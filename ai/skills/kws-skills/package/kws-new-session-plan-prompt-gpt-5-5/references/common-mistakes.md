@@ -5,22 +5,30 @@
 - Leaving placeholder bullets or placeholder paths in the generated prompt.
 - Omitting repo-local instructions, worktree isolation, cleanup, or handoff checkpoint rules.
 - Omitting quality-first routing and the default `gpt-5.5 high` requirement.
-- Including Spark/model-usage optimization rules when the user did not explicitly request them.
+- Omitting conservative automatic Spark evidence packing when the user did not forbid Spark/model optimization.
+- Keeping conservative automatic Spark routing when the user requested no Spark, no model optimization, or `gpt-5.5 only`.
+- Including broader Spark/model-usage optimization rules when the user did not explicitly request them.
+- Letting conservative automatic Spark choose source files, broaden exploration, infer root cause, review code, interpret verification, or make completion decisions.
 - Letting Spark scout mode make implementation, review, root-cause, verification, completion, git mutation, PR, merge, or release decisions.
 - Letting Spark scout mode run broad commands such as formatters, installers, migrations, cleanup commands, or service lifecycle commands.
 - Re-synthesizing `{{OPTIONAL_SPARK_SCOUT_BULLETS}}` instead of using `templates/spark-scout-bullets.ko.txt` for Korean output.
 - Starting at Task 1 when the plan starts at Task 0.
+- Starting a Task without a short execution contract that names scope, files to inspect, allowed edits, forbidden edits, and acceptance command.
+- Treating a broad multi-layer Task as one undifferentiated edit instead of splitting it into self-contained intra-task Phases.
 - Allowing model exceptions the user did not explicitly request.
 - Requiring subagent-driven execution but accepting the implementation subagent's self-report as the only review.
 - Requiring task execution but not task closure: implementation, review, fixes, verification, and agent cleanup.
 - Encouraging broad cleanup such as `killall node`, `pkill node`, `killall chrome`, or `pkill playwright`.
 - Writing compact rules as if the model can prevent system compaction.
 - Emitting long repetitive checkpoints that consume context faster.
+- Writing free-form checkpoints instead of fixed restart-critical fields.
+- Pasting long raw logs into checkpoints instead of preserving raw output by path or short excerpt plus repro command.
 - Handing off mid-task, mid-review, or during failed-verification analysis.
 - Splitting at non-semantic boundaries such as file reads or partial edits.
 - Treating task count, area switches, file count, or log volume as automatic stop conditions instead of checkpoint-and-continue signals.
 - Treating every context boundary as a full-test boundary, causing repeated full-suite runs for small phases.
 - Skipping verification without recording why and where the next honest verification will happen.
+- Retrying the same root cause indefinitely instead of stopping after 3 failed fix attempts with an error/blocked checkpoint.
 - Forcing KWS-only doc/skill review skills in the generated prompt instead of using an impact-gated documentation check.
 - Using weak language such as "review and report" instead of task-by-task execution across continuation sessions.
 - Adding explanation when the user asked for prompt-only output.
