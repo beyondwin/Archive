@@ -2,7 +2,7 @@
 name: kws-new-session-plan-prompt-gpt-5-5
 description: Use when a user asks for a copy-paste fresh Codex session prompt, continuation handoff prompt, or prompt-only output based on an implementation plan, optionally with spec, design, or extra docs.
 metadata:
-  version: "2.2.5"
+  version: "2.2.6"
   updated_at: "2026-05-08"
 ---
 
@@ -24,42 +24,30 @@ This skill produces the prompt only. Do not start implementation, edit the plan,
 6. **Preserve output intent and language.** If the user asks for "prompt only", return only one fenced `text` block. Use the user's requested language when specified; otherwise preserve the template language.
 7. **Validate before sending.** Load `references/pre-send-checklist.md` and check every generated prompt against it.
 
-## Required Inputs
+## Inputs
 
 - Implementation plan path: required for execution prompts
 - Spec or design doc paths: optional but include them when available
 - Workspace path: include the absolute repo path when known; ask only when inference could select the wrong repo or worktree
 
-## Generated Prompt Requirements
+## Required Invariants
 
 Unless the user explicitly says otherwise, generated prompts must include:
 
-- Absolute workspace, implementation plan, and known spec/design/extra doc paths.
-- The invariant execution blocks already present in `templates/fresh-session-prompt.txt`: repo-local instruction checks, task-by-task execution, per-task execution contracts, subagent implementation plus two-stage `gpt-5.5 high` review, conservative automatic Spark evidence packing, checkbox updates, worktree isolation, unrelated-change handling, session-owned cleanup, structured semantic handoff checkpoints, continuation stop rules, retry budget and raw-output preservation for failures, risk-scaled verification, documentation impact check, and final summary.
-- Quality-first routing: default all implementation, review, root-cause, verification interpretation, architecture/state/auth/persistence/shared-module judgment, and completion decisions to `gpt-5.5 high`; other models are allowed only for conservative automatic Spark evidence packing or explicit user exceptions.
-- Conservative automatic Spark routing: unless the user forbids Spark/model optimization or requests `gpt-5.5 only`, generated prompts may let `gpt-5.5 high` use `gpt-5.3-codex-spark high` only for read-only evidence packing of commands/files selected by `gpt-5.5 high`.
-- No broader Spark/model-usage optimization rules unless the user explicitly requests broader Spark scout routing, model-usage optimization, or a model-specific exception.
-- Final verification before completion claims.
+- Verified absolute workspace, implementation plan, and known spec/design/extra doc paths; no placeholder paths, unused optional bullets, or template tokens.
+- The invariant execution blocks in `templates/fresh-session-prompt.txt`: repo-local instruction checks, Task 0/1 start handling, task-by-task execution, per-task execution contracts, subagent implementation plus two-stage `gpt-5.5 high` review, worktree isolation, unrelated-change handling, session-owned cleanup, structured checkpoints, continuation stop rules, retry budget, raw-output preservation, risk-scaled verification, documentation impact check, and final summary.
+- Quality-first routing: all implementation, review, root-cause, verification interpretation, architecture/state/auth/persistence/shared-module judgment, and completion decisions stay on `gpt-5.5 high`.
+- Conservative automatic Spark evidence packing is included unless the user forbids Spark/model optimization or requests `gpt-5.5 only`; broader Spark scout routing is included only for an explicit broader Spark/model-routing request.
+- Prompt-only and requested-language behavior is preserved, and final verification before completion claims is explicit.
 
 ## Stop Rules
 
-- Do not invent plan/spec paths or leave placeholder paths in the final prompt.
-- Do not leave template tokens such as `{{PLAN_PATH}}` or optional-section markers in the final prompt.
-- Do not browse for docs unless the user explicitly asks or a referenced remote document must be fetched.
+- If an implementation plan path is missing and cannot be inferred safely, ask one short question; do not generate a partial prompt.
+- If repo state, workspace, plan path, or required docs are ambiguous enough to change execution scope, ask one short question.
+- If a local path exists but is unreadable, report that path as a blocker.
 - If the user forbids Spark/model optimization or requests `gpt-5.5 only`, remove conservative automatic Spark routing and any optional Spark scout bullets.
 - Do not include broader Spark/model-usage optimization exceptions unless the user explicitly requested them.
-- If repo state, plan path, or required docs are ambiguous enough to change execution scope, ask one short question instead of generating a brittle prompt.
-
-## Success Criteria
-
-The output is ready when:
-
-- the prompt contains an absolute implementation plan path and known workspace path when available;
-- all placeholder tokens and unused optional document bullets are removed;
-- repo-local instruction checks, task-by-task execution, per-task execution contracts, subagent review flow, conservative automatic Spark evidence packing, structured semantic handoff checkpoints, resource cleanup, continuation stop rules, retry budget, raw-output preservation, risk-scaled verification, and default `gpt-5.5 high` judgment routing are explicit;
-- broader Spark scout routing is absent unless explicitly requested, and narrowly scoped when included;
-- final documentation impact check is explicit without requiring KWS-only review skills;
-- the final answer respects the user's prompt-only preference.
+- Do not browse for docs unless the user explicitly asks or a referenced remote document must be fetched.
 
 ## Output Style
 
@@ -69,7 +57,7 @@ If the user asks for "prompt only", return only the code block and nothing else.
 
 If the user does not ask for prompt-only output, one short lead-in sentence is acceptable before the code block.
 
-## Template
+## Template Rules
 
 Use `templates/fresh-session-prompt.txt` as the prompt body and replace every `{{...}}` token with verified content or remove the optional section. Keep the generated output as a single fenced `text` block unless the user asks for surrounding explanation.
 
@@ -85,12 +73,8 @@ Before sending, load and verify against `references/pre-send-checklist.md`.
 
 ## Pressure Scenarios
 
-- User gives a plan path and says "prompt only": output only one fenced `text` block.
-- User asks "prompt only" but gives no plan path: ask one short question; do not output explanatory prose or a partial prompt.
-- User gives a spec path but no plan path: ask for the implementation plan path instead of generating placeholder text.
-- User gives plan, spec, and extra docs: include only those real paths and remove every unused template bullet.
-- User gives a path that exists but is unreadable: report that specific path as a blocker.
-- User gives an existing `codex/...` worktree: include it as the workspace path instead of instructing a second integration worktree unless the plan requires isolation.
-- User asks to reduce GPT-5.5 usage with broader Spark scout routing: include `templates/spark-scout-bullets.ko.txt` as an opt-in support path only, keep implementation/review/root-cause/verification interpretation/final judgment on `gpt-5.5 high`, and forbid Spark-driven file edits, formatters, dependency installs, migrations, cleanup commands, service lifecycle commands, staging, commits, merges, pushes, and PR/release decisions.
-- User does not mention Spark/model optimization: keep only conservative automatic Spark evidence packing and remove every broader Spark scout bullet.
-- User says no Spark, no model optimization, or `gpt-5.5 only`: remove both conservative automatic Spark routing and broader Spark scout bullets.
+- Plan path + "prompt only": output only one fenced `text` block; no plan path: ask one short question.
+- Spec/design path but no plan path: ask for the implementation plan path instead of generating placeholders.
+- Multiple docs: include only readable real paths; unreadable paths are blockers.
+- Existing `codex/...` worktree: include it as workspace instead of instructing a second integration worktree unless the plan requires isolation.
+- Spark routing: default to conservative evidence packing only; broader Spark requires explicit request; no-Spark or `gpt-5.5 only` removes every Spark route.
