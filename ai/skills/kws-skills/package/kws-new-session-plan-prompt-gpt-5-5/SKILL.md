@@ -2,8 +2,8 @@
 name: kws-new-session-plan-prompt-gpt-5-5
 description: Use when a user asks for a copy-paste fresh Codex session prompt, continuation handoff prompt, or prompt-only output based on an implementation plan, optionally with spec, design, or extra docs.
 metadata:
-  version: "2.2.6"
-  updated_at: "2026-05-08"
+  version: "2.2.7"
+  updated_at: "2026-05-09"
 ---
 
 # KWS New Session Plan Prompt
@@ -35,7 +35,7 @@ This skill produces the prompt only. Do not start implementation, edit the plan,
 Unless the user explicitly says otherwise, generated prompts must include:
 
 - Verified absolute workspace, implementation plan, and known spec/design/extra doc paths; no placeholder paths, unused optional bullets, or template tokens.
-- The invariant execution blocks in `templates/fresh-session-prompt.txt`: repo-local instruction checks, Task 0/1 start handling, task-by-task execution, per-task execution contracts, subagent implementation plus two-stage `gpt-5.5 high` review, worktree isolation, unrelated-change handling, session-owned cleanup, structured checkpoints, continuation stop rules, retry budget, raw-output preservation, risk-scaled verification, documentation impact check, and final summary.
+- The invariant execution blocks in `templates/fresh-session-prompt.txt`: repo-local instruction checks, Task 0/1 start handling, task-by-task execution, per-task execution contracts, lightweight session ledger, task risk ledger, subagent implementation plus two-stage `gpt-5.5 high` review, recurring issue detection, worktree isolation, unrelated-change handling, session-owned cleanup, structured checkpoints, continuation stop rules, retry budget, raw-output preservation, ENV_BLOCKER triage, risk-scaled verification, documentation impact check, and final summary.
 - Quality-first routing: all implementation, review, root-cause, verification interpretation, architecture/state/auth/persistence/shared-module judgment, and completion decisions stay on `gpt-5.5 high`.
 - Conservative automatic Spark evidence packing is included unless the user forbids Spark/model optimization or requests `gpt-5.5 only`; broader Spark scout routing is included only for an explicit broader Spark/model-routing request.
 - Prompt-only and requested-language behavior is preserved, and final verification before completion claims is explicit.
@@ -78,3 +78,4 @@ Before sending, load and verify against `references/pre-send-checklist.md`.
 - Multiple docs: include only readable real paths; unreadable paths are blockers.
 - Existing `codex/...` worktree: include it as workspace instead of instructing a second integration worktree unless the plan requires isolation.
 - Spark routing: default to conservative evidence packing only; broader Spark requires explicit request; no-Spark or `gpt-5.5 only` removes every Spark route.
+- Continuation prompt: preserve any existing `.codex-orchestrator/session.json` path and instruct the fresh session to read it before resuming task execution.
