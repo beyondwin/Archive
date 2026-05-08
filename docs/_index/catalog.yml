@@ -1,0 +1,152 @@
+# Source of truth for docs/INDEX.md.
+# Keep entries sorted by topic, then title.
+
+- title: Redis, Optimistic Lock, UPSERT로 타임딜 재고 차감 설계하기
+  path: docs/notes/backend/concurrency/time-deal-stock-decrement-redis-db_kr.md
+  topic: backend/concurrency
+  type: guide
+  language: ko
+  status: organized
+  summary: Beginner-friendly rewrite and fact-check of a Redis, PostgreSQL optimistic lock, and UPSERT based time-deal stock decrement design.
+  source: https://ditto-dev.tistory.com/110
+  updated: 2026-05-01
+
+- title: 구독앱 수익화 가이드
+  path: docs/notes/business/mobile-apps/subscription-app-guide-insights_kr.md
+  topic: business/mobile-apps
+  type: research-note
+  language: ko
+  status: organized
+  summary: iOS subscription app monetization guide covering category selection, paid acquisition, paywalls, retention, and small-budget validation.
+  source: https://x.com/dalgom_bami/status/2048957916246610151
+  updated: 2026-04-29
+
+- title: CS 면접 대비 데이터베이스 질문 4-49
+  path: docs/notes/career/backend-interviews/cs-database-interview-questions_kr.md
+  topic: career/backend-interviews
+  type: guide
+  language: ko
+  status: organized
+  summary: Database interview preparation guide covering transactions, isolation levels, locks, indexes, RDBMS versus NoSQL, connection pools, and operations.
+  source: https://www.inflearn.com/course/cs-interview-prepara-1?cid=341793
+  updated: 2026-04-29
+
+- title: 분산처리와 서버 확장 전략 면접 가이드
+  path: docs/notes/career/backend-interviews/distributed-scaling-architecture-interview_kr.md
+  topic: career/backend-interviews
+  type: guide
+  language: ko
+  status: organized
+  summary: Backend architecture interview guide covering load balancing, read replicas, caching, queues, partitioning, sharding, and failure isolation.
+  source: unknown
+  updated: 2026-04-29
+
+- title: booq 제품 기획서
+  path: docs/_inbox/booq_product_plan.md
+  topic: inbox
+  type: plan
+  language: ko
+  status: inbox
+  summary: Unclassified product plan for booq, a minimal reading note app focused on remembered passages and revisited thoughts.
+  source: unknown
+  updated: 2026-04-30
+
+- title: booq 프로젝트 아키텍처 문서
+  path: docs/_inbox/booq_project_architecture.md
+  topic: inbox
+  type: spec
+  language: ko
+  status: inbox
+  summary: Unclassified Flutter architecture note for the booq offline-first reading note app.
+  source: unknown
+  updated: 2026-05-08
+
+- title: Codex로 이미지 목업을 제대로 된 UI로 구현하게 만드는 방법
+  path: docs/_inbox/codex_ui_mockup_workflow_summary.md
+  topic: inbox
+  type: guide
+  language: ko
+  status: inbox
+  summary: Unclassified workflow note about turning AI-generated UI mockups into implementable design systems before coding.
+  source: https://www.reddit.com/r/codex/comments/1t1klni/how_to_get_codex_to_create_proper_uis_out_of/
+  updated: 2026-05-08
+
+- title: forrestchang/andrej-karpathy-skills 상세 분석
+  path: docs/_inbox/andrej-karpathy-skills_analysis_ko.md
+  topic: inbox
+  type: research-note
+  language: ko
+  status: inbox
+  summary: Unclassified analysis of the forrestchang/andrej-karpathy-skills repository as lightweight AI coding agent behavior rules.
+  source: https://github.com/forrestchang/andrej-karpathy-skills
+  updated: 2026-05-06
+
+- title: nexu-io/open-design 레포지토리 분석 보고서
+  path: docs/_inbox/open_design_repo_analysis.md
+  topic: inbox
+  type: research-note
+  language: ko
+  status: inbox
+  summary: Unclassified static analysis of the nexu-io/open-design local-first design generation repository.
+  source: https://github.com/nexu-io/open-design
+  updated: 2026-05-06
+
+- title: Archive Docs Organizer
+  path: docs/notes/skills/archive-docs-organizer.md
+  topic: skills/agent-workflows
+  type: workflow
+  language: en
+  status: organized
+  summary: Operating note for sorting Archive inbox documents into raw sources, curated notes, and index metadata.
+  source: /Users/kws/.codex/skills/archive-docs-organizer/SKILL.md
+  updated: 2026-04-29
+
+- title: mattpocock/skills 레포 분석
+  path: docs/notes/skills/mattpocock-skills-repo-analysis.md
+  topic: skills/agent-workflows
+  type: research-note
+  language: ko
+  status: organized
+  summary: Analysis of the mattpocock/skills repository as a set of composable engineering protocols for AI coding agents.
+  source: https://github.com/mattpocock/skills
+  updated: 2026-04-29
+
+- title: GStack + Superpowers 발표자료용 초압축 버전
+  path: docs/notes/skills/gstack-superpowers/gstack-superpowers-slides.md
+  topic: skills/gstack-superpowers
+  type: reference
+  language: ko
+  status: organized
+  summary: Slide-ready compressed outline explaining the GStack and Superpowers workflow for Claude Code.
+  source: docs/notes/skills/gstack-superpowers/gstack-superpowers-analysis.md
+  updated: 2026-04-29
+
+- title: GStack + Superpowers 작업 방식 요약
+  path: docs/notes/skills/gstack-superpowers/gstack-superpowers-summary.md
+  topic: skills/gstack-superpowers
+  type: guide
+  language: ko
+  status: organized
+  summary: Practical summary of how to combine GStack and Superpowers for planning, worktree separation, subagents, and review.
+  source: docs/notes/skills/gstack-superpowers/gstack-superpowers-analysis.md
+  updated: 2026-04-29
+
+- title: GStack + Superpowers는 어떻게 같이 쓰면 좋을까
+  path: docs/notes/skills/gstack-superpowers/gstack-superpowers-blog.md
+  topic: skills/gstack-superpowers
+  type: guide
+  language: ko
+  status: organized
+  summary: Blog-style explanation of using GStack and Superpowers to structure Claude Code work before implementation.
+  source: docs/notes/skills/gstack-superpowers/gstack-superpowers-analysis.md
+  updated: 2026-04-29
+
+- title: GStack + Superpowers로 클로드코드 완전히 달라진 사람의 후기 분석 문서
+  path: docs/notes/skills/gstack-superpowers/gstack-superpowers-analysis.md
+  topic: skills/gstack-superpowers
+  type: research-note
+  language: ko
+  status: organized
+  summary: Detailed analysis of a Maker Evan video about using GStack and Superpowers to structure Claude Code workflows.
+  source: https://www.youtube.com/watch?v=af3OJ0L1jEU
+  updated: 2026-04-29
