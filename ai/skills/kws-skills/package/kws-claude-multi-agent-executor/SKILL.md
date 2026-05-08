@@ -29,8 +29,11 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
    If there are uncommitted changes, stop immediately. Tell the user: "Working tree is dirty. Please commit or stash changes before running multi-agent-executor." Do not proceed.
 
 2. **Create worktree:**
+   - First invoke `Skill("superpowers:using-git-worktrees")` and follow its guidance for creating the isolated workspace.
+   - Capture the timestamp once now (e.g., `20260508-143022`) — use the **same value** for both the branch name and the worktree path below.
+   - Then execute:
    ```bash
-   git worktree add -b <plan-slug>-<YYYYMMDD-HHMMSS> ../worktrees/<plan-slug>
+   git worktree add -b <plan-slug>-<YYYYMMDD-HHMMSS> ../worktrees/<plan-slug>-<YYYYMMDD-HHMMSS>
    ```
    Derive `plan-slug` from the plan filename: lowercase, replace spaces and underscores with hyphens, strip the date prefix if present (e.g., `2026-05-08-my-feature.md` → `my-feature`).
 
@@ -51,8 +54,11 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
 
 Repeat for **each task in order** (Task 0 → Task N). Advance to the next task only when the current task reaches Agent Cleanup successfully.
 
-For each task, maintain two counters (reset per task):
-- `review_retries` — how many times you re-dispatched Implementer due to review failures (max 3 per reviewer)
+**Before Step 1 of each task:** run `git -C <worktree_path> rev-parse HEAD` and **record the output SHA in your internal task notes** (e.g., `Task 3: pre_sha=abc1234`). Use the literal SHA string in all subsequent revert and diff commands — do not rely on shell variables, which do not persist between Bash tool calls.
+
+For each task, maintain three counters (reset per task):
+- `review_retries` — how many times you re-dispatched Implementer due to Spec or Quality Reviewer FAIL (max 3 per reviewer, counted separately)
+- `verifier_retries` — how many times you re-dispatched Implementer due to Verifier FAIL (max 3)
 - `escalation_count` — how many ESCALATE signals received across all sub-agents this task (max 3 total)
 
 ### Step 1: Dispatch Implementer
@@ -61,7 +67,13 @@ Build the implementer prompt from the **Implementer Prompt Template** section be
 - `{full text of the task}` — copy the entire `### Task N:` section from the plan
 - `{relevant spec excerpt}` — copy the spec section(s) that govern this task
 - `{files to touch}` — from the task's **Files:** block
+- `{risk level}` — the risk level you assigned to this task in Phase 0 (`low`, `mid`, or `high`)
 - `{context from previous tasks}` — your internal summary of tasks completed so far (not raw output)
+
+Re-dispatch rules (append `## Fix Required\n{issues}` in all cases, then):
+- After **Spec or Quality Reviewer FAIL**: also include Required Skills bullet 4 (`receiving-code-review`) in the prompt.
+- After **Verifier FAIL**: do NOT include bullet 4. `systematic-debugging` (bullet 2) handles diagnosis if needed.
+- After **cleanup grep**: do NOT include bullet 4.
 
 Dispatch as a **fresh Sonnet sub-agent**.
 
@@ -100,20 +112,24 @@ Dispatch as a **fresh Sonnet sub-agent**.
 Build the verifier prompt from the **Verifier Prompt Template** section below. Fill in:
 - `{LOW | MID | HIGH}` — the risk level you assigned to this task in Phase 0
 - `{files changed}` — accumulated from implementer output
-- `{test command}` — derive from the plan's Tech Stack or existing Makefile/package.json in the repo
 
 **Result: PASS** → proceed to Step 5.  
-**Result: FAIL or ESCALATE** → go to **Escalation Protocol**.
+**Result: FAIL** →
+- Increment `verifier_retries`
+- If `verifier_retries` ≤ 3: re-dispatch Implementer with verifier's `ISSUES:` under `## Fix Required`. Do NOT include `receiving-code-review`. Return to Step 1.
+- If `verifier_retries` > 3: halt. Report to user: "Task N exceeded verifier retry limit (3). Manual intervention required."
+
+**Result: ESCALATE** → go to **Escalation Protocol**.
 
 ### Step 5: Agent Cleanup
 
 You (Orchestrator) perform these checks directly — no sub-agent needed:
 
-1. Scan changed files for debug artifacts:
+1. Scan only lines added in this task for debug artifacts (substitute the literal pre-task SHA from your notes):
    ```bash
-   grep -rn "console\.log\|print(\|TODO\|FIXME\|debugger" <files_changed>
+   git -C <worktree_path> diff <pre_task_sha> -- <files_changed> | grep "^+" | grep -v "^+++" | grep -E "console\.log|TODO|FIXME|debugger"
    ```
-   If found: re-dispatch Implementer with specific cleanup instructions.
+   If found: re-dispatch Implementer with the artifact list under `## Fix Required`. Do NOT include `receiving-code-review` in this re-dispatch.
 
 2. Record this task's result in your internal summary:
    ```
@@ -153,18 +169,19 @@ options:
    State: <worktree path>, <branch name>
    Manual intervention required.
    ```
-3. **Before any re-dispatch:** revert partial commits:
+3. **Before any re-dispatch:** reset to the pre-task state using the literal SHA from your task notes:
    ```bash
-   git -C <worktree_path> log --oneline -5   # identify commits from this task
-   git -C <worktree_path> revert HEAD         # or reset to pre-task state
+   git -C <worktree_path> reset --hard <pre_task_sha>
    ```
 4. Act based on type:
 
 | Type | Your action |
 |------|-------------|
-| `SPEC_BLOCKER` | Edit the design spec document directly to resolve the contradiction or impossibility. Note the change. Re-dispatch Implementer from clean state. |
+| `SPEC_BLOCKER` | Make the smallest possible edit to the design spec that resolves the contradiction. Record the change in your internal notes. Re-dispatch Implementer from clean state. |
 | `ENV_BLOCKER` | Diagnose the environment issue yourself. If fixable (missing dep: run install, broken path: fix it): fix it, then re-dispatch. If not fixable: skip this task (record `SKIPPED` in summary) or abort entire run. |
 | `AMBIGUITY` | Edit the plan document with an explicit decision that resolves the ambiguity. Note the decision. Re-dispatch Implementer from clean state. |
+
+5. **After resolving any escalation:** return to Step 1 (Implementer) and re-run all steps in sequence (Steps 1–5) from the clean reset state. Do NOT skip Spec Review, Quality Review, or Verification.
 
 **Rule:** You update all documents yourself. Never tell a sub-agent to update the spec or plan.  
 **Rule:** After updating any document, re-read it before building the next sub-agent prompt.
@@ -184,6 +201,8 @@ Build the docs updater prompt from the **Docs Updater Prompt Template** section 
 Dispatch as a **fresh Sonnet sub-agent**.
 
 ### Step 2: Generate Final Summary Report
+
+Before generating the report, invoke `Skill("superpowers:finishing-a-development-branch")` to determine the right completion path (merge, PR, or cleanup) and include its recommendation in the Cleanup Status section.
 
 Output this report to the user:
 
@@ -233,8 +252,9 @@ These rules are absolute. No exceptions.
 | **Orchestrator never writes code** | All implementation goes through sub-agents. You read, plan, dispatch, and decide — never implement. |
 | **Sub-agents never self-resolve blockers** | If a sub-agent guesses around a blocker instead of escalating, its output is invalid. Re-dispatch with explicit escalation instructions. |
 | **Max 3 review retries per reviewer per task** | Spec Reviewer retries and Quality Reviewer retries are counted separately. Hitting either limit halts that task. |
+| **Max 3 verifier retries per task** | If verifier keeps failing after 3 re-dispatches, halt the task. |
 | **Max 3 escalations per task** | Combined across all sub-agents. Exceeding this halts the entire run. |
-| **Revert before re-dispatch** | Never retry from a state with partial commits. Always revert first. |
+| **Reset before re-dispatch** | Never retry from a state with partial commits. Always `git reset --hard <pre_task_sha>` first. |
 | **Risk level set by Orchestrator** | The Verifier receives an explicit `LOW`, `MID`, or `HIGH`. It does not self-assign. |
 | **Document updates are Orchestrator-only** | Never delegate spec or plan updates to a sub-agent. |
 | **Re-read docs after every update** | After you modify spec or plan, re-read the full updated document before dispatching the next sub-agent. |
@@ -249,6 +269,19 @@ When dispatching the Implementer, build this prompt by filling in `{placeholders
 
 ````
 You are an Implementer sub-agent running on Sonnet. Implement exactly one task. Do not do anything outside the task's scope.
+
+## Required Skills
+
+Invoke these skills at the right moment — they shape how you work:
+
+1. **If your task involves writing or modifying executable code with test coverage:** invoke `Skill("superpowers:test-driven-development")` before writing any implementation code. Follow its workflow: write the failing test first, then implement until it passes.
+
+2. **If you hit any unexpected error, broken import, or environment issue:** invoke `Skill("superpowers:systematic-debugging")` before escalating. Only send ESCALATE if the debugging skill cannot resolve it with the information available.
+
+3. **Before reporting `STATUS: DONE`:** invoke `Skill("superpowers:verification-before-completion")` and run through its checklist. Do not report DONE until this check passes.
+
+{IF this is a re-dispatch after Spec or Quality Reviewer FAIL — not after Verifier FAIL or cleanup artifacts:}
+4. **At the start of this re-dispatch:** invoke `Skill("superpowers:receiving-code-review")` to guide how you address the review feedback systematically.
 
 ## Your Task
 
@@ -285,7 +318,7 @@ The previous implementation had these issues. Address all of them:
    <type>(<scope>): <description>
 
    Task: <task id>
-   Risk: <level>
+   Risk: {risk level}
    Files: <comma-separated list>
    ```
 5. If you hit a blocker you cannot resolve with the information you have, output ESCALATE immediately. Do not attempt workarounds or make assumptions that change scope.
@@ -337,6 +370,7 @@ You are a Spec Reviewer sub-agent running on Sonnet. Verify that the implementat
 2. For each requirement in the spec excerpt: does the implementation satisfy it exactly?
 3. Be precise. Quote the spec and point to the file/line when something is missing.
 4. Do not flag: code style, naming preferences, performance, features not mentioned in the spec.
+5. If the inputs are insufficient to review (files missing or unreadable, spec excerpt empty), output `STATUS: FAIL` with `ISSUES: review inputs incomplete — <what is missing>`.
 
 ## Output Format (required — do not deviate)
 
@@ -372,6 +406,8 @@ Review only for these categories:
 
 Do NOT flag: spec compliance (already checked), style preferences without clear rationale, missing features not in this task, micro-optimizations.
 
+If the inputs are insufficient to review (files missing or unreadable), output `STATUS: FAIL` with `ISSUES: review inputs incomplete — <what is missing>`.
+
 ## Output Format (required — do not deviate)
 
 STATUS: PASS | FAIL
@@ -390,6 +426,17 @@ When dispatching the Verifier, build this prompt by filling in `{placeholders}`:
 
 ````
 You are a Verifier sub-agent running on Sonnet. Run tests calibrated to the risk level provided. Do not modify any implementation files.
+
+## Required Skills
+
+1. **If any test fails:** invoke `Skill("superpowers:systematic-debugging")` before escalating. Diagnose the root cause — is it a flaky test, a test environment issue, or a real implementation bug? Only send ESCALATE if debugging cannot resolve it with available information.
+
+**Before reporting your final STATUS,** confirm the checklist for your risk level:
+- LOW: unit tests for changed files ran and passed, no new failures introduced
+- MID: unit tests + integration tests for all touched modules ran and passed
+- HIGH: full test suite ran, no regressions from baseline
+
+Do not report PASS until every item for your risk level is confirmed.
 
 ## Risk Level: {LOW | MID | HIGH}
 
@@ -412,7 +459,7 @@ You are a Verifier sub-agent running on Sonnet. Run tests calibrated to the risk
 - Run: `<full test command>`
 - Pass condition: all tests pass, no regressions from the baseline.
 
-Derive the test command from the project's `Makefile`, `package.json`, `pyproject.toml`, or `Cargo.toml`. If you cannot determine the test command, escalate with type AMBIGUITY.
+Derive the test command from the project's `Makefile`, `package.json`, `pyproject.toml`, or `Cargo.toml`. If you cannot determine the test command, escalate with type ENV_BLOCKER.
 
 ## Output Format (required — do not deviate)
 
@@ -448,6 +495,10 @@ When dispatching the Docs Updater (Phase 2 only, once after all tasks complete),
 
 ````
 You are a Docs Updater sub-agent running on Sonnet. Update documentation to reflect all changes made during this execution run. Do not change implementation files.
+
+## Required Skills
+
+**Before running the final `git commit`:** invoke `Skill("superpowers:verification-before-completion")` and verify that every doc in scope has been reviewed and updated where needed. Do not commit until this check passes.
 
 ## All Files Changed During This Run
 
