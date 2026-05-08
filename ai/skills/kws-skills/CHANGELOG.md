@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.4.1 - 2026-05-08
+
+- `kws-new-session-plan-prompt-gpt-5-5`의 기본 로드 경로를 줄이기 위해 Spark scout opt-in 본문과 common mistakes reference를 별도 파일로 분리했습니다.
+- fresh-session 템플릿에서 implementation subagent 자기 보고가 review를 대체하지 않도록 `gpt-5.5 high` 두 단계 리뷰 경계를 명확히 했습니다.
+- workspace 추론 규칙, prompt-only 검증 체크리스트, OpenAI agent trigger 문구를 개별 스킬 버전 `2.2.3`에 맞춰 갱신했습니다.
+
 ## 2.4.0 - 2026-05-08
 
 - `kws-claude-multi-agent-executor` 스킬을 패키지 manifest와 전역 링크 대상에 추가했습니다.
