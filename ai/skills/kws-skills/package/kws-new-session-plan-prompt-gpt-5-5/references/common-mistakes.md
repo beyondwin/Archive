@@ -14,9 +14,12 @@
 - Re-synthesizing `{{OPTIONAL_SPARK_SCOUT_BULLETS}}` instead of using `templates/spark-scout-bullets.ko.txt` for Korean output.
 - Starting at Task 1 when the plan starts at Task 0.
 - Starting a Task without a short execution contract that names scope, files to inspect, allowed edits, forbidden edits, and acceptance command.
+- Treating `HANDOFF CHECKPOINT` as enough for restart-critical state instead of also maintaining `.codex-orchestrator/session.json`.
+- Saying verification is risk-scaled without first assigning task-level `low | mid | high` risk and upgrade reasons.
 - Treating a broad multi-layer Task as one undifferentiated edit instead of splitting it into self-contained intra-task Phases.
 - Allowing model exceptions the user did not explicitly request.
 - Requiring subagent-driven execution but accepting the implementation subagent's self-report as the only review.
+- Retrying review or verification failures without stable `ISSUE_KEY` records, making recurring failures invisible.
 - Requiring task execution but not task closure: implementation, review, fixes, verification, and agent cleanup.
 - Encouraging broad cleanup such as `killall node`, `pkill node`, `killall chrome`, or `pkill playwright`.
 - Writing compact rules as if the model can prevent system compaction.
@@ -28,6 +31,7 @@
 - Treating task count, area switches, file count, or log volume as automatic stop conditions instead of checkpoint-and-continue signals.
 - Treating every context boundary as a full-test boundary, causing repeated full-suite runs for small phases.
 - Skipping verification without recording why and where the next honest verification will happen.
+- Reporting an environment blocker before checking command execution, dependencies, path/config, and required services.
 - Retrying the same root cause indefinitely instead of stopping after 3 failed fix attempts with an error/blocked checkpoint.
 - Forcing KWS-only doc/skill review skills in the generated prompt instead of using an impact-gated documentation check.
 - Using weak language such as "review and report" instead of task-by-task execution across continuation sessions.

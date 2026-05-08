@@ -12,9 +12,12 @@
 - 편집 전에 repo-local instructions를 확인해. 예: `AGENTS.md`, `CLAUDE.md`, task-specific agent guide.
 - 문서 계획과 repo instructions가 충돌하면 repo instructions를 우선하고, 계획 의도에 맞는 최소 수정으로 적응해.
 - subagent-driven-development 방식으로 계획 문서의 첫 Task(Task 0 또는 Task 1)부터 마지막 Task까지 순서대로 수행해. 기본 목표는 현재 세션에서 가능한 한 끝까지 완료하는 것이다.
+- 시작 직후 계획 문서의 Task 목록을 훑고 각 Task에 `risk: low | mid | high`와 한 줄 이유를 부여해. `low`는 단일 파일/모듈의 고립 변경, `mid`는 2개 이상 모듈/공유 상태/config 변경, `high`는 cross-area/API/schema/auth/persistence/breaking change다. 같은 파일을 여러 Task가 수정하면 뒤 Task는 최소 `mid`로 승격해.
+- 작업 worktree 안에 `.codex-orchestrator/session.json`을 유지해. 없으면 만들고 Task/Phase boundary마다 갱신해. 필드는 `schema_version`, `workspace`, `plan`, `branch`, `current_task`, `current_phase`, `tasks`, `risk_levels`, `review_issue_keys`, `verification`, `last_checkpoint`를 포함해. `HANDOFF CHECKPOINT`는 사람이 읽는 요약이고, 이 JSON은 재개용 source of truth다.
 - 각 Task 시작 전에 본문 5줄 이내 `TASK EXECUTION CONTRACT`를 확정해: `scope`, `files_to_inspect`, `allowed_edits`, `forbidden_edits`, `acceptance_command_or_honest_substitute`. 계획 문서만으로 채울 수 없으면 repo를 확인해 보강하고, 실행 범위를 바꿀 수 있는 공백이면 blocker로 보고해.
 - 계획의 Task가 여러 레이어나 모듈을 동시에 넓게 건드리면 문서 의도는 유지하되 Task 내부 Phase를 한 레이어/모듈 중심으로 나누어 진행해. 각 Phase도 필요한 파일, 허용/금지 수정 범위, 검증 기준을 자기완결적으로 명시해.
 - 각 Task는 fresh implementation subagent로 구현해. 구현 subagent의 자기 보고만으로 review를 대체하지 말고, `gpt-5.5 high`가 spec compliance review와 code quality review를 수행해. 고위험/큰 Task는 별도 fresh reviewer subagent를 둘 수 있다. 필요한 수정/재리뷰, 검증, agent cleanup까지 끝난 뒤 Task를 닫아. 큰 Task를 Phase로 나누거나 continuation handoff가 발생해도 재개 Phase는 fresh implementation subagent로 진행해.
+- 리뷰/검증 실패를 재시도할 때는 각 이슈에 가능한 한 `ISSUE_KEY=<file>:<line-or-symbol>:<category>`를 붙이고 `.codex-orchestrator/session.json`의 `review_issue_keys`에 기록해. 이전 재시도와 같은 `ISSUE_KEY`가 다시 나오면 `[RECURRING - previous fix did not address this]`로 표시하고, 같은 방식의 수정 반복 전에 root cause를 다시 확인해.
 - 기본 판단 라우팅은 `gpt-5.5` + reasoning effort `high`다. 구현 방향, 파일 수정, 리뷰, root-cause, 결과 해석, 검증 해석, architecture/state/auth/persistence/shared-module 판단, 완료 판단은 모두 `gpt-5.5 high`로 수행해.
 - 보수적 자동 Spark 예외: 사용자가 Spark/model optimization을 금지하거나 `gpt-5.5 only`를 요구하지 않았다면, `gpt-5.5 high`가 명시적으로 선택한 read-only 명령/파일에 한해 `gpt-5.3-codex-spark` + reasoning effort `high`를 evidence packing 용도로 자동 사용할 수 있다.
 - Spark evidence packing은 non-mutating verification command 실행, raw stdout/stderr 파일 보존, exit code/cwd/command/duration 기록, failing test name/error excerpt/stack trace anchor 추출, `git status`/`git diff --stat`/`git diff --name-only` 같은 read-only 상태 요약, `HANDOFF CHECKPOINT`의 `verification`/`raw_output` 필드 초안에만 허용된다.
@@ -39,6 +42,7 @@
 - 정말 막히는 경우에만 blocker 를 명확히 정리해서 보고해.
 - 검증은 비용과 리스크에 맞춰 계층화해: 조사-only Phase는 결정/다음 검증 계획만 기록, 구현 Phase는 targeted check, Task 완료나 high-risk/cross-area 변경은 관련 범위 확장, 마지막에는 계획의 final verification command 또는 가장 정직한 대체 full check를 실행해.
 - 검증 실패가 나오면 raw output을 보존하고 `gpt-5.5 high`로 root-cause analysis를 수행해. 긴 raw output은 대화에 전문을 붙이지 말고 파일 경로 또는 핵심 excerpt와 재현 명령을 기록해.
+- 실패가 환경 문제일 가능성이 있으면 blocker로 멈추기 전에 4단계를 순서대로 확인해: 1) test command 자체가 실행되는가, 2) dependency가 빠졌는가, 3) path/config가 worktree와 맞는가, 4) DB/server/external service가 필요하고 시작 가능한가. 각 단계의 명령, 결과, raw output 위치를 `verification`과 checkpoint에 기록해.
 - 원인 없이 우회하거나 테스트를 약화하지 마.
 - 수정 후 같은 검증 또는 더 작은 재현 검증을 다시 실행해.
 - 같은 root cause에 대한 수정 재시도는 최대 3회로 제한해. 3회 후에도 실패하면 `status: error` 또는 `status: blocked` checkpoint로 시도한 수정, raw output 위치, 남은 가설, 다음 검증을 정리하고 멈춰.
