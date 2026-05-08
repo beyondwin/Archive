@@ -1,0 +1,41 @@
+{{WORKSPACE_PATH}} 에서 아래 문서 기준으로 작업해줘.
+
+기준 문서:
+- 구현 계획 문서: {{PLAN_PATH}}
+{{OPTIONAL_DOCUMENT_BULLETS}}
+
+위 문서 경로가 존재하지 않거나 열 수 없으면 추측하지 말고 blocker로 보고해.
+
+작업 원칙:
+- 편집 전에 repo-local instructions를 확인해. 예: `AGENTS.md`, `CLAUDE.md`, task-specific agent guide.
+- 문서 계획과 repo instructions가 충돌하면 repo instructions를 우선하고, 계획 의도에 맞는 최소 수정으로 적응해.
+- subagent-driven-development 방식으로 계획 문서의 첫 Task(Task 0 또는 Task 1)부터 마지막 Task까지 순서대로 수행해. 기본 목표는 현재 세션에서 가능한 한 끝까지 완료하는 것이다.
+- 각 Task는 fresh subagent로 구현, spec compliance review, code quality review, 필요한 수정/재리뷰, 검증, agent cleanup까지 완료한 뒤 닫아. 큰 Task를 Phase로 나누거나 continuation handoff가 발생해도 재개 Phase는 fresh subagent로 진행해.
+- 기본 모델 라우팅은 `gpt-5.5` + reasoning effort `high` only다. 구현, 리뷰, root-cause, 결과 해석, 검증 해석, architecture/state/auth/persistence/shared-module 판단, 완료 판단은 모두 `gpt-5.5 high`로 수행해.
+- 사용자가 모델별 예외를 명시적으로 요청하지 않는 한 다른 모델로 Task나 지원 작업을 라우팅하지 마.
+{{OPTIONAL_SPARK_SCOUT_BULLETS}}
+- 체크박스 기반 계획 문서라면 진행 상태를 문서에 반영해.
+- 시작 전에 git 상태와 현재 브랜치를 확인해.
+- 가능한 경우 원본 작업트리를 직접 수정하지 말고, 새 `codex/...` 브랜치의 전용 integration git worktree를 만들어 그 안에서 작업해. 전체 실행용 worktree는 하나로 유지해.
+- 원본 workspace의 unrelated change는 건드리지 마. 관련 uncommitted change를 새 worktree에 어떻게 반영해야 할지 불명확하면 blocker로 보고해.
+- 각 Task 경계에서 완료된 subagent를 종료하고, 이 세션이 직접 띄운 Node/Vite/dev server/Playwright/browser/exec session만 정리해. 가능한 경우 owner, command, PID/session id, port를 기록하고 확인된 session-owned resource만 종료해. `killall node`, `pkill node`, `killall chrome`, `pkill playwright` 같은 광역 정리는 하지 마.
+- 시스템 compaction은 제어할 수 없으므로, Task/Phase boundary마다 짧은 `HANDOFF CHECKPOINT`를 남겨 자동 compaction 후에도 이어갈 수 있게 해.
+- checkpoint는 마지막 checkpoint 이후 delta 중심으로 10줄 이내에 작성해: 완료 범위, 변경 파일, 확정 contract, 검증 결과, 남은 리스크, 다음 첫 액션, worktree/branch, session-owned resource 상태.
+- 자발적으로 `CONTINUATION PROMPT`를 출력하고 멈추는 것은 예외다. 사용자 결정 필요, unresolved root cause/verification failure, 다음 고위험 작업을 안정적으로 재구성할 수 없음, 실제 context 압박이 명확한 경우에만 멈춰.
+- mid-task, mid-review, failed-verification 분석 중에는 handoff하지 말고 먼저 원인과 상태를 정리해 semantic boundary를 만들어라. Task 개수, 영역 전환, 변경 파일 증가, 긴 로그 누적만으로는 멈추지 마.
+
+실행 기준:
+- 설계/계획 범위를 임의로 넓히지 말고, 문서 범위만 정확히 구현해.
+- 문서와 실제 코드베이스가 다르면 문서 의도를 유지하는 가장 작은 수정으로 적응해.
+- 정말 막히는 경우에만 blocker 를 명확히 정리해서 보고해.
+- 검증은 비용과 리스크에 맞춰 계층화해: 조사-only Phase는 결정/다음 검증 계획만 기록, 구현 Phase는 targeted check, Task 완료나 high-risk/cross-area 변경은 관련 범위 확장, 마지막에는 계획의 final verification command 또는 가장 정직한 대체 full check를 실행해.
+- 검증 실패가 나오면 raw output을 보존하고 `gpt-5.5 high`로 root-cause analysis를 수행해.
+- 원인 없이 우회하거나 테스트를 약화하지 마.
+- 수정 후 같은 검증 또는 더 작은 재현 검증을 다시 실행해.
+
+마지막 문서 업데이트 기준:
+- 구현과 기능 검증 후 완료 요약 전에 `$kws-doc-prompt-review`로 실제로 달라진 repo docs, prompt/operator docs, agent-facing instructions를 필요한 만큼 업데이트해. 산출물이 Codex `SKILL.md`나 skill bundle이면 `$kws-skill-prompt-review`를 사용해.
+- 문서 업데이트는 실제 동작과 검증 결과에 근거하고, docs-only 검증 또는 repo-local 문서 검증 명령을 실행해. 실행하지 못한 검증은 이유와 대체 확인을 기록해.
+
+마무리 기준:
+- 마지막에는 무엇을 바꿨는지, `$kws-doc-prompt-review` 또는 skill artifact라면 `$kws-skill-prompt-review`로 어떤 문서를 업데이트했는지, 어떤 검증을 실제로 돌렸는지, 어떤 모델을 썼는지, worktree 경로와 브랜치, 정리한 background process/agent 상태, 남은 리스크가 있는지만 간단히 정리해.

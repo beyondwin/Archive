@@ -1,0 +1,20 @@
+eval "$(/opt/homebrew/bin/brew shellenv)"
+
+export ARCHIVE_HOME={{ .archiveHome | quote }}
+export AI_MACHINE_PROFILE={{ .machineProfile | quote }}
+
+if [[ "$AI_MACHINE_PROFILE" == "work" ]]; then
+  export AI_WORK_PROFILE=1
+  unset AI_PERSONAL_PROFILE
+else
+  export AI_PERSONAL_PROFILE=1
+  unset AI_WORK_PROFILE
+fi
+
+if [[ ! -d "$ARCHIVE_HOME" ]]; then
+  echo "kws shell init: ARCHIVE_HOME '$ARCHIVE_HOME' does not exist. Update ~/.config/chezmoi/chezmoi.toml." >&2
+elif [[ ! -f "$ARCHIVE_HOME/ai/runtime/init.zsh" ]]; then
+  echo "kws shell init: missing $ARCHIVE_HOME/ai/runtime/init.zsh. Pull Archive and re-run chezmoi apply." >&2
+else
+  source "$ARCHIVE_HOME/ai/runtime/init.zsh"
+fi

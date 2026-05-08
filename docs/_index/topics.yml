@@ -1,0 +1,33 @@
+# Topic registry for Archive docs.
+# Add topics only when they help retrieval across multiple documents or represent
+# a stable category worth keeping.
+
+- id: backend/concurrency
+  name: Backend Concurrency
+  description: Notes about high-contention backend workflows, transaction boundaries, idempotency, locks, optimistic concurrency, queues, and consistency recovery.
+  folder: docs/notes/backend/concurrency
+
+- id: business/mobile-apps
+  name: Mobile App Business
+  description: Notes about mobile app monetization, acquisition, subscriptions, app store strategy, and related product-market research.
+  folder: docs/notes/business/mobile-apps
+
+- id: career/backend-interviews
+  name: Backend Interviews
+  description: Backend interview preparation material covering CS fundamentals, databases, distributed systems, scaling, and architecture tradeoffs.
+  folder: docs/notes/career/backend-interviews
+
+- id: inbox
+  name: Inbox
+  description: Unclassified intake documents that should remain in docs/_inbox until a stable topic or source/notes split is chosen.
+  folder: docs/_inbox
+
+- id: skills/agent-workflows
+  name: Agent Workflows
+  description: Notes about AI-agent skills, reusable coding-agent workflows, prompt protocols, and agent operating conventions.
+  folder: docs/notes/skills
+
+- id: skills/gstack-superpowers
+  name: GStack Superpowers
+  description: Notes about using GStack and Superpowers workflows for Claude Code planning, review, worktree, and subagent-driven development.
+  folder: docs/notes/skills/gstack-superpowers

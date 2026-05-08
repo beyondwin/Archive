@@ -1,0 +1,4 @@
+interface:
+  display_name: "Archive Docs Organizer"
+  short_description: "Organize Archive docs inbox into topic folders"
+  default_prompt: "Use $archive-docs-organizer to organize documents from docs/_inbox into the right docs folders."

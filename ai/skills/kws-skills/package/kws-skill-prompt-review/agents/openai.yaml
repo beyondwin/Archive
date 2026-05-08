@@ -1,0 +1,4 @@
+interface:
+  display_name: "KWS Skill Prompt Review"
+  short_description: "Review Codex skills with GPT-5.5 prompt guidance"
+  default_prompt: "Use $kws-skill-prompt-review to review this Codex skill and report findings; apply changes only when the user explicitly asks."
