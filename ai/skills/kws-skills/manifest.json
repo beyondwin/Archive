@@ -1,6 +1,6 @@
 {
   "name": "kws-skills",
-  "version": "2.4.0",
+  "version": "2.4.1",
   "updated_at": "2026-05-08",
   "skills": [
     "archive-docs-organizer",
@@ -29,8 +29,8 @@
       "updated_at": "2026-05-05"
     },
     "kws-new-session-plan-prompt-gpt-5-5": {
-      "version": "2.2.1",
-      "updated_at": "2026-05-06"
+      "version": "2.2.3",
+      "updated_at": "2026-05-08"
     },
     "reflective-essay-writer": {
       "version": "1.0.1",
