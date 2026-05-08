@@ -1,9 +1,12 @@
 ---
-name: multi-agent-executor
+name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation.
+metadata:
+  version: "1.0.0"
+  updated_at: "2026-05-08"
 ---
 
-# Multi-Agent Executor
+# KWS Claude Multi-Agent Executor
 
 ## Overview
 

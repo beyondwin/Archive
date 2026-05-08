@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.4.0 - 2026-05-08
+
+- `kws-claude-multi-agent-executor` 스킬을 패키지 manifest와 전역 링크 대상에 추가했습니다.
+- 패키지 테스트가 `package/*` 스킬과 manifest 목록 불일치를 잡도록 보강했습니다.
+
 ## 2.3.0 - 2026-05-08
 
 - `frontend-design` 스킬을 패키지에서 제거했습니다.
