@@ -2,8 +2,8 @@
 name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation.
 metadata:
-  version: "2.2.1"
-  updated_at: "2026-05-08"
+  version: "2.3.0"
+  updated_at: "2026-05-09"
 ---
 
 # KWS Claude Multi-Agent Executor
@@ -35,6 +35,13 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
      - Warn user: "State file exists but is corrupted at <path>. Recommend manual inspection before proceeding."
      - Do NOT overwrite. Halt.
 
+0.5. **Validate plan file (pre-flight):**
+   Read the plan file. Before proceeding:
+   - If the file is unreadable or missing: halt. "Plan file not found or unreadable at <path>."
+   - If no `### Task N:` sections are found: halt. "Plan has no `### Task N:` sections. Cannot execute."
+   
+   This gate runs before worktree creation — structural failures cost zero infrastructure.
+
 1. **Check working tree is clean:**
    ```bash
    git status
@@ -44,6 +51,7 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
 2. **Create worktree:**
    - First invoke `Skill("superpowers:using-git-worktrees")` and follow its guidance.
    - Capture the timestamp once now (e.g., `20260508-143022`) — use the **same value** for both the branch name and the worktree path.
+   - Before executing: run `git branch --list "<plan-slug>-*"` to check for an existing branch with the same slug prefix. If a match is found and no state.json exists at the expected worktree path (i.e., this is not a resume): ask the user — "Branch <name> already exists with no state file. Rename with a new timestamp suffix, or halt?" Do not silently overwrite.
    - Execute:
    ```bash
    git worktree add -b <plan-slug>-<YYYYMMDD-HHMMSS> ../worktrees/<plan-slug>-<YYYYMMDD-HHMMSS>
@@ -74,6 +82,22 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
 3. **Read both documents fully:**
    - Read the plan document. Extract the ordered task list: every `### Task N:` section with full text. Note any explicit phase groupings (e.g., `## Phase 1`, `## Phase 2`) — these define phase boundaries.
    - Read the spec document. Keep relevant sections in context for prompt construction.
+
+3.5. **Validate document content (Ambiguity Gate):**
+   After reading both documents, before assigning risk levels:
+
+   1. **Missing Files blocks:** List every `### Task N:` section that has no `**Files:**` block. If any found: ask the user one short question — "Tasks N, M have no Files block. Should I infer from task descriptions, or halt for you to add them?" Halt until answered.
+
+   2. **Ambiguity scan:** Check each task description for:
+      - Verbs without referents: "fix the bug", "optimize the query", "update the config" — which one?
+      - Missing acceptance thresholds: "improve performance" with no metric, "reduce errors" with no target
+      - Named contracts (function/type/API names) in the task that contradict the spec — same entity, different name or signature
+      
+      For each ambiguity found: ask one targeted question. Halt until all are resolved. Do not proceed to risk assignment until all ambiguities are cleared.
+
+   3. **Out-of-repo paths:** Verify all paths in `**Files:**` blocks resolve within the repo root. Any path that escapes (e.g., `../../other-repo/file.py`): halt. "Task N references path outside repo root: <path>. Resolve before proceeding."
+
+   **Why this gate exists:** Every ambiguity caught here saves one Implementer dispatch + SPEC_BLOCKER escalation + git reset cycle downstream.
 
 4. **Assign risk levels** to each task:
    - `low` — isolated change, single file or module, no shared state, no API surface change
@@ -531,6 +555,9 @@ These rules are absolute. No exceptions.
 | **Two-phase commits** | See Phase 1 Step 2.5. `chore:` orchestrator state and `feat:` code are always separate commits. |
 | **PreToolUse hooks in worktree** | Phase 0 Step 2.5 writes `.claude/settings.json` blocking `rm -rf /`, force-push to protected branches, and `DROP TABLE/DATABASE/SCHEMA`. |
 | **Acceptance Criteria shell is primary PASS condition** | If a task has an `## Acceptance Criteria` block with executable shell, the Verifier runs those commands first. All must exit 0. Risk-tiered test instructions are the fallback when no AC block is present. |
+| **Plan structural validation is mandatory** | Step 0.5 runs before worktree creation. A plan without `### Task N:` headers halts immediately. A plan with missing Files blocks halts with a user question. Never skip this gate. |
+| **Ambiguity gate clears before risk assignment** | Step 3.5 must complete with zero unresolved ambiguities before Step 4 begins. Unclear task descriptions answered downstream cost one full sub-agent dispatch + reset cycle. |
+| **Out-of-repo paths halt execution** | Files blocks referencing paths outside repo root halt at Phase 0 Step 3.5. Never infer a correction — always ask the user. |
 
 ---
 
