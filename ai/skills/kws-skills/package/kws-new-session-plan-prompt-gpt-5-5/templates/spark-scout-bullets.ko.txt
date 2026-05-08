@@ -1,4 +1,4 @@
-- 사용자가 명시적으로 Spark/model-usage optimization을 요청한 경우에만 `gpt-5.3-codex-spark` + reasoning effort `high` scout mode를 사용할 수 있다.
+- 사용자가 보수적 자동 Spark evidence packing을 넘어선 Spark/model-usage optimization을 명시적으로 요청한 경우에만 `gpt-5.3-codex-spark` + reasoning effort `high` scout mode를 넓게 사용할 수 있다.
 - Spark scout mode는 read-only 탐색, read-only inspection 명령, `gpt-5.5 high`가 선택한 non-mutating verification 명령의 실행 및 raw output 수집, 파일/리소스 인벤토리, `HANDOFF CHECKPOINT` 초안에만 허용된다.
 - Spark scout mode는 구현 방향, root-cause, 리뷰 결론, 검증 해석, 완료 판단을 내리지 않는다. 파일 편집, formatter 실행, dependency install, migration, cleanup command, service lifecycle command, staging/commit/merge/push/PR 생성/PR merge/release/version/changelog 결정 등 repository state mutation을 수행하지 않는다.
 - Spark 출력은 `gpt-5.5 high`의 판단 입력일 뿐이다. 구현 또는 최종 판단 전에 `gpt-5.5 high`가 핵심 파일과 결론을 직접 확인한다.
