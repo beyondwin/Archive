@@ -20,7 +20,10 @@ Before sending the generated prompt, confirm:
 
 - task-by-task subagent implementation, two-stage review, and Task 0/1 start handling are explicit
 - per-task `TASK EXECUTION CONTRACT` is explicit with scope, files to inspect, allowed edits, forbidden edits, and acceptance command or honest substitute
+- lightweight `.codex-orchestrator/session.json` ledger is explicit and includes workspace, plan, branch, current task/phase, task state, risk levels, issue keys, verification, and last checkpoint
+- task-level `low | mid | high` risk ledger is explicit, with same-file later tasks upgraded to at least `mid`
 - broad tasks are handled by intra-task phases centered on one layer/module without expanding plan scope
+- retry reviews or verification failures use stable `ISSUE_KEY=<file>:<line-or-symbol>:<category>` records and label repeated keys as `[RECURRING - previous fix did not address this]`
 - repo-local instructions, isolated worktree, original workspace handling, unrelated-change handling, and scoped cleanup are explicit; broad process cleanup is forbidden
 - Task/Phase checkpoints are semantically complete, delta-focused, limited, and use fixed fields for status, scope, files, contracts, verification, raw output, risk, next action, worktree/branch, and session-owned resources
 - summaries and checkpoints preserve only restart-critical facts, not long logs or generic narration
@@ -30,6 +33,7 @@ Before sending the generated prompt, confirm:
 ## Verification And Finish
 
 - verification ladder is explicit: no full suite on every phase, targeted checks for implementation phases, broader checks for task completion/high-risk changes, final full check at the end
+- ENV_BLOCKER triage is explicit: command runs at all, dependencies, path/config, and required service checks before reporting blocker
 - verification failures preserve raw output by file path or short excerpt plus repro command, and same-root-cause fix retries are capped at 3 before an error/blocked checkpoint
 - final documentation impact check is explicit without requiring KWS-only review skills
 - final summary includes doc update/no-impact reason, worktree/branch, finish-to-end status, and final verification
