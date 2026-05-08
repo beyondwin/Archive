@@ -2,7 +2,7 @@
 name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation.
 metadata:
-  version: "2.2.0"
+  version: "2.2.1"
   updated_at: "2026-05-08"
 ---
 
@@ -105,8 +105,7 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
    ```
    Mark **compaction points** — tasks after which no later task depends on any earlier task's raw details. At each compaction point you will: (a) run a batch Verifier for accumulated LOW tasks, (b) dispatch a Phase Docs Updater, and (c) write a state anchor and drop prior context. Explicit plan phase boundaries are always compaction points.
 
-   - **Conservative default:** If you are not confident that two tasks are truly independent (because the plan does not explicitly list their files, or because 'logical data flow' is ambiguous), treat them as DEPENDENT. Fewer compaction points are safer than wrong compaction points.
-   - **Phase boundary fallback:** If task-level dependency analysis feels unreliable for any segment, restrict compaction points for that segment to the explicit plan phase boundary. Add the last task index always: `compaction_points` must always include the index of the final task (or the final task before Phase 2).
+   - **When in doubt, be conservative:** If dependency analysis is unreliable for any segment, treat tasks as DEPENDENT and restrict compaction points to explicit plan phase boundaries. `compaction_points` must always include the index of the final task (or the final task before Phase 2). Fewer compaction points are safer than wrong ones.
    - **SKIPPED propagation:** If task X is SKIPPED, automatically mark all tasks with X in their deps as SKIPPED as well. Record each propagated SKIPPED with reason 'dependency task_X was SKIPPED'.
 
 7. **Initialize state file:**
@@ -138,7 +137,6 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
      "current_previous_issues": [],
      "phase_summaries": [],
      "phase_doc_commits": [],
-     "low_tasks_pending_verification": [],
      "timestamps": {
        "started_at": null,
        "completed_at": null
@@ -331,12 +329,7 @@ If `low_tasks_pending_verification` is non-empty: build the Verifier prompt from
 - `{acceptance_criteria}`: "run all test files for changed files combined"
 - `{result_json_path}`: `<worktree_path>/.orchestrator/verifier_results/batch_<compaction_index>.json`
 
-**Dispatch as a headless `claude -p` subprocess:**
-1. Write prompt to `<worktree_path>/.orchestrator/verifier_prompts/batch_<compaction_index>.txt`
-2. `mkdir -p <worktree_path>/.orchestrator/verifier_results`
-3. Run: `claude -p --dangerously-skip-permissions "$(cat <prompt_file>)" > <worktree_path>/.orchestrator/verifier_results/batch_<compaction_index>.stdout 2>&1`
-4. Read `<worktree_path>/.orchestrator/verifier_results/batch_<compaction_index>.json`
-   - Missing/malformed → ENV_BLOCKER ESCALATE.
+**Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<worktree_path>/.orchestrator/verifier_prompts/batch_<compaction_index>.txt` and result path `<worktree_path>/.orchestrator/verifier_results/batch_<compaction_index>.json`. Missing/malformed result → ENV_BLOCKER ESCALATE.
 
 **Result: PASS** → clear `low_tasks_pending_verification` in the state file.  
 **Result: FAIL** → apply this recovery algorithm:
@@ -354,12 +347,7 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
 - Docs scope: user-provided or default (`README.md`, `CHANGELOG.md`, `docs/*runbook*`, `docs/*operator*`)
 - `{result_json_path}`: `<worktree_path>/.orchestrator/docs_results/phase_<compaction_index>.json`
 
-**Dispatch as a headless `claude -p` subprocess:**
-1. Write prompt to `<worktree_path>/.orchestrator/docs_prompts/phase_<compaction_index>.txt`
-2. `mkdir -p <worktree_path>/.orchestrator/docs_results`
-3. Run: `claude -p --dangerously-skip-permissions "$(cat <prompt_file>)" > <worktree_path>/.orchestrator/docs_results/phase_<compaction_index>.stdout 2>&1`
-4. Read `<worktree_path>/.orchestrator/docs_results/phase_<compaction_index>.json`
-   - Missing/malformed → treat as ESCALATE (skip docs for this phase; record `phase_docs_skipped` in state.json as before).
+**Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<worktree_path>/.orchestrator/docs_prompts/phase_<compaction_index>.txt` and result path `<worktree_path>/.orchestrator/docs_results/phase_<compaction_index>.json`. Missing/malformed result → treat as ESCALATE; record `phase_docs_skipped` in state.json. The Final Docs Updater in Phase 2 will recover.
 
 ### Step T3: State Anchor + Context Drop
 
@@ -465,11 +453,7 @@ Build from the **Final Docs Updater Prompt Template** with:
 - Docs scope: user-provided or default (`README.md`, `CHANGELOG.md`, `docs/*runbook*`, `docs/*operator*`)
 - `{result_json_path}`: `<worktree_path>/.orchestrator/docs_results/final.json`
 
-**Dispatch as a headless `claude -p` subprocess:**
-1. Write prompt to `<worktree_path>/.orchestrator/docs_prompts/final.txt`
-2. `mkdir -p <worktree_path>/.orchestrator/docs_results`
-3. Run: `claude -p --dangerously-skip-permissions "$(cat <prompt_file>)" > <worktree_path>/.orchestrator/docs_results/final.stdout 2>&1`
-4. Read `<worktree_path>/.orchestrator/docs_results/final.json` for completion status.
+**Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<worktree_path>/.orchestrator/docs_prompts/final.txt` and result path `<worktree_path>/.orchestrator/docs_results/final.json`. Missing/malformed result → ENV_BLOCKER ESCALATE.
 
 ### Step 2: Generate Final Summary Report
 
@@ -539,15 +523,13 @@ These rules are absolute. No exceptions.
 | **Never auto-delete the worktree** | Report its location. The user decides when to merge or delete. |
 | **LOW tasks must reach batch verification** | LOW tasks skip per-task Verifier but MUST be covered by batch sweep at every compaction point and at Phase 2 Step 0. |
 | **State file is authoritative** | After each compaction, the state file is the source of truth. Drop raw task details from active context. |
-| **LOW task file-conflict upgrade** | If a LOW task touches a file already touched by an earlier LOW task, upgrade to MID before execution. Never allow two LOW tasks with shared files to batch together. |
+| **LOW task file-conflict upgrade** | See Phase 0 Step 4. Never allow two LOW tasks with shared files to batch together. |
 | **ISSUE_KEY matching for RECURRING** | RECURRING labels are determined by ISSUE_KEY exact match (file:line:category), never by fuzzy text comparison. |
-| **test_command is cached** | The test command is derived once in Phase 0 and stored in state.json. Verifiers receive it pre-filled. They do not re-derive it. |
+| **test_command is cached** | Derived once in Phase 0 Step 5; stored in state.json. Verifiers receive it pre-filled — do not re-derive. |
 | **State file write must be verified** | After every Write to state.json, immediately verify it is readable. If write fails: hard halt. |
-| **Verifier dispatched headless** | Verifier (per-task MID/HIGH and all LOW batch) runs via `claude -p --dangerously-skip-permissions`. Result written to `.orchestrator/verifier_results/`. Do NOT use Agent tool for Verifier. |
-| **Docs Updaters dispatched headless** | Phase Docs Updater and Final Docs Updater run via `claude -p --dangerously-skip-permissions`. Results written to `.orchestrator/docs_results/`. |
-| **Missing result file = ENV_BLOCKER** | If a headless subprocess exits without writing its result JSON, treat as ESCALATE with type: ENV_BLOCKER. Check the `.stdout` log file for diagnostics. Do not silently continue. |
-| **Two-phase commits** | Agent Cleanup commits orchestrator state (`chore:`) separately from implementation code (`feat:`). Never mix them in one commit. |
-| **PreToolUse hooks in worktree** | Phase 0 Step 2.5 writes `.claude/settings.json` to the worktree. This blocks `rm -rf /`, force-push to protected branches, and `DROP TABLE/DATABASE/SCHEMA` in sub-agent Bash calls. |
+| **Headless subprocess dispatch** | Verifier and Docs Updaters run via `claude -p --dangerously-skip-permissions` (never Agent tool). Results in `.orchestrator/{verifier,docs}_results/`. Missing result JSON → ENV_BLOCKER ESCALATE; check `.stdout` for diagnostics. |
+| **Two-phase commits** | See Phase 1 Step 2.5. `chore:` orchestrator state and `feat:` code are always separate commits. |
+| **PreToolUse hooks in worktree** | Phase 0 Step 2.5 writes `.claude/settings.json` blocking `rm -rf /`, force-push to protected branches, and `DROP TABLE/DATABASE/SCHEMA`. |
 | **Acceptance Criteria shell is primary PASS condition** | If a task has an `## Acceptance Criteria` block with executable shell, the Verifier runs those commands first. All must exit 0. Risk-tiered test instructions are the fallback when no AC block is present. |
 
 ---
@@ -557,7 +539,7 @@ These rules are absolute. No exceptions.
 When dispatching the Implementer, build this prompt by filling in `{placeholders}`:
 
 ````
-You are an Implementer sub-agent running on Sonnet. Implement exactly one task. Do not do anything outside the task's scope. Keep your output compact — stay within the structured format below.
+You are an Implementer sub-agent running on Sonnet. Implement exactly one task. Do not do anything outside the task's scope.
 
 ## Required Skills
 
@@ -605,8 +587,6 @@ The previous implementation had these issues. Address ALL of them:
    Risk: {risk level}
    Files: <comma-separated list>
    ```
-5. On any unresolvable blocker: output ESCALATE immediately. No workarounds or scope assumptions.
-
 ## Output Format (required — do not deviate)
 
 STATUS: DONE | ESCALATE
@@ -638,7 +618,7 @@ options:
 When dispatching the Combined Reviewer, build this prompt by filling in `{placeholders}`:
 
 ````
-You are a Combined Reviewer sub-agent running on Sonnet. Perform spec compliance review AND code quality review in a single pass. Do not implement anything. Keep your output compact — stay within the structured format below.
+You are a Combined Reviewer sub-agent running on Sonnet. Perform spec compliance review AND code quality review in a single pass. Do not implement anything.
 
 ## Spec Requirement (governs this task)
 
