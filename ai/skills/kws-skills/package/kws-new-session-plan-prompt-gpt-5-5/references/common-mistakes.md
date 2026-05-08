@@ -1,0 +1,26 @@
+# Common Mistakes
+
+- Starting implementation in the current session instead of generating the prompt.
+- Using vague document descriptions instead of absolute paths.
+- Leaving placeholder bullets or placeholder paths in the generated prompt.
+- Omitting repo-local instructions, worktree isolation, cleanup, or handoff checkpoint rules.
+- Omitting quality-first routing and the default `gpt-5.5 high` requirement.
+- Including Spark/model-usage optimization rules when the user did not explicitly request them.
+- Letting Spark scout mode make implementation, review, root-cause, verification, completion, git mutation, PR, merge, or release decisions.
+- Letting Spark scout mode run broad commands such as formatters, installers, migrations, cleanup commands, or service lifecycle commands.
+- Re-synthesizing `{{OPTIONAL_SPARK_SCOUT_BULLETS}}` instead of using `templates/spark-scout-bullets.ko.txt` for Korean output.
+- Starting at Task 1 when the plan starts at Task 0.
+- Allowing model exceptions the user did not explicitly request.
+- Requiring subagent-driven execution but accepting the implementation subagent's self-report as the only review.
+- Requiring task execution but not task closure: implementation, review, fixes, verification, and agent cleanup.
+- Encouraging broad cleanup such as `killall node`, `pkill node`, `killall chrome`, or `pkill playwright`.
+- Writing compact rules as if the model can prevent system compaction.
+- Emitting long repetitive checkpoints that consume context faster.
+- Handing off mid-task, mid-review, or during failed-verification analysis.
+- Splitting at non-semantic boundaries such as file reads or partial edits.
+- Treating task count, area switches, file count, or log volume as automatic stop conditions instead of checkpoint-and-continue signals.
+- Treating every context boundary as a full-test boundary, causing repeated full-suite runs for small phases.
+- Skipping verification without recording why and where the next honest verification will happen.
+- Forcing KWS-only doc/skill review skills in the generated prompt instead of using an impact-gated documentation check.
+- Using weak language such as "review and report" instead of task-by-task execution across continuation sessions.
+- Adding explanation when the user asked for prompt-only output.
