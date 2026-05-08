@@ -1,4 +1,4 @@
 interface:
   display_name: "KWS New Session Plan Prompt GPT-5.5"
-  short_description: "Create continuation-safe fresh-session prompts from plan docs"
-  default_prompt: "Use $kws-new-session-plan-prompt-gpt-5-5 to generate a paste-ready fresh-session prompt from an absolute implementation plan path and any related spec/docs."
+  short_description: "Create prompt-only fresh-session or continuation handoff prompts from implementation plans"
+  default_prompt: "Use $kws-new-session-plan-prompt-gpt-5-5 to generate a paste-ready fresh-session/continuation prompt from an absolute implementation plan path and any related spec/docs."
