@@ -64,6 +64,22 @@ for skill in $SKILLS; do
   grep -q '^[[:space:]]*updated_at:[[:space:]]*"' "$PACKAGE_DIR/$skill/SKILL.md"
 done
 
+python3 - "$MANIFEST" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+package_dir = manifest_path.parent / "package"
+with open(manifest_path, encoding="utf-8") as fh:
+    data = json.load(fh)
+manifest_skills = set(data["skills"])
+package_skills = {path.name for path in package_dir.iterdir() if path.is_dir()}
+missing = sorted(package_skills - manifest_skills)
+if missing:
+    raise SystemExit("package skills missing from manifest: " + ", ".join(missing))
+PY
+
 python3 - "$MANIFEST" $SKILLS <<'PY'
 import json, sys
 import re

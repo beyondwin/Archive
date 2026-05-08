@@ -1,9 +1,10 @@
 {
   "name": "kws-skills",
-  "version": "2.3.0",
+  "version": "2.4.0",
   "updated_at": "2026-05-08",
   "skills": [
     "archive-docs-organizer",
+    "kws-claude-multi-agent-executor",
     "kws-doc-prompt-review",
     "kws-skill-prompt-review",
     "kws-new-session-plan-prompt-gpt-5-5",
@@ -14,6 +15,10 @@
     "archive-docs-organizer": {
       "version": "1.1.1",
       "updated_at": "2026-04-30"
+    },
+    "kws-claude-multi-agent-executor": {
+      "version": "1.0.0",
+      "updated_at": "2026-05-08"
     },
     "kws-doc-prompt-review": {
       "version": "1.0.1",
