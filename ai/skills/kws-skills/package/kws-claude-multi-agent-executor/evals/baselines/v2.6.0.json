@@ -1,0 +1,18 @@
+{
+  "version": "2.6.0",
+  "date": "2026-05-12T15:49:49Z",
+  "fixtures": [
+    {
+      "fixture": "01-trivial-typo",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 1.0,
+        "code_quality": 1.0,
+        "cost_efficiency": 1.0
+      },
+      "mean": 1.0,
+      "passed": true,
+      "notes": "All 3 expected files modified with exact typo corrections matching spec; 3 fix commits within ±1 of expected (3-9 range). Batch verifier PASS at LOW risk, test_after grep check returned PASS, wall-time 9min under 15min budget (60%). Diffs are minimal, comment-only, no behavior change — textbook SMALL-bucket execution."
+    }
+  ]
+}
