@@ -70,25 +70,43 @@ PY
 )"
   python3 -c "$parse_py" "$fixture_path" "$tmpdir"
 
-  # Bootstrap
+  # Bootstrap + gitignore harness scratch BEFORE the first commit so they
+  # never appear as untracked → no "dirty tree" gate trip during Phase 0 Step 1.
   ( cd "$tmpdir" && git init -q && git config user.email "eval@example.com" && git config user.name "eval" )
+  cat > "$tmpdir/.gitignore" <<'GI'
+# Harness-managed artifacts — never committed
+_meta.json
+bootstrap.log
+run.jsonl
+judge_input.txt
+.harness/
+GI
+  mkdir -p "$tmpdir/.harness"
   local bootstrap
   bootstrap="$(jq -r '.bootstrap // empty' "$tmpdir/_meta.json")"
   if [ -n "$bootstrap" ]; then
-    ( cd "$tmpdir" && bash -euxc "$bootstrap" ) 2>&1 | tee "$tmpdir/bootstrap.log"
+    ( cd "$tmpdir" && bash -euxc "$bootstrap" ) 2>&1 | tee "$tmpdir/.harness/bootstrap.log"
   fi
   ( cd "$tmpdir" && git add -A && git commit -q -m "eval bootstrap" || true )
 
   # Invoke skill headless.
+  # Eval framing preamble — required because v2.6.0 description says
+  # "single-session execution is preferable for ≤5-task plans" and Claude
+  # will honestly act on that, bypassing the orchestrator if the plan looks
+  # trivial. This eval explicitly tests the orchestrator behavior, so we
+  # signal that intent up front.
   local invocation
   invocation="$(jq -r '.invocation // ""' "$tmpdir/_meta.json")"
+  local eval_preamble="EVAL_RUN: This is an automated regression test of the kws-claude-multi-agent-executor skill. Execute the skill exactly as written — do not substitute direct edits for the orchestrator workflow, do not ask clarifying questions, do not bypass steps based on perceived task triviality. The eval is scored on BOTH outcome correctness AND skill adherence (worktree created, state.json populated, sub-agent commits visible)."
   local start_ts
   start_ts="$(date +%s)"
   ( cd "$tmpdir" && \
     claude -p --dangerously-skip-permissions \
       --output-format stream-json --verbose \
-      "/kws-claude-multi-agent-executor plan=plan.md spec=spec.md mode=interactive $invocation" \
-      > run.jsonl 2>&1 ) || true
+      "${eval_preamble}
+
+/kws-claude-multi-agent-executor plan=plan.md spec=spec.md mode=interactive $invocation" \
+      > .harness/run.jsonl 2>&1 ) || true
   local end_ts
   end_ts="$(date +%s)"
   local wall_min
@@ -96,7 +114,7 @@ PY
 
   # Token usage from stream-json (sum of input + output across all events)
   local total_tokens
-  total_tokens="$(jq -s '[.[] | select(.type=="usage") | (.input_tokens // 0) + (.output_tokens // 0)] | add // 0' "$tmpdir/run.jsonl" 2>/dev/null || echo 0)"
+  total_tokens="$(jq -s '[.[] | select(.type=="usage") | (.input_tokens // 0) + (.output_tokens // 0)] | add // 0' "$tmpdir/.harness/run.jsonl" 2>/dev/null || echo 0)"
 
   # Capture artifacts.
   local state_file
@@ -147,7 +165,7 @@ sys.stdout.write(template)
 ' "$EVAL_DIR/judge.md" "$tmpdir/_meta.json" "$fixture_name" "$wall_min" "$total_tokens")"
 
   # Append captured payloads as substitution (multi-line — write to temp file).
-  local judge_input="$tmpdir/judge_input.txt"
+  local judge_input="$tmpdir/.harness/judge_input.txt"
   {
     printf '%s\n' "$judge_prompt"
     printf '\n\n### ACTUAL DATA (replaces placeholders if any remained):\n'

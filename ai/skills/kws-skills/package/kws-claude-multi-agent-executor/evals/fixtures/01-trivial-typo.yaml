@@ -1,7 +1,11 @@
 name: 01-trivial-typo
 description: |
-  Single SMALL task — fix a comment typo in one file. Tests that v2.5.1 effort-scaling
-  produces a SMALL bucket and Implementer stays within ≤8 tool calls.
+  3 SMALL-bucket tasks across 3 disjoint files — comment typo cleanup pass.
+  Tests P5 SMALL bucket per task (≤8 tool calls each), LOW risk batch
+  verification at Phase 2 Step 0, and that the orchestrator runs end-to-end
+  on a deliberately low-complexity multi-task plan. Critical baseline: if a
+  3-typo plan completes via orchestrator, the multi-agent overhead is
+  proven non-prohibitive.
 
 bootstrap: |
   mkdir -p src
@@ -10,38 +14,81 @@ bootstrap: |
       # Retrun a friendly greeting.
       return f"Hello, {name}"
   PY
-  printf 'test:\n\tpython -m pytest -q || true\n' > Makefile
+  cat > src/util.py <<'PY'
+  def measure(s):
+      # Recieve a string and return its length.
+      return len(s)
+  PY
+  cat > src/event.py <<'PY'
+  def fire(name):
+      # Trigger an event that occured.
+      return name
+  PY
+  printf 'test:\n\tpython -c "from src.main import greet; from src.util import measure; from src.event import fire" || true\n' > Makefile
 
 plan: |
-  ### Task 0: Fix the typo in src/main.py comment
+  ### Task 0: Fix `Retrun` typo in src/main.py comment
 
   **Files:**
   - src/main.py
 
   The comment `# Retrun a friendly greeting.` has a typo. Replace `Retrun` with `Return`.
+  No other lines should change.
+
+  ### Task 1: Fix `Recieve` typo in src/util.py comment
+
+  **Files:**
+  - src/util.py
+
+  The comment `# Recieve a string and return its length.` has a typo. Replace `Recieve` with `Receive`.
+  No other lines should change.
+
+  ### Task 2: Fix `occured` typo in src/event.py comment
+
+  **Files:**
+  - src/event.py
+
+  The comment `# Trigger an event that occured.` has a typo. Replace `occured` with `occurred`.
+  No other lines should change.
 
 spec: |
-  # Spec: comment-typo fix
+  # Spec: comment typo cleanup pass
 
-  ## src/main.py
+  Three independent comment typos across three modules. Each correction must be exact
+  and isolated — no whitespace changes, no reformatting, no extra lines.
 
-  The function-doc comment must read `# Return a friendly greeting.` exactly.
-  No other lines should change.
+  - src/main.py: `Retrun` → `Return`
+  - src/util.py: `Recieve` → `Receive`
+  - src/event.py: `occured` → `occurred`
+
+  Each module's public function (`greet`, `measure`, `fire`) keeps its existing signature
+  and behavior. The fix is confined to comment text only.
 
 invocation: ""
 
 expected:
-  task_count: 1
+  task_count: 3
   expected_files_changed:
     - src/main.py
-  commit_count_min: 1
-  commit_count_max: 3
+    - src/util.py
+    - src/event.py
+  commit_count_min: 3
+  commit_count_max: 9
   test_after: |
-    grep -q '# Return a friendly greeting.' src/main.py && echo PASS || echo FAIL
+    grep -q '# Return a friendly greeting.' src/main.py && \
+    grep -q '# Receive a string and return its length.' src/util.py && \
+    grep -q '# Trigger an event that occurred.' src/event.py && echo PASS || echo FAIL
   notes: |
-    Should land in SMALL bucket per v2.5.1 effort-scaling.
-    SPEC_SCORE >= 0.9 expected; QUALITY_SCORE >= 0.85 expected.
+    All 3 tasks should land in SMALL bucket per v2.5.1 effort-scaling
+    (1 file, ~50 LOC spec, 0 new declarations, LOW risk → SMALL).
+    All 3 LOW risk → no per-task Verifier; single batch verifier sweep at
+    Phase 2 Step 0. Per design, batch pre-filter should classify these as
+    code-modifying (files_test=[] but files include .py, not all .md) →
+    regular test run via Makefile.
+    SPEC_SCORE >= 0.9 expected per task; QUALITY_SCORE >= 0.85.
+    Plan Reviewer (Phase 0 Step 6.5) should PASS (no missing Files,
+    no contract drift, mechanical-only audit).
 
 cost_budget:
-  wallclock_minutes: 8
-  tokens: 60000
+  wallclock_minutes: 15
+  tokens: 300000
