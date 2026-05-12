@@ -13,10 +13,7 @@ bootstrap: |
   Initial line.
   MD
   done
-  cat > Makefile <<'MK'
-  test:
-  ${TAB}grep -q "^# File" docs/*.md
-  MK
+  printf 'test:\n\tgrep -q "^# File" docs/*.md\n' > Makefile
 
 plan: |
   ### Task 0: Append marker to docs/file_1.md

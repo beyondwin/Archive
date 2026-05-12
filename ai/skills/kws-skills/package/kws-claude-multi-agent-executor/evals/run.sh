@@ -47,6 +47,12 @@ with open(os.path.join(sys.argv[2], "plan.md"), "w") as fh:
     fh.write(d["plan"])
 with open(os.path.join(sys.argv[2], "spec.md"), "w") as fh:
     fh.write(d["spec"])
+# extra_files (e.g., fixture 04's plan2.md + spec2.md) — write each name→content pair
+for name, content in (d.get("extra_files") or {}).items():
+    target = os.path.join(sys.argv[2], name)
+    os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
+    with open(target, "w") as fh:
+        fh.write(content)
 with open(os.path.join(sys.argv[2], "_meta.json"), "w") as fh:
     json.dump({k: d[k] for k in ("name","description","bootstrap","invocation","expected","cost_budget") if k in d}, fh)
 PY

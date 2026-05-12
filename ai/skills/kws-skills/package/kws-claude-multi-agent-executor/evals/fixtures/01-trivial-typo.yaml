@@ -10,10 +10,7 @@ bootstrap: |
       # Retrun a friendly greeting.
       return f"Hello, {name}"
   PY
-  cat > Makefile <<'MK'
-  test:
-  ${TAB}python -m pytest -q || true
-  MK
+  printf 'test:\n\tpython -m pytest -q || true\n' > Makefile
 
 plan: |
   ### Task 0: Fix the typo in src/main.py comment

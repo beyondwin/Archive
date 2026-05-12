@@ -8,10 +8,7 @@ bootstrap: |
   cat > src/api.py <<'PY'
   # placeholder
   PY
-  cat > Makefile <<'MK'
-  test:
-  ${TAB}python -m pytest -q tests/
-  MK
+  printf 'test:\n\tpython -m pytest -q tests/\n' > Makefile
 
 plan: |
   ### Task 0: Define `Greeter` class

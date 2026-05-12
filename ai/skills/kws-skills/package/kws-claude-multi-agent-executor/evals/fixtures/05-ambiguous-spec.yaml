@@ -6,10 +6,7 @@ description: |
 
 bootstrap: |
   mkdir -p src
-  cat > Makefile <<'MK'
-  test:
-  ${TAB}true
-  MK
+  printf 'test:\n\ttrue\n' > Makefile
 
 plan: |
   ### Task 0: Add CSV parser
