@@ -29,10 +29,7 @@ bootstrap: |
   name = "eval02"
   version = "0.0.1"
   TOML
-  cat > Makefile <<'MK'
-  test:
-  ${TAB}python -m pytest -q tests/
-  MK
+  printf 'test:\n\tpython -m pytest -q tests/\n' > Makefile
 
 plan: |
   ### Task 0: Rename `add_nums` → `add` in src/calc.py
