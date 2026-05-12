@@ -1,0 +1,90 @@
+{
+  "version": "2.6.0",
+  "date": "2026-05-12T17:00:34Z",
+  "fixtures": [
+    {
+      "fixture": "01-trivial-typo",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 1.0,
+        "code_quality": 1.0,
+        "cost_efficiency": 1.0
+      },
+      "mean": 1.0,
+      "passed": true,
+      "notes": "All 3 expected files modified with exact comment-typo fixes; test_after grep check returned PASS; commit count (3 fix commits + 2 plan-state commits = 5) within [3,9] window. Wall-time 8min is 53% of 15min budget; tokens reported as 0 (under budget). Diffs are minimal, isolated to comments, no behavior change — matches SMALL/LOW classification."
+    },
+    {
+      "fixture": "02-three-file-refactor",
+      "scores": {
+        "correctness": 0.0,
+        "spec_compliance": 0.0,
+        "code_quality": 0.4,
+        "cost_efficiency": 0.85
+      },
+      "mean": 0.3,
+      "passed": false,
+      "notes": "Captured run executed an entirely different task — comment-only typo fixes in src/main.py, src/util.py, src/event.py — not the expected add_nums rename across src/calc.py, src/usage.py, tests/test_calc.py. No expected file was touched; pytest target tests/ does not exist (file-not-found error); the post-condition grep for 'add_nums' is moot because no calc.py exists. Diffs themselves are clean, but they implement the wrong spec, so correctness and spec_compliance are zero."
+    },
+    {
+      "fixture": "03-add-new-feature",
+      "scores": {
+        "correctness": 0.0,
+        "spec_compliance": 0.0,
+        "code_quality": 0.7,
+        "cost_efficiency": 1.0
+      },
+      "mean": 0.4,
+      "passed": false,
+      "notes": "Captured run executed an entirely different plan — 3 comment-only typo fixes across src/main.py, src/util.py, src/event.py — instead of the expected 5-task CLI feature (src/cli.py, src/transform.py, and matching test files). None of the expected files were touched, the acceptance test fails with 'No module named src.cli', and only 3 task commits landed (below the 5-12 range). The typo edits themselves are clean and well under cost budget, but the run does not address the fixture spec."
+    },
+    {
+      "fixture": "04-cross-plan-handoff",
+      "scores": {
+        "correctness": 0.0,
+        "spec_compliance": 0.0,
+        "code_quality": 0.7,
+        "cost_efficiency": 1.0
+      },
+      "mean": 0.4,
+      "passed": false,
+      "notes": "Plan 2 was never executed — none of the expected files (src/api.py, src/cli2.py, tests/test_cli2.py) exist, and the post-run test fails with 'No module named src.cli2'. Only Plan 1's three typo-fix tasks ran; the cross-plan handoff (the entire point of this fixture) did not occur. Plan 1's code itself is clean and well-structured, and wall-time was well under budget."
+    },
+    {
+      "fixture": "05-ambiguous-spec",
+      "scores": {
+        "correctness": 0.0,
+        "spec_compliance": 0.0,
+        "code_quality": 0.7,
+        "cost_efficiency": 1.0
+      },
+      "mean": 0.4,
+      "passed": false,
+      "notes": "Run executed 3 unrelated typo-fix tasks and never invoked Plan Reviewer's contract-mismatch check; spec_edits is empty, no escalations, no BLOCKER halt — the exact failure mode the fixture penalizes. Captured tasks (typo fixes in main/util/event) bear no relation to the parse_csv contract mismatch the fixture targets, so spec_compliance is zero. Diffs themselves are clean and cost was well under budget, but those cannot rescue a run that bypassed the gate this fixture exists to measure."
+    },
+    {
+      "fixture": "06-flaky-test-recovery",
+      "scores": {
+        "correctness": 0.0,
+        "spec_compliance": 0.0,
+        "code_quality": 0.7,
+        "cost_efficiency": 1.0
+      },
+      "mean": 0.4,
+      "passed": false,
+      "notes": "Captured run does not exercise the fixture's ENV_BLOCKER scenario at all — expected 1 task probing missing-module triage, but state.json shows 3 unrelated comment-only typo-fix tasks (src/main.py, src/util.py, src/event.py) all marked COMPLETE with 0 verifier retries and no escalations. The verifier reported PASS only because the Makefile masks failures with `|| true`, so the triage playbook was never invoked. Diff hygiene is clean in isolation, and cost is well under budget, but correctness and spec-compliance are zero against this fixture's intent."
+    },
+    {
+      "fixture": "07-low-batch-heavy",
+      "scores": {
+        "correctness": 0.0,
+        "spec_compliance": 0.0,
+        "code_quality": 0.4,
+        "cost_efficiency": 1.0
+      },
+      "mean": 0.4,
+      "passed": false,
+      "notes": "Captured run modified src/{main,util,event}.py with typo fixes instead of the expected docs/file_{1..6}.md MARKER appends. Only 3 of 6 tasks executed; test_after fails immediately (docs/file_1.md missing). Diff is clean for what was done, but it's the wrong work against the fixture spec."
+    }
+  ]
+}
