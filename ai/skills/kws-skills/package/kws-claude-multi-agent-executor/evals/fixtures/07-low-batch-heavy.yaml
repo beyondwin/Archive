@@ -1,0 +1,92 @@
+name: 07-low-batch-heavy
+description: |
+  6 LOW-risk tasks across disjoint files. Exercises the batch verifier path —
+  per-task Verifier is skipped, single batch run at compaction point. Also stresses
+  the LOW-task file-conflict upgrade rule (no upgrades expected here; files disjoint).
+
+bootstrap: |
+  mkdir -p docs
+  for i in $(seq 1 6); do
+    cat > "docs/file_$i.md" <<MD
+  # File $i
+
+  Initial line.
+  MD
+  done
+  cat > Makefile <<'MK'
+  test:
+  ${TAB}grep -q "^# File" docs/*.md
+  MK
+
+plan: |
+  ### Task 0: Append marker to docs/file_1.md
+
+  **Files:**
+  - docs/file_1.md
+
+  Append the line `MARKER-1` at the end of the file.
+
+  ### Task 1: Append marker to docs/file_2.md
+
+  **Files:**
+  - docs/file_2.md
+
+  Append `MARKER-2`.
+
+  ### Task 2: Append marker to docs/file_3.md
+
+  **Files:**
+  - docs/file_3.md
+
+  Append `MARKER-3`.
+
+  ### Task 3: Append marker to docs/file_4.md
+
+  **Files:**
+  - docs/file_4.md
+
+  Append `MARKER-4`.
+
+  ### Task 4: Append marker to docs/file_5.md
+
+  **Files:**
+  - docs/file_5.md
+
+  Append `MARKER-5`.
+
+  ### Task 5: Append marker to docs/file_6.md
+
+  **Files:**
+  - docs/file_6.md
+
+  Append `MARKER-6`.
+
+spec: |
+  # Spec — markers
+
+  Each file `docs/file_N.md` must end with the literal line `MARKER-N` (no trailing whitespace).
+  Existing content is preserved.
+
+invocation: ""
+
+expected:
+  task_count: 6
+  expected_files_changed:
+    - docs/file_1.md
+    - docs/file_2.md
+    - docs/file_3.md
+    - docs/file_4.md
+    - docs/file_5.md
+    - docs/file_6.md
+  commit_count_min: 6
+  commit_count_max: 15
+  test_after: |
+    for i in 1 2 3 4 5 6; do tail -1 "docs/file_$i.md" | grep -qx "MARKER-$i" || { echo "missing $i"; exit 1; }; done && echo PASS
+  notes: |
+    All 6 should be LOW. Phase Transition T1 batch verifier should run once.
+    Pre-filter in T1 should classify these as docs-only (files_test=[] and all paths end in .md)
+    → markdownlint or git diff --check instead of test run.
+
+cost_budget:
+  wallclock_minutes: 18
+  tokens: 250000
