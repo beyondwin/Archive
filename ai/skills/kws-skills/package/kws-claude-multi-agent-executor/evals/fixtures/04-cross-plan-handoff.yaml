@@ -1,0 +1,77 @@
+name: 04-cross-plan-handoff
+description: |
+  Two plans, sequential — Plan 1 establishes a contract, Plan 2 consumes it.
+  Exercises `plan2=` argument + active_plan pointer + plan2 baseline retake.
+
+bootstrap: |
+  mkdir -p src tests
+  cat > src/api.py <<'PY'
+  # placeholder
+  PY
+  cat > Makefile <<'MK'
+  test:
+  ${TAB}python -m pytest -q tests/
+  MK
+
+plan: |
+  ### Task 0: Define `Greeter` class
+
+  **Files:**
+  - src/api.py
+
+  Define a class `Greeter` with `greet(name: str) -> str` returning `f"Hello, {name}"`.
+
+  ## Acceptance Criteria
+
+  ```bash
+  python -c "from src.api import Greeter; assert Greeter().greet('world') == 'Hello, world'"
+  ```
+
+spec: |
+  # Spec — Plan 1
+
+  `Greeter.greet(name)` returns the exact string `f"Hello, {name}"`. No prefix, no suffix.
+
+invocation: "plan2=plan2.md spec2=spec2.md"
+
+# Plan 2 + Spec 2 are written to the temp dir by the harness (extension fields below).
+extra_files:
+  plan2.md: |
+    ### Task 0: Add CLI entry that uses Greeter
+
+    **Files:**
+    - src/cli2.py
+    - tests/test_cli2.py
+
+    Add `src/cli2.py` that imports `Greeter` from `src.api` and prints `Greeter().greet(sys.argv[1])`.
+    Add a test that verifies `python -m src.cli2 world` prints `Hello, world`.
+
+    ## Acceptance Criteria
+
+    ```bash
+    python -m src.cli2 world | grep -qx "Hello, world"
+    ```
+
+  spec2.md: |
+    # Spec — Plan 2
+
+    Plan 2 consumes the `Greeter` contract from Plan 1's spec. No re-definition; import only.
+
+expected:
+  task_count: 2
+  expected_files_changed:
+    - src/api.py
+    - src/cli2.py
+    - tests/test_cli2.py
+  commit_count_min: 3
+  commit_count_max: 8
+  test_after: |
+    python -m src.cli2 world | grep -qx "Hello, world"
+  notes: |
+    Plan 2 must re-take baseline (Plan 1's changes are now its starting state).
+    active_plan pointer must flip to "plan2" in state.json.
+    last_completed_task should reflect Plan 2's final task at the end.
+
+cost_budget:
+  wallclock_minutes: 20
+  tokens: 300000
