@@ -1,6 +1,6 @@
 {
   "version": "2.6.0",
-  "date": "2026-05-12T15:49:49Z",
+  "date": "2026-05-12T18:18:18Z",
   "fixtures": [
     {
       "fixture": "01-trivial-typo",
@@ -12,7 +12,80 @@
       },
       "mean": 1.0,
       "passed": true,
-      "notes": "All 3 expected files modified with exact typo corrections matching spec; 3 fix commits within ±1 of expected (3-9 range). Batch verifier PASS at LOW risk, test_after grep check returned PASS, wall-time 9min under 15min budget (60%). Diffs are minimal, comment-only, no behavior change — textbook SMALL-bucket execution."
+      "notes": "All 3 expected files modified with exact typo corrections (Retrun\u2192Return, Recieve\u2192Receive, occured\u2192occurred); test grep gate PASS; 5 commits within [3,9]; all tasks SMALL/LOW with spec=quality=1.0 and PASS review tier. Wall-time 9m well under 15m budget; batch verifier sweep ran as designed at Phase 2 Step 0."
+    },
+    {
+      "fixture": "02-three-file-refactor",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 1.0,
+        "code_quality": 1.0,
+        "cost_efficiency": 0.9
+      },
+      "mean": 1.0,
+      "passed": true,
+      "notes": "All three expected files renamed cleanly (add_nums \u2192 add), full pytest passes, and the grep guard in test_after would succeed. Three task commits land within the 3\u20136 commit window with zero escalations/retries across all tasks. Wall-time 12/15 min is under budget but not below the 60% threshold for a full 1.0 on cost."
+    },
+    {
+      "fixture": "03-add-new-feature",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 1.0,
+        "code_quality": 1.0,
+        "cost_efficiency": 1.0
+      },
+      "mean": 1.0,
+      "passed": true,
+      "notes": "All 4 expected files modified, 4/4 tests pass, 12 commits within 5\u201312 range. Implementation is clean and idiomatic: to_upper helper, CLI refactored to use it, focused unit + integration tests. Wall-time 11min is ~44% of budget."
+    },
+    {
+      "fixture": "04-cross-plan-handoff",
+      "scores": {
+        "correctness": 0.4,
+        "spec_compliance": 0.6,
+        "code_quality": 0.5,
+        "cost_efficiency": 1.0
+      },
+      "mean": 0.6,
+      "passed": true,
+      "notes": "Cross-plan handoff mechanic visible in commit log (plan2 orchestrator commits, feat(cli2) using Greeter), and commit count (5) sits inside the 3\u20138 window. But FILES_CHANGED only lists src/api.py \u2014 tests/test_cli2.py isn't evidenced anywhere and test_output is empty, so the expected `python -m src.cli2 world` check is unverified. Diff tail is empty so code_quality is a neutral estimate; wall-time 9m is well under the 20m budget."
+    },
+    {
+      "fixture": "05-ambiguous-spec",
+      "scores": {
+        "correctness": 0.8,
+        "spec_compliance": 0.9,
+        "code_quality": 0.8,
+        "cost_efficiency": 0.85
+      },
+      "mean": 0.8,
+      "passed": true,
+      "notes": "Ambiguity gate caught the parse_csv contract_mismatch pre-Phase-1 and applied a spec edit (commit 81c0419) before any task work \u2014 the high-correctness path the fixture rewards. Implementation cleanly honored the revised contract (optional delimiter default ',' in task_0, explicit ';' in task_1). Minor deductions: commit count (7 post-bootstrap) slightly exceeds the 0\u20135 band, and reviewer flagged unaddressed CRLF/encoding robustness warnings on src/parser.py."
+    },
+    {
+      "fixture": "06-flaky-test-recovery",
+      "scores": {
+        "correctness": 0.9,
+        "spec_compliance": 0.9,
+        "code_quality": 0.7,
+        "cost_efficiency": 0.85
+      },
+      "mean": 0.8,
+      "passed": true,
+      "notes": "Healthy outcome achieved: task completed with verifier_retries=0 and 0 escalations, indicating the skill bypassed the broken pytest infra via AC rather than burning retry budget on ENV_BLOCKER. Files modified (src/feature.py, tests/test_sub.py) match expected; wall-time 9/12 min under budget. Code quality scored conservatively since the diff tail is empty \u2014 cannot directly verify implementation, relying on the internal reviewer's PASS tier."
+    },
+    {
+      "fixture": "07-low-batch-heavy",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 1.0,
+        "code_quality": 1.0,
+        "cost_efficiency": 0.85
+      },
+      "mean": 0.96,
+      "passed": true,
+      "notes": "All 6 LOW tasks completed cleanly with disjoint docs files; batch verifier ran once at Phase Transition (PASS) as expected. Commit count 15 sits at the top of the allowed range due to per-task orchestrator state commits, but within bounds. Wall-time 13m of 18m budget (~72%) keeps cost_efficiency just under the 60% threshold for a full 1.0."
     }
-  ]
+  ],
+  "notes": "Fixtures 03 and 04 re-scored against existing state.json after harness bug fix (worktree path glob now covers both <repo>/../worktrees/ and <repo>/.claude/worktrees/)."
 }

@@ -42,8 +42,14 @@ run_one_fixture() {
   fixture_name="$(basename "$fixture_path" .yaml)"
   echo "=== Running fixture: $fixture_name ==="
 
-  local tmpdir
-  tmpdir="$(mktemp -d -t "mae-eval-${fixture_name}.XXXXXX")"
+  # Per-fixture isolated parent — the skill creates worktrees at
+  # <repo>/../worktrees/, so multiple fixtures sharing $TMPDIR would all
+  # write to the same `<TMPDIR>/worktrees/` and collide. Give each fixture
+  # its own private parent so `<parent>/worktrees/` is isolated.
+  local parent
+  parent="$(mktemp -d -t "mae-eval-parent-${fixture_name}.XXXXXX")"
+  local tmpdir="$parent/repo"
+  mkdir -p "$tmpdir"
   echo "tmpdir: $tmpdir"
 
   # Parse fixture YAML — we only need a handful of fields.
@@ -118,7 +124,7 @@ GI
 
   # Capture artifacts.
   local state_file
-  state_file="$(ls "$tmpdir"/../worktrees/*/.orchestrator/state.json 2>/dev/null | head -1 || true)"
+  state_file="$(ls -t "$tmpdir"/../worktrees/*/.orchestrator/state.json "$tmpdir"/.claude/worktrees/*/.orchestrator/state.json 2>/dev/null | head -1 || true)"
   local task_statuses=""
   local git_log=""
   local files_changed=""
