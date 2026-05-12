@@ -22,7 +22,18 @@ fixtures=()
 if [ $# -eq 0 ]; then
   while IFS= read -r f; do fixtures+=("$f"); done < <(ls "$EVAL_DIR/fixtures"/*.yaml | sort)
 else
-  for f in "$@"; do fixtures+=("$EVAL_DIR/$f"); done
+  # Accept three forms: absolute path, path relative to $EVAL_DIR ("fixtures/01.yaml"),
+  # or path relative to cwd (preferred for tab-completion).
+  for f in "$@"; do
+    if [ -f "$f" ]; then
+      fixtures+=("$(cd "$(dirname "$f")" && pwd -P)/$(basename "$f")")
+    elif [ -f "$EVAL_DIR/$f" ]; then
+      fixtures+=("$EVAL_DIR/$f")
+    else
+      echo "FATAL: fixture not found: $f (tried as-is and as $EVAL_DIR/$f)" >&2
+      exit 1
+    fi
+  done
 fi
 
 run_one_fixture() {
@@ -75,7 +86,7 @@ PY
   start_ts="$(date +%s)"
   ( cd "$tmpdir" && \
     claude -p --dangerously-skip-permissions \
-      --output-format stream-json \
+      --output-format stream-json --verbose \
       "/kws-claude-multi-agent-executor plan=plan.md spec=spec.md mode=interactive $invocation" \
       > run.jsonl 2>&1 ) || true
   local end_ts
@@ -118,14 +129,22 @@ PY
   fi
 
   local judge_prompt
-  judge_prompt="$(sed \
-    -e "s|{fixture_name}|$fixture_name|g" \
-    -e "s|{fixture_description}|$(jq -r '.description // ""' "$tmpdir/_meta.json")|g" \
-    -e "s|{cost_budget_wallclock_minutes}|$(jq -r '.cost_budget.wallclock_minutes // 30' "$tmpdir/_meta.json")|g" \
-    -e "s|{cost_budget_tokens}|$(jq -r '.cost_budget.tokens // 500000' "$tmpdir/_meta.json")|g" \
-    -e "s|{wall_time}|$wall_min|g" \
-    -e "s|{total_tokens}|$total_tokens|g" \
-    "$EVAL_DIR/judge.md")"
+  judge_prompt="$(python3 -c '
+import sys, json
+template = open(sys.argv[1]).read()
+meta = json.load(open(sys.argv[2]))
+subs = {
+    "fixture_name": sys.argv[3],
+    "fixture_description": (meta.get("description") or "").strip(),
+    "cost_budget_wallclock_minutes": str((meta.get("cost_budget") or {}).get("wallclock_minutes", 30)),
+    "cost_budget_tokens": str((meta.get("cost_budget") or {}).get("tokens", 500000)),
+    "wall_time": sys.argv[4],
+    "total_tokens": sys.argv[5],
+}
+for k, v in subs.items():
+    template = template.replace("{" + k + "}", v)
+sys.stdout.write(template)
+' "$EVAL_DIR/judge.md" "$tmpdir/_meta.json" "$fixture_name" "$wall_min" "$total_tokens")"
 
   # Append captured payloads as substitution (multi-line — write to temp file).
   local judge_input="$tmpdir/judge_input.txt"
