@@ -27,10 +27,7 @@ bootstrap: |
       r = subprocess.run(["python", "-m", "src.cli", "--echo", "hi"], capture_output=True, text=True)
       assert "hi" in r.stdout
   PY
-  cat > Makefile <<'MK'
-  test:
-  ${TAB}python -m pytest -q tests/
-  MK
+  printf 'test:\n\tpython -m pytest -q tests/\n' > Makefile
 
 plan: |
   ### Task 0: Add `--upper` flag to src/cli.py
