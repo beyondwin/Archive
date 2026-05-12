@@ -1,9 +1,9 @@
 ---
 name: kws-claude-multi-agent-executor
-description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation.
+description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation. NOTE — single-session execution is preferable for ≤5-task plans or plans with deep cross-task coupling (multi-agent overhead exceeds the parallelism win).
 metadata:
-  version: "2.4.0"
-  updated_at: "2026-05-12"
+  version: "2.6.0"
+  updated_at: "2026-05-13"
 ---
 
 # KWS Claude Multi-Agent Executor
@@ -248,12 +248,24 @@ This is a fallback — the primary expectation is that one headless subprocess c
    ```
    Derive `plan-slug` from the plan filename: lowercase, replace spaces and underscores with hyphens, strip the date prefix (e.g., `2026-05-08-my-feature.md` → `my-feature`).
 
-2.5. **Write worktree safety hooks:**
-   Create `.claude/settings.json` inside the worktree:
+2.5. **Write worktree safety hooks + gate hooks (P1):**
+   Create `.claude/settings.json` and the helper-script directory inside the worktree:
    ```bash
    mkdir -p <worktree_path>/.claude
+   mkdir -p <worktree_path>/.orchestrator/hooks
    ```
-   Write `<worktree_path>/.claude/settings.json`:
+
+   **Materialize hook scripts** by copying the templates from this skill's `references/hooks/` into the worktree, stripping the `.template` suffix and making them executable:
+   ```bash
+   cp <skill_dir>/references/hooks/scan-debug-artifacts.sh.template \
+      <worktree_path>/.orchestrator/hooks/scan-debug-artifacts.sh
+   cp <skill_dir>/references/hooks/check-implementer-output.sh.template \
+      <worktree_path>/.orchestrator/hooks/check-implementer-output.sh
+   chmod +x <worktree_path>/.orchestrator/hooks/*.sh
+   ```
+   `<skill_dir>` is the directory containing this SKILL.md. Resolve via `dirname` of the skill path or the absolute path captured when the skill was invoked.
+
+   **Write `<worktree_path>/.claude/settings.json`**:
    ```json
    {
      "hooks": {
@@ -263,11 +275,31 @@ This is a fallback — the primary expectation is that one headless subprocess c
            "type": "command",
            "command": "if echo \"$CLAUDE_TOOL_INPUT\" | grep -qE 'rm\\s+-rf\\s+/|git\\s+push\\s+--force\\s+(origin\\s+)?(main|master|trunk)|DROP\\s+(TABLE|DATABASE|SCHEMA)\\s'; then echo 'BLOCKED: dangerous command detected' >&2; exit 1; fi"
          }]
+       }],
+       "PostToolUse": [{
+         "matcher": "Edit|Write",
+         "hooks": [{
+           "type": "command",
+           "command": "<worktree_path>/.orchestrator/hooks/scan-debug-artifacts.sh"
+         }]
+       }],
+       "SubagentStop": [{
+         "hooks": [{
+           "type": "command",
+           "command": "<worktree_path>/.orchestrator/hooks/check-implementer-output.sh"
+         }]
        }]
      }
    }
    ```
-   This blocks `rm -rf /`, force-push to protected branches, and `DROP TABLE/DATABASE/SCHEMA` in sub-agent Bash calls. Do NOT block `git reset --hard` — the orchestrator uses it for verifier-fail recovery.
+   Substitute `<worktree_path>` with the actual absolute worktree path before writing.
+
+   **What each hook does:**
+   - `PreToolUse` (Bash) blocks `rm -rf /`, force-push to protected branches, and `DROP TABLE/DATABASE/SCHEMA` in sub-agent Bash calls. Does NOT block `git reset --hard` — the orchestrator uses it for verifier-fail recovery.
+   - `PostToolUse` (Edit|Write) — `scan-debug-artifacts.sh` — runtime-enforced debug-artifact gate. On detection of `console.log|debugger|TODO|FIXME` in added content (outside string literals and `*.md` paths), exits 2; Claude Code surfaces the failure to the sub-agent which retries the edit. Replaces the prose-only Phase 1 Step 4.1 grep (now removed) — discipline lives in the runtime, not in the loop.
+   - `SubagentStop` — `check-implementer-output.sh` — STATUS sanity check on Implementer output. Verifies presence of `STATUS:`, `SUMMARY:`, `FILES_CHANGED:`, `FILES_TEST_CHANGED:` (and `COMMIT:` when STATUS=DONE; ESCALATE fields when STATUS=ESCALATE). Missing field → exit 2 → orchestrator receives failure and re-dispatches.
+
+   **Why this layering matters (P1):** prior versions kept these checks in prose (Orchestrator-driven), so a context drift or malformed reply could silently skip the gate. With hooks they cannot be bypassed.
 
 3. **Read both documents fully:**
    - Read the plan document. Extract the ordered task list: every `### Task N:` section with full text. Note any explicit phase groupings (e.g., `## Phase 1`, `## Phase 2`) — these define phase boundaries.
@@ -323,6 +355,83 @@ This is a fallback — the primary expectation is that one headless subprocess c
    - **SKIPPED propagation:** If task X is SKIPPED, automatically mark all tasks with X in their deps as SKIPPED as well. Record each propagated SKIPPED with reason 'dependency task_X was SKIPPED'.
    - **Compute `global_constraints.shared_files`:** Build a map of file → list of task IDs that touch it (from each task's `**Files:**` block). Keep only files referenced by ≥ 2 tasks. Write this to `state.global_constraints.shared_files` in Step 7. The Implementer template's *Shared files alert* reads from here — not from any external `analysis.json` (no such file exists in this skill).
 
+   - **Compute `task_complexity` (P5 — effort scaling):** For each task, derive a complexity bucket SMALL / MEDIUM / LARGE used to scale the Implementer prompt at Phase 1 Step 1.
+
+     Inputs per task:
+     - `file_count` = number of paths in **Files:** block
+     - `spec_chars` = character count of the relevant spec excerpt assigned to this task (rough LOC proxy)
+     - `new_decls` = count of new functions, types, constants, or APIs the spec/task names as outputs of this task (parse for "introduce", "add function", "new type", `\bnew\b` headers, function-arrow definitions in spec code blocks)
+     - `risk_mult` = 1 (LOW), 2 (MID), 3 (HIGH)
+
+     Bucket rule (apply in order — first match wins):
+     | Condition | Bucket |
+     |-----------|--------|
+     | `file_count == 1` AND `spec_chars < 1200` AND `new_decls <= 1` AND `risk_mult == 1` | SMALL |
+     | `file_count >= 4` OR `risk_mult == 3` OR `new_decls >= 4` | LARGE |
+     | (else) | MEDIUM |
+
+     Heuristic biases upward — under-instructing is worse than mild over-engineering. Record per-task: `state.task_complexity.task_N = "SMALL" | "MEDIUM" | "LARGE"`.
+
+     Effort-guidance strings (the Implementer prompt at Phase 1 Step 1 injects one of these into `{effort_guidance}`):
+     - SMALL: `aim for ≤8 tool calls; skip TDD for trivial renames/aliases unless task explicitly says test required; do not add abstractions, helpers, or refactors`
+     - MEDIUM: `aim for 10–25 tool calls; TDD recommended for new behavior; refactor only what the task touches`
+     - LARGE: `aim for 25–60 tool calls; TDD required for any new logic; if you exceed 60 tool calls without DONE, ESCALATE with AMBIGUITY rather than continue`
+
+   - **Compute `execution_plan` — waves + parallel groups (P2 — parallel dispatch):**
+
+     After the dependency graph is built, compute waves greedily:
+     - Wave 0 = all tasks with `deps == []`
+     - Wave N = all tasks whose deps are all in waves 0..N-1
+     - Tasks within a wave have no inter-dependency by construction.
+
+     Within each wave, partition tasks into **parallel groups** by file-disjointness:
+     1. Start with each task as its own singleton group.
+     2. Greedily merge two groups iff the UNION of their declared `Files:` sets has no overlap AND no task in either group has a `serial: true` annotation in the plan.
+     3. Tasks whose Files: blocks overlap any other in the same wave MUST stay in their own singleton group (run sequentially within the wave).
+
+     Write to `state.execution_plan`:
+     ```json
+     [
+       {"wave": 0, "parallel_groups": [["task_0", "task_2"], ["task_1"]]},
+       {"wave": 1, "parallel_groups": [["task_3"], ["task_4"]]}
+     ]
+     ```
+
+     Each inner list is one parallel group: a single-element list means standard sequential execution; a multi-element list triggers the Parallel Sub-Flow in Phase 1.
+
+     **Disable parallel dispatch via** skill argument `parallel=off` — write a degenerate `execution_plan` where every task is its own singleton group preserving plan order. Use this as a fallback when sub-worktree creation is constrained (e.g., shallow clones).
+
+6.5. **Plan Reviewer preflight (P3 — mechanical plan audit):**
+
+   Skip this step if the user passed `preflight=off` in skill arguments (regression runs of already-validated plans).
+
+   Build the Plan Reviewer prompt from `references/plan-reviewer-prompt.md`. Fill in:
+   - `{plan_path}`, `{plan_full_text}` — the plan document
+   - `{spec_path}`, `{spec_full_text}` — the spec document
+   - `{risk_levels_yaml}` — from Step 4 (YAML-formatted `task_N: <risk>`)
+   - `{result_json_path}` — `<worktree_path>/.orchestrator/plan_review.json`
+
+   **Dispatch headless** via `claude -p --dangerously-skip-permissions` (same pattern as Verifier — Phase 1 Step 3). Prompt path: `<worktree_path>/.orchestrator/plan_review_prompt.txt`. Result path: `<worktree_path>/.orchestrator/plan_review.json`. Missing/malformed result → log warning and proceed (Plan Reviewer is advisory; absence is NOT a halt).
+
+   **Parse the result:**
+
+   - `status: "PASS"` → record `state.plan_review = {status: "PASS", warnings: []}` at Step 7. Proceed.
+   - `status: "ISSUES_FOUND"` →
+     - Partition issues by severity: `BLOCKER` vs `WARN`.
+     - All `WARN` only: record `state.plan_review = {status: "WARN", warnings: [...]}`. Log to user as a one-line summary. Proceed.
+     - Any `BLOCKER`: ask the user ONE batched question with all blocker issues listed:
+       ```
+       Plan Reviewer found <N> BLOCKER issue(s) that will likely cause SPEC_BLOCKER escalations during Phase 1:
+         1. [task_<id> / <category>] <description>
+            evidence: <file:line>
+            suggested fix: <one-sentence fix>
+         ...
+       Proceed anyway, halt for manual fix, or auto-apply each `suggested_fix` (max 2 retry cycles)?
+       ```
+       Halt until answered. If user picks auto-apply: edit plan/spec per each `suggested_fix`, re-read both documents, re-dispatch Plan Reviewer (max 2 cycles). If still ISSUES_FOUND after 2 cycles: halt with manual-fix message.
+
+   **Why this gate exists:** every BLOCKER caught here costs ~30s + 5k tokens; each one missed costs one Implementer dispatch + SPEC_BLOCKER escalation + git reset (~2–3 min + tokens).
+
 7. **Initialize state file:**
    ```bash
    mkdir -p <worktree_path>/.orchestrator
@@ -341,9 +450,13 @@ This is a fallback — the primary expectation is that one headless subprocess c
      "baseline": {"passing": 0, "failing": 0},
      "risk_levels": {},
      "compaction_points": [],
+     "execution_plan": [],
      "global_constraints": {
        "shared_files": {}
      },
+     "plan_review": {"status": "SKIPPED", "warnings": []},
+     "task_complexity": {},
+     "quality_trend": [],
      "tasks": {},
      "task_summaries": {},
      "spec_edits": [],
@@ -392,6 +505,7 @@ This is a fallback — the primary expectation is that one headless subprocess c
    "task_N": {
      "status": "COMPLETE | SKIPPED | IN_PROGRESS",
      "risk": "<level>",
+     "complexity": "SMALL | MEDIUM | LARGE",
      "files": [],
      "files_test": [],
      "commit": "<sha>",
@@ -400,6 +514,9 @@ This is a fallback — the primary expectation is that one headless subprocess c
      "review_retries": 0,
      "verifier_retries": 0,
      "spec_clarifications": 0,
+     "spec_score": null,
+     "quality_score": null,
+     "review_tier": null,
      "timing": {
        "started": null,
        "implementer_done": null,
@@ -418,7 +535,13 @@ This is a fallback — the primary expectation is that one headless subprocess c
 
 ## Phase 1: Per-Task Cycle
 
-Repeat for **each task in order** (Task 0 → Task N). Advance only when the current task reaches Agent Cleanup successfully.
+Iterate `state.execution_plan` (waves outer, parallel groups inner). Within each parallel group:
+- **Singleton group** (one task): run the standard sequential per-task flow described below (Steps 1–4).
+- **Multi-task group** (size ≥ 2): run the **Parallel Sub-Flow** (described after the standard flow). Combined Reviewer and Verifier still run sequentially after the parallel Implementer merge.
+
+Within a wave, parallel groups run sequentially (not in parallel with each other) — the second parallel group of the same wave starts after the first group's Reviewer + Verifier have completed. This keeps the post-merge state deterministic.
+
+Advance only when the current task (or parallel group) reaches Agent Cleanup successfully.
 
 **Before Step 1 of each task:**
 - Run `git -C <worktree_path> rev-parse HEAD` and **record the literal SHA** (e.g., `Task 3: pre_sha=abc1234`). Use this literal string in all subsequent revert and diff commands — do not use shell variables, which do not persist between Bash calls.
@@ -439,6 +562,8 @@ Build the implementer prompt from the **Implementer Prompt Template** below. Fil
 - `{risk level}` — from your Phase 0 assignment
 - `{worktree_path}` — the worktree path
 - `{deps_for_this_task}` — list of task IDs that this task depends on (from Phase 0 Step 6 dependency graph)
+- `{task_size}` — SMALL / MEDIUM / LARGE from `state.task_complexity.task_N` (P5)
+- `{effort_guidance}` — the matching guidance string from Phase 0 Step 6 (P5)
 
 Re-dispatch rules (always append `## Fix Required\n{issues}`):
 - After **Combined Reviewer FAIL**: include Required Skills bullet 4 (`receiving-code-review`).
@@ -464,8 +589,37 @@ Build the Combined Reviewer prompt from the **Combined Reviewer Prompt Template*
 
 Dispatch as a **fresh Sonnet sub-agent**.
 
-**Result: PASS** → proceed to Step 3.  
-**Result: FAIL** — branch on the Reviewer's `SPEC_FAULT` field (added to the Combined Reviewer output schema; see template). The field is one of:
+**Parse scores first (P4):** the Reviewer emits `SPEC_SCORE` and `QUALITY_SCORE` (0.0–1.0, 1-decimal). Compute the **tier** by combining both axes:
+
+| Tier | Condition |
+|------|-----------|
+| **PASS** | `SPEC_SCORE >= 0.85` AND `QUALITY_SCORE >= 0.75` |
+| **WARN** | (PASS not met) AND `SPEC_SCORE >= 0.70` AND `QUALITY_SCORE >= 0.60` |
+| **FAIL** | otherwise (either score below the WARN floor) |
+
+Record per-task into the active task tree (`state.tasks.task_N` or `state.plan2_state.tasks.task_N`):
+```json
+"spec_score": <float>,
+"quality_score": <float>,
+"review_tier": "PASS | WARN | FAIL"
+```
+
+Update the rolling quality-trend buffer at top level (active-plan-aware):
+- For `active_plan == "plan1"`: append `quality_score` to `state.quality_trend` (max 10, drop oldest).
+- For `active_plan == "plan2"`: append to `state.plan2_state.quality_trend` (same rule).
+- After append, if length ≥ 5 AND mean of last 5 < mean of first 5 by > 0.10: surface at the NEXT compaction point (T3 message) — `"Quality trending down: last 5 tasks averaged X.XX vs first 5 at Y.YY. Consider manual review of recent tasks."`. Do NOT halt automatically.
+
+Then branch on tier:
+
+**Tier: PASS** → proceed to Step 3.
+
+**Tier: WARN** → proceed to Step 3, but ALSO:
+1. Record the QUALITY_ISSUES (and any non-blocking SPEC_ISSUES) under `state.task_summaries.task_N.warnings = [...]` (active-tree-aware).
+2. Do NOT retry. WARN exists precisely to avoid burning a retry on borderline work that ships.
+3. The Final Summary Report (Phase 2 Step 2) lists WARN tasks in a dedicated row so the user sees the pattern.
+4. If three consecutive tasks land in WARN: surface at the next compaction point as a quality-trend signal even if the rolling mean rule did not trip.
+
+**Tier: FAIL** — branch on the Reviewer's `SPEC_FAULT` field (added to the Combined Reviewer output schema; see template). The field is one of:
 
 - `spec_contradicts` — spec is internally inconsistent or contradicts the task; Implementer cannot satisfy both.
 - `implementer_omitted` — spec is clear; Implementer missed or misimplemented it.
@@ -541,11 +695,9 @@ Decision table:
 
 You (Orchestrator) perform these checks directly — no sub-agent needed:
 
-1. **Debug artifact scan** (only lines added since pre-task SHA):
-   ```bash
-   git -C <worktree_path> diff <pre_task_sha>..HEAD -- <files_changed> | grep "^+" | grep -v "^+++" | grep -E "console\.log|TODO|FIXME|debugger"
-   ```
-   If found: re-dispatch Implementer with the artifact list under `## Fix Required`. Do NOT include `receiving-code-review`.
+1. **Debug artifact scan — REMOVED in v2.5.0.** This check is now runtime-enforced by the `PostToolUse(Edit|Write)` hook at `<worktree>/.orchestrator/hooks/scan-debug-artifacts.sh` (materialized at Phase 0 Step 2.5). If an Implementer attempted to write `console.log|debugger|TODO|FIXME` outside of allow-listed contexts, the hook already exit-2'd and the Implementer auto-retried before reaching this step. No orchestrator-side grep needed.
+
+   If you suspect the hook was misfired or disabled (e.g., user manually edited settings.json mid-run): re-enable and continue. Do not re-introduce the manual grep — it duplicates the hook and was the silent-bypass risk that motivated P1.
 
 2. **Update state file** — write this task's result into the active task tree.
 
@@ -555,6 +707,7 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
    "task_N": {
      "status": "COMPLETE",
      "risk": "<level>",
+     "complexity": "<SMALL|MEDIUM|LARGE>",
      "files": ["<file1>", "..."],
      "files_test": ["<test_file1>", "..."],
      "commit": "<sha>",
@@ -563,6 +716,9 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
      "review_retries": 0,
      "verifier_retries": 0,
      "spec_clarifications": 0,
+     "spec_score": <float 0.0-1.0>,
+     "quality_score": <float 0.0-1.0>,
+     "review_tier": "PASS | WARN",
      "timing": {
        "started": "<iso8601>",
        "implementer_done": "<iso8601>",
@@ -573,7 +729,7 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
    }
    ```
 
-   `files_test` comes from the Implementer's `FILES_TEST_CHANGED:` output (empty list if none).
+   `files_test` comes from the Implementer's `FILES_TEST_CHANGED:` output (empty list if none). `complexity` comes from `state.task_complexity.task_N` (set in Phase 0 Step 6 per P5). `spec_score` / `quality_score` / `review_tier` come from Phase 1 Step 2 score parsing — PASS or WARN reached this point; FAIL would have looped back to Step 1.
 
    **Also update top-level latest pointers (P14)** — required for Monitor and any consumer that needs "most recent task":
    ```json
@@ -601,6 +757,95 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
    This keeps implementation commits (`feat:`) separate from orchestrator state commits (`chore:`). Reviewers can filter `git log --grep '^feat'` to see only code changes.
 
 3. **Check for compaction point:** if this task is a compaction point, go to **Phase Transition** before advancing. Otherwise, advance to the next task.
+
+### Parallel Sub-Flow (P2 — multi-task parallel group)
+
+Triggered when the current parallel group from `state.execution_plan` has size ≥ 2.
+
+**Pre-flight invariant:** all tasks in the group have disjoint `Files:` sets (Phase 0 Step 6 partition guarantees this). If you observe the group has size ≥ 2 but the tasks share any file: halt — `execution_plan` is corrupt; do not proceed.
+
+**Step P.0: Record pre-group SHA**
+
+```bash
+git -C <worktree_path> rev-parse HEAD
+```
+Record as `current_pre_group_sha` in state.json. Every task in the group will branch off this SHA.
+
+**Step P.1: Create sub-worktrees + replicate safety hooks**
+
+For each task `task_<N>` in the group:
+```bash
+mkdir -p <worktree_path>/.parallel
+git -C <worktree_path> worktree add \
+  <worktree_path>/.parallel/task_<N> \
+  HEAD
+# Replicate safety + gate hooks into the sub-worktree
+mkdir -p <worktree_path>/.parallel/task_<N>/.claude
+mkdir -p <worktree_path>/.parallel/task_<N>/.orchestrator/hooks
+cp <worktree_path>/.claude/settings.json \
+   <worktree_path>/.parallel/task_<N>/.claude/settings.json
+cp <worktree_path>/.orchestrator/hooks/*.sh \
+   <worktree_path>/.parallel/task_<N>/.orchestrator/hooks/
+```
+Rewrite the absolute `<worktree_path>` in the copied `settings.json` to point at the sub-worktree path (sed/Edit). Otherwise hooks reference the parent and silently no-op.
+
+**Step P.2: Dispatch all Implementers in one Orchestrator message**
+
+In a single assistant message, emit N `Agent` tool calls — one per task in the group. Each prompt:
+- Uses the same Implementer Prompt Template
+- Has `{worktree_path}` set to the **sub-worktree** path (`<worktree_path>/.parallel/task_<N>`), NOT the parent worktree
+- Has `{deps_for_this_task}` set to the dependency list (which by definition only includes earlier-WAVE tasks, all already merged into the parent before P.0)
+
+Collect all N tool results.
+
+**Step P.3: Aggregate results**
+
+For each sub-worktree task:
+- `STATUS: DONE` → record the sub-worktree commit SHA from the `COMMIT:` line; record `FILES_CHANGED:` for merge verification.
+- `STATUS: ESCALATE` → defer the escalation; continue collecting other results. The escalations are handled sequentially in P.5.
+
+If at least one ESCALATE: do NOT merge any sub-worktree until all escalations are resolved (P.5). Keep all sub-worktrees intact.
+
+**Step P.4: Out-of-scope file check (guardrail)**
+
+For each DONE sub-worktree:
+- Read its `FILES_CHANGED:`. Confirm every file is within the task's declared `Files:` block.
+- Confirm that across ALL DONE sub-worktrees in this group, the union of `FILES_CHANGED` has no duplicates.
+
+If any out-of-scope edit OR duplicate file: halt the entire group. Remove all sub-worktrees with `git worktree remove --force`. Re-dispatch the offending task sequentially in the main worktree under standard flow with `## Fix Required\n<out-of-scope file list>`.
+
+**Step P.5: Resolve ESCALATEs serially**
+
+For each ESCALATE from P.3: handle via the standard Escalation Protocol. The escalation may resolve via spec edit (continue to P.6), AMBIGUITY edit, or hit the escalation cap (skip that task; remove its sub-worktree).
+
+**Step P.6: Cherry-pick onto parent worktree**
+
+In task-ID order (numeric ascending), for each successful sub-worktree:
+```bash
+git -C <worktree_path> cherry-pick <sub_worktree_commit_sha>
+```
+
+If a cherry-pick fails (should be impossible given the disjoint-files guarantee, but defensively):
+- `git -C <worktree_path> cherry-pick --abort`
+- Halt the group. Report the conflict path to the user; do NOT proceed to Reviewer/Verifier.
+
+After all cherry-picks succeed:
+```bash
+git -C <worktree_path> worktree remove --force <worktree_path>/.parallel/task_<N>  # for each N
+rm -rf <worktree_path>/.parallel
+```
+
+**Step P.7: Per-task Reviewer + Verifier (serial)**
+
+For each task in the group, in task-ID order, run Steps 2 (Combined Reviewer) and 3 (Verifier) from the standard flow. The diff is computed from `current_pre_group_sha` to the post-cherry-pick HEAD scoped to this task's `FILES_CHANGED`.
+
+If a Reviewer FAIL or Verifier FAIL occurs for any task: reset the offending task ONLY by reverting its specific cherry-picked commit (`git revert <commit_sha>` — single-commit revert) and re-dispatch sequentially in the main worktree under the standard flow. Other tasks' commits stay in place.
+
+**Step P.8: Agent Cleanup per task**
+
+Run Step 4 (Agent Cleanup) for each task in the group, writing per-task state entries normally. The first task in the group writes the compaction-point check; subsequent tasks bypass it (the boundary is the LAST task of the group).
+
+**Failure isolation guarantee (P2):** if any single sub-worktree dies (Implementer ESCALATE or out-of-scope edit), only that task is rolled back. The other parallel commits stay. This is the core wall-time win — independent failures don't restart the whole wave.
 
 ---
 
@@ -771,9 +1016,25 @@ Output:
 **Date:** <YYYY-MM-DD>
 
 ### Tasks
-| Task | Status | Risk | Escalations | Review Retries | Verifier Retries | Duration |
-|------|--------|------|-------------|----------------|------------------|----------|
-| Task 0 | COMPLETE | low | 0 | 0 | — (batch) | <M> min |
+| Task | Status | Risk | Size | Spec | Quality | Tier | Escalations | Review Retries | Verifier Retries | Duration |
+|------|--------|------|------|------|---------|------|-------------|----------------|------------------|----------|
+| Task 0 | COMPLETE | low | SMALL | 0.95 | 0.90 | PASS | 0 | 0 | — (batch) | <M> min |
+
+### WARN-tier tasks (P4)
+
+For each task in `state.tasks` (and `state.plan2_state.tasks`) where `review_tier == "WARN"`, list one row:
+- `task_<id>` — spec=<score>, quality=<score> — warnings: <one-line summary from task_summaries.task_N.warnings>
+
+If none: "WARN-tier tasks: 0".
+
+### Quality trend (P4)
+
+- First 5 task quality_score mean: <X.XX>
+- Last 5 task quality_score mean: <Y.YY>
+- Delta: <signed>
+- Note: <"stable" | "declining — review recent tasks" | "improving">
+
+(Pull from `state.quality_trend` and `state.plan2_state.quality_trend` when relevant.)
 
 ### Performance
 - Total wall time: <HH:MM from timestamps.started_at to completed_at>
@@ -828,6 +1089,17 @@ These rules are absolute. No exceptions.
 | **Headless subprocess dispatch** | Verifier and Docs Updaters run via `claude -p --dangerously-skip-permissions` (never Agent tool). Results in `.orchestrator/{verifier,docs}_results/`. Missing result JSON → ENV_BLOCKER ESCALATE; check `.stdout` for diagnostics. |
 | **Two-phase commits** | See Phase 1 Step 2.5. `chore:` orchestrator state and `feat:` code are always separate commits. |
 | **PreToolUse hooks in worktree** | Phase 0 Step 2.5 writes `.claude/settings.json` blocking `rm -rf /`, force-push to protected branches, and `DROP TABLE/DATABASE/SCHEMA`. |
+| **PostToolUse hook is the only debug-artifact gate** | `<worktree>/.orchestrator/hooks/scan-debug-artifacts.sh` (materialized at Phase 0 Step 2.5) is runtime-enforced. The orchestrator does NOT run a parallel manual grep — that duplication was removed in v2.5.0 because prose discipline silently bypassed. If the hook is disabled or missing, fix it; do not re-introduce the manual scan. |
+| **SubagentStop hook validates Implementer output structure** | `<worktree>/.orchestrator/hooks/check-implementer-output.sh` exits 2 if STATUS / SUMMARY / FILES_CHANGED / FILES_TEST_CHANGED (or COMMIT on DONE, ESCALATE fields on ESCALATE) are missing. Sub-agent auto-retries; no orchestrator action needed. |
+| **Plan Reviewer is mechanical, not subjective** | Phase 0 Step 6.5 audits the plan/spec against a fixed rubric (missing Files, missing AC on MID/HIGH, contract mismatch, dep cycles, out-of-repo paths). Style/architecture suggestions are out of scope and MUST be ignored if the sub-agent returns them. BLOCKER issues halt with a batched user question; WARN issues are recorded and bypass. Skip the entire step via `preflight=off`. |
+| **Effort scaling is heuristic and biased upward** | Phase 0 Step 6 assigns SMALL/MEDIUM/LARGE per task. SMALL skips TDD only for trivial renames; MEDIUM/LARGE require TDD. Mis-estimation is acceptable as mild over-engineering; never silently under-instruct a HIGH-risk task (risk_mult forces LARGE). |
+| **Quality scoring thresholds are not user-configurable** | SPEC threshold 0.85, QUALITY threshold 0.75, WARN floors 0.70/0.60 (P4). Calibrated against the P6 eval suite. Re-tune only when re-calibrating against a new Claude version, not per-run. |
+| **WARN tier does not retry** | A WARN-tier review proceeds to Verifier with warnings recorded in `task_summaries.task_N.warnings`. WARN exists to prevent burning the 3-retry budget on borderline work. Three consecutive WARN tasks → surface at next compaction (signal, not halt). |
+| **`quality_trend` is rolling, max 10** | Phase 1 Step 2 appends `quality_score` to `state.quality_trend` (drop oldest at length 10). Mean-of-last-5 < mean-of-first-5 by > 0.10 → surface at next compaction. Plan 2 has its own buffer at `state.plan2_state.quality_trend`. |
+| **Parallel Implementer outputs must respect declared Files: blocks** | Step P.4 verifies each sub-worktree's `FILES_CHANGED` is a subset of its task's declared `Files:` block AND that no two sub-worktrees in the same group touched the same file. Violation halts the group, removes sub-worktrees, and re-dispatches the offender sequentially. Never silently merge an out-of-scope parallel edit. |
+| **Sub-worktrees inherit safety + gate hooks** | Step P.1 copies `.claude/settings.json` and `.orchestrator/hooks/*.sh` into every sub-worktree. The settings.json absolute path MUST be rewritten to point at the sub-worktree, not the parent — otherwise hooks reference a different worktree's helper scripts and silently no-op. |
+| **External-resource contention in parallel waves is the user's responsibility** | If two parallel tasks contend for the same DB port, file lock, or external service, mark one of them `serial: true` in the plan. The Phase 0 Step 6 partition respects `serial` and keeps such tasks in singleton groups. The skill cannot detect arbitrary external contention. |
+| **Disable parallel dispatch via `parallel=off`** | Writes a degenerate `execution_plan` where every parallel group is singleton. Use when sub-worktree creation is constrained (shallow clones, low disk, fsmonitor races). |
 | **Acceptance Criteria shell is primary PASS condition** | If a task has an `## Acceptance Criteria` block with executable shell, the Verifier runs those commands first. All must exit 0. Risk-tiered test instructions are the fallback when no AC block is present. |
 | **Plan structural validation is mandatory** | Step 0.5 runs before worktree creation. A plan without `### Task N:` headers halts immediately. A plan with missing Files blocks halts with a user question. Never skip this gate. |
 | **Ambiguity gate clears before risk assignment** | Step 3.5 must complete with zero unresolved ambiguities before Step 4 begins. Unclear task descriptions answered downstream cost one full sub-agent dispatch + reset cycle. |
@@ -849,6 +1121,7 @@ The Implementer, Combined Reviewer, Verifier, and Docs Updater prompt templates 
 
 | Step | Template file | Dispatch mode |
 |------|---------------|---------------|
+| Phase 0 Step 6.5 — Plan Reviewer | `references/plan-reviewer-prompt.md` | Headless `claude -p` |
 | Phase 1 Step 1 — Implementer | `references/implementer-prompt.md` | Agent tool (fresh Sonnet) |
 | Phase 1 Step 2 — Combined Reviewer | `references/reviewer-prompt.md` | Agent tool (fresh Sonnet) |
 | Phase 1 Step 3 / Transition T1 — Verifier | `references/verifier-prompt.md` | Headless `claude -p` |
