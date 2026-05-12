@@ -1,0 +1,96 @@
+name: 02-three-file-refactor
+description: |
+  3-task MEDIUM-bucket plan — rename a function consistently across producer, consumer,
+  and test file. Exercises P5 MEDIUM bucket and consumer-sweep instruction in Implementer prompt.
+
+bootstrap: |
+  mkdir -p src tests
+  cat > src/calc.py <<'PY'
+  def add_nums(a, b):
+      return a + b
+  PY
+  cat > src/usage.py <<'PY'
+  from src.calc import add_nums
+
+  def total(xs):
+      result = 0
+      for x in xs:
+          result = add_nums(result, x)
+      return result
+  PY
+  cat > tests/test_calc.py <<'PY'
+  from src.calc import add_nums
+
+  def test_add_nums():
+      assert add_nums(2, 3) == 5
+  PY
+  cat > pyproject.toml <<'TOML'
+  [project]
+  name = "eval02"
+  version = "0.0.1"
+  TOML
+  cat > Makefile <<'MK'
+  test:
+  ${TAB}python -m pytest -q tests/
+  MK
+
+plan: |
+  ### Task 0: Rename `add_nums` → `add` in src/calc.py
+
+  **Files:**
+  - src/calc.py
+
+  Rename the function `add_nums` to `add`. Update its callers in subsequent tasks.
+
+  ## Acceptance Criteria
+
+  ```bash
+  python -c "from src.calc import add; assert add(2, 3) == 5"
+  ```
+
+  ### Task 1: Update consumer src/usage.py
+
+  **Files:**
+  - src/usage.py
+
+  Update `src/usage.py` to call `add` instead of `add_nums`.
+
+  ### Task 2: Update test file tests/test_calc.py
+
+  **Files:**
+  - tests/test_calc.py
+
+  Update `tests/test_calc.py` to import and call `add` instead of `add_nums`.
+
+  ## Acceptance Criteria
+
+  ```bash
+  python -m pytest -q tests/
+  ```
+
+spec: |
+  # Spec: rename add_nums to add
+
+  The function `add(a, b) -> int` returns `a + b`. The old name `add_nums` is removed entirely
+  from the codebase — no aliases, no deprecation shim. All three files must agree on the new name.
+
+invocation: ""
+
+expected:
+  task_count: 3
+  expected_files_changed:
+    - src/calc.py
+    - src/usage.py
+    - tests/test_calc.py
+  commit_count_min: 3
+  commit_count_max: 6
+  test_after: |
+    python -m pytest -q tests/ && ! grep -rn 'add_nums' src/ tests/
+  notes: |
+    Each task should be MEDIUM bucket.
+    No SPEC_BLOCKER escalations expected.
+    P3 Plan Reviewer should PASS (no missing AC on HIGH risk).
+
+cost_budget:
+  wallclock_minutes: 15
+  tokens: 200000

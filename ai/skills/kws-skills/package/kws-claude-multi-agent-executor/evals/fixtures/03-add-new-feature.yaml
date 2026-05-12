@@ -1,0 +1,126 @@
+name: 03-add-new-feature
+description: |
+  5-task plan, mixed sizes — add a small CLI feature end to end. Includes one HIGH-risk
+  task (CLI argparse change) plus LOW/MEDIUM follow-ups. Primary wall-time benchmark for
+  P2 parallel dispatch: tasks 2 and 3 are independent (different modules).
+
+bootstrap: |
+  mkdir -p src tests
+  cat > src/cli.py <<'PY'
+  import argparse
+
+  def main():
+      p = argparse.ArgumentParser()
+      p.add_argument("--echo", help="print this and exit")
+      args = p.parse_args()
+      if args.echo:
+          print(args.echo)
+
+  if __name__ == "__main__":
+      main()
+  PY
+  cat > src/__init__.py <<'PY'
+  PY
+  cat > tests/test_cli.py <<'PY'
+  import subprocess
+  def test_echo():
+      r = subprocess.run(["python", "-m", "src.cli", "--echo", "hi"], capture_output=True, text=True)
+      assert "hi" in r.stdout
+  PY
+  cat > Makefile <<'MK'
+  test:
+  ${TAB}python -m pytest -q tests/
+  MK
+
+plan: |
+  ### Task 0: Add `--upper` flag to src/cli.py
+
+  **Files:**
+  - src/cli.py
+
+  Add `--upper` boolean flag. When present, echo output is uppercased.
+
+  ## Acceptance Criteria
+
+  ```bash
+  python -m src.cli --echo hi --upper | grep -qx HI
+  ```
+
+  ### Task 1: Add helper module src/transform.py
+
+  **Files:**
+  - src/transform.py
+
+  Create `src/transform.py` exporting `to_upper(s: str) -> str`. cli.py will import from it
+  in Task 2.
+
+  ### Task 2: Wire src/cli.py through transform.to_upper
+
+  **Files:**
+  - src/cli.py
+
+  Replace the inline `.upper()` call from Task 0 with a call to `src.transform.to_upper`.
+
+  ### Task 3: Add unit test for transform.to_upper
+
+  **Files:**
+  - tests/test_transform.py
+
+  New test file with at least two cases: empty string and a normal string.
+
+  ## Acceptance Criteria
+
+  ```bash
+  python -m pytest -q tests/test_transform.py
+  ```
+
+  ### Task 4: Add integration test for --upper flag
+
+  **Files:**
+  - tests/test_cli_upper.py
+
+  New test verifying `python -m src.cli --echo foo --upper` prints `FOO`.
+
+  ## Acceptance Criteria
+
+  ```bash
+  python -m pytest -q tests/
+  ```
+
+spec: |
+  # Spec: --upper CLI flag
+
+  ## Contract
+
+  `python -m src.cli --echo <text> [--upper]` prints `<text>`. When `--upper` is set, the printed
+  value is uppercased. `--upper` without `--echo` is a no-op.
+
+  ## Module structure
+
+  `src/transform.py` exports a single pure function `to_upper(s: str) -> str` returning `s.upper()`.
+  No other behavior, no dependencies.
+
+  `src/cli.py` imports `to_upper` from `src.transform`. The CLI module owns only argparse + output
+  glue; no string transformations live in cli.py.
+
+invocation: ""
+
+expected:
+  task_count: 5
+  expected_files_changed:
+    - src/cli.py
+    - src/transform.py
+    - tests/test_transform.py
+    - tests/test_cli_upper.py
+  commit_count_min: 5
+  commit_count_max: 12
+  test_after: |
+    python -m src.cli --echo hi --upper | grep -qx HI && python -m pytest -q tests/
+  notes: |
+    Tasks 3 and 4 are independent (different test files, no shared production code) — P2
+    should parallel-dispatch them in wave 2.
+    Plan Reviewer should PASS (each task has Files block and contract is consistent).
+
+cost_budget:
+  wallclock_minutes: 25
+  tokens: 400000

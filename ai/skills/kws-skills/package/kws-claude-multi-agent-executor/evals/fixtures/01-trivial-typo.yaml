@@ -1,0 +1,50 @@
+name: 01-trivial-typo
+description: |
+  Single SMALL task — fix a comment typo in one file. Tests that v2.5.1 effort-scaling
+  produces a SMALL bucket and Implementer stays within ≤8 tool calls.
+
+bootstrap: |
+  mkdir -p src
+  cat > src/main.py <<'PY'
+  def greet(name):
+      # Retrun a friendly greeting.
+      return f"Hello, {name}"
+  PY
+  cat > Makefile <<'MK'
+  test:
+  ${TAB}python -m pytest -q || true
+  MK
+
+plan: |
+  ### Task 0: Fix the typo in src/main.py comment
+
+  **Files:**
+  - src/main.py
+
+  The comment `# Retrun a friendly greeting.` has a typo. Replace `Retrun` with `Return`.
+
+spec: |
+  # Spec: comment-typo fix
+
+  ## src/main.py
+
+  The function-doc comment must read `# Return a friendly greeting.` exactly.
+  No other lines should change.
+
+invocation: ""
+
+expected:
+  task_count: 1
+  expected_files_changed:
+    - src/main.py
+  commit_count_min: 1
+  commit_count_max: 3
+  test_after: |
+    grep -q '# Return a friendly greeting.' src/main.py && echo PASS || echo FAIL
+  notes: |
+    Should land in SMALL bucket per v2.5.1 effort-scaling.
+    SPEC_SCORE >= 0.9 expected; QUALITY_SCORE >= 0.85 expected.
+
+cost_budget:
+  wallclock_minutes: 8
+  tokens: 60000
