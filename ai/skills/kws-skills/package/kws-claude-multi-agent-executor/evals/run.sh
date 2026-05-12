@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# Eval harness for kws-claude-multi-agent-executor.
+#
+# Usage:
+#   ./evals/run.sh                                # run all fixtures
+#   ./evals/run.sh fixtures/01-trivial-typo.yaml  # single fixture
+#
+# Writes per-version baseline to evals/baselines/v<X.Y.Z>.json.
+# Reads version from ../SKILL.md frontmatter.
+
+set -euo pipefail
+
+EVAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+SKILL_DIR="$(dirname "$EVAL_DIR")"
+SKILL_VERSION="$(grep '^  version:' "$SKILL_DIR/SKILL.md" | head -1 | sed -E 's/.*"([0-9.]+)".*/\1/')"
+BASELINE_FILE="$EVAL_DIR/baselines/v${SKILL_VERSION}.json"
+
+mkdir -p "$EVAL_DIR/baselines"
+: > "$BASELINE_FILE.partial"
+
+fixtures=()
+if [ $# -eq 0 ]; then
+  while IFS= read -r f; do fixtures+=("$f"); done < <(ls "$EVAL_DIR/fixtures"/*.yaml | sort)
+else
+  for f in "$@"; do fixtures+=("$EVAL_DIR/$f"); done
+fi
+
+run_one_fixture() {
+  local fixture_path="$1"
+  local fixture_name
+  fixture_name="$(basename "$fixture_path" .yaml)"
+  echo "=== Running fixture: $fixture_name ==="
+
+  local tmpdir
+  tmpdir="$(mktemp -d -t "mae-eval-${fixture_name}.XXXXXX")"
+  echo "tmpdir: $tmpdir"
+
+  # Parse fixture YAML — we only need a handful of fields.
+  # Tolerate yq absent by using python -c with PyYAML if available.
+  local parse_py
+  parse_py="$(cat <<PY
+import sys, yaml, json, os
+with open(sys.argv[1]) as fh:
+    d = yaml.safe_load(fh)
+os.makedirs(sys.argv[2], exist_ok=True)
+with open(os.path.join(sys.argv[2], "plan.md"), "w") as fh:
+    fh.write(d["plan"])
+with open(os.path.join(sys.argv[2], "spec.md"), "w") as fh:
+    fh.write(d["spec"])
+with open(os.path.join(sys.argv[2], "_meta.json"), "w") as fh:
+    json.dump({k: d[k] for k in ("name","description","bootstrap","invocation","expected","cost_budget") if k in d}, fh)
+PY
+)"
+  python3 -c "$parse_py" "$fixture_path" "$tmpdir"
+
+  # Bootstrap
+  ( cd "$tmpdir" && git init -q && git config user.email "eval@example.com" && git config user.name "eval" )
+  local bootstrap
+  bootstrap="$(jq -r '.bootstrap // empty' "$tmpdir/_meta.json")"
+  if [ -n "$bootstrap" ]; then
+    ( cd "$tmpdir" && bash -euxc "$bootstrap" ) 2>&1 | tee "$tmpdir/bootstrap.log"
+  fi
+  ( cd "$tmpdir" && git add -A && git commit -q -m "eval bootstrap" || true )
+
+  # Invoke skill headless.
+  local invocation
+  invocation="$(jq -r '.invocation // ""' "$tmpdir/_meta.json")"
+  local start_ts
+  start_ts="$(date +%s)"
+  ( cd "$tmpdir" && \
+    claude -p --dangerously-skip-permissions \
+      --output-format stream-json \
+      "/kws-claude-multi-agent-executor plan=plan.md spec=spec.md mode=interactive $invocation" \
+      > run.jsonl 2>&1 ) || true
+  local end_ts
+  end_ts="$(date +%s)"
+  local wall_min
+  wall_min=$(( (end_ts - start_ts) / 60 ))
+
+  # Token usage from stream-json (sum of input + output across all events)
+  local total_tokens
+  total_tokens="$(jq -s '[.[] | select(.type=="usage") | (.input_tokens // 0) + (.output_tokens // 0)] | add // 0' "$tmpdir/run.jsonl" 2>/dev/null || echo 0)"
+
+  # Capture artifacts.
+  local state_file
+  state_file="$(ls "$tmpdir"/../worktrees/*/.orchestrator/state.json 2>/dev/null | head -1 || true)"
+  local task_statuses=""
+  local git_log=""
+  local files_changed=""
+  if [ -n "$state_file" ] && [ -f "$state_file" ]; then
+    task_statuses="$(jq '.tasks' "$state_file" 2>/dev/null || echo '{}')"
+    files_changed="$(jq -r '[.tasks[].files // []] | flatten | unique | join("\n")' "$state_file" 2>/dev/null || echo '')"
+    local worktree_path
+    worktree_path="$(dirname "$(dirname "$state_file")")"
+    git_log="$(git -C "$worktree_path" log --oneline -n 30 2>/dev/null || echo '')"
+  fi
+
+  # Test outcome (best effort — only if fixture set test_after).
+  local test_after
+  test_after="$(jq -r '.expected.test_after // empty' "$tmpdir/_meta.json")"
+  local test_output=""
+  if [ -n "$test_after" ] && [ -n "$state_file" ]; then
+    test_output="$( cd "$(dirname "$(dirname "$state_file")")" && bash -c "$test_after" 2>&1 || true )"
+  fi
+
+  # Build judge input.
+  local diff_tail=""
+  if [ -n "$state_file" ]; then
+    local wt
+    wt="$(dirname "$(dirname "$state_file")")"
+    diff_tail="$(git -C "$wt" diff HEAD~5..HEAD 2>/dev/null | tail -200 || echo '')"
+  fi
+
+  local judge_prompt
+  judge_prompt="$(sed \
+    -e "s|{fixture_name}|$fixture_name|g" \
+    -e "s|{fixture_description}|$(jq -r '.description // ""' "$tmpdir/_meta.json")|g" \
+    -e "s|{cost_budget_wallclock_minutes}|$(jq -r '.cost_budget.wallclock_minutes // 30' "$tmpdir/_meta.json")|g" \
+    -e "s|{cost_budget_tokens}|$(jq -r '.cost_budget.tokens // 500000' "$tmpdir/_meta.json")|g" \
+    -e "s|{wall_time}|$wall_min|g" \
+    -e "s|{total_tokens}|$total_tokens|g" \
+    "$EVAL_DIR/judge.md")"
+
+  # Append captured payloads as substitution (multi-line — write to temp file).
+  local judge_input="$tmpdir/judge_input.txt"
+  {
+    printf '%s\n' "$judge_prompt"
+    printf '\n\n### ACTUAL DATA (replaces placeholders if any remained):\n'
+    printf '\n#### fixture_expected_yaml\n%s\n' "$(jq -r '.expected' "$tmpdir/_meta.json")"
+    printf '\n#### captured_task_statuses\n%s\n' "$task_statuses"
+    printf '\n#### captured_git_log\n%s\n' "$git_log"
+    printf '\n#### captured_files_changed\n%s\n' "$files_changed"
+    printf '\n#### captured_test_output\n%s\n' "$test_output"
+    printf '\n#### captured_diff_tail\n%s\n' "$diff_tail"
+  } > "$judge_input"
+
+  local judge_out
+  judge_out="$(claude -p --dangerously-skip-permissions "$(cat "$judge_input")" 2>/dev/null || echo '{"fixture":"'"$fixture_name"'","scores":{"correctness":0,"spec_compliance":0,"code_quality":0,"cost_efficiency":0},"mean":0,"passed":false,"notes":"judge invocation failed"}')"
+
+  # Extract JSON object from judge output.
+  local judge_json
+  judge_json="$(printf '%s' "$judge_out" | sed -n '/^{/,/^}$/p' | head -200 || echo '{}')"
+  if ! printf '%s' "$judge_json" | jq -e . >/dev/null 2>&1; then
+    judge_json='{"fixture":"'"$fixture_name"'","scores":{"correctness":0,"spec_compliance":0,"code_quality":0,"cost_efficiency":0},"mean":0,"passed":false,"notes":"judge output unparseable"}'
+  fi
+
+  printf '%s\n' "$judge_json" >> "$BASELINE_FILE.partial"
+  echo "=== Fixture $fixture_name scored: $(printf '%s' "$judge_json" | jq -r '.mean') ==="
+}
+
+for f in "${fixtures[@]}"; do
+  run_one_fixture "$f"
+done
+
+# Aggregate baseline.
+jq -s '{version: "'"$SKILL_VERSION"'", date: now | todate, fixtures: .}' "$BASELINE_FILE.partial" > "$BASELINE_FILE"
+rm -f "$BASELINE_FILE.partial"
+echo "=== Baseline written: $BASELINE_FILE ==="
+jq '.fixtures | map({fixture, mean, passed})' "$BASELINE_FILE"

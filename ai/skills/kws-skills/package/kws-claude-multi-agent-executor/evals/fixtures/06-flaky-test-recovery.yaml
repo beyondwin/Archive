@@ -1,0 +1,67 @@
+name: 06-flaky-test-recovery
+description: |
+  Plan with a Task whose baseline test command is intentionally broken (missing module).
+  Tests Verifier ENV_BLOCKER triage playbook — should attempt pip install, retry, then
+  SKIP gracefully if not resolvable.
+
+bootstrap: |
+  mkdir -p src tests
+  cat > src/feature.py <<'PY'
+  def add(a, b):
+      return a + b
+  PY
+  cat > tests/test_feature.py <<'PY'
+  # Intentionally imports a missing package to simulate ENV_BLOCKER
+  import nonexistent_package_xyz  # noqa: F401
+  from src.feature import add
+
+  def test_add():
+      assert add(2, 3) == 5
+  PY
+  cat > pyproject.toml <<'TOML'
+  [project]
+  name = "eval06"
+  version = "0.0.1"
+  TOML
+  cat > Makefile <<'MK'
+  test:
+  ${TAB}python -m pytest -q tests/
+  MK
+
+plan: |
+  ### Task 0: Modify src/feature.py
+
+  **Files:**
+  - src/feature.py
+
+  Add a function `sub(a, b) -> int` returning `a - b`.
+
+  ## Acceptance Criteria
+
+  ```bash
+  python -c "from src.feature import sub; assert sub(5, 2) == 3"
+  ```
+
+spec: |
+  # Spec
+
+  `sub(a, b)` returns `a - b`. No additional behavior.
+
+invocation: "risk=mid"
+
+expected:
+  task_count: 1
+  expected_outcome: |
+    Verifier should:
+    1. Detect import error (ModuleNotFoundError) on test run.
+    2. Attempt `pip install nonexistent_package_xyz` per ENV_BLOCKER triage step 2.
+    3. Install fails → escalate. Task should be marked SKIPPED OR completed via AC bypass
+       (since Acceptance Criteria block uses python -c, not pytest).
+  notes: |
+    Healthy outcome: skill recognizes the AC block is independent of pytest infra and PASSes
+    the task via AC even though pytest cannot run. Failing outcome: skill burns 3 verifier
+    retries on the broken test.
+
+cost_budget:
+  wallclock_minutes: 12
+  tokens: 150000

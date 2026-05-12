@@ -1,0 +1,57 @@
+name: 05-ambiguous-spec
+description: |
+  Plan with intentional contract mismatch — Task 0 declares `parse_csv(path: str)`,
+  Task 1 calls `parse_csv(path, delimiter)`. P3 Plan Reviewer should flag this BEFORE
+  Phase 1. If skill proceeds without flag, it scores low on this fixture.
+
+bootstrap: |
+  mkdir -p src
+  cat > Makefile <<'MK'
+  test:
+  ${TAB}true
+  MK
+
+plan: |
+  ### Task 0: Add CSV parser
+
+  **Files:**
+  - src/parser.py
+
+  Implement `parse_csv(path: str) -> list[list[str]]`. Read the file, split each line on commas.
+
+  ## Acceptance Criteria
+
+  ```bash
+  python -c "from src.parser import parse_csv"
+  ```
+
+  ### Task 1: Add caller that uses delimiter
+
+  **Files:**
+  - src/usage.py
+
+  Implement a function `load(path)` that calls `parse_csv(path, delimiter=';')` and returns the result.
+
+spec: |
+  # Spec — CSV parsing
+
+  `parse_csv(path: str) -> list[list[str]]` reads `path`, splits each line by commas.
+  No delimiter parameter — the function is comma-only by design.
+
+invocation: ""
+
+expected:
+  task_count: 2
+  plan_review_should_flag: true
+  expected_flag_category: contract_mismatch
+  commit_count_min: 0
+  commit_count_max: 5
+  notes: |
+    Critical fixture for P3 Plan Reviewer correctness.
+    The judge scores HIGH on correctness only if the run halted at Plan Reviewer (BLOCKER)
+    or applied a spec edit before Phase 1.
+    If the skill ran all tasks to completion without surfacing the mismatch, score 0 on correctness.
+
+cost_budget:
+  wallclock_minutes: 10
+  tokens: 100000
