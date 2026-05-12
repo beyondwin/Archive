@@ -2,8 +2,8 @@
 name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation.
 metadata:
-  version: "2.3.0"
-  updated_at: "2026-05-09"
+  version: "2.4.0"
+  updated_at: "2026-05-12"
 ---
 
 # KWS Claude Multi-Agent Executor
@@ -20,17 +20,207 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
 
 ---
 
+## Phase -1: Mode Selection (Autonomy Gate)
+
+At invocation, before any other work:
+
+Detection (in order):
+1. Parse skill arguments. Args are space-separated `key=value` pairs (e.g., `plan=/path/to/plan.md spec=/path/to/spec.md mode=interactive`).
+2. If parsed args contain `mode=interactive` (case-insensitive): legacy single-session mode — skip Phase -1, proceed to Phase 0.
+3. If invocation prompt contains literal `<<HEADLESS_KWS_ORCHESTRATOR>>` anywhere: this is the headless instance — skip Phase -1, proceed to Phase 0.
+4. Otherwise: execute Self-Spawn Procedure below, then exit.
+
+### Self-Spawn Procedure
+
+**a. Run Phase 0 Steps 1, 2, 2.5 in interactive context.**
+
+Execute Phase 0 Step 1 (working tree clean check), Step 2 (worktree creation), and Step 2.5 (safety hooks) now, in the interactive session. These steps are quick (~2 min) and must complete before the subprocess starts — the subprocess requires an existing worktree to operate in. If any of these steps fail, abort the spawn and surface the failure to the user. Do NOT proceed to step b.
+
+**b. Initialize a minimal `.orchestrator/state.json` in the worktree.**
+
+Write `<worktree_path>/.orchestrator/state.json` using the Write tool:
+```json
+{
+  "schema_version": "2",
+  "mode": "headless_pending",
+  "interactive_setup_complete": true,
+  "plan": "<plan path>",
+  "spec": "<spec path>",
+  "branch": "<branch name>",
+  "worktree": "<worktree path>",
+  "timestamps": {
+    "interactive_setup_at": "<iso8601 now>",
+    "headless_started_at": null,
+    "completed_at": null
+  }
+}
+```
+Fill in actual values from Phase 0 Steps 1–2.5. The full state.json fields (analysis, risk_levels, baseline, etc.) will be populated by the headless instance in its Phase 0 run.
+
+**c. Write the headless prompt at `<worktree_path>/.orchestrator/headless_prompt.txt`:**
+
+```
+<<HEADLESS_KWS_ORCHESTRATOR>>
+You are the kws-claude-multi-agent-executor running HEADLESSLY. No user available.
+Working directory: <abs worktree path>
+Plan: <plan path>
+Spec: <spec path>
+
+Resume protocol applies — read .orchestrator/state.json. If state shows mode=headless_pending, proceed with full Phase 0 (analysis, baseline, dependency graph, state population). Otherwise resume from current_task.
+
+Run Phase 0 → Phase 1 → Phase 2 to completion. NEVER ask for user input.
+Halt only on: per-task escalation_count > 3 (record SKIPPED, continue) OR all tasks COMPLETE/SKIPPED.
+On completion, write .orchestrator/HEADLESS_DONE.txt with summary.
+On critical failure, write .orchestrator/HEADLESS_HALTED.txt with diagnostics.
+
+Begin.
+```
+
+Fill in `<abs worktree path>`, `<plan path>`, `<spec path>` with the actual resolved paths before writing.
+
+**d. Spawn detached background process:**
+
+```bash
+WORKTREE_ABS="$(cd <worktree> && pwd -P)"
+nohup claude -p --dangerously-skip-permissions \
+  --output-format stream-json \
+  "$(cat "$WORKTREE_ABS/.orchestrator/headless_prompt.txt")" \
+  > "$WORKTREE_ABS/.orchestrator/headless.jsonl" 2>&1 &
+echo $! > "$WORKTREE_ABS/.orchestrator/headless.pid"
+disown
+```
+
+**d.5. Verify spawn lived past startup**:
+   ```bash
+   sleep 3
+   if ! kill -0 $(cat "$WORKTREE_ABS/.orchestrator/headless.pid") 2>/dev/null; then
+     echo "FATAL: headless subprocess died within 3 seconds. Check $WORKTREE_ABS/.orchestrator/headless.jsonl for diagnostic." >&2
+     # Read first 50 lines of headless.jsonl and surface to user; do NOT proceed to step e (no Monitor)
+     exit 1
+   fi
+   ```
+   If spawn died: report failure to user with diagnostic; do NOT continue.
+
+**e. Report to user (final message before exit):**
+
+```
+Orchestrator running headless.
+Worktree: <abs path>
+PID: $(cat .orchestrator/headless.pid)
+
+Monitor live (stream-json events):
+  tail -f <worktree>/.orchestrator/headless.jsonl | jq -c 'select(.type=="text" or .type=="tool_use")'
+
+Status snapshot:
+  jq '{current_task, mode, completed: (.tasks | to_entries | map(select(.value.status=="COMPLETE")) | length)}' <worktree>/.orchestrator/state.json
+
+Completion check:
+  test -f <worktree>/.orchestrator/HEADLESS_DONE.txt && cat <worktree>/.orchestrator/HEADLESS_DONE.txt
+```
+
+Fill in `<abs path>` and `<worktree>` with the actual worktree path before outputting.
+
+**e′. Real-time progress notifications via Monitor**
+
+After confirming the spawn lived (step d.5), set up live progress notifications:
+
+1. Load the Monitor tool if not already available: `ToolSearch("select:Monitor")`
+2. Invoke Monitor with `persistent: true` and the following watcher script:
+
+```bash
+WT="$WORKTREE_ABS"
+prev_c=0; prev_s=0
+
+while true; do
+  # Re-read PID each loop — Resume Chain (see below) may have replaced it.
+  HEADLESS_PID=$(cat $WT/.orchestrator/headless.pid 2>/dev/null || echo "")
+  if [ -f $WT/.orchestrator/state.json ]; then
+    # Use active_plan pointer to select the right task tree (Plan 1 vs Plan 2 nested).
+    AP=$(jq -r '.active_plan // "plan1"' $WT/.orchestrator/state.json 2>/dev/null)
+    if [ "$AP" = "plan2" ]; then TASKS_FILTER='.plan2_state.tasks'; else TASKS_FILTER='.tasks'; fi
+    cur_c=$(jq -r "[$TASKS_FILTER[]|select(.status==\"COMPLETE\")]|length" $WT/.orchestrator/state.json 2>/dev/null || echo 0)
+    cur_s=$(jq -r "[$TASKS_FILTER[]|select(.status==\"SKIPPED\")]|length" $WT/.orchestrator/state.json 2>/dev/null || echo 0)
+    if [ "$cur_c" != "$prev_c" ] || [ "$cur_s" != "$prev_s" ]; then
+      # P14: read explicit last_completed_task field (NOT JSON insertion order).
+      latest=$(jq -r '.last_completed_task as $t | if $t then
+                       (if .active_plan == "plan2" then .plan2_state.tasks[$t] else .tasks[$t] end)
+                       | "\($t) \(.status) risk=\(.risk) review_retries=\(.review_retries // 0)"
+                       else "(no task recorded yet)" end' \
+                $WT/.orchestrator/state.json 2>/dev/null)
+      echo "[$(date +%H:%M:%S)] [$AP] $latest | totals: ${cur_c}C ${cur_s}S"
+      prev_c=$cur_c; prev_s=$cur_s
+    fi
+  fi
+  test -f $WT/.orchestrator/HEADLESS_DONE.txt && echo "[$(date +%H:%M:%S)] DONE: $(head -1 $WT/.orchestrator/HEADLESS_DONE.txt)" && exit 0
+  test -f $WT/.orchestrator/HEADLESS_HALTED.txt && echo "[$(date +%H:%M:%S)] HALTED: $(head -1 $WT/.orchestrator/HEADLESS_HALTED.txt)" && exit 1
+  if [ -n "$HEADLESS_PID" ] && ! kill -0 $HEADLESS_PID 2>/dev/null; then
+    # Grace period for Resume Chain handoff — .pid is rewritten by the child.
+    sleep 2
+    NEW_PID=$(cat $WT/.orchestrator/headless.pid 2>/dev/null || echo "")
+    if [ "$NEW_PID" != "$HEADLESS_PID" ] && [ -n "$NEW_PID" ] && kill -0 $NEW_PID 2>/dev/null; then
+      echo "[$(date +%H:%M:%S)] CHAIN_HANDOFF: PID $HEADLESS_PID → $NEW_PID"
+    else
+      echo "[$(date +%H:%M:%S)] PROCESS_DIED unexpectedly (PID $HEADLESS_PID gone, no DONE/HALTED file)"
+      exit 2
+    fi
+  fi
+  sleep 30
+done
+```
+
+This emits one notification per task transition + final DONE/HALTED/DIED. Polling 30s; 다수-시간 실행에 persistent 필수. User sees task-level progress in chat without manual polling.
+
+**f. Exit cleanly.** Do NOT attempt to monitor the subprocess in the interactive context.
+
+### Resume Chain (for plans that exceed single subprocess context)
+
+**Trigger (deterministic, introspectable from state.json):**
+Chain ONLY when **both** are observed by the headless instance just after Phase Transition T3:
+- `state.compaction_points` reached **≥ 2** AND
+- count of tasks with `status == "COMPLETE"` is **≥ 8**
+
+Do NOT chain on token-count heuristics (not introspectable) or after every compaction point. If neither threshold is met, continue in the same subprocess.
+
+Procedure:
+
+1. Pre-generate a UUID for the resume session: `RESUME_UUID=$(uuidgen)`. Store in state.json `chain_resume.session_id`.
+2. Flush state: set `mode: "headless_chained"`, write `chain_resume: {session_id: $RESUME_UUID, from_task: <N>, parent_pid: <current PID>, chained_at: "<iso8601>"}`. Verify state.json is readable after write (per existing State-file write guardrail). If write fails: hard halt — do NOT spawn child.
+3. Write the chain prompt file:
+   ```bash
+   cat > "$WORKTREE_ABS/.orchestrator/headless_chain_<N>_prompt.txt" <<EOF
+   <<HEADLESS_KWS_ORCHESTRATOR>>
+   Continue from state.json. Worktree: $WORKTREE_ABS.
+   EOF
+   ```
+   (Note: use unquoted heredoc so `$WORKTREE_ABS` interpolates.)
+4. Spawn child AND atomically swap the PID file so the Monitor watcher (step e′) picks up the new process:
+   ```bash
+   nohup claude -p --session-id "$RESUME_UUID" --dangerously-skip-permissions \
+     --output-format stream-json \
+     "$(cat "$WORKTREE_ABS/.orchestrator/headless_chain_<N>_prompt.txt")" \
+     > "$WORKTREE_ABS/.orchestrator/headless_chain_<N>.jsonl" 2>&1 &
+   CHILD_PID=$!
+   disown
+   # Atomic-ish swap: write-then-rename
+   echo $CHILD_PID > "$WORKTREE_ABS/.orchestrator/headless.pid.new"
+   mv "$WORKTREE_ABS/.orchestrator/headless.pid.new" "$WORKTREE_ABS/.orchestrator/headless.pid"
+   sleep 3
+   kill -0 $CHILD_PID 2>/dev/null || { echo "FATAL: chain child died within 3s" >&2; exit 1; }
+   ```
+5. Parent exits. Child takes over. The Monitor watcher re-reads `headless.pid` each loop (see step e′) so the handoff is observed as `CHAIN_HANDOFF`, not `PROCESS_DIED`.
+
+This is a fallback — the primary expectation is that one headless subprocess completes a typical 10-25 task plan within its own context budget.
+
+---
+
 ## Phase 0: Setup
 
 0. **Check for existing state file (Resume Protocol):**
    Check if `<worktree_path>/.orchestrator/state.json` exists by attempting to read it.
    - If it does NOT exist: proceed normally to Step 1.
    - If it EXISTS and is valid JSON with `schema_version: "2"`:
-     - Load all fields. Do NOT overwrite.
-     - Ask yourself: does the git branch and worktree match?
-     - Set your internal tracking from state.json: `current_task`, `current_step_within_task`, `current_pre_task_sha`, per-task counters.
-     - Output to user: "Resuming from state file: Task <N>, Step <M>."
-     - Skip Phase 0 Steps 1–7 (setup already done). Go directly to Phase 1 at the recorded task/step.
+     - If `"mode": "headless_pending"`: freshly-spawned headless instance — Phase -1 already ran Steps 1, 2, 2.5 in interactive context and wrote minimal state. **MUST skip Phase 0 Steps 1, 2, 2.5** (clean check, worktree creation, safety hooks — re-running breaks: `git status` flags pre-written `.orchestrator/` and `.claude/settings.json` as dirty; `git worktree add` errors on the existing branch). PROCEED with Phase 0 Step 0.5 onward (`0.5 → 3 → 3.5 → 4 → 5 → 6 → 7`) to populate baseline, risk_levels, compaction_points, full task data. After Step 7, update `state.json.mode` from `"headless_pending"` to `"headless_running"` and write.
+     - If `"mode": "headless_running"`, `"headless_chained"`, `"plan2_running"`, `"interactive_session"`, or no mode field: Standard resume path — load all fields. Do NOT overwrite. Verify git branch and worktree match `state.branch` / `state.worktree`. Set internal tracking from state.json: `current_task`, `current_step_within_task`, `current_pre_task_sha`, per-task counters. Output: "Resuming from state file: Task <N>, Step <M> (mode=<value or null>)." Skip Phase 0 Steps 1–7 (setup already done). Go directly to Phase 1 at the recorded task/step.
    - If it EXISTS but is invalid (empty, malformed JSON):
      - Warn user: "State file exists but is corrupted at <path>. Recommend manual inspection before proceeding."
      - Do NOT overwrite. Halt.
@@ -131,6 +321,7 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
 
    - **When in doubt, be conservative:** If dependency analysis is unreliable for any segment, treat tasks as DEPENDENT and restrict compaction points to explicit plan phase boundaries. `compaction_points` must always include the index of the final task (or the final task before Phase 2). Fewer compaction points are safer than wrong ones.
    - **SKIPPED propagation:** If task X is SKIPPED, automatically mark all tasks with X in their deps as SKIPPED as well. Record each propagated SKIPPED with reason 'dependency task_X was SKIPPED'.
+   - **Compute `global_constraints.shared_files`:** Build a map of file → list of task IDs that touch it (from each task's `**Files:**` block). Keep only files referenced by ≥ 2 tasks. Write this to `state.global_constraints.shared_files` in Step 7. The Implementer template's *Shared files alert* reads from here — not from any external `analysis.json` (no such file exists in this skill).
 
 7. **Initialize state file:**
    ```bash
@@ -140,6 +331,8 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
    ```json
    {
      "schema_version": "2",
+     "mode": "<interactive_session | headless_running>",
+     "active_plan": "plan1",
      "plan": "<plan path>",
      "spec": "<spec path>",
      "branch": "<branch name>",
@@ -148,10 +341,16 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
      "baseline": {"passing": 0, "failing": 0},
      "risk_levels": {},
      "compaction_points": [],
+     "global_constraints": {
+       "shared_files": {}
+     },
      "tasks": {},
      "task_summaries": {},
+     "spec_edits": [],
      "low_tasks_pending_verification": [],
      "last_compaction_after_task": -1,
+     "last_completed_task": null,
+     "last_completed_at": null,
      "current_task": 0,
      "current_step_within_task": 1,
      "current_pre_task_sha": null,
@@ -161,6 +360,8 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
      "current_previous_issues": [],
      "phase_summaries": [],
      "phase_doc_commits": [],
+     "chain_resume": null,
+     "plan2_state": null,
      "timestamps": {
        "started_at": null,
        "completed_at": null
@@ -169,17 +370,36 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
    ```
    Fill in the actual values from steps 4–6.
 
-   Each task entry written into `tasks` later uses this format:
+   **Mode field rule (P13a):** `mode` MUST always be a string — never `null`. Set to `"interactive_session"` when not under Phase -1 self-spawn, `"headless_running"` immediately after Phase 0 completes under `headless_pending` resume.
+
+   **active_plan pointer (P13b):** `"plan1"` while executing the primary plan, `"plan2"` after Phase 2 Step -1 swap. Phase Transition / Phase 2 / Monitor scripts MUST use this pointer to select between `state.tasks` and `state.plan2_state.tasks` — see Phase 2 Step -1.
+
+   **plan2_state initialization (Previous #5):** If invocation includes `plan2=<path>`, populate at Phase 0 Step 7:
+   ```json
+   "plan2_state": {
+     "status": "queued",
+     "plan_path": "<plan2 path>",
+     "spec_path": "<spec2 path or same as plan2>",
+     "blocked_until": "task_<final-task-id-of-plan1>=COMPLETE",
+     "tasks": {},
+     "task_summaries": {}
+   }
+   ```
+   If no `plan2=`, leave as `null`.
+
+   Each task entry written into `tasks` (or `plan2_state.tasks`) later uses this format:
    ```json
    "task_N": {
      "status": "COMPLETE | SKIPPED | IN_PROGRESS",
      "risk": "<level>",
      "files": [],
+     "files_test": [],
      "commit": "<sha>",
      "pre_task_sha": "<sha>",
      "escalations": 0,
      "review_retries": 0,
      "verifier_retries": 0,
+     "spec_clarifications": 0,
      "timing": {
        "started": null,
        "implementer_done": null,
@@ -189,6 +409,10 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
      }
    }
    ```
+
+   `files_test` (Previous #3): list of test-file paths the Implementer touched, separated from `files` (the broader change set). Populated from Implementer's `FILES_TEST_CHANGED:` output. Phase Transition T1 pre-filter uses this — if empty AND `files` are all `.md`, the task is treated as docs-only.
+
+   `spec_clarifications` (P15): per-task counter for the spec-edit branch in Step 2, kept distinct from `review_retries` so spec issues don't burn the implementer-retry budget.
 
 ---
 
@@ -241,7 +465,34 @@ Build the Combined Reviewer prompt from the **Combined Reviewer Prompt Template*
 Dispatch as a **fresh Sonnet sub-agent**.
 
 **Result: PASS** → proceed to Step 3.  
-**Result: FAIL** — if `SPEC_STATUS` is FAIL OR `QUALITY_STATUS` is FAIL (or both):
+**Result: FAIL** — branch on the Reviewer's `SPEC_FAULT` field (added to the Combined Reviewer output schema; see template). The field is one of:
+
+- `spec_contradicts` — spec is internally inconsistent or contradicts the task; Implementer cannot satisfy both.
+- `implementer_omitted` — spec is clear; Implementer missed or misimplemented it.
+- `unclear` — spec is ambiguous but not contradictory; Implementer guessed.
+- `none` — used when `SPEC_STATUS: PASS` (no spec issue).
+
+Decision table:
+
+| SPEC_FAULT | QUALITY_STATUS | Action |
+|------------|----------------|--------|
+| `spec_contradicts` | any | **Spec-edit branch** (below). Do NOT count against `review_retries`. |
+| `unclear` | any | **Spec-edit branch** with plan-clarification only (no spec text change). Do NOT count against `review_retries`. |
+| `implementer_omitted` or `none` | PASS or FAIL | **Standard retry branch** (below). Counts against `review_retries`. |
+
+**Spec-edit branch (P15):**
+1. **Safety init:** if `state.spec_edits` is missing/null, set it to `[]` before append (handles legacy state.json).
+2. Increment `task.spec_clarifications` (NOT `review_retries`). If `spec_clarifications > 3` for this task: halt this task as SKIPPED with reason "exceeded spec-clarification limit"; record in state.json and continue per SKIPPED propagation.
+3. Orchestrator re-reads the affected spec section, makes the smallest possible edit, then re-reads the full spec.
+4. Append to `state.spec_edits`:
+   ```json
+   {"task": "<id>", "spec_line": <N>, "reason": "<one sentence>", "commit": "<sha>", "ts": "<iso8601>", "fault": "spec_contradicts|unclear"}
+   ```
+5. Identify incomplete downstream tasks that overlap the edited spec section (compare each task's `Files:` + spec excerpt range against the edited line range stored in your internal task index). For those tasks' next Implementer dispatch: inject a `## [SPEC UPDATED]` section with the changed spec text.
+6. Commit spec edit with message: `chore(<plan-slug>): clarify spec line <N> for task <id>`.
+7. Reset to pre-task SHA, re-dispatch Implementer from clean state. Return to Step 1.
+
+**Standard retry branch:**
 - Capture ISSUES (both SPEC_ISSUES and QUALITY_ISSUES) as `current_issues`. Increment `review_retries`.
 - If `review_retries` ≤ 3:
   - **Retry-learning:** compare `current_issues` against `previous_issues` by matching ISSUE_KEY (exact match on file:line:category). Mark any issue whose ISSUE_KEY appears in both as `[RECURRING — previous fix did not address this]`.
@@ -296,17 +547,22 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
    ```
    If found: re-dispatch Implementer with the artifact list under `## Fix Required`. Do NOT include `receiving-code-review`.
 
-2. **Update state file** — write this task's result into `tasks`:
+2. **Update state file** — write this task's result into the active task tree.
+
+   **Active tree selection (P13b):** if `state.active_plan == "plan2"`, write under `state.plan2_state.tasks.task_N`; otherwise under `state.tasks.task_N`. Same rule for `task_summaries`.
+
    ```json
    "task_N": {
      "status": "COMPLETE",
      "risk": "<level>",
      "files": ["<file1>", "..."],
+     "files_test": ["<test_file1>", "..."],
      "commit": "<sha>",
      "pre_task_sha": "<sha>",
      "escalations": 0,
      "review_retries": 0,
      "verifier_retries": 0,
+     "spec_clarifications": 0,
      "timing": {
        "started": "<iso8601>",
        "implementer_done": "<iso8601>",
@@ -317,7 +573,16 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
    }
    ```
 
-   Also write to `task_summaries.task_N`:
+   `files_test` comes from the Implementer's `FILES_TEST_CHANGED:` output (empty list if none).
+
+   **Also update top-level latest pointers (P14)** — required for Monitor and any consumer that needs "most recent task":
+   ```json
+   "last_completed_task": "task_N",
+   "last_completed_at":   "<iso8601>"
+   ```
+   Do NOT rely on JSON insertion order — this skill re-writes state.json many times and key order is unreliable (observed bug: a later spec-edit re-touch of an earlier task moved it to the end of insertion order, breaking `to_entries | last`).
+
+   Also write to `task_summaries.task_N` (same active-tree rule):
    ```json
    {
      "files": ["<file1>", "..."],
@@ -357,6 +622,13 @@ If `low_tasks_pending_verification` is non-empty: build the Verifier prompt from
 
 **Result: PASS** → clear `low_tasks_pending_verification` in the state file.  
 **Result: FAIL** → apply this recovery algorithm:
+0. **Pre-filter** (docs-only exclusion): For each task in `low_tasks_pending_verification`, read its entry under the active task tree (`state.tasks` or `state.plan2_state.tasks`). The task is docs-only if **either**:
+   - `files_test` is present and equals `[]`, **or**
+   - `files_test` is missing/null AND every entry in `files` ends with `.md` (heuristic fallback for legacy state.json).
+
+   Docs-only tasks: exclude from batch test mapping. Run `markdownlint` (if available) on the changed `.md` files; if markdownlint is unavailable, run a syntax sanity check via `git diff --check` on the same files. Failures here count toward the task's `verifier_retries`.
+
+   Tasks with test files proceed to the standard test-mapping algorithm below.
 1. From the batch FAIL output, identify which test files failed.
 2. Map each failing test file to the LOW task that last modified it (use `git log --oneline <worktree>` and task commit messages which include `Files:` lines).
 3. If two LOW tasks both modified the same file and that file's tests fail: treat the LATER task as the likely cause — reset only that task to its `pre_task_sha`, re-implement it, then re-run the full batch.
@@ -435,30 +707,32 @@ options:
 
 ### ENV_BLOCKER Triage Playbook
 
-Work through these steps in order before escalating to the user:
+See `references/escalation-playbook.md` (the ENV_BLOCKER Triage section). Read it at the moment an `ENV_BLOCKER` arrives. The same file also contains the canonical orchestrator response procedure and the document-update rules referenced above.
 
-**Step 1 — Can the test suite run at all?**
-Run the test command from Phase 0. If it fails with command-not-found, config error, or missing file (not a test failure): that is the environment issue — continue to step 2.
-
-**Step 2 — Is a dependency missing?**
-Check `package.json`/`pyproject.toml`/`Cargo.toml`/`build.gradle` against the installed state. If missing: run the install command (`npm install`, `pip install -e .`, `cargo fetch`, etc.) and retry the test command.
-
-**Step 3 — Is a path or configuration wrong?**
-Compare the error's file path against the worktree. If a symlink, path alias, or config reference is broken: fix it directly (create symlink, update config path) and retry.
-
-**Step 4 — Does the test require a running service?**
-Check if the failure mentions a DB, server, or external service. If needed and startable: start it and retry. If not startable in this environment: escalate to the user with `SKIPPED` rationale and full diagnostic output from each step.
-
-If none of the 4 steps resolve it: record this task as `SKIPPED` in the state file and report to the user with the full diagnostic log.
-
-**Rule:** You update all documents yourself. Never tell a sub-agent to update the spec or plan.  
-**Rule:** After updating any document, re-read it fully before building the next sub-agent prompt.
+**Rule (kept here for prominence):** You (Orchestrator) update all documents yourself. Never delegate spec or plan updates to a sub-agent. After updating any document, re-read it fully before building the next sub-agent prompt.
 
 ---
 
 ## Phase 2: Final Phase
 
 After all tasks are processed (COMPLETE or SKIPPED):
+
+### Step -1: Cross-Plan Trigger (only if multi-plan invocation)
+
+Precondition: `state.plan2_state` is a non-null object initialized at Phase 0 Step 7 with `status: "queued"` (see Phase 0 Step 7). If `plan2_state` is null, this whole step is skipped — proceed to Step 0.
+
+If `plan2_state.status == "queued"`:
+
+1. Verify Plan 1 Phase 2 Step 0 (LOW batch sweep) PASSED — check `state.low_tasks_pending_verification == []` AND no batch verifier result file in `<worktree>/.orchestrator/verifier_results/batch_final.json` has `status: FAIL`.
+2. Verify `plan2_state.blocked_until` condition is satisfied. The condition string takes the form `task_<id>=COMPLETE`; resolve by looking up `state.tasks[<id>].status`. If not COMPLETE: skip Step -1, proceed to Step 1 (Plan 1 Final Docs Updater only).
+3. If both pass, initialize Plan 2 orchestration:
+   - Swap the active-plan pointer: set `state.active_plan = "plan2"`. All Phase 1 / Phase Transition / Phase 2 logic from this point reads/writes through `state.plan2_state.tasks` and `state.plan2_state.task_summaries` — NOT top-level `state.tasks`. Plan 1 results remain intact under `state.tasks` (no archival move; the pointer is authoritative).
+   - Update `state.mode = "plan2_running"`. Update `state.plan = plan2_state.plan_path`, `state.spec = plan2_state.spec_path` for documentation; Phase 1 reads these.
+   - Reset transient counters: `current_task = 0` (matches Phase 0 indexing), `current_step_within_task = 1`, `current_pre_task_sha = null`, `current_review_retries = 0`, `current_verifier_retries = 0`, `current_escalation_count = 0`, `current_previous_issues = []`, `low_tasks_pending_verification = []`, `last_compaction_after_task = -1`, `last_completed_task = null`, `last_completed_at = null`.
+   - Re-run Phase 0 Steps 3, 3.5, 4, 6 against Plan 2 (read Plan 2 docs, ambiguity gate, risk assignment, dependency graph + `shared_files` for Plan 2). Write Plan 2's `risk_levels`, `compaction_points`, `global_constraints.shared_files` into `state.plan2_state` (NOT top-level — those belong to Plan 1).
+   - **Re-take baseline (P13b correction):** do NOT reuse Plan 1's baseline. Plan 1's changes are now in HEAD; that's Plan 2's starting state. Run Phase 0 Step 5 fresh — the `test_command` is unchanged but the passing/failing counts MUST be re-measured. Write to `state.plan2_state.baseline`.
+   - Set `state.plan2_state.status = "running"`.
+   - Begin Phase 1 Task 0 of Plan 2 (under the active-plan pointer).
 
 ### Step 0: LOW Batch Verifier Sweep
 
@@ -558,358 +832,27 @@ These rules are absolute. No exceptions.
 | **Plan structural validation is mandatory** | Step 0.5 runs before worktree creation. A plan without `### Task N:` headers halts immediately. A plan with missing Files blocks halts with a user question. Never skip this gate. |
 | **Ambiguity gate clears before risk assignment** | Step 3.5 must complete with zero unresolved ambiguities before Step 4 begins. Unclear task descriptions answered downstream cost one full sub-agent dispatch + reset cycle. |
 | **Out-of-repo paths halt execution** | Files blocks referencing paths outside repo root halt at Phase 0 Step 3.5. Never infer a correction — always ask the user. |
+| **Phase -1 self-spawn is the default** | Interactive invocations auto-detach unless `mode=interactive` is explicitly passed. The headless sentinel `<<HEADLESS_KWS_ORCHESTRATOR>>` distinguishes spawned instances. Self-spawn is gated by Phase 0 Steps 1, 2, 2.5 completing successfully — failures abort the spawn and surface to the user. |
+| **`mode` field is always a string** | `state.mode ∈ {interactive_session, headless_pending, headless_running, headless_chained, plan2_running}`. Never null. Resume protocol (Phase 0 Step 0) dispatches on this value — null breaks the headless_pending branch. |
+| **`active_plan` pointer is authoritative for plan selection** | Phase 1 / Phase Transition / Phase 2 / Monitor scripts ALWAYS dereference `state.active_plan` (`"plan1"` → `state.tasks`, `"plan2"` → `state.plan2_state.tasks`). Never assume top-level `state.tasks` is the active tree. |
+| **`last_completed_task` is the only authoritative "most recent" field** | Phase 1 Step 4 Agent Cleanup writes it. Monitor and any post-hoc query MUST use it — never `to_entries \| last` over `tasks` (key insertion order is mutated by re-writes; this caused a real observed bug). |
+| **Spec-edit branch uses `spec_clarifications`, not `review_retries`** | When `SPEC_FAULT ∈ {spec_contradicts, unclear}`, increment `spec_clarifications` (max 3 per task). Implementer retry budget stays intact for actual implementer mistakes. |
+| **Resume Chain trigger is deterministic** | Chain only when `compaction_points reached ≥ 2` AND `completed tasks ≥ 8`. No token-count heuristics — not introspectable. Chain procedure MUST update `headless.pid` atomically so Monitor sees `CHAIN_HANDOFF`, not `PROCESS_DIED`. |
+| **`files_test` discrimination for batch verifier** | Implementer outputs `FILES_TEST_CHANGED` separately from `FILES_CHANGED`. T1 batch pre-filter uses it (or `.md`-only heuristic for legacy state) to route docs-only tasks to lint instead of test runs. |
+| **Plan 2 re-takes baseline** | When Phase 2 Step -1 swaps `active_plan` to `"plan2"`, run Phase 0 Step 5 fresh against current HEAD (Plan 1's changes are now Plan 2's starting point). Never reuse Plan 1's baseline as Plan 2's regression reference. |
 
 ---
 
-## Implementer Prompt Template
-
-When dispatching the Implementer, build this prompt by filling in `{placeholders}`:
-
-````
-You are an Implementer sub-agent running on Sonnet. Implement exactly one task. Do not do anything outside the task's scope.
-
-## Required Skills
-
-1. **If your task involves writing or modifying executable code with test coverage:** invoke `Skill("superpowers:test-driven-development")` before writing any implementation code. Follow its workflow: write the failing test first, then implement until it passes.
-
-2. **If you hit any unexpected error, broken import, or environment issue:** invoke `Skill("superpowers:systematic-debugging")` before escalating. Only send ESCALATE if the debugging skill cannot resolve it.
-
-3. **Before reporting `STATUS: DONE`:** invoke `Skill("superpowers:verification-before-completion")` and run through its checklist. Do not report DONE until this check passes.
-
-{IF this is a re-dispatch after Combined Reviewer FAIL — not after Verifier FAIL or cleanup artifacts:}
-4. **At the start of this re-dispatch:** invoke `Skill("superpowers:receiving-code-review")` to address the review feedback systematically.
-
-## Your Task
-
-{full text of the task from the plan — copy the entire ### Task N: section verbatim}
-
-## Spec Requirement (governs this task)
-
-{relevant excerpt from the design spec — copy the section(s) that apply to this task}
-
-## Files to Touch
-
-{list from the task's Files: block — create / modify / test}
-
-## Context from Previous Tasks
-
-Read `{worktree_path}/.orchestrator/state.json`. Use the `task_summaries` field for the tasks listed in your dependency chain (task IDs in `{deps_for_this_task}`). Focus on `for_next_tasks` — that is what upstream tasks explicitly pass down. Do NOT look at raw git log for context — use only the state file summary.
-
-{IF this is a re-dispatch after review failure, append:}
-## Fix Required
-
-The previous implementation had these issues. Address ALL of them:
-{issues list — RECURRING issues are marked "[RECURRING — your previous fix did not address this]"}
-
-## Instructions
-
-1. Implement exactly what the task says. Nothing more, nothing outside scope.
-2. Follow the spec requirement above strictly.
-3. Before committing: no debug prints, console.log, TODO, unused imports. Names match spec and plan.
-4. Commit format:
-   ```
-   <type>(<scope>): <description>
-
-   Task: <task id>
-   Risk: {risk level}
-   Files: <comma-separated list>
-   ```
-## Output Format (required — do not deviate)
-
-STATUS: DONE | ESCALATE
-SUMMARY: <≤3 sentences>
-ISSUES:
-  - <issue encountered, or "none">
-FILES_CHANGED:
-  - <exact file path, one per line>
-COMMIT: <full commit hash>
-
---- (if ESCALATE, also include:)
-
-ESCALATE
-type: SPEC_BLOCKER | ENV_BLOCKER | AMBIGUITY
-task: <task id>
-blocker: <one sentence — what is impossible>
-attempted: <what you tried>
-cause: <suspected root cause>
-options:
-  A: <concrete option>
-  B: <concrete option>
-  C: <concrete option>
-````
-
----
-
-## Combined Reviewer Prompt Template
-
-When dispatching the Combined Reviewer, build this prompt by filling in `{placeholders}`:
-
-````
-You are a Combined Reviewer sub-agent running on Sonnet. Perform spec compliance review AND code quality review in a single pass. Do not implement anything.
-
-## Spec Requirement (governs this task)
-
-{exact spec requirement text — same excerpt given to the Implementer}
-
-## Files Changed
-
-{list from the implementer's FILES_CHANGED: output — one per line}
-
-## Diff (read this — do not re-run git diff yourself)
-
-```diff
-{inline git diff output injected by orchestrator}
-```
-
-{IF review_retries > 0:}
-## Issues from Previous Review
-
-The Implementer was already given these issues. Verify whether each was addressed:
-{previous_issues list}
-
-## Instructions
-
-You MAY use the Read tool to inspect any file beyond the provided diff — for example, to verify codebase conventions, check for duplicate functions, confirm caller updates, or check barrel/index registrations. Do NOT re-run git diff yourself (the orchestrator already injected the correct diff above).
-
-**Part 1 — Spec Compliance:**
-1. For each requirement in the spec excerpt: verify the implementation satisfies it exactly.
-2. Quote the spec and cite file:line when something is missing or wrong.
-3. Do NOT flag: code style, naming preferences, performance, features outside spec scope.
-
-**Part 2 — Code Quality:**
-Review only these categories:
-1. **Clarity** — naming, structure, readability. Would a new engineer understand this?
-2. **Conventions** — does the code match the patterns already in the codebase?
-3. **Security** — injection risks, unvalidated external input, exposed secrets, unsafe eval
-4. **Unnecessary complexity** — over-engineering, premature abstraction, YAGNI violations
-5. **Dead code** — unused imports, unreachable branches, commented-out blocks
-
-Do NOT flag: spec compliance (Part 1 covers it), style preferences without clear rationale, missing features not in this task, micro-optimizations.
-
-If inputs are insufficient (files missing, diff empty, spec excerpt blank): output `SPEC_STATUS: FAIL` and `QUALITY_STATUS: FAIL` with `SPEC_ISSUES: review inputs incomplete — <what is missing>`.
-
-## Output Format (required — do not deviate)
-
-SPEC_STATUS: PASS | FAIL
-QUALITY_STATUS: PASS | FAIL
-SUMMARY: <≤3 sentences>
-SPEC_ISSUES:
-  - ISSUE_KEY: <file>:<line>:<category> | <description> or "none"
-QUALITY_ISSUES:
-  - ISSUE_KEY: <file>:<line>:<category> | <description> or "none"
-FILES_REVIEWED:
-  - <exact file path, one per line>
-````
-
----
-
-## Verifier Prompt Template
-
-When dispatching the Verifier (MID/HIGH tasks or LOW BATCH), build this prompt by filling in `{placeholders}`:
-
-````
-You are a Verifier sub-agent running on Sonnet. Run tests calibrated to the risk level provided. Do not modify any implementation files.
-
-## Risk Level: {MID | HIGH | LOW (BATCH)}
-
-## Files Changed
-
-{list of changed files — for LOW BATCH, all files from accumulated LOW tasks since last compaction point}
-
-## Baseline (do not introduce new failures beyond this)
-
-Passing: {N} | Failing: {M}
-
-## Test Command
-
-`{test_command}` — use this exact command. Do not re-derive.
-
-## Acceptance Criteria
-
-{acceptance_criteria — executable shell commands from the task's ## Acceptance Criteria block, or "none provided"}
-
-If Acceptance Criteria are provided: run each command and confirm all exit 0. These are the primary PASS conditions.
-If not provided: use the risk-tiered test instructions below as PASS conditions.
-
-## Test Instructions
-
-**If MID:** Run unit tests + integration tests for all touched modules.
-- Run `{test_command}` scoped to changed files, plus integration tests for affected modules.
-- Pass condition: all pass, no new failures vs baseline.
-
-**If HIGH:** Run the full test suite.
-- Run: `{test_command}` (full suite).
-- Pass condition: all pass, no regressions from baseline.
-
-**If LOW (BATCH):** Run unit tests for all changed files combined.
-- Identify test files covering each changed file (look for `test_<filename>` or `<filename>_test` patterns).
-- Run: `{test_command}` scoped to those test files.
-- Pass condition: all pass, no new failures vs baseline.
-
-## If Tests Fail — Debugging Checklist
-
-Before escalating, work through these steps in order:
-1. Re-run the failing test in isolation — confirm it fails consistently (not flaky)
-2. Read the full stack trace — identify the exact file:line:error
-3. Is it a real implementation bug, environment issue, or test setup problem?
-4. If environment issue: check for missing dependencies, broken paths, or services not running
-5. If missing dep: run the install command (`npm install`, `pip install -e .`, etc.) and retry
-6. Only ESCALATE if you cannot resolve with available information
-
-**Before reporting STATUS:** confirm every item for your risk level is met. Do not report PASS until confirmed.
-
-## Result File
-
-Write your structured result to: `{result_json_path}`
-
-JSON schema (write this exact structure):
-```json
-{
-  "status": "PASS",
-  "summary": "<≤3 sentences>",
-  "risk_level": "<as provided>",
-  "tests_run": ["<command1>"],
-  "results": [{"suite": "<name>", "status": "PASS", "count": 0, "failures": 0}],
-  "issues": ["none"],
-  "escalation": null
-}
-```
-
-If FAIL: set `"status": "FAIL"` and populate `issues` with failure descriptions.
-If ESCALATE: set `"status": "ESCALATE"` and populate `escalation`:
-```json
-"escalation": {
-  "type": "ENV_BLOCKER",
-  "task": "<task id or 'batch'>",
-  "blocker": "<one sentence>",
-  "attempted": "<commands run>",
-  "cause": "<suspected root cause>",
-  "options": {"A": "<>", "B": "<>", "C": "<>"}
-}
-```
-
-After writing the file, print its contents to stdout for logging.
-````
-
----
-
-## Phase Docs Updater Prompt Template
-
-When dispatching the Phase Docs Updater at a compaction point, build this prompt by filling in `{placeholders}`:
-
-````
-You are a Phase Docs Updater sub-agent running on Sonnet. Update documentation to reflect changes made during this phase. Do not change implementation files.
-
-## Files Changed in This Phase
-
-{list of implementation files changed across tasks in this phase — from orchestrator's state file}
-
-## Docs Scope
-
-{docs_scope list provided by orchestrator — e.g.:
-- README.md
-- CHANGELOG.md
-- docs/operator-runbook.md}
-
-## Instructions
-
-For each doc file in scope:
-1. Read the file first.
-2. Identify sections affected by the changes listed above.
-3. Update only affected sections — do not rewrite unrelated content.
-
-Guidance per doc type:
-- **README.md**: Update feature descriptions, usage examples, configuration tables.
-- **CHANGELOG.md**: Add entry under `## Unreleased` → `### Changed` with a user-facing description.
-- **Operator/runbook docs**: Update operational steps, config references, environment variable lists.
-- **Prompt files**: Update doc comments or usage notes if instruction files changed.
-
-## Before Committing — Verification Checklist
-
-- Every file in the docs scope was read and checked
-- Only affected sections were updated (no unrelated rewrites)
-- Commit message follows the format below
-
-Commit all doc changes together:
-```bash
-git add <doc files>
-git commit -m "docs(<phase-name>): update documentation after phase implementation"
-```
-
-## Result File
-
-Write your structured result to: `{result_json_path}`
-
-JSON schema:
-```json
-{
-  "status": "DONE",
-  "summary": "<≤2 sentences>",
-  "files_updated": [{"path": "<file path>", "change": "<one sentence>"}],
-  "commit": "<full commit hash>"
-}
-```
-
-If ESCALATE: set `"status": "ESCALATE"` and add `"escalation": {"blocker": "<one sentence>"}`.
-After writing the file, print its contents to stdout for logging.
-````
-
----
-
-## Final Docs Updater Prompt Template
-
-When dispatching the Final Docs Updater (Phase 2), build this prompt by filling in `{placeholders}`:
-
-````
-You are a Final Docs Updater sub-agent running on Sonnet. Ensure top-level documentation captures the complete implementation run. Do not change implementation files.
-
-## All Files Changed During This Run
-
-{complete list of implementation files changed across all tasks — from orchestrator's state file}
-
-## Docs Scope
-
-{user-provided or default: README.md, CHANGELOG.md, any file matching docs/*runbook* or docs/*operator*}
-
-## Instructions
-
-For each doc file in scope:
-1. Read the file.
-2. Identify gaps — sections that reference the changed features but were not updated by phase updaters.
-3. Update only the gaps. Do not duplicate changes already made by phase updaters.
-
-Guidance per doc type:
-- **README.md**: Verify the feature overview is complete and accurate.
-- **CHANGELOG.md**: Verify `## Unreleased` captures all user-visible changes from this run.
-- **Operator/runbook docs**: Verify all env/config changes are documented.
-- **Prompt files**: Verify usage notes reflect all instruction changes.
-
-## Before Committing — Verification Checklist
-
-- Every file in the docs scope was read and reviewed for gaps
-- No content duplicated from phase updaters
-- Commit message follows the format below
-
-Commit all changes:
-```bash
-git add <doc files>
-git commit -m "docs: finalize documentation after full implementation run"
-```
-
-## Result File
-
-Write your structured result to: `{result_json_path}`
-
-JSON schema:
-```json
-{
-  "status": "DONE",
-  "summary": "<≤2 sentences>",
-  "files_updated": [{"path": "<file path>", "change": "<one sentence>"}],
-  "commit": "<full commit hash>"
-}
-```
-
-If ESCALATE: set `"status": "ESCALATE"` and add `"escalation": {"blocker": "<one sentence>"}`.
-After writing the file, print its contents to stdout for logging.
-````
+## Sub-agent Prompt Templates
+
+The Implementer, Combined Reviewer, Verifier, and Docs Updater prompt templates live in `references/`. Read the relevant file via the Read tool **at the moment of dispatch** — do NOT preload them.
+
+| Step | Template file | Dispatch mode |
+|------|---------------|---------------|
+| Phase 1 Step 1 — Implementer | `references/implementer-prompt.md` | Agent tool (fresh Sonnet) |
+| Phase 1 Step 2 — Combined Reviewer | `references/reviewer-prompt.md` | Agent tool (fresh Sonnet) |
+| Phase 1 Step 3 / Transition T1 — Verifier | `references/verifier-prompt.md` | Headless `claude -p` |
+| Transition T2 — Phase Docs Updater | `references/docs-updater-prompts.md` (Phase section) | Headless `claude -p` |
+| Phase 2 Step 1 — Final Docs Updater | `references/docs-updater-prompts.md` (Final section) | Headless `claude -p` |
+
+Each file is a self-contained prompt body with `{placeholders}` to fill from the current task context. The dispatch mechanics (Agent vs. headless), result-file paths, and ESCALATE handling are defined in the SKILL.md phases above — the reference files do not repeat that logic.
