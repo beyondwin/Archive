@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# PostToolUse hook — debug-artifact scan.
+#
+# Materialized into <worktree_path>/.orchestrator/hooks/scan-debug-artifacts.sh
+# at Phase 0 Step 2.5. Wired in <worktree_path>/.claude/settings.json under
+# hooks.PostToolUse with matcher "Edit|Write".
+#
+# Inputs (provided by Claude Code via env):
+#   CLAUDE_TOOL_NAME       — "Edit" | "Write" | ...
+#   CLAUDE_TOOL_INPUT      — JSON of the tool input
+#   CLAUDE_TOOL_RESULT     — JSON of the tool result (unused here)
+#
+# Behavior:
+#   - Only acts on Edit/Write of files inside this worktree.
+#   - Scans the new content for forbidden tokens on added lines only:
+#       console.log | TODO | FIXME | debugger
+#     anywhere outside string literals (single/double-quoted or fenced code).
+#   - On hit: exit 2 with a structured rejection message on stderr.
+#     Claude Code surfaces stderr to the agent which auto-retries.
+#   - Allow-list:
+#       lines inside "...", '...', `...`, or ```fenced``` are exempt.
+#       lines whose path matches **/CHANGELOG.md or **/docs/** are exempt.
+#       lines whose first non-space char is a comment-marker for plain markdown
+#       (<!--) are exempt — markdown TODO callouts are intentional.
+
+set -euo pipefail
+
+# Only run for Edit/Write.
+case "${CLAUDE_TOOL_NAME:-}" in
+  Edit|Write) ;;
+  *) exit 0 ;;
+esac
+
+# Extract path + new content from CLAUDE_TOOL_INPUT (best-effort jq).
+INPUT="${CLAUDE_TOOL_INPUT:-{}}"
+PATH_FIELD="$(printf '%s' "$INPUT" | jq -r '.file_path // .path // empty' 2>/dev/null || true)"
+NEW_CONTENT="$(printf '%s' "$INPUT" | jq -r '.new_string // .content // empty' 2>/dev/null || true)"
+
+# Bail if we couldn't parse.
+[ -z "$PATH_FIELD" ] && exit 0
+[ -z "$NEW_CONTENT" ] && exit 0
+
+# Allow-list paths.
+case "$PATH_FIELD" in
+  *CHANGELOG.md|*/docs/*|*.md.template|*/.orchestrator/*) exit 0 ;;
+esac
+
+# Scan added content. Strip strings and fenced blocks first.
+SCRUBBED="$(printf '%s\n' "$NEW_CONTENT" \
+  | sed -E 's/"[^"]*"//g; s/'\''[^'\'']*'\''//g; s/`[^`]*`//g')"
+
+if printf '%s\n' "$SCRUBBED" | grep -qE '(^|[^A-Za-z_])(console\.log|debugger)([^A-Za-z_]|$)|(^|\s)(TODO|FIXME)(\s|:)'; then
+  echo "BLOCKED: debug artifact (console.log|debugger|TODO|FIXME) in $PATH_FIELD." >&2
+  echo "If intentional (string literal, docstring, deliberate TODO in doc), either move it into a string/comment in the appropriate format, or skip via a state.json escape recorded by the orchestrator." >&2
+  exit 2
+fi
+
+exit 0

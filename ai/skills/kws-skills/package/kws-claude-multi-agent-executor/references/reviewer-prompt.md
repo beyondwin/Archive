@@ -49,10 +49,38 @@ Review only these categories:
 
 Do NOT flag: spec compliance (Part 1 covers it), style preferences without clear rationale, missing features not in this task, micro-optimizations.
 
-If inputs are insufficient (files missing, diff empty, spec excerpt blank): output `SPEC_STATUS: FAIL` and `QUALITY_STATUS: FAIL` with `SPEC_ISSUES: review inputs incomplete — <what is missing>`.
+If inputs are insufficient (files missing, diff empty, spec excerpt blank): output `SPEC_STATUS: FAIL` and `QUALITY_STATUS: FAIL` with `SPEC_ISSUES: review inputs incomplete — <what is missing>` and both scores 0.0.
+
+## Scoring (P4 — Generator-Verifier 0.0–1.0)
+
+For each axis, emit one score quantized to 1 decimal place (0.0, 0.1, ..., 1.0). Anchors:
+
+**SPEC_SCORE** — alignment between implementation and spec requirement:
+- 1.0 — every spec requirement satisfied exactly; no missing or extra behavior
+- 0.9 — spec satisfied; minor naming/structure quibble that does not violate spec
+- 0.85 — borderline PASS (threshold); spec satisfied with one small omission that does not break a downstream contract
+- 0.7 — spec mostly satisfied but one named contract subtly diverges (signature, naming, error type)
+- 0.5 — spec partially satisfied; a stated requirement is missing
+- 0.3 — spec largely unmet; multiple stated requirements missing
+- 0.0 — implementation contradicts spec or is unreviewable
+
+**QUALITY_SCORE** — code quality (clarity / conventions / security / unnecessary-complexity / dead-code) along the Part 2 axes above:
+- 0.95 — textbook quality; reads cleanly, matches codebase conventions, no dead code, no security smells
+- 0.75 — ships but has one or two minor issues (naming drift, small dead branch, light over-engineering)
+- 0.6 — borderline; needs follow-up but not blocking
+- 0.4 — significant problems (over-engineered, unclear, or potential security smell)
+- 0.0 — unfit; major rewrite needed
+
+**SPEC_STATUS / QUALITY_STATUS — derive mechanically:**
+- `SPEC_STATUS: PASS` iff `SPEC_SCORE >= 0.85`, else `FAIL`.
+- `QUALITY_STATUS: PASS` iff `QUALITY_SCORE >= 0.75`, else `FAIL`.
+
+These thresholds are calibrated against the eval suite (P6). Do NOT change them in this prompt.
 
 ## Output Format (required — do not deviate)
 
+SPEC_SCORE: <0.0–1.0, 1-decimal quantized>
+QUALITY_SCORE: <0.0–1.0, 1-decimal quantized>
 SPEC_STATUS: PASS | FAIL
 QUALITY_STATUS: PASS | FAIL
 SPEC_FAULT: spec_contradicts | unclear | implementer_omitted | none

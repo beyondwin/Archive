@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# SubagentStop hook — Implementer output sanity check.
+#
+# Materialized into <worktree_path>/.orchestrator/hooks/check-implementer-output.sh
+# at Phase 0 Step 2.5. Wired in <worktree_path>/.claude/settings.json under
+# hooks.SubagentStop.
+#
+# Inputs (provided by Claude Code):
+#   CLAUDE_TOOL_RESULT  — final assistant message from the sub-agent (text)
+#
+# Behavior:
+#   - Only applies to Implementer dispatches. We detect this by presence of
+#     a STATUS line in the sub-agent output (Reviewer/Verifier/Docs use other
+#     channels via headless result files).
+#   - Verifies the output contains the required fields:
+#       STATUS:                (DONE or ESCALATE)
+#       SUMMARY:
+#       FILES_CHANGED:
+#       FILES_TEST_CHANGED:
+#       COMMIT:                (only required when STATUS is DONE)
+#   - On any missing field → exit 2 with diagnostic.
+
+set -euo pipefail
+
+RESULT="${CLAUDE_TOOL_RESULT:-}"
+[ -z "$RESULT" ] && exit 0
+
+# Skip if this clearly isn't an Implementer sub-agent (no STATUS line).
+if ! printf '%s' "$RESULT" | grep -qE '^STATUS:[[:space:]]*(DONE|ESCALATE)'; then
+  exit 0
+fi
+
+STATUS_LINE="$(printf '%s' "$RESULT" | grep -E '^STATUS:' | head -1 || true)"
+STATUS="$(printf '%s' "$STATUS_LINE" | sed -E 's/^STATUS:[[:space:]]*//;s/[[:space:]].*$//')"
+
+missing=()
+for field in SUMMARY FILES_CHANGED FILES_TEST_CHANGED; do
+  if ! printf '%s' "$RESULT" | grep -qE "^${field}:"; then
+    missing+=("$field")
+  fi
+done
+
+if [ "$STATUS" = "DONE" ]; then
+  if ! printf '%s' "$RESULT" | grep -qE '^COMMIT:'; then
+    missing+=("COMMIT")
+  fi
+fi
+
+if [ "$STATUS" = "ESCALATE" ]; then
+  for field in type task blocker; do
+    if ! printf '%s' "$RESULT" | grep -qE "^[[:space:]]*${field}:"; then
+      missing+=("ESCALATE.${field}")
+    fi
+  done
+fi
+
+if [ ${#missing[@]} -ne 0 ]; then
+  echo "BLOCKED: Implementer output is missing required field(s): ${missing[*]}." >&2
+  echo "Re-emit the full Output Format block with all fields populated." >&2
+  exit 2
+fi
+
+exit 0
