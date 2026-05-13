@@ -241,7 +241,7 @@ def ensure_run_dir_with_meta(log_root: Path, run_id: str, session_id: str | None
     return rd
 
 
-SKILL_VERSION = "2.10.0"
+SKILL_VERSION = "2.10.2"
 
 
 # ---------- subcommands ----------

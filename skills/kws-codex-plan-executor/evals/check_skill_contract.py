@@ -79,6 +79,18 @@ def main() -> int:
         )
         and all(token in headless for token in ("using-superpowers", "test-driven-development"))
         and all(token in eval_run for token in ("using-superpowers", "test-driven-development")),
+        "tdd_scope_not_headless_only": all(
+            token in (text + execution + template + headless)
+            for token in (
+                "not a headless-only rule",
+                "interactive and headless",
+                "RED evidence",
+            )
+        ),
+        "interactive_execution_bootstraps_superpowers_tdd": all(
+            token in execution
+            for token in ("using-superpowers", "test-driven-development", "RED evidence")
+        ),
         "headless_target_avoids_nested_exec": bool(
             re.search(r"Do not launch\s+another nested `codex exec`", headless)
         )

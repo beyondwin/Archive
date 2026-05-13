@@ -292,15 +292,20 @@ For each task, compute a complexity score from:
 
 Quantize to 3 buckets: SMALL / MEDIUM / LARGE.
 
+> Historical note: this v2.5 design softened TDD for SMALL tasks. That policy
+> was superseded in v2.10.2; current Implementer prompts require
+> `superpowers:test-driven-development` for executable implementation work
+> across SMALL / MEDIUM / LARGE tasks.
+
 | Bucket | Heuristic | Implementer guidance |
 |--------|-----------|----------------------|
-| SMALL | 1 file + <30 LOC + risk LOW | "aim for ≤8 tool calls; skip TDD for trivial renames/aliases unless task explicitly says test required" |
-| MEDIUM | 2-3 files + <150 LOC | "aim for 10-25 tool calls; TDD recommended" |
-| LARGE | 4+ files OR risk HIGH | "aim for 25-60 tool calls; TDD required; consider splitting if you exceed 60" |
+| SMALL | 1 file + <30 LOC + risk LOW | Historical v2.5 guidance allowed trivial rename/alias tasks to bypass TDD; superseded by v2.10.2. |
+| MEDIUM | 2-3 files + <150 LOC | Historical v2.5 guidance made TDD advisory; superseded by v2.10.2. |
+| LARGE | 4+ files OR risk HIGH | Historical v2.5 guidance required TDD; current policy applies it across all executable implementation work. |
 
 **Prompt injection:**
 
-`{task_size}` and `{effort_guidance}` placeholders added to `references/implementer-prompt.md`. The Required Skills section's TDD trigger softens for SMALL tasks: "*if your task involves writing new logic with test coverage AND task_size is MEDIUM or LARGE*".
+`{task_size}` and `{effort_guidance}` placeholders added to `references/implementer-prompt.md`. Historical v2.5 text softened the Required Skills TDD trigger for SMALL tasks; v2.10.2 supersedes that policy and requires TDD for executable implementation work across all task sizes.
 
 ### Implementation
 

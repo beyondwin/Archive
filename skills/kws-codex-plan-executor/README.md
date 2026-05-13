@@ -12,7 +12,7 @@ read [docs/user-guide.ko.md](docs/user-guide.ko.md).
 
 ## Current Contract
 
-- Skill version: `1.7.0`
+- Skill version: `1.7.1`
 - Execution worktree: mandatory dedicated non-conflicting `codex/...` git
   worktree for `interactive` and `headless`
 - Primary state: `.codex-orchestrator/runs/<run_id>/state.json`

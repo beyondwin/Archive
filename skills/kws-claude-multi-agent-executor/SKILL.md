@@ -2,7 +2,7 @@
 name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation. NOTE — single-session execution is preferable for ≤5-task plans or plans with deep cross-task coupling (multi-agent overhead exceeds the parallelism win).
 metadata:
-  version: "2.10.1"
+  version: "2.10.2"
   updated_at: "2026-05-14"
 ---
 
@@ -414,9 +414,9 @@ This is a fallback — the primary expectation is that one headless subprocess c
      Heuristic biases upward — under-instructing is worse than mild over-engineering. Record per-task: `state.task_complexity.task_N = "SMALL" | "MEDIUM" | "LARGE"`.
 
      Effort-guidance strings (the Implementer prompt at Phase 1 Step 1 injects one of these into `{effort_guidance}`):
-     - SMALL: `aim for ≤8 tool calls; skip TDD for trivial renames/aliases unless task explicitly says test required; do not add abstractions, helpers, or refactors`
-     - MEDIUM: `aim for 10–25 tool calls; TDD recommended for new behavior; refactor only what the task touches`
-     - LARGE: `aim for 25–60 tool calls; TDD required for any new logic; if you exceed 60 tool calls without DONE, ESCALATE with AMBIGUITY rather than continue`
+     - SMALL: `aim for ≤8 tool calls; TDD is still required for executable code or behavior; docs/config/generated-only tasks may mark TDD not applicable; do not add abstractions, helpers, or refactors`
+     - MEDIUM: `aim for 10–25 tool calls; use TDD for executable code or behavior; refactor only what the task touches`
+     - LARGE: `aim for 25–60 tool calls; use TDD for executable code or behavior; if you exceed 60 tool calls without DONE, ESCALATE with AMBIGUITY rather than continue`
 
    - **Compute `execution_plan` — waves + parallel groups (P2 — parallel dispatch):**
 
@@ -1247,7 +1247,7 @@ These rules are absolute. No exceptions.
 | **PostToolUse hook is the only debug-artifact gate** | `<worktree>/.orchestrator/hooks/scan-debug-artifacts.sh` (materialized at Phase 0 Step 2.5) is runtime-enforced. The orchestrator does NOT run a parallel manual grep — that duplication was removed in v2.5.0 because prose discipline silently bypassed. If the hook is disabled or missing, fix it; do not re-introduce the manual scan. |
 | **SubagentStop hook validates Implementer output structure** | `<worktree>/.orchestrator/hooks/check-implementer-output.sh` exits 2 if STATUS / SUMMARY / FILES_CHANGED / FILES_TEST_CHANGED (or COMMIT on DONE, ESCALATE fields on ESCALATE) are missing. Sub-agent auto-retries; no orchestrator action needed. |
 | **Plan Reviewer is mechanical, not subjective** | Phase 0 Step 6.5 audits the plan/spec against a fixed rubric (missing Files, missing AC on MID/HIGH, contract mismatch, dep cycles, out-of-repo paths). Style/architecture suggestions are out of scope and MUST be ignored if the sub-agent returns them. BLOCKER issues halt with a batched user question; WARN issues are recorded and bypass. Skip the entire step via `preflight=off`. |
-| **Effort scaling is heuristic and biased upward** | Phase 0 Step 6 assigns SMALL/MEDIUM/LARGE per task. SMALL skips TDD only for trivial renames; MEDIUM/LARGE require TDD. Mis-estimation is acceptable as mild over-engineering; never silently under-instruct a HIGH-risk task (risk_mult forces LARGE). |
+| **Effort scaling is heuristic and biased upward** | Phase 0 Step 6 assigns SMALL/MEDIUM/LARGE per task for tool budget and review/verification routing only. Task size is not a TDD skip condition: any Implementer task that writes or modifies executable code or behavior must use `superpowers:test-driven-development` and report RED evidence before implementation, whether SMALL, MEDIUM, or LARGE. Docs-only, config-only, or generated-only tasks may report TDD as not applicable. Mis-estimation is acceptable as mild over-engineering; never silently under-instruct a HIGH-risk task (risk_mult forces LARGE). |
 | **Quality scoring thresholds are not user-configurable** | SPEC threshold 0.85, QUALITY threshold 0.75, WARN floors 0.70/0.60 (P4). Calibrated against the P6 eval suite. Re-tune only when re-calibrating against a new Claude version, not per-run. |
 | **WARN tier does not retry** | A WARN-tier review proceeds to Verifier with warnings recorded in `task_summaries.task_N.warnings`. WARN exists to prevent burning the 3-retry budget on borderline work. Three consecutive WARN tasks → surface at next compaction (signal, not halt). |
 | **`quality_trend` is rolling, max 10** | Phase 1 Step 2 appends `quality_score` to `state.quality_trend` (drop oldest at length 10). Mean-of-last-5 < mean-of-first-5 by > 0.10 → surface at next compaction. Plan 2 has its own buffer at `state.plan2_state.quality_trend`. |
@@ -1289,3 +1289,5 @@ The Implementer, Combined Reviewer, Verifier, and Docs Updater prompt templates 
 | Phase 2 Step 1 — Final Docs Updater | `references/docs-updater-prompts.md` (Final section) | Headless `claude -p` |
 
 Each file is a self-contained prompt body with `{placeholders}` to fill from the current task context. The dispatch mechanics (Agent vs. headless), result-file paths, and ESCALATE handling are defined in the SKILL.md phases above — the reference files do not repeat that logic.
+
+All sub-agent prompt templates must bootstrap `Skill("superpowers:using-superpowers")` as their first action. Implementers must additionally invoke `Skill("superpowers:test-driven-development")` for executable implementation work before writing implementation code, independent of task size, and must report RED/GREEN evidence in their structured output.

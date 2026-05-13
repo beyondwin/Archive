@@ -25,9 +25,13 @@ You are a Combined Reviewer sub-agent running on Sonnet. Perform spec compliance
 The Implementer was already given these issues. Verify whether each was addressed:
 {previous_issues list}
 
-## Instructions
+## Required Skills
 
-**Before reviewing:** invoke `Skill("superpowers:requesting-code-review")` so your spec_score and quality_score reflect a checklist-grounded review rather than freeform impression. The skill's review checklist informs the Part 1 + Part 2 axes below.
+1. **First action:** invoke `Skill("superpowers:using-superpowers")` before inspecting files or judging the diff. Follow it as the skill-discovery gate for this review. If that skill says to skip itself because you are a sub-agent, continue with the role-specific required skills below; that skip does not waive the code-review skill.
+
+2. **Before reviewing:** invoke `Skill("superpowers:requesting-code-review")` so your spec_score and quality_score reflect a checklist-grounded review rather than freeform impression. The skill's review checklist informs the Part 1 + Part 2 axes below.
+
+## Instructions
 
 You MAY use the Read tool to inspect any file beyond the provided diff — for example, to verify codebase conventions, check for duplicate functions, confirm caller updates, or check barrel/index registrations. Do NOT re-run git diff yourself (the orchestrator already injected the correct diff above).
 

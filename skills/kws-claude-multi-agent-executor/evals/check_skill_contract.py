@@ -19,6 +19,14 @@ REVIEW_SIDE_SKILL_CALLS = {
     "references/verifier-prompt.md": 'Skill("superpowers:verification-before-completion")',
 }
 
+SUBAGENT_PROMPTS = [
+    "references/implementer-prompt.md",
+    "references/plan-reviewer-prompt.md",
+    "references/reviewer-prompt.md",
+    "references/verifier-prompt.md",
+    "references/docs-updater-prompts.md",
+]
+
 EVENT_TYPES = [
     "blocker",
     "error",
@@ -117,6 +125,15 @@ def main() -> int:
         "SKILL.md Step 7.5 must use MANDATORY framing and emit LEARNING_LOG_INIT marker (v2.8.1)",
     )
 
+    record(
+        "skill_md_tdd_not_size_gated",
+        "SMALL skips TDD" not in skill_text
+        and "skip TDD" not in skill_text
+        and "TDD recommended" not in skill_text
+        and "Task size is not a TDD skip condition" in skill_text,
+        "SKILL.md must not describe task-size TDD skipping; task size is not a TDD skip condition",
+    )
+
     # ---- learning-log.md content ----
     if learning_log_md.is_file():
         record(
@@ -147,6 +164,23 @@ def main() -> int:
         )
 
     # ---- review-side superpowers Skill invocations ----
+    for rel_path in SUBAGENT_PROMPTS:
+        full = skill_dir / rel_path
+        if not full.is_file():
+            record(
+                f"using_superpowers_in_{rel_path.replace('/', '_')}",
+                False,
+                f"{rel_path} must exist",
+            )
+            continue
+        body = full.read_text(encoding="utf-8")
+        record(
+            f"using_superpowers_in_{rel_path.replace('/', '_')}",
+            'Skill("superpowers:using-superpowers")' in body
+            and "does not waive" in body,
+            f"{rel_path} must bootstrap Skill(\"superpowers:using-superpowers\") without waiving role-specific skills",
+        )
+
     for rel_path, expected_call in REVIEW_SIDE_SKILL_CALLS.items():
         full = skill_dir / rel_path
         if not full.is_file():
@@ -161,6 +195,28 @@ def main() -> int:
             f"skill_call_in_{rel_path.replace('/', '_')}",
             expected_call in body,
             f"{rel_path} must invoke {expected_call}",
+        )
+
+    implementer_prompt = skill_dir / "references" / "implementer-prompt.md"
+    if implementer_prompt.is_file():
+        body = implementer_prompt.read_text(encoding="utf-8")
+        record(
+            "implementer_tdd_not_size_gated",
+            'Skill("superpowers:test-driven-development")' in body
+            and "MEDIUM or LARGE" not in body
+            and "SMALL tasks may skip TDD" not in body
+            and "SMALL, MEDIUM, and LARGE" in body
+            and "RED command" in body,
+            "Implementer prompt must require TDD for executable implementation work across SMALL, MEDIUM, and LARGE tasks and require RED evidence",
+        )
+
+    docs_prompt = skill_dir / "references" / "docs-updater-prompts.md"
+    if docs_prompt.is_file():
+        body = docs_prompt.read_text(encoding="utf-8")
+        record(
+            "docs_updater_verification_skill_call",
+            body.count('Skill("superpowers:verification-before-completion")') >= 2,
+            "Both Docs Updater prompts must invoke verification-before-completion before reporting DONE",
         )
 
     # ---- sub-agent prompts describe candidate-file contract (no direct helper calls) ----
