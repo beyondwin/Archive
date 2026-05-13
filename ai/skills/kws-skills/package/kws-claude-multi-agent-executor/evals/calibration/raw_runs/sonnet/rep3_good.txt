@@ -1,0 +1,14 @@
+```json
+{
+  "fixture": "08-subtle-input-validation",
+  "scores": {
+    "correctness":     0.7,
+    "spec_compliance": 0.4,
+    "code_quality":    0.4,
+    "cost_efficiency": 1.0
+  },
+  "mean": 0.625,
+  "passed": true,
+  "notes": "src/duration.py is excellent — single-pass regex, meaningful per-segment error messages, type hint, pure function, passes all 20 rubric checks. However, tests/test_duration.py imports calibration artifacts (good_impl, broken_impl) instead of src.duration, deliberately omits 6 of 10 error-case rubric checks, and is explicitly designed to pass for broken implementations — the 28 passes validate calibration fixtures, not the project's own module, directly violating the 'test file covers ALL 20 rubric checks' quality requirement."
+}
+```
