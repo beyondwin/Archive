@@ -1,314 +1,278 @@
-# Doc-update protocol
+# 문서 갱신 프로토콜
 
-A per-change-type checklist saying *exactly* which docs to touch when you
-ship that kind of change. The goal: docs stay current without anyone
-having to remember "what should I update?" — the protocol tells you.
+변경을 출하할 때 *정확히* 어떤 문서를 건드릴지 알려주는 변경 종류별 체크리스트. 목표: 누가 "뭘 갱신해야 하지?" 를 기억하지 않아도 문서가 최신 유지 — 프로토콜이 알려줍니다.
 
-This file is the cognitive aid; [`../evals/check_doc_freshness.py`](../evals/check_doc_freshness.py)
-is the automated guard (catches the most regression-prone drift even if
-this protocol is skipped).
+이 파일은 인지 보조; [`../evals/check_doc_freshness.py`](../evals/check_doc_freshness.py) 가 자동화된 가드 (이 프로토콜이 건너뛰어졌어도 가장 회귀되기 쉬운 드리프트 잡음).
 
-For the broader contributing protocol see [`../AGENTS.md`](../AGENTS.md).
+더 넓은 기여 프로토콜은 [`../AGENTS.md`](../AGENTS.md) 참조.
 
 ---
 
-## Table of contents
+## 목차
 
-- [Quick lookup: what change type am I making?](#quick-lookup)
-- [Detailed checklists per change type](#detailed-checklists)
-- [Freshness eval — what's automated](#freshness-eval)
-- [Worked examples](#worked-examples)
-
----
-
-## Quick lookup
-
-| If you're changing... | Required updates | Detail |
-|------------------------|------------------|--------|
-| Skill behavior (SKILL.md edit) | SKILL.md version + README + HISTORY + ARCHITECTURE | [Skill behavior](#skill-behavior-change) |
-| A sub-agent prompt | references/<role>-prompt.md + check_skill_contract.py if structure changes + experiment record if ≥50 lines | [Sub-agent prompt](#sub-agent-prompt-change) |
-| Helper script | scripts/append_learning_event.py + check_learning_log.py if schema changes + references/learning-log.md | [Helper script](#helper-script-change) |
-| Adding a learning-log event type | All 5 places in [extend-event-type.md](./how-to/extend-event-type.md) | [Event type addition](#event-type-addition) |
-| Adding an eval fixture | evals/fixtures/<N>.yaml + baselines/v<X>.json + maybe HISTORY entry | [Fixture addition](#fixture-addition) |
-| Discovering a new risk | docs/risks-and-limitations.md (always) + tracking in deferred-candidates if action deferred | [Risk discovery](#risk-discovery) |
-| Closing a known risk | docs/risks-and-limitations.md (move to CLOSED) + HISTORY entry if shipped fix | [Risk closure](#risk-closure) |
-| Making a design decision | docs/experiments/<v>/decisions/D###-*.md + decision-log.md index row | [Design decision](#design-decision) |
-| Deferring a candidate | docs/deferred-candidates.md (add with revisit criteria) | [Candidate deferral](#candidate-deferral) |
-| Version bump (any version) | SKILL.md frontmatter + README + HISTORY + snapshots/ (minor+) | [Version bump](#version-bump) |
-| New experiment | docs/experiments/v<X>-<name>/ + docs/experiments/README.md index + HISTORY §3 row | [New experiment](#new-experiment) |
-| Closing an experiment | finalize findings/ + JOURNAL close-out + HISTORY §3 row update + decision-log if shipped | [Experiment closure](#experiment-closure) |
-| Major refactor / restructure | All of the above, plus a fresh snapshot in docs/snapshots/ | [Major refactor](#major-refactor) |
-| Trivial fix (typo, formatting) | Just commit. No doc updates. | [Trivial change](#trivial-change) |
+- [빠른 조회: 어떤 변경 타입인가?](#빠른-조회)
+- [변경 타입별 상세 체크리스트](#상세-체크리스트)
+- [신선도 eval — 자동화된 것](#신선도-eval)
+- [실제 예시들](#실제-예시들)
 
 ---
 
-## Detailed checklists
+## 빠른 조회
 
-### Skill behavior change
+| 변경 대상 | 필수 갱신 | 상세 |
+|-----------|-----------|------|
+| 스킬 동작 (SKILL.md 편집) | SKILL.md 버전 + README + HISTORY + ARCHITECTURE | [스킬 동작](#스킬-동작-변경) |
+| 서브에이전트 프롬프트 | references/<role>-prompt.md + 구조 변경 시 check_skill_contract.py + ≥50줄 시 실험 기록 | [서브에이전트 프롬프트](#서브에이전트-프롬프트-변경) |
+| 헬퍼 스크립트 | scripts/append_learning_event.py + 스키마 변경 시 check_learning_log.py + references/learning-log.md | [헬퍼 스크립트](#헬퍼-스크립트-변경) |
+| 학습 로그 이벤트 타입 추가 | [extend-event-type.md](./how-to/extend-event-type.md) 의 5곳 모두 | [이벤트 타입 추가](#이벤트-타입-추가) |
+| Eval 픽스처 추가 | evals/fixtures/<N>.yaml + baselines/v<X>.json + 필요 시 HISTORY 항목 | [픽스처 추가](#픽스처-추가) |
+| 새 리스크 발견 | docs/risks-and-limitations.md (항상) + 액션 연기 시 deferred-candidates 에 추적 | [리스크 발견](#리스크-발견) |
+| 알려진 리스크 종결 | docs/risks-and-limitations.md (CLOSED 로 이동) + 출하된 수정이면 HISTORY 항목 | [리스크 종결](#리스크-종결) |
+| 설계 결정 | docs/experiments/<v>/decisions/D###-*.md + decision-log.md 인덱스 행 | [설계 결정](#설계-결정) |
+| 후보 연기 | docs/deferred-candidates.md (재방문 기준과 함께 추가) | [후보 연기](#후보-연기) |
+| 버전 번프 (어떤 버전이든) | SKILL.md frontmatter + README + HISTORY + snapshots/ (minor+) | [버전 번프](#버전-번프) |
+| 새 실험 | docs/experiments/v<X>-<name>/ + docs/experiments/README.md 인덱스 + HISTORY §3 행 | [새 실험](#새-실험) |
+| 실험 종결 | finalize findings/ + JOURNAL 마감 + HISTORY §3 행 갱신 + 출하 시 decision-log | [실험 종결](#실험-종결) |
+| 메이저 리팩터 / 재구조화 | 위 모든 것 + docs/snapshots/ 의 새 스냅샷 | [메이저 리팩터](#메이저-리팩터) |
+| 자명한 수정 (오타, 포매팅) | 그냥 커밋. 문서 갱신 없음. | [자명한 변경](#자명한-변경) |
 
-**Definition**: any edit to `SKILL.md` that changes runtime semantics
-(phase steps, dispatch logic, scoring thresholds, escalation routing).
+---
 
-**Required updates**:
+## 상세 체크리스트
 
-- [ ] `SKILL.md` — the edit itself + frontmatter `metadata.version` bump
-- [ ] `README.md` — current version line
-- [ ] `skills/README.md` — only if the Archive-level skill inventory changed
-- [ ] `HISTORY.md` §1 — new version entry with: what changed, why,
-      what's tested, what's NOT changed/deferred
-- [ ] `ARCHITECTURE.md` — sync any section affected by the change
-      (per AGENTS.md "ARCHITECTURE.md sync (REQUIRED on behavior
-      changes)" rule)
-- [ ] If contract-relevant: extend `evals/check_skill_contract.py` with
-      a check that locks in the new behavior
+### 스킬 동작 변경
 
-**Optional but recommended**:
-- [ ] Experiment record if ≥50 lines or has a hypothesis
-- [ ] Snapshot file under `docs/snapshots/v<X>.md` if minor-version bump
+**정의**: 런타임 의미를 바꾸는 `SKILL.md` 편집 (단계 스텝, 디스패치 로직, 채점 임계, 에스컬레이션 라우팅).
 
-### Sub-agent prompt change
+**필수 갱신**:
 
-**Definition**: edit to any `references/<role>-prompt.md`.
+- [ ] `SKILL.md` — 편집 자체 + frontmatter `metadata.version` 번프
+- [ ] `README.md` — 현재 버전 라인
+- [ ] `skills/README.md` — Archive 수준 스킬 인벤토리가 변경된 경우만
+- [ ] `HISTORY.md` §1 — 새 버전 항목: 무엇이 변경됐나, 왜, 무엇이 테스트됐나, 무엇이 변경 안 되고/연기됐나
+- [ ] `ARCHITECTURE.md` — 변경에 영향받는 섹션 동기화 (AGENTS.md "ARCHITECTURE.md sync (REQUIRED on behavior changes)" 규칙)
+- [ ] 계약 관련이면: 새 동작을 고정하는 체크로 `evals/check_skill_contract.py` 확장
 
-**Required updates**:
+**선택이지만 권장**:
+- [ ] ≥50줄 또는 가설 있으면 실험 기록
+- [ ] 마이너 버전 번프면 `docs/snapshots/v<X>.md` 스냅샷 파일
 
-- [ ] The prompt file
-- [ ] `evals/check_skill_contract.py` — if the change affects an
-      asserted token (e.g., adding/removing a `Skill(...)` invocation,
-      changing the output format), extend the contract check
-- [ ] `references/learning-log.md` — if the prompt's candidate-emit
-      contract changed
+### 서브에이전트 프롬프트 변경
 
-**Optional**:
-- [ ] HISTORY.md entry — if user-visible behavior change
-- [ ] Experiment record — if non-trivial (e.g., v2.9.0 Spec Coverage Walk)
+**정의**: 어떤 `references/<role>-prompt.md` 편집.
 
-### Helper script change
+**필수 갱신**:
 
-**Definition**: edit to `scripts/append_learning_event.py`.
+- [ ] 프롬프트 파일
+- [ ] `evals/check_skill_contract.py` — 변경이 주장된 토큰에 영향이면 (예: `Skill(...)` 호출 추가/제거, 출력 포맷 변경) 계약 체크 확장
+- [ ] `references/learning-log.md` — 프롬프트의 후보 발산 계약이 변경된 경우
 
-**Required updates**:
+**선택**:
+- [ ] HISTORY.md 항목 — 사용자 가시 동작 변경 시
+- [ ] 실험 기록 — 비자명한 경우 (예: v2.9.0 Spec Coverage Walk)
 
-- [ ] The script itself
-- [ ] `evals/check_learning_log.py` — add tests covering the new behavior
-- [ ] `references/learning-log.md` — if schema or subcommand changed
+### 헬퍼 스크립트 변경
 
-**Optional**:
-- [ ] HISTORY.md entry — if user-visible
-- [ ] Experiment record — if schema-breaking
+**정의**: `scripts/append_learning_event.py` 편집.
 
-### Event type addition
+**필수 갱신**:
 
-Use the full step-by-step at [`how-to/extend-event-type.md`](./how-to/extend-event-type.md).
+- [ ] 스크립트 자체
+- [ ] `evals/check_learning_log.py` — 새 동작을 커버하는 테스트 추가
+- [ ] `references/learning-log.md` — 스키마 또는 서브커맨드 변경 시
 
-**Required (5 places)**:
+**선택**:
+- [ ] HISTORY.md 항목 — 사용자 가시면
+- [ ] 실험 기록 — 스키마 깨는 경우
 
-- [ ] `references/learning-log.md` — schema doc
-- [ ] `scripts/append_learning_event.py` — `EVENT_TYPES` set
-- [ ] `evals/check_learning_log.py` — positive + negative test cases
-- [ ] `evals/check_skill_contract.py` — `EVENT_TYPES` list
-- [ ] At least one `references/<role>-prompt.md` — emitter
+### 이벤트 타입 추가
 
-### Fixture addition
+[`how-to/extend-event-type.md`](./how-to/extend-event-type.md) 의 완전한 단계별 사용.
 
-Use the full step-by-step at [`how-to/add-a-fixture.md`](./how-to/add-a-fixture.md).
+**필수 (5곳)**:
 
-**Required**:
+- [ ] `references/learning-log.md` — 스키마 문서
+- [ ] `scripts/append_learning_event.py` — `EVENT_TYPES` 셋
+- [ ] `evals/check_learning_log.py` — 양성 + 음성 테스트 케이스
+- [ ] `evals/check_skill_contract.py` — `EVENT_TYPES` 리스트
+- [ ] 적어도 하나의 `references/<role>-prompt.md` — 발산자
 
-- [ ] `evals/fixtures/0N-<slug>.yaml` — the fixture
-- [ ] `evals/baselines/v<current>.json` — captured first-run baseline
-- [ ] Spec-vs-rubric audit (no hidden assumptions)
+### 픽스처 추가
 
-**Optional**:
-- [ ] `evals/README.md` — update index if format docs change
-- [ ] HISTORY.md entry — if shipping with a version
+[`how-to/add-a-fixture.md`](./how-to/add-a-fixture.md) 의 완전한 단계별 사용.
 
-### Risk discovery
+**필수**:
 
-**Required**:
+- [ ] `evals/fixtures/0N-<slug>.yaml` — 픽스처
+- [ ] `evals/baselines/v<current>.json` — 캡처된 첫 실행 베이스라인
+- [ ] 스펙 vs 루브릭 감사 (숨은 가정 없음)
 
-- [ ] `docs/risks-and-limitations.md` — add new entry with status,
-      manifestation, mitigation, tracking pointer
-- [ ] If the risk needs deferred action: also add to
-      `docs/deferred-candidates.md` with revisit criteria
+**선택**:
+- [ ] `evals/README.md` — 포맷 문서 변경 시 인덱스 갱신
+- [ ] HISTORY.md 항목 — 버전과 함께 출하 시
 
-### Risk closure
+### 리스크 발견
 
-**Required**:
+**필수**:
 
-- [ ] `docs/risks-and-limitations.md` — move entry to "Closed/resolved"
-      section with `verified by` link
-- [ ] `HISTORY.md` entry — if the closure was shipped as part of a
-      version bump
+- [ ] `docs/risks-and-limitations.md` — 상태, 표현, 완화, 추적 포인터와 함께 새 항목 추가
+- [ ] 리스크가 연기된 액션 필요면: 재방문 기준과 함께 `docs/deferred-candidates.md` 에도 추가
 
-### Design decision
+### 리스크 종결
 
-**Required**:
+**필수**:
 
-- [ ] `docs/experiments/<v>/decisions/D###-<slug>.md` — the ADR itself
-- [ ] `docs/decision-log.md` — add row to the experiment's section
-- [ ] If decision overturns a prior ADR: also update the "Overturned"
-      table in decision-log.md
+- [ ] `docs/risks-and-limitations.md` — 항목을 "Closed/resolved" 섹션으로 이동, `verified by` 링크와 함께
+- [ ] `HISTORY.md` 항목 — 종결이 버전 번프의 일부로 출하된 경우
 
-### Candidate deferral
+### 설계 결정
 
-**Required**:
+**필수**:
 
-- [ ] `docs/deferred-candidates.md` — add section with proposed
-      change, origin, why deferred, revisit criteria (concrete trigger)
+- [ ] `docs/experiments/<v>/decisions/D###-<slug>.md` — ADR 자체
+- [ ] `docs/decision-log.md` — 실험 섹션에 행 추가
+- [ ] 결정이 이전 ADR 을 번복하면: decision-log.md 의 "Overturned" 표도 갱신
 
-**Optional**:
-- [ ] `docs/decision-log.md` overturned table if it supersedes a prior decision
+### 후보 연기
 
-### Version bump
+**필수**:
 
-Whether patch / minor / major bump:
+- [ ] `docs/deferred-candidates.md` — 제안된 변경, 기원, 연기 이유, 재방문 기준 (구체적 트리거) 와 함께 섹션 추가
 
-**Required**:
+**선택**:
+- [ ] 이전 결정을 대체하면 `docs/decision-log.md` overturned 표
+
+### 버전 번프
+
+패치 / 마이너 / 메이저 번프 어느 것이든:
+
+**필수**:
 
 - [ ] `SKILL.md` frontmatter `metadata.version`
-- [ ] `README.md` current version line
-- [ ] `skills/README.md` only if the Archive-level inventory changed
-- [ ] `HISTORY.md` §1 — new entry
+- [ ] `README.md` 현재 버전 라인
+- [ ] `skills/README.md` — Archive 수준 인벤토리 변경 시만
+- [ ] `HISTORY.md` §1 — 새 항목
 
-**For minor+ bump (e.g., 2.8 → 2.9)**:
-- [ ] `docs/snapshots/v<X>.md` — full state snapshot at ship time
+**마이너+ 번프 (예: 2.8 → 2.9)**:
+- [ ] `docs/snapshots/v<X>.md` — 출하 시점 전체 상태 스냅샷
 
-**For major bump (e.g., 2.X → 3.0)**:
-- [ ] All of the above plus a migration note in HISTORY.md
+**메이저 번프 (예: 2.X → 3.0)**:
+- [ ] 위 모두 + HISTORY.md 에 migration 노트
 
-### New experiment
+### 새 실험
 
-**Required**:
+**필수**:
 
-- [ ] `docs/experiments/v<X>-<name>/{README.md, JOURNAL.md, decisions/, findings/}`
-      — created from `docs/experiments/_template/`
-- [ ] `docs/experiments/README.md` — add row to the index table
-- [ ] `HISTORY.md` §3 — add experiment row (status, link)
+- [ ] `docs/experiments/v<X>-<name>/{README.md, JOURNAL.md, decisions/, findings/}` — `docs/experiments/_template/` 에서 생성
+- [ ] `docs/experiments/README.md` — 인덱스 표에 행 추가
+- [ ] `HISTORY.md` §3 — 실험 행 추가 (상태, 링크)
 
-### Experiment closure
+### 실험 종결
 
-**Required**:
+**필수**:
 
-- [ ] `docs/experiments/<v>/findings/F00N-<close-out>.md` — final
-      findings doc
-- [ ] `docs/experiments/<v>/JOURNAL.md` — close-out section with
-      outcome, what learned, residual risks
-- [ ] `docs/experiments/<v>/README.md` — status field updated to
-      CLOSED with outcome
-- [ ] `docs/experiments/README.md` — index status updated
-- [ ] `HISTORY.md` §3 — experiment row updated
-- [ ] If shipped change: also do "Skill behavior change" checklist
-- [ ] If decision overturned: update decision-log.md Overturned table
+- [ ] `docs/experiments/<v>/findings/F00N-<close-out>.md` — 최종 findings 문서
+- [ ] `docs/experiments/<v>/JOURNAL.md` — outcome, 배운 것, 잔여 리스크와 함께 마감 섹션
+- [ ] `docs/experiments/<v>/README.md` — 상태 필드 CLOSED 와 outcome 으로 갱신
+- [ ] `docs/experiments/README.md` — 인덱스 상태 갱신
+- [ ] `HISTORY.md` §3 — 실험 행 갱신
+- [ ] 출하된 변경: "스킬 동작 변경" 체크리스트도 수행
+- [ ] 결정 번복: decision-log.md Overturned 표 갱신
 
-### Major refactor
+### 메이저 리팩터
 
-Treat as compound change: do every relevant checklist above, AND:
+복합 변경으로 다루기: 위 모든 관련 체크리스트 + 추가로:
 
-- [ ] Add a fresh `docs/snapshots/v<X>.md` capturing the new state
-- [ ] Open a v<X>-refactor experiment record if not already done
-- [ ] Run full preflight + at least 2 fixture reps before commit
+- [ ] 새 상태 캡처하는 새 `docs/snapshots/v<X>.md` 추가
+- [ ] 아직 안 했으면 v<X>-refactor 실험 기록 열기
+- [ ] 커밋 전 풀 preflight + 적어도 2 픽스처 reps 실행
 
-### Trivial change
+### 자명한 변경
 
-Typos, whitespace, formatting, comment fixes:
+오타, 공백, 포매팅, 주석 수정:
 
-- [ ] Just commit. No doc updates needed.
+- [ ] 그냥 커밋. 문서 갱신 불필요.
 
-If you're unsure whether it's trivial → it's not trivial. Apply one of
-the above.
+자명한지 확실치 않으면 → 자명한 게 아님. 위 중 하나 적용.
 
 ---
 
-## Freshness eval — what's automated
+## 신선도 eval
 
-[`../evals/check_doc_freshness.py`](../evals/check_doc_freshness.py) runs
-deterministic checks for the most regression-prone drift:
+[`../evals/check_doc_freshness.py`](../evals/check_doc_freshness.py) 가 가장 회귀되기 쉬운 드리프트를 결정론적으로 체크:
 
-1. **Version consistency** — `SKILL.md` frontmatter version matches the skill
-   README current-version line.
-2. **Internal markdown links** — every ``[text](./path.md)`` or
-   ``[text](../path.md)`` reference resolves to an existing file.
-3. **HISTORY.md entry present** — for the current `SKILL.md` version,
-   `HISTORY.md` §1 has a matching entry.
-4. **Latest snapshot exists** — for the current minor version (e.g.,
-   2.9.X for 2.9.0), `docs/snapshots/v2.9.0.md` exists.
-5. **Decision-log indexes ADRs** — every D### file under
-   `docs/experiments/*/decisions/` appears in `docs/decision-log.md`.
-6. **Stale markers** — `TODO`, `FIXME`, `XXX`, `WIP:` count under
-   `docs/` and `references/`. Reports count; doesn't fail.
+1. **버전 일치** — `SKILL.md` frontmatter 버전이 스킬 README 의 현재 버전 라인과 일치.
+2. **내부 markdown 링크** — 모든 ``[text](./path.md)`` 또는 ``[text](../path.md)`` 참조가 존재하는 파일로 해결.
+3. **HISTORY.md 항목 존재** — 현재 `SKILL.md` 버전에 대해 `HISTORY.md` §1 에 일치하는 항목.
+4. **최신 스냅샷 존재** — 현재 마이너 버전 (예: 2.9.0 에 대해 2.9.X) 에 대해 `docs/snapshots/v2.9.0.md` 존재.
+5. **결정 로그가 ADR 인덱싱** — `docs/experiments/*/decisions/` 하위 모든 D### 파일이 `docs/decision-log.md` 에 나타남.
+6. **Stale 마커** — `docs/` 와 `references/` 하위 `TODO`, `FIXME`, `XXX`, `WIP:` 카운트. 카운트 보고; 실패시키지 않음.
 
-The eval is **non-blocking by default**: it reports drift and exit
-code 0 so `evals/run.sh` continues. To make blocking, set
-`DOC_FRESHNESS_STRICT=1` in your shell before running the harness.
+Eval 은 **기본적으로 비차단**: 드리프트 보고하고 exit code 0 으로 `evals/run.sh` 가 계속. 차단으로 만들려면 하네스 실행 전 shell 에서 `DOC_FRESHNESS_STRICT=1` 설정.
 
-Run standalone:
+독립 실행:
 
 ```bash
 python3 evals/check_doc_freshness.py
-# or with strict mode
+# 또는 strict 모드로
 DOC_FRESHNESS_STRICT=1 python3 evals/check_doc_freshness.py
 ```
 
 ---
 
-## Worked examples
+## 실제 예시들
 
-### Example 1 — User asks "fix a typo in the Reviewer prompt"
+### 예시 1 — 사용자가 "Reviewer 프롬프트 오타 수정" 요청
 
-- Edit `references/reviewer-prompt.md`.
-- Trivial change. Commit. No doc updates.
+- `references/reviewer-prompt.md` 편집.
+- 자명한 변경. 커밋. 문서 갱신 없음.
 
-### Example 2 — User asks "promote Step 7.5 to mandatory" (was the actual v2.8.1)
+### 예시 2 — 사용자가 "Step 7.5 를 필수로 승격" 요청 (실제 v2.8.1)
 
-This is a skill behavior change. Checklist:
+스킬 동작 변경. 체크리스트:
 
-- [x] `SKILL.md` Step 7.5 edited
-- [x] Frontmatter version 2.8.0 → 2.8.1
-- [x] `README.md` current version line bumped
-- [x] `HISTORY.md` §1 v2.8.1 entry added with what + why + verified-by
-- [x] `evals/check_skill_contract.py` 18th check added
-- [x] `evals/run.sh` adherence marker grep added (eval is contract-adjacent)
-- [x] `docs/risks-and-limitations.md` "★★ Adherence" updated with mitigation
-- [x] Experiment record NOT needed (empirical fix, inline rationale)
-- [x] Snapshot NOT needed (patch bump, not minor)
+- [x] `SKILL.md` Step 7.5 편집됨
+- [x] Frontmatter 버전 2.8.0 → 2.8.1
+- [x] `README.md` 현재 버전 라인 번프
+- [x] `HISTORY.md` §1 v2.8.1 항목 추가 (무엇 + 왜 + verified-by 포함)
+- [x] `evals/check_skill_contract.py` 18번째 체크 추가
+- [x] `evals/run.sh` 준수 마커 grep 추가 (eval 이 계약 인접)
+- [x] `docs/risks-and-limitations.md` "★★ Adherence" 완화 갱신
+- [x] 실험 기록 불필요 (경험적 수정, 인라인 근거)
+- [x] 스냅샷 불필요 (패치 번프, 마이너 아님)
 
-### Example 3 — User asks "add a fixture for concurrency edge cases"
+### 예시 3 — 사용자가 "동시성 엣지 케이스 픽스처 추가" 요청
 
-Fixture addition. Checklist:
+픽스처 추가. 체크리스트:
 
-- [ ] Decision audit: is there measured evidence?
-- [ ] If yes: write `evals/fixtures/09-concurrency-edge-cases.yaml`
-- [ ] Run preflight + first run; capture baseline
-- [ ] Spec-vs-rubric audit
-- [ ] Commit
-- [ ] Optional: open experiment record if non-trivial design
+- [ ] 결정 감사: 측정된 증거 있나?
+- [ ] 있으면: `evals/fixtures/09-concurrency-edge-cases.yaml` 작성
+- [ ] Preflight + 첫 실행; 베이스라인 캡처
+- [ ] 스펙 vs 루브릭 감사
+- [ ] 커밋
+- [ ] 선택: 비자명한 설계면 실험 기록 열기
 
-### Example 4 — User asks "add `subagent_dispatched` event type"
+### 예시 4 — 사용자가 "`subagent_dispatched` 이벤트 타입 추가" 요청
 
-Event type addition. Use [`how-to/extend-event-type.md`](./how-to/extend-event-type.md):
+이벤트 타입 추가. [`how-to/extend-event-type.md`](./how-to/extend-event-type.md) 사용:
 
-- [ ] `references/learning-log.md` — schema doc updated (11 event types now)
-- [ ] `scripts/append_learning_event.py` — `EVENT_TYPES` set + type-specific validation
-- [ ] `evals/check_learning_log.py` — positive + negative tests
-- [ ] `evals/check_skill_contract.py` — `EVENT_TYPES` list extended
-- [ ] At least one `references/<role>-prompt.md` — emitter wired
-- [ ] Version bump (minor, since schema extended)
-- [ ] HISTORY.md entry
-- [ ] Snapshot if minor bump
+- [ ] `references/learning-log.md` — 스키마 문서 갱신 (이제 11개 이벤트 타입)
+- [ ] `scripts/append_learning_event.py` — `EVENT_TYPES` 셋 + 타입별 검증
+- [ ] `evals/check_learning_log.py` — 양성 + 음성 테스트
+- [ ] `evals/check_skill_contract.py` — `EVENT_TYPES` 리스트 확장
+- [ ] 적어도 하나의 `references/<role>-prompt.md` — 발산자 연결
+- [ ] 버전 번프 (스키마 확장이므로 마이너)
+- [ ] HISTORY.md 항목
+- [ ] 마이너 번프면 스냅샷
 
 ---
 
-## When the protocol is wrong
+## 프로토콜이 틀렸을 때
 
-This protocol is a heuristic. If you find yourself:
+이 프로토콜은 휴리스틱입니다. 다음 상황을 발견하면:
 
-- Bumping versions without changing user-visible behavior — the
-  protocol is too prescriptive; drop the bump.
-- Updating docs that won't be read until the next major refactor —
-  the protocol forces noise; downgrade the requirement.
-- Skipping a step because it "feels obvious" — that's the protocol
-  doing its job; don't skip.
+- 사용자 가시 동작 변경 없이 버전 번프 — 프로토콜이 너무 처방적; 번프 떨어뜨려.
+- 다음 메이저 리팩터까지 읽히지 않을 문서 갱신 — 프로토콜이 노이즈 강제; 요구사항 다운그레이드.
+- "분명해 보여서" 스텝 건너뛰기 — 그게 프로토콜이 일하는 모습; 건너뛰지 마.
 
-When the friction is too high: open a PR amending this file with the
-relaxation + the rationale. Doc protocol is not sacred; it's a tool.
+마찰이 너무 높으면: 완화 + 근거와 함께 이 파일 수정하는 PR 열기. 문서 프로토콜은 신성하지 않음; 도구임.
