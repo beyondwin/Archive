@@ -47,3 +47,4 @@ choices, error-handling policy). Cost: 2–6× tokens vs balanced.
 - [D004 — Pilot scope: balanced vs quality_plus only (skip alpha until HIGH fixture)](./decisions/D004-pilot-scope.md)
 - [D005 — Experimental branch, no production SKILL.md edits until pilot validates](./decisions/D005-experimental-branch.md)
 - [D006 — Pilot-first instead of full 15-run experiment](./decisions/D006-pilot-first.md)
+- [D007 — Fixture 08 redesign: realistic underspec after ceiling check showed pass_rate 1.0](./decisions/D007-fixture-realistic-spec.md)
