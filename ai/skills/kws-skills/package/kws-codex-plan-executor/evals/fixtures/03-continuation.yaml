@@ -1,0 +1,14 @@
+name: continuation
+mode: handoff
+plan: |
+  ### Task 0: Continue work
+
+  **Files:**
+  - Modify: docs/example.md
+expected:
+  prompt_only: true
+  must_include:
+    - "HANDOFF CHECKPOINT"
+    - ".codex-orchestrator/session.json"
+  must_not_include:
+    - "{{PLAN_PATH}}"
