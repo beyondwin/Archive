@@ -22,6 +22,12 @@ Before sending the generated prompt, confirm:
 - task-by-task local implementation by default, subagent opt-in only, two-stage review, and Task 0/1 start handling are explicit
 - per-task `TASK EXECUTION CONTRACT` is explicit with scope, files to inspect, allowed edits, forbidden edits, and acceptance command or honest substitute
 - lightweight `.codex-orchestrator/state.json` ledger is explicit and includes workspace, plan, branch, worktree, current task/phase, task state, risk levels, issue keys, verification, session-owned resources, and last checkpoint
+- execution-only learning-log contract is explicit: `interactive` and
+  `headless` record redacted notable-boundary events to
+  `~/.codex/learning/kws-codex-plan-executor/events.jsonl`; `prompt` and
+  `handoff` are not logging modes
+- generated prompts include privacy rules forbidding secrets, full transcripts,
+  long raw logs, and absolute home paths in learning events
 - task-level `low | mid | high` risk ledger is explicit, with same-file later tasks upgraded to at least `mid`
 - broad tasks are handled by intra-task phases centered on one layer/module without expanding plan scope
 - retry reviews or verification failures use stable `ISSUE_KEY=<file>:<line-or-symbol>:<category>` records and label repeated keys as `[RECURRING - previous fix did not address this]`
