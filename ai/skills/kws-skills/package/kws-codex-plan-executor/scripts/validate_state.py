@@ -11,11 +11,14 @@ from pathlib import Path
 
 REQUIRED_TOP_LEVEL = {
     "schema_version",
+    "run_id",
     "mode",
     "workspace",
     "plan",
     "branch",
     "worktree",
+    "run_dir",
+    "state_path",
     "current_task",
     "current_phase",
     "tasks",
@@ -53,6 +56,16 @@ def validate(data: object) -> list[str]:
     mode = data.get("mode")
     if mode not in VALID_MODES:
         errors.append(f"mode must be one of {sorted(VALID_MODES)}")
+
+    run_id = data.get("run_id")
+    expected_run_dir = f".codex-orchestrator/runs/{run_id}" if isinstance(run_id, str) else None
+    expected_state_path = f"{expected_run_dir}/state.json" if expected_run_dir else None
+    if not isinstance(run_id, str) or not run_id.strip():
+        errors.append("run_id must be a non-empty string")
+    if expected_run_dir and data.get("run_dir") != expected_run_dir:
+        errors.append(f"run_dir must be {expected_run_dir}")
+    if expected_state_path and data.get("state_path") != expected_state_path:
+        errors.append(f"state_path must be {expected_state_path}")
 
     if not isinstance(data.get("tasks"), dict):
         errors.append("tasks must be an object keyed by task id")
@@ -92,7 +105,7 @@ def validate(data: object) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("state_json", help="Path to .codex-orchestrator/state.json")
+    parser.add_argument("state_json", help="Path to .codex-orchestrator/runs/<run_id>/state.json")
     args = parser.parse_args()
 
     path = Path(args.state_json)

@@ -93,8 +93,17 @@ def main() -> int:
         and "prompt" in learning
         and "handoff" in learning
         and "not logging modes" in learning,
-        "learning_log_user_local_path": "~/.codex/learning/kws-codex-plan-executor/events.jsonl" in learning
-        and "~/.codex/learning/kws-codex-plan-executor/events.jsonl" in template,
+        "learning_log_user_local_path": "~/.codex/learning/kws-codex-plan-executor/runs/" in learning
+        and "~/.codex/learning/kws-codex-plan-executor/runs/" in template
+        and "index.jsonl" in learning,
+        "learning_log_lifecycle": all(token in learning for token in ("init-run", "append", "close-run"))
+        and all(token in text for token in ("init-run", "close-run"))
+        and all(token in template for token in ("init-run", "close-run")),
+        "per_run_orchestrator_state": ".codex-orchestrator/runs/<run_id>/state.json" in learning
+        and ".codex-orchestrator/runs/<run_id>/state.json" in template
+        and ".codex-orchestrator/runs/<run_id>/" in headless,
+        "learning_events_include_run_identity": all(token in learning for token in ("run_id", "run_dir", "state_path"))
+        and all(token in template for token in ("run_id", "run_dir", "state_path")),
         "learning_log_notable_boundaries": all(
             token in learning
             for token in (

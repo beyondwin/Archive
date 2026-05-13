@@ -13,7 +13,10 @@ from pathlib import Path
 REQUIRED_CONTRACT = {
     "scope": "Create one docs note.",
     "files_to_inspect": ["docs/example.md"],
-    "allowed_edits": ["docs/example.md", ".codex-orchestrator/state.json"],
+    "allowed_edits": [
+        "docs/example.md",
+        ".codex-orchestrator/runs/20260513T000000Z-archive-codex-example-abcdef0-a1b2c3/state.json",
+    ],
     "forbidden_edits": ["docs/unrelated.md"],
     "acceptance_command_or_honest_substitute": "test -f docs/example.md",
 }
@@ -22,11 +25,14 @@ REQUIRED_CONTRACT = {
 def base_state() -> dict:
     return {
         "schema_version": "1",
+        "run_id": "20260513T000000Z-archive-codex-example-abcdef0-a1b2c3",
         "mode": "interactive",
         "workspace": "/tmp/repo",
         "plan": "/tmp/repo/plan.md",
         "branch": "codex/example",
         "worktree": "/tmp/repo",
+        "run_dir": ".codex-orchestrator/runs/20260513T000000Z-archive-codex-example-abcdef0-a1b2c3",
+        "state_path": ".codex-orchestrator/runs/20260513T000000Z-archive-codex-example-abcdef0-a1b2c3/state.json",
         "current_task": "task_0",
         "current_phase": "task_loop",
         "tasks": {
@@ -80,6 +86,24 @@ def main() -> int:
     )
     if not checks["incomplete_contract_fails"]:
         failures.append("state with incomplete task contract should fail")
+
+    missing_run = base_state()
+    del missing_run["run_id"]
+    missing_run_result = run_validator(script, missing_run)
+    checks["missing_run_id_fails"] = missing_run_result.returncode != 0 and "run_id" in (
+        missing_run_result.stderr + missing_run_result.stdout
+    )
+    if not checks["missing_run_id_fails"]:
+        failures.append("state without run_id should fail")
+
+    mismatched_state_path = base_state()
+    mismatched_state_path["state_path"] = ".codex-orchestrator/state.json"
+    mismatch = run_validator(script, mismatched_state_path)
+    checks["mismatched_state_path_fails"] = mismatch.returncode != 0 and "state_path" in (
+        mismatch.stderr + mismatch.stdout
+    )
+    if not checks["mismatched_state_path_fails"]:
+        failures.append("state_path should point at the matching per-run state")
 
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, ensure_ascii=False, indent=2))
