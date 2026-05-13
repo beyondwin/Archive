@@ -171,4 +171,53 @@ implementation green-light from user before starting T1.
 
 ## On close-out
 
-(filled at end)
+### 2026-05-13 evening — close-out
+
+**Outcome**: SHIPPED on branch `codex/executor-learning-log`. v2.8.0 lands the
+full design plus implementation. Deterministic preflight (16 + 17 = 33 checks
+total across check_learning_log.py + check_skill_contract.py) all pass.
+Shell-level lifecycle smoke passed (init-run → candidate-file → append with
+redaction → append-session-id → close-run, all assertions green).
+
+**What shipped**:
+- 4-subcommand helper script (`scripts/append_learning_event.py`)
+- 16-check helper eval (`evals/check_learning_log.py`)
+- 17-check contract eval (`evals/check_skill_contract.py`) wired into `evals/run.sh` preflight
+- `references/learning-log.md` reference doc (~390 lines)
+- SKILL.md Phase 0/1/Transition/2 + Escalation + Resume Chain wired
+- Review-side Skill calls: Plan Reviewer (writing-plans), Reviewer (requesting-code-review), Verifier (verification-before-completion)
+- Sub-agent prompts (Reviewer/Verifier/Implementer): candidate-file emit instructions + explicit "do not call the helper" rule
+- escalation-playbook.md: ESCALATE-type → event severity mapping
+- ARCHITECTURE.md §14 Learning Log Contract
+- HISTORY.md v2.8.0 entry + experiment index row
+- AGENTS.md learning-log operational protocol
+- manifest/README/CHANGELOG: package 2.10.0 → 2.11.0, skill 2.6.0 → 2.8.0
+
+**What deferred**:
+- Full-fixture smoke (Smoke A `01-trivial-typo` + Smoke B `08-subtle-input-validation`)
+  pending budget approval. F001 documents what would be checked and why it's
+  deferred. Real-LLM behavioral validation under `claude -p --dangerously-skip-permissions`
+  is the only thing the shell smoke can't substitute for.
+
+**What learned**:
+- The per-run sharded layout idea (user's pivot in design round 3) eliminated
+  an entire class of concurrency bugs we never had to debug.
+- The single-writer contract (advisor's Q4 patch) removed the env-propagation
+  puzzle for Agent-tool sub-agents — a hidden trap we would have hit at
+  smoke time.
+- Building the 16-check eval *before* the helper (T1 then T2, real TDD)
+  surfaced the idempotency contract requirements early (init-run had to
+  return the same run_id on second call with same args). The natural
+  pid-based run_id format wouldn't have satisfied this without the
+  `find_open_run` probe.
+- The conflict-resolution dance with the user's parallel Codex work (stash
+  pop → manual merge of 3 metadata files) was a one-time tax for shared-
+  branch parallel work. Future v2.x experiments should consider a Claude-
+  specific branch off main if the user is actively on a different topic.
+
+**Residual risk carry-forward** to v2.9:
+- ESCALATE path not exercised by smoke
+- CLAUDE_SESSION_ID env propagation under various dispatch modes unverified
+- The headless `--model` gap (Codex executor's clarification of bootstrap
+  Skills suggests Claude executor may benefit from a similar audit) — see
+  earlier sub-discovery noted in design phase

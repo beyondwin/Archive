@@ -1,6 +1,6 @@
 # v2.8 — Learning Log
 
-**Status**: In progress
+**Status**: SHIPPED on branch (full-fixture smoke deferred) — see [F001](./findings/F001-smoke.md)
 **Branch**: `codex/executor-learning-log` (shared with Codex sibling work; Claude files isolated by path)
 **Production baseline**: v2.6.0 (untouched on `main`)
 **Sibling work**: `kws-codex-plan-executor` learning log (Codex side, parallel design)
@@ -42,15 +42,15 @@ only Implementer currently invokes superpowers.
 
 | Task | Status | Notes |
 |------|--------|-------|
-| T0 — Experiment scaffold + design ADR | in progress | this directory + D001 |
-| T1 — Spec doc (Archive-level) | pending | `docs/superpowers/specs/...` |
-| T2 — Plan doc (Archive-level) | pending | `docs/superpowers/plans/...` |
-| T3 — Advisor review on design | pending | before substantive code |
-| T4 — Helper script + failing eval (TDD) | pending | after plan approved |
-| T5 — Runtime contract docs | pending | references + SKILL.md |
-| T6 — Reviewer/Verifier/Plan Reviewer Skill invocations | pending | A from §5 of design chat |
-| T7 — Release metadata + ARCHITECTURE/HISTORY sync | pending | per AGENTS.md |
-| T8 — Smoke run + close-out finding | pending | verify event lands |
+| T0 — Experiment scaffold + design ADR | ✓ done | this directory + D001 |
+| T1 — Spec doc (Archive-level) | ✓ done | `docs/superpowers/specs/2026-05-13-kws-claude-multi-agent-executor-learning-log-design.md` |
+| T2 — Plan doc (Archive-level) | ✓ done | `docs/superpowers/plans/2026-05-13-kws-claude-multi-agent-executor-learning-log.md` |
+| T3 — Advisor review on design | ✓ done | 4 gaps patched into D001 / spec / plan |
+| T4 — Helper script + failing eval (TDD) | ✓ done | 16/16 checks pass; commits `d9f4f8a`, `6cfa8a2` |
+| T5 — Runtime contract docs | ✓ done | learning-log.md + contract eval; commits `01d734c`, `de0f573` |
+| T6 — SKILL.md + sub-agent prompts + escalation-playbook | ✓ done | Review-side Skill calls added; commit `e54a97a` |
+| T7 — Release metadata + ARCHITECTURE/HISTORY sync | ✓ done | §14 added; v2.8.0; commit `08c7d19` |
+| T8 — Smoke run + close-out finding | ✓ done (shell-level); full-fixture DEFERRED | [F001](./findings/F001-smoke.md) |
 
 ## Decisions index
 
@@ -58,4 +58,4 @@ only Implementer currently invokes superpowers.
 
 ## Findings index
 
-(none yet)
+- F001 — Shell-level integration smoke (PASS; full-fixture DEFERRED) — [link](./findings/F001-smoke.md)
