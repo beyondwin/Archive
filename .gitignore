@@ -7,6 +7,8 @@
 # Editor and local machine state
 .idea/
 .vscode/
+/.chezmoiroot
+/.local/
 *.swp
 *.swo
 
@@ -52,3 +54,4 @@ docs/_graph/*
 .codex/
 .claude/
 .codex-orchestrator/
+docs/superpowers/
