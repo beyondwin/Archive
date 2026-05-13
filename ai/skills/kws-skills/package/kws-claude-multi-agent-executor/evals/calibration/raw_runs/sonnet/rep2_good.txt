@@ -1,0 +1,14 @@
+```json
+{
+  "fixture": "08-subtle-input-validation",
+  "scores": {
+    "correctness":     0.7,
+    "spec_compliance": 0.4,
+    "code_quality":    0.7,
+    "cost_efficiency": 1.0
+  },
+  "mean": 0.7,
+  "passed": true,
+  "notes": "src/duration.py is excellent — single-pass regex, informative error messages, type hint, pure function, all 20 rubric checks pass against the implementation. However, tests/test_duration.py is fundamentally mis-targeted: it imports calibration modules (good_impl, broken_impl) instead of src.duration, and its own docstring explicitly states it skips 6 of the 10 error cases (repeated unit, decimal, internal whitespace, uppercase, bare unit, trailing bare integer); the 28 passing tests reflect parametrized calibration runs, not coverage of the actual implementation. An extra unrelated commit (docs: update for v2.7) is also present."
+}
+```
