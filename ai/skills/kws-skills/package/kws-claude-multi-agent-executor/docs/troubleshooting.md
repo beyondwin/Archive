@@ -97,6 +97,30 @@ hit a tool that wasn't approved.
 
 ## Eval system issues
 
+### Symptom: doc freshness check reports drift
+
+**Likely cause**: you shipped a change without the corresponding doc
+update.
+
+**Diagnostic**:
+```bash
+python3 evals/check_doc_freshness.py
+```
+
+Examine `failures[]` — each entry names the drift.
+
+**Fix**: consult [`./doc-update-protocol.md`](./doc-update-protocol.md)
+for the per-change-type checklist matching what you shipped. Common cases:
+- Version mismatch → bump all 3 (SKILL.md, manifest, README) in same commit
+- Broken link → fix the path or update the target
+- Missing HISTORY entry → add §1 entry for current version
+- Missing snapshot → write `docs/snapshots/v<X>.md` for minor bump
+- ADR not indexed → add row to `docs/decision-log.md`
+
+If the drift is intentional (e.g., a placeholder link in a template):
+add it to the `_template` exclusion or wrap in backticks (code-span text
+is skipped).
+
 ### Symptom: `evals/run.sh` fails preflight
 
 **Likely cause**: contract eval regression (you broke a prompt or SKILL.md
