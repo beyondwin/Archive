@@ -1,0 +1,87 @@
+name: resume-latest-headless
+mode: headless
+args: "resume=latest"
+plan: |
+  ### Task 0: Conflicting plan target
+
+  **Files:**
+  - Create: docs/plan-target.md
+
+  ## Acceptance Criteria
+
+  ```bash
+  test -f docs/plan-target.md
+  ```
+spec: |
+  This fixture intentionally conflicts with the persisted state. With
+  resume=latest, the existing .codex-orchestrator/state.json is the source of
+  truth and the executor must continue the state task instead of creating the
+  plan target.
+initial_state:
+  schema_version: "1"
+  mode: "headless"
+  workspace: "__WORKDIR__"
+  plan: "__WORKDIR__/plan.md"
+  spec: "__WORKDIR__/spec.md"
+  branch: "main"
+  worktree: "__WORKDIR__"
+  test_command: "test -f docs/resume-target.md && grep -q 'resumed execution from state' docs/resume-target.md"
+  baseline:
+    status: "passed"
+    summary: "bootstrap state exists"
+  current_task: "task_0"
+  current_phase: "task_loop"
+  risk_levels:
+    task_0: "low"
+  resume_marker: "resume-latest-source-of-truth"
+  tasks:
+    task_0:
+      status: "pending"
+      title: "Resume persisted state target"
+      risk: "low"
+      risk_reason: "single docs file from persisted state"
+      files_declared:
+        - docs/resume-target.md
+      files_changed: []
+      contract:
+        scope: "Continue the persisted state task."
+        files_to_inspect:
+          - docs/resume-target.md
+        allowed_edits:
+          - docs/resume-target.md
+          - .codex-orchestrator/state.json
+        forbidden_edits:
+          - docs/plan-target.md
+        acceptance_command_or_honest_substitute: "test -f docs/resume-target.md && grep -q 'resumed execution from state' docs/resume-target.md"
+      pre_task_sha: null
+      commit: null
+      review_retries: 0
+      verifier_retries: 0
+      issue_keys: []
+      verification: []
+      summary: "Create docs/resume-target.md with exact text: resumed execution from state"
+      started_at: null
+      completed_at: null
+  review_issue_keys: {}
+  verification: {}
+  session_owned_resources: []
+  last_checkpoint: null
+  timestamps:
+    started_at: null
+    updated_at: null
+    completed_at: null
+expected:
+  files_changed:
+    - docs/resume-target.md
+  allowed_extra_files:
+    - .codex-orchestrator/state.json
+  must_not_change:
+    - docs/plan-target.md
+  state_must_include:
+    - "resume-latest-source-of-truth"
+    - "docs/resume-target.md"
+  forbidden_log_patterns:
+    - "evals/fixtures/"
+    - "\\.harness/fixture"
+    - "baselines/v"
+  test_after: "test -f docs/resume-target.md && grep -q 'resumed execution from state' docs/resume-target.md && test ! -f docs/plan-target.md"

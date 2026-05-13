@@ -1,0 +1,29 @@
+name: dirty-unrelated-headless
+mode: headless
+plan: |
+  ### Task 0: Add executor note
+
+  **Files:**
+  - Create: docs/task-note.md
+
+  ## Acceptance Criteria
+
+  ```bash
+  test -f docs/task-note.md && grep -q 'executor task note' docs/task-note.md
+  ```
+spec: |
+  Create docs/task-note.md with the exact text "executor task note".
+dirty_files:
+  docs/user-note.md: |
+    user dirty note - preserve
+expected:
+  files_changed:
+    - docs/task-note.md
+  allowed_extra_files:
+    - .codex-orchestrator/state.json
+    - docs/user-note.md
+  forbidden_log_patterns:
+    - "evals/fixtures/"
+    - "\\.harness/fixture"
+    - "baselines/v"
+  test_after: "test -f docs/task-note.md && grep -q 'executor task note' docs/task-note.md && grep -qx 'user dirty note - preserve' docs/user-note.md"
