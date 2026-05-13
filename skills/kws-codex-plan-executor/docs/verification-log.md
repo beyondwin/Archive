@@ -7,6 +7,50 @@ verification before final responses, commits, pushes, or PRs.
 Keep entries concise. Store commands, outcomes, skipped checks, and residual
 risk. Do not paste long logs or sensitive output.
 
+## 2026-05-14 - Mandatory execution worktree contract
+
+- Branch: `codex/enforce-plan-executor-worktree`
+- Commit: pending at time of verification
+- Scope: made `interactive` and `headless` execution require a dedicated
+  non-conflicting `codex/...` git worktree before task contracts or edits;
+  forbids implementation from `main` or the caller's original checkout; bumped
+  skill metadata to `1.7.0`.
+- Commands:
+  - `python3 evals/check_skill_contract.py --skill SKILL.md`
+    - result: pass, JSON payload had `"passed": true` and no failures,
+      including `execution_requires_dedicated_worktree`,
+      `worktree_uniqueness_contract`, `no_main_implementation_contract`, and
+      `worktree_prompt_export_contract`
+  - `python3 scripts/parse_plan.py --help`, `python3 scripts/build_context_snapshot.py --help`,
+    `python3 scripts/validate_state.py --help`, `python3 evals/check_prompt.py --help`,
+    `python3 evals/check_execution.py --help`, `python3 evals/check_parse_plan.py --help`
+    - result: pass, all commands printed usage and exited 0
+  - `python3 evals/check_state_schema.py`
+    - result: pass, JSON payload had `"passed": true` and no failures
+  - `python3 evals/check_learning_log.py`
+    - result: pass, JSON payload had `"passed": true` and no failures
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .`
+    - result: pass, `Skill is valid!`
+  - `python3 -m py_compile scripts/append_learning_event.py evals/check_learning_log.py evals/check_skill_contract.py`
+    - result: pass, no syntax errors
+  - `git diff --check -- skills/kws-codex-plan-executor`
+    - result: pass, no whitespace errors
+  - `graphify update .`
+    - result: pass, graph rebuilt with `2897` nodes and `2936` edges
+- Skipped checks:
+  - `bash evals/run.sh`; skipped because it launches real `codex exec` fixture
+    runs. This change is a skill-contract/runtime-doc hardening and is covered
+    by deterministic cross-surface checks; run the full fixtures before
+    release/PR landing if execution behavior needs live validation.
+- Documentation impact:
+  - Updated `SKILL.md`, runtime references, prompt template/checklist,
+    architecture, README, decisions, how-it-works, Korean guide, common
+    mistakes, eval docs, learning-log example, and history.
+- Residual risk:
+  - The contract is now explicit and eval-gated, but actual worktree placement
+    still depends on the future executor following the documented git worktree
+    creation step.
+
 ## 2026-05-14 - Context health state contract
 
 - Branch: `codex/update-project-docs`

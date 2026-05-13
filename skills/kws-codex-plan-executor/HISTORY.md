@@ -3,6 +3,16 @@
 Source of truth for current behavior: `SKILL.md`, `templates/`, and
 `references/`. This file tracks release intent and migration history.
 
+## v1.7.0 - Require dedicated execution worktrees (2026-05-14)
+
+- Made `interactive` and `headless` execution require a dedicated
+  non-conflicting `codex/...` git worktree before any task contract or edits.
+- Forbid implementation from `main` or the caller's original checkout during
+  execution modes.
+- Added deterministic contract checks for mandatory worktree isolation,
+  branch/path uniqueness, and no-main implementation language across runtime
+  references and prompt export.
+
 ## v1.6.0 - Track context health in execution state (2026-05-14)
 
 - Added `context_health` to execution state so agents can record whether a run

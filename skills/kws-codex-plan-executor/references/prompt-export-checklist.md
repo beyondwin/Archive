@@ -26,6 +26,9 @@ Before sending the generated prompt, confirm:
 - generated execution prompt requires state `context_health` at semantic boundaries with `status=green|yellow|red`, `next_action`, and `handoff_ready`; final successful state must be `handoff_ready=true` and not `red`
 - successful final completion requires `lifecycle_outcome=finished` and `completion_audit.passed=true` with non-empty `prompt_to_artifact_checklist` and `verification_evidence`
 - blocked or failed handoff includes non-success `lifecycle_outcome`, evidence, artifacts/state, and a concrete `handoff_reason`
+- generated execution prompts require a dedicated non-conflicting `codex/...`
+  git worktree before any task contract or edits; prompt text must forbid
+  implementation from `main` or the caller's original checkout
 - execution-only learning-log contract is explicit: `interactive` and
   `headless` record redacted notable-boundary events to
   `~/.codex/learning/kws-codex-plan-executor/runs/<YYYY-MM-DD>/<run_id>/events.jsonl`

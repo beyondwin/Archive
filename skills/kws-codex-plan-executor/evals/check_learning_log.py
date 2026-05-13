@@ -18,7 +18,7 @@ def base_event(run_id: str) -> dict:
         "schema_version": "1",
         "run_id": run_id,
         "skill": "kws-codex-plan-executor",
-        "skill_version": "1.4.0",
+        "skill_version": "1.7.0",
         "mode": "interactive",
         "event_type": "verification_failure",
         "severity": "medium",

@@ -111,6 +111,7 @@ It currently protects:
 - completion audit contract
 - lifecycle outcome contract
 - high-risk verification matrix guidance
+- mandatory dedicated `codex/...` worktree isolation and no-main execution
 
 When adding a new cross-surface invariant, add a contract check here.
 

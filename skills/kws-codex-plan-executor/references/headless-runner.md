@@ -18,6 +18,18 @@ that receives `$PROMPT` is already inside `codex exec`; it must execute the task
 locally and write the required `.codex-orchestrator/` artifacts. Do not launch
 another nested `codex exec` from the target process.
 
+## Mandatory Worktree Gate
+
+Before launching `codex exec`, the supervising session must create a dedicated
+non-conflicting `codex/...` git worktree and set `WORKTREE_ABS` to that path.
+Do not implement from `main` or from the caller's original checkout.
+
+Use `git worktree list --porcelain` plus local branch checks before selecting
+the branch/path. If a branch name already exists or the path is claimed, append
+the run_id or a unique pre-run suffix before launch. Resume may use only the
+worktree recorded in the explicit state path/run id; if that worktree is absent
+or points at another branch, stop with a blocker.
+
 ## Safe Default Command
 
 ```bash

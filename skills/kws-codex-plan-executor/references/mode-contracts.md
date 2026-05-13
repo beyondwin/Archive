@@ -2,13 +2,15 @@
 
 | Mode | Trigger | Mutates repo | Uses codex exec | Default sandbox |
 |------|---------|--------------|-----------------|-----------------|
-| `interactive` | default | yes | no | current session policy |
-| `headless` | `mode=headless` | yes | yes | `workspace-write` |
+| `interactive` | default | yes, inside a dedicated `codex/...` worktree | no | current session policy |
+| `headless` | `mode=headless` | yes, inside a dedicated `codex/...` worktree | yes | `workspace-write` |
 | `prompt` | `mode=prompt` | no | no | n/a |
 | `handoff` | `mode=handoff` or continuation request | no | no | n/a |
 
 `interactive` is the default because it preserves Codex app context, connector
-availability, user-visible progress, and approval handling.
+availability, user-visible progress, and approval handling. It still must not
+implement from the caller's original checkout; execution starts only after a
+dedicated non-conflicting `codex/...` git worktree exists.
 
 `headless` is for eval, CI, or explicitly detached work. It must write logs and
 final output paths.

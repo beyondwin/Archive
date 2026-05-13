@@ -33,7 +33,7 @@
 - 체크박스 기반 계획 문서라면 진행 상태를 문서에 반영해.
 - 계획 문서 체크박스나 진행 상태를 원본 workspace에 갱신해야 한다면, 시작 시 해당 계획 문서의 git 상태(tracked/untracked/dirty)를 확인하고 커밋 포함 여부를 Task contract, checkpoint, final summary에 명시해. 원본 계획 문서가 untracked이거나 unrelated change와 섞여 있으면 추측해서 stage/commit하지 말고 관련 상태만 보고해.
 - 시작 전에 git 상태와 현재 브랜치를 확인해.
-- 가능한 경우 원본 작업트리를 직접 수정하지 말고, 새 `codex/...` 브랜치의 전용 integration git worktree를 만들어 그 안에서 작업해. 전체 실행용 worktree는 하나로 유지해.
+- 실행 모드에서는 원본 작업트리를 직접 수정하지 마. 편집 또는 `TASK EXECUTION CONTRACT` 전에 반드시 dedicated non-conflicting `codex/...` git worktree를 만들고 그 안에서만 작업해. `main`이나 호출 세션의 원래 checkout에서 구현하지 마. `git worktree list --porcelain`과 로컬 브랜치를 확인하고, branch name already exists 또는 path 충돌이 있으면 append the run_id 또는 고유 pre-run suffix를 붙여 중복을 피한 뒤 최종 branch/worktree를 state에 기록해. 전체 실행용 worktree는 하나로 유지해.
 - 원본 workspace의 unrelated change는 건드리지 마. 관련 uncommitted change를 새 worktree에 어떻게 반영해야 할지 불명확하면 blocker로 보고해.
 - 각 Task 경계에서 완료된 subagent가 있다면 종료하고, 이 세션이 직접 띄운 Node/Vite/dev server/Playwright/browser/exec session만 정리해. 가능한 경우 owner, command, PID/session id, port를 기록하고 확인된 session-owned resource만 종료해. `killall node`, `pkill node`, `killall chrome`, `pkill playwright` 같은 광역 정리는 하지 마.
 - background process 확인도 `.codex-orchestrator/runs/<run_id>/state.json`에 기록된 PID/session id/port/worktree path 중심으로 좁혀라. 전체 `ps`에서 나온 unrelated Node/Java/Playwright 프로세스를 session-owned resource로 간주하지 마.

@@ -10,6 +10,9 @@ Use this for failure analysis or substantial edits to this skill.
   contract. The state validator should reject missing task contract fields.
 - Do not classify dirty files before plan parsing. Dirty classification depends
   on declared task file blocks.
+- Do not treat `interactive` as permission to implement from `main` or the
+  caller's original checkout. Execution modes require a dedicated
+  non-conflicting `codex/...` git worktree before task contracts or edits.
 - Do not document a headless artifact path without creating its parent directory
   before shell redirection.
 - Do not add a user-facing argument such as `headless_sandbox=read-only` without

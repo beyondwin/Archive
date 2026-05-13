@@ -10,8 +10,24 @@ Use this for `mode=interactive`.
 - Parse the plan with `scripts/parse_plan.py`.
 - Classify dirty files as `related` or `unrelated` against declared task files.
   Stop before editing related dirty files; preserve unrelated dirty files.
-- Initialize a learning run with `scripts/append_learning_event.py init-run` and
-  keep its `run_id` for all state, headless artifacts, and learning events.
+- Create a dedicated non-conflicting `codex/...` git worktree for every new
+  execution run before any task contract or edits. Do not implement from `main`
+  or the caller's original checkout.
+  - Inspect `git worktree list --porcelain` and local branches before choosing
+    a branch/path.
+  - Start from a `codex/<plan-or-task-slug>` branch name. If the branch name
+    already exists or a worktree path is already claimed, append the run_id or a
+    unique pre-run suffix; once run_id is known, record the final branch and
+    worktree in state.
+  - Resume may select the worktree recorded in the explicit state path/run id,
+    but only if it is still present and matches the stored branch. Otherwise
+    stop with a blocker instead of falling back to the original checkout.
+- Initialize a learning run inside the selected worktree with
+  `scripts/append_learning_event.py init-run` and keep its `run_id` for all
+  state, headless artifacts, and learning events.
+- Initialize `.codex-orchestrator/runs/<run_id>/state.json` and keep
+  `.codex-orchestrator/state.json` as a latest-state compatibility copy or
+  pointer.
 - Build `.codex-orchestrator/runs/<run_id>/context.json` with
   `scripts/build_context_snapshot.py` after `run_id` initialization and before
   task contracts. Store `context_snapshot_path` and `context_basis_hash` in
@@ -21,18 +37,15 @@ Use this for `mode=interactive`.
   `context_basis_hash_recorded`, `active_task_contract_present`, `next_action`,
   `open_questions`, `known_assumptions`, and `handoff_ready`.
 - For `blocker` outcomes such as unreadable plans, ambiguous resume state,
-  related dirty task files, or unclear mid/high-risk acceptance criteria, write
-  a redacted learning event using `references/learning-log.md` and
-  `scripts/append_learning_event.py append`.
-- Create or select `codex/...` worktree when appropriate.
+  related dirty task files, unusable execution worktree, or unclear mid/high-risk
+  acceptance criteria, write a redacted learning event using
+  `references/learning-log.md` and `scripts/append_learning_event.py append`
+  when a run_id exists.
 - Assign task risk:
   - `low`: one isolated file or module.
   - `mid`: multiple files, shared config, repeated edits to the same file, or
     unclear verification.
   - `high`: cross-area API/schema/auth/persistence/breaking change.
-- Initialize `.codex-orchestrator/runs/<run_id>/state.json` and keep
-  `.codex-orchestrator/state.json` as a latest-state compatibility copy or
-  pointer.
 
 ## Phase 1: Task Loop
 

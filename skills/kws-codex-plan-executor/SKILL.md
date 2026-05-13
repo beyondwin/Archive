@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "1.6.0"
+  version: "1.7.0"
   updated_at: "2026-05-14"
 ---
 
@@ -13,8 +13,9 @@ metadata:
 Execute implementation plans in Codex or export a paste-ready prompt from the
 same inputs.
 
-Default behavior is interactive execution in the current Codex session.
-Headless execution and prompt export require explicit mode selection.
+Default behavior is interactive execution in the current Codex session, with
+implementation isolated in a dedicated non-conflicting `codex/...` git
+worktree. Headless execution and prompt export require explicit mode selection.
 
 ## Invocation
 
@@ -37,6 +38,10 @@ Do not use `--dangerously-bypass-approvals-and-sandbox` unless the user
 explicitly requests it and the target is an isolated throwaway repo or CI
 sandbox.
 
+Execution modes must not implement from `main` or the caller's original
+checkout. If a dedicated non-conflicting `codex/...` git worktree cannot be
+created or selected before task contracts and edits, stop with a blocker.
+
 Use `spawn_agent` only when the user explicitly asks for subagents, delegation,
 parallel work, or passes `subagents=on`.
 
@@ -45,6 +50,12 @@ parallel work, or passes `subagents=on`.
 - No edits before a 5-line `TASK EXECUTION CONTRACT` is stated and recorded:
   `scope`, `files_to_inspect`, `allowed_edits`, `forbidden_edits`, and
   `acceptance_command_or_honest_substitute`.
+- For every new `interactive` or `headless` execution run, create a dedicated
+  non-conflicting `codex/...` git worktree before any task contract or edits.
+  Do not implement from `main` or the caller's original checkout. Check
+  `git worktree list --porcelain` and existing branches; when a branch name
+  already exists, append the run_id or another unique pre-run suffix and record
+  the final branch/worktree in state.
 - Before execution, classify dirty worktree changes as `related` or
   `unrelated`. Continue past unrelated dirty files only when they are outside
   the declared task files; stop before touching related dirty files.
@@ -100,6 +111,7 @@ parallel work, or passes `subagents=on`.
 
 - Missing or unreadable plan: ask one short question or report blocker.
 - Dirty worktree with related ambiguity: stop and report.
+- Missing or unusable dedicated execution worktree: stop and report.
 - Ambiguous `resume=latest` with multiple state files: stop and ask.
 - Missing `Files:` blocks in execution mode: stop before edits.
 - Unclear acceptance criteria on mid/high risk tasks: stop for clarification

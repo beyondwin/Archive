@@ -81,10 +81,10 @@ subagents=on
 | `plan=<path>` | 보통 필수 | 실행할 구현 계획. `resume` 전용 흐름에서는 생략 가능 |
 | `spec=<path>` | 선택 | 제품 요구사항, 설계 명세, PRD 같은 핵심 배경 문서 |
 | `docs=<path1,path2>` | 선택 | 추가 참고 문서 목록 |
-| `workspace=<path>` | 선택 | 실행할 작업 디렉터리. 생략하면 현재 워크스페이스를 사용 |
+| `workspace=<path>` | 선택 | 원본 작업 디렉터리. 실행 모드는 별도 전용 worktree를 만들거나 상태에 기록된 worktree를 재개 |
 | `resume=latest|<state-path>|<run_id>` | 선택 | 기존 실행 상태를 이어받음 |
-| `mode=interactive` | 기본 | 현재 Codex 세션에서 직접 실행 |
-| `mode=headless` | 명시 필요 | 감독 세션이 `codex exec`를 띄워 별도 프로세스로 실행 |
+| `mode=interactive` | 기본 | 현재 Codex 세션에서 실행하되 구현은 전용 `codex/...` worktree에서 수행 |
+| `mode=headless` | 명시 필요 | 감독 세션이 전용 `codex/...` worktree에서 `codex exec`를 띄워 실행 |
 | `mode=prompt` | 명시 필요 | 실행하지 않고 새 세션용 프롬프트만 출력 |
 | `mode=handoff` | 명시 필요 | 기존 상태를 기반으로 이어받기 프롬프트를 출력 |
 | `subagents=on|off` | 선택 | 명시하지 않으면 `off` |
@@ -132,14 +132,15 @@ Acceptance:
 1. 입력 경로와 모드를 확인한다.
 2. 계획 파일을 파싱한다.
 3. git dirty worktree를 확인하고 관련 변경과 무관한 변경을 나눈다.
-4. `run_id`를 만들고 `.codex-orchestrator/runs/<run_id>/`를 준비한다.
-5. 실행 전 `context.json`을 만들어 계획, 명세, 참고 문서의 해시를 기록한다.
-6. `context_health`를 갱신해 이어받을 수 있는 상태인지 기록한다.
-7. 편집 전에 5줄짜리 `TASK EXECUTION CONTRACT`를 선언하고 상태 파일에 기록한다.
-8. 작업을 수행한다.
-9. 위험도에 맞는 검증 명령 또는 정직한 대체 검증을 실행한다.
-10. 완료 시 `context_health`, `completion_audit`, `lifecycle_outcome=finished`를 기록한다.
-11. 상태 파일을 검증하고 최종 결과를 요약한다.
+4. 중복 없는 전용 `codex/...` git worktree를 만든다.
+5. `run_id`를 만들고 `.codex-orchestrator/runs/<run_id>/`를 준비한다.
+6. 실행 전 `context.json`을 만들어 계획, 명세, 참고 문서의 해시를 기록한다.
+7. `context_health`를 갱신해 이어받을 수 있는 상태인지 기록한다.
+8. 편집 전에 5줄짜리 `TASK EXECUTION CONTRACT`를 선언하고 상태 파일에 기록한다.
+9. 작업을 수행한다.
+10. 위험도에 맞는 검증 명령 또는 정직한 대체 검증을 실행한다.
+11. 완료 시 `context_health`, `completion_audit`, `lifecycle_outcome=finished`를 기록한다.
+12. 상태 파일을 검증하고 최종 결과를 요약한다.
 
 핵심은 "수정하기 전에 범위를 고정하고, 완료라고 말하기 전에 증거를
 남기는 것"이다.
@@ -229,8 +230,8 @@ acceptance_command_or_honest_substitute: ...
 
 | 모드 | 언제 쓰나 | 저장소 수정 | 학습 로그 |
 | --- | --- | --- | --- |
-| `interactive` | 일반적인 현재 세션 실행 | 함 | 함 |
-| `headless` | 재현 가능한 별도 실행, eval, 장시간 작업 | 보통 함 | 함 |
+| `interactive` | 일반적인 현재 세션 실행 | 전용 `codex/...` worktree에서 함 | 함 |
+| `headless` | 재현 가능한 별도 실행, eval, 장시간 작업 | 전용 `codex/...` worktree에서 보통 함 | 함 |
 | `prompt` | 다른 새 세션에 붙여 넣을 실행 프롬프트 생성 | 안 함 | 안 함 |
 | `handoff` | 기존 실행을 다른 세션으로 넘김 | 안 함 | 안 함 |
 
@@ -258,6 +259,20 @@ acceptance_command_or_honest_substitute: ...
 작업을 멈추면 비효율적이다. 반대로 관련 파일에 이미 변경이 있는데 계속
 수정하면 사용자 작업을 덮을 수 있다. 그래서 선언된 작업 파일 기준으로
 관련 변경은 멈추고, 무관한 변경은 보존한 채 진행한다.
+
+### 왜 전용 worktree를 강제하나
+
+`interactive`는 현재 Codex 세션에서 진행된다는 뜻이지, 현재 checkout을
+직접 수정해도 된다는 뜻이 아니다. 실행 모드는 편집이나
+`TASK EXECUTION CONTRACT` 전에 중복 없는 전용 `codex/...` git worktree를
+만들어야 한다. `main`이나 호출 세션의 원래 checkout에서 구현하면 사용자
+작업, 다른 실행, protected branch를 섞을 위험이 커진다.
+
+worktree 이름은 `git worktree list --porcelain`과 로컬 브랜치를 확인해서
+충돌을 피한다. 같은 branch name이 이미 있으면 `run_id`나 고유 suffix를
+붙이고, 최종 branch/worktree를 상태 파일에 기록한다. 재개 흐름만 예외로,
+명시된 상태 파일에 기록된 worktree가 실제로 존재하고 같은 브랜치를 가리킬
+때만 그 worktree를 다시 쓴다.
 
 ### 왜 실행마다 `run_id`를 만들나
 

@@ -109,6 +109,19 @@ runtime invariant, future sessions can silently regress.
 For this reason `check_skill_contract.py` checks `SKILL.md`, references, and
 templates together.
 
+## Why Execution Worktrees Are Mandatory
+
+`interactive` means the current Codex session owns progress reporting and tool
+use. It does not mean the caller's current checkout is safe to mutate. Running
+from `main` or a shared workspace makes branch protection, user WIP, and
+parallel executor runs easy to mix.
+
+The executor therefore treats a dedicated non-conflicting `codex/...` git
+worktree as an execution precondition for `interactive` and `headless`. New
+runs create one before task contracts or edits; resume uses only the worktree
+recorded in explicit state. If branch/path uniqueness cannot be proven, the run
+blocks instead of falling back to the original checkout.
+
 ## Why Subagents Remain Opt-In
 
 Subagents are useful when the user asks for delegation or when independent
