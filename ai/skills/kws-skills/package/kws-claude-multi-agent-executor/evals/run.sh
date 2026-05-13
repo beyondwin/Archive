@@ -18,6 +18,22 @@ BASELINE_FILE="$EVAL_DIR/baselines/v${SKILL_VERSION}.json"
 mkdir -p "$EVAL_DIR/baselines"
 : > "$BASELINE_FILE.partial"
 
+# Deterministic preflight checks — fail fast before running the (expensive)
+# fixture loop.
+echo "=== Preflight: deterministic checks ==="
+python3 "$EVAL_DIR/check_learning_log.py" >/dev/null || {
+  echo "FATAL: check_learning_log.py failed; see output above" >&2
+  python3 "$EVAL_DIR/check_learning_log.py" >&2
+  exit 1
+}
+python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md" >/dev/null || {
+  echo "FATAL: check_skill_contract.py failed; see output above" >&2
+  python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md" >&2
+  exit 1
+}
+echo "=== Preflight passed ==="
+
+
 fixtures=()
 if [ $# -eq 0 ]; then
   while IFS= read -r f; do fixtures+=("$f"); done < <(ls "$EVAL_DIR/fixtures"/*.yaml | sort)
