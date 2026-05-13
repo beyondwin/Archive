@@ -54,6 +54,36 @@ this skill's institutional memory.
 If you find yourself making a non-trivial decision without an experiment
 directory open, STOP and create one. Then resume.
 
+## Learning log operational protocol (v2.8+)
+
+The skill emits structured learning events to a user-local per-run sharded
+log. As an agent editing this skill, you should:
+
+- **Read recent events when starting work on a related area.** Glob
+  `~/.claude/learning/kws-claude-multi-agent-executor/runs/**/events.jsonl`
+  and look for repeated `issue_key`s, `improvement.target`s, or
+  `event_type`s touching the file you're about to edit. Past run data is
+  cheap context.
+- **Do not write events yourself when running the skill.** The skill's
+  own runtime (orchestrator) handles emission. Manual writes from
+  outside an orchestrator run would pollute the dataset.
+- **Treat the log as observability, not state.** Plan execution must never
+  depend on it; conversely, deleting old run directories never breaks the
+  skill. The `meta.json` `outcome` field is the canonical "did this run
+  finish cleanly?" signal — use it when summarizing skill performance.
+- **When changing event types or schemas**, update `references/learning-log.md`,
+  ARCHITECTURE.md §14, and `evals/check_learning_log.py` in the same commit.
+  Bump skill minor version. Past events on disk retain the older schema —
+  the `schema_version` field on each event records which contract it was
+  written under.
+- **Privacy is non-negotiable.** If you encounter an event with a secret,
+  absolute home path, full transcript, or other forbidden content, treat
+  it as a helper bug and fix the rejection path. Do not weaken redaction
+  to make a candidate pass.
+
+See `references/learning-log.md` for the full schema and `docs/experiments/v2.8-learning-log/`
+for the implementation history.
+
 ## File responsibilities (quick reference)
 
 - **`SKILL.md`** — current skill behavior. The runtime reads this. Treat

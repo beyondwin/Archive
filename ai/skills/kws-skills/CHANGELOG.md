@@ -1,5 +1,31 @@
 # Changelog
 
+## 2.11.0 - 2026-05-13
+
+- `kws-claude-multi-agent-executor`에 per-run sharded user-local learning log를
+  추가했습니다 (skill 2.6.0 → 2.8.0).
+- 10개 event type (blocker, error, verification_failure, reviewer_warn_or_fail,
+  escalation, recurring_issue, user_correction, parallel_dispatch_failure,
+  successful_workaround, completion_learning) — Phase 0/1/Transition/2 notable
+  boundary 모두 커버.
+- `~/.claude/learning/kws-claude-multi-agent-executor/runs/<date>/<run_id>/`
+  per-run 디렉토리 레이아웃 — 한 repo 안 multiple orchestrator 동시 실행도 lock 없이
+  격리 (Codex sibling이 single-file이라면 Claude 쪽은 multi-orchestrator 환경에 맞게
+  per-run 분리).
+- 4-subcommand helper (`init-run`, `append`, `close-run`, `append-session-id`) —
+  마지막은 Resume Chain 핸드오프용.
+- Single-writer contract: orchestrator만 helper 호출. Sub-agent는
+  `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json` 후보 파일만
+  작성하고 orchestrator가 Phase 1 Step 3.5에서 스캔/forwarding.
+- Review-side superpowers Skill 호출 보강: Plan Reviewer →
+  `superpowers:writing-plans`, Reviewer → `superpowers:requesting-code-review`,
+  Verifier → `superpowers:verification-before-completion`. (Implementer는 이미
+  4개 Skill 호출 보유; 검수 측의 0건 비대칭 해소.)
+- ARCHITECTURE.md §14 Learning Log Contract 신설, HISTORY.md v2.8.0 entry,
+  AGENTS.md learning-log 운영 프로토콜, evals/check_learning_log.py (16 checks)
+  + evals/check_skill_contract.py preflight 통합.
+- 실험 기록: `ai/skills/kws-skills/package/kws-claude-multi-agent-executor/docs/experiments/v2.8-learning-log/`.
+
 ## 2.10.0 - 2026-05-13
 
 - `kws-codex-plan-executor`에 execution-only user-local learning log를 추가했습니다.
