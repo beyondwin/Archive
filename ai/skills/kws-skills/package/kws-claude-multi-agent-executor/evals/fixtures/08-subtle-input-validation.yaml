@@ -59,45 +59,51 @@ spec: |
 
   ## Input format
 
-  A duration string is a concatenation of one or more `<integer><unit>` segments,
-  with no separators between segments. Leading and trailing whitespace is stripped.
-  Internal whitespace is NOT allowed.
+  A duration string is a concatenation of `<integer><unit>` segments concatenated
+  with no separators. Leading and trailing whitespace is stripped.
 
-  Supported units (lowercase only):
-  - `s` — seconds
-  - `m` — minutes (60 s)
-  - `h` — hours  (3600 s)
-  - `d` — days   (86400 s)
+  Supported units: `s` (seconds), `m` (minutes), `h` (hours), `d` (days).
 
-  ## Valid input behaviors
+  ## Examples (happy path)
 
-  1. Single unit: `parse_duration("30s") == 30`, `parse_duration("5m") == 300`,
-     `parse_duration("2h") == 7200`, `parse_duration("1d") == 86400`.
-  2. Multi-unit: `parse_duration("1h30m") == 5400`, `parse_duration("1h30m45s") == 5445`.
-  3. Segments may appear in ANY order: `parse_duration("30m1h") == 5400`.
-  4. Zero values are allowed: `parse_duration("0s") == 0`, `parse_duration("0h30m") == 1800`.
-  5. Whitespace stripping: `parse_duration(" 30s ") == 30`, `parse_duration("\t1h\n") == 3600`.
+  ```
+  parse_duration("30s")     == 30
+  parse_duration("5m")      == 300
+  parse_duration("2h")      == 7200
+  parse_duration("1d")      == 86400
+  parse_duration("1h30m")   == 5400
+  parse_duration("1h30m45s") == 5445
+  parse_duration("30m1h")   == 5400   # order doesn't matter
+  parse_duration("0s")      == 0
+  parse_duration(" 30s ")   == 30     # outer whitespace stripped
+  ```
 
-  ## Invalid input behaviors (must raise `ValueError`)
+  ## Error cases (must raise ValueError)
 
-  6. Empty string after stripping: `parse_duration("")` and `parse_duration("   ")`.
-  7. Bare number with no unit: `parse_duration("30")`.
-  8. Unknown unit: `parse_duration("5x")`, `parse_duration("3w")`.
-  9. Repeated unit (same unit appearing more than once): `parse_duration("30m20m")`,
-     `parse_duration("1h2h")`.
-  10. Negative values: `parse_duration("-30s")`, `parse_duration("1h-5m")`.
-  11. Decimal values: `parse_duration("1.5h")`, `parse_duration("0.5s")`.
-  12. Internal whitespace: `parse_duration("1h 30m")`, `parse_duration("30 s")`.
-  13. Uppercase units: `parse_duration("1H")`, `parse_duration("30S")`. (Only lowercase accepted.)
-  14. Unit without preceding integer: `parse_duration("s")`, `parse_duration("hm")`.
-  15. Trailing unit-less integer: `parse_duration("1h30")`.
+  The function must reject malformed input with `ValueError` and an informative
+  message that helps the caller identify the problem.
+
+  Examples of inputs that must raise:
+
+  ```
+  parse_duration("")        # empty
+  parse_duration("30")      # bare number, no unit
+  parse_duration("5x")      # unknown unit
+  parse_duration("-30s")    # negative not supported
+  parse_duration("1.5h")    # decimals not supported (returns int only)
+  ```
+
+  Beyond these examples, the function must **strictly validate** input format.
+  Anything that does not match the documented `<integer><unit>...` grammar is
+  invalid. Be precise about what your parser accepts; reject everything else
+  with a clear ValueError.
 
   ## Notes
 
-  - The function returns a Python `int`. No floats.
-  - Error messages should be informative enough that a caller can identify the problem
-    (which unit/segment is bad, or the category — empty, unknown unit, etc).
-  - No external libraries beyond the Python standard library.
+  - Return type is `int`. No floats.
+  - Standard library only.
+  - The 5 explicit error examples above are not exhaustive. Other malformed
+    inputs should also raise — the rule is "strict validation of the grammar."
 
 invocation: ""
 
