@@ -1,0 +1,18 @@
+{
+  "version": "2.8.0",
+  "date": "2026-05-13T14:19:48Z",
+  "fixtures": [
+    {
+      "fixture": "08-subtle-input-validation",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 0.9,
+        "code_quality": 0.9,
+        "cost_efficiency": 1.0
+      },
+      "mean": 0.95,
+      "passed": true,
+      "notes": "Rubric: 19/20 valid+error checks pass (pass_rate 0.95 → correctness 1.0); single missed error case is the repeated-unit rejection (error_cases 9/10 → spec_compliance 0.9). Implementation uses a single regex parser with parametrized tests covering happy/explicit/adversarial cases — clean and idiomatic. Wall-time 15m of 25m budget; both budgets well under 60%."
+    }
+  ]
+}
