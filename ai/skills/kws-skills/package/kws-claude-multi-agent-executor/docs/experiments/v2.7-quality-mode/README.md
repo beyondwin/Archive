@@ -1,8 +1,18 @@
 # v2.7 Quality Mode Experiment
 
-**Status**: In progress (started 2026-05-13)
+**Status**: **CLOSED** (negative result on quality_plus; positive on infrastructure) — 2026-05-13
 **Branch**: `feature/v2.7-quality-mode-experiment`
 **Production baseline**: v2.6.0 (untouched on `main`)
+
+## Outcome
+
+3 reps of balanced v2.6.0 on fixture 08 produced identical 0.95 rubric
+pass_rate (0% variance, same single miss every time). quality_plus's
+maximum gain on this fixture is +0.05 and best-of-N is unlikely to
+discriminate when 3/3 reps reproduce the exact same code.
+
+See [F002-close-out.md](./findings/F002-close-out.md) for the full
+recommendation and what infrastructure to ship.
 
 ## Goal
 
@@ -26,18 +36,18 @@ choices, error-handling policy). Cost: 2–6× tokens vs balanced.
 - [decisions/](./decisions/) — one short ADR per major decision
 - [findings/](./findings/) — run artifacts and analysis (populated as runs complete)
 
-## Current phase: **Pilot**
+## Final phase status
 
 | Task | Status | Notes |
 |------|--------|-------|
 | Experiment branch | ✓ | commit d5aa5eb |
-| Fixture 08 design | ✓ | 20 deterministic rubric checks |
-| Judge calibration | ✓ | Pass via deterministic rubric runner (Δ=0.20) |
-| Rubric runner integrated into harness | ⏳ | next |
-| Fixture 08 ceiling check (balanced × 1) | ⏳ | |
-| quality_plus mode implementation | ⏳ | |
-| Pilot (6 runs: balanced × 3 + quality_plus × 3) | ⏳ | |
-| Analysis + decision | ⏳ | |
+| Fixture 08 design + redesign | ✓ | D007: realistic underspec, 20 rubric checks |
+| Judge calibration | ✓ | Failed LLM-alone; replaced with deterministic rubric runner |
+| Rubric runner integrated into harness | ✓ | commit cc2cf6e — ship to main |
+| Fixture 08 ceiling check (balanced × 3) | ✓ | All 3 reps: 0.95, same single miss |
+| quality_plus mode implementation | **SKIPPED** | Ceiling makes lift marginal (+0.05 max) |
+| Pilot (6 runs) | **SKIPPED** | Lift undetectable at zero baseline variance |
+| Close-out + findings | ✓ | F001 (data), F002 (decision) |
 
 ## Decisions index
 

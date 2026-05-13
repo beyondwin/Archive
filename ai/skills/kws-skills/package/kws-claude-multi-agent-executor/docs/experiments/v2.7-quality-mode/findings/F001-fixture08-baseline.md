@@ -1,7 +1,7 @@
 # F001 — Fixture 08 baseline variance (v2.6.0 balanced, n=3)
 
 **Date**: 2026-05-13 (evening)
-**Status**: Data collection in progress (rep 1 done, reps 2–3 running)
+**Status**: COMPLETE
 
 ## Question
 
@@ -21,15 +21,38 @@ can realistically demonstrate improvement.
 
 | Rep | pass_rate | error_cases | Missed checks | Judge mean |
 |-----|-----------|-------------|---------------|------------|
-| 1 | 0.95 | 9/10 | repeated unit raises ValueError | 0.9 |
-| 2 | 0.95 | 9/10 | repeated unit raises ValueError | 0.9 |
-| 3 | ⏳ | | | |
-| **mean** | (pending) | | | |
-| **range** | (pending) | | | |
+| 1 | 0.95 | 9/10 | repeated unit raises ValueError | 0.90 |
+| 2 | 0.95 | 9/10 | repeated unit raises ValueError | 0.90 |
+| 3 | 0.95 | 9/10 | repeated unit raises ValueError | 0.95 |
+| **mean** | **0.95** | 9/10 | (always same) | 0.917 |
+| **range** | **0.00** | 0 | n/a | 0.05 |
 
-**Note**: Reps 1 and 2 produced **identical** rubric outcomes — same single
-missed check, same pass rate. This is strong early signal for Case A
-(deterministic-stable balanced behavior).
+**Result**: Case A confirmed. All 3 reps produced identical rubric outcomes
+— same exact pass_rate, same single missed check, zero variance on the
+deterministic measurement. Judge mean varied slightly (0.90 / 0.90 / 0.95)
+because the LLM judge's `code_quality` axis has its known stochasticity.
+
+## Per-check consistency
+
+For each of the 20 rubric checks, all 3 reps produced the same outcome:
+- 19 checks pass in every rep
+- 1 check (`repeated unit raises ValueError`) fails in every rep
+
+Zero variance on outcome. Sonnet's behavior on this fixture is
+**reproducibly deterministic** at the level of rubric pass/fail.
+
+## Why this matters for quality_plus
+
+Best-of-N's value proposition rests on **selecting between diverse
+candidates**. If 3 Opus candidates would also reliably produce the same
+miss (because Sonnet did 3/3 times, and the miss is in Sonnet's spec
+interpretation, not its sampling), best-of-N picks between identical
+candidates and adds zero correctness signal.
+
+Best-of-N could still help if Opus is MORE thorough than Sonnet on this
+class of edge case — but that would be measuring "Opus vs Sonnet
+Implementer", not "1 vs N candidates". A cheaper experiment is just
+"use Opus Implementer in balanced mode" — no best-of-N machinery needed.
 
 ## Per-check consistency (filled when data complete)
 
@@ -60,11 +83,18 @@ case D:  Reps land 0.70, 1.0, 0.85 (wild variance)
          → cannot conclude; pivot domain
 ```
 
-## Decision (filled after analysis)
+## Decision
 
-(will be one of: ship quality_plus / skip quality_plus / pivot to different
-fixture domain / accept null result)
+**Case A confirmed. Skip quality_plus implementation. Ship calibration
+infrastructure.** See [F002](./F002-close-out.md) for the close-out plan.
+
+Reasoning: the deterministic 0.95 ceiling + zero variance means quality_plus's
+maximum gain on this fixture is +0.05, all candidates would likely produce
+the same miss, and the implementation cost (~150-line SKILL.md + ~$50–100
+per fixture run) is not justified.
 
 ## Cost actuals
 
-(filled with token counts and wall times across all 3 reps)
+3 balanced reps × ~$5–10 per run = **~$15–30**. Wall time ~30 min total
+across all 3 reps (each ~10–15 min). Token spend roughly within fixture
+budget (350k cap).
