@@ -7,6 +7,39 @@ verification before final responses, commits, pushes, or PRs.
 Keep entries concise. Store commands, outcomes, skipped checks, and residual
 risk. Do not paste long logs or sensitive output.
 
+## 2026-05-14 - Korean human guide
+
+- Branch: `codex/update-project-docs`
+- Commit: pending at time of verification
+- Scope: added a Korean human-facing guide for usage, structure, design
+  rationale, state artifacts, maintenance, and common blockers; linked it from
+  README and recorded docs-only history. `SKILL.md` runtime instructions were
+  intentionally unchanged.
+- Commands:
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .`
+    - result: pass, `Skill is valid!`
+  - `python3 evals/check_skill_contract.py --skill SKILL.md`
+    - result: pass, JSON payload had `"passed": true` and no failures
+  - `python3 evals/check_learning_log.py`
+    - result: pass, JSON payload had `"passed": true` and no failures
+  - package-local Markdown link check over `README.md`, `HISTORY.md`,
+    `ARCHITECTURE.md`, `docs/*.md`, and `references/*.md`
+    - result: pass, `markdown links ok`
+  - `git diff --check -- skills/kws-codex-plan-executor`
+    - result: pass, no whitespace errors
+  - `graphify update .`
+    - result: pass, graph rebuilt with `3561` nodes and `3735` edges
+- Skipped checks:
+  - `bash evals/run.sh`; skipped because this was a docs-only human guide
+    change with no runtime, prompt, state schema, parser, or headless behavior
+    change.
+- Documentation impact:
+  - Added [user-guide.ko.md](user-guide.ko.md) and linked it from
+    [../README.md](../README.md).
+- Residual risk:
+  - The Korean guide is explanatory documentation. Runtime guarantees continue
+    to be enforced by `SKILL.md`, `references/`, scripts, and evals.
+
 ## 2026-05-14 - README and maintainer docs
 
 - Branch: `codex/executor-learning-log`

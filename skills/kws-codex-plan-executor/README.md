@@ -7,6 +7,9 @@ This README is an index for maintainers and future agents. Runtime instructions
 remain in [SKILL.md](SKILL.md); detailed contracts are split by topic so agents
 can load only the context they need.
 
+For a Korean human-facing guide with usage, structure, and design rationale,
+read [docs/user-guide.ko.md](docs/user-guide.ko.md).
+
 ## Current Contract
 
 - Skill version: `1.5.0`
@@ -29,19 +32,21 @@ For normal use:
 
 For maintenance or follow-up work:
 
-1. [docs/doc-update-protocol.md](docs/doc-update-protocol.md) - what to update
+1. [docs/user-guide.ko.md](docs/user-guide.ko.md) - Korean human-facing usage,
+   structure, and design rationale.
+2. [docs/doc-update-protocol.md](docs/doc-update-protocol.md) - what to update
    before finalizing package changes.
-2. [docs/how-it-works.md](docs/how-it-works.md) - end-to-end runtime model.
-3. [docs/state-and-logging.md](docs/state-and-logging.md) - state, context,
+3. [docs/how-it-works.md](docs/how-it-works.md) - end-to-end runtime model.
+4. [docs/state-and-logging.md](docs/state-and-logging.md) - state, context,
    learning logs, privacy rules.
-4. [docs/evals-and-verification.md](docs/evals-and-verification.md) - how evals
+5. [docs/evals-and-verification.md](docs/evals-and-verification.md) - how evals
    are organized and run.
-5. [docs/verification-log.md](docs/verification-log.md) - compact record of
+6. [docs/verification-log.md](docs/verification-log.md) - compact record of
    verification commands and outcomes.
-6. [docs/decisions.md](docs/decisions.md) - why the current design exists.
-7. [docs/risks-limitations-deferrals.md](docs/risks-limitations-deferrals.md) -
+7. [docs/decisions.md](docs/decisions.md) - why the current design exists.
+8. [docs/risks-limitations-deferrals.md](docs/risks-limitations-deferrals.md) -
    known risks, limits, and intentional deferrals.
-8. [docs/future-agent-guide.md](docs/future-agent-guide.md) - safe change path
+9. [docs/future-agent-guide.md](docs/future-agent-guide.md) - safe change path
    and suggested next improvements.
 
 For behavior history:
