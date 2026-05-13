@@ -19,7 +19,7 @@ execution and prompt export. It fully replaces the former
 
 1. Resolve paths and mode.
 2. Validate plan structure with `scripts/parse_plan.py` for execution modes.
-3. Initialize or update `.codex-orchestrator/state.json`.
+3. Initialize a `run_id` and update `.codex-orchestrator/runs/<run_id>/state.json`.
 4. Record a task execution contract before edits.
 5. Execute tasks locally unless subagents were explicitly requested.
 6. Verify each task with risk-scaled commands and record failures with stable
@@ -29,17 +29,30 @@ execution and prompt export. It fully replaces the former
 
 ## State File Contract
 
-`.codex-orchestrator/state.json` is the source of truth for resuming execution.
-The schema is documented in `references/state-schema.md` and mechanically
-checked by `scripts/validate_state.py`.
+`.codex-orchestrator/runs/<run_id>/state.json` is the source of truth for
+resuming one execution. `.codex-orchestrator/state.json` is retained only as a
+latest-state compatibility copy or pointer. The schema is documented in
+`references/state-schema.md` and mechanically checked by
+`scripts/validate_state.py`.
 
 ## Learning Log Contract
 
-Execution modes may append redacted notable-boundary events to the user-local
-JSONL log at `~/.codex/learning/kws-codex-plan-executor/events.jsonl`. This log
-is for improving the executor across repositories. It does not replace
-`.codex-orchestrator/state.json`, checkpoints, headless logs, or raw
-verification artifacts.
+Execution modes may append redacted notable-boundary events to a user-local
+per-run log:
+
+```text
+~/.codex/learning/kws-codex-plan-executor/
+  index.jsonl
+  runs/<YYYY-MM-DD>/<run_id>/{meta.json,events.jsonl,final.json}
+```
+
+`run_id` is generated from UTC time, repo slug, branch slug, head hash, and a
+random suffix. The helper lifecycle is `init-run`, `append`, and `close-run`.
+Events include `run_id`, `execution.run_dir`, and `execution.state_path` so logs
+from multiple projects or multiple same-project executors remain queryable and
+do not logically mix. This log is for improving the executor across
+repositories. It does not replace per-run state, checkpoints, headless logs, or
+raw verification artifacts.
 
 ## Subagent Policy
 
@@ -51,7 +64,7 @@ the current Codex session.
 ## Headless Codex Exec Contract
 
 Headless mode uses `codex exec --json --output-last-message`, creates
-`.codex-orchestrator/` before redirecting logs, and defaults to
+`.codex-orchestrator/runs/<run_id>/` before redirecting logs, and defaults to
 `--sandbox workspace-write`. `headless_sandbox=read-only` is limited to
 preflight, parse, and prompt verification; implementation tasks stop instead of
 silently switching sandbox mode. Headless mode may use `--output-schema` for

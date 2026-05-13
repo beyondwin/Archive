@@ -21,11 +21,13 @@ Before sending the generated prompt, confirm:
 
 - task-by-task local implementation by default, subagent opt-in only, two-stage review, and Task 0/1 start handling are explicit
 - per-task `TASK EXECUTION CONTRACT` is explicit with scope, files to inspect, allowed edits, forbidden edits, and acceptance command or honest substitute
-- lightweight `.codex-orchestrator/state.json` ledger is explicit and includes workspace, plan, branch, worktree, current task/phase, task state, risk levels, issue keys, verification, session-owned resources, and last checkpoint
+- lightweight `.codex-orchestrator/runs/<run_id>/state.json` ledger is explicit and includes run_id, run_dir, state_path, workspace, plan, branch, worktree, current task/phase, task state, risk levels, issue keys, verification, session-owned resources, and last checkpoint; `.codex-orchestrator/state.json` is only a latest-state compatibility copy/pointer
 - execution-only learning-log contract is explicit: `interactive` and
   `headless` record redacted notable-boundary events to
-  `~/.codex/learning/kws-codex-plan-executor/events.jsonl`; `prompt` and
-  `handoff` are not logging modes
+  `~/.codex/learning/kws-codex-plan-executor/runs/<YYYY-MM-DD>/<run_id>/events.jsonl`
+  with `index.jsonl`; `prompt` and `handoff` are not logging modes
+- learning events include `run_id`, `run_dir`, and `state_path`, and the prompt
+  covers `init-run`, `append`, and `close-run`
 - generated prompts include privacy rules forbidding secrets, full transcripts,
   long raw logs, and absolute home paths in learning events
 - task-level `low | mid | high` risk ledger is explicit, with same-file later tasks upgraded to at least `mid`
