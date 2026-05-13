@@ -3,6 +3,16 @@
 Source of truth for current behavior: `SKILL.md`, `templates/`, and
 `references/`. This file tracks release intent and migration history.
 
+## Docs-only - Korean human guide (2026-05-14)
+
+- Added `docs/user-guide.ko.md` as a Korean human-facing guide for usage,
+  structure, execution artifacts, operating rationale, maintenance, and common
+  blockers.
+- Kept `SKILL.md` unchanged so the agent-facing runtime contract remains
+  compact and optimized for execution.
+- Linked the guide from `README.md`; no runtime behavior, prompt export,
+  scripts, evals, or public skill metadata changed.
+
 ## v1.5.0 - Add source-grounded completion proof (2026-05-14)
 
 - Hardened plan parsing to ignore hidden Markdown regions such as fenced code,
