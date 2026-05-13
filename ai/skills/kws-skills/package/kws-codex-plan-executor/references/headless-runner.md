@@ -5,9 +5,12 @@ Use this only for `mode=headless`, eval, CI, or explicitly detached execution.
 ## Safe Default Command
 
 ```bash
+mkdir -p "$WORKTREE_ABS/.codex-orchestrator"
+HEADLESS_SANDBOX="${HEADLESS_SANDBOX:-workspace-write}"
+
 codex exec \
   --cd "$WORKTREE_ABS" \
-  --sandbox workspace-write \
+  --sandbox "$HEADLESS_SANDBOX" \
   --json \
   --output-last-message "$WORKTREE_ABS/.codex-orchestrator/headless-final.md" \
   "$PROMPT" \
@@ -17,9 +20,12 @@ codex exec \
 ## Schema Output Variant
 
 ```bash
+mkdir -p "$WORKTREE_ABS/.codex-orchestrator"
+HEADLESS_SANDBOX="${HEADLESS_SANDBOX:-workspace-write}"
+
 codex exec \
   --cd "$WORKTREE_ABS" \
-  --sandbox workspace-write \
+  --sandbox "$HEADLESS_SANDBOX" \
   --json \
   --output-schema "$WORKTREE_ABS/.codex-orchestrator/final.schema.json" \
   --output-last-message "$WORKTREE_ABS/.codex-orchestrator/headless-final.json" \
@@ -34,6 +40,13 @@ codex exec \
   `.codex-orchestrator/headless-final.json`
 - `.codex-orchestrator/state.json`
 - raw verification output paths for failures
+
+## Sandbox Selection
+
+`headless_sandbox=workspace-write` is the default for implementation runs.
+`headless_sandbox=read-only` is only for preflight, parse, or prompt
+verification. If a read-only headless run reaches a task that requires editing,
+stop with a blocker instead of silently switching sandbox mode.
 
 ## Eval Harness Boundary
 

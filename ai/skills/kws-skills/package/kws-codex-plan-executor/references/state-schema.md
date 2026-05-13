@@ -88,7 +88,17 @@ Required per-task fields:
 - `status`
 - `risk`
 - `files_declared`
+- `contract`
 - `review_retries`
 - `verifier_retries`
 
-Keep retry counts numeric and file lists as arrays.
+The `contract` object must include:
+
+- `scope`
+- `files_to_inspect`
+- `allowed_edits`
+- `forbidden_edits`
+- `acceptance_command_or_honest_substitute`
+
+Keep retry counts numeric, contract text fields as strings, and file lists as
+arrays.
