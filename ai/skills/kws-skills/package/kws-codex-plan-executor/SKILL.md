@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "1.2.0"
+  version: "1.2.1"
   updated_at: "2026-05-13"
 ---
 
@@ -28,7 +28,8 @@ Supported arguments:
   stop and ask which state to resume.
 - `mode=interactive|headless|prompt|handoff` optional, default `interactive`.
 - `subagents=on|off` optional, default `off` unless the user explicitly asked for subagents, delegation, or parallel work.
-- `headless_sandbox=workspace-write|read-only` optional, default `workspace-write`.
+- `headless_sandbox=workspace-write|read-only` optional, default `workspace-write`;
+  `read-only` is for preflight/prompt verification and blocks edit execution.
 
 ## Hard Boundary
 

@@ -39,6 +39,7 @@ python3 scripts/validate_state.py --help
 python3 evals/check_prompt.py --help
 python3 evals/check_execution.py --help
 python3 evals/check_parse_plan.py --help
+python3 evals/check_state_schema.py
 python3 evals/check_skill_contract.py --help
 python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
 ../../tests/test-sync.sh

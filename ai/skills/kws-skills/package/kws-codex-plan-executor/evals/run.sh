@@ -34,6 +34,12 @@ mkdir -p "$EVAL_DIR/baselines"
 partial="$BASELINE_FILE.partial"
 : > "$partial"
 
+python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md" >/dev/null
+python3 "$EVAL_DIR/check_state_schema.py" >/dev/null
+while IFS= read -r parser_fixture; do
+  python3 "$EVAL_DIR/check_parse_plan.py" --fixture "$parser_fixture" >/dev/null
+done < <(find "$EVAL_DIR/parser-fixtures" -name '*.yaml' -type f | sort)
+
 for fixture_path in "${fixtures[@]}"; do
   fixture_name="$(basename "$fixture_path" .yaml)"
   parent="$(mktemp -d -t "codex-executor-eval-${fixture_name}.XXXXXX")"
@@ -145,7 +151,7 @@ payload = {
     "mode": mode,
     "codex_status": int(codex_status),
     "checker_status": int(checker_status),
-    "passed": int(checker_status) == 0,
+    "passed": int(codex_status) == 0 and int(checker_status) == 0,
     "checks": checks,
 }
 with open(path, "a", encoding="utf-8") as fh:

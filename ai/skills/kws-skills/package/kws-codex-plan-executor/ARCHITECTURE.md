@@ -42,10 +42,14 @@ the current Codex session.
 
 ## Headless Codex Exec Contract
 
-Headless mode uses `codex exec --json --output-last-message` and defaults to
-`--sandbox workspace-write`. It may use `--output-schema` for structured final
-results. It does not use `--dangerously-bypass-approvals-and-sandbox` unless
-the user explicitly asks and the target is isolated.
+Headless mode uses `codex exec --json --output-last-message`, creates
+`.codex-orchestrator/` before redirecting logs, and defaults to
+`--sandbox workspace-write`. `headless_sandbox=read-only` is limited to
+preflight, parse, and prompt verification; implementation tasks stop instead of
+silently switching sandbox mode. Headless mode may use `--output-schema` for
+structured final results. It does not use
+`--dangerously-bypass-approvals-and-sandbox` unless the user explicitly asks and
+the target is isolated.
 
 The eval harness creates real headless worktrees for resume and dirty-worktree
 scenarios. `initial_state` is written before the bootstrap commit, while
@@ -70,6 +74,7 @@ Deterministic scripts own mechanical correctness:
 - `evals/check_prompt.py`
 - `evals/check_execution.py`
 - `evals/check_parse_plan.py`
+- `evals/check_state_schema.py`
 - `evals/check_skill_contract.py`
 
 `evals/judge.md` is reserved for subjective quality after deterministic checks.
