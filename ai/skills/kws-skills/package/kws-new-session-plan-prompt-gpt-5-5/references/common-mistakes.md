@@ -15,6 +15,8 @@
 - Starting at Task 1 when the plan starts at Task 0.
 - Starting a Task without a short execution contract that names scope, files to inspect, allowed edits, forbidden edits, and acceptance command.
 - Treating `HANDOFF CHECKPOINT` as enough for restart-critical state instead of also maintaining `.codex-orchestrator/session.json`.
+- Updating source-of-truth plan checkboxes in the original workspace without recording whether the plan docs are tracked, untracked, dirty, and intended for commit.
+- Staging or committing original-workspace plan docs by inference when they are untracked or mixed with unrelated changes.
 - Saying verification is risk-scaled without first assigning task-level `low | mid | high` risk and upgrade reasons.
 - Treating a broad multi-layer Task as one undifferentiated edit instead of splitting it into self-contained intra-task Phases.
 - Allowing model exceptions the user did not explicitly request.
@@ -22,6 +24,7 @@
 - Retrying review or verification failures without stable `ISSUE_KEY` records, making recurring failures invisible.
 - Requiring task execution but not task closure: implementation, review, fixes, verification, and agent cleanup.
 - Encouraging broad cleanup such as `killall node`, `pkill node`, `killall chrome`, or `pkill playwright`.
+- Treating broad `ps` output for Node/Java/Playwright as session-owned cleanup evidence instead of narrowing by ledger-recorded PID/session id/port/worktree path.
 - Writing compact rules as if the model can prevent system compaction.
 - Emitting long repetitive checkpoints that consume context faster.
 - Writing free-form checkpoints instead of fixed restart-critical fields.
@@ -30,7 +33,9 @@
 - Splitting at non-semantic boundaries such as file reads or partial edits.
 - Treating task count, area switches, file count, or log volume as automatic stop conditions instead of checkpoint-and-continue signals.
 - Treating every context boundary as a full-test boundary, causing repeated full-suite runs for small phases.
+- Letting targeted tests for test property/config/build-input changes pass as `UP-TO-DATE` without cache-busting or a broader verification that actually re-runs the changed path.
 - Skipping verification without recording why and where the next honest verification will happen.
+- Running broad public-safety or process scans by default, then treating existing placeholder/env-var false positives as if they were introduced by the current change.
 - Reporting an environment blocker before checking command execution, dependencies, path/config, and required services.
 - Retrying the same root cause indefinitely instead of stopping after 3 failed fix attempts with an error/blocked checkpoint.
 - Forcing KWS-only doc/skill review skills in the generated prompt instead of using an impact-gated documentation check.

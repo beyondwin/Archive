@@ -12,8 +12,8 @@
 
 ## 현재 버전
 
-- 패키지 버전: `2.4.1`
-- 마지막 갱신일: `2026-05-08`
+- 패키지 버전: `2.5.0`
+- 마지막 갱신일: `2026-05-13`
 
 ## 포함된 스킬
 
@@ -30,9 +30,9 @@
 | 스킬 | 버전 | 갱신일 |
 | --- | --- | --- |
 | `archive-docs-organizer` | `1.1.1` | `2026-04-30` |
-| `kws-claude-multi-agent-executor` | `1.0.0` | `2026-05-08` |
+| `kws-claude-multi-agent-executor` | `2.6.0` | `2026-05-13` |
 | `kws-doc-prompt-review` | `1.0.1` | `2026-05-05` |
-| `kws-new-session-plan-prompt-gpt-5-5` | `2.2.3` | `2026-05-08` |
+| `kws-new-session-plan-prompt-gpt-5-5` | `2.3.0` | `2026-05-13` |
 | `kws-skill-prompt-review` | `1.0.1` | `2026-05-05` |
 | `reflective-essay-writer` | `1.0.1` | `2026-04-30` |
 | `reflective-writing-coach` | `1.0.1` | `2026-04-30` |

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.5.0 - 2026-05-13
+
+- `kws-new-session-plan-prompt-gpt-5-5`에 `HISTORY.md`, `ARCHITECTURE.md`, 변경 프로토콜, 평가 fixture, 실험 기록 템플릿을 추가해 점진적 개선 이력을 남길 수 있게 했습니다.
+- `kws-new-session-plan-prompt-gpt-5-5`의 개별 스킬 버전을 `2.3.0`으로 갱신했습니다.
+- manifest와 README의 개별 스킬 버전 표를 현재 `SKILL.md` metadata와 맞췄습니다.
+
 ## 2.4.1 - 2026-05-08
 
 - `kws-new-session-plan-prompt-gpt-5-5`의 기본 로드 경로를 줄이기 위해 Spark scout opt-in 본문과 common mistakes reference를 별도 파일로 분리했습니다.
