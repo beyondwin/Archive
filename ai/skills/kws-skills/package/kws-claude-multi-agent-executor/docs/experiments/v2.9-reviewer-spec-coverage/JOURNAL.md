@@ -146,3 +146,89 @@ step 3 of the autonomous mandate ("1~3까지").
 Step 1 (v2.8 F001 smoke), Step 2 (T4 prompt edit), Step 3 (T4.5 dry-run
 pilot) all complete. Handing off T5 + ship decision to user with full
 data and Path-α/β/γ analysis recorded in F001-T4.5-dry-run.md.
+
+---
+
+## 2026-05-14
+
+### Early morning — user requested full integrated plan execution
+
+User responded to the 11-risk audit ("다 필요한거아냐?") and authorized
+all five phases. Path A discipline preserved: phases sequenced by
+dependency, evidence-first, no over-engineering. Phase 4 (omc candidate
+re-ranking) deferred to 1-2 weeks of runtime data accumulation.
+
+### Phase 1 — v2.8.1 enforcement
+
+- SKILL.md Step 7.5 promoted to MANDATORY heading with explicit "DO NOT
+  SKIP THIS STEP" framing.
+- Helper invocation emits `LEARNING_LOG_INIT:` marker on both success
+  and shell-level failure paths (visible in run.jsonl for post-run audit).
+- `2>/dev/null` removed from helper call so stderr surfaces.
+- `evals/run.sh` greps run.jsonl for the marker post-run and reports
+  `learning_log_adherence: yes|no (markers=N)`.
+- `evals/check_skill_contract.py` 18th check (`skill_md_v281_mandatory_framing`)
+  asserts MANDATORY / DO NOT SKIP / LEARNING_LOG_INIT tokens present.
+- Version bumps: SKILL.md 2.8.0 → 2.8.1; manifest + README updated.
+- Committed as `4afca2e`.
+
+### Phase 2 — fixture 08 spec clarification
+
+- Spec Notes section now includes explicit "A unit may appear at most
+  once per input. `30m20m`, `1h1h`, or any other string that repeats the
+  same unit letter MUST raise ValueError."
+- Removes the spec-vs-rubric ambiguity discovered in T4.5 dry-run.
+- Committed alongside Phase 1 in `4afca2e`.
+
+### Phase 3 — T5 (n=4) + T6 (ship decision)
+
+Ran fixture 08 four times under combined v2.8.1 + v2.9 prompt + clarified
+spec. Results:
+
+| Rep | rubric | judge | adherence (markers) | meta.outcome |
+|-----|--------|-------|---------------------|---------------|
+| 1   | 1.0    | 1.0   | yes (7)             | success       |
+| 2   | 1.0    | 1.0   | yes (7)             | success       |
+| 3   | 1.0    | 1.0   | yes (7)             | success       |
+| 4   | 1.0    | 1.0   | yes (8)             | success       |
+
+Per-Reviewer walk inspection (n=8 invocations across 4 reps × 2 reviewers):
+- 8/8 emit SPEC_COVERAGE_WALK block
+- 8/8 explicitly include `30m20m` row in sub-step B
+- Mean SPEC_SCORE 0.997 (no false-positive implementer_omitted)
+- All SPEC_STATUS: PASS
+
+Pass criteria evaluation:
+- Primary (`30m20m` rejection): 25% → **100%** (4/4 reps); +75 pp
+- Secondary (SPEC_SCORE stability): 0.93 → 0.997; +0.07 improvement
+- Tertiary (v2.8.1 adherence): 4/4 reps with markers + run dirs
+- Walk reproducibility: 8/8 invocations
+
+**T6 verdict: SHIP v2.9.0**. F002 findings doc records full attribution
+analysis (spec clarification = biggest single contributor; walk =
+deterministic mechanism; v2.8.1 = observability prerequisite) and power
+note (n=4 cannot bound effect tighter than ±60% but rejects null
+hypothesis at p < 0.01).
+
+### Phase 5 — branch hygiene + close-out
+
+- Version bumps: SKILL.md 2.8.1 → 2.9.0; manifest + README updated.
+- HISTORY.md v2.9.0 entry added under §1.
+- README + JOURNAL phase status updated to ✓ done.
+- Findings index includes F002-T5-n4-results.
+
+### Out-of-scope deferrals (recorded)
+
+- omc 6-item candidate shelf (D/E/F/G/A/B) — re-rank after 1-2 weeks of
+  v2.8.1 learning-log runtime data accumulation.
+- Verifier acceptance-criteria coverage walk (Q3 in design doc) —
+  re-evaluate when Verifier failure rate has measured baseline.
+- Implementer retry visibility of NOT FOUND walk rows (Q1 in design
+  doc) — defer; existing `previous_issues` covers most cases.
+
+### Close-out
+
+v2.9.0 + v2.8.1 shipped on `codex/executor-learning-log` branch. All four
+pass criteria empirically satisfied. Total cost (Phases 1-3, 5):
+~$30-50 across 5 fixture runs + 1 short fixture A. Wall ~3 hours
+including waiting.
