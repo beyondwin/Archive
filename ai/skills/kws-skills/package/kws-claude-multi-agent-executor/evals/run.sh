@@ -31,6 +31,16 @@ python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md" >/dev/
   python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md" >&2
   exit 1
 }
+# Doc freshness check — non-blocking by default. Set DOC_FRESHNESS_STRICT=1
+# to fail the preflight on any drift. See docs/doc-update-protocol.md.
+echo "--- Doc freshness (non-blocking by default) ---"
+python3 "$EVAL_DIR/check_doc_freshness.py" || {
+  if [ "${DOC_FRESHNESS_STRICT:-0}" = "1" ]; then
+    echo "FATAL: check_doc_freshness.py failed under DOC_FRESHNESS_STRICT=1" >&2
+    exit 1
+  fi
+  echo "  (above failures reported only; preflight continues — set DOC_FRESHNESS_STRICT=1 to enforce)"
+}
 echo "=== Preflight passed ==="
 
 

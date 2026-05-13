@@ -86,6 +86,8 @@ for the implementation history.
 
 ## File responsibilities (quick reference)
 
+- **`README.md`** (root) — navigation hub. Update when adding a new top-
+  level doc or moving file locations.
 - **`SKILL.md`** — current skill behavior. The runtime reads this. Treat
   edits with care; any change here can affect every future invocation.
 - **`ARCHITECTURE.md`** — comprehensive overview of how the skill is built.
@@ -102,6 +104,35 @@ for the implementation history.
   changes — eval improvements ship orthogonally.
 - **`docs/experiments/`** — institutional memory. One subdirectory per
   experiment. Read before starting related work; write as you do related work.
+- **`docs/`** (top-level, non-experiment) — navigation + cross-cutting
+  docs. Glossary, decision-log, risks-and-limitations, deferred-candidates,
+  onboarding-for-ai-agents, troubleshooting, doc-update-protocol,
+  snapshots, how-to. Owned by whoever ships the relevant change — see
+  `docs/doc-update-protocol.md` for what to update when.
+
+## Doc-update protocol (REQUIRED on every non-trivial change)
+
+When you ship anything that's not a typo or whitespace fix, consult
+**`docs/doc-update-protocol.md`** to determine which docs need updating.
+The protocol has a per-change-type checklist (skill behavior / new event /
+new fixture / risk / decision / etc.). It is your obligation to:
+
+1. Read the relevant checklist before opening the commit.
+2. Do every required update in the same commit (atomicity matters —
+   docs and code drift apart fastest when they ship separately).
+3. Run `evals/check_doc_freshness.py` before commit (or rely on
+   `evals/run.sh` preflight, which invokes it non-blocking).
+
+The freshness check catches:
+- Version mismatch across SKILL.md / manifest / README
+- Broken internal markdown links
+- HISTORY.md missing an entry for the current SKILL.md version
+- Minor-version bumps without a `docs/snapshots/v<X>.md` snapshot
+- ADRs in `docs/experiments/*/decisions/` not indexed in `docs/decision-log.md`
+- Stale TODO/FIXME/XXX/WIP marker counts (reported, not failed)
+
+Strict mode (`DOC_FRESHNESS_STRICT=1`) makes the check fail the preflight.
+Use strict mode in CI; non-strict for interactive development.
 
 ## ARCHITECTURE.md sync (REQUIRED on behavior changes)
 

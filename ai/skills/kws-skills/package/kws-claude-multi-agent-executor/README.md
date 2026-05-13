@@ -121,6 +121,13 @@ package/kws-claude-multi-agent-executor/
 │   ├── deferred-candidates.md      ← future-work shelf  [NEW]
 │   ├── onboarding-for-ai-agents.md ← what an AI agent reads first  [NEW]
 │   ├── troubleshooting.md          ← common issues + fixes  [NEW]
+│   ├── doc-update-protocol.md      ← which docs to update when shipping each kind of change  [NEW]
+│   ├── how-to/
+│   │   ├── add-a-fixture.md            ← extending the eval suite
+│   │   ├── investigate-regression.md   ← debugging when reps regress
+│   │   └── extend-event-type.md        ← adding a new learning-log event type
+│   ├── snapshots/
+│   │   └── v2.9.0.md               ← archaeological state snapshot at ship time
 │   └── experiments/
 │       ├── README.md               ← experiment index
 │       ├── _template/              ← scaffold for new experiments
@@ -162,16 +169,23 @@ Related artifacts outside this directory:
 - **Sibling skill** (Codex executor parallel design): `package/kws-codex-plan-executor/`
 - **Plugin manifest**: `kws-skills/manifest.json`, `kws-skills/README.md`, `kws-skills/CHANGELOG.md`
 
-## What's proposed but not yet written
+## Keeping docs current
 
-If you want to extend the doc set, these are next-natural additions:
+Documentation drifts when changes ship without doc updates. To prevent
+that here:
 
-- `docs/how-to/add-a-fixture.md` — step-by-step for extending the eval suite
-- `docs/how-to/investigate-regression.md` — debugging guide when a rep regresses
-- `docs/how-to/extend-event-type.md` — adding a new learning-log event type
-- A versioned snapshot doc per major version (e.g., `docs/snapshots/v2.9.0.md`)
-  capturing the complete state at ship-time for archaeological reference
+- **Doc-update protocol** ([`docs/doc-update-protocol.md`](./docs/doc-update-protocol.md))
+  — a per-change-type checklist (skill behavior / new event / new fixture / risk / etc.)
+  saying exactly which docs to touch when you ship that kind of change.
+- **Freshness eval** (`evals/check_doc_freshness.py`) — deterministic
+  checks for the most regression-prone drift: version mismatch across
+  SKILL.md / manifest / README, broken internal markdown links across
+  the doc tree, stale "TODO/FIXME" markers. Runs in the same preflight
+  as the other two contract evals.
+- **Snapshots** ([`docs/snapshots/`](./docs/snapshots/)) — capture full
+  state at each major version. Currently: `v2.9.0.md`. Add one with
+  every minor-version bump.
 
-None of these block normal operation. Open them when the corresponding need
-arises (the pattern: write the doc *while* you do the thing, then it's both
-done and recorded).
+The freshness eval is **non-blocking by default** (reports drift,
+doesn't fail the harness). Promote to blocking if you find yourself
+ignoring its warnings.
