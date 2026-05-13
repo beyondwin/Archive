@@ -1,7 +1,7 @@
 # F001 — Shell-level integration smoke
 
-**Date**: 2026-05-13
-**Status**: PASS (shell-level); full-fixture smoke DEFERRED
+**Date**: 2026-05-13 (initial), 2026-05-13 evening (full-fixture run)
+**Status**: PARTIAL PASS — Smoke A clean; Smoke B workflow OK but learning-log adherence FAIL
 
 ## What was tested
 
@@ -111,3 +111,100 @@ only the runtime adherence needs verification.
 
 These are all acceptable residual risks for a v2.8.0 ship — they affect
 observability quality, not skill correctness.
+
+## Full-fixture smoke (2026-05-13 evening) — ACTUAL RESULTS
+
+### Smoke A — fixture 01-trivial-typo (PASS)
+
+Wall: ~6 min (22:40:06 → 22:46:17 UTC compact).
+Baseline: judge mean **0.96**, PASSED. Rubric pass_rate: null (no rubric block).
+
+Learning log:
+- Run dir created: `~/.claude/learning/kws-claude-multi-agent-executor/runs/2026-05-13/20260513T134006Z-eval-86243/`
+- `meta.json` populated: `outcome=success`, `event_count=0`, `session_id="eval"`,
+  `started_at=2026-05-13T13:40:06Z`, `ended_at=2026-05-13T13:46:17Z`.
+- `events.jsonl`: not created (zero events emitted, as expected for a trivial typo task).
+- Helper invocations in run.jsonl: 2 — one `init-run`, one `close-run --outcome success`.
+
+**Verdict**: clean PASS. The full v2.8 contract (init-run → close-run on
+success path → meta.json with outcome=success and event_count=0) works
+end-to-end under real `claude -p --dangerously-skip-permissions`.
+
+### Smoke B — fixture 08-subtle-input-validation (PARTIAL)
+
+Wall: ~22 min. Baseline: judge mean **1.0**, PASSED. Rubric pass_rate **1.0**
+(all 20 checks satisfied, including `parse_duration("30m20m")` → ValueError).
+
+Learning log:
+- **No run dir created.** The only run dir in `runs/2026-05-13/` is Smoke A's.
+- **No `init-run`, `append`, or `close-run` invocation** in Smoke B's
+  47 total Bash tool calls. The orchestrator referenced `MAE_LEARNING_RUN_ID`,
+  `init-run`, `append_learning_event`, etc. 19+ times in thinking/text
+  content but **never actually executed** the helper script.
+
+**Implementation correctness**: PASS. The orchestrator ran end-to-end —
+worktree created, state.json populated, 2 tasks completed (parse_duration
++ tests), Reviewer ran, Verifier ran, commits visible.
+
+**Learning-log adherence**: FAIL. Step 7.5 (init-run) of Phase 0 was not
+executed under real `claude -p` for this fixture.
+
+**Verdict**: PARTIAL. The implementation contract works (Smoke A proves it);
+the *adherence* contract is unreliable on longer multi-task plans.
+
+### Why Smoke B skipped the helper (hypothesis)
+
+Fixture 01 is single-task LOW-risk: SKILL.md Phase 0 dominates the
+orchestrator's first response. Phase 0 Step 7.5 (init-run) is reached and
+executed before TDD context loads.
+
+Fixture 08 is two-task MID-risk: Phase 0 → Phase 1 (TDD cycle) → Reviewer
+→ Verifier → Phase 2 loops dominate the response. Step 7.5's `RUN_ID=$(... || echo "")`
+shell-fallback semantics (designed to fail silently if the helper is
+unavailable) appear to also fail silently if the orchestrator simply *skips*
+the call. There is no enforcement mechanism — only prose instruction.
+
+This is a real adherence-vs-contract gap. The SKILL.md contract is correct;
+the orchestrator's adherence to it under heavy contextual load is unreliable.
+
+### Implications for v2.9 measurement
+
+v2.9 design specifies fallback to rubric-only signal if Smoke B does not
+emit `reviewer_warn_or_fail` events. Smoke B's result triggers that
+fallback. Two concrete impacts:
+
+1. v2.9 T5 cannot use `events.jsonl` count of `reviewer_warn_or_fail` as
+   evidence. Instead, v2.9 T5 inspects raw Reviewer output from the harness's
+   `run.jsonl` directly (stream-json format).
+2. v2.9 T6 finding doc must record the F001 adherence gap explicitly under
+   "residual risks" — `30m20m` rejection rate is the primary metric; raw
+   Reviewer `SPEC_COVERAGE_WALK:` output is the secondary inspection target.
+
+### Implications for v2.8.1 (follow-up)
+
+The adherence gap is a separate observation about SKILL.md instruction
+strength. Candidate fixes for a future v2.8.1:
+
+- Replace Step 7.5's silent-fallback `|| echo ""` with a louder error +
+  retry, so adherence is visible.
+- Promote init-run from "Step 7.5 with silent fallback" to a Phase 0
+  mandatory checkpoint (similar to git worktree creation).
+- Hook-based enforcement (PreToolUse hook that init-runs on first Bash call).
+
+None of these are in v2.9 scope. They are recorded here for the v2.8.1
+backlog. v2.9 proceeds with the documented fallback.
+
+## Updated residual risks (post full-fixture run)
+
+5. **Orchestrator adherence to Step 7.5 under heavy contextual load**.
+   Confirmed by Smoke B: longer plans skip the init-run call. This is the
+   single most important observation from F001's full run — it changes how
+   v2.9 and any future learning-log-dependent experiment must measure.
+   Mitigations: v2.9 falls back to rubric-only signal; v2.8.1 candidate
+   fixes recorded above.
+
+6. **`30m20m` rejection variance is wide**. Single Smoke B rep produced
+   `rubric=1.0` (Implementer caught `30m20m`), matching the 1/4 "lucky"
+   bucket in F002 baseline. n=1 is insufficient to bound miss rate from
+   above. v2.9 T5's n=3-4 should re-confirm the baseline variance before
+   attributing any reduction to the prompt change.
