@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "1.7.0"
+  version: "1.7.1"
   updated_at: "2026-05-14"
 ---
 
@@ -84,6 +84,12 @@ parallel work, or passes `subagents=on`.
   `verification_evidence`.
 - Blocked or failed terminal runs set a non-success `lifecycle_outcome` and a
   concrete `handoff_reason`.
+- In interactive and headless execution, feature, bugfix, refactor, or
+  behavior-change implementation must invoke `using-superpowers` as the skill
+  gate and `test-driven-development` before implementation code. This is not a
+  headless-only rule; headless only needs extra prompt bootstrap because it is a
+  fresh `codex exec` process. Record RED evidence (command/eval and expected
+  failure) before implementing, then GREEN evidence after the fix.
 - Headless `codex exec` prompts must bootstrap applicable skills because parent
   session skill state is not assumed to carry over. Explicitly include
   `using-superpowers` and `test-driven-development` for implementation work.

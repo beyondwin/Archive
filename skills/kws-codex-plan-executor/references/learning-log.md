@@ -128,7 +128,7 @@ rejects candidates whose `run_id` does not match `--run-id`.
   "schema_version": "1",
   "run_id": "20260513T142233Z-archive-codex-example-7e884a0-a1b2c3",
   "skill": "kws-codex-plan-executor",
-  "skill_version": "1.7.0",
+  "skill_version": "1.7.1",
   "mode": "interactive",
   "event_type": "verification_failure",
   "severity": "medium",

@@ -118,11 +118,11 @@ structured final results. It does not use
 `--dangerously-bypass-approvals-and-sandbox` unless the user explicitly asks and
 the target is isolated.
 
-Headless runs are fresh Codex processes, so prompts must bootstrap applicable
-skills rather than relying on parent-session state. Runtime prompts and eval
-prompts explicitly require `using-superpowers`, and require
-`test-driven-development` before implementation of features, bug fixes,
-refactors, or behavior changes.
+TDD is an execution-mode invariant, not a headless-only rule. Both interactive
+and headless implementation work must pass through `using-superpowers` and
+`test-driven-development` before feature, bugfix, refactor, or behavior-change
+implementation. Headless runs are fresh Codex processes, so their prompts must
+bootstrap those skills explicitly rather than relying on parent-session state.
 
 The supervising session owns the `codex exec` launch. Once the target process
 starts, `mode=headless` means it writes headless artifacts while executing

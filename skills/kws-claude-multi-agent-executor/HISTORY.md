@@ -21,6 +21,25 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.10.2 — Mandatory sub-agent superpowers bootstrap + TDD enforcement (2026-05-14)
+
+Prompt-contract hardening after observing Implementer tasks rationalizing away
+`superpowers:test-driven-development` under the old SMALL-task loophole.
+
+- Every sub-agent prompt template now starts with
+  `Skill("superpowers:using-superpowers")` so fresh Agent-tool and headless
+  dispatches do not depend on parent-session skill state.
+- Implementer TDD is no longer gated by task size. SMALL/MEDIUM/LARGE now
+  affects tool budget and routing only; executable implementation work must
+  invoke `Skill("superpowers:test-driven-development")` and report RED/GREEN
+  evidence.
+- Docs Updater prompts now invoke
+  `Skill("superpowers:verification-before-completion")` before reporting DONE
+  or committing documentation changes.
+- `evals/check_skill_contract.py` rejects missing `using-superpowers`
+  bootstraps, size-gated Implementer TDD, and docs updater completion without
+  verification skill grounding.
+
 ### v2.10.1 — Cross-run isolation + polite-stop invariant (2026-05-14)
 
 Patch release prompted by a deep read of the `oh-my-claudecode` project

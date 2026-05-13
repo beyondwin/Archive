@@ -322,7 +322,9 @@ worktree 이름은 `git worktree list --porcelain`과 로컬 브랜치를 확인
 `codex exec`로 시작한 headless 프로세스는 부모 세션의 스킬 로드 상태를
 그대로 이어받는다고 가정할 수 없다. 그래서 구현 작업 프롬프트는 필요한
 스킬, 특히 `using-superpowers`와 `test-driven-development`를 명시적으로
-부트스트랩해야 한다.
+부트스트랩해야 한다. 다만 TDD는 headless 전용 규칙이 아니다. interactive와
+headless 실행 모두 feature/bugfix/refactor/behavior change 구현 전
+`test-driven-development`를 적용하고 RED/GREEN 증거를 남겨야 한다.
 
 ### 왜 prompt export가 runtime 계약을 따라야 하나
 

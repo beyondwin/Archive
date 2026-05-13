@@ -9,7 +9,7 @@
 위 workspace나 문서 경로가 존재하지 않거나 열 수 없으면 추측하지 말고 blocker로 보고해.
 
 작업 원칙:
-- 실행 시작 직후 적용 가능한 installed skills를 먼저 load/follow해. 특히 `using-superpowers`를 먼저 적용하고, feature/bugfix/refactor/behavior change 구현 전에는 `test-driven-development`를 적용해 failing test/eval을 먼저 확인해.
+- 실행 시작 직후 적용 가능한 installed skills를 먼저 load/follow해. 특히 `using-superpowers`를 먼저 적용하고, feature/bugfix/refactor/behavior change 구현 전에는 `test-driven-development`를 적용해 failing test/eval을 먼저 확인해. 이건 headless-only rule이 아니라 interactive and headless 실행 모두의 구현 규칙이다. 각 구현 Task는 구현 전 RED evidence(명령/eval + 예상 실패)와 수정 후 GREEN evidence를 state/checkpoint에 남겨라.
 - 편집 전에 repo-local instructions를 확인해. 예: `AGENTS.md`, `CLAUDE.md`, task-specific agent guide.
 - 문서 계획과 repo instructions가 충돌하면 repo instructions를 우선하고, 계획 의도에 맞는 최소 수정으로 적응해.
 - 계획 문서의 첫 Task(Task 0 또는 Task 1)부터 마지막 Task까지 순서대로 수행해. 기본 목표는 현재 세션에서 가능한 한 끝까지 완료하는 것이다. subagent는 사용자가 `subagents=on`, delegation, parallel work, subagents를 명시한 경우에만 사용해.

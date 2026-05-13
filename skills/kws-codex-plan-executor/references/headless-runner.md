@@ -9,7 +9,10 @@ loaded skills carry over. The prompt passed as `$PROMPT` must explicitly tell
 the target run to load and follow applicable installed skills, including
 `using-superpowers` before any implementation or clarification and
 `test-driven-development` before feature, bugfix, refactor, or behavior-change
-implementation.
+implementation. This is not a headless-only rule: interactive and headless
+execution both require TDD for implementation work. Headless merely needs the
+explicit bootstrap because it is a fresh process. The target must record RED
+evidence before implementation and GREEN evidence after the fix.
 
 ## Caller And Target Boundary
 

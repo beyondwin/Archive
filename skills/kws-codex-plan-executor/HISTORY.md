@@ -3,6 +3,18 @@
 Source of truth for current behavior: `SKILL.md`, `templates/`, and
 `references/`. This file tracks release intent and migration history.
 
+## v1.7.1 - Clarify TDD scope across execution modes (2026-05-14)
+
+- Clarified that `test-driven-development` is required for implementation work
+  in both `interactive` and `headless` execution; it is not a headless-only
+  rule.
+- Added per-task `using-superpowers` and `test-driven-development` skill gates
+  to `references/execution-cycle.md`, including RED/GREEN evidence recording.
+- Updated `templates/fresh-session-prompt.txt` and
+  `references/headless-runner.md` to distinguish transport bootstrap from TDD
+  applicability.
+- Added deterministic contract checks for this distinction.
+
 ## v1.7.0 - Require dedicated execution worktrees (2026-05-14)
 
 - Made `interactive` and `headless` execution require a dedicated

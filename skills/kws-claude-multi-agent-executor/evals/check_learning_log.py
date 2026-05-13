@@ -20,7 +20,7 @@ def base_event(run_id: str) -> dict:
         "schema_version": "1",
         "run_id": run_id,
         "skill": "kws-claude-multi-agent-executor",
-        "skill_version": "2.8.0",
+        "skill_version": "2.10.2",
         "phase": "phase_1",
         "risk_tier": "MID",
         "event_type": "reviewer_warn_or_fail",

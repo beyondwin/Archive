@@ -59,9 +59,17 @@ For each task:
    - `acceptance_command_or_honest_substitute`
    Record the same contract under the task entry in
    `.codex-orchestrator/runs/<run_id>/state.json`.
-2. Implement locally unless subagents are explicitly allowed.
-3. Review spec compliance and code quality on `gpt-5.5 high`.
-4. Run risk-scaled verification.
+2. Re-check task skills before edits. Invoke `using-superpowers` as the
+   per-task skill gate. For feature, bugfix, refactor, behavior change, or
+   executable-code edits, invoke `test-driven-development` before writing
+   implementation code. This applies to interactive and headless execution and
+   is not a headless-only rule. Record RED evidence (command/eval plus expected
+   failure) in state/checkpoint before implementing, then record GREEN evidence
+   after the fix. Docs-only/config-only/generated-only tasks may record TDD as
+   not applicable with the reason.
+3. Implement locally unless subagents are explicitly allowed.
+4. Review spec compliance and code quality on `gpt-5.5 high`.
+5. Run risk-scaled verification.
    For `risk=high`, maintain a compact high-risk verification matrix. Include
    each relevant scenario with `status=passed|failed|blocked|not-applicable`,
    the command or manual check, and the evidence path or excerpt:
@@ -73,12 +81,12 @@ For each task:
    - cancellation/interruption recovery when the task changes workflow state
    Do not run irrelevant scenarios just to fill the table. Mark them
    `not-applicable` with one concrete reason.
-5. Record raw output paths for failures.
-6. Update state and checkpoint.
+6. Record raw output paths for failures.
+7. Update state and checkpoint.
    Task completion must set the task `status` to `completed`, `blocked`, or
    `error`; do not leave a finished task as `in_progress` with only
    `completed_at` populated.
-7. Refresh `context_health` at the same semantic boundary. Use `green` when
+8. Refresh `context_health` at the same semantic boundary. Use `green` when
    another agent can resume from state and artifacts, `yellow` when assumptions
    or open questions remain but execution can continue, and `red` when safe
    continuation requires a blocker, user decision, or handoff.

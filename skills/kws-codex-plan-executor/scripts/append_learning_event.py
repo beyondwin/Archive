@@ -23,7 +23,7 @@ from typing import Any
 
 
 DEFAULT_LOG_ROOT = Path("~/.codex/learning/kws-codex-plan-executor").expanduser()
-SKILL_VERSION = "1.7.0"
+SKILL_VERSION = "1.7.1"
 VALID_MODES = {"interactive", "headless"}
 VALID_EVENT_TYPES = {
     "blocker",

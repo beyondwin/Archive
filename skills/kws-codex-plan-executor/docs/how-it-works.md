@@ -85,9 +85,11 @@ Interactive execution is described in
 target process must not launch another nested `codex exec`; it is already the
 target executor.
 
-Headless prompts must bootstrap applicable skills because parent-session skill
-state is not assumed to carry over. Implementation work explicitly names
-`using-superpowers` and `test-driven-development`.
+TDD is not headless-only: interactive and headless implementation work both use
+`using-superpowers` and `test-driven-development` before feature, bugfix,
+refactor, or behavior-change implementation. Headless prompts must name those
+skills explicitly because parent-session skill state is not assumed to carry
+over.
 
 Headless artifacts include:
 
