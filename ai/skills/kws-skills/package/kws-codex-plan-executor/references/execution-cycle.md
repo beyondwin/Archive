@@ -7,10 +7,10 @@ Use this for `mode=interactive`.
 - Read repo-local instructions.
 - Verify plan/spec/docs paths.
 - Check git status and branch.
+- Parse the plan with `scripts/parse_plan.py`.
 - Classify dirty files as `related` or `unrelated` against declared task files.
   Stop before editing related dirty files; preserve unrelated dirty files.
 - Create or select `codex/...` worktree when appropriate.
-- Parse the plan with `scripts/parse_plan.py`.
 - Assign task risk:
   - `low`: one isolated file or module.
   - `mid`: multiple files, shared config, repeated edits to the same file, or

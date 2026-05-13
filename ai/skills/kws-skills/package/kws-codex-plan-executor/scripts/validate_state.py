@@ -22,7 +22,23 @@ REQUIRED_TOP_LEVEL = {
     "timestamps",
 }
 VALID_MODES = {"interactive", "headless", "prompt", "handoff"}
-REQUIRED_TASK_FIELDS = {"status", "risk", "files_declared", "review_retries", "verifier_retries"}
+REQUIRED_TASK_FIELDS = {
+    "status",
+    "risk",
+    "files_declared",
+    "contract",
+    "review_retries",
+    "verifier_retries",
+}
+REQUIRED_CONTRACT_FIELDS = {
+    "scope",
+    "files_to_inspect",
+    "allowed_edits",
+    "forbidden_edits",
+    "acceptance_command_or_honest_substitute",
+}
+CONTRACT_LIST_FIELDS = {"files_to_inspect", "allowed_edits", "forbidden_edits"}
+CONTRACT_STRING_FIELDS = {"scope", "acceptance_command_or_honest_substitute"}
 
 
 def validate(data: object) -> list[str]:
@@ -50,6 +66,20 @@ def validate(data: object) -> list[str]:
                     errors.append(f"{task_id}: missing field {key}")
             if "files_declared" in task and not isinstance(task["files_declared"], list):
                 errors.append(f"{task_id}: files_declared must be a list")
+            contract = task.get("contract")
+            if "contract" in task:
+                if not isinstance(contract, dict):
+                    errors.append(f"{task_id}: contract must be an object")
+                else:
+                    for key in sorted(REQUIRED_CONTRACT_FIELDS):
+                        if key not in contract:
+                            errors.append(f"{task_id}: contract missing field {key}")
+                    for key in sorted(CONTRACT_LIST_FIELDS):
+                        if key in contract and not isinstance(contract[key], list):
+                            errors.append(f"{task_id}: contract.{key} must be a list")
+                    for key in sorted(CONTRACT_STRING_FIELDS):
+                        if key in contract and not isinstance(contract[key], str):
+                            errors.append(f"{task_id}: contract.{key} must be a string")
             for retry_key in ("review_retries", "verifier_retries"):
                 if retry_key in task and not isinstance(task[retry_key], int):
                     errors.append(f"{task_id}: {retry_key} must be an integer")
