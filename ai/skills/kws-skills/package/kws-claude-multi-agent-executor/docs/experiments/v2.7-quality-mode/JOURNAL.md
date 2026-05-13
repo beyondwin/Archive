@@ -186,11 +186,50 @@ User instructed: "stop asking, finish it, and version-document every decision
 and review along the way." Wrote `docs/experiments/v2.7-quality-mode/` with
 README + JOURNAL + ADR files. Continuing autonomously per user direction.
 
-### Next steps (autonomous)
+### 20:30 — Harness integration (commit cc2cf6e)
 
-1. Integrate `rubric.py` into `evals/run.sh` (post-test_after, pre-judge)
-2. Update `evals/judge.md` to derive correctness from `rubric_results`
-3. Run balanced × 1 on fixture 08 — ceiling check (pass_rate must be < 0.9)
-4. Implement quality_plus mode on experiment-branch SKILL.md
-5. Run pilot: balanced × 3 + quality_plus × 3
-6. Analyze, report, commit findings under `findings/`
+Modified `evals/run.sh`:
+- After `test_after` runs, invoke `rubric.py` if fixture has `expected.rubric`
+- Result saved to `.harness/rubric.json`, appended to judge input as
+  `#### rubric_results` section
+- Print `rubric pass_rate` to harness stdout
+
+Modified `evals/judge.md`:
+- Added section instructing judge to derive `correctness` from
+  `rubric_results.summary.pass_rate` mechanically
+- Added section for `spec_compliance` from `rubric_results.error_cases.passed/total`
+- LLM judge falls back to diff/test estimation only when rubric absent
+
+### 21:00 — Drafted best-of-N judge prompt (in references/)
+
+`references/best-of-n-judge-prompt.md` — Opus judge template for quality_plus
+mode's parallel-candidate selection. Weighted composite scoring
+(0.5 rubric + 0.3 code_quality + 0.2 risk). Includes escalation path when
+all candidates are weak.
+
+### 21:15 — Ceiling check run on fixture 08 → **CEILING HIT**
+
+Ran `bash evals/run.sh fixtures/08-*.yaml` against unmodified v2.6.0 (balanced).
+
+Result: **rubric pass_rate = 1.0** (20/20 checks pass). Judge mean: 1.0.
+
+Sonnet aces the fixture. Cause: original spec enumerated all 15 edge cases
+explicitly, making the fixture a reading-comprehension test rather than a
+judgment test.
+
+→ [D007](./decisions/D007-fixture-realistic-spec.md): rewrite spec to a
+realistic underspec while keeping the rubric. The 4 "naive miss" categories
+(internal whitespace, uppercase, repeated unit, bare unit) removed from
+spec text. Spec now lists happy-path + obvious errors, then says "strictly
+validate the grammar — these examples are not exhaustive."
+
+### Next steps (autonomous, current position)
+
+1. Re-run ceiling check on rewritten fixture 08
+2. If pass_rate in target range (0.70–0.85): proceed to quality_plus
+   implementation
+3. If still at ceiling: redesign harder (omit more from spec)
+4. If too easy / too hard, adjust and document iteration
+5. Implement quality_plus on experiment branch
+6. Pilot run (6 runs)
+7. Analyze → findings/
