@@ -1,7 +1,0 @@
-{{- $archiveHome := promptStringOnce . "archiveHome" "Absolute path to your Archive checkout" "/Users/kws/source/persnal/Archive" -}}
-{{- $machineProfile := promptChoiceOnce . "machineProfile" "Select machine profile" (list "personal" "work") -}}
-sourceDir = {{ $archiveHome | quote }}
-
-[data]
-archiveHome = {{ $archiveHome | quote }}
-machineProfile = {{ $machineProfile | quote }}
