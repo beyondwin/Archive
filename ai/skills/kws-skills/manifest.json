@@ -3,19 +3,10 @@
   "version": "2.13.0",
   "updated_at": "2026-05-14",
   "skills": [
-    "archive-docs-organizer",
     "kws-claude-multi-agent-executor",
-    "kws-codex-plan-executor",
-    "kws-doc-prompt-review",
-    "kws-skill-prompt-review",
-    "reflective-essay-writer",
-    "reflective-writing-coach"
+    "kws-codex-plan-executor"
   ],
   "skill_versions": {
-    "archive-docs-organizer": {
-      "version": "1.1.1",
-      "updated_at": "2026-04-30"
-    },
     "kws-claude-multi-agent-executor": {
       "version": "2.9.0",
       "updated_at": "2026-05-14"
@@ -23,22 +14,6 @@
     "kws-codex-plan-executor": {
       "version": "1.5.0",
       "updated_at": "2026-05-14"
-    },
-    "kws-doc-prompt-review": {
-      "version": "1.0.1",
-      "updated_at": "2026-05-05"
-    },
-    "kws-skill-prompt-review": {
-      "version": "1.0.1",
-      "updated_at": "2026-05-05"
-    },
-    "reflective-essay-writer": {
-      "version": "1.0.1",
-      "updated_at": "2026-04-30"
-    },
-    "reflective-writing-coach": {
-      "version": "1.0.1",
-      "updated_at": "2026-04-30"
     }
   }
 }
