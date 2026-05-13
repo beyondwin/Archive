@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.12.0 - 2026-05-13
+
+- `kws-codex-plan-executor`의 user-local learning log를 단일
+  `events.jsonl`에서 per-run sharded layout으로 전환했습니다:
+  `~/.codex/learning/kws-codex-plan-executor/runs/<date>/<run_id>/`.
+- `append_learning_event.py`가 `init-run`, `append`, `close-run` lifecycle을
+  제공하고, 이벤트가 `run_id`, `run_dir`, `state_path`를 포함하도록
+  검증합니다.
+- project-local 실행 state/headless/raw artifacts를
+  `.codex-orchestrator/runs/<run_id>/` 아래로 분리하고,
+  `.codex-orchestrator/state.json`은 latest-state 호환 copy/pointer로만
+  남기도록 계약을 업데이트했습니다.
+- 같은 repo 또는 여러 repo에서 동시에 executor를 실행해도 learning events와
+  project state가 논리적으로 섞이지 않도록 deterministic eval을 추가했습니다.
+
 ## 2.11.0 - 2026-05-13
 
 - `kws-claude-multi-agent-executor`에 per-run sharded user-local learning log를

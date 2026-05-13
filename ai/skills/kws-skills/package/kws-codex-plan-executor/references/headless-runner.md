@@ -21,53 +21,73 @@ another nested `codex exec` from the target process.
 ## Safe Default Command
 
 ```bash
-mkdir -p "$WORKTREE_ABS/.codex-orchestrator"
+RUN_ID="$(python3 "$SKILL_DIR/scripts/append_learning_event.py" init-run \
+  --repo-root "$WORKTREE_ABS" \
+  --repo-name "$REPO_NAME" \
+  --branch "$BRANCH" \
+  --head "$HEAD_SHA" \
+  --plan-path "$PLAN_REL" \
+  --spec-path "${SPEC_REL:-}" \
+  --mode headless)"
+RUN_DIR="$WORKTREE_ABS/.codex-orchestrator/runs/$RUN_ID"
+mkdir -p "$RUN_DIR/raw"
 HEADLESS_SANDBOX="${HEADLESS_SANDBOX:-workspace-write}"
 
 codex exec \
   --cd "$WORKTREE_ABS" \
   --sandbox "$HEADLESS_SANDBOX" \
   --json \
-  --output-last-message "$WORKTREE_ABS/.codex-orchestrator/headless-final.md" \
+  --output-last-message "$RUN_DIR/headless-final.md" \
   "$PROMPT" \
-  > "$WORKTREE_ABS/.codex-orchestrator/headless.jsonl" 2>&1
+  > "$RUN_DIR/headless.jsonl" 2>&1
 ```
 
 ## Schema Output Variant
 
 ```bash
-mkdir -p "$WORKTREE_ABS/.codex-orchestrator"
+RUN_ID="$(python3 "$SKILL_DIR/scripts/append_learning_event.py" init-run \
+  --repo-root "$WORKTREE_ABS" \
+  --repo-name "$REPO_NAME" \
+  --branch "$BRANCH" \
+  --head "$HEAD_SHA" \
+  --plan-path "$PLAN_REL" \
+  --spec-path "${SPEC_REL:-}" \
+  --mode headless)"
+RUN_DIR="$WORKTREE_ABS/.codex-orchestrator/runs/$RUN_ID"
+mkdir -p "$RUN_DIR/raw"
 HEADLESS_SANDBOX="${HEADLESS_SANDBOX:-workspace-write}"
 
 codex exec \
   --cd "$WORKTREE_ABS" \
   --sandbox "$HEADLESS_SANDBOX" \
   --json \
-  --output-schema "$WORKTREE_ABS/.codex-orchestrator/final.schema.json" \
-  --output-last-message "$WORKTREE_ABS/.codex-orchestrator/headless-final.json" \
+  --output-schema "$RUN_DIR/final.schema.json" \
+  --output-last-message "$RUN_DIR/headless-final.json" \
   "$PROMPT" \
-  > "$WORKTREE_ABS/.codex-orchestrator/headless.jsonl" 2>&1
+  > "$RUN_DIR/headless.jsonl" 2>&1
 ```
 
 ## Required Artifacts
 
-- `.codex-orchestrator/headless.jsonl`
-- `.codex-orchestrator/headless-final.md` or
-  `.codex-orchestrator/headless-final.json`
-- `.codex-orchestrator/state.json`
+- `.codex-orchestrator/runs/<run_id>/headless.jsonl`
+- `.codex-orchestrator/runs/<run_id>/headless-final.md` or
+  `.codex-orchestrator/runs/<run_id>/headless-final.json`
+- `.codex-orchestrator/runs/<run_id>/state.json`
+- `.codex-orchestrator/state.json` as latest-state compatibility copy/pointer
 - raw verification output paths for failures
 
 ## Learning Log
 
-Headless artifacts remain under `.codex-orchestrator/`. Learning events are
-separate user-local records written to:
+Headless artifacts remain under `.codex-orchestrator/runs/<run_id>/`. Learning
+events are separate user-local records written to:
 
 ```text
-~/.codex/learning/kws-codex-plan-executor/events.jsonl
+~/.codex/learning/kws-codex-plan-executor/runs/<YYYY-MM-DD>/<run_id>/events.jsonl
 ```
 
 Use `references/learning-log.md` and `scripts/append_learning_event.py` for
-`blocker`, `error`, `verification_failure`, `recurring_issue`,
+`init-run`, `append`, and `close-run` around `blocker`, `error`,
+`verification_failure`, `recurring_issue`,
 `successful_workaround`, and actionable `completion_learning` events. `prompt`
 and `handoff` are not logging modes.
 

@@ -20,7 +20,7 @@ Pass JSON:
 {
   "status": "PASS",
   "commands": [
-    {"cmd": "pytest", "exit_code": 0, "raw_output": ".codex-orchestrator/raw/task_0-pytest.txt"}
+    {"cmd": "pytest", "exit_code": 0, "raw_output": ".codex-orchestrator/runs/<run_id>/raw/task_0-pytest.txt"}
   ],
   "issues": [],
   "notes": "short"
@@ -33,7 +33,7 @@ Failure JSON:
 {
   "status": "FAIL",
   "commands": [
-    {"cmd": "pytest", "exit_code": 1, "raw_output": ".codex-orchestrator/raw/task_0-pytest.txt"}
+    {"cmd": "pytest", "exit_code": 1, "raw_output": ".codex-orchestrator/runs/<run_id>/raw/task_0-pytest.txt"}
   ],
   "issues": [
     {"issue_key": "tests/test_example.py:test_name:assertion", "summary": "one sentence"}

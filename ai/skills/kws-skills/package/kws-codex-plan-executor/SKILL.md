@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "1.3.1"
+  version: "1.4.0"
   updated_at: "2026-05-13"
 ---
 
@@ -24,8 +24,8 @@ Supported arguments:
 - `spec=<path>` optional.
 - `docs=<path1,path2>` optional.
 - `workspace=<path>` optional.
-- `resume=latest|<state-path>` optional; if multiple candidate states exist,
-  stop and ask which state to resume.
+- `resume=latest|<state-path>|<run_id>` optional; if multiple candidate active
+  runs exist, stop and ask which run/state to resume.
 - `mode=interactive|headless|prompt|handoff` optional, default `interactive`.
 - `subagents=on|off` optional, default `off` unless the user explicitly asked for subagents, delegation, or parallel work.
 - `headless_sandbox=workspace-write|read-only` optional, default `workspace-write`;
@@ -51,11 +51,17 @@ parallel work, or passes `subagents=on`.
 - Execution plans may use `Files`, `Affected files`, `Modified files`,
   `Changed files`, `수정 파일`, `변경 파일`, `대상 파일`, or `파일` headings for
   task file blocks. Execution mode still stops if no file block is present.
-- Resume mode uses `.codex-orchestrator/state.json` as source of truth. Do not
-  infer between multiple ambiguous states.
+- Each execution has a `run_id`. Primary project-local state and artifacts live
+  under `.codex-orchestrator/runs/<run_id>/`; `.codex-orchestrator/state.json`
+  is only a backwards-compatible latest-state copy or pointer.
+- Resume mode uses an explicit state path/run id, or the only active run found
+  under `.codex-orchestrator/runs/`. Do not infer between multiple ambiguous
+  active runs.
 - In `interactive` and `headless` execution, record execution-only redacted
   notable-boundary learning events with `scripts/append_learning_event.py` and
-  `references/learning-log.md`; `prompt` and `handoff` are not logging modes.
+  `references/learning-log.md`; initialize with `init-run`, append with
+  `append`, close with `close-run`, and include `run_id`, `run_dir`, and
+  `state_path`. `prompt` and `handoff` are not logging modes.
 - Headless `codex exec` prompts must bootstrap applicable skills because parent
   session skill state is not assumed to carry over. Explicitly include
   `using-superpowers` and `test-driven-development` for implementation work.
@@ -69,8 +75,9 @@ parallel work, or passes `subagents=on`.
    `references/prompt-export-checklist.md`.
 4. For `interactive`, follow `references/execution-cycle.md`.
 5. For `headless`, follow `references/headless-runner.md`.
-6. Maintain `.codex-orchestrator/state.json` using
-   `references/state-schema.md`.
+6. Maintain `.codex-orchestrator/runs/<run_id>/state.json` using
+   `references/state-schema.md`; keep `.codex-orchestrator/state.json` as the
+   latest-state compatibility copy/pointer.
 7. For execution modes, record learning events at notable boundaries using
    `references/learning-log.md`.
 8. Validate using scripts before claiming completion.

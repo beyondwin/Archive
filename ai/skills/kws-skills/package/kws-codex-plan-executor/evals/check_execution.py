@@ -42,6 +42,13 @@ def task_statuses_complete(state: dict, allow_blocked: bool) -> bool:
     return True
 
 
+def select_state_path(workdir: Path) -> Path:
+    run_states = sorted((workdir / ".codex-orchestrator" / "runs").glob("*/state.json"))
+    if run_states:
+        return run_states[-1]
+    return workdir / ".codex-orchestrator" / "state.json"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--fixture", required=True, help="Fixture YAML path")
@@ -59,7 +66,7 @@ def main() -> int:
     failures: list[str] = []
     checks: dict[str, bool] = {}
 
-    state_path = workdir / ".codex-orchestrator" / "state.json"
+    state_path = select_state_path(workdir)
     checks["state_exists"] = state_path.is_file()
     allow_no_state = bool(expected.get("allow_no_state"))
     if not checks["state_exists"] and not allow_no_state:
@@ -98,6 +105,7 @@ def main() -> int:
         }
     )
     allowed_prefixes = (
+        ".codex-orchestrator/runs/",
         ".codex-orchestrator/raw/",
         ".codex-orchestrator/learning",
         ".codex-orchestrator/events",

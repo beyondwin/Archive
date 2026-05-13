@@ -24,8 +24,10 @@ repo.
 - If the user asks for a continuation prompt or handoff, use `handoff`.
 - If the user asks for eval, CI, background, or detached `codex exec`, use
   `headless`.
-- If the user passes `resume=latest`, resume from the only readable
-  `.codex-orchestrator/state.json`; if there are multiple candidates, stop and
-  ask which state to use.
+- If the user passes `resume=latest`, scan `.codex-orchestrator/runs/*/state.json`
+  first. Resume from the only readable active run; if there are multiple active
+  candidates, stop and ask which run/state to use. Use
+  `.codex-orchestrator/state.json` only as a backwards-compatible latest pointer
+  or copy.
 - If the requested mode conflicts with the user's words, stop and ask one short
   question.
