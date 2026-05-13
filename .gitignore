@@ -51,3 +51,4 @@ docs/_graph/*
 # Local AI agent state
 .codex/
 .claude/
+.codex-orchestrator/
