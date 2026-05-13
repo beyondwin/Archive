@@ -31,11 +31,14 @@ def main() -> int:
     execution_path = skill_dir / "references" / "execution-cycle.md"
     headless_path = skill_dir / "references" / "headless-runner.md"
     common_mistakes_path = skill_dir / "references" / "common-mistakes.md"
+    learning_path = skill_dir / "references" / "learning-log.md"
+    learning_script_path = skill_dir / "scripts" / "append_learning_event.py"
 
     template = template_path.read_text(encoding="utf-8") if template_path.is_file() else ""
     checklist = checklist_path.read_text(encoding="utf-8") if checklist_path.is_file() else ""
     execution = execution_path.read_text(encoding="utf-8") if execution_path.is_file() else ""
     headless = headless_path.read_text(encoding="utf-8") if headless_path.is_file() else ""
+    learning = learning_path.read_text(encoding="utf-8") if learning_path.is_file() else ""
     invocation = section(text, "## Invocation", "## Hard Boundary")
     checks: dict[str, bool] = {}
     failures: list[str] = []
@@ -70,6 +73,32 @@ def main() -> int:
         and "read-only" in headless,
         "common_mistakes_reference_valid": "references/common-mistakes.md" not in checklist
         or common_mistakes_path.is_file(),
+        "learning_log_reference_exists": learning_path.is_file(),
+        "learning_log_helper_exists": learning_script_path.is_file(),
+        "learning_log_execution_only": "execution-only" in text
+        and "interactive" in learning
+        and "headless" in learning
+        and "prompt" in learning
+        and "handoff" in learning
+        and "not logging modes" in learning,
+        "learning_log_user_local_path": "~/.codex/learning/kws-codex-plan-executor/events.jsonl" in learning
+        and "~/.codex/learning/kws-codex-plan-executor/events.jsonl" in template,
+        "learning_log_notable_boundaries": all(
+            token in learning
+            for token in (
+                "blocker",
+                "error",
+                "verification_failure",
+                "recurring_issue",
+                "user_correction",
+                "successful_workaround",
+                "completion_learning",
+            )
+        ),
+        "learning_log_privacy_guard": all(
+            token in learning
+            for token in ("redacted-context", "Do not store full conversation transcripts", "Do not store secrets")
+        ),
     }
 
     checks.update(expectations)
