@@ -101,6 +101,16 @@
   source: /Users/kws/.codex/skills/archive-docs-organizer/SKILL.md
   updated: 2026-04-29
 
+- title: KWS Codex Plan Executor 구현 계획
+  path: docs/superpowers/plans/2026-05-13-kws-codex-plan-executor.md
+  topic: skills/agent-workflows
+  type: plan
+  language: en
+  status: organized
+  summary: Implementation plan for replacing the KWS fresh-session prompt generator with a Codex-native plan executor skill that also supports prompt export.
+  source: local planning session
+  updated: 2026-05-13
+
 - title: mattpocock/skills 레포 분석
   path: docs/notes/skills/mattpocock-skills-repo-analysis.md
   topic: skills/agent-workflows

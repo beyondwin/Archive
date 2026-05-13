@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.6.0 - 2026-05-13
+
+- `kws-codex-plan-executor`를 Codex-native 계획 실행용 forward skill로 추가했습니다.
+- interactive, headless, prompt, handoff mode 계약과 `.codex-orchestrator/state.json` 스키마를 추가했습니다.
+- 기존 fresh-session prompt export 계약을 새 executor skill의 `mode=prompt`로 이전했습니다.
+- `kws-new-session-plan-prompt-gpt-5-5`를 호환 wrapper로 deprecated 처리했습니다.
+- prompt/execution fixture를 검증하는 deterministic eval harness scaffold를 추가했습니다.
+
 ## 2.5.0 - 2026-05-13
 
 - `kws-new-session-plan-prompt-gpt-5-5`에 `HISTORY.md`, `ARCHITECTURE.md`, 변경 프로토콜, 평가 fixture, 실험 기록 템플릿을 추가해 점진적 개선 이력을 남길 수 있게 했습니다.

@@ -1,0 +1,21 @@
+name: interactive-docs-only
+mode: interactive
+plan: |
+  ### Task 0: Add docs note
+
+  **Files:**
+  - Create: docs/example.md
+
+  ## Acceptance Criteria
+
+  ```bash
+  test -f docs/example.md
+  ```
+spec: |
+  Create docs/example.md with the exact text "hello executor".
+expected:
+  files_changed:
+    - docs/example.md
+  allowed_extra_files:
+    - .codex-orchestrator/state.json
+  test_after: "test -f docs/example.md && grep -q 'hello executor' docs/example.md"

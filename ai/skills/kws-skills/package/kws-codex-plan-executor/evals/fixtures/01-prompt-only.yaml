@@ -1,0 +1,26 @@
+name: prompt-only
+mode: prompt
+user_request: "Generate prompt only for plan.md"
+plan: |
+  ### Task 0: Add docs note
+
+  **Files:**
+  - Create: docs/example.md
+
+  ## Acceptance Criteria
+
+  ```bash
+  test -f docs/example.md
+  ```
+spec: |
+  Create docs/example.md.
+expected:
+  prompt_only: true
+  spark: true
+  must_include:
+    - "gpt-5.5 high"
+    - ".codex-orchestrator/session.json"
+  must_not_include:
+    - "{{PLAN_PATH}}"
+    - "{{OPTIONAL_DOCUMENT_BULLETS}}"
+    - "{{OPTIONAL_SPARK_SCOUT_BULLETS}}"
