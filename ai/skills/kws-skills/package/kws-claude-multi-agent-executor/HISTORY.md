@@ -14,6 +14,38 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.8 — Learning log + review-side superpowers Skill calls (2026-05-13)
+
+Adds a user-local per-run sharded learning log so notable boundaries
+(reviewer WARN/FAIL, verifier FAIL, sub-agent ESCALATE, recurring issues,
+parallel dispatch failures, successful workarounds, actionable completion
+learnings) can drive future skill improvements. Sibling pattern to
+`kws-codex-plan-executor`'s learning log, adapted for the Claude Code
+runtime.
+
+Key changes:
+- New `scripts/append_learning_event.py` with 4 idempotent subcommands
+  (`init-run`, `append`, `close-run`, `append-session-id`).
+- New `references/learning-log.md` reference doc.
+- New `evals/check_learning_log.py` (16 deterministic checks) and
+  `evals/check_skill_contract.py` wired into `evals/run.sh` as preflight.
+- SKILL.md Phase 0 Step 7.5 / Phase 1 Step 3.5 / Phase 2 Step 2 / Escalation
+  Protocol / Resume Chain instrumented for lifecycle calls.
+- Single-writer contract: orchestrator only — sub-agents write candidate
+  JSON files under `<worktree>/.orchestrator/learning_events/`.
+- Resume Chain handoff preserves `MAE_LEARNING_RUN_ID` via env propagation
+  and calls `append-session-id` (NOT `init-run`).
+- Review-side superpowers Skill invocations added:
+  - Plan Reviewer → `Skill("superpowers:writing-plans")`
+  - Reviewer → `Skill("superpowers:requesting-code-review")`
+  - Verifier → `Skill("superpowers:verification-before-completion")`
+- ARCHITECTURE.md §14 Learning Log Contract added.
+- All helper calls wrapped to fail silently — observability never blocks
+  plan execution.
+
+Records: `docs/experiments/v2.8-learning-log/`
+Branch: `codex/executor-learning-log`
+
 ### v2.7 — Quality-mode experiment (2026-05-13)
 **Branch only** — not merged to `main`. **Negative result** on quality_plus mode.
 
@@ -124,6 +156,7 @@ with JOURNAL + decisions/ + findings/. Index:
 | Experiment | Status | Outcome | Path |
 |------------|--------|---------|------|
 | v2.7-quality-mode | CLOSED | Negative on quality_plus; positive on rubric infra | `docs/experiments/v2.7-quality-mode/` |
+| v2.8-learning-log | In progress | Per-run sharded learning log + review-side Skill calls | `docs/experiments/v2.8-learning-log/` |
 | (future) | | | `docs/experiments/v2.X-<name>/` |
 
 See `docs/experiments/README.md` for the experiment template and protocol.
