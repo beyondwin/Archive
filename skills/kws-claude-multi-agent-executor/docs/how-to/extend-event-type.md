@@ -230,8 +230,7 @@ Adding an event type is a feature; bump the minor version (e.g.,
 v2.9.0 → v2.10.0). Update:
 
 - `SKILL.md` frontmatter `metadata.version`
-- `manifest.json` skill_versions entry
-- `README.md` (root) skill version table
+- `README.md` current version line
 - `HISTORY.md` v2.X.0 entry under §1 explaining the new type and
   evidence motivating it
 

@@ -10,6 +10,9 @@ intake, source material, curated notes, generated wiki pages, and metadata.
   exported PDFs converted to Markdown, or other reference material.
 - `notes/` - human-curated documents organized by topic. This is the primary
   long-term library.
+- `superpowers/` - implementation plans and design specs produced while
+  building or changing skills. These are working artifacts, not cataloged
+  library notes.
 - `wiki/` - AI-maintained wiki pages compiled from `raw/` and `notes/`.
 - `_index/` - catalog and topic metadata used to build `INDEX.md`.
 - `_graph/` - notes about generated graph artifacts. Graphify's default runtime
@@ -21,10 +24,12 @@ Use this priority order when answers conflict:
 
 1. Original material in `raw/`
 2. Curated notes in `notes/`
-3. Generated summaries and relationship maps in `wiki/` or `graphify-out/`
+3. Working plans and specs in `superpowers/`
+4. Generated summaries and relationship maps in `wiki/` or `graphify-out/`
 
 Generated wiki pages are useful for speed, but they are not the final authority.
-Important claims should link back to a source file or curated note.
+Important claims should link back to a source file, curated note, or the
+specific plan/spec that introduced the claim.
 
 ## Version Control
 
@@ -36,6 +41,8 @@ navigation output local unless it is a lightweight placeholder:
 - `docs/_graph/README.md` documents graph artifacts, but generated graph files
   are ignored.
 - `graphify-out/` is a local generated knowledge graph and is ignored.
+- `docs/superpowers/` is tracked because the plans and specs are source
+  artifacts for executor-skill work.
 
 ## Intake Workflow
 
@@ -44,6 +51,10 @@ navigation output local unless it is a lightweight placeholder:
 3. Move polished or synthesized material into `notes/<topic>/`.
 4. Update `_index/catalog.yml`, `_index/topics.yml`, and `INDEX.md`.
 5. Regenerate `wiki/` or `graphify-out/` when enough material has changed.
+
+Do not add `docs/superpowers/` plans to the library catalog unless a plan is
+converted into a durable curated note. Link them from the relevant skill README
+or experiment record instead.
 
 ## Graphify Workflow
 

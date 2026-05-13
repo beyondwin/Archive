@@ -29,9 +29,8 @@ For behavior changes, update:
 - `SKILL.md` metadata
 - `HISTORY.md`
 - `ARCHITECTURE.md` when contracts or flow changed
-- `../../manifest.json`
-- `../../README.md`
-- `../../CHANGELOG.md`
+- `README.md`
+- affected files under `docs/`, `references/`, `templates/`, and `evals/`
 
 For every package change, update or explicitly check:
 
@@ -58,7 +57,6 @@ python3 evals/check_state_schema.py
 python3 evals/check_learning_log.py
 python3 evals/check_skill_contract.py --help
 python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
-../../tests/test-sync.sh
 ```
 
 After verification, append the command outcomes and any skipped-check rationale

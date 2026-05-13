@@ -9,7 +9,11 @@ This folder contains index metadata used to keep Archive documents findable.
 Use `$archive-docs-organizer` to update these files when sorting documents from
 `docs/_inbox`.
 
-Catalog paths should point to human-curated documents under `docs/notes/`.
-External source captures can be indexed under `docs/raw/` when they are useful
-as standalone references. Generated wiki pages under `docs/wiki/` should not be
-cataloged as primary sources.
+Catalog paths usually point to human-curated documents under `docs/notes/`.
+They may also point to `docs/_inbox/` while a document is still intentionally
+unsorted, or to `docs/raw/` when an original capture is useful as a standalone
+reference.
+
+Generated wiki pages under `docs/wiki/` should not be cataloged as primary
+sources. Working plans and specs under `docs/superpowers/` are excluded from
+the library index unless they are later promoted into curated notes.

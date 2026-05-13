@@ -1,17 +1,18 @@
 # Archive
 
 Archive is a personal knowledge and AI tooling repository. It keeps long-lived
-documents, reusable AI-agent skills, shell runtime helpers, and dotfile
-bootstrap configuration in one checkout.
+documents and reusable AI-agent executor skills in one checkout.
 
 ## Layout
 
 - `AGENTS.md` - repository instructions for coding agents.
-- `ai/` - AI tooling runtime, dotfiles, skill source packages, and operating
-  docs.
 - `docs/` - source captures, curated notes, generated wiki navigation, and
   index metadata.
-- `.chezmoiroot` - points chezmoi at `ai/dotfiles/chezmoi`.
+- `docs/superpowers/` - working implementation plans and design specs for
+  skill work. These are project artifacts, not the curated library index.
+- `skills/` - source of truth for the personal executor skills installed into
+  Claude Code and Codex through symlinks.
+- `graphify-out/` - local generated knowledge graph output, ignored by Git.
 
 ## Working Rules
 
@@ -20,8 +21,10 @@ bootstrap configuration in one checkout.
   navigation layers.
 - Keep `docs/_index/catalog.yml`, `docs/_index/topics.yml`, and
   `docs/INDEX.md` aligned when documents are moved or added.
-- Edit AI skill source under `ai/skills/kws-skills/package/`.
-- Edit shell runtime behavior under `ai/runtime/`.
+- Edit AI skill source under `skills/<skill-name>/`.
+- Do not treat working implementation plans under `docs/superpowers/` as
+  source code. Update current runtime docs instead unless the plan itself is
+  being corrected as a record.
 
 ## Git Hygiene
 
@@ -31,7 +34,7 @@ state, dependency caches, local environment files, and generated navigation
 outputs.
 
 Generated Graphify output should stay in `graphify-out/` locally and be
-refreshed with:
+refreshed after code changes with:
 
 ```bash
 graphify update .

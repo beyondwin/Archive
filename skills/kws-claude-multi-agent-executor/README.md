@@ -107,7 +107,7 @@ that may not surface until much later.
 ## Repo layout
 
 ```
-package/kws-claude-multi-agent-executor/
+skills/kws-claude-multi-agent-executor/
 ├── README.md                       ← you are here
 ├── SKILL.md                        ← the executable skill (v2.9.0)
 ├── ARCHITECTURE.md                 ← system-level design (14 sections)
@@ -161,13 +161,13 @@ package/kws-claude-multi-agent-executor/
 
 ## Cross-Archive context
 
-This skill lives inside the `kws-skills` plugin at the Archive-level repo.
-Related artifacts outside this directory:
+This skill lives as a standalone source directory under Archive's `skills/`
+tree. Related artifacts outside this directory:
 
 - **Design specs**: `docs/superpowers/specs/2026-05-13-kws-claude-multi-agent-executor-*.md`
 - **Implementation plans**: `docs/superpowers/plans/2026-05-13-kws-claude-multi-agent-executor-*.md`
-- **Sibling skill** (Codex executor parallel design): `package/kws-codex-plan-executor/`
-- **Plugin manifest**: `kws-skills/manifest.json`, `kws-skills/README.md`, `kws-skills/CHANGELOG.md`
+- **Sibling skill** (Codex executor parallel design): `skills/kws-codex-plan-executor/`
+- **Archive skill index**: `skills/README.md`
 
 ## Keeping docs current
 
@@ -178,10 +178,10 @@ that here:
   — a per-change-type checklist (skill behavior / new event / new fixture / risk / etc.)
   saying exactly which docs to touch when you ship that kind of change.
 - **Freshness eval** (`evals/check_doc_freshness.py`) — deterministic
-  checks for the most regression-prone drift: version mismatch across
-  SKILL.md / manifest / README, broken internal markdown links across
-  the doc tree, stale "TODO/FIXME" markers. Runs in the same preflight
-  as the other two contract evals.
+  checks for the most regression-prone drift: SKILL.md/README version
+  consistency, broken internal markdown links across the doc tree, and stale
+  "TODO/FIXME" markers. Runs in the same preflight as the other two contract
+  evals.
 - **Snapshots** ([`docs/snapshots/`](./docs/snapshots/)) — capture full
   state at each major version. Currently: `v2.9.0.md`. Add one with
   every minor-version bump.

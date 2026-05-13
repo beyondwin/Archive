@@ -163,9 +163,7 @@ Per `DESIGN-v2.5.md`:
 - `state.json` external memory
 - Risk-tiered verification (LOW batch, MID/HIGH per-task)
 - P2: Wave-parallel sub-worktree dispatch for independent tasks
-- Skill added to plugin manifest
-
-### Earlier — see `kws-skills/CHANGELOG.md` at plugin level
+- Skill added to the executor skill inventory
 
 ---
 
@@ -249,7 +247,8 @@ See `docs/experiments/README.md` for the experiment template and protocol.
 
 - **`SKILL.md` frontmatter `metadata.version`** — current shipped skill version. Single source of truth for "what version is this right now."
 - **`ARCHITECTURE.md`** — synthesized current-state view of how the skill works. Update whenever behavior changes (see its §13).
-- **`kws-skills/CHANGELOG.md`** — plugin-level changelog. Tracks the package manifest version (not skill version). User-facing release notes.
+- **`skills/README.md`** — Archive-level index for currently installed
+  standalone executor skills.
 - **`HISTORY.md` (this file)** — skill-level narrative history. Both timeline and topic axes. Update when shipping a new version.
 - **`DESIGN-v<X>.md`** — point-in-time design doc for a specific version's design intent. Frozen artifact.
 - **`docs/experiments/<name>/`** — per-experiment record. Created at experiment start, finalized at close-out.

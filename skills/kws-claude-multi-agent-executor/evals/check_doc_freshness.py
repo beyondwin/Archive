@@ -3,7 +3,7 @@
 
 Runs deterministic checks for the most regression-prone doc drift:
 
-1. Version consistency across SKILL.md frontmatter / manifest.json / root README.
+1. Version consistency across SKILL.md frontmatter / skill README.
 2. Internal markdown links resolve.
 3. HISTORY.md has an entry matching the current SKILL.md version.
 4. Latest minor-version snapshot exists in docs/snapshots/.
@@ -27,15 +27,6 @@ from pathlib import Path
 
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
-# Standalone layout (post 2026-05-14): Archive/skills/<name>/. No plugin
-# manifest co-located. If the historical kws-skills plugin manifest is still
-# present at ai/skills/kws-skills/manifest.json, use it; otherwise skip the
-# plugin-coupled checks gracefully.
-_archive_root = SKILL_ROOT.parent.parent
-_legacy_manifest = _archive_root / "ai" / "skills" / "kws-skills" / "manifest.json"
-_legacy_readme = _archive_root / "ai" / "skills" / "kws-skills" / "README.md"
-MANIFEST_PATH = _legacy_manifest if _legacy_manifest.exists() else (SKILL_ROOT.parent / "manifest.json")
-PLUGIN_README = _legacy_readme if _legacy_readme.exists() else (SKILL_ROOT.parent / "README.md")
 
 
 def read_skill_version() -> str | None:
@@ -48,30 +39,19 @@ def read_skill_version() -> str | None:
     return match.group(1) if match else None
 
 
-def read_manifest_version() -> str | None:
-    """Extract skill_versions['kws-claude-multi-agent-executor'].version from manifest.json."""
-    if not MANIFEST_PATH.exists():
+def read_readme_version() -> str | None:
+    """Extract the current version from this skill's README."""
+    readme = SKILL_ROOT / "README.md"
+    if not readme.exists():
         return None
-    try:
-        data = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
-        return data.get("skill_versions", {}).get("kws-claude-multi-agent-executor", {}).get("version")
-    except (json.JSONDecodeError, OSError):
-        return None
-
-
-def read_plugin_readme_version() -> str | None:
-    """Extract kws-claude-multi-agent-executor version from the plugin README's skill table."""
-    if not PLUGIN_README.exists():
-        return None
-    text = PLUGIN_README.read_text(encoding="utf-8")
-    match = re.search(r'`kws-claude-multi-agent-executor`\s*\|\s*`([^`]+)`', text)
+    text = readme.read_text(encoding="utf-8")
+    match = re.search(r'\*\*Current version\*\*:\s*`([^`]+)`', text)
     return match.group(1) if match else None
 
 
 def check_version_consistency(checks: dict, failures: list) -> None:
     skill = read_skill_version()
-    manifest = read_manifest_version()
-    plugin = read_plugin_readme_version()
+    readme = read_readme_version()
 
     # Skill MUST always be readable.
     if skill is None:
@@ -79,30 +59,16 @@ def check_version_consistency(checks: dict, failures: list) -> None:
         failures.append("SKILL.md frontmatter version unreadable")
         return
 
-    # If there's no co-located plugin manifest (standalone skill layout
-    # post-2026-05-14), there's nothing to be consistent WITH. Mark the
-    # cross-version check as not-applicable rather than failing.
-    if manifest is None and plugin is None:
-        checks["versions_readable"] = True
-        checks["versions_consistent"] = "n/a (standalone skill — no plugin manifest)"
-        return
-
-    # Mixed presence — manifest exists but plugin README missing, or vice
-    # versa. That's an actual gap.
-    if manifest is None or plugin is None:
+    if readme is None:
         checks["versions_readable"] = False
-        failures.append(
-            f"Partial version metadata: SKILL.md={skill!r}, manifest={manifest!r}, "
-            f"plugin README={plugin!r} — if standalone, remove both; if plugin, "
-            f"populate both"
-        )
+        failures.append("README.md current version unreadable")
         return
 
     checks["versions_readable"] = True
-    checks["versions_consistent"] = skill == manifest == plugin
+    checks["versions_consistent"] = skill == readme
     if checks["versions_consistent"] is not True:
         failures.append(
-            f"Version drift: SKILL.md={skill}, manifest={manifest}, plugin README={plugin} — "
+            f"Version drift: SKILL.md={skill}, README.md={readme} — "
             f"see docs/doc-update-protocol.md §Version bump"
         )
 
