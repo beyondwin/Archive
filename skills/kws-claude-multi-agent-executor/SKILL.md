@@ -2,7 +2,7 @@
 name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation. NOTE — single-session execution is preferable for ≤5-task plans or plans with deep cross-task coupling (multi-agent overhead exceeds the parallelism win).
 metadata:
-  version: "2.10.0"
+  version: "2.10.1"
   updated_at: "2026-05-14"
 ---
 
@@ -32,9 +32,9 @@ Detection (in order):
 
 ### Self-Spawn Procedure
 
-**a. Run Phase 0 Steps 1, 2, 2.5 in interactive context.**
+**a. Run Phase 0 Steps 1, 1.5, 2, 2.5 in interactive context.**
 
-Execute Phase 0 Step 1 (working tree clean check), Step 2 (worktree creation), and Step 2.5 (safety hooks) now, in the interactive session. These steps are quick (~2 min) and must complete before the subprocess starts — the subprocess requires an existing worktree to operate in. If any of these steps fail, abort the spawn and surface the failure to the user. Do NOT proceed to step b.
+Execute Phase 0 Step 1 (working tree clean check), Step 1.5 (cross-run isolation checks — mode exclusivity + orphan-worktree report; v2.10.1), Step 2 (worktree creation), and Step 2.5 (safety hooks) now, in the interactive session. These steps are quick (~2 min) and must complete before the subprocess starts — the subprocess requires an existing worktree to operate in. If any of these steps fail, abort the spawn and surface the failure to the user. Do NOT proceed to step b.
 
 **b. Initialize a minimal `.orchestrator/state.json` in the worktree.**
 
@@ -232,7 +232,7 @@ This is a fallback — the primary expectation is that one headless subprocess c
    Check if `<worktree_path>/.orchestrator/state.json` exists by attempting to read it.
    - If it does NOT exist: proceed normally to Step 1.
    - If it EXISTS and is valid JSON with `schema_version: "2"`:
-     - If `"mode": "headless_pending"`: freshly-spawned headless instance — Phase -1 already ran Steps 1, 2, 2.5 in interactive context and wrote minimal state. **MUST skip Phase 0 Steps 1, 2, 2.5** (clean check, worktree creation, safety hooks — re-running breaks: `git status` flags pre-written `.orchestrator/` and `.claude/settings.json` as dirty; `git worktree add` errors on the existing branch). PROCEED with Phase 0 Step 0.5 onward (`0.5 → 3 → 3.5 → 4 → 5 → 6 → 7`) to populate baseline, risk_levels, compaction_points, full task data. After Step 7, update `state.json.mode` from `"headless_pending"` to `"headless_running"` and write.
+     - If `"mode": "headless_pending"`: freshly-spawned headless instance — Phase -1 already ran Steps 1, 1.5, 2, 2.5 in interactive context and wrote minimal state. **MUST skip Phase 0 Steps 1, 1.5, 2, 2.5** (clean check, cross-run isolation, worktree creation, safety hooks — re-running breaks: `git status` flags pre-written `.orchestrator/` and `.claude/settings.json` as dirty; `git worktree add` errors on the existing branch; Step 1.5 mode-exclusivity check would self-block on the freshly-created `.orchestrator/headless.pid`). PROCEED with Phase 0 Step 0.5 onward (`0.5 → 3 → 3.5 → 4 → 5 → 6 → 7`) to populate baseline, risk_levels, compaction_points, full task data. After Step 7, update `state.json.mode` from `"headless_pending"` to `"headless_running"` and write.
      - If `"mode": "headless_running"`, `"headless_chained"`, `"plan2_running"`, `"interactive_session"`, or no mode field: Standard resume path — load all fields. Do NOT overwrite. Verify git branch and worktree match `state.branch` / `state.worktree`. Set internal tracking from state.json: `current_task`, `current_step_within_task`, `current_pre_task_sha`, per-task counters. Output: "Resuming from state file: Task <N>, Step <M> (mode=<value or null>)." Skip Phase 0 Steps 1–7 (setup already done). Go directly to Phase 1 at the recorded task/step.
    - If it EXISTS but is invalid (empty, malformed JSON):
      - Warn user: "State file exists but is corrupted at <path>. Recommend manual inspection before proceeding."
@@ -250,6 +250,34 @@ This is a fallback — the primary expectation is that one headless subprocess c
    git status
    ```
    If there are uncommitted changes, stop immediately. Tell the user: "Working tree is dirty. Please commit or stash changes before running multi-agent-executor." Do not proceed.
+
+1.5. **Cross-run isolation checks (v2.10.1):**
+   These run in the **outer repo** (not in any worktree) and catch state that prior crashed runs left behind. Two independent checks:
+
+   **(a) Mode exclusivity** — refuse to start if another run is alive. Enumerate all worktrees matching this skill's pattern via `git worktree list --porcelain | awk '/^worktree /{print $2}'`. For each candidate path:
+   ```bash
+   pid_file="$path/.orchestrator/headless.pid"
+   done_file="$path/.orchestrator/HEADLESS_DONE.txt"
+   halted_file="$path/.orchestrator/HEADLESS_HALTED.txt"
+   if [ -f "$pid_file" ] && [ ! -f "$done_file" ] && [ ! -f "$halted_file" ]; then
+     pid=$(cat "$pid_file")
+     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+       echo "BLOCKED: active run at $path (PID $pid). Halt with 'kill $pid' or wait for HEADLESS_DONE.txt. To force-clear after confirming the process is dead, remove $pid_file." >&2
+       exit 1
+     fi
+   fi
+   ```
+   On detection: halt with the message above. Do NOT silently proceed — concurrent runs on the same source repo can race on git fetches, the user-local learning log, and the parent-repo branch namespace.
+
+   **(b) Stale-worktree report (advisory, NOT auto-delete)** — for any worktree path matching this skill's pattern with **no `.orchestrator/state.json`** AND mtime > 7 days, list it to the user once:
+   > "Orphan worktrees detected (no state.json, last modified >7d ago):
+   >   - `<path1>` (<age> days)
+   >   - `<path2>` (<age> days)
+   > These appear to be from interrupted runs. Inspect manually with `ls <path>/.orchestrator/` and remove with `git worktree remove <path> --force && git worktree prune` if no in-progress work. Continuing with this run."
+
+   **Do NOT auto-delete.** A worktree with no state.json may still hold uncommitted manual debugging work; the user must decide. The report is one-shot per invocation; it does not halt.
+
+   **Headless skip:** when the resume protocol detects `mode == "headless_pending"`, this step is part of the "MUST skip" set (already covered by Phase -1's interactive run).
 
 2. **Create worktree:**
    - First invoke `Skill("superpowers:using-git-worktrees")` and follow its guidance.
@@ -1242,6 +1270,8 @@ These rules are absolute. No exceptions.
 | **Learning log lifecycle (v2.8)** | Phase 0 Step 7.5 calls `init-run` and exports `MAE_LEARNING_RUN_ID`. Phase 1 Step 3.5 scans `<worktree>/.orchestrator/learning_events/` for sub-agent candidate JSON and calls `append`. Phase 2 Step 2 closes with `outcome=success`; orchestrator-level abort closes with `outcome=aborted`; whole-orchestrator hard-halt (state-write fail, exhausted escalations halting the run) closes with `outcome=blocked`. Resume Chain preserves `MAE_LEARNING_RUN_ID` via env propagation and calls `append-session-id`, never `init-run`. **Learning-log failure must never block plan execution** — every helper invocation is wrapped with `\|\| true`. See `references/learning-log.md`. |
 | **Single-writer for learning events** | Only the orchestrator invokes the helper. Sub-agents write event candidates as JSON files under `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`; the orchestrator reads and forwards them. Never let a sub-agent prompt instruct direct helper invocation. |
 | **`context_health` is observation-only (v2.10)** | Emitted at Phase Transition T3 and Resume Chain chained-orchestrator startup. Counts compaction index, completed tasks, chain handoffs. **MUST NOT alter orchestrator control flow** — Goodhart's-law guard. Behavior changes require a follow-on experiment under `docs/experiments/v2.10-context-health/` after ≥ 2 weeks of real-run data. See `references/learning-log.md`. |
+| **Polite-stop anti-pattern is forbidden (v2.10.1)** | A sub-agent returning PASS / APPROVED is a checkpoint inside the autonomous loop, never a reporting moment. The orchestrator MUST proceed immediately to the next phase step in the same turn. The only legitimate reporting moments are: Phase 2 success completion, ESCALATE that exceeds `escalation_count > 3`, headless `HEADLESS_HALTED.txt`, or hook denial. Any prompt edit that introduces "summarize and wait for user acknowledgment" between PASS and the next step IS the regression this invariant exists to prevent. |
+| **Cross-run isolation is enforced (v2.10.1)** | Phase 0 Step 1.5 refuses to start when another worktree of this skill has a live headless PID. Mode exclusivity is concurrent-safe by halt, not by lock — the user is responsible for choosing which run continues. Orphan worktrees with no state.json + >7d mtime are reported but never auto-deleted (may hold uncommitted manual debugging). |
 
 ---
 

@@ -165,6 +165,66 @@
 
 ---
 
+## OMC 비교 분석 (2026-05-14) 에서 도출된 후보들
+
+`yeachan-heo/oh-my-claudecode` (33k stars) 의 핵심 패턴 ~15개를 검토 후, 우리 스킬과 일치하지 않거나 측정 우선이 필요한 4개를 여기에 보존. v2.10.1 출하 시 3개 (mode exclusivity / orphan worktree report / polite-stop invariant) 는 즉시 적용. 나머지 4개는 아래.
+
+### Plan Reviewer pre-mortem 서브스텝
+
+**제안된 변경**: Plan Reviewer 프롬프트 (`references/plan-reviewer-prompt.md`) 에 sub-step C 추가 — "이 plan 이 그대로 실행됐고 사용자가 실패 보고를 했다고 가정. 메커니즘 + 증상 짝으로 구체적 실패 시나리오 3개 생성. 각각에 대해: plan 에 이를 막는 스텝이 있는가? 없으면 `PLAN_GAP:` finding."
+
+**기원**: OMC `agents/critic.md` Investigation_Protocol Phase 2 Step 2 (pre-mortem). v2.9 Spec Coverage Walk sub-step B 와 다른 축 — walk 는 구현이 spec 메타룰을 빠뜨렸나, pre-mortem 은 spec/plan 자체가 실패 모드를 빠뜨렸나.
+
+**연기 이유**: Plan Reviewer 출력 길이 ↑ → 오케스트레이터 context 압박 ↑. v2.10 의 `context_health` 가 정확히 이 비용을 측정하는 도구로 막 출하됐는데, 그 데이터 누적 전에 도입하면 자기 자신의 Goodhart guard 위반.
+
+**재방문 시점**: v2.10 `context_health` 데이터 ≥ 2주 누적 후, 픽스처 01/03/05 에 pre-mortem 변형으로 A/B 측정. `docs/experiments/v2.11-plan-pre-mortem/D001.md` 에서 시작.
+
+---
+
+### AI slop cleaner post-PASS bounded pass
+
+**제안된 변경**: Phase Transition T2 (Docs Updater) 후 또는 Phase 2 Step 1 (Final Docs Updater) 후, 변경된 파일들을 대상으로 bounded "deslop" pass 실행 — duplicate logic, dead wrappers, single-use abstractions 제거. OMC `ralph` 의 Step 7.5 패턴.
+
+**기원**: OMC `skills/ai-slop-cleaner/SKILL.md`. 우리의 현 `PostToolUse` hook (`scan-debug-artifacts.sh`) 은 `console.log|TODO|FIXME|debugger` 같은 어휘 레벨 슬롭만 잡음. 의미 레벨 슬롭 (중복 로직, 죽은 헬퍼, 한 번만 쓰이는 추상화) 은 안 잡힘.
+
+**연기 이유**: 추가 서브에이전트 디스패치 비용. 실제로 의미 레벨 슬롭이 자주 들어오는지 측정된 증거 없음 (현 Implementer 프롬프트의 `<Failure_Modes_To_Avoid>` 와 Reviewer 의 QUALITY_SCORE 가 이미 어느 정도 잡고 있을 가능성).
+
+**재방문 시점**: 학습 로그에 `successful_workaround` 또는 `recurring_issue` 이벤트 ≥ 3개가 "Implementer-introduced dead helper / duplicate logic / single-use wrapper" 패턴으로 표면화 시.
+
+---
+
+### Haiku 티어를 LOW-risk 단일 파일 태스크에
+
+**제안된 변경**: 현재 모든 Implementer 가 Sonnet. LOW-risk + 단일 파일 + 평균 diff < 50 lines 인 태스크에 Haiku 호출. OMC `ultrawork` / `ralph` 의 명시적 티어링 패턴.
+
+**기원**: OMC `agents/executor.md` + 다수 OMC 스킬의 `Task(executor, model="haiku")` 사용 패턴. 비용 ~5배 차이.
+
+**연기 이유**: 비용 매력적이지만 추측. LOW-risk 정의가 우리 dependency graph 기반 (cross-cutting 아님) 이지 모델 능력 기반 아님 — Haiku 가 우리 P4 QUALITY threshold (0.75) 를 안정적으로 통과할지 측정 안 됨. 우리 자신의 invariant "추측으로 임계값 설정 금지" 와 동일 패턴.
+
+**재방문 시점**: v2.10 `context_health` 누적 후 LOW 태스크의 `verifier_retry_total` 분포 확인. 분포가 좁고 P4 fail 률 < 5% 이면 픽스처 01/02 에 Haiku 변형 A/B 측정.
+
+---
+
+### 사용자 설정 가능한 임계값 (`.omc/omc.jsonc` 스타일)
+
+**제안된 변경**: SPEC 0.85 / QUALITY 0.75 / WARN 0.70/0.60 / `escalation_count > 3` 등을 사용자 config 파일로 노출. OMC `autopilot.maxQaCycles`, `self-improve.plateau_threshold` 등의 패턴.
+
+**기원**: OMC `autopilot/SKILL.md` Advanced §Configuration + `self-improve/config/settings.json`.
+
+**연기 이유 (그리고 거부에 가까움)**: 우리 v2.10 Goodhart guard 의 직접 위반. SPEC/QUALITY 임계값은 P6 eval suite 로 보정됐고 — 사용자가 per-run 으로 낮추면 비교 가능한 측정 사라짐. 사용자 config 는 "관측 불가능한 변경" 을 합법화하는 게이트.
+
+**재방문 시점 (높은 바)**: 다른 Claude 버전 (예: Claude 5) 으로 마이그레이션 시 임계값 재보정 필요. 그땐 config 가 아니라 새 P6 baseline 캡처 + 새 보정된 hard-coded 값으로 코드 변경.
+
+**거부 대신 연기 이유**: 미래에 보정 컨텍스트가 바뀔 수 있음. 하지만 "사용자가 자유롭게 조절" 형태로는 영원히 안 들어감.
+
+---
+
+### (참고) 명시적 거부 — 평가 후 재방문 안 함
+
+- **Tournament selection + approach family taxonomy + plateau circuit-breaker** (OMC `self-improve`). 다른 문제 모양 — 우리는 한 plan 직선 실행, OMC self-improve 는 N 후보 경쟁 진화. 우리 스킬을 tournament 화하면 의미 없는 비용. 향후 사용자가 "evolutionary code search" 가 필요하면 별도 스킬로.
+
+---
+
 ## 후보 추가 방법
 
 지금 *하지 않기* 로 결정했지만 옵션을 열어두고 싶을 때:

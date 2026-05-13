@@ -21,6 +21,72 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.10.1 — Cross-run isolation + polite-stop invariant (2026-05-14)
+
+Patch release prompted by a deep read of the `oh-my-claudecode` project
+(33k stars; Yeachan-Heo). Filtered ~15 candidate patterns down to three
+zero-cost, zero-risk additions; all four "fits but needs measurement"
+candidates were moved to `docs/deferred-candidates.md` with explicit
+revisit triggers.
+
+Three changes, all in `SKILL.md`:
+
+- **Phase 0 Step 1.5 (NEW): Cross-run isolation checks**
+  - **(a) Mode exclusivity**: enumerate worktrees of this skill; if any has a
+    live `headless.pid` AND no `HEADLESS_DONE.txt` / `HEADLESS_HALTED.txt`,
+    halt with a clear message. Concurrent runs on the same source repo can
+    race on git fetches, the user-local learning log, and parent-repo branch
+    namespace — fail-fast is cheaper than debugging the race.
+  - **(b) Orphan-worktree report (advisory, NOT auto-delete)**: list orphan
+    worktrees (no state.json AND mtime > 7d) for user inspection. We do
+    not auto-delete because such a worktree may hold uncommitted manual
+    debugging work; the user must decide.
+  - **Phase -1 self-spawn**: Step (a) now runs Phase 0 Steps `1, 1.5, 2, 2.5`.
+  - **Headless resume**: `mode == "headless_pending"` skip list extended to
+    include Step 1.5 (the freshly-written `.orchestrator/headless.pid`
+    would self-block the mode-exclusivity check).
+
+- **Invariants table: "Polite-stop anti-pattern is forbidden"** — names the
+  failure mode that the existing `<<HEADLESS_KWS_ORCHESTRATOR>>` mechanism
+  guards against. Inspired by `ralph/SKILL.md`'s explicit callout. A
+  sub-agent returning PASS is a checkpoint inside the loop, never a
+  reporting moment. This is a documentation-level invariant — the mechanism
+  already exists; the change makes the failure mode legible so future SKILL.md
+  edits cannot silently regress it.
+
+- **Invariants table: "Cross-run isolation is enforced"** — documents the
+  Phase 0 Step 1.5 contract for future readers.
+
+Why now: the v2.10.0 ship is a natural point to apply 3 small
+documentation/setup hardenings before the v2.10 `context_health` corpus
+starts being analyzed. Pure-prose changes, no schema/contract drift, no
+new sub-agent prompts.
+
+Considered but deferred (all four moved to `docs/deferred-candidates.md`):
+
+- **Plan Reviewer pre-mortem sub-step (OMC `critic` agent)** — genuine gap
+  at Plan side, but increases Plan Reviewer output length and Orchestrator
+  context. v2.10 `context_health` data is the right tool to measure this;
+  premature ship would violate our own Goodhart guard.
+- **AI slop cleaner post-PASS pass (OMC `ai-slop-cleaner` skill)** —
+  catches duplicate logic / dead wrappers that the existing
+  `PostToolUse` hook misses, but adds a sub-agent dispatch. Trigger:
+  ≥3 `successful_workaround`/`recurring_issue` events naming
+  Implementer-introduced dead helpers.
+- **Haiku tier for LOW-risk single-file tasks (OMC tiered executor)** —
+  cost-attractive but speculation; revisit after v2.10 corpus shows
+  LOW tasks have acceptable verifier_retry distributions on Haiku.
+- **User-configurable thresholds (OMC `.omc/omc.jsonc`)** — directly
+  contradicts our Goodhart guard. SPEC/QUALITY thresholds were calibrated
+  against the P6 eval suite; per-run override is not a feature, it is a
+  measurement-destroying knob.
+
+Explicit rejects (will not revisit absent fundamental problem-shape change):
+
+- Tournament selection / approach-family taxonomy / plateau circuit-breaker
+  (OMC `self-improve`) — different problem shape (N candidates per round
+  vs. our straight-line single-plan execution).
+
 ### v2.10.0 — `context_health` passive observation (2026-05-14)
 
 Adds an 11th event type `context_health` to the learning log. **Observation-only**:
