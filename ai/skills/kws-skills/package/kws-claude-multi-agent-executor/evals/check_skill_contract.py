@@ -104,6 +104,18 @@ def main() -> int:
         "SKILL.md must describe append-session-id in Resume Chain handoff",
     )
 
+    # v2.8.1 enforcement: Step 7.5 must use MANDATORY framing + emit a
+    # LEARNING_LOG_INIT marker that the eval harness can detect.
+    record(
+        "skill_md_v281_mandatory_framing",
+        all(token in skill_text for token in [
+            "MANDATORY",
+            "DO NOT SKIP THIS STEP",
+            "LEARNING_LOG_INIT:",
+        ]),
+        "SKILL.md Step 7.5 must use MANDATORY framing and emit LEARNING_LOG_INIT marker (v2.8.1)",
+    )
+
     # ---- learning-log.md content ----
     if learning_log_md.is_file():
         record(

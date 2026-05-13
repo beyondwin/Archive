@@ -2,7 +2,7 @@
 name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation. NOTE — single-session execution is preferable for ≤5-task plans or plans with deep cross-task coupling (multi-agent overhead exceeds the parallelism win).
 metadata:
-  version: "2.8.0"
+  version: "2.8.1"
   updated_at: "2026-05-13"
 ---
 
@@ -496,9 +496,11 @@ This is a fallback — the primary expectation is that one headless subprocess c
 
    **Mode field rule (P13a):** `mode` MUST always be a string — never `null`. Set to `"interactive_session"` when not under Phase -1 self-spawn, `"headless_running"` immediately after Phase 0 completes under `headless_pending` resume.
 
-7.5. **Learning log init-run (v2.8):**
+7.5. **Learning log init-run (v2.8 — MANDATORY, v2.8.1 enforced):**
 
-   After state.json is written, initialize the user-local learning log. This is observability — failure to init must NOT block plan execution.
+   **DO NOT SKIP THIS STEP.** This is a required Phase 0 checkpoint, equivalent in priority to git worktree creation and state.json initialization. Even on simple single-task plans, even when the plan looks trivial, even under headless `claude -p`, you MUST execute this block in the orchestrator session before any Phase 1 work begins. Skipping it disables institutional-memory observability for the entire run (no meta.json, no events.jsonl) and is the most reproducible adherence regression observed in v2.8 F001 Smoke B.
+
+   After state.json is written, initialize the user-local learning log:
 
    ```bash
    # Skill dir is the directory containing this SKILL.md.
@@ -508,13 +510,21 @@ This is a fallback — the primary expectation is that one headless subprocess c
      --branch "$(git -C "$WORKTREE_ABS" branch --show-current)" \
      --plan-path "$PLAN_PATH" \
      --spec-path "$SPEC_PATH" \
-     --session-id "${CLAUDE_SESSION_ID:-}" 2>/dev/null || echo "")"
+     --session-id "${CLAUDE_SESSION_ID:-}" || echo "")"
    if [ -n "$RUN_ID" ]; then
      export MAE_LEARNING_RUN_ID="$RUN_ID"
+     echo "LEARNING_LOG_INIT: RUN_ID=$RUN_ID"
+   else
+     echo "LEARNING_LOG_INIT: SKIPPED (helper missing or write failure — observability degraded for this run)"
    fi
    ```
 
-   `MAE_LEARNING_RUN_ID` is captured in shell env and used for the lifetime of the run. If helper init fails (script missing, write failure), `RUN_ID` is empty and no `MAE_LEARNING_RUN_ID` is exported — subsequent emit attempts (Phase 1/Transition/2) check the env var and skip silently. The plan execution proceeds normally.
+   Note v2.8.1 changes vs v2.8.0:
+   - `2>/dev/null` removed — helper script stderr now surfaces in run.jsonl. If init-run breaks, you see why.
+   - Explicit `echo` on both success and failure paths — this line appears in `run.jsonl` and lets eval/audit verify adherence (the absence of either `LEARNING_LOG_INIT:` line proves the step was skipped entirely, not just that the helper failed).
+   - Heading text strengthens MANDATORY framing. Under headless multi-task plans (F001 Smoke B baseline) the previous "must NOT block" language was being read as "may skip".
+
+   `MAE_LEARNING_RUN_ID` is captured in shell env and used for the lifetime of the run. If helper init fails (script missing, write failure), `RUN_ID` is empty and no `MAE_LEARNING_RUN_ID` is exported — subsequent emit attempts (Phase 1/Transition/2) check the env var and skip silently. The plan execution proceeds normally. **Failure of init-run must NEVER block plan execution; failure to even attempt init-run IS the regression we are guarding against.**
 
    Sub-agents do NOT call the helper. They write event candidate JSON files to `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`. The orchestrator scans this directory after each cycle step and invokes `append` itself. See `references/learning-log.md` for the schema and 10 event types.
 
