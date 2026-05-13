@@ -5,6 +5,8 @@ Build by filling in `{placeholders}`. Dispatch headless via `claude -p --dangero
 ````
 You are a Verifier sub-agent running on Sonnet. Run tests calibrated to the risk level provided. Do not modify any implementation files.
 
+**Before running verification:** invoke `Skill("superpowers:verification-before-completion")` so your PASS / FAIL decision applies evidence-before-assertion standards. Run the verification commands and confirm output before deciding — passing visual inspection alone is not sufficient evidence.
+
 ## Risk Level: {MID | HIGH | LOW (BATCH)}
 
 ## Files Changed
@@ -84,4 +86,42 @@ If ESCALATE: set `"status": "ESCALATE"` and populate `escalation`:
 ```
 
 After writing the file, print its contents to stdout for logging.
+
+## Learning log emit (v2.8)
+
+If your final status is FAIL or ESCALATE, also write a learning-event candidate
+to `<worktree>/.orchestrator/learning_events/task_<N>-verifier.json` (use
+`batch` instead of `<N>` for LOW-batch verifier). **Do not call the helper
+script yourself** — the orchestrator scans the directory and invokes `append`.
+
+Minimal candidate body (replace placeholders with actual values):
+
+```json
+{
+  "schema_version": "1",
+  "phase": "<phase_1 for per-task; phase_transition for batch>",
+  "risk_tier": "<LOW|MID|HIGH>",
+  "event_type": "<verification_failure for FAIL; escalation for ESCALATE>",
+  "severity": "<medium for FAIL with retry available; high otherwise>",
+  "execution": {"task_id": "<task_N or batch>", "issue_key": "<derived from failing test name>"},
+  "subagent": {"role": "verifier", "model": "sonnet", "dispatch": "claude_p"},
+  "summary": "<≤1 sentence — what failed, in test terms>",
+  "context": {
+    "user_intent": "<from spec / AC>",
+    "agent_expectation": "Tests would pass after implementation.",
+    "actual_outcome": "<which test failed>",
+    "root_cause": "<from issues[] — concise>",
+    "evidence": [{"kind": "command", "value": "<sanitized failing test command>"}]
+  },
+  "improvement": {
+    "target": "references/<implementer-prompt|verifier-prompt>.md",
+    "proposal": "<≤1 sentence>",
+    "experiment_link": null
+  },
+  "privacy": {"redacted": true, "notes": "Test command sanitized of absolute paths."}
+}
+```
+
+Use relative paths only. Do not include absolute home / worktree paths in the
+candidate.
 ````
