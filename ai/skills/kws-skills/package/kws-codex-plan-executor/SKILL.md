@@ -2,8 +2,8 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "1.4.0"
-  updated_at: "2026-05-13"
+  version: "1.5.0"
+  updated_at: "2026-05-14"
 ---
 
 # KWS Codex Plan Executor
@@ -62,6 +62,13 @@ parallel work, or passes `subagents=on`.
   `references/learning-log.md`; initialize with `init-run`, append with
   `append`, close with `close-run`, and include `run_id`, `run_dir`, and
   `state_path`. `prompt` and `handoff` are not logging modes.
+- Execution runs record `.codex-orchestrator/runs/<run_id>/context.json` before
+  edits and store `context_snapshot_path` plus `context_basis_hash` in state.
+- Successful terminal runs set `lifecycle_outcome=finished` and include a
+  passing `completion_audit` with `prompt_to_artifact_checklist` and
+  `verification_evidence`.
+- Blocked or failed terminal runs set a non-success `lifecycle_outcome` and a
+  concrete `handoff_reason`.
 - Headless `codex exec` prompts must bootstrap applicable skills because parent
   session skill state is not assumed to carry over. Explicitly include
   `using-superpowers` and `test-driven-development` for implementation work.
@@ -78,9 +85,11 @@ parallel work, or passes `subagents=on`.
 6. Maintain `.codex-orchestrator/runs/<run_id>/state.json` using
    `references/state-schema.md`; keep `.codex-orchestrator/state.json` as the
    latest-state compatibility copy/pointer.
-7. For execution modes, record learning events at notable boundaries using
+7. Build `context.json` for execution modes before edits and record completion
+   proof before reporting a finished lifecycle outcome.
+8. For execution modes, record learning events at notable boundaries using
    `references/learning-log.md`.
-8. Validate using scripts before claiming completion.
+9. Validate using scripts before claiming completion.
 
 ## Stop Rules
 
@@ -112,8 +121,8 @@ Return only one fenced `text` block when the user asks for prompt-only output.
 
 | Mode | Required checks before completion |
 |------|-----------------------------------|
-| `interactive` | `scripts/parse_plan.py`, changed-project tests or honest substitute, `scripts/validate_state.py` |
-| `headless` | `scripts/parse_plan.py`, acceptance command or honest substitute, `scripts/validate_state.py`, headless JSONL/final artifact review |
+| `interactive` | `scripts/parse_plan.py`, `context.json`, changed-project tests or honest substitute, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py` |
+| `headless` | `scripts/parse_plan.py`, `context.json`, acceptance command or honest substitute, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py`, headless JSONL/final artifact review |
 | `prompt` | `evals/check_prompt.py` or the prompt export checklist when no fixture exists |
 | `handoff` | `evals/check_prompt.py` or the prompt export checklist, plus source state/path readability |
 

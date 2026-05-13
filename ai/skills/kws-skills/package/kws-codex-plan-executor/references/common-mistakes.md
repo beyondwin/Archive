@@ -25,3 +25,13 @@ Use this for failure analysis or substantial edits to this skill.
   pointer.
 - Do not store secrets, full transcripts, long raw logs, or absolute home paths
   in learning events.
+- Do not parse executable tasks, `Files` blocks, or dependency markers from
+  fenced code, HTML comments, or indented code.
+- Do not report `lifecycle_outcome=finished` without a passing
+  `completion_audit` containing `prompt_to_artifact_checklist` and
+  `verification_evidence`.
+- Do not use `current_phase` as a substitute for terminal
+  `lifecycle_outcome`.
+- Do not let optional DAG metadata bypass per-task execution contracts.
+- Do not store source snapshots outside
+  `.codex-orchestrator/runs/<run_id>/context.json`.

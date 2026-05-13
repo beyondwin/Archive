@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.13.0 - 2026-05-14
+
+- `kws-codex-plan-executor`가 hidden Markdown 영역의 `Task`/`Files` marker를
+  실행 대상으로 오인하지 않도록 parser를 강화했습니다.
+- 실행 run마다 `.codex-orchestrator/runs/<run_id>/context.json` source snapshot을
+  만들고 `context_snapshot_path`, `context_basis_hash`를 state에 기록하도록
+  계약과 검증을 추가했습니다.
+- 성공 완료에는 `lifecycle_outcome=finished`와 passing `completion_audit`
+  (`prompt_to_artifact_checklist`, `verification_evidence`)를 요구하고,
+  non-success outcome에는 `handoff_reason`을 요구합니다.
+- optional `Depends on:` DAG metadata와 high-risk verification matrix guidance를
+  추가하되 subagent opt-in 정책은 유지했습니다.
+
 ## 2.12.0 - 2026-05-13
 
 - `kws-codex-plan-executor`의 user-local learning log를 단일

@@ -120,6 +120,35 @@ def main() -> int:
             token in learning
             for token in ("redacted-context", "Do not store full conversation transcripts", "Do not store secrets")
         ),
+        "context_snapshot_contract": all(
+            token in (text + execution + headless + checklist)
+            for token in ("context.json", "context_snapshot_path", "context_basis_hash")
+        ),
+        "completion_audit_contract": all(
+            token in (text + execution + headless + checklist)
+            for token in ("completion_audit", "prompt_to_artifact_checklist", "verification_evidence")
+        ),
+        "lifecycle_outcome_contract": all(
+            token in (text + execution + headless + checklist)
+            for token in ("lifecycle_outcome", "handoff_reason", "finished", "blocked", "failed")
+        ),
+        "fresh_prompt_new_state_contracts": all(
+            token in template
+            for token in (
+                "context.json",
+                "context_snapshot_path",
+                "context_basis_hash",
+                "completion_audit",
+                "prompt_to_artifact_checklist",
+                "verification_evidence",
+                "lifecycle_outcome",
+                "handoff_reason",
+            )
+        ),
+        "high_risk_matrix_contract": all(
+            token in (execution + checklist + template)
+            for token in ("high-risk verification matrix", "misleading success", "stale state", "hung")
+        ),
     }
 
     checks.update(expectations)

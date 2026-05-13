@@ -1,0 +1,20 @@
+name: hidden-task-in-fence
+mode: interactive
+plan: |
+  ### Task 0: Real task
+
+  Files:
+  - Create: docs/real.md
+
+  ```markdown
+  ### Task 1: Hidden task
+
+  Files:
+  - Create: docs/hidden.md
+  ```
+
+  ## Verification
+  Run `test -f docs/real.md`.
+expected:
+  files:
+    - docs/real.md
