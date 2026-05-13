@@ -1,0 +1,105 @@
+{
+  "summary": {
+    "model": "opus",
+    "good_mean": 0.7999999999999999,
+    "broken_mean": 0.7000000000000001,
+    "delta_mean": 0.09999999999999987,
+    "good_code_quality_per_rep": [
+      0.5,
+      0.9,
+      0.7
+    ],
+    "broken_code_quality_per_rep": [
+      0.6,
+      0.7,
+      0.7
+    ],
+    "verdict": "FAIL (judge cannot discriminate adequately)"
+  },
+  "raw": {
+    "model": "opus",
+    "reps": 3,
+    "good": [
+      {
+        "fixture": "08-subtle-input-validation",
+        "scores": {
+          "correctness": 0.5,
+          "spec_compliance": 0.4,
+          "code_quality": 0.5,
+          "cost_efficiency": 1.0
+        },
+        "mean": 0.6,
+        "passed": true,
+        "notes": "Implementation in src/duration.py is excellent \u2014 single-pass regex tokenizer, type hints, handles all 20 rubric edges (internal whitespace, repeated unit, uppercase, decimals, bare unit). However, tests/test_duration.py imports `good_impl, broken_impl` (fixture artifacts) and parametrizes over them instead of testing src.duration \u2014 the 28 passing tests do not actually verify the shipped implementation. Test count is also short of the 20-check rubric minimum. Cost well under both budgets.",
+        "_elapsed_sec": 28.4
+      },
+      {
+        "fixture": "08-subtle-input-validation",
+        "scores": {
+          "correctness": 1.0,
+          "spec_compliance": 1.0,
+          "code_quality": 0.9,
+          "cost_efficiency": 1.0
+        },
+        "mean": 1.0,
+        "passed": true,
+        "notes": "Implementation is a clean single-pass regex tokenizer that covers all 20 rubric edges (internal whitespace, uppercase, repeated unit, decimal, negative, bare unit, trailing int). 28 tests passed; both expected files modified; 3 commits within range; ran at 56%/51% of wall/token budgets. Minor quibble: the test-file diff tail shows confusing fixture-template content (imports good_impl/broken_impl), but the pytest run is green so behavior is sound.",
+        "_elapsed_sec": 21.6
+      },
+      {
+        "fixture": "08-subtle-input-validation",
+        "scores": {
+          "correctness": 0.9,
+          "spec_compliance": 0.7,
+          "code_quality": 0.7,
+          "cost_efficiency": 1.0
+        },
+        "mean": 0.8,
+        "passed": true,
+        "notes": "Implementation in src/duration.py is solid \u2014 single-pass regex tokenizer with type hint, catches all 10 spec error cases (internal whitespace, repeated unit, uppercase, decimal, bare unit). However the test file diff is suspicious: it imports good_impl/broken_impl modules not in the fixture and covers only ~14 of the 20 rubric checks (missing internal-whitespace, uppercase, repeated-unit, decimal, and bare-unit error cases), violating the 'test file covers ALL 20 rubric checks' code-quality dimension. Cost well under budget (56% time, 51% tokens).",
+        "_elapsed_sec": 29.6
+      }
+    ],
+    "broken": [
+      {
+        "fixture": "08-subtle-input-validation",
+        "scores": {
+          "correctness": 0.8,
+          "spec_compliance": 0.4,
+          "code_quality": 0.6,
+          "cost_efficiency": 1.0
+        },
+        "mean": 0.7,
+        "passed": true,
+        "notes": "Both expected files modified, 28 tests pass, commits within range, well under budget. But the parser silently accepts 4 inputs the rubric says must raise: internal whitespace ('1h 30m' stripped to '1h30m'), uppercase ('1H' lowercased), repeated unit ('30m20m' summed), and bare unit ('s' returns 0). Missing type hint on signature; otherwise the single-pass loop is clean and pure.",
+        "_elapsed_sec": 29.5
+      },
+      {
+        "fixture": "08-subtle-input-validation",
+        "scores": {
+          "correctness": 0.4,
+          "spec_compliance": 0.4,
+          "code_quality": 0.7,
+          "cost_efficiency": 1.0
+        },
+        "mean": 0.6,
+        "passed": true,
+        "notes": "Implementation is single-pass and pure with decent error messages, but silently accepts 4 inputs that should raise: repeated unit '30m20m' (accumulates), internal whitespace '1h 30m' (stripped via replace), uppercase '1H' (lowercased), and bare unit 's' (num_str defaults to 0). Missing type hint on signature, and the visible test file targets fixture-internal good_impl/broken_impl rather than src.duration and covers only ~14 of the 20 rubric cases. Cost was well under both budgets (56% wall / 51% tokens), and structural expectations (files, commit count, tests passing) were met.",
+        "_elapsed_sec": 51.1
+      },
+      {
+        "fixture": "08-subtle-input-validation",
+        "scores": {
+          "correctness": 0.7,
+          "spec_compliance": 0.7,
+          "code_quality": 0.7,
+          "cost_efficiency": 1.0
+        },
+        "mean": 0.8,
+        "passed": true,
+        "notes": "Implementation passes ~16/20 rubric checks \u2014 misses repeated-unit ('30m20m'), internal-whitespace ('1h 30m' is silently collapsed), uppercase ('1H' lowercased), and bare-unit ('s' returns 0). Code is clean single-pass but lacks type hints, and visible test file appears to be the calibration template rather than 20 rubric-aligned tests against src.duration. Cost was well under both budgets (56% wall, 51% tokens).",
+        "_elapsed_sec": 28.1
+      }
+    ]
+  }
+}
