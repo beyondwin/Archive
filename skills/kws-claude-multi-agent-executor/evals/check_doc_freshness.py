@@ -45,7 +45,7 @@ def read_readme_version() -> str | None:
     if not readme.exists():
         return None
     text = readme.read_text(encoding="utf-8")
-    match = re.search(r'\*\*Current version\*\*:\s*`([^`]+)`', text)
+    match = re.search(r'\*\*(?:Current version|현재 버전)\*\*:\s*`([^`]+)`', text)
     return match.group(1) if match else None
 
 

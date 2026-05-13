@@ -71,6 +71,37 @@ task completions, or ordinary success.
 | `parallel_dispatch_failure` | A P2 wave's sub-worktree dispatch fails or merge-back conflicts |
 | `successful_workaround` | A root-cause-based recovery reveals a reusable executor improvement |
 | `completion_learning` | Final completion produces an actionable executor-improvement observation (NOT routine completion) |
+| `context_health` (v2.10) | Passive observation of context-management state — emitted by the orchestrator at Phase Transition T3 (after each compaction) and at Resume Chain chained-orchestrator startup. **No thresholds, no actions** — the type exists to collect data before deciding whether context drift signals need policy. |
+
+### `context_health` (v2.10) — passive observation contract
+
+**Producer**: orchestrator only (NOT sub-agents). Sub-agents do not have visibility into compaction boundaries or chain handoffs.
+
+**Emit points** (both unconditional — no severity escalation):
+1. Phase Transition T3, after the compaction completes and state has been written.
+2. Resume Chain chained orchestrator startup, immediately after `append-session-id`.
+
+**Severity**: always `low`. This event is informational; it is not a failure signal.
+
+**Required `context` fields** (beyond the baseline `user_intent` / `agent_expectation` / `actual_outcome` / `root_cause` / `evidence` schema, which remain required for shape consistency):
+
+| Field | Source | Meaning |
+|---|---|---|
+| `compaction_index` | `state.last_compaction_after_task` derived index, or `-1` for chain-handoff snapshots | Which compaction this snapshot is at |
+| `completed_tasks_count` | count of `state.tasks[*].status == "COMPLETE"` (or `state.plan2_state.tasks` when `active_plan == "plan2"`) | How much progress has been made |
+| `resume_chain_handoffs` | `len(state.meta.session_ids) - 1`, or 0 if unset | How many chain handoffs have already occurred |
+
+**Optional `context` fields** (include when introspectable, omit otherwise):
+
+- `risk_distribution`: object mapping `LOW`/`MID`/`HIGH` → count of completed tasks at that tier
+- `verifier_retry_total`: sum of `verifier_retries` across completed tasks
+- `review_retry_total`: sum of `review_retries` across completed tasks
+- `quality_trend_mean`: mean of `state.quality_trend` if non-empty
+- `drift_signals`: array of free-form strings describing observations (e.g., `"three consecutive WARN tasks"`)
+
+**`improvement` field**: set `target` to `references/learning-log.md` (self-reference — the eventual improvement target is the schema itself, once we know which fields matter), `proposal` to `"Aggregate context_health events to derive empirical thresholds."`, `experiment_link` to `null`.
+
+**Goodhart warning**: do NOT use these counters to alter orchestrator behavior (e.g., force compaction earlier, refuse new dispatches). The v2.10 contract is observation-only. Behavior changes require a follow-on experiment under `docs/experiments/v2.10-context-health/` after ≥ 2 weeks of real-run data.
 
 ## meta.json schema
 

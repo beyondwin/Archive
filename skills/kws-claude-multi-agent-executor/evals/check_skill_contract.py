@@ -30,6 +30,7 @@ EVENT_TYPES = [
     "parallel_dispatch_failure",
     "successful_workaround",
     "completion_learning",
+    "context_health",
 ]
 
 PRIVACY_PHRASES = [
@@ -121,7 +122,7 @@ def main() -> int:
         record(
             "learning_log_event_types",
             all(t in learning_log_text for t in EVENT_TYPES),
-            f"learning-log.md must mention all 10 event types ({', '.join(EVENT_TYPES)})",
+            f"learning-log.md must mention all 11 event types ({', '.join(EVENT_TYPES)})",
         )
         record(
             "learning_log_privacy_guard",

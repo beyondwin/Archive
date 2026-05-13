@@ -2,7 +2,7 @@
 name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation. NOTE — single-session execution is preferable for ≤5-task plans or plans with deep cross-task coupling (multi-agent overhead exceeds the parallelism win).
 metadata:
-  version: "2.9.0"
+  version: "2.10.0"
   updated_at: "2026-05-14"
 ---
 
@@ -219,6 +219,8 @@ Procedure:
    fi
    ```
    It does NOT call `init-run` — that would fragment the run record. If `MAE_LEARNING_RUN_ID` is unset (env not propagated, helper missing), it proceeds without learning-log support rather than starting a new run.
+
+   **After `append-session-id` succeeds, emit a `context_health` snapshot (v2.10):** the chained orchestrator writes a candidate JSON to `<worktree>/.orchestrator/learning_events/chain_handoff-orchestrator.json` and `append`s it. Use `phase: "phase_0"`, `execution.task_id: "chain_handoff"`, `execution.issue_key: "context_health_snapshot"`, `context.compaction_index: -1`, `context.completed_tasks_count: <count of COMPLETE tasks from state>`, `context.resume_chain_handoffs: <new len(session_ids) - 1>`. This marks the boundary in the event stream so downstream analysis can attribute pre/post-handoff metrics. Append failure is silent.
 
 This is a fallback — the primary expectation is that one headless subprocess completes a typical 10-25 task plan within its own context budget.
 
@@ -965,6 +967,37 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
 
 2. **Actively drop prior task context:** from this point forward, do not reference individual task details from before this compaction point. Work only from your structured task summary (what you have in internal notes from Agent Cleanup steps). If you need details from an earlier task, re-read the state file — do not hold raw sub-agent output in active context.
 
+3. **Emit `context_health` passive snapshot (v2.10):** if `MAE_LEARNING_RUN_ID` is set, write a candidate JSON to `<worktree>/.orchestrator/learning_events/transition_<compaction_index>-orchestrator.json` and `append` it. The event is informational — never alters control flow. Fields per `references/learning-log.md` "`context_health` (v2.10) — passive observation contract". Minimum body:
+   ```json
+   {
+     "schema_version": "1",
+     "phase": "phase_transition",
+     "risk_tier": null,
+     "event_type": "context_health",
+     "severity": "low",
+     "execution": {"task_id": "transition_<compaction_index>", "issue_key": "context_health_snapshot"},
+     "subagent": {"role": "orchestrator", "model": "opus", "dispatch": "orchestrator"},
+     "summary": "Phase Transition T3 passive context-health snapshot.",
+     "context": {
+       "user_intent": "Observe context-management state across compactions.",
+       "agent_expectation": "Counters captured at compaction boundary.",
+       "actual_outcome": "Snapshot recorded.",
+       "root_cause": "Routine emit point — not a failure.",
+       "evidence": [{"kind": "issue_key", "value": "context_health_snapshot"}],
+       "compaction_index": <index>,
+       "completed_tasks_count": <count>,
+       "resume_chain_handoffs": <handoffs>
+     },
+     "improvement": {
+       "target": "references/learning-log.md",
+       "proposal": "Aggregate context_health events to derive empirical thresholds.",
+       "experiment_link": null
+     },
+     "privacy": {"redacted": true, "notes": "Counters only — no path/content."}
+   }
+   ```
+   Append failure is silent (`|| true`) per the learning-log failure policy. **Do not use these counters to alter orchestrator behavior** — Goodhart's-law guard. Behavior changes require a follow-on experiment.
+
 **Phase Transition failure handling:**
 - If T1 batch Verifier FAIL exceeds retries for any task: halt that task, record SKIPPED in state.json, continue Phase Transition.
 - If T2 Phase Docs Updater sends ESCALATE: skip docs for this phase. Record `phase_docs_skipped: [<phase_id>]` in state.json. The Final Docs Updater in Phase 2 will recover.
@@ -1208,6 +1241,7 @@ These rules are absolute. No exceptions.
 | **Plan 2 re-takes baseline** | When Phase 2 Step -1 swaps `active_plan` to `"plan2"`, run Phase 0 Step 5 fresh against current HEAD (Plan 1's changes are now Plan 2's starting point). Never reuse Plan 1's baseline as Plan 2's regression reference. |
 | **Learning log lifecycle (v2.8)** | Phase 0 Step 7.5 calls `init-run` and exports `MAE_LEARNING_RUN_ID`. Phase 1 Step 3.5 scans `<worktree>/.orchestrator/learning_events/` for sub-agent candidate JSON and calls `append`. Phase 2 Step 2 closes with `outcome=success`; orchestrator-level abort closes with `outcome=aborted`; whole-orchestrator hard-halt (state-write fail, exhausted escalations halting the run) closes with `outcome=blocked`. Resume Chain preserves `MAE_LEARNING_RUN_ID` via env propagation and calls `append-session-id`, never `init-run`. **Learning-log failure must never block plan execution** — every helper invocation is wrapped with `\|\| true`. See `references/learning-log.md`. |
 | **Single-writer for learning events** | Only the orchestrator invokes the helper. Sub-agents write event candidates as JSON files under `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`; the orchestrator reads and forwards them. Never let a sub-agent prompt instruct direct helper invocation. |
+| **`context_health` is observation-only (v2.10)** | Emitted at Phase Transition T3 and Resume Chain chained-orchestrator startup. Counts compaction index, completed tasks, chain handoffs. **MUST NOT alter orchestrator control flow** — Goodhart's-law guard. Behavior changes require a follow-on experiment under `docs/experiments/v2.10-context-health/` after ≥ 2 weeks of real-run data. See `references/learning-log.md`. |
 
 ---
 
