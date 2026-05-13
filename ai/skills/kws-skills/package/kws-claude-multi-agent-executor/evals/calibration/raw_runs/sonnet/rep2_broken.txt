@@ -1,0 +1,14 @@
+```json
+{
+  "fixture": "08-subtle-input-validation",
+  "scores": {
+    "correctness":     0.4,
+    "spec_compliance": 0.4,
+    "code_quality":    0.4,
+    "cost_efficiency": 1.0
+  },
+  "mean": 0.55,
+  "passed": false,
+  "notes": "Four of ten error-case rubric checks fail against the actual implementation: internal whitespace silently accepted (strip+replace before parsing), uppercase silently accepted (lowercased before parsing), repeated unit silently summed (no duplicate-unit guard), and bare unit returns 0 instead of raising — the test suite covers only 14 of 20 required rubric checks and misses all four failures, so pytest's '28 passed' is a false green. Cost efficiency is excellent (56 % of wall-time budget, 51 % of token budget)."
+}
+```
