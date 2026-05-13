@@ -146,11 +146,25 @@ GI
 
   # Build judge input.
   local diff_tail=""
+  local wt=""
   if [ -n "$state_file" ]; then
-    local wt
     wt="$(dirname "$(dirname "$state_file")")"
     diff_tail="$(git -C "$wt" diff HEAD~5..HEAD 2>/dev/null | tail -200 || echo '')"
   fi
+
+  # Run rubric.py for deterministic correctness measurement (only if fixture has rubric block).
+  local rubric_results="(no rubric block in fixture)"
+  local rubric_pass_rate="null"
+  if [ -n "$wt" ] && jq -e '.expected.rubric' "$tmpdir/_meta.json" >/dev/null 2>&1; then
+    local rubric_file="$tmpdir/.harness/rubric.json"
+    if python3 "$EVAL_DIR/rubric.py" --fixture "$fixture_path" --workdir "$wt" --output "$rubric_file" 2>"$tmpdir/.harness/rubric.err"; then
+      rubric_results="$(cat "$rubric_file")"
+      rubric_pass_rate="$(jq -r '.summary.pass_rate // "null"' "$rubric_file")"
+    else
+      rubric_results="$(printf 'rubric runner failed: %s' "$(cat "$tmpdir/.harness/rubric.err" 2>/dev/null || echo '(no stderr)')")"
+    fi
+  fi
+  echo "  rubric pass_rate: $rubric_pass_rate"
 
   local judge_prompt
   judge_prompt="$(python3 -c '
@@ -176,6 +190,7 @@ sys.stdout.write(template)
     printf '%s\n' "$judge_prompt"
     printf '\n\n### ACTUAL DATA (replaces placeholders if any remained):\n'
     printf '\n#### fixture_expected_yaml\n%s\n' "$(jq -r '.expected' "$tmpdir/_meta.json")"
+    printf '\n#### rubric_results (deterministic — authoritative for correctness)\n%s\n' "$rubric_results"
     printf '\n#### captured_task_statuses\n%s\n' "$task_statuses"
     printf '\n#### captured_git_log\n%s\n' "$git_log"
     printf '\n#### captured_files_changed\n%s\n' "$files_changed"

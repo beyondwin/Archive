@@ -1,0 +1,14 @@
+```json
+{
+  "fixture": "08-subtle-input-validation",
+  "scores": {
+    "correctness":     0.7,
+    "spec_compliance": 0.7,
+    "code_quality":    0.7,
+    "cost_efficiency": 1.0
+  },
+  "mean": 0.8,
+  "passed": true,
+  "notes": "Implementation passes ~16/20 rubric checks — misses repeated-unit ('30m20m'), internal-whitespace ('1h 30m' is silently collapsed), uppercase ('1H' lowercased), and bare-unit ('s' returns 0). Code is clean single-pass but lacks type hints, and visible test file appears to be the calibration template rather than 20 rubric-aligned tests against src.duration. Cost was well under both budgets (56% wall, 51% tokens)."
+}
+```
