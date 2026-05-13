@@ -1,6 +1,6 @@
 # v2.9 — Reviewer Spec-Coverage Walk
 
-**Status**: DESIGN (implementation BLOCKED on v2.8 F001 full-fixture smoke PASS)
+**Status**: SHIPPED as v2.9.0 (2026-05-14). All four pass criteria satisfied empirically (n=4 reps on fixture 08).
 **Branch**: TBD (cut from `main` once v2.8 lands and F001 closes PASS)
 **Production baseline**: v2.6.0 (untouched on `main`)
 **Predecessor**: v2.8 learning log (shipped on branch, behavior-smoke deferred — see `../v2.8-learning-log/findings/F001-smoke.md`)
@@ -114,11 +114,13 @@ event-level signal.
 | T2 — Plan doc (Archive-level)        | ✓ done | `docs/superpowers/plans/2026-05-13-kws-claude-multi-agent-executor-v2.9-reviewer-spec-coverage.md` |
 | T3 — Advisor review on design        | pending | run before T4 |
 | **GATE — v2.8 F001 full-fixture smoke PASS** | **blocked** | budget approval + execute |
-| T4 — `reviewer-prompt.md` edit       | ✓ done   | Spec Coverage Walk added (sub-steps A + B) |
+| T4 — `reviewer-prompt.md` edit       | ✓ done   | Spec Coverage Walk added (sub-steps A + B); commit `1ed61c6` |
 | T4.5 — Cheap dry-run pilot (1 rep)   | ✓ done   | Guardrail PASS; failure mode shifted (miss → spec ambiguity). See [F001-T4.5](./findings/F001-T4.5-dry-run.md) |
-| T5 — Re-run fixture 08 (3-4 reps)    | user-controlled | $20-40; recommendation = Path γ then α |
-| T6 — Findings doc + recommendation   | blocked | gated by T5 |
-| T7 — Release metadata / HISTORY      | blocked | only if T6 recommends ship |
+| **Phase 1 — v2.8.1 enforcement**     | ✓ done   | SKILL.md Step 7.5 MANDATORY + adherence marker; commit `4afca2e` |
+| **Phase 2 — fixture 08 spec clarify** | ✓ done   | "unit may appear at most once" note added; commit `4afca2e` |
+| T5 — Re-run fixture 08 (n=4 reps)    | ✓ done   | 4/4 rubric 1.0, 4/4 adherence yes; see [F002-T5](./findings/F002-T5-n4-results.md) |
+| T6 — Findings doc + recommendation   | ✓ done   | SHIP v2.9.0; 4 of 4 pass criteria satisfied |
+| T7 — Release metadata / HISTORY      | ✓ done   | manifest 2.8.1→2.9.0; HISTORY.md v2.9.0 entry |
 
 ### v2.8 F001 gate result
 
@@ -136,3 +138,4 @@ See [v2.8 F001-smoke.md](../v2.8-learning-log/findings/F001-smoke.md) for full d
 ## Findings index
 
 - F001 — T4.5 dry-run pilot (1 rep). Walk mechanism PASSED; failure mode shifted from silent miss (F002) to spec-text ambiguity surfaced and reasoned through. [link](./findings/F001-T4.5-dry-run.md)
+- F002 — T5 n=4 reps under v2.8.1 + clarified spec + v2.9 prompt. All four pass criteria satisfied; `30m20m` rejection 100% (4/4 vs F002 baseline 25%). SHIP recommendation. [link](./findings/F002-T5-n4-results.md)
