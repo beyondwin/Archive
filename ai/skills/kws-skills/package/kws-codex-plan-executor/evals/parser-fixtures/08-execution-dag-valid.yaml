@@ -1,0 +1,28 @@
+name: execution-dag-valid
+mode: interactive
+plan: |
+  ### Task 0: Build base
+
+  Files:
+  - Create: src/base.py
+
+  ## Verification
+  Run `python -m py_compile src/base.py`.
+
+  ### Task 1: Use base
+
+  Depends on: task_0
+
+  Files:
+  - Create: src/use_base.py
+
+  ## Verification
+  Run `python -m py_compile src/use_base.py`.
+expected:
+  files:
+    - src/base.py
+    - src/use_base.py
+  depends_on:
+    task_0: []
+    task_1:
+      - task_0

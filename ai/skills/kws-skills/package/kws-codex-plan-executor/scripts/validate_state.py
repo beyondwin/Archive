@@ -25,6 +25,15 @@ REQUIRED_TOP_LEVEL = {
     "timestamps",
 }
 VALID_MODES = {"interactive", "headless", "prompt", "handoff"}
+EXECUTION_MODES = {"interactive", "headless"}
+VALID_LIFECYCLE_OUTCOMES = {
+    "finished",
+    "blocked",
+    "failed",
+    "userinterlude",
+    "askuserQuestion",
+}
+NON_SUCCESS_OUTCOMES = {"blocked", "failed", "userinterlude", "askuserQuestion"}
 REQUIRED_TASK_FIELDS = {
     "status",
     "risk",
@@ -44,6 +53,78 @@ CONTRACT_LIST_FIELDS = {"files_to_inspect", "allowed_edits", "forbidden_edits"}
 CONTRACT_STRING_FIELDS = {"scope", "acceptance_command_or_honest_substitute"}
 
 
+def _required_project_path(run_id: str, name: str) -> str:
+    return f".codex-orchestrator/runs/{run_id}/{name}"
+
+
+def _required_run_dir(run_id: str) -> str:
+    return f".codex-orchestrator/runs/{run_id}"
+
+
+def _has_substantive_value(value: object) -> bool:
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return len(value) > 0
+    if isinstance(value, dict):
+        return len(value) > 0
+    return value is True
+
+
+def _validate_context_snapshot(data: dict, errors: list[str]) -> None:
+    run_id = data.get("run_id")
+    mode = data.get("mode")
+    phase = data.get("current_phase")
+    context_path = data.get("context_snapshot_path")
+    basis_hash = data.get("context_basis_hash")
+
+    if not isinstance(run_id, str) or not run_id.strip():
+        return
+
+    context_required = mode in EXECUTION_MODES and phase != "preflight"
+    if context_required and not _has_substantive_value(context_path):
+        errors.append("context_snapshot_path must be present after execution preflight")
+        return
+
+    if context_path is None:
+        return
+    if not isinstance(context_path, str) or not context_path.strip():
+        errors.append("context_snapshot_path must be a non-empty string when present")
+        return
+
+    expected_context_path = _required_project_path(run_id, "context.json")
+    if context_path != expected_context_path:
+        errors.append(f"context_snapshot_path must be {expected_context_path}")
+    if not isinstance(basis_hash, str) or not basis_hash.strip():
+        errors.append("context_basis_hash must be a non-empty string when context_snapshot_path is present")
+
+
+def _validate_completion_audit(data: dict, errors: list[str]) -> None:
+    outcome = data.get("lifecycle_outcome")
+    audit = data.get("completion_audit")
+
+    if outcome is not None and outcome not in VALID_LIFECYCLE_OUTCOMES:
+        errors.append(f"lifecycle_outcome must be one of {sorted(VALID_LIFECYCLE_OUTCOMES)}")
+        return
+
+    if outcome == "finished":
+        if not isinstance(audit, dict):
+            errors.append("completion_audit must be present when lifecycle_outcome is finished")
+            return
+        if audit.get("passed") is not True:
+            errors.append("completion_audit.passed must be true when lifecycle_outcome is finished")
+        checklist = audit.get("prompt_to_artifact_checklist")
+        evidence = audit.get("verification_evidence")
+        if not _has_substantive_value(checklist):
+            errors.append("completion_audit.prompt_to_artifact_checklist must be non-empty")
+        if not _has_substantive_value(evidence):
+            errors.append("completion_audit.verification_evidence must be non-empty")
+        return
+
+    if outcome in NON_SUCCESS_OUTCOMES and not _has_substantive_value(data.get("handoff_reason")):
+        errors.append("handoff_reason must be non-empty for non-success lifecycle_outcome")
+
+
 def validate(data: object) -> list[str]:
     errors: list[str] = []
     if not isinstance(data, dict):
@@ -58,7 +139,7 @@ def validate(data: object) -> list[str]:
         errors.append(f"mode must be one of {sorted(VALID_MODES)}")
 
     run_id = data.get("run_id")
-    expected_run_dir = f".codex-orchestrator/runs/{run_id}" if isinstance(run_id, str) else None
+    expected_run_dir = _required_run_dir(run_id) if isinstance(run_id, str) else None
     expected_state_path = f"{expected_run_dir}/state.json" if expected_run_dir else None
     if not isinstance(run_id, str) or not run_id.strip():
         errors.append("run_id must be a non-empty string")
@@ -99,6 +180,9 @@ def validate(data: object) -> list[str]:
 
     if "timestamps" in data and not isinstance(data["timestamps"], dict):
         errors.append("timestamps must be an object")
+
+    _validate_context_snapshot(data, errors)
+    _validate_completion_audit(data, errors)
 
     return errors
 

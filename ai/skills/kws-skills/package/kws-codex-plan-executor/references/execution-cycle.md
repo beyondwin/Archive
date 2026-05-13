@@ -12,6 +12,10 @@ Use this for `mode=interactive`.
   Stop before editing related dirty files; preserve unrelated dirty files.
 - Initialize a learning run with `scripts/append_learning_event.py init-run` and
   keep its `run_id` for all state, headless artifacts, and learning events.
+- Build `.codex-orchestrator/runs/<run_id>/context.json` with
+  `scripts/build_context_snapshot.py` after `run_id` initialization and before
+  task contracts. Store `context_snapshot_path` and `context_basis_hash` in
+  `.codex-orchestrator/runs/<run_id>/state.json`.
 - For `blocker` outcomes such as unreadable plans, ambiguous resume state,
   related dirty task files, or unclear mid/high-risk acceptance criteria, write
   a redacted learning event using `references/learning-log.md` and
@@ -41,6 +45,17 @@ For each task:
 2. Implement locally unless subagents are explicitly allowed.
 3. Review spec compliance and code quality on `gpt-5.5 high`.
 4. Run risk-scaled verification.
+   For `risk=high`, maintain a compact high-risk verification matrix. Include
+   each relevant scenario with `status=passed|failed|blocked|not-applicable`,
+   the command or manual check, and the evidence path or excerpt:
+   - malformed or unexpected input
+   - stale state or resume path
+   - dirty worktree preservation
+   - hung or long-running command behavior
+   - misleading success output or skipped tests
+   - cancellation/interruption recovery when the task changes workflow state
+   Do not run irrelevant scenarios just to fill the table. Mark them
+   `not-applicable` with one concrete reason.
 5. Record raw output paths for failures.
 6. Update state and checkpoint.
    Task completion must set the task `status` to `completed`, `blocked`, or
@@ -70,6 +85,11 @@ parallel work, or passed `subagents=on`. Otherwise execute locally.
 
 - Run final verification.
 - Check documentation impact.
+- Write `completion_audit` before claiming completion. It must include
+  `passed=true`, non-empty `prompt_to_artifact_checklist`, and non-empty
+  `verification_evidence` when `lifecycle_outcome=finished`.
+- Set terminal `lifecycle_outcome` to `finished`, `blocked`, or `failed`.
+  Non-success outcomes must include a concrete `handoff_reason`.
 - Validate state file.
 - Record `completion_learning` only when final completion reveals an actionable
   improvement for this executor. Do not log routine successful completions.
@@ -77,6 +97,7 @@ parallel work, or passed `subagents=on`. Otherwise execute locally.
   `success`, `blocked`, or `error` for whole-run outcome. Learning-log failure
   must not block the user's implementation result.
 - Summarize changed files, verification, branch/worktree, session-owned
-  resources, and residual risk.
+  resources, `lifecycle_outcome`, evidence, artifacts/state, `handoff_reason`
+  when not finished, and residual risk.
 
 Do not claim completion without fresh verification evidence.

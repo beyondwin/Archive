@@ -28,12 +28,18 @@ python3 scripts/validate_state.py .codex-orchestrator/runs/<run_id>/state.json
   "worktree": "/abs/path/worktree",
   "run_dir": ".codex-orchestrator/runs/20260513T142233Z-archive-codex-example-7e884a0-a1b2c3",
   "state_path": ".codex-orchestrator/runs/20260513T142233Z-archive-codex-example-7e884a0-a1b2c3/state.json",
+  "context_snapshot_path": ".codex-orchestrator/runs/20260513T142233Z-archive-codex-example-7e884a0-a1b2c3/context.json",
+  "context_basis_hash": "<sha256-of-source-list>",
   "test_command": "pytest",
   "baseline": {"status": "unknown", "summary": ""},
   "current_task": "task_0",
   "current_phase": "preflight",
+  "lifecycle_outcome": null,
+  "handoff_reason": "",
+  "completion_audit": null,
   "risk_levels": {},
   "tasks": {},
+  "execution_dag": [],
   "review_issue_keys": {},
   "verification": {},
   "session_owned_resources": [],
@@ -64,6 +70,46 @@ Required top-level fields:
 
 `mode` must be one of `interactive`, `headless`, `prompt`, or `handoff`.
 
+`context_snapshot_path` is required for `interactive` and `headless` execution
+after preflight initializes. It must equal
+`.codex-orchestrator/runs/<run_id>/context.json`. `context_basis_hash` must be
+non-empty and match the `basis_hash` inside that snapshot. `prompt` and
+`handoff` modes may omit these fields.
+
+`lifecycle_outcome` is the terminal handoff state and must not be confused with
+`current_phase`. Valid values are `finished`, `blocked`, `failed`,
+`userinterlude`, and `askuserQuestion`.
+
+Successful terminal runs use:
+
+```json
+"lifecycle_outcome": "finished",
+"handoff_reason": "",
+"completion_audit": {
+  "passed": true,
+  "prompt_to_artifact_checklist": [
+    "Task 0 changed docs/example.md as requested"
+  ],
+  "verification_evidence": [
+    {"command": "pytest tests/example_test.py", "status": "passed"}
+  ],
+  "open_gaps": [],
+  "residual_risk": []
+}
+```
+
+Blocked, failed, interrupted, or user-question outcomes may omit a passing
+`completion_audit`, but must set a concrete `handoff_reason`.
+
+Optional `execution_dag` entries record parsed dependency metadata only. They do
+not change task status semantics or bypass per-task execution contracts:
+
+```json
+"execution_dag": [
+  {"id": "task_1", "depends_on": ["task_0"]}
+]
+```
+
 ## Per-Task Fields
 
 ```json
@@ -74,6 +120,7 @@ Required top-level fields:
   "risk_reason": "single docs file",
   "files_declared": [],
   "files_changed": [],
+  "depends_on": [],
   "contract": {
     "scope": "",
     "files_to_inspect": [],
@@ -98,6 +145,7 @@ Required per-task fields:
 - `status`
 - `risk`
 - `files_declared`
+- `depends_on` when parsed from the plan
 - `contract`
 - `review_retries`
 - `verifier_retries`
@@ -112,3 +160,15 @@ The `contract` object must include:
 
 Keep retry counts numeric, contract text fields as strings, and file lists as
 arrays.
+
+For `risk=high`, task `verification` may include compact high-risk verification
+matrix evidence:
+
+```json
+{
+  "type": "high_risk_matrix",
+  "scenario": "misleading_success_output",
+  "status": "passed",
+  "evidence": "raw/task_1-misleading-success.txt"
+}
+```

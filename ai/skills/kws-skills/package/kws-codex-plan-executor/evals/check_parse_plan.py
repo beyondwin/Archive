@@ -60,6 +60,16 @@ def main() -> int:
         if not checks["files_match"]:
             failures.append(f"expected files {expected_files}, got {sorted(actual_files)}")
 
+    expected_depends = expected.get("depends_on") or {}
+    if expected_depends:
+        actual_depends = {
+            task.get("id"): task.get("depends_on", [])
+            for task in parsed.get("tasks", [])
+        }
+        checks["depends_on_match"] = expected_depends == actual_depends
+        if not checks["depends_on_match"]:
+            failures.append(f"expected dependencies {expected_depends}, got {actual_depends}")
+
     payload = {
         "fixture": fixture.get("name") or fixture_path.stem,
         "passed": not failures,
