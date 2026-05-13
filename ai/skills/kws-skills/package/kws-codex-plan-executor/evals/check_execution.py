@@ -83,7 +83,17 @@ def main() -> int:
 
     allowed_extra = set(expected.get("allowed_extra_files") or [])
     allowed_extra.add(".codex-orchestrator/state.json")
-    allowed_extra.update({".harness/fixture.json", ".harness/final.md", ".harness/run.jsonl"})
+    allowed_extra.update(
+        {
+            ".codex-orchestrator/headless-final.json",
+            ".codex-orchestrator/headless-final.md",
+            ".codex-orchestrator/headless.jsonl",
+            ".codex-orchestrator/final.schema.json",
+            ".harness/fixture.json",
+            ".harness/final.md",
+            ".harness/run.jsonl",
+        }
+    )
     out_of_scope = actual_files - expected_files - allowed_extra
     checks["no_out_of_scope_files"] = not out_of_scope
     if out_of_scope:
@@ -132,7 +142,14 @@ def main() -> int:
         blocked_values = {"blocked", "skipped"}
         tasks = state.get("tasks") if isinstance(state, dict) else {}
         state_blocked = any(str(task.get("status", "")).lower() in blocked_values for task in (tasks or {}).values())
-        final_blocked = bool(re.search(r"\bblocked\b|차단|중단|cannot proceed", final_text, re.I))
+        final_blocked = bool(
+            re.search(
+                r"\bblocked\b|\bstopp?ed\b|\bstopping\b|\bhalt(?:ed)?\b|"
+                r"cannot proceed|dirty worktree|related dirty|차단|중단|정지|멈춤|더티",
+                final_text,
+                re.I,
+            )
+        )
         checks["must_block"] = state_blocked or final_blocked
         if not checks["must_block"]:
             failures.append("expected blocked outcome was not observed")

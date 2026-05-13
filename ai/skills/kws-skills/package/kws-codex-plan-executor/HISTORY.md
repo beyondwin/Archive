@@ -3,6 +3,17 @@
 Source of truth for current behavior: `SKILL.md`, `templates/`, and
 `references/`. This file tracks release intent and migration history.
 
+## v1.2.0 - Add dynamic headless eval fixtures (2026-05-13)
+
+- Added actual headless fixtures for `resume=latest`, unrelated dirty
+  worktree continuation, and related dirty worktree blocking.
+- Required the interactive docs-only fixture to verify task contracts are
+  recorded inside `.codex-orchestrator/state.json`.
+- Updated the eval harness to create `initial_state` before bootstrap commits,
+  create `dirty_files` after commits, and prevent fixture/baseline leakage into
+  target runs.
+- Allowed expected headless artifacts in `check_execution.py`.
+
 ## v1.1.0 - Add eval-gated execution safeguards (2026-05-13)
 
 - Added deterministic contract and parser evals for resume, validation matrix,

@@ -47,6 +47,13 @@ Headless mode uses `codex exec --json --output-last-message` and defaults to
 results. It does not use `--dangerously-bypass-approvals-and-sandbox` unless
 the user explicitly asks and the target is isolated.
 
+The eval harness creates real headless worktrees for resume and dirty-worktree
+scenarios. `initial_state` is written before the bootstrap commit, while
+`dirty_files` are written after the commit so `git status` exposes them as user
+dirty work. The target run is forbidden from reading fixture YAML, baselines,
+`.harness` metadata, or expected values; the outer harness performs final
+fixture checks.
+
 ## Prompt Export Compatibility
 
 Prompt export mode copies the old prompt-generator template behavior:
@@ -66,6 +73,13 @@ Deterministic scripts own mechanical correctness:
 - `evals/check_skill_contract.py`
 
 `evals/judge.md` is reserved for subjective quality after deterministic checks.
+
+Dynamic execution fixtures now cover:
+
+- `resume=latest` preferring persisted state over a conflicting plan.
+- unrelated dirty worktree files being preserved while execution continues.
+- related dirty task files blocking before edits.
+- interactive success runs recording the task execution contract in state.
 
 ## Migration From Legacy Prompt Export
 
