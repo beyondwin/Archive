@@ -1,0 +1,4 @@
+interface:
+  display_name: "KWS Codex Plan Executor"
+  short_description: "Execute Codex plans or export handoff prompts"
+  default_prompt: "Use $kws-codex-plan-executor with plan=<path> and optional spec=<path> to execute the plan, or mode=prompt to export a fresh-session prompt."

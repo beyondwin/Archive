@@ -1,0 +1,10 @@
+name: missing-files-block
+mode: interactive
+plan: |
+  ### Task 0: Ambiguous task
+
+  Add a docs note somewhere.
+expected:
+  allow_blocked: true
+  must_include:
+    - "Files"

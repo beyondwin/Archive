@@ -1,5 +1,8 @@
 # Architecture - kws-new-session-plan-prompt-gpt-5-5
 
+Status: deprecated compatibility wrapper. New prompt export behavior lives in
+`../kws-codex-plan-executor/` as `mode=prompt`.
+
 How this skill works, top to bottom. Runtime instructions live in `SKILL.md`.
 Version history lives in `HISTORY.md`.
 
@@ -7,11 +10,14 @@ Version history lives in `HISTORY.md`.
 
 ## 1. What The Skill Does
 
-The skill generates a paste-ready Codex prompt from a verified implementation
-plan path and optional spec/design/extra document paths.
+The legacy skill now redirects prompt-generation work to
+`kws-codex-plan-executor mode=prompt`.
 
-It does not execute the plan, edit the plan, or create a new plan. The output is
-the artifact: one prompt that a fresh Codex session can paste and follow.
+Historically, it generated a paste-ready Codex prompt from a verified
+implementation plan path and optional spec/design/extra document paths.
+
+It does not execute the plan, edit the plan, or create a new plan. The output
+contract is preserved through the new executor skill's prompt mode.
 
 Primary inputs:
 
@@ -46,7 +52,11 @@ kws-new-session-plan-prompt-gpt-5-5/
   ARCHITECTURE.md                   # this file
 ```
 
-## 3. Generation Flow
+## 3. Legacy Generation Flow
+
+The active generation flow is now `kws-codex-plan-executor mode=prompt`.
+
+Historical flow:
 
 1. Collect explicit user paths and infer missing workspace only when one root is
    unambiguous.
