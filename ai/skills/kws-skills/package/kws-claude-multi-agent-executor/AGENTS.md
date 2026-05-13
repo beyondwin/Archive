@@ -58,8 +58,12 @@ directory open, STOP and create one. Then resume.
 
 - **`SKILL.md`** — current skill behavior. The runtime reads this. Treat
   edits with care; any change here can affect every future invocation.
+- **`ARCHITECTURE.md`** — comprehensive overview of how the skill is built.
+  Update whenever you change any topic listed in its §13 Update protocol
+  (sub-agent catalog, state schema, isolation, risk tiers, scoring,
+  eval harness, failure modes). Same commit as the SKILL.md change.
 - **`HISTORY.md`** — narrative history of versions + improvement areas.
-  Update on every shipped version.
+  Update on every shipped version. Cross-references ARCHITECTURE.md.
 - **`DESIGN-v<X>.md`** — point-in-time design doc for that version. Frozen.
 - **`references/`** — sub-agent prompt templates (Implementer, Reviewer,
   Verifier, Documenter, Plan Reviewer, etc.). Versioned together with
@@ -68,6 +72,23 @@ directory open, STOP and create one. Then resume.
   changes — eval improvements ship orthogonally.
 - **`docs/experiments/`** — institutional memory. One subdirectory per
   experiment. Read before starting related work; write as you do related work.
+
+## ARCHITECTURE.md sync (REQUIRED on behavior changes)
+
+When changing SKILL.md behavior, ARCHITECTURE.md §13 lists what triggers an
+update. Examples that REQUIRE ARCHITECTURE.md update in the same commit:
+
+- Add/remove/rename a sub-agent role
+- Add/remove a state.json field, or change a field's semantics
+- Change a risk-tier criterion or upgrade rule
+- Change quality-score thresholds or tier definitions
+- Add a new failure-mode response or escalation category
+- Add a new hook category
+- Add a new measurement layer to the eval harness
+
+Do NOT update ARCHITECTURE.md for: new fixture, bug fix, prose tweak,
+typo, refactor that doesn't change behavior. Those go in SKILL.md /
+commit message only.
 
 ## When in doubt
 
