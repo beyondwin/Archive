@@ -18,6 +18,7 @@ workflow contracts that make autonomous execution safer:
 - parse only visible plan text
 - ground execution in a source snapshot
 - require explicit completion proof
+- track context resumability explicitly
 - separate internal phase from terminal outcome
 - use dependency metadata as advisory structure
 - increase verification scrutiny for high-risk work
@@ -28,6 +29,7 @@ workflow contracts that make autonomous execution safer:
 | --- | --- | --- |
 | Visible Markdown parsing | Adopt | Prevents examples or comments from becoming executable tasks. |
 | Source snapshot hashes | Adopt | Resume and handoff need stable inputs, not chat memory. |
+| Context health | Adopt | Agents need to know whether state is resumable, not just whether sources were hashed. |
 | Completion audit | Adopt | Tests passing does not prove every prompt requirement was satisfied. |
 | Lifecycle outcome | Adopt | `current_phase` is not a user-facing terminal result. |
 | Optional task dependencies | Adopt as metadata | Dependencies help ordering and review, but must not bypass task contracts. |
@@ -65,6 +67,19 @@ future agent can verify what source basis the run used.
 
 This is intentionally lightweight. It does not store full source contents and
 does not replace the actual plan/spec/docs.
+
+## Why Context Health Exists
+
+Source hashes prove which inputs grounded the run, but they do not prove that
+the active state is sufficient for continuation. A run can have valid source
+hashes while still hiding the next action, open questions, or assumptions in
+chat history.
+
+`context_health` keeps that resumability judgment in `state.json`. It is
+intentionally compact: `green`, `yellow`, or `red`, plus `next_action`,
+`open_questions`, `known_assumptions`, and `handoff_ready`. This avoids trying
+to estimate token pressure directly while still making context management
+auditable.
 
 ## Why Completion Audit Exists
 

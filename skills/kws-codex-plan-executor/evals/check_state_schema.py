@@ -35,6 +35,17 @@ def base_state() -> dict:
         "state_path": ".codex-orchestrator/runs/20260513T000000Z-archive-codex-example-abcdef0-a1b2c3/state.json",
         "context_snapshot_path": ".codex-orchestrator/runs/20260513T000000Z-archive-codex-example-abcdef0-a1b2c3/context.json",
         "context_basis_hash": "0" * 64,
+        "context_health": {
+            "status": "green",
+            "last_checked_at": None,
+            "context_snapshot_present": True,
+            "context_basis_hash_recorded": True,
+            "active_task_contract_present": True,
+            "next_action": "Report finished outcome with verification evidence.",
+            "open_questions": [],
+            "known_assumptions": [],
+            "handoff_ready": True,
+        },
         "current_task": "task_0",
         "current_phase": "task_loop",
         "lifecycle_outcome": "finished",
@@ -133,6 +144,40 @@ def main() -> int:
     )
     if not checks["mismatched_context_snapshot_fails"]:
         failures.append("context_snapshot_path should point at the matching per-run context")
+
+    missing_context_health = base_state()
+    del missing_context_health["context_health"]
+    missing_context_health_result = run_validator(script, missing_context_health)
+    checks["missing_context_health_fails"] = (
+        missing_context_health_result.returncode != 0
+        and "context_health" in (missing_context_health_result.stderr + missing_context_health_result.stdout)
+    )
+    if not checks["missing_context_health_fails"]:
+        failures.append("interactive state after preflight should include context_health")
+
+    invalid_context_health_status = base_state()
+    invalid_context_health_status["context_health"]["status"] = "okay"
+    invalid_context_health_status_result = run_validator(script, invalid_context_health_status)
+    checks["invalid_context_health_status_fails"] = (
+        invalid_context_health_status_result.returncode != 0
+        and "context_health.status" in (
+            invalid_context_health_status_result.stderr + invalid_context_health_status_result.stdout
+        )
+    )
+    if not checks["invalid_context_health_status_fails"]:
+        failures.append("context_health.status should reject invalid values")
+
+    finished_context_not_handoff_ready = base_state()
+    finished_context_not_handoff_ready["context_health"]["handoff_ready"] = False
+    finished_context_not_handoff_ready_result = run_validator(script, finished_context_not_handoff_ready)
+    checks["finished_context_not_handoff_ready_fails"] = (
+        finished_context_not_handoff_ready_result.returncode != 0
+        and "context_health.handoff_ready" in (
+            finished_context_not_handoff_ready_result.stderr + finished_context_not_handoff_ready_result.stdout
+        )
+    )
+    if not checks["finished_context_not_handoff_ready_fails"]:
+        failures.append("finished lifecycle outcome should require context_health.handoff_ready")
 
     finished_without_audit = base_state()
     del finished_without_audit["completion_audit"]

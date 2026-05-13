@@ -7,6 +7,49 @@ verification before final responses, commits, pushes, or PRs.
 Keep entries concise. Store commands, outcomes, skipped checks, and residual
 risk. Do not paste long logs or sensitive output.
 
+## 2026-05-14 - Context health state contract
+
+- Branch: `codex/update-project-docs`
+- Commit: pending at time of verification
+- Scope: added `context_health` to execution state, validator enforcement,
+  prompt/export contracts, state-schema docs, runtime docs, eval checks, and
+  the Korean human guide. Bumped skill metadata to `1.6.0`.
+- Commands:
+  - `python3 evals/check_state_schema.py`
+    - result: pass, JSON payload had `"passed": true` and no failures
+  - `python3 evals/check_skill_contract.py --skill SKILL.md`
+    - result: pass, JSON payload had `"passed": true` and no failures
+  - `python3 -m py_compile scripts/validate_state.py evals/check_state_schema.py evals/check_skill_contract.py evals/check_execution.py`
+    - result: pass, no syntax errors
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .`
+    - result: pass, `Skill is valid!`
+  - `python3 scripts/parse_plan.py --help`, `python3 scripts/build_context_snapshot.py --help`,
+    `python3 scripts/validate_state.py --help`, `python3 evals/check_prompt.py --help`,
+    `python3 evals/check_execution.py --help`, `python3 evals/check_parse_plan.py --help`
+    - result: pass, command group printed `fast-help-ok`
+  - `python3 evals/check_learning_log.py`
+    - result: pass, JSON payload had `"passed": true` and no failures
+  - package-local Markdown link check over `README.md`, `HISTORY.md`,
+    `ARCHITECTURE.md`, `docs/*.md`, and `references/*.md`
+    - result: pass, `markdown links ok`
+  - `git diff --check -- skills/kws-codex-plan-executor`
+    - result: pass, no whitespace errors
+  - `graphify update .`
+    - result: pass, graph rebuilt with `3758` nodes and `3977` edges
+- Skipped checks:
+  - `bash evals/run.sh`; skipped because it launches real `codex exec` fixture
+    runs. The changed contract was covered by deterministic state, prompt
+    surface, and execution checker updates; full fixture runs should be used
+    before release/PR landing.
+- Documentation impact:
+  - Updated runtime references, architecture, how-it-works, state/logging,
+    decisions, risks, future-agent guide, prompt checklist, README, HISTORY,
+    and [user-guide.ko.md](user-guide.ko.md).
+- Residual risk:
+  - `context_health` semantic quality still depends on agent judgment; future
+    checks should compare `next_action` against the current task and lifecycle
+    outcome.
+
 ## 2026-05-14 - Korean human guide
 
 - Branch: `codex/update-project-docs`

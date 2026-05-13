@@ -67,9 +67,11 @@ contracts or change task completion semantics.
 5. classifies dirty files as related or unrelated
 6. initializes a `run_id`
 7. builds `context.json`
-8. writes state under `.codex-orchestrator/runs/<run_id>/`
-9. executes each task locally unless subagents were explicitly allowed
-10. records verification, completion audit, and terminal lifecycle outcome
+8. initializes `context_health`
+9. writes state under `.codex-orchestrator/runs/<run_id>/`
+10. executes each task locally unless subagents were explicitly allowed
+11. refreshes `context_health` at task and blocker boundaries
+12. records verification, completion audit, and terminal lifecycle outcome
 
 Interactive execution is described in
 [../references/execution-cycle.md](../references/execution-cycle.md).
@@ -137,6 +139,25 @@ Before any task edit, the executor must state and record:
 The same contract is stored under the task entry in state. This makes a resumed
 agent reconstruct what was allowed even if the conversation context is gone.
 
+## Context Health
+
+`context_health` is stored in `.codex-orchestrator/runs/<run_id>/state.json`.
+It does not try to measure remaining tokens. It answers whether another agent
+can continue from durable artifacts without relying on hidden chat context.
+
+The executor refreshes it after `context.json` creation, after each task or
+phase, after blocker/error events, before handoff/resume, and before final
+completion.
+
+Valid statuses:
+
+- `green`: state and artifacts are enough to resume; no open questions.
+- `yellow`: execution can continue, but assumptions or open questions remain.
+- `red`: safe continuation needs a blocker, user decision, or handoff.
+
+Finished runs require `context_health.handoff_ready=true` and a non-red status.
+Blocked or failed runs must leave a concrete `next_action`.
+
 ## Risk-Scaled Verification
 
 Each task is classified as `low`, `mid`, or `high`.
@@ -159,6 +180,8 @@ Successful execution is not just "tests passed." A terminal successful run must
 write:
 
 - `lifecycle_outcome=finished`
+- `context_health.handoff_ready=true`
+- `context_health.status` is not `red`
 - `completion_audit.passed=true`
 - non-empty `completion_audit.prompt_to_artifact_checklist`
 - non-empty `completion_audit.verification_evidence`

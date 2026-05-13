@@ -20,6 +20,7 @@ expected:
   must_include:
     - "gpt-5.5 high"
     - ".codex-orchestrator/state.json"
+    - "context_health"
   must_not_include:
     - "{{PLAN_PATH}}"
     - "{{OPTIONAL_DOCUMENT_BULLETS}}"

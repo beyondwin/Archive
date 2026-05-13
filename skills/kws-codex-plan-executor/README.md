@@ -12,10 +12,11 @@ read [docs/user-guide.ko.md](docs/user-guide.ko.md).
 
 ## Current Contract
 
-- Skill version: `1.5.0`
+- Skill version: `1.6.0`
 - Primary state: `.codex-orchestrator/runs/<run_id>/state.json`
 - Compatibility state: `.codex-orchestrator/state.json`
 - Source snapshot: `.codex-orchestrator/runs/<run_id>/context.json`
+- Context health: `context_health` inside per-run `state.json`
 - Learning log: `~/.codex/learning/kws-codex-plan-executor/`
 
 ## Read Order
@@ -78,12 +79,13 @@ flowchart TD
   B --> C["Classify dirty worktree changes"]
   C --> D["Create run_id and state directory"]
   D --> E["Build context.json source snapshot"]
-  E --> F["Record TASK EXECUTION CONTRACT"]
-  F --> G["Implement and verify task"]
-  G --> H{"More tasks?"}
-  H -- Yes --> F
-  H -- No --> I["Write completion_audit and lifecycle_outcome"]
-  I --> J["Validate state and summarize evidence"]
+  E --> F["Refresh context_health"]
+  F --> G["Record TASK EXECUTION CONTRACT"]
+  G --> H["Implement and verify task"]
+  H --> I{"More tasks?"}
+  I -- Yes --> F
+  I -- No --> J["Write completion_audit and lifecycle_outcome"]
+  J --> K["Validate state and summarize evidence"]
 ```
 
 The critical gates are:
@@ -94,6 +96,8 @@ The critical gates are:
   `completion_audit`
 - no resume/handoff reliance on implicit session memory; use `context.json` and
   `state.json`
+- no successful finish with `context_health.status=red` or
+  `context_health.handoff_ready=false`
 
 ## Key Commands
 

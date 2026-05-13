@@ -16,6 +16,10 @@ Use this for `mode=interactive`.
   `scripts/build_context_snapshot.py` after `run_id` initialization and before
   task contracts. Store `context_snapshot_path` and `context_basis_hash` in
   `.codex-orchestrator/runs/<run_id>/state.json`.
+- Initialize `context_health` in state after the context snapshot is created.
+  It must include `status`, `last_checked_at`, `context_snapshot_present`,
+  `context_basis_hash_recorded`, `active_task_contract_present`, `next_action`,
+  `open_questions`, `known_assumptions`, and `handoff_ready`.
 - For `blocker` outcomes such as unreadable plans, ambiguous resume state,
   related dirty task files, or unclear mid/high-risk acceptance criteria, write
   a redacted learning event using `references/learning-log.md` and
@@ -61,6 +65,10 @@ For each task:
    Task completion must set the task `status` to `completed`, `blocked`, or
    `error`; do not leave a finished task as `in_progress` with only
    `completed_at` populated.
+7. Refresh `context_health` at the same semantic boundary. Use `green` when
+   another agent can resume from state and artifacts, `yellow` when assumptions
+   or open questions remain but execution can continue, and `red` when safe
+   continuation requires a blocker, user decision, or handoff.
 
 Use `spawn_agent` only when the user explicitly asked for subagents, delegation,
 parallel work, or passed `subagents=on`. Otherwise execute locally.
@@ -85,6 +93,9 @@ parallel work, or passed `subagents=on`. Otherwise execute locally.
 
 - Run final verification.
 - Check documentation impact.
+- Refresh `context_health` before final state validation. Finished runs must be
+  `handoff_ready=true` and not `red`; blocked or failed runs must leave a
+  concrete `next_action` and any `open_questions` needed for handoff.
 - Write `completion_audit` before claiming completion. It must include
   `passed=true`, non-empty `prompt_to_artifact_checklist`, and non-empty
   `verification_evidence` when `lifecycle_outcome=finished`.

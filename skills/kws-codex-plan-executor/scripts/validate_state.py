@@ -34,6 +34,18 @@ VALID_LIFECYCLE_OUTCOMES = {
     "askuserQuestion",
 }
 NON_SUCCESS_OUTCOMES = {"blocked", "failed", "userinterlude", "askuserQuestion"}
+VALID_CONTEXT_HEALTH_STATUSES = {"green", "yellow", "red"}
+REQUIRED_CONTEXT_HEALTH_FIELDS = {
+    "status",
+    "last_checked_at",
+    "context_snapshot_present",
+    "context_basis_hash_recorded",
+    "active_task_contract_present",
+    "next_action",
+    "open_questions",
+    "known_assumptions",
+    "handoff_ready",
+}
 REQUIRED_TASK_FIELDS = {
     "status",
     "risk",
@@ -97,6 +109,58 @@ def _validate_context_snapshot(data: dict, errors: list[str]) -> None:
         errors.append(f"context_snapshot_path must be {expected_context_path}")
     if not isinstance(basis_hash, str) or not basis_hash.strip():
         errors.append("context_basis_hash must be a non-empty string when context_snapshot_path is present")
+
+
+def _validate_context_health(data: dict, errors: list[str]) -> None:
+    mode = data.get("mode")
+    phase = data.get("current_phase")
+    outcome = data.get("lifecycle_outcome")
+    health = data.get("context_health")
+
+    health_required = mode in EXECUTION_MODES and phase != "preflight"
+    if health_required and health is None:
+        errors.append("context_health must be present after execution preflight")
+        return
+    if health is None:
+        return
+    if not isinstance(health, dict):
+        errors.append("context_health must be an object")
+        return
+
+    for key in sorted(REQUIRED_CONTEXT_HEALTH_FIELDS):
+        if key not in health:
+            errors.append(f"context_health missing field {key}")
+
+    status = health.get("status")
+    if status not in VALID_CONTEXT_HEALTH_STATUSES:
+        errors.append(f"context_health.status must be one of {sorted(VALID_CONTEXT_HEALTH_STATUSES)}")
+
+    for key in ("context_snapshot_present", "context_basis_hash_recorded", "active_task_contract_present", "handoff_ready"):
+        if key in health and not isinstance(health[key], bool):
+            errors.append(f"context_health.{key} must be a boolean")
+
+    if "next_action" in health and (not isinstance(health["next_action"], str) or not health["next_action"].strip()):
+        errors.append("context_health.next_action must be a non-empty string")
+
+    for key in ("open_questions", "known_assumptions"):
+        if key in health and not isinstance(health[key], list):
+            errors.append(f"context_health.{key} must be a list")
+
+    if data.get("context_snapshot_path") is not None and health.get("context_snapshot_present") is not True:
+        errors.append("context_health.context_snapshot_present must be true when context_snapshot_path is present")
+    if data.get("context_basis_hash") is not None and health.get("context_basis_hash_recorded") is not True:
+        errors.append("context_health.context_basis_hash_recorded must be true when context_basis_hash is present")
+
+    if status == "green" and _has_substantive_value(health.get("open_questions")):
+        errors.append("context_health.open_questions must be empty when status is green")
+    if status == "red" and health.get("handoff_ready") is True:
+        errors.append("context_health.handoff_ready must be false when status is red")
+
+    if outcome == "finished":
+        if health.get("handoff_ready") is not True:
+            errors.append("context_health.handoff_ready must be true when lifecycle_outcome is finished")
+        if status == "red":
+            errors.append("context_health.status must not be red when lifecycle_outcome is finished")
 
 
 def _validate_completion_audit(data: dict, errors: list[str]) -> None:
@@ -182,6 +246,7 @@ def validate(data: object) -> list[str]:
         errors.append("timestamps must be an object")
 
     _validate_context_snapshot(data, errors)
+    _validate_context_health(data, errors)
     _validate_completion_audit(data, errors)
 
     return errors
