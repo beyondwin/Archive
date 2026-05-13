@@ -105,4 +105,46 @@ options:
   A: <concrete option>
   B: <concrete option>
   C: <concrete option>
+
+## Learning log emit (v2.8)
+
+If you ESCALATE (any type), write a learning-event candidate JSON to
+`<worktree>/.orchestrator/learning_events/task_<N>-implementer.json` before
+ending your turn. If a root-cause-based recovery during this dispatch produced
+a reusable executor-improvement insight (e.g., "the prompt should specify X to
+prevent this confusion"), also write a `successful_workaround` candidate.
+**Do not call the helper script yourself** — the orchestrator scans the
+candidate directory after your turn and invokes `append`.
+
+Minimal candidate body for ESCALATE:
+
+```json
+{
+  "schema_version": "1",
+  "phase": "phase_1",
+  "risk_tier": "<LOW|MID|HIGH>",
+  "event_type": "escalation",
+  "severity": "<low|medium|high — see references/escalation-playbook.md>",
+  "execution": {"task_id": "task_<N>", "issue_key": "<derived from ESCALATE type + blocker>"},
+  "subagent": {"role": "implementer", "model": "sonnet", "dispatch": "agent_tool"},
+  "summary": "<your one-sentence blocker, redacted>",
+  "context": {
+    "user_intent": "<from spec excerpt>",
+    "agent_expectation": "<what you tried to do>",
+    "actual_outcome": "<what blocked you>",
+    "root_cause": "<from cause: line>",
+    "evidence": [{"kind": "command", "value": "<sanitized — no abs paths or secrets>"}]
+  },
+  "improvement": {
+    "target": "references/implementer-prompt.md",
+    "proposal": "<≤1 sentence — what prompt change would prevent recurrence>",
+    "experiment_link": null
+  },
+  "privacy": {"redacted": true, "notes": "<what you sanitized>"}
+}
+```
+
+Use relative paths only. Do not embed absolute home / worktree paths or any
+secret-like values. The orchestrator's `append` invocation will validate and
+reject candidates that violate redaction rules.
 ````

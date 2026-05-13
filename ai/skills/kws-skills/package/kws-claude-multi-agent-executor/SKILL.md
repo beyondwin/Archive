@@ -2,7 +2,7 @@
 name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation. NOTE — single-session execution is preferable for ≤5-task plans or plans with deep cross-task coupling (multi-agent overhead exceeds the parallelism win).
 metadata:
-  version: "2.6.0"
+  version: "2.8.0"
   updated_at: "2026-05-13"
 ---
 
@@ -193,9 +193,10 @@ Procedure:
    EOF
    ```
    (Note: use unquoted heredoc so `$WORKTREE_ABS` interpolates.)
-4. Spawn child AND atomically swap the PID file so the Monitor watcher (step e′) picks up the new process:
+4. Spawn child AND atomically swap the PID file so the Monitor watcher (step e′) picks up the new process. **Pass `MAE_LEARNING_RUN_ID` explicitly** so the chained orchestrator continues writing to the same learning-log run (v2.8):
    ```bash
-   nohup claude -p --session-id "$RESUME_UUID" --dangerously-skip-permissions \
+   env MAE_LEARNING_RUN_ID="${MAE_LEARNING_RUN_ID:-}" \
+     nohup claude -p --session-id "$RESUME_UUID" --dangerously-skip-permissions \
      --output-format stream-json \
      "$(cat "$WORKTREE_ABS/.orchestrator/headless_chain_<N>_prompt.txt")" \
      > "$WORKTREE_ABS/.orchestrator/headless_chain_<N>.jsonl" 2>&1 &
@@ -207,7 +208,17 @@ Procedure:
    sleep 3
    kill -0 $CHILD_PID 2>/dev/null || { echo "FATAL: chain child died within 3s" >&2; exit 1; }
    ```
-5. Parent exits. Child takes over. The Monitor watcher re-reads `headless.pid` each loop (see step e′) so the handoff is observed as `CHAIN_HANDOFF`, not `PROCESS_DIED`.
+5. Parent exits **without calling `close-run`** — the run is still alive in the child. Child takes over. The Monitor watcher re-reads `headless.pid` each loop (see step e′) so the handoff is observed as `CHAIN_HANDOFF`, not `PROCESS_DIED`.
+
+6. **Chained child startup (v2.8 learning log):** at Phase 0 Step 0 (Resume Protocol), after detecting `state.mode == "headless_chained"`, the chained orchestrator runs:
+   ```bash
+   if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
+     python3 <skill_dir>/scripts/append_learning_event.py append-session-id \
+       --run-id "$MAE_LEARNING_RUN_ID" \
+       --session-id "${CLAUDE_SESSION_ID:-$RESUME_UUID}" >/dev/null 2>&1 || true
+   fi
+   ```
+   It does NOT call `init-run` — that would fragment the run record. If `MAE_LEARNING_RUN_ID` is unset (env not propagated, helper missing), it proceeds without learning-log support rather than starting a new run.
 
 This is a fallback — the primary expectation is that one headless subprocess completes a typical 10-25 task plan within its own context budget.
 
@@ -485,6 +496,28 @@ This is a fallback — the primary expectation is that one headless subprocess c
 
    **Mode field rule (P13a):** `mode` MUST always be a string — never `null`. Set to `"interactive_session"` when not under Phase -1 self-spawn, `"headless_running"` immediately after Phase 0 completes under `headless_pending` resume.
 
+7.5. **Learning log init-run (v2.8):**
+
+   After state.json is written, initialize the user-local learning log. This is observability — failure to init must NOT block plan execution.
+
+   ```bash
+   # Skill dir is the directory containing this SKILL.md.
+   RUN_ID="$(python3 <skill_dir>/scripts/append_learning_event.py init-run \
+     --repo-root "$WORKTREE_ABS" \
+     --repo-name "$(basename $(git -C "$WORKTREE_ABS" rev-parse --show-toplevel))" \
+     --branch "$(git -C "$WORKTREE_ABS" branch --show-current)" \
+     --plan-path "$PLAN_PATH" \
+     --spec-path "$SPEC_PATH" \
+     --session-id "${CLAUDE_SESSION_ID:-}" 2>/dev/null || echo "")"
+   if [ -n "$RUN_ID" ]; then
+     export MAE_LEARNING_RUN_ID="$RUN_ID"
+   fi
+   ```
+
+   `MAE_LEARNING_RUN_ID` is captured in shell env and used for the lifetime of the run. If helper init fails (script missing, write failure), `RUN_ID` is empty and no `MAE_LEARNING_RUN_ID` is exported — subsequent emit attempts (Phase 1/Transition/2) check the env var and skip silently. The plan execution proceeds normally.
+
+   Sub-agents do NOT call the helper. They write event candidate JSON files to `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`. The orchestrator scans this directory after each cycle step and invokes `append` itself. See `references/learning-log.md` for the schema and 10 event types.
+
    **active_plan pointer (P13b):** `"plan1"` while executing the primary plan, `"plan2"` after Phase 2 Step -1 swap. Phase Transition / Phase 2 / Monitor scripts MUST use this pointer to select between `state.tasks` and `state.plan2_state.tasks` — see Phase 2 Step -1.
 
    **plan2_state initialization (Previous #5):** If invocation includes `plan2=<path>`, populate at Phase 0 Step 7:
@@ -690,6 +723,26 @@ Decision table:
 - If `verifier_retries` > 3: halt. Report to user: "Task N exceeded verifier retry limit (3). Manual intervention required."
 
 **Result: ESCALATE** → go to **Escalation Protocol**.
+
+### Step 3.5: Learning-log candidate scan (v2.8)
+
+After each Phase 1 cycle step (Step 1 Implementer, Step 2 Reviewer, Step 3 Verifier), check if a learning-event candidate file was written:
+
+```bash
+CANDIDATE_DIR="<worktree_path>/.orchestrator/learning_events"
+if [ -n "${MAE_LEARNING_RUN_ID:-}" ] && [ -d "$CANDIDATE_DIR" ]; then
+  for cand in "$CANDIDATE_DIR"/task_<N>-*.json; do
+    [ -f "$cand" ] || continue
+    python3 <skill_dir>/scripts/append_learning_event.py append \
+      --run-id "$MAE_LEARNING_RUN_ID" \
+      --event-json "$cand" \
+      --repo-root "$WORKTREE_ABS" >/dev/null 2>&1 || true
+    mv "$cand" "$cand.appended"  # mark consumed; avoid double-emit
+  done
+fi
+```
+
+Append failures are silent (`|| true`) — observability must not block execution. Candidate files are renamed `.appended` after consumption to prevent duplicate emission on the next cycle step. Sub-agents writing fresh candidates always overwrite (per-task-per-role one file at a time).
 
 ### Step 4: Agent Cleanup
 
@@ -935,6 +988,15 @@ options:
    ```
    Record the task as SKIPPED in state.json with the escalation reason. The orchestrator continues with subsequent tasks (subject to SKIPPED propagation rules from Phase 0 Step 6).
 
+   **Learning-log (v2.8):** if this exhausted-escalation halt aborts the entire run (whole-orchestrator halt, not just task skip), call `close-run --outcome=aborted` before exiting:
+   ```bash
+   if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
+     python3 <skill_dir>/scripts/append_learning_event.py close-run \
+       --run-id "$MAE_LEARNING_RUN_ID" --outcome aborted >/dev/null 2>&1 || true
+   fi
+   ```
+   For the more common case (task-only halt that lets the orchestrator continue), do NOT close-run — the run is still alive. Phase 2 Step 2 closes it with `outcome=success` if subsequent tasks finish, or the final hard-halt block does so with `outcome=blocked` if the orchestrator gives up entirely.
+
 2. Reset to pre-task state using the literal SHA from your notes:
    ```bash
    git -C <worktree_path> reset --hard <pre_task_sha>
@@ -1001,6 +1063,19 @@ Build from the **Final Docs Updater Prompt Template** with:
 ### Step 2: Generate Final Summary Report
 
 Before generating the report, invoke `Skill("superpowers:finishing-a-development-branch")` and include its recommendation in Cleanup Status.
+
+**Learning-log close-run (v2.8):** before printing the summary, close the
+run record. Use `--outcome=success` when Phase 2 completes normally:
+
+```bash
+if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
+  python3 <skill_dir>/scripts/append_learning_event.py close-run \
+    --run-id "$MAE_LEARNING_RUN_ID" \
+    --outcome success >/dev/null 2>&1 || true
+fi
+```
+
+Close-run failure is silent. The summary report below still prints unchanged.
 
 Output:
 
@@ -1112,6 +1187,8 @@ These rules are absolute. No exceptions.
 | **Resume Chain trigger is deterministic** | Chain only when `compaction_points reached ≥ 2` AND `completed tasks ≥ 8`. No token-count heuristics — not introspectable. Chain procedure MUST update `headless.pid` atomically so Monitor sees `CHAIN_HANDOFF`, not `PROCESS_DIED`. |
 | **`files_test` discrimination for batch verifier** | Implementer outputs `FILES_TEST_CHANGED` separately from `FILES_CHANGED`. T1 batch pre-filter uses it (or `.md`-only heuristic for legacy state) to route docs-only tasks to lint instead of test runs. |
 | **Plan 2 re-takes baseline** | When Phase 2 Step -1 swaps `active_plan` to `"plan2"`, run Phase 0 Step 5 fresh against current HEAD (Plan 1's changes are now Plan 2's starting point). Never reuse Plan 1's baseline as Plan 2's regression reference. |
+| **Learning log lifecycle (v2.8)** | Phase 0 Step 7.5 calls `init-run` and exports `MAE_LEARNING_RUN_ID`. Phase 1 Step 3.5 scans `<worktree>/.orchestrator/learning_events/` for sub-agent candidate JSON and calls `append`. Phase 2 Step 2 closes with `outcome=success`; orchestrator-level abort closes with `outcome=aborted`; whole-orchestrator hard-halt (state-write fail, exhausted escalations halting the run) closes with `outcome=blocked`. Resume Chain preserves `MAE_LEARNING_RUN_ID` via env propagation and calls `append-session-id`, never `init-run`. **Learning-log failure must never block plan execution** — every helper invocation is wrapped with `\|\| true`. See `references/learning-log.md`. |
+| **Single-writer for learning events** | Only the orchestrator invokes the helper. Sub-agents write event candidates as JSON files under `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`; the orchestrator reads and forwards them. Never let a sub-agent prompt instruct direct helper invocation. |
 
 ---
 

@@ -27,6 +27,8 @@ The Implementer was already given these issues. Verify whether each was addresse
 
 ## Instructions
 
+**Before reviewing:** invoke `Skill("superpowers:requesting-code-review")` so your spec_score and quality_score reflect a checklist-grounded review rather than freeform impression. The skill's review checklist informs the Part 1 + Part 2 axes below.
+
 You MAY use the Read tool to inspect any file beyond the provided diff — for example, to verify codebase conventions, check for duplicate functions, confirm caller updates, or check barrel/index registrations. Do NOT re-run git diff yourself (the orchestrator already injected the correct diff above).
 
 **Part 1 — Spec Compliance:**
@@ -91,4 +93,44 @@ QUALITY_ISSUES:
   - ISSUE_KEY: <file>:<line>:<category> | <description> or "none"
 FILES_REVIEWED:
   - <exact file path, one per line>
+
+## Learning log emit (v2.8)
+
+If your tier is WARN or FAIL (QUALITY_SCORE < 0.75 OR SPEC_SCORE < 0.85), write
+a learning-event candidate JSON file to
+`<worktree>/.orchestrator/learning_events/task_<N>-reviewer.json` before
+returning your output. **Do not call the helper script yourself** — the
+orchestrator scans `.orchestrator/learning_events/` and invokes `append`.
+
+Minimal candidate body (fill in actual values):
+
+```json
+{
+  "schema_version": "1",
+  "phase": "phase_1",
+  "risk_tier": "<LOW|MID|HIGH>",
+  "event_type": "reviewer_warn_or_fail",
+  "severity": "<medium for WARN, high for FAIL>",
+  "execution": {"task_id": "task_<N>", "issue_key": "<top SPEC or QUALITY ISSUE_KEY>"},
+  "scores": {"spec_score": <num>, "quality_score": <num>, "tier": "<WARN|FAIL>"},
+  "subagent": {"role": "reviewer", "model": "sonnet", "dispatch": "agent_tool"},
+  "summary": "<≤1 sentence — what failed>",
+  "context": {
+    "user_intent": "<from the spec requirement>",
+    "agent_expectation": "<what the Implementer was meant to do>",
+    "actual_outcome": "<what they did instead>",
+    "root_cause": "<from SPEC_FAULT + top issue>",
+    "evidence": [{"kind": "issue_key", "value": "<top ISSUE_KEY>"}]
+  },
+  "improvement": {
+    "target": "references/<implementer-prompt|reviewer-prompt>.md",
+    "proposal": "<≤1 sentence — what prompt change would prevent this>",
+    "experiment_link": null
+  },
+  "privacy": {"redacted": true, "notes": "Worktree path relativized."}
+}
+```
+
+Use relative paths only — never absolute home / worktree paths. The
+orchestrator's `append` invocation will sanitize, validate, and forward.
 ````
