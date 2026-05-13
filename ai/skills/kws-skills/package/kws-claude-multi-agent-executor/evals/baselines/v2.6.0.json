@@ -1,18 +1,18 @@
 {
   "version": "2.6.0",
-  "date": "2026-05-13T05:04:30Z",
+  "date": "2026-05-13T05:44:35Z",
   "fixtures": [
     {
       "fixture": "08-subtle-input-validation",
       "scores": {
         "correctness": 1.0,
-        "spec_compliance": 0.9,
+        "spec_compliance": 1.0,
         "code_quality": 0.9,
         "cost_efficiency": 1.0
       },
-      "mean": 0.95,
+      "mean": 1.0,
       "passed": true,
-      "notes": "Rubric: 19/20 checks pass (0.95 pass_rate → 1.0 rounded). The single miss is the 'repeated unit' error case (e.g. '30m20m'); all 10 valid inputs and 9/10 error cases pass. Code ships clean — typed signature, parametrized happy-path tests, individual error tests with pytest.raises, well under both time and token budgets."
+      "notes": "Rubric confirms 20/20 checks pass (10 valid + 10 error cases); tests green (22 passed). Both tasks COMPLETE with PASS review tier, no escalations or retries, commit count (5) within expected range. Wall-time 11min is under 60% of 25min budget; diff tail unavailable so code_quality leans on reviewer's 0.9 quality_score."
     }
   ]
 }
