@@ -1,7 +1,7 @@
 # F002 — v2.7 Quality Mode Experiment: Close-out
 
 **Date**: 2026-05-13
-**Status**: DRAFT (pending rep 3)
+**Status**: FINAL
 **Outcome**: NEGATIVE on quality_plus hypothesis; POSITIVE on rubric infrastructure.
 
 ## TL;DR
@@ -71,9 +71,21 @@ fixture 08) — these are independently valuable.
    designed 4 fixtures + run 45 cells before discovering the marginal
    ceiling. Doing baseline-variance first surfaced the answer at $30.
 
-## Per-rep data (filled when rep 3 completes)
+## Per-rep data — final
 
-(see F001-fixture08-baseline.md)
+3 reps of balanced v2.6.0 on fixture 08, all identical:
+
+| Rep | rubric pass_rate | Missed | Judge mean |
+|-----|------------------|--------|------------|
+| 1 | 0.95 | "repeated unit raises ValueError" | 0.90 |
+| 2 | 0.95 | "repeated unit raises ValueError" | 0.90 |
+| 3 | 0.95 | "repeated unit raises ValueError" | 0.95 |
+
+- **Variance on rubric**: 0.00 (deterministic)
+- **Variance on judge code_quality**: small (±0.05 noise — LLM judge stochasticity)
+- **quality_plus ceiling**: 0.95 → 1.00 = +0.05
+
+See [F001](./F001-fixture08-baseline.md) for detail.
 
 ## When to revisit
 
