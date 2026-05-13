@@ -3,8 +3,9 @@
 Use this for failure analysis or substantial edits to this skill.
 
 - Do not let prompt export drift from runtime execution policy. If interactive
-  mode uses `.codex-orchestrator/state.json` and subagent opt-in, prompt and
-  handoff output must use the same source of truth and delegation boundary.
+  mode uses `.codex-orchestrator/runs/<run_id>/state.json` and subagent opt-in,
+  prompt and handoff output must use the same source of truth and delegation
+  boundary.
 - Do not validate only field presence when a hard gate depends on a nested
   contract. The state validator should reject missing task contract fields.
 - Do not classify dirty files before plan parsing. Dirty classification depends
@@ -17,6 +18,10 @@ Use this for failure analysis or substantial edits to this skill.
   Prompt and handoff generation do not log events themselves, but generated
   execution prompts must carry the same execution-only contract.
 - Do not put learning events in the target repository. Use the user-local
-  `~/.codex/learning/kws-codex-plan-executor/events.jsonl` path.
+  `~/.codex/learning/kws-codex-plan-executor/runs/<YYYY-MM-DD>/<run_id>/events.jsonl`
+  path.
+- Do not reuse a root `.codex-orchestrator/state.json` as the primary state for
+  concurrent execution. Treat it only as a latest-state compatibility copy or
+  pointer.
 - Do not store secrets, full transcripts, long raw logs, or absolute home paths
   in learning events.

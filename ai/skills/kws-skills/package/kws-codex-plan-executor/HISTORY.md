@@ -3,6 +3,21 @@
 Source of truth for current behavior: `SKILL.md`, `templates/`, and
 `references/`. This file tracks release intent and migration history.
 
+## v1.4.0 - Shard Codex executor runs by run_id (2026-05-13)
+
+- Replaced the single global Codex learning log with per-run user-local
+  directories under
+  `~/.codex/learning/kws-codex-plan-executor/runs/<date>/<run_id>/` plus
+  `index.jsonl`.
+- Extended `scripts/append_learning_event.py` with `init-run`, `append`, and
+  `close-run`, and required events to carry `run_id`, `run_dir`, and
+  `state_path`.
+- Moved primary project-local state/artifacts to
+  `.codex-orchestrator/runs/<run_id>/`, keeping `.codex-orchestrator/state.json`
+  only as a latest-state compatibility copy or pointer.
+- Updated deterministic evals to reject cross-run event leakage and invalid
+  per-run state paths.
+
 ## v1.3.1 - Bootstrap process skills in headless runs (2026-05-13)
 
 - Required headless prompts and eval runs to bootstrap applicable installed

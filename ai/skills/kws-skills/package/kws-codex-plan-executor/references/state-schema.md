@@ -1,13 +1,17 @@
 # State Schema
 
-The executor writes `.codex-orchestrator/state.json` in the active worktree.
-This file is the resume source of truth. Human-readable checkpoints summarize
-state, but the JSON state owns task status.
+The executor writes `.codex-orchestrator/runs/<run_id>/state.json` in the active
+worktree. This file is the resume source of truth for that run. Human-readable
+checkpoints summarize state, but the JSON state owns task status.
+
+For backwards compatibility, `.codex-orchestrator/state.json` may also be
+updated as a latest-state copy or pointer. Do not use that root file as the
+only active state when multiple runs exist.
 
 Validate with:
 
 ```bash
-python3 scripts/validate_state.py .codex-orchestrator/state.json
+python3 scripts/validate_state.py .codex-orchestrator/runs/<run_id>/state.json
 ```
 
 ## Top-Level Fields
@@ -15,12 +19,15 @@ python3 scripts/validate_state.py .codex-orchestrator/state.json
 ```json
 {
   "schema_version": "1",
+  "run_id": "20260513T142233Z-archive-codex-example-7e884a0-a1b2c3",
   "mode": "interactive",
   "workspace": "/abs/path",
   "plan": "/abs/path/plan.md",
   "spec": "/abs/path/spec.md",
   "branch": "codex/example",
   "worktree": "/abs/path/worktree",
+  "run_dir": ".codex-orchestrator/runs/20260513T142233Z-archive-codex-example-7e884a0-a1b2c3",
+  "state_path": ".codex-orchestrator/runs/20260513T142233Z-archive-codex-example-7e884a0-a1b2c3/state.json",
   "test_command": "pytest",
   "baseline": {"status": "unknown", "summary": ""},
   "current_task": "task_0",
@@ -42,11 +49,14 @@ python3 scripts/validate_state.py .codex-orchestrator/state.json
 Required top-level fields:
 
 - `schema_version`
+- `run_id`
 - `mode`
 - `workspace`
 - `plan`
 - `branch`
 - `worktree`
+- `run_dir`
+- `state_path`
 - `current_task`
 - `current_phase`
 - `tasks`
