@@ -73,15 +73,34 @@ def check_version_consistency(checks: dict, failures: list) -> None:
     manifest = read_manifest_version()
     plugin = read_plugin_readme_version()
 
-    checks["versions_readable"] = all(v is not None for v in [skill, manifest, plugin])
-    if not checks["versions_readable"]:
+    # Skill MUST always be readable.
+    if skill is None:
+        checks["versions_readable"] = False
+        failures.append("SKILL.md frontmatter version unreadable")
+        return
+
+    # If there's no co-located plugin manifest (standalone skill layout
+    # post-2026-05-14), there's nothing to be consistent WITH. Mark the
+    # cross-version check as not-applicable rather than failing.
+    if manifest is None and plugin is None:
+        checks["versions_readable"] = True
+        checks["versions_consistent"] = "n/a (standalone skill — no plugin manifest)"
+        return
+
+    # Mixed presence — manifest exists but plugin README missing, or vice
+    # versa. That's an actual gap.
+    if manifest is None or plugin is None:
+        checks["versions_readable"] = False
         failures.append(
-            f"Could not read all 3 versions: SKILL.md={skill!r}, manifest={manifest!r}, plugin README={plugin!r}"
+            f"Partial version metadata: SKILL.md={skill!r}, manifest={manifest!r}, "
+            f"plugin README={plugin!r} — if standalone, remove both; if plugin, "
+            f"populate both"
         )
         return
 
+    checks["versions_readable"] = True
     checks["versions_consistent"] = skill == manifest == plugin
-    if not checks["versions_consistent"]:
+    if checks["versions_consistent"] is not True:
         failures.append(
             f"Version drift: SKILL.md={skill}, manifest={manifest}, plugin README={plugin} — "
             f"see docs/doc-update-protocol.md §Version bump"
