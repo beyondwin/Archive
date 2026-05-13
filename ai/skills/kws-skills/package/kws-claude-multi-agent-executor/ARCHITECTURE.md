@@ -356,6 +356,83 @@ eliminated noise on the mechanical axes.
 
 ---
 
+## 14. Learning Log Contract (v2.8)
+
+The skill emits structured, redacted learning events to a user-local JSONL
+log so the skill itself can be improved across runs. This is an
+**observability layer** — the skill's correctness does not depend on it,
+and every helper invocation is wrapped to fail silently.
+
+### Storage layout
+
+Per-run sharded directory under `~/.claude/learning/kws-claude-multi-agent-executor/`:
+
+```
+runs/<YYYY-MM-DD>/<run_id>/
+├── meta.json       # run metadata; outcome, event_count, session_ids
+└── events.jsonl    # 0+ events; one compact JSON per line
+```
+
+`run_id = <UTC-compact-timestamp>-<session_short>-<pid>` (lexically sortable,
+disambiguated by session UUID + pid). Concurrent runs (same repo or different
+repos) write to distinct run directories — no lock contention because no two
+writers ever touch the same file.
+
+### Single-writer contract
+
+**Only the orchestrator invokes the helper.** Sub-agents prepare event
+candidate JSON files under `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`.
+Phase 1 Step 3.5 in the orchestrator scans this directory after each cycle
+step and calls `append`. This avoids env-propagation puzzles between Agent-
+tool sub-agents (Implementer/Reviewer) and `claude -p` subprocesses
+(Plan Reviewer/Verifier/Docs Updater).
+
+### Helper subcommands
+
+`scripts/append_learning_event.py`:
+
+- `init-run` — Phase 0 Step 7.5; echoes `run_id`; idempotent on `(session_id, repo, plan)`
+- `append` — Phase 1 Step 3.5 / Phase Transition / Phase 2; validates + sanitizes + writes one line
+- `close-run` — Phase 2 Step 2 (success), exhausted-escalation halt (aborted), hard-halt (blocked)
+- `append-session-id` — Resume Chain chained orchestrator startup; never `init-run`
+
+### 10 event types
+
+- `blocker` (orchestrator) — plan/spec/baseline missing, dirty worktree blocking Phase 0
+- `error` (orchestrator) — skill procedure failure (state corrupt, worktree create failed)
+- `verification_failure` (verifier) — Verifier FAIL on MID/HIGH per-task or LOW batch
+- `reviewer_warn_or_fail` (reviewer) — Combined Reviewer WARN/FAIL tier
+- `escalation` (any sub-agent) — sub-agent ESCALATE (see `references/escalation-playbook.md` for severity)
+- `recurring_issue` (orchestrator) — same `ISSUE_KEY` reappears after retry
+- `user_correction` (orchestrator) — user corrects scope/files/assumptions mid-run
+- `parallel_dispatch_failure` (orchestrator) — P2 wave dispatch failed / merge conflict
+- `successful_workaround` (implementer or orchestrator) — reusable recovery insight
+- `completion_learning` (orchestrator) — actionable executor-improvement observation at end
+
+### Redaction guard
+
+The helper rejects: secrets (Authorization: Bearer / api_key / sk-...), full
+transcripts, absolute home paths, oversized excerpts (> 400 chars). It
+relativizes paths under `--repo-root`. Sub-agent transcripts are referenced
+by `session_id` from `meta.json`, not duplicated.
+
+### Failure isolation
+
+Every learning-log call in SKILL.md is wrapped `... || true` or routed
+through `>/dev/null 2>&1`. Helper missing, write fail, schema reject — none
+of these block plan execution. If `MAE_LEARNING_RUN_ID` is unset, Phase 1
+Step 3.5 short-circuits before the append loop.
+
+### Relation to `state.json`
+
+`state.json` is the per-run resume source of truth (lives in the worktree).
+The learning log is the cross-run institutional memory (lives in `~/.claude/`).
+The two are independent: an orchestrator can run end-to-end without ever
+touching the learning log (helper missing / init failed), and the learning
+log can record events from a run whose `state.json` has been deleted.
+
+See `references/learning-log.md` for the full schema and code examples.
+
 ## 13. Update protocol
 
 **Update this file whenever** you change any of:
@@ -369,6 +446,7 @@ eliminated noise on the mechanical axes.
 | Quality scoring (§8) | Threshold changes, tier changes, trend rule changes |
 | Eval harness (§10) | New fixture type, new measurement layer, new calibration tool |
 | Failure modes (§12) | New ESCALATE category, new retry rule |
+| Learning log (§14) | New event type, new helper subcommand, schema change, new redaction rule, candidate-file path change |
 
 **Do not update this file for**:
 - New fixture added (that's `evals/`)
