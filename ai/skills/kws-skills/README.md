@@ -12,7 +12,7 @@
 
 ## 현재 버전
 
-- 패키지 버전: `2.9.1`
+- 패키지 버전: `2.10.0`
 - 마지막 갱신일: `2026-05-13`
 
 ## 포함된 스킬
@@ -31,7 +31,7 @@
 | --- | --- | --- |
 | `archive-docs-organizer` | `1.1.1` | `2026-04-30` |
 | `kws-claude-multi-agent-executor` | `2.6.0` | `2026-05-13` |
-| `kws-codex-plan-executor` | `1.2.1` | `2026-05-13` |
+| `kws-codex-plan-executor` | `1.3.0` | `2026-05-13` |
 | `kws-doc-prompt-review` | `1.0.1` | `2026-05-05` |
 | `kws-skill-prompt-review` | `1.0.1` | `2026-05-05` |
 | `reflective-essay-writer` | `1.0.1` | `2026-04-30` |
