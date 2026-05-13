@@ -122,6 +122,9 @@ GI
   local eval_preamble="EVAL_RUN: This is an automated regression test of the kws-claude-multi-agent-executor skill. Execute the skill exactly as written — do not substitute direct edits for the orchestrator workflow, do not ask clarifying questions, do not bypass steps based on perceived task triviality. The eval is scored on BOTH outcome correctness AND skill adherence (worktree created, state.json populated, sub-agent commits visible)."
   local start_ts
   start_ts="$(date +%s)"
+  # Drop a startmark file so the adherence post-check can use `find -newer`
+  # to scope which learning-log run dirs (if any) belong to this fixture.
+  touch "$tmpdir/.harness/run.jsonl.startmark"
   ( cd "$tmpdir" && \
     claude -p --dangerously-skip-permissions \
       --output-format stream-json --verbose \
@@ -181,6 +184,22 @@ GI
     fi
   fi
   echo "  rubric pass_rate: $rubric_pass_rate"
+
+  # Learning-log adherence check (v2.8.1) — detect whether the orchestrator
+  # actually executed Step 7.5 init-run. Grep run.jsonl for the
+  # LEARNING_LOG_INIT marker, then cross-check by scanning ~/.claude/learning
+  # for a run dir whose started_at falls within the fixture's wall window.
+  local llog_marker_count
+  llog_marker_count="$(grep -o 'LEARNING_LOG_INIT:' "$tmpdir/.harness/run.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
+  local llog_run_dirs
+  llog_run_dirs="$(find "$HOME/.claude/learning/kws-claude-multi-agent-executor/runs" -type d -name "*-eval-*" -newer "$tmpdir/.harness/run.jsonl.startmark" 2>/dev/null | wc -l | tr -d ' ' || echo 0)"
+  local adherence
+  if [ "$llog_marker_count" -gt 0 ]; then
+    adherence="yes (marker emitted)"
+  else
+    adherence="no (Step 7.5 skipped)"
+  fi
+  echo "  learning_log_adherence: $adherence (markers=$llog_marker_count)"
 
   local judge_prompt
   judge_prompt="$(python3 -c '
