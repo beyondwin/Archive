@@ -52,7 +52,7 @@ Map the drop to a category:
 
 ```bash
 # What changed in this skill since the previous baseline?
-git log --oneline v<previous-tag>..HEAD -- ai/skills/kws-skills/package/kws-claude-multi-agent-executor
+git log --oneline v<previous-tag>..HEAD -- skills/kws-claude-multi-agent-executor
 ```
 
 Cross-reference each commit against the regression axis:
@@ -178,7 +178,7 @@ version's* prompt against the same fixture (manually, via the Agent tool
 in your session) and diff:
 
 ```bash
-git show v<previous-tag>:ai/skills/kws-skills/package/kws-claude-multi-agent-executor/references/reviewer-prompt.md > /tmp/prev-reviewer-prompt.md
+git show v<previous-tag>:skills/kws-claude-multi-agent-executor/references/reviewer-prompt.md > /tmp/prev-reviewer-prompt.md
 diff /tmp/prev-reviewer-prompt.md references/reviewer-prompt.md
 ```
 
