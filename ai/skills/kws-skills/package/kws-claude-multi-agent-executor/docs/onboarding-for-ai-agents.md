@@ -45,6 +45,19 @@ Each of those has slightly different norms — covered below.
 
 ## Operating norms
 
+### 0. Honor the doc-update protocol
+
+Every non-trivial change ships with corresponding doc updates **in the
+same commit**. The per-change-type checklist is in
+[`./doc-update-protocol.md`](./doc-update-protocol.md). Read it before
+opening any commit.
+
+The freshness check (`evals/check_doc_freshness.py`) runs in
+`evals/run.sh` preflight as a non-blocking guard for the most regression-
+prone drift: version consistency, broken links, missing HISTORY entry,
+missing snapshot for minor bumps, ADRs not indexed. Set
+`DOC_FRESHNESS_STRICT=1` if you want it to fail the preflight.
+
 ### 1. Don't bypass the experiment protocol
 
 If you're about to make a SKILL.md change ≥50 lines, or a multi-file
