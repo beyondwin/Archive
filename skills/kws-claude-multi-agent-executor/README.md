@@ -1,191 +1,162 @@
 # kws-claude-multi-agent-executor
 
-A Claude Code skill that autonomously executes an implementation plan via an
-Opus **Orchestrator** + Sonnet **sub-agents** (Implementer / Reviewer /
-Verifier / Plan Reviewer / Docs Updater). The orchestrator drives a deterministic
-3-phase lifecycle, isolates each plan run in a git worktree, scores each task
-with a structured rubric, and persists notable-boundary events to a user-local
-learning log for future skill improvements.
+구현 계획(plan)과 디자인 스펙(spec)을 입력받아 **자율적으로** 끝까지 실행하는 Claude Code 스킬. Opus **오케스트레이터** 한 명이 새로 생성되는 Sonnet **서브 에이전트**들(Implementer / Reviewer / Verifier / Plan Reviewer / Docs Updater)에게 작업을 분배합니다. 오케스트레이터는 3단계 라이프사이클을 결정론적으로 진행하며, 각 실행은 별도의 git worktree에 격리되고, 모든 태스크는 구조화된 루브릭으로 채점되며, 주요 이벤트는 사용자 로컬 학습 로그에 영구 저장되어 스킬 자체의 개선에 사용됩니다.
 
-**Current version**: `2.9.0` (2026-05-14) — see [`HISTORY.md`](./HISTORY.md) for
-the version timeline.
+**현재 버전**: `2.9.0` (2026-05-14) — 버전 타임라인은 [`HISTORY.md`](./HISTORY.md) 참조.
 
-## Quick start
+---
 
-The skill is installed at `~/.claude/skills/kws-claude-multi-agent-executor/`
-(symlinked from this source). Invoke it from Claude Code:
+## 빠른 시작
+
+스킬은 `~/.claude/skills/kws-claude-multi-agent-executor/` 에 심링크로 설치되어 있습니다. Claude Code에서:
 
 ```
-/kws-claude-multi-agent-executor plan=<path-to-plan.md> spec=<path-to-spec.md>
+/kws-claude-multi-agent-executor plan=<계획문서경로> spec=<스펙문서경로>
 ```
 
-Optional invocation parameters: `risk=<low|mid|high>`, `docs_scope=<file1,file2>`,
-`plan2=<chained-second-plan.md>`, `mode=<interactive|headless>`. Full invocation
-contract: see [`SKILL.md`](./SKILL.md) Phase 0.
+선택 인자: `risk=<low|mid|high>`, `docs_scope=<file1,file2>`, `plan2=<연결할둘째계획.md>`, `mode=<interactive|headless>`. 전체 호출 계약은 [`SKILL.md`](./SKILL.md) Phase 0 참조.
 
-## Document map — where to find what
+자세한 사용법·시나리오·트러블슈팅은 [`docs/usage.md`](./docs/usage.md) 부터 읽으세요.
 
-### I want to understand…
+## 문서 지도 — 어디서 무엇을 찾는가
 
-| Question | Document |
-|----------|----------|
-| What this skill is and a quick mental model | This file (above) + [`ARCHITECTURE.md`](./ARCHITECTURE.md) §1 |
-| The complete runtime behavior — phases, sub-agents, dispatch, scoring | [`ARCHITECTURE.md`](./ARCHITECTURE.md) §2-§12 |
-| A guided walkthrough of one plan execution | [`docs/how-it-works.md`](./docs/how-it-works.md) |
-| What every term means (orchestrator / sub-agent / worktree / risk tier / …) | [`docs/glossary.md`](./docs/glossary.md) |
-| How version 2.X differs from 2.Y | [`HISTORY.md`](./HISTORY.md) §1 |
-| Which improvement areas have been touched and when | [`HISTORY.md`](./HISTORY.md) §2 |
+### 개념을 이해하고 싶다
 
-### I want to run / operate the skill…
+| 질문 | 문서 |
+|------|------|
+| 이 스킬이 뭐고, 머릿속에 어떻게 그려야 하나 | 이 파일 위쪽 + [`ARCHITECTURE.md`](./ARCHITECTURE.md) §1 |
+| 런타임 동작 전반 — 단계·서브에이전트·디스패치·채점 | [`ARCHITECTURE.md`](./ARCHITECTURE.md) §2-§12 |
+| 한 번의 실행이 어떻게 진행되는지 시뮬레이션 | [`docs/how-it-works.md`](./docs/how-it-works.md) |
+| 용어 사전 (orchestrator / sub-agent / worktree / risk tier 등) | [`docs/glossary.md`](./docs/glossary.md) |
+| 2.X와 2.Y의 차이 | [`HISTORY.md`](./HISTORY.md) §1 |
+| 어떤 영역이 언제 개선되었나 | [`HISTORY.md`](./HISTORY.md) §2 |
+| **왜 이런 설계인가 (입문)** | [`docs/design-decisions.md`](./docs/design-decisions.md) |
 
-| Task | Document |
-|------|----------|
-| Invoke the skill on a plan | [`SKILL.md`](./SKILL.md) Phase 0 §Invocation |
-| Run the regression eval suite | [`evals/README.md`](./evals/README.md) |
-| Read or analyze the learning log | [`references/learning-log.md`](./references/learning-log.md) |
-| Diagnose a failed run | [`docs/troubleshooting.md`](./docs/troubleshooting.md) |
-| Replay a specific session for debugging | [`docs/how-it-works.md`](./docs/how-it-works.md) §Replay |
+### 스킬을 실행·운영하고 싶다
 
-### I want to contribute / change behavior…
+| 작업 | 문서 |
+|------|------|
+| **호출법·인자·시나리오** | [`docs/usage.md`](./docs/usage.md) |
+| 스킬을 계획에 적용 | [`SKILL.md`](./SKILL.md) Phase 0 §Invocation |
+| 회귀 eval 스위트 실행 | [`evals/README.md`](./evals/README.md) |
+| 학습 로그 읽기·분석 | [`references/learning-log.md`](./references/learning-log.md) |
+| 실패한 실행 진단 | [`docs/troubleshooting.md`](./docs/troubleshooting.md) |
+| 특정 세션 디버깅 (리플레이) | [`docs/how-it-works.md`](./docs/how-it-works.md) §Replay |
 
-| Task | Document |
-|------|----------|
-| Where AI contributors should start | [`docs/onboarding-for-ai-agents.md`](./docs/onboarding-for-ai-agents.md) |
-| Required record-keeping protocol (experiment / history / advisor) | [`AGENTS.md`](./AGENTS.md) |
-| Start a new experiment (≥50-line change or non-trivial hypothesis) | [`docs/experiments/README.md`](./docs/experiments/README.md) + [`docs/experiments/_template/`](./docs/experiments/_template/) |
-| Add a new eval fixture | [`evals/README.md`](./evals/README.md) §Fixture format |
-| Understand why a design decision was made | [`docs/decision-log.md`](./docs/decision-log.md) |
-| Bump version + release | [`AGENTS.md`](./AGENTS.md) §ARCHITECTURE.md sync + [`HISTORY.md`](./HISTORY.md) §Update protocol |
+### 동작을 바꾸거나 기여하고 싶다
 
-### I want to understand limits and future work…
+| 작업 | 문서 |
+|------|------|
+| AI 기여자가 가장 먼저 읽어야 할 곳 | [`docs/onboarding-for-ai-agents.md`](./docs/onboarding-for-ai-agents.md) |
+| 필수 기록 프로토콜 (experiment / history / advisor) | [`AGENTS.md`](./AGENTS.md) |
+| 새 실험 시작 (≥50줄 변경, 또는 비자명한 가설) | [`docs/experiments/README.md`](./docs/experiments/README.md) + [`docs/experiments/_template/`](./docs/experiments/_template/) |
+| 새 eval 픽스처 추가 | [`evals/README.md`](./evals/README.md) §Fixture format |
+| 특정 설계 결정의 배경 | [`docs/decision-log.md`](./docs/decision-log.md) |
+| 버전 번프 + 릴리즈 | [`AGENTS.md`](./AGENTS.md) §ARCHITECTURE.md sync + [`HISTORY.md`](./HISTORY.md) §Update protocol |
 
-| Question | Document |
-|----------|----------|
-| What's known to be unreliable / fragile / partially-validated | [`docs/risks-and-limitations.md`](./docs/risks-and-limitations.md) |
-| What's been considered and deliberately deferred | [`docs/deferred-candidates.md`](./docs/deferred-candidates.md) |
-| Why a specific decision was made (and the alternatives considered) | [`docs/decision-log.md`](./docs/decision-log.md) → individual D### files |
-| What recent experiments produced | [`docs/experiments/`](./docs/experiments/) |
+### 한계와 향후 작업을 알고 싶다
 
-### I'm an AI agent continuing this work in a future session
+| 질문 | 문서 |
+|------|------|
+| 무엇이 불안정·취약하거나 부분만 검증되었나 | [`docs/risks-and-limitations.md`](./docs/risks-and-limitations.md) |
+| 무엇이 의도적으로 미뤄졌나 | [`docs/deferred-candidates.md`](./docs/deferred-candidates.md) |
+| 특정 결정의 대안과 채택 이유 | [`docs/decision-log.md`](./docs/decision-log.md) → 개별 D### 파일 |
+| 최근 실험 결과 | [`docs/experiments/`](./docs/experiments/) |
 
-Read **in this order**:
+### 나는 다음 세션에서 이 작업을 이어받는 AI 에이전트다
 
-1. This README (you are here)
-2. [`docs/onboarding-for-ai-agents.md`](./docs/onboarding-for-ai-agents.md) — operating norms, where to start
-3. [`AGENTS.md`](./AGENTS.md) — record-keeping protocol (REQUIRED)
-4. [`ARCHITECTURE.md`](./ARCHITECTURE.md) §1-§4 — orchestrator-worker mental model
-5. [`docs/risks-and-limitations.md`](./docs/risks-and-limitations.md) — known fragilities
-6. [`HISTORY.md`](./HISTORY.md) §1 most-recent two entries — what changed recently
-7. [`docs/decision-log.md`](./docs/decision-log.md) — index into the deeper "why"s
+**아래 순서로 읽으세요**:
 
-Then load specifics (SKILL.md, learning-log.md, fixture YAMLs, etc.) on demand.
+1. 이 README (현재 위치)
+2. [`docs/onboarding-for-ai-agents.md`](./docs/onboarding-for-ai-agents.md) — 운영 규범, 진입점
+3. [`AGENTS.md`](./AGENTS.md) — 기록 프로토콜 (**필수**)
+4. [`ARCHITECTURE.md`](./ARCHITECTURE.md) §1-§4 — orchestrator-worker 멘탈 모델
+5. [`docs/risks-and-limitations.md`](./docs/risks-and-limitations.md) — 알려진 취약점
+6. [`HISTORY.md`](./HISTORY.md) §1 가장 최근 2개 항목 — 최근 변경
+7. [`docs/decision-log.md`](./docs/decision-log.md) — "왜"에 대한 깊은 인덱스
 
-## Key invariants (memorize these)
+이후 필요할 때 SKILL.md / learning-log.md / 픽스처 YAML 등을 로드.
 
-These are the load-bearing rules. Violating them breaks the skill in ways
-that may not surface until much later.
+## 핵심 불변식 (반드시 외울 것)
 
-1. **One orchestrator, one git worktree, one `state.json`.** Plan execution is
-   sequential per worktree. Concurrent runs use separate worktrees (no shared
-   state). See [`ARCHITECTURE.md`](./ARCHITECTURE.md) §5-§6.
-2. **Sub-agents NEVER call the learning-log helper directly.** They write
-   candidate JSON to `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`;
-   the orchestrator (single writer) invokes `append`. See [`references/learning-log.md`](./references/learning-log.md).
-3. **Step 7.5 init-run is MANDATORY** (v2.8.1). Skipping it breaks
-   observability for the entire run — no meta.json, no events.jsonl. The
-   `LEARNING_LOG_INIT:` marker in run.jsonl is the post-run audit signal.
-4. **`close-run` runs on every exit path**: `outcome=success` (Phase 2 done),
-   `outcome=blocked` (state-write failure, exhausted escalation), `outcome=aborted`
-   (user/hook abort). Hard crash leaves `outcome=unknown` (honest).
-5. **Risk tiering drives TDD strictness, not model selection.** Model
-   selection is documented as Orchestrator=Opus / Sub-agents=Sonnet but the
-   `--model` flag is not yet passed to `claude -p` subprocesses ([`docs/risks-and-limitations.md`](./docs/risks-and-limitations.md) §Headless model gap).
-6. **Reviewer emits `SPEC_COVERAGE_WALK:` before scoring** (v2.9.0). Two
-   sub-steps: A enumerate stated bullets, B adversarial generation from
-   meta-rules. See [`references/reviewer-prompt.md`](./references/reviewer-prompt.md).
+이들은 골격을 떠받치는 규칙입니다. 위반하면 한참 뒤에 표면화되는 방식으로 스킬이 깨집니다.
 
-## Repo layout
+1. **오케스트레이터 1개, worktree 1개, `state.json` 1개.** worktree당 계획 실행은 순차적입니다. 동시 실행은 별도 worktree (공유 상태 없음). [`ARCHITECTURE.md`](./ARCHITECTURE.md) §5-§6 참조.
+2. **서브 에이전트는 학습 로그 헬퍼를 절대 직접 호출하지 않습니다.** 후보 JSON을 `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json` 에 쓰고, 오케스트레이터(단일 작성자)가 `append`를 호출합니다. [`references/learning-log.md`](./references/learning-log.md) 참조.
+3. **Step 7.5 `init-run`은 필수입니다** (v2.8.1). 건너뛰면 실행 전체의 관측성이 깨집니다 (meta.json 없음, events.jsonl 없음). `run.jsonl`의 `LEARNING_LOG_INIT:` 마커가 사후 감사 신호입니다.
+4. **`close-run`은 모든 종료 경로에서 호출됩니다**: `outcome=success` (Phase 2 정상 종료), `outcome=blocked` (state 쓰기 실패, 에스컬레이션 소진), `outcome=aborted` (사용자/훅 중단). 하드 크래시는 `outcome=unknown` (정직).
+5. **위험 등급은 TDD 엄격도를 결정합니다 — 모델 선택이 아닙니다.** 모델 선택은 Orchestrator=Opus / Sub-agents=Sonnet으로 문서화되어 있지만, 아직 `--model` 플래그가 `claude -p` 서브프로세스에 전달되지 않습니다 ([`docs/risks-and-limitations.md`](./docs/risks-and-limitations.md) §Headless model gap).
+6. **Reviewer는 채점 전에 `SPEC_COVERAGE_WALK:`를 발산합니다** (v2.9.0). 두 단계: A) 명시된 요구사항 열거, B) 메타 규칙 기반 적대적 생성. [`references/reviewer-prompt.md`](./references/reviewer-prompt.md) 참조.
+
+## 레포 레이아웃
 
 ```
 skills/kws-claude-multi-agent-executor/
-├── README.md                       ← you are here
-├── SKILL.md                        ← the executable skill (v2.9.0)
-├── ARCHITECTURE.md                 ← system-level design (14 sections)
-├── AGENTS.md                       ← AI-contributor operational protocol
-├── HISTORY.md                      ← version timeline + improvement areas + experiment index
-├── docs/
-│   ├── how-it-works.md             ← guided runtime walkthrough  [NEW]
-│   ├── glossary.md                 ← terminology  [NEW]
-│   ├── decision-log.md             ← ADR cross-index  [NEW]
-│   ├── risks-and-limitations.md    ← consolidated risk register  [NEW]
-│   ├── deferred-candidates.md      ← future-work shelf  [NEW]
-│   ├── onboarding-for-ai-agents.md ← what an AI agent reads first  [NEW]
-│   ├── troubleshooting.md          ← common issues + fixes  [NEW]
-│   ├── doc-update-protocol.md      ← which docs to update when shipping each kind of change  [NEW]
-│   ├── how-to/
-│   │   ├── add-a-fixture.md            ← extending the eval suite
-│   │   ├── investigate-regression.md   ← debugging when reps regress
-│   │   └── extend-event-type.md        ← adding a new learning-log event type
-│   ├── snapshots/
-│   │   └── v2.9.0.md               ← archaeological state snapshot at ship time
-│   └── experiments/
-│       ├── README.md               ← experiment index
-│       ├── _template/              ← scaffold for new experiments
-│       ├── v2.7-quality-mode/      ← closed (negative result on quality_plus)
-│       ├── v2.8-learning-log/      ← shipped (full-fixture smoke PARTIAL, v2.8.1 closes the gap)
-│       └── v2.9-reviewer-spec-coverage/  ← shipped 2026-05-14
-├── references/
-│   ├── implementer-prompt.md       ← sub-agent prompt template
-│   ├── reviewer-prompt.md          ← sub-agent prompt template (v2.9.0 Spec Coverage Walk)
-│   ├── verifier-prompt.md          ← sub-agent prompt template
-│   ├── plan-reviewer-prompt.md     ← sub-agent prompt template
-│   ├── docs-updater-prompts.md     ← Phase 2 docs-update sub-agent prompts
-│   ├── escalation-playbook.md      ← ESCALATE-type → event severity mapping
-│   ├── learning-log.md             ← schema + single-writer contract + 10 event types
-│   └── best-of-n-judge-prompt.md   ← orphan reference (v2.7 deferred)
+├── README.md                       ← 현재 위치 (한글, 사람용 진입점)
+├── SKILL.md                        ← 실행 가능한 스킬 (v2.9.0, 영어, 에이전트 전용)
+├── ARCHITECTURE.md                 ← 시스템 설계 (한글, 14개 섹션)
+├── AGENTS.md                       ← AI 기여자 운영 프로토콜 (영어, 에이전트 전용)
+├── HISTORY.md                      ← 버전 타임라인 + 개선 영역 + 실험 인덱스
+├── docs/                           ← 사람용 한글 심화 자료
+│   ├── usage.md                    ← 사용법·시나리오·인자 [NEW 한글]
+│   ├── design-decisions.md         ← 설계 결정의 배경 [NEW 한글]
+│   ├── how-it-works.md             ← 런타임 시뮬레이션 [한글]
+│   ├── glossary.md                 ← 용어 사전 [한글]
+│   ├── decision-log.md             ← ADR 교차 인덱스 [한글]
+│   ├── risks-and-limitations.md    ← 통합 리스크 레지스터 [한글]
+│   ├── deferred-candidates.md      ← 향후 작업 선반 [한글]
+│   ├── onboarding-for-ai-agents.md ← AI 에이전트가 먼저 읽는 곳 (영어 유지 — 대상이 에이전트)
+│   ├── troubleshooting.md          ← 흔한 문제 + 해결 [한글]
+│   ├── doc-update-protocol.md      ← 변경 종류별 갱신 체크리스트 [한글]
+│   ├── how-to/                     ← 작업 가이드
+│   ├── snapshots/                  ← 출시 시점 상태 스냅샷
+│   └── experiments/                ← 실험 기록
+├── references/                     ← 영어, 에이전트 프롬프트 (절대 한글화 X)
+│   ├── implementer-prompt.md       ← 서브에이전트 프롬프트 템플릿
+│   ├── reviewer-prompt.md          ← (v2.9.0 Spec Coverage Walk)
+│   ├── verifier-prompt.md
+│   ├── plan-reviewer-prompt.md
+│   ├── docs-updater-prompts.md     ← Phase 2 문서 업데이트 프롬프트
+│   ├── escalation-playbook.md      ← ESCALATE 유형 → 이벤트 심각도 매핑
+│   ├── learning-log.md             ← 스키마 + 단일 작성자 계약 + 10개 이벤트 타입
+│   └── best-of-n-judge-prompt.md   ← 고아 참조 (v2.7 deferred)
 ├── evals/
-│   ├── README.md                   ← eval harness explainer
-│   ├── run.sh                      ← per-fixture harness (bash + jq)
-│   ├── rubric.py                   ← deterministic correctness measurement
-│   ├── judge.md                    ← LLM-as-judge prompt
-│   ├── check_learning_log.py       ← 16 deterministic checks (helper)
-│   ├── check_skill_contract.py     ← 18 deterministic checks (skill contract)
-│   ├── fixtures/                   ← 8 YAML fixtures (01-08)
-│   ├── baselines/                  ← per-version judge mean + scores
-│   └── calibration/                ← judge calibration test runner (v2.7 artifact)
+│   ├── README.md
+│   ├── run.sh                      ← 픽스처별 하네스 (bash + jq)
+│   ├── rubric.py                   ← 결정론적 정확성 측정
+│   ├── judge.md                    ← LLM-as-judge 프롬프트
+│   ├── check_learning_log.py       ← 16개 결정론적 체크
+│   ├── check_skill_contract.py     ← 18개 결정론적 체크
+│   ├── fixtures/                   ← 8개 YAML 픽스처 (01-08)
+│   ├── baselines/                  ← 버전별 judge 평균 + 점수
+│   └── calibration/                ← judge 캘리브레이션 (v2.7 산출물)
 ├── scripts/
-│   └── append_learning_event.py    ← 4-subcommand helper (init-run / append / close-run / append-session-id)
+│   └── append_learning_event.py    ← 4개 서브커맨드 헬퍼
 └── templates/
-    └── (currently empty — reserved for future scaffolds)
+    └── (현재 비어있음 — 향후 스캐폴드 예약)
 ```
 
-## Cross-Archive context
+**언어 정책**:
+- `SKILL.md`, `AGENTS.md`, `references/*` — 영어 유지 (LLM이 직접 읽는 프롬프트, 한글화 시 토큰 30~50% 증가 + 영어 학습 패턴 약화)
+- 그 외 사람이 읽는 문서 — 한국어
 
-This skill lives as a standalone source directory under Archive's `skills/`
-tree. Related artifacts outside this directory:
+자세한 분리 원칙은 [`docs/design-decisions.md`](./docs/design-decisions.md) §문서 언어 정책 참조.
 
-- **Design specs**: `docs/superpowers/specs/2026-05-13-kws-claude-multi-agent-executor-*.md`
-- **Implementation plans**: `docs/superpowers/plans/2026-05-13-kws-claude-multi-agent-executor-*.md`
-- **Sibling skill** (Codex executor parallel design): `skills/kws-codex-plan-executor/`
-- **Archive skill index**: `skills/README.md`
+## Archive 레포 내 교차 컨텍스트
 
-## Keeping docs current
+이 스킬은 Archive의 `skills/` 트리에 독립 디렉터리로 존재합니다. 디렉터리 밖의 관련 산출물:
 
-Documentation drifts when changes ship without doc updates. To prevent
-that here:
+- **디자인 스펙**: `docs/superpowers/specs/2026-05-13-kws-claude-multi-agent-executor-*.md`
+- **구현 계획**: `docs/superpowers/plans/2026-05-13-kws-claude-multi-agent-executor-*.md`
+- **자매 스킬** (Codex executor 병렬 설계): `skills/kws-codex-plan-executor/`
+- **Archive 스킬 인덱스**: `skills/README.md`
 
-- **Doc-update protocol** ([`docs/doc-update-protocol.md`](./docs/doc-update-protocol.md))
-  — a per-change-type checklist (skill behavior / new event / new fixture / risk / etc.)
-  saying exactly which docs to touch when you ship that kind of change.
-- **Freshness eval** (`evals/check_doc_freshness.py`) — deterministic
-  checks for the most regression-prone drift: SKILL.md/README version
-  consistency, broken internal markdown links across the doc tree, and stale
-  "TODO/FIXME" markers. Runs in the same preflight as the other two contract
-  evals.
-- **Snapshots** ([`docs/snapshots/`](./docs/snapshots/)) — capture full
-  state at each major version. Currently: `v2.9.0.md`. Add one with
-  every minor-version bump.
+## 문서 신선도 유지
 
-The freshness eval is **non-blocking by default** (reports drift,
-doesn't fail the harness). Promote to blocking if you find yourself
-ignoring its warnings.
+변경이 머지될 때 문서가 같이 갱신되지 않으면 드리프트가 발생합니다. 이를 방지하기 위해:
+
+- **문서 갱신 프로토콜** ([`docs/doc-update-protocol.md`](./docs/doc-update-protocol.md)) — 변경 종류별 (스킬 동작 / 새 이벤트 / 새 픽스처 / 위험 등) "어떤 문서를 어떻게 건드릴지" 체크리스트.
+- **신선도 eval** (`evals/check_doc_freshness.py`) — 가장 회귀되기 쉬운 드리프트를 결정론적으로 검사: SKILL.md/README 버전 일치, 문서 트리의 내부 markdown 링크 깨짐, 오래된 TODO/FIXME 마커. 다른 두 계약 eval과 같은 사전 점검 단계에서 실행.
+- **스냅샷** ([`docs/snapshots/`](./docs/snapshots/)) — 메이저 버전마다 전체 상태 캡처. 현재: `v2.9.0.md`. 마이너 버전 번프마다 추가.
+
+신선도 eval은 **기본적으로 비차단**입니다 (드리프트를 보고하지만 하네스를 실패시키진 않음). 경고를 자꾸 무시하게 되면 차단으로 승격하세요.

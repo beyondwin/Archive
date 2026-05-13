@@ -1,36 +1,28 @@
 # Architecture — kws-claude-multi-agent-executor
 
-How this skill works, top to bottom. For runtime instructions see `SKILL.md`.
-For version history see `HISTORY.md`. For experiment records see
-`docs/experiments/`.
+이 스킬이 위에서 아래로 어떻게 동작하는지. 런타임 명령어는 `SKILL.md`, 버전 이력은 `HISTORY.md`, 실험 기록은 `docs/experiments/` 참조.
 
-**When to update this file**: see [§13 Update protocol](#13-update-protocol).
+**이 파일을 갱신할 때**: [§13 갱신 프로토콜](#13-갱신-프로토콜) 참조.
 
 ---
 
-## 1. What the skill does
+## 1. 스킬이 하는 일
 
-Takes a plan document + spec document as input, then **autonomously** executes
-every task in the plan from start to finish. The user doesn't approve between
-tasks. The skill drives the entire delivery cycle: write code, review code,
-verify tests, update docs, repeat.
+계획 문서 + 스펙 문서를 입력받아 계획의 모든 태스크를 처음부터 끝까지 **자율적으로** 실행합니다. 태스크 사이에 사용자 승인을 받지 않습니다. 스킬이 전체 딜리버리 사이클을 주도합니다: 코드 작성, 코드 리뷰, 테스트 검증, 문서 갱신, 반복.
 
-Inputs:
-- `plan=<path>` — markdown plan with `### Task N:` sections, each declaring
-  `**Files:**` and optionally `## Acceptance Criteria`
-- `spec=<path>` — design spec the implementation must match
-- Optional: `risk=low|mid|high` (override per-task risk), `docs_scope=...`
+입력:
+- `plan=<경로>` — `### Task N:` 섹션들을 가진 markdown 계획. 각 섹션은 `**Files:**` 를 선언하고, 선택적으로 `## Acceptance Criteria` 를 포함.
+- `spec=<경로>` — 구현이 따라야 할 디자인 스펙.
+- 선택: `risk=low|mid|high` (태스크별 위험 등급 일괄 오버라이드), `docs_scope=...`.
 
-Output: a sequence of commits on an isolated worktree, plus a final summary
-report. The main branch is never modified during execution.
+출력: 격리된 worktree 위에 만들어진 일련의 커밋과 최종 요약 리포트. 실행 동안 메인 브랜치는 절대 변경되지 않습니다.
 
-## 2. The Orchestrator-Worker pattern
+## 2. 오케스트레이터-워커 패턴
 
-Anthropic's canonical multi-agent topology. One Opus orchestrator drives
-many fresh Sonnet sub-agents.
+Anthropic이 정형화한 멀티 에이전트 토폴로지. Opus 오케스트레이터 한 명이 새로 생성되는 Sonnet 서브 에이전트 여러 명을 지휘합니다.
 
 ```
-                Opus Orchestrator (single session)
+                Opus 오케스트레이터 (단일 세션)
                       │
    ┌─────┬────────────┼─────────────┬──────────────┐
    │     │            │             │              │
@@ -39,138 +31,104 @@ many fresh Sonnet sub-agents.
  (Sonnet, fresh)     (Sonnet,    headless)       headless)
  preflight)          fresh)
                       │
-                state.json (external memory)
-                git worktree (isolated workspace)
+                state.json (외부 메모리)
+                git worktree (격리된 작업 공간)
 ```
 
-**Why orchestrator-worker, not other topologies:**
-- Single-session orchestrator can run 50+ task plans without running out
-  of context, because sub-agents return *summaries* — the orchestrator
-  never accumulates raw work in its own buffer.
-- Fresh sub-agents start with no priors → less drift, more determinism per
-  task.
-- Sub-agents that misbehave (escalation, malformed output) are caught at
-  the orchestrator boundary, never poisoning future tasks.
+**왜 오케스트레이터-워커이고 다른 토폴로지가 아닌가**:
+- 단일 세션 오케스트레이터가 50+ 태스크 계획을 컨텍스트를 다 쓰지 않고 실행할 수 있는 이유는 서브 에이전트가 *요약*만 돌려주기 때문입니다. 오케스트레이터는 원본 작업물을 자기 버퍼에 누적하지 않습니다.
+- 새로 생성된 서브 에이전트는 사전 정보가 없어서 → 드리프트가 적고 태스크별 결정론이 강합니다.
+- 잘못 행동하는 서브 에이전트(에스컬레이션, 형식 깨진 출력)는 오케스트레이터 경계에서 포착되어 이후 태스크를 오염시키지 않습니다.
 
-**What the orchestrator never does**: it never writes code itself. It
-reads, decides, dispatches, parses results, updates state. The pattern is
-"manager, not contributor."
+**오케스트레이터가 절대 하지 않는 일**: 코드를 직접 작성하지 않습니다. 읽고, 결정하고, 디스패치하고, 결과를 파싱하고, 상태를 갱신합니다. 패턴은 "기여자가 아닌 매니저"입니다.
 
-## 3. Lifecycle: 3 phases
+## 3. 라이프사이클: 3단계
 
-### Phase 0 — Setup (once)
+### Phase 0 — 셋업 (1회)
 
-1. Parse invocation arguments (`plan=`, `spec=`, `risk=`, `docs_scope=`,
-   experimental `mode=`).
-2. Check the tree is clean (`git status` empty); halt if not.
-3. Create the work-isolation **worktree** at `<repo>/../worktrees/<branch>`.
-   All subsequent work happens here; `main` stays untouched.
-4. Install **safety hooks** into `<worktree>/.claude/settings.json`:
-   - `PreToolUse` blocks for `rm -rf`, `git push`, schema drops
-   - `PostToolUse` scan for debug artifacts (`console.log`, `TODO`,
-     `FIXME`, `debugger`) on Edit/Write
-   - `SubagentStop` sanity check on Implementer output structure
-5. Read plan + spec. Run the **Ambiguity Gate**: detect missing Files
-   blocks, out-of-repo paths, contradictions. Halt for user clarification
-   if any.
-6. Assign **risk tiers** (LOW/MID/HIGH) per task (see §7).
-7. Snapshot **baseline test state** (pass/fail counts of current test
-   suite) for later regression comparison.
-8. Compute **compaction points** — task indices after which earlier
-   raw context can be dropped from orchestrator memory.
-9. Compute **wave structure** (P2) — group tasks by dependency. Within
-   a wave, tasks with non-overlapping file sets can run in parallel
-   sub-worktrees.
-10. Compute **effort buckets** (P5) per task — SMALL/MEDIUM/LARGE based
-    on file count, LOC estimate, declarations, risk.
-11. Run **Plan Reviewer preflight** (P3) — a headless Sonnet sub-agent
-    that mechanically audits the plan for missing AC blocks, contract
-    mismatches, dependency inconsistencies.
-12. Initialize `state.json` with all the computed metadata.
+1. 호출 인자 파싱 (`plan=`, `spec=`, `risk=`, `docs_scope=`, 실험적 `mode=`).
+2. 트리가 깨끗한지 확인 (`git status` 비어있음); 아니면 중단.
+3. 작업 격리용 **worktree**를 `<repo>/../worktrees/<branch>` 에 생성. 이후 모든 작업은 여기서 이뤄지고 `main`은 그대로.
+4. **안전 훅**을 `<worktree>/.claude/settings.json` 에 설치:
+   - `PreToolUse` — `rm -rf`, `git push`, 스키마 드롭 차단
+   - `PostToolUse` — Edit/Write 시 디버그 아티팩트(`console.log`, `TODO`, `FIXME`, `debugger`) 스캔
+   - `SubagentStop` — Implementer 출력 구조 sanity 체크
+5. 계획 + 스펙 읽기. **모호성 게이트** 실행: 누락된 Files 블록, 레포 밖 경로, 모순 검출. 발견 시 사용자 확인 대기.
+6. 태스크별 **위험 등급** 할당 (LOW/MID/HIGH) — §7 참조.
+7. **베이스라인 테스트 상태** 스냅샷 (현재 테스트 스위트의 pass/fail 카운트) — 나중 회귀 비교용.
+8. **컴팩션 포인트** 계산 — 이 인덱스 이후로는 이전 원본 컨텍스트를 오케스트레이터 메모리에서 드롭해도 되는 태스크 경계.
+9. **웨이브 구조** 계산 (P2) — 의존성 기준으로 태스크 그룹핑. 한 웨이브 안에서 파일 집합이 겹치지 않는 태스크들은 병렬 sub-worktree에서 실행 가능.
+10. 태스크별 **노력 버킷** 계산 (P5) — 파일 수, LOC 추정, 선언 수, 위험을 종합해 SMALL/MEDIUM/LARGE.
+11. **Plan Reviewer 사전 검토** 실행 (P3) — headless Sonnet 서브에이전트가 계획을 기계적으로 감사 (누락된 AC 블록, 계약 불일치, 의존성 비일관성).
+12. 모든 계산된 메타데이터로 `state.json` 초기화.
 
-### Phase 1 — Per-task cycle (repeated)
+### Phase 1 — 태스크 사이클 (반복)
 
-For each task in `state.execution_plan`:
+`state.execution_plan`의 각 태스크에 대해:
 
 ```
-Step 1: Dispatch Implementer (Sonnet, fresh)
-   │  Prompt: spec excerpt, files, risk, effort_guidance,
-   │          previous_issues (if retry)
+Step 1: Implementer 디스패치 (Sonnet, fresh)
+   │  프롬프트: 스펙 발췌, 파일, 위험, effort_guidance,
+   │           previous_issues (재시도일 때)
    ↓ STATUS: DONE | ESCALATE
    
-Step 2: Dispatch Combined Reviewer (Sonnet, fresh)
-   │  Inputs: spec, diff, previous_issues
-   │  Outputs: SPEC_SCORE, QUALITY_SCORE (0.0-1.0), SPEC_FAULT
+Step 2: Combined Reviewer 디스패치 (Sonnet, fresh)
+   │  입력: 스펙, diff, previous_issues
+   │  출력: SPEC_SCORE, QUALITY_SCORE (0.0-1.0), SPEC_FAULT
    ↓ tier:
-   │  PASS  (≥0.85 spec AND ≥0.75 quality) → Step 3
-   │  WARN  (≥0.70 AND ≥0.60)             → Step 3 + record warnings
-   │  FAIL                                  → branch:
+   │  PASS  (spec≥0.85 AND quality≥0.75) → Step 3
+   │  WARN  (≥0.70 AND ≥0.60)            → Step 3 + 경고 기록
+   │  FAIL                                → 분기:
    │     spec_contradicts → spec edit branch (P15)
-   │     unclear          → clarification (no spec text change)
-   │     implementer_omitted/none → standard retry (max 3)
+   │     unclear          → 명확화 (스펙 텍스트 변경 없음)
+   │     implementer_omitted/none → 표준 재시도 (최대 3)
    ↓
-Step 3: Verifier (MID/HIGH only — LOW batched at compaction points)
-   │  headless `claude -p` → JSON result file
-   │  Runs full test suite, compares to baseline
-   ↓ result:
+Step 3: Verifier (MID/HIGH만 — LOW는 컴팩션 포인트에서 배치)
+   │  headless `claude -p` → JSON 결과 파일
+   │  전체 테스트 스위트 실행, 베이스라인과 비교
+   ↓ 결과:
    │  PASS                → Step 4
-   │  FAIL (test broke)   → retry (max 3)
-   │  ENV_BLOCKER         → ESCALATE to user
+   │  FAIL (테스트 깨짐)  → 재시도 (최대 3)
+   │  ENV_BLOCKER         → 사용자에게 ESCALATE
    ↓
 Step 4: Agent Cleanup
-   │  Debug artifact scan (now hook-enforced per P1)
-   │  Protected-file check (no edits to .git, .orchestrator, ...)
-   │  Commit verification
+   │  디버그 아티팩트 스캔 (이제 P1 훅으로 강제됨)
+   │  보호 파일 체크 (.git, .orchestrator 등 편집 금지)
+   │  커밋 검증
    ↓
-   Advance to next task. Update state.json.
+   다음 태스크로 진행. state.json 갱신.
 ```
 
-**Parallel sub-flow (P2)**: when a wave has multiple tasks in the same
-parallel group, each runs in its own sub-worktree
-(`<worktree>/.parallel/task_N`). After all DONE: cherry-pick winning
-commits to the main worktree, then run Reviewer + Verifier sequentially
-on the merged state.
+**병렬 서브 플로우 (P2)**: 한 웨이브 내 같은 병렬 그룹에 여러 태스크가 있으면, 각각 자기 sub-worktree (`<worktree>/.parallel/task_N`) 에서 실행. 모두 DONE 후: 우승 커밋들을 메인 worktree로 cherry-pick. 머지된 상태에서 Reviewer + Verifier를 순차 실행.
 
-**LOW task batching**: LOW tasks skip per-task Verifier. They accumulate
-in `state.low_tasks_pending_verification`. At each compaction point and
-at Phase 2 entry, the batch Verifier runs all accumulated LOW tasks at
-once. If batch FAIL: bisect to identify offending task, reset, retry.
+**LOW 태스크 배칭**: LOW 태스크는 태스크별 Verifier를 건너뜁니다. `state.low_tasks_pending_verification` 에 누적됩니다. 각 컴팩션 포인트와 Phase 2 진입 시점에 배치 Verifier가 누적된 LOW 태스크를 한꺼번에 검증. 배치 FAIL이면 어느 태스크가 범인인지 이진 탐색, 리셋, 재시도.
 
-### Phase 2 — Cleanup (once at end)
+### Phase 2 — 마무리 (마지막에 1회)
 
-1. **Batch Verifier sweep** — verify any remaining LOW tasks.
-2. **Final Docs Updater** — headless Sonnet, given the consolidated
-   `FILES_CHANGED` across all tasks, updates README, CHANGELOG, related
-   docs.
-3. **Final Summary Report** — markdown summary delivered to the user:
-   tasks done/skipped, WARN list, quality_trend chart, total wall time,
-   total tokens, spec edits made.
+1. **배치 Verifier 스윕** — 남은 LOW 태스크 검증.
+2. **최종 Docs Updater** — headless Sonnet, 모든 태스크의 통합된 `FILES_CHANGED`를 받아 README, CHANGELOG, 관련 문서 갱신.
+3. **최종 요약 리포트** — markdown 요약을 사용자에게 전달: 완료/스킵된 태스크, WARN 목록, quality_trend 차트, 총 wall time, 총 토큰, 적용된 스펙 편집.
 
-## 4. Sub-agent roles (catalog)
+## 4. 서브 에이전트 역할 카탈로그
 
-| Role | Model | Dispatch | When | Output format |
-|------|-------|----------|------|---------------|
-| Plan Reviewer | Sonnet | headless | Phase 0 Step 0.6, once | JSON: `{status, issues[]}` |
-| Implementer | Sonnet | `Agent` tool (fresh) | Phase 1 Step 1, per task | Text: `STATUS:`, `COMMIT:`, `FILES_CHANGED:`, `FILES_TEST_CHANGED:` |
-| Combined Reviewer | Sonnet | `Agent` tool (fresh) | Phase 1 Step 2, per task | Text: `SPEC_SCORE:`, `QUALITY_SCORE:`, `SPEC_FAULT:`, `ISSUES:` |
-| Verifier | Sonnet | headless `claude -p` | Phase 1 Step 3 (MID/HIGH) + Phase 2 batch (LOW) | JSON: test results, regression list, environment status |
-| Phase Docs Updater | Sonnet | headless `claude -p` | Compaction points | Markdown summary + commit |
-| Final Docs Updater | Sonnet | headless `claude -p` | Phase 2 Step 1 | Markdown summary + commit |
+| 역할 | 모델 | 디스패치 방식 | 시점 | 출력 포맷 |
+|------|------|---------------|------|-----------|
+| Plan Reviewer | Sonnet | headless | Phase 0 Step 0.6, 1회 | JSON: `{status, issues[]}` |
+| Implementer | Sonnet | `Agent` 툴 (fresh) | Phase 1 Step 1, 태스크당 | Text: `STATUS:`, `COMMIT:`, `FILES_CHANGED:`, `FILES_TEST_CHANGED:` |
+| Combined Reviewer | Sonnet | `Agent` 툴 (fresh) | Phase 1 Step 2, 태스크당 | Text: `SPEC_SCORE:`, `QUALITY_SCORE:`, `SPEC_FAULT:`, `ISSUES:` |
+| Verifier | Sonnet | headless `claude -p` | Phase 1 Step 3 (MID/HIGH) + Phase 2 배치 (LOW) | JSON: 테스트 결과, 회귀 목록, 환경 상태 |
+| Phase Docs Updater | Sonnet | headless `claude -p` | 컴팩션 포인트 | Markdown 요약 + 커밋 |
+| Final Docs Updater | Sonnet | headless `claude -p` | Phase 2 Step 1 | Markdown 요약 + 커밋 |
 
-**`Agent` tool vs headless `claude -p`**:
-- `Agent` returns result into orchestrator's context — good for interactive
-  back-and-forth tasks where the orchestrator needs to read the structured
-  reply directly.
-- `claude -p` writes to a JSON file — good when the result is bulky
-  (test output, doc text) and the orchestrator only needs the verdict.
-  Avoids context bloat.
+**`Agent` 툴 vs headless `claude -p`**:
+- `Agent`는 결과를 오케스트레이터 컨텍스트로 반환 — 오케스트레이터가 구조화된 답을 직접 읽어야 하는 짧은 인터랙티브 태스크에 적합.
+- `claude -p`는 결과를 JSON 파일로 작성 — 결과가 크고(테스트 출력, 문서 본문) 오케스트레이터가 평가(verdict)만 필요할 때 적합. 컨텍스트 비대화 회피.
 
-## 5. State management (external memory)
+## 5. 상태 관리 (외부 메모리)
 
-`<worktree>/.orchestrator/state.json` is the **single source of truth**.
-Every orchestrator decision: read state.json → compute → mutate → write.
+`<worktree>/.orchestrator/state.json` 은 **유일한 진실의 출처**입니다. 모든 오케스트레이터 결정: state.json 읽기 → 계산 → 변경 → 쓰기.
 
-Selected fields (full schema in `SKILL.md` Phase 0 Step 6):
+주요 필드 (전체 스키마는 `SKILL.md` Phase 0 Step 6):
 
 ```json
 {
@@ -201,7 +159,7 @@ Selected fields (full schema in `SKILL.md` Phase 0 Step 6):
     ...
   ],
   "compaction_points": [4, 8, 12],
-  "quality_trend": [0.9, 0.85, 0.95, ...],   // rolling last 10
+  "quality_trend": [0.9, 0.85, 0.95, ...],   // 롤링 최근 10개
   "low_tasks_pending_verification": [...],
   "task_summaries": {
     "task_N": {"summary": "...", "warnings": [...]}
@@ -212,254 +170,195 @@ Selected fields (full schema in `SKILL.md` Phase 0 Step 6):
 }
 ```
 
-**Resumption**: because all state is in JSON, a fresh orchestrator session
-can resume from any point by reading state.json and continuing at the
-recorded task/step. This is how `mode: headless_pending` works — the
-spawning session writes minimal state, the spawned session fills it in.
+**재개(Resumption)**: 모든 상태가 JSON에 있으므로, 새 오케스트레이터 세션은 state.json만 읽어서 기록된 태스크/스텝에서 이어 실행할 수 있습니다. 이것이 `mode: headless_pending` 의 동작 원리입니다 — 스폰하는 세션이 최소 상태를 쓰고, 스폰된 세션이 채워 넣습니다.
 
-## 6. Isolation mechanisms
+## 6. 격리 메커니즘
 
-| Boundary | Mechanism |
-|----------|-----------|
-| Main branch ↔ skill execution | `git worktree` at `<repo>/../worktrees/<branch>` — separate working tree, no cross-contamination of working files |
-| Parallel tasks within a wave | Sub-worktrees at `<worktree>/.parallel/task_N/` — each task runs in its own checkout |
-| Orchestrator ↔ sub-agent context | Fresh sub-agent dispatch — Sonnet starts with no orchestrator priors; prompt carries only what it needs |
-| Sub-agent ↔ destructive ops | `.claude/settings.json` hooks block `rm -rf`, `git push`, schema drops via `PreToolUse` regex |
-| Sub-agent output validity | `SubagentStop` hook checks structure: `STATUS:` present, `COMMIT:` present if DONE, `FILES_CHANGED:` present. Malformed → orchestrator sees rejection, re-dispatches |
-| Debug artifacts leaking into commits | `PostToolUse` hook scans diff lines for `console.log`/`TODO`/`FIXME`/`debugger` on Edit/Write |
+| 경계 | 메커니즘 |
+|------|----------|
+| 메인 브랜치 ↔ 스킬 실행 | `git worktree` at `<repo>/../worktrees/<branch>` — 별도 워킹 트리, 작업 파일 교차 오염 없음 |
+| 한 웨이브 내 병렬 태스크 | sub-worktree at `<worktree>/.parallel/task_N/` — 각 태스크가 자기 체크아웃 |
+| 오케스트레이터 ↔ 서브에이전트 컨텍스트 | fresh 서브에이전트 디스패치 — Sonnet은 오케스트레이터 사전 정보 없이 시작, 프롬프트가 필요한 것만 전달 |
+| 서브에이전트 ↔ 파괴적 연산 | `.claude/settings.json` 훅이 `PreToolUse` 정규식으로 `rm -rf`, `git push`, 스키마 드롭 차단 |
+| 서브에이전트 출력 유효성 | `SubagentStop` 훅이 구조 검사: `STATUS:` 존재, DONE이면 `COMMIT:` 존재, `FILES_CHANGED:` 존재. 형식 깨짐 → 오케스트레이터가 거부로 인식하고 재디스패치 |
+| 디버그 아티팩트가 커밋으로 새는 것 | `PostToolUse` 훅이 Edit/Write 시 diff 라인에서 `console.log`/`TODO`/`FIXME`/`debugger` 스캔 |
 
-## 7. Risk tiers
+## 7. 위험 등급
 
-Assigned by orchestrator at Phase 0 Step 4. Controls verifier dispatch
-timing, effort bucket eligibility, and (in proposed quality_plus) model
-selection.
+오케스트레이터가 Phase 0 Step 4에서 할당. Verifier 디스패치 타이밍, 노력 버킷 적격성, (제안된 quality_plus에서는) 모델 선택을 제어.
 
-| Tier | Criteria | Verifier | Effort bucket eligibility |
-|------|----------|----------|---------------------------|
-| LOW  | 1 file, isolated module, no API change | Batched at compaction points | SMALL eligible (≤8 tool calls) |
-| MID  | 2+ modules, shared state, config changes | Per-task | MEDIUM default (10–25 tool calls) |
-| HIGH | DB/schema/API surface, breaking change, explicitly marked | Per-task | LARGE forced (25–60 tool calls) |
+| 등급 | 기준 | Verifier | 노력 버킷 적격성 |
+|------|------|----------|-------------------|
+| LOW  | 1 파일, 격리된 모듈, API 변경 없음 | 컴팩션 포인트에서 배치 | SMALL 가능 (≤8 툴 콜) |
+| MID  | 2+ 모듈, 공유 상태, 설정 변경 | 태스크별 | MEDIUM 기본 (10–25 툴 콜) |
+| HIGH | DB/스키마/API 표면, breaking change, 명시적 마킹 | 태스크별 | LARGE 강제 (25–60 툴 콜) |
 
-**LOW→MID auto-upgrade rule**: if a LOW task touches any file already
-touched by an earlier LOW task in the same plan, the later task is
-upgraded to MID. Prevents batch Verifier from accumulating overlapping
-changes that hide which task broke what.
+**LOW→MID 자동 승격 규칙**: 한 LOW 태스크가 같은 계획 안의 이전 LOW 태스크가 이미 건드린 파일을 건드리면, 후행 태스크를 MID로 승격. 배치 Verifier가 겹치는 변경을 누적해 어느 태스크가 무엇을 깨뜨렸는지 숨기는 것을 방지.
 
-## 8. Quality scoring (P4)
+## 8. 품질 채점 (P4)
 
-Replaces binary PASS/FAIL. Combined Reviewer outputs `SPEC_SCORE` and
-`QUALITY_SCORE`, both 0.0–1.0 quantized to one decimal.
+이진 PASS/FAIL을 대체. Combined Reviewer가 `SPEC_SCORE`와 `QUALITY_SCORE`를 출력 — 둘 다 0.0–1.0, 소수점 1자리로 양자화.
 
-**Tier mapping**:
+**등급 매핑**:
 - `PASS`: `SPEC_SCORE >= 0.85` AND `QUALITY_SCORE >= 0.75`
-- `WARN`: (PASS not met) AND `SPEC_SCORE >= 0.70` AND `QUALITY_SCORE >= 0.60`
-- `FAIL`: otherwise
+- `WARN`: (PASS 아님) AND `SPEC_SCORE >= 0.70` AND `QUALITY_SCORE >= 0.60`
+- `FAIL`: 그 외
 
-**WARN tier exists to avoid burning a retry on borderline-but-shippable
-work**. WARN tasks proceed (Verifier still runs); the QUALITY_ISSUES
-are recorded in `state.task_summaries.task_N.warnings[]` and surfaced
-in the Final Summary Report.
+**WARN 등급이 존재하는 이유는 경계선이지만 출하 가능한 작업에 재시도를 낭비하지 않기 위해서입니다**. WARN 태스크는 진행하고 (Verifier는 그래도 실행), QUALITY_ISSUES 는 `state.task_summaries.task_N.warnings[]` 에 기록되고 최종 요약 리포트에서 노출됩니다.
 
-**Quality trend tracking**: rolling 10-task buffer in
-`state.quality_trend`. If the mean of the last 5 drops > 0.10 below
-the mean of the first 5 (within the buffer), the next compaction point
-surfaces a warning to the user — quality is degrading.
+**품질 추세 추적**: 롤링 10개 태스크 버퍼, `state.quality_trend` 에 저장. 마지막 5개의 평균이 버퍼 안의 처음 5개 평균보다 > 0.10 떨어지면, 다음 컴팩션 포인트에서 사용자에게 경고 — 품질이 떨어지고 있다는 신호.
 
-## 9. Spec-edit branch (P15)
+## 9. 스펙 편집 분기 (P15)
 
-A Reviewer FAIL with `SPEC_FAULT: spec_contradicts` or `unclear` is
-classified as **spec problem, not implementer problem**. Standard retry
-would burn `review_retries` budget without progress because the spec
-itself is broken.
+`SPEC_FAULT: spec_contradicts` 또는 `unclear` 인 Reviewer FAIL은 **Implementer 문제가 아니라 스펙 문제**로 분류됩니다. 표준 재시도는 진척 없이 `review_retries` 예산만 태웁니다 — 스펙 자체가 깨졌기 때문에.
 
-Spec edit branch instead:
-1. Increment `task.spec_clarifications` (separate counter from
-   `review_retries`). Cap at 3 per task.
-2. Orchestrator re-reads the affected spec section and makes the smallest
-   possible edit.
-3. Append edit to `state.spec_edits[]`: `{task, spec_line, reason,
-   commit, ts, fault}`.
-4. Identify downstream tasks that overlap the edited spec section.
-   Inject a `## [SPEC UPDATED]` section into their next Implementer
-   prompt.
-5. Commit spec edit: `chore(<plan>): clarify spec line N for task M`.
-6. Reset to pre-task SHA. Re-dispatch Implementer from clean state.
+스펙 편집 분기는 대신:
+1. `task.spec_clarifications` 증가 (`review_retries` 와 별도 카운터). 태스크당 최대 3.
+2. 오케스트레이터가 영향받은 스펙 섹션을 다시 읽고 **최소한의 편집**.
+3. 편집을 `state.spec_edits[]` 에 추가: `{task, spec_line, reason, commit, ts, fault}`.
+4. 편집된 스펙 섹션과 겹치는 후행 태스크 식별. 그들의 다음 Implementer 프롬프트에 `## [SPEC UPDATED]` 섹션 주입.
+5. 스펙 편집 커밋: `chore(<plan>): clarify spec line N for task M`.
+6. pre-task SHA로 리셋. 깨끗한 상태에서 Implementer 재디스패치.
 
-## 10. Eval harness
+## 10. Eval 하네스
 
-`evals/` is independent of `SKILL.md` — it tests the skill from outside.
+`evals/` 는 `SKILL.md` 와 독립적입니다 — 스킬을 외부에서 테스트합니다.
 
 ```
 evals/
-├── fixtures/           # one YAML per scenario (plan + spec + bootstrap +
+├── fixtures/           # 시나리오당 YAML 1개 (plan + spec + bootstrap +
 │   │                   #   expected outcome + rubric)
 │   ├── 01-trivial-typo.yaml
 │   ├── 02-three-file-refactor.yaml
 │   ├── ...
 │   └── 08-subtle-input-validation.yaml
-├── rubric.py           # deterministic per-fixture rubric runner
-├── judge.md            # LLM judge prompt template (4-axis scoring)
-├── run.sh              # the harness: bootstrap repo, invoke skill, capture
-│                       #   state/log/diff/test/rubric, build judge prompt,
-│                       #   write baseline JSON
-├── baselines/          # per-version scored results
+├── rubric.py           # 결정론적 픽스처별 루브릭 러너
+├── judge.md            # LLM judge 프롬프트 템플릿 (4축 채점)
+├── run.sh              # 하네스: 레포 부트스트랩, 스킬 호출, state/log/diff/test/rubric 캡처,
+│                       #   judge 프롬프트 빌드, baseline JSON 작성
+├── baselines/          # 버전별 채점 결과
 │   └── v2.6.0.json
-└── calibration/        # judge-calibration framework (added v2.7)
-    ├── good_impl.py    # reference impls
+└── calibration/        # judge 캘리브레이션 프레임워크 (v2.7 추가)
+    ├── good_impl.py    # 레퍼런스 구현
     ├── broken_impl.py
-    ├── run.py          # invoke judge × N reps, verify Δ≥0.2
+    ├── run.py          # judge × N reps 호출, Δ≥0.2 검증
     └── README.md
 ```
 
-**Two measurement layers**:
-1. **Programmatic rubric** (`rubric.py`) — if fixture has `expected.rubric`,
-   shell-execute each check, count pass/fail. Deterministic. Used for
-   `correctness` and `spec_compliance` axes.
-2. **LLM judge** (`judge.md` → Sonnet/Opus) — scores `code_quality` and
-   `cost_efficiency` (subjective). Receives rubric_results as input so
-   correctness is not re-estimated.
+**두 측정 계층**:
+1. **프로그래매틱 루브릭** (`rubric.py`) — 픽스처에 `expected.rubric` 이 있으면 각 체크를 shell-execute, pass/fail 카운트. 결정론적. `correctness` 와 `spec_compliance` 축에 사용.
+2. **LLM judge** (`judge.md` → Sonnet/Opus) — `code_quality` 와 `cost_efficiency` 채점 (주관적). 입력으로 rubric_results 를 받아 정확성을 다시 추정하지 않음.
 
-**Why both**: the v2.7 experiment found LLM judge alone has high per-rep
-variance (±0.16 on subjective axes) and gives fair partial credit that
-dampens deltas. Splitting deterministic vs subjective measurement
-eliminated noise on the mechanical axes.
+**왜 둘 다인가**: v2.7 실험에서 LLM judge 단독은 rep별 분산이 크고(주관적 축에서 ±0.16) 부분 점수가 후해서 델타를 누른다는 것이 밝혀짐. 결정론적 측정과 주관적 측정을 분리하면 기계적 축에서 노이즈가 사라집니다.
 
-## 11. Key design decisions (why this pattern)
+## 11. 핵심 설계 결정 (왜 이 패턴인가)
 
-| Decision | Why this, not alternatives |
-|----------|----------------------------|
-| Orchestrator-Worker (not swarm/queen) | Swarm requires complex emergent coordination. Orchestrator-Worker is well-understood, debuggable, resumable |
-| Opus orchestrator + Sonnet workers (not all-Opus or all-Sonnet) | Orchestration needs Opus-level judgment (when to escalate, how to respond to FAIL). Implementation can use Sonnet — measurable on calibration |
-| External memory (state.json) | Resumption, debuggability, cap on orchestrator context growth. SQLite would be over-engineered for the field set |
-| `Agent` tool for short interactive sub-agents, headless `claude -p` for big outputs | Avoids orchestrator context bloat from bulky test logs / doc text |
-| Worktree isolation (not branch-only) | Tests can run in the worktree without disturbing the user's main checkout. Hooks scoped to the worktree, not user-global |
-| Risk tiers as blast-radius, not quality bar | TDD-always, Reviewer-always — quality bar is uniform. Risk decides verification timing/effort, not "how good must this be" |
-| WARN tier (not just PASS/FAIL) | Without WARN, every borderline result burns a retry. With WARN, borderline work ships with a flag, retry budget reserved for true breaks |
-| Sub-agents return summaries, not raw work | Orchestrator scales to 50+ tasks because per-task context is bounded |
-| Deterministic rubric runner (v2.7) | LLM judge alone has Δ < 0.2 discrimination on close cases. rubric.py removes that noise from mechanical axes |
-| Pilot-first experimentation (v2.7) | Full experiments at n=1 per cell can't detect realistic effect sizes. Pilot at n=3 on one fixture surfaces ceiling/variance issues cheaply |
+| 결정 | 왜 이것이고 대안이 아닌가 |
+|------|---------------------------|
+| 오케스트레이터-워커 (스웜/퀸이 아니라) | 스웜은 복잡한 창발적 조정 필요. 오케스트레이터-워커는 잘 이해되고 디버깅 가능하고 재개 가능 |
+| Opus 오케스트레이터 + Sonnet 워커 (전 Opus나 전 Sonnet이 아니라) | 오케스트레이션은 Opus 수준 판단 필요 (언제 에스컬레이트할지, FAIL에 어떻게 대응할지). 구현은 Sonnet 가능 — 캘리브레이션으로 측정됨 |
+| 외부 메모리 (state.json) | 재개, 디버깅성, 오케스트레이터 컨텍스트 증가 캡. SQLite는 이 필드 셋에 과공학 |
+| 짧은 인터랙티브 서브에이전트는 `Agent` 툴, 큰 출력은 headless `claude -p` | 큰 테스트 로그 / 문서 텍스트로 오케스트레이터 컨텍스트가 비대해지는 것 회피 |
+| Worktree 격리 (브랜치만이 아니라) | 사용자 메인 체크아웃을 방해하지 않고 worktree 안에서 테스트 가능. 훅이 worktree 범위로 한정 (사용자 전역 아님) |
+| 위험 등급을 폭발 반경으로 (품질 잣대가 아님) | TDD 항상, Reviewer 항상 — 품질 잣대는 균일. 위험은 검증 타이밍/노력을 결정, "얼마나 좋아야 하는가" 가 아님 |
+| WARN 등급 (PASS/FAIL만이 아니라) | WARN 없으면 모든 경계선 결과가 재시도를 태움. WARN 있으면 경계선 작업이 플래그 달고 출하, 재시도 예산은 진짜 깨진 것에만 |
+| 서브에이전트는 요약을 반환, 원본 작업이 아님 | 오케스트레이터가 50+ 태스크로 확장 가능 — 태스크당 컨텍스트가 유계이기 때문 |
+| 결정론적 루브릭 러너 (v2.7) | LLM judge 단독은 가까운 케이스에서 Δ < 0.2 변별력. rubric.py 가 기계적 축에서 그 노이즈 제거 |
+| Pilot-first 실험 (v2.7) | 셀당 n=1 풀 실험은 현실적 효과 크기를 못 잡음. 한 픽스처에 n=3 파일럿이 천장/분산 문제를 싸게 노출 |
 
-## 12. Failure modes & escalation
+## 12. 실패 모드 & 에스컬레이션
 
-| Failure | Detection | Response |
-|---------|-----------|----------|
-| Implementer ESCALATES | `STATUS: ESCALATE` in sub-agent reply | Escalation Protocol — categorize (SPEC_BLOCKER, ENV_BLOCKER, AMBIGUITY, TASK_BLOCKER), increment `escalation_count` (cap 3/task), respond per protocol |
-| Combined Reviewer FAIL — implementer fault | `SPEC_FAULT: implementer_omitted` | Standard retry. Increment `review_retries` (cap 3). Re-dispatch with `## Fix Required\n{issues}` |
-| Combined Reviewer FAIL — spec fault | `SPEC_FAULT: spec_contradicts` or `unclear` | Spec-edit branch (§9). Doesn't count against `review_retries` |
-| Verifier FAIL — test broken | Verifier JSON says regression | Re-dispatch Implementer with `## Fix Required\n{failed tests}`. Increment `verifier_retries` (cap 3) |
-| Verifier ENV_BLOCKER | Verifier JSON says environment unstable | ESCALATE — user must fix env (DB down, port conflict, etc.) |
-| Debug artifact in commit | `PostToolUse` hook fires | Hook returns exit 2. Implementer sees rejection, auto-retries the edit |
-| Malformed sub-agent output | `SubagentStop` hook detects missing fields | Hook returns exit 2. Orchestrator treats as Reviewer FAIL, re-dispatches |
-| Sub-agent edits protected file | Agent Cleanup grep | Reset task, re-dispatch with explicit prohibition in prompt |
-| State.json corrupted | Phase 0 resume read | Halt with "state file corrupted, manual inspection recommended" |
-| Worktree dirty at start | Phase 0 clean check | Halt — "git status not empty, resolve before invoking" |
+| 실패 | 검출 | 대응 |
+|------|------|------|
+| Implementer 가 ESCALATE | 서브에이전트 답에서 `STATUS: ESCALATE` | 에스컬레이션 프로토콜 — 카테고리화 (SPEC_BLOCKER, ENV_BLOCKER, AMBIGUITY, TASK_BLOCKER), `escalation_count` 증가 (태스크당 캡 3), 프로토콜에 따라 응답 |
+| Combined Reviewer FAIL — Implementer 책임 | `SPEC_FAULT: implementer_omitted` | 표준 재시도. `review_retries` 증가 (캡 3). `## Fix Required\n{issues}` 와 함께 재디스패치 |
+| Combined Reviewer FAIL — 스펙 책임 | `SPEC_FAULT: spec_contradicts` 또는 `unclear` | 스펙 편집 분기 (§9). `review_retries` 에 카운트 안 됨 |
+| Verifier FAIL — 테스트 깨짐 | Verifier JSON이 회귀 보고 | `## Fix Required\n{failed tests}` 와 함께 Implementer 재디스패치. `verifier_retries` 증가 (캡 3) |
+| Verifier ENV_BLOCKER | Verifier JSON이 환경 불안정 보고 | ESCALATE — 사용자가 환경 고쳐야 함 (DB 다운, 포트 충돌 등) |
+| 커밋에 디버그 아티팩트 | `PostToolUse` 훅 발동 | 훅이 exit 2 반환. Implementer가 거부 보고 받고 자동 재시도 |
+| 형식 깨진 서브에이전트 출력 | `SubagentStop` 훅이 필드 누락 검출 | 훅이 exit 2 반환. 오케스트레이터가 Reviewer FAIL로 처리, 재디스패치 |
+| 서브에이전트가 보호 파일 편집 | Agent Cleanup grep | 태스크 리셋, 프롬프트에 명시적 금지 추가하고 재디스패치 |
+| state.json 손상 | Phase 0 재개 읽기 | "state file corrupted, manual inspection recommended" 와 함께 중단 |
+| 시작 시 worktree dirty | Phase 0 클린 체크 | 중단 — "git status not empty, resolve before invoking" |
 
 ---
 
-## 14. Learning Log Contract (v2.8)
+## 14. 학습 로그 계약 (v2.8)
 
-The skill emits structured, redacted learning events to a user-local JSONL
-log so the skill itself can be improved across runs. This is an
-**observability layer** — the skill's correctness does not depend on it,
-and every helper invocation is wrapped to fail silently.
+스킬은 구조화·민감정보 제거된 학습 이벤트를 사용자 로컬 JSONL 로그로 발산해서 스킬 자체가 여러 실행에 걸쳐 개선될 수 있도록 합니다. 이것은 **관측성 계층**입니다 — 스킬의 정확성은 여기에 의존하지 않으며, 모든 헬퍼 호출은 조용히 실패하도록 감싸져 있습니다.
 
-### Storage layout
+### 저장소 레이아웃
 
-Per-run sharded directory under `~/.claude/learning/kws-claude-multi-agent-executor/`:
+실행별 샤딩된 디렉터리, `~/.claude/learning/kws-claude-multi-agent-executor/` 하위:
 
 ```
 runs/<YYYY-MM-DD>/<run_id>/
-├── meta.json       # run metadata; outcome, event_count, session_ids
-└── events.jsonl    # 0+ events; one compact JSON per line
+├── meta.json       # 실행 메타데이터; outcome, event_count, session_ids
+└── events.jsonl    # 0+ 이벤트; 줄당 컴팩트 JSON 1개
 ```
 
-`run_id = <UTC-compact-timestamp>-<session_short>-<pid>` (lexically sortable,
-disambiguated by session UUID + pid). Concurrent runs (same repo or different
-repos) write to distinct run directories — no lock contention because no two
-writers ever touch the same file.
+`run_id = <UTC-compact-timestamp>-<session_short>-<pid>` (사전식 정렬 가능, 세션 UUID + pid로 모호성 제거). 동시 실행(같은 레포든 다른 레포든)은 별도 실행 디렉터리에 작성 — 두 작성자가 같은 파일을 절대 만지지 않으므로 락 경합 없음.
 
-### Single-writer contract
+### 단일 작성자 계약
 
-**Only the orchestrator invokes the helper.** Sub-agents prepare event
-candidate JSON files under `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`.
-Phase 1 Step 3.5 in the orchestrator scans this directory after each cycle
-step and calls `append`. This avoids env-propagation puzzles between Agent-
-tool sub-agents (Implementer/Reviewer) and `claude -p` subprocesses
-(Plan Reviewer/Verifier/Docs Updater).
+**오케스트레이터만 헬퍼를 호출합니다.** 서브에이전트들은 `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json` 에 이벤트 후보 JSON 파일을 준비합니다. 오케스트레이터의 Phase 1 Step 3.5 가 각 사이클 스텝 후 이 디렉터리를 스캔하고 `append` 를 호출. 이는 Agent 툴 서브에이전트(Implementer/Reviewer)와 `claude -p` 서브프로세스(Plan Reviewer/Verifier/Docs Updater) 사이의 환경변수 전파 퍼즐을 피하기 위함.
 
-### Helper subcommands
+### 헬퍼 서브커맨드
 
 `scripts/append_learning_event.py`:
 
-- `init-run` — Phase 0 Step 7.5; echoes `run_id`; idempotent on `(session_id, repo, plan)`
-- `append` — Phase 1 Step 3.5 / Phase Transition / Phase 2; validates + sanitizes + writes one line
-- `close-run` — Phase 2 Step 2 (success), exhausted-escalation halt (aborted), hard-halt (blocked)
-- `append-session-id` — Resume Chain chained orchestrator startup; never `init-run`
+- `init-run` — Phase 0 Step 7.5; `run_id` 에코; `(session_id, repo, plan)` 에 대해 멱등
+- `append` — Phase 1 Step 3.5 / Phase Transition / Phase 2; 검증 + 살균 + 한 줄 작성
+- `close-run` — Phase 2 Step 2 (success), 에스컬레이션 소진 halt (aborted), 하드 halt (blocked)
+- `append-session-id` — Resume Chain 체인 오케스트레이터 시작; `init-run` 절대 호출 안 함
 
-### 10 event types
+### 10개 이벤트 타입
 
-- `blocker` (orchestrator) — plan/spec/baseline missing, dirty worktree blocking Phase 0
-- `error` (orchestrator) — skill procedure failure (state corrupt, worktree create failed)
-- `verification_failure` (verifier) — Verifier FAIL on MID/HIGH per-task or LOW batch
-- `reviewer_warn_or_fail` (reviewer) — Combined Reviewer WARN/FAIL tier
-- `escalation` (any sub-agent) — sub-agent ESCALATE (see `references/escalation-playbook.md` for severity)
-- `recurring_issue` (orchestrator) — same `ISSUE_KEY` reappears after retry
-- `user_correction` (orchestrator) — user corrects scope/files/assumptions mid-run
-- `parallel_dispatch_failure` (orchestrator) — P2 wave dispatch failed / merge conflict
-- `successful_workaround` (implementer or orchestrator) — reusable recovery insight
-- `completion_learning` (orchestrator) — actionable executor-improvement observation at end
+- `blocker` (orchestrator) — Phase 0를 막는 plan/spec/baseline 누락, dirty worktree
+- `error` (orchestrator) — 스킬 절차 실패 (state 손상, worktree 생성 실패)
+- `verification_failure` (verifier) — MID/HIGH 태스크별 또는 LOW 배치에서 Verifier FAIL
+- `reviewer_warn_or_fail` (reviewer) — Combined Reviewer WARN/FAIL 등급
+- `escalation` (any sub-agent) — 서브에이전트 ESCALATE (심각도는 `references/escalation-playbook.md` 참조)
+- `recurring_issue` (orchestrator) — 재시도 후 같은 `ISSUE_KEY` 재출현
+- `user_correction` (orchestrator) — 실행 중 사용자가 범위/파일/가정 수정
+- `parallel_dispatch_failure` (orchestrator) — P2 웨이브 디스패치 실패 / 머지 충돌
+- `successful_workaround` (implementer 또는 orchestrator) — 재사용 가능한 복구 통찰
+- `completion_learning` (orchestrator) — 종료 시 실행자 개선 관찰
 
-### Redaction guard
+### 살균 가드
 
-The helper rejects: secrets (Authorization: Bearer / api_key / sk-...), full
-transcripts, absolute home paths, oversized excerpts (> 400 chars). It
-relativizes paths under `--repo-root`. Sub-agent transcripts are referenced
-by `session_id` from `meta.json`, not duplicated.
+헬퍼는 다음을 거부: 비밀(Authorization: Bearer / api_key / sk-...), 전체 트랜스크립트, 절대 홈 경로, 과도한 발췌 (> 400자). `--repo-root` 하위 경로는 상대화. 서브에이전트 트랜스크립트는 `meta.json` 의 `session_id` 로 참조, 복제하지 않음.
 
-### Failure isolation
+### 실패 격리
 
-Every learning-log call in SKILL.md is wrapped `... || true` or routed
-through `>/dev/null 2>&1`. Helper missing, write fail, schema reject — none
-of these block plan execution. If `MAE_LEARNING_RUN_ID` is unset, Phase 1
-Step 3.5 short-circuits before the append loop.
+SKILL.md 의 모든 학습 로그 호출은 `... || true` 로 감싸지거나 `>/dev/null 2>&1` 로 라우팅됩니다. 헬퍼 누락, 쓰기 실패, 스키마 거부 — 이 중 어느 것도 계획 실행을 막지 않습니다. `MAE_LEARNING_RUN_ID` 가 설정되지 않으면 Phase 1 Step 3.5 는 append 루프 전에 단락됩니다.
 
-### Relation to `state.json`
+### `state.json` 과의 관계
 
-`state.json` is the per-run resume source of truth (lives in the worktree).
-The learning log is the cross-run institutional memory (lives in `~/.claude/`).
-The two are independent: an orchestrator can run end-to-end without ever
-touching the learning log (helper missing / init failed), and the learning
-log can record events from a run whose `state.json` has been deleted.
+`state.json` 은 실행당 재개 진실의 출처 (worktree에 거주). 학습 로그는 실행 교차 제도적 메모리 (`~/.claude/` 에 거주). 둘은 독립적입니다: 오케스트레이터는 학습 로그를 만지지 않고도 끝까지 실행할 수 있고(헬퍼 누락 / init 실패), 학습 로그는 `state.json` 이 삭제된 실행의 이벤트도 기록할 수 있습니다.
 
-See `references/learning-log.md` for the full schema and code examples.
+전체 스키마와 코드 예시는 `references/learning-log.md` 참조.
 
-## 13. Update protocol
+## 13. 갱신 프로토콜
 
-**Update this file whenever** you change any of:
+다음 중 하나를 변경하면 **이 파일을 갱신하세요**:
 
-| Topic in this doc | Triggering changes to update §X |
-|-------------------|----------------------------------|
-| Sub-agent catalog (§4) | New role added, role removed, model mapping changes |
-| State.json schema (§5) | Any new field, any field semantics change |
-| Isolation mechanisms (§6) | New hook, new worktree pattern, new safety boundary |
-| Risk tiers (§7) | Criteria changes, upgrade rules change, mode-based overrides added |
-| Quality scoring (§8) | Threshold changes, tier changes, trend rule changes |
-| Eval harness (§10) | New fixture type, new measurement layer, new calibration tool |
-| Failure modes (§12) | New ESCALATE category, new retry rule |
-| Learning log (§14) | New event type, new helper subcommand, schema change, new redaction rule, candidate-file path change |
+| 이 문서의 주제 | 갱신 트리거 |
+|----------------|-------------|
+| 서브에이전트 카탈로그 (§4) | 새 역할 추가, 역할 제거, 모델 매핑 변경 |
+| state.json 스키마 (§5) | 새 필드, 필드 의미 변경 |
+| 격리 메커니즘 (§6) | 새 훅, 새 worktree 패턴, 새 안전 경계 |
+| 위험 등급 (§7) | 기준 변경, 승격 규칙 변경, 모드 기반 오버라이드 추가 |
+| 품질 채점 (§8) | 임계값 변경, 등급 변경, 추세 규칙 변경 |
+| Eval 하네스 (§10) | 새 픽스처 타입, 새 측정 계층, 새 캘리브레이션 도구 |
+| 실패 모드 (§12) | 새 ESCALATE 카테고리, 새 재시도 규칙 |
+| 학습 로그 (§14) | 새 이벤트 타입, 새 헬퍼 서브커맨드, 스키마 변경, 새 살균 규칙, 후보 파일 경로 변경 |
 
-**Do not update this file for**:
-- New fixture added (that's `evals/`)
-- Bug fix to existing behavior (that's a commit message)
-- Prose-only tweaks to SKILL.md (that's SKILL.md)
+**갱신하지 말 것**:
+- 새 픽스처 추가 (`evals/` 의 일)
+- 기존 동작 버그 수정 (커밋 메시지의 일)
+- SKILL.md 의 문장만 다듬는 변경 (SKILL.md 의 일)
 
-**On version bump** (SKILL.md frontmatter `metadata.version`): add a row
-to `HISTORY.md` §1 referencing the relevant ARCHITECTURE.md sections that
-changed in that version. Do not duplicate content — link to commits and
-to experiment records.
+**버전 번프 시** (SKILL.md frontmatter `metadata.version`): 그 버전에서 변경된 ARCHITECTURE.md 섹션을 참조하는 행을 `HISTORY.md` §1 에 추가. 내용을 복제하지 말고 — 커밋과 실험 기록으로 링크.
 
-**On new experiment**: if the experiment lands behavior changes, update
-the corresponding ARCHITECTURE.md sections in the same commit that
-merges the experiment to main. The experiment's own `docs/experiments/<name>/`
-directory remains the detailed record; ARCHITECTURE.md remains the
-synthesized current-state view.
+**새 실험 시**: 실험이 동작 변경을 머지하면, 실험을 main에 머지하는 같은 커밋에서 해당 ARCHITECTURE.md 섹션을 갱신. 실험의 자체 `docs/experiments/<name>/` 디렉터리는 상세 기록으로 유지; ARCHITECTURE.md 는 종합된 현재 상태 뷰로 유지.
