@@ -1,195 +1,141 @@
-# Deferred candidates — future-work shelf
+# 연기된 후보 — 향후 작업 선반
 
-Candidate changes that have been considered, deliberately deferred, and
-remain on the shelf pending evidence or scope. Each entry has:
+검토되었고, 의도적으로 연기되었으며, 증거나 범위를 기다리며 선반에 남은 후보 변경들. 각 항목 구성:
 
-- A **proposed change** (what would land if pursued)
-- **Origin** (where the idea came from)
-- **Why deferred** (the specific reason it's not in current scope)
-- **Revisit criteria** (concrete trigger to reconsider)
+- **제안된 변경** (추진했을 때 안착할 것)
+- **기원** (아이디어가 어디서 왔나)
+- **연기 이유** (현재 범위에 없는 구체적 사유)
+- **재방문 기준** (재고려할 구체적 트리거)
 
-This file is the answer to "what's the next plausible thing?". Read it
-when planning a new experiment or major version bump. Update it when an
-item is either pursued or dropped permanently.
+이 파일은 "다음으로 그럴듯한 게 뭐냐?" 에 대한 답입니다. 새 실험이나 메이저 버전 번프 계획 시 읽으세요. 항목이 추진되거나 영구 폐기되면 갱신.
 
 ---
 
-## omc-inspired candidates (deferred 2026-05-14 after T5 PASS)
+## omc 영감 후보 (T5 PASS 후 2026-05-14 연기)
 
-These six items came from a 2026-05-13 analysis of
-`https://github.com/yeachan-heo/oh-my-claudecode` (omc), a 33K-star
-Teams-first multi-agent orchestration project. v2.9.0 shipped only item C
-(Reviewer "What's Missing" walk — the only one with measured KCMAE
-failure evidence). The other six remain on this shelf.
+이 여섯 항목은 2026-05-13 의 `https://github.com/yeachan-heo/oh-my-claudecode` (omc) — 33K-star Teams-first 멀티 에이전트 오케스트레이션 프로젝트 — 분석에서 나옴. v2.9.0 는 항목 C (Reviewer "What's Missing" walk — 측정된 KCMAE 실패 증거가 있는 유일한 것) 만 출하. 나머지 여섯은 이 선반에 남음.
 
-| Item | Description | Defer reason | Revisit when |
-|------|-------------|--------------|--------------|
-| **D — Governance flags** | Defensive config flags for autonomous skill invocation (e.g., max-recursion depth, max-cost per run, allowlist for skill chaining) | No measured KCMAE incident requiring this; defensive surface; would touch SKILL.md broadly | Any "self-spawn went wild" or "cost runaway" event surfaces in the learning log; OR after 1-2 weeks of v2.8.1 runtime data |
-| **E — Heartbeat freshness** | Monitor process emits periodic heartbeat; orchestrator detects subprocess hang via heartbeat staleness | No measured hang case in F001/F002 (`kill -0 $PID` already detects most issues) | A `claude -p` subprocess hangs without exiting in a real run |
-| **F — Conflict-mailbox event type** | New learning-log event type for cross-agent merge collisions (omc uses this for parallel-branch auto-merge) | v2.8 learning log not yet event-rich; KCMAE is in-process Phase 1 (no parallel branches at orchestrator level) | Real `parallel_dispatch_failure` event surfaces OR v2.10 introduces parallel-branch dispatch |
-| **G — Sentinel READY gate** | Explicit "ready" sentinel emitted by sub-agent before dispatch unblocks the next step (omc pattern for tmux-pane orchestration) | KCMAE's 3-sec sleep + kill check has not failed in eval corpus; sub-agent dispatch is in-process, no race | A sub-agent dispatch race / premature progression is observed |
-| **A — Inbox/Outbox messaging** | Per-pane JSONL messaging for cross-agent communication (omc uses this because it runs N CLI processes in tmux) | KCMAE uses in-process Agent-tool dispatch + Resume Chain `claude -p`. Current ESCALATE mechanism not insufficient for any measured case | KCMAE topology changes to multi-process (currently no plan); OR cross-orchestrator messaging need surfaces |
-| **B — Auto-merge orchestrator** | Auto-merge logic for parallel branches (omc M1-M6 hardening for its multi-pane topology) | KCMAE merges in-process; no parallel orchestrator-level branches. Topology mismatch | Topology pivot to multi-orchestrator parallel work (not currently planned) |
+| 항목 | 설명 | 연기 이유 | 재방문 시점 |
+|------|------|-----------|-------------|
+| **D — 거버넌스 플래그** | 자율 스킬 호출의 방어적 설정 플래그 (예: 최대 재귀 깊이, 실행당 최대 비용, 스킬 체이닝 허용 목록) | 이를 요구하는 측정된 KCMAE 사고 없음; 방어적 표면; SKILL.md 를 광범위하게 건드림 | "자가 스폰이 폭주" 또는 "비용 폭주" 이벤트가 학습 로그에 표면화; 또는 v2.8.1 런타임 데이터 1-2주 후 |
+| **E — Heartbeat freshness** | Monitor 프로세스가 주기적 heartbeat 발산; 오케스트레이터가 heartbeat staleness 로 서브프로세스 hang 검출 | F001/F002 에 측정된 hang 케이스 없음 (`kill -0 $PID` 가 이미 대부분 검출) | `claude -p` 서브프로세스가 실제 실행에서 exit 없이 hang |
+| **F — Conflict-mailbox 이벤트 타입** | 크로스 에이전트 머지 충돌용 새 학습 로그 이벤트 타입 (omc 는 병렬 브랜치 자동 머지에 사용) | v2.8 학습 로그가 아직 이벤트 풍부하지 않음; KCMAE 는 in-process Phase 1 (오케스트레이터 수준 병렬 브랜치 없음) | 실제 `parallel_dispatch_failure` 이벤트 표면화 또는 v2.10 이 병렬 브랜치 디스패치 도입 |
+| **G — Sentinel READY gate** | 서브에이전트가 다음 스텝 디스패치 차단 해제 전 명시적 "ready" 센티넬 발산 (omc 의 tmux-pane 오케스트레이션 패턴) | KCMAE 의 3초 sleep + kill 체크가 eval 코퍼스에서 실패 안 함; 서브에이전트 디스패치는 in-process, race 없음 | 서브에이전트 디스패치 race / premature progression 관찰됨 |
+| **A — Inbox/Outbox 메시징** | 크로스 에이전트 통신용 pane 별 JSONL 메시징 (omc 가 tmux 에서 N 개 CLI 프로세스 실행하기 때문에 사용) | KCMAE 는 in-process Agent 툴 디스패치 + Resume Chain `claude -p` 사용. 현재 ESCALATE 메커니즘이 측정된 어떤 케이스에도 불충분하지 않음 | KCMAE 토폴로지가 멀티 프로세스로 변경 (현재 계획 없음); 또는 크로스 오케스트레이터 메시징 필요 표면화 |
+| **B — Auto-merge 오케스트레이터** | 병렬 브랜치용 자동 머지 로직 (omc M1-M6 가 멀티 pane 토폴로지에 사용) | KCMAE 는 in-process 머지; 오케스트레이터 수준 병렬 브랜치 없음. 토폴로지 불일치 | 멀티 오케스트레이터 병렬 작업으로 토폴로지 피벗 (현재 계획 없음) |
 
-**Re-rank trigger** (whole-set): 1-2 weeks of v2.8.1 runtime usage with the
-learning log capturing real failures. Re-evaluate each item against actual
-event-stream evidence, not analogy from omc.
+**재순위 트리거** (전체 셋): 학습 로그가 실제 실패를 캡처하며 v2.8.1 런타임 사용 1-2주. omc 와의 유추가 아닌 실제 이벤트 스트림 증거에 대해 각 항목 재평가.
 
-**Reference**: `docs/experiments/v2.9-reviewer-spec-coverage/decisions/D001-initial-design.md` §Out-of-scope.
+**참조**: `docs/experiments/v2.9-reviewer-spec-coverage/decisions/D001-initial-design.md` §Out-of-scope.
 
 ---
 
-## Hook-based enforcement of Step 7.5
+## Step 7.5 의 훅 기반 강제
 
-**Proposed change**: A PreToolUse hook that auto-runs `init-run` before
-the orchestrator's first non-trivial Bash call. Replaces v2.8.1's prose
-+ marker mechanism with structural enforcement.
+**제안된 변경**: 오케스트레이터의 첫 비자명 Bash 호출 전에 `init-run` 을 자동 실행하는 PreToolUse 훅. v2.8.1 의 prose + 마커 메커니즘을 구조적 강제로 대체.
 
-**Origin**: v2.8 F001 Smoke B adherence gap + risks-and-limitations
-"Adherence marker is spoofable".
+**기원**: v2.8 F001 Smoke B 준수 갭 + risks-and-limitations "Adherence marker is spoofable".
 
-**Why deferred**:
-- Scoping issue: SessionStart hook would fire on every `claude -p`
-  including non-orchestrator runs.
-- PreToolUse hook fires too late (after orchestrator already started)
-  and on the wrong context.
-- These hooks live in `.claude/hooks/` settings, not inside the skill —
-  adding them blurs the boundary between skill and environment.
+**연기 이유**:
+- 스코핑 이슈: SessionStart 훅은 비-오케스트레이터 실행을 포함한 모든 `claude -p` 에 발화.
+- PreToolUse 훅은 너무 늦게 (오케스트레이터가 이미 시작된 후) 그리고 잘못된 컨텍스트에서 발화.
+- 이 훅들은 `.claude/hooks/` 설정에 살고 스킬 내부 아님 — 추가하면 스킬과 환경 경계 흐려짐.
 
-**Revisit when**:
-- v2.8.1's marker-based detection misses a real adherence regression in
-  production runtime.
-- Hook framework gains skill-scoped event types (e.g., "fires only for
-  skills X, Y, Z").
+**재방문 시점**:
+- v2.8.1 의 마커 기반 검출이 프로덕션 런타임에서 실제 준수 회귀를 놓침.
+- 훅 프레임워크가 스킬 스코프 이벤트 타입(예: "스킬 X, Y, Z 에 대해서만 발화") 획득.
 
 ---
 
-## Headless model flag
+## Headless 모델 플래그
 
-**Proposed change**: Pass `--model claude-opus-4-7` (orchestrator) and
-`--model claude-sonnet-4-6` (sub-agents) explicitly on all 6 `claude -p`
-dispatch sites in SKILL.md.
+**제안된 변경**: SKILL.md 의 6개 `claude -p` 디스패치 사이트 전부에서 `--model claude-opus-4-7` (오케스트레이터) 와 `--model claude-sonnet-4-6` (서브에이전트) 명시 전달.
 
-**Origin**: v2.8 design audit found documented model assignment doesn't
-match runtime behavior (model is inherited from CLI default).
+**기원**: v2.8 설계 감사가 문서화된 모델 할당이 런타임 동작과 일치 안 한다는 걸 발견 (모델이 CLI 기본값에서 상속됨).
 
-**Why deferred**:
-- Behavior change, not observability change. Bundling with v2.8 (an
-  observability addition) would conflate scopes.
-- A separate v2.8.x mini-PR is the right shape — single-purpose, low risk.
+**연기 이유**:
+- 동작 변경, 관측성 변경 아님. v2.8 (관측성 추가) 와 묶으면 스코프 혼동.
+- 별도 v2.8.x 미니 PR 이 올바른 모양 — 단일 목적, 낮은 위험.
 
-**Revisit when**: Next time a user reports unexpected reasoning depth or
-cost (likely indicator: orchestrator ran on Sonnet but user expected Opus).
+**재방문 시점**: 사용자가 예상 못한 추론 깊이나 비용을 보고하는 다음 시점 (가능한 지표: 오케스트레이터가 Sonnet 으로 실행됐지만 사용자가 Opus 기대).
 
-**Reference**: `docs/experiments/v2.8-learning-log/decisions/D001-initial-design.md` §Out-of-scope.
+**참조**: `docs/experiments/v2.8-learning-log/decisions/D001-initial-design.md` §Out-of-scope.
 
 ---
 
 ## Verifier acceptance-criteria coverage walk
 
-**Proposed change**: Extend the v2.9 Spec Coverage Walk pattern to the
-Verifier — emit a `CRITERIA_COVERAGE_WALK:` block enumerating spec
-acceptance criteria + adversarial criteria-violation inputs before
-verifying.
+**제안된 변경**: v2.9 Spec Coverage Walk 패턴을 Verifier 로 확장 — 검증 전에 스펙 acceptance criteria + 적대적 기준 위반 입력 열거하는 `CRITERIA_COVERAGE_WALK:` 블록 발산.
 
-**Origin**: v2.9 D001 §Open question Q3.
+**기원**: v2.9 D001 §Open question Q3.
 
-**Why deferred**:
-- Verifier failure rate is not measured at this granularity (no F002-
-  equivalent evidence for Verifier).
-- v2.9's pilot-strength evidence is fixture-specific; generalizing the
-  walk pattern to another role before validating on its own data would
-  compound the over-tuning risk.
+**연기 이유**:
+- Verifier 실패율이 이 입도로 측정 안 됨 (Verifier 용 F002 등가 증거 없음).
+- v2.9 의 파일럿 강도 증거가 픽스처 특이적; walk 패턴을 자신의 데이터에 검증 전에 다른 역할로 일반화하면 과-튜닝 리스크 복합화.
 
-**Revisit when**: A measured Verifier failure (`verification_failure`
-event in the learning log) surfaces a case the prompt missed.
+**재방문 시점**: 측정된 Verifier 실패 (학습 로그의 `verification_failure` 이벤트) 가 프롬프트가 놓친 케이스 표면화.
 
 ---
 
-## Walk pattern validator in `check_skill_contract.py`
+## `check_skill_contract.py` 의 walk 패턴 검증자
 
-**Proposed change**: Add a contract check that the Reviewer prompt's
-walk template specifies the strict row format `"<frag>" :: <file>:<line>
-| NOT FOUND | PARTIAL`. Currently the v2.9.0 check only verifies that
-the section title is present.
+**제안된 변경**: Reviewer 프롬프트의 walk 템플릿이 엄격한 행 포맷 `"<frag>" :: <file>:<line> | NOT FOUND | PARTIAL` 을 명시한다는 계약 체크 추가. 현재 v2.9.0 체크는 섹션 제목 존재만 검증.
 
-**Origin**: v2.9 D001 §Open question Q2.
+**기원**: v2.9 D001 §Open question Q2.
 
-**Why deferred**:
-- Adds eval surface for marginal benefit — the walk is a prompt-level
-  discipline, not a structural contract.
-- Would need iteration as the walk template evolves; risk of contract-
-  check becoming the limiting factor on legitimate prompt improvements.
+**연기 이유**:
+- 한계 이익에 비해 eval 표면 추가 — walk 는 구조 계약이 아니라 프롬프트 수준 discipline.
+- walk 템플릿 진화에 따라 반복 필요; 계약 체크가 정당한 프롬프트 개선의 제약 요인이 될 리스크.
 
-**Revisit when**: The walk template stabilizes across 2+ minor versions
-without further iteration.
+**재방문 시점**: walk 템플릿이 추가 반복 없이 2+ 마이너 버전 걸쳐 안정화.
 
 ---
 
-## Fixture spec audit (01-07)
+## 픽스처 스펙 감사 (01-07)
 
-**Proposed change**: Manually audit fixtures 01-07 for spec-vs-rubric
-ambiguity (same kind that v2.9 Phase 2 fixed for fixture 08).
+**제안된 변경**: 스펙 vs 루브릭 모호성에 대해 픽스처 01-07 수동 감사 (v2.9 Phase 2 가 픽스처 08 에서 고친 것과 같은 종류).
 
-**Origin**: risks-and-limitations §Spec ambiguity vs rubric strictness.
+**기원**: risks-and-limitations §Spec ambiguity vs rubric strictness.
 
-**Why deferred**:
-- Not blocking any current work.
-- May produce false-positive flags on already-stable fixtures.
+**연기 이유**:
+- 현재 어떤 작업도 차단 안 함.
+- 이미 안정된 픽스처에서 false-positive 플래그 생성 가능.
 
-**Revisit when**: Any rerun of fixtures 01-07 produces a confusing
-"rubric FAIL but Reviewer PASS" (or vice versa) — the inverse of the
-v2.9 T4.5 finding.
+**재방문 시점**: 픽스처 01-07 의 어떤 재실행이 혼란스러운 "rubric FAIL but Reviewer PASS" (또는 반대) 생성 — v2.9 T4.5 발견의 역.
 
 ---
 
-## Aggregator / reporting CLI for the learning log
+## 학습 로그용 집계자 / 리포팅 CLI
 
-**Proposed change**: A small CLI that reads
-`~/.claude/learning/kws-claude-multi-agent-executor/runs/**/events.jsonl`
-and emits summaries (top event types, recurring failure signatures,
-time series).
+**제안된 변경**: `~/.claude/learning/kws-claude-multi-agent-executor/runs/**/events.jsonl` 을 읽고 요약 발산하는 작은 CLI (상위 이벤트 타입, 반복 실패 시그니처, 시계열).
 
-**Origin**: v2.8 D001 §Out-of-scope.
+**기원**: v2.8 D001 §Out-of-scope.
 
-**Why deferred**: Requires a real event corpus first. v2.8 runtime data
-is currently sparse (and v2.8.0's adherence gap means even sparser).
+**연기 이유**: 실제 이벤트 코퍼스가 먼저 필요. v2.8 런타임 데이터가 현재 sparse (그리고 v2.8.0 의 준수 갭이 더 sparse 하게 만듦).
 
-**Revisit when**: Post-v2.8.1, after 1-2 weeks of routine use with the
-adherence fix in place.
+**재방문 시점**: 준수 수정이 자리잡은 채로 1-2주 정례 사용 후 v2.8.1 사후.
 
 ---
 
-## Auto-trigger from learning log → experiment scaffold
+## 학습 로그 → 실험 스캐폴드 자동 트리거
 
-**Proposed change**: A meta-skill that watches the learning log for
-recurring patterns and auto-generates an experiment scaffold (D001
-template + README + plan stub) for the surfaced issue.
+**제안된 변경**: 학습 로그에서 반복 패턴 감시하고 표면화된 이슈에 대해 실험 스캐폴드 자동 생성하는 메타 스킬 (D001 템플릿 + README + 계획 stub).
 
-**Origin**: v2.8 D001 §Out-of-scope.
+**기원**: v2.8 D001 §Out-of-scope.
 
-**Why deferred**: Requires the aggregator (above) as a prerequisite,
-which requires the corpus, which requires v2.8.1 in production for 1-2
-weeks. Two layers of prerequisites.
+**연기 이유**: 위 집계자를 전제조건으로 요구, 그건 코퍼스 요구, 그건 1-2주 프로덕션의 v2.8.1 요구. 전제조건 두 계층.
 
-**Revisit when**: After the aggregator ships and identifies a manual
-case the user already wishes had been auto-scaffolded.
+**재방문 시점**: 집계자 출하 후 사용자가 이미 자동 스캐폴드 됐으면 했던 수동 케이스 식별.
 
 ---
 
-## How to add a candidate
+## 후보 추가 방법
 
-When you decide *not* to do something now but want to keep the option
-open:
+지금 *하지 않기* 로 결정했지만 옵션을 열어두고 싶을 때:
 
-1. Add a section above with: proposed change, origin (commit / discussion /
-   experiment), why deferred, revisit criteria.
-2. Make revisit criteria *concrete* — "after 1-2 weeks", "when N events
-   surface", "if X is reported" — not "in the future".
-3. Add to [`decision-log.md`](./decision-log.md) §Overturned table if it
-   supersedes a prior decision.
-4. Update or remove the entry when the criterion is met (do the work) or
-   the criterion becomes irrelevant (close as won't-do with a note).
+1. 위에 섹션 추가: 제안된 변경, 기원 (커밋 / 토론 / 실험), 연기 이유, 재방문 기준.
+2. 재방문 기준을 *구체적* 으로 — "1-2주 후", "N 이벤트 표면화 시", "X 보고 시" — "미래에" 아님.
+3. 이전 결정을 대체하면 [`decision-log.md`](./decision-log.md) §Overturned 표에 추가.
+4. 기준 충족 (작업 수행) 또는 기준 무관해짐 (won't-do 노트와 함께 종결) 시 항목 갱신 또는 제거.
 
-The goal: never lose a good idea, never let an old idea become a hidden
-backlog burden.
+목표: 좋은 아이디어를 절대 잃지 않기, 오래된 아이디어가 숨은 backlog 부담이 되지 않기.
