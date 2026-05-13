@@ -432,7 +432,39 @@ def main() -> int:
         record("append_session_id_idempotent", ok and ok2,
                f"append-session-id should extend session_ids[] and be idempotent (sids={sids2})")
 
-        # ----- check 16: bad run_id mismatch in append fails -----
+        # ----- check 16: context_health (v2.10) accepted with severity=low -----
+        ctx_health = base_event(empty_run)
+        ctx_health["event_type"] = "context_health"
+        ctx_health["severity"] = "low"
+        ctx_health["subagent"] = {
+            "role": "orchestrator", "model": "opus", "dispatch": "orchestrator",
+        }
+        ctx_health["summary"] = "Phase Transition T3: passive context-health snapshot."
+        ctx_health["context"] = {
+            "user_intent": "Observe context-management state across compactions.",
+            "agent_expectation": "Counters captured at compaction boundary.",
+            "actual_outcome": "Snapshot recorded.",
+            "root_cause": "Routine emit point — not a failure.",
+            "evidence": [{"kind": "issue_key", "value": "context_health_snapshot"}],
+            "compaction_index": 2,
+            "completed_tasks_count": 8,
+            "resume_chain_handoffs": 0,
+        }
+        # scores not required for context_health
+        ctx_health.pop("scores", None)
+        res = run_helper(
+            "append",
+            "--log-root", str(log_root5),
+            "--run-id", empty_run,
+            "--event-json", str(write_event(event_dir, ctx_health, "ctx_health.json")),
+            "--repo-root", str(repo_root5),
+            "--dry-run",
+        )
+        ok = res.returncode == 0 and "context_health" in res.stdout
+        record("context_health_accepted", ok,
+               f"context_health event should be accepted (rc={res.returncode}, stderr={res.stderr[:200]})")
+
+        # ----- check 17: bad run_id mismatch in append fails -----
         wrong = base_event("20260513T143321Z-deadbeef-99999")
         res = run_helper(
             "append",

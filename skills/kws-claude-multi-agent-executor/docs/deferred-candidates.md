@@ -117,9 +117,19 @@
 
 ---
 
-## 컨텍스트 헬스 관측성 (v2.10 후보)
+## 컨텍스트 헬스 관측성 (v2.10 — passive observation 출하 / 능동 액션은 연기 중)
 
-**제안된 변경**: 새 학습 로그 이벤트 타입 `context_health` 또는 기존 `completion_learning` 확장. 실행당 1회 (Phase 2 종료 시) 발산. 측정 지표 후보:
+**현재 상태 (2026-05-14)**: v2.10.0 에서 **passive observation 만** 출하. 새 이벤트 타입 `context_health` 가 Phase Transition T3 + Resume Chain handoff 에서 발산. **임계값 없음, 액션 없음, 제어 흐름 영향 없음**. 데이터 수집만 함. 능동 관리 (자동 컴팩션 강제, dispatch 스로틀링, mid-task 요약 주입 등) 는 여전히 이 섹션 아래 *deferred* 로 보존 — 1-2주 데이터 축적 후 재방문.
+
+**v2.10 에서 이미 출하된 부분**:
+- 이벤트 타입 + 스키마 (`references/learning-log.md` §"`context_health` (v2.10) — passive observation contract")
+- 두 emit 시점 (Phase Transition T3 + chained orchestrator startup)
+- 필수 필드: `compaction_index`, `completed_tasks_count`, `resume_chain_handoffs`
+- 옵션 필드: `risk_distribution`, `verifier_retry_total`, `review_retry_total`, `quality_trend_mean`, `drift_signals[]`
+
+**여전히 연기된 부분 (v2.11+ 후보)**: 아래 측정 지표 후보 + 능동 액션. 데이터 누적 후 어떤 지표가 의미 있는지 결정.
+
+**원래 제안 (보존)**: 새 학습 로그 이벤트 타입 `context_health` 또는 기존 `completion_learning` 확장. 실행당 1회 (Phase 2 종료 시) 발산. 측정 지표 후보:
 - `max_orchestrator_tokens` — 세션 jsonl 의 누적 토큰 카운트
 - `compaction_events_observed` — `state.compaction_points` 실제 도달 횟수
 - `resume_chain_handoffs` — state.json `chain_resume` 히스토리에서 카운트

@@ -42,6 +42,7 @@ VALID_EVENT_TYPES = {
     "parallel_dispatch_failure",
     "successful_workaround",
     "completion_learning",
+    "context_health",
 }
 VALID_SEVERITIES = {"low", "medium", "high"}
 VALID_OUTCOMES = {"success", "blocked", "aborted", "unknown"}
@@ -240,7 +241,7 @@ def ensure_run_dir_with_meta(log_root: Path, run_id: str, session_id: str | None
     return rd
 
 
-SKILL_VERSION = "2.8.0"
+SKILL_VERSION = "2.10.0"
 
 
 # ---------- subcommands ----------

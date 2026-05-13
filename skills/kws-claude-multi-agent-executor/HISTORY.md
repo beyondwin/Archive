@@ -21,6 +21,55 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.10.0 — `context_health` passive observation (2026-05-14)
+
+Adds an 11th event type `context_health` to the learning log. **Observation-only**:
+no thresholds, no actions, no control-flow changes. Counters captured at two
+emit points:
+
+- **Phase Transition T3** — after each compaction completes and state is written.
+- **Resume Chain handoff** — chained orchestrator emits one snapshot after
+  `append-session-id` succeeds, marking the pre/post-handoff boundary.
+
+Required `context` fields: `compaction_index`, `completed_tasks_count`,
+`resume_chain_handoffs`. Optional: `risk_distribution`, `verifier_retry_total`,
+`review_retry_total`, `quality_trend_mean`, `drift_signals[]`.
+
+Why this exists:
+
+- User-raised observation gap: "the orchestrator does not log how well its own
+  context is being managed." Compaction events, chain handoffs, dispatch
+  counts are introspectable from state.json but never observed cross-run.
+- Goodhart's-law concern dominates: imposing thresholds before we have
+  empirical distributions risks miscalibrating early. v2.10 collects data;
+  v2.11+ may add behavioral consequences after ≥ 2 weeks of real-run data.
+
+Open questions deferred to follow-on experiment
+(`docs/experiments/v2.10-context-health/`):
+
+- Which counter best predicts execution quality degradation across compactions?
+- Is `resume_chain_handoffs > N` actually correlated with regression risk, or
+  with plan length only (confounder)?
+- Should `quality_trend` rolling mean become a `drift_signal` automatically?
+
+The full active-management proposal (forced compaction, dispatch throttling,
+mid-task summarization injection) remains in `docs/deferred-candidates.md`.
+Re-rank after data is in.
+
+Changes in this version:
+
+- `scripts/append_learning_event.py` — `VALID_EVENT_TYPES` gains `context_health`;
+  `SKILL_VERSION` bumped to `2.10.0`.
+- `references/learning-log.md` — 11th row in event-type table + dedicated
+  "passive observation contract" section.
+- `evals/check_skill_contract.py` — `EVENT_TYPES` extended; message updated to
+  "all 11 event types".
+- `evals/check_learning_log.py` — new check 16 verifies `context_health`
+  accepted with `severity=low` and orchestrator role.
+- `SKILL.md` — Phase Transition Step T3 gains emit substep; Resume Chain
+  chained-orchestrator startup gains snapshot after `append-session-id`;
+  invariants table gains Goodhart's-law guard.
+
 ### v2.9.0 — Reviewer Spec Coverage Walk (2026-05-14)
 
 Inserts a deterministic "Spec Coverage Walk" pass into
