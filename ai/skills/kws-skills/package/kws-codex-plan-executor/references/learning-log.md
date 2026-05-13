@@ -81,7 +81,7 @@ secret-like strings before appending one compact JSON object per line.
 {
   "schema_version": "1",
   "skill": "kws-codex-plan-executor",
-  "skill_version": "1.3.0",
+  "skill_version": "1.3.1",
   "mode": "interactive",
   "event_type": "verification_failure",
   "severity": "medium",

@@ -2,6 +2,22 @@
 
 Use this only for `mode=headless`, eval, CI, or explicitly detached execution.
 
+## Skill Bootstrap
+
+Headless starts a fresh `codex exec` process. Do not assume the parent session's
+loaded skills carry over. The prompt passed as `$PROMPT` must explicitly tell
+the target run to load and follow applicable installed skills, including
+`using-superpowers` before any implementation or clarification and
+`test-driven-development` before feature, bugfix, refactor, or behavior-change
+implementation.
+
+## Caller And Target Boundary
+
+The supervising session launches the command below. The headless target process
+that receives `$PROMPT` is already inside `codex exec`; it must execute the task
+locally and write the required `.codex-orchestrator/` artifacts. Do not launch
+another nested `codex exec` from the target process.
+
 ## Safe Default Command
 
 ```bash
