@@ -1,0 +1,26 @@
+{
+  "version": "1.0.0",
+  "date": "2026-05-13T06:32:39Z",
+  "fixtures": [
+    {
+      "fixture": "01-prompt-only",
+      "mode": "prompt",
+      "codex_status": 0,
+      "checker_status": 0,
+      "passed": true,
+      "checks": {
+        "fixture": "prompt-only",
+        "passed": true,
+        "checks": {
+          "one_text_block": true,
+          "no_template_tokens": true,
+          "must_include": true,
+          "must_not_include": true,
+          "model_routing": true,
+          "no_implementation_started_language": true
+        },
+        "failures": []
+      }
+    }
+  ]
+}

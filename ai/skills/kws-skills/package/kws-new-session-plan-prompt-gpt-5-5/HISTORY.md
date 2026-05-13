@@ -15,6 +15,12 @@ Update protocol: see `references/change-protocol.md`.
 
 ## Section 1: Version Timeline
 
+### v2.4.0 - Deprecated in favor of kws-codex-plan-executor (2026-05-13)
+
+- Moved forward usage to `kws-codex-plan-executor mode=prompt`.
+- Stopped maintaining a separate prompt-generation contract in this skill.
+- Kept templates, eval fixtures, and historical notes for migration reference.
+
 ### v2.3.0 - Maintenance record scaffold (2026-05-13)
 
 - Added this `HISTORY.md` as the skill-level narrative record.

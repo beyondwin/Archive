@@ -1,0 +1,16 @@
+name: no-spark
+mode: prompt
+args: "gpt-5.5 only"
+plan: |
+  ### Task 0: Add docs note
+
+  **Files:**
+  - Create: docs/example.md
+expected:
+  prompt_only: true
+  spark: false
+  must_include:
+    - "gpt-5.5 high"
+  must_not_include:
+    - "gpt-5.3-codex-spark"
+    - "{{OPTIONAL_SPARK_SCOUT_BULLETS}}"
