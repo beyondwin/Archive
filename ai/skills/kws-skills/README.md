@@ -17,25 +17,15 @@
 
 ## 포함된 스킬
 
-- `archive-docs-organizer`
 - `kws-claude-multi-agent-executor`
 - `kws-codex-plan-executor`
-- `kws-doc-prompt-review`
-- `kws-skill-prompt-review`
-- `reflective-essay-writer`
-- `reflective-writing-coach`
 
 ## 개별 스킬 버전
 
 | 스킬 | 버전 | 갱신일 |
 | --- | --- | --- |
-| `archive-docs-organizer` | `1.1.1` | `2026-04-30` |
 | `kws-claude-multi-agent-executor` | `2.9.0` | `2026-05-14` |
 | `kws-codex-plan-executor` | `1.5.0` | `2026-05-14` |
-| `kws-doc-prompt-review` | `1.0.1` | `2026-05-05` |
-| `kws-skill-prompt-review` | `1.0.1` | `2026-05-05` |
-| `reflective-essay-writer` | `1.0.1` | `2026-04-30` |
-| `reflective-writing-coach` | `1.0.1` | `2026-04-30` |
 
 ## 구조
 
