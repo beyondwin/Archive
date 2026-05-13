@@ -8,13 +8,15 @@ Before editing:
 
 1. Read [../SKILL.md](../SKILL.md) for current runtime invariants.
 2. Read [../references/change-protocol.md](../references/change-protocol.md).
-3. Read the relevant topic document:
+3. Read [doc-update-protocol.md](doc-update-protocol.md).
+4. Read the relevant topic document:
    - runtime flow: [how-it-works.md](how-it-works.md)
    - state/logs: [state-and-logging.md](state-and-logging.md)
    - evals: [evals-and-verification.md](evals-and-verification.md)
+   - verification history: [verification-log.md](verification-log.md)
    - decisions: [decisions.md](decisions.md)
    - risks: [risks-limitations-deferrals.md](risks-limitations-deferrals.md)
-4. Check `git status --short` and preserve unrelated user changes.
+5. Check `git status --short` and preserve unrelated user changes.
 
 ## Change Classification
 
@@ -27,6 +29,8 @@ Classify the change before editing:
 | State schema | `references/state-schema.md`, `validate_state.py`, `check_state_schema.py` |
 | Learning log schema | `references/learning-log.md`, helper script, `check_learning_log.py` |
 | Parser behavior | parser script, parser fixture, parser checker |
+| Verification command or result | `docs/evals-and-verification.md`, `docs/verification-log.md` |
+| Maintenance workflow | `docs/doc-update-protocol.md`, `references/change-protocol.md`, this guide |
 | Docs only | README/docs, optional `quick_validate.py`, no version bump unless policy changes |
 
 Keep detailed contracts out of `SKILL.md` unless the executor must load them on
@@ -39,8 +43,11 @@ explanations.
 2. Make the smallest code or document change that satisfies the contract.
 3. Run the narrow check.
 4. Run `evals/check_skill_contract.py --skill SKILL.md` if an invariant changed.
-5. Run package validation before finalizing.
-6. Update `HISTORY.md` and package metadata only for behavior or release
+5. Apply [doc-update-protocol.md](doc-update-protocol.md) and update affected
+   docs.
+6. Run package validation before finalizing.
+7. Append compact results to [verification-log.md](verification-log.md).
+8. Update `HISTORY.md` and package metadata only for behavior or release
    changes.
 
 ## Minimum Verification By Area
@@ -151,3 +158,5 @@ metadata, or expected values.
 - Do not use root `.codex-orchestrator/state.json` as the only active state.
 - Do not make subagents default without a deliberate policy change and evals.
 - Do not update baselines to hide a regression.
+- Do not commit a package change without updating or explicitly checking the
+  documentation impact and verification log.
