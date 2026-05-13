@@ -1,0 +1,14 @@
+```json
+{
+  "fixture": "08-subtle-input-validation",
+  "scores": {
+    "correctness":     0.9,
+    "spec_compliance": 0.7,
+    "code_quality":    0.7,
+    "cost_efficiency": 1.0
+  },
+  "mean": 0.8,
+  "passed": true,
+  "notes": "Implementation in src/duration.py is solid — single-pass regex tokenizer with type hint, catches all 10 spec error cases (internal whitespace, repeated unit, uppercase, decimal, bare unit). However the test file diff is suspicious: it imports good_impl/broken_impl modules not in the fixture and covers only ~14 of the 20 rubric checks (missing internal-whitespace, uppercase, repeated-unit, decimal, and bare-unit error cases), violating the 'test file covers ALL 20 rubric checks' code-quality dimension. Cost well under budget (56% time, 51% tokens)."
+}
+```

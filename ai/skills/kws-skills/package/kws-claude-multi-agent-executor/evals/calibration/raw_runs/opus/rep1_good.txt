@@ -1,0 +1,14 @@
+```json
+{
+  "fixture": "08-subtle-input-validation",
+  "scores": {
+    "correctness":     0.5,
+    "spec_compliance": 0.4,
+    "code_quality":    0.5,
+    "cost_efficiency": 1.0
+  },
+  "mean": 0.6,
+  "passed": true,
+  "notes": "Implementation in src/duration.py is excellent — single-pass regex tokenizer, type hints, handles all 20 rubric edges (internal whitespace, repeated unit, uppercase, decimals, bare unit). However, tests/test_duration.py imports `good_impl, broken_impl` (fixture artifacts) and parametrizes over them instead of testing src.duration — the 28 passing tests do not actually verify the shipped implementation. Test count is also short of the 20-check rubric minimum. Cost well under both budgets."
+}
+```

@@ -1,0 +1,14 @@
+```json
+{
+  "fixture": "08-subtle-input-validation",
+  "scores": {
+    "correctness":     0.8,
+    "spec_compliance": 0.4,
+    "code_quality":    0.6,
+    "cost_efficiency": 1.0
+  },
+  "mean": 0.7,
+  "passed": true,
+  "notes": "Both expected files modified, 28 tests pass, commits within range, well under budget. But the parser silently accepts 4 inputs the rubric says must raise: internal whitespace ('1h 30m' stripped to '1h30m'), uppercase ('1H' lowercased), repeated unit ('30m20m' summed), and bare unit ('s' returns 0). Missing type hint on signature; otherwise the single-pass loop is clean and pure."
+}
+```

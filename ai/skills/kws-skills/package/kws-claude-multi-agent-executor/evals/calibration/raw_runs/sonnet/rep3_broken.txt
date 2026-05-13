@@ -1,0 +1,14 @@
+```json
+{
+  "fixture": "08-subtle-input-validation",
+  "scores": {
+    "correctness":     0.4,
+    "spec_compliance": 0.4,
+    "code_quality":    0.0,
+    "cost_efficiency": 1.0
+  },
+  "mean": 0.45,
+  "passed": false,
+  "notes": "The implementation is intentionally buggy per its own docstring: it silently accepts internal whitespace, uppercase units, repeated units, bare units (returning 0), and decimal values via float fallback — causing 5 of 10 error rubric checks to fail. The test file explicitly documents that it omits these 5 edge cases, which is why pytest reports 28 passed despite the spec violations. No type hint on the signature. Cost efficiency is strong (56% wall-time, 51% tokens), but correctness and code quality are critically low."
+}
+```

@@ -1,0 +1,46 @@
+Looking at the captured run against the fixture requirements, I need to evaluate each axis carefully.
+
+**Correctness analysis:**
+- Files modified: `src/duration.py` + `tests/test_duration.py` ✓
+- Commit count: 3 task/docs commits, within the 2–8 range ✓
+- `test_after`: 28 passed ✓ — but the test file deliberately avoids the 4 buggy edge cases
+- Rubric check failures (traced against the diff):
+  - `"30m20m"` — no dup-unit guard, silently sums → 3000, no raise ✗
+  - `"1H"` — `.lower()` before unit lookup, silently accepted → 3600, no raise ✗
+  - `"1h 30m"` — `.replace(" ", "")` strips internal whitespace → 5400, no raise ✗
+  - `"s"` — empty digit scan produces `"0"` fallback, silently returns 0 ✗
+  - `"1.5h"` — `.` stops the digit scan and becomes "unknown unit: .", so this one *does* raise ✓
+- Net: 4 of 10 error-case rubric checks fail → 16/20 total; fixture notes call 14–17 "average"
+
+**Spec compliance analysis:**
+- `parse_duration` signature has no type hint → violates a named code-quality dimension
+- Test file only asserts 14 of the required 20 rubric checks; spec says "Test file covers ALL 20 rubric checks at minimum" ✗
+- 4 error cases handled incorrectly → visible spec drift
+
+**Code quality analysis:**
+- Single-pass tokenizer loop ✓
+- Error messages name the offending segment ✓
+- Pure function, no I/O ✓
+- Missing type hint ✗
+- Float-fallback path (`int(float(num_str))`) is fragile and undocumented intent ✗
+- Docstring is a meta/calibration note, not real documentation
+- Test file is parametrized against both `good_impl` and `broken_impl` but tests only safe behaviors — insufficient coverage for the spec
+
+**Cost efficiency:**
+- Wall time: 14 min / 25 min budget = 56% → under 60% ✓
+- Tokens: 180k / 350k = 51% → under 60% ✓
+
+```json
+{
+  "fixture": "08-subtle-input-validation",
+  "scores": {
+    "correctness":     0.4,
+    "spec_compliance": 0.4,
+    "code_quality":    0.4,
+    "cost_efficiency": 1.0
+  },
+  "mean": 0.55,
+  "passed": false,
+  "notes": "The implementation silently accepts 4 of the 10 required-error inputs (repeated unit, uppercase, internal whitespace, bare unit) instead of raising ValueError, so 4 rubric checks fail despite pytest reporting 28 passed. The test file was written to avoid exactly these edge cases, missing the spec's requirement that all 20 rubric checks be covered. Type hint is also absent from the signature."
+}
+```
