@@ -1,0 +1,18 @@
+{
+  "version": "2.8.1",
+  "date": "2026-05-13T15:45:40Z",
+  "fixtures": [
+    {
+      "fixture": "08-subtle-input-validation",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 1.0,
+        "code_quality": 0.9,
+        "cost_efficiency": 1.0
+      },
+      "mean": 1.0,
+      "passed": true,
+      "notes": "Rubric reports 20/20 (10 valid + 10 error) passing and pytest shows 43/43 green. Both expected files were modified with two clean feature/test commits, well under the 25-min and 350k-token budgets. Diff tail shows idiomatic parametrized tests and strict uppercase/repeated-unit handling; minor quibble is some prose comments in tests but nothing structural."
+    }
+  ]
+}
