@@ -71,21 +71,38 @@ fixture 08) — these are independently valuable.
    designed 4 fixtures + run 45 cells before discovering the marginal
    ceiling. Doing baseline-variance first surfaced the answer at $30.
 
-## Per-rep data — final
+## Per-rep data — final (n=4 including main post-merge smoke)
 
-3 reps of balanced v2.6.0 on fixture 08, all identical:
+4 reps of balanced v2.6.0 on fixture 08:
 
-| Rep | rubric pass_rate | Missed | Judge mean |
-|-----|------------------|--------|------------|
-| 1 | 0.95 | "repeated unit raises ValueError" | 0.90 |
-| 2 | 0.95 | "repeated unit raises ValueError" | 0.90 |
-| 3 | 0.95 | "repeated unit raises ValueError" | 0.95 |
+| Rep | rubric pass_rate | Missed | Judge mean | Branch |
+|-----|------------------|--------|------------|--------|
+| 1 | 0.95 | "repeated unit raises ValueError" | 0.90 | experiment |
+| 2 | 0.95 | "repeated unit raises ValueError" | 0.90 | experiment |
+| 3 | 0.95 | "repeated unit raises ValueError" | 0.95 | experiment |
+| 4 | **1.00** | **none** | **1.00** | main (smoke) |
 
-- **Variance on rubric**: 0.00 (deterministic)
-- **Variance on judge code_quality**: small (±0.05 noise — LLM judge stochasticity)
-- **quality_plus ceiling**: 0.95 → 1.00 = +0.05
+- **mean**: 0.9625
+- **Variance on rubric**: 3/4 reps missed, 1/4 caught — **probabilistic, ~75% miss rate**
+- **Updated quality_plus expected gain**: ~+0.017 (best-of-3 with 75% miss rate per candidate)
 
-See [F001](./F001-fixture08-baseline.md) for detail.
+The rep 4 result was an unexpected finding from the post-merge smoke test
+on main. It revealed that the "zero variance" claim from the n=3 data was
+premature. Recommendation stands but rationale revised — see
+[F001](./F001-fixture08-baseline.md) for full analysis.
+
+## A cheaper alternative not pursued
+
+If the 75% miss rate is driven by Sonnet's thoroughness rather than candidate
+diversity, the simpler intervention is to **escalate the Implementer to Opus
+on HIGH-risk tasks** without any best-of-N machinery. Single Implementer,
+Opus model, ~2× cost (one Opus call instead of one Sonnet call), no
+sub-worktree complexity, no judge needed.
+
+This is a ~10-line change to SKILL.md Phase 1 Step 1 dispatch logic. Worth
+considering as a future minor revision IF a real failure case justifies
+investigation. Not pursued in this experiment because the 75% miss rate
+was only discovered post-merge.
 
 ## When to revisit
 

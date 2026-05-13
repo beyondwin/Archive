@@ -280,3 +280,47 @@ not by patching the fixture until quality_plus has room to win**.
 4. Decide implementation: implement quality_plus + pilot, OR skip
    implementation and ship calibration infrastructure only
 5. Final commit + close-out summary
+
+### 22:30–23:00 — 3-rep ceiling check complete
+
+Reps 1, 2, 3 all returned identical 0.95 pass_rate with same single miss.
+Wrote F001 + F002, marked experiment CLOSED, merged infrastructure to main
+(commit 0a9c2ef).
+
+### 23:30 — Guide documentation + auto-update system
+
+Added ARCHITECTURE.md (13-section overview), updated AGENTS.md with
+ARCHITECTURE.md sync protocol, cross-referenced in HISTORY.md. Committed
+to main (commit d5c4d01).
+
+### 23:45 — ADVISOR REVIEW (third)
+
+After "experiment archived" claim, advisor noted: the post-merge
+infrastructure was never smoke-tested on main. The 3 ceiling reps were
+on the experiment branch. Need one fixture-08 run from main to confirm
+the merged infrastructure produces the expected rubric pipeline output.
+
+### 23:50 — Smoke test on main — UNEXPECTED FINDING
+
+Ran fixture 08 on main. Expected: 0.95, "repeated unit" miss.
+**Actually got: 1.00, zero misses.**
+
+This contradicts the "zero variance" conclusion from n=3. The 4th rep
+catches the edge case that the previous 3 missed. Updated reading:
+balanced misses "repeated unit" ~75% of the time, not 100%.
+
+Updated F001 + F002 with n=4 data and revised math. quality_plus
+expected gain revised from ~+0.05 to ~+0.017. Recommendation to NOT
+implement still holds — even smaller expected effect.
+
+Noted in F002: cheaper alternative not pursued — just escalate
+Implementer to Opus on HIGH-risk tasks. ~10-line SKILL.md change, no
+best-of-N machinery. Worth considering if a real failure case ever
+justifies investigation.
+
+### Final state
+
+- Experiment archived with n=4 data and revised recommendation
+- Infrastructure on main (smoke-verified)
+- Documentation system in place (ARCHITECTURE + AGENTS protocol)
+- Branch preserved for D008 reference if revived
