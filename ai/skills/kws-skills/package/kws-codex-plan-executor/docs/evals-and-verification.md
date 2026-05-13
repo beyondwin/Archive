@@ -21,6 +21,10 @@ python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py
 These checks do not launch real executor sessions. Use them first while editing
 scripts, docs, or contracts.
 
+After running verification for a package change, append a compact entry to
+[verification-log.md](verification-log.md). Record command, result, skipped
+checks, and residual risk; do not paste long logs.
+
 ## Parser Fixtures
 
 Parser fixtures live in:
