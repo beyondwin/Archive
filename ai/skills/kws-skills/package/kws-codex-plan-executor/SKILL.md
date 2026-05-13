@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "1.1.0"
+  version: "1.2.0"
   updated_at: "2026-05-13"
 ---
 
@@ -97,7 +97,7 @@ Return only one fenced `text` block when the user asks for prompt-only output.
 | Mode | Required checks before completion |
 |------|-----------------------------------|
 | `interactive` | `scripts/parse_plan.py`, changed-project tests or honest substitute, `scripts/validate_state.py` |
-| `headless` | `scripts/parse_plan.py`, `evals/check_execution.py`, `scripts/validate_state.py`, headless JSONL/final artifact review |
+| `headless` | `scripts/parse_plan.py`, acceptance command or honest substitute, `scripts/validate_state.py`, headless JSONL/final artifact review |
 | `prompt` | `evals/check_prompt.py` or the prompt export checklist when no fixture exists |
 | `handoff` | `evals/check_prompt.py` or the prompt export checklist, plus source state/path readability |
 
@@ -106,3 +106,7 @@ Return only one fenced `text` block when the user asks for prompt-only output.
 Use `references/change-protocol.md` before editing this skill. Update
 `HISTORY.md`, `ARCHITECTURE.md`, package metadata, and eval baselines for
 behavior changes.
+
+For eval harness runs, the outer harness runs `evals/check_execution.py`.
+The target executor must not inspect fixture YAML, baseline files, `.harness`
+metadata, or expected values.

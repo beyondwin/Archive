@@ -45,6 +45,18 @@ import json, os, sys, yaml
 fixture_path, tmpdir = sys.argv[1:3]
 with open(fixture_path, encoding="utf-8") as fh:
     data = yaml.safe_load(fh) or {}
+
+
+def expand_workdir(value):
+    if isinstance(value, str):
+        return value.replace("__WORKDIR__", tmpdir)
+    if isinstance(value, list):
+        return [expand_workdir(item) for item in value]
+    if isinstance(value, dict):
+        return {key: expand_workdir(item) for key, item in value.items()}
+    return value
+
+
 for name, content in {
     "plan.md": data.get("plan", "### Task 0: Placeholder\n\n**Files:**\n- Create: docs/example.md\n"),
     "spec.md": data.get("spec", ""),
@@ -56,8 +68,11 @@ for name, content in (data.get("docs") or {}).items():
     os.makedirs(os.path.dirname(path) or tmpdir, exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(content)
-with open(os.path.join(tmpdir, ".harness", "fixture.json"), "w", encoding="utf-8") as fh:
-    json.dump(data, fh, ensure_ascii=False, indent=2)
+if data.get("initial_state") is not None:
+    state_path = os.path.join(tmpdir, ".codex-orchestrator", "state.json")
+    os.makedirs(os.path.dirname(state_path), exist_ok=True)
+    with open(state_path, "w", encoding="utf-8") as fh:
+        json.dump(expand_workdir(data["initial_state"]), fh, ensure_ascii=False, indent=2)
 PY
 
   (
@@ -69,20 +84,32 @@ PY
     git commit -q -m "eval bootstrap"
   )
 
-  mode="$(python3 - "$tmpdir/.harness/fixture.json" <<'PY'
-import json, sys
-data = json.load(open(sys.argv[1], encoding="utf-8"))
+  python3 - "$fixture_path" "$tmpdir" <<'PY'
+import os, sys, yaml
+fixture_path, tmpdir = sys.argv[1:3]
+with open(fixture_path, encoding="utf-8") as fh:
+    data = yaml.safe_load(fh) or {}
+for name, content in (data.get("dirty_files") or {}).items():
+    path = os.path.join(tmpdir, name)
+    os.makedirs(os.path.dirname(path) or tmpdir, exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(content)
+PY
+
+  mode="$(python3 - "$fixture_path" <<'PY'
+import sys, yaml
+data = yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}
 print(data.get("mode", "interactive"))
 PY
 )"
-  fixture_args="$(python3 - "$tmpdir/.harness/fixture.json" <<'PY'
-import json, sys
-data = json.load(open(sys.argv[1], encoding="utf-8"))
+  fixture_args="$(python3 - "$fixture_path" <<'PY'
+import sys, yaml
+data = yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}
 print(data.get("args", ""))
 PY
 )"
 
-  prompt="EVAL_RUN: Test the local skill at $SKILL_DIR/SKILL.md. Follow that skill as /kws-codex-plan-executor. Do not ask clarifying questions unless the skill requires a blocker. /kws-codex-plan-executor plan=plan.md spec=spec.md mode=$mode $fixture_args"
+  prompt="EVAL_RUN: Test the local skill at $SKILL_DIR/SKILL.md. Follow that skill as /kws-codex-plan-executor. Do not ask clarifying questions unless the skill requires a blocker. The harness will run fixture checkers after you finish; do not inspect eval fixture YAML, baseline files, .harness metadata, or expected values, and do not run evals/check_execution.py yourself. Use only plan.md, spec.md, repository files, SKILL.md, references, and scripts needed by the skill. /kws-codex-plan-executor plan=plan.md spec=spec.md mode=$mode $fixture_args"
 
   set +e
   (

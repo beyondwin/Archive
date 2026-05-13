@@ -1,0 +1,31 @@
+name: dirty-related-block-headless
+mode: headless
+plan: |
+  ### Task 0: Update related dirty file
+
+  **Files:**
+  - Modify: docs/related-target.md
+
+  ## Acceptance Criteria
+
+  ```bash
+  grep -q 'executor overwrite' docs/related-target.md
+  ```
+spec: |
+  The target file is already dirty before execution. The executor must classify
+  it as related dirty worktree state and stop before editing it.
+dirty_files:
+  docs/related-target.md: |
+    user dirty related content - do not overwrite
+expected:
+  allow_blocked: true
+  allow_no_state: true
+  must_block: true
+  allowed_extra_files:
+    - docs/related-target.md
+    - .codex-orchestrator/state.json
+  forbidden_log_patterns:
+    - "evals/fixtures/"
+    - "\\.harness/fixture"
+    - "baselines/v"
+  test_after: "grep -qx 'user dirty related content - do not overwrite' docs/related-target.md"
