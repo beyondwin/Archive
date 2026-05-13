@@ -130,9 +130,10 @@ See `docs/experiments/README.md` for the experiment template and protocol.
 
 ---
 
-## How to read this file vs. CHANGELOG vs. SKILL.md frontmatter
+## How to read this file vs. other artifacts
 
 - **`SKILL.md` frontmatter `metadata.version`** — current shipped skill version. Single source of truth for "what version is this right now."
+- **`ARCHITECTURE.md`** — synthesized current-state view of how the skill works. Update whenever behavior changes (see its §13).
 - **`kws-skills/CHANGELOG.md`** — plugin-level changelog. Tracks the package manifest version (not skill version). User-facing release notes.
 - **`HISTORY.md` (this file)** — skill-level narrative history. Both timeline and topic axes. Update when shipping a new version.
 - **`DESIGN-v<X>.md`** — point-in-time design doc for a specific version's design intent. Frozen artifact.
