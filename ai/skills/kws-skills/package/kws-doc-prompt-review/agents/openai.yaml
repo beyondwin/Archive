@@ -1,4 +1,0 @@
-interface:
-  display_name: "KWS Doc Prompt Review"
-  short_description: "Review and patch repository docs with GPT-5.5 prompt guidance"
-  default_prompt: "Use $kws-doc-prompt-review to review these repository docs and suggest or apply prompt-guidance improvements."
