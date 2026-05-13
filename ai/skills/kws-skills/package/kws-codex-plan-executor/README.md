@@ -30,15 +30,19 @@ For normal use:
 
 For maintenance or follow-up work:
 
-1. [docs/how-it-works.md](docs/how-it-works.md) - end-to-end runtime model.
-2. [docs/state-and-logging.md](docs/state-and-logging.md) - state, context,
+1. [docs/doc-update-protocol.md](docs/doc-update-protocol.md) - what to update
+   before finalizing package changes.
+2. [docs/how-it-works.md](docs/how-it-works.md) - end-to-end runtime model.
+3. [docs/state-and-logging.md](docs/state-and-logging.md) - state, context,
    learning logs, privacy rules.
-3. [docs/evals-and-verification.md](docs/evals-and-verification.md) - how evals
+4. [docs/evals-and-verification.md](docs/evals-and-verification.md) - how evals
    are organized and run.
-4. [docs/decisions.md](docs/decisions.md) - why the current design exists.
-5. [docs/risks-limitations-deferrals.md](docs/risks-limitations-deferrals.md) -
+5. [docs/verification-log.md](docs/verification-log.md) - compact record of
+   verification commands and outcomes.
+6. [docs/decisions.md](docs/decisions.md) - why the current design exists.
+7. [docs/risks-limitations-deferrals.md](docs/risks-limitations-deferrals.md) -
    known risks, limits, and intentional deferrals.
-6. [docs/future-agent-guide.md](docs/future-agent-guide.md) - safe change path
+8. [docs/future-agent-guide.md](docs/future-agent-guide.md) - safe change path
    and suggested next improvements.
 
 For behavior history:
@@ -108,6 +112,10 @@ than the deterministic unit checks. Use the narrower checks first when iterating
 ## Maintenance Rule
 
 Before changing runtime behavior, read
-[references/change-protocol.md](references/change-protocol.md). Behavior changes
-must update matching deterministic checks so prompt export, headless execution,
-state validation, and runtime docs cannot drift independently.
+[references/change-protocol.md](references/change-protocol.md). Before
+finalizing any package change, read
+[docs/doc-update-protocol.md](docs/doc-update-protocol.md) and append compact
+verification evidence to [docs/verification-log.md](docs/verification-log.md).
+Behavior changes must update matching deterministic checks so prompt export,
+headless execution, state validation, and runtime docs cannot drift
+independently.
