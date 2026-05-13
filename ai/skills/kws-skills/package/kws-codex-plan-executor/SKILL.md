@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "1.0.0"
+  version: "1.1.0"
   updated_at: "2026-05-13"
 ---
 
@@ -24,9 +24,11 @@ Supported arguments:
 - `spec=<path>` optional.
 - `docs=<path1,path2>` optional.
 - `workspace=<path>` optional.
+- `resume=latest|<state-path>` optional; if multiple candidate states exist,
+  stop and ask which state to resume.
 - `mode=interactive|headless|prompt|handoff` optional, default `interactive`.
 - `subagents=on|off` optional, default `off` unless the user explicitly asked for subagents, delegation, or parallel work.
-- `headless_sandbox=workspace-write|read-only|danger-full-access` optional, default `workspace-write`.
+- `headless_sandbox=workspace-write|read-only` optional, default `workspace-write`.
 
 ## Hard Boundary
 
@@ -36,6 +38,20 @@ sandbox.
 
 Use `spawn_agent` only when the user explicitly asks for subagents, delegation,
 parallel work, or passes `subagents=on`.
+
+## Core Invariants
+
+- No edits before a 5-line `TASK EXECUTION CONTRACT` is stated and recorded:
+  `scope`, `files_to_inspect`, `allowed_edits`, `forbidden_edits`, and
+  `acceptance_command_or_honest_substitute`.
+- Before execution, classify dirty worktree changes as `related` or
+  `unrelated`. Continue past unrelated dirty files only when they are outside
+  the declared task files; stop before touching related dirty files.
+- Execution plans may use `Files`, `Affected files`, `Modified files`,
+  `Changed files`, `수정 파일`, `변경 파일`, `대상 파일`, or `파일` headings for
+  task file blocks. Execution mode still stops if no file block is present.
+- Resume mode uses `.codex-orchestrator/state.json` as source of truth. Do not
+  infer between multiple ambiguous states.
 
 ## Workflow
 
@@ -54,6 +70,7 @@ parallel work, or passes `subagents=on`.
 
 - Missing or unreadable plan: ask one short question or report blocker.
 - Dirty worktree with related ambiguity: stop and report.
+- Ambiguous `resume=latest` with multiple state files: stop and ask.
 - Missing `Files:` blocks in execution mode: stop before edits.
 - Unclear acceptance criteria on mid/high risk tasks: stop for clarification
   unless the plan gives an honest substitute.
@@ -74,6 +91,15 @@ For prompt/handoff mode:
 5. Run the checklist in `references/prompt-export-checklist.md`.
 
 Return only one fenced `text` block when the user asks for prompt-only output.
+
+## Validation Matrix
+
+| Mode | Required checks before completion |
+|------|-----------------------------------|
+| `interactive` | `scripts/parse_plan.py`, changed-project tests or honest substitute, `scripts/validate_state.py` |
+| `headless` | `scripts/parse_plan.py`, `evals/check_execution.py`, `scripts/validate_state.py`, headless JSONL/final artifact review |
+| `prompt` | `evals/check_prompt.py` or the prompt export checklist when no fixture exists |
+| `handoff` | `evals/check_prompt.py` or the prompt export checklist, plus source state/path readability |
 
 ## Maintenance
 

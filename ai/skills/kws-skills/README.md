@@ -12,7 +12,7 @@
 
 ## 현재 버전
 
-- 패키지 버전: `2.6.0`
+- 패키지 버전: `2.8.0`
 - 마지막 갱신일: `2026-05-13`
 
 ## 포함된 스킬
@@ -21,7 +21,6 @@
 - `kws-claude-multi-agent-executor`
 - `kws-codex-plan-executor`
 - `kws-doc-prompt-review`
-- `kws-new-session-plan-prompt-gpt-5-5`
 - `kws-skill-prompt-review`
 - `reflective-essay-writer`
 - `reflective-writing-coach`
@@ -32,14 +31,11 @@
 | --- | --- | --- |
 | `archive-docs-organizer` | `1.1.1` | `2026-04-30` |
 | `kws-claude-multi-agent-executor` | `2.6.0` | `2026-05-13` |
-| `kws-codex-plan-executor` | `1.0.0` | `2026-05-13` |
+| `kws-codex-plan-executor` | `1.1.0` | `2026-05-13` |
 | `kws-doc-prompt-review` | `1.0.1` | `2026-05-05` |
-| `kws-new-session-plan-prompt-gpt-5-5` | `2.4.0` | `2026-05-13` |
 | `kws-skill-prompt-review` | `1.0.1` | `2026-05-05` |
 | `reflective-essay-writer` | `1.0.1` | `2026-04-30` |
 | `reflective-writing-coach` | `1.0.1` | `2026-04-30` |
-
-`kws-new-session-plan-prompt-gpt-5-5`는 임시 legacy wrapper로 유지합니다. 새 계획 실행과 prompt export는 `kws-codex-plan-executor`를 사용합니다.
 
 ## 구조
 
