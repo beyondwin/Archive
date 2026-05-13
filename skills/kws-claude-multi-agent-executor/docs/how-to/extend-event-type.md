@@ -1,71 +1,53 @@
-# How to extend the learning-log event-type set
+# 학습 로그 이벤트 타입 셋 확장하는 법
 
-Adding a new event type to the schema. This is a coordinated change
-across the schema definition, the helper script, the deterministic
-checks, the reference doc, and at least one sub-agent prompt that emits
-the new type.
+스키마에 새 이벤트 타입 추가. 이건 스키마 정의, 헬퍼 스크립트, 결정론적 체크, 참조 문서, 그리고 새 타입을 발산할 적어도 하나의 서브에이전트 프롬프트에 걸친 협응 변경입니다.
 
-For the existing 10 event types and contract see
-[`../../references/learning-log.md`](../../references/learning-log.md).
-Before adding, verify the decision criteria below.
+기존 10개 이벤트 타입과 계약은 [`../../references/learning-log.md`](../../references/learning-log.md) 참조. 추가 전, 아래 결정 기준 검증.
 
-## Decision: should a new event type exist?
+## 결정: 새 이벤트 타입이 존재해야 하나?
 
-Adding an event type is a schema change. The 10 existing types were
-chosen to be jointly exhaustive over notable boundaries the orchestrator
-sees. Before adding:
+이벤트 타입 추가는 스키마 변경. 기존 10개 타입은 오케스트레이터가 보는 주목할 만한 경계에 대해 jointly exhaustive 하도록 선택됨. 추가 전:
 
-1. **Can the new signal be expressed as a refinement of an existing
-   type?** Most "I want to record X" needs map to an existing type +
-   a richer `context` field. Prefer that.
-2. **Is there *measured* need?** The omc-inspired conflict-mailbox type
-   (Risk F in [`../deferred-candidates.md`](../deferred-candidates.md))
-   is deferred precisely because no measured KCMAE failure currently
-   uses it. Don't add speculatively.
-3. **Will at least one current sub-agent prompt actually emit this?**
-   An event type with no producer is dead code.
+1. **새 신호가 기존 타입의 정제로 표현 가능한가?** 대부분의 "X 를 기록하고 싶다" 는 기존 타입 + 풍부해진 `context` 필드로 매핑. 그쪽 선호.
+2. **측정된 필요가 있나?** omc 영감 conflict-mailbox 타입 ([`../deferred-candidates.md`](../deferred-candidates.md) Risk F) 은 측정된 KCMAE 실패가 현재 이를 사용 안 해서 연기. 추측으로 추가 금지.
+3. **현재 서브에이전트 프롬프트 중 적어도 하나가 실제로 이를 발산할 것인가?** 생산자 없는 이벤트 타입은 데드 코드.
 
-If all three answer yes, proceed. If not, record in deferred-candidates
-and revisit when evidence accumulates.
+세 답이 모두 yes 면 진행. 아니면 deferred-candidates 에 기록, 증거 누적 시 재방문.
 
-## The five places to update
+## 갱신할 다섯 곳
 
-A new event type touches these artifacts; missing any breaks the
-contract or makes the type invisible:
+새 이벤트 타입이 건드리는 산출물; 누락 시 계약 깨짐 또는 타입 비가시:
 
-1. **`references/learning-log.md`** — schema documentation
-2. **`scripts/append_learning_event.py`** — `EVENT_TYPES` validation set
-3. **`evals/check_learning_log.py`** — schema test coverage
-4. **`evals/check_skill_contract.py`** — `EVENT_TYPES` list (cross-check)
-5. **At least one sub-agent prompt under `references/`** — emitter
+1. **`references/learning-log.md`** — 스키마 문서
+2. **`scripts/append_learning_event.py`** — `EVENT_TYPES` 검증 셋
+3. **`evals/check_learning_log.py`** — 스키마 테스트 커버리지
+4. **`evals/check_skill_contract.py`** — `EVENT_TYPES` 리스트 (교차 체크)
+5. **`references/` 하위 적어도 하나의 서브에이전트 프롬프트** — 발산자
 
-Optional but recommended:
-6. **`references/escalation-playbook.md`** — if this type maps to an
-   ESCALATE category
-7. **A new contract-eval check** verifying the schema honors any new
-   required fields specific to this type
+선택이지만 권장:
+6. **`references/escalation-playbook.md`** — 이 타입이 ESCALATE 카테고리에 매핑되면
+7. **새 계약 eval 체크** — 이 타입 특이적 새 필수 필드를 스키마가 존중하는지 검증
 
-## Step 1 — Update `references/learning-log.md`
+## Step 1 — `references/learning-log.md` 갱신
 
-Add the new type to the "10 event types" enumeration (which will become
-11). For each type the doc currently has:
-- One-line description
-- When the orchestrator emits it (or which sub-agent writes the candidate)
-- Required `context` fields beyond the schema baseline
-- One example payload
+새 타입을 "10 event types" 열거 (이제 11이 됨) 에 추가. 각 타입에 대해 문서가 현재 가진 것:
+- 한 줄 설명
+- 오케스트레이터가 발산하는 시점 (또는 어느 서브에이전트가 후보 작성)
+- 스키마 베이스라인 너머의 필수 `context` 필드
+- 예시 페이로드 하나
 
-Match that pattern.
+그 패턴 매칭.
 
 ```markdown
-### N. `your_new_type` (NEW in vX.Y.Z)
+### N. `your_new_type` (vX.Y.Z 에서 NEW)
 
-**When emitted**: <one sentence — orchestrator or sub-agent + trigger condition>
+**언제 발산**: <한 문장 — 오케스트레이터 또는 서브에이전트 + 트리거 조건>
 
-**Required context fields beyond baseline**:
-- `field_a` (string) — <what it carries>
-- `field_b` (object) — <structure>
+**베이스라인 너머 필수 context 필드**:
+- `field_a` (string) — <무엇을 운반>
+- `field_b` (object) — <구조>
 
-**Example**:
+**예시**:
 \`\`\`json
 {
   "schema_version": "1",
@@ -78,12 +60,11 @@ Match that pattern.
 \`\`\`
 ```
 
-If the type changes the schema version (new required top-level field),
-bump `schema_version` and document the migration in HISTORY.md.
+타입이 스키마 버전 변경 (새 최상위 필수 필드) 이면 `schema_version` 번프하고 HISTORY.md 에 마이그레이션 문서화.
 
-## Step 2 — Update `scripts/append_learning_event.py`
+## Step 2 — `scripts/append_learning_event.py` 갱신
 
-Find the `EVENT_TYPES` constant or `validate_event` function:
+`EVENT_TYPES` 상수 또는 `validate_event` 함수 찾기:
 
 ```python
 EVENT_TYPES = {
@@ -97,51 +78,47 @@ EVENT_TYPES = {
     "parallel_dispatch_failure",
     "successful_workaround",
     "completion_learning",
-    "your_new_type",          # NEW vX.Y.Z
+    "your_new_type",          # vX.Y.Z 에서 NEW
 }
 ```
 
-If your new type has type-specific required fields, add a validation
-branch:
+새 타입이 타입 특이적 필수 필드 있으면 검증 분기 추가:
 
 ```python
 if event["event_type"] == "your_new_type":
     for required in ("context.field_a", "context.field_b"):
-        # Walk dotted path; raise if missing
+        # 점 분리 경로 walk; 누락 시 raise
         ...
 ```
 
-## Step 3 — Update `evals/check_learning_log.py`
+## Step 3 — `evals/check_learning_log.py` 갱신
 
-The deterministic check suite verifies that `append` rejects unknown
-event types. Add at least one positive + one negative case:
+결정론적 체크 스위트가 `append` 가 알려지지 않은 이벤트 타입을 거부하는지 검증. 적어도 양성 + 음성 케이스 추가:
 
 ```python
 def check_your_new_type_accepted():
-    """append accepts the new event type when fields are correct"""
+    """필드가 올바르면 append 가 새 이벤트 타입 수락"""
     event = {
         "schema_version": "1",
         "phase": "phase_1",
         "event_type": "your_new_type",
-        # ... full minimal valid event with required fields ...
+        # ... 필수 필드와 함께 풀 최소 유효 이벤트 ...
     }
     result = run_helper("append", "--run-id", run_id, payload=event)
     assert result.returncode == 0
 
 def check_your_new_type_missing_required_field_fails():
-    """append rejects the new event type if a required type-specific field is missing"""
-    event = {...}  # missing context.field_a
+    """타입 특이적 필수 필드 누락 시 append 가 새 이벤트 타입 거부"""
+    event = {...}  # context.field_a 누락
     result = run_helper("append", "--run-id", run_id, payload=event)
     assert result.returncode != 0
 ```
 
-Run `python3 evals/check_learning_log.py` — should be 17/17+ (was 16/16
-before).
+`python3 evals/check_learning_log.py` 실행 — 17/17+ 통과해야 함 (이전 16/16).
 
-## Step 4 — Update `evals/check_skill_contract.py`
+## Step 4 — `evals/check_skill_contract.py` 갱신
 
-The contract check has an `EVENT_TYPES` list it cross-references against
-`references/learning-log.md`. Add your new type:
+계약 체크가 `references/learning-log.md` 와 교차 참조하는 `EVENT_TYPES` 리스트 보유. 새 타입 추가:
 
 ```python
 EVENT_TYPES = [
@@ -155,29 +132,22 @@ EVENT_TYPES = [
     "parallel_dispatch_failure",
     "successful_workaround",
     "completion_learning",
-    "your_new_type",          # NEW vX.Y.Z
+    "your_new_type",          # vX.Y.Z 에서 NEW
 ]
 ```
 
-Run `python3 evals/check_skill_contract.py --skill SKILL.md` — the
-`learning_log_event_types` check should still pass (it greps for every
-member of this list in `learning-log.md`).
+`python3 evals/check_skill_contract.py --skill SKILL.md` 실행 — `learning_log_event_types` 체크가 여전히 통과해야 함 (이 리스트의 모든 멤버를 `learning-log.md` 에서 grep).
 
-## Step 5 — Wire at least one emitter
+## Step 5 — 적어도 하나의 발산자 연결
 
-Pick the sub-agent prompt that should produce the new candidate file.
-Edit `references/<role>-prompt.md` to add (or extend) a "Learning log
-emit" section:
+새 후보 파일을 생산해야 할 서브에이전트 프롬프트 선택. `references/<role>-prompt.md` 편집해서 "Learning log emit" 섹션 추가 (또는 확장):
 
 ```markdown
 ## Learning log emit (vX.Y.Z)
 
-If <trigger condition>, write a learning-event candidate JSON file to
-`<worktree>/.orchestrator/learning_events/<task_id>-<role>.json` before
-returning your output. **Do not call the helper script yourself** — the
-orchestrator scans this directory and invokes `append`.
+<트리거 조건> 이면, 출력 반환 전 `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json` 에 learning-event 후보 JSON 파일 작성. **헬퍼 스크립트를 직접 호출하지 마세요** — 오케스트레이터가 이 디렉터리를 스캔하고 `append` 호출.
 
-Minimal candidate body:
+최소 후보 본문:
 
 \`\`\`json
 {
@@ -188,7 +158,7 @@ Minimal candidate body:
   "severity": "<low|medium|high>",
   "execution": {"task_id": "task_<N>", "issue_key": "<top_issue_key>"},
   "subagent": {"role": "<your-role>", "model": "sonnet", "dispatch": "agent_tool"},
-  "summary": "<≤1 sentence — what occurred>",
+  "summary": "<≤1 문장 — 무엇이 일어났나>",
   "context": {
     "user_intent": "<…>",
     "agent_expectation": "<…>",
@@ -199,76 +169,58 @@ Minimal candidate body:
     "field_b": {...}
   },
   "improvement": {
-    "target": "<file the improvement would touch>",
-    "proposal": "<≤1 sentence>",
+    "target": "<개선이 건드릴 파일>",
+    "proposal": "<≤1 문장>",
     "experiment_link": null
   },
-  "privacy": {"redacted": true, "notes": "<what was redacted>"}
+  "privacy": {"redacted": true, "notes": "<무엇이 redact 됐나>"}
 }
 \`\`\`
 ```
 
-If multiple sub-agents emit the type, repeat for each.
+여러 서브에이전트가 타입 발산하면 각각 반복.
 
-If the orchestrator itself emits (rather than a sub-agent), update
-`SKILL.md` directly with the appropriate phase step.
+오케스트레이터 자체가 발산하면 (서브에이전트가 아니라), 적절한 단계 스텝과 함께 `SKILL.md` 직접 갱신.
 
-## Step 6 — Update escalation playbook (if applicable)
+## Step 6 — 에스컬레이션 플레이북 갱신 (해당 시)
 
-If the new event type corresponds to an ESCALATE category (e.g.,
-`spec_blocked`, `implementation_blocked`, `test_blocked`), add a row to
-`references/escalation-playbook.md`:
+새 이벤트 타입이 ESCALATE 카테고리 (예: `spec_blocked`, `implementation_blocked`, `test_blocked`) 에 대응하면 `references/escalation-playbook.md` 에 행 추가:
 
-| ESCALATE type | Event type | Severity |
-|---------------|------------|----------|
+| ESCALATE 타입 | 이벤트 타입 | 심각도 |
+|---------------|-------------|--------|
 | ... | ... | ... |
 | `<your_escalate>` | `your_new_type` | <severity> |
 
-## Step 7 — Version bump
+## Step 7 — 버전 번프
 
-Adding an event type is a feature; bump the minor version (e.g.,
-v2.9.0 → v2.10.0). Update:
+이벤트 타입 추가는 기능; 마이너 버전 번프 (예: v2.9.0 → v2.10.0). 갱신:
 
 - `SKILL.md` frontmatter `metadata.version`
-- `README.md` current version line
-- `HISTORY.md` v2.X.0 entry under §1 explaining the new type and
-  evidence motivating it
+- `README.md` 현재 버전 라인
+- `HISTORY.md` §1 아래 v2.X.0 항목에 새 타입과 이를 동기 부여한 증거 설명
 
-## Step 8 — Run full preflight
+## Step 8 — 풀 preflight 실행
 
 ```bash
-python3 evals/check_learning_log.py      # 17+ checks pass
-python3 evals/check_skill_contract.py --skill SKILL.md  # 18+ checks pass
+python3 evals/check_learning_log.py      # 17+ 체크 통과
+python3 evals/check_skill_contract.py --skill SKILL.md  # 18+ 체크 통과
 ```
 
-Then a single fixture run to verify nothing else broke:
+그리고 다른 게 깨지지 않았는지 검증할 단일 픽스처 실행:
 
 ```bash
 bash evals/run.sh evals/fixtures/01-trivial-typo.yaml  # smoke
 ```
 
-## Step 9 — Commit + experiment record (if non-trivial)
+## Step 9 — 커밋 + 실험 기록 (비자명할 때)
 
-If the new type came from an experiment (e.g., a v2.X-<name>/ directory
-with D### deciding the type), commit the schema + emitter changes
-together with the experiment finding that justified them.
+새 타입이 실험 (예: 타입을 결정한 D### 가 있는 v2.X-<name>/ 디렉터리) 에서 왔으면, 이를 정당화한 실험 finding 과 함께 스키마 + 발산자 변경 커밋.
 
-If the change is small and uncontroversial: one commit with the schema
-+ emitter is fine.
+변경이 작고 논쟁 여지 없으면: 스키마 + 발산자 하나의 커밋이면 됨.
 
-## Common pitfalls
+## 흔한 함정
 
-- **Adding the type to the helper but not the contract eval**: tests
-  pass locally but `check_skill_contract.py` fails on the contract
-  check that cross-references the doc. Fix: keep the three lists
-  (`learning-log.md`, helper, contract eval) in sync — they exist
-  precisely to catch this drift.
-- **Missing emitter**: schema accepts the new type but no sub-agent
-  produces it. The type is dead. Fix: wire at least one prompt before
-  shipping; verify a sample run produces the candidate file.
-- **Type semantics overlap an existing type**: future readers will
-  emit the wrong type. Fix: write a "use type X vs Y" section in
-  `references/learning-log.md` distinguishing them.
-- **Required fields are too permissive**: events come through with
-  partial context, downstream analysis fails. Fix: make required
-  fields actually required in helper validation (raise if missing).
+- **헬퍼에 타입 추가하지만 계약 eval 에 없음**: 로컬에선 테스트 통과하지만 `check_skill_contract.py` 가 문서 교차 참조하는 계약 체크에서 실패. 수정: 세 리스트 (`learning-log.md`, 헬퍼, 계약 eval) 동기화 — 정확히 이 드리프트를 잡기 위해 존재.
+- **발산자 누락**: 스키마가 새 타입 수락하지만 어느 서브에이전트도 생산 안 함. 타입은 데드. 수정: 출하 전 적어도 하나의 프롬프트 연결; 샘플 실행이 후보 파일 생산하는지 검증.
+- **타입 의미가 기존 타입과 겹침**: 미래 독자가 잘못된 타입 발산. 수정: `references/learning-log.md` 에 둘을 구분하는 "타입 X vs Y 사용" 섹션 작성.
+- **필수 필드가 너무 관대**: 이벤트가 부분 컨텍스트로 들어오고, downstream 분석 실패. 수정: 헬퍼 검증에서 필수 필드를 실제로 필수로 만들기 (누락 시 raise).

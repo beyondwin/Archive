@@ -117,6 +117,32 @@
 
 ---
 
+## 컨텍스트 헬스 관측성 (v2.10 후보)
+
+**제안된 변경**: 새 학습 로그 이벤트 타입 `context_health` 또는 기존 `completion_learning` 확장. 실행당 1회 (Phase 2 종료 시) 발산. 측정 지표 후보:
+- `max_orchestrator_tokens` — 세션 jsonl 의 누적 토큰 카운트
+- `compaction_events_observed` — `state.compaction_points` 실제 도달 횟수
+- `resume_chain_handoffs` — state.json `chain_resume` 히스토리에서 카운트
+- `subagent_dispatch_count` / `avg_subagent_tokens_in_out` — 서브에이전트 입출력 토큰 평균
+- `state_json_writes` / `read_after_compaction` — 외부 메모리가 복구 보조 역할 실제로 하는지
+- 드리프트 신호: `recurring_issue` 카운트, 반복 SPEC_FAULT, 같은 file:line 의 ISSUE_KEY 재출현
+
+**기원**: 사용자 제안 2026-05-14 — "로그 기록할때 컨텍스트가 잘관리되고있는지도 파악". 스킬 전체 아키텍처(오케스트레이터-워커, 컴팩션 포인트, fresh 서브에이전트, state.json) 가 컨텍스트 위생을 위해 설계됐는데 정작 작동 여부를 측정 안 하고 있다는 관찰.
+
+**연기 이유**:
+- 측정 정의에 가설 있음 — "어떤 지표가 실제로 드리프트 예측할까?" 가 비자명. 추측으로 지표 선택하면 메트릭이 *수단* 이 되어 동작 왜곡 (Goodhart's law).
+- 실험 스캐폴드로 다뤄야 함 (≥50줄 변경: SKILL.md 5곳 + 헬퍼 + eval). 현재 코퍼스 부족.
+- v2.8.1 자체가 아직 1-2주 실사용 데이터 부족 — 이 데이터로 가설을 키울 수 있어야 함.
+
+**재방문 시점**:
+- v2.8.1 가 자리 잡고 1-2주 정례 사용 후, 학습 로그가 ≥10 실제 실행 캡처.
+- 또는 `recurring_issue` / SPEC_FAULT 반복 패턴이 컨텍스트 압박 추정을 정당화하는 사고 표면화.
+- 또는 omc 비교 후보 D(거버넌스 플래그) / E(heartbeat) 재방문 시 — 이 항목이 그들의 트리거 기준 데이터 공급.
+
+**시작 시 주의**: 메트릭은 진단용 — threshold 기반 자동 분기(예: "토큰 X 초과면 자동 컴팩션") 도입 금지. 그러면 측정이 동작 왜곡.
+
+---
+
 ## 학습 로그 → 실험 스캐폴드 자동 트리거
 
 **제안된 변경**: 학습 로그에서 반복 패턴 감시하고 표면화된 이슈에 대해 실험 스캐폴드 자동 생성하는 메타 스킬 (D001 템플릿 + README + 계획 stub).

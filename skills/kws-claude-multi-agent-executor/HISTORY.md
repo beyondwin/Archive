@@ -1,5 +1,12 @@
 # Skill History — kws-claude-multi-agent-executor
 
+> **한글 TL;DR**: 이 파일은 영어 원본으로 유지됩니다. 시간 고정 버전 기록 + 실험 인덱스가 본체이며, 재작성하면 사실 왜곡 위험이 있어 그대로 두는 게 안전. **무엇을 찾나요?**
+> - 버전 간 변경 (예: v2.8 → v2.9) → §1 "Version timeline"
+> - 어떤 영역이 언제 개선됐나 → §2 "Improvement areas"
+> - 실험과 그 결과 → §3 "Experiment index"
+>
+> 한글 설계 배경은 [`docs/design-decisions.md`](./docs/design-decisions.md), 결정 인덱스는 [`docs/decision-log.md`](./docs/decision-log.md).
+
 A two-axis summary of where this skill came from and what changed:
 
 - **§1 Version timeline** — chronological version notes

@@ -1,88 +1,81 @@
 # Experiments — kws-claude-multi-agent-executor
 
-Each non-trivial change to this skill that has a hypothesis to test, a non-obvious
-trade-off, or could produce a negative result gets its own experiment record here.
+이 스킬에 대한 비자명한 변경 중 검증할 가설이 있거나, 비자명한 트레이드오프가 있거나, 부정 결과를 낼 수 있는 변경은 여기 자체 실험 기록을 갖습니다.
 
-Small bug fixes and obvious improvements don't need an experiment record — a
-git commit + CHANGELOG entry is enough.
+작은 버그 수정과 자명한 개선은 실험 기록이 필요 없습니다 — git 커밋 + CHANGELOG 항목이면 충분.
 
-## Index
+## 인덱스
 
-| Experiment | Status | Outcome | Records |
-|------------|--------|---------|---------|
-| `v2.7-quality-mode` | **CLOSED** (2026-05-13) | Negative on `quality_plus`; positive on rubric infrastructure | [v2.7-quality-mode/](./v2.7-quality-mode/) |
-| _(future experiments listed here)_ | | | |
+| 실험 | 상태 | 결과 | 기록 |
+|------|------|------|------|
+| `v2.7-quality-mode` | **CLOSED** (2026-05-13) | `quality_plus` 부정; rubric 인프라 긍정 | [v2.7-quality-mode/](./v2.7-quality-mode/) |
+| _(미래 실험이 여기 나열)_ | | | |
 
-## When to start an experiment record
+## 언제 실험 기록을 시작하나
 
-Open a new `docs/experiments/<version>-<short-name>/` subdirectory when **any** of:
+다음 중 **하나라도** 해당하면 새 `docs/experiments/<version>-<short-name>/` 서브디렉터리 열기:
 
-- You are about to make a SKILL.md change ≥ 50 lines, or a multi-file behavioral change
-- You have a hypothesis that could be wrong (e.g., "best-of-N improves quality")
-- The change requires designing a fixture or evaluation method
-- You expect to need user clarification, advisor calls, or external review
-- Cost > $20 in API or > 1 hour of substantive work
+- SKILL.md 변경이 ≥ 50줄이거나 멀티 파일 동작 변경
+- 틀릴 수 있는 가설이 있음 (예: "best-of-N 이 품질 개선")
+- 변경이 픽스처나 평가 방법 설계 필요
+- 사용자 명확화, advisor 호출, 외부 리뷰가 필요할 것으로 예상
+- 비용 > $20 API 또는 > 1시간 실질 작업
 
-If the change is mechanical (rename, typo fix, dependency bump): just commit. No experiment record needed.
+변경이 기계적이면(이름 변경, 오타 수정, 의존성 번프): 그냥 커밋. 실험 기록 불필요.
 
-## Structure (use the template)
+## 구조 (템플릿 사용)
 
-Every experiment subdirectory follows this layout:
+모든 실험 서브디렉터리는 이 레이아웃 따름:
 
 ```
 docs/experiments/<version>-<name>/
-├── README.md              # one-page overview + status + decisions index
-├── JOURNAL.md             # chronological narrative of work
-├── decisions/             # one short ADR per major decision
+├── README.md              # 한 페이지 개요 + 상태 + 결정 인덱스
+├── JOURNAL.md             # 작업의 시간순 narrative
+├── decisions/             # 주요 결정마다 짧은 ADR 하나
 │   ├── D001-<topic>.md
 │   ├── D002-<topic>.md
 │   └── ...
-└── findings/              # results, data, close-out documents
+└── findings/              # 결과, 데이터, 마감 문서
     ├── F001-<topic>.md
-    ├── F002-close-out.md  # final summary with ship/skip recommendation
+    ├── F002-close-out.md  # ship/skip 권고와 함께 최종 요약
     └── <raw-data-files>
 ```
 
-See `_template/` for a starter scaffold.
+스타터 스캐폴드는 `_template/` 참조.
 
-## Required documents
+## 필수 문서
 
-At close-out, every experiment record must have:
+마감 시 모든 실험 기록은 다음을 가져야 함:
 
-1. **README.md** — current-status block + index of decisions + index of findings
-2. **JOURNAL.md** — chronological log with timestamps, including:
-   - Initial problem framing
-   - Each major decision with reasoning
-   - Each advisor review (capture the actual advice, don't paraphrase)
-   - Each pivot or scope change with reason
-   - Final close-out
-3. **At least one findings/ document** — what data was collected, what was decided
-4. **Close-out finding** (`Fnn-close-out.md` or similar) — explicit decision: ship / skip / pivot
+1. **README.md** — 현재 상태 블록 + 결정 인덱스 + findings 인덱스
+2. **JOURNAL.md** — 타임스탬프 포함 시간순 로그:
+   - 초기 문제 정의
+   - 추론과 함께 각 주요 결정
+   - 각 advisor 리뷰 (실제 조언 캡처, 의역 금지)
+   - 이유와 함께 각 피벗 또는 범위 변경
+   - 최종 마감
+3. **적어도 하나의 findings/ 문서** — 무엇이 수집됐고 무엇이 결정됐는지
+4. **마감 finding** (`Fnn-close-out.md` 또는 유사) — 명시적 결정: ship / skip / pivot
 
-## Documentation protocol (for the agent running the experiment)
+## 문서화 프로토콜 (실험 실행 에이전트용)
 
-- Update JOURNAL **as you go**, not at the end. Future-you and future-others
-  need to know *what you were thinking when*, not just the outcome.
-- Write ADRs (`D###-<topic>.md`) for any decision that:
-  - Couldn't be made from existing code alone (required judgment)
-  - Could plausibly be revisited later
-  - Was rejected (record the rejection reason — equally valuable)
-- Commit messages reference ADR IDs: e.g., `feat(skill): X (per D003)`.
-- When close-out happens, update the index in this README and in
-  `../HISTORY.md` §3.
+- JOURNAL 을 **진행하면서** 갱신, 끝에서가 아님. 미래의 나와 다른 사람은 결과만이 아니라 *언제 무슨 생각이었는지* 알 필요 있음.
+- 다음에 해당하는 결정에 대해 ADR (`D###-<topic>.md`) 작성:
+  - 기존 코드만으로는 만들 수 없었음 (판단 필요)
+  - 나중에 그럴듯하게 재방문 가능
+  - 거부됨 (거부 이유 기록 — 동등하게 가치 있음)
+- 커밋 메시지가 ADR ID 참조: 예, `feat(skill): X (per D003)`.
+- 마감 시 이 README 의 인덱스와 `../HISTORY.md` §3 갱신.
 
-## Closing an experiment
+## 실험 닫기
 
-1. Write `findings/Fnn-close-out.md` with final recommendation
-2. Update the experiment's own `README.md` status to CLOSED + outcome
-3. Update this file's index table
-4. Update `HISTORY.md` §3 if not already
-5. Commit with message `docs(experiment): close-out v<X.Y>-<name> — <outcome>`
-6. If branch-only: leave branch open as artifact. If anything from the experiment
-   ships, separate cherry-pick commit(s) to main referencing the close-out.
+1. 최종 권고와 함께 `findings/Fnn-close-out.md` 작성
+2. 실험 자체의 `README.md` 상태를 CLOSED + outcome 으로 갱신
+3. 이 파일의 인덱스 표 갱신
+4. 아직 안 됐으면 `HISTORY.md` §3 갱신
+5. 메시지 `docs(experiment): close-out v<X.Y>-<name> — <outcome>` 로 커밋
+6. 브랜치 전용이면: 산출물로 브랜치 열어둠. 실험에서 무엇이든 출하되면 마감 참조하는 별도 cherry-pick 커밋(들)을 main 으로.
 
-## When you DON'T close an experiment
+## 실험을 닫지 않을 때
 
-If you pause work without closing: leave JOURNAL with a "PAUSED YYYY-MM-DD"
-entry stating *what's left to do, what's blocked, why*. Future-you needs to
-resume from cold context.
+닫지 않고 작업 일시 중지: JOURNAL 에 *남은 일, 차단된 것, 이유* 명시하는 "PAUSED YYYY-MM-DD" 항목 남기기. 미래의 나는 차가운 컨텍스트에서 재개해야 함.

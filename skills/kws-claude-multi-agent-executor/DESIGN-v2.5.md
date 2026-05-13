@@ -1,5 +1,7 @@
 # Design: kws-claude-multi-agent-executor v2.5
 
+> **한글 TL;DR**: v2.5 시점의 영어 디자인 문서 (시간 고정 산출물). 이후 v2.6/2.7/2.8/2.9 변경은 [`HISTORY.md`](./HISTORY.md) §1 과 각 실험 디렉터리에 반영되었습니다. **현재 상태** 를 알고 싶으면 [`ARCHITECTURE.md`](./ARCHITECTURE.md) (한글) — 이 문서는 *그때* 가 어떻게 설계됐는지의 스냅샷입니다.
+
 Status: Draft (2026-05-13)
 Author: kws + Claude Opus 4.7
 Supersedes: none (additive to v2.4.0)
