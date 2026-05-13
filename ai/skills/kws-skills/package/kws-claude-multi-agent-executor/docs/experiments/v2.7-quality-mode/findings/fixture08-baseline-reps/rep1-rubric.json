@@ -1,0 +1,24 @@
+{
+  "fixture": "08-subtle-input-validation",
+  "workdir": "/private/var/folders/01/pttq8zy57654cfd1zm1ps7jm0000gn/T/mae-eval-parent-08-subtle-input-validation.XXXXXX.Jg5AXXKpMU/worktrees/input-validation-20260513-132615",
+  "valid_inputs": {
+    "passed": 10,
+    "total": 10,
+    "failures": []
+  },
+  "error_cases": {
+    "passed": 9,
+    "total": 10,
+    "failures": [
+      {
+        "desc": "repeated unit raises ValueError",
+        "stderr": ""
+      }
+    ]
+  },
+  "summary": {
+    "total_passed": 19,
+    "total_checks": 20,
+    "pass_rate": 0.95
+  }
+}
