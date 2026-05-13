@@ -25,7 +25,7 @@ For the broader contributing protocol see [`../AGENTS.md`](../AGENTS.md).
 
 | If you're changing... | Required updates | Detail |
 |------------------------|------------------|--------|
-| Skill behavior (SKILL.md edit) | SKILL.md version + manifest + README + HISTORY + ARCHITECTURE | [Skill behavior](#skill-behavior-change) |
+| Skill behavior (SKILL.md edit) | SKILL.md version + README + HISTORY + ARCHITECTURE | [Skill behavior](#skill-behavior-change) |
 | A sub-agent prompt | references/<role>-prompt.md + check_skill_contract.py if structure changes + experiment record if ≥50 lines | [Sub-agent prompt](#sub-agent-prompt-change) |
 | Helper script | scripts/append_learning_event.py + check_learning_log.py if schema changes + references/learning-log.md | [Helper script](#helper-script-change) |
 | Adding a learning-log event type | All 5 places in [extend-event-type.md](./how-to/extend-event-type.md) | [Event type addition](#event-type-addition) |
@@ -34,7 +34,7 @@ For the broader contributing protocol see [`../AGENTS.md`](../AGENTS.md).
 | Closing a known risk | docs/risks-and-limitations.md (move to CLOSED) + HISTORY entry if shipped fix | [Risk closure](#risk-closure) |
 | Making a design decision | docs/experiments/<v>/decisions/D###-*.md + decision-log.md index row | [Design decision](#design-decision) |
 | Deferring a candidate | docs/deferred-candidates.md (add with revisit criteria) | [Candidate deferral](#candidate-deferral) |
-| Version bump (any version) | manifest + README + SKILL.md frontmatter + HISTORY + snapshots/ (minor+) | [Version bump](#version-bump) |
+| Version bump (any version) | SKILL.md frontmatter + README + HISTORY + snapshots/ (minor+) | [Version bump](#version-bump) |
 | New experiment | docs/experiments/v<X>-<name>/ + docs/experiments/README.md index + HISTORY §3 row | [New experiment](#new-experiment) |
 | Closing an experiment | finalize findings/ + JOURNAL close-out + HISTORY §3 row update + decision-log if shipped | [Experiment closure](#experiment-closure) |
 | Major refactor / restructure | All of the above, plus a fresh snapshot in docs/snapshots/ | [Major refactor](#major-refactor) |
@@ -52,10 +52,8 @@ For the broader contributing protocol see [`../AGENTS.md`](../AGENTS.md).
 **Required updates**:
 
 - [ ] `SKILL.md` — the edit itself + frontmatter `metadata.version` bump
-- [ ] `manifest.json` — `skill_versions.kws-claude-multi-agent-executor.version`
-- [ ] `manifest.json` — `skill_versions.kws-claude-multi-agent-executor.updated_at`
-- [ ] `README.md` (root) — skill version table row
-- [ ] `kws-skills/README.md` — table row
+- [ ] `README.md` — current version line
+- [ ] `skills/README.md` — only if the Archive-level skill inventory changed
 - [ ] `HISTORY.md` §1 — new version entry with: what changed, why,
       what's tested, what's NOT changed/deferred
 - [ ] `ARCHITECTURE.md` — sync any section affected by the change
@@ -169,11 +167,9 @@ Whether patch / minor / major bump:
 **Required**:
 
 - [ ] `SKILL.md` frontmatter `metadata.version`
-- [ ] `manifest.json` `skill_versions` entry (version + updated_at)
-- [ ] Root `README.md` skill version table
-- [ ] `kws-skills/README.md` table
+- [ ] `README.md` current version line
+- [ ] `skills/README.md` only if the Archive-level inventory changed
 - [ ] `HISTORY.md` §1 — new entry
-- [ ] `kws-skills/CHANGELOG.md` — corresponding entry
 
 **For minor+ bump (e.g., 2.8 → 2.9)**:
 - [ ] `docs/snapshots/v<X>.md` — full state snapshot at ship time
@@ -229,8 +225,8 @@ the above.
 [`../evals/check_doc_freshness.py`](../evals/check_doc_freshness.py) runs
 deterministic checks for the most regression-prone drift:
 
-1. **Version consistency** — `SKILL.md` frontmatter version == manifest
-   `skill_versions` version == root `README.md` table version.
+1. **Version consistency** — `SKILL.md` frontmatter version matches the skill
+   README current-version line.
 2. **Internal markdown links** — every ``[text](./path.md)`` or
    ``[text](../path.md)`` reference resolves to an existing file.
 3. **HISTORY.md entry present** — for the current `SKILL.md` version,
@@ -269,9 +265,7 @@ This is a skill behavior change. Checklist:
 
 - [x] `SKILL.md` Step 7.5 edited
 - [x] Frontmatter version 2.8.0 → 2.8.1
-- [x] `manifest.json` skill_versions entry bumped
-- [x] Root `README.md` skill table row bumped
-- [x] `kws-skills/README.md` table bumped (user did this in parallel)
+- [x] `README.md` current version line bumped
 - [x] `HISTORY.md` §1 v2.8.1 entry added with what + why + verified-by
 - [x] `evals/check_skill_contract.py` 18th check added
 - [x] `evals/run.sh` adherence marker grep added (eval is contract-adjacent)

@@ -29,7 +29,7 @@ Do not treat passing tests as proof that documentation is current.
 | Design rationale or accepted tradeoff | `docs/decisions.md`, `ARCHITECTURE.md` when stable |
 | New risk, limit, or intentional deferral | `docs/risks-limitations-deferrals.md` |
 | Maintenance workflow | `docs/future-agent-guide.md`, `references/change-protocol.md`, this file |
-| Release-level behavior change | `HISTORY.md`, package `README.md`, `CHANGELOG.md`, `manifest.json` |
+| Release-level behavior change | `SKILL.md` version, `HISTORY.md`, `README.md`, and affected runtime docs |
 
 ## Pre-Final Checklist
 
@@ -73,8 +73,9 @@ not change.
 
 Behavior changes still follow
 [../references/change-protocol.md](../references/change-protocol.md): update
-skill metadata, history, architecture, package metadata, changelog, and
-deterministic checks as appropriate.
+skill metadata, history, architecture, runtime docs, and deterministic checks
+as appropriate. If this standalone skill is later reattached to a plugin
+package, update that package metadata in the same change.
 
 ## What Not To Do
 

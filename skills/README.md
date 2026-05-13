@@ -49,7 +49,9 @@ ls -l ~/.codex/skills/  | grep kws-
 1. 이 디렉터리 안에서 직접 편집 (`skills/<skill>/SKILL.md` 등).
 2. `git status` 로 Archive 레포에 변경 사항이 잡히는지 확인.
 3. Claude/Codex 둘 다 즉시 새 내용을 사용 — 추가 설치 불필요.
-4. `SKILL.md` 프론트매터의 `metadata.version` / `updated_at` 을 의미 있는 변경 시 갱신.
+4. 의미 있는 런타임 변경이면 각 스킬의 `SKILL.md` 프론트매터 버전,
+   `HISTORY.md`, 관련 `docs/` / `references/` 문서를 함께 갱신합니다.
+   문서만 정리한 경우에는 버전 bump가 필요하지 않습니다.
 
 ## 참고
 

@@ -84,7 +84,7 @@ short redacted summary before calling the helper.
 Initialize the run after the worktree, plan, branch, and head are known:
 
 ```bash
-RUN_ID="$(python3 ai/skills/kws-skills/package/kws-codex-plan-executor/scripts/append_learning_event.py init-run \
+RUN_ID="$(python3 scripts/append_learning_event.py init-run \
   --repo-root "$WORKTREE_ABS" \
   --repo-name "$REPO_NAME" \
   --branch "$BRANCH" \
@@ -99,7 +99,7 @@ STATE_PATH="$RUN_DIR/state.json"
 Create an event candidate JSON file and append it:
 
 ```bash
-python3 ai/skills/kws-skills/package/kws-codex-plan-executor/scripts/append_learning_event.py append \
+python3 scripts/append_learning_event.py append \
   --run-id "$RUN_ID" \
   --event-json /tmp/kws-codex-plan-executor-event.json \
   --repo-root "$WORKTREE_ABS"
@@ -108,7 +108,7 @@ python3 ai/skills/kws-skills/package/kws-codex-plan-executor/scripts/append_lear
 Close the run at the end or on whole-run halt:
 
 ```bash
-python3 ai/skills/kws-skills/package/kws-codex-plan-executor/scripts/append_learning_event.py close-run \
+python3 scripts/append_learning_event.py close-run \
   --run-id "$RUN_ID" \
   --outcome success
 ```

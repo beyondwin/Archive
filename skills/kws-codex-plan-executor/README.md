@@ -10,7 +10,6 @@ can load only the context they need.
 ## Current Contract
 
 - Skill version: `1.5.0`
-- Package version: `kws-skills` `2.13.0`
 - Primary state: `.codex-orchestrator/runs/<run_id>/state.json`
 - Compatibility state: `.codex-orchestrator/state.json`
 - Source snapshot: `.codex-orchestrator/runs/<run_id>/context.json`

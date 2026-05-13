@@ -111,7 +111,8 @@ Examine `failures[]` — each entry names the drift.
 
 **Fix**: consult [`./doc-update-protocol.md`](./doc-update-protocol.md)
 for the per-change-type checklist matching what you shipped. Common cases:
-- Version mismatch → bump all 3 (SKILL.md, manifest, README) in same commit
+- Version mismatch → bump `SKILL.md`, the skill `README.md`, and `HISTORY.md`
+  in the same commit.
 - Broken link → fix the path or update the target
 - Missing HISTORY entry → add §1 entry for current version
 - Missing snapshot → write `docs/snapshots/v<X>.md` for minor bump
@@ -213,13 +214,13 @@ work and your Claude executor work coexist as path-isolated changes.
 
 **Diagnostic**:
 ```bash
-git status --short | grep "package/kws-codex"
+git status --short | grep "skills/kws-codex"
 # These belong to the user — don't touch.
 ```
 
-**Fix**: Stage only Claude executor files (`package/kws-claude-multi-agent-executor/`)
-and the manifest/README rows for *your* skill version. Leave Codex
-changes alone.
+**Fix**: Stage only Claude executor files
+(`skills/kws-claude-multi-agent-executor/`) and any Archive-level README rows
+for *your* skill version. Leave Codex changes alone.
 
 ---
 
