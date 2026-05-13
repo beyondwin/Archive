@@ -1,0 +1,17 @@
+name: unreadable-doc
+description: Optional document path exists in user request but cannot be read.
+user_request: >-
+  Generate a prompt from /tmp/archive-fixtures/plans/plan.md and include
+  /tmp/archive-fixtures/specs/private-spec.md.
+available_paths:
+  workspace: /tmp/archive-fixtures/repo
+  plan: /tmp/archive-fixtures/plans/plan.md
+  unreadable_optional_doc: /tmp/archive-fixtures/specs/private-spec.md
+expected:
+  behavior:
+    - stop and report unreadable optional doc as a blocker
+  must_not_include:
+    - placeholder spec bullet
+    - invented summary of the unreadable doc
+    - generated partial prompt that references the unreadable path as if verified
+regression_risk: unreadable docs get silently included or hallucinated

@@ -1,7 +1,7 @@
 {
   "name": "kws-skills",
-  "version": "2.4.1",
-  "updated_at": "2026-05-08",
+  "version": "2.5.0",
+  "updated_at": "2026-05-13",
   "skills": [
     "archive-docs-organizer",
     "kws-claude-multi-agent-executor",
@@ -17,8 +17,8 @@
       "updated_at": "2026-04-30"
     },
     "kws-claude-multi-agent-executor": {
-      "version": "1.0.0",
-      "updated_at": "2026-05-08"
+      "version": "2.6.0",
+      "updated_at": "2026-05-13"
     },
     "kws-doc-prompt-review": {
       "version": "1.0.1",
@@ -29,8 +29,8 @@
       "updated_at": "2026-05-05"
     },
     "kws-new-session-plan-prompt-gpt-5-5": {
-      "version": "2.2.3",
-      "updated_at": "2026-05-08"
+      "version": "2.3.0",
+      "updated_at": "2026-05-13"
     },
     "reflective-essay-writer": {
       "version": "1.0.1",

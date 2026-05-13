@@ -26,10 +26,12 @@
 - 위 보수적 Spark evidence packing과 사용자가 명시한 모델별 예외 외에는 다른 모델로 Task나 지원 작업을 라우팅하지 마.
 {{OPTIONAL_SPARK_SCOUT_BULLETS}}
 - 체크박스 기반 계획 문서라면 진행 상태를 문서에 반영해.
+- 계획 문서 체크박스나 진행 상태를 원본 workspace에 갱신해야 한다면, 시작 시 해당 계획 문서의 git 상태(tracked/untracked/dirty)를 확인하고 커밋 포함 여부를 Task contract, checkpoint, final summary에 명시해. 원본 계획 문서가 untracked이거나 unrelated change와 섞여 있으면 추측해서 stage/commit하지 말고 관련 상태만 보고해.
 - 시작 전에 git 상태와 현재 브랜치를 확인해.
 - 가능한 경우 원본 작업트리를 직접 수정하지 말고, 새 `codex/...` 브랜치의 전용 integration git worktree를 만들어 그 안에서 작업해. 전체 실행용 worktree는 하나로 유지해.
 - 원본 workspace의 unrelated change는 건드리지 마. 관련 uncommitted change를 새 worktree에 어떻게 반영해야 할지 불명확하면 blocker로 보고해.
 - 각 Task 경계에서 완료된 subagent를 종료하고, 이 세션이 직접 띄운 Node/Vite/dev server/Playwright/browser/exec session만 정리해. 가능한 경우 owner, command, PID/session id, port를 기록하고 확인된 session-owned resource만 종료해. `killall node`, `pkill node`, `killall chrome`, `pkill playwright` 같은 광역 정리는 하지 마.
+- background process 확인도 `.codex-orchestrator/session.json`에 기록된 PID/session id/port/worktree path 중심으로 좁혀라. 전체 `ps`에서 나온 unrelated Node/Java/Playwright 프로세스를 session-owned resource로 간주하지 마.
 - 시스템 compaction은 제어할 수 없으므로, Task/Phase boundary마다 짧은 `HANDOFF CHECKPOINT`를 남겨 자동 compaction 후에도 이어갈 수 있게 해.
 - checkpoint는 마지막 checkpoint 이후 delta 중심으로 헤더 제외 10줄 이내의 고정 필드로 작성해: `status: completed | blocked | error`, `completed_scope`, `changed_files`, `contracts_confirmed`, `verification`, `raw_output`, `remaining_risk`, `next_action`, `worktree_branch`, `session_owned_resources`.
 - summary나 checkpoint는 재개에 필요한 사실만 남겨: 생성/수정 파일, 확정된 interface/contract, 검증 결과, 다음 액션. 감상, 일반 설명, 긴 로그 전문은 넣지 마.
@@ -41,6 +43,7 @@
 - 문서와 실제 코드베이스가 다르면 문서 의도를 유지하는 가장 작은 수정으로 적응해.
 - 정말 막히는 경우에만 blocker 를 명확히 정리해서 보고해.
 - 검증은 비용과 리스크에 맞춰 계층화해: 조사-only Phase는 결정/다음 검증 계획만 기록, 구현 Phase는 targeted check, Task 완료나 high-risk/cross-area 변경은 관련 범위 확장, 마지막에는 계획의 final verification command 또는 가장 정직한 대체 full check를 실행해.
+- test config, build input, test property, Dockerfile, migration, generated artifact 입력을 바꾼 Task의 targeted verification은 cache/up-to-date가 변경 검증을 숨기지 않도록 `clean`, `--rerun-tasks`, fresh output path, 또는 동등한 honest substitute를 사용해. cache-busting을 하지 않는다면 raw output의 `UP-TO-DATE` 여부와 이유를 기록하고 Task/final verification에서 실제 실행되는 broader check로 닫아.
 - 검증 실패가 나오면 raw output을 보존하고 `gpt-5.5 high`로 root-cause analysis를 수행해. 긴 raw output은 대화에 전문을 붙이지 말고 파일 경로 또는 핵심 excerpt와 재현 명령을 기록해.
 - 실패가 환경 문제일 가능성이 있으면 blocker로 멈추기 전에 4단계를 순서대로 확인해: 1) test command 자체가 실행되는가, 2) dependency가 빠졌는가, 3) path/config가 worktree와 맞는가, 4) DB/server/external service가 필요하고 시작 가능한가. 각 단계의 명령, 결과, raw output 위치를 `verification`과 checkpoint에 기록해.
 - 원인 없이 우회하거나 테스트를 약화하지 마.
@@ -51,6 +54,7 @@
 - 계획 문서에 문서 업데이트 Task가 있으면 그 범위만 수행해.
 - 구현 결과가 README, AGENTS.md, 운영 문서, prompt/operator docs, agent-facing instructions와 명확히 어긋나게 만들거나 사용자가 문서 업데이트를 요구한 경우에만 관련 문서를 좁게 업데이트해.
 - 문서 업데이트는 실제 동작과 검증 결과에 근거하고, repo-local 문서 검증 명령이 있으면 실행해. 실행하지 못한 검증은 이유와 대체 확인을 기록해.
+- public-safety, secret, path, link scan은 기본적으로 변경된 문서 또는 added lines로 범위를 좁혀 실행해. public release나 scanner 자체 변경처럼 전체 스캔이 필요한 경우에만 넓히고, 기존 false positive와 이번 변경에서 새로 생긴 위험을 구분해 기록해.
 - 문서 영향이 없으면 문서를 수정하지 말고 최종 요약에 “문서 업데이트 없음: <이유>”를 기록해.
 
 마무리 기준:
