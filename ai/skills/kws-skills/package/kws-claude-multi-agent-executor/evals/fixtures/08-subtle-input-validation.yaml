@@ -104,6 +104,11 @@ spec: |
   - Standard library only.
   - The 5 explicit error examples above are not exhaustive. Other malformed
     inputs should also raise — the rule is "strict validation of the grammar."
+  - **A unit may appear at most once per input.** `"30m20m"`, `"1h1h"`, or
+    any other string that repeats the same unit letter MUST raise ValueError.
+    The grammar `<integer><unit><integer><unit>...` permits any *ordering*
+    of distinct units (so `"30m1h"` is valid) but does NOT permit a unit
+    to be repeated. This is a strict-validation case covered by the meta-rule.
 
 invocation: ""
 

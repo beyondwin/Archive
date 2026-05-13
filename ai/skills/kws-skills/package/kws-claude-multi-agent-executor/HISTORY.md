@@ -14,6 +14,38 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.8.1 — Step 7.5 enforcement (MANDATORY framing + adherence marker) (2026-05-13)
+
+Empirical fix for the adherence gap found in v2.8 F001 Smoke B: 47 of 47
+Bash invocations in a fixture-08 run skipped the learning-log helper
+despite SKILL.md instructing it. Root cause: Step 7.5 under heavier
+contextual load (multi-task plans) was read as advisory rather than
+mandatory.
+
+Changes:
+- SKILL.md Step 7.5 heading promoted to MANDATORY; "DO NOT SKIP" framing
+  added. Stronger imperative language reused from worktree-creation
+  Phase 0 checkpoints.
+- Helper invocation block now emits `LEARNING_LOG_INIT: RUN_ID=<id>` on
+  success and `LEARNING_LOG_INIT: SKIPPED (...)` on shell-level failure.
+  These markers surface in run.jsonl and enable post-run adherence audit.
+- `2>/dev/null` removed from the init-run call — helper stderr now visible
+  if the script breaks.
+- `evals/run.sh` now greps run.jsonl for the `LEARNING_LOG_INIT:` marker
+  after each fixture and reports `learning_log_adherence: yes|no` plus
+  marker count. Non-blocking; observability-only.
+- `evals/check_skill_contract.py` gains an 18th check (`skill_md_v281_mandatory_framing`)
+  asserting the MANDATORY / DO NOT SKIP / LEARNING_LOG_INIT tokens are
+  present in SKILL.md.
+
+What this does NOT fix:
+- Adherence is still prose-based (no PreToolUse hook). A determined
+  skipping is still possible. The marker + eval check make it visible
+  rather than silent. Hook-based enforcement is candidate work for v2.10+.
+- v2.9 (Reviewer Spec Coverage Walk) is unaffected by this change. The
+  walk's measurement infrastructure can now rely on the learning log
+  firing for multi-task plans.
+
 ### v2.8 — Learning log + review-side superpowers Skill calls (2026-05-13)
 
 Adds a user-local per-run sharded learning log so notable boundaries

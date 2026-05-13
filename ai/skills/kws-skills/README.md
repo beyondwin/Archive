@@ -30,7 +30,7 @@
 | 스킬 | 버전 | 갱신일 |
 | --- | --- | --- |
 | `archive-docs-organizer` | `1.1.1` | `2026-04-30` |
-| `kws-claude-multi-agent-executor` | `2.8.0` | `2026-05-13` |
+| `kws-claude-multi-agent-executor` | `2.8.1` | `2026-05-13` |
 | `kws-codex-plan-executor` | `1.4.0` | `2026-05-13` |
 | `kws-doc-prompt-review` | `1.0.1` | `2026-05-05` |
 | `kws-skill-prompt-review` | `1.0.1` | `2026-05-05` |
