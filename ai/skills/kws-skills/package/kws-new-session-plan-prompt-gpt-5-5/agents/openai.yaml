@@ -1,4 +1,0 @@
-interface:
-  display_name: "KWS New Session Plan Prompt GPT-5.5"
-  short_description: "Legacy wrapper for Codex plan prompt export"
-  default_prompt: "Use $kws-new-session-plan-prompt-gpt-5-5 only for legacy prompt export; prefer $kws-codex-plan-executor mode=prompt for new usage."

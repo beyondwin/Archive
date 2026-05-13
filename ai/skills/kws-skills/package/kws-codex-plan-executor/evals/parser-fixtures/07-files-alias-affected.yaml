@@ -1,0 +1,16 @@
+name: files-alias-affected
+mode: interactive
+plan: |
+  ### Task 0: Add affected files docs note
+
+  Affected files:
+  - Create: docs/example.md
+
+  ## Verification
+
+  ```bash
+  test -f docs/example.md
+  ```
+expected:
+  files:
+    - docs/example.md

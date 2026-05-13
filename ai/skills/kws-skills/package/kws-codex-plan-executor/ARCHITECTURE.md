@@ -5,9 +5,8 @@ Runtime instructions live in `SKILL.md`. This file records the stable design.
 ## Purpose
 
 `kws-codex-plan-executor` is the forward Codex-native entrypoint for plan
-execution and prompt export. It replaces day-to-day use of
-`kws-new-session-plan-prompt-gpt-5-5` without deleting the old compatibility
-entrypoint.
+execution and prompt export. It fully replaces the former
+`kws-new-session-plan-prompt-gpt-5-5` compatibility entrypoint.
 
 ## Modes
 
@@ -21,10 +20,11 @@ entrypoint.
 1. Resolve paths and mode.
 2. Validate plan structure with `scripts/parse_plan.py` for execution modes.
 3. Initialize or update `.codex-orchestrator/state.json`.
-4. Execute tasks locally unless subagents were explicitly requested.
-5. Verify each task with risk-scaled commands and record failures with stable
+4. Record a task execution contract before edits.
+5. Execute tasks locally unless subagents were explicitly requested.
+6. Verify each task with risk-scaled commands and record failures with stable
    `ISSUE_KEY` values.
-6. Validate state and summarize changed files, verification, resources, and
+7. Validate state and summarize changed files, verification, resources, and
    residual risk.
 
 ## State File Contract
@@ -62,11 +62,12 @@ Deterministic scripts own mechanical correctness:
 - `scripts/validate_state.py`
 - `evals/check_prompt.py`
 - `evals/check_execution.py`
+- `evals/check_parse_plan.py`
+- `evals/check_skill_contract.py`
 
 `evals/judge.md` is reserved for subjective quality after deterministic checks.
 
-## Migration From kws-new-session-plan-prompt-gpt-5-5
+## Migration From Legacy Prompt Export
 
-The old skill is retained as a legacy wrapper. New prompt export usage should
-call `kws-codex-plan-executor mode=prompt`. The old skill should not keep a
-separate prompt-generation contract.
+The old `kws-new-session-plan-prompt-gpt-5-5` skill has been removed from the
+package. Prompt export usage should call `kws-codex-plan-executor mode=prompt`.
