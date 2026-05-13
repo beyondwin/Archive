@@ -7,9 +7,9 @@ Use this when editing `kws-codex-plan-executor`.
 - Identify whether the change affects runtime behavior, prompt export,
   headless execution, evals, or metadata only.
 - Add or update a deterministic eval/check when behavior changes.
-- Preserve prompt-export invariants inherited from
-  `kws-new-session-plan-prompt-gpt-5-5` unless the change explicitly removes
-  them.
+- Preserve prompt-export invariants documented in `templates/` and
+  `references/prompt-export-checklist.md` unless the change explicitly updates
+  those contracts.
 
 ## Edit Boundaries
 
@@ -38,6 +38,8 @@ python3 scripts/parse_plan.py --help
 python3 scripts/validate_state.py --help
 python3 evals/check_prompt.py --help
 python3 evals/check_execution.py --help
+python3 evals/check_parse_plan.py --help
+python3 evals/check_skill_contract.py --help
 python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
 ../../tests/test-sync.sh
 ```

@@ -7,6 +7,8 @@ Use this for `mode=interactive`.
 - Read repo-local instructions.
 - Verify plan/spec/docs paths.
 - Check git status and branch.
+- Classify dirty files as `related` or `unrelated` against declared task files.
+  Stop before editing related dirty files; preserve unrelated dirty files.
 - Create or select `codex/...` worktree when appropriate.
 - Parse the plan with `scripts/parse_plan.py`.
 - Assign task risk:
@@ -26,6 +28,8 @@ For each task:
    - `allowed_edits`
    - `forbidden_edits`
    - `acceptance_command_or_honest_substitute`
+   Record the same contract under the task entry in
+   `.codex-orchestrator/state.json`.
 2. Implement locally unless subagents are explicitly allowed.
 3. Review spec compliance and code quality on `gpt-5.5 high`.
 4. Run risk-scaled verification.

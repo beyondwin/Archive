@@ -64,6 +64,13 @@ Required top-level fields:
   "risk_reason": "single docs file",
   "files_declared": [],
   "files_changed": [],
+  "contract": {
+    "scope": "",
+    "files_to_inspect": [],
+    "allowed_edits": [],
+    "forbidden_edits": [],
+    "acceptance_command_or_honest_substitute": ""
+  },
   "pre_task_sha": null,
   "commit": null,
   "review_retries": 0,

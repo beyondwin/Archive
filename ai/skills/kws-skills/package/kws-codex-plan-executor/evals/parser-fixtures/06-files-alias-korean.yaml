@@ -1,0 +1,16 @@
+name: files-alias-korean
+mode: interactive
+plan: |
+  ### Task 0: Add Korean alias docs note
+
+  **수정 파일:**
+  - Create: docs/example.md
+
+  ## 검증
+
+  ```bash
+  test -f docs/example.md
+  ```
+expected:
+  files:
+    - docs/example.md
