@@ -59,6 +59,16 @@ structured final results. It does not use
 `--dangerously-bypass-approvals-and-sandbox` unless the user explicitly asks and
 the target is isolated.
 
+Headless runs are fresh Codex processes, so prompts must bootstrap applicable
+skills rather than relying on parent-session state. Runtime prompts and eval
+prompts explicitly require `using-superpowers`, and require
+`test-driven-development` before implementation of features, bug fixes,
+refactors, or behavior changes.
+
+The supervising session owns the `codex exec` launch. Once the target process
+starts, `mode=headless` means it writes headless artifacts while executing
+locally; it must not recurse into another nested `codex exec`.
+
 The eval harness creates real headless worktrees for resume and dirty-worktree
 scenarios. `initial_state` is written before the bootstrap commit, while
 `dirty_files` are written after the commit so `git status` exposes them as user

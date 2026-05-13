@@ -25,6 +25,11 @@
   AGENTS.md learning-log 운영 프로토콜, evals/check_learning_log.py (16 checks)
   + evals/check_skill_contract.py preflight 통합.
 - 실험 기록: `ai/skills/kws-skills/package/kws-claude-multi-agent-executor/docs/experiments/v2.8-learning-log/`.
+- `kws-codex-plan-executor`의 headless `codex exec` 프롬프트가 부모 세션의
+  skill load 상태를 가정하지 않고 `using-superpowers`와
+  `test-driven-development`를 명시적으로 bootstrap하도록 계약을 보강했습니다.
+- runtime prompt, headless runner 문서, eval harness prompt가 같은 skill
+  bootstrap 계약을 유지하도록 deterministic contract check를 추가했습니다.
 
 ## 2.10.0 - 2026-05-13
 
