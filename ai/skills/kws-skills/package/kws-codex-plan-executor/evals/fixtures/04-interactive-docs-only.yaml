@@ -18,4 +18,9 @@ expected:
     - docs/example.md
   allowed_extra_files:
     - .codex-orchestrator/state.json
+  contract_required: true
+  forbidden_log_patterns:
+    - "evals/fixtures/"
+    - "\\.harness/fixture"
+    - "baselines/v"
   test_after: "test -f docs/example.md && grep -q 'hello executor' docs/example.md"

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.9.0 - 2026-05-13
+
+- `kws-codex-plan-executor`에 `resume=latest`, dirty worktree 분류, interactive task contract 기록을 실제 `codex exec` fixture로 검증하는 동적 eval을 추가했습니다.
+- eval harness가 `initial_state`와 `dirty_files`를 실제 git worktree 상태로 재현하도록 확장했습니다.
+- fixture/baseline 누출 방지 지시와 log 검사를 추가하고, headless 산출물을 checker 기본 허용 목록에 반영했습니다.
+
 ## 2.8.0 - 2026-05-13
 
 - `kws-codex-plan-executor`에 resume 규약, task contract hard gate, dirty worktree 분류, mode별 validation matrix를 추가했습니다.

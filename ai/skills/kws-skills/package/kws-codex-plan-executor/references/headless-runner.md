@@ -35,6 +35,14 @@ codex exec \
 - `.codex-orchestrator/state.json`
 - raw verification output paths for failures
 
+## Eval Harness Boundary
+
+When the outer eval harness invokes headless mode, it runs
+`evals/check_execution.py` after the target execution finishes. The target
+execution must not inspect fixture YAML, baseline files, `.harness` metadata,
+or expected values. Use only the plan/spec/docs, state file, skill references,
+and project files available in the test worktree.
+
 ## Hard Rule
 
 Do not use `--dangerously-bypass-approvals-and-sandbox` unless the user
