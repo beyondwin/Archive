@@ -10,6 +10,10 @@ Use this for `mode=interactive`.
 - Parse the plan with `scripts/parse_plan.py`.
 - Classify dirty files as `related` or `unrelated` against declared task files.
   Stop before editing related dirty files; preserve unrelated dirty files.
+- For `blocker` outcomes such as unreadable plans, ambiguous resume state,
+  related dirty task files, or unclear mid/high-risk acceptance criteria, write
+  a redacted learning event using `references/learning-log.md` and
+  `scripts/append_learning_event.py`.
 - Create or select `codex/...` worktree when appropriate.
 - Assign task risk:
   - `low`: one isolated file or module.
@@ -45,6 +49,12 @@ parallel work, or passed `subagents=on`. Otherwise execute locally.
   `ISSUE_KEY=<file>:<line-or-symbol>:<category>`.
 - If the same key appears again, mark it as
   `[RECURRING - previous fix did not address this]`.
+- Record a `verification_failure` event after raw output is preserved.
+- Record a `recurring_issue` event when the same `ISSUE_KEY` appears again.
+- Record a `user_correction` event when user feedback changes scope, allowed
+  files, or assumptions.
+- Record a `successful_workaround` event when a root-cause-based recovery
+  exposes a reusable executor improvement.
 - Do not repeat the same root-cause fix more than 3 times.
 - Preserve raw output for failures under `.codex-orchestrator/raw/` when the
   output is long.
@@ -54,6 +64,8 @@ parallel work, or passed `subagents=on`. Otherwise execute locally.
 - Run final verification.
 - Check documentation impact.
 - Validate state file.
+- Record `completion_learning` only when final completion reveals an actionable
+  improvement for this executor. Do not log routine successful completions.
 - Summarize changed files, verification, branch/worktree, session-owned
   resources, and residual risk.
 

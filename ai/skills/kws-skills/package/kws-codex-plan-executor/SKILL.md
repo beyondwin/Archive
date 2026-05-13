@@ -53,6 +53,9 @@ parallel work, or passes `subagents=on`.
   task file blocks. Execution mode still stops if no file block is present.
 - Resume mode uses `.codex-orchestrator/state.json` as source of truth. Do not
   infer between multiple ambiguous states.
+- In `interactive` and `headless` execution, record execution-only redacted
+  notable-boundary learning events with `scripts/append_learning_event.py` and
+  `references/learning-log.md`; `prompt` and `handoff` are not logging modes.
 
 ## Workflow
 
@@ -65,7 +68,9 @@ parallel work, or passes `subagents=on`.
 5. For `headless`, follow `references/headless-runner.md`.
 6. Maintain `.codex-orchestrator/state.json` using
    `references/state-schema.md`.
-7. Validate using scripts before claiming completion.
+7. For execution modes, record learning events at notable boundaries using
+   `references/learning-log.md`.
+8. Validate using scripts before claiming completion.
 
 ## Stop Rules
 
