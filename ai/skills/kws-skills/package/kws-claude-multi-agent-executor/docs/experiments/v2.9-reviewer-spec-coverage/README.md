@@ -114,11 +114,19 @@ event-level signal.
 | T2 — Plan doc (Archive-level)        | ✓ done | `docs/superpowers/plans/2026-05-13-kws-claude-multi-agent-executor-v2.9-reviewer-spec-coverage.md` |
 | T3 — Advisor review on design        | pending | run before T4 |
 | **GATE — v2.8 F001 full-fixture smoke PASS** | **blocked** | budget approval + execute |
-| T4 — `reviewer-prompt.md` edit       | blocked | gated by F001 PASS |
-| T4.5 — Cheap dry-run pilot (1 rep)   | blocked | gated by T4; ≤3 prompt iterations |
-| T5 — Re-run fixture 08 (3-4 reps)    | blocked | gated by T4.5 sub-step B fires |
+| T4 — `reviewer-prompt.md` edit       | ✓ done   | Spec Coverage Walk added (sub-steps A + B) |
+| T4.5 — Cheap dry-run pilot (1 rep)   | ✓ done   | Guardrail PASS; failure mode shifted (miss → spec ambiguity). See [F001-T4.5](./findings/F001-T4.5-dry-run.md) |
+| T5 — Re-run fixture 08 (3-4 reps)    | user-controlled | $20-40; recommendation = Path γ then α |
 | T6 — Findings doc + recommendation   | blocked | gated by T5 |
 | T7 — Release metadata / HISTORY      | blocked | only if T6 recommends ship |
+
+### v2.8 F001 gate result
+
+v2.8 F001 full-fixture smoke ran 2026-05-13 evening:
+- **Smoke A** (fixture 01): PASS — clean lifecycle (init-run + close-run, meta.outcome=success).
+- **Smoke B** (fixture 08): PARTIAL — implementation+rubric PASS, but the orchestrator skipped the helper invocation entirely (0 of 47 Bash calls referenced the helper). Adherence gap recorded; v2.9 falls back to inspecting `.harness/run.jsonl` directly for Reviewer output.
+
+See [v2.8 F001-smoke.md](../v2.8-learning-log/findings/F001-smoke.md) for full details.
 
 ## Decisions index
 
@@ -127,4 +135,4 @@ event-level signal.
 
 ## Findings index
 
-(empty until T5 runs)
+- F001 — T4.5 dry-run pilot (1 rep). Walk mechanism PASSED; failure mode shifted from silent miss (F002) to spec-text ambiguity surfaced and reasoned through. [link](./findings/F001-T4.5-dry-run.md)

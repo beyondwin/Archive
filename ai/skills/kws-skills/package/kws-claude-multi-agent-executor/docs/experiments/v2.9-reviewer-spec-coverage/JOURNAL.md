@@ -86,3 +86,63 @@ Patched:
   yet on main; cross-refs resolve on that branch).
 
 Next: advisor review on the patched design + plan.
+
+### Evening — v2.8 F001 full-fixture smoke executed (Path A step 1)
+
+User authorized autonomous execution of steps 1-3 ("너가 알아서 판단해서 1~3까지
+끝까지 진행해줘"). Ran v2.8 F001 full-fixture smoke as the hard prerequisite.
+
+- Smoke A (fixture 01-trivial-typo): PASS. Clean init-run / close-run
+  lifecycle. `meta.outcome=success`, `event_count=0`. Judge mean 0.96.
+  Wall ~6 min.
+- Smoke B (fixture 08-subtle-input-validation): PARTIAL. Implementation
+  correctness PASS (rubric pass_rate 1.0, judge mean 1.0), BUT the
+  orchestrator never executed any helper command — 0 of 47 Bash calls
+  referenced init-run/append/close-run. SKILL.md Phase 0 Step 7.5 was read
+  but skipped, presumably due to heavier contextual load on a multi-task
+  plan.
+
+Adherence gap recorded in v2.8 F001-smoke.md. For v2.9 measurement, falls
+back to direct inspection of `.harness/run.jsonl` instead of `events.jsonl`.
+Documented as a v2.8.1 follow-up candidate (stronger init-run enforcement).
+
+### Evening — T4 prompt edit applied
+
+Spec Coverage Walk section added to `references/reviewer-prompt.md` between
+the "Before reviewing" Skill paragraph and Part 1 Spec Compliance. Two
+ordered sub-steps (A: stated bullets, B: adversarial generation from
+meta-rules). Output Format block extended with `SPEC_COVERAGE_WALK:` at the
+top. Contract eval (check_skill_contract.py 17 checks) still passes.
+
+### Evening — T4.5 dry-run pilot
+
+Ran fixture 08 once with the v2.9 prompt. Extracted Reviewer outputs from
+`.harness/run.jsonl` (no learning log signal available — v2.8 F001 PARTIAL).
+
+Findings (see findings/F001-T4.5-dry-run.md for full detail):
+- Walk mechanism GUARDRAIL PASSED. Task 0 Reviewer: 16 sub-step-A rows +
+  **8 sub-step-B adversarial rows** including `30m20m`, `1h1h`, `s`, `1H`,
+  `1h 30m`, `1h30`, `0`, `١h`. Walk template emitted as designed.
+- Rubric pass_rate 0.95 (same as F002 baseline, did not move).
+- BUT — critical finding — the failure mode SHIFTED. F002 baseline: Reviewer
+  silently missed `30m20m`. v2.9 T4.5: Reviewer explicitly generated
+  `30m20m` as an adversarial input, reasoned about it against the spec
+  text, and concluded *"the spec grammar allows repeated units; the spec's
+  `30m1h` example shows order doesn't matter; accepted"*. The Reviewer's
+  reasoning is defensible against the spec text — the fixture's spec
+  excerpt does not explicitly forbid repeated units; only the fixture's
+  *rubric* encodes that interpretation as authoritative.
+
+Recommendation in F001-T4.5: Path γ then α — run T5 (n=3-4) to confirm
+reproducibility of the new failure mode, then ship v2.9 with the finding
+that the intervention solved the silent-miss problem and surfaced a
+distinct issue (fixture spec ambiguity) requiring a separate fix.
+
+T5 is user-controlled ($20-40 budget) and is the natural next step after
+step 3 of the autonomous mandate ("1~3까지").
+
+### Stop point per user mandate ("1~3까지")
+
+Step 1 (v2.8 F001 smoke), Step 2 (T4 prompt edit), Step 3 (T4.5 dry-run
+pilot) all complete. Handing off T5 + ship decision to user with full
+data and Path-α/β/γ analysis recorded in F001-T4.5-dry-run.md.

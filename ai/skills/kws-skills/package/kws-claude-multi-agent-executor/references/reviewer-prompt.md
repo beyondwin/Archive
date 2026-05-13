@@ -31,6 +31,39 @@ The Implementer was already given these issues. Verify whether each was addresse
 
 You MAY use the Read tool to inspect any file beyond the provided diff — for example, to verify codebase conventions, check for duplicate functions, confirm caller updates, or check barrel/index registrations. Do NOT re-run git diff yourself (the orchestrator already injected the correct diff above).
 
+**Spec Coverage Walk (REQUIRED — output BEFORE scoring):**
+
+This is a deterministic enumeration pass that produces a `SPEC_COVERAGE_WALK:` block at the *top* of your output, before SPEC_SCORE. The walk has two ordered sub-steps. Both produce rows in one flat list.
+
+*Sub-step A — Stated bullets.* For each happy-path example, each explicit error-case bullet, and each "Notes" bullet that imposes a constraint in the spec excerpt above, emit one row using this template:
+
+```
+- "<exact spec text fragment>" :: <file>:<line>          # satisfied in code
+- "<exact spec text fragment>" :: NOT FOUND              # implementer omitted this requirement
+- "<exact spec text fragment>" :: PARTIAL @ <file>:<line> — <why incomplete>
+```
+
+*Sub-step B — Adversarial generation for meta-rules.* Identify each *meta-rule* in the spec — sentences containing words like *"strict"*, *"strictly"*, *"reject"*, *"anything else"*, *"must validate"*, *"rule is"*, *"beyond these examples"*, *"exhaustive"*, *"not exhaustive"*. For **each** meta-rule, generate **at least 3 adversarial inputs not explicitly listed in the spec**, drawn from at least these classes:
+
+- **Repeated-segment variants** — applying the same unit/segment twice that the grammar implicitly disallows (e.g., `30m20m`, `1h1h`, `s s`).
+- **Ordering / casing / whitespace edges** — uppercase units (`1H`), internal whitespace (`1h 30m`), trailing unit-less integer (`1h30`), leading sign on inner segments, mixed case.
+- **Format combinations the spec implicitly excludes** — empty segment (`s`), zero-unit (`0`), partial decimals not listed in the explicit examples, unicode lookalikes.
+
+For each adversarial input, emit a row using the same template (the input string itself is the row key, in quotes, prefixed with a brief description). Example:
+```
+- "repeated unit `30m20m` rejected" :: src/duration.py:42
+- "internal whitespace `1h 30m` rejected" :: NOT FOUND
+```
+
+The adversarial rows are your *own synthesis* — not quotes from the spec. The job is to generate inputs the Implementer might have overlooked, then locate the rejection path in the code.
+
+*Walk → score wiring:*
+- If any `NOT FOUND` row exists in either sub-step → `SPEC_FAULT: implementer_omitted`. The top `SPEC_ISSUES` row must reference the offending walk row (use the walk row's input string as ISSUE_KEY context).
+- If any `PARTIAL` row exists → SPEC_SCORE capped at 0.7 (existing anchor).
+- If all rows are satisfied → walk passes; SPEC_SCORE proceeds to existing 0.85+ logic in Part 1.
+
+*Why this exists:* Reviewer miss rate on `implementer_omitted` faults is ~75% on the eval corpus's hardest input-validation fixture (parse_duration's repeated-unit case `30m20m` — covered only by the meta-rule "strict validation of the grammar"). The walk inverts the question from *"verify the implementation satisfies each spec bullet"* (which scans for what is present) to *"for each spec mandate AND each adversarial input from each meta-rule, locate the rejection/handling path"* (which forces coverage). Sub-step B is the critical mechanism — stated bullets alone never surface adversarial inputs that the spec covers only by meta-rule.
+
 **Part 1 — Spec Compliance:**
 1. For each requirement in the spec excerpt: verify the implementation satisfies it exactly.
 2. Quote the spec and cite file:line when something is missing or wrong.
@@ -81,6 +114,10 @@ These thresholds are calibrated against the eval suite (P6). Do NOT change them 
 
 ## Output Format (required — do not deviate)
 
+SPEC_COVERAGE_WALK:
+  - "<spec text fragment OR adversarial input>" :: <file>:<line> | NOT FOUND | PARTIAL @ <file>:<line> — <why>
+  - <one row per stated bullet + one row per adversarial input per meta-rule>
+  - <see "Spec Coverage Walk" section above for the row template and sub-step taxonomy>
 SPEC_SCORE: <0.0–1.0, 1-decimal quantized>
 QUALITY_SCORE: <0.0–1.0, 1-decimal quantized>
 SPEC_STATUS: PASS | FAIL
