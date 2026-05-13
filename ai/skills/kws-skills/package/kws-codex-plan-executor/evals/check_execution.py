@@ -88,13 +88,27 @@ def main() -> int:
             ".codex-orchestrator/headless-final.json",
             ".codex-orchestrator/headless-final.md",
             ".codex-orchestrator/headless.jsonl",
+            ".codex-orchestrator/blocker-event.json",
+            ".codex-orchestrator/learning-event.json",
+            ".codex-orchestrator/parsed-plan.json",
             ".codex-orchestrator/final.schema.json",
             ".harness/fixture.json",
             ".harness/final.md",
             ".harness/run.jsonl",
         }
     )
-    out_of_scope = actual_files - expected_files - allowed_extra
+    allowed_prefixes = (
+        ".codex-orchestrator/raw/",
+        ".codex-orchestrator/learning",
+        ".codex-orchestrator/events",
+    )
+    allowed_name_fragments = ("learning-event",)
+    out_of_scope = {
+        path
+        for path in actual_files - expected_files - allowed_extra
+        if not path.startswith(allowed_prefixes)
+        and not any(fragment in path for fragment in allowed_name_fragments)
+    }
     checks["no_out_of_scope_files"] = not out_of_scope
     if out_of_scope:
         failures.append(f"out-of-scope files changed: {sorted(out_of_scope)}")

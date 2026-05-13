@@ -33,12 +33,14 @@ def main() -> int:
     common_mistakes_path = skill_dir / "references" / "common-mistakes.md"
     learning_path = skill_dir / "references" / "learning-log.md"
     learning_script_path = skill_dir / "scripts" / "append_learning_event.py"
+    eval_run_path = skill_dir / "evals" / "run.sh"
 
     template = template_path.read_text(encoding="utf-8") if template_path.is_file() else ""
     checklist = checklist_path.read_text(encoding="utf-8") if checklist_path.is_file() else ""
     execution = execution_path.read_text(encoding="utf-8") if execution_path.is_file() else ""
     headless = headless_path.read_text(encoding="utf-8") if headless_path.is_file() else ""
     learning = learning_path.read_text(encoding="utf-8") if learning_path.is_file() else ""
+    eval_run = eval_run_path.read_text(encoding="utf-8") if eval_run_path.is_file() else ""
     invocation = section(text, "## Invocation", "## Hard Boundary")
     checks: dict[str, bool] = {}
     failures: list[str] = []
@@ -71,6 +73,16 @@ def main() -> int:
         and ".codex-orchestrator" in headless,
         "headless_runner_uses_sandbox_argument": "HEADLESS_SANDBOX" in headless
         and "read-only" in headless,
+        "headless_prompt_bootstraps_superpowers_tdd": all(
+            token in template
+            for token in ("using-superpowers", "test-driven-development")
+        )
+        and all(token in headless for token in ("using-superpowers", "test-driven-development"))
+        and all(token in eval_run for token in ("using-superpowers", "test-driven-development")),
+        "headless_target_avoids_nested_exec": bool(
+            re.search(r"Do not launch\s+another nested `codex exec`", headless)
+        )
+        and "do not launch another nested codex exec" in eval_run,
         "common_mistakes_reference_valid": "references/common-mistakes.md" not in checklist
         or common_mistakes_path.is_file(),
         "learning_log_reference_exists": learning_path.is_file(),

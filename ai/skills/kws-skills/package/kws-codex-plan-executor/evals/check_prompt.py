@@ -65,7 +65,7 @@ def main() -> int:
 
     if "spark" in expected:
         wants_spark = bool(expected["spark"])
-        has_spark = "gpt-5.3-codex-spark" in text or "Spark" in text
+        has_spark = "gpt-5.3-codex-spark" in text
         checks["model_routing"] = has_spark if wants_spark else not has_spark
         if not checks["model_routing"]:
             failures.append("Spark routing presence does not match fixture expectation")
