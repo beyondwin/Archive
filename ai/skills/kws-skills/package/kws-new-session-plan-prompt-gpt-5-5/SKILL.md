@@ -2,8 +2,8 @@
 name: kws-new-session-plan-prompt-gpt-5-5
 description: Use when a user asks for a copy-paste fresh Codex session prompt, continuation handoff prompt, or prompt-only output based on an implementation plan, optionally with spec, design, or extra docs.
 metadata:
-  version: "2.2.7"
-  updated_at: "2026-05-09"
+  version: "2.3.0"
+  updated_at: "2026-05-13"
 ---
 
 # KWS New Session Plan Prompt
@@ -38,6 +38,7 @@ Unless the user explicitly says otherwise, generated prompts must include:
 - The invariant execution blocks in `templates/fresh-session-prompt.txt`: repo-local instruction checks, Task 0/1 start handling, task-by-task execution, per-task execution contracts, lightweight session ledger, task risk ledger, subagent implementation plus two-stage `gpt-5.5 high` review, recurring issue detection, worktree isolation, unrelated-change handling, session-owned cleanup, structured checkpoints, continuation stop rules, retry budget, raw-output preservation, ENV_BLOCKER triage, risk-scaled verification, documentation impact check, and final summary.
 - Quality-first routing: all implementation, review, root-cause, verification interpretation, architecture/state/auth/persistence/shared-module judgment, and completion decisions stay on `gpt-5.5 high`.
 - Conservative automatic Spark evidence packing is included unless the user forbids Spark/model optimization or requests `gpt-5.5 only`; broader Spark scout routing is included only for an explicit broader Spark/model-routing request.
+- Source-of-truth plan progress updates are explicit: if generated prompts tell agents to update checkboxes or status in original plan docs, they must also tell agents to inspect whether those docs are tracked, untracked, dirty, and intended for commit.
 - Prompt-only and requested-language behavior is preserved, and final verification before completion claims is explicit.
 
 ## Stop Rules
@@ -47,6 +48,7 @@ Unless the user explicitly says otherwise, generated prompts must include:
 - If a local path exists but is unreadable, report that path as a blocker.
 - If the user forbids Spark/model optimization or requests `gpt-5.5 only`, remove conservative automatic Spark routing and any optional Spark scout bullets.
 - Do not include broader Spark/model-usage optimization exceptions unless the user explicitly requested them.
+- Do not include low-risk main-agent implementation shortcuts unless the user explicitly asks for lean/cost-optimized execution. Default prompts preserve fresh implementation subagents and two-stage review.
 - Do not browse for docs unless the user explicitly asks or a referenced remote document must be fetched.
 
 ## Output Style
@@ -71,6 +73,12 @@ Only include the `{{OPTIONAL_SPARK_SCOUT_BULLETS}}` section when the user explic
 
 Before sending, load and verify against `references/pre-send-checklist.md`.
 
+## Skill Maintenance
+
+When editing this skill itself, use `references/change-protocol.md`. Keep runtime behavior in `SKILL.md` and `templates/`, long rationale in `references/`, regression scenarios in `evals/`, and non-trivial experiment records in `docs/experiments/`.
+
+On behavior changes, update `HISTORY.md` and package metadata (`manifest.json`, package `README.md`, and `CHANGELOG.md`) in the same change. Update `ARCHITECTURE.md` when the generation flow, routing contract, validation gates, or maintenance/eval structure changes.
+
 ## Pressure Scenarios
 
 - Plan path + "prompt only": output only one fenced `text` block; no plan path: ask one short question.
@@ -79,3 +87,5 @@ Before sending, load and verify against `references/pre-send-checklist.md`.
 - Existing `codex/...` worktree: include it as workspace instead of instructing a second integration worktree unless the plan requires isolation.
 - Spark routing: default to conservative evidence packing only; broader Spark requires explicit request; no-Spark or `gpt-5.5 only` removes every Spark route.
 - Continuation prompt: preserve any existing `.codex-orchestrator/session.json` path and instruct the fresh session to read it before resuming task execution.
+- Source-of-truth plan outside an integration worktree: include explicit git-status handling for the original plan document and do not let agents stage or commit unrelated plan/doc changes by inference.
+- Lean/cost-optimized execution request: allow low-risk single-file hygiene tasks to skip implementation subagents only when the user explicitly requests that mode; keep fresh `gpt-5.5 high` reviews and honest verification.
