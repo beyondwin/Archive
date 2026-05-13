@@ -6,5 +6,7 @@ plan: |
   Add a docs note somewhere.
 expected:
   allow_blocked: true
+  allow_no_state: true
+  must_block: true
   must_include:
     - "Files"

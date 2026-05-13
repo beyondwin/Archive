@@ -1,0 +1,56 @@
+{
+  "version": "1.1.0",
+  "date": "2026-05-13T07:03:42Z",
+  "fixtures": [
+    {
+      "fixture": "01-prompt-only",
+      "mode": "prompt",
+      "codex_status": 0,
+      "checker_status": 0,
+      "passed": true,
+      "checks": {
+        "fixture": "prompt-only",
+        "passed": true,
+        "checks": {
+          "one_text_block": true,
+          "no_template_tokens": true,
+          "must_include": true,
+          "must_not_include": true,
+          "model_routing": true,
+          "no_implementation_started_language": true
+        },
+        "failures": []
+      }
+    },
+    {
+      "fixture": "05-missing-files-block",
+      "mode": "interactive",
+      "codex_status": 0,
+      "checker_status": 0,
+      "passed": true,
+      "checks": {
+        "fixture": "missing-files-block",
+        "passed": true,
+        "checks": {
+          "state_exists": false,
+          "expected_files_changed": true,
+          "no_out_of_scope_files": true,
+          "must_not_change": true,
+          "tasks_finished": true,
+          "test_after": true,
+          "must_include_final": true,
+          "must_not_include_final": true,
+          "must_block": true,
+          "state_must_include": true,
+          "contract_required": true,
+          "forbidden_log_patterns": true
+        },
+        "failures": [],
+        "actual_changed_files": [
+          ".harness/final.md",
+          ".harness/run.jsonl"
+        ]
+      }
+    }
+  ]
+}

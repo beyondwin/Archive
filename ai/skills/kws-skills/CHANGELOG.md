@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.8.0 - 2026-05-13
+
+- `kws-codex-plan-executor`에 resume 규약, task contract hard gate, dirty worktree 분류, mode별 validation matrix를 추가했습니다.
+- `parse_plan.py`가 영어 alias와 한국어 `수정 파일` 계열 파일 블록을 인식하도록 확장했습니다.
+- executor eval harness에 skill contract, parser fixture, final output/log/state 검증을 추가했습니다.
+
+## 2.7.0 - 2026-05-13
+
+- `kws-new-session-plan-prompt-gpt-5-5` legacy wrapper를 패키지에서 제거했습니다.
+- `docs/superpowers/*` 작업 계획 문서는 `docs/INDEX.md`와 `docs/_index/catalog.yml` library index에서 제외하도록 정리했습니다.
+- `kws-codex-plan-executor`의 migration 문구를 legacy wrapper 제거 상태에 맞췄습니다.
+
 ## 2.6.0 - 2026-05-13
 
 - `kws-codex-plan-executor`를 Codex-native 계획 실행용 forward skill로 추가했습니다.

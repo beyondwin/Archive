@@ -11,9 +11,17 @@ from pathlib import Path
 
 
 TASK_RE = re.compile(r"(?m)^(#{2,4})\s+Task\s+(\d+)\s*:\s*(.+?)\s*$")
-FILES_HEADING_RE = re.compile(r"(?mi)^\s*\*\*Files:\*\*\s*$|^\s*Files:\s*$")
+FILES_HEADING_RE = re.compile(
+    r"(?mi)^\s*(?:\*\*)?"
+    r"(?:Files|Affected files|Modified files|Changed files|수정 파일|변경 파일|대상 파일|파일)"
+    r"\s*:\s*(?:\*\*)?\s*$"
+)
 AC_RE = re.compile(r"(?mi)^\s*(#{2,5}\s*)?(Acceptance Criteria|Verification|검증)\b")
-FILE_LINE_RE = re.compile(r"^\s*-\s+(?:(?:Create|Modify|Read|Delete|Move|Update):\s*)?`?([^`\n]+?)`?\s*$")
+FILE_LINE_RE = re.compile(
+    r"^\s*-\s+"
+    r"(?:(?:Create|Modify|Read|Delete|Move|Update|생성|수정|읽기|삭제|이동|변경|갱신):\s*)?"
+    r"`?([^`\n]+?)`?\s*$"
+)
 EXECUTION_MODES = {"interactive", "headless"}
 
 

@@ -15,7 +15,6 @@ This index is generated from `docs/_index/catalog.yml` and maintained by
 | forrestchang/andrej-karpathy-skills 상세 분석 | inbox | research-note | ko | inbox | [docs/_inbox/andrej-karpathy-skills_analysis_ko.md](_inbox/andrej-karpathy-skills_analysis_ko.md) |
 | nexu-io/open-design 레포지토리 분석 보고서 | inbox | research-note | ko | inbox | [docs/_inbox/open_design_repo_analysis.md](_inbox/open_design_repo_analysis.md) |
 | Archive Docs Organizer | skills/agent-workflows | workflow | en | organized | [docs/notes/skills/archive-docs-organizer.md](notes/skills/archive-docs-organizer.md) |
-| KWS Codex Plan Executor 구현 계획 | skills/agent-workflows | plan | en | organized | [docs/superpowers/plans/2026-05-13-kws-codex-plan-executor.md](superpowers/plans/2026-05-13-kws-codex-plan-executor.md) |
 | mattpocock/skills 레포 분석 | skills/agent-workflows | research-note | ko | organized | [docs/notes/skills/mattpocock-skills-repo-analysis.md](notes/skills/mattpocock-skills-repo-analysis.md) |
 | GStack + Superpowers 발표자료용 초압축 버전 | skills/gstack-superpowers | reference | ko | organized | [docs/notes/skills/gstack-superpowers/gstack-superpowers-slides.md](notes/skills/gstack-superpowers/gstack-superpowers-slides.md) |
 | GStack + Superpowers 작업 방식 요약 | skills/gstack-superpowers | guide | ko | organized | [docs/notes/skills/gstack-superpowers/gstack-superpowers-summary.md](notes/skills/gstack-superpowers/gstack-superpowers-summary.md) |

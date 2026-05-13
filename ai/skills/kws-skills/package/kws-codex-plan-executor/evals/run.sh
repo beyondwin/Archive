@@ -102,7 +102,7 @@ PY
     checker_out="$(python3 "$EVAL_DIR/check_prompt.py" --fixture "$fixture_path" --output "$tmpdir/.harness/final.md" 2>&1)" || checker_status=$?
     checker_status="${checker_status:-0}"
   else
-    checker_out="$(python3 "$EVAL_DIR/check_execution.py" --fixture "$fixture_path" --workdir "$tmpdir" 2>&1)" || checker_status=$?
+    checker_out="$(python3 "$EVAL_DIR/check_execution.py" --fixture "$fixture_path" --workdir "$tmpdir" --final-output "$tmpdir/.harness/final.md" --run-log "$tmpdir/.harness/run.jsonl" 2>&1)" || checker_status=$?
     checker_status="${checker_status:-0}"
   fi
 
