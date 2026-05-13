@@ -32,6 +32,13 @@ RUN_ID="$(python3 "$SKILL_DIR/scripts/append_learning_event.py" init-run \
 RUN_DIR="$WORKTREE_ABS/.codex-orchestrator/runs/$RUN_ID"
 mkdir -p "$RUN_DIR/raw"
 HEADLESS_SANDBOX="${HEADLESS_SANDBOX:-workspace-write}"
+CONTEXT_BASIS_HASH="$(python3 "$SKILL_DIR/scripts/build_context_snapshot.py" \
+  --repo-root "$WORKTREE_ABS" \
+  --run-id "$RUN_ID" \
+  --plan "$PLAN_REL" \
+  --spec "${SPEC_REL:-}" \
+  --docs "${DOCS_REL:-}" \
+  --output "$RUN_DIR/context.json")"
 
 codex exec \
   --cd "$WORKTREE_ABS" \
@@ -56,6 +63,13 @@ RUN_ID="$(python3 "$SKILL_DIR/scripts/append_learning_event.py" init-run \
 RUN_DIR="$WORKTREE_ABS/.codex-orchestrator/runs/$RUN_ID"
 mkdir -p "$RUN_DIR/raw"
 HEADLESS_SANDBOX="${HEADLESS_SANDBOX:-workspace-write}"
+CONTEXT_BASIS_HASH="$(python3 "$SKILL_DIR/scripts/build_context_snapshot.py" \
+  --repo-root "$WORKTREE_ABS" \
+  --run-id "$RUN_ID" \
+  --plan "$PLAN_REL" \
+  --spec "${SPEC_REL:-}" \
+  --docs "${DOCS_REL:-}" \
+  --output "$RUN_DIR/context.json")"
 
 codex exec \
   --cd "$WORKTREE_ABS" \
@@ -72,9 +86,16 @@ codex exec \
 - `.codex-orchestrator/runs/<run_id>/headless.jsonl`
 - `.codex-orchestrator/runs/<run_id>/headless-final.md` or
   `.codex-orchestrator/runs/<run_id>/headless-final.json`
+- `.codex-orchestrator/runs/<run_id>/context.json`
 - `.codex-orchestrator/runs/<run_id>/state.json`
 - `.codex-orchestrator/state.json` as latest-state compatibility copy/pointer
 - raw verification output paths for failures
+
+The target must not report completion until `state.json` contains
+`context_snapshot_path`, `context_basis_hash`, `lifecycle_outcome=finished`, and
+a passing `completion_audit` with non-empty `prompt_to_artifact_checklist` and
+`verification_evidence`. Blocked or failed targets must set a non-success
+`lifecycle_outcome` and a concrete `handoff_reason`.
 
 ## Learning Log
 

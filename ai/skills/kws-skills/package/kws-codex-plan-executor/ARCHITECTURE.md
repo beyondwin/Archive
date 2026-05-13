@@ -20,11 +20,14 @@ execution and prompt export. It fully replaces the former
 1. Resolve paths and mode.
 2. Validate plan structure with `scripts/parse_plan.py` for execution modes.
 3. Initialize a `run_id` and update `.codex-orchestrator/runs/<run_id>/state.json`.
-4. Record a task execution contract before edits.
-5. Execute tasks locally unless subagents were explicitly requested.
-6. Verify each task with risk-scaled commands and record failures with stable
+4. Build `.codex-orchestrator/runs/<run_id>/context.json` and store
+   `context_snapshot_path` plus `context_basis_hash`.
+5. Record a task execution contract before edits.
+6. Execute tasks locally unless subagents were explicitly requested.
+7. Verify each task with risk-scaled commands and record failures with stable
    `ISSUE_KEY` values.
-7. Validate state and summarize changed files, verification, resources, and
+8. Write `completion_audit` and terminal `lifecycle_outcome`.
+9. Validate state and summarize changed files, verification, resources, and
    residual risk.
 
 ## State File Contract
@@ -34,6 +37,22 @@ resuming one execution. `.codex-orchestrator/state.json` is retained only as a
 latest-state compatibility copy or pointer. The schema is documented in
 `references/state-schema.md` and mechanically checked by
 `scripts/validate_state.py`.
+
+Execution runs also write `.codex-orchestrator/runs/<run_id>/context.json`.
+The snapshot records the plan/spec/docs source list and source hashes; the
+state file records `context_snapshot_path` and `context_basis_hash` so resume
+and handoff do not rely on implicit session memory.
+
+`current_phase` describes internal progress. `lifecycle_outcome` describes the
+terminal handoff result: `finished`, `blocked`, `failed`, `userinterlude`, or
+`askuserQuestion`. Finished outcomes require a passing `completion_audit` with
+`prompt_to_artifact_checklist` and `verification_evidence`; non-success
+outcomes require `handoff_reason`.
+
+Plans may include optional task dependencies via visible `Depends on:` lines.
+`scripts/parse_plan.py` validates known dependency references and cycle-free
+dependencies, then emits `depends_on` metadata. This metadata is advisory only
+and does not replace task contracts.
 
 ## Learning Log Contract
 
@@ -95,6 +114,10 @@ Prompt export mode copies the old prompt-generator template behavior:
 verified absolute paths, prompt-only output, conservative Spark evidence
 packing, no-Spark removal, continuation ledger handling, risk-scaled
 verification, and session-owned cleanup boundaries.
+
+Fresh-session prompts mirror the runtime source-grounding and completion-proof
+contracts: create `context.json` before edits, report `lifecycle_outcome`, and
+finish only with a passing `completion_audit`.
 
 ## Eval Surface
 

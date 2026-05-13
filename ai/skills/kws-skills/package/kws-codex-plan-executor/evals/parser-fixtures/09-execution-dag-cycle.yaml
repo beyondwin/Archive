@@ -1,0 +1,18 @@
+name: execution-dag-cycle
+mode: interactive
+plan: |
+  ### Task 0: First
+
+  Depends on: task_1
+
+  Files:
+  - Create: src/first.py
+
+  ### Task 1: Second
+
+  Depends on: task_0
+
+  Files:
+  - Create: src/second.py
+expected:
+  error_contains: cycle detected

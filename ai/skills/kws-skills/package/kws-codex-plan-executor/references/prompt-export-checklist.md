@@ -22,6 +22,9 @@ Before sending the generated prompt, confirm:
 - task-by-task local implementation by default, subagent opt-in only, two-stage review, and Task 0/1 start handling are explicit
 - per-task `TASK EXECUTION CONTRACT` is explicit with scope, files to inspect, allowed edits, forbidden edits, and acceptance command or honest substitute
 - lightweight `.codex-orchestrator/runs/<run_id>/state.json` ledger is explicit and includes run_id, run_dir, state_path, workspace, plan, branch, worktree, current task/phase, task state, risk levels, issue keys, verification, session-owned resources, and last checkpoint; `.codex-orchestrator/state.json` is only a latest-state compatibility copy/pointer
+- generated execution prompt requires `.codex-orchestrator/runs/<run_id>/context.json` creation before edits and records `context_snapshot_path` plus `context_basis_hash`
+- successful final completion requires `lifecycle_outcome=finished` and `completion_audit.passed=true` with non-empty `prompt_to_artifact_checklist` and `verification_evidence`
+- blocked or failed handoff includes non-success `lifecycle_outcome`, evidence, artifacts/state, and a concrete `handoff_reason`
 - execution-only learning-log contract is explicit: `interactive` and
   `headless` record redacted notable-boundary events to
   `~/.codex/learning/kws-codex-plan-executor/runs/<YYYY-MM-DD>/<run_id>/events.jsonl`
@@ -43,6 +46,7 @@ Before sending the generated prompt, confirm:
 ## Verification And Finish
 
 - verification ladder is explicit: no full suite on every phase, targeted checks for implementation phases, broader checks for task completion/high-risk changes, final full check at the end
+- high-risk verification matrix guidance is explicit for stale state, dirty worktree preservation, hung command behavior, misleading success output or skipped tests, malformed input, and cancellation/interruption recovery when relevant
 - targeted checks for test config, build input, test property, Dockerfile, migration, or generated-artifact input changes either bypass up-to-date/cache behavior or explicitly record cache behavior plus the broader verification that closes the risk
 - ENV_BLOCKER triage is explicit: command runs at all, dependencies, path/config, and required service checks before reporting blocker
 - verification failures preserve raw output by file path or short excerpt plus repro command, and same-root-cause fix retries are capped at 3 before an error/blocked checkpoint

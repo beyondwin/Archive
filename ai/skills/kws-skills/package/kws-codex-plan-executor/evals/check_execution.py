@@ -131,6 +131,44 @@ def main() -> int:
     if not checks["tasks_finished"]:
         failures.append("final state does not mark tasks complete or expected blocked")
 
+    mode = state.get("mode") or fixture.get("mode")
+    context_required = (
+        checks["state_exists"]
+        and mode in {"interactive", "headless"}
+        and state.get("current_phase") != "preflight"
+    )
+    if context_required:
+        context_path = state.get("context_snapshot_path")
+        context_file = workdir / context_path if isinstance(context_path, str) else None
+        checks["context_snapshot_exists"] = bool(context_file and context_file.is_file())
+        if not checks["context_snapshot_exists"]:
+            failures.append("missing per-run context.json snapshot")
+    else:
+        checks["context_snapshot_exists"] = True
+
+    successful_terminal_expected = (
+        checks["state_exists"]
+        and not allow_no_state
+        and not bool(expected.get("allow_blocked"))
+        and not bool(expected.get("must_block"))
+    )
+    if successful_terminal_expected:
+        audit = state.get("completion_audit")
+        checks["lifecycle_finished"] = state.get("lifecycle_outcome") == "finished"
+        checks["completion_audit_passed"] = (
+            isinstance(audit, dict)
+            and audit.get("passed") is True
+            and bool(audit.get("prompt_to_artifact_checklist"))
+            and bool(audit.get("verification_evidence"))
+        )
+        if not checks["lifecycle_finished"]:
+            failures.append("successful execution state must set lifecycle_outcome=finished")
+        if not checks["completion_audit_passed"]:
+            failures.append("successful execution state must include passing completion_audit proof")
+    else:
+        checks["lifecycle_finished"] = True
+        checks["completion_audit_passed"] = True
+
     test_after = expected.get("test_after")
     if test_after:
         result = subprocess.run(test_after, cwd=workdir, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)

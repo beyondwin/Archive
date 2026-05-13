@@ -3,6 +3,16 @@
 Source of truth for current behavior: `SKILL.md`, `templates/`, and
 `references/`. This file tracks release intent and migration history.
 
+## v1.5.0 - Add source-grounded completion proof (2026-05-14)
+
+- Hardened plan parsing to ignore hidden Markdown regions such as fenced code,
+  HTML comments, and indented code.
+- Added per-run `context.json` source snapshots with source hashes.
+- Added terminal `lifecycle_outcome` metadata and completion audit proof for
+  successful runs.
+- Added optional execution dependency metadata and high-risk verification
+  matrix guidance without changing subagent opt-in policy.
+
 ## v1.4.0 - Shard Codex executor runs by run_id (2026-05-13)
 
 - Replaced the single global Codex learning log with per-run user-local
