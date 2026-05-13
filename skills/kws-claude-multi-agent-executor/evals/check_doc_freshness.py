@@ -27,8 +27,15 @@ from pathlib import Path
 
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
-MANIFEST_PATH = SKILL_ROOT.parent.parent / "manifest.json"
-PLUGIN_README = SKILL_ROOT.parent.parent / "README.md"
+# Standalone layout (post 2026-05-14): Archive/skills/<name>/. No plugin
+# manifest co-located. If the historical kws-skills plugin manifest is still
+# present at ai/skills/kws-skills/manifest.json, use it; otherwise skip the
+# plugin-coupled checks gracefully.
+_archive_root = SKILL_ROOT.parent.parent
+_legacy_manifest = _archive_root / "ai" / "skills" / "kws-skills" / "manifest.json"
+_legacy_readme = _archive_root / "ai" / "skills" / "kws-skills" / "README.md"
+MANIFEST_PATH = _legacy_manifest if _legacy_manifest.exists() else (SKILL_ROOT.parent / "manifest.json")
+PLUGIN_README = _legacy_readme if _legacy_readme.exists() else (SKILL_ROOT.parent / "README.md")
 
 
 def read_skill_version() -> str | None:
