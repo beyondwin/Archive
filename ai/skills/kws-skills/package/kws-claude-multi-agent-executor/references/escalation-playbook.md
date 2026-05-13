@@ -66,3 +66,29 @@ If none of the 4 steps resolve it: record the task as `SKIPPED` in state.json an
 
 - You (Orchestrator) update all documents yourself. Never delegate spec or plan updates to a sub-agent.
 - After updating any document, re-read it fully before building the next sub-agent prompt.
+
+## Learning log: ESCALATE → event mapping (v2.8)
+
+When a sub-agent ESCALATEs, it writes a candidate JSON to
+`<worktree>/.orchestrator/learning_events/task_<N>-<role>.json`. The
+orchestrator's Phase 1 Step 3.5 scan picks it up and forwards to `append`.
+
+Severity mapping by ESCALATE type:
+
+| Type | severity | Notes |
+|---|---|---|
+| `SPEC_BLOCKER` | `medium` | Resolvable by orchestrator spec-edit; learning value is which ambiguity recurred |
+| `ENV_BLOCKER` | `high` if Triage steps 1-4 all fail; `medium` if Triage resolves | Learning value is the missing env knowledge |
+| `AMBIGUITY` | `medium` | Resolvable by orchestrator plan-edit; learning value is which plan section is consistently unclear |
+
+If the same ISSUE_KEY recurs across retries (same task, same root cause), the
+orchestrator additionally emits a `recurring_issue` event AFTER the
+`escalation` event — that pattern is the strongest "fix the prompt" signal
+the skill has.
+
+If the orchestrator's ESCALATE handling (spec edit / plan edit / triage)
+resolves the blocker and execution continues, that recovery is a
+`successful_workaround` signal IF the resolution generalizes (e.g., "spec
+section X always needs clarification of Y"). The Implementer prompt
+instructs sub-agents to write this candidate themselves — see
+`implementer-prompt.md` §Learning log emit.
