@@ -223,13 +223,60 @@ realistic underspec while keeping the rubric. The 4 "naive miss" categories
 spec text. Spec now lists happy-path + obvious errors, then says "strictly
 validate the grammar — these examples are not exhaustive."
 
+### 21:30 — Re-run ceiling check on rewritten fixture 08 (commit d0cbd9a)
+
+Result: **rubric pass_rate = 0.95** (19/20 checks).
+
+The one missed check: `"repeated unit raises ValueError"` —
+`parse_duration("30m20m")` silently accepted instead of raising.
+
+The other 3 "naive miss" categories I removed from spec
+(internal whitespace, uppercase units, bare unit) were caught anyway.
+Reason: a regex-based or grammar-based parser naturally rejects them as
+"input doesn't match `<integer><unit>` pattern." Only "repeated unit" is
+a higher-order semantic judgment call ("did I already see this unit?")
+that requires explicit memory.
+
+### 21:40 — ADVISOR REVIEW (second)
+
+Surfaced the 0.95 result + plan to implement D008 (~150-line SKILL.md
+change). Advisor pushed back hard:
+
+1. **0.95 is the experiment's answer, not a problem to design around.**
+   3 of 4 naive-miss predictions were wrong — Sonnet handles them natively.
+   Only 1 edge case (repeated unit) is actually missing from balanced.
+2. **Need n=3 baseline variance before any SKILL.md surgery.** Could be
+   reliably 0.95 (small detectable ceiling), wildly variable (noise floor
+   too high), or 1.0 sometimes (single-shot lucky). Spend $20 to learn
+   which.
+3. **Don't iterate fixture again.** That's the confirmation-bias trap
+   (advisor #5). Either accept the data or pivot domain.
+4. **Calibration infrastructure (rubric.py, judge integration) is worth
+   shipping regardless.** quality_plus hypothesis specifically is weak.
+5. **"Honest framing"**: data says v2.6.0 is closer to a solved problem
+   on realistic MID tasks than expected. That's a *finding*, not a failure.
+
+### 22:00 — Decision: baseline variance probe first
+
+Running balanced × 2 more reps on fixture 08. Then:
+
+- If all 3 reps land at 0.95 with the same single miss → write findings
+  document, ship rubric.py + judge update, close v2.7-quality-mode
+  experiment with negative result on quality_plus
+- If variance is high (e.g., reps land at 0.85, 0.95, 1.00) → quality_plus
+  cannot be measured with n=3 on this fixture; revisit
+- If some reps land at 1.0 → balanced is already at ceiling reliably;
+  experiment closed
+
+The advisor's reframe: **finish the experiment by following the data,
+not by patching the fixture until quality_plus has room to win**.
+
 ### Next steps (autonomous, current position)
 
-1. Re-run ceiling check on rewritten fixture 08
-2. If pass_rate in target range (0.70–0.85): proceed to quality_plus
-   implementation
-3. If still at ceiling: redesign harder (omit more from spec)
-4. If too easy / too hard, adjust and document iteration
-5. Implement quality_plus on experiment branch
-6. Pilot run (6 runs)
-7. Analyze → findings/
+1. Run balanced × 2 more on fixture 08 (in series — harness baseline file
+   would race on parallel)
+2. Analyze 3-rep variance
+3. Write `findings/F001-fixture08-baseline.md` with the result
+4. Decide implementation: implement quality_plus + pilot, OR skip
+   implementation and ship calibration infrastructure only
+5. Final commit + close-out summary
