@@ -19,40 +19,73 @@ can realistically demonstrate improvement.
 
 ## Results (filled as runs complete)
 
-| Rep | pass_rate | error_cases | Missed checks | Judge mean |
-|-----|-----------|-------------|---------------|------------|
-| 1 | 0.95 | 9/10 | repeated unit raises ValueError | 0.90 |
-| 2 | 0.95 | 9/10 | repeated unit raises ValueError | 0.90 |
-| 3 | 0.95 | 9/10 | repeated unit raises ValueError | 0.95 |
-| **mean** | **0.95** | 9/10 | (always same) | 0.917 |
-| **range** | **0.00** | 0 | n/a | 0.05 |
+| Rep | pass_rate | error_cases | Missed checks | Judge mean | Branch |
+|-----|-----------|-------------|---------------|------------|--------|
+| 1 | 0.95 | 9/10 | repeated unit raises ValueError | 0.90 | experiment |
+| 2 | 0.95 | 9/10 | repeated unit raises ValueError | 0.90 | experiment |
+| 3 | 0.95 | 9/10 | repeated unit raises ValueError | 0.95 | experiment |
+| 4 | **1.00** | **10/10** | **(none)** | 1.00 | main (post-merge smoke) |
+| **mean** | **0.9625** | 9.25/10 | (75% repeated-unit miss) | 0.94 | |
+| **range** | **0.05** | | | 0.10 | |
 
-**Result**: Case A confirmed. All 3 reps produced identical rubric outcomes
-— same exact pass_rate, same single missed check, zero variance on the
-deterministic measurement. Judge mean varied slightly (0.90 / 0.90 / 0.95)
-because the LLM judge's `code_quality` axis has its known stochasticity.
+**Revised result** (was: "Case A confirmed, zero variance"):
 
-## Per-check consistency
+Three sequential reps on the experiment branch all produced the same single
+miss. A fourth rep run from `main` after merging the v2.7 infrastructure
+produced ZERO misses. This contradicts the original "zero variance"
+characterization.
 
-For each of the 20 rubric checks, all 3 reps produced the same outcome:
-- 19 checks pass in every rep
-- 1 check (`repeated unit raises ValueError`) fails in every rep
+Updated reading: balanced **frequently** misses "repeated unit raises
+ValueError" (3/4 reps observed = 75%), but the miss is **probabilistic
+not deterministic**. With small n=4 the 75% point estimate has wide CI;
+the true miss rate could plausibly be anywhere from 30% to 95%.
 
-Zero variance on outcome. Sonnet's behavior on this fixture is
-**reproducibly deterministic** at the level of rubric pass/fail.
+For quality_plus impact estimate: if balanced misses at rate p_miss ≈ 0.75
+and 3 best-of-N candidates are independent draws from the same Sonnet
+process:
+- P(all 3 candidates miss) ≈ 0.75³ = 0.42
+- P(at least one catches) ≈ 0.58
+- Assuming judge correctly picks the catcher when present:
+  - quality_plus expected pass_rate ≈ 0.58 × 1.0 + 0.42 × 0.95 = 0.979
+- balanced expected pass_rate ≈ 0.25 × 1.0 + 0.75 × 0.95 = 0.9625
+- **Expected delta ≈ +0.017** — even smaller than the +0.05 ceiling
+  originally assumed
+- Cost ratio remains ~3× tokens, ~2× wall time
 
-## Why this matters for quality_plus
+The recommendation in [F002](./F002-close-out.md) **stands** — implementing
+quality_plus for a ~+0.02 expected gain is not justified. But the rationale
+shifts: not "all candidates would miss the same thing" (which the 4th rep
+disproved) but rather "the gain is smaller than originally estimated, and
+the variance is small enough that detecting +0.02 would require ~30+ reps
+per cell."
 
-Best-of-N's value proposition rests on **selecting between diverse
-candidates**. If 3 Opus candidates would also reliably produce the same
-miss (because Sonnet did 3/3 times, and the miss is in Sonnet's spec
-interpretation, not its sampling), best-of-N picks between identical
-candidates and adds zero correctness signal.
+## Per-check consistency (revised n=4)
 
-Best-of-N could still help if Opus is MORE thorough than Sonnet on this
-class of edge case — but that would be measuring "Opus vs Sonnet
-Implementer", not "1 vs N candidates". A cheaper experiment is just
-"use Opus Implementer in balanced mode" — no best-of-N machinery needed.
+For each of the 20 rubric checks across 4 reps:
+- 19 checks pass in every rep (100% reliability)
+- 1 check (`repeated unit raises ValueError`) fails in 3/4 reps (75% miss rate)
+
+The miss is **probabilistic, not deterministic** as the n=3 data on the
+experiment branch suggested.
+
+## Why this still matters for the quality_plus recommendation
+
+Earlier analysis assumed zero variance → "best-of-N picks between identical
+candidates → zero correctness signal." The 4th rep falsifies this.
+
+Updated analysis: best-of-N COULD catch the edge case via candidate
+diversity, but at expected delta only ~+0.017 (see math in §Results).
+Detecting this size of effect with n=3 per cell is impossible — the noise
+floor is larger. Would need n≥30 per cell, which is $300+/fixture.
+
+Either way, the implementation cost (~150-line SKILL.md change + ~$50–100
+per fixture run + maintenance) is not justified for a +0.02 expected
+improvement on a single edge case in a single fixture domain.
+
+The cheaper alternative if Opus-vs-Sonnet thoroughness is the real
+differentiator: just use Opus Implementer in balanced mode for HIGH-risk
+tasks. No best-of-N machinery needed. That's a one-line change to
+SKILL.md, gated on `mode=quality` or risk tier.
 
 ## Per-check consistency (filled when data complete)
 
