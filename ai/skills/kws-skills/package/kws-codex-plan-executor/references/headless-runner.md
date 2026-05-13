@@ -41,6 +41,20 @@ codex exec \
 - `.codex-orchestrator/state.json`
 - raw verification output paths for failures
 
+## Learning Log
+
+Headless artifacts remain under `.codex-orchestrator/`. Learning events are
+separate user-local records written to:
+
+```text
+~/.codex/learning/kws-codex-plan-executor/events.jsonl
+```
+
+Use `references/learning-log.md` and `scripts/append_learning_event.py` for
+`blocker`, `error`, `verification_failure`, `recurring_issue`,
+`successful_workaround`, and actionable `completion_learning` events. `prompt`
+and `handoff` are not logging modes.
+
 ## Sandbox Selection
 
 `headless_sandbox=workspace-write` is the default for implementation runs.
