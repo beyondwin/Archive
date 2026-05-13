@@ -153,6 +153,33 @@ def main() -> int:
             token in (execution + checklist + template)
             for token in ("high-risk verification matrix", "misleading success", "stale state", "hung")
         ),
+        "execution_requires_dedicated_worktree": all(
+            token in (text + execution + headless + checklist)
+            for token in (
+                "dedicated non-conflicting `codex/...` git worktree",
+                "before any task contract or edits",
+            )
+        ),
+        "worktree_uniqueness_contract": all(
+            token in (execution + headless)
+            for token in (
+                "git worktree list --porcelain",
+                "branch name already exists",
+                "append the run_id",
+            )
+        ),
+        "no_main_implementation_contract": "Do not implement from `main`" in execution
+        and "Do not implement from `main`" in headless,
+        "worktree_prompt_export_contract": all(
+            token in template
+            for token in (
+                "dedicated non-conflicting `codex/...` git worktree",
+                "TASK EXECUTION CONTRACT",
+                "main",
+                "git worktree list --porcelain",
+                "append the run_id",
+            )
+        ),
     }
 
     checks.update(expectations)

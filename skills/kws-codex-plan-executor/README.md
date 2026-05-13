@@ -12,7 +12,9 @@ read [docs/user-guide.ko.md](docs/user-guide.ko.md).
 
 ## Current Contract
 
-- Skill version: `1.6.0`
+- Skill version: `1.7.0`
+- Execution worktree: mandatory dedicated non-conflicting `codex/...` git
+  worktree for `interactive` and `headless`
 - Primary state: `.codex-orchestrator/runs/<run_id>/state.json`
 - Compatibility state: `.codex-orchestrator/state.json`
 - Source snapshot: `.codex-orchestrator/runs/<run_id>/context.json`
@@ -63,8 +65,8 @@ For behavior history:
 
 | Mode | Purpose | Mutates repo | Logging |
 | --- | --- | --- | --- |
-| `interactive` | Execute the plan in the current Codex session. | Yes | Yes, notable boundaries only |
-| `headless` | Execute via supervised `codex exec`. | Yes unless `read-only` blocks | Yes, notable boundaries only |
+| `interactive` | Execute the plan in the current Codex session. | Yes, inside a dedicated `codex/...` worktree | Yes, notable boundaries only |
+| `headless` | Execute via supervised `codex exec`. | Yes, inside a dedicated `codex/...` worktree unless `read-only` blocks | Yes, notable boundaries only |
 | `prompt` | Export a fresh-session execution prompt. | No | No |
 | `handoff` | Export a continuation prompt from existing state. | No | No |
 
@@ -77,20 +79,23 @@ subagents, delegation, parallel work, or passes `subagents=on`.
 flowchart TD
   A["Resolve plan/spec/docs and mode"] --> B["Parse visible Markdown plan"]
   B --> C["Classify dirty worktree changes"]
-  C --> D["Create run_id and state directory"]
-  D --> E["Build context.json source snapshot"]
-  E --> F["Refresh context_health"]
-  F --> G["Record TASK EXECUTION CONTRACT"]
-  G --> H["Implement and verify task"]
-  H --> I{"More tasks?"}
-  I -- Yes --> F
-  I -- No --> J["Write completion_audit and lifecycle_outcome"]
-  J --> K["Validate state and summarize evidence"]
+  C --> D["Create/select non-conflicting codex worktree"]
+  D --> E["Create run_id and state directory"]
+  E --> F["Build context.json source snapshot"]
+  F --> G["Refresh context_health"]
+  G --> H["Record TASK EXECUTION CONTRACT"]
+  H --> I["Implement and verify task"]
+  I --> J{"More tasks?"}
+  J -- Yes --> G
+  J -- No --> K["Write completion_audit and lifecycle_outcome"]
+  K --> L["Validate state and summarize evidence"]
 ```
 
 The critical gates are:
 
 - no edits before a five-field `TASK EXECUTION CONTRACT`
+- no `interactive` or `headless` implementation from `main` or the original
+  checkout; use a dedicated non-conflicting `codex/...` worktree first
 - no execution without visible `Files` blocks in execution modes
 - no successful finish without `lifecycle_outcome=finished` and a passing
   `completion_audit`

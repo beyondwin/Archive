@@ -10,8 +10,10 @@ execution and prompt export. It fully replaces the former
 
 ## Modes
 
-- `interactive`: default, current-session execution with visible progress.
-- `headless`: explicit `codex exec` run for eval, CI, or detached execution.
+- `interactive`: default, current-session execution with visible progress,
+  implemented inside a dedicated `codex/...` git worktree.
+- `headless`: explicit `codex exec` run for eval, CI, or detached execution,
+  launched only after a dedicated `codex/...` git worktree exists.
 - `prompt`: legacy fresh-session prompt export.
 - `handoff`: continuation prompt export for resuming an existing run.
 
@@ -19,17 +21,32 @@ execution and prompt export. It fully replaces the former
 
 1. Resolve paths and mode.
 2. Validate plan structure with `scripts/parse_plan.py` for execution modes.
-3. Initialize a `run_id` and update `.codex-orchestrator/runs/<run_id>/state.json`.
-4. Build `.codex-orchestrator/runs/<run_id>/context.json` and store
+3. Create or select a dedicated non-conflicting `codex/...` git worktree.
+4. Initialize a `run_id` and update `.codex-orchestrator/runs/<run_id>/state.json`.
+5. Build `.codex-orchestrator/runs/<run_id>/context.json` and store
    `context_snapshot_path` plus `context_basis_hash`.
-5. Initialize and refresh `context_health` at semantic boundaries.
-6. Record a task execution contract before edits.
-7. Execute tasks locally unless subagents were explicitly requested.
-8. Verify each task with risk-scaled commands and record failures with stable
+6. Initialize and refresh `context_health` at semantic boundaries.
+7. Record a task execution contract before edits.
+8. Execute tasks locally unless subagents were explicitly requested.
+9. Verify each task with risk-scaled commands and record failures with stable
    `ISSUE_KEY` values.
-9. Write `completion_audit` and terminal `lifecycle_outcome`.
-10. Validate state and summarize changed files, verification, resources, and
+10. Write `completion_audit` and terminal `lifecycle_outcome`.
+11. Validate state and summarize changed files, verification, resources, and
    residual risk.
+
+## Worktree Isolation Contract
+
+Execution modes never implement from `main` or from the caller's original
+checkout. A new run creates a dedicated non-conflicting `codex/...` git
+worktree before any task contract or edits. The executor checks
+`git worktree list --porcelain` and local branches before choosing a
+branch/path. If the preferred branch name already exists or the path is already
+claimed, the executor appends the run id or another unique pre-run suffix and
+records the final branch/worktree in state.
+
+Resume may select the worktree stored in an explicit state path or run id. If
+that worktree is missing or no longer matches the stored branch, execution
+blocks rather than silently falling back to the original checkout.
 
 ## State File Contract
 
@@ -91,7 +108,8 @@ the current Codex session.
 
 ## Headless Codex Exec Contract
 
-Headless mode uses `codex exec --json --output-last-message`, creates
+Headless mode first creates a dedicated worktree, then uses
+`codex exec --json --output-last-message`, creates
 `.codex-orchestrator/runs/<run_id>/` before redirecting logs, and defaults to
 `--sandbox workspace-write`. `headless_sandbox=read-only` is limited to
 preflight, parse, and prompt verification; implementation tasks stop instead of

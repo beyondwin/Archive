@@ -22,7 +22,8 @@ Supported runtime arguments are defined in [../SKILL.md](../SKILL.md):
 - `plan=<path>`: required except resume-only flows
 - `spec=<path>`: optional
 - `docs=<path1,path2>`: optional
-- `workspace=<path>`: optional
+- `workspace=<path>`: optional source workspace; execution modes still create
+  or resume a dedicated execution worktree
 - `resume=latest|<state-path>|<run_id>`: optional
 - `mode=interactive|headless|prompt|handoff`: default `interactive`
 - `subagents=on|off`: default `off`
@@ -58,20 +59,22 @@ contracts or change task completion semantics.
 
 ### Interactive
 
-`interactive` runs in the current Codex session. The executor:
+`interactive` runs in the current Codex session, but implementation happens in
+a dedicated non-conflicting `codex/...` git worktree. The executor:
 
 1. reads repo-local instructions
 2. verifies paths
 3. checks git status
 4. parses the plan
 5. classifies dirty files as related or unrelated
-6. initializes a `run_id`
-7. builds `context.json`
-8. initializes `context_health`
-9. writes state under `.codex-orchestrator/runs/<run_id>/`
-10. executes each task locally unless subagents were explicitly allowed
-11. refreshes `context_health` at task and blocker boundaries
-12. records verification, completion audit, and terminal lifecycle outcome
+6. creates or selects the dedicated execution worktree
+7. initializes a `run_id`
+8. builds `context.json`
+9. initializes `context_health`
+10. writes state under `.codex-orchestrator/runs/<run_id>/`
+11. executes each task locally unless subagents were explicitly allowed
+12. refreshes `context_health` at task and blocker boundaries
+13. records verification, completion audit, and terminal lifecycle outcome
 
 Interactive execution is described in
 [../references/execution-cycle.md](../references/execution-cycle.md).
@@ -114,6 +117,23 @@ and is checked with
 `handoff` produces a continuation prompt for an existing run. It must use an
 explicit state path, run id, or unambiguous active run. It should preserve the
 same source-grounding and completion-proof expectations as a fresh run.
+
+## Mandatory Worktree Isolation
+
+For `interactive` and `headless`, a new execution run must create a dedicated
+non-conflicting `codex/...` git worktree before any task contract or edits. The
+executor must not implement from `main` or from the caller's original checkout.
+
+The worktree gate checks `git worktree list --porcelain` and local branches
+before choosing a branch/path. If the preferred `codex/<slug>` branch name
+already exists or the path is already claimed, the executor appends the run_id
+or another unique pre-run suffix and records the final branch and worktree in
+state.
+
+Resume is the exception to creating a fresh worktree. It may select the
+worktree recorded in the explicit state path or run id, but it must stop if
+that worktree is missing or points at a different branch. It must not silently
+fall back to the original workspace.
 
 ## Dirty Worktree Policy
 
