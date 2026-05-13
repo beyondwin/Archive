@@ -1,0 +1,14 @@
+```json
+{
+  "fixture": "08-subtle-input-validation",
+  "scores": {
+    "correctness":     0.7,
+    "spec_compliance": 0.4,
+    "code_quality":    0.4,
+    "cost_efficiency": 1.0
+  },
+  "mean": 0.6,
+  "passed": true,
+  "notes": "src/duration.py is excellent — single-pass regex, type-hinted, informative per-segment error messages, handles all 20 edge cases correctly. However, tests/test_duration.py fatally imports calibration modules (good_impl, broken_impl) instead of src.duration and covers only 14 of 20 required rubric cases; its own docstring explicitly admits the incompleteness, meaning '28 passed' reflects 14 functions × 2 reference impls rather than any verification of the actual deliverable. An unexplained 'docs: update for v2.7' commit is additional noise."
+}
+```

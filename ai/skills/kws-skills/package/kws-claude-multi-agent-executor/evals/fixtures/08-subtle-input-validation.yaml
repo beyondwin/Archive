@@ -1,0 +1,233 @@
+name: 08-subtle-input-validation
+description: |
+  2-task MID-risk plan — implement parse_duration() with 15 concrete edge cases,
+  then write tests covering them. Designed to stress quality: a naive implementation
+  is likely to miss 2-4 edge cases. Tests best-of-N's ability to combine multiple
+  attempts into something closer to spec-complete.
+
+bootstrap: |
+  mkdir -p src tests
+  cat > pyproject.toml <<'TOML'
+  [project]
+  name = "eval08"
+  version = "0.0.1"
+  TOML
+  printf 'test:\n\tpython -m pytest -q tests/\n' > Makefile
+  touch src/__init__.py tests/__init__.py
+
+plan: |
+  ### Task 0: Implement parse_duration() in src/duration.py
+
+  **Files:**
+  - src/duration.py
+
+  Implement a function `parse_duration(s: str) -> int` that parses duration strings
+  (e.g., "1h30m", "30s", "2d") and returns the total number of seconds. The function
+  must implement ALL of the behaviors and error cases described in `spec.md` exactly.
+
+  Do NOT add behaviors not in the spec. Do NOT silently accept inputs the spec marks
+  as invalid. Match error messages reasonably (the spec specifies the error CATEGORY
+  via ValueError; exact wording is flexible but messages should be informative).
+
+  ## Acceptance Criteria
+
+  ```bash
+  python -c "from src.duration import parse_duration; assert parse_duration('1h30m') == 5400"
+  ```
+
+  ### Task 1: Add comprehensive tests in tests/test_duration.py
+
+  **Files:**
+  - tests/test_duration.py
+
+  Add pytest tests that cover EVERY behavior listed in `spec.md` — both the valid-input
+  cases and the ValueError cases. Use `pytest.raises(ValueError)` for error cases.
+
+  Aim for one test (or one parametrize case) per spec bullet. Tests must be discoverable
+  by `python -m pytest -q tests/`. All tests must pass against the Task 0 implementation.
+
+  ## Acceptance Criteria
+
+  ```bash
+  python -m pytest -q tests/
+  ```
+
+spec: |
+  # Spec: parse_duration(s: str) -> int
+
+  Parses a duration string and returns the total number of seconds as an integer.
+
+  ## Input format
+
+  A duration string is a concatenation of one or more `<integer><unit>` segments,
+  with no separators between segments. Leading and trailing whitespace is stripped.
+  Internal whitespace is NOT allowed.
+
+  Supported units (lowercase only):
+  - `s` — seconds
+  - `m` — minutes (60 s)
+  - `h` — hours  (3600 s)
+  - `d` — days   (86400 s)
+
+  ## Valid input behaviors
+
+  1. Single unit: `parse_duration("30s") == 30`, `parse_duration("5m") == 300`,
+     `parse_duration("2h") == 7200`, `parse_duration("1d") == 86400`.
+  2. Multi-unit: `parse_duration("1h30m") == 5400`, `parse_duration("1h30m45s") == 5445`.
+  3. Segments may appear in ANY order: `parse_duration("30m1h") == 5400`.
+  4. Zero values are allowed: `parse_duration("0s") == 0`, `parse_duration("0h30m") == 1800`.
+  5. Whitespace stripping: `parse_duration(" 30s ") == 30`, `parse_duration("\t1h\n") == 3600`.
+
+  ## Invalid input behaviors (must raise `ValueError`)
+
+  6. Empty string after stripping: `parse_duration("")` and `parse_duration("   ")`.
+  7. Bare number with no unit: `parse_duration("30")`.
+  8. Unknown unit: `parse_duration("5x")`, `parse_duration("3w")`.
+  9. Repeated unit (same unit appearing more than once): `parse_duration("30m20m")`,
+     `parse_duration("1h2h")`.
+  10. Negative values: `parse_duration("-30s")`, `parse_duration("1h-5m")`.
+  11. Decimal values: `parse_duration("1.5h")`, `parse_duration("0.5s")`.
+  12. Internal whitespace: `parse_duration("1h 30m")`, `parse_duration("30 s")`.
+  13. Uppercase units: `parse_duration("1H")`, `parse_duration("30S")`. (Only lowercase accepted.)
+  14. Unit without preceding integer: `parse_duration("s")`, `parse_duration("hm")`.
+  15. Trailing unit-less integer: `parse_duration("1h30")`.
+
+  ## Notes
+
+  - The function returns a Python `int`. No floats.
+  - Error messages should be informative enough that a caller can identify the problem
+    (which unit/segment is bad, or the category — empty, unknown unit, etc).
+  - No external libraries beyond the Python standard library.
+
+invocation: ""
+
+expected:
+  task_count: 2
+  expected_files_changed:
+    - src/duration.py
+    - tests/test_duration.py
+  commit_count_min: 2
+  commit_count_max: 8
+  test_after: |
+    python -m pytest -q tests/
+  rubric:
+    valid_inputs:
+      - check: 'python -c "from src.duration import parse_duration; assert parse_duration(\"30s\") == 30"'
+      - check: 'python -c "from src.duration import parse_duration; assert parse_duration(\"5m\") == 300"'
+      - check: 'python -c "from src.duration import parse_duration; assert parse_duration(\"2h\") == 7200"'
+      - check: 'python -c "from src.duration import parse_duration; assert parse_duration(\"1d\") == 86400"'
+      - check: 'python -c "from src.duration import parse_duration; assert parse_duration(\"1h30m\") == 5400"'
+      - check: 'python -c "from src.duration import parse_duration; assert parse_duration(\"1h30m45s\") == 5445"'
+      - check: 'python -c "from src.duration import parse_duration; assert parse_duration(\"30m1h\") == 5400"'
+      - check: 'python -c "from src.duration import parse_duration; assert parse_duration(\"0s\") == 0"'
+      - check: 'python -c "from src.duration import parse_duration; assert parse_duration(\"0h30m\") == 1800"'
+      - check: 'python -c "from src.duration import parse_duration; assert parse_duration(\" 30s \") == 30"'
+    error_cases:
+      # Each check passes iff parse_duration raises ValueError (exit 0).
+      # Returns exit 1 if no exception (impl accepted invalid input).
+      # Returns exit 2 if non-ValueError exception (impl crashed wrongly).
+      - check: |
+          python -c "
+          from src.duration import parse_duration
+          import sys
+          try: parse_duration(''); sys.exit(1)
+          except ValueError: sys.exit(0)
+          except Exception: sys.exit(2)
+          "
+        desc: empty string raises ValueError
+      - check: |
+          python -c "
+          from src.duration import parse_duration
+          import sys
+          try: parse_duration('30'); sys.exit(1)
+          except ValueError: sys.exit(0)
+          except Exception: sys.exit(2)
+          "
+        desc: bare number raises ValueError
+      - check: |
+          python -c "
+          from src.duration import parse_duration
+          import sys
+          try: parse_duration('5x'); sys.exit(1)
+          except ValueError: sys.exit(0)
+          except Exception: sys.exit(2)
+          "
+        desc: unknown unit raises ValueError
+      - check: |
+          python -c "
+          from src.duration import parse_duration
+          import sys
+          try: parse_duration('30m20m'); sys.exit(1)
+          except ValueError: sys.exit(0)
+          except Exception: sys.exit(2)
+          "
+        desc: repeated unit raises ValueError
+      - check: |
+          python -c "
+          from src.duration import parse_duration
+          import sys
+          try: parse_duration('-30s'); sys.exit(1)
+          except ValueError: sys.exit(0)
+          except Exception: sys.exit(2)
+          "
+        desc: negative raises ValueError
+      - check: |
+          python -c "
+          from src.duration import parse_duration
+          import sys
+          try: parse_duration('1.5h'); sys.exit(1)
+          except ValueError: sys.exit(0)
+          except Exception: sys.exit(2)
+          "
+        desc: decimal raises ValueError
+      - check: |
+          python -c "
+          from src.duration import parse_duration
+          import sys
+          try: parse_duration('1h 30m'); sys.exit(1)
+          except ValueError: sys.exit(0)
+          except Exception: sys.exit(2)
+          "
+        desc: internal whitespace raises ValueError
+      - check: |
+          python -c "
+          from src.duration import parse_duration
+          import sys
+          try: parse_duration('1H'); sys.exit(1)
+          except ValueError: sys.exit(0)
+          except Exception: sys.exit(2)
+          "
+        desc: uppercase unit raises ValueError
+      - check: |
+          python -c "
+          from src.duration import parse_duration
+          import sys
+          try: parse_duration('s'); sys.exit(1)
+          except ValueError: sys.exit(0)
+          except Exception: sys.exit(2)
+          "
+        desc: unit without integer raises ValueError
+      - check: |
+          python -c "
+          from src.duration import parse_duration
+          import sys
+          try: parse_duration('1h30'); sys.exit(1)
+          except ValueError: sys.exit(0)
+          except Exception: sys.exit(2)
+          "
+        desc: trailing unit-less integer raises ValueError
+    code_quality_dimensions:
+      - "Single-pass parser or regex (not a chain of nested if/elif on entire input)"
+      - "Error messages identify the offending segment or category, not just 'invalid input'"
+      - "No mutable global state; no I/O; pure function"
+      - "Type hint on signature"
+      - "Test file covers ALL 20 rubric checks (10 valid + 10 error) at minimum"
+  notes: |
+    Both tasks should be MID-risk (NOT LOW — touches new module that will gain consumers).
+    Naive implementations commonly miss: internal whitespace, repeated unit, uppercase, bare unit ("s").
+    A good implementation passes all 20 rubric checks; an average one passes 14-17.
+    A best-of-3 should land closer to 18-20 by picking the candidate that catches the most edges.
+
+cost_budget:
+  wallclock_minutes: 25
+  tokens: 350000
