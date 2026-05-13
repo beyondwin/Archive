@@ -36,6 +36,7 @@ partial="$BASELINE_FILE.partial"
 
 python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md" >/dev/null
 python3 "$EVAL_DIR/check_state_schema.py" >/dev/null
+python3 "$EVAL_DIR/check_learning_log.py" >/dev/null
 while IFS= read -r parser_fixture; do
   python3 "$EVAL_DIR/check_parse_plan.py" --fixture "$parser_fixture" >/dev/null
 done < <(find "$EVAL_DIR/parser-fixtures" -name '*.yaml' -type f | sort)
