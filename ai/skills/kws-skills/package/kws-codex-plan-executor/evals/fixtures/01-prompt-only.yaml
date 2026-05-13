@@ -19,8 +19,9 @@ expected:
   spark: true
   must_include:
     - "gpt-5.5 high"
-    - ".codex-orchestrator/session.json"
+    - ".codex-orchestrator/state.json"
   must_not_include:
     - "{{PLAN_PATH}}"
     - "{{OPTIONAL_DOCUMENT_BULLETS}}"
     - "{{OPTIONAL_SPARK_SCOUT_BULLETS}}"
+    - ".codex-orchestrator/session.json"

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.9.1 - 2026-05-13
+
+- `kws-codex-plan-executor`의 prompt/handoff export가 현행 실행 계약과 같은
+  `.codex-orchestrator/state.json`과 subagent opt-in 정책을 쓰도록 맞췄습니다.
+- task contract 누락/불완전 상태를 `validate_state.py`가 실패로 잡도록
+  강화했습니다.
+- dirty worktree 분류 전 plan parse 순서, headless artifact directory 생성,
+  `headless_sandbox=read-only` 의미를 명확히 했습니다.
+- prompt/runtime contract drift와 state schema 강화를 잡는 deterministic eval을
+  추가했습니다.
+
 ## 2.9.0 - 2026-05-13
 
 - `kws-codex-plan-executor`에 `resume=latest`, dirty worktree 분류, interactive task contract 기록을 실제 `codex exec` fixture로 검증하는 동적 eval을 추가했습니다.

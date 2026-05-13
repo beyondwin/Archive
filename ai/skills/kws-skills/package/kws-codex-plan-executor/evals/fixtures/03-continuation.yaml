@@ -9,6 +9,7 @@ expected:
   prompt_only: true
   must_include:
     - "HANDOFF CHECKPOINT"
-    - ".codex-orchestrator/session.json"
+    - ".codex-orchestrator/state.json"
   must_not_include:
     - "{{PLAN_PATH}}"
+    - ".codex-orchestrator/session.json"

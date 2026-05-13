@@ -3,6 +3,19 @@
 Source of truth for current behavior: `SKILL.md`, `templates/`, and
 `references/`. This file tracks release intent and migration history.
 
+## v1.2.1 - Align prompt export and state validation contracts (2026-05-13)
+
+- Aligned prompt/handoff export with the current executor contract:
+  `.codex-orchestrator/state.json` is the source of truth and subagents remain
+  opt-in.
+- Strengthened `validate_state.py` to reject missing or incomplete task
+  contracts.
+- Fixed preflight ordering so plan parsing precedes dirty-file classification.
+- Documented `headless_sandbox=read-only` behavior and ensured headless artifact
+  directories are created before shell redirection.
+- Added deterministic checks for prompt/runtime contract drift and state schema
+  enforcement.
+
 ## v1.2.0 - Add dynamic headless eval fixtures (2026-05-13)
 
 - Added actual headless fixtures for `resume=latest`, unrelated dirty
