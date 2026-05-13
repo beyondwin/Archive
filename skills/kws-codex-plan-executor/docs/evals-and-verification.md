@@ -68,6 +68,7 @@ and invalid state payloads. It covers:
 - task contract shape
 - retry count types
 - execution context snapshot requirements
+- context health shape and finished-run handoff readiness
 - lifecycle outcomes
 - completion audit proof
 - non-success `handoff_reason`
@@ -106,6 +107,7 @@ It currently protects:
 - headless skill bootstrap
 - learning-log lifecycle and privacy
 - context snapshot contract
+- context health contract
 - completion audit contract
 - lifecycle outcome contract
 - high-risk verification matrix guidance

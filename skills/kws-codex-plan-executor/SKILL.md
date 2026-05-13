@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "1.5.0"
+  version: "1.6.0"
   updated_at: "2026-05-14"
 ---
 
@@ -64,6 +64,10 @@ parallel work, or passes `subagents=on`.
   `state_path`. `prompt` and `handoff` are not logging modes.
 - Execution runs record `.codex-orchestrator/runs/<run_id>/context.json` before
   edits and store `context_snapshot_path` plus `context_basis_hash` in state.
+- Execution runs maintain `context_health` in state at semantic boundaries:
+  after context snapshot creation, after each task, after blocker/error events,
+  before handoff/resume, and before final completion. It must include
+  `status=green|yellow|red`, `next_action`, and `handoff_ready`.
 - Successful terminal runs set `lifecycle_outcome=finished` and include a
   passing `completion_audit` with `prompt_to_artifact_checklist` and
   `verification_evidence`.
@@ -85,8 +89,9 @@ parallel work, or passes `subagents=on`.
 6. Maintain `.codex-orchestrator/runs/<run_id>/state.json` using
    `references/state-schema.md`; keep `.codex-orchestrator/state.json` as the
    latest-state compatibility copy/pointer.
-7. Build `context.json` for execution modes before edits and record completion
-   proof before reporting a finished lifecycle outcome.
+7. Build `context.json` for execution modes before edits, maintain
+   `context_health`, and record completion proof before reporting a finished
+   lifecycle outcome.
 8. For execution modes, record learning events at notable boundaries using
    `references/learning-log.md`.
 9. Validate using scripts before claiming completion.
@@ -121,8 +126,8 @@ Return only one fenced `text` block when the user asks for prompt-only output.
 
 | Mode | Required checks before completion |
 |------|-----------------------------------|
-| `interactive` | `scripts/parse_plan.py`, `context.json`, changed-project tests or honest substitute, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py` |
-| `headless` | `scripts/parse_plan.py`, `context.json`, acceptance command or honest substitute, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py`, headless JSONL/final artifact review |
+| `interactive` | `scripts/parse_plan.py`, `context.json`, `context_health`, changed-project tests or honest substitute, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py` |
+| `headless` | `scripts/parse_plan.py`, `context.json`, `context_health`, acceptance command or honest substitute, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py`, headless JSONL/final artifact review |
 | `prompt` | `evals/check_prompt.py` or the prompt export checklist when no fixture exists |
 | `handoff` | `evals/check_prompt.py` or the prompt export checklist, plus source state/path readability |
 

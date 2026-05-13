@@ -134,11 +134,12 @@ Acceptance:
 3. git dirty worktree를 확인하고 관련 변경과 무관한 변경을 나눈다.
 4. `run_id`를 만들고 `.codex-orchestrator/runs/<run_id>/`를 준비한다.
 5. 실행 전 `context.json`을 만들어 계획, 명세, 참고 문서의 해시를 기록한다.
-6. 편집 전에 5줄짜리 `TASK EXECUTION CONTRACT`를 선언하고 상태 파일에 기록한다.
-7. 작업을 수행한다.
-8. 위험도에 맞는 검증 명령 또는 정직한 대체 검증을 실행한다.
-9. 완료 시 `completion_audit`와 `lifecycle_outcome=finished`를 기록한다.
-10. 상태 파일을 검증하고 최종 결과를 요약한다.
+6. `context_health`를 갱신해 이어받을 수 있는 상태인지 기록한다.
+7. 편집 전에 5줄짜리 `TASK EXECUTION CONTRACT`를 선언하고 상태 파일에 기록한다.
+8. 작업을 수행한다.
+9. 위험도에 맞는 검증 명령 또는 정직한 대체 검증을 실행한다.
+10. 완료 시 `context_health`, `completion_audit`, `lifecycle_outcome=finished`를 기록한다.
+11. 상태 파일을 검증하고 최종 결과를 요약한다.
 
 핵심은 "수정하기 전에 범위를 고정하고, 완료라고 말하기 전에 증거를
 남기는 것"이다.
@@ -185,6 +186,45 @@ acceptance_command_or_honest_substitute: ...
 `context.json`은 원문 전체를 저장하지 않는다. 어떤 입력을 기준으로 실행이
 시작됐는지 확인할 수 있도록 경로와 해시를 기록한다.
 
+## Context Health
+
+`context_health`는 "대화 컨텍스트가 없어도 다음 에이전트가 이어받을 수
+있는가"를 상태 파일에 기록하는 작은 품질 체크다. 토큰 잔량을 재는 장치가
+아니라, 재개 가능성을 판정하는 장치다.
+
+```json
+{
+  "context_health": {
+    "status": "green",
+    "last_checked_at": "2026-05-14T00:00:00Z",
+    "context_snapshot_present": true,
+    "context_basis_hash_recorded": true,
+    "active_task_contract_present": true,
+    "next_action": "Run final verification and write completion_audit.",
+    "open_questions": [],
+    "known_assumptions": [],
+    "handoff_ready": true
+  }
+}
+```
+
+상태 의미:
+
+- `green`: 상태 파일과 산출물만 보고 이어받을 수 있음
+- `yellow`: 진행은 가능하지만 가정이나 open question이 남아 있음
+- `red`: 안전한 진행을 위해 blocker, 사용자 판단, handoff가 필요함
+
+갱신 시점:
+
+- `context.json` 생성 직후
+- 각 task나 phase 종료 후
+- blocker/error 발생 시
+- handoff/resume 전
+- final 직전
+
+성공 완료를 선언하려면 `context_health.handoff_ready=true`이고
+`context_health.status`가 `red`가 아니어야 한다.
+
 ## 모드별 사용 기준
 
 | 모드 | 언제 쓰나 | 저장소 수정 | 학습 로그 |
@@ -230,6 +270,16 @@ acceptance_command_or_honest_substitute: ...
 에이전트는 대화 맥락을 잃거나 다른 세션으로 넘어갈 수 있다. `context.json`
 은 실행 시작 시점의 계획, 명세, 참고 문서 경로와 해시를 기록해 "무엇을
 근거로 실행했는지"를 복원하게 한다.
+
+### 왜 `context_health`가 필요한가
+
+`context.json`은 입력 근거를 보존하지만, 현재 실행 상태가 실제로
+이어받기 좋은지는 말해 주지 않는다. 예를 들어 다음 액션이 불분명하거나,
+열린 질문이 있거나, 현재 task contract가 아직 기록되지 않았을 수 있다.
+
+`context_health`는 그런 상태를 `green`, `yellow`, `red`로 압축해 남긴다.
+컨텍스트 압박이나 세션 재개 상황에서 다음 에이전트가 바로 판단할 수 있고,
+완료 직전에도 "정말 이어받을 수 있는 상태인가"를 검증할 수 있다.
 
 ### 왜 `completion_audit`가 필요한가
 
@@ -314,6 +364,7 @@ acceptance_command_or_honest_substitute: ...
 - `--dangerously-bypass-approvals-and-sandbox`를 일반 저장소에서 쓰기.
 - `prompt` 모드 출력에 runtime 계약을 빼기.
 - `completion_audit` 없이 테스트 통과만으로 완료 선언하기.
+- `context_health`가 `red`인데 성공 완료로 보고하기.
 - 사람용 설명을 계속 `SKILL.md`에 추가하기.
 
 ## 한 줄 요약

@@ -27,6 +27,7 @@ Classify the change before editing:
 | Runtime behavior | `SKILL.md`, references, deterministic eval, `HISTORY.md`, package metadata |
 | Prompt export behavior | template, prompt checklist, contract check, prompt fixtures |
 | State schema | `references/state-schema.md`, `validate_state.py`, `check_state_schema.py` |
+| Context health | `references/state-schema.md`, `docs/state-and-logging.md`, `check_state_schema.py`, `check_skill_contract.py` |
 | Learning log schema | `references/learning-log.md`, helper script, `check_learning_log.py` |
 | Parser behavior | parser script, parser fixture, parser checker |
 | Verification command or result | `docs/evals-and-verification.md`, `docs/verification-log.md` |
@@ -141,14 +142,16 @@ metadata, or expected values.
 
 1. Add resume-time source drift detection: compare live plan/spec/docs hashes
    against `context.json` and warn or block based on risk.
-2. Strengthen `completion_audit` quality checks: require artifact paths and
+2. Strengthen `context_health` quality checks: compare `next_action` with the
+   current task, lifecycle outcome, and open blockers.
+3. Strengthen `completion_audit` quality checks: require artifact paths and
    command/status objects instead of accepting any non-empty list.
-3. Add a `summarize_state.py` helper for humans and agents to inspect active
+4. Add a `summarize_state.py` helper for humans and agents to inspect active
    run status without manually reading JSON.
-4. Add a package-local Markdown link check for README/docs/reference links.
-5. Add parser fixtures for malformed fences, nested comments, mixed-language
+5. Add a package-local Markdown link check for README/docs/reference links.
+6. Add parser fixtures for malformed fences, nested comments, mixed-language
    headings, and `Depends on:` variants.
-6. Add learning-log redaction fixtures using realistic command-output excerpts.
+7. Add learning-log redaction fixtures using realistic command-output excerpts.
 
 ## Do Not Do This
 

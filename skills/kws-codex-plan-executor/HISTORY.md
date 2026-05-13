@@ -3,6 +3,15 @@
 Source of truth for current behavior: `SKILL.md`, `templates/`, and
 `references/`. This file tracks release intent and migration history.
 
+## v1.6.0 - Track context health in execution state (2026-05-14)
+
+- Added `context_health` to execution state so agents can record whether a run
+  is resumable from durable artifacts instead of hidden chat context.
+- Required execution modes after preflight to validate `context_health` shape,
+  status, `next_action`, and `handoff_ready` semantics.
+- Updated runtime docs, prompt export, state schema, deterministic evals, and
+  human-facing Korean guide around context-health boundaries.
+
 ## Docs-only - Korean human guide (2026-05-14)
 
 - Added `docs/user-guide.ko.md` as a Korean human-facing guide for usage,

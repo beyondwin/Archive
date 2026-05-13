@@ -23,6 +23,7 @@ Before sending the generated prompt, confirm:
 - per-task `TASK EXECUTION CONTRACT` is explicit with scope, files to inspect, allowed edits, forbidden edits, and acceptance command or honest substitute
 - lightweight `.codex-orchestrator/runs/<run_id>/state.json` ledger is explicit and includes run_id, run_dir, state_path, workspace, plan, branch, worktree, current task/phase, task state, risk levels, issue keys, verification, session-owned resources, and last checkpoint; `.codex-orchestrator/state.json` is only a latest-state compatibility copy/pointer
 - generated execution prompt requires `.codex-orchestrator/runs/<run_id>/context.json` creation before edits and records `context_snapshot_path` plus `context_basis_hash`
+- generated execution prompt requires state `context_health` at semantic boundaries with `status=green|yellow|red`, `next_action`, and `handoff_ready`; final successful state must be `handoff_ready=true` and not `red`
 - successful final completion requires `lifecycle_outcome=finished` and `completion_audit.passed=true` with non-empty `prompt_to_artifact_checklist` and `verification_evidence`
 - blocked or failed handoff includes non-success `lifecycle_outcome`, evidence, artifacts/state, and a concrete `handoff_reason`
 - execution-only learning-log contract is explicit: `interactive` and

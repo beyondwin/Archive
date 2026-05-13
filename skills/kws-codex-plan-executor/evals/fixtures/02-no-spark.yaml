@@ -11,6 +11,7 @@ expected:
   spark: false
   must_include:
     - "gpt-5.5 high"
+    - "context_health"
   must_not_include:
     - "gpt-5.3-codex-spark"
     - "{{OPTIONAL_SPARK_SCOUT_BULLETS}}"

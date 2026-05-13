@@ -26,6 +26,8 @@ requirement.
 Mitigation:
 
 - `lifecycle_outcome=finished` requires `completion_audit.passed=true`.
+- `lifecycle_outcome=finished` requires healthy `context_health` with
+  `handoff_ready=true` and non-red status.
 - The audit must include `prompt_to_artifact_checklist` and
   `verification_evidence`.
 - `check_execution.py` verifies this for successful execution fixtures.
@@ -45,6 +47,22 @@ Mitigation:
 
 Residual risk: there is no automatic mismatch blocker yet when plan/spec/docs
 change after snapshot creation.
+
+### Context Health Quality
+
+Risk: `context_health` can be mechanically valid but too optimistic if an agent
+marks `green` without recording real next-action or open-question detail.
+
+Mitigation:
+
+- `validate_state.py` checks shape, status enum, handoff readiness, and finished
+  outcome consistency.
+- `evals/check_skill_contract.py` keeps the context-health contract visible in
+  runtime references and prompt export.
+
+Residual risk: semantic quality still depends on agent judgment. Future checks
+should compare `next_action` against current task, lifecycle outcome, and open
+blockers.
 
 ### Hidden Markdown Edge Cases
 

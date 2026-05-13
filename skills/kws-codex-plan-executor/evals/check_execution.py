@@ -143,8 +143,13 @@ def main() -> int:
         checks["context_snapshot_exists"] = bool(context_file and context_file.is_file())
         if not checks["context_snapshot_exists"]:
             failures.append("missing per-run context.json snapshot")
+        health = state.get("context_health")
+        checks["context_health_present"] = isinstance(health, dict)
+        if not checks["context_health_present"]:
+            failures.append("missing context_health in execution state")
     else:
         checks["context_snapshot_exists"] = True
+        checks["context_health_present"] = True
 
     successful_terminal_expected = (
         checks["state_exists"]
@@ -161,13 +166,22 @@ def main() -> int:
             and bool(audit.get("prompt_to_artifact_checklist"))
             and bool(audit.get("verification_evidence"))
         )
+        health = state.get("context_health") if isinstance(state, dict) else None
+        checks["context_health_handoff_ready"] = (
+            isinstance(health, dict)
+            and health.get("handoff_ready") is True
+            and health.get("status") != "red"
+        )
         if not checks["lifecycle_finished"]:
             failures.append("successful execution state must set lifecycle_outcome=finished")
         if not checks["completion_audit_passed"]:
             failures.append("successful execution state must include passing completion_audit proof")
+        if not checks["context_health_handoff_ready"]:
+            failures.append("successful execution state must include handoff-ready context_health")
     else:
         checks["lifecycle_finished"] = True
         checks["completion_audit_passed"] = True
+        checks["context_health_handoff_ready"] = True
 
     test_after = expected.get("test_after")
     if test_after:

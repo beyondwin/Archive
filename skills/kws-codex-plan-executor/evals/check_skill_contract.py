@@ -124,6 +124,10 @@ def main() -> int:
             token in (text + execution + headless + checklist)
             for token in ("context.json", "context_snapshot_path", "context_basis_hash")
         ),
+        "context_health_contract": all(
+            token in (text + execution + headless + checklist + template)
+            for token in ("context_health", "handoff_ready", "next_action")
+        ),
         "completion_audit_contract": all(
             token in (text + execution + headless + checklist)
             for token in ("completion_audit", "prompt_to_artifact_checklist", "verification_evidence")

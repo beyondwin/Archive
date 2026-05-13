@@ -23,6 +23,7 @@ Do not treat passing tests as proof that documentation is current.
 | Headless behavior | `references/headless-runner.md`, `docs/how-it-works.md`, `docs/evals-and-verification.md` |
 | Prompt or handoff export | `templates/fresh-session-prompt.txt`, `references/prompt-export-checklist.md`, `docs/evals-and-verification.md` |
 | State schema | `references/state-schema.md`, `docs/state-and-logging.md`, `docs/how-it-works.md` |
+| Context health | `references/state-schema.md`, `docs/state-and-logging.md`, `docs/how-it-works.md`, `docs/decisions.md` |
 | Learning log schema or privacy | `references/learning-log.md`, `docs/state-and-logging.md`, `docs/risks-limitations-deferrals.md` |
 | Parser behavior | `docs/how-it-works.md`, `docs/evals-and-verification.md`, parser fixtures |
 | Eval harness or commands | `docs/evals-and-verification.md`, `docs/verification-log.md` |

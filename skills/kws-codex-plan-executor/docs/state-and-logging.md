@@ -75,6 +75,36 @@ The state file stores:
 This makes resume and handoff grounded in the actual plan/spec/docs used at
 execution start rather than implicit chat memory.
 
+## Context Health
+
+`context_health` records whether the current state is resumable without hidden
+chat context:
+
+```json
+{
+  "context_health": {
+    "status": "green",
+    "last_checked_at": "2026-05-14T00:00:00Z",
+    "context_snapshot_present": true,
+    "context_basis_hash_recorded": true,
+    "active_task_contract_present": true,
+    "next_action": "Run final verification and write completion_audit.",
+    "open_questions": [],
+    "known_assumptions": [],
+    "handoff_ready": true
+  }
+}
+```
+
+Use `green` when state and artifacts are enough to resume, `yellow` when
+execution can continue with known assumptions or open questions, and `red` when
+safe continuation requires a blocker, user decision, or handoff. This field is
+updated at semantic boundaries; it is not a token counter.
+
+Finished lifecycle outcomes require `handoff_ready=true` and a non-red status.
+Non-success outcomes should leave a concrete `next_action` and any
+`open_questions` needed by the next agent.
+
 ## Lifecycle Outcome
 
 `current_phase` is internal progress. `lifecycle_outcome` is the terminal
@@ -88,8 +118,8 @@ Valid outcomes:
 - `userinterlude`
 - `askuserQuestion`
 
-`finished` requires a passing `completion_audit`. Non-success outcomes require
-a concrete `handoff_reason`.
+`finished` requires healthy `context_health` and a passing `completion_audit`.
+Non-success outcomes require a concrete `handoff_reason`.
 
 ## Completion Audit
 

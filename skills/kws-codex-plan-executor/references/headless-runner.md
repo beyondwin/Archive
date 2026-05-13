@@ -92,10 +92,13 @@ codex exec \
 - raw verification output paths for failures
 
 The target must not report completion until `state.json` contains
-`context_snapshot_path`, `context_basis_hash`, `lifecycle_outcome=finished`, and
-a passing `completion_audit` with non-empty `prompt_to_artifact_checklist` and
-`verification_evidence`. Blocked or failed targets must set a non-success
-`lifecycle_outcome` and a concrete `handoff_reason`.
+`context_snapshot_path`, `context_basis_hash`, `context_health`,
+`lifecycle_outcome=finished`, and a passing `completion_audit` with non-empty
+`prompt_to_artifact_checklist` and `verification_evidence`. `context_health`
+must include `status`, `next_action`, and `handoff_ready`; finished targets must
+be `handoff_ready=true` and not `red`. Blocked or failed targets must set a
+non-success `lifecycle_outcome`, a concrete `handoff_reason`, and a
+`context_health.next_action` suitable for resume.
 
 ## Learning Log
 

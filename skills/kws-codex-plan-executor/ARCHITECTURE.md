@@ -22,12 +22,13 @@ execution and prompt export. It fully replaces the former
 3. Initialize a `run_id` and update `.codex-orchestrator/runs/<run_id>/state.json`.
 4. Build `.codex-orchestrator/runs/<run_id>/context.json` and store
    `context_snapshot_path` plus `context_basis_hash`.
-5. Record a task execution contract before edits.
-6. Execute tasks locally unless subagents were explicitly requested.
-7. Verify each task with risk-scaled commands and record failures with stable
+5. Initialize and refresh `context_health` at semantic boundaries.
+6. Record a task execution contract before edits.
+7. Execute tasks locally unless subagents were explicitly requested.
+8. Verify each task with risk-scaled commands and record failures with stable
    `ISSUE_KEY` values.
-8. Write `completion_audit` and terminal `lifecycle_outcome`.
-9. Validate state and summarize changed files, verification, resources, and
+9. Write `completion_audit` and terminal `lifecycle_outcome`.
+10. Validate state and summarize changed files, verification, resources, and
    residual risk.
 
 ## State File Contract
@@ -43,11 +44,19 @@ The snapshot records the plan/spec/docs source list and source hashes; the
 state file records `context_snapshot_path` and `context_basis_hash` so resume
 and handoff do not rely on implicit session memory.
 
+`context_health` is the compact resumability signal inside state. It is updated
+after the context snapshot, after task boundaries, after blocker/error events,
+before handoff/resume, and before final completion. It records
+`status=green|yellow|red`, `next_action`, `open_questions`,
+`known_assumptions`, and `handoff_ready` so future agents can tell whether the
+run can continue from artifacts rather than hidden chat context.
+
 `current_phase` describes internal progress. `lifecycle_outcome` describes the
 terminal handoff result: `finished`, `blocked`, `failed`, `userinterlude`, or
 `askuserQuestion`. Finished outcomes require a passing `completion_audit` with
 `prompt_to_artifact_checklist` and `verification_evidence`; non-success
-outcomes require `handoff_reason`.
+outcomes require `handoff_reason`. Finished outcomes also require
+`context_health.handoff_ready=true` and a non-red context health status.
 
 Plans may include optional task dependencies via visible `Depends on:` lines.
 `scripts/parse_plan.py` validates known dependency references and cycle-free
@@ -117,7 +126,7 @@ verification, and session-owned cleanup boundaries.
 
 Fresh-session prompts mirror the runtime source-grounding and completion-proof
 contracts: create `context.json` before edits, report `lifecycle_outcome`, and
-finish only with a passing `completion_audit`.
+finish only with healthy `context_health` and a passing `completion_audit`.
 
 ## Eval Surface
 
