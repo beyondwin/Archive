@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.10.0 - 2026-05-13
+
+- `kws-codex-plan-executor`에 execution-only user-local learning log를 추가했습니다.
+- `interactive`와 `headless` 실행 중 blocker, verification failure, recurring
+  issue, user correction, successful workaround, actionable completion learning을
+  redacted JSONL로 기록할 수 있게 했습니다.
+- `append_learning_event.py`, `references/learning-log.md`,
+  `check_learning_log.py`를 추가해 로그 schema와 privacy guard를
+  deterministic하게 검증합니다.
+- prompt export와 headless 문서가 새 learning-log 계약과 drift 나지 않도록
+  contract eval을 보강했습니다.
+
 ## 2.9.1 - 2026-05-13
 
 - `kws-codex-plan-executor`의 prompt/handoff export가 현행 실행 계약과 같은
