@@ -362,7 +362,10 @@ def cmd_append(args: argparse.Namespace) -> int:
         print(json.dumps(event, ensure_ascii=False, indent=2, sort_keys=True))
         return 0
 
-    rd = ensure_run_dir_with_meta(log_root, run_id, event.get("subagent", {}).get("session_id"))
+    # Self-heal does not know the session id. The orchestrator's init-run
+    # is the authoritative source; this fallback only runs when init-run
+    # was skipped entirely.
+    rd = ensure_run_dir_with_meta(log_root, run_id, None)
     events_path = rd / "events.jsonl"
     with events_path.open("a", encoding="utf-8") as fh:
         fh.write(line + "\n")

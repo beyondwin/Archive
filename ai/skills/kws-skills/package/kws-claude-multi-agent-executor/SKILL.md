@@ -726,7 +726,10 @@ Decision table:
 
 ### Step 3.5: Learning-log candidate scan (v2.8)
 
-After each Phase 1 cycle step (Step 1 Implementer, Step 2 Reviewer, Step 3 Verifier), check if a learning-event candidate file was written:
+Once per task cycle, after Step 3 completes (or after Step 2 for LOW tasks
+that skip Verifier), check the candidate directory for any event files
+written by Implementer / Reviewer / Verifier during this cycle and forward
+them in a single batch:
 
 ```bash
 CANDIDATE_DIR="<worktree_path>/.orchestrator/learning_events"
@@ -955,7 +958,13 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
 **Phase Transition failure handling:**
 - If T1 batch Verifier FAIL exceeds retries for any task: halt that task, record SKIPPED in state.json, continue Phase Transition.
 - If T2 Phase Docs Updater sends ESCALATE: skip docs for this phase. Record `phase_docs_skipped: [<phase_id>]` in state.json. The Final Docs Updater in Phase 2 will recover.
-- If T3 state file write fails (Write tool error or Read-back fails): **hard halt immediately** — 'State file write failed at <path>. Risk of state corruption. Manual inspection required.' Do not proceed.
+- If T3 state file write fails (Write tool error or Read-back fails): close the learning log with `outcome=blocked` (best-effort, silent on failure) and then **hard halt immediately** — 'State file write failed at <path>. Risk of state corruption. Manual inspection required.' Do not proceed.
+  ```bash
+  if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
+    python3 <skill_dir>/scripts/append_learning_event.py close-run \
+      --run-id "$MAE_LEARNING_RUN_ID" --outcome blocked >/dev/null 2>&1 || true
+  fi
+  ```
 
 ---
 
