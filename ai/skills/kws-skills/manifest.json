@@ -1,7 +1,7 @@
 {
   "name": "kws-skills",
-  "version": "2.12.0",
-  "updated_at": "2026-05-13",
+  "version": "2.13.0",
+  "updated_at": "2026-05-14",
   "skills": [
     "archive-docs-organizer",
     "kws-claude-multi-agent-executor",
@@ -17,12 +17,12 @@
       "updated_at": "2026-04-30"
     },
     "kws-claude-multi-agent-executor": {
-      "version": "2.8.1",
-      "updated_at": "2026-05-13"
+      "version": "2.9.0",
+      "updated_at": "2026-05-14"
     },
     "kws-codex-plan-executor": {
-      "version": "1.4.0",
-      "updated_at": "2026-05-13"
+      "version": "1.5.0",
+      "updated_at": "2026-05-14"
     },
     "kws-doc-prompt-review": {
       "version": "1.0.1",

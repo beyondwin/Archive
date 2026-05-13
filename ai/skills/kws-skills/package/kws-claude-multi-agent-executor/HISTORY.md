@@ -14,6 +14,56 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.9.0 — Reviewer Spec Coverage Walk (2026-05-14)
+
+Inserts a deterministic "Spec Coverage Walk" pass into
+`references/reviewer-prompt.md`, requiring the Combined Reviewer to
+emit a `SPEC_COVERAGE_WALK:` block before scoring. The walk has two
+ordered sub-steps:
+
+- **Sub-step A** — Enumerate stated spec bullets (happy-path examples,
+  explicit error-case bullets, Notes constraints) with a strict row
+  template `"<frag>" :: <file>:<line> | NOT FOUND | PARTIAL`.
+- **Sub-step B** — Adversarial generation for spec meta-rules. For each
+  meta-rule (sentences containing "strict", "reject", "anything else",
+  etc.), generate ≥3 adversarial inputs not explicitly listed in the
+  spec, drawn from at least these classes: repeated-segment variants,
+  ordering/casing/whitespace edges, format combinations the spec
+  implicitly excludes.
+
+Why this exists:
+- v2.7 F002 documented a Reviewer miss rate ~75% on `parse_duration("30m20m")`
+  ValueError. Root cause: Sonnet's regex/grammar instinct read the spec
+  as "natural language about non-repeated units" and never explicitly
+  tested whether `30m20m` was rejected anywhere in the implementation.
+- The pre-write analysis (v2.9 D001 §Question 3) showed enumeration of
+  stated bullets alone would not surface `30m20m` — the case is covered
+  only by the spec's meta-rule "strict validation of the grammar."
+  Adversarial generation from meta-rules is the critical mechanism.
+
+Empirical validation (T5, n=4 reps on fixture 08):
+- `30m20m` rejection rate: F002 baseline ~25% → v2.9.0 **100% (4/4 reps)**.
+- 8 of 8 Reviewer invocations across the 4 reps emitted `SPEC_COVERAGE_WALK`
+  and explicitly included a `30m20m` row.
+- SPEC_SCORE mean 0.997 (no false-positive `implementer_omitted` flags).
+- v2.8.1 adherence verified: 4/4 reps with markers + run dirs created.
+
+Combined intervention attribution: spec-clarification (fixture 08 yaml
+patch — explicit "unit may appear at most once" note) is the biggest
+single contributor; the walk makes the consideration deterministic and
+reproducible. Without the walk, the spec-clarification result would
+still depend on whether the Reviewer happens to scan for the case.
+
+Out of scope (deferred candidates):
+- Multi-perspective Reviewer dispatch (omc Team pattern). Single-pass
+  enumeration solved the F002 case; multi-perspective is candidate work
+  for v2.10+ only if a non-fixture-08 failure surfaces that requires it.
+- Walk pattern extension to Verifier (acceptance-criteria coverage walk).
+  Deferred — Verifier failure rate not measured at this granularity.
+
+See `docs/experiments/v2.9-reviewer-spec-coverage/findings/F002-T5-n4-results.md`
+for the full ship analysis.
+
 ### v2.8.1 — Step 7.5 enforcement (MANDATORY framing + adherence marker) (2026-05-13)
 
 Empirical fix for the adherence gap found in v2.8 F001 Smoke B: 47 of 47
