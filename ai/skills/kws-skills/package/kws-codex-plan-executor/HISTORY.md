@@ -3,6 +3,16 @@
 Source of truth for current behavior: `SKILL.md`, `templates/`, and
 `references/`. This file tracks release intent and migration history.
 
+## v1.3.0 - Add execution learning log helper (2026-05-13)
+
+- Added user-local JSONL learning events for `interactive` and `headless`
+  execution notable boundaries.
+- Added `scripts/append_learning_event.py` to validate, redact, and append
+  learning events outside project repositories.
+- Added `references/learning-log.md` and deterministic helper checks.
+- Aligned runtime instructions, headless docs, prompt export, and contract evals
+  around execution-only learning logs.
+
 ## v1.2.1 - Align prompt export and state validation contracts (2026-05-13)
 
 - Aligned prompt/handoff export with the current executor contract:

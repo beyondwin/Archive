@@ -33,6 +33,14 @@ execution and prompt export. It fully replaces the former
 The schema is documented in `references/state-schema.md` and mechanically
 checked by `scripts/validate_state.py`.
 
+## Learning Log Contract
+
+Execution modes may append redacted notable-boundary events to the user-local
+JSONL log at `~/.codex/learning/kws-codex-plan-executor/events.jsonl`. This log
+is for improving the executor across repositories. It does not replace
+`.codex-orchestrator/state.json`, checkpoints, headless logs, or raw
+verification artifacts.
+
 ## Subagent Policy
 
 Subagents are opt-in only. The executor may use `spawn_agent` only when the user
@@ -75,6 +83,7 @@ Deterministic scripts own mechanical correctness:
 - `evals/check_execution.py`
 - `evals/check_parse_plan.py`
 - `evals/check_state_schema.py`
+- `evals/check_learning_log.py`
 - `evals/check_skill_contract.py`
 
 `evals/judge.md` is reserved for subjective quality after deterministic checks.
