@@ -39,6 +39,9 @@ For each task:
 4. Run risk-scaled verification.
 5. Record raw output paths for failures.
 6. Update state and checkpoint.
+   Task completion must set the task `status` to `completed`, `blocked`, or
+   `error`; do not leave a finished task as `in_progress` with only
+   `completed_at` populated.
 
 Use `spawn_agent` only when the user explicitly asked for subagents, delegation,
 parallel work, or passed `subagents=on`. Otherwise execute locally.

@@ -3,6 +3,15 @@
 Source of truth for current behavior: `SKILL.md`, `templates/`, and
 `references/`. This file tracks release intent and migration history.
 
+## v1.3.1 - Bootstrap process skills in headless runs (2026-05-13)
+
+- Required headless prompts and eval runs to bootstrap applicable installed
+  skills instead of assuming parent-session skill state carries over.
+- Explicitly named `using-superpowers` and `test-driven-development` in
+  headless runtime contracts and deterministic contract checks.
+- Clarified that the supervising session launches `codex exec`; the headless
+  target process must not recursively launch another nested `codex exec`.
+
 ## v1.3.0 - Add execution learning log helper (2026-05-13)
 
 - Added user-local JSONL learning events for `interactive` and `headless`

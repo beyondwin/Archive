@@ -31,7 +31,7 @@
 | --- | --- | --- |
 | `archive-docs-organizer` | `1.1.1` | `2026-04-30` |
 | `kws-claude-multi-agent-executor` | `2.8.0` | `2026-05-13` |
-| `kws-codex-plan-executor` | `1.3.0` | `2026-05-13` |
+| `kws-codex-plan-executor` | `1.3.1` | `2026-05-13` |
 | `kws-doc-prompt-review` | `1.0.1` | `2026-05-05` |
 | `kws-skill-prompt-review` | `1.0.1` | `2026-05-05` |
 | `reflective-essay-writer` | `1.0.1` | `2026-04-30` |
