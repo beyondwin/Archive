@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import os
 import re
 import socket
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -374,6 +376,57 @@ def cmd_append(args: argparse.Namespace) -> int:
     return 0
 
 
+def _rewrite_index_outcome(log_root: Path, run_id: str, outcome: str) -> bool:
+    """Atomic rewrite of index.jsonl: update the matching run_id row's outcome.
+
+    Returns True on rewrite, False if no matching row was found.
+    """
+    index_path = log_root / "index.jsonl"
+    if not index_path.is_file():
+        return False
+
+    # Hold a lock on the index across read + write to avoid interleaving with
+    # concurrent init-run / append calls from other skills (e.g., parallel
+    # codex-plan-executor runs).
+    with index_path.open("r+", encoding="utf-8") as src:
+        fcntl.flock(src.fileno(), fcntl.LOCK_EX)
+        rows = []
+        rewritten = False
+        for line in src:
+            line = line.rstrip("\n")
+            if not line:
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                rows.append(line)
+                continue
+            if row.get("run_id") == run_id:
+                row["outcome"] = outcome
+                rewritten = True
+            rows.append(json.dumps(row, sort_keys=True, separators=(",", ":")))
+
+        if not rewritten:
+            return False
+
+        tmp = tempfile.NamedTemporaryFile("w", delete=False,
+                                          dir=index_path.parent,
+                                          prefix=".index.", suffix=".tmp")
+        try:
+            tmp.write("\n".join(rows) + "\n")
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            tmp.close()
+            os.replace(tmp.name, index_path)
+        except Exception:
+            try:
+                os.unlink(tmp.name)
+            except OSError:
+                pass
+            raise
+        return True
+
+
 def cmd_close_run(args: argparse.Namespace) -> int:
     log_root: Path = Path(args.log_root).expanduser()
     if args.outcome not in VALID_OUTCOMES:
@@ -391,6 +444,13 @@ def cmd_close_run(args: argparse.Namespace) -> int:
     meta["outcome"] = args.outcome
     meta["event_count"] = event_count
     save_meta(rd, meta)
+    try:
+        _rewrite_index_outcome(log_root, args.run_id, args.outcome)
+    except OSError as exc:
+        # Index rewrite is best-effort; surface to stderr but don't abort.
+        # The resolver will still find the outcome via final.json.
+        print(f"warning: failed to rewrite index outcome for {args.run_id}: {exc}",
+              file=sys.stderr)
     print(f"closed {args.run_id} outcome={args.outcome} events={event_count}")
     return 0
 
@@ -407,6 +467,68 @@ def cmd_append_session_id(args: argparse.Namespace) -> int:
     meta["session_ids"] = sids
     save_meta(rd, meta)
     print(f"session_ids[]={sids}")
+    return 0
+
+
+def cmd_resolve_outcome(args) -> int:
+    log_root = Path(args.log_root or DEFAULT_LOG_ROOT).expanduser()
+    run_id = args.run_id
+    date_dir = log_root / "runs" / f"{run_id[0:4]}-{run_id[4:6]}-{run_id[6:8]}"
+    run_dir = date_dir / run_id
+
+    sources_checked = []
+    outcome = None
+    source = None
+
+    final_path = run_dir / "final.json"
+    if final_path.is_file():
+        sources_checked.append(str(final_path))
+        try:
+            data = json.loads(final_path.read_text(encoding="utf-8"))
+            outcome = data.get("outcome")
+            source = "final.json"
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    if outcome is None:
+        meta_path = run_dir / "meta.json"
+        if meta_path.is_file():
+            sources_checked.append(str(meta_path))
+            try:
+                data = json.loads(meta_path.read_text(encoding="utf-8"))
+                outcome = data.get("outcome")
+                source = "meta.json" if outcome and outcome != "unknown" else source
+                if outcome == "unknown":
+                    outcome = None
+            except (json.JSONDecodeError, OSError):
+                pass
+
+    if outcome is None:
+        index_path = log_root / "index.jsonl"
+        if index_path.is_file():
+            sources_checked.append(str(index_path))
+            for line in index_path.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if row.get("run_id") == run_id:
+                    outcome = row.get("outcome")
+                    source = "index.jsonl"
+                    break
+
+    payload = {
+        "run_id": run_id,
+        "outcome": outcome or "unknown",
+        "source": source,
+        "sources_checked": sources_checked,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2))
+    else:
+        print(outcome or "unknown")
     return 0
 
 
@@ -446,6 +568,15 @@ def build_parser() -> argparse.ArgumentParser:
     p_sid.add_argument("--run-id", required=True)
     p_sid.add_argument("--session-id", required=True)
     p_sid.set_defaults(func=cmd_append_session_id)
+
+    sub_resolve = sub.add_parser("resolve-outcome",
+        help="Resolve terminal outcome for a run (final.json > meta.json > index.jsonl)")
+    sub_resolve.add_argument("--run-id", required=True)
+    sub_resolve.add_argument("--log-root", default=None,
+                             help="Default: ~/.claude/learning/kws-claude-multi-agent-executor")
+    sub_resolve.add_argument("--json", action="store_true",
+                             help="Print full resolution metadata as JSON")
+    sub_resolve.set_defaults(func=cmd_resolve_outcome)
 
     return parser
 

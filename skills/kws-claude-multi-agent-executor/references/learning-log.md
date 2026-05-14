@@ -33,6 +33,18 @@ example: 20260513T143321Z-188042f4-48211
 Concurrent runs in the same repository write to distinct run directories —
 no file locking required.
 
+## Source of truth for terminal outcome
+
+Precedence (highest first):
+
+1. `runs/<date>/<run_id>/final.json` — written by `close-run`. Authoritative once present.
+2. `runs/<date>/<run_id>/meta.json` — mirrors `final.json` outcome when close-run runs; remains `unknown` until then.
+3. `index.jsonl` — start records by default. **As of v2.11**, `close-run` rewrites the matching row's `outcome` field atomically. Older runs prior to this change still have stale `index.jsonl` entries; use `resolve-outcome` to query.
+
+Use `scripts/append_learning_event.py resolve-outcome --run-id <id>` instead of reading `index.jsonl` directly when reporting on closed runs.
+
+A run with `event_count == 0` AND `final.outcome == "success"` is **normal** for routine successful work — learning events are notable-boundary-only, not routine task logs.
+
 ## Single-writer contract
 
 **The orchestrator is the only process that invokes the helper.** Sub-agents
