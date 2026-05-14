@@ -260,3 +260,36 @@ risk. Do not paste long logs or sensitive output.
   - The docs include proposed code and state shapes, including `method_audit`,
     that still need a separate implementation pass before they become active
     executor behavior.
+
+## 2026-05-15 - Run lifecycle drift hardening plan docs
+
+- Branch: `main`
+- Commit: pending at time of verification
+- Scope: added detailed plan and implementation documents for project-state-aware
+  run health reporting and updated the earlier log-driven hardening docs to
+  correct their false-stale assumption. `meta.pid` is helper-process metadata,
+  so health reporting must prefer terminal `final.json`, then project-local
+  state, before considering stale candidates.
+- Commands:
+  - `rg -n "TBD|TODO|fill in|implement later|Similar to Task|dead pid|dead_pid_unclosed" skills/kws-codex-plan-executor/docs/experiments/2026-05-14-run-lifecycle-drift-hardening skills/kws-codex-plan-executor/docs/experiments/2026-05-14-log-driven-executor-hardening || true`
+    - result: pass, no placeholder matches; expected references to legacy
+      `dead_pid_unclosed` and "dead pid" fixture wording remain as corrected
+      behavior examples.
+  - `test -f skills/kws-codex-plan-executor/docs/experiments/2026-05-14-run-lifecycle-drift-hardening/PLAN.md && test -f skills/kws-codex-plan-executor/docs/experiments/2026-05-14-run-lifecycle-drift-hardening/IMPLEMENTATION.md`
+    - result: pass
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/kws-codex-plan-executor`
+    - result: pass, `Skill is valid!`
+  - `git diff --check -- skills/kws-codex-plan-executor/docs/experiments/2026-05-14-run-lifecycle-drift-hardening skills/kws-codex-plan-executor/docs/experiments/2026-05-14-log-driven-executor-hardening skills/kws-codex-plan-executor/docs/verification-log.md`
+    - result: pass, no whitespace errors
+- Skipped checks:
+  - Runtime evals were skipped because this change only adds experiment planning
+    docs and does not change scripts, references, prompt templates, or skill
+    runtime behavior.
+- Documentation impact:
+  - Added package-internal experiment docs under `docs/experiments/`.
+  - No root Archive catalog update was needed because these are skill-package
+    implementation planning artifacts, not Archive library notes.
+- Residual risk:
+  - The docs describe desired reporter behavior. A future implementation pass
+    still needs to update scripts, evals, references, and release docs before
+    the behavior becomes active.
