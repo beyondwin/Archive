@@ -4,6 +4,9 @@
 
 **현재 버전**: `2.10.2` (2026-05-14) — 버전 타임라인은 [`HISTORY.md`](./HISTORY.md) 참조.
 
+**최근 변경 (Recent changes)**:
+- **v2.11** — Method audit gate at Phase 2; ENV_BLOCKER triage categories; local-env preflight; `resource_key` plan annotation; learning-log outcome coherence.
+
 ---
 
 ## 빠른 시작

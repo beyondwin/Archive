@@ -1421,6 +1421,7 @@ These rules are absolute. No exceptions.
 | **Method audit must pass before Phase 2 close-run** | Phase 2 Step 1.5 runs `scripts/validate_method_audit.py`. A task is `applied` only when it has evidence references (RED command, GREEN command, commands_run, findings_count). FAIL halts before close-run; user re-dispatches or edits `state.tasks.<id>.method_audit.waived` with a reason. |
 | **Method audit fields populated at Phase 1 Step 4** | Orchestrator parses `METHOD_AUDIT:` from Implementer, `REVIEW_FINDINGS:` from Combined Reviewer, `commands_run` from Verifier result JSON. Written under the active task tree (`state.tasks` or `state.plan2_state.tasks` per `active_plan`). |
 | **TDD waive reasons are restricted** | `METHOD_AUDIT: tdd waived` accepts only `reason=docs-only-task`, `config-only-task`, or `generated-only-task`. Other reasons fail validation. |
+| **Resource-key collisions force serialization in same wave** | Phase 0 Step 6 resource_key partition rule: tasks in the same wave that share a `**Resource Key:** <slug>` annotation are placed in singleton groups (never merged). The `serialization_reason: "resource_key=<key>"` field is written to each affected `state.execution_plan` group. WARN is emitted by the Plan Reviewer; correctness is automatic. |
 
 ---
 
