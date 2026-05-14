@@ -13,6 +13,19 @@ Use this for failure analysis or substantial edits to this skill.
 - Do not treat `interactive` as permission to implement from `main` or the
   caller's original checkout. Execution modes require a dedicated
   non-conflicting `codex/...` git worktree before task contracts or edits.
+- Do not start baseline verification in a fresh worktree before checking
+  machine-local prerequisites such as Android `local.properties`, package
+  manager install state, Docker daemon/memory availability, and intentional
+  local `.env` absence. Report blockers or get explicit approval before
+  copying ignored files.
+- Do not turn Docker or Gradle resource failures into source-code changes
+  without evidence. Check Docker OOM state, Gradle daemon disappearance causes,
+  JVM/metaspace pressure, and Kotlin daemon memory before root-causing a build
+  failure as a compile error.
+- Do not under-scope React Router lazy-route tasks. Route test harness helpers,
+  async assertions, `hydrateFallbackElement`, and request shim timing may be
+  legitimate allowed edits for lazy-route conversion, even when product
+  behavior is intended to stay unchanged.
 - Do not document a headless artifact path without creating its parent directory
   before shell redirection.
 - Do not add a user-facing argument such as `headless_sandbox=read-only` without

@@ -141,6 +141,72 @@ Successful terminal runs use:
 Blocked, failed, interrupted, or user-question outcomes may omit a passing
 `completion_audit`, but must set a concrete `handoff_reason`.
 
+Optional top-level verification evidence may record scheduling decisions when
+commands share mutable output resources:
+
+```json
+"verification": {
+  "resource_serialization": [
+    {
+      "resource_key": "gradle-test:server:integrationTest:server/build/test-results/integrationTest",
+      "commands": [
+        "./server/gradlew -p server integrationTest --tests com.example.A",
+        "./server/gradlew -p server integrationTest --tests com.example.B"
+      ],
+      "reason": "Gradle Test XML output is shared inside one worktree.",
+      "decision": "serial"
+    }
+  ]
+}
+```
+
+This evidence is informational unless a future scheduler enforces it. Use it to
+explain why otherwise independent verification commands were not parallelized.
+
+Optional top-level `method_audit` records whether required phase methods were
+actually applied, missing, or waived:
+
+```json
+"method_audit": {
+  "required": [
+    "using-superpowers",
+    "test-driven-development",
+    "verification-before-completion"
+  ],
+  "applied": [
+    {
+      "skill": "test-driven-development",
+      "phase": "implementation",
+      "status": "applied",
+      "evidence_refs": [
+        "tasks.task_2.red_evidence",
+        "tasks.task_2.green_evidence"
+      ],
+      "summary": "RED failed before implementation; GREEN passed after the fix."
+    }
+  ],
+  "missing": [],
+  "waived": []
+}
+```
+
+Rules:
+
+- Every skill in `method_audit.required` must appear in exactly one of
+  `applied`, `missing`, or `waived`.
+- `applied[].status` must be `applied`, and `applied[].evidence_refs` must be
+  non-empty.
+- `missing` entries fail validation when `lifecycle_outcome=finished`.
+- `waived` entries must include a non-empty `reason`.
+- `test-driven-development` applied during implementation must reference both
+  RED and GREEN evidence.
+- `review` applied during review must reference findings or an explicit
+  no-findings residual-risk statement.
+- `verification-before-completion` applied during verification must reference
+  `completion_audit.verification_evidence`.
+- `using-superpowers` applied as a gate must reference the task contract or
+  pre-implementation state.
+
 Optional `execution_dag` entries record parsed dependency metadata only. They do
 not change task status semantics or bypass per-task execution contracts:
 
@@ -200,6 +266,27 @@ The `contract` object must include:
 
 Keep retry counts numeric, contract text fields as strings, and file lists as
 arrays.
+
+Tasks may include optional `carried_acceptance` when a sequential metric cannot
+be fully resolved until a later task:
+
+```json
+"carried_acceptance": {
+  "status": "open",
+  "metric": "front index chunk size",
+  "baseline_value": "208.78 kB after task_5",
+  "current_value": "221.68 kB after task_6",
+  "reason": "Host feature barrel remains statically reachable until task_7.",
+  "depends_on_task": "task_7",
+  "next_action": "Resolve host barrel coupling and rerun pnpm --dir front build."
+}
+```
+
+Valid statuses are `open`, `resolved`, and `accepted_with_rationale`. `open` is
+allowed during intermediate execution, but `lifecycle_outcome=finished` cannot
+leave any carried acceptance entry open. Finished runs with `resolved` or
+`accepted_with_rationale` carried acceptance must include final metric evidence
+under `completion_audit.verification_evidence`.
 
 For `risk=high`, task `verification` may include compact high-risk verification
 matrix evidence:

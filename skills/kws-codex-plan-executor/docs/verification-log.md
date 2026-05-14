@@ -7,6 +7,54 @@ verification before final responses, commits, pushes, or PRs.
 Keep entries concise. Store commands, outcomes, skipped checks, and residual
 risk. Do not paste long logs or sensitive output.
 
+## 2026-05-14 - Log-driven executor hardening implementation
+
+- Branch: `codex/log-driven-executor-hardening`
+- Commit: pending at time of verification
+- Scope: implemented the log-driven hardening plan: read-only learning-log
+  health reporter, deterministic health fixtures, stale run detection, carried
+  acceptance validation, method audit validation, local-env preflight guidance,
+  verification resource keys, Docker/Gradle triage, and React Router lazy-route
+  guidance. Bumped skill metadata to `1.8.0`.
+- Commands:
+  - `python3 scripts/parse_plan.py --help`
+    - result: pass, usage printed and exit 0
+  - `python3 scripts/validate_state.py --help`
+    - result: pass, usage printed and exit 0
+  - `python3 scripts/append_learning_event.py --help`
+    - result: pass, usage printed and exit 0
+  - `python3 scripts/check_learning_log_health.py --help`
+    - result: pass, usage printed and exit 0
+  - `python3 scripts/check_learning_log_health.py --latest 5 --json`
+    - result: pass, JSON payload had `schema_version=1`, five runs, and
+      statuses `success`, `success`, `success`, `success`, `unknown`
+  - `python3 evals/check_learning_log.py`
+    - result: pass, JSON payload had `"passed": true` and no failures,
+      including final/index mismatch, zero-event success, stale dead-pid run,
+      and live-pid unclosed run fixtures
+  - `python3 evals/check_state_schema.py`
+    - result: pass, JSON payload had `"passed": true` and no failures,
+      including carried acceptance and method audit cases
+  - `python3 evals/check_skill_contract.py --skill SKILL.md`
+    - result: pass, JSON payload had `"passed": true` and no failures
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .`
+    - result: pass, `Skill is valid!`
+  - `git diff --check -- skills/kws-codex-plan-executor`
+    - result: pass, no whitespace errors
+  - `graphify update .`
+    - result: pass, graph rebuilt with `3022` nodes, `3078` edges, and `303`
+      communities
+- Skipped checks:
+  - `bash evals/run.sh`; skipped because this change is covered by deterministic
+    script/state/contract evals and does not alter prompt templates or headless
+    fixture orchestration.
+- Documentation impact:
+  - Updated README, ARCHITECTURE, HISTORY, state/logging docs, eval docs, risk
+    docs, and runtime references.
+- Residual risk:
+  - Resource-key serialization and local-env preflight are policy guidance, not
+    an enforced scheduler or automatic local-file copier.
+
 ## 2026-05-14 - Mandatory execution worktree contract
 
 - Branch: `codex/enforce-plan-executor-worktree`

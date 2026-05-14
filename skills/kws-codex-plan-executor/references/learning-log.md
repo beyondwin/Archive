@@ -22,6 +22,11 @@ not the resume source of truth for a single run. Keep the project-local
 `.codex-orchestrator/state.json` may exist only as a backwards-compatible
 latest-state copy or pointer.
 
+`index.jsonl` is a run start index. Terminal outcome is resolved from
+`runs/<date>/<run_id>/final.json` when present, then `meta.json`, then the
+start index row. A reporter may warn that an index row still says `unknown`,
+but that does not override a terminal `final.json` outcome.
+
 ## Run Identity
 
 Every execution has a `run_id` shaped like:
@@ -52,6 +57,15 @@ Record only notable boundaries:
 
 Do not record routine task starts, routine task completions, or ordinary
 success with no executor improvement.
+
+`event_count=0` is normal for routine success because learning events are only
+for notable boundaries. Do not treat a zero-event successful `final.json` as a
+warning by itself.
+
+A stale run is diagnostic, not a terminal lifecycle outcome. It means a run has
+no `final.json`, `meta.ended_at` is null, `meta.pid` is no longer alive, and
+the run is older than the reporter's stale threshold. Health reporting must not
+mutate project state or user-local learning logs.
 
 ## redacted-context Rule
 
@@ -117,6 +131,12 @@ Valid outcomes are `success`, `blocked`, `error`, and `unknown`. For tests,
 pass `--log-root <temp-root>`. For preflight validation, pass `--dry-run` to
 `append`.
 
+Summarize recent run health without mutating logs:
+
+```bash
+python3 scripts/check_learning_log_health.py --latest 5 --json
+```
+
 The helper validates required fields, enum values, redaction constraints, and
 secret-like strings before appending one compact JSON object per line. It also
 rejects candidates whose `run_id` does not match `--run-id`.
@@ -128,7 +148,7 @@ rejects candidates whose `run_id` does not match `--run-id`.
   "schema_version": "1",
   "run_id": "20260513T142233Z-archive-codex-example-7e884a0-a1b2c3",
   "skill": "kws-codex-plan-executor",
-  "skill_version": "1.7.1",
+  "skill_version": "1.8.0",
   "mode": "interactive",
   "event_type": "verification_failure",
   "severity": "medium",
