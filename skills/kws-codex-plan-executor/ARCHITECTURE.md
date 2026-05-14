@@ -68,7 +68,10 @@ after the context snapshot, after task boundaries, after blocker/error events,
 before handoff/resume, and before final completion. It records
 `status=green|yellow|red`, `next_action`, `open_questions`,
 `known_assumptions`, and `handoff_ready` so future agents can tell whether the
-run can continue from artifacts rather than hidden chat context.
+run can continue from artifacts rather than hidden chat context. Whenever
+`context_health` changes, `context_health.last_checked_at` changes in the same
+state write. Finished outcomes require that timestamp to be present and not
+older than `timestamps.updated_at`.
 
 `current_phase` describes internal progress. `lifecycle_outcome` describes the
 terminal handoff result: `finished`, `blocked`, `failed`, `userinterlude`, or
@@ -111,12 +114,15 @@ do not logically mix. This log is for improving the executor across
 repositories. It does not replace per-run state, checkpoints, headless logs, or
 raw verification artifacts.
 
-`index.jsonl` is a start index. Terminal outcome is resolved from `final.json`
-when present, then `meta.json`, then the index row. The read-only
-`scripts/check_learning_log_health.py` reporter summarizes recent runs,
-identifies append-only index rows whose start outcome is stale, treats
-zero-event success as normal, and classifies old unclosed dead-pid runs as
-diagnostic `stale` without mutating logs.
+`index.jsonl` is a start index. Health is resolved from terminal `final.json`
+when present, then project-local state, then learning-log metadata. New run
+metadata writes `helper_pid` while retaining legacy `pid`; both identify the
+short-lived helper process, not the durable Codex executor session. The
+read-only `scripts/check_learning_log_health.py` reporter summarizes recent
+runs, treats zero-event success as normal, reports append-only index mismatch
+as informational, includes project-state and git-state summaries when
+available, and reports `stale_candidate` only from inactive project state rather
+than helper-pid liveness.
 
 ## Subagent Policy
 

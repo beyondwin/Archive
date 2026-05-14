@@ -100,6 +100,18 @@ and makes cross-project review possible.
 The helper also enforces redaction because learning logs are more durable than a
 single chat answer.
 
+## Why Run Health Reads Project State Before Helper Pids
+
+`append_learning_event.py init-run` is a short-lived helper. Its `helper_pid`
+and legacy `pid` values prove only which process wrote metadata, not whether a
+Codex execution session is still active.
+
+The health reporter therefore treats `final.json` as the terminal source,
+project-local state as the active-progress source, and helper-pid liveness as
+informational diagnostics. This avoids false stale reports for runs that are
+still progressing through `.codex-orchestrator/runs/<run_id>/state.json`, while
+still surfacing old inactive state as `stale_candidate`.
+
 ## Why Prompt Export Mirrors Runtime
 
 `mode=prompt` and `mode=handoff` do not execute anything. However, they create

@@ -115,6 +115,12 @@ Rules:
 - `green` status cannot have open questions.
 - `red` status cannot be `handoff_ready=true`.
 - `lifecycle_outcome=finished` requires `handoff_ready=true` and not `red`.
+- Whenever any `context_health` field changes, update
+  `context_health.last_checked_at` in the same state write.
+- `lifecycle_outcome=finished` requires `context_health.last_checked_at` to be
+  present and not older than `timestamps.updated_at` when `updated_at` is
+  present. Active runs may carry older timestamps as advisory drift; validation
+  only blocks terminal finished claims.
 
 `lifecycle_outcome` is the terminal handoff state and must not be confused with
 `current_phase`. Valid values are `finished`, `blocked`, `failed`,

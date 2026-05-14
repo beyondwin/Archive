@@ -182,10 +182,35 @@ Only `interactive` and `headless` are logging modes. `prompt` and `handoff` do
 not log events, though exported prompts must carry the same logging contract for
 future execution.
 
-`index.jsonl` is a run start index, not the terminal status source. Reporters
-resolve terminal outcome from `final.json` when present, then `meta.json`, then
-the index start row. This keeps append-only start records from making completed
-runs look permanently `unknown`.
+`index.jsonl` is a run start index, not the terminal status source. Run health
+is resolved in this order: terminal `final.json`, project-local state, then
+learning-log metadata. Missing `final.json` is normal while a project-local
+state file shows active task-loop progress or pending final verification. This
+keeps append-only start records from making completed or active runs look
+permanently `unknown`.
+
+`meta.helper_pid` and legacy `meta.pid` identify the short-lived helper process
+that wrote the learning-log metadata. They are retained for diagnostics, but
+they do not prove executor-session liveness and must not be used as the primary
+stale-run signal.
+
+Health reporter public statuses are:
+
+- `success`
+- `blocked`
+- `error`
+- `failed`
+- `in_progress`
+- `needs_finalization`
+- `stale_candidate`
+- `unknown`
+
+The JSON report keeps top-level `warnings` for compatibility, but new callers
+should read `diagnostics.info` and `diagnostics.warnings`. Informational
+diagnostics include `helper_pid_dead`, `missing_learning_final`, and
+`index_outcome_stale`. Actionable warnings include `missing_worktree`,
+`missing_project_state`, `project_state_inactive_past_threshold`, and
+`dirty_worktree_during_in_progress`.
 
 `event_count=0` is normal for routine success. The learning log records notable
 boundaries only, so a successful run with no `events.jsonl` can still be

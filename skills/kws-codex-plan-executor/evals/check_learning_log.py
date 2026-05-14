@@ -21,7 +21,7 @@ def base_event(run_id: str) -> dict:
         "schema_version": "1",
         "run_id": run_id,
         "skill": "kws-codex-plan-executor",
-        "skill_version": "1.8.0",
+        "skill_version": "1.8.1",
         "mode": "interactive",
         "event_type": "verification_failure",
         "severity": "medium",
@@ -88,22 +88,25 @@ def make_run(
     started_at: str,
     outcome: str = "unknown",
     index_outcome: str = "unknown",
+    worktree_path: str | None = "/tmp/worktree",
+    state_path: str | None = None,
 ) -> Path:
     rd = run_dir(log_root, run_id)
+    resolved_state_path = state_path or f".codex-orchestrator/runs/{run_id}/state.json"
     meta = {
         "schema_version": "1",
         "run_id": run_id,
         "skill": "kws-codex-plan-executor",
-        "skill_version": "1.8.0",
+        "skill_version": "1.8.1",
         "host": "test.local",
         "pid": pid,
         "repo": {"name": "Fixture", "branch": "codex/test", "remote_hash": "abc123"},
         "mode": "interactive",
         "plan_path": "docs/superpowers/plans/test.md",
         "spec_path": None,
-        "worktree_path": "/tmp/worktree",
+        "worktree_path": worktree_path,
         "project_run_dir": f".codex-orchestrator/runs/{run_id}",
-        "state_path": f".codex-orchestrator/runs/{run_id}/state.json",
+        "state_path": resolved_state_path,
         "started_at": started_at,
         "ended_at": None,
         "outcome": outcome,
@@ -116,17 +119,110 @@ def make_run(
             "schema_version": "1",
             "run_id": run_id,
             "skill": "kws-codex-plan-executor",
-            "skill_version": "1.8.0",
+            "skill_version": "1.8.1",
             "repo": meta["repo"],
             "mode": "interactive",
             "plan_path": meta["plan_path"],
             "project_run_dir": meta["project_run_dir"],
-            "state_path": meta["state_path"],
+            "state_path": resolved_state_path,
             "started_at": started_at,
             "outcome": index_outcome,
         },
     )
     return rd
+
+
+def write_project_state(worktree: Path, run_id: str, *, state: dict) -> Path:
+    state_path = worktree / ".codex-orchestrator" / "runs" / run_id / "state.json"
+    write_json(state_path, state)
+    return state_path
+
+
+def create_dirty_git_worktree(worktree: Path) -> None:
+    worktree.mkdir()
+    subprocess.run(["git", "init"], cwd=worktree, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    tracked = worktree / "tracked.txt"
+    tracked.write_text("clean\n", encoding="utf-8")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=worktree, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Learning Log Eval",
+            "-c",
+            "user.email=learning-log-eval@example.invalid",
+            "commit",
+            "-m",
+            "init fixture",
+        ],
+        cwd=worktree,
+        check=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    tracked.write_text("dirty\n", encoding="utf-8")
+    (worktree / "untracked.txt").write_text("new\n", encoding="utf-8")
+
+
+def base_project_state(
+    run_id: str,
+    *,
+    worktree: Path,
+    current_task: str,
+    current_phase: str = "task_loop",
+    lifecycle_outcome: str | None = None,
+    updated_at: str,
+    task_statuses: dict[str, str] | None = None,
+) -> dict:
+    statuses = task_statuses or {
+        "task_1": "completed",
+        "task_2": "completed",
+        "task_7": "pending",
+    }
+    return {
+        "schema_version": "1",
+        "run_id": run_id,
+        "mode": "interactive",
+        "workspace": str(worktree),
+        "plan": str(worktree / "docs/superpowers/plans/example.md"),
+        "branch": "codex/example",
+        "worktree": str(worktree),
+        "run_dir": f".codex-orchestrator/runs/{run_id}",
+        "state_path": f".codex-orchestrator/runs/{run_id}/state.json",
+        "context_snapshot_path": f".codex-orchestrator/runs/{run_id}/context.json",
+        "context_basis_hash": "abc123",
+        "context_health": {
+            "status": "yellow",
+            "last_checked_at": updated_at,
+            "context_snapshot_present": True,
+            "context_basis_hash_recorded": True,
+            "active_task_contract_present": True,
+            "next_action": "Run final acceptance verification commands.",
+            "open_questions": [],
+            "known_assumptions": [],
+            "handoff_ready": True,
+        },
+        "current_task": current_task,
+        "current_phase": current_phase,
+        "lifecycle_outcome": lifecycle_outcome,
+        "handoff_reason": "",
+        "tasks": {
+            task_id: {
+                "status": status,
+                "risk": "low",
+                "files_declared": [],
+                "contract": {},
+                "review_retries": 0,
+                "verifier_retries": 0,
+            }
+            for task_id, status in statuses.items()
+        },
+        "timestamps": {
+            "started_at": updated_at,
+            "updated_at": updated_at,
+            "completed_at": None,
+        },
+    }
 
 
 def init_run(log_root: Path, repo_root: Path, **kwargs: str) -> str:
@@ -194,6 +290,7 @@ def main() -> int:
                 rd.is_dir()
                 and meta.get("run_id") == run_id
                 and meta.get("skill") == "kws-codex-plan-executor"
+                and meta.get("helper_pid") == meta.get("pid")
                 and meta.get("outcome") == "unknown"
                 and meta.get("event_count") == 0
                 and meta.get("project_run_dir") == f".codex-orchestrator/runs/{run_id}"
@@ -428,12 +525,133 @@ def main() -> int:
         live_pid = "20260513T040000Z-fixture-live-pid-abcdef123456-444444"
         make_run(health_root, live_pid, pid=os.getpid(), started_at=stale_started_at)
 
+        active_state = "20260513T050000Z-fixture-active-state-abcdef123456-555555"
+        active_worktree = temp_path / "active-worktree"
+        active_worktree.mkdir()
+        write_project_state(
+            active_worktree,
+            active_state,
+            state=base_project_state(
+                active_state,
+                worktree=active_worktree,
+                current_task="task_7",
+                updated_at=recent_started_at,
+            ),
+        )
+        make_run(
+            health_root,
+            active_state,
+            pid=999999999,
+            started_at=stale_started_at,
+            worktree_path=str(active_worktree),
+        )
+
+        needs_finalization = "20260513T060000Z-fixture-needs-final-abcdef123456-666666"
+        needs_final_worktree = temp_path / "needs-final-worktree"
+        needs_final_worktree.mkdir()
+        write_project_state(
+            needs_final_worktree,
+            needs_finalization,
+            state=base_project_state(
+                needs_finalization,
+                worktree=needs_final_worktree,
+                current_task="task_7",
+                current_phase="final_verification",
+                updated_at=recent_started_at,
+                task_statuses={"task_1": "completed", "task_2": "completed", "task_7": "completed"},
+            ),
+        )
+        make_run(
+            health_root,
+            needs_finalization,
+            pid=999999999,
+            started_at=stale_started_at,
+            worktree_path=str(needs_final_worktree),
+        )
+
+        stale_project_state = "20260513T070000Z-fixture-stale-state-abcdef123456-777777"
+        stale_worktree = temp_path / "stale-worktree"
+        stale_worktree.mkdir()
+        write_project_state(
+            stale_worktree,
+            stale_project_state,
+            state=base_project_state(
+                stale_project_state,
+                worktree=stale_worktree,
+                current_task="task_1",
+                updated_at=stale_started_at,
+                task_statuses={"task_1": "pending", "task_2": "pending"},
+            ),
+        )
+        make_run(
+            health_root,
+            stale_project_state,
+            pid=999999999,
+            started_at=stale_started_at,
+            worktree_path=str(stale_worktree),
+        )
+
+        missing_worktree = "20260513T080000Z-fixture-missing-worktree-abcdef123456-888888"
+        make_run(
+            health_root,
+            missing_worktree,
+            pid=999999999,
+            started_at=stale_started_at,
+            worktree_path=str(temp_path / "missing-worktree"),
+        )
+
+        dirty_active = "20260513T090000Z-fixture-dirty-active-abcdef123456-999999"
+        dirty_worktree = temp_path / "dirty-worktree"
+        create_dirty_git_worktree(dirty_worktree)
+        write_project_state(
+            dirty_worktree,
+            dirty_active,
+            state=base_project_state(
+                dirty_active,
+                worktree=dirty_worktree,
+                current_task="task_2",
+                updated_at=recent_started_at,
+                task_statuses={"task_1": "completed", "task_2": "in_progress"},
+            ),
+        )
+        subprocess.run(
+            ["git", "add", ".codex-orchestrator"],
+            cwd=dirty_worktree,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Learning Log Eval",
+                "-c",
+                "user.email=learning-log-eval@example.invalid",
+                "commit",
+                "-m",
+                "add state fixture",
+            ],
+            cwd=dirty_worktree,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        make_run(
+            health_root,
+            dirty_active,
+            pid=os.getpid(),
+            started_at=recent_started_at,
+            worktree_path=str(dirty_worktree),
+        )
+
         try:
-            health = run_health_report(health_root, latest=4, stale_after_minutes=30)
+            health = run_health_report(health_root, latest=9, stale_after_minutes=30)
             by_run_id = {item["run_id"]: item for item in health.get("runs", [])}
             checks["health_index_unknown_final_success"] = (
                 by_run_id.get(index_final, {}).get("status") == "success"
-                and "index_outcome_stale" in by_run_id.get(index_final, {}).get("warnings", [])
+                and "index_outcome_stale" in by_run_id.get(index_final, {}).get("diagnostics", {}).get("info", [])
+                and not by_run_id.get(index_final, {}).get("warnings")
             )
             checks["health_zero_event_success"] = (
                 by_run_id.get(zero_event, {}).get("status") == "success"
@@ -442,25 +660,71 @@ def main() -> int:
                 and not by_run_id.get(zero_event, {}).get("warnings")
             )
             checks["health_dead_pid_unclosed_run"] = (
-                by_run_id.get(dead_pid, {}).get("status") == "stale"
-                and "dead_pid_unclosed" in by_run_id.get(dead_pid, {}).get("warnings", [])
+                by_run_id.get(dead_pid, {}).get("status") == "unknown"
+                and "helper_pid_dead" in by_run_id.get(dead_pid, {}).get("diagnostics", {}).get("info", [])
             )
             checks["health_live_pid_unclosed_run"] = (
                 by_run_id.get(live_pid, {}).get("status") == "unknown"
-                and not by_run_id.get(live_pid, {}).get("warnings")
+                and "dead_pid_unclosed" not in by_run_id.get(live_pid, {}).get("warnings", [])
+            )
+            checks["health_active_project_state_dead_helper_pid"] = (
+                by_run_id.get(active_state, {}).get("status") == "in_progress"
+                and by_run_id.get(active_state, {}).get("project_state", {}).get("current_task") == "task_7"
+                and "helper_pid_dead" in by_run_id.get(active_state, {}).get("diagnostics", {}).get("info", [])
+                and "missing_learning_final" in by_run_id.get(active_state, {}).get("diagnostics", {}).get("info", [])
+                and not by_run_id.get(active_state, {}).get("diagnostics", {}).get("warnings", [])
+            )
+            checks["health_needs_finalization_project_state"] = (
+                by_run_id.get(needs_finalization, {}).get("status") == "needs_finalization"
+                and by_run_id.get(needs_finalization, {}).get("project_state", {}).get("task_counts", {}).get("completed") == 3
+                and "missing_learning_final"
+                in by_run_id.get(needs_finalization, {}).get("diagnostics", {}).get("info", [])
+            )
+            checks["health_old_project_state_stale_candidate"] = (
+                by_run_id.get(stale_project_state, {}).get("status") == "stale_candidate"
+                and "project_state_inactive_past_threshold"
+                in by_run_id.get(stale_project_state, {}).get("diagnostics", {}).get("warnings", [])
+            )
+            checks["health_missing_worktree_unknown"] = (
+                by_run_id.get(missing_worktree, {}).get("status") == "unknown"
+                and "missing_worktree" in by_run_id.get(missing_worktree, {}).get("diagnostics", {}).get("warnings", [])
+                and "missing_project_state"
+                in by_run_id.get(missing_worktree, {}).get("diagnostics", {}).get("warnings", [])
+            )
+            checks["health_dirty_active_git_state"] = (
+                by_run_id.get(dirty_active, {}).get("status") == "in_progress"
+                and by_run_id.get(dirty_active, {}).get("git_state", {}).get("worktree_exists") is True
+                and by_run_id.get(dirty_active, {}).get("git_state", {}).get("git_readable") is True
+                and by_run_id.get(dirty_active, {}).get("git_state", {}).get("short_status_count") == 2
+                and by_run_id.get(dirty_active, {}).get("git_state", {}).get("modified_count") == 1
+                and by_run_id.get(dirty_active, {}).get("git_state", {}).get("untracked_count") == 1
+                and by_run_id.get(dirty_active, {}).get("git_state", {}).get("head")
+                and by_run_id.get(dirty_active, {}).get("git_state", {}).get("branch")
+                and "dirty_worktree_during_in_progress"
+                in by_run_id.get(dirty_active, {}).get("diagnostics", {}).get("warnings", [])
             )
         except Exception as exc:  # noqa: BLE001
             checks["health_index_unknown_final_success"] = False
             checks["health_zero_event_success"] = False
             checks["health_dead_pid_unclosed_run"] = False
             checks["health_live_pid_unclosed_run"] = False
+            checks["health_active_project_state_dead_helper_pid"] = False
+            checks["health_needs_finalization_project_state"] = False
+            checks["health_old_project_state_stale_candidate"] = False
+            checks["health_missing_worktree_unknown"] = False
+            checks["health_dirty_active_git_state"] = False
             failures.append(f"health reporter should summarize fixture runs: {exc}")
 
         for check, message in {
             "health_index_unknown_final_success": "health reporter should prefer final.json over unknown index outcome",
             "health_zero_event_success": "health reporter should treat zero-event success as routine",
-            "health_dead_pid_unclosed_run": "health reporter should classify old dead-pid unclosed runs as stale",
+            "health_dead_pid_unclosed_run": "health reporter should not classify old dead-helper-pid runs as stale",
             "health_live_pid_unclosed_run": "health reporter should not classify live-pid unclosed runs as stale",
+            "health_active_project_state_dead_helper_pid": "health reporter should prefer active project state over dead helper pid",
+            "health_needs_finalization_project_state": "health reporter should detect completed tasks awaiting finalization",
+            "health_old_project_state_stale_candidate": "health reporter should report old inactive project state as stale_candidate",
+            "health_missing_worktree_unknown": "health reporter should report missing worktree/state diagnostics without crashing",
+            "health_dirty_active_git_state": "health reporter should summarize dirty git state for active runs",
         }.items():
             if not checks.get(check):
                 failures.append(message)

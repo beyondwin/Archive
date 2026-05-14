@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -94,6 +95,18 @@ def _has_substantive_value(value: object) -> bool:
     return value is True
 
 
+def _parse_ts(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
 def _validate_context_snapshot(data: dict, errors: list[str]) -> None:
     run_id = data.get("run_id")
     mode = data.get("mode")
@@ -172,6 +185,15 @@ def _validate_context_health(data: dict, errors: list[str]) -> None:
             errors.append("context_health.handoff_ready must be true when lifecycle_outcome is finished")
         if status == "red":
             errors.append("context_health.status must not be red when lifecycle_outcome is finished")
+        checked_at = _parse_ts(health.get("last_checked_at"))
+        if checked_at is None:
+            errors.append("context_health.last_checked_at must be present when lifecycle_outcome is finished")
+        timestamps = data.get("timestamps") if isinstance(data.get("timestamps"), dict) else {}
+        updated_at = _parse_ts(timestamps.get("updated_at"))
+        if updated_at is not None and checked_at is not None and checked_at < updated_at:
+            errors.append(
+                "context_health.last_checked_at must not be older than timestamps.updated_at when lifecycle_outcome is finished"
+            )
 
 
 def _validate_completion_audit(data: dict, errors: list[str]) -> None:

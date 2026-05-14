@@ -70,7 +70,8 @@ and invalid state payloads. It covers:
 - task contract shape
 - retry count types
 - execution context snapshot requirements
-- context health shape and finished-run handoff readiness
+- context health shape, finished-run handoff readiness, and terminal
+  `last_checked_at` freshness
 - lifecycle outcomes
 - completion audit proof
 - non-success `handoff_reason`
@@ -90,7 +91,11 @@ Add or update these cases whenever `references/state-schema.md` changes.
 - run identity isolation
 - `run_dir` and `state_path` consistency
 - terminal outcome health reporting
-- stale unclosed run classification
+- project-state-aware run classification
+- helper-pid diagnostics without stale classification
+- stale candidate classification from old inactive project state
+- missing worktree and project-state diagnostics
+- git worktree dirty-state summaries
 - zero-event success semantics
 
 Add checks here when changing `scripts/append_learning_event.py` or
