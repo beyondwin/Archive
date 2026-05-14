@@ -1230,6 +1230,61 @@ Build from the **Final Docs Updater Prompt Template** with:
 
 **Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<worktree_path>/.orchestrator/docs_prompts/final.txt` and result path `<worktree_path>/.orchestrator/docs_results/final.json`. Missing/malformed result → ENV_BLOCKER ESCALATE.
 
+### Step 1.5: Method Audit Validation (v2.11)
+
+After the Final Docs Updater commit and before generating the Final Summary Report:
+
+```bash
+python3 <skill_dir>/scripts/validate_method_audit.py \
+  --state <worktree>/.orchestrator/state.json
+```
+
+Parse the JSON output:
+
+- `"passed": true` → proceed to Step 2.
+- `"passed": false` → for each entry in `failures`, write a learning-log candidate event:
+
+  ```json
+  {
+    "schema_version": "1",
+    "phase": "phase_2",
+    "risk_tier": "high",
+    "event_type": "method_audit_violation",
+    "severity": "high",
+    "execution": {"task_id": "<id>", "issue_key": "method_audit_missing"},
+    "subagent": {"role": "orchestrator", "model": "opus", "dispatch": "orchestrator"},
+    "summary": "Task <id> missing required methods: <missing list>",
+    "context": {
+      "user_intent": "Validate that required disciplines were applied.",
+      "agent_expectation": "All COMPLETE tasks emit method_audit evidence.",
+      "actual_outcome": "Missing methods: <list>",
+      "root_cause": "Sub-agent did not emit METHOD_AUDIT lines or evidence was incomplete.",
+      "evidence": [{"kind": "missing_methods", "value": "<list>"}]
+    },
+    "improvement": {"target": "references/implementer-prompt.md",
+                    "proposal": "Strengthen METHOD_AUDIT requirement or hook check.",
+                    "experiment_link": null},
+    "privacy": {"redacted": true, "notes": "Skill names only."}
+  }
+  ```
+  Then halt:
+
+  ```
+  Method audit FAILED for tasks: <comma-separated list>.
+
+  To resolve, either:
+    - Re-dispatch the failing task(s) with explicit instructions to emit
+      METHOD_AUDIT: lines (see references/implementer-prompt.md).
+    - If a method is genuinely not applicable, edit
+      state.tasks.<id>.method_audit.waived in state.json with a reason,
+      then re-run Phase 2.
+
+  Validator output:
+  <pretty-printed validator JSON>
+  ```
+
+  Do NOT call `close-run` — the run remains alive for the user's resolution. Standard hard-halt block applies.
+
 ### Step 2: Generate Final Summary Report
 
 Before generating the report, invoke `Skill("superpowers:finishing-a-development-branch")` and include its recommendation in Cleanup Status.
@@ -1363,6 +1418,9 @@ These rules are absolute. No exceptions.
 | **Polite-stop anti-pattern is forbidden (v2.10.1)** | A sub-agent returning PASS / APPROVED is a checkpoint inside the autonomous loop, never a reporting moment. The orchestrator MUST proceed immediately to the next phase step in the same turn. The only legitimate reporting moments are: Phase 2 success completion, ESCALATE that exceeds `escalation_count > 3`, headless `HEADLESS_HALTED.txt`, or hook denial. Any prompt edit that introduces "summarize and wait for user acknowledgment" between PASS and the next step IS the regression this invariant exists to prevent. |
 | **Cross-run isolation is enforced (v2.10.1)** | Phase 0 Step 1.5 refuses to start when another worktree of this skill has a live headless PID. Mode exclusivity is concurrent-safe by halt, not by lock — the user is responsible for choosing which run continues. Orphan worktrees with no state.json + >7d mtime are reported but never auto-deleted (may hold uncommitted manual debugging). |
 | **Method audit fields are populated at Agent Cleanup (v2.11)** | Method audit fields are populated at Phase 1 Step 4 from structured sub-agent output. |
+| **Method audit must pass before Phase 2 close-run** | Phase 2 Step 1.5 runs `scripts/validate_method_audit.py`. A task is `applied` only when it has evidence references (RED command, GREEN command, commands_run, findings_count). FAIL halts before close-run; user re-dispatches or edits `state.tasks.<id>.method_audit.waived` with a reason. |
+| **Method audit fields populated at Phase 1 Step 4** | Orchestrator parses `METHOD_AUDIT:` from Implementer, `REVIEW_FINDINGS:` from Combined Reviewer, `commands_run` from Verifier result JSON. Written under the active task tree (`state.tasks` or `state.plan2_state.tasks` per `active_plan`). |
+| **TDD waive reasons are restricted** | `METHOD_AUDIT: tdd waived` accepts only `reason=docs-only-task`, `config-only-task`, or `generated-only-task`. Other reasons fail validation. |
 
 ---
 
