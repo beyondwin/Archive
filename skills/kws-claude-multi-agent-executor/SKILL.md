@@ -888,7 +888,7 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
          {"skill": "verification-before-completion",
           "evidence": {"commands_run": ["<cmd1>", "<cmd2>"]}},
          {"skill": "code-review-pass",
-          "evidence": {"findings_count": "<N>", "locations": ["<file:line>"]}}
+          "evidence": {"findings_count": <N>, "locations": ["<file:line>"]}}
        ],
        "missing": [],
        "waived": []
