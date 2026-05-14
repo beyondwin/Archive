@@ -182,3 +182,33 @@ risk. Do not paste long logs or sensitive output.
 - Residual risk:
   - The protocol is process documentation, not a hard pre-commit hook; future
     agents still need to follow it.
+
+## 2026-05-14 - Log-driven executor hardening plan docs
+
+- Branch: current working tree
+- Commit: pending at time of verification
+- Scope: added detailed plan and implementation documents for improvements
+  derived from the latest five `kws-codex-plan-executor` learning-log runs,
+  including phase-level method audit evidence for required skills such as TDD,
+  review, and completion verification.
+- Commands:
+  - `rg -n "TBD|TODO|fill in|implement later|Similar to Task" skills/kws-codex-plan-executor/docs/experiments/2026-05-14-log-driven-executor-hardening || true`
+    - result: pass, no placeholder matches
+  - `test -f skills/kws-codex-plan-executor/docs/experiments/2026-05-14-log-driven-executor-hardening/PLAN.md && test -f skills/kws-codex-plan-executor/docs/experiments/2026-05-14-log-driven-executor-hardening/IMPLEMENTATION.md`
+    - result: pass
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .`
+    - result: pass, `Skill is valid!`
+  - `git diff --check -- skills/kws-codex-plan-executor/docs/experiments/2026-05-14-log-driven-executor-hardening`
+    - result: pass, no whitespace errors
+- Skipped checks:
+  - Runtime evals were skipped because this change only adds experiment planning
+    docs and does not change scripts, references, prompt templates, or skill
+    runtime behavior.
+- Documentation impact:
+  - Added package-internal experiment docs under `docs/experiments/`.
+  - No root Archive catalog update was needed because these are generated
+    execution-planning docs for a skill package, not Archive library notes.
+- Residual risk:
+  - The docs include proposed code and state shapes, including `method_audit`,
+    that still need a separate implementation pass before they become active
+    executor behavior.
