@@ -373,6 +373,56 @@ This is a fallback — the primary expectation is that one headless subprocess c
 
    If the user provided `risk=<level>` override: apply it to all tasks. However, if any task's description in the plan contains the words 'high-risk', 'schema migration', 'database', 'API surface', or 'breaking change', log a warning: 'risk override applied but task N description suggests HIGH risk — proceeding with override as instructed.' Do not silently downgrade dangerous tasks.
 
+### Step 4.7: Local-env preflight (v2.11)
+
+After risk assignment, before baseline test. Detection-only — never halts, never auto-copies.
+
+1. **Unfilled local-config counterpart scan:**
+   ```bash
+   cd <worktree_path>
+   for tmpl in $(find . -maxdepth 3 -type f \( -name '*.example' -o -name '*.template' -o -name '*.dist' \) 2>/dev/null); do
+     real="${tmpl%.example}"
+     real="${real%.template}"
+     real="${real%.dist}"
+     if [ ! -e "$real" ] && git check-ignore -q "$real" 2>/dev/null; then
+       echo "MISSING_LOCAL_CONFIG: counterpart=$real template=$tmpl"
+     fi
+   done
+   ```
+   Each `MISSING_LOCAL_CONFIG:` line becomes a warning entry:
+   ```json
+   {"kind": "missing_local_config", "file": "<counterpart>", "template": "<template>",
+    "suggestion": "Copy <template> to <counterpart> and fill in the local values",
+    "detected_at": "<iso8601>"}
+   ```
+
+2. **Stale-dependency detection** — check each manifest/lockfile pair against its install marker:
+   | Manifest | Lockfile | Install marker |
+   |----------|----------|----------------|
+   | `package.json` | `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` | `node_modules/.package-lock.json` |
+   | `pyproject.toml` | `poetry.lock` / `uv.lock` | `.venv/pyvenv.cfg` or `venv/pyvenv.cfg` |
+   | `Cargo.toml` | `Cargo.lock` | `target/.rustc_info.json` |
+   | `build.gradle` / `build.gradle.kts` | `gradle/wrapper/gradle-wrapper.properties` | `.gradle/<version>/` or `build/` |
+
+   For each pair: if lockfile mtime > install-marker mtime + 1s OR install-marker missing while lockfile exists → warning entry:
+   ```json
+   {"kind": "dependencies_likely_stale", "manifest": "<manifest>", "lockfile": "<lockfile>",
+    "suggestion": "Run install before baseline (e.g., `npm install`, `poetry install`, `cargo fetch`).",
+    "detected_at": "<iso8601>"}
+   ```
+
+3. **Record into state.json:**
+   ```json
+   "preflight_warnings": [<warning entries>]
+   ```
+   Always present; empty list when clean.
+
+4. **One-line summary to user:**
+   - clean → `Preflight: clean`
+   - warnings → `Preflight: <N> warnings (see state.preflight_warnings)` followed by the bulleted list with `kind` + `file` + `suggestion`.
+
+5. Never halt on preflight. ENV_BLOCKER triage (`references/escalation-playbook.md`) cross-references `state.preflight_warnings` when baseline or task tests fail — a `dependencies_likely_stale` warning matches a `module not found` symptom and short-circuits dependency-install triage.
+
 5. **Take baseline test snapshot:**
    Before running: derive the test command from `Makefile`, `package.json`, `pyproject.toml`, or `Cargo.toml`. Record this exact command in state.json `test_command` field. Use this same command everywhere in the skill (Verifier prompts, Phase Transition batch Verifier). Verifiers do NOT need to re-derive the test command.
 

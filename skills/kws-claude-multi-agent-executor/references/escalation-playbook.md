@@ -53,6 +53,7 @@ Run the `test_command` from state.json. If it fails with command-not-found, conf
 
 **Step 2 — Is a dependency missing?**
 Check `package.json` / `pyproject.toml` / `Cargo.toml` / `build.gradle` against the installed state. If missing: run the install command (`npm install`, `pip install -e .`, `cargo fetch`, etc.) and retry the test command.
+   **Before running install:** check `state.preflight_warnings` for `dependencies_likely_stale` — if present, the suggested install command is pre-identified; run it directly.
 
 **Step 3 — Is a path or configuration wrong?**
 Compare the error's file path against the worktree. If a symlink, path alias, or config reference is broken: fix it directly (create symlink, update config path) and retry.

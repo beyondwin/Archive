@@ -11,3 +11,7 @@ When a multi-stage Docker build fails after the compilation step with no compile
 "Daemon disappeared" is a symptom, not a cause. The cause lives in `~/.gradle/daemon/<version>/daemon-*.out.log`. Categorize as `gradle_metaspace`, OOM, or daemon crash *before* assuming the project's code broke the daemon.
 
 <!-- for_next_tasks: Task 8 should append additional common-mistake entries below this point -->
+
+### Missing local-config counterpart causes mystery baseline failures
+
+A worktree freshly created from `git worktree add` inherits the tracked files only. If `.env.example` is tracked but `.env` is gitignored and absent, baseline tests reading `process.env.SECRET_KEY` will fail before any task touches code. Phase 0 Step 4.7 surfaces these as `missing_local_config` warnings; honor them before treating baseline failures as regressions.
