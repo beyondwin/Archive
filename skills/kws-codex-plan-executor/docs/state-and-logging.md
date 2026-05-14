@@ -147,6 +147,21 @@ The checklist maps prompt/plan requirements to artifacts. Verification evidence
 records commands or honest substitutes. This prevents a run from claiming
 completion solely because a narrow command passed.
 
+## Method Audit
+
+`method_audit` is optional state evidence for required phase methods. It records
+which methods were required, applied, missing, or waived. A method is applied
+only when it points to evidence that its contract was followed:
+
+- `test-driven-development` needs RED and GREEN evidence references.
+- `review` needs findings or an explicit no-findings residual-risk statement.
+- `verification-before-completion` needs `completion_audit.verification_evidence`.
+- `using-superpowers` needs a task-contract or pre-implementation gate record.
+
+Finished runs fail validation when a required method is listed as missing or
+when an applied method lacks the required evidence. Docs-only runs can waive
+implementation methods with a non-empty reason.
+
 ## Learning Log
 
 The learning log is user-local and cross-repository:
@@ -166,6 +181,21 @@ truth and does not replace `.codex-orchestrator/runs/<run_id>/state.json`.
 Only `interactive` and `headless` are logging modes. `prompt` and `handoff` do
 not log events, though exported prompts must carry the same logging contract for
 future execution.
+
+`index.jsonl` is a run start index, not the terminal status source. Reporters
+resolve terminal outcome from `final.json` when present, then `meta.json`, then
+the index start row. This keeps append-only start records from making completed
+runs look permanently `unknown`.
+
+`event_count=0` is normal for routine success. The learning log records notable
+boundaries only, so a successful run with no `events.jsonl` can still be
+healthy when `final.json` says it closed successfully.
+
+Inspect recent run health with:
+
+```bash
+python3 scripts/check_learning_log_health.py --latest 5 --json
+```
 
 ## Learning Helper Lifecycle
 

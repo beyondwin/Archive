@@ -12,13 +12,16 @@ read [docs/user-guide.ko.md](docs/user-guide.ko.md).
 
 ## Current Contract
 
-- Skill version: `1.7.1`
+- Skill version: `1.8.0`
 - Execution worktree: mandatory dedicated non-conflicting `codex/...` git
   worktree for `interactive` and `headless`
 - Primary state: `.codex-orchestrator/runs/<run_id>/state.json`
 - Compatibility state: `.codex-orchestrator/state.json`
 - Source snapshot: `.codex-orchestrator/runs/<run_id>/context.json`
 - Context health: `context_health` inside per-run `state.json`
+- Method audit: optional `method_audit` evidence for required phase methods
+- Carried acceptance: optional task-level `carried_acceptance` for sequential
+  metrics
 - Learning log: `~/.codex/learning/kws-codex-plan-executor/`
 
 ## Read Order
@@ -103,6 +106,9 @@ The critical gates are:
   `state.json`
 - no successful finish with `context_health.status=red` or
   `context_health.handoff_ready=false`
+- no finished run with unresolved `carried_acceptance.status=open`
+- no applied `method_audit` entry without required evidence refs when a method
+  is declared required
 
 ## Key Commands
 
@@ -112,6 +118,7 @@ From this directory:
 python3 scripts/parse_plan.py --help
 python3 scripts/build_context_snapshot.py --help
 python3 scripts/validate_state.py --help
+python3 scripts/check_learning_log_health.py --latest 5 --json
 python3 evals/check_state_schema.py
 python3 evals/check_learning_log.py
 python3 evals/check_skill_contract.py --skill SKILL.md

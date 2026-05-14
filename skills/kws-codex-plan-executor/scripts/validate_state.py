@@ -54,6 +54,17 @@ REQUIRED_TASK_FIELDS = {
     "review_retries",
     "verifier_retries",
 }
+VALID_CARRIED_ACCEPTANCE_STATUSES = {"open", "resolved", "accepted_with_rationale"}
+REQUIRED_CARRIED_ACCEPTANCE_FIELDS = {
+    "status",
+    "metric",
+    "current_value",
+    "baseline_value",
+    "reason",
+    "depends_on_task",
+    "next_action",
+}
+REQUIRED_METHOD_AUDIT_FIELDS = {"required", "applied", "missing", "waived"}
 REQUIRED_CONTRACT_FIELDS = {
     "scope",
     "files_to_inspect",
@@ -189,6 +200,154 @@ def _validate_completion_audit(data: dict, errors: list[str]) -> None:
         errors.append("handoff_reason must be non-empty for non-success lifecycle_outcome")
 
 
+def _validate_carried_acceptance(data: dict, errors: list[str]) -> None:
+    outcome = data.get("lifecycle_outcome")
+    audit = data.get("completion_audit") if isinstance(data.get("completion_audit"), dict) else {}
+    evidence_text = json.dumps(audit.get("verification_evidence", []), sort_keys=True)
+    tasks = data.get("tasks")
+    if not isinstance(tasks, dict):
+        return
+
+    for task_id, task in tasks.items():
+        if not isinstance(task, dict) or "carried_acceptance" not in task:
+            continue
+        carried = task["carried_acceptance"]
+        if not isinstance(carried, dict):
+            errors.append(f"{task_id}: carried_acceptance must be an object")
+            continue
+
+        for key in sorted(REQUIRED_CARRIED_ACCEPTANCE_FIELDS):
+            if key not in carried:
+                errors.append(f"{task_id}: carried_acceptance missing field {key}")
+
+        status = carried.get("status")
+        if status not in VALID_CARRIED_ACCEPTANCE_STATUSES:
+            errors.append(
+                f"{task_id}: carried_acceptance.status must be one of {sorted(VALID_CARRIED_ACCEPTANCE_STATUSES)}"
+            )
+
+        for key in sorted(REQUIRED_CARRIED_ACCEPTANCE_FIELDS - {"status"}):
+            if key in carried and not _has_substantive_value(carried[key]):
+                errors.append(f"{task_id}: carried_acceptance.{key} must be non-empty")
+
+        if outcome == "finished" and status == "open":
+            errors.append(f"{task_id}: open carried_acceptance is not allowed for lifecycle_outcome=finished")
+
+        if outcome == "finished" and status in {"resolved", "accepted_with_rationale"}:
+            metric = carried.get("metric")
+            if isinstance(metric, str) and metric and metric not in evidence_text:
+                errors.append(
+                    f"{task_id}: carried_acceptance metric must be referenced by completion_audit.verification_evidence"
+                )
+
+
+def _method_skill(entry: object) -> str | None:
+    if isinstance(entry, str):
+        return entry
+    if isinstance(entry, dict) and isinstance(entry.get("skill"), str):
+        return entry["skill"]
+    return None
+
+
+def _evidence_refs(entry: dict) -> list[str]:
+    refs = entry.get("evidence_refs")
+    if not isinstance(refs, list):
+        return []
+    return [item for item in refs if isinstance(item, str)]
+
+
+def _validate_method_audit(data: dict, errors: list[str]) -> None:
+    audit = data.get("method_audit")
+    if audit is None:
+        return
+    if not isinstance(audit, dict):
+        errors.append("method_audit must be an object")
+        return
+
+    for key in sorted(REQUIRED_METHOD_AUDIT_FIELDS):
+        if key not in audit:
+            errors.append(f"method_audit missing field {key}")
+
+    required = audit.get("required", [])
+    applied = audit.get("applied", [])
+    missing = audit.get("missing", [])
+    waived = audit.get("waived", [])
+    for key, value in (("required", required), ("applied", applied), ("missing", missing), ("waived", waived)):
+        if not isinstance(value, list):
+            errors.append(f"method_audit.{key} must be a list")
+            return
+
+    required_skills = [_method_skill(item) for item in required]
+    required_skills = [skill for skill in required_skills if skill]
+    applied_by_skill: dict[str, list[dict]] = {}
+    missing_by_skill: dict[str, list[object]] = {}
+    waived_by_skill: dict[str, list[dict]] = {}
+
+    for entry in applied:
+        if not isinstance(entry, dict):
+            errors.append("method_audit.applied entries must be objects")
+            continue
+        skill = _method_skill(entry)
+        if not skill:
+            errors.append("method_audit.applied entry missing skill")
+            continue
+        applied_by_skill.setdefault(skill, []).append(entry)
+        if entry.get("status") != "applied":
+            errors.append(f"{skill}: applied method status must be applied")
+        if not _evidence_refs(entry):
+            errors.append(f"{skill}: applied method evidence_refs must be non-empty")
+
+    for entry in missing:
+        skill = _method_skill(entry)
+        if not skill:
+            errors.append("method_audit.missing entry missing skill")
+            continue
+        missing_by_skill.setdefault(skill, []).append(entry)
+
+    for entry in waived:
+        if not isinstance(entry, dict):
+            errors.append("method_audit.waived entries must be objects")
+            continue
+        skill = _method_skill(entry)
+        if not skill:
+            errors.append("method_audit.waived entry missing skill")
+            continue
+        waived_by_skill.setdefault(skill, []).append(entry)
+        if not _has_substantive_value(entry.get("reason")):
+            errors.append(f"{skill}: waived method requires a reason")
+
+    for skill in required_skills:
+        count = len(applied_by_skill.get(skill, [])) + len(missing_by_skill.get(skill, [])) + len(waived_by_skill.get(skill, []))
+        if count == 0:
+            errors.append(f"required method {skill} has no applied or waived evidence")
+        elif count > 1:
+            errors.append(f"required method {skill} must appear in exactly one method_audit bucket")
+
+    if data.get("lifecycle_outcome") == "finished":
+        for skill in missing_by_skill:
+            errors.append(f"required method {skill} is missing for lifecycle_outcome=finished")
+
+    for entry in applied_by_skill.get("test-driven-development", []):
+        refs = [ref.lower() for ref in _evidence_refs(entry)]
+        if not any("red" in ref for ref in refs) or not any("green" in ref for ref in refs):
+            errors.append("test-driven-development requires RED and GREEN evidence references")
+
+    for entry in applied_by_skill.get("review", []):
+        refs = [ref.lower().replace("-", "_") for ref in _evidence_refs(entry)]
+        if not any("findings" in ref or "residual_risk" in ref or "no_findings" in ref for ref in refs):
+            errors.append("review method requires findings or residual-risk evidence")
+
+    for entry in applied_by_skill.get("verification-before-completion", []):
+        refs = _evidence_refs(entry)
+        if "completion_audit.verification_evidence" not in refs:
+            errors.append("verification-before-completion requires completion_audit.verification_evidence")
+
+    for entry in applied_by_skill.get("using-superpowers", []):
+        refs = [ref.lower() for ref in _evidence_refs(entry)]
+        if not any("contract" in ref or "pre_task" in ref or "pre-implementation" in ref for ref in refs):
+            errors.append("using-superpowers requires task contract or pre-implementation evidence")
+
+
 def validate(data: object) -> list[str]:
     errors: list[str] = []
     if not isinstance(data, dict):
@@ -248,6 +407,8 @@ def validate(data: object) -> list[str]:
     _validate_context_snapshot(data, errors)
     _validate_context_health(data, errors)
     _validate_completion_audit(data, errors)
+    _validate_carried_acceptance(data, errors)
+    _validate_method_audit(data, errors)
 
     return errors
 
