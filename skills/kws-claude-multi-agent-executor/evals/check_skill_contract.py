@@ -15,7 +15,11 @@ from pathlib import Path
 
 REVIEW_SIDE_SKILL_CALLS = {
     "references/plan-reviewer-prompt.md": 'Skill("superpowers:writing-plans")',
-    "references/reviewer-prompt.md": 'Skill("superpowers:requesting-code-review")',
+    # reviewer-prompt.md intentionally inlines the requesting-code-review
+    # checklist rather than invoking the skill (the orchestrator already
+    # performed the meta-dispatch the skill describes — this Reviewer IS
+    # the dispatched sub-agent). See "Review Checklist (inlined" section
+    # in references/reviewer-prompt.md and the dedicated checks below.
     "references/verifier-prompt.md": 'Skill("superpowers:verification-before-completion")',
 }
 
@@ -208,6 +212,43 @@ def main() -> int:
             and "SMALL, MEDIUM, and LARGE" in body
             and "RED command" in body,
             "Implementer prompt must require TDD for executable implementation work across SMALL, MEDIUM, and LARGE tasks and require RED evidence",
+        )
+
+    reviewer_prompt = skill_dir / "references" / "reviewer-prompt.md"
+    if reviewer_prompt.is_file():
+        body = reviewer_prompt.read_text(encoding="utf-8")
+        record(
+            "reviewer_checklist_inlined",
+            "Review Checklist (inlined" in body
+            and 'Skill("superpowers:requesting-code-review")' not in body,
+            "reviewer-prompt.md must inline the review checklist and not invoke requesting-code-review (the orchestrator already performed that meta-dispatch)",
+        )
+        record(
+            "reviewer_systematic_debugging_fallback",
+            'Skill("superpowers:systematic-debugging")' in body,
+            "reviewer-prompt.md must offer systematic-debugging as a fallback when the diff is insufficient to judge behavior",
+        )
+
+    implementer_prompt_v2 = skill_dir / "references" / "implementer-prompt.md"
+    if implementer_prompt_v2.is_file():
+        body = implementer_prompt_v2.read_text(encoding="utf-8")
+        record(
+            "implementer_receiving_review_on_verifier_fail",
+            "Combined Reviewer FAIL OR Verifier FAIL" in body,
+            "implementer-prompt.md must apply receiving-code-review after both Combined Reviewer FAIL and Verifier FAIL re-dispatches",
+        )
+
+    hook_template = skill_dir / "references" / "hooks" / "check-implementer-output.sh.template"
+    if hook_template.is_file():
+        body = hook_template.read_text(encoding="utf-8")
+        record(
+            "implementer_hook_validates_tdd_evidence",
+            "TDD_EVIDENCE" in body
+            and "not[[:space:]]+applicable" in body
+            and "FILES_TEST_CHANGED" in body
+            and "RED:" in body
+            and "GREEN:" in body,
+            "check-implementer-output.sh.template must validate TDD_EVIDENCE presence + cross-check RED/GREEN against FILES_TEST_CHANGED",
         )
 
     docs_prompt = skill_dir / "references" / "docs-updater-prompts.md"

@@ -639,8 +639,8 @@ Build the implementer prompt from the **Implementer Prompt Template** below. Fil
 - `{effort_guidance}` — the matching guidance string from Phase 0 Step 6 (P5)
 
 Re-dispatch rules (always append `## Fix Required\n{issues}`):
-- After **Combined Reviewer FAIL**: include Required Skills bullet 4 (`receiving-code-review`).
-- After **Verifier FAIL** or cleanup grep: do NOT include bullet 4.
+- After **Combined Reviewer FAIL** OR **Verifier FAIL**: include Required Skills bullet 5 (`receiving-code-review`). The skill's discipline (verify each issue is real before patching; push back on false positives like baseline drift or flaky tests) applies to verifier feedback the same as reviewer feedback.
+- After cleanup-only re-dispatch (e.g., hook-blocked debug artifact): do NOT include bullet 5.
 
 Dispatch as a **fresh Sonnet sub-agent**.
 
@@ -759,7 +759,7 @@ Decision table:
 - Increment `verifier_retries`.
 - If `verifier_retries` ≤ 3:
   - Reset to pre-task state: `git -C <worktree_path> reset --hard <pre_task_sha>`
-  - Re-dispatch Implementer with verifier's `issues` from the JSON under `## Fix Required`. Do NOT include `receiving-code-review`. Return to Step 1.
+  - Re-dispatch Implementer with verifier's `issues` from the JSON under `## Fix Required`. Include `receiving-code-review` (per Phase 1 Step 1 re-dispatch rules) — verifier feedback can be wrong (baseline drift, flaky tests), so the skill's "verify before patching" discipline applies. Return to Step 1.
 - If `verifier_retries` > 3: halt. Report to user: "Task N exceeded verifier retry limit (3). Manual intervention required."
 
 **Result: ESCALATE** → go to **Escalation Protocol**.

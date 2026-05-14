@@ -27,9 +27,20 @@ The Implementer was already given these issues. Verify whether each was addresse
 
 ## Required Skills
 
-1. **First action:** invoke `Skill("superpowers:using-superpowers")` before inspecting files or judging the diff. Follow it as the skill-discovery gate for this review. If that skill says to skip itself because you are a sub-agent, continue with the role-specific required skills below; that skip does not waive the code-review skill.
+1. **First action:** invoke `Skill("superpowers:using-superpowers")` before inspecting files or judging the diff. Follow it as the skill-discovery gate for this review. If that skill says to skip itself because you are a sub-agent, continue with the role-specific required skills below; that skip does not waive the systematic-debugging fallback or the inlined review checklist.
 
-2. **Before reviewing:** invoke `Skill("superpowers:requesting-code-review")` so your spec_score and quality_score reflect a checklist-grounded review rather than freeform impression. The skill's review checklist informs the Part 1 + Part 2 axes below.
+2. **If the diff is insufficient to judge behavior or contract** (e.g., suspicious import path, type contract that hinges on a file not in the diff, output mismatch you cannot explain by reading): invoke `Skill("superpowers:systematic-debugging")` and resolve the question with hypothesis-then-evidence steps before assigning scores. Do NOT score under uncertainty — uncertain scores produce WARN-tier noise that consumes downstream retry budget.
+
+## Review Checklist (inlined — applied to Part 1 + Part 2 below)
+
+This Reviewer is itself the separate-subagent reviewer that `superpowers:requesting-code-review` exists to dispatch — the orchestrator already performed that dispatch. So instead of re-loading that skill (which describes how to dispatch a reviewer, not how to be one), apply this distilled checklist directly:
+
+- **Categorize issues by actual severity** — Critical (bugs / security / data-loss / broken functionality), Important (architecture / missing features / poor error handling / test gaps), Minor (style / nits). The PASS/WARN/FAIL tier you emit later maps to these.
+- **Be specific** — every issue cites `file:line` and explains *why* it matters, not just *what* is wrong. Vague comments ("improve error handling") are useless to the Implementer on re-dispatch.
+- **Acknowledge strengths** — accurate praise helps the Implementer trust the rest of the feedback. List at least one strength when SPEC_STATUS=PASS.
+- **Plan alignment first, then code quality** — the spec/task is the ground truth. Style preferences without rationale are out of scope (see Part 2 "Do NOT flag").
+- **Distinguish spec deviation type** — when the implementation diverges from the spec, decide whether it is an *Implementer omission/error* (`implementer_omitted`), a *spec contradiction* (`spec_contradicts`), or *spec ambiguity* (`unclear`). This drives `SPEC_FAULT` below — the orchestrator routes spec-fault tasks to a spec-edit branch instead of burning retries on the Implementer.
+- **Give a clear verdict** — `SPEC_STATUS` and `QUALITY_STATUS` are PASS/FAIL only. Never hedge.
 
 ## Instructions
 

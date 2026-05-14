@@ -17,8 +17,16 @@
 #       SUMMARY:
 #       FILES_CHANGED:
 #       FILES_TEST_CHANGED:
+#       TDD_EVIDENCE:          (only required when STATUS is DONE)
+#         - RED:               (sub-line)
+#         - GREEN:             (sub-line)
 #       COMMIT:                (only required when STATUS is DONE)
-#   - On any missing field → exit 2 with diagnostic.
+#   - Cross-validates TDD_EVIDENCE against FILES_TEST_CHANGED:
+#       - If FILES_TEST_CHANGED lists actual test files, RED+GREEN MUST NOT both
+#         be "not applicable".
+#       - If RED and GREEN are both "not applicable", SUMMARY MUST mention one of
+#         docs / config / generated to justify the skip.
+#   - On any violation → exit 2 with diagnostic. Sub-agent then auto-retries.
 
 set -euo pipefail
 
@@ -44,6 +52,9 @@ if [ "$STATUS" = "DONE" ]; then
   if ! printf '%s' "$RESULT" | grep -qE '^COMMIT:'; then
     missing+=("COMMIT")
   fi
+  if ! printf '%s' "$RESULT" | grep -qE '^TDD_EVIDENCE:'; then
+    missing+=("TDD_EVIDENCE")
+  fi
 fi
 
 if [ "$STATUS" = "ESCALATE" ]; then
@@ -58,6 +69,63 @@ if [ ${#missing[@]} -ne 0 ]; then
   echo "BLOCKED: Implementer output is missing required field(s): ${missing[*]}." >&2
   echo "Re-emit the full Output Format block with all fields populated." >&2
   exit 2
+fi
+
+# TDD_EVIDENCE cross-validation (DONE only). Extracts the two sub-lines
+# under the TDD_EVIDENCE: header (typically indented "  - RED:" / "  - GREEN:").
+if [ "$STATUS" = "DONE" ]; then
+  TDD_BLOCK="$(printf '%s' "$RESULT" | awk '
+    /^TDD_EVIDENCE:/ {sub(/^TDD_EVIDENCE:[[:space:]]*/, ""); capture=1; print; next}
+    capture && /^[A-Z_]+:/ {capture=0}
+    capture {print}
+  ')"
+
+  RED_LINE="$(printf '%s' "$TDD_BLOCK" | grep -iE '^[[:space:]]*-?[[:space:]]*RED:' | head -1 || true)"
+  GREEN_LINE="$(printf '%s' "$TDD_BLOCK" | grep -iE '^[[:space:]]*-?[[:space:]]*GREEN:' | head -1 || true)"
+
+  if [ -z "$RED_LINE" ] || [ -z "$GREEN_LINE" ]; then
+    echo "BLOCKED: TDD_EVIDENCE must contain both RED: and GREEN: sub-lines." >&2
+    echo "Re-emit TDD_EVIDENCE with RED and GREEN populated (or both 'not applicable' for docs/config/generated-only tasks)." >&2
+    exit 2
+  fi
+
+  # Treat "not applicable" (any case, possibly with trailing punctuation/dash) as the skip marker.
+  red_na=0; green_na=0
+  printf '%s' "$RED_LINE"   | grep -qiE 'not[[:space:]]+applicable' && red_na=1
+  printf '%s' "$GREEN_LINE" | grep -qiE 'not[[:space:]]+applicable' && green_na=1
+
+  # Extract FILES_TEST_CHANGED block (lines between header and next ALL_CAPS_FIELD:).
+  FTC_BLOCK="$(printf '%s' "$RESULT" | awk '
+    /^FILES_TEST_CHANGED:/ {sub(/^FILES_TEST_CHANGED:[[:space:]]*/, ""); capture=1; print; next}
+    capture && /^[A-Z_]+:/ {capture=0}
+    capture {print}
+  ')"
+  # Has a real test file if any non-empty, non-"none" entry exists.
+  ftc_has_tests=0
+  if printf '%s' "$FTC_BLOCK" | grep -vE '^[[:space:]]*(-[[:space:]]*)?(none|None|NONE)?[[:space:]]*$' | grep -qE '\S'; then
+    ftc_has_tests=1
+  fi
+
+  # Rule A: real test files were touched but BOTH RED/GREEN are "not applicable" → contradiction.
+  if [ "$ftc_has_tests" = "1" ] && [ "$red_na" = "1" ] && [ "$green_na" = "1" ]; then
+    echo "BLOCKED: FILES_TEST_CHANGED lists test files, but TDD_EVIDENCE marks both RED and GREEN as 'not applicable'." >&2
+    echo "If you touched test files, report the actual RED command + failing test summary and the GREEN command + passing summary. If the test changes are unrelated to TDD, justify in SUMMARY." >&2
+    exit 2
+  fi
+
+  # Rule B: both RED/GREEN are "not applicable" but SUMMARY doesn't justify the skip.
+  if [ "$red_na" = "1" ] && [ "$green_na" = "1" ]; then
+    SUMMARY_BLOCK="$(printf '%s' "$RESULT" | awk '
+      /^SUMMARY:/ {sub(/^SUMMARY:[[:space:]]*/, ""); capture=1; print; next}
+      capture && /^[A-Z_]+:/ {capture=0}
+      capture {print}
+    ')"
+    if ! printf '%s' "$SUMMARY_BLOCK" | grep -qiE '(docs?-only|docs?[[:space:]]+only|documentation|config-only|config[[:space:]]+only|configuration|generated[[:space:]]+only|generated-only|markdown|README)'; then
+      echo "BLOCKED: TDD_EVIDENCE marks RED+GREEN as 'not applicable' but SUMMARY does not justify the skip (expected mention of docs/config/generated)." >&2
+      echo "Only docs-only, config-only, or generated-only tasks may skip TDD. Add a one-phrase justification to SUMMARY or report real RED/GREEN evidence." >&2
+      exit 2
+    fi
+  fi
 fi
 
 exit 0
