@@ -33,6 +33,15 @@ the run_id or a unique pre-run suffix before launch. Resume may use only the
 worktree recorded in the explicit state path/run id; if that worktree is absent
 or points at another branch, stop with a blocker.
 
+After the worktree exists and before baseline commands, run local environment
+preflight. Check for ignored machine-local files or state the project needs but
+git did not copy, such as Android `local.properties`, missing Node dependency
+installs for the selected package manager, Docker daemon or memory constraints
+for container builds, and `.env.example` without a corresponding local `.env`.
+Do not silently copy ignored files into the headless worktree. If the missing
+file or state blocks baseline verification, the target must ask/report before
+copying or record an honest substitute.
+
 ## Safe Default Command
 
 ```bash
@@ -114,6 +123,13 @@ must include `status`, `next_action`, and `handoff_ready`; finished targets must
 be `handoff_ready=true` and not `red`. Blocked or failed targets must set a
 non-success `lifecycle_outcome`, a concrete `handoff_reason`, and a
 `context_health.next_action` suitable for resume.
+
+When a headless target records required phase methods, it must use
+`method_audit` evidence instead of skill-invocation intent. Implementation TDD
+needs RED and GREEN evidence references, review needs findings or an explicit
+no-findings residual-risk statement, and completion verification needs
+`completion_audit.verification_evidence`. Docs-only or read-only analysis runs
+may waive implementation methods only with an explicit reason.
 
 ## Learning Log
 

@@ -12,6 +12,8 @@ Run from the skill directory:
 python3 scripts/parse_plan.py --help
 python3 scripts/build_context_snapshot.py --help
 python3 scripts/validate_state.py --help
+python3 scripts/check_learning_log_health.py --help
+python3 scripts/check_learning_log_health.py --latest 5 --json
 python3 evals/check_state_schema.py
 python3 evals/check_learning_log.py
 python3 evals/check_skill_contract.py --skill SKILL.md
@@ -87,9 +89,12 @@ Add or update these cases whenever `references/state-schema.md` changes.
 - redaction guardrails
 - run identity isolation
 - `run_dir` and `state_path` consistency
+- terminal outcome health reporting
+- stale unclosed run classification
+- zero-event success semantics
 
 Add checks here when changing `scripts/append_learning_event.py` or
-[state-and-logging.md](state-and-logging.md).
+`scripts/check_learning_log_health.py` or [state-and-logging.md](state-and-logging.md).
 
 ## Contract Drift Checks
 
@@ -184,6 +189,15 @@ Use prompt fixtures when changing:
 For release-level behavior changes, run all fast checks plus affected execution
 fixtures. For docs-only changes, run `quick_validate.py` and the contract check
 if the docs mention runtime invariants.
+
+Local environment preflight guidance is documentation-only today. Verify those
+changes by checking the relevant reference text and running the contract check
+when wording is promoted into `SKILL.md` or prompt/runtime templates.
+
+Docker and Gradle resource triage is also policy guidance today. Verify edits by
+checking that the failure categories and learning-event guidance remain aligned
+between [../references/execution-cycle.md](../references/execution-cycle.md)
+and [../references/common-mistakes.md](../references/common-mistakes.md).
 
 ## Baselines
 

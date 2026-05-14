@@ -3,6 +3,22 @@
 Source of truth for current behavior: `SKILL.md`, `templates/`, and
 `references/`. This file tracks release intent and migration history.
 
+## v1.8.0 - Harden learning-log health and execution evidence (2026-05-14)
+
+- Added `scripts/check_learning_log_health.py` as a read-only reporter that
+  resolves terminal outcomes from `final.json`, treats zero-event success as
+  routine, and reports old unclosed dead-pid runs as diagnostic `stale`.
+- Extended learning-log evals with fixtures for final/index mismatch,
+  zero-event success, stale dead-pid runs, and live unclosed runs.
+- Added carried acceptance validation so finished runs cannot leave sequential
+  metrics open without final evidence.
+- Added method audit validation for declared required phase methods, including
+  RED/GREEN TDD evidence, review findings or residual-risk evidence, and
+  completion verification evidence.
+- Documented local environment preflight, verification resource-key
+  serialization, Docker/Gradle resource triage, and React Router lazy-route
+  verification risks.
+
 ## v1.7.1 - Clarify TDD scope across execution modes (2026-05-14)
 
 - Clarified that `test-driven-development` is required for implementation work
