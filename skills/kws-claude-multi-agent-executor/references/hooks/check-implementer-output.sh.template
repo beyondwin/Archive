@@ -128,4 +128,41 @@ if [ "$STATUS" = "DONE" ]; then
   fi
 fi
 
+# v2.11: METHOD_AUDIT block required on STATUS=DONE
+if [ "$STATUS" = "DONE" ]; then
+  # Rule M1: at least one METHOD_AUDIT: line must be present.
+  if ! printf '%s' "$RESULT" | grep -qE '^METHOD_AUDIT:'; then
+    cat >&2 <<'HOOKEOF'
+BLOCKED: Implementer output is missing a METHOD_AUDIT block.
+STATUS=DONE requires at least one METHOD_AUDIT: line.
+See references/implementer-prompt.md "METHOD_AUDIT lines" section.
+HOOKEOF
+    exit 2
+  fi
+
+  # Rule M2: if test files were changed, a METHOD_AUDIT: tdd applied|waived line is required.
+  # Reuse ftc_has_tests computed above in the TDD_EVIDENCE cross-validation block.
+  if [ "$ftc_has_tests" = "1" ]; then
+    if ! printf '%s' "$RESULT" | grep -qE '^METHOD_AUDIT:[[:space:]]*tdd[[:space:]]+(applied|waived)'; then
+      cat >&2 <<'HOOKEOF'
+BLOCKED: Test files were changed but no METHOD_AUDIT: tdd line was emitted.
+Either emit METHOD_AUDIT: tdd applied red=... green=... tests=...
+or METHOD_AUDIT: tdd waived reason=<docs-only-task|config-only-task|generated-only-task>.
+HOOKEOF
+      exit 2
+    fi
+  fi
+
+  # Rule M3: if METHOD_AUDIT: tdd applied is present, all three evidence keys must be present.
+  if printf '%s' "$RESULT" | grep -qE '^METHOD_AUDIT:[[:space:]]*tdd[[:space:]]+applied'; then
+    AUDIT_LINE="$(printf '%s' "$RESULT" | grep -E '^METHOD_AUDIT:[[:space:]]*tdd[[:space:]]+applied' | head -1)"
+    for key in red green tests; do
+      if ! printf '%s' "$AUDIT_LINE" | grep -qE "${key}="; then
+        printf 'BLOCKED: METHOD_AUDIT: tdd applied is missing required key %s= on line: %s\n' "$key" "$AUDIT_LINE" >&2
+        exit 2
+      fi
+    done
+  fi
+fi
+
 exit 0

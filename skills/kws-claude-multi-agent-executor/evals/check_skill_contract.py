@@ -250,6 +250,14 @@ def main() -> int:
             and "GREEN:" in body,
             "check-implementer-output.sh.template must validate TDD_EVIDENCE presence + cross-check RED/GREEN against FILES_TEST_CHANGED",
         )
+        # v2.11: hook must also enforce METHOD_AUDIT block on STATUS=DONE
+        record(
+            "implementer_hook_validates_method_audit",
+            "METHOD_AUDIT" in body
+            and "tdd applied" in body
+            and "tdd waived" in body,
+            "check-implementer-output.sh.template must enforce METHOD_AUDIT block (v2.11)",
+        )
 
     docs_prompt = skill_dir / "references" / "docs-updater-prompts.md"
     if docs_prompt.is_file():
