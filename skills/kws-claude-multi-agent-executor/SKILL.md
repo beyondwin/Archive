@@ -430,6 +430,21 @@ This is a fallback — the primary expectation is that one headless subprocess c
      2. Greedily merge two groups iff the UNION of their declared `Files:` sets has no overlap AND no task in either group has a `serial: true` annotation in the plan.
      3. Tasks whose Files: blocks overlap any other in the same wave MUST stay in their own singleton group (run sequentially within the wave).
 
+     **v2.11 — `resource_key` partition rule:**
+
+     A task may declare `**Resource Key:** <slug>` in its task body (similar to `**Files:**`). Slug is lowercased and whitespace-stripped. Examples: `gradle-test-output`, `db-port-5432`, `playwright-browser`.
+
+     After file-disjointness merging, before finalizing the wave's parallel groups:
+
+     1. Build a `resource_key → [task_ids]` map for tasks in this wave.
+     2. For each key with ≥ 2 task IDs in the same wave:
+        - Move each affected task to its own singleton group within the wave. If a multi-task group contained two collision-tagged tasks, split into singletons.
+        - Annotate each resulting singleton group in `state.execution_plan` with `"serialization_reason": "resource_key=<key>"`.
+
+     The wave still respects the file-disjointness invariant (groups within a wave never share files). Splits only widen serialization — they never merge file-overlapping tasks.
+
+     Tasks with no `Resource Key:` block are unaffected. The annotation is opt-in.
+
      Write to `state.execution_plan`:
      ```json
      [

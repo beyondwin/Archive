@@ -50,6 +50,26 @@ You are a Plan Reviewer sub-agent running on Sonnet. Audit the Plan + Spec again
 
 6. **Out-of-repo paths**: Any path in a Files block that uses `..` to escape the repo root. Already covered by Phase 0.5; re-verify.
 
+### Resource-Key Collision (WARN)
+
+For each task, parse `**Resource Key:** <slug>` if present (case-insensitive header match; slug lowercased; whitespace stripped).
+
+Using the supplied `execution_plan` YAML (waves and groups), identify any wave with ≥ 2 tasks sharing a non-null `resource_key`.
+
+For each such wave, emit:
+
+```json
+{
+  "severity": "WARN",
+  "category": "resource_key_collision",
+  "task_ids": ["<id1>", "<id2>"],
+  "description": "Tasks <id1>, <id2> share resource_key '<key>' in wave <N>. They will be forced into separate parallel groups (serial execution within the wave).",
+  "suggested_fix": "Either accept the serialization (no action) or add an explicit dependency to push one task to a later wave."
+}
+```
+
+WARN only — never BLOCKER. The runtime partition rule (Phase 0 Step 6) handles correctness automatically; the WARN exists so the plan author is aware that the declared parallelism is reduced.
+
 ## Severity assignment
 
 - `BLOCKER`: would cause a SPEC_BLOCKER escalation in Phase 1 with near-certainty (missing AC on HIGH-risk, named contract mismatch, dependency cycle, out-of-repo path).
