@@ -448,7 +448,8 @@ def cmd_close_run(args: argparse.Namespace) -> int:
         _rewrite_index_outcome(log_root, args.run_id, args.outcome)
     except OSError as exc:
         # Index rewrite is best-effort; surface to stderr but don't abort.
-        # The resolver will still find the outcome via final.json.
+        # The resolver falls back to meta.json (written above) when index.jsonl
+        # is stale; final.json is only present for runs that wrote it explicitly.
         print(f"warning: failed to rewrite index outcome for {args.run_id}: {exc}",
               file=sys.stderr)
     print(f"closed {args.run_id} outcome={args.outcome} events={event_count}")

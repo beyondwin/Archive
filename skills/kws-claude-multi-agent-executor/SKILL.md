@@ -1269,6 +1269,12 @@ Parse the JSON output:
   ```
   Then halt:
 
+  Substitute `<task_path_prefix>` in the message below with `state.tasks` when
+  `state.active_plan == "plan1"` and with `state.plan2_state.tasks` when
+  `state.active_plan == "plan2"` — the validator script itself reads the right
+  tree via `--active-plan`, but this user-facing diagnostic must point at the
+  correct path so the operator edits the right node.
+
   ```
   Method audit FAILED for tasks: <comma-separated list>.
 
@@ -1276,7 +1282,7 @@ Parse the JSON output:
     - Re-dispatch the failing task(s) with explicit instructions to emit
       METHOD_AUDIT: lines (see references/implementer-prompt.md).
     - If a method is genuinely not applicable, edit
-      state.tasks.<id>.method_audit.waived in state.json with a reason,
+      <task_path_prefix>.<id>.method_audit.waived in state.json with a reason,
       then re-run Phase 2.
 
   Validator output:
