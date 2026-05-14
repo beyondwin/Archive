@@ -4,12 +4,24 @@ This document expands `PLAN.md` into concrete implementation guidance. It is
 written for a future implementation pass against `kws-codex-plan-executor`; it
 does not claim the changes are already applied.
 
+## 2026-05-15 Correction
+
+This document originally treated a dead `meta.pid` as evidence for stale-run
+classification. That is not correct. `meta.pid` is written by the short-lived
+learning-log helper process, so helper-pid liveness is informational only.
+
+For the corrected run lifecycle implementation, use
+`../2026-05-14-run-lifecycle-drift-hardening/IMPLEMENTATION.md`. The sections
+below still describe useful fixture and reporter mechanics, but stale
+classification must read project-local state before considering a run stale.
+
 ## Implementation Order
 
 1. Add deterministic log-health fixtures.
 2. Implement read-only log-health reporting.
 3. Decide whether `index.jsonl` stays append-only or is rewritten on close.
-4. Add stale-run classification.
+4. Add project-state-aware `in_progress`, `needs_finalization`, and
+   `stale_candidate` classification.
 5. Update execution-cycle guidance for local env, resource serialization, and resource failure triage.
 6. Add carried acceptance state validation.
 7. Add phase-level method audit validation.
@@ -85,8 +97,12 @@ Create four cases inside the eval:
 
 1. `index_unknown_final_success`: `index.jsonl` says `unknown`; `final.json` says `success`.
 2. `zero_event_success`: `final.json` says `success`; `event_count=0`; no `events.jsonl`.
-3. `dead_pid_unclosed_run`: no `final.json`; `ended_at=null`; pid is impossible, such as `999999`.
-4. `live_pid_unclosed_run`: no `final.json`; `ended_at=null`; pid is `os.getpid()`.
+3. `active_project_state_dead_helper_pid`: no `final.json`; `ended_at=null`;
+   helper pid is impossible, but project-local state shows active or pending
+   finalization progress.
+4. `old_project_state_stale_candidate`: no `final.json`; `ended_at=null`;
+   project-local state exists but has an old `timestamps.updated_at` and no
+   active progress.
 
 Expected classifications:
 
@@ -94,8 +110,8 @@ Expected classifications:
 | --- | --- | --- |
 | `index_unknown_final_success` | `success` | `index_outcome_stale` |
 | `zero_event_success` | `success` | none |
-| `dead_pid_unclosed_run` | `stale` | `dead_pid_unclosed` |
-| `live_pid_unclosed_run` | `unknown` | none |
+| `active_project_state_dead_helper_pid` | `in_progress` or `needs_finalization` | none; `helper_pid_dead` may appear as info |
+| `old_project_state_stale_candidate` | `stale_candidate` | `project_state_inactive_past_threshold` |
 
 ### Step 1.3: Run The Eval
 
@@ -117,170 +133,20 @@ learning log checks passed
 - Create: `scripts/check_learning_log_health.py`
 - Modify: `evals/check_learning_log.py`
 
-### Step 2.1: Create Script Skeleton
+This task is superseded for lifecycle classification by
+`../2026-05-14-run-lifecycle-drift-hardening/IMPLEMENTATION.md`. The reporter
+still needs the same basic JSON/JSONL readers, but its classification logic must
+use this precedence:
 
-Create `scripts/check_learning_log_health.py`:
+1. `final.json` terminal outcome.
+2. Project-local state resolved from `meta.worktree_path` and `meta.state_path`.
+3. State-age-based `stale_candidate`.
+4. `unknown`.
 
-```python
-#!/usr/bin/env python3
-"""Summarize kws-codex-plan-executor learning-log health."""
+Helper pid liveness may appear as `diagnostics.info=["helper_pid_dead"]`, but
+must not drive stale classification.
 
-from __future__ import annotations
-
-import argparse
-import datetime as dt
-import json
-import os
-import sys
-from pathlib import Path
-from typing import Any
-
-
-DEFAULT_LOG_ROOT = Path("~/.codex/learning/kws-codex-plan-executor").expanduser()
-TERMINAL_OUTCOMES = {"success", "blocked", "error"}
-
-
-def parse_time(value: str | None) -> dt.datetime | None:
-    if not value:
-        return None
-    try:
-        return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def read_json(path: Path) -> dict[str, Any] | None:
-    if not path.is_file():
-        return None
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict):
-        raise ValueError(f"{path} root must be an object")
-    return data
-
-
-def read_index(log_root: Path) -> list[dict[str, Any]]:
-    path = log_root / "index.jsonl"
-    if not path.is_file():
-        return []
-    rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            value = json.loads(line)
-            if isinstance(value, dict):
-                rows.append(value)
-    return rows
-
-
-def run_dir_for(log_root: Path, run_id: str) -> Path:
-    date = f"{run_id[0:4]}-{run_id[4:6]}-{run_id[6:8]}"
-    return log_root / "runs" / date / run_id
-
-
-def pid_is_alive(pid: Any) -> bool | None:
-    if not isinstance(pid, int) or pid <= 0:
-        return None
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def count_events(run_dir: Path) -> int:
-    path = run_dir / "events.jsonl"
-    if not path.is_file():
-        return 0
-    return sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
-```
-
-### Step 2.2: Add Run Summarization
-
-Continue the script:
-
-```python
-def summarize_run(log_root: Path, index_row: dict[str, Any], *, now: dt.datetime, stale_after_minutes: int) -> dict[str, Any]:
-    run_id = str(index_row["run_id"])
-    run_dir = run_dir_for(log_root, run_id)
-    meta = read_json(run_dir / "meta.json") or {}
-    final = read_json(run_dir / "final.json")
-    event_count = count_events(run_dir)
-    warnings: list[str] = []
-
-    status = "unknown"
-    if final and final.get("outcome"):
-        status = str(final["outcome"])
-        if index_row.get("outcome") != status:
-            warnings.append("index_outcome_stale")
-    elif meta.get("outcome") in TERMINAL_OUTCOMES:
-        status = str(meta["outcome"])
-    elif meta:
-        started_at = parse_time(str(meta.get("started_at") or ""))
-        ended_at = meta.get("ended_at")
-        pid_alive = pid_is_alive(meta.get("pid"))
-        old_enough = started_at is not None and now - started_at > dt.timedelta(minutes=stale_after_minutes)
-        if ended_at is None and pid_alive is False and old_enough:
-            status = "stale"
-            warnings.append("dead_pid_unclosed")
-
-    if status == "success" and event_count == 0:
-        event_note = "routine_success_no_notable_events"
-    else:
-        event_note = None
-
-    return {
-        "run_id": run_id,
-        "status": status,
-        "repo": (meta or index_row).get("repo"),
-        "plan_path": (meta or index_row).get("plan_path"),
-        "started_at": (meta or index_row).get("started_at"),
-        "ended_at": (final or meta).get("ended_at") if (final or meta) else None,
-        "event_count": event_count,
-        "event_note": event_note,
-        "warnings": warnings,
-        "run_dir": str(run_dir),
-    }
-```
-
-### Step 2.3: Add CLI
-
-Finish the script:
-
-```python
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--log-root", default=str(DEFAULT_LOG_ROOT))
-    parser.add_argument("--latest", type=int, default=5)
-    parser.add_argument("--stale-after-minutes", type=int, default=30)
-    parser.add_argument("--json", action="store_true")
-    args = parser.parse_args()
-
-    log_root = Path(args.log_root).expanduser()
-    rows = read_index(log_root)[-args.latest :]
-    now = dt.datetime.now(dt.UTC)
-    summaries = [
-        summarize_run(log_root, row, now=now, stale_after_minutes=args.stale_after_minutes)
-        for row in rows
-    ]
-
-    if args.json:
-        print(json.dumps({"schema_version": "1", "runs": summaries}, indent=2, sort_keys=True))
-        return 0
-
-    for item in summaries:
-        warnings = ",".join(item["warnings"]) if item["warnings"] else "-"
-        print(f"{item['status']:8} events={item['event_count']} warnings={warnings} {item['run_id']}")
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
-```
-
-### Step 2.4: Verify
-
-Run:
+Verify with:
 
 ```bash
 python3 scripts/check_learning_log_health.py --latest 5 --json
@@ -291,7 +157,10 @@ Expected:
 
 - Latest real runs show terminal outcomes from `final.json` when present.
 - Zero-event success is annotated as routine success, not warned.
-- The unclosed GasStation-style fixture is `stale` only when the pid is dead and the age threshold is met.
+- The PromptGate adapter-runtime fixture reports `in_progress` or
+  `needs_finalization` when project-local state shows active progress even if
+  helper pid is dead.
+- Old inactive state reports `stale_candidate`, not terminal `stale`.
 
 ## Task 3: Close-Run Index Coherence
 
@@ -359,19 +228,20 @@ does not rewrite history.
 
 ### Required Semantics
 
-A run is stale when all of these are true:
+A run is a stale candidate when all of these are true:
 
 - `final.json` is absent.
-- `meta.json` exists.
-- `meta.ended_at` is `null`.
-- `meta.pid` is not alive.
-- `now - meta.started_at > stale_after_minutes`.
+- project-local state is absent, unreadable, or shows no active progress.
+- state age, such as `timestamps.updated_at`, exceeds the stale threshold when
+  available.
+- there is no cleaner explanation such as pending final verification,
+  `context_health.next_action`, or dirty worktree activity.
 
 Do not classify these as stale:
 
 - A run with `final.json`.
-- A run whose pid is still alive.
-- A run whose pid cannot be checked because of permissions.
+- A run with active or pending project-local state.
+- A run whose only "dead" signal is helper-pid liveness.
 - A recently started unclosed run under the age threshold.
 
 ### Documentation Text
@@ -382,12 +252,20 @@ Add this wording to `references/learning-log.md`:
 `index.jsonl` is a run start index. Terminal outcome is read from
 `runs/<date>/<run_id>/final.json` when present, then `meta.json`.
 
+When `final.json` is absent, health reporters should inspect project-local
+`.codex-orchestrator/runs/<run_id>/state.json` through `meta.worktree_path`
+before reporting stale candidates.
+
 `event_count=0` is normal for routine success because the log records only
 notable boundaries.
 
-A stale run is diagnostic, not a terminal lifecycle outcome. It means the
-learning-log helper saw an initialized run whose process is no longer alive and
-whose run was never closed. Do not mutate project state from the health report.
+`meta.helper_pid` and legacy `meta.pid` identify the helper process that wrote
+the learning-log metadata. They do not identify a durable Codex execution
+session. Health reporters must not classify a run as stale from helper-pid
+liveness alone.
+
+`stale_candidate` is diagnostic, not a terminal lifecycle outcome. Do not mutate
+project state or user-local learning logs from the health report.
 ```
 
 ## Task 5: Local Environment Preflight

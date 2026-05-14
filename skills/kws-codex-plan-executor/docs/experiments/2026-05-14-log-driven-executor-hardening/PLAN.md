@@ -28,10 +28,26 @@ The reviewed runs were:
 | `20260513T193445Z-readmates-codex-readmates-build-optimization-20260-43f6856ca32c-01cd1b` | ReadMates | success | dependency bootstrap, Docker memory, router lazy tests, bundle-size carry-forward |
 | `20260513T193443Z-readmates-codex-readmates-test-runtime-optimizatio-43f6856ca32c-2c4b36` | ReadMates | success | parallel Gradle test output collision |
 
+## 2026-05-15 Correction
+
+The later PromptGate adapter-runtime run showed that the original stale-run
+interpretation was too aggressive. `meta.pid` is written by the short-lived
+`append_learning_event.py init-run` helper process, not by a durable Codex
+executor session. A dead helper pid is expected after initialization and must
+not classify a run as stale by itself.
+
+For run lifecycle reporting, prefer the narrower plan in
+`../2026-05-14-run-lifecycle-drift-hardening/PLAN.md`. This broader hardening
+plan remains valid for local-env preflight, verification serialization,
+resource triage, carry-forward acceptance, and method audit, but stale
+classification must be project-state-aware.
+
 ## Problems To Solve
 
 1. `index.jsonl` keeps the initial `outcome=unknown` even when a run later writes `final.json` with `outcome=success`.
-2. A run can be abandoned after writing `meta.json` and events but before `close-run`, leaving `ended_at=null`, no `final.json`, and a dead `pid`.
+2. A run can be ambiguous after writing `meta.json` but before `close-run`,
+   leaving `ended_at=null` and no `final.json`; helper-pid liveness is not
+   enough to decide whether it is abandoned.
 3. New isolated worktrees do not carry ignored local environment files such as Android `local.properties`, which can make baseline checks fail before touching project code.
 4. Verification command parallelization can collide when Gradle Test tasks share output directories in the same worktree.
 5. Docker build failures can look like project compile failures when the actual cause is container OOM.
@@ -77,7 +93,7 @@ The reviewed runs were:
 | Decision | Choice | Rationale |
 | --- | --- | --- |
 | Learning-log source of truth | `final.json` wins for terminal outcome; `meta.json` mirrors it; `index.jsonl` must be updated or clearly marked as append-only start index | Current analysis is misleading if it reads only `index.jsonl`. |
-| Stale run handling | Report as `stale` when no `final.json`, `ended_at=null`, `pid` is dead, and age exceeds threshold | Avoids treating abandoned runs as active. |
+| Stale run handling | Resolve terminal `final.json` first, then project-local state, then classify old inactive state as `stale_candidate` | Avoids treating active runs as abandoned because the helper pid has exited. |
 | Local env files | Detect and report missing repo-specific ignored files; do not auto-copy by default | These files may contain machine-local paths or secrets. |
 | Verification parallelization | Add command resource keys and serialize conflicting keys | Keeps safe parallelism while avoiding Gradle Test output collisions. |
 | Docker OOM triage | Inspect OOM evidence before root-causing as compile failure | Recent ReadMates failure was environment memory, not source code. |
@@ -100,13 +116,20 @@ Acceptance:
 
 ### Milestone 2: Stale Run Health Reporting
 
-Detect abandoned or interrupted runs without mutating them.
+Detect likely abandoned or interrupted runs without mutating them and without
+false-staling active project state.
 
 Acceptance:
 
-- `check_learning_log_health.py --latest 5` prints JSON with `status=success|blocked|error|unknown|stale`.
-- Stale requires no `final.json`, `meta.ended_at=null`, a dead or missing `pid`, and age above a configurable threshold.
-- A currently live process is not reported as stale.
+- `check_learning_log_health.py --latest 5` prints JSON with
+  `status=success|blocked|error|in_progress|needs_finalization|unknown|stale_candidate`.
+- A run with no `final.json` but readable active project-local state reports
+  `in_progress` or `needs_finalization`.
+- `meta.pid` or `meta.helper_pid` liveness is informational only and never the
+  primary stale signal.
+- `stale_candidate` requires no `final.json`, no active project-state progress,
+  an old `timestamps.updated_at` or equivalent state-age signal, and no cleaner
+  explanation such as pending final verification.
 - Missing `events.jsonl` is not an error.
 
 ### Milestone 3: Isolated Worktree Local-Env Preflight
@@ -202,8 +225,8 @@ Acceptance:
 
 - [ ] Add a fixture for `index_unknown_final_success`.
 - [ ] Add a fixture for `zero_event_success`.
-- [ ] Add a fixture for `dead_pid_unclosed_run`.
-- [ ] Add a fixture for `live_pid_unclosed_run`.
+- [ ] Add a fixture for `active_project_state_dead_helper_pid`.
+- [ ] Add a fixture for `old_project_state_stale_candidate`.
 - [ ] Run `python3 evals/check_learning_log.py`.
 - [ ] Commit: `test: cover learning log health cases`.
 
