@@ -476,6 +476,146 @@ def main() -> int:
         record("run_id_mismatch_rejected", ok,
                "append with event.run_id != --run-id should fail")
 
+        # ----- outcome fixture helpers (resolver deferred to later task per plan v2.11) -----
+        # These fixture builders construct on-disk state and return expected_status /
+        # expected_warnings so the future outcome-resolver can be verified against them.
+        # For now we assert the on-disk artifacts exist and have the correct content.
+
+        def fixture_index_unknown_final_success(fx_root: Path) -> dict:
+            run_id_fx = "20260514T010000Z-test-success-aaaa-aaaaaa"
+            rd_fx = fx_root / "runs" / "2026-05-14" / run_id_fx
+            rd_fx.mkdir(parents=True, exist_ok=True)
+            (fx_root / "index.jsonl").write_text(json.dumps({
+                "schema_version": "1", "run_id": run_id_fx, "outcome": "unknown",
+            }) + "\n", encoding="utf-8")
+            (rd_fx / "final.json").write_text(json.dumps({
+                "schema_version": "1", "run_id": run_id_fx, "outcome": "success",
+            }), encoding="utf-8")
+            return {
+                "run_id": run_id_fx,
+                "run_dir": rd_fx,
+                "index_path": fx_root / "index.jsonl",
+                "expected_status": "success",
+                "expected_warnings": ["index_outcome_stale"],
+            }
+
+        def fixture_zero_event_success(fx_root: Path) -> dict:
+            run_id_fx = "20260514T020000Z-test-zero-bbbb-bbbbbb"
+            rd_fx = fx_root / "runs" / "2026-05-14" / run_id_fx
+            rd_fx.mkdir(parents=True, exist_ok=True)
+            (rd_fx / "final.json").write_text(json.dumps({
+                "schema_version": "1", "run_id": run_id_fx,
+                "outcome": "success", "event_count": 0,
+            }), encoding="utf-8")
+            return {
+                "run_id": run_id_fx,
+                "run_dir": rd_fx,
+                "expected_status": "success",
+                "expected_warnings": [],
+            }
+
+        def fixture_dead_pid_unclosed_run(fx_root: Path) -> dict | None:
+            dead_pid = 999999
+            try:
+                os.kill(dead_pid, 0)
+                # PermissionError means PID exists on this host — skip fixture
+                return None
+            except ProcessLookupError:
+                pass
+            except PermissionError:
+                return None
+            run_id_fx = "20260514T030000Z-test-dead-cccc-cccccc"
+            rd_fx = fx_root / "runs" / "2026-05-14" / run_id_fx
+            rd_fx.mkdir(parents=True, exist_ok=True)
+            (rd_fx / "meta.json").write_text(json.dumps({
+                "schema_version": "1", "run_id": run_id_fx,
+                "outcome": "unknown", "event_count": 0,
+                "ended_at": None, "pid": dead_pid,
+            }), encoding="utf-8")
+            return {
+                "run_id": run_id_fx,
+                "run_dir": rd_fx,
+                "expected_status": "stale",
+                "expected_warnings": ["dead_pid_unclosed"],
+            }
+
+        def fixture_live_pid_unclosed_run(fx_root: Path) -> dict:
+            live_pid = os.getpid()
+            run_id_fx = "20260514T040000Z-test-live-dddd-dddddd"
+            rd_fx = fx_root / "runs" / "2026-05-14" / run_id_fx
+            rd_fx.mkdir(parents=True, exist_ok=True)
+            (rd_fx / "meta.json").write_text(json.dumps({
+                "schema_version": "1", "run_id": run_id_fx,
+                "outcome": "unknown", "event_count": 0,
+                "ended_at": None, "pid": live_pid,
+            }), encoding="utf-8")
+            return {
+                "run_id": run_id_fx,
+                "run_dir": rd_fx,
+                "expected_status": "unknown",
+                "expected_warnings": [],
+            }
+
+        fx_root_base = temp_path / "fx"
+        fx_root_base.mkdir()
+
+        # ----- check 18: fixture_index_unknown_final_success -----
+        fx18 = fixture_index_unknown_final_success(fx_root_base / "fx18")
+        final18 = json.loads((fx18["run_dir"] / "final.json").read_text(encoding="utf-8"))
+        index18_line = json.loads((fx18["index_path"]).read_text(encoding="utf-8").splitlines()[0])
+        ok = (
+            final18.get("outcome") == "success"
+            and index18_line.get("outcome") == "unknown"
+            and fx18["expected_status"] == "success"
+            and "index_outcome_stale" in fx18["expected_warnings"]
+        )
+        record("fixture_index_unknown_final_success",
+               ok, "fixture: index=unknown + final=success -> expected_status=success + warn index_outcome_stale")
+
+        # ----- check 19: fixture_zero_event_success -----
+        fx19 = fixture_zero_event_success(fx_root_base / "fx19")
+        final19 = json.loads((fx19["run_dir"] / "final.json").read_text(encoding="utf-8"))
+        ok = (
+            final19.get("outcome") == "success"
+            and final19.get("event_count") == 0
+            and not (fx19["run_dir"] / "events.jsonl").exists()
+            and fx19["expected_status"] == "success"
+            and fx19["expected_warnings"] == []
+        )
+        record("fixture_zero_event_success",
+               ok, "fixture: final.outcome=success event_count=0 no events.jsonl -> expected_status=success no warnings")
+
+        # ----- check 20: fixture_dead_pid_unclosed_run -----
+        fx20 = fixture_dead_pid_unclosed_run(fx_root_base / "fx20")
+        if fx20 is None:
+            # PID 999999 is live on this host — skip without failing
+            record("fixture_dead_pid_unclosed_run", True,
+                   "skipped: PID 999999 is live on this host")
+        else:
+            meta20 = json.loads((fx20["run_dir"] / "meta.json").read_text(encoding="utf-8"))
+            ok = (
+                meta20.get("ended_at") is None
+                and meta20.get("pid") == 999999
+                and not (fx20["run_dir"] / "final.json").exists()
+                and fx20["expected_status"] == "stale"
+                and "dead_pid_unclosed" in fx20["expected_warnings"]
+            )
+            record("fixture_dead_pid_unclosed_run",
+                   ok, "fixture: no final.json + ended_at=null + dead pid -> expected_status=stale warn dead_pid_unclosed")
+
+        # ----- check 21: fixture_live_pid_unclosed_run -----
+        fx21 = fixture_live_pid_unclosed_run(fx_root_base / "fx21")
+        meta21 = json.loads((fx21["run_dir"] / "meta.json").read_text(encoding="utf-8"))
+        ok = (
+            meta21.get("ended_at") is None
+            and meta21.get("pid") == os.getpid()
+            and not (fx21["run_dir"] / "final.json").exists()
+            and fx21["expected_status"] == "unknown"
+            and fx21["expected_warnings"] == []
+        )
+        record("fixture_live_pid_unclosed_run",
+               ok, "fixture: no final.json + ended_at=null + live pid -> expected_status=unknown no warnings")
+
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if not failures else 1
