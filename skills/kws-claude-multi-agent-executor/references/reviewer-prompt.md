@@ -146,6 +146,24 @@ QUALITY_ISSUES:
 FILES_REVIEWED:
   - <exact file path, one per line>
 
+### REVIEW_FINDINGS line (v2.11 — required)
+
+Emit exactly one line in your final output:
+
+```
+REVIEW_FINDINGS: count=<N> locations=<file:line[,file:line...]>
+```
+
+OR when no findings:
+
+```
+REVIEW_FINDINGS: no-findings residual-risk="<one-sentence statement of what could still go wrong>"
+```
+
+The `residual-risk` statement should name a class of concern you considered and decided was acceptable (e.g., "no concurrency tests added but the change is single-threaded by construction"). A blank residual-risk is not acceptable — emit at least one sentence.
+
+The orchestrator parses this line to populate `state.tasks.task_N.method_audit.applied` for the `code-review-pass` skill.
+
 ## Learning log emit (v2.8)
 
 If your tier is WARN or FAIL (QUALITY_SCORE < 0.75 OR SPEC_SCORE < 0.85), write

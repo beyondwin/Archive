@@ -111,6 +111,35 @@ options:
   B: <concrete option>
   C: <concrete option>
 
+### METHOD_AUDIT lines (v2.11 — required when STATUS=DONE)
+
+For each skill in the "Required Skills" section that applies to this task, emit one line:
+
+```
+METHOD_AUDIT: <skill-short-name> applied [evidence-kv pairs]
+METHOD_AUDIT: <skill-short-name> waived reason=<short rationale>
+```
+
+Skill short names:
+
+| Skill | Short name | Evidence pairs |
+|-------|-----------|----------------|
+| `superpowers:test-driven-development` | `tdd` | `red="<command>"`, `green="<command>"`, `tests=<path[::test]>` |
+| `superpowers:verification-before-completion` | `verification` | `commands_run=<comma-separated>` |
+| Combined Reviewer pass (downstream) | `code-review-pass` | Filled by the orchestrator from Reviewer output; you should NOT emit this line. |
+
+Examples:
+
+```
+METHOD_AUDIT: tdd applied red="pytest tests/test_foo.py::test_bar" green="pytest tests/test_foo.py::test_bar" tests=tests/test_foo.py::test_bar
+METHOD_AUDIT: verification applied commands_run="pytest -q,ruff check src/"
+METHOD_AUDIT: tdd waived reason=docs-only-task
+```
+
+**Fabricating evidence is grounds for re-dispatch.** Commands listed under `red` / `green` / `commands_run` must be commands you actually executed in this task. The orchestrator may sample-replay them or check tool-call history if a method_audit_violation is suspected. Fabricated evidence triggers a `method_audit_violation` learning-log event (severity=high).
+
+**TDD waive conditions:** the only legitimate reasons are `docs-only-task`, `config-only-task`, `generated-only-task`. If you waive TDD with another reason, the orchestrator validator will fail the run.
+
 ## Learning log emit (v2.8)
 
 If you ESCALATE (any type), write a learning-event candidate JSON to
