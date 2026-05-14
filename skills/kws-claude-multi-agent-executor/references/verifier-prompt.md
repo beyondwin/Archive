@@ -63,31 +63,25 @@ Before escalating, work through these steps in order:
 
 Write your structured result to: `{result_json_path}`
 
-JSON schema (write this exact structure):
+### Result JSON (v2.11)
+
 ```json
 {
-  "status": "PASS",
-  "summary": "<≤3 sentences>",
-  "risk_level": "<as provided>",
-  "tests_run": ["<command1>"],
-  "results": [{"suite": "<name>", "status": "PASS", "count": 0, "failures": 0}],
-  "issues": ["none"],
-  "escalation": null
+  "status": "PASS" | "FAIL" | "ESCALATE",
+  "commands_run": ["<cmd1>", "<cmd2>", ...],
+  "exit_codes": [0, 0, ...],
+  "issues": [...],          // on FAIL
+  "category": "docker_oom" | "gradle_daemon_disappearance" |
+              "gradle_metaspace" | "node_heap_oom" |
+              "service_unreachable" | "other",   // on FAIL; optional, default "other"
+  "blocker": "...",         // on ESCALATE
+  "options": {...}          // on ESCALATE
 }
 ```
 
-If FAIL: set `"status": "FAIL"` and populate `issues` with failure descriptions.
-If ESCALATE: set `"status": "ESCALATE"` and populate `escalation`:
-```json
-"escalation": {
-  "type": "ENV_BLOCKER",
-  "task": "<task id or 'batch'>",
-  "blocker": "<one sentence>",
-  "attempted": "<commands run>",
-  "cause": "<suspected root cause>",
-  "options": {"A": "<>", "B": "<>", "C": "<>"}
-}
-```
+`commands_run` is the verification-evidence list. The orchestrator harvests it into `state.tasks.task_N.method_audit.applied` for the `verification-before-completion` skill.
+
+`category` is optional on FAIL. When present, it must be one of the ENV_BLOCKER triage categories from `references/escalation-playbook.md`. Used to populate `root_cause_category` on the `verification_failure` learning-log event.
 
 After writing the file, print its contents to stdout for logging.
 
