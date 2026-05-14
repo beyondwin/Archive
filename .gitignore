@@ -54,4 +54,5 @@ docs/_graph/*
 .codex/
 .claude/
 .codex-orchestrator/
+.orchestrator/
 docs/superpowers/
