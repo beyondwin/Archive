@@ -178,7 +178,26 @@ Valid statuses:
 - `red`: safe continuation needs a blocker, user decision, or handoff.
 
 Finished runs require `context_health.handoff_ready=true` and a non-red status.
-Blocked or failed runs must leave a concrete `next_action`.
+They also require `context_health.last_checked_at` to be present and not older
+than `timestamps.updated_at`, so a fresh `next_action` cannot be paired with an
+old health timestamp. Blocked or failed runs must leave a concrete
+`next_action`.
+
+## Learning-Log Health Reporting
+
+Execution modes write user-local learning-log metadata under
+`~/.codex/learning/kws-codex-plan-executor/`. That log is diagnostic, not the
+resume source of truth. Recent-run health is resolved in this order:
+
+1. terminal `final.json`
+2. project-local `.codex-orchestrator/runs/<run_id>/state.json`
+3. learning-log metadata
+
+The reporter returns project-state and git-state summaries when available.
+`meta.helper_pid` and legacy `meta.pid` identify only the helper process that
+wrote learning-log metadata; helper-pid liveness is informational and cannot by
+itself make a run stale. Old inactive project state is reported as
+`stale_candidate`, and dirty active worktrees are surfaced as diagnostics.
 
 ## Risk-Scaled Verification
 

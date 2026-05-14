@@ -293,3 +293,61 @@ risk. Do not paste long logs or sensitive output.
   - The docs describe desired reporter behavior. A future implementation pass
     still needs to update scripts, evals, references, and release docs before
     the behavior becomes active.
+
+## 2026-05-15 - Project-state-aware run health reporting
+
+- Branch: `codex/run-lifecycle-drift-hardening-20260515`
+- Commit: pending at time of verification
+- Scope: implemented project-state-aware learning-log health reporting, helper
+  pid metadata, git drift summaries, terminal context-health timestamp
+  validation, deterministic eval fixtures, and release documentation for
+  `kws-codex-plan-executor` v1.8.1.
+- Commands:
+  - `python3 scripts/parse_plan.py --help`
+    - result: pass, help printed required `--plan` and `--repo-root` arguments
+  - `python3 scripts/validate_state.py --help`
+    - result: pass, help printed state JSON positional argument
+  - `python3 evals/check_prompt.py --help`
+    - result: pass, help printed `--fixture` and `--output`
+  - `python3 evals/check_execution.py --help`
+    - result: pass, help printed fixture/workdir/final-output options
+  - `python3 evals/check_parse_plan.py --help`
+    - result: pass, help printed fixture option
+  - `python3 evals/check_skill_contract.py --help`
+    - result: pass, help printed `--skill`
+  - `python3 evals/check_state_schema.py`
+    - result: pass, `"passed": true`; includes terminal
+      `context_health.last_checked_at` freshness fixtures
+  - `python3 evals/check_learning_log.py`
+    - result: pass, `"passed": true`; includes active project state,
+      needs-finalization state, stale candidate, missing worktree, dirty git
+      state, helper-pid, and index-info fixtures
+  - `python3 evals/check_skill_contract.py --skill SKILL.md`
+    - result: pass, `"passed": true` and no failures
+  - `python3 scripts/check_learning_log_health.py --latest 5 --json`
+    - result: pass, JSON emitted terminal success, active project-state
+      summaries, git-state summaries, and expected
+      `dirty_worktree_during_in_progress` diagnostics for active dirty
+      worktrees
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .`
+    - result: pass, `Skill is valid!`
+  - `git diff --check -- skills/kws-codex-plan-executor`
+    - result: pass, no whitespace errors
+  - `python3 -m py_compile scripts/append_learning_event.py scripts/check_learning_log_health.py scripts/validate_state.py evals/check_learning_log.py evals/check_state_schema.py`
+    - result: pass, no syntax errors
+  - `graphify update .`
+    - result: pass, rebuilt `graphify-out` with 3596 nodes, 3668 edges, and 353
+      communities
+- Skipped checks:
+  - `bash evals/run.sh`; skipped because this change did not modify headless
+    runner orchestration or fixture harness behavior. The modified reporter,
+    learning-log helper, state validator, contracts, and docs are covered by
+    deterministic checks above.
+- Documentation impact:
+  - Updated README, architecture, history, state/logging docs, eval docs,
+    risks, decisions, how-it-works, learning-log reference, execution-cycle
+    reference, state-schema reference, and this verification log.
+- Residual risk:
+  - Health reporting still cannot prove a live Codex desktop session; it
+    classifies persisted project state and git evidence, with old inactive
+    state reported as `stale_candidate`.

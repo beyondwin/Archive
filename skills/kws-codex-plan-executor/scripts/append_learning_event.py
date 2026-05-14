@@ -23,7 +23,7 @@ from typing import Any
 
 
 DEFAULT_LOG_ROOT = Path("~/.codex/learning/kws-codex-plan-executor").expanduser()
-SKILL_VERSION = "1.8.0"
+SKILL_VERSION = "1.8.1"
 VALID_MODES = {"interactive", "headless"}
 VALID_EVENT_TYPES = {
     "blocker",
@@ -241,6 +241,7 @@ def ensure_run_dir_with_meta(log_root: Path, run_id: str) -> Path:
             "skill_version": SKILL_VERSION,
             "host": socket.gethostname(),
             "pid": os.getpid(),
+            "helper_pid": os.getpid(),
             "repo": {"name": None, "branch": None, "remote_hash": None},
             "mode": None,
             "plan_path": None,
@@ -274,6 +275,7 @@ def cmd_init_run(args: argparse.Namespace) -> int:
         "skill_version": SKILL_VERSION,
         "host": socket.gethostname(),
         "pid": os.getpid(),
+        "helper_pid": os.getpid(),
         "repo": {
             "name": args.repo_name,
             "branch": args.branch,

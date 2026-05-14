@@ -120,7 +120,11 @@ For each task:
 8. Refresh `context_health` at the same semantic boundary. Use `green` when
    another agent can resume from state and artifacts, `yellow` when assumptions
    or open questions remain but execution can continue, and `red` when safe
-   continuation requires a blocker, user decision, or handoff.
+   continuation requires a blocker, user decision, or handoff. Whenever any
+   `context_health` field changes, update `context_health.last_checked_at` in
+   the same state write. A stale timestamp is misleading during resume because
+   `next_action` can look fresh while the health check date still points at an
+   earlier task.
 
 When sequential tasks share one acceptance metric, record task-level
 `carried_acceptance` instead of marking the metric silently green. Use
@@ -193,8 +197,10 @@ details.
 - Run final verification.
 - Check documentation impact.
 - Refresh `context_health` before final state validation. Finished runs must be
-  `handoff_ready=true` and not `red`; blocked or failed runs must leave a
-  concrete `next_action` and any `open_questions` needed for handoff.
+  `handoff_ready=true`, not `red`, and have `context_health.last_checked_at`
+  present and at least as recent as `timestamps.updated_at`; blocked or failed
+  runs must leave a concrete `next_action` and any `open_questions` needed for
+  handoff.
 - Write `completion_audit` before claiming completion. It must include
   `passed=true`, non-empty `prompt_to_artifact_checklist`, and non-empty
   `verification_evidence` when `lifecycle_outcome=finished`.

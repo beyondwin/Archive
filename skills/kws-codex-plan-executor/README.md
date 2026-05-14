@@ -12,7 +12,7 @@ read [docs/user-guide.ko.md](docs/user-guide.ko.md).
 
 ## Current Contract
 
-- Skill version: `1.8.0`
+- Skill version: `1.8.1`
 - Execution worktree: mandatory dedicated non-conflicting `codex/...` git
   worktree for `interactive` and `headless`
 - Primary state: `.codex-orchestrator/runs/<run_id>/state.json`
@@ -23,6 +23,8 @@ read [docs/user-guide.ko.md](docs/user-guide.ko.md).
 - Carried acceptance: optional task-level `carried_acceptance` for sequential
   metrics
 - Learning log: `~/.codex/learning/kws-codex-plan-executor/`
+- Run health reporting: terminal `final.json`, then project-local state, then
+  learning-log metadata; helper pid liveness is informational only
 
 ## Read Order
 
@@ -106,6 +108,8 @@ The critical gates are:
   `state.json`
 - no successful finish with `context_health.status=red` or
   `context_health.handoff_ready=false`
+- no finished run with stale `context_health.last_checked_at` relative to
+  `timestamps.updated_at`
 - no finished run with unresolved `carried_acceptance.status=open`
 - no applied `method_audit` entry without required evidence refs when a method
   is declared required

@@ -37,7 +37,7 @@ def base_state() -> dict:
         "context_basis_hash": "0" * 64,
         "context_health": {
             "status": "green",
-            "last_checked_at": None,
+            "last_checked_at": "2026-05-14T10:00:00Z",
             "context_snapshot_present": True,
             "context_basis_hash_recorded": True,
             "active_task_contract_present": True,
@@ -67,7 +67,11 @@ def base_state() -> dict:
                 "verifier_retries": 0,
             }
         },
-        "timestamps": {"started_at": None, "updated_at": None, "completed_at": None},
+        "timestamps": {
+            "started_at": "2026-05-14T09:00:00Z",
+            "updated_at": "2026-05-14T10:00:00Z",
+            "completed_at": "2026-05-14T10:00:00Z",
+        },
     }
 
 
@@ -178,6 +182,42 @@ def main() -> int:
     )
     if not checks["finished_context_not_handoff_ready_fails"]:
         failures.append("finished lifecycle outcome should require context_health.handoff_ready")
+
+    finished_missing_context_health_checked_at = base_state()
+    finished_missing_context_health_checked_at["context_health"]["last_checked_at"] = None
+    finished_missing_context_health_checked_at_result = run_validator(script, finished_missing_context_health_checked_at)
+    checks["finished_missing_context_health_checked_at_fails"] = (
+        finished_missing_context_health_checked_at_result.returncode != 0
+        and "context_health.last_checked_at" in (
+            finished_missing_context_health_checked_at_result.stderr
+            + finished_missing_context_health_checked_at_result.stdout
+        )
+    )
+    if not checks["finished_missing_context_health_checked_at_fails"]:
+        failures.append("finished lifecycle outcome should require context_health.last_checked_at")
+
+    finished_stale_context_health_timestamp = base_state()
+    finished_stale_context_health_timestamp["context_health"]["last_checked_at"] = "2026-05-14T09:59:59Z"
+    finished_stale_context_health_timestamp_result = run_validator(script, finished_stale_context_health_timestamp)
+    checks["finished_stale_context_health_timestamp_fails"] = (
+        finished_stale_context_health_timestamp_result.returncode != 0
+        and "context_health.last_checked_at must not be older than timestamps.updated_at"
+        in (
+            finished_stale_context_health_timestamp_result.stderr
+            + finished_stale_context_health_timestamp_result.stdout
+        )
+    )
+    if not checks["finished_stale_context_health_timestamp_fails"]:
+        failures.append("finished lifecycle outcome should reject stale context_health.last_checked_at")
+
+    intermediate_stale_context_health_timestamp = base_state()
+    intermediate_stale_context_health_timestamp["lifecycle_outcome"] = None
+    intermediate_stale_context_health_timestamp["completion_audit"] = None
+    intermediate_stale_context_health_timestamp["context_health"]["last_checked_at"] = "2026-05-14T09:59:59Z"
+    intermediate_stale = run_validator(script, intermediate_stale_context_health_timestamp)
+    checks["intermediate_stale_context_health_timestamp_passes"] = intermediate_stale.returncode == 0
+    if not checks["intermediate_stale_context_health_timestamp_passes"]:
+        failures.append("stale context_health timestamp should be non-blocking before terminal finished outcome")
 
     finished_without_audit = base_state()
     del finished_without_audit["completion_audit"]

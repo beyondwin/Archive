@@ -3,6 +3,25 @@
 Source of truth for current behavior: `SKILL.md`, `templates/`, and
 `references/`. This file tracks release intent and migration history.
 
+## v1.8.1 - Make run health project-state-aware (2026-05-15)
+
+- Added `helper_pid` to new learning-log run metadata while keeping legacy
+  `pid` for compatibility.
+- Changed `scripts/check_learning_log_health.py` to resolve status from
+  terminal `final.json`, then project-local state, then learning-log metadata.
+  Dead helper pids now appear as `diagnostics.info=["helper_pid_dead"]` rather
+  than driving stale classification.
+- Added project-state summaries, git worktree summaries, and actionable
+  diagnostics such as `missing_project_state`,
+  `project_state_inactive_past_threshold`, and
+  `dirty_worktree_during_in_progress`.
+- Added eval fixtures for active project state with dead helper pid,
+  needs-finalization state, stale candidate state, missing worktrees, dirty git
+  state, and append-only index mismatch as informational diagnostics.
+- Tightened terminal state validation so `lifecycle_outcome=finished` requires
+  `context_health.last_checked_at` to be present and not older than
+  `timestamps.updated_at`.
+
 ## v1.8.0 - Harden learning-log health and execution evidence (2026-05-14)
 
 - Added `scripts/check_learning_log_health.py` as a read-only reporter that

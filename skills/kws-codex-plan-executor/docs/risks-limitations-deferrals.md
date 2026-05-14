@@ -57,6 +57,8 @@ Mitigation:
 
 - `validate_state.py` checks shape, status enum, handoff readiness, and finished
   outcome consistency.
+- Terminal `finished` state must include `context_health.last_checked_at` that
+  is not older than `timestamps.updated_at`.
 - `evals/check_skill_contract.py` keeps the context-health contract visible in
   runtime references and prompt export.
 
@@ -106,22 +108,28 @@ Mitigation:
 Residual risk: no static redactor catches every possible secret. Agents must
 still summarize conservatively before appending events.
 
-### Stale Learning Runs
+### Run Health Liveness
 
 Risk: an interrupted executor can leave `meta.json` with `ended_at=null` and no
-`final.json`, making a dead run look active.
+`final.json`, making an inactive run look active. Conversely, a healthy active
+run can look dead if a reporter treats the short-lived helper pid as executor
+liveness.
 
 Mitigation:
 
-- `scripts/check_learning_log_health.py` reports stale runs only when no final
-  outcome exists, the pid is not alive, and the run is older than the configured
-  threshold.
+- `scripts/check_learning_log_health.py` resolves terminal `final.json` first,
+  then project-local state, then learning-log metadata.
+- `meta.helper_pid` and legacy `meta.pid` are reported only as helper-process
+  diagnostics.
+- Old inactive project state reports `stale_candidate`, not terminal failure.
+- Missing worktrees, missing project state, and dirty active worktrees are
+  explicit diagnostics.
 - The report is diagnostic and read-only; it does not mutate user-local logs or
   project state.
 
-Residual risk: pid liveness is best-effort and can be ambiguous across
-permissions, host restarts, or pid reuse. Permission-denied checks are treated
-as alive rather than stale.
+Residual risk: the reporter cannot prove a Codex session is currently running.
+It reports persisted state and git evidence, so a clean worktree with old
+active state can still be ambiguous and should be treated as `stale_candidate`.
 
 ### Local Environment Preflight
 
