@@ -22,6 +22,21 @@ Use this for `mode=interactive`.
   - Resume may select the worktree recorded in the explicit state path/run id,
     but only if it is still present and matches the stored branch. Otherwise
     stop with a blocker instead of falling back to the original checkout.
+- Run local environment preflight immediately after worktree creation and
+  before baseline verification. Check for ignored machine-local files or state
+  that git will not copy into a new worktree:
+  - Android/Gradle: `local.properties` with `sdk.dir`; compare against the
+    original checkout discovered from `git worktree list --porcelain` when
+    available.
+  - Node/frontend: dependency install state for the selected package manager
+    before build or test commands.
+  - Docker build tasks: Docker daemon reachability and available memory when
+    the plan includes containerized builds.
+  - Local env templates: `.env.example` exists while `.env` is intentionally
+    absent.
+  Do not silently copy ignored files. If a missing local file blocks baseline
+  verification, ask the user, copy only after explicit approval, or record an
+  honest substitute explaining the environment blocker.
 - Initialize a learning run inside the selected worktree with
   `scripts/append_learning_event.py init-run` and keep its `run_id` for all
   state, headless artifacts, and learning events.
@@ -67,9 +82,25 @@ For each task:
    failure) in state/checkpoint before implementing, then record GREEN evidence
    after the fix. Docs-only/config-only/generated-only tasks may record TDD as
    not applicable with the reason.
+   Record required phase methods in `method_audit` by evidence, not by intent.
+   TDD requires RED and GREEN evidence, review requires findings or an explicit
+   no-findings residual-risk statement, and completion verification requires
+   command evidence. Do not record routine helper skills; record required
+   methods and explicit waivers only.
 3. Implement locally unless subagents are explicitly allowed.
 4. Review spec compliance and code quality on `gpt-5.5 high`.
 5. Run risk-scaled verification.
+   Parallel verification is allowed only when commands do not share mutable
+   output resources. Assign a `verification_resource_key` before parallelizing
+   commands that can write shared artifacts:
+   - Gradle Test task:
+     `gradle-test:<project-path>:<task-name>:<test-results-dir>`
+   - Gradle build task: `gradle-build:<project-path>`
+   - Node package command: `node:<package-dir>:<command-name>`
+   - Docker build: `docker-build:<dockerfile-path>:<context-path>:<tag>`
+   - Browser/E2E command: `browser:<app-url-or-project>:<suite>`
+   Commands with the same resource key run serially in one worktree. Record the
+   serialization reason in state when this changes the verification plan.
    For `risk=high`, maintain a compact high-risk verification matrix. Include
    each relevant scenario with `status=passed|failed|blocked|not-applicable`,
    the command or manual check, and the evidence path or excerpt:
@@ -91,8 +122,55 @@ For each task:
    or open questions remain but execution can continue, and `red` when safe
    continuation requires a blocker, user decision, or handoff.
 
+When sequential tasks share one acceptance metric, record task-level
+`carried_acceptance` instead of marking the metric silently green. Use
+`status=open` while a later task is expected to resolve it. Before
+`lifecycle_outcome=finished`, every carried acceptance entry must be `resolved`
+or `accepted_with_rationale`, and final metric evidence must be present in the
+completion audit.
+
+For React Router work that converts static route objects to lazy route objects,
+include route tests and test harness helpers in `allowed_edits` unless the plan
+explicitly forbids test changes. Expected verification risks are asynchronous
+lazy route rendering, missing `hydrateFallbackElement`, request construction
+through existing test shims, and public navigation/auth tests that need async
+assertions even when product behavior is unchanged. Keep this guidance scoped to
+React Router lazy-route tasks.
+
 Use `spawn_agent` only when the user explicitly asked for subagents, delegation,
 parallel work, or passed `subagents=on`. Otherwise execute locally.
+
+## Resource Failure Triage
+
+When Docker, Gradle, or Kotlin build failures could be environmental, gather
+resource evidence before changing project source.
+
+Docker build triage:
+
+1. Identify the failed builder container when available.
+2. Check OOM state with redaction-safe evidence:
+
+   ```bash
+   docker inspect <container-id> --format '{{.State.OOMKilled}}'
+   ```
+
+3. If OOM is true, treat it as environment/resource evidence before changing
+   source code.
+
+Gradle daemon disappearance triage should distinguish:
+
+- container OOM
+- JVM metaspace or heap limit
+- Kotlin daemon memory pressure
+- daemon crash unrelated to source
+- real compile or test failure
+
+If a bounded retry succeeds after resource adjustment, record a
+`successful_workaround` event with the resource category and bounded command.
+When verification still fails, record `verification_failure`; when the same
+stable `ISSUE_KEY` repeats, record `recurring_issue`. Learning events should use
+shortened container identifiers or redacted summaries, not unrelated process
+details.
 
 ## Review And Retry
 

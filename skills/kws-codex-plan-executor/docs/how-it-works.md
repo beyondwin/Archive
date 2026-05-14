@@ -196,6 +196,13 @@ preservation, hung command behavior, misleading success output or skipped tests,
 and cancellation/interruption recovery. Irrelevant scenarios should be marked
 `not-applicable` with a concrete reason.
 
+Verification commands can run in parallel only when they do not share mutable
+output resources. The executor assigns resource keys for common command classes
+such as Gradle Test output directories, Gradle build projects, Node package
+scripts, Docker build tags, and browser/E2E suites. Commands with the same
+resource key run serially in one worktree, and the reason can be recorded in
+state under `verification.resource_serialization`.
+
 ## Completion Gate
 
 Successful execution is not just "tests passed." A terminal successful run must

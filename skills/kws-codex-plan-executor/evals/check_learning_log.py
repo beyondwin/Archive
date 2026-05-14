@@ -4,13 +4,16 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "append_learning_event.py"
+HEALTH_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "check_learning_log_health.py"
 
 
 def base_event(run_id: str) -> dict:
@@ -18,7 +21,7 @@ def base_event(run_id: str) -> dict:
         "schema_version": "1",
         "run_id": run_id,
         "skill": "kws-codex-plan-executor",
-        "skill_version": "1.7.1",
+        "skill_version": "1.8.0",
         "mode": "interactive",
         "event_type": "verification_failure",
         "severity": "medium",
@@ -61,9 +64,69 @@ def write_event(repo_root: Path, event: dict, name: str = "event.json") -> Path:
     return event_path
 
 
+def write_json(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def append_jsonl(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n")
+
+
 def run_dir(log_root: Path, run_id: str) -> Path:
     date_part = run_id.split("T", 1)[0]
     return log_root / "runs" / f"{date_part[0:4]}-{date_part[4:6]}-{date_part[6:8]}" / run_id
+
+
+def make_run(
+    log_root: Path,
+    run_id: str,
+    *,
+    pid: int,
+    started_at: str,
+    outcome: str = "unknown",
+    index_outcome: str = "unknown",
+) -> Path:
+    rd = run_dir(log_root, run_id)
+    meta = {
+        "schema_version": "1",
+        "run_id": run_id,
+        "skill": "kws-codex-plan-executor",
+        "skill_version": "1.8.0",
+        "host": "test.local",
+        "pid": pid,
+        "repo": {"name": "Fixture", "branch": "codex/test", "remote_hash": "abc123"},
+        "mode": "interactive",
+        "plan_path": "docs/superpowers/plans/test.md",
+        "spec_path": None,
+        "worktree_path": "/tmp/worktree",
+        "project_run_dir": f".codex-orchestrator/runs/{run_id}",
+        "state_path": f".codex-orchestrator/runs/{run_id}/state.json",
+        "started_at": started_at,
+        "ended_at": None,
+        "outcome": outcome,
+        "event_count": 0,
+    }
+    write_json(rd / "meta.json", meta)
+    append_jsonl(
+        log_root / "index.jsonl",
+        {
+            "schema_version": "1",
+            "run_id": run_id,
+            "skill": "kws-codex-plan-executor",
+            "skill_version": "1.8.0",
+            "repo": meta["repo"],
+            "mode": "interactive",
+            "plan_path": meta["plan_path"],
+            "project_run_dir": meta["project_run_dir"],
+            "state_path": meta["state_path"],
+            "started_at": started_at,
+            "outcome": index_outcome,
+        },
+    )
+    return rd
 
 
 def init_run(log_root: Path, repo_root: Path, **kwargs: str) -> str:
@@ -89,6 +152,28 @@ def init_run(log_root: Path, repo_root: Path, **kwargs: str) -> str:
     if result.returncode != 0:
         raise RuntimeError(result.stderr or result.stdout)
     return result.stdout.strip()
+
+
+def run_health_report(log_root: Path, *, latest: int = 5, stale_after_minutes: int = 30) -> dict:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(HEALTH_SCRIPT),
+            "--log-root",
+            str(log_root),
+            "--latest",
+            str(latest),
+            "--stale-after-minutes",
+            str(stale_after_minutes),
+            "--json",
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr or result.stdout)
+    return json.loads(result.stdout)
 
 
 def main() -> int:
@@ -300,6 +385,85 @@ def main() -> int:
         )
         if not checks["secret_like_value_rejected"]:
             failures.append("secret-like values should be rejected")
+
+        health_root = temp_path / "health-learning"
+        stale_started_at = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat().replace("+00:00", "Z")
+        recent_started_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+        index_final = "20260513T010000Z-fixture-index-final-abcdef123456-111111"
+        index_final_dir = make_run(health_root, index_final, pid=os.getpid(), started_at=recent_started_at)
+        write_json(
+            index_final_dir / "final.json",
+            {
+                "schema_version": "1",
+                "run_id": index_final,
+                "outcome": "success",
+                "ended_at": recent_started_at,
+                "event_count": 1,
+            },
+        )
+
+        zero_event = "20260513T020000Z-fixture-zero-event-abcdef123456-222222"
+        zero_event_dir = make_run(
+            health_root,
+            zero_event,
+            pid=os.getpid(),
+            started_at=recent_started_at,
+            index_outcome="success",
+        )
+        write_json(
+            zero_event_dir / "final.json",
+            {
+                "schema_version": "1",
+                "run_id": zero_event,
+                "outcome": "success",
+                "ended_at": recent_started_at,
+                "event_count": 0,
+            },
+        )
+
+        dead_pid = "20260513T030000Z-fixture-dead-pid-abcdef123456-333333"
+        make_run(health_root, dead_pid, pid=999999999, started_at=stale_started_at)
+
+        live_pid = "20260513T040000Z-fixture-live-pid-abcdef123456-444444"
+        make_run(health_root, live_pid, pid=os.getpid(), started_at=stale_started_at)
+
+        try:
+            health = run_health_report(health_root, latest=4, stale_after_minutes=30)
+            by_run_id = {item["run_id"]: item for item in health.get("runs", [])}
+            checks["health_index_unknown_final_success"] = (
+                by_run_id.get(index_final, {}).get("status") == "success"
+                and "index_outcome_stale" in by_run_id.get(index_final, {}).get("warnings", [])
+            )
+            checks["health_zero_event_success"] = (
+                by_run_id.get(zero_event, {}).get("status") == "success"
+                and by_run_id.get(zero_event, {}).get("event_count") == 0
+                and by_run_id.get(zero_event, {}).get("event_note") == "routine_success_no_notable_events"
+                and not by_run_id.get(zero_event, {}).get("warnings")
+            )
+            checks["health_dead_pid_unclosed_run"] = (
+                by_run_id.get(dead_pid, {}).get("status") == "stale"
+                and "dead_pid_unclosed" in by_run_id.get(dead_pid, {}).get("warnings", [])
+            )
+            checks["health_live_pid_unclosed_run"] = (
+                by_run_id.get(live_pid, {}).get("status") == "unknown"
+                and not by_run_id.get(live_pid, {}).get("warnings")
+            )
+        except Exception as exc:  # noqa: BLE001
+            checks["health_index_unknown_final_success"] = False
+            checks["health_zero_event_success"] = False
+            checks["health_dead_pid_unclosed_run"] = False
+            checks["health_live_pid_unclosed_run"] = False
+            failures.append(f"health reporter should summarize fixture runs: {exc}")
+
+        for check, message in {
+            "health_index_unknown_final_success": "health reporter should prefer final.json over unknown index outcome",
+            "health_zero_event_success": "health reporter should treat zero-event success as routine",
+            "health_dead_pid_unclosed_run": "health reporter should classify old dead-pid unclosed runs as stale",
+            "health_live_pid_unclosed_run": "health reporter should not classify live-pid unclosed runs as stale",
+        }.items():
+            if not checks.get(check):
+                failures.append(message)
 
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, ensure_ascii=False, indent=2))

@@ -30,8 +30,10 @@ execution and prompt export. It fully replaces the former
 8. Execute tasks locally unless subagents were explicitly requested.
 9. Verify each task with risk-scaled commands and record failures with stable
    `ISSUE_KEY` values.
-10. Write `completion_audit` and terminal `lifecycle_outcome`.
-11. Validate state and summarize changed files, verification, resources, and
+10. Record optional carried acceptance and method audit evidence when a task
+    carries sequential metrics or declares required phase methods.
+11. Write `completion_audit` and terminal `lifecycle_outcome`.
+12. Validate state and summarize changed files, verification, resources, and
    residual risk.
 
 ## Worktree Isolation Contract
@@ -75,6 +77,16 @@ terminal handoff result: `finished`, `blocked`, `failed`, `userinterlude`, or
 outcomes require `handoff_reason`. Finished outcomes also require
 `context_health.handoff_ready=true` and a non-red context health status.
 
+Task entries may include `carried_acceptance` for sequential acceptance metrics
+that cannot be resolved until a later task. Open carried acceptance is allowed
+while execution continues, but finished runs must resolve or explicitly accept
+the carried criterion and cite final metric evidence.
+
+Top-level `method_audit` can record required phase methods as evidence-backed
+`applied`, `missing`, or `waived` entries. The validator checks declared
+methods such as TDD, review, completion verification, and the superpowers gate
+against evidence references rather than skill-invocation intent.
+
 Plans may include optional task dependencies via visible `Depends on:` lines.
 `scripts/parse_plan.py` validates known dependency references and cycle-free
 dependencies, then emits `depends_on` metadata. This metadata is advisory only
@@ -98,6 +110,13 @@ from multiple projects or multiple same-project executors remain queryable and
 do not logically mix. This log is for improving the executor across
 repositories. It does not replace per-run state, checkpoints, headless logs, or
 raw verification artifacts.
+
+`index.jsonl` is a start index. Terminal outcome is resolved from `final.json`
+when present, then `meta.json`, then the index row. The read-only
+`scripts/check_learning_log_health.py` reporter summarizes recent runs,
+identifies append-only index rows whose start outcome is stale, treats
+zero-event success as normal, and classifies old unclosed dead-pid runs as
+diagnostic `stale` without mutating logs.
 
 ## Subagent Policy
 
@@ -123,6 +142,10 @@ and headless implementation work must pass through `using-superpowers` and
 `test-driven-development` before feature, bugfix, refactor, or behavior-change
 implementation. Headless runs are fresh Codex processes, so their prompts must
 bootstrap those skills explicitly rather than relying on parent-session state.
+Execution docs also cover local environment preflight, verification resource
+serialization, Docker/Gradle resource triage, and React Router lazy-route test
+harness scope so common environment failures are not misclassified as source
+changes.
 
 The supervising session owns the `codex exec` launch. Once the target process
 starts, `mode=headless` means it writes headless artifacts while executing
@@ -152,6 +175,7 @@ Deterministic scripts own mechanical correctness:
 
 - `scripts/parse_plan.py`
 - `scripts/validate_state.py`
+- `scripts/check_learning_log_health.py`
 - `evals/check_prompt.py`
 - `evals/check_execution.py`
 - `evals/check_parse_plan.py`

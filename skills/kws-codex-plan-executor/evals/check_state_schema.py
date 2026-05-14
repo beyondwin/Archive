@@ -197,6 +197,179 @@ def main() -> int:
     if not checks["finished_empty_evidence_fails"]:
         failures.append("finished completion_audit should require verification evidence")
 
+    finished_open_carried_acceptance = base_state()
+    finished_open_carried_acceptance["tasks"]["task_0"]["carried_acceptance"] = {
+        "status": "open",
+        "metric": "front index chunk size",
+        "baseline_value": "208.78 kB after task_5",
+        "current_value": "221.68 kB after task_6",
+        "reason": "Host feature barrel remains statically reachable until task_7.",
+        "depends_on_task": "task_7",
+        "next_action": "Resolve host barrel coupling and rerun pnpm --dir front build.",
+    }
+    open_carried = run_validator(script, finished_open_carried_acceptance)
+    checks["finished_open_carried_acceptance_fails"] = (
+        open_carried.returncode != 0 and "open carried_acceptance" in (open_carried.stderr + open_carried.stdout)
+    )
+    if not checks["finished_open_carried_acceptance_fails"]:
+        failures.append("open carried_acceptance is not allowed for lifecycle_outcome=finished")
+
+    finished_resolved_carried_acceptance = base_state()
+    finished_resolved_carried_acceptance["tasks"]["task_0"]["carried_acceptance"] = {
+        "status": "resolved",
+        "metric": "front index chunk size",
+        "baseline_value": "208.78 kB after task_5",
+        "current_value": "198.12 kB after task_7",
+        "reason": "Final bundle metric improved below the carried baseline.",
+        "depends_on_task": "task_7",
+        "next_action": "No follow-up; completion audit contains final bundle evidence.",
+    }
+    finished_resolved_carried_acceptance["completion_audit"]["verification_evidence"].append(
+        {"metric": "front index chunk size", "status": "passed", "value": "198.12 kB"}
+    )
+    resolved_carried = run_validator(script, finished_resolved_carried_acceptance)
+    checks["finished_resolved_carried_acceptance_passes"] = resolved_carried.returncode == 0
+    if not checks["finished_resolved_carried_acceptance_passes"]:
+        failures.append("resolved carried_acceptance should pass for lifecycle_outcome=finished")
+
+    intermediate_open_carried_acceptance = base_state()
+    intermediate_open_carried_acceptance["lifecycle_outcome"] = None
+    intermediate_open_carried_acceptance["completion_audit"] = None
+    intermediate_open_carried_acceptance["tasks"]["task_0"]["carried_acceptance"] = dict(
+        finished_open_carried_acceptance["tasks"]["task_0"]["carried_acceptance"]
+    )
+    intermediate_open = run_validator(script, intermediate_open_carried_acceptance)
+    checks["intermediate_open_carried_acceptance_passes"] = intermediate_open.returncode == 0
+    if not checks["intermediate_open_carried_acceptance_passes"]:
+        failures.append("open carried_acceptance should pass before terminal finished outcome")
+
+    method_required_without_evidence = base_state()
+    method_required_without_evidence["method_audit"] = {
+        "required": ["test-driven-development"],
+        "applied": [],
+        "missing": [],
+        "waived": [],
+    }
+    method_missing = run_validator(script, method_required_without_evidence)
+    checks["method_required_without_evidence_fails"] = (
+        method_missing.returncode != 0
+        and "required method test-driven-development" in (method_missing.stderr + method_missing.stdout)
+    )
+    if not checks["method_required_without_evidence_fails"]:
+        failures.append("required method test-driven-development has no applied or waived evidence")
+
+    tdd_green_only = base_state()
+    tdd_green_only["method_audit"] = {
+        "required": ["test-driven-development"],
+        "applied": [
+            {
+                "skill": "test-driven-development",
+                "phase": "implementation",
+                "status": "applied",
+                "evidence_refs": ["tasks.task_0.green_evidence"],
+                "summary": "GREEN passed after implementation.",
+            }
+        ],
+        "missing": [],
+        "waived": [],
+    }
+    tdd_green_only_result = run_validator(script, tdd_green_only)
+    checks["method_tdd_requires_red_and_green_fails"] = (
+        tdd_green_only_result.returncode != 0
+        and "test-driven-development requires RED and GREEN evidence references"
+        in (tdd_green_only_result.stderr + tdd_green_only_result.stdout)
+    )
+    if not checks["method_tdd_requires_red_and_green_fails"]:
+        failures.append("test-driven-development requires RED and GREEN evidence references")
+
+    review_without_findings = base_state()
+    review_without_findings["method_audit"] = {
+        "required": ["review"],
+        "applied": [
+            {
+                "skill": "review",
+                "phase": "review",
+                "status": "applied",
+                "evidence_refs": ["review.summary"],
+                "summary": "Review completed.",
+            }
+        ],
+        "missing": [],
+        "waived": [],
+    }
+    review_without_findings_result = run_validator(script, review_without_findings)
+    checks["method_review_requires_findings_fails"] = (
+        review_without_findings_result.returncode != 0
+        and "review method requires findings or residual-risk evidence"
+        in (review_without_findings_result.stderr + review_without_findings_result.stdout)
+    )
+    if not checks["method_review_requires_findings_fails"]:
+        failures.append("review method requires findings or residual-risk evidence")
+
+    docs_waived_tdd = base_state()
+    docs_waived_tdd["method_audit"] = {
+        "required": ["test-driven-development"],
+        "applied": [],
+        "missing": [],
+        "waived": [
+            {
+                "skill": "test-driven-development",
+                "phase": "implementation",
+                "reason": "Docs-only planning change with no behavior implementation.",
+            }
+        ],
+    }
+    docs_waived_tdd_result = run_validator(script, docs_waived_tdd)
+    checks["method_docs_tdd_waiver_passes"] = docs_waived_tdd_result.returncode == 0
+    if not checks["method_docs_tdd_waiver_passes"]:
+        failures.append("docs-only run with TDD waiver and reason should pass")
+
+    complete_method_audit = base_state()
+    complete_method_audit["method_audit"] = {
+        "required": [
+            "using-superpowers",
+            "test-driven-development",
+            "verification-before-completion",
+            "review",
+        ],
+        "applied": [
+            {
+                "skill": "using-superpowers",
+                "phase": "pre-implementation",
+                "status": "applied",
+                "evidence_refs": ["tasks.task_0.contract"],
+                "summary": "Skill gate acknowledged before edits.",
+            },
+            {
+                "skill": "test-driven-development",
+                "phase": "implementation",
+                "status": "applied",
+                "evidence_refs": ["tasks.task_0.red_evidence", "tasks.task_0.green_evidence"],
+                "summary": "RED failed before implementation; GREEN passed after fix.",
+            },
+            {
+                "skill": "verification-before-completion",
+                "phase": "verification",
+                "status": "applied",
+                "evidence_refs": ["completion_audit.verification_evidence"],
+                "summary": "Completion claimed after recorded verification.",
+            },
+            {
+                "skill": "review",
+                "phase": "review",
+                "status": "applied",
+                "evidence_refs": ["review.findings", "review.residual_risk"],
+                "summary": "Review completed with no blocking findings.",
+            },
+        ],
+        "missing": [],
+        "waived": [],
+    }
+    complete_method_audit_result = run_validator(script, complete_method_audit)
+    checks["method_complete_audit_passes"] = complete_method_audit_result.returncode == 0
+    if not checks["method_complete_audit_passes"]:
+        failures.append("complete method audit with evidence should pass")
+
     blocked = base_state()
     blocked["lifecycle_outcome"] = "blocked"
     blocked["handoff_reason"] = "waiting for user decision"

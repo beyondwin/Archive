@@ -106,6 +106,56 @@ Mitigation:
 Residual risk: no static redactor catches every possible secret. Agents must
 still summarize conservatively before appending events.
 
+### Stale Learning Runs
+
+Risk: an interrupted executor can leave `meta.json` with `ended_at=null` and no
+`final.json`, making a dead run look active.
+
+Mitigation:
+
+- `scripts/check_learning_log_health.py` reports stale runs only when no final
+  outcome exists, the pid is not alive, and the run is older than the configured
+  threshold.
+- The report is diagnostic and read-only; it does not mutate user-local logs or
+  project state.
+
+Residual risk: pid liveness is best-effort and can be ambiguous across
+permissions, host restarts, or pid reuse. Permission-denied checks are treated
+as alive rather than stale.
+
+### Local Environment Preflight
+
+Risk: a fresh isolated worktree may lack ignored machine-local files or install
+state that the original checkout needs for baseline verification.
+
+Mitigation:
+
+- Execution guidance requires a post-worktree, pre-baseline local environment
+  preflight.
+- Android `local.properties`, package manager install state, Docker daemon and
+  memory, and intentional `.env` absence are called out explicitly.
+- Agents must ask, report, or record an honest substitute before copying ignored
+  files.
+
+Residual risk: the policy detects and explains missing local state; it does not
+automatically copy files because those files can contain private paths or
+secrets.
+
+### Verification Resource Serialization
+
+Risk: parallel verification commands can share mutable outputs and collide,
+especially Gradle Test XML/result directories in one worktree.
+
+Mitigation:
+
+- Execution guidance defines resource keys for Gradle, Node, Docker, and
+  browser/E2E commands.
+- Commands with identical resource keys run serially, and state may record the
+  serialization reason.
+
+Residual risk: resource-key serialization is guidance unless a future scheduler
+enforces it mechanically.
+
 ### Headless Fresh-Process Behavior
 
 Risk: headless `codex exec` may not inherit parent session context, skills, or
