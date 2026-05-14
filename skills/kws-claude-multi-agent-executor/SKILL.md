@@ -880,6 +880,19 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
      "spec_score": <float 0.0-1.0>,
      "quality_score": <float 0.0-1.0>,
      "review_tier": "PASS | WARN",
+     "method_audit": {
+       "required": ["test-driven-development", "verification-before-completion", "code-review-pass"],
+       "applied": [
+         {"skill": "test-driven-development",
+          "evidence": {"red": "<cmd>", "green": "<cmd>", "tests": ["<path>"]}},
+         {"skill": "verification-before-completion",
+          "evidence": {"commands_run": ["<cmd1>", "<cmd2>"]}},
+         {"skill": "code-review-pass",
+          "evidence": {"findings_count": "<N>", "locations": ["<file:line>"]}}
+       ],
+       "missing": [],
+       "waived": []
+     },
      "timing": {
        "started": "<iso8601>",
        "implementer_done": "<iso8601>",
@@ -898,6 +911,18 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
    "last_completed_at":   "<iso8601>"
    ```
    Do NOT rely on JSON insertion order — this skill re-writes state.json many times and key order is unreliable (observed bug: a later spec-edit re-touch of an earlier task moved it to the end of insertion order, breaking `to_entries | last`).
+
+   **v2.11 — Populate `method_audit`:**
+
+   1. Read the Implementer's final output (captured in this turn's Agent tool result). Parse each `METHOD_AUDIT:` line:
+      - `<skill> applied <kv pairs>` → append `{"skill": <skill>, "evidence": <parsed kv>}` to `method_audit.applied`.
+      - `<skill> waived reason=<text>` → append `{"skill": <skill>, "reason": <text>}` to `method_audit.waived`.
+   2. Read the Combined Reviewer's output. Parse the `REVIEW_FINDINGS:` line:
+      - `count=<N> locations=<list>` → append `{"skill": "code-review-pass", "evidence": {"findings_count": <N>, "locations": <list>}}` to `method_audit.applied`.
+      - `no-findings residual-risk=<text>` → append `{"skill": "code-review-pass", "evidence": {"findings_count": 0, "residual_risk": <text>}}` to `method_audit.applied`.
+   3. Read the Verifier result JSON (if dispatched — Phase 1 Step 3 for MID/HIGH; deferred to Phase Transition T1 or Phase 2 Step 0 for LOW). Append `{"skill": "verification-before-completion", "evidence": {"commands_run": <list>}}` to `method_audit.applied`. For LOW tasks awaiting batch verification, write the populator note `pending_batch_verification: true` in `method_audit` and resolve it in T1 / Phase 2 Step 0.
+   4. Compute `required` from the docs-only heuristic: `files_test == []` OR (`files_test` missing AND all `files` end with `.md`) → `["verification-before-completion"]`. Else → `["test-driven-development", "verification-before-completion", "code-review-pass"]`.
+   5. Compute `missing = required - applied_skills - waived_skills`. (This is informational — Phase 2 Step 1.5 is authoritative.)
 
    Also write to `task_summaries.task_N` (same active-tree rule):
    ```json
@@ -1337,6 +1362,7 @@ These rules are absolute. No exceptions.
 | **`context_health` is observation-only (v2.10)** | Emitted at Phase Transition T3 and Resume Chain chained-orchestrator startup. Counts compaction index, completed tasks, chain handoffs. **MUST NOT alter orchestrator control flow** — Goodhart's-law guard. Behavior changes require a follow-on experiment under `docs/experiments/v2.10-context-health/` after ≥ 2 weeks of real-run data. See `references/learning-log.md`. |
 | **Polite-stop anti-pattern is forbidden (v2.10.1)** | A sub-agent returning PASS / APPROVED is a checkpoint inside the autonomous loop, never a reporting moment. The orchestrator MUST proceed immediately to the next phase step in the same turn. The only legitimate reporting moments are: Phase 2 success completion, ESCALATE that exceeds `escalation_count > 3`, headless `HEADLESS_HALTED.txt`, or hook denial. Any prompt edit that introduces "summarize and wait for user acknowledgment" between PASS and the next step IS the regression this invariant exists to prevent. |
 | **Cross-run isolation is enforced (v2.10.1)** | Phase 0 Step 1.5 refuses to start when another worktree of this skill has a live headless PID. Mode exclusivity is concurrent-safe by halt, not by lock — the user is responsible for choosing which run continues. Orphan worktrees with no state.json + >7d mtime are reported but never auto-deleted (may hold uncommitted manual debugging). |
+| **Method audit fields are populated at Agent Cleanup (v2.11)** | Method audit fields are populated at Phase 1 Step 4 from structured sub-agent output. |
 
 ---
 
