@@ -250,6 +250,14 @@ def main() -> int:
             and "GREEN:" in body,
             "check-implementer-output.sh.template must validate TDD_EVIDENCE presence + cross-check RED/GREEN against FILES_TEST_CHANGED",
         )
+        # v2.11: hook must also enforce METHOD_AUDIT block on STATUS=DONE
+        record(
+            "implementer_hook_validates_method_audit",
+            "METHOD_AUDIT" in body
+            and "tdd applied" in body
+            and "tdd waived" in body,
+            "check-implementer-output.sh.template must enforce METHOD_AUDIT block (v2.11)",
+        )
 
     docs_prompt = skill_dir / "references" / "docs-updater-prompts.md"
     if docs_prompt.is_file():
@@ -277,6 +285,42 @@ def main() -> int:
             f"candidate_file_contract_in_{rel_path.replace('/', '_')}",
             ".orchestrator/learning_events/" in body and "Do not call the helper" in body,
             f"{rel_path} must describe candidate-file emission and forbid direct helper calls",
+        )
+
+    # ---- v2.11 mandatory-wording checks ----
+    # Each tuple: (section_anchor, required_substring).
+    # Section-scoped: locate anchor in skill_text, then search forward ~4000 chars
+    # for the required_substring. Avoids false positives from distant sections.
+    # Anchors are verbatim substrings that appear at or near the section's heading
+    # in SKILL.md — use actual heading text rather than descriptive phase labels.
+    REQUIRED_WORDING = [
+        # v2.11 additions — (anchor_in_skill_text, required_substring)
+        # Phase 1 Step 4 = "### Step 4: Agent Cleanup" — method_audit in schema block
+        ("Step 4: Agent Cleanup", "method_audit"),
+        # Phase 2 Step 1.5 = "### Step 1.5: Method Audit Validation"
+        ("Step 1.5: Method Audit Validation", "method_audit"),
+        # Phase 0 Step 4.7 heading itself contains "Local-env preflight"
+        ("Step 4.7: Local-env preflight", "Local-env preflight"),
+        # Phase 0 Step 6 resource_key partition rule — "v2.11 — `resource_key`"
+        ("resource_key` partition rule", "resource_key"),
+        # Guardrails table — these rows must appear within the Guardrails section
+        ("## Guardrails", "Method audit must pass before Phase 2 close-run"),
+        ("## Guardrails", "Resource-key collisions force serialization in same wave"),
+    ]
+    SECTION_WINDOW = 15000  # chars to scan forward from anchor (Guardrails table spans >12k chars)
+
+    for anchor, substring in REQUIRED_WORDING:
+        check_key = f"wording_v211_{anchor[:20].lower().replace(' ', '_').replace('`', '').replace(':', '').replace('#', '').strip()}_{substring[:15].lower().replace(' ', '_').replace('-', '_')}"
+        idx = skill_text.find(anchor)
+        if idx == -1:
+            record(check_key, False,
+                   f"SKILL.md: section anchor '{anchor}' not found (needed to verify '{substring}')")
+            continue
+        window = skill_text[idx: idx + SECTION_WINDOW]
+        record(
+            check_key,
+            substring in window,
+            f"SKILL.md: '{substring}' not found within {SECTION_WINDOW} chars after '{anchor}'",
         )
 
     payload = {"passed": not failures, "checks": checks, "failures": failures}

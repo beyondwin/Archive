@@ -339,6 +339,38 @@ SKILL.md 의 모든 학습 로그 호출은 `... || true` 로 감싸지거나 `>
 
 전체 스키마와 코드 예시는 `references/learning-log.md` 참조.
 
+## Method Audit (v2.11)
+
+MAE requires sub-agents to invoke `superpowers:test-driven-development`, `superpowers:verification-before-completion`, and code-review-pass disciplines, but prior to v2.11 it did not verify the disciplines were actually applied. v2.11 adds:
+
+- Structured output blocks (`METHOD_AUDIT:`, `REVIEW_FINDINGS:`, Verifier `commands_run`) emitted by sub-agents.
+- Orchestrator populator at Phase 1 Step 4 — parses and writes `state.tasks.<id>.method_audit`.
+- SubagentStop hook (`references/hooks/check-implementer-output.sh.template`) — runtime gate on Implementer output shape.
+- Validator script (`scripts/validate_method_audit.py`) — semantic gate at Phase 2 Step 1.5 before close-run.
+
+Required-methods derivation: executable task → TDD + verification + code-review-pass; docs-only task (`files_test == []` or all `.md` files) → verification only. TDD waiver reasons are restricted to `docs-only-task`, `config-only-task`, `generated-only-task`.
+
+Fabricated evidence is grounds for re-dispatch and a `method_audit_violation` learning-log event (severity=high).
+
+## Local-Env Preflight (v2.11)
+
+Phase 0 Step 4.7 runs between risk assignment and baseline test. Two detection rules:
+
+1. **Unfilled local-config counterpart** — for every `*.example` / `*.template` / `*.dist` in the worktree, the suffix-stripped counterpart is checked for existence + gitignored status.
+2. **Stale dependencies** — manifest/lockfile/install-marker mtime triple per language ecosystem.
+
+Both are detection-only. Warnings are written to `state.preflight_warnings`. The orchestrator does not auto-copy gitignored files (potential secret / machine-specific path leakage).
+
+ENV_BLOCKER triage cross-references preflight warnings before running generic dependency install.
+
+## Resource-Key Serialization (v2.11)
+
+A task may declare `**Resource Key:** <slug>` in its plan body. Phase 0 Step 6 partition algorithm builds the resource-key map per wave and splits any same-key collisions into singleton groups. The wave's file-disjointness invariant is preserved; only serialization widens.
+
+`state.execution_plan` group entries record `serialization_reason: "resource_key=<key>"` when applied.
+
+Plan Reviewer (Phase 0 Step 6.5) emits WARN issues for same-wave collisions so the plan author sees the reduced parallelism. WARN, not BLOCKER — runtime correctness is automatic.
+
 ## 13. 갱신 프로토콜
 
 다음 중 하나를 변경하면 **이 파일을 갱신하세요**:

@@ -21,6 +21,18 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.11 — Method audit and codex-cross-pollinated hardening (2026-05-14)
+
+Five features, drawn from sibling `kws-codex-plan-executor` learning-log review (commit `1d10f13`) plus an MAE-internal gap analysis:
+
+1. **Phase Method Audit** — `state.tasks.<id>.method_audit = {required, applied, missing, waived}`. Validated at Phase 2 Step 1.5 by `scripts/validate_method_audit.py` before close-run. SubagentStop hook gates Implementer output. Closes the gap between MAE's *required* TDD / review / verification disciplines and actual *validation* of them.
+2. **Learning-log outcome coherence** — `scripts/append_learning_event.py close-run` now rewrites the matching `index.jsonl` row's `outcome` atomically. New `resolve-outcome` subcommand returns the authoritative outcome (final.json > meta.json > index.jsonl).
+3. **ENV_BLOCKER triage categories** — five named root-cause buckets (`docker_oom`, `gradle_daemon_disappearance`, `gradle_metaspace`, `node_heap_oom`, `service_unreachable`) added to `references/escalation-playbook.md`. Recorded as optional `root_cause_category` on `verification_failure` learning events.
+4. **Local-env preflight** — new Phase 0 Step 4.7 detects unfilled `*.example` / `*.template` / `*.dist` counterparts and stale dependency manifests. Records warnings to `state.preflight_warnings`; never halts, never auto-copies.
+5. **Resource-key serialization** — plan tasks may declare `**Resource Key:** <slug>`; Phase 0 Step 6 partition forces same-key tasks into different parallel groups within a wave. Plan Reviewer (Step 6.5) emits a WARN on collisions.
+
+Backward compatible. No state-schema breaking changes; new fields are additive.
+
 ### v2.10.2 — Mandatory sub-agent superpowers bootstrap + TDD enforcement (2026-05-14)
 
 Prompt-contract hardening after observing Implementer tasks rationalizing away

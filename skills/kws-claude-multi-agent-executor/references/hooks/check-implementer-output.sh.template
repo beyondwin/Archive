@@ -100,9 +100,15 @@ if [ "$STATUS" = "DONE" ]; then
     capture && /^[A-Z_]+:/ {capture=0}
     capture {print}
   ')"
-  # Has a real test file if any non-empty, non-"none" entry exists.
+  # Has a real test file if any non-empty, non-"none", non-"[]" entry exists.
+  # Treat as empty: blank lines, "none"/"None"/"NONE" (optionally prefixed by "- "),
+  # and literal empty-list markers "[]" / "- []" (Implementers occasionally emit
+  # JSON-style empty lists instead of "none").
   ftc_has_tests=0
-  if printf '%s' "$FTC_BLOCK" | grep -vE '^[[:space:]]*(-[[:space:]]*)?(none|None|NONE)?[[:space:]]*$' | grep -qE '\S'; then
+  if printf '%s' "$FTC_BLOCK" \
+       | grep -vE '^[[:space:]]*(-[[:space:]]*)?(none|None|NONE)?[[:space:]]*$' \
+       | grep -vE '^[[:space:]]*(-[[:space:]]*)?\[[[:space:]]*\][[:space:]]*$' \
+       | grep -qE '\S'; then
     ftc_has_tests=1
   fi
 
@@ -125,6 +131,50 @@ if [ "$STATUS" = "DONE" ]; then
       echo "Only docs-only, config-only, or generated-only tasks may skip TDD. Add a one-phrase justification to SUMMARY or report real RED/GREEN evidence." >&2
       exit 2
     fi
+  fi
+fi
+
+# v2.11: METHOD_AUDIT block required on STATUS=DONE
+if [ "$STATUS" = "DONE" ]; then
+  # Rule M1: at least one METHOD_AUDIT: line must be present.
+  if ! printf '%s' "$RESULT" | grep -qE '^METHOD_AUDIT:'; then
+    cat >&2 <<'HOOKEOF'
+BLOCKED: Implementer output is missing a METHOD_AUDIT block.
+STATUS=DONE requires at least one METHOD_AUDIT: line.
+See references/implementer-prompt.md "METHOD_AUDIT lines" section.
+HOOKEOF
+    exit 2
+  fi
+
+  # Rule M2: if test files were changed, a METHOD_AUDIT: tdd applied|waived line is required.
+  # Reuse ftc_has_tests computed above in the TDD_EVIDENCE cross-validation block.
+  if [ "$ftc_has_tests" = "1" ]; then
+    if ! printf '%s' "$RESULT" | grep -qE '^METHOD_AUDIT:[[:space:]]*tdd[[:space:]]+(applied|waived)'; then
+      cat >&2 <<'HOOKEOF'
+BLOCKED: Test files were changed but no METHOD_AUDIT: tdd line was emitted.
+Either emit METHOD_AUDIT: tdd applied red=... green=... tests=...
+or METHOD_AUDIT: tdd waived reason=<docs-only-task|config-only-task|generated-only-task>.
+HOOKEOF
+      exit 2
+    fi
+  fi
+
+  # Rule M3: if METHOD_AUDIT: tdd applied is present, all three evidence keys
+  # must be present AND have a non-empty value (≥1 non-whitespace char after =).
+  # The non-empty-value check catches `red=` / `green=` / `tests=` (empty after
+  # the =), which the presence-only check tolerated.
+  if printf '%s' "$RESULT" | grep -qE '^METHOD_AUDIT:[[:space:]]*tdd[[:space:]]+applied'; then
+    AUDIT_LINE="$(printf '%s' "$RESULT" | grep -E '^METHOD_AUDIT:[[:space:]]*tdd[[:space:]]+applied' | head -1)"
+    for key in red green tests; do
+      if ! printf '%s' "$AUDIT_LINE" | grep -qE "${key}="; then
+        printf 'BLOCKED: METHOD_AUDIT: tdd applied is missing required key %s= on line: %s\n' "$key" "$AUDIT_LINE" >&2
+        exit 2
+      fi
+      if ! printf '%s' "$AUDIT_LINE" | grep -qE "${key}=[^[:space:]]"; then
+        printf 'BLOCKED: METHOD_AUDIT: tdd applied key %s= is present but has no value on line: %s\n' "$key" "$AUDIT_LINE" >&2
+        exit 2
+      fi
+    done
   fi
 fi
 
