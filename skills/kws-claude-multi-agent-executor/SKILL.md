@@ -373,6 +373,56 @@ This is a fallback — the primary expectation is that one headless subprocess c
 
    If the user provided `risk=<level>` override: apply it to all tasks. However, if any task's description in the plan contains the words 'high-risk', 'schema migration', 'database', 'API surface', or 'breaking change', log a warning: 'risk override applied but task N description suggests HIGH risk — proceeding with override as instructed.' Do not silently downgrade dangerous tasks.
 
+### Step 4.7: Local-env preflight (v2.11)
+
+After risk assignment, before baseline test. Detection-only — never halts, never auto-copies.
+
+1. **Unfilled local-config counterpart scan:**
+   ```bash
+   cd <worktree_path>
+   for tmpl in $(find . -maxdepth 3 -type f \( -name '*.example' -o -name '*.template' -o -name '*.dist' \) 2>/dev/null); do
+     real="${tmpl%.example}"
+     real="${real%.template}"
+     real="${real%.dist}"
+     if [ ! -e "$real" ] && git check-ignore -q "$real" 2>/dev/null; then
+       echo "MISSING_LOCAL_CONFIG: counterpart=$real template=$tmpl"
+     fi
+   done
+   ```
+   Each `MISSING_LOCAL_CONFIG:` line becomes a warning entry:
+   ```json
+   {"kind": "missing_local_config", "file": "<counterpart>", "template": "<template>",
+    "suggestion": "Copy <template> to <counterpart> and fill in the local values",
+    "detected_at": "<iso8601>"}
+   ```
+
+2. **Stale-dependency detection** — check each manifest/lockfile pair against its install marker:
+   | Manifest | Lockfile | Install marker |
+   |----------|----------|----------------|
+   | `package.json` | `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` | `node_modules/.package-lock.json` |
+   | `pyproject.toml` | `poetry.lock` / `uv.lock` | `.venv/pyvenv.cfg` or `venv/pyvenv.cfg` |
+   | `Cargo.toml` | `Cargo.lock` | `target/.rustc_info.json` |
+   | `build.gradle` / `build.gradle.kts` | `gradle/wrapper/gradle-wrapper.properties` | `.gradle/<version>/` or `build/` |
+
+   For each pair: if lockfile mtime > install-marker mtime + 1s OR install-marker missing while lockfile exists → warning entry:
+   ```json
+   {"kind": "dependencies_likely_stale", "manifest": "<manifest>", "lockfile": "<lockfile>",
+    "suggestion": "Run install before baseline (e.g., `npm install`, `poetry install`, `cargo fetch`).",
+    "detected_at": "<iso8601>"}
+   ```
+
+3. **Record into state.json:**
+   ```json
+   "preflight_warnings": [<warning entries>]
+   ```
+   Always present; empty list when clean.
+
+4. **One-line summary to user:**
+   - clean → `Preflight: clean`
+   - warnings → `Preflight: <N> warnings (see state.preflight_warnings)` followed by the bulleted list with `kind` + `file` + `suggestion`.
+
+5. Never halt on preflight. ENV_BLOCKER triage (`references/escalation-playbook.md`) cross-references `state.preflight_warnings` when baseline or task tests fail — a `dependencies_likely_stale` warning matches a `module not found` symptom and short-circuits dependency-install triage.
+
 5. **Take baseline test snapshot:**
    Before running: derive the test command from `Makefile`, `package.json`, `pyproject.toml`, or `Cargo.toml`. Record this exact command in state.json `test_command` field. Use this same command everywhere in the skill (Verifier prompts, Phase Transition batch Verifier). Verifiers do NOT need to re-derive the test command.
 
@@ -429,6 +479,21 @@ This is a fallback — the primary expectation is that one headless subprocess c
      1. Start with each task as its own singleton group.
      2. Greedily merge two groups iff the UNION of their declared `Files:` sets has no overlap AND no task in either group has a `serial: true` annotation in the plan.
      3. Tasks whose Files: blocks overlap any other in the same wave MUST stay in their own singleton group (run sequentially within the wave).
+
+     **v2.11 — `resource_key` partition rule:**
+
+     A task may declare `**Resource Key:** <slug>` in its task body (similar to `**Files:**`). Slug is lowercased and whitespace-stripped. Examples: `gradle-test-output`, `db-port-5432`, `playwright-browser`.
+
+     After file-disjointness merging, before finalizing the wave's parallel groups:
+
+     1. Build a `resource_key → [task_ids]` map for tasks in this wave.
+     2. For each key with ≥ 2 task IDs in the same wave:
+        - Move each affected task to its own singleton group within the wave. If a multi-task group contained two collision-tagged tasks, split into singletons.
+        - Annotate each resulting singleton group in `state.execution_plan` with `"serialization_reason": "resource_key=<key>"`.
+
+     The wave still respects the file-disjointness invariant (groups within a wave never share files). Splits only widen serialization — they never merge file-overlapping tasks.
+
+     Tasks with no `Resource Key:` block are unaffected. The annotation is opt-in.
 
      Write to `state.execution_plan`:
      ```json
@@ -815,6 +880,19 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
      "spec_score": <float 0.0-1.0>,
      "quality_score": <float 0.0-1.0>,
      "review_tier": "PASS | WARN",
+     "method_audit": {
+       "required": ["test-driven-development", "verification-before-completion", "code-review-pass"],
+       "applied": [
+         {"skill": "test-driven-development",
+          "evidence": {"red": "<cmd>", "green": "<cmd>", "tests": ["<path>"]}},
+         {"skill": "verification-before-completion",
+          "evidence": {"commands_run": ["<cmd1>", "<cmd2>"]}},
+         {"skill": "code-review-pass",
+          "evidence": {"findings_count": <N>, "locations": ["<file:line>"]}}
+       ],
+       "missing": [],
+       "waived": []
+     },
      "timing": {
        "started": "<iso8601>",
        "implementer_done": "<iso8601>",
@@ -833,6 +911,18 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
    "last_completed_at":   "<iso8601>"
    ```
    Do NOT rely on JSON insertion order — this skill re-writes state.json many times and key order is unreliable (observed bug: a later spec-edit re-touch of an earlier task moved it to the end of insertion order, breaking `to_entries | last`).
+
+   **v2.11 — Populate `method_audit`:**
+
+   1. Read the Implementer's final output (captured in this turn's Agent tool result). Parse each `METHOD_AUDIT:` line:
+      - `<skill> applied <kv pairs>` → append `{"skill": <skill>, "evidence": <parsed kv>}` to `method_audit.applied`.
+      - `<skill> waived reason=<text>` → append `{"skill": <skill>, "reason": <text>}` to `method_audit.waived`.
+   2. Read the Combined Reviewer's output. Parse the `REVIEW_FINDINGS:` line:
+      - `count=<N> locations=<list>` → append `{"skill": "code-review-pass", "evidence": {"findings_count": <N>, "locations": <list>}}` to `method_audit.applied`.
+      - `no-findings residual-risk=<text>` → append `{"skill": "code-review-pass", "evidence": {"findings_count": 0, "residual_risk": <text>}}` to `method_audit.applied`.
+   3. Read the Verifier result JSON (if dispatched — Phase 1 Step 3 for MID/HIGH; deferred to Phase Transition T1 or Phase 2 Step 0 for LOW). Append `{"skill": "verification-before-completion", "evidence": {"commands_run": <list>}}` to `method_audit.applied`. For LOW tasks awaiting batch verification, write the populator note `pending_batch_verification: true` in `method_audit` and resolve it in T1 / Phase 2 Step 0.
+   4. Compute `required` from the docs-only heuristic: `files_test == []` OR (`files_test` missing AND all `files` end with `.md`) → `["verification-before-completion"]`. Else → `["test-driven-development", "verification-before-completion", "code-review-pass"]`.
+   5. Compute `missing = required - applied_skills - waived_skills`. (This is informational — Phase 2 Step 1.5 is authoritative.)
 
    Also write to `task_summaries.task_N` (same active-tree rule):
    ```json
@@ -1140,6 +1230,67 @@ Build from the **Final Docs Updater Prompt Template** with:
 
 **Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<worktree_path>/.orchestrator/docs_prompts/final.txt` and result path `<worktree_path>/.orchestrator/docs_results/final.json`. Missing/malformed result → ENV_BLOCKER ESCALATE.
 
+### Step 1.5: Method Audit Validation (v2.11)
+
+After the Final Docs Updater commit and before generating the Final Summary Report:
+
+```bash
+python3 <skill_dir>/scripts/validate_method_audit.py \
+  --state <worktree>/.orchestrator/state.json
+```
+
+Parse the JSON output:
+
+- `"passed": true` → proceed to Step 2.
+- `"passed": false` → for each entry in `failures`, write a learning-log candidate event:
+
+  ```json
+  {
+    "schema_version": "1",
+    "phase": "phase_2",
+    "risk_tier": "high",
+    "event_type": "method_audit_violation",
+    "severity": "high",
+    "execution": {"task_id": "<id>", "issue_key": "method_audit_missing"},
+    "subagent": {"role": "orchestrator", "model": "opus", "dispatch": "orchestrator"},
+    "summary": "Task <id> missing required methods: <missing list>",
+    "context": {
+      "user_intent": "Validate that required disciplines were applied.",
+      "agent_expectation": "All COMPLETE tasks emit method_audit evidence.",
+      "actual_outcome": "Missing methods: <list>",
+      "root_cause": "Sub-agent did not emit METHOD_AUDIT lines or evidence was incomplete.",
+      "evidence": [{"kind": "missing_methods", "value": "<list>"}]
+    },
+    "improvement": {"target": "references/implementer-prompt.md",
+                    "proposal": "Strengthen METHOD_AUDIT requirement or hook check.",
+                    "experiment_link": null},
+    "privacy": {"redacted": true, "notes": "Skill names only."}
+  }
+  ```
+  Then halt:
+
+  Substitute `<task_path_prefix>` in the message below with `state.tasks` when
+  `state.active_plan == "plan1"` and with `state.plan2_state.tasks` when
+  `state.active_plan == "plan2"` — the validator script itself reads the right
+  tree via `--active-plan`, but this user-facing diagnostic must point at the
+  correct path so the operator edits the right node.
+
+  ```
+  Method audit FAILED for tasks: <comma-separated list>.
+
+  To resolve, either:
+    - Re-dispatch the failing task(s) with explicit instructions to emit
+      METHOD_AUDIT: lines (see references/implementer-prompt.md).
+    - If a method is genuinely not applicable, edit
+      <task_path_prefix>.<id>.method_audit.waived in state.json with a reason,
+      then re-run Phase 2.
+
+  Validator output:
+  <pretty-printed validator JSON>
+  ```
+
+  Do NOT call `close-run` — the run remains alive for the user's resolution. Standard hard-halt block applies.
+
 ### Step 2: Generate Final Summary Report
 
 Before generating the report, invoke `Skill("superpowers:finishing-a-development-branch")` and include its recommendation in Cleanup Status.
@@ -1272,6 +1423,11 @@ These rules are absolute. No exceptions.
 | **`context_health` is observation-only (v2.10)** | Emitted at Phase Transition T3 and Resume Chain chained-orchestrator startup. Counts compaction index, completed tasks, chain handoffs. **MUST NOT alter orchestrator control flow** — Goodhart's-law guard. Behavior changes require a follow-on experiment under `docs/experiments/v2.10-context-health/` after ≥ 2 weeks of real-run data. See `references/learning-log.md`. |
 | **Polite-stop anti-pattern is forbidden (v2.10.1)** | A sub-agent returning PASS / APPROVED is a checkpoint inside the autonomous loop, never a reporting moment. The orchestrator MUST proceed immediately to the next phase step in the same turn. The only legitimate reporting moments are: Phase 2 success completion, ESCALATE that exceeds `escalation_count > 3`, headless `HEADLESS_HALTED.txt`, or hook denial. Any prompt edit that introduces "summarize and wait for user acknowledgment" between PASS and the next step IS the regression this invariant exists to prevent. |
 | **Cross-run isolation is enforced (v2.10.1)** | Phase 0 Step 1.5 refuses to start when another worktree of this skill has a live headless PID. Mode exclusivity is concurrent-safe by halt, not by lock — the user is responsible for choosing which run continues. Orphan worktrees with no state.json + >7d mtime are reported but never auto-deleted (may hold uncommitted manual debugging). |
+| **Method audit fields are populated at Agent Cleanup (v2.11)** | Method audit fields are populated at Phase 1 Step 4 from structured sub-agent output. |
+| **Method audit must pass before Phase 2 close-run** | Phase 2 Step 1.5 runs `scripts/validate_method_audit.py`. A task is `applied` only when it has evidence references (RED command, GREEN command, commands_run, findings_count). FAIL halts before close-run; user re-dispatches or edits `state.tasks.<id>.method_audit.waived` with a reason. |
+| **Method audit fields populated at Phase 1 Step 4** | Orchestrator parses `METHOD_AUDIT:` from Implementer, `REVIEW_FINDINGS:` from Combined Reviewer, `commands_run` from Verifier result JSON. Written under the active task tree (`state.tasks` or `state.plan2_state.tasks` per `active_plan`). |
+| **TDD waive reasons are restricted** | `METHOD_AUDIT: tdd waived` accepts only `reason=docs-only-task`, `config-only-task`, or `generated-only-task`. Other reasons fail validation. |
+| **Resource-key collisions force serialization in same wave** | Phase 0 Step 6 resource_key partition rule: tasks in the same wave that share a `**Resource Key:** <slug>` annotation are placed in singleton groups (never merged). The `serialization_reason: "resource_key=<key>"` field is written to each affected `state.execution_plan` group. WARN is emitted by the Plan Reviewer; correctness is automatic. |
 
 ---
 

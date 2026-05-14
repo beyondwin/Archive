@@ -33,6 +33,18 @@ example: 20260513T143321Z-188042f4-48211
 Concurrent runs in the same repository write to distinct run directories —
 no file locking required.
 
+## Source of truth for terminal outcome
+
+Precedence (highest first):
+
+1. `runs/<date>/<run_id>/final.json` — written by `close-run`. Authoritative once present.
+2. `runs/<date>/<run_id>/meta.json` — mirrors `final.json` outcome when close-run runs; remains `unknown` until then.
+3. `index.jsonl` — start records by default. **As of v2.11**, `close-run` rewrites the matching row's `outcome` field atomically. Older runs prior to this change still have stale `index.jsonl` entries; use `resolve-outcome` to query.
+
+Use `scripts/append_learning_event.py resolve-outcome --run-id <id>` instead of reading `index.jsonl` directly when reporting on closed runs.
+
+A run with `event_count == 0` AND `final.outcome == "success"` is **normal** for routine successful work — learning events are notable-boundary-only, not routine task logs.
+
 ## Single-writer contract
 
 **The orchestrator is the only process that invokes the helper.** Sub-agents
@@ -102,6 +114,12 @@ task completions, or ordinary success.
 **`improvement` field**: set `target` to `references/learning-log.md` (self-reference — the eventual improvement target is the schema itself, once we know which fields matter), `proposal` to `"Aggregate context_health events to derive empirical thresholds."`, `experiment_link` to `null`.
 
 **Goodhart warning**: do NOT use these counters to alter orchestrator behavior (e.g., force compaction earlier, refuse new dispatches). The v2.10 contract is observation-only. Behavior changes require a follow-on experiment under `docs/experiments/v2.10-context-health/` after ≥ 2 weeks of real-run data.
+
+### Optional fields (v2.11)
+
+- `context.root_cause_category`: one of `docker_oom`, `gradle_daemon_disappearance`, `gradle_metaspace`, `node_heap_oom`, `service_unreachable`, `other`. Set when ENV_BLOCKER triage from `references/escalation-playbook.md` identifies a category. Absent or `other` means uncategorized.
+
+<!-- for_next_tasks: Task 2 will add the source-of-truth section for verification_failure elsewhere in this file. This subsection is an optional-field extension within the verification_failure event-type, not a replacement for the full event-type description. -->
 
 ## meta.json schema
 
