@@ -103,6 +103,12 @@ task completions, or ordinary success.
 
 **Goodhart warning**: do NOT use these counters to alter orchestrator behavior (e.g., force compaction earlier, refuse new dispatches). The v2.10 contract is observation-only. Behavior changes require a follow-on experiment under `docs/experiments/v2.10-context-health/` after ≥ 2 weeks of real-run data.
 
+### Optional fields (v2.11)
+
+- `context.root_cause_category`: one of `docker_oom`, `gradle_daemon_disappearance`, `gradle_metaspace`, `node_heap_oom`, `service_unreachable`, `other`. Set when ENV_BLOCKER triage from `references/escalation-playbook.md` identifies a category. Absent or `other` means uncategorized.
+
+<!-- for_next_tasks: Task 2 will add the source-of-truth section for verification_failure elsewhere in this file. This subsection is an optional-field extension within the verification_failure event-type, not a replacement for the full event-type description. -->
+
 ## meta.json schema
 
 Written once by `init-run`, updated by `close-run`. Example:
