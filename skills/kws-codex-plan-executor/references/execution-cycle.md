@@ -107,6 +107,11 @@ For each task:
    Finished runs cannot contain running or unreviewed subagent records.
 4. Review spec compliance and code quality on `gpt-5.5 high`.
 5. Run risk-scaled verification.
+   When a command result needs triage before root cause is assigned, record a
+   compact `command_observations[]` entry in state with command, status,
+   taxonomy category, bounded evidence, and next action. Use
+   `category=unknown` only with bounded evidence; terminal finished runs must
+   also mention that command in `completion_audit.residual_risk`.
    Parallel verification is allowed only when commands do not share mutable
    output resources. Assign a `verification_resource_key` before parallelizing
    commands that can write shared artifacts:

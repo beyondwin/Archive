@@ -50,6 +50,7 @@ python3 scripts/validate_state.py .codex-orchestrator/runs/<run_id>/state.json
   "lifecycle_outcome": null,
   "handoff_reason": "",
   "completion_audit": null,
+  "command_observations": [],
   "subagents_requested": false,
   "subagent_runs": [],
   "risk_levels": {},
@@ -125,6 +126,28 @@ Optional top-level `context_budget` mirrors the budget summary from
 
 `status` must be `green`, `yellow`, or `red`; `max_chars` must be positive;
 `estimated_chars` must be non-negative; section fields must be arrays.
+
+Optional top-level `command_observations` records bounded command evidence
+before root cause is assigned:
+
+```json
+"command_observations": [
+  {
+    "command": "pnpm test",
+    "status": "failed",
+    "category": "dependency_bootstrap",
+    "evidence": "node_modules is missing in the fresh worktree.",
+    "next_action": "Run pnpm install before retrying tests."
+  }
+]
+```
+
+Each observation requires non-empty `command`, `status`, `category`, `evidence`,
+and `next_action`. `category` must be one of `source_failure`,
+`missing_local_env`, `dependency_bootstrap`, `resource_oom`, `timeout_or_hang`,
+`flaky_test`, `permission_or_sandbox`, `tooling_bug`, or `unknown`. For
+`lifecycle_outcome=finished`, every `unknown` command observation must be
+mentioned in `completion_audit.residual_risk` by command.
 
 Optional top-level `subagents_requested` and `subagent_runs` record delegated
 execution only when the user explicitly allowed subagents:

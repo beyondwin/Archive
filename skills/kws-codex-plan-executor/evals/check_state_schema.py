@@ -105,6 +105,16 @@ def completed_subagent_run() -> dict:
     }
 
 
+def valid_command_observation() -> dict:
+    return {
+        "command": "pnpm test",
+        "status": "failed",
+        "category": "dependency_bootstrap",
+        "evidence": "node_modules is missing in the fresh worktree.",
+        "next_action": "Run pnpm install before retrying tests.",
+    }
+
+
 def run_validator(script: Path, payload: dict) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory(prefix="codex-state-schema-") as temp:
         state_path = Path(temp) / "state.json"
@@ -224,6 +234,67 @@ def main() -> int:
     checks["subagent_current_task_overlap_with_rationale_passes"] = overlapping_allowed_result.returncode == 0
     if not checks["subagent_current_task_overlap_with_rationale_passes"]:
         failures.append("subagent write_scope overlapping current task should pass with overlap_rationale")
+
+    valid_observation = base_state()
+    valid_observation["command_observations"] = [valid_command_observation()]
+    valid_observation_result = run_validator(script, valid_observation)
+    checks["valid_command_observation_passes"] = valid_observation_result.returncode == 0
+    if not checks["valid_command_observation_passes"]:
+        failures.append("valid command_observation should pass")
+
+    invalid_observation_category = base_state()
+    invalid_category = valid_command_observation()
+    invalid_category["category"] = "mystery"
+    invalid_observation_category["command_observations"] = [invalid_category]
+    invalid_observation_category_result = run_validator(script, invalid_observation_category)
+    checks["invalid_command_observation_category_fails"] = (
+        invalid_observation_category_result.returncode != 0
+        and "command_observations[0].category" in (
+            invalid_observation_category_result.stderr + invalid_observation_category_result.stdout
+        )
+    )
+    if not checks["invalid_command_observation_category_fails"]:
+        failures.append("invalid command_observation category should fail")
+
+    missing_observation_fields = base_state()
+    missing_fields = valid_command_observation()
+    del missing_fields["evidence"]
+    missing_observation_fields["command_observations"] = [missing_fields]
+    missing_observation_fields_result = run_validator(script, missing_observation_fields)
+    checks["missing_command_observation_fields_fails"] = (
+        missing_observation_fields_result.returncode != 0
+        and "command_observations[0] missing field evidence" in (
+            missing_observation_fields_result.stderr + missing_observation_fields_result.stdout
+        )
+    )
+    if not checks["missing_command_observation_fields_fails"]:
+        failures.append("command_observation missing required fields should fail")
+
+    unknown_observation_without_risk = base_state()
+    unknown_without_risk = valid_command_observation()
+    unknown_without_risk["category"] = "unknown"
+    unknown_observation_without_risk["command_observations"] = [unknown_without_risk]
+    unknown_without_risk_result = run_validator(script, unknown_observation_without_risk)
+    checks["finished_unknown_observation_without_residual_risk_fails"] = (
+        unknown_without_risk_result.returncode != 0
+        and "unknown command observation" in (
+            unknown_without_risk_result.stderr + unknown_without_risk_result.stdout
+        )
+    )
+    if not checks["finished_unknown_observation_without_residual_risk_fails"]:
+        failures.append("finished unknown command_observation should require completion_audit residual_risk")
+
+    unknown_observation_with_risk = base_state()
+    unknown_with_risk = valid_command_observation()
+    unknown_with_risk["category"] = "unknown"
+    unknown_observation_with_risk["command_observations"] = [unknown_with_risk]
+    unknown_observation_with_risk["completion_audit"]["residual_risk"] = [
+        "Command pnpm test had bounded evidence but final category remained unknown."
+    ]
+    unknown_with_risk_result = run_validator(script, unknown_observation_with_risk)
+    checks["finished_unknown_observation_with_residual_risk_passes"] = unknown_with_risk_result.returncode == 0
+    if not checks["finished_unknown_observation_with_residual_risk_passes"]:
+        failures.append("finished unknown command_observation should pass when residual_risk mentions command")
 
     invalid_unit_type = base_state()
     invalid_unit_type["tasks"]["task_0"]["unit_manifest"]["unit_type"] = "mystery"

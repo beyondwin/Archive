@@ -162,6 +162,12 @@ no-findings residual-risk statement, and completion verification needs
 `completion_audit.verification_evidence`. Docs-only or read-only analysis runs
 may waive implementation methods only with an explicit reason.
 
+When a command result needs triage before root cause is assigned, the target may
+record `command_observations[]` in state. Each observation needs command,
+status, taxonomy category, bounded evidence, and next action. Use
+`category=unknown` only with bounded evidence, and mention the command in
+`completion_audit.residual_risk` before any finished outcome.
+
 ## Learning Log
 
 Headless artifacts remain under `.codex-orchestrator/runs/<run_id>/`. Learning

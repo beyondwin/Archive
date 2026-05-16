@@ -81,6 +81,9 @@ and invalid state payloads. It covers:
 - completion audit proof
 - non-success `handoff_reason`
 - `unit_manifest` enum, write-scope, and terminal-completion requirements
+- opt-in `subagent_runs` ownership, write-scope, and review requirements
+- `command_observations` category, required-field, and terminal unknown-risk
+  requirements
 
 Add or update these cases whenever `references/state-schema.md` changes.
 
