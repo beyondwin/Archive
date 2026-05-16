@@ -116,6 +116,12 @@ For each task:
    - cancellation/interruption recovery when the task changes workflow state
    Do not run irrelevant scenarios just to fill the table. Mark them
    `not-applicable` with one concrete reason.
+   Before closing a task that records `unit_manifest`, run or honestly
+   substitute `scripts/check_run_diffs.py --repo-root <worktree> --state
+   .codex-orchestrator/runs/<run_id>/state.json --task <task_id>` so changed
+   files are checked against `contract.allowed_edits`,
+   `unit_manifest.allowed_write_globs`, `contract.forbidden_edits`, and
+   `unit_manifest.forbidden_write_globs`.
 6. Record raw output paths for failures.
 7. Update state and checkpoint.
    Task completion must set the task `status` to `completed`, `blocked`, or

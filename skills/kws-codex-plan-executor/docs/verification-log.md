@@ -57,6 +57,36 @@ risk. Do not paste long logs or sensitive output.
   - The manifest is validated in state, but actual write enforcement is still a
     later diff-policy task.
 
+## 2026-05-16 - GSD-2 adoption task 3 diff policy
+
+- Branch: `codex/gsd-2-adoption-20260516-074140`
+- Commit: pending at time of verification
+- Scope: added `scripts/check_run_diffs.py`, deterministic diff-policy evals,
+  and runtime docs for the post-diff gate.
+- TDD evidence:
+  - RED: `python3 evals/check_run_diffs.py` failed before implementation because
+    `scripts/check_run_diffs.py` did not exist.
+  - GREEN: `python3 evals/check_run_diffs.py` passed after implementation with
+    all allowed, outside-allowed, forbidden, read-only, and docs-policy cases
+    true.
+- Commands:
+  - `python3 evals/check_run_diffs.py`
+    - result: pass, JSON payload had `"passed": true` and no failures.
+  - `python3 scripts/check_run_diffs.py --repo-root /Users/kws/source/private/worktrees/gsd-2-adoption-074140 --state /Users/kws/source/private/worktrees/gsd-2-adoption-074140/.codex-orchestrator/runs/20260516T074231Z-archive-codex-gsd-2-adoption-20260516-074140-f4e9b30fbbc1-c17bdf/state.json --task task_3 --json`
+    - result: pass after normalizing task contract paths to repo-relative
+      values; no violations.
+  - `python3 evals/check_skill_contract.py --skill SKILL.md`
+    - result: pass, JSON payload had `"passed": true`.
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .`
+    - result: pass, `Skill is valid!`
+  - `python3 -m py_compile scripts/check_run_diffs.py evals/check_run_diffs.py`
+    - result: pass, no syntax errors.
+  - `git diff --check -- skills/kws-codex-plan-executor`
+    - result: pass, no whitespace errors.
+- Residual risk:
+  - The checker is post-facto evidence; it cannot prevent writes before they
+    happen.
+
 ## 2026-05-14 - Log-driven executor hardening implementation
 
 - Branch: `codex/log-driven-executor-hardening`

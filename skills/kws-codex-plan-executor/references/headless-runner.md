@@ -131,6 +131,11 @@ runs require every completed task to have a valid manifest. `implementation`
 manifests must include non-empty `allowed_write_globs`; `read-only` manifests
 must not allow write globs.
 
+When a task records `unit_manifest`, the target should run or honestly
+substitute `scripts/check_run_diffs.py --repo-root "$WORKTREE_ABS" --state
+"$RUN_DIR/state.json" --task <task_id>` before task completion. The diff check
+is post-facto policy evidence, not a low-level write hook.
+
 When a headless target records required phase methods, it must use
 `method_audit` evidence instead of skill-invocation intent. Implementation TDD
 needs RED and GREEN evidence references, review needs findings or an explicit

@@ -81,3 +81,9 @@ tasks, an empty `allowed_write_globs` value is invalid.
 navigation layers, `.git/**`, run-external state, and other files that must not
 be touched by the unit.
 
+Use `scripts/check_run_diffs.py` after implementation and before task
+completion to compare the git diff against both the task contract and
+`unit_manifest`. The checker treats `contract.allowed_edits` and
+`unit_manifest.allowed_write_globs` as allowed patterns, and
+`contract.forbidden_edits` plus `unit_manifest.forbidden_write_globs` as
+forbidden patterns. Forbidden patterns win.
