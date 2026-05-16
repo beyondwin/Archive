@@ -37,6 +37,8 @@ Stay within the tool-call budget. If you find yourself exceeding it for a SMALL/
 
 ## Spec Requirement (governs this task)
 
+Spec sections included: `{spec_section_label}` (per `<active>.spec_manifest.task_to_sections["task_<N>"]`).
+
 {relevant excerpt from the design spec — copy the section(s) that apply to this task}
 
 ## Files to Touch

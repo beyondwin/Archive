@@ -1032,7 +1032,30 @@ Advance only when the current task (or parallel group) reaches Agent Cleanup suc
 
 Build the implementer prompt from the **Implementer Prompt Template** below. Fill in:
 - `{full text of the task}` — copy the entire `### Task N:` section verbatim
-- `{relevant spec excerpt}` — spec section(s) that govern this task
+- `{relevant spec excerpt}` — spec section(s) that govern this task. **v2.15 substitution rule (C1):**
+  ```
+  section_entry = <active>.spec_manifest.task_to_sections["task_<N>"]
+  section_ids = section_entry["sections"]
+  if "*" in section_ids:
+    spec_text       = full spec file contents
+    section_label   = "FULL (fallback)"
+  else:
+    lines = ["## Spec context (sections: " + ", ".join(section_ids) + ")", ""]
+    for sid in section_ids (in spec_manifest order):
+      section = <active>.spec_manifest.sections[sid]
+      slice = spec_file_lines[section.range[0]-1 : section.range[1]]
+      lines.extend(slice)
+      lines.append("")
+    spec_text       = "\n".join(lines)
+    section_label   = ", ".join(section_ids)
+  Substitute {relevant spec excerpt} → spec_text
+  Substitute {spec_section_label} → section_label
+  ```
+  Implementer prompt template includes `{spec_section_label}` as a new placeholder (introduced in v2.15) — fill it from `section_label`.
+
+  **SPEC_BLOCKER fallback (per spec §C1.4):** if the Implementer returns `ESCALATE` with `type: SPEC_BLOCKER` and `blocker` text matches the regex `(missing context|missing section|ambiguous reference|insufficient spec)` (case-insensitive):
+    - If `<active>.spec_manifest.fallback_policy == "full_spec_on_blocker"`: re-dispatch the Implementer with the FULL spec inlined (set `section_ids=["*"]` for this dispatch only). Increment the task's `spec_clarifications` (NOT `review_retries` — per the P15 rule). Return to Step 1.
+    - Else (`halt_on_blocker`): apply standard ESCALATE handling — no automatic full-spec retry.
 - `{files to touch}` — from the task's **Files:** block
 - `{risk level}` — from your Phase 0 assignment
 - `{worktree_path}` — the worktree path
