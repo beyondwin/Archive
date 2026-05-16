@@ -164,6 +164,50 @@ Mitigation:
 Residual risk: resource-key serialization is guidance unless a future scheduler
 enforces it mechanically.
 
+### Unit Manifest Enforcement Boundary
+
+Risk: the new unit manifest can describe a strict write/tool policy, but Codex
+skills cannot intercept every low-level file operation through a custom hook.
+
+Mitigation:
+
+- State validation checks manifest shape and terminal requirements.
+- The task contract remains mandatory before edits.
+- A post-diff checker compares changed files against contract and manifest
+  write globs.
+
+Residual risk: violations are detected by contract and diff review, not blocked
+at the instant of every write.
+
+### Event Journal Duplication
+
+Risk: a project-local event journal can look redundant next to state and the
+user-local learning log.
+
+Mitigation:
+
+- State remains the source of truth.
+- The event journal is replayable project-local execution evidence.
+- The learning log remains user-local cross-repo process learning.
+
+Residual risk: agents may over-log routine events unless references and evals
+keep the journal vocabulary compact.
+
+### Drift Repair Overreach
+
+Risk: automatic repair could mask real source or state mismatches.
+
+Mitigation:
+
+- Repair mode is explicit.
+- Safe repairs are limited to mechanical pointer, timestamp, and sequence
+  drift.
+- Source hash mismatch, missing manifests, unresolved carried acceptance, and
+  journal run-id mismatch are blocking.
+
+Residual risk: future repair types must stay conservative or they can weaken
+resume safety.
+
 ### Headless Fresh-Process Behavior
 
 Risk: headless `codex exec` may not inherit parent session context, skills, or
@@ -207,6 +251,17 @@ separate workflows.
 Learning events live under `~/.codex/learning/`, not the target repository. The
 repository contains execution state and artifacts, while cross-project process
 learning remains user-local.
+
+### No SQLite Runtime From GSD-2
+
+GSD-2's SQLite-backed runtime is intentionally not adopted. The executor keeps
+per-run JSON state as the authority and uses JSONL only as evidence.
+
+### No Dashboard Or Daemon
+
+The GSD-2 dashboard, daemon, Studio, MCP server, and extension runtime are not
+part of this skill. They would increase operational surface area without
+improving portable Codex execution.
 
 ### No Automatic Version Bump For Docs-Only Changes
 
