@@ -69,7 +69,11 @@ Args are a mix of explicit `key=value` pairs and free-text natural-language hint
 
 **Pass 1 — collect `key=value` pairs.**
 
-Recognized keys: `plan`, `plan2`, `plan3`, …, `planN`, `spec`, `spec2`, `spec3`, …, `specN` (matching plan numbers), `implementer_model`, `parallel`, `risk`, `docs_scope`, `mode`, `manifest`. Each appears as `key=value` with no surrounding spaces around `=`. Unknown keys → halt: `"Unknown argument: <key>=<value>"`.
+Recognized keys: `plan`, `plan2`, `plan3`, …, `planN`, `spec`, `spec2`, `spec3`, …, `specN` (matching plan numbers), `implementer_model`, `parallel`, `risk`, `docs_scope`, `mode`, `manifest`, `budget`, `budget_action`. Each appears as `key=value` with no surrounding spaces around `=`. Unknown keys → halt: `"Unknown argument: <key>=<value>"`.
+
+`budget=<USD>` is a positive float or zero. Negative → halt with `Invalid budget=<value>; must be ≥ 0.`
+`budget_action=<value>` must be one of `pause`, `warn`, `off`. Else halt with `Unknown budget_action=<value>. Allowed: pause, warn, off.`
+NL lexicon: no entries added for budget — explicit-only by design.
 
 **Pass 2 — multi-plan auto-detection.**
 
@@ -116,8 +120,10 @@ Application rule (explicit always wins):
 After Pass 3, output ONE line to the user summarizing the resolved interpretation, before doing any other work:
 
 ```
-Parsed: <N> plan(s) [<index 0 slug>→<index 1 slug>→...], implementer_model=<value> [from <source>], parallel=<value> [from <source>], mode=<value> [from <source>], risk=<value or "per-task">.
+Parsed: <N> plan(s) [<index 0 slug>→<index 1 slug>→...], implementer_model=<value> [from <source>], parallel=<value> [from <source>], mode=<value> [from <source>], risk=<value or "per-task">, budget=<value or "off">.
 ```
+
+The `budget=<value or "off">` field in the echo line shows the parsed `budget=<USD>` value (e.g. `budget=5.00`) or the literal string `off` when no `budget=` arg was provided. This lets the user see the cost cap before detach.
 
 `<source>` is one of: `explicit` (Pass 1 set it), `NL '<word>'` (Pass 3 set it from a keyword), or `default` (not set; using built-in default). The slug is derived from the plan filename per Phase 0 Step 2 rule.
 
