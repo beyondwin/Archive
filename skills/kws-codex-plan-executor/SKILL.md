@@ -2,8 +2,8 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "1.8.1"
-  updated_at: "2026-05-15"
+  version: "1.9.0"
+  updated_at: "2026-05-16"
 ---
 
 # KWS Codex Plan Executor
@@ -50,6 +50,11 @@ parallel work, or passes `subagents=on`.
 - No edits before a 5-line `TASK EXECUTION CONTRACT` is stated and recorded:
   `scope`, `files_to_inspect`, `allowed_edits`, `forbidden_edits`, and
   `acceptance_command_or_honest_substitute`.
+- Executable tasks may record `unit_manifest` with context, skill, tool, and
+  write policy; finished runs require every completed task to have a valid
+  manifest, including `allowed_write_globs` and `forbidden_write_globs`.
+  Before closing a task with a manifest, run or honestly substitute the
+  post-diff policy check against the recorded task contract and manifest.
 - For every new `interactive` or `headless` execution run, create a dedicated
   non-conflicting `codex/...` git worktree before any task contract or edits.
   Do not implement from `main` or the caller's original checkout. Check
@@ -73,8 +78,14 @@ parallel work, or passes `subagents=on`.
   `references/learning-log.md`; initialize with `init-run`, append with
   `append`, close with `close-run`, and include `run_id`, `run_dir`, and
   `state_path`. `prompt` and `handoff` are not logging modes.
+- Execution runs maintain project-local replay evidence in
+  `.codex-orchestrator/runs/<run_id>/events.jsonl` when the event helper is
+  available. State remains authoritative, but finished state records the event
+  journal path and last event sequence.
 - Execution runs record `.codex-orchestrator/runs/<run_id>/context.json` before
   edits and store `context_snapshot_path` plus `context_basis_hash` in state.
+  The snapshot may record `context_budget` so oversized plan/spec/doc sources
+  are visible before task execution.
 - Execution runs maintain `context_health` in state at semantic boundaries:
   after context snapshot creation, after each task, after blocker/error events,
   before handoff/resume, and before final completion. It must include
@@ -82,8 +93,17 @@ parallel work, or passes `subagents=on`.
 - Successful terminal runs set `lifecycle_outcome=finished` and include a
   passing `completion_audit` with `prompt_to_artifact_checklist` and
   `verification_evidence`.
+- Before terminal `lifecycle_outcome=finished`, run drift reconciliation with
+  `scripts/reconcile_state.py --check` or `--repair-safe`; unresolved blocking
+  drift prevents a finished outcome.
 - Blocked or failed terminal runs set a non-success `lifecycle_outcome` and a
   concrete `handoff_reason`.
+- Subagent records are opt-in. If subagents were explicitly allowed, record
+  `subagents_requested=true` and `subagent_runs[]`; finished runs cannot retain
+  running or unreviewed subagent records.
+- Command observations classify bounded command evidence before root cause is
+  assigned. Finished runs with `category=unknown` observations must mention the
+  command in `completion_audit.residual_risk`.
 - In interactive and headless execution, feature, bugfix, refactor, or
   behavior-change implementation must invoke `using-superpowers` as the skill
   gate and `test-driven-development` before implementation code. This is not a
@@ -93,6 +113,8 @@ parallel work, or passes `subagents=on`.
 - Headless `codex exec` prompts must bootstrap applicable skills because parent
   session skill state is not assumed to carry over. Explicitly include
   `using-superpowers` and `test-driven-development` for implementation work.
+- Headless final output follows the structured result shape documented in
+  `templates/headless-output-schema.json` when schema output is available.
 
 ## Workflow
 
@@ -138,7 +160,12 @@ For prompt/handoff mode:
    asks for broader Spark/model scout routing.
 5. Run the checklist in `references/prompt-export-checklist.md`.
 
-Return only one fenced `text` block when the user asks for prompt-only output.
+Prompt and handoff modes are export-only. Do not create `.codex-orchestrator`
+artifacts, execute tasks, or report completion artifacts in these modes. Return
+exactly one fenced `text` block containing the generated prompt. Handoff export
+must include the literal `HANDOFF CHECKPOINT`; no-Spark or `gpt-5.5 only`
+exports must still include the literal `gpt-5.5 high` while omitting Spark
+routes.
 
 ## Validation Matrix
 

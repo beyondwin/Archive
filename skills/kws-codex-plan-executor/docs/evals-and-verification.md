@@ -15,6 +15,11 @@ python3 scripts/validate_state.py --help
 python3 scripts/check_learning_log_health.py --help
 python3 scripts/check_learning_log_health.py --latest 5 --json
 python3 evals/check_state_schema.py
+python3 evals/check_run_diffs.py
+python3 evals/check_event_journal.py
+python3 evals/check_state_reconciliation.py
+python3 evals/check_context_snapshot.py
+python3 evals/check_headless_result.py
 python3 evals/check_learning_log.py
 python3 evals/check_skill_contract.py --skill SKILL.md
 python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
@@ -22,6 +27,11 @@ python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py
 
 These checks do not launch real executor sessions. Use them first while editing
 scripts, docs, or contracts.
+
+`bash evals/run.sh` runs the same deterministic preflight checks before it
+launches real fixture sessions, so fixture baselines cannot be regenerated
+while state, event, drift, context-budget, headless-result, or diff-policy
+checks are failing.
 
 After running verification for a package change, append a compact entry to
 [verification-log.md](verification-log.md). Record command, result, skipped
@@ -75,8 +85,85 @@ and invalid state payloads. It covers:
 - lifecycle outcomes
 - completion audit proof
 - non-success `handoff_reason`
+- `unit_manifest` enum, write-scope, and terminal-completion requirements
+- opt-in `subagent_runs` ownership, write-scope, and review requirements
+- `command_observations` category, required-field, and terminal unknown-risk
+  requirements
 
 Add or update these cases whenever `references/state-schema.md` changes.
+
+## Diff Policy Checks
+
+`evals/check_run_diffs.py` creates temporary git repositories and verifies
+`scripts/check_run_diffs.py` against changed files from the worktree, index,
+and untracked set. It covers:
+
+- changed file allowed by both task contract and manifest
+- changed file outside `allowed_edits`
+- changed file matching forbidden globs
+- read-only manifest with no changed files
+- docs policy allowing `docs/**`
+
+Add cases here whenever the post-diff policy changes.
+
+## Event Journal Checks
+
+`evals/check_event_journal.py` verifies `scripts/append_run_event.py` and the
+terminal state metadata expected for project-local `events.jsonl`. It covers:
+
+- first append creates `events.jsonl` and sets `last_event_seq=1`
+- second append increments sequence
+- payload run-id mismatch rejection
+- secret-like payload key redaction and long-string truncation
+- finished state rejecting missing or stale event journal metadata
+
+Add cases here when event types, redaction policy, or terminal event metadata
+changes.
+
+## Drift Reconciliation Checks
+
+`evals/check_state_reconciliation.py` verifies safe drift repair and blocking
+drift detection. It covers:
+
+- stale root compatibility state pointer repair
+- missing `context_health.last_checked_at` repair
+- missing `event_journal_path` repair
+- stale `last_event_seq` repair
+- open carried acceptance blocking terminal success
+- completed task missing `unit_manifest` blocking terminal success
+- context basis hash mismatch blocking terminal success
+
+Add cases here whenever drift types, repair policy, or terminal drift
+validation changes.
+
+## Context Snapshot Checks
+
+`evals/check_context_snapshot.py` verifies context-budget metadata from
+`scripts/build_context_snapshot.py`. It covers:
+
+- small sources producing `green`
+- sources above 70% of max producing `yellow`
+- sources over max producing `red` with omitted section records
+- stable repeated `basis_hash` and section metadata
+
+Add cases here when snapshot source hashing, section extraction, or budget
+status rules change.
+
+## Headless Result Checks
+
+`evals/check_headless_result.py` parses
+`templates/headless-output-schema.json` and manually validates representative
+payloads without adding a JSON Schema dependency. It covers:
+
+- schema JSON parsing
+- required field list
+- status enum
+- valid payload acceptance
+- invalid status rejection
+- missing required field rejection
+- invalid verification status rejection
+
+Add cases here when the headless final result shape changes.
 
 ## Learning Log Checks
 
@@ -122,6 +209,8 @@ It currently protects:
 - lifecycle outcome contract
 - high-risk verification matrix guidance
 - mandatory dedicated `codex/...` worktree isolation and no-main execution
+- unit manifest, event journal, context-budget, headless-result, subagent, and
+  command-observation behavior through the deterministic checks listed above
 
 When adding a new cross-surface invariant, add a contract check here.
 

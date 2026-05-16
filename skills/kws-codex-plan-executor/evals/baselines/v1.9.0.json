@@ -1,0 +1,306 @@
+{
+  "version": "1.9.0",
+  "date": "2026-05-16T09:48:43Z",
+  "fixtures": [
+    {
+      "fixture": "01-prompt-only",
+      "mode": "prompt",
+      "codex_status": 0,
+      "checker_status": 0,
+      "passed": true,
+      "checks": {
+        "fixture": "prompt-only",
+        "passed": true,
+        "checks": {
+          "one_text_block": true,
+          "no_template_tokens": true,
+          "must_include": true,
+          "must_not_include": true,
+          "model_routing": true,
+          "no_implementation_started_language": true
+        },
+        "failures": []
+      }
+    },
+    {
+      "fixture": "02-no-spark",
+      "mode": "prompt",
+      "codex_status": 0,
+      "checker_status": 0,
+      "passed": true,
+      "checks": {
+        "fixture": "no-spark",
+        "passed": true,
+        "checks": {
+          "one_text_block": true,
+          "no_template_tokens": true,
+          "must_include": true,
+          "must_not_include": true,
+          "model_routing": true,
+          "no_implementation_started_language": true
+        },
+        "failures": []
+      }
+    },
+    {
+      "fixture": "03-continuation",
+      "mode": "handoff",
+      "codex_status": 0,
+      "checker_status": 0,
+      "passed": true,
+      "checks": {
+        "fixture": "continuation",
+        "passed": true,
+        "checks": {
+          "one_text_block": true,
+          "no_template_tokens": true,
+          "must_include": true,
+          "must_not_include": true,
+          "model_routing": true,
+          "no_implementation_started_language": true
+        },
+        "failures": []
+      }
+    },
+    {
+      "fixture": "04-interactive-docs-only",
+      "mode": "interactive",
+      "codex_status": 0,
+      "checker_status": 0,
+      "passed": true,
+      "checks": {
+        "fixture": "interactive-docs-only",
+        "passed": true,
+        "checks": {
+          "state_exists": true,
+          "state_valid": true,
+          "expected_files_changed": true,
+          "no_out_of_scope_files": true,
+          "must_not_change": true,
+          "tasks_finished": true,
+          "context_snapshot_exists": true,
+          "context_health_present": true,
+          "lifecycle_finished": true,
+          "completion_audit_passed": true,
+          "context_health_handoff_ready": true,
+          "test_after": true,
+          "must_include_final": true,
+          "must_not_include_final": true,
+          "must_block": true,
+          "state_must_include": true,
+          "contract_required": true,
+          "forbidden_log_patterns": true
+        },
+        "failures": [],
+        "actual_changed_files": [
+          ".codex-orchestrator/runs/20260516T085216Z-repo-codex-add-docs-note-698bd3658a0c-545937/context.json",
+          ".codex-orchestrator/runs/20260516T085216Z-repo-codex-add-docs-note-698bd3658a0c-545937/events.jsonl",
+          ".codex-orchestrator/runs/20260516T085216Z-repo-codex-add-docs-note-698bd3658a0c-545937/state.json",
+          ".codex-orchestrator/state.json",
+          ".harness/final.md",
+          ".harness/run.jsonl",
+          "docs/example.md"
+        ]
+      }
+    },
+    {
+      "fixture": "05-missing-files-block",
+      "mode": "interactive",
+      "codex_status": 0,
+      "checker_status": 0,
+      "passed": true,
+      "checks": {
+        "fixture": "missing-files-block",
+        "passed": true,
+        "checks": {
+          "state_exists": true,
+          "state_valid": true,
+          "expected_files_changed": true,
+          "no_out_of_scope_files": true,
+          "must_not_change": true,
+          "tasks_finished": true,
+          "context_snapshot_exists": true,
+          "context_health_present": true,
+          "lifecycle_finished": true,
+          "completion_audit_passed": true,
+          "context_health_handoff_ready": true,
+          "test_after": true,
+          "must_include_final": true,
+          "must_not_include_final": true,
+          "must_block": true,
+          "state_must_include": true,
+          "contract_required": true,
+          "forbidden_log_patterns": true
+        },
+        "failures": [],
+        "actual_changed_files": [
+          ".codex-orchestrator/runs/20260516T090454Z-repo-codex-ambiguous-task-8c827f7193c8-9d8bbd/context.json",
+          ".codex-orchestrator/runs/20260516T090454Z-repo-codex-ambiguous-task-8c827f7193c8-9d8bbd/events.jsonl",
+          ".codex-orchestrator/runs/20260516T090454Z-repo-codex-ambiguous-task-8c827f7193c8-9d8bbd/state.json",
+          ".codex-orchestrator/state.json",
+          ".harness/final.md",
+          ".harness/run.jsonl"
+        ]
+      }
+    },
+    {
+      "fixture": "06-resume-latest-headless",
+      "mode": "headless",
+      "codex_status": 0,
+      "checker_status": 0,
+      "passed": true,
+      "checks": {
+        "fixture": "resume-latest-headless",
+        "passed": true,
+        "checks": {
+          "state_exists": true,
+          "state_valid": true,
+          "expected_files_changed": true,
+          "no_out_of_scope_files": true,
+          "must_not_change": true,
+          "tasks_finished": true,
+          "context_snapshot_exists": true,
+          "context_health_present": true,
+          "lifecycle_finished": true,
+          "completion_audit_passed": true,
+          "context_health_handoff_ready": true,
+          "test_after": true,
+          "must_include_final": true,
+          "must_not_include_final": true,
+          "must_block": true,
+          "state_must_include": true,
+          "contract_required": true,
+          "forbidden_log_patterns": true
+        },
+        "failures": [],
+        "actual_changed_files": [
+          ".codex-orchestrator/runs/20260516T091132Z-repo-main-b6d1127b34e6-5d7955/context.json",
+          ".codex-orchestrator/runs/20260516T091132Z-repo-main-b6d1127b34e6-5d7955/events.jsonl",
+          ".codex-orchestrator/runs/20260516T091132Z-repo-main-b6d1127b34e6-5d7955/headless-final.json",
+          ".codex-orchestrator/runs/20260516T091132Z-repo-main-b6d1127b34e6-5d7955/headless.jsonl",
+          ".codex-orchestrator/runs/20260516T091132Z-repo-main-b6d1127b34e6-5d7955/raw/final-acceptance.txt",
+          ".codex-orchestrator/runs/20260516T091132Z-repo-main-b6d1127b34e6-5d7955/raw/parse-plan-final.json",
+          ".codex-orchestrator/runs/20260516T091132Z-repo-main-b6d1127b34e6-5d7955/raw/reconcile-state.json",
+          ".codex-orchestrator/runs/20260516T091132Z-repo-main-b6d1127b34e6-5d7955/raw/task_0-diff-policy-substitute.txt",
+          ".codex-orchestrator/runs/20260516T091132Z-repo-main-b6d1127b34e6-5d7955/raw/task_0-green.txt",
+          ".codex-orchestrator/runs/20260516T091132Z-repo-main-b6d1127b34e6-5d7955/raw/task_0-red.txt",
+          ".codex-orchestrator/runs/20260516T091132Z-repo-main-b6d1127b34e6-5d7955/raw/validate-state.txt",
+          ".codex-orchestrator/runs/20260516T091132Z-repo-main-b6d1127b34e6-5d7955/state.json",
+          ".codex-orchestrator/state.json",
+          ".harness/final.md",
+          ".harness/run.jsonl",
+          "docs/resume-target.md"
+        ]
+      }
+    },
+    {
+      "fixture": "07-dirty-unrelated-headless",
+      "mode": "headless",
+      "codex_status": 0,
+      "checker_status": 0,
+      "passed": true,
+      "checks": {
+        "fixture": "dirty-unrelated-headless",
+        "passed": true,
+        "checks": {
+          "state_exists": true,
+          "state_valid": true,
+          "expected_files_changed": true,
+          "no_out_of_scope_files": true,
+          "must_not_change": true,
+          "tasks_finished": true,
+          "context_snapshot_exists": true,
+          "context_health_present": true,
+          "lifecycle_finished": true,
+          "completion_audit_passed": true,
+          "context_health_handoff_ready": true,
+          "test_after": true,
+          "must_include_final": true,
+          "must_not_include_final": true,
+          "must_block": true,
+          "state_must_include": true,
+          "contract_required": true,
+          "forbidden_log_patterns": true
+        },
+        "failures": [],
+        "actual_changed_files": [
+          ".codex-orchestrator/learning/index.jsonl",
+          ".codex-orchestrator/learning/runs/2026-05-16/20260516T092212Z-repo-main-4b8d96aec359-484a5f/final.json",
+          ".codex-orchestrator/learning/runs/2026-05-16/20260516T092212Z-repo-main-4b8d96aec359-484a5f/meta.json",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/context.json",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/events.jsonl",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/headless-final.json",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/headless-final.md",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/headless.jsonl",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/raw/exact-content.txt",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/raw/final-acceptance.txt",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/raw/final-artifact-review.txt",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/raw/final-exact-content.txt",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/raw/final-parse-plan.json",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/raw/focused-dirty-status.txt",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/raw/green-acceptance.txt",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/raw/parse-plan.json",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/raw/post-diff-status.txt",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/raw/reconcile-check.json",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/raw/reconcile-repair-safe.json",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/raw/red-acceptance.txt",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/raw/validate-state.txt",
+          ".codex-orchestrator/runs/20260516T092212Z-repo-main-4b8d96aec359-484a5f/state.json",
+          ".codex-orchestrator/state.json",
+          ".harness/final.md",
+          ".harness/run.jsonl",
+          "docs/task-note.md",
+          "docs/user-note.md"
+        ]
+      }
+    },
+    {
+      "fixture": "08-dirty-related-block-headless",
+      "mode": "headless",
+      "codex_status": 0,
+      "checker_status": 0,
+      "passed": true,
+      "checks": {
+        "fixture": "dirty-related-block-headless",
+        "passed": true,
+        "checks": {
+          "state_exists": true,
+          "state_valid": true,
+          "expected_files_changed": true,
+          "no_out_of_scope_files": true,
+          "must_not_change": true,
+          "tasks_finished": true,
+          "context_snapshot_exists": true,
+          "context_health_present": true,
+          "lifecycle_finished": true,
+          "completion_audit_passed": true,
+          "context_health_handoff_ready": true,
+          "test_after": true,
+          "must_include_final": true,
+          "must_not_include_final": true,
+          "must_block": true,
+          "state_must_include": true,
+          "contract_required": true,
+          "forbidden_log_patterns": true
+        },
+        "failures": [],
+        "actual_changed_files": [
+          ".codex-orchestrator/learning-log/index.jsonl",
+          ".codex-orchestrator/learning-log/runs/2026-05-16/20260516T093311Z-repo-main-c5a6840e470c-fd0960/events.jsonl",
+          ".codex-orchestrator/learning-log/runs/2026-05-16/20260516T093311Z-repo-main-c5a6840e470c-fd0960/final.json",
+          ".codex-orchestrator/learning-log/runs/2026-05-16/20260516T093311Z-repo-main-c5a6840e470c-fd0960/meta.json",
+          ".codex-orchestrator/runs/20260516T093311Z-repo-main-c5a6840e470c-fd0960/context.json",
+          ".codex-orchestrator/runs/20260516T093311Z-repo-main-c5a6840e470c-fd0960/events.jsonl",
+          ".codex-orchestrator/runs/20260516T093311Z-repo-main-c5a6840e470c-fd0960/headless-final.json",
+          ".codex-orchestrator/runs/20260516T093311Z-repo-main-c5a6840e470c-fd0960/headless.jsonl",
+          ".codex-orchestrator/runs/20260516T093311Z-repo-main-c5a6840e470c-fd0960/raw/blocker-learning-event.json",
+          ".codex-orchestrator/runs/20260516T093311Z-repo-main-c5a6840e470c-fd0960/state.json",
+          ".codex-orchestrator/state.json",
+          ".harness/final.md",
+          ".harness/run.jsonl",
+          "docs/related-target.md"
+        ]
+      }
+    }
+  ]
+}

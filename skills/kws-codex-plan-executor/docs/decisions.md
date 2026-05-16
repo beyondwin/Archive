@@ -46,6 +46,32 @@ workflow contracts that make autonomous execution safer:
 | plan-creation gate before execution | Reject | This skill starts from `plan=`; plan authoring belongs elsewhere. |
 | repository-local learning events | Reject | Logs could pollute project repos and expose private context. |
 
+## GSD-2 Adoption Basis
+
+The v1.9.0 adoption pass reviewed `gsd-build/gsd-2` at commit
+`74bba52ac2af5960d7caf8c8720ed0249d4ee6b5`, observed on 2026-05-16.
+
+The goal is selective adoption. GSD-2 is a standalone TypeScript runtime with
+SQLite state, extensions, dashboard surfaces, and worker orchestration.
+`kws-codex-plan-executor` remains a portable file-based Codex skill. The useful
+parts are execution-control contracts that can be represented in JSON, JSONL,
+reference docs, and deterministic Python checks.
+
+| GSD-2 Pattern | Decision | Reason |
+| --- | --- | --- |
+| Unit context manifest | Adopt | Per-task context and write policy can be validated without a new runtime. |
+| Pre-dispatch gate pipeline | Adopt | A fixed gate order catches missing state before edits. |
+| Write/tool policy by unit type | Adopt with post-diff checks | Codex skills cannot intercept every write, but contracts and diffs can be checked. |
+| Project-local event journal | Adopt | Replayable run evidence belongs next to per-run state. |
+| Drift-driven reconciliation | Adopt | Safe mechanical state repair reduces resume friction without hiding blockers. |
+| Context budget and packing | Adopt approximately | Character budgets are good enough for safety metadata. |
+| Structured headless result | Adopt | Parent sessions need stable status, artifact, verification, and blocker fields. |
+| Subagent run store | Adopt only for opt-in subagents | Parallelism remains explicit, but state should describe delegated work. |
+| Command observation taxonomy | Adopt | Failures should be classified before root cause is asserted. |
+| Dynamic model routing | Defer | Runtime model choice remains under Codex/app policy. |
+| SQLite canonical runtime | Reject | JSON state is simpler and fits skill distribution. |
+| Web dashboard, daemon, MCP server | Reject | Those are product surfaces outside this skill. |
+
 ## Why State Is Per Run
 
 Earlier versions used root `.codex-orchestrator/state.json` as the active

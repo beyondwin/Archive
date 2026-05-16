@@ -22,6 +22,19 @@ REQUIRED_CONTRACT = {
 }
 
 
+def unit_manifest() -> dict:
+    return {
+        "unit_type": "execute-task",
+        "context_mode": "focused",
+        "required_skills": ["using-superpowers", "test-driven-development"],
+        "tool_policy": "implementation",
+        "allowed_write_globs": ["docs/example.md"],
+        "forbidden_write_globs": ["docs/unrelated.md"],
+        "artifact_policy": "inline-summary",
+        "max_context_chars": 60000,
+    }
+
+
 def base_state() -> dict:
     return {
         "schema_version": "1",
@@ -35,6 +48,8 @@ def base_state() -> dict:
         "state_path": ".codex-orchestrator/runs/20260513T000000Z-archive-codex-example-abcdef0-a1b2c3/state.json",
         "context_snapshot_path": ".codex-orchestrator/runs/20260513T000000Z-archive-codex-example-abcdef0-a1b2c3/context.json",
         "context_basis_hash": "0" * 64,
+        "event_journal_path": ".codex-orchestrator/runs/20260513T000000Z-archive-codex-example-abcdef0-a1b2c3/events.jsonl",
+        "last_event_seq": 1,
         "context_health": {
             "status": "green",
             "last_checked_at": "2026-05-14T10:00:00Z",
@@ -63,6 +78,7 @@ def base_state() -> dict:
                 "risk": "low",
                 "files_declared": ["docs/example.md"],
                 "contract": dict(REQUIRED_CONTRACT),
+                "unit_manifest": unit_manifest(),
                 "review_retries": 0,
                 "verifier_retries": 0,
             }
@@ -72,6 +88,30 @@ def base_state() -> dict:
             "updated_at": "2026-05-14T10:00:00Z",
             "completed_at": "2026-05-14T10:00:00Z",
         },
+    }
+
+
+def completed_subagent_run() -> dict:
+    return {
+        "id": "agent_123",
+        "owner_task": "task_0",
+        "mode": "fork_context",
+        "write_scope": ["docs/subagent.md"],
+        "status": "completed",
+        "result_summary": "Updated the delegated docs note.",
+        "changed_files": ["docs/subagent.md"],
+        "review_status": "accepted",
+        "merged_at": "2026-05-14T09:45:00Z",
+    }
+
+
+def valid_command_observation() -> dict:
+    return {
+        "command": "pnpm test",
+        "status": "failed",
+        "category": "dependency_bootstrap",
+        "evidence": "node_modules is missing in the fresh worktree.",
+        "next_action": "Run pnpm install before retrying tests.",
     }
 
 
@@ -96,6 +136,218 @@ def main() -> int:
     checks["valid_contract_passes"] = valid.returncode == 0
     if not checks["valid_contract_passes"]:
         failures.append("valid state with task contract should pass")
+    checks["valid_unit_manifest_passes"] = valid.returncode == 0
+    if not checks["valid_unit_manifest_passes"]:
+        failures.append("valid unit_manifest should pass")
+
+    no_subagents_requested = base_state()
+    no_subagents_requested["subagents_requested"] = False
+    no_subagents_requested["subagent_runs"] = []
+    no_subagents = run_validator(script, no_subagents_requested)
+    checks["subagents_off_without_runs_passes"] = no_subagents.returncode == 0
+    if not checks["subagents_off_without_runs_passes"]:
+        failures.append("subagents off with no subagent_runs should pass")
+
+    completed_subagent = base_state()
+    completed_subagent["subagents_requested"] = True
+    completed_subagent["subagent_runs"] = [completed_subagent_run()]
+    completed_subagent_result = run_validator(script, completed_subagent)
+    checks["completed_reviewed_subagent_passes"] = completed_subagent_result.returncode == 0
+    if not checks["completed_reviewed_subagent_passes"]:
+        failures.append("completed reviewed subagent record should pass")
+
+    subagent_without_opt_in = base_state()
+    subagent_without_opt_in["subagent_runs"] = [completed_subagent_run()]
+    subagent_without_opt_in_result = run_validator(script, subagent_without_opt_in)
+    checks["subagent_runs_without_opt_in_fails"] = (
+        subagent_without_opt_in_result.returncode != 0
+        and "subagent_runs requires subagents_requested=true" in (
+            subagent_without_opt_in_result.stderr + subagent_without_opt_in_result.stdout
+        )
+    )
+    if not checks["subagent_runs_without_opt_in_fails"]:
+        failures.append("subagent_runs should require subagents_requested=true")
+
+    completed_subagent_missing_changed_files = base_state()
+    completed_subagent_missing_changed_files["subagents_requested"] = True
+    missing_changed_run = completed_subagent_run()
+    del missing_changed_run["changed_files"]
+    completed_subagent_missing_changed_files["subagent_runs"] = [missing_changed_run]
+    missing_changed_result = run_validator(script, completed_subagent_missing_changed_files)
+    checks["completed_subagent_missing_changed_files_fails"] = (
+        missing_changed_result.returncode != 0
+        and "changed_files" in (missing_changed_result.stderr + missing_changed_result.stdout)
+    )
+    if not checks["completed_subagent_missing_changed_files_fails"]:
+        failures.append("completed subagent record missing changed_files should fail")
+
+    finished_unreviewed_subagent = base_state()
+    finished_unreviewed_subagent["subagents_requested"] = True
+    unreviewed_run = completed_subagent_run()
+    unreviewed_run["review_status"] = "unreviewed"
+    finished_unreviewed_subagent["subagent_runs"] = [unreviewed_run]
+    unreviewed_result = run_validator(script, finished_unreviewed_subagent)
+    checks["finished_unreviewed_subagent_fails"] = (
+        unreviewed_result.returncode != 0
+        and "review_status=unreviewed" in (unreviewed_result.stderr + unreviewed_result.stdout)
+    )
+    if not checks["finished_unreviewed_subagent_fails"]:
+        failures.append("finished run with unreviewed subagent result should fail")
+
+    finished_running_subagent = base_state()
+    finished_running_subagent["subagents_requested"] = True
+    running_run = completed_subagent_run()
+    running_run["status"] = "running"
+    running_run["review_status"] = "unreviewed"
+    running_run["changed_files"] = []
+    finished_running_subagent["subagent_runs"] = [running_run]
+    running_result = run_validator(script, finished_running_subagent)
+    checks["finished_running_subagent_fails"] = (
+        running_result.returncode != 0
+        and "running subagent" in (running_result.stderr + running_result.stdout)
+    )
+    if not checks["finished_running_subagent_fails"]:
+        failures.append("finished run with running subagent should fail")
+
+    overlapping_subagent_without_rationale = base_state()
+    overlapping_subagent_without_rationale["subagents_requested"] = True
+    overlapping_run = completed_subagent_run()
+    overlapping_run["write_scope"] = ["docs/example.md"]
+    overlapping_run["changed_files"] = ["docs/example.md"]
+    overlapping_subagent_without_rationale["subagent_runs"] = [overlapping_run]
+    overlapping_result = run_validator(script, overlapping_subagent_without_rationale)
+    checks["subagent_current_task_overlap_without_rationale_fails"] = (
+        overlapping_result.returncode != 0
+        and "overlap_rationale" in (overlapping_result.stderr + overlapping_result.stdout)
+    )
+    if not checks["subagent_current_task_overlap_without_rationale_fails"]:
+        failures.append("subagent write_scope overlapping current task should require overlap_rationale")
+
+    overlapping_subagent_with_rationale = base_state()
+    overlapping_subagent_with_rationale["subagents_requested"] = True
+    overlapping_allowed_run = completed_subagent_run()
+    overlapping_allowed_run["write_scope"] = ["docs/example.md"]
+    overlapping_allowed_run["changed_files"] = ["docs/example.md"]
+    overlapping_allowed_run["overlap_rationale"] = "Parent task delegated one declared docs file and will review before merge."
+    overlapping_subagent_with_rationale["subagent_runs"] = [overlapping_allowed_run]
+    overlapping_allowed_result = run_validator(script, overlapping_subagent_with_rationale)
+    checks["subagent_current_task_overlap_with_rationale_passes"] = overlapping_allowed_result.returncode == 0
+    if not checks["subagent_current_task_overlap_with_rationale_passes"]:
+        failures.append("subagent write_scope overlapping current task should pass with overlap_rationale")
+
+    valid_observation = base_state()
+    valid_observation["command_observations"] = [valid_command_observation()]
+    valid_observation_result = run_validator(script, valid_observation)
+    checks["valid_command_observation_passes"] = valid_observation_result.returncode == 0
+    if not checks["valid_command_observation_passes"]:
+        failures.append("valid command_observation should pass")
+
+    invalid_observation_category = base_state()
+    invalid_category = valid_command_observation()
+    invalid_category["category"] = "mystery"
+    invalid_observation_category["command_observations"] = [invalid_category]
+    invalid_observation_category_result = run_validator(script, invalid_observation_category)
+    checks["invalid_command_observation_category_fails"] = (
+        invalid_observation_category_result.returncode != 0
+        and "command_observations[0].category" in (
+            invalid_observation_category_result.stderr + invalid_observation_category_result.stdout
+        )
+    )
+    if not checks["invalid_command_observation_category_fails"]:
+        failures.append("invalid command_observation category should fail")
+
+    missing_observation_fields = base_state()
+    missing_fields = valid_command_observation()
+    del missing_fields["evidence"]
+    missing_observation_fields["command_observations"] = [missing_fields]
+    missing_observation_fields_result = run_validator(script, missing_observation_fields)
+    checks["missing_command_observation_fields_fails"] = (
+        missing_observation_fields_result.returncode != 0
+        and "command_observations[0] missing field evidence" in (
+            missing_observation_fields_result.stderr + missing_observation_fields_result.stdout
+        )
+    )
+    if not checks["missing_command_observation_fields_fails"]:
+        failures.append("command_observation missing required fields should fail")
+
+    unknown_observation_without_risk = base_state()
+    unknown_without_risk = valid_command_observation()
+    unknown_without_risk["category"] = "unknown"
+    unknown_observation_without_risk["command_observations"] = [unknown_without_risk]
+    unknown_without_risk_result = run_validator(script, unknown_observation_without_risk)
+    checks["finished_unknown_observation_without_residual_risk_fails"] = (
+        unknown_without_risk_result.returncode != 0
+        and "unknown command observation" in (
+            unknown_without_risk_result.stderr + unknown_without_risk_result.stdout
+        )
+    )
+    if not checks["finished_unknown_observation_without_residual_risk_fails"]:
+        failures.append("finished unknown command_observation should require completion_audit residual_risk")
+
+    unknown_observation_with_risk = base_state()
+    unknown_with_risk = valid_command_observation()
+    unknown_with_risk["category"] = "unknown"
+    unknown_observation_with_risk["command_observations"] = [unknown_with_risk]
+    unknown_observation_with_risk["completion_audit"]["residual_risk"] = [
+        "Command pnpm test had bounded evidence but final category remained unknown."
+    ]
+    unknown_with_risk_result = run_validator(script, unknown_observation_with_risk)
+    checks["finished_unknown_observation_with_residual_risk_passes"] = unknown_with_risk_result.returncode == 0
+    if not checks["finished_unknown_observation_with_residual_risk_passes"]:
+        failures.append("finished unknown command_observation should pass when residual_risk mentions command")
+
+    invalid_unit_type = base_state()
+    invalid_unit_type["tasks"]["task_0"]["unit_manifest"]["unit_type"] = "mystery"
+    invalid_unit_type_result = run_validator(script, invalid_unit_type)
+    checks["invalid_unit_type_fails"] = (
+        invalid_unit_type_result.returncode != 0
+        and "unit_manifest.unit_type" in (invalid_unit_type_result.stderr + invalid_unit_type_result.stdout)
+    )
+    if not checks["invalid_unit_type_fails"]:
+        failures.append("unknown unit_manifest.unit_type should fail")
+
+    invalid_tool_policy = base_state()
+    invalid_tool_policy["tasks"]["task_0"]["unit_manifest"]["tool_policy"] = "admin"
+    invalid_tool_policy_result = run_validator(script, invalid_tool_policy)
+    checks["invalid_tool_policy_fails"] = (
+        invalid_tool_policy_result.returncode != 0
+        and "unit_manifest.tool_policy" in (invalid_tool_policy_result.stderr + invalid_tool_policy_result.stdout)
+    )
+    if not checks["invalid_tool_policy_fails"]:
+        failures.append("unknown unit_manifest.tool_policy should fail")
+
+    finished_missing_manifest = base_state()
+    finished_missing_manifest["tasks"]["task_0"]["status"] = "completed"
+    del finished_missing_manifest["tasks"]["task_0"]["unit_manifest"]
+    finished_missing_manifest_result = run_validator(script, finished_missing_manifest)
+    checks["finished_missing_unit_manifest_for_completed_task_fails"] = (
+        finished_missing_manifest_result.returncode != 0
+        and "unit_manifest is required" in (finished_missing_manifest_result.stderr + finished_missing_manifest_result.stdout)
+    )
+    if not checks["finished_missing_unit_manifest_for_completed_task_fails"]:
+        failures.append("finished completed task missing unit_manifest should fail")
+
+    implementation_without_write_globs = base_state()
+    implementation_without_write_globs["tasks"]["task_0"]["unit_manifest"]["allowed_write_globs"] = []
+    implementation_without_write_globs_result = run_validator(script, implementation_without_write_globs)
+    checks["implementation_manifest_without_allowed_write_globs_fails"] = (
+        implementation_without_write_globs_result.returncode != 0
+        and "requires allowed_write_globs" in (
+            implementation_without_write_globs_result.stderr + implementation_without_write_globs_result.stdout
+        )
+    )
+    if not checks["implementation_manifest_without_allowed_write_globs_fails"]:
+        failures.append("implementation unit_manifest without allowed_write_globs should fail")
+
+    readonly_with_write_globs = base_state()
+    readonly_with_write_globs["tasks"]["task_0"]["unit_manifest"]["tool_policy"] = "read-only"
+    readonly_with_write_globs_result = run_validator(script, readonly_with_write_globs)
+    checks["read_only_manifest_with_write_globs_fails"] = (
+        readonly_with_write_globs_result.returncode != 0
+        and "read-only unit_manifest" in (readonly_with_write_globs_result.stderr + readonly_with_write_globs_result.stdout)
+    )
+    if not checks["read_only_manifest_with_write_globs_fails"]:
+        failures.append("read-only unit_manifest with write globs should fail")
 
     missing_contract = base_state()
     del missing_contract["tasks"]["task_0"]["contract"]
@@ -236,6 +488,37 @@ def main() -> int:
     )
     if not checks["finished_empty_evidence_fails"]:
         failures.append("finished completion_audit should require verification evidence")
+
+    finished_missing_event_journal_path = base_state()
+    del finished_missing_event_journal_path["event_journal_path"]
+    missing_journal_path = run_validator(script, finished_missing_event_journal_path)
+    checks["finished_missing_event_journal_path_fails"] = (
+        missing_journal_path.returncode != 0 and "event_journal_path" in (
+            missing_journal_path.stderr + missing_journal_path.stdout
+        )
+    )
+    if not checks["finished_missing_event_journal_path_fails"]:
+        failures.append("finished lifecycle outcome should require event_journal_path")
+
+    finished_wrong_event_journal_path = base_state()
+    finished_wrong_event_journal_path["event_journal_path"] = ".codex-orchestrator/events.jsonl"
+    wrong_journal_path = run_validator(script, finished_wrong_event_journal_path)
+    checks["finished_wrong_event_journal_path_fails"] = (
+        wrong_journal_path.returncode != 0 and "event_journal_path must be" in (
+            wrong_journal_path.stderr + wrong_journal_path.stdout
+        )
+    )
+    if not checks["finished_wrong_event_journal_path_fails"]:
+        failures.append("finished lifecycle outcome should require matching event_journal_path")
+
+    finished_stale_last_event_seq = base_state()
+    finished_stale_last_event_seq["last_event_seq"] = 0
+    stale_event_seq = run_validator(script, finished_stale_last_event_seq)
+    checks["finished_stale_last_event_seq_fails"] = (
+        stale_event_seq.returncode != 0 and "last_event_seq" in (stale_event_seq.stderr + stale_event_seq.stdout)
+    )
+    if not checks["finished_stale_last_event_seq_fails"]:
+        failures.append("finished lifecycle outcome should require positive last_event_seq")
 
     finished_open_carried_acceptance = base_state()
     finished_open_carried_acceptance["tasks"]["task_0"]["carried_acceptance"] = {

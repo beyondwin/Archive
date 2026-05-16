@@ -43,10 +43,17 @@ Use this for `mode=interactive`.
 - Initialize `.codex-orchestrator/runs/<run_id>/state.json` and keep
   `.codex-orchestrator/state.json` as a latest-state compatibility copy or
   pointer.
+- Initialize project-local event evidence by appending `run_started` with
+  `scripts/append_run_event.py` when the helper is available. Store
+  `event_journal_path` and `last_event_seq` in state; this journal is replay
+  evidence and does not replace `state.json` or user-local learning logs.
 - Build `.codex-orchestrator/runs/<run_id>/context.json` with
   `scripts/build_context_snapshot.py` after `run_id` initialization and before
   task contracts. Store `context_snapshot_path` and `context_basis_hash` in
   `.codex-orchestrator/runs/<run_id>/state.json`.
+  Pass `--max-chars` when a run needs an explicit context budget; the snapshot
+  records `context_budget.status`, `estimated_chars`, `included_sections`, and
+  `omitted_sections` without changing the source-list `basis_hash`.
 - Initialize `context_health` in state after the context snapshot is created.
   It must include `status`, `last_checked_at`, `context_snapshot_present`,
   `context_basis_hash_recorded`, `active_task_contract_present`, `next_action`,
@@ -74,6 +81,12 @@ For each task:
    - `acceptance_command_or_honest_substitute`
    Record the same contract under the task entry in
    `.codex-orchestrator/runs/<run_id>/state.json`.
+   Executable tasks may also record `unit_manifest` with `unit_type`,
+   `context_mode`, `required_skills`, `tool_policy`, `allowed_write_globs`,
+   `forbidden_write_globs`, `artifact_policy`, and `max_context_chars`.
+   Finished runs require every completed task to have a valid manifest.
+   Append `task_contract_recorded` after the contract is saved when the event
+   journal is active.
 2. Re-check task skills before edits. Invoke `using-superpowers` as the
    per-task skill gate. For feature, bugfix, refactor, behavior change, or
    executable-code edits, invoke `test-driven-development` before writing
@@ -87,9 +100,18 @@ For each task:
    no-findings residual-risk statement, and completion verification requires
    command evidence. Do not record routine helper skills; record required
    methods and explicit waivers only.
-3. Implement locally unless subagents are explicitly allowed.
+3. Implement locally unless subagents are explicitly allowed. If subagents are
+   explicitly allowed, set `subagents_requested=true` in state and record each
+   delegated run under `subagent_runs` with owner task, write scope, status,
+   result summary, changed files, review status, and any overlap rationale.
+   Finished runs cannot contain running or unreviewed subagent records.
 4. Review spec compliance and code quality on `gpt-5.5 high`.
 5. Run risk-scaled verification.
+   When a command result needs triage before root cause is assigned, record a
+   compact `command_observations[]` entry in state with command, status,
+   taxonomy category, bounded evidence, and next action. Use
+   `category=unknown` only with bounded evidence; terminal finished runs must
+   also mention that command in `completion_audit.residual_risk`.
    Parallel verification is allowed only when commands do not share mutable
    output resources. Assign a `verification_resource_key` before parallelizing
    commands that can write shared artifacts:
@@ -112,6 +134,14 @@ For each task:
    - cancellation/interruption recovery when the task changes workflow state
    Do not run irrelevant scenarios just to fill the table. Mark them
    `not-applicable` with one concrete reason.
+   Before closing a task that records `unit_manifest`, run or honestly
+   substitute `scripts/check_run_diffs.py --repo-root <worktree> --state
+   .codex-orchestrator/runs/<run_id>/state.json --task <task_id>` so changed
+   files are checked against `contract.allowed_edits`,
+   `unit_manifest.allowed_write_globs`, `contract.forbidden_edits`, and
+   `unit_manifest.forbidden_write_globs`.
+   Append `verification_passed` or `verification_failed` for task-level
+   verification boundaries when the event journal is active.
 6. Record raw output paths for failures.
 7. Update state and checkpoint.
    Task completion must set the task `status` to `completed`, `blocked`, or
@@ -195,6 +225,10 @@ details.
 ## Phase 2: Finish
 
 - Run final verification.
+- Run drift reconciliation with `scripts/reconcile_state.py --check` or
+  `--repair-safe` before terminal `lifecycle_outcome=finished`. Unrepaired
+  blocking drift prevents a finished outcome and requires a concrete
+  `handoff_reason` or `context_health.next_action`.
 - Check documentation impact.
 - Refresh `context_health` before final state validation. Finished runs must be
   `handoff_ready=true`, not `red`, and have `context_health.last_checked_at`

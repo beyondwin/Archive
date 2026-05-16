@@ -7,11 +7,16 @@ Before sending the generated prompt, confirm:
 - plan path is present; workspace path is present when known; required local paths were checked for existence/readability
 - no placeholder paths or template tokens such as `/absolute/path/to/plan.md`, `{{PLAN_PATH}}`, `{{OPTIONAL_DOCUMENT_BULLETS}}`, or `{{OPTIONAL_SPARK_SCOUT_BULLETS}}` remain
 - only readable real spec/design/extra document bullets are included; requested language and prompt-only output are respected
+- prompt and handoff modes return exactly one fenced `text` block and do not
+  create `.codex-orchestrator` artifacts or execute the plan
+- handoff exports include the literal `HANDOFF CHECKPOINT`
 - if progress checkboxes/status in source-of-truth plan docs may be updated, the prompt tells agents to inspect and report those docs' tracked/untracked/dirty status and commit handling
 
 ## Model Routing
 
 - non-delegable implementation/review/root-cause/verification interpretation/completion decisions stay on `gpt-5.5 high`
+- no-Spark or `gpt-5.5 only` exports still include the literal `gpt-5.5 high`
+  while omitting Spark routes
 - conservative automatic Spark evidence packing is present unless forbidden or `gpt-5.5 only`, and is limited to `gpt-5.3-codex-spark high` for read-only commands/files selected by `gpt-5.5 high`
 - conservative automatic Spark cannot choose source files, broaden exploration, infer root cause, review code, interpret verification, decide completion, edit files, or mutate repo/process state
 - broader Spark scout mode appears only on explicit request, uses `gpt-5.3-codex-spark high`, and uses `templates/spark-scout-bullets.ko.txt` exactly for Korean output or a constraint-preserving translation

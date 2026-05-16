@@ -23,17 +23,21 @@ execution and prompt export. It fully replaces the former
 2. Validate plan structure with `scripts/parse_plan.py` for execution modes.
 3. Create or select a dedicated non-conflicting `codex/...` git worktree.
 4. Initialize a `run_id` and update `.codex-orchestrator/runs/<run_id>/state.json`.
-5. Build `.codex-orchestrator/runs/<run_id>/context.json` and store
-   `context_snapshot_path` plus `context_basis_hash`.
-6. Initialize and refresh `context_health` at semantic boundaries.
-7. Record a task execution contract before edits.
-8. Execute tasks locally unless subagents were explicitly requested.
-9. Verify each task with risk-scaled commands and record failures with stable
+5. Append project-local event evidence when the event helper is available.
+6. Build `.codex-orchestrator/runs/<run_id>/context.json` and store
+   `context_snapshot_path`, `context_basis_hash`, and optional context-budget
+   metadata.
+7. Initialize and refresh `context_health` at semantic boundaries.
+8. Record a task execution contract and optional `unit_manifest` before edits.
+9. Execute tasks locally unless subagents were explicitly requested and
+   recorded in `subagent_runs`.
+10. Verify each task with risk-scaled commands and record failures with stable
    `ISSUE_KEY` values.
-10. Record optional carried acceptance and method audit evidence when a task
-    carries sequential metrics or declares required phase methods.
-11. Write `completion_audit` and terminal `lifecycle_outcome`.
-12. Validate state and summarize changed files, verification, resources, and
+11. Record optional carried acceptance, method audit, command observations, and
+    post-diff policy evidence when applicable.
+12. Run drift reconciliation before finished outcomes.
+13. Write `completion_audit` and terminal `lifecycle_outcome`.
+14. Validate state and summarize changed files, verification, resources, and
    residual risk.
 
 ## Worktree Isolation Contract
@@ -89,6 +93,18 @@ Top-level `method_audit` can record required phase methods as evidence-backed
 `applied`, `missing`, or `waived` entries. The validator checks declared
 methods such as TDD, review, completion verification, and the superpowers gate
 against evidence references rather than skill-invocation intent.
+
+Top-level `subagent_runs` records delegated execution only when subagents were
+explicitly allowed. Completed records include changed files and review status;
+finished runs reject running or unreviewed records. `command_observations`
+record bounded command evidence before root cause is assigned; terminal
+unknown observations must appear in completion residual risk.
+
+Task-level `unit_manifest` records unit type, context mode, required skills,
+tool policy, allowed and forbidden write globs, artifact policy, and max
+context. Completed tasks in finished runs require a valid manifest, and the
+post-diff checker compares actual changed files against the contract and
+manifest.
 
 Plans may include optional task dependencies via visible `Depends on:` lines.
 `scripts/parse_plan.py` validates known dependency references and cycle-free
@@ -182,10 +198,19 @@ Deterministic scripts own mechanical correctness:
 - `scripts/parse_plan.py`
 - `scripts/validate_state.py`
 - `scripts/check_learning_log_health.py`
+- `scripts/check_run_diffs.py`
+- `scripts/append_run_event.py`
+- `scripts/reconcile_state.py`
+- `scripts/build_context_snapshot.py`
 - `evals/check_prompt.py`
 - `evals/check_execution.py`
 - `evals/check_parse_plan.py`
 - `evals/check_state_schema.py`
+- `evals/check_run_diffs.py`
+- `evals/check_event_journal.py`
+- `evals/check_state_reconciliation.py`
+- `evals/check_context_snapshot.py`
+- `evals/check_headless_result.py`
 - `evals/check_learning_log.py`
 - `evals/check_skill_contract.py`
 
