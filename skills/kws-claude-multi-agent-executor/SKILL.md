@@ -403,6 +403,12 @@ This is a fallback — the primary expectation is that one headless subprocess c
    - If it EXISTS and is valid JSON with `schema_version: "2"`:
      - If `"mode": "headless_pending"`: freshly-spawned headless instance — Phase -1 already ran Steps 1, 1.5, 2, 2.5 in interactive context and wrote minimal state. **MUST skip Phase 0 Steps 1, 1.5, 2, 2.5** (clean check, cross-run isolation, worktree creation, safety hooks — re-running breaks: `git status` flags pre-written `.orchestrator/` and `.claude/settings.json` as dirty; `git worktree add` errors on the existing branch; Step 1.5 mode-exclusivity check would self-block on the freshly-created `.orchestrator/headless.pid`). PROCEED with Phase 0 Step 0.5 onward (`0.5 → 3 → 3.5 → 4 → 5 → 6 → 7`) to populate baseline, risk_levels, compaction_points, full task data. After Step 7, update `state.json.mode` from `"headless_pending"` to `"headless_running"` and write. **Preserve `state.implementer_model` exactly as the parent wrote it (v2.12)** — the parent already parsed the skill arg; do NOT overwrite. If the field is absent (legacy state.json), default to `{"used": "sonnet", "default": "sonnet"}`. **Preserve `state.plan_chain` exactly as the parent wrote it (v2.13)** — the parent already parsed the plan/plan2/.../planN args and constructed the chain. The child reads plan paths from `state.plan_chain[state.active_plan].plan_path` for multi-plan runs; do NOT re-parse skill args. If `plan_chain` is absent → this is a single-plan run, read from top-level `state.plan` and `state.spec`.
      - If `"mode": "headless_running"`, `"headless_chained"`, `"plan2_running"`, `"interactive_session"`, or no mode field: Standard resume path — load all fields. Do NOT overwrite. Verify git branch and worktree match `state.branch` / `state.worktree`. Set internal tracking from state.json: `current_task`, `current_step_within_task`, `current_pre_task_sha`, per-task counters. Output: "Resuming from state file: Task <N>, Step <M> (mode=<value or null>)." Skip Phase 0 Steps 1–7 (setup already done). Go directly to Phase 1 at the recorded task/step.
+     - **Legacy state.json defaults (v2.14 — RUN-LEVEL fields):** before continuing the resume, backfill the four v2.14 run-level fields if missing (pre-v2.14 state.json will not have them). Apply each as a `setdefault` (write-only-if-absent) at the TOP level of `state` (NOT inside `plan_chain[i]`):
+       - `state.setdefault('cost_ledger', {"by_task": {}, "by_role": {}, "by_model": {}, "totals": {"input_tokens": 0, "output_tokens": 0, "cached_read_tokens": 0, "cached_write_tokens": 0, "cost_usd": 0.0, "dispatches": 0}})`
+       - `state.setdefault('budget_cap_usd', None)`
+       - `state.setdefault('budget_action', 'warn')`
+       - `state.setdefault('archive', None)`
+       If `state.cost_ledger` is already present (v2.14+ state.json), preserve it as-is and continue accumulating. Same for `budget_cap_usd` and `budget_action`. These fields span the whole chain, so the resume MUST NOT reset them on plan2 swap or chain handoff.
    - If it EXISTS but is invalid (empty, malformed JSON):
      - Warn user: "State file exists but is corrupted at <path>. Recommend manual inspection before proceeding."
      - Do NOT overwrite. Halt.
@@ -759,6 +765,22 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
      "phase_doc_commits": [],
      "chain_resume": null,
      "plan2_state": null,
+     "budget_cap_usd": null,
+     "budget_action": "warn",
+     "cost_ledger": {
+       "by_task": {},
+       "by_role": {},
+       "by_model": {},
+       "totals": {
+         "input_tokens": 0,
+         "output_tokens": 0,
+         "cached_read_tokens": 0,
+         "cached_write_tokens": 0,
+         "cost_usd": 0.0,
+         "dispatches": 0
+       }
+     },
+     "archive": null,
      "timestamps": {
        "started_at": null,
        "completed_at": null
@@ -767,6 +789,8 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
    ```
 
    Fill in the actual values from steps 4–6.
+
+   **Run-level cost/budget/archive fields (v2.14):** the four fields `cost_ledger`, `budget_cap_usd`, `budget_action`, and `archive` are **RUN-LEVEL** — they live at the top of `state.json` and span the entire orchestrator invocation, including every plan in a multi-plan chain. They are NOT per-plan and MUST NOT be duplicated inside `plan_chain[i]`. `cost_ledger.by_task` is keyed `"<plan_index_or_'top'>::<task_id>"` so a single ledger covers the chain. `budget_cap_usd` is a number (USD) or `null` (no cap). `budget_action ∈ {"pause", "warn", "off"}` controls behavior when the cap is crossed. `archive` defaults to `null` and is populated by the post-run forensics archive step (v2.14).
 
    **Multi-plan shape (v2.13):** when `plan_chain` exists, the equivalent state.json is:
 
@@ -818,9 +842,27 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
      "phase_doc_commits": [],
      "chain_resume": null,
      "plan2_state": null,
+     "budget_cap_usd": null,
+     "budget_action": "warn",
+     "cost_ledger": {
+       "by_task": {},
+       "by_role": {},
+       "by_model": {},
+       "totals": {
+         "input_tokens": 0,
+         "output_tokens": 0,
+         "cached_read_tokens": 0,
+         "cached_write_tokens": 0,
+         "cost_usd": 0.0,
+         "dispatches": 0
+       }
+     },
+     "archive": null,
      "timestamps": {"started_at": "...", "completed_at": null}
    }
    ```
+
+   Note: in the multi-plan shape, `budget_cap_usd`, `budget_action`, `cost_ledger`, and `archive` appear at the TOP level (siblings of `plan_chain`, NOT inside any `plan_chain[i]` entry). See the "Run-level cost/budget/archive fields (v2.14)" paragraph above — these four fields are shared across all plans in the chain and accumulate end-to-end.
 
    For multi-plan runs at the START of Phase 0 (active_plan == 0): populate `plan_chain[0]` with all the data Steps 3–6 produced for plan 0. Other plan_chain entries (i ≥ 1) keep their `status: "queued"` placeholders and only become populated when their swap fires at Phase 2 Step -1.
 
