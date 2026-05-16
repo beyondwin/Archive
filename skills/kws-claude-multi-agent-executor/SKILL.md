@@ -358,12 +358,23 @@ This emits one notification per task transition + final DONE/HALTED/DIED. Pollin
 
 ### Resume Chain (for plans that exceed single subprocess context)
 
-**Trigger (deterministic, introspectable from state.json):**
-Chain ONLY when **both** are observed by the headless instance just after Phase Transition T3:
-- `<active>.compaction_points` reached **≥ 2** AND
-- count of tasks with `status == "COMPLETE"` is **≥ 8**
+**Trigger (v2.15 — token-aware, deterministic, introspectable):**
 
-Do NOT chain on token-count heuristics (not introspectable) or after every compaction point. If neither threshold is met, continue in the same subprocess.
+Chain when ANY of the following holds at Phase Transition T3 (or at end of Phase 1 Step 4 if `current_task` is in `<active>.compaction_points`):
+
+1. **Token threshold (NEW, primary):**
+   - Requires `state.budget_action != "off"` AND `state.cost_ledger` present.
+   - Compute: `session_input_tokens = state.cost_ledger.totals.input_tokens - state.cost_ledger.totals.cached_read_tokens`.
+   - Threshold: `state.context_budget.threshold_tokens` (default `102000` = 60% of `170000`; see Task 11).
+   - Fire if `session_input_tokens >= threshold_tokens`.
+
+2. **Legacy floor (PRESERVED, fallback):**
+   - `<active>.compaction_points_reached >= 2` AND count of `COMPLETE` tasks `>= 8`.
+   - Always evaluated regardless of `budget_action`.
+
+If both evaluate true, record `trigger_reason = "token_threshold"` (first-observed wins). If only the legacy floor fires, record `trigger_reason = "legacy_floor"`. If neither fires, no chain.
+
+`budget_action == "off"` disables the token trigger (legacy floor becomes sole criterion). Cache-read tokens are excluded from `session_input_tokens` so retry sessions don't double-count.
 
 Procedure:
 
@@ -1983,7 +1994,7 @@ These rules are absolute. No exceptions.
 | **`active_plan` pointer is authoritative for plan selection** | All Phase 1 / Phase Transition / Phase 2 / Monitor code dereferences `<active>` per the resolution table near the top of this document. v2.13 multi-plan: integer index into `state.plan_chain[]`. v2.12 legacy: string `"plan1"` / `"plan2"`. Never assume top-level `state.tasks` is the active tree without checking — hard-coding it for a multi-plan run silently corrupts the chain. |
 | **`last_completed_task` is the only authoritative "most recent" field** | Phase 1 Step 4 Agent Cleanup writes it. Monitor and any post-hoc query MUST use it — never `to_entries \| last` over `tasks` (key insertion order is mutated by re-writes; this caused a real observed bug). |
 | **Spec-edit branch uses `spec_clarifications`, not `review_retries`** | When `SPEC_FAULT ∈ {spec_contradicts, unclear}`, increment `spec_clarifications` (max 3 per task). Implementer retry budget stays intact for actual implementer mistakes. |
-| **Resume Chain trigger is deterministic** | Chain only when `compaction_points reached ≥ 2` AND `completed tasks ≥ 8`. No token-count heuristics — not introspectable. Chain procedure MUST update `headless.pid` atomically so Monitor sees `CHAIN_HANDOFF`, not `PROCESS_DIED`. |
+| **Resume Chain trigger is deterministic** (v2.15) | Chain when EITHER token threshold OR legacy floor fires (additive). Token threshold: `session_input_tokens (= cost_ledger.totals.input_tokens − cached_read_tokens) ≥ state.context_budget.threshold_tokens`. Legacy floor: `compaction_points reached ≥ 2` AND `completed tasks ≥ 8` (always evaluated). `budget_action == "off"` disables the token trigger, leaving the legacy floor as the sole criterion. Chain procedure MUST update `headless.pid` atomically so Monitor sees `CHAIN_HANDOFF`, not `PROCESS_DIED`. |
 | **`files_test` discrimination for batch verifier** | Implementer outputs `FILES_TEST_CHANGED` separately from `FILES_CHANGED`. T1 batch pre-filter uses it (or `.md`-only heuristic for legacy state) to route docs-only tasks to lint instead of test runs. |
 | **Plan 2 re-takes baseline** | When Phase 2 Step -1 swaps `active_plan` to `"plan2"`, run Phase 0 Step 5 fresh against current HEAD (Plan 1's changes are now Plan 2's starting point). Never reuse Plan 1's baseline as Plan 2's regression reference. |
 | **Learning log lifecycle (v2.8)** | Phase 0 Step 7.5 calls `init-run` and exports `MAE_LEARNING_RUN_ID`. Phase 1 Step 3.5 scans `<worktree>/.orchestrator/learning_events/` for sub-agent candidate JSON and calls `append`. Phase 2 Step 2 closes with `outcome=success`; orchestrator-level abort closes with `outcome=aborted`; whole-orchestrator hard-halt (state-write fail, exhausted escalations halting the run) closes with `outcome=blocked`. Resume Chain preserves `MAE_LEARNING_RUN_ID` via env propagation and calls `append-session-id`, never `init-run`. **Learning-log failure must never block plan execution** — every helper invocation is wrapped with `\|\| true`. See `references/learning-log.md`. |
