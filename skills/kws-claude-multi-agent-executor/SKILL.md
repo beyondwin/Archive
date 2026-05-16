@@ -1106,6 +1106,7 @@ Build the Combined Reviewer prompt from the **Combined Reviewer Prompt Template*
 - `{files changed}` — from the implementer's `FILES_CHANGED:` output
 - `{inline diff}` — the git diff output captured above
 - `{previous_issues}` — if `review_retries > 0`, the ISSUES list from the prior Combined Reviewer output; otherwise omit the section
+- `{decisions_register}` — **v2.15 (C2)** — same substitution rule as the Implementer prompt (Phase 1 Step 1). Renders the `## Project decisions so far` block from `<active>.decisions_register`, or empty string if the register is empty. The Combined Reviewer's "Decision consistency" rubric reads from this block to flag `decision_conflict` QUALITY_ISSUES.
 
 Dispatch as a **fresh Sonnet sub-agent**.
 
