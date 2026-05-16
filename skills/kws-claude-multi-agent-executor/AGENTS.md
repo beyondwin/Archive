@@ -151,6 +151,20 @@ Do NOT update ARCHITECTURE.md for: new fixture, bug fix, prose tweak,
 typo, refactor that doesn't change behavior. Those go in SKILL.md /
 commit message only.
 
+## State-field discipline (v2.13+)
+
+When adding a new field to `state.json`, decide first:
+
+- **Per-plan field** (different value per plan in a chain) — e.g., tasks, baseline, quality_trend, risk_levels. Reference it as `<active>.foo` throughout SKILL.md prose, NOT `state.foo`. The `<active>` placeholder resolves to the right tree (`state.plan_chain[active].foo` / `state.plan2_state.foo` / top-level) at runtime.
+- **Run-level field** (shared across all plans) — e.g., implementer_model, test_command, branch, worktree, spec_edits, mode, timestamps. Reference it as `state.foo` at top-level always.
+
+If unsure, ask: "would this field need to be re-measured or reset when Phase 2 Step -1 swaps to the next plan?" If yes → per-plan. If no → run-level.
+
+Per-plan additions also need:
+- Phase 0 Step 7 schema sample updated for both single-plan and multi-plan shapes
+- Resolution rule in ARCHITECTURE.md §5 schema snippet
+- HISTORY.md entry documenting the field
+
 ## When in doubt
 
 - Ask first: does this need an experiment record? (If unsure, yes — it's

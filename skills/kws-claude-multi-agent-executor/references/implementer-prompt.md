@@ -45,9 +45,15 @@ Stay within the tool-call budget. If you find yourself exceeding it for a SMALL/
 
 ## Context from Previous Tasks
 
-Read `{worktree_path}/.orchestrator/state.json`. Use the `task_summaries` field for the tasks listed in your dependency chain (task IDs in `{deps_for_this_task}`). Focus on `for_next_tasks` — that is what upstream tasks explicitly pass down. Do NOT look at raw git log for context — use only the state file summary.
+Read `{worktree_path}/.orchestrator/state.json`. Resolve which task tree applies to you using this rule (v2.13):
 
-**Shared files alert**: Read `{worktree_path}/.orchestrator/state.json` and check `state.global_constraints.shared_files` (when `active_plan == "plan2"`, check `state.plan2_state.global_constraints.shared_files` if present). If any file in your `{files to touch}` appears as a key in `shared_files`, the value is a list of other task IDs that touch it. Read those tasks' `for_next_tasks` summaries before modifying. If the other task is BEFORE this one and COMPLETE: confirm your changes don't undo theirs. If AFTER: leave a clear `for_next_tasks` note about any shape changes you made.
+- `state.plan_chain` exists (multi-plan) → active tree is `state.plan_chain[state.active_plan]`. Read `task_summaries` and `global_constraints.shared_files` from there.
+- `state.plan_chain` absent + `state.active_plan == "plan2"` (v2.12 legacy two-plan) → read from `state.plan2_state.task_summaries` and `state.plan2_state.global_constraints.shared_files`.
+- Otherwise (single-plan) → read top-level `state.task_summaries` and `state.global_constraints.shared_files`.
+
+Focus on `for_next_tasks` for the task IDs in `{deps_for_this_task}` — that is what upstream tasks explicitly pass down. Do NOT look at raw git log for context — use only the state file summary. Dependencies never cross plan boundaries — when you are working on plan_chain[i], your deps only reference tasks within plan_chain[i].
+
+**Shared files alert**: After resolving the active `shared_files` map above, if any file in your `{files to touch}` appears as a key, the value is a list of other task IDs (within the same plan) that touch it. Read those tasks' `for_next_tasks` summaries before modifying. If the other task is BEFORE this one and COMPLETE: confirm your changes don't undo theirs. If AFTER: leave a clear `for_next_tasks` note about any shape changes you made.
 
 {IF this is a re-dispatch after review failure, append:}
 ## Fix Required
