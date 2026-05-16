@@ -129,6 +129,24 @@ REQUIRED_SUBAGENT_FIELDS = {
     "result_summary",
 }
 COMPLETED_SUBAGENT_FIELDS = {"changed_files", "review_status"}
+VALID_COMMAND_OBSERVATION_CATEGORIES = {
+    "source_failure",
+    "missing_local_env",
+    "dependency_bootstrap",
+    "resource_oom",
+    "timeout_or_hang",
+    "flaky_test",
+    "permission_or_sandbox",
+    "tooling_bug",
+    "unknown",
+}
+REQUIRED_COMMAND_OBSERVATION_FIELDS = {
+    "command",
+    "status",
+    "category",
+    "evidence",
+    "next_action",
+}
 
 
 def _required_project_path(run_id: str, name: str) -> str:
@@ -536,6 +554,45 @@ def _validate_subagent_runs(data: dict, errors: list[str]) -> None:
                 errors.append(f"{prefix}.overlap_rationale is required when write_scope overlaps current task")
 
 
+def _validate_command_observations(data: dict, errors: list[str]) -> None:
+    observations = data.get("command_observations", [])
+    if observations is None:
+        return
+    if not isinstance(observations, list):
+        errors.append("command_observations must be a list when present")
+        return
+
+    audit = data.get("completion_audit") if isinstance(data.get("completion_audit"), dict) else {}
+    residual_risk_text = json.dumps(audit.get("residual_risk", []), sort_keys=True).lower()
+
+    for index, observation in enumerate(observations):
+        prefix = f"command_observations[{index}]"
+        if not isinstance(observation, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+
+        for key in sorted(REQUIRED_COMMAND_OBSERVATION_FIELDS):
+            if key not in observation:
+                errors.append(f"{prefix} missing field {key}")
+            elif not _has_substantive_value(observation.get(key)):
+                errors.append(f"{prefix}.{key} must be non-empty")
+
+        category = observation.get("category")
+        if category not in VALID_COMMAND_OBSERVATION_CATEGORIES:
+            errors.append(f"{prefix}.category must be one of {sorted(VALID_COMMAND_OBSERVATION_CATEGORIES)}")
+
+        command = observation.get("command")
+        if (
+            data.get("lifecycle_outcome") == "finished"
+            and category == "unknown"
+            and isinstance(command, str)
+            and command.lower() not in residual_risk_text
+        ):
+            errors.append(
+                f"{prefix}: unknown command observation must be mentioned in completion_audit.residual_risk"
+            )
+
+
 def _method_skill(entry: object) -> str | None:
     if isinstance(entry, str):
         return entry
@@ -706,6 +763,7 @@ def validate(data: object) -> list[str]:
     _validate_event_journal(data, errors)
     _validate_drift(data, errors)
     _validate_subagent_runs(data, errors)
+    _validate_command_observations(data, errors)
     _validate_completion_audit(data, errors)
     _validate_carried_acceptance(data, errors)
     _validate_method_audit(data, errors)

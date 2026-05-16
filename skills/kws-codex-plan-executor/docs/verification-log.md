@@ -603,3 +603,19 @@ risk. Do not paste long logs or sensitive output.
 - Residual risk:
   - Subagent records remain audit artifacts, not a scheduler. Parent execution
     still owns diff review and final verification.
+
+## 2026-05-16 - GSD-2 adoption Task 9 command observations
+
+- Branch: `codex/gsd-2-adoption-20260516-074140`
+- Commit: pending at time of verification
+- Scope: added command observation state validation, deterministic fixtures,
+  taxonomy references, execution-cycle guidance, and headless-runner guidance.
+- Commands:
+  - `python3 evals/check_state_schema.py`
+    - RED result: failed as expected before validator changes for invalid
+      category, missing required fields, and terminal `unknown` observations
+      without residual risk.
+    - GREEN result: pass, `"passed": true`
+- Residual risk:
+  - Observations classify bounded command evidence; they do not replace root
+    cause analysis for reproducible source failures.
