@@ -69,11 +69,14 @@ Args are a mix of explicit `key=value` pairs and free-text natural-language hint
 
 **Pass 1 — collect `key=value` pairs.**
 
-Recognized keys: `plan`, `plan2`, `plan3`, …, `planN`, `spec`, `spec2`, `spec3`, …, `specN` (matching plan numbers), `implementer_model`, `parallel`, `risk`, `docs_scope`, `mode`, `manifest`, `budget`, `budget_action`. Each appears as `key=value` with no surrounding spaces around `=`. Unknown keys → halt: `"Unknown argument: <key>=<value>"`.
+Recognized keys: `plan`, `plan2`, `plan3`, …, `planN`, `spec`, `spec2`, `spec3`, …, `specN` (matching plan numbers), `implementer_model`, `parallel`, `risk`, `docs_scope`, `mode`, `manifest`, `budget`, `budget_action`, `context_budget`, `context_threshold`, `manifest_fallback`. Each appears as `key=value` with no surrounding spaces around `=`. Unknown keys → halt: `"Unknown argument: <key>=<value>"`.
 
 `budget=<USD>` is a positive float or zero. Negative → halt with `Invalid budget=<value>; must be ≥ 0.`
 `budget_action=<value>` must be one of `pause`, `warn`, `off`. Else halt with `Unknown budget_action=<value>. Allowed: pause, warn, off.`
-NL lexicon: no entries added for budget — explicit-only by design.
+`context_budget=<int>` (v2.15 — C3) is a positive integer > 10000. Else halt: `Invalid context_budget=<value>; must be int > 10000.` Default `170000`.
+`context_threshold=<float>` (v2.15 — C3) is a float in `[0.05, 0.95]`. Else halt: `Invalid context_threshold=<value>; must be float in [0.05, 0.95].` Default `0.60`.
+`manifest_fallback=<value>` (v2.15 — C1) must be one of `full_spec_on_blocker`, `halt_on_blocker`. Else halt: `Unknown manifest_fallback=<value>. Allowed: full_spec_on_blocker, halt_on_blocker.` Default `full_spec_on_blocker`.
+NL lexicon: no entries added for budget or context — explicit-only by design.
 
 **Pass 2 — multi-plan auto-detection.**
 
@@ -835,12 +838,21 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
        }
      },
      "archive": null,
+     "context_budget": {
+       "effective_input_budget": 170000,
+       "threshold_ratio": 0.60,
+       "threshold_tokens": 102000,
+       "last_evaluation_at": null,
+       "last_evaluation_tokens": 0
+     },
      "timestamps": {
        "started_at": null,
        "completed_at": null
      }
    }
    ```
+
+   **Run-level `context_budget` (v2.15 — C3):** lives at the TOP of state.json (NOT inside any `plan_chain[i]`), like `cost_ledger`. Defaults: `effective_input_budget=170000`, `threshold_ratio=0.60`, `threshold_tokens=102000`. If the user passed `context_budget=<int>`: overwrite `effective_input_budget`. If `context_threshold=<float>`: overwrite `threshold_ratio`. After either override, recompute `threshold_tokens = round(effective_input_budget * threshold_ratio)`. The chained orchestrator preserves this block on resume.
 
    Fill in the actual values from steps 4–6.
 
