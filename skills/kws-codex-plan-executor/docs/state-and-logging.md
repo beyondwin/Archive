@@ -82,6 +82,32 @@ execution start rather than implicit chat memory.
 and 100%, and `red` when the source exceeds the max or sections are omitted.
 The budget is character-based approximation, not exact token accounting.
 
+## Unit Manifest And Diff Policy
+
+Completed execution tasks may include `unit_manifest` with:
+
+- `unit_type`
+- `context_mode`
+- `required_skills`
+- `tool_policy`
+- `allowed_write_globs`
+- `forbidden_write_globs`
+- `artifact_policy`
+- `max_context_chars`
+
+Finished runs require a valid manifest for every completed task. The post-diff
+policy helper compares changed files from git against both the task contract
+and the manifest:
+
+```bash
+python3 scripts/check_run_diffs.py \
+  --repo-root "$WORKTREE_ABS" \
+  --state .codex-orchestrator/runs/<run_id>/state.json \
+  --task <task_id>
+```
+
+This is evidence and validation, not a low-level write hook.
+
 ## Context Health
 
 `context_health` records whether the current state is resumable without hidden
@@ -200,6 +226,50 @@ python3 scripts/reconcile_state.py \
 Finished state cannot contain `drift.unrepaired_blockers` or blocking drift
 records. Safe repair may append a `drift_repaired` project-local event when the
 event journal exists.
+
+## Subagent Runs
+
+Subagent execution is opt-in only. When used, state records:
+
+```json
+{
+  "subagents_requested": true,
+  "subagent_runs": [
+    {
+      "id": "agent_123",
+      "owner_task": "task_4",
+      "write_scope": ["docs/**"],
+      "status": "completed",
+      "changed_files": ["docs/example.md"],
+      "review_status": "accepted"
+    }
+  ]
+}
+```
+
+Non-empty `subagent_runs` requires `subagents_requested=true`. Finished state
+cannot contain running or unreviewed subagent records, and completed changed
+files must match the declared write scope.
+
+## Command Observations
+
+`command_observations[]` records bounded command evidence before root cause is
+assigned:
+
+```json
+{
+  "command": "pnpm test",
+  "status": "failed",
+  "category": "dependency_bootstrap",
+  "evidence": "node_modules is missing in the fresh worktree.",
+  "next_action": "Run pnpm install before retrying tests."
+}
+```
+
+Categories are documented in
+[../references/command-observations.md](../references/command-observations.md).
+Finished runs with `category=unknown` observations must mention the command in
+`completion_audit.residual_risk`.
 
 ## Method Audit
 

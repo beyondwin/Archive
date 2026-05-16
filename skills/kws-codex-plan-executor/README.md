@@ -12,16 +12,25 @@ read [docs/user-guide.ko.md](docs/user-guide.ko.md).
 
 ## Current Contract
 
-- Skill version: `1.8.1`
+- Skill version: `1.9.0`
 - Execution worktree: mandatory dedicated non-conflicting `codex/...` git
   worktree for `interactive` and `headless`
 - Primary state: `.codex-orchestrator/runs/<run_id>/state.json`
 - Compatibility state: `.codex-orchestrator/state.json`
 - Source snapshot: `.codex-orchestrator/runs/<run_id>/context.json`
+- Context budget: optional `context_budget` summary from context snapshotting
 - Context health: `context_health` inside per-run `state.json`
+- Event journal: `.codex-orchestrator/runs/<run_id>/events.jsonl`
+- Unit manifest: completed execution tasks declare context, tool, and
+  write-scope policy
+- Diff policy: post-task check compares changed files against task contract and
+  unit manifest
 - Method audit: optional `method_audit` evidence for required phase methods
 - Carried acceptance: optional task-level `carried_acceptance` for sequential
   metrics
+- Subagent run store: optional opt-in `subagent_runs` records
+- Command observations: optional bounded command triage evidence
+- Headless result schema: `templates/headless-output-schema.json`
 - Learning log: `~/.codex/learning/kws-codex-plan-executor/`
 - Run health reporting: terminal `final.json`, then project-local state, then
   learning-log metadata; helper pid liveness is informational only
@@ -106,6 +115,11 @@ The critical gates are:
   `completion_audit`
 - no resume/handoff reliance on implicit session memory; use `context.json` and
   `state.json`
+- no task close with unchecked changed files when `unit_manifest` is recorded
+- no finished run with blocking drift from `scripts/reconcile_state.py`
+- no finished run with running or unreviewed subagent records
+- no finished run with an unknown command observation that is missing residual
+  risk evidence
 - no successful finish with `context_health.status=red` or
   `context_health.handoff_ready=false`
 - no finished run with stale `context_health.last_checked_at` relative to
@@ -124,6 +138,11 @@ python3 scripts/build_context_snapshot.py --help
 python3 scripts/validate_state.py --help
 python3 scripts/check_learning_log_health.py --latest 5 --json
 python3 evals/check_state_schema.py
+python3 evals/check_run_diffs.py
+python3 evals/check_event_journal.py
+python3 evals/check_state_reconciliation.py
+python3 evals/check_context_snapshot.py
+python3 evals/check_headless_result.py
 python3 evals/check_learning_log.py
 python3 evals/check_skill_contract.py --skill SKILL.md
 bash evals/run.sh

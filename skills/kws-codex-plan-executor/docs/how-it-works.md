@@ -69,12 +69,15 @@ a dedicated non-conflicting `codex/...` git worktree. The executor:
 5. classifies dirty files as related or unrelated
 6. creates or selects the dedicated execution worktree
 7. initializes a `run_id`
-8. builds `context.json`
-9. initializes `context_health`
-10. writes state under `.codex-orchestrator/runs/<run_id>/`
-11. executes each task locally unless subagents were explicitly allowed
-12. refreshes `context_health` at task and blocker boundaries
-13. records verification, completion audit, and terminal lifecycle outcome
+8. appends project-local event evidence when available
+9. builds `context.json` with optional context-budget metadata
+10. initializes `context_health`
+11. writes state under `.codex-orchestrator/runs/<run_id>/`
+12. executes each task locally unless subagents were explicitly allowed and
+    recorded
+13. refreshes `context_health` at task and blocker boundaries
+14. records verification, diff-policy evidence, drift reconciliation,
+    completion audit, and terminal lifecycle outcome
 
 Interactive execution is described in
 [../references/execution-cycle.md](../references/execution-cycle.md).
@@ -98,6 +101,7 @@ Headless artifacts include:
   `headless-final.json`
 - `.codex-orchestrator/runs/<run_id>/context.json`
 - `.codex-orchestrator/runs/<run_id>/state.json`
+- `.codex-orchestrator/runs/<run_id>/events.jsonl`
 
 Headless behavior is described in
 [../references/headless-runner.md](../references/headless-runner.md).
@@ -161,6 +165,13 @@ Before any task edit, the executor must state and record:
 The same contract is stored under the task entry in state. This makes a resumed
 agent reconstruct what was allowed even if the conversation context is gone.
 
+Executable tasks may also record `unit_manifest` with unit type, context mode,
+required skills, tool policy, allowed and forbidden write globs, artifact
+policy, and max context. Finished runs require every completed task to have a
+valid manifest. Before closing a task with a manifest, the executor runs or
+honestly substitutes the post-diff checker so changed files are compared
+against the task contract and manifest.
+
 ## Context Health
 
 `context_health` is stored in `.codex-orchestrator/runs/<run_id>/state.json`.
@@ -222,6 +233,16 @@ scripts, Docker build tags, and browser/E2E suites. Commands with the same
 resource key run serially in one worktree, and the reason can be recorded in
 state under `verification.resource_serialization`.
 
+When a command result needs triage before root cause is known, the executor can
+record `command_observations[]` with command, status, taxonomy category,
+evidence, and next action. `unknown` is allowed only with bounded evidence, and
+finished runs must carry residual-risk evidence for the affected command.
+
+Subagents remain opt-in. If the user explicitly allows subagents, state records
+`subagents_requested=true` and `subagent_runs[]`. Completed records include
+changed files and review status, and finished runs cannot keep running or
+unreviewed subagent results.
+
 ## Completion Gate
 
 Successful execution is not just "tests passed." A terminal successful run must
@@ -233,6 +254,7 @@ write:
 - `completion_audit.passed=true`
 - non-empty `completion_audit.prompt_to_artifact_checklist`
 - non-empty `completion_audit.verification_evidence`
+- no unresolved blocking drift from `scripts/reconcile_state.py`
 
 Blocked, failed, interrupted, or user-question outcomes use a non-success
 `lifecycle_outcome` and a concrete `handoff_reason`.

@@ -28,6 +28,11 @@ python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py
 These checks do not launch real executor sessions. Use them first while editing
 scripts, docs, or contracts.
 
+`bash evals/run.sh` runs the same deterministic preflight checks before it
+launches real fixture sessions, so fixture baselines cannot be regenerated
+while state, event, drift, context-budget, headless-result, or diff-policy
+checks are failing.
+
 After running verification for a package change, append a compact entry to
 [verification-log.md](verification-log.md). Record command, result, skipped
 checks, and residual risk; do not paste long logs.
@@ -204,6 +209,8 @@ It currently protects:
 - lifecycle outcome contract
 - high-risk verification matrix guidance
 - mandatory dedicated `codex/...` worktree isolation and no-main execution
+- unit manifest, event journal, context-budget, headless-result, subagent, and
+  command-observation behavior through the deterministic checks listed above
 
 When adding a new cross-surface invariant, add a contract check here.
 
