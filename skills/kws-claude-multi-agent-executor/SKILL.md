@@ -1146,6 +1146,11 @@ Decision table:
    ```
 5. Identify incomplete downstream tasks that overlap the edited spec section (compare each task's `Files:` + spec excerpt range against the edited line range stored in your internal task index). For those tasks' next Implementer dispatch: inject a `## [SPEC UPDATED]` section with the changed spec text.
 6. Commit spec edit with message: `chore(<plan-slug>): clarify spec line <N> for task <id>`.
+6.5. **Recompute spec_manifest (C1):** after the spec edit commit succeeds, re-run `python3 <skill_dir>/scripts/build_spec_manifest.py <spec_path>` and overwrite `<active>.spec_manifest.sections` in place. For each incomplete downstream task whose previous `task_to_sections.sections` overlap the edited line range, re-run the Step 6.3 heuristic for that task and update its `task_to_sections` entry. Append to the latest entry in `state.spec_edits`:
+   ```json
+   "manifest_recompute": true,
+   "manifest_recompute_at": "<iso8601>"
+   ```
 7. Reset to pre-task SHA, re-dispatch Implementer from clean state. Return to Step 1.
 
 **Standard retry branch:**
