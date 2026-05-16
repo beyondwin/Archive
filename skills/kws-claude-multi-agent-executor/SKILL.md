@@ -1328,6 +1328,19 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
    }
    ```
 
+2.3. **Append to decisions_register (C2):**
+   After writing `task_summaries.task_N`, read its `key_decision`. If the value is non-empty AND not `"(none)"` AND not `"n/a"` (case-insensitive after stripping): append to `<active>.decisions_register` (creating the list if absent):
+   ```json
+   {
+     "task": "task_<N>",
+     "decision": "<key_decision text, verified ≤15 words>",
+     "files": ["<files from task_summaries>"],
+     "made_at": "<iso8601 now>",
+     "supersedes": null
+   }
+   ```
+   Atomic R-M-W of state.json. If the write fails: log a warning, continue (decisions_register is best-effort enrichment, NOT load-bearing). The register accumulates per plan and is projected to `DECISIONS.md` at each Phase Transition T3 and at Phase 2 Step 1 (see Task 9).
+
 2.5. **Commit orchestrator state separately:**
    ```bash
    git -C <worktree_path> add .orchestrator/
