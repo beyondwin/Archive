@@ -1164,6 +1164,31 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
 
    If you suspect the hook was misfired or disabled (e.g., user manually edited settings.json mid-run): re-enable and continue. Do not re-introduce the manual grep — it duplicates the hook and was the silent-bypass risk that motivated P1.
 
+1.5. **Accumulate cost (F2):**
+   Use `scripts/price_table.py` (`compute_cost(model, usage)`) to compute per-task cost.
+
+   For the just-completed Agent tool dispatch (Implementer / Combined Reviewer), extract `usage` from the Agent result. For just-completed headless subprocess (Verifier / Plan Reviewer / Docs Updater), parse the final `result` stream-json line from `<name>.stdout`.
+
+   Compute:
+   ```
+   cost_usd = compute_cost(model, usage) via scripts/price_table.py
+   key      = "<active_plan>::<task_id>"
+   ```
+
+   Update `state.cost_ledger` atomically:
+   ```
+   by_task[key] = {input_tokens, output_tokens, cached_read_tokens, cached_write_tokens,
+                   cost_usd, model, role, dispatched_at}
+   by_role[<role>]   += increments
+   by_model[<model>] += increments
+   totals            += increments
+   ```
+
+   Failure modes:
+   - Missing `usage` block → record entry with zeros, `model="unknown"`, `role="<role>"`. Do not halt.
+   - `state.json` write failure → existing hard-halt rule applies (state-file write guardrail).
+   - `price_table` import failure → log warning, record `cost_usd=0.0`, continue.
+
 2. **Update state file** — write this task's result into the active task tree.
 
    **Active tree selection (v2.13):** write under **`<active>.tasks.task_N`** (resolves per the table at the top of the document: `state.plan_chain[state.active_plan].tasks.task_N` for multi-plan, `state.plan2_state.tasks.task_N` for v2.12 legacy plan2, `state.tasks.task_N` otherwise). Same rule for `task_summaries`. Note `state.active_plan` is an **integer** (0, 1, 2, ...) when `plan_chain` is in use — do NOT string-compare `== "plan2"` for multi-plan runs.
