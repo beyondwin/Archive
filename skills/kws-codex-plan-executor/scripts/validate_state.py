@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import sys
 from datetime import datetime, timezone
@@ -36,6 +37,7 @@ VALID_LIFECYCLE_OUTCOMES = {
 }
 NON_SUCCESS_OUTCOMES = {"blocked", "failed", "userinterlude", "askuserQuestion"}
 VALID_CONTEXT_HEALTH_STATUSES = {"green", "yellow", "red"}
+VALID_CONTEXT_BUDGET_STATUSES = {"green", "yellow", "red"}
 REQUIRED_CONTEXT_HEALTH_FIELDS = {
     "status",
     "last_checked_at",
@@ -75,6 +77,76 @@ REQUIRED_CONTRACT_FIELDS = {
 }
 CONTRACT_LIST_FIELDS = {"files_to_inspect", "allowed_edits", "forbidden_edits"}
 CONTRACT_STRING_FIELDS = {"scope", "acceptance_command_or_honest_substitute"}
+VALID_UNIT_TYPES = {
+    "research",
+    "plan",
+    "execute-task",
+    "reactive-execute",
+    "validate",
+    "complete",
+    "docs",
+    "review",
+    "handoff",
+}
+VALID_CONTEXT_MODES = {"minimal", "focused", "expanded", "full"}
+VALID_TOOL_POLICIES = {"read-only", "planning", "implementation", "docs", "verification"}
+VALID_ARTIFACT_POLICIES = {"inline", "inline-summary", "excerpt", "on-demand"}
+VALID_EVENT_TYPES = {
+    "run_started",
+    "context_snapshot_created",
+    "pre_dispatch_checked",
+    "dispatch_gate_failed",
+    "task_contract_recorded",
+    "task_started",
+    "task_completed",
+    "verification_started",
+    "verification_passed",
+    "verification_failed",
+    "drift_detected",
+    "drift_repaired",
+    "blocked",
+    "failed",
+    "finished",
+}
+REQUIRED_UNIT_MANIFEST_FIELDS = {
+    "unit_type",
+    "context_mode",
+    "required_skills",
+    "tool_policy",
+    "allowed_write_globs",
+    "forbidden_write_globs",
+    "artifact_policy",
+    "max_context_chars",
+}
+VALID_SUBAGENT_STATUSES = {"queued", "running", "completed", "failed", "cancelled"}
+VALID_SUBAGENT_REVIEW_STATUSES = {"unreviewed", "accepted", "rejected", "changes_requested"}
+REQUIRED_SUBAGENT_FIELDS = {
+    "id",
+    "owner_task",
+    "mode",
+    "write_scope",
+    "status",
+    "result_summary",
+}
+COMPLETED_SUBAGENT_FIELDS = {"changed_files", "review_status"}
+VALID_COMMAND_OBSERVATION_CATEGORIES = {
+    "source_failure",
+    "missing_local_env",
+    "dependency_bootstrap",
+    "resource_oom",
+    "timeout_or_hang",
+    "flaky_test",
+    "permission_or_sandbox",
+    "tooling_bug",
+    "unknown",
+}
+REQUIRED_COMMAND_OBSERVATION_FIELDS = {
+    "command",
+    "status",
+    "category",
+    "evidence",
+    "next_action",
+}
 
 
 def _required_project_path(run_id: str, name: str) -> str:
@@ -196,6 +268,25 @@ def _validate_context_health(data: dict, errors: list[str]) -> None:
             )
 
 
+def _validate_context_budget(data: dict, errors: list[str]) -> None:
+    budget = data.get("context_budget")
+    if budget is None:
+        return
+    if not isinstance(budget, dict):
+        errors.append("context_budget must be an object")
+        return
+    if budget.get("status") not in VALID_CONTEXT_BUDGET_STATUSES:
+        errors.append(f"context_budget.status must be one of {sorted(VALID_CONTEXT_BUDGET_STATUSES)}")
+    for key in ("max_chars", "estimated_chars"):
+        if key in budget and (not isinstance(budget[key], int) or budget[key] < 0):
+            errors.append(f"context_budget.{key} must be a non-negative integer")
+    if isinstance(budget.get("max_chars"), int) and budget["max_chars"] <= 0:
+        errors.append("context_budget.max_chars must be a positive integer")
+    for key in ("included_sections", "omitted_sections"):
+        if key in budget and not isinstance(budget[key], list):
+            errors.append(f"context_budget.{key} must be a list")
+
+
 def _validate_completion_audit(data: dict, errors: list[str]) -> None:
     outcome = data.get("lifecycle_outcome")
     audit = data.get("completion_audit")
@@ -261,6 +352,245 @@ def _validate_carried_acceptance(data: dict, errors: list[str]) -> None:
                 errors.append(
                     f"{task_id}: carried_acceptance metric must be referenced by completion_audit.verification_evidence"
                 )
+
+
+def _validate_unit_manifest(data: dict, errors: list[str]) -> None:
+    outcome = data.get("lifecycle_outcome")
+    tasks = data.get("tasks")
+    if not isinstance(tasks, dict):
+        return
+
+    for task_id, task in tasks.items():
+        if not isinstance(task, dict):
+            continue
+        manifest = task.get("unit_manifest")
+        completed = task.get("status") in {"completed", "verified", "done"}
+        if outcome == "finished" and completed and manifest is None:
+            errors.append(
+                f"{task_id}: unit_manifest is required for completed tasks when lifecycle_outcome is finished"
+            )
+            continue
+        if manifest is None:
+            continue
+        if not isinstance(manifest, dict):
+            errors.append(f"{task_id}: unit_manifest must be an object")
+            continue
+
+        for key in sorted(REQUIRED_UNIT_MANIFEST_FIELDS):
+            if key not in manifest:
+                errors.append(f"{task_id}: unit_manifest missing field {key}")
+
+        if manifest.get("unit_type") not in VALID_UNIT_TYPES:
+            errors.append(f"{task_id}: unit_manifest.unit_type must be one of {sorted(VALID_UNIT_TYPES)}")
+        if manifest.get("context_mode") not in VALID_CONTEXT_MODES:
+            errors.append(f"{task_id}: unit_manifest.context_mode must be one of {sorted(VALID_CONTEXT_MODES)}")
+        if manifest.get("tool_policy") not in VALID_TOOL_POLICIES:
+            errors.append(f"{task_id}: unit_manifest.tool_policy must be one of {sorted(VALID_TOOL_POLICIES)}")
+        if manifest.get("artifact_policy") not in VALID_ARTIFACT_POLICIES:
+            errors.append(f"{task_id}: unit_manifest.artifact_policy must be one of {sorted(VALID_ARTIFACT_POLICIES)}")
+
+        for key in ("required_skills", "allowed_write_globs", "forbidden_write_globs"):
+            if key in manifest and not isinstance(manifest[key], list):
+                errors.append(f"{task_id}: unit_manifest.{key} must be a list")
+
+        max_chars = manifest.get("max_context_chars")
+        if not isinstance(max_chars, int) or max_chars <= 0:
+            errors.append(f"{task_id}: unit_manifest.max_context_chars must be a positive integer")
+
+        policy = manifest.get("tool_policy")
+        allowed = manifest.get("allowed_write_globs")
+        if policy == "implementation" and not _has_substantive_value(allowed):
+            errors.append(f"{task_id}: implementation unit_manifest requires allowed_write_globs")
+        if policy == "read-only" and isinstance(allowed, list) and allowed:
+            errors.append(f"{task_id}: read-only unit_manifest must not allow write globs")
+
+
+def _validate_event_journal(data: dict, errors: list[str]) -> None:
+    if data.get("lifecycle_outcome") != "finished":
+        return
+
+    run_id = data.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        return
+
+    expected_path = _required_project_path(run_id, "events.jsonl")
+    journal_path = data.get("event_journal_path")
+    if not isinstance(journal_path, str) or not journal_path.strip():
+        errors.append("event_journal_path must be a non-empty string when lifecycle_outcome is finished")
+    elif journal_path != expected_path:
+        errors.append(f"event_journal_path must be {expected_path}")
+
+    last_seq = data.get("last_event_seq")
+    if not isinstance(last_seq, int) or last_seq <= 0:
+        errors.append("last_event_seq must be a positive integer when lifecycle_outcome is finished")
+
+
+def _validate_drift(data: dict, errors: list[str]) -> None:
+    if data.get("lifecycle_outcome") != "finished":
+        return
+    drift = data.get("drift")
+    if drift is None:
+        return
+    if not isinstance(drift, dict):
+        errors.append("drift must be an object")
+        return
+    blockers = drift.get("unrepaired_blockers", [])
+    if blockers:
+        errors.append("drift.unrepaired_blockers must be empty when lifecycle_outcome is finished")
+    records = drift.get("records", [])
+    if isinstance(records, list):
+        for index, record_item in enumerate(records):
+            if isinstance(record_item, dict) and record_item.get("severity") == "blocking":
+                errors.append(
+                    f"drift.records[{index}] blocking drift is not allowed when lifecycle_outcome is finished"
+                )
+
+
+def _path_matches_any(path: str, patterns: list[str]) -> bool:
+    return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
+
+
+def _patterns_overlap(left: str, right: str) -> bool:
+    return (
+        fnmatch.fnmatchcase(left, right)
+        or fnmatch.fnmatchcase(right, left)
+        or left.startswith(right.rstrip("*"))
+        or right.startswith(left.rstrip("*"))
+    )
+
+
+def _current_task_write_patterns(data: dict) -> list[str]:
+    tasks = data.get("tasks")
+    current_task_id = data.get("current_task")
+    if not isinstance(tasks, dict) or not isinstance(current_task_id, str):
+        return []
+    current_task = tasks.get(current_task_id)
+    if not isinstance(current_task, dict):
+        return []
+
+    patterns: list[str] = []
+    contract = current_task.get("contract")
+    if isinstance(contract, dict) and isinstance(contract.get("allowed_edits"), list):
+        patterns.extend(item for item in contract["allowed_edits"] if isinstance(item, str))
+    manifest = current_task.get("unit_manifest")
+    if isinstance(manifest, dict) and isinstance(manifest.get("allowed_write_globs"), list):
+        patterns.extend(item for item in manifest["allowed_write_globs"] if isinstance(item, str))
+    return patterns
+
+
+def _validate_subagent_runs(data: dict, errors: list[str]) -> None:
+    requested = data.get("subagents_requested", False)
+    if "subagents_requested" in data and not isinstance(requested, bool):
+        errors.append("subagents_requested must be a boolean when present")
+        requested = False
+
+    runs = data.get("subagent_runs", [])
+    if runs is None:
+        return
+    if not isinstance(runs, list):
+        errors.append("subagent_runs must be a list when present")
+        return
+    if runs and requested is not True:
+        errors.append("subagent_runs requires subagents_requested=true")
+
+    tasks = data.get("tasks") if isinstance(data.get("tasks"), dict) else {}
+    current_patterns = _current_task_write_patterns(data)
+    outcome = data.get("lifecycle_outcome")
+
+    for index, run in enumerate(runs):
+        prefix = f"subagent_runs[{index}]"
+        if not isinstance(run, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+
+        for key in sorted(REQUIRED_SUBAGENT_FIELDS):
+            if key not in run:
+                errors.append(f"{prefix} missing field {key}")
+
+        owner_task = run.get("owner_task")
+        if not isinstance(owner_task, str) or not owner_task.strip():
+            errors.append(f"{prefix}.owner_task must be a non-empty string")
+        elif owner_task not in tasks:
+            errors.append(f"{prefix}.owner_task must reference an existing task")
+
+        status = run.get("status")
+        if status not in VALID_SUBAGENT_STATUSES:
+            errors.append(f"{prefix}.status must be one of {sorted(VALID_SUBAGENT_STATUSES)}")
+        if outcome == "finished" and status == "running":
+            errors.append(f"{prefix}: running subagent is not allowed when lifecycle_outcome is finished")
+
+        write_scope = run.get("write_scope")
+        if not isinstance(write_scope, list) or not write_scope or not all(isinstance(item, str) and item for item in write_scope):
+            errors.append(f"{prefix}.write_scope must be a non-empty list of strings")
+            write_scope_patterns: list[str] = []
+        else:
+            write_scope_patterns = write_scope
+
+        review_status = run.get("review_status")
+        if "review_status" in run and review_status not in VALID_SUBAGENT_REVIEW_STATUSES:
+            errors.append(f"{prefix}.review_status must be one of {sorted(VALID_SUBAGENT_REVIEW_STATUSES)}")
+        if outcome == "finished" and review_status == "unreviewed":
+            errors.append(f"{prefix}: review_status=unreviewed is not allowed when lifecycle_outcome is finished")
+
+        if status == "completed":
+            for key in sorted(COMPLETED_SUBAGENT_FIELDS):
+                if key not in run:
+                    errors.append(f"{prefix} completed record missing field {key}")
+            changed_files = run.get("changed_files")
+            if not isinstance(changed_files, list) or not all(isinstance(item, str) and item for item in changed_files):
+                errors.append(f"{prefix}.changed_files must be a list of strings for completed subagents")
+            else:
+                for changed_file in changed_files:
+                    if write_scope_patterns and not _path_matches_any(changed_file, write_scope_patterns):
+                        errors.append(f"{prefix}.changed_files entry {changed_file} does not match write_scope")
+
+        if current_patterns and write_scope_patterns:
+            overlaps_current = any(
+                _patterns_overlap(subagent_pattern, current_pattern)
+                for subagent_pattern in write_scope_patterns
+                for current_pattern in current_patterns
+            )
+            if overlaps_current and not _has_substantive_value(run.get("overlap_rationale")):
+                errors.append(f"{prefix}.overlap_rationale is required when write_scope overlaps current task")
+
+
+def _validate_command_observations(data: dict, errors: list[str]) -> None:
+    observations = data.get("command_observations", [])
+    if observations is None:
+        return
+    if not isinstance(observations, list):
+        errors.append("command_observations must be a list when present")
+        return
+
+    audit = data.get("completion_audit") if isinstance(data.get("completion_audit"), dict) else {}
+    residual_risk_text = json.dumps(audit.get("residual_risk", []), sort_keys=True).lower()
+
+    for index, observation in enumerate(observations):
+        prefix = f"command_observations[{index}]"
+        if not isinstance(observation, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+
+        for key in sorted(REQUIRED_COMMAND_OBSERVATION_FIELDS):
+            if key not in observation:
+                errors.append(f"{prefix} missing field {key}")
+            elif not _has_substantive_value(observation.get(key)):
+                errors.append(f"{prefix}.{key} must be non-empty")
+
+        category = observation.get("category")
+        if category not in VALID_COMMAND_OBSERVATION_CATEGORIES:
+            errors.append(f"{prefix}.category must be one of {sorted(VALID_COMMAND_OBSERVATION_CATEGORIES)}")
+
+        command = observation.get("command")
+        if (
+            data.get("lifecycle_outcome") == "finished"
+            and category == "unknown"
+            and isinstance(command, str)
+            and command.lower() not in residual_risk_text
+        ):
+            errors.append(
+                f"{prefix}: unknown command observation must be mentioned in completion_audit.residual_risk"
+            )
 
 
 def _method_skill(entry: object) -> str | None:
@@ -428,6 +758,12 @@ def validate(data: object) -> list[str]:
 
     _validate_context_snapshot(data, errors)
     _validate_context_health(data, errors)
+    _validate_context_budget(data, errors)
+    _validate_unit_manifest(data, errors)
+    _validate_event_journal(data, errors)
+    _validate_drift(data, errors)
+    _validate_subagent_runs(data, errors)
+    _validate_command_observations(data, errors)
     _validate_completion_audit(data, errors)
     _validate_carried_acceptance(data, errors)
     _validate_method_audit(data, errors)

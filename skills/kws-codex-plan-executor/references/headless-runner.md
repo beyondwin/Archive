@@ -62,6 +62,7 @@ CONTEXT_BASIS_HASH="$(python3 "$SKILL_DIR/scripts/build_context_snapshot.py" \
   --plan "$PLAN_REL" \
   --spec "${SPEC_REL:-}" \
   --docs "${DOCS_REL:-}" \
+  --max-chars "${CONTEXT_MAX_CHARS:-120000}" \
   --output "$RUN_DIR/context.json")"
 
 codex exec \
@@ -93,17 +94,23 @@ CONTEXT_BASIS_HASH="$(python3 "$SKILL_DIR/scripts/build_context_snapshot.py" \
   --plan "$PLAN_REL" \
   --spec "${SPEC_REL:-}" \
   --docs "${DOCS_REL:-}" \
+  --max-chars "${CONTEXT_MAX_CHARS:-120000}" \
   --output "$RUN_DIR/context.json")"
 
 codex exec \
   --cd "$WORKTREE_ABS" \
   --sandbox "$HEADLESS_SANDBOX" \
   --json \
-  --output-schema "$RUN_DIR/final.schema.json" \
+  --output-schema "$SKILL_DIR/templates/headless-output-schema.json" \
   --output-last-message "$RUN_DIR/headless-final.json" \
   "$PROMPT" \
   > "$RUN_DIR/headless.jsonl" 2>&1
 ```
+
+When `--output-schema` is unavailable, keep the same requested JSON shape and
+save the last message for review. The required final fields are `status`,
+`run_id`, `state_path`, `summary`, `changed_files`, `verification`,
+`open_gaps`, `residual_risk`, and `next_action`.
 
 ## Required Artifacts
 
@@ -112,6 +119,7 @@ codex exec \
   `.codex-orchestrator/runs/<run_id>/headless-final.json`
 - `.codex-orchestrator/runs/<run_id>/context.json`
 - `.codex-orchestrator/runs/<run_id>/state.json`
+- `.codex-orchestrator/runs/<run_id>/events.jsonl`
 - `.codex-orchestrator/state.json` as latest-state compatibility copy/pointer
 - raw verification output paths for failures
 
@@ -124,12 +132,41 @@ be `handoff_ready=true` and not `red`. Blocked or failed targets must set a
 non-success `lifecycle_outcome`, a concrete `handoff_reason`, and a
 `context_health.next_action` suitable for resume.
 
+For executable tasks, the target may record `unit_manifest` with `unit_type`,
+`context_mode`, `required_skills`, `tool_policy`, `allowed_write_globs`,
+`forbidden_write_globs`, `artifact_policy`, and `max_context_chars`. Finished
+runs require every completed task to have a valid manifest. `implementation`
+manifests must include non-empty `allowed_write_globs`; `read-only` manifests
+must not allow write globs.
+
+When a task records `unit_manifest`, the target should run or honestly
+substitute `scripts/check_run_diffs.py --repo-root "$WORKTREE_ABS" --state
+"$RUN_DIR/state.json" --task <task_id>` before task completion. The diff check
+is post-facto policy evidence, not a low-level write hook.
+
+The target should append project-local events with
+`scripts/append_run_event.py`. The event journal is run evidence only; terminal
+success still depends on `state.json`, `context_health`, and
+`completion_audit`. Finished state must include matching `event_journal_path`
+and a positive `last_event_seq`.
+
+Before claiming terminal success, run `scripts/reconcile_state.py --check` or
+`--repair-safe`. If blocking drift remains, the target must report a blocked or
+failed lifecycle outcome with a concrete resume action instead of
+`lifecycle_outcome=finished`.
+
 When a headless target records required phase methods, it must use
 `method_audit` evidence instead of skill-invocation intent. Implementation TDD
 needs RED and GREEN evidence references, review needs findings or an explicit
 no-findings residual-risk statement, and completion verification needs
 `completion_audit.verification_evidence`. Docs-only or read-only analysis runs
 may waive implementation methods only with an explicit reason.
+
+When a command result needs triage before root cause is assigned, the target may
+record `command_observations[]` in state. Each observation needs command,
+status, taxonomy category, bounded evidence, and next action. Use
+`category=unknown` only with bounded evidence, and mention the command in
+`completion_audit.residual_risk` before any finished outcome.
 
 ## Learning Log
 

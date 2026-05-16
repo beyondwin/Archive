@@ -164,6 +164,50 @@ Mitigation:
 Residual risk: resource-key serialization is guidance unless a future scheduler
 enforces it mechanically.
 
+### Unit Manifest Enforcement Boundary
+
+Risk: the new unit manifest can describe a strict write/tool policy, but Codex
+skills cannot intercept every low-level file operation through a custom hook.
+
+Mitigation:
+
+- State validation checks manifest shape and terminal requirements.
+- The task contract remains mandatory before edits.
+- A post-diff checker compares changed files against contract and manifest
+  write globs.
+
+Residual risk: violations are detected by contract and diff review, not blocked
+at the instant of every write.
+
+### Event Journal Duplication
+
+Risk: a project-local event journal can look redundant next to state and the
+user-local learning log.
+
+Mitigation:
+
+- State remains the source of truth.
+- The event journal is replayable project-local execution evidence.
+- The learning log remains user-local cross-repo process learning.
+
+Residual risk: agents may over-log routine events unless references and evals
+keep the journal vocabulary compact.
+
+### Drift Repair Overreach
+
+Risk: automatic repair could mask real source or state mismatches.
+
+Mitigation:
+
+- Repair mode is explicit.
+- Safe repairs are limited to mechanical pointer, timestamp, and sequence
+  drift.
+- Source hash mismatch, missing manifests, unresolved carried acceptance, and
+  journal run-id mismatch are blocking.
+
+Residual risk: future repair types must stay conservative or they can weaken
+resume safety.
+
 ### Headless Fresh-Process Behavior
 
 Risk: headless `codex exec` may not inherit parent session context, skills, or
@@ -177,6 +221,37 @@ Mitigation:
 
 Residual risk: model/tool availability can differ by environment, and fixture
 runs can be slower or flaky because they execute real Codex sessions.
+
+### Subagent Record Trust Boundary
+
+Risk: delegated work can be mistaken for reviewed parent work if subagent output
+is accepted at face value.
+
+Mitigation:
+
+- Subagent records are opt-in and require `subagents_requested=true`.
+- Completed records must include `changed_files` and `review_status`.
+- Finished runs cannot carry running or unreviewed subagent records.
+- `changed_files` must match declared `write_scope`.
+- Overlap with the current task write scope requires an explicit rationale.
+
+Residual risk: the validator proves record shape and obvious scope violations;
+the parent executor must still inspect diffs and run final verification.
+
+### GSD-2 Runtime Scope
+
+Risk: adopting selected GSD-2 safeguards can imply a larger scheduler or daemon
+than this skill actually provides.
+
+Mitigation:
+
+- The release keeps JSON state as authority and JSONL events as evidence.
+- Subagent records are audit artifacts, not a dispatcher.
+- Drift repair is explicit and limited to safe mechanical fields.
+- Diff policy is post-facto validation, not a filesystem hook.
+
+Residual risk: operators must still understand that this is a Codex skill
+workflow, not the full `gsd-build/gsd-2` runtime.
 
 ## Intentional Deferrals
 
@@ -207,6 +282,17 @@ separate workflows.
 Learning events live under `~/.codex/learning/`, not the target repository. The
 repository contains execution state and artifacts, while cross-project process
 learning remains user-local.
+
+### No SQLite Runtime From GSD-2
+
+GSD-2's SQLite-backed runtime is intentionally not adopted. The executor keeps
+per-run JSON state as the authority and uses JSONL only as evidence.
+
+### No Dashboard Or Daemon
+
+The GSD-2 dashboard, daemon, Studio, MCP server, and extension runtime are not
+part of this skill. They would increase operational surface area without
+improving portable Codex execution.
 
 ### No Automatic Version Bump For Docs-Only Changes
 

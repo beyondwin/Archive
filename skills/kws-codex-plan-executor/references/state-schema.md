@@ -30,6 +30,8 @@ python3 scripts/validate_state.py .codex-orchestrator/runs/<run_id>/state.json
   "state_path": ".codex-orchestrator/runs/20260513T142233Z-archive-codex-example-7e884a0-a1b2c3/state.json",
   "context_snapshot_path": ".codex-orchestrator/runs/20260513T142233Z-archive-codex-example-7e884a0-a1b2c3/context.json",
   "context_basis_hash": "<sha256-of-source-list>",
+  "event_journal_path": ".codex-orchestrator/runs/20260513T142233Z-archive-codex-example-7e884a0-a1b2c3/events.jsonl",
+  "last_event_seq": 1,
   "context_health": {
     "status": "green",
     "last_checked_at": null,
@@ -48,6 +50,9 @@ python3 scripts/validate_state.py .codex-orchestrator/runs/<run_id>/state.json
   "lifecycle_outcome": null,
   "handoff_reason": "",
   "completion_audit": null,
+  "command_observations": [],
+  "subagents_requested": false,
+  "subagent_runs": [],
   "risk_levels": {},
   "tasks": {},
   "execution_dag": [],
@@ -86,6 +91,97 @@ after preflight initializes. It must equal
 `.codex-orchestrator/runs/<run_id>/context.json`. `context_basis_hash` must be
 non-empty and match the `basis_hash` inside that snapshot. `prompt` and
 `handoff` modes may omit these fields.
+
+`event_journal_path` is project-local replay evidence for execution modes. For
+`lifecycle_outcome=finished`, it must equal
+`.codex-orchestrator/runs/<run_id>/events.jsonl`, and `last_event_seq` must be a
+positive integer. The state validator checks only state metadata; journal file
+contents are covered by `evals/check_event_journal.py`.
+
+Optional top-level `drift` records the last drift reconciliation result:
+
+```json
+"drift": {
+  "last_checked_at": "2026-05-16T07:35:00Z",
+  "records": [],
+  "unrepaired_blockers": []
+}
+```
+
+When `lifecycle_outcome=finished`, `drift.unrepaired_blockers` must be empty
+and `drift.records` cannot contain any record with `severity=blocking`.
+
+Optional top-level `context_budget` mirrors the budget summary from
+`context.json` when a run wants budget state in `state.json`:
+
+```json
+"context_budget": {
+  "status": "green",
+  "max_chars": 120000,
+  "estimated_chars": 42100,
+  "included_sections": [],
+  "omitted_sections": []
+}
+```
+
+`status` must be `green`, `yellow`, or `red`; `max_chars` must be positive;
+`estimated_chars` must be non-negative; section fields must be arrays.
+
+Optional top-level `command_observations` records bounded command evidence
+before root cause is assigned:
+
+```json
+"command_observations": [
+  {
+    "command": "pnpm test",
+    "status": "failed",
+    "category": "dependency_bootstrap",
+    "evidence": "node_modules is missing in the fresh worktree.",
+    "next_action": "Run pnpm install before retrying tests."
+  }
+]
+```
+
+Each observation requires non-empty `command`, `status`, `category`, `evidence`,
+and `next_action`. `category` must be one of `source_failure`,
+`missing_local_env`, `dependency_bootstrap`, `resource_oom`, `timeout_or_hang`,
+`flaky_test`, `permission_or_sandbox`, `tooling_bug`, or `unknown`. For
+`lifecycle_outcome=finished`, every `unknown` command observation must be
+mentioned in `completion_audit.residual_risk` by command.
+
+Optional top-level `subagents_requested` and `subagent_runs` record delegated
+execution only when the user explicitly allowed subagents:
+
+```json
+"subagents_requested": true,
+"subagent_runs": [
+  {
+    "id": "agent_123",
+    "owner_task": "task_4",
+    "mode": "fork_context",
+    "write_scope": ["docs/**"],
+    "status": "completed",
+    "result_summary": "Updated delegated docs wording.",
+    "changed_files": ["docs/example.md"],
+    "review_status": "accepted",
+    "merged_at": "2026-05-16T07:40:00Z",
+    "overlap_rationale": "Parent task delegated one docs subset and reviewed before merge."
+  }
+]
+```
+
+Rules:
+
+- `subagents_requested` is optional and defaults to false.
+- Non-empty `subagent_runs` requires `subagents_requested=true`.
+- Each `owner_task` must reference an existing task id.
+- Each `write_scope` must be a non-empty list of path globs.
+- Completed subagent records require `changed_files` and `review_status`.
+- Completed `changed_files` must match the record's `write_scope`.
+- `lifecycle_outcome=finished` cannot contain running or unreviewed subagent
+  records.
+- If a subagent `write_scope` overlaps the current task's allowed write scope,
+  the record must include a non-empty `overlap_rationale`.
 
 `context_health` is required for `interactive` and `headless` execution after
 preflight initializes. It is a compact answer to: "Can another agent resume
@@ -240,6 +336,16 @@ not change task status semantics or bypass per-task execution contracts:
     "forbidden_edits": [],
     "acceptance_command_or_honest_substitute": ""
   },
+  "unit_manifest": {
+    "unit_type": "execute-task",
+    "context_mode": "focused",
+    "required_skills": ["using-superpowers", "test-driven-development"],
+    "tool_policy": "implementation",
+    "allowed_write_globs": ["scripts/*.py", "evals/*.py"],
+    "forbidden_write_globs": [".git/**", "graphify-out/**"],
+    "artifact_policy": "inline-summary",
+    "max_context_chars": 60000
+  },
   "pre_task_sha": null,
   "commit": null,
   "review_retries": 0,
@@ -272,6 +378,27 @@ The `contract` object must include:
 
 Keep retry counts numeric, contract text fields as strings, and file lists as
 arrays.
+
+Tasks may include optional `unit_manifest` while active. When
+`lifecycle_outcome=finished`, every task whose status is `completed`,
+`verified`, or `done` must include a valid manifest.
+
+`unit_manifest` fields:
+
+- `unit_type`: one of `research`, `plan`, `execute-task`, `reactive-execute`,
+  `validate`, `complete`, `docs`, `review`, or `handoff`
+- `context_mode`: one of `minimal`, `focused`, `expanded`, or `full`
+- `required_skills`: array
+- `tool_policy`: one of `read-only`, `planning`, `implementation`, `docs`, or
+  `verification`
+- `allowed_write_globs`: array
+- `forbidden_write_globs`: array
+- `artifact_policy`: one of `inline`, `inline-summary`, `excerpt`, or
+  `on-demand`
+- `max_context_chars`: positive integer
+
+`implementation` manifests require non-empty `allowed_write_globs`. `read-only`
+manifests must not allow write globs.
 
 Tasks may include optional `carried_acceptance` when a sequential metric cannot
 be fully resolved until a later task:
