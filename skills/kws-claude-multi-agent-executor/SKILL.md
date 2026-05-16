@@ -2,8 +2,8 @@
 name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation. NOTE — single-session execution is preferable for ≤5-task plans or plans with deep cross-task coupling (multi-agent overhead exceeds the parallelism win).
 metadata:
-  version: "2.10.2"
-  updated_at: "2026-05-14"
+  version: "2.12.0"
+  updated_at: "2026-05-16"
 ---
 
 # KWS Claude Multi-Agent Executor
@@ -17,6 +17,7 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
 - **Spec path** — path to the design spec document
 - Optionally: `risk=<low|mid|high>` to override risk level for all tasks
 - Optionally: `docs_scope=<file1,file2>` to override which docs are updated
+- Optionally: `implementer_model=<opus|sonnet>` — override the Implementer sub-agent's model. Default is `sonnet`. The Reviewer and Verifier always run on Sonnet regardless (judge consistency). See `docs/experiments/v2.12-implementer-opus-vs-sonnet/` for the rationale.
 
 ---
 
@@ -38,6 +39,8 @@ Execute Phase 0 Step 1 (working tree clean check), Step 1.5 (cross-run isolation
 
 **b. Initialize a minimal `.orchestrator/state.json` in the worktree.**
 
+Before writing: parse the optional `implementer_model=<opus|sonnet>` skill argument here in the interactive parent — this is the only place where the original skill args are available, since the headless subprocess only sees the headless prompt text (NOT the original args). Case-insensitive. Unknown value → halt with: "Unknown implementer_model=<value>. Allowed: opus, sonnet." If unset → use `"sonnet"`.
+
 Write `<worktree_path>/.orchestrator/state.json` using the Write tool:
 ```json
 {
@@ -48,6 +51,7 @@ Write `<worktree_path>/.orchestrator/state.json` using the Write tool:
   "spec": "<spec path>",
   "branch": "<branch name>",
   "worktree": "<worktree path>",
+  "implementer_model": {"used": "<parsed value or sonnet>", "default": "sonnet"},
   "timestamps": {
     "interactive_setup_at": "<iso8601 now>",
     "headless_started_at": null,
@@ -56,6 +60,8 @@ Write `<worktree_path>/.orchestrator/state.json` using the Write tool:
 }
 ```
 Fill in actual values from Phase 0 Steps 1–2.5. The full state.json fields (analysis, risk_levels, baseline, etc.) will be populated by the headless instance in its Phase 0 run.
+
+**Why `implementer_model` is set HERE (v2.12):** Phase -1 step c writes `headless_prompt.txt` with no arg propagation, and `claude -p` in step d sees only that prompt — not the original skill args. If we deferred parsing to Phase 0 Step 7 in the child, the arg would be lost and both arms would silently fall back to Sonnet. The child reads `state.implementer_model` from state.json in its resume path; it does NOT re-parse skill args. See Phase 0 Step 7 "field rule" below.
 
 **c. Write the headless prompt at `<worktree_path>/.orchestrator/headless_prompt.txt`:**
 
@@ -232,7 +238,7 @@ This is a fallback — the primary expectation is that one headless subprocess c
    Check if `<worktree_path>/.orchestrator/state.json` exists by attempting to read it.
    - If it does NOT exist: proceed normally to Step 1.
    - If it EXISTS and is valid JSON with `schema_version: "2"`:
-     - If `"mode": "headless_pending"`: freshly-spawned headless instance — Phase -1 already ran Steps 1, 1.5, 2, 2.5 in interactive context and wrote minimal state. **MUST skip Phase 0 Steps 1, 1.5, 2, 2.5** (clean check, cross-run isolation, worktree creation, safety hooks — re-running breaks: `git status` flags pre-written `.orchestrator/` and `.claude/settings.json` as dirty; `git worktree add` errors on the existing branch; Step 1.5 mode-exclusivity check would self-block on the freshly-created `.orchestrator/headless.pid`). PROCEED with Phase 0 Step 0.5 onward (`0.5 → 3 → 3.5 → 4 → 5 → 6 → 7`) to populate baseline, risk_levels, compaction_points, full task data. After Step 7, update `state.json.mode` from `"headless_pending"` to `"headless_running"` and write.
+     - If `"mode": "headless_pending"`: freshly-spawned headless instance — Phase -1 already ran Steps 1, 1.5, 2, 2.5 in interactive context and wrote minimal state. **MUST skip Phase 0 Steps 1, 1.5, 2, 2.5** (clean check, cross-run isolation, worktree creation, safety hooks — re-running breaks: `git status` flags pre-written `.orchestrator/` and `.claude/settings.json` as dirty; `git worktree add` errors on the existing branch; Step 1.5 mode-exclusivity check would self-block on the freshly-created `.orchestrator/headless.pid`). PROCEED with Phase 0 Step 0.5 onward (`0.5 → 3 → 3.5 → 4 → 5 → 6 → 7`) to populate baseline, risk_levels, compaction_points, full task data. After Step 7, update `state.json.mode` from `"headless_pending"` to `"headless_running"` and write. **Preserve `state.implementer_model` exactly as the parent wrote it (v2.12)** — the parent already parsed the skill arg; do NOT overwrite. If the field is absent (legacy state.json), default to `{"used": "sonnet", "default": "sonnet"}`.
      - If `"mode": "headless_running"`, `"headless_chained"`, `"plan2_running"`, `"interactive_session"`, or no mode field: Standard resume path — load all fields. Do NOT overwrite. Verify git branch and worktree match `state.branch` / `state.worktree`. Set internal tracking from state.json: `current_task`, `current_step_within_task`, `current_pre_task_sha`, per-task counters. Output: "Resuming from state file: Task <N>, Step <M> (mode=<value or null>)." Skip Phase 0 Steps 1–7 (setup already done). Go directly to Phase 1 at the recorded task/step.
    - If it EXISTS but is invalid (empty, malformed JSON):
      - Warn user: "State file exists but is corrupted at <path>. Recommend manual inspection before proceeding."
@@ -561,6 +567,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
        "shared_files": {}
      },
      "plan_review": {"status": "SKIPPED", "warnings": []},
+     "implementer_model": {"used": "<sonnet | opus>", "default": "sonnet"},
      "task_complexity": {},
      "quality_trend": [],
      "tasks": {},
@@ -590,6 +597,15 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
    Fill in the actual values from steps 4–6.
 
    **Mode field rule (P13a):** `mode` MUST always be a string — never `null`. Set to `"interactive_session"` when not under Phase -1 self-spawn, `"headless_running"` immediately after Phase 0 completes under `headless_pending` resume.
+
+   **`implementer_model` field rule (v2.12):**
+
+   Two cases by entry path:
+
+   - **You are the headless child (resume from `mode=headless_pending`)**: `state.implementer_model` was already written by the interactive parent at Phase -1 step b. **Read it from state.json. Do NOT re-parse skill args** — the original args are not available to you, only the headless prompt text. Preserve the field as-is.
+   - **You are an interactive run (no headless self-spawn — `mode=interactive` was passed, OR you are the parent during Phase -1 itself)**: parse the optional `implementer_model=<opus|sonnet>` skill argument. Case-insensitive. Unknown values → halt with: "Unknown implementer_model=<value>. Allowed: opus, sonnet." Set `state.implementer_model.used = <parsed value, or "sonnet" if not provided>`. Set `state.implementer_model.default = "sonnet"` literally — this records what the skill would have dispatched in the absence of an override at the time of this run. Do NOT compute `default` from the args.
+
+   On Phase 2 Step -1 plan2 swap: do NOT reset this field. Plan 2 inherits the same Implementer model selection as Plan 1 within one orchestrator invocation.
 
 7.5. **Learning log init-run (v2.8 — MANDATORY, v2.8.1 enforced):**
 
@@ -702,12 +718,17 @@ Build the implementer prompt from the **Implementer Prompt Template** below. Fil
 - `{deps_for_this_task}` — list of task IDs that this task depends on (from Phase 0 Step 6 dependency graph)
 - `{task_size}` — SMALL / MEDIUM / LARGE from `state.task_complexity.task_N` (P5)
 - `{effort_guidance}` — the matching guidance string from Phase 0 Step 6 (P5)
+- `{implementer_model}` — value of `state.implementer_model.used` ("sonnet" or "opus"). Used in the prompt header and the learning-log `subagent.model` field.
 
 Re-dispatch rules (always append `## Fix Required\n{issues}`):
 - After **Combined Reviewer FAIL** OR **Verifier FAIL**: include Required Skills bullet 5 (`receiving-code-review`). The skill's discipline (verify each issue is real before patching; push back on false positives like baseline drift or flaky tests) applies to verifier feedback the same as reviewer feedback.
 - After cleanup-only re-dispatch (e.g., hook-blocked debug artifact): do NOT include bullet 5.
 
-Dispatch as a **fresh Sonnet sub-agent**.
+**Model selection (v2.12):** read `state.implementer_model.used`. Dispatch the Agent tool with `model: "<that value>"`. When the value is `"sonnet"`, you MAY omit the parameter (this is the agent default). When the value is `"opus"`, the `model` parameter MUST be set — omitting it silently downgrades to the agent default and invalidates the comparison. The dispatched sub-agent runs the same Implementer Prompt Template either way; only the model differs.
+
+Fill in `{implementer_model}` in the prompt template with the same value (used downstream by the learning-log emit so `subagent.model` is accurate).
+
+Dispatch as a **fresh sub-agent on the selected model** (default Sonnet; Opus when overridden).
 
 **Result: DONE** → proceed to Step 2.  
 **Result: ESCALATE** → go to **Escalation Protocol**.
@@ -977,8 +998,9 @@ Rewrite the absolute `<worktree_path>` in the copied `settings.json` to point at
 
 **Step P.2: Dispatch all Implementers in one Orchestrator message**
 
-In a single assistant message, emit N `Agent` tool calls — one per task in the group. Each prompt:
-- Uses the same Implementer Prompt Template
+In a single assistant message, emit N `Agent` tool calls — one per task in the group. Each Agent dispatch:
+- Uses the same Implementer Prompt Template, with `{implementer_model}` filled from `state.implementer_model.used` (same value for all parallel siblings — the field is run-level, not task-level).
+- **Sets the Agent tool `model` parameter to `state.implementer_model.used`** under the same rule as the sequential Step 1 dispatch — `sonnet` may omit the parameter, `opus` MUST set it explicitly. Forgetting this here silently downgrades every parallel-dispatched task to Sonnet regardless of the run's selection (v2.12 regression risk).
 - Has `{worktree_path}` set to the **sub-worktree** path (`<worktree_path>/.parallel/task_<N>`), NOT the parent worktree
 - Has `{deps_for_this_task}` set to the dependency list (which by definition only includes earlier-WAVE tasks, all already merged into the parent before P.0)
 
@@ -1428,6 +1450,7 @@ These rules are absolute. No exceptions.
 | **Method audit fields populated at Phase 1 Step 4** | Orchestrator parses `METHOD_AUDIT:` from Implementer, `REVIEW_FINDINGS:` from Combined Reviewer, `commands_run` from Verifier result JSON. Written under the active task tree (`state.tasks` or `state.plan2_state.tasks` per `active_plan`). |
 | **TDD waive reasons are restricted** | `METHOD_AUDIT: tdd waived` accepts only `reason=docs-only-task`, `config-only-task`, or `generated-only-task`. Other reasons fail validation. |
 | **Resource-key collisions force serialization in same wave** | Phase 0 Step 6 resource_key partition rule: tasks in the same wave that share a `**Resource Key:** <slug>` annotation are placed in singleton groups (never merged). The `serialization_reason: "resource_key=<key>"` field is written to each affected `state.execution_plan` group. WARN is emitted by the Plan Reviewer; correctness is automatic. |
+| **`implementer_model` records both used and default** (v2.12) | Arg is parsed in the **interactive parent** (Phase -1 step b OR Phase 0 Step 7 when mode=interactive) and written into state.json. The headless child reads it FROM state.json — it cannot re-parse skill args since `claude -p` only sees the headless prompt text. Phase 0 Step 7 in the child preserves the field as-is. `state.implementer_model = {"used": <effective>, "default": "sonnet"}`. `default` is the contemporaneous skill default, NOT the parsed arg. Phase 1 Step 1 reads `used` and passes it as the Agent tool `model` parameter — `sonnet` may omit the parameter, `opus` MUST set it explicitly (omitting silently falls back to the agent default and invalidates A/B comparisons). **Parallel Sub-Flow Step P.2 dispatches MUST also pass `model`** under the same rule — forgetting it there silently downgrades parallel-merged tasks to Sonnet regardless of the run's selection. Reviewer and Verifier are unaffected — they always run on Sonnet for judge consistency. Plan 2 inherits Plan 1's selection. |
 
 ---
 
