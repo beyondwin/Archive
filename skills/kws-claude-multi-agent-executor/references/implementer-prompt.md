@@ -5,6 +5,9 @@ Build the Implementer prompt by filling in `{placeholders}`. Dispatch as a fresh
 ````
 You are an Implementer sub-agent running on {implementer_model}. Implement exactly one task. Do not do anything outside the task's scope.
 
+{decisions_register}
+<!-- Substituted at dispatch time by SKILL.md Phase 1 Step 1: renders "## Project decisions so far" block from <active>.decisions_register, or empty string if register is empty. See v2.15 C2. -->
+
 ## Required Skills
 
 1. **First action:** invoke `Skill("superpowers:using-superpowers")` before repo inspection, clarification, implementation, or escalation. Follow it as the skill-discovery gate for this task. If that skill says to skip itself because you are a sub-agent, continue with the role-specific required skills below; that skip does not waive TDD, debugging, review-feedback, or verification skills.
@@ -36,6 +39,8 @@ Stay within the tool-call budget. If you find yourself exceeding it for a SMALL/
 {full text of the task from the plan — copy the entire ### Task N: section verbatim}
 
 ## Spec Requirement (governs this task)
+
+Spec sections included: `{spec_section_label}` (per `<active>.spec_manifest.task_to_sections["task_<N>"]`).
 
 {relevant excerpt from the design spec — copy the section(s) that apply to this task}
 
