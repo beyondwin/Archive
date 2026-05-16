@@ -165,7 +165,7 @@ rejects candidates whose `run_id` does not match `--run-id`.
   "severity": "medium",
   "repo": {"name": "Archive", "remote_hash": null, "branch": "codex/example"},
   "execution": {
-    "plan_path": "docs/superpowers/plans/example.md",
+    "plan_path": "skills/kws-codex-plan-executor/docs/experiments/example/PLAN.md",
     "task_id": "task_2",
     "phase": "verification",
     "run_dir": ".codex-orchestrator/runs/20260513T142233Z-archive-codex-example-7e884a0-a1b2c3",

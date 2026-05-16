@@ -8,10 +8,9 @@ documents and reusable AI-agent executor skills in one checkout.
 - `AGENTS.md` - repository instructions for coding agents.
 - `docs/` - source captures, curated notes, generated wiki navigation, and
   index metadata.
-- `docs/superpowers/` - working implementation plans and design specs for
-  skill work. These are project artifacts, not the curated library index.
 - `skills/` - source of truth for the personal executor skills installed into
-  Claude Code and Codex through symlinks.
+  Claude Code and Codex through symlinks. Durable skill implementation plans
+  live under each skill's `docs/experiments/` directory.
 - `graphify-out/` - local generated knowledge graph output, ignored by Git.
 
 ## Working Rules
@@ -22,16 +21,16 @@ documents and reusable AI-agent executor skills in one checkout.
 - Keep `docs/_index/catalog.yml`, `docs/_index/topics.yml`, and
   `docs/INDEX.md` aligned when documents are moved or added.
 - Edit AI skill source under `skills/<skill-name>/`.
-- Do not treat working implementation plans under `docs/superpowers/` as
-  source code. Update current runtime docs instead unless the plan itself is
-  being corrected as a record.
+- Treat `skills/<skill-name>/docs/experiments/` as durable implementation
+  records. Update current runtime docs instead unless an experiment record
+  itself is being corrected.
 
 ## Git Hygiene
 
 The repository tracks source files, curated documents, scripts, tests, and
 lightweight README placeholders. It ignores local machine metadata, editor
-state, dependency caches, local environment files, and generated navigation
-outputs.
+state, dependency caches, local environment files, local agent runtime state
+such as `.parallel/`, and generated navigation outputs.
 
 Generated Graphify output should stay in `graphify-out/` locally and be
 refreshed after code changes with:

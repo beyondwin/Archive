@@ -15,5 +15,6 @@ unsorted, or to `docs/raw/` when an original capture is useful as a standalone
 reference.
 
 Generated wiki pages under `docs/wiki/` should not be cataloged as primary
-sources. Working plans and specs under `docs/superpowers/` are excluded from
-the library index unless they are later promoted into curated notes.
+sources. Executor-skill implementation records under
+`skills/<skill>/docs/experiments/` are maintained from the skill docs, not this
+library index, unless they are later promoted into curated notes.

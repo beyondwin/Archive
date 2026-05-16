@@ -135,12 +135,19 @@ Acceptance:
 4. 중복 없는 전용 `codex/...` git worktree를 만든다.
 5. `run_id`를 만들고 `.codex-orchestrator/runs/<run_id>/`를 준비한다.
 6. 실행 전 `context.json`을 만들어 계획, 명세, 참고 문서의 해시를 기록한다.
-7. `context_health`를 갱신해 이어받을 수 있는 상태인지 기록한다.
-8. 편집 전에 5줄짜리 `TASK EXECUTION CONTRACT`를 선언하고 상태 파일에 기록한다.
-9. 작업을 수행한다.
-10. 위험도에 맞는 검증 명령 또는 정직한 대체 검증을 실행한다.
-11. 완료 시 `context_health`, `completion_audit`, `lifecycle_outcome=finished`를 기록한다.
-12. 상태 파일을 검증하고 최종 결과를 요약한다.
+7. 필요하면 `context_budget`으로 입력 크기와 생략 구간을 기록한다.
+8. `context_health`를 갱신해 이어받을 수 있는 상태인지 기록한다.
+9. 편집 전에 5줄짜리 `TASK EXECUTION CONTRACT`를 선언하고 상태 파일에 기록한다.
+10. 실행 가능한 task에는 `unit_manifest`로 context, tool, write-scope
+    정책을 기록할 수 있다.
+11. 작업을 수행한다.
+12. 위험도에 맞는 검증 명령 또는 정직한 대체 검증을 실행한다.
+13. task contract와 `unit_manifest`가 있으면 변경 파일이 허용 범위 안에
+    있는지 diff policy를 확인한다.
+14. 완료 전 drift reconciliation을 실행해 호환 상태, 이벤트 메타데이터,
+    context health 같은 안전 수리 항목과 blocking drift를 구분한다.
+15. 완료 시 `context_health`, `completion_audit`, `lifecycle_outcome=finished`를 기록한다.
+16. 상태 파일을 검증하고 최종 결과를 요약한다.
 
 핵심은 "수정하기 전에 범위를 고정하고, 완료라고 말하기 전에 증거를
 남기는 것"이다.
@@ -179,13 +186,21 @@ acceptance_command_or_honest_substitute: ...
 | 경로 | 설명 |
 | --- | --- |
 | `.codex-orchestrator/runs/<run_id>/state.json` | 실행 재개와 완료 판정의 기준 상태 |
-| `.codex-orchestrator/runs/<run_id>/context.json` | 계획, 명세, 참고 문서의 경로와 해시 |
+| `.codex-orchestrator/runs/<run_id>/context.json` | 계획, 명세, 참고 문서의 경로, 해시, 선택적 context budget |
+| `.codex-orchestrator/runs/<run_id>/events.jsonl` | project-local 실행 이벤트 증거 |
 | `.codex-orchestrator/runs/<run_id>/headless.jsonl` | headless 실행 로그 |
-| `.codex-orchestrator/runs/<run_id>/headless-final.md` | headless 최종 메시지 |
+| `.codex-orchestrator/runs/<run_id>/headless-final.md` 또는 `headless-final.json` | headless 최종 메시지 또는 구조화된 결과 |
 | `~/.codex/learning/kws-codex-plan-executor/` | 사용자 로컬 학습 이벤트 로그 |
 
 `context.json`은 원문 전체를 저장하지 않는다. 어떤 입력을 기준으로 실행이
 시작됐는지 확인할 수 있도록 경로와 해시를 기록한다.
+
+`events.jsonl`은 상태 파일을 대체하지 않는다. 상태 파일이 source of truth이고,
+이벤트 저널은 나중에 실행 흐름을 재구성하기 위한 project-local 증거다.
+
+`subagent_runs`와 `command_observations`는 선택적 상태 필드다. 서브에이전트는
+사용자가 명시적으로 요청했을 때만 기록하고, 원인 분석 전의 명령 관찰은
+bounded evidence로 남겨 완료 감사의 residual risk와 연결한다.
 
 ## Context Health
 

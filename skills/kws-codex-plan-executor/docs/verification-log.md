@@ -7,6 +7,27 @@ verification before final responses, commits, pushes, or PRs.
 Keep entries concise. Store commands, outcomes, skipped checks, and residual
 risk. Do not paste long logs or sensitive output.
 
+## 2026-05-16 - Project documentation sync after GSD-2 merge
+
+- Branch: `main`
+- Commit: pending at time of verification
+- Scope: aligned project entry docs and docs index guidance with the current
+  repository layout. Replaced stale `docs/superpowers/` source-of-truth wording
+  with skill-local `docs/experiments/` guidance, added the v1.9.0 experiment
+  record to the package index, updated the Korean user guide for the new
+  evidence surfaces, and noted ignored local agent runtime state.
+- Commands:
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .`
+    - result: pass, `Skill is valid!`
+  - `python3 evals/check_skill_contract.py --skill SKILL.md`
+    - result: pass, JSON payload had `"passed": true`.
+  - `python3 - <<'PY' ... markdown link check ... PY`
+    - result: pass, `markdown links ok`.
+  - `git diff --check`
+    - result: pass, no whitespace errors.
+- Residual risk:
+  - Full headless fixture suite is not required for docs-only changes.
+
 ## 2026-05-16 - GSD-2 adoption task 1 contracts
 
 - Branch: `codex/gsd-2-adoption-20260516-074140`
