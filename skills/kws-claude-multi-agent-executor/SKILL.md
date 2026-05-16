@@ -2,7 +2,7 @@
 name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation. NOTE — single-session execution is preferable for ≤5-task plans or plans with deep cross-task coupling (multi-agent overhead exceeds the parallelism win).
 metadata:
-  version: "2.13.0"
+  version: "2.15.0"
   updated_at: "2026-05-16"
 ---
 
@@ -69,7 +69,14 @@ Args are a mix of explicit `key=value` pairs and free-text natural-language hint
 
 **Pass 1 — collect `key=value` pairs.**
 
-Recognized keys: `plan`, `plan2`, `plan3`, …, `planN`, `spec`, `spec2`, `spec3`, …, `specN` (matching plan numbers), `implementer_model`, `parallel`, `risk`, `docs_scope`, `mode`, `manifest`. Each appears as `key=value` with no surrounding spaces around `=`. Unknown keys → halt: `"Unknown argument: <key>=<value>"`.
+Recognized keys: `plan`, `plan2`, `plan3`, …, `planN`, `spec`, `spec2`, `spec3`, …, `specN` (matching plan numbers), `implementer_model`, `parallel`, `risk`, `docs_scope`, `mode`, `manifest`, `budget`, `budget_action`, `context_budget`, `context_threshold`, `manifest_fallback`. Each appears as `key=value` with no surrounding spaces around `=`. Unknown keys → halt: `"Unknown argument: <key>=<value>"`.
+
+`budget=<USD>` is a positive float or zero. Negative → halt with `Invalid budget=<value>; must be ≥ 0.`
+`budget_action=<value>` must be one of `pause`, `warn`, `off`. Else halt with `Unknown budget_action=<value>. Allowed: pause, warn, off.`
+`context_budget=<int>` (v2.15 — C3) is a positive integer > 10000. Else halt: `Invalid context_budget=<value>; must be int > 10000.` Default `170000`.
+`context_threshold=<float>` (v2.15 — C3) is a float in `[0.05, 0.95]`. Else halt: `Invalid context_threshold=<value>; must be float in [0.05, 0.95].` Default `0.60`.
+`manifest_fallback=<value>` (v2.15 — C1) must be one of `full_spec_on_blocker`, `halt_on_blocker`. Else halt: `Unknown manifest_fallback=<value>. Allowed: full_spec_on_blocker, halt_on_blocker.` Default `full_spec_on_blocker`.
+NL lexicon: no entries added for budget or context — explicit-only by design.
 
 **Pass 2 — multi-plan auto-detection.**
 
@@ -116,8 +123,10 @@ Application rule (explicit always wins):
 After Pass 3, output ONE line to the user summarizing the resolved interpretation, before doing any other work:
 
 ```
-Parsed: <N> plan(s) [<index 0 slug>→<index 1 slug>→...], implementer_model=<value> [from <source>], parallel=<value> [from <source>], mode=<value> [from <source>], risk=<value or "per-task">.
+Parsed: <N> plan(s) [<index 0 slug>→<index 1 slug>→...], implementer_model=<value> [from <source>], parallel=<value> [from <source>], mode=<value> [from <source>], risk=<value or "per-task">, budget=<value or "off"> [from <source>].
 ```
+
+The `budget=<value or "off">` field in the echo line shows the parsed `budget=<USD>` value (e.g. `budget=5.00`) or the literal string `off` when no `budget=` arg was provided. This lets the user see the cost cap before detach.
 
 `<source>` is one of: `explicit` (Pass 1 set it), `NL '<word>'` (Pass 3 set it from a keyword), or `default` (not set; using built-in default). The slug is derived from the plan filename per Phase 0 Step 2 rule.
 
@@ -270,6 +279,15 @@ Status snapshot:
 
 Completion check:
   test -f <worktree>/.orchestrator/HEADLESS_DONE.txt && cat <worktree>/.orchestrator/HEADLESS_DONE.txt
+
+Quick queries (no LLM, ~10ms each):
+  <skill_dir>/scripts/query_state.sh --worktree <abs_path> progress
+  <skill_dir>/scripts/query_state.sh --worktree <abs_path> cost
+  <skill_dir>/scripts/query_state.sh --worktree <abs_path> warn
+
+Post-run, archived analysis:
+  <skill_dir>/scripts/query_run.sh list-runs
+  <skill_dir>/scripts/query_run.sh last cost
 ```
 
 Fill in `<abs path>` and `<worktree>` with the actual worktree path before outputting.
@@ -343,12 +361,23 @@ This emits one notification per task transition + final DONE/HALTED/DIED. Pollin
 
 ### Resume Chain (for plans that exceed single subprocess context)
 
-**Trigger (deterministic, introspectable from state.json):**
-Chain ONLY when **both** are observed by the headless instance just after Phase Transition T3:
-- `<active>.compaction_points` reached **≥ 2** AND
-- count of tasks with `status == "COMPLETE"` is **≥ 8**
+**Trigger (v2.15 — token-aware, deterministic, introspectable):**
 
-Do NOT chain on token-count heuristics (not introspectable) or after every compaction point. If neither threshold is met, continue in the same subprocess.
+Chain when ANY of the following holds at Phase Transition T3 (or at end of Phase 1 Step 4 if `current_task` is in `<active>.compaction_points`):
+
+1. **Token threshold (NEW, primary):**
+   - Requires `state.budget_action != "off"` AND `state.cost_ledger` present.
+   - Compute: `session_input_tokens = state.cost_ledger.totals.input_tokens - state.cost_ledger.totals.cached_read_tokens`.
+   - Threshold: `state.context_budget.threshold_tokens` (default `102000` = 60% of `170000`; see Task 11).
+   - Fire if `session_input_tokens >= threshold_tokens`.
+
+2. **Legacy floor (PRESERVED, fallback):**
+   - `<active>.compaction_points_reached >= 2` AND count of `COMPLETE` tasks `>= 8`.
+   - Always evaluated regardless of `budget_action`.
+
+If both evaluate true, record `trigger_reason = "token_threshold"` (first-observed wins). If only the legacy floor fires, record `trigger_reason = "legacy_floor"`. If neither fires, no chain.
+
+`budget_action == "off"` disables the token trigger (legacy floor becomes sole criterion). Cache-read tokens are excluded from `session_input_tokens` so retry sessions don't double-count.
 
 Procedure:
 
@@ -403,6 +432,12 @@ This is a fallback — the primary expectation is that one headless subprocess c
    - If it EXISTS and is valid JSON with `schema_version: "2"`:
      - If `"mode": "headless_pending"`: freshly-spawned headless instance — Phase -1 already ran Steps 1, 1.5, 2, 2.5 in interactive context and wrote minimal state. **MUST skip Phase 0 Steps 1, 1.5, 2, 2.5** (clean check, cross-run isolation, worktree creation, safety hooks — re-running breaks: `git status` flags pre-written `.orchestrator/` and `.claude/settings.json` as dirty; `git worktree add` errors on the existing branch; Step 1.5 mode-exclusivity check would self-block on the freshly-created `.orchestrator/headless.pid`). PROCEED with Phase 0 Step 0.5 onward (`0.5 → 3 → 3.5 → 4 → 5 → 6 → 7`) to populate baseline, risk_levels, compaction_points, full task data. After Step 7, update `state.json.mode` from `"headless_pending"` to `"headless_running"` and write. **Preserve `state.implementer_model` exactly as the parent wrote it (v2.12)** — the parent already parsed the skill arg; do NOT overwrite. If the field is absent (legacy state.json), default to `{"used": "sonnet", "default": "sonnet"}`. **Preserve `state.plan_chain` exactly as the parent wrote it (v2.13)** — the parent already parsed the plan/plan2/.../planN args and constructed the chain. The child reads plan paths from `state.plan_chain[state.active_plan].plan_path` for multi-plan runs; do NOT re-parse skill args. If `plan_chain` is absent → this is a single-plan run, read from top-level `state.plan` and `state.spec`.
      - If `"mode": "headless_running"`, `"headless_chained"`, `"plan2_running"`, `"interactive_session"`, or no mode field: Standard resume path — load all fields. Do NOT overwrite. Verify git branch and worktree match `state.branch` / `state.worktree`. Set internal tracking from state.json: `current_task`, `current_step_within_task`, `current_pre_task_sha`, per-task counters. Output: "Resuming from state file: Task <N>, Step <M> (mode=<value or null>)." Skip Phase 0 Steps 1–7 (setup already done). Go directly to Phase 1 at the recorded task/step.
+     - **Legacy state.json defaults (v2.14 — RUN-LEVEL fields):** before continuing the resume, backfill the four v2.14 run-level fields if missing (pre-v2.14 state.json will not have them). Apply each as a `setdefault` (write-only-if-absent) at the TOP level of `state` (NOT inside `plan_chain[i]`):
+       - `state.setdefault('cost_ledger', {"by_task": {}, "by_role": {}, "by_model": {}, "totals": {"input_tokens": 0, "output_tokens": 0, "cached_read_tokens": 0, "cached_write_tokens": 0, "cost_usd": 0.0, "dispatches": 0}})`
+       - `state.setdefault('budget_cap_usd', None)`
+       - `state.setdefault('budget_action', 'warn')`
+       - `state.setdefault('archive', None)`
+       If `state.cost_ledger` is already present (v2.14+ state.json), preserve it as-is and continue accumulating. Same for `budget_cap_usd` and `budget_action`. These fields span the whole chain, so the resume MUST NOT reset them on plan2 swap or chain handoff.
    - If it EXISTS but is invalid (empty, malformed JSON):
      - Warn user: "State file exists but is corrupted at <path>. Recommend manual inspection before proceeding."
      - Do NOT overwrite. Halt.
@@ -531,6 +566,23 @@ This is a fallback — the primary expectation is that one headless subprocess c
 
    **Why this gate exists:** Every ambiguity caught here saves one Implementer dispatch + SPEC_BLOCKER escalation + git reset cycle downstream.
 
+3.7. **Build spec manifest (C1):**
+   Call: `python3 <skill_dir>/scripts/build_spec_manifest.py <spec_path>`
+   Capture stdout JSON. If parse fails: halt with `"spec_manifest build failed: <stderr>"`.
+
+   Write to `<active>.spec_manifest`:
+   ```json
+   {
+     "spec_path": "<spec_path>",
+     "spec_total_chars": <int from stdout sum>,
+     "sections": <parsed JSON>,
+     "task_to_sections": {},  
+     "fallback_policy": "<state.manifest_fallback arg-set; default 'full_spec_on_blocker'>"
+   }
+   ```
+
+   `task_to_sections` starts empty here; it is populated at Step 6 (Compute task_to_sections — C1, added by Task 2). The Plan Reviewer (Step 6.5) validates downstream references.
+
 4. **Assign risk levels** to each task:
    - `low` — isolated change, single file or module, no shared state, no API surface change
    - `mid` — touches 2+ modules, shared state, moderate coupling, or config changes
@@ -613,6 +665,16 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 
    - **When in doubt, be conservative:** If dependency analysis is unreliable for any segment, treat tasks as DEPENDENT and restrict compaction points to explicit plan phase boundaries. `compaction_points` must always include the index of the final task (or the final task before Phase 2). Fewer compaction points are safer than wrong ones.
    - **SKIPPED propagation:** If task X is SKIPPED, automatically mark all tasks with X in their deps as SKIPPED as well. Record each propagated SKIPPED with reason 'dependency task_X was SKIPPED'.
+   - **Compute task_to_sections (C1):** For each task in the plan, populate `<active>.spec_manifest.task_to_sections[task_id]`:
+
+     a. Parse task body for `**Spec Refs:**` block (comma-separated section IDs, e.g. `**Spec Refs:** S1.2, S3.1`). If present: use those IDs verbatim. Validate each in `spec_manifest.sections` — any unknown ID is recorded as a Plan Reviewer **BLOCKER** input (consumed at Step 6.5).
+
+     b. Else (heuristic from **Files:** block): for each file in the task's Files block, compare path components against each `spec_manifest.sections[*].title` (case-insensitive substring match). Collect and dedupe matches across all files.
+
+     c. If step b yields no matches: set the entry to `{"sections": ["*"], "fallback_used": true}` — the Implementer will receive the full spec for this task. Otherwise: `{"sections": [<ids>], "fallback_used": false}`.
+
+     Write final values into `<active>.spec_manifest.task_to_sections`. Unknown-ID rows from step (a) are still written (with the unknown IDs intact) so the Plan Reviewer in Step 6.5 can see and BLOCKER them.
+
    - **Compute `global_constraints.shared_files`:** Build a map of file → list of task IDs that touch it (from each task's `**Files:**` block). Keep only files referenced by ≥ 2 tasks. Write this to **`<active>.global_constraints.shared_files`** in Step 7 (top-level `state.global_constraints.shared_files` for single-plan; `state.plan_chain[state.active_plan].global_constraints.shared_files` for v2.13 multi-plan; `state.plan2_state.global_constraints.shared_files` for v2.12 legacy plan2). The Implementer template's *Shared files alert* reads from the same resolved path.
 
    - **Compute `task_complexity` (P5 — effort scaling):** For each task, derive a complexity bucket SMALL / MEDIUM / LARGE used to scale the Implementer prompt at Phase 1 Step 1.
@@ -682,6 +744,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 
    Build the Plan Reviewer prompt from `references/plan-reviewer-prompt.md`. Fill in:
    - `{plan_path}`, `{plan_full_text}` — the plan document
+   - `{spec_manifest_json}` — the rendered JSON of `<active>.spec_manifest` (sections + task_to_sections; built in Steps 3.7 and 6) for the spec_manifest rubric items (C1)
    - `{spec_path}`, `{spec_full_text}` — the spec document
    - `{risk_levels_yaml}` — from Step 4 (YAML-formatted `task_N: <risk>`)
    - `{result_json_path}` — `<worktree_path>/.orchestrator/plan_review.json`
@@ -759,6 +822,29 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
      "phase_doc_commits": [],
      "chain_resume": null,
      "plan2_state": null,
+     "budget_cap_usd": null,
+     "budget_action": "warn",
+     "cost_ledger": {
+       "by_task": {},
+       "by_role": {},
+       "by_model": {},
+       "totals": {
+         "input_tokens": 0,
+         "output_tokens": 0,
+         "cached_read_tokens": 0,
+         "cached_write_tokens": 0,
+         "cost_usd": 0.0,
+         "dispatches": 0
+       }
+     },
+     "archive": null,
+     "context_budget": {
+       "effective_input_budget": 170000,
+       "threshold_ratio": 0.60,
+       "threshold_tokens": 102000,
+       "last_evaluation_at": null,
+       "last_evaluation_tokens": 0
+     },
      "timestamps": {
        "started_at": null,
        "completed_at": null
@@ -766,7 +852,11 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
    }
    ```
 
+   **Run-level `context_budget` (v2.15 — C3):** lives at the TOP of state.json (NOT inside any `plan_chain[i]`), like `cost_ledger`. Defaults: `effective_input_budget=170000`, `threshold_ratio=0.60`, `threshold_tokens=102000`. If the user passed `context_budget=<int>`: overwrite `effective_input_budget`. If `context_threshold=<float>`: overwrite `threshold_ratio`. After either override, recompute `threshold_tokens = round(effective_input_budget * threshold_ratio)`. The chained orchestrator preserves this block on resume.
+
    Fill in the actual values from steps 4–6.
+
+   **Run-level cost/budget/archive fields (v2.14):** the four fields `cost_ledger`, `budget_cap_usd`, `budget_action`, and `archive` are **RUN-LEVEL** — they live at the top of `state.json` and span the entire orchestrator invocation, including every plan in a multi-plan chain. They are NOT per-plan and MUST NOT be duplicated inside `plan_chain[i]`. `cost_ledger.by_task` is keyed `"<plan_index_or_'top'>::<task_id>"` so a single ledger covers the chain. `budget_cap_usd` is a number (USD) or `null` (no cap). `budget_action ∈ {"pause", "warn", "off"}` controls behavior when the cap is crossed. `archive` defaults to `null` and is populated by the post-run forensics archive step (v2.14).
 
    **Multi-plan shape (v2.13):** when `plan_chain` exists, the equivalent state.json is:
 
@@ -818,9 +908,27 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
      "phase_doc_commits": [],
      "chain_resume": null,
      "plan2_state": null,
+     "budget_cap_usd": null,
+     "budget_action": "warn",
+     "cost_ledger": {
+       "by_task": {},
+       "by_role": {},
+       "by_model": {},
+       "totals": {
+         "input_tokens": 0,
+         "output_tokens": 0,
+         "cached_read_tokens": 0,
+         "cached_write_tokens": 0,
+         "cost_usd": 0.0,
+         "dispatches": 0
+       }
+     },
+     "archive": null,
      "timestamps": {"started_at": "...", "completed_at": null}
    }
    ```
+
+   Note: in the multi-plan shape, `budget_cap_usd`, `budget_action`, `cost_ledger`, and `archive` appear at the TOP level (siblings of `plan_chain`, NOT inside any `plan_chain[i]` entry). See the "Run-level cost/budget/archive fields (v2.14)" paragraph above — these four fields are shared across all plans in the chain and accumulate end-to-end.
 
    For multi-plan runs at the START of Phase 0 (active_plan == 0): populate `plan_chain[0]` with all the data Steps 3–6 produced for plan 0. Other plan_chain entries (i ≥ 1) keep their `status: "queued"` placeholders and only become populated when their swap fires at Phase 2 Step -1.
 
@@ -947,7 +1055,30 @@ Advance only when the current task (or parallel group) reaches Agent Cleanup suc
 
 Build the implementer prompt from the **Implementer Prompt Template** below. Fill in:
 - `{full text of the task}` — copy the entire `### Task N:` section verbatim
-- `{relevant spec excerpt}` — spec section(s) that govern this task
+- `{relevant spec excerpt}` — spec section(s) that govern this task. **v2.15 substitution rule (C1):**
+  ```
+  section_entry = <active>.spec_manifest.task_to_sections["task_<N>"]
+  section_ids = section_entry["sections"]
+  if "*" in section_ids:
+    spec_text       = full spec file contents
+    section_label   = "FULL (fallback)"
+  else:
+    lines = ["## Spec context (sections: " + ", ".join(section_ids) + ")", ""]
+    for sid in section_ids (in spec_manifest order):
+      section = <active>.spec_manifest.sections[sid]
+      slice = spec_file_lines[section.range[0]-1 : section.range[1]]
+      lines.extend(slice)
+      lines.append("")
+    spec_text       = "\n".join(lines)
+    section_label   = ", ".join(section_ids)
+  Substitute {relevant spec excerpt} → spec_text
+  Substitute {spec_section_label} → section_label
+  ```
+  Implementer prompt template includes `{spec_section_label}` as a new placeholder (introduced in v2.15) — fill it from `section_label`.
+
+  **SPEC_BLOCKER fallback (per spec §C1.4):** if the Implementer returns `ESCALATE` with `type: SPEC_BLOCKER` and `blocker` text matches the regex `(missing context|missing section|ambiguous reference|insufficient spec)` (case-insensitive):
+    - If `<active>.spec_manifest.fallback_policy == "full_spec_on_blocker"`: re-dispatch the Implementer with the FULL spec inlined (set `section_ids=["*"]` for this dispatch only). Increment the task's `spec_clarifications` (NOT `review_retries` — per the P15 rule). Return to Step 1.
+    - Else (`halt_on_blocker`): apply standard ESCALATE handling — no automatic full-spec retry.
 - `{files to touch}` — from the task's **Files:** block
 - `{risk level}` — from your Phase 0 assignment
 - `{worktree_path}` — the worktree path
@@ -955,6 +1086,23 @@ Build the implementer prompt from the **Implementer Prompt Template** below. Fil
 - `{task_size}` — SMALL / MEDIUM / LARGE from `<active>.task_complexity.task_N` (P5)
 - `{effort_guidance}` — the matching guidance string from Phase 0 Step 6 (P5)
 - `{implementer_model}` — value of `state.implementer_model.used` ("sonnet" or "opus"). Used in the prompt header and the learning-log `subagent.model` field.
+- `{decisions_register}` — **v2.15 decisions_register substitution (C2)**:
+  ```
+  register = <active>.decisions_register (list)
+  if register is empty: spec_text = ""
+  else:
+    lines = ["## Project decisions so far (do NOT re-decide; raise objection via Reviewer if any seem wrong):"]
+    for entry in register sorted by made_at ascending:
+      if entry["supersedes"] is not None:
+        prefix = "~~[SUPERSEDED by " + entry["supersedes"] + "]~~ "
+      else:
+        prefix = ""
+      file_list = ", ".join(entry["files"]) if entry.get("files") else "(no files)"
+      lines.append("- " + prefix + "[" + entry["task"] + "] " + entry["decision"] + " — " + file_list)
+    spec_text = "\n".join(lines) + "\n\n"
+  Substitute {decisions_register} → spec_text
+  ```
+  Empty register → placeholder substitutes to empty string (section omitted entirely). Superseded entries render with strikethrough prefix `~~[SUPERSEDED by task_X]~~`.
 
 Re-dispatch rules (always append `## Fix Required\n{issues}`):
 - After **Combined Reviewer FAIL** OR **Verifier FAIL**: include Required Skills bullet 5 (`receiving-code-review`). The skill's discipline (verify each issue is real before patching; push back on false positives like baseline drift or flaky tests) applies to verifier feedback the same as reviewer feedback.
@@ -981,6 +1129,7 @@ Build the Combined Reviewer prompt from the **Combined Reviewer Prompt Template*
 - `{files changed}` — from the implementer's `FILES_CHANGED:` output
 - `{inline diff}` — the git diff output captured above
 - `{previous_issues}` — if `review_retries > 0`, the ISSUES list from the prior Combined Reviewer output; otherwise omit the section
+- `{decisions_register}` — **v2.15 (C2)** — same substitution rule as the Implementer prompt (Phase 1 Step 1). Renders the `## Project decisions so far` block from `<active>.decisions_register`, or empty string if the register is empty. The Combined Reviewer's "Decision consistency" rubric reads from this block to flag `decision_conflict` QUALITY_ISSUES.
 
 Dispatch as a **fresh Sonnet sub-agent**.
 
@@ -1038,6 +1187,11 @@ Decision table:
    ```
 5. Identify incomplete downstream tasks that overlap the edited spec section (compare each task's `Files:` + spec excerpt range against the edited line range stored in your internal task index). For those tasks' next Implementer dispatch: inject a `## [SPEC UPDATED]` section with the changed spec text.
 6. Commit spec edit with message: `chore(<plan-slug>): clarify spec line <N> for task <id>`.
+6.5. **Recompute spec_manifest (C1):** after the spec edit commit succeeds, re-run `python3 <skill_dir>/scripts/build_spec_manifest.py <spec_path>` and overwrite `<active>.spec_manifest.sections` in place. For each incomplete downstream task whose previous `task_to_sections.sections` overlap the edited line range, re-run the Step 6.3 heuristic for that task and update its `task_to_sections` entry. Append to the latest entry in `state.spec_edits`:
+   ```json
+   "manifest_recompute": true,
+   "manifest_recompute_at": "<iso8601>"
+   ```
 7. Reset to pre-task SHA, re-dispatch Implementer from clean state. Return to Step 1.
 
 **Standard retry branch:**
@@ -1116,6 +1270,31 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
 
    If you suspect the hook was misfired or disabled (e.g., user manually edited settings.json mid-run): re-enable and continue. Do not re-introduce the manual grep — it duplicates the hook and was the silent-bypass risk that motivated P1.
 
+1.5. **Accumulate cost (F2):**
+   Use `scripts/price_table.py` (`compute_cost(model, usage)`) to compute per-task cost.
+
+   For the just-completed Agent tool dispatch (Implementer / Combined Reviewer), extract `usage` from the Agent result. For just-completed headless subprocess (Verifier / Plan Reviewer / Docs Updater), parse the final `result` stream-json line from `<name>.stdout`.
+
+   Compute:
+   ```
+   cost_usd = compute_cost(model, usage) via scripts/price_table.py
+   key      = "<active_plan>::<task_id>"
+   ```
+
+   Update `state.cost_ledger` atomically:
+   ```
+   by_task[key] = {input_tokens, output_tokens, cached_read_tokens, cached_write_tokens,
+                   cost_usd, model, role, dispatched_at}
+   by_role[<role>]   += increments
+   by_model[<model>] += increments
+   totals            += increments
+   ```
+
+   Failure modes:
+   - Missing `usage` block → record entry with zeros, `model="unknown"`, `role="<role>"`. Do not halt.
+   - `state.json` write failure → existing hard-halt rule applies (state-file write guardrail).
+   - `price_table` import failure → log warning, record `cost_usd=0.0`, continue.
+
 2. **Update state file** — write this task's result into the active task tree.
 
    **Active tree selection (v2.13):** write under **`<active>.tasks.task_N`** (resolves per the table at the top of the document: `state.plan_chain[state.active_plan].tasks.task_N` for multi-plan, `state.plan2_state.tasks.task_N` for v2.12 legacy plan2, `state.tasks.task_N` otherwise). Same rule for `task_summaries`. Note `state.active_plan` is an **integer** (0, 1, 2, ...) when `plan_chain` is in use — do NOT string-compare `== "plan2"` for multi-plan runs.
@@ -1189,6 +1368,19 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
      "for_next_tasks": "<≤30 words: what downstream tasks must know — contracts, types, naming>"
    }
    ```
+
+2.3. **Append to decisions_register (C2):**
+   After writing `task_summaries.task_N`, read its `key_decision`. If the value is non-empty AND not `"(none)"` AND not `"n/a"` (case-insensitive after stripping): append to `<active>.decisions_register` (creating the list if absent):
+   ```json
+   {
+     "task": "task_<N>",
+     "decision": "<key_decision text, verified ≤15 words>",
+     "files": ["<files from task_summaries>"],
+     "made_at": "<iso8601 now>",
+     "supersedes": null
+   }
+   ```
+   Atomic R-M-W of state.json. If the write fails: log a warning, continue (decisions_register is best-effort enrichment, NOT load-bearing). The register accumulates per plan and is projected to `DECISIONS.md` at each Phase Transition T3 and at Phase 2 Step 1 (see Task 9).
 
 2.5. **Commit orchestrator state separately:**
    ```bash
@@ -1340,6 +1532,8 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
    - Update `low_tasks_pending_verification = []`
    - Write the file and verify it is readable.
 
+1.5. **Project decisions to DECISIONS.md (C2):** render `<worktree>/.orchestrator/DECISIONS.md` from `<active>.decisions_register`. Format: a markdown table with columns `[Task, Decision, Files, Made at, Supersedes]`. Sort by `made_at` ascending. Group superseded entries (`supersedes != null`) at the bottom in a separate subsection. Use an atomic write: write to `DECISIONS.md.tmp`, then `mv` over `DECISIONS.md`. The file is included in the archive tarball (F1). Empty register → write a stub file with header `# Decisions register (empty)`. Failure → log warning, continue (best-effort like the register itself).
+
 2. **Actively drop prior task context:** from this point forward, do not reference individual task details from before this compaction point. Work only from your structured task summary (what you have in internal notes from Agent Cleanup steps). If you need details from an earlier task, re-read the state file — do not hold raw sub-agent output in active context.
 
 3. **Emit `context_health` passive snapshot (v2.10):** if `MAE_LEARNING_RUN_ID` is set, write a candidate JSON to `<worktree>/.orchestrator/learning_events/transition_<compaction_index>-orchestrator.json` and `append` it. The event is informational — never alters control flow. Fields per `references/learning-log.md` "`context_health` (v2.10) — passive observation contract". Minimum body:
@@ -1372,6 +1566,65 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
    }
    ```
    Append failure is silent (`|| true`) per the learning-log failure policy. **Do not use these counters to alter orchestrator behavior** — Goodhart's-law guard. Behavior changes require a follow-on experiment.
+
+3.5. **Emit `chain_trigger_eval` (C3 — v2.15):** compute the trigger result via the should_chain logic (Resume Chain "Trigger (v2.15 — token-aware)" section). Update `state.context_budget.last_evaluation_tokens = session_input_tokens` and `state.context_budget.last_evaluation_at = <iso8601 now>`. Then write a candidate event to `<worktree>/.orchestrator/learning_events/trigger_<compaction_index>-orchestrator.json`:
+
+   ```json
+   {
+     "schema_version": "1",
+     "phase": "phase_transition",
+     "event_type": "context_health",
+     "severity": "low",
+     "execution": {"task_id": "transition_<compaction_index>", "issue_key": "chain_trigger_eval"},
+     "subagent": {"role": "orchestrator", "model": "opus", "dispatch": "orchestrator"},
+     "summary": "Chain trigger eval: <chained|not_chained> | tokens=<N>/<threshold> | compactions=<N>/2 | completed=<N>/8",
+     "context": {
+       "trigger_decision": "chained" | "not_chained",
+       "trigger_reason": "token_threshold" | "legacy_floor" | "none",
+       "session_input_tokens": <int>,
+       "threshold_tokens": <int>,
+       "compactions_reached": <int>,
+       "completed_count": <int>
+     },
+     "privacy": {"redacted": true, "notes": "Counters only — no path/content."}
+   }
+   ```
+
+   Append silently (`|| true`). One event PER Phase Transition T3 regardless of decision — enables post-hoc A/B analysis of token-vs-legacy trigger lift. If `trigger_decision == "chained"`: proceed with the existing Resume Chain procedure (Phase 0 Step 0 Resume Chain section). If `not_chained`: continue execution.
+
+4. **Evaluate budget (F2):** governed by spec §F2.4. Placement is **after** the state-anchor write (step 1) **and after** the `context_health` snapshot (step 3) — the spec timing supersedes the plan's "step 2.5" label.
+
+   ```
+   If state.budget_action == "off" OR state.budget_cap_usd is None: skip.
+   Else if state.cost_ledger.totals.cost_usd >= state.budget_cap_usd:
+     If state.budget_action == "warn":
+       Emit a context_health learning event with severity=high, issue_key=budget_warning,
+       summary="Budget warning: ${totals} of ${cap} cap consumed."
+       Continue execution.
+     If state.budget_action == "pause":
+       Call close-run --outcome=blocked.
+       Write HEADLESS_HALTED.txt with first line "reason: budget_exceeded".
+       Exit orchestrator (headless child) or halt (interactive).
+   ```
+
+   The `warn` event is written as a candidate JSON under `<worktree>/.orchestrator/learning_events/transition_<compaction_index>-budget.json` and appended via `scripts/append_learning_event.py append` — same pattern as the `context_health` snapshot in step 3, but with `severity: "high"` and `execution.issue_key: "budget_warning"`. Append failure is silent.
+
+   The `pause` branch invokes the same close-run helper used by the exhausted-escalation halt:
+   ```bash
+   if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
+     python3 <skill_dir>/scripts/append_learning_event.py close-run \
+       --run-id "$MAE_LEARNING_RUN_ID" --outcome blocked >/dev/null 2>&1 || true
+   fi
+   # Archive run (F1): best-effort archive before HEADLESS_HALTED marker.
+   if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
+     <skill_dir>/scripts/archive_run.sh \
+       --worktree <worktree_path> \
+       --run-id "$MAE_LEARNING_RUN_ID" \
+       --outcome blocked 2>&1 || echo "ARCHIVE: failed (see archive output above) — worktree retained"
+   fi
+   printf 'reason: budget_exceeded\n' > <worktree_path>/.orchestrator/HEADLESS_HALTED.txt
+   ```
+   Then exit (headless child) or halt (interactive). The Monitor watcher will surface the HALTED line on its next loop.
 
 **Phase Transition failure handling:**
 - If T1 batch Verifier FAIL exceeds retries for any task: halt that task, record SKIPPED in state.json, continue Phase Transition.
@@ -1420,6 +1673,16 @@ options:
    if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
      python3 <skill_dir>/scripts/append_learning_event.py close-run \
        --run-id "$MAE_LEARNING_RUN_ID" --outcome aborted >/dev/null 2>&1 || true
+   fi
+   ```
+
+   **Archive run (F1):** after close-run, call archive_run.sh with `--outcome aborted`. Best-effort — failure is silent (the run has already been closed):
+   ```bash
+   if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
+     <skill_dir>/scripts/archive_run.sh \
+       --worktree <worktree_path> \
+       --run-id "$MAE_LEARNING_RUN_ID" \
+       --outcome aborted 2>&1 || echo "ARCHIVE: failed (see archive output above) — worktree retained"
    fi
    ```
    For the more common case (task-only halt that lets the orchestrator continue), do NOT close-run — the run is still alive. Phase 2 Step 2 closes it with `outcome=success` if subsequent tasks finish, or the final hard-halt block does so with `outcome=blocked` if the orchestrator gives up entirely.
@@ -1510,6 +1773,8 @@ If `plan2_state.status == "queued"`:
 
 ### Step 0: LOW Batch Verifier Sweep
 
+**Phase 2 Step 0 — Budget evaluation (F2):** before dispatching the LOW batch verifier, run the same evaluation as Phase Transition T3 step 4 — this is the last chance to halt before incurring more cost. If `budget_action=pause` AND `state.cost_ledger.totals.cost_usd >= state.budget_cap_usd`: call `close-run --outcome=blocked`, write `<worktree_path>/.orchestrator/HEADLESS_HALTED.txt` with first line `reason: budget_exceeded`, and exit. If `budget_action=warn` AND the same threshold is crossed: emit ONE `context_health` learning event (severity=high, issue_key=budget_warning, summary referencing totals/cap) under `<worktree>/.orchestrator/learning_events/phase2_step0-budget.json` and continue. If `budget_action=off` OR `budget_cap_usd is None`: skip the check. The cap is compared against the run-level totals, so chained plans share one budget.
+
 Read the active tree's `low_tasks_pending_verification` (resolution rule from Phase 0 Step 7: `state.plan_chain[state.active_plan].low_tasks_pending_verification` for v2.13 multi-plan; `state.plan2_state.low_tasks_pending_verification` for v2.12 legacy plan2; top-level for single-plan). If non-empty: dispatch headless batch Verifier (same pattern as Phase Transition T1).
 
 **Result path:** when `state.plan_chain` is in use, use `batch_final_p<active>.json` (consistent with Phase 2 Step -1 check). For single-plan or v2.12 legacy two-plan: `batch_final.json` un-suffixed.
@@ -1528,6 +1793,8 @@ This guarantees LOW task verification even when `compaction_points=[]` (short pl
 If a Phase Docs Updater was NOT dispatched for the last phase of the active plan (no compaction point after the last task): dispatch one now for that plan first (per-plan, with `_p<active>` suffix in multi-plan mode), then proceed to the chain-level summary if multi-plan.
 
 If per-plan updaters already covered all phases: dispatch only the top-level chain summary (multi-plan) or the un-suffixed single-plan final (single-plan).
+
+**Final DECISIONS.md projection (C2):** re-render `<worktree>/.orchestrator/DECISIONS.md` from the full union of `<active>.decisions_register` across every plan (iterate `state.plan_chain[*]` for multi-plan; top-level + `plan2_state` for legacy). Same format and atomic-write contract as Phase Transition T3 step 1.5. This is the canonical, end-of-run snapshot — the per-T3 projections are intermediate.
 
 Build from the **Final Docs Updater Prompt Template** with:
 - All files changed: consolidated from state file across all tasks (all plans for chain runs)
@@ -1615,6 +1882,19 @@ fi
 
 Close-run failure is silent. The summary report below still prints unchanged.
 
+**Archive run (F1):** call scripts/archive_run.sh with the worktree path, run ID (from MAE_LEARNING_RUN_ID), and outcome. Failure is silent — log to user but do NOT halt; close-run already succeeded.
+
+```bash
+if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
+  <skill_dir>/scripts/archive_run.sh \
+    --worktree "$WORKTREE_ABS" \
+    --run-id "$MAE_LEARNING_RUN_ID" \
+    --outcome success 2>&1 || echo "ARCHIVE: failed (see archive output above) — worktree retained"
+fi
+```
+
+After archive completes, populate the "Archive" section of the Final Summary Report below using fields from `<worktree>/.orchestrator/state.json` `archive` object (written by archive_run.sh): `archive.tar_path`, `archive.size_bytes`, `archive.redacted`. If the archive call failed, write `FAILED` for archive_path and omit size/redacted. The worktree is always retained — record its absolute path.
+
 Output:
 
 ```markdown
@@ -1669,9 +1949,38 @@ If none: "WARN-tier tasks: 0".
 - Debug artifacts: none found
 - Temp files: none found
 
+### Archive (F1)
+
+| Item | Value |
+|------|-------|
+| Archive path | `<archive_meta.tar_path or "FAILED">` |
+| Size | `<bytes formatted>` |
+| Redacted | `<yes/no>` |
+| Worktree | `<still present at> <path>` |
+| HTML report | `<file://path/to/REPORT.html or "FAILED (see render.log)">` |
+
 ### Remaining Risks
 - <risk description>: <mitigation taken or "accepted">
 ```
+
+### Step 3: Render HTML run report (F3)
+
+After Step 2's archive completes (regardless of archive success/failure), invoke the HTML renderer:
+
+```bash
+if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
+  ARCHIVE_DIR="$HOME/.claude/learning/kws-claude-multi-agent-executor/runs/$(date +%Y-%m-%d)/${MAE_LEARNING_RUN_ID}"
+  if [ -d "$ARCHIVE_DIR/artifacts" ]; then
+    python3 <skill_dir>/scripts/render_html_report.py \
+      --archive-dir "$ARCHIVE_DIR" \
+      --output "$ARCHIVE_DIR/artifacts/REPORT.html" \
+      2>"$ARCHIVE_DIR/artifacts/render.log" || \
+      echo "REPORT_RENDER: failed (see $ARCHIVE_DIR/artifacts/render.log)"
+  fi
+fi
+```
+
+Update state.json's `archive.report_html_path` if rendering succeeds (atomic R-M-W).
 
 ---
 
@@ -1722,7 +2031,7 @@ These rules are absolute. No exceptions.
 | **`active_plan` pointer is authoritative for plan selection** | All Phase 1 / Phase Transition / Phase 2 / Monitor code dereferences `<active>` per the resolution table near the top of this document. v2.13 multi-plan: integer index into `state.plan_chain[]`. v2.12 legacy: string `"plan1"` / `"plan2"`. Never assume top-level `state.tasks` is the active tree without checking — hard-coding it for a multi-plan run silently corrupts the chain. |
 | **`last_completed_task` is the only authoritative "most recent" field** | Phase 1 Step 4 Agent Cleanup writes it. Monitor and any post-hoc query MUST use it — never `to_entries \| last` over `tasks` (key insertion order is mutated by re-writes; this caused a real observed bug). |
 | **Spec-edit branch uses `spec_clarifications`, not `review_retries`** | When `SPEC_FAULT ∈ {spec_contradicts, unclear}`, increment `spec_clarifications` (max 3 per task). Implementer retry budget stays intact for actual implementer mistakes. |
-| **Resume Chain trigger is deterministic** | Chain only when `compaction_points reached ≥ 2` AND `completed tasks ≥ 8`. No token-count heuristics — not introspectable. Chain procedure MUST update `headless.pid` atomically so Monitor sees `CHAIN_HANDOFF`, not `PROCESS_DIED`. |
+| **Resume Chain trigger is deterministic** (v2.15) | Chain when EITHER token threshold OR legacy floor fires (additive). Token threshold: `session_input_tokens (= cost_ledger.totals.input_tokens − cached_read_tokens) ≥ state.context_budget.threshold_tokens`. Legacy floor: `compaction_points reached ≥ 2` AND `completed tasks ≥ 8` (always evaluated). `budget_action == "off"` disables the token trigger, leaving the legacy floor as the sole criterion. Chain procedure MUST update `headless.pid` atomically so Monitor sees `CHAIN_HANDOFF`, not `PROCESS_DIED`. |
 | **`files_test` discrimination for batch verifier** | Implementer outputs `FILES_TEST_CHANGED` separately from `FILES_CHANGED`. T1 batch pre-filter uses it (or `.md`-only heuristic for legacy state) to route docs-only tasks to lint instead of test runs. |
 | **Plan 2 re-takes baseline** | When Phase 2 Step -1 swaps `active_plan` to `"plan2"`, run Phase 0 Step 5 fresh against current HEAD (Plan 1's changes are now Plan 2's starting point). Never reuse Plan 1's baseline as Plan 2's regression reference. |
 | **Learning log lifecycle (v2.8)** | Phase 0 Step 7.5 calls `init-run` and exports `MAE_LEARNING_RUN_ID`. Phase 1 Step 3.5 scans `<worktree>/.orchestrator/learning_events/` for sub-agent candidate JSON and calls `append`. Phase 2 Step 2 closes with `outcome=success`; orchestrator-level abort closes with `outcome=aborted`; whole-orchestrator hard-halt (state-write fail, exhausted escalations halting the run) closes with `outcome=blocked`. Resume Chain preserves `MAE_LEARNING_RUN_ID` via env propagation and calls `append-session-id`, never `init-run`. **Learning-log failure must never block plan execution** — every helper invocation is wrapped with `\|\| true`. See `references/learning-log.md`. |
@@ -1742,6 +2051,15 @@ These rules are absolute. No exceptions.
 | **`plan_chain[]` is authoritative when present** (v2.13) | When `state.plan_chain` exists in state.json, code MUST dereference `state.plan_chain[state.active_plan].*` for tasks, task_summaries, quality_trend, risk_levels, task_complexity, compaction_points, execution_plan, global_constraints, low_tasks_pending_verification, last_compaction_after_task, last_completed_task, last_completed_at, plan_review. Top-level `state.tasks` etc. are NOT written for multi-plan runs. `state.plan` and `state.spec` mirror `plan_chain[active].plan_path / .spec_path` for legacy reader convenience but are NOT the source of truth. `state.active_plan` is an integer (not a string) when chain is in use. |
 | **Per-plan result file suffix** (v2.13) | Verifier/Docs Updater output JSON files under `.orchestrator/{verifier,docs}_results/` get a `_p<index>` suffix in multi-plan runs to avoid collision across plans (`batch_p0_2.json`, `phase_p1_4.json`, `final_p2.json`). Single-plan and legacy v2.12 two-plan runs keep their un-suffixed paths for compatibility. Aggregators that scan these directories must accept both shapes. |
 | **Run-level args propagate across all chain plans** (v2.13) | `implementer_model`, `parallel`, `risk`, `docs_scope` are written to state.json top-level (NOT into each plan_chain entry). The Cross-Plan Trigger does NOT reset them at swap. Every plan in the chain inherits the same model selection, parallel toggle, etc. Plan-specific overrides are deliberately NOT supported — if a user wants different models for different plans, they invoke the skill once per plan, not as a chain. |
+| **Cost ledger frozen pricing** | `scripts/price_table.py` hardcodes rates at commit time. Historical runs reflect contemporaneous rates — re-running with a later price_table does NOT retroactively recompute past runs. Update price_table when Anthropic adjusts rates; do NOT auto-fetch. |
+| **`budget_action=pause` halts at compaction boundaries only** | Budget is evaluated at Phase Transition T3 and Phase 2 Step 0 — never mid-task. Cost overruns within a single task complete the task, then the next compaction triggers halt. This is intentional: aborting mid-task wastes the in-flight dispatch. |
+| **Cost ledger is run-level** | `cost_ledger`, `budget_cap_usd`, `budget_action` live at top-level state.json (never inside `plan_chain[N]`). Cross-plan chains accumulate one unified ledger. Per-plan totals derivable via `by_task` key prefix `<plan_index>::`. |
+| **Archive on close-run is best-effort** | `scripts/archive_run.sh` is invoked AFTER `close-run` succeeds. Archive failure is logged but does NOT halt the orchestrator (the primary run already completed). The worktree is never auto-deleted by archive — user retains it for manual recovery if archive fails. |
+| **Redaction is mandatory** | `redact_archive.py` MUST run before the tar moves to its final path. Redaction failure → tar discarded, `archive_meta.json` written with `redaction_applied: false, error: ...`, user-visible warning. Never write a non-redacted tar to `~/.claude/learning/`. |
+| **Spec manifest is per-plan** (v2.15 C1) | `spec_manifest` lives under `<active>` per the v2.13 resolution rule. Each plan in a chain has its own manifest (sections + task_to_sections + fallback_policy). `task_to_sections` references are validated by the Plan Reviewer at Phase 0 Step 6.5 — unknown section IDs are BLOCKER. Manifest is rebuilt at the spec-edit branch (Phase 1 Step 2 sub-step 6.5). |
+| **Decisions register is per-plan, append-only** (v2.15 C2) | `decisions_register` lives under `<active>`. Entries are never deleted — supersession is recorded via the `supersedes` field (still rendered, with strikethrough prefix). Empty `key_decision` from `task_summaries` is ignored (not appended). Append failure logs a warning and continues (best-effort). |
+| **decision_conflict is a QUALITY issue, not SPEC** (v2.15 C2) | Combined Reviewer flags `decision_conflict` under `QUALITY_ISSUES`. Does NOT downgrade `SPEC_SCORE`. Standard `review_retries` budget applies — no spec-edit branch. Use it to nudge sub-agents toward consistency, not to halt. Intentional supersession (diff includes `supersedes <task_id>` comment) emits an ADVISORY note instead of an ISSUE. |
+| **Token-based chain trigger is additive** (v2.15 C3) | C3's `session_input_tokens >= threshold_tokens` trigger fires *in addition to* the legacy `compactions ≥ 2 AND completed ≥ 8` floor. Never replaces. `budget_action=off` disables the token trigger (legacy is then the sole criterion). `session_input_tokens = cost_ledger.totals.input_tokens − cached_read_tokens`. One `chain_trigger_eval` event per Phase Transition T3 regardless of decision (telemetry for trigger lift). |
 
 ---
 

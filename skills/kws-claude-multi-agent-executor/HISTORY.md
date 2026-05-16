@@ -21,6 +21,32 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.15 — Context engineering (2026-05-16)
+
+Three additive features for context efficiency on large plans:
+
+- **C1 — Tiered spec injection (`spec_manifest`):** new `scripts/build_spec_manifest.py` parses markdown spec headings (stdlib only). Phase 0 Step 3.7 builds the manifest at boot; Step 6 computes `task_to_sections` per task (from explicit `**Spec Refs:**` blocks or Files-title heuristic, with `["*"]` full-spec fallback). Phase 1 Step 1 Implementer prompt builder replaces subjective spec curation with deterministic per-task slicing. Plan Reviewer gains 3 new rubric items (`spec_manifest_invalid_ref` BLOCKER, `spec_manifest_fallback_used` WARN, `spec_manifest_unused_section` WARN). Spec-edit branch recomputes manifest. SPEC_BLOCKER fallback re-dispatches with full spec under `manifest_fallback=full_spec_on_blocker`.
+- **C2 — Decisions register:** new per-plan `decisions_register` accumulates `key_decision` entries at Phase 1 Step 4 (substep 2.3). Implementer prompt receives `## Project decisions so far` block; Combined Reviewer flags `decision_conflict` as `QUALITY_ISSUE` (not SPEC). Atomic projection to `<worktree>/.orchestrator/DECISIONS.md` at each Phase Transition T3 and at Phase 2 Step 1 (union across plans). Included in F1 archive.
+- **C3 — Token-based Resume Chain trigger:** new run-level `state.context_budget` (top-level, defaults `effective_input_budget=170000`, `threshold_ratio=0.60`, `threshold_tokens=102000`). Chain trigger fires when `session_input_tokens (input_tokens − cached_read_tokens) ≥ threshold_tokens` OR legacy floor (`compactions ≥ 2 AND completed ≥ 8`). Additive — never replaces legacy. `chain_trigger_eval` telemetry event emitted at every Phase Transition T3 for trigger-lift analysis. Args: `context_budget=<int>`, `context_threshold=<float>`, `manifest_fallback=<value>`.
+
+Goals: G1 (≤0.50 median Implementer input-token ratio vs v2.14 on ≥10KB specs), G2 (cross-task convention drift to <1/30 tasks), G3 (no quality decline across chain handoffs), G4 (token trigger fires before legacy on 30+ task plans).
+
+A/B measurement template at `docs/experiments/v2.15-context-engineering/findings/v2.14-vs-v2.15-tokens.md`; journal at `docs/experiments/v2.15-context-engineering/JOURNAL.md`.
+
+### v2.14 — Forensics & cost (2026-05-16)
+
+Bundle of four forensic/observability features that all share the same axis: making post-run state inspectable, queryable, and budget-aware. None of them change Orchestrator or sub-agent logic during a run — they all act at run boundaries (close-run, post-task) or as out-of-band read-only tooling.
+
+- **F1 — Archive `.orchestrator/` to user-local store after close-run.** When a run finishes (close-run path), the entire `.orchestrator/` directory is copied to `~/.claude-multi-agent-executor/archive/<run-id>/` so that subsequent `git clean` / branch deletion / worktree teardown does not vaporize the audit trail. A `redact_archive.py` helper strips obvious secrets (API keys, tokens, env-style `KEY=value` lines matching well-known patterns) before archival; redaction is best-effort, not a security boundary — see `docs/experiments/v2.14-forensics-and-cost/spec.md §F1` for the exact regex set and the §F1.5 clarification on anchor handling.
+
+- **F2 — Cost ledger + budget cap.** Every sub-agent dispatch records token usage to `cost_ledger` (broken down `by_task`, `by_role`, `by_model`, and `totals`) using `scripts/price_table.py` for $/token conversion. A new run-level `budget_cap_usd` arg + `budget_action` (`warn` | `halt`) lets the Orchestrator stop dispatching new sub-agents once cumulative cost exceeds the cap. Price table is a flat dict keyed by model id; update on Anthropic price changes.
+
+- **F3 — HTML run report.** `scripts/render_html_report.py` runs at Phase 2 Step 3 (post-run docs phase) and produces a single-file `report.html` summarizing tasks, durations, cost, escalations, and per-task verification evidence. Pure templating, no LLM, no external deps beyond stdlib. Designed to be opened from the archive long after the worktree is gone.
+
+- **F4 — Query scripts.** `scripts/query_state.sh` and `scripts/query_run.sh` are no-LLM read-only `jq`-based query helpers. `query_state.sh` queries the live `.orchestrator/state.json` of an in-progress run; `query_run.sh` queries an archived run by `<run-id>` against the user-local archive (F1). Both expose the same query verbs (`tasks`, `cost`, `escalations`, `timeline`) so muscle memory carries across live/archived inspection.
+
+Acceptance signal for the bundle: all 15 tasks (`task_0`…`task_14`) green, plus the spec clarification recorded for `task_6` regex anchor in `docs/experiments/v2.14-forensics-and-cost/spec.md §F1.5`.
+
 ### v2.13 — Natural-language args + multi-plan auto-chain (experiment branch, 2026-05-16)
 
 **Status**: Ships on `experiment/v2.13-natural-multi-plan` only — NOT yet merged to main. Awaiting a real multi-plan run + advisor sign-off before promotion.

@@ -70,6 +70,53 @@ For each such wave, emit:
 
 WARN only — never BLOCKER. The runtime partition rule (Phase 0 Step 6) handles correctness automatically; the WARN exists so the plan author is aware that the declared parallelism is reduced.
 
+### Rubric item: spec_manifest_invalid_ref (severity: BLOCKER)
+
+Check every task body's `**Spec Refs:** <id1>, <id2>, ...` block. Each section ID must exist as a key in the provided `spec_manifest.sections`. Unknown ID → emit an ISSUE_KEY:
+
+```json
+{
+  "severity": "BLOCKER",
+  "task": "task_<id>",
+  "category": "spec_manifest_invalid_ref",
+  "description": "Task references spec section <id> that does not exist in spec_manifest.sections.",
+  "evidence": "<file:line of Spec Refs block>",
+  "suggested_fix": "Correct the section ID to a valid value or remove the Spec Refs entry."
+}
+```
+
+### Rubric item: spec_manifest_fallback_used (severity: WARN)
+
+Check `spec_manifest.task_to_sections`. Any entry with `fallback_used: true` (i.e. no `**Spec Refs:**` block and the heuristic Files-title match returned zero hits) → emit:
+
+```json
+{
+  "severity": "WARN",
+  "task": "task_<id>",
+  "category": "spec_manifest_fallback_used",
+  "description": "Task falls back to the full spec because no **Spec Refs:** block was provided and heuristic Files-title match found no sections.",
+  "evidence": "task_to_sections[task_<id>].fallback_used == true",
+  "suggested_fix": "Add **Spec Refs:** <section_id_list> to the task body to bypass the full-spec fallback."
+}
+```
+
+### Rubric item: spec_manifest_unused_section (severity: WARN)
+
+Compute the union of all `task_to_sections[*].sections` lists (excluding tasks whose list is `["*"]`). Any section ID in `spec_manifest.sections` not in that union → emit:
+
+```json
+{
+  "severity": "WARN",
+  "task": null,
+  "category": "spec_manifest_unused_section",
+  "description": "Section <id> (title '<title>') is not referenced by any task.",
+  "evidence": "spec_manifest.sections[<id>]",
+  "suggested_fix": "Either reference it explicitly from a task's **Spec Refs:** block or remove it from the spec."
+}
+```
+
+(Pass the rendered `spec_manifest_json` block to this Plan Reviewer prompt as `{spec_manifest_json}` — see SKILL.md Phase 0 Step 6.5 prose.)
+
 ## Severity assignment
 
 - `BLOCKER`: would cause a SPEC_BLOCKER escalation in Phase 1 with near-certainty (missing AC on HIGH-risk, named contract mismatch, dependency cycle, out-of-repo path).
