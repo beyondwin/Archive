@@ -1446,6 +1446,33 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
    ```
    Append failure is silent (`|| true`) per the learning-log failure policy. **Do not use these counters to alter orchestrator behavior** — Goodhart's-law guard. Behavior changes require a follow-on experiment.
 
+4. **Evaluate budget (F2):** governed by spec §F2.4. Placement is **after** the state-anchor write (step 1) **and after** the `context_health` snapshot (step 3) — the spec timing supersedes the plan's "step 2.5" label.
+
+   ```
+   If state.budget_action == "off" OR state.budget_cap_usd is None: skip.
+   Else if state.cost_ledger.totals.cost_usd >= state.budget_cap_usd:
+     If state.budget_action == "warn":
+       Emit a context_health learning event with severity=high, issue_key=budget_warning,
+       summary="Budget warning: ${totals} of ${cap} cap consumed."
+       Continue execution.
+     If state.budget_action == "pause":
+       Call close-run --outcome=blocked.
+       Write HEADLESS_HALTED.txt with first line "reason: budget_exceeded".
+       Exit orchestrator (headless child) or halt (interactive).
+   ```
+
+   The `warn` event is written as a candidate JSON under `<worktree>/.orchestrator/learning_events/transition_<compaction_index>-budget.json` and appended via `scripts/append_learning_event.py append` — same pattern as the `context_health` snapshot in step 3, but with `severity: "high"` and `execution.issue_key: "budget_warning"`. Append failure is silent.
+
+   The `pause` branch invokes the same close-run helper used by the exhausted-escalation halt:
+   ```bash
+   if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
+     python3 <skill_dir>/scripts/append_learning_event.py close-run \
+       --run-id "$MAE_LEARNING_RUN_ID" --outcome blocked >/dev/null 2>&1 || true
+   fi
+   printf 'reason: budget_exceeded\n' > <worktree_path>/.orchestrator/HEADLESS_HALTED.txt
+   ```
+   Then exit (headless child) or halt (interactive). The Monitor watcher will surface the HALTED line on its next loop.
+
 **Phase Transition failure handling:**
 - If T1 batch Verifier FAIL exceeds retries for any task: halt that task, record SKIPPED in state.json, continue Phase Transition.
 - If T2 Phase Docs Updater sends ESCALATE: skip docs for this phase. Record `phase_docs_skipped: [<phase_id>]` in state.json. The Final Docs Updater in Phase 2 will recover.
@@ -1582,6 +1609,8 @@ If `plan2_state.status == "queued"`:
    - Begin Phase 1 Task 0 of Plan 2 (under the active-plan pointer).
 
 ### Step 0: LOW Batch Verifier Sweep
+
+**Phase 2 Step 0 — Budget evaluation (F2):** before dispatching the LOW batch verifier, run the same evaluation as Phase Transition T3 step 4 — this is the last chance to halt before incurring more cost. If `budget_action=pause` AND `state.cost_ledger.totals.cost_usd >= state.budget_cap_usd`: call `close-run --outcome=blocked`, write `<worktree_path>/.orchestrator/HEADLESS_HALTED.txt` with first line `reason: budget_exceeded`, and exit. If `budget_action=warn` AND the same threshold is crossed: emit ONE `context_health` learning event (severity=high, issue_key=budget_warning, summary referencing totals/cap) under `<worktree>/.orchestrator/learning_events/phase2_step0-budget.json` and continue. If `budget_action=off` OR `budget_cap_usd is None`: skip the check. The cap is compared against the run-level totals, so chained plans share one budget.
 
 Read the active tree's `low_tasks_pending_verification` (resolution rule from Phase 0 Step 7: `state.plan_chain[state.active_plan].low_tasks_pending_verification` for v2.13 multi-plan; `state.plan2_state.low_tasks_pending_verification` for v2.12 legacy plan2; top-level for single-plan). If non-empty: dispatch headless batch Verifier (same pattern as Phase Transition T1).
 
