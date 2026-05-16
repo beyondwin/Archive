@@ -238,6 +238,21 @@ Mitigation:
 Residual risk: the validator proves record shape and obvious scope violations;
 the parent executor must still inspect diffs and run final verification.
 
+### GSD-2 Runtime Scope
+
+Risk: adopting selected GSD-2 safeguards can imply a larger scheduler or daemon
+than this skill actually provides.
+
+Mitigation:
+
+- The release keeps JSON state as authority and JSONL events as evidence.
+- Subagent records are audit artifacts, not a dispatcher.
+- Drift repair is explicit and limited to safe mechanical fields.
+- Diff policy is post-facto validation, not a filesystem hook.
+
+Residual risk: operators must still understand that this is a Codex skill
+workflow, not the full `gsd-build/gsd-2` runtime.
+
 ## Intentional Deferrals
 
 ### No Full OMX Runtime

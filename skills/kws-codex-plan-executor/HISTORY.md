@@ -3,6 +3,23 @@
 Source of truth for current behavior: `SKILL.md`, `templates/`, and
 `references/`. This file tracks release intent and migration history.
 
+## v1.9.0 - Adopt selected GSD-2 execution safeguards (2026-05-16)
+
+- Added task `unit_manifest` validation and post-diff policy checks so
+  completed execution tasks have explicit context, tool, and write-scope
+  contracts.
+- Added project-local `events.jsonl` run evidence, event helper validation, and
+  terminal event metadata checks.
+- Added drift reconciliation for safe mechanical repairs and blocking terminal
+  contradictions.
+- Added context-budget metadata to context snapshots.
+- Added structured headless final-result schema validation.
+- Added opt-in `subagent_runs` validation and documentation.
+- Added `command_observations` taxonomy validation for bounded command triage
+  evidence.
+- Updated release docs and eval runner coverage for the new deterministic
+  checks.
+
 ## v1.8.1 - Make run health project-state-aware (2026-05-15)
 
 - Added `helper_pid` to new learning-log run metadata while keeping legacy

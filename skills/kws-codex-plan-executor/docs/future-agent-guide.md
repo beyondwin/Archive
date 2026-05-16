@@ -27,6 +27,13 @@ Classify the change before editing:
 | Runtime behavior | `SKILL.md`, references, deterministic eval, `HISTORY.md`, package metadata |
 | Prompt export behavior | template, prompt checklist, contract check, prompt fixtures |
 | State schema | `references/state-schema.md`, `validate_state.py`, `check_state_schema.py` |
+| Unit manifest or diff policy | `references/state-schema.md`, `scripts/check_run_diffs.py`, `evals/check_run_diffs.py`, `docs/evals-and-verification.md` |
+| Event journal | execution docs, `scripts/append_run_event.py`, `evals/check_event_journal.py` |
+| Drift reconciliation | `scripts/reconcile_state.py`, `evals/check_state_reconciliation.py`, `docs/state-and-logging.md` |
+| Context snapshot budget | `scripts/build_context_snapshot.py`, `evals/check_context_snapshot.py`, `references/state-schema.md` |
+| Headless final result | `templates/headless-output-schema.json`, `evals/check_headless_result.py`, `references/headless-result-schema.md` |
+| Subagent run records | `references/subagent-run-store.md`, `references/state-schema.md`, `check_state_schema.py` |
+| Command observations | `references/command-observations.md`, `references/state-schema.md`, `check_state_schema.py` |
 | Context health | `references/state-schema.md`, `docs/state-and-logging.md`, `check_state_schema.py`, `check_skill_contract.py` |
 | Learning log schema | `references/learning-log.md`, helper script, `check_learning_log.py` |
 | Parser behavior | parser script, parser fixture, parser checker |
@@ -64,6 +71,11 @@ State:
 
 ```bash
 python3 evals/check_state_schema.py
+python3 evals/check_run_diffs.py
+python3 evals/check_event_journal.py
+python3 evals/check_state_reconciliation.py
+python3 evals/check_context_snapshot.py
+python3 evals/check_headless_result.py
 python3 -m py_compile scripts/validate_state.py evals/check_state_schema.py
 ```
 
@@ -146,12 +158,14 @@ metadata, or expected values.
    current task, lifecycle outcome, and open blockers.
 3. Strengthen `completion_audit` quality checks: require artifact paths and
    command/status objects instead of accepting any non-empty list.
-4. Add a `summarize_state.py` helper for humans and agents to inspect active
+4. Add resume-time enforcement for context source drift when live plan/spec/docs
+   hashes no longer match `context.json`.
+5. Add a `summarize_state.py` helper for humans and agents to inspect active
    run status without manually reading JSON.
-5. Add a package-local Markdown link check for README/docs/reference links.
-6. Add parser fixtures for malformed fences, nested comments, mixed-language
+6. Add a package-local Markdown link check for README/docs/reference links.
+7. Add parser fixtures for malformed fences, nested comments, mixed-language
    headings, and `Depends on:` variants.
-7. Add learning-log redaction fixtures using realistic command-output excerpts.
+8. Add learning-log redaction fixtures using realistic command-output excerpts.
 
 ## Do Not Do This
 
