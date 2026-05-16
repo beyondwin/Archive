@@ -120,7 +120,7 @@ Application rule (explicit always wins):
 After Pass 3, output ONE line to the user summarizing the resolved interpretation, before doing any other work:
 
 ```
-Parsed: <N> plan(s) [<index 0 slug>→<index 1 slug>→...], implementer_model=<value> [from <source>], parallel=<value> [from <source>], mode=<value> [from <source>], risk=<value or "per-task">, budget=<value or "off">.
+Parsed: <N> plan(s) [<index 0 slug>→<index 1 slug>→...], implementer_model=<value> [from <source>], parallel=<value> [from <source>], mode=<value> [from <source>], risk=<value or "per-task">, budget=<value or "off"> [from <source>].
 ```
 
 The `budget=<value or "off">` field in the echo line shows the parsed `budget=<USD>` value (e.g. `budget=5.00`) or the literal string `off` when no `budget=` arg was provided. This lets the user see the cost cap before detach.
@@ -276,6 +276,15 @@ Status snapshot:
 
 Completion check:
   test -f <worktree>/.orchestrator/HEADLESS_DONE.txt && cat <worktree>/.orchestrator/HEADLESS_DONE.txt
+
+Quick queries (no LLM, ~10ms each):
+  <skill_dir>/scripts/query_state.sh --worktree <abs_path> progress
+  <skill_dir>/scripts/query_state.sh --worktree <abs_path> cost
+  <skill_dir>/scripts/query_state.sh --worktree <abs_path> warn
+
+Post-run, archived analysis:
+  <skill_dir>/scripts/query_run.sh list-runs
+  <skill_dir>/scripts/query_run.sh last cost
 ```
 
 Fill in `<abs path>` and `<worktree>` with the actual worktree path before outputting.
