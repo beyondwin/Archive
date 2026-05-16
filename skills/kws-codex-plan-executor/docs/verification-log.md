@@ -28,6 +28,35 @@ risk. Do not paste long logs or sensitive output.
   - The new contracts are advisory until later tasks add deterministic
     validation and runtime references.
 
+## 2026-05-16 - GSD-2 adoption task 2 unit manifests
+
+- Branch: `codex/gsd-2-adoption-20260516-074140`
+- Commit: pending at time of verification
+- Scope: added `unit_manifest` state validation, state-schema fixtures, runtime
+  and prompt contract text, and a contract-drift check for the manifest
+  invariant.
+- TDD evidence:
+  - RED: `python3 evals/check_state_schema.py` failed before validator
+    implementation because invalid unit type, invalid tool policy, missing
+    completed-task manifest, empty implementation write globs, and read-only
+    write globs were not rejected.
+  - GREEN: `python3 evals/check_state_schema.py` passed with all manifest
+    checks true after validator implementation.
+- Commands:
+  - `python3 evals/check_state_schema.py`
+    - result: pass, JSON payload had `"passed": true` and no failures.
+  - `python3 evals/check_skill_contract.py --skill SKILL.md`
+    - result: pass, including `unit_manifest_contract`.
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .`
+    - result: pass, `Skill is valid!`
+  - `python3 -m py_compile scripts/validate_state.py evals/check_state_schema.py evals/check_skill_contract.py`
+    - result: pass, no syntax errors.
+  - `git diff --check -- skills/kws-codex-plan-executor`
+    - result: pass, no whitespace errors.
+- Residual risk:
+  - The manifest is validated in state, but actual write enforcement is still a
+    later diff-policy task.
+
 ## 2026-05-14 - Log-driven executor hardening implementation
 
 - Branch: `codex/log-driven-executor-hardening`

@@ -30,6 +30,7 @@ def main() -> int:
     checklist_path = skill_dir / "references" / "prompt-export-checklist.md"
     execution_path = skill_dir / "references" / "execution-cycle.md"
     headless_path = skill_dir / "references" / "headless-runner.md"
+    state_schema_path = skill_dir / "references" / "state-schema.md"
     common_mistakes_path = skill_dir / "references" / "common-mistakes.md"
     learning_path = skill_dir / "references" / "learning-log.md"
     learning_script_path = skill_dir / "scripts" / "append_learning_event.py"
@@ -39,6 +40,7 @@ def main() -> int:
     checklist = checklist_path.read_text(encoding="utf-8") if checklist_path.is_file() else ""
     execution = execution_path.read_text(encoding="utf-8") if execution_path.is_file() else ""
     headless = headless_path.read_text(encoding="utf-8") if headless_path.is_file() else ""
+    state_schema = state_schema_path.read_text(encoding="utf-8") if state_schema_path.is_file() else ""
     learning = learning_path.read_text(encoding="utf-8") if learning_path.is_file() else ""
     eval_run = eval_run_path.read_text(encoding="utf-8") if eval_run_path.is_file() else ""
     invocation = section(text, "## Invocation", "## Hard Boundary")
@@ -47,6 +49,9 @@ def main() -> int:
 
     parse_index = execution.find("Parse the plan")
     dirty_index = execution.find("Classify dirty files")
+    all_runtime_text = text + execution + headless + template + state_schema
+    normalized_runtime_text = re.sub(r"\s+", " ", all_runtime_text)
+    unit_manifest_surfaces = (text, execution, headless, template, state_schema)
 
     expectations = {
         "resume_argument": "resume=latest|<state-path>" in invocation,
@@ -192,6 +197,11 @@ def main() -> int:
                 "append the run_id",
             )
         ),
+        "unit_manifest_contract": all(
+            all(token in surface for token in ("unit_manifest", "allowed_write_globs", "forbidden_write_globs"))
+            for surface in unit_manifest_surfaces
+        )
+        and "finished runs require every completed task to have a valid manifest" in normalized_runtime_text,
     }
 
     checks.update(expectations)

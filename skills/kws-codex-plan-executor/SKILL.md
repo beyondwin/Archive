@@ -50,6 +50,9 @@ parallel work, or passes `subagents=on`.
 - No edits before a 5-line `TASK EXECUTION CONTRACT` is stated and recorded:
   `scope`, `files_to_inspect`, `allowed_edits`, `forbidden_edits`, and
   `acceptance_command_or_honest_substitute`.
+- Executable tasks may record `unit_manifest` with context, skill, tool, and
+  write policy; finished runs require every completed task to have a valid
+  manifest, including `allowed_write_globs` and `forbidden_write_globs`.
 - For every new `interactive` or `headless` execution run, create a dedicated
   non-conflicting `codex/...` git worktree before any task contract or edits.
   Do not implement from `main` or the caller's original checkout. Check

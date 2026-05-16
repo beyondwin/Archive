@@ -22,6 +22,19 @@ REQUIRED_CONTRACT = {
 }
 
 
+def unit_manifest() -> dict:
+    return {
+        "unit_type": "execute-task",
+        "context_mode": "focused",
+        "required_skills": ["using-superpowers", "test-driven-development"],
+        "tool_policy": "implementation",
+        "allowed_write_globs": ["docs/example.md"],
+        "forbidden_write_globs": ["docs/unrelated.md"],
+        "artifact_policy": "inline-summary",
+        "max_context_chars": 60000,
+    }
+
+
 def base_state() -> dict:
     return {
         "schema_version": "1",
@@ -63,6 +76,7 @@ def base_state() -> dict:
                 "risk": "low",
                 "files_declared": ["docs/example.md"],
                 "contract": dict(REQUIRED_CONTRACT),
+                "unit_manifest": unit_manifest(),
                 "review_retries": 0,
                 "verifier_retries": 0,
             }
@@ -96,6 +110,62 @@ def main() -> int:
     checks["valid_contract_passes"] = valid.returncode == 0
     if not checks["valid_contract_passes"]:
         failures.append("valid state with task contract should pass")
+    checks["valid_unit_manifest_passes"] = valid.returncode == 0
+    if not checks["valid_unit_manifest_passes"]:
+        failures.append("valid unit_manifest should pass")
+
+    invalid_unit_type = base_state()
+    invalid_unit_type["tasks"]["task_0"]["unit_manifest"]["unit_type"] = "mystery"
+    invalid_unit_type_result = run_validator(script, invalid_unit_type)
+    checks["invalid_unit_type_fails"] = (
+        invalid_unit_type_result.returncode != 0
+        and "unit_manifest.unit_type" in (invalid_unit_type_result.stderr + invalid_unit_type_result.stdout)
+    )
+    if not checks["invalid_unit_type_fails"]:
+        failures.append("unknown unit_manifest.unit_type should fail")
+
+    invalid_tool_policy = base_state()
+    invalid_tool_policy["tasks"]["task_0"]["unit_manifest"]["tool_policy"] = "admin"
+    invalid_tool_policy_result = run_validator(script, invalid_tool_policy)
+    checks["invalid_tool_policy_fails"] = (
+        invalid_tool_policy_result.returncode != 0
+        and "unit_manifest.tool_policy" in (invalid_tool_policy_result.stderr + invalid_tool_policy_result.stdout)
+    )
+    if not checks["invalid_tool_policy_fails"]:
+        failures.append("unknown unit_manifest.tool_policy should fail")
+
+    finished_missing_manifest = base_state()
+    finished_missing_manifest["tasks"]["task_0"]["status"] = "completed"
+    del finished_missing_manifest["tasks"]["task_0"]["unit_manifest"]
+    finished_missing_manifest_result = run_validator(script, finished_missing_manifest)
+    checks["finished_missing_unit_manifest_for_completed_task_fails"] = (
+        finished_missing_manifest_result.returncode != 0
+        and "unit_manifest is required" in (finished_missing_manifest_result.stderr + finished_missing_manifest_result.stdout)
+    )
+    if not checks["finished_missing_unit_manifest_for_completed_task_fails"]:
+        failures.append("finished completed task missing unit_manifest should fail")
+
+    implementation_without_write_globs = base_state()
+    implementation_without_write_globs["tasks"]["task_0"]["unit_manifest"]["allowed_write_globs"] = []
+    implementation_without_write_globs_result = run_validator(script, implementation_without_write_globs)
+    checks["implementation_manifest_without_allowed_write_globs_fails"] = (
+        implementation_without_write_globs_result.returncode != 0
+        and "requires allowed_write_globs" in (
+            implementation_without_write_globs_result.stderr + implementation_without_write_globs_result.stdout
+        )
+    )
+    if not checks["implementation_manifest_without_allowed_write_globs_fails"]:
+        failures.append("implementation unit_manifest without allowed_write_globs should fail")
+
+    readonly_with_write_globs = base_state()
+    readonly_with_write_globs["tasks"]["task_0"]["unit_manifest"]["tool_policy"] = "read-only"
+    readonly_with_write_globs_result = run_validator(script, readonly_with_write_globs)
+    checks["read_only_manifest_with_write_globs_fails"] = (
+        readonly_with_write_globs_result.returncode != 0
+        and "read-only unit_manifest" in (readonly_with_write_globs_result.stderr + readonly_with_write_globs_result.stdout)
+    )
+    if not checks["read_only_manifest_with_write_globs_fails"]:
+        failures.append("read-only unit_manifest with write globs should fail")
 
     missing_contract = base_state()
     del missing_contract["tasks"]["task_0"]["contract"]

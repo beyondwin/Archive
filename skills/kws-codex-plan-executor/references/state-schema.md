@@ -240,6 +240,16 @@ not change task status semantics or bypass per-task execution contracts:
     "forbidden_edits": [],
     "acceptance_command_or_honest_substitute": ""
   },
+  "unit_manifest": {
+    "unit_type": "execute-task",
+    "context_mode": "focused",
+    "required_skills": ["using-superpowers", "test-driven-development"],
+    "tool_policy": "implementation",
+    "allowed_write_globs": ["scripts/*.py", "evals/*.py"],
+    "forbidden_write_globs": [".git/**", "graphify-out/**"],
+    "artifact_policy": "inline-summary",
+    "max_context_chars": 60000
+  },
   "pre_task_sha": null,
   "commit": null,
   "review_retries": 0,
@@ -272,6 +282,27 @@ The `contract` object must include:
 
 Keep retry counts numeric, contract text fields as strings, and file lists as
 arrays.
+
+Tasks may include optional `unit_manifest` while active. When
+`lifecycle_outcome=finished`, every task whose status is `completed`,
+`verified`, or `done` must include a valid manifest.
+
+`unit_manifest` fields:
+
+- `unit_type`: one of `research`, `plan`, `execute-task`, `reactive-execute`,
+  `validate`, `complete`, `docs`, `review`, or `handoff`
+- `context_mode`: one of `minimal`, `focused`, `expanded`, or `full`
+- `required_skills`: array
+- `tool_policy`: one of `read-only`, `planning`, `implementation`, `docs`, or
+  `verification`
+- `allowed_write_globs`: array
+- `forbidden_write_globs`: array
+- `artifact_policy`: one of `inline`, `inline-summary`, `excerpt`, or
+  `on-demand`
+- `max_context_chars`: positive integer
+
+`implementation` manifests require non-empty `allowed_write_globs`. `read-only`
+manifests must not allow write globs.
 
 Tasks may include optional `carried_acceptance` when a sequential metric cannot
 be fully resolved until a later task:
