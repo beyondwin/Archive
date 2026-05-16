@@ -101,11 +101,16 @@ codex exec \
   --cd "$WORKTREE_ABS" \
   --sandbox "$HEADLESS_SANDBOX" \
   --json \
-  --output-schema "$RUN_DIR/final.schema.json" \
+  --output-schema "$SKILL_DIR/templates/headless-output-schema.json" \
   --output-last-message "$RUN_DIR/headless-final.json" \
   "$PROMPT" \
   > "$RUN_DIR/headless.jsonl" 2>&1
 ```
+
+When `--output-schema` is unavailable, keep the same requested JSON shape and
+save the last message for review. The required final fields are `status`,
+`run_id`, `state_path`, `summary`, `changed_files`, `verification`,
+`open_gaps`, `residual_risk`, and `next_action`.
 
 ## Required Artifacts
 

@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "run_id",
+    "state_path",
+    "summary",
+    "changed_files",
+    "verification",
+    "open_gaps",
+    "residual_risk",
+    "next_action"
+  ],
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["success", "blocked", "failed", "cancelled"]
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "state_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "changed_files": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "verification": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["command", "status"],
+        "properties": {
+          "command": {
+            "type": "string",
+            "minLength": 1
+          },
+          "status": {
+            "type": "string",
+            "enum": ["passed", "failed", "skipped"]
+          },
+          "evidence": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "open_gaps": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "residual_risk": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "next_action": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

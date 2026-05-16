@@ -19,6 +19,7 @@ python3 evals/check_run_diffs.py
 python3 evals/check_event_journal.py
 python3 evals/check_state_reconciliation.py
 python3 evals/check_context_snapshot.py
+python3 evals/check_headless_result.py
 python3 evals/check_learning_log.py
 python3 evals/check_skill_contract.py --skill SKILL.md
 python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
@@ -139,6 +140,22 @@ validation changes.
 
 Add cases here when snapshot source hashing, section extraction, or budget
 status rules change.
+
+## Headless Result Checks
+
+`evals/check_headless_result.py` parses
+`templates/headless-output-schema.json` and manually validates representative
+payloads without adding a JSON Schema dependency. It covers:
+
+- schema JSON parsing
+- required field list
+- status enum
+- valid payload acceptance
+- invalid status rejection
+- missing required field rejection
+- invalid verification status rejection
+
+Add cases here when the headless final result shape changes.
 
 ## Learning Log Checks
 

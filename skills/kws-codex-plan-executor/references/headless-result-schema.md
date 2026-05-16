@@ -22,12 +22,12 @@ Final result shape:
 }
 ```
 
-`status` should be one of `success`, `blocked`, `failed`, or `interrupted`.
+`status` should be one of `success`, `blocked`, `failed`, or `cancelled`.
 Successful results must include non-empty verification evidence and a readable
 state path. Non-success results must include the blocker or failure in
 `open_gaps` or `residual_risk`, plus a concrete `next_action`.
 
 When `codex exec --output-schema` is available, the headless runner can pass a
-JSON Schema for this shape. When it is unavailable, the prompt must still ask
-for this JSON result and save the last message for review.
-
+JSON Schema for this shape from `templates/headless-output-schema.json`. When it
+is unavailable, the prompt must still ask for this JSON result and save the last
+message for review.
