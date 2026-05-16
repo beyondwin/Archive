@@ -15,6 +15,7 @@ python3 scripts/validate_state.py --help
 python3 scripts/check_learning_log_health.py --help
 python3 scripts/check_learning_log_health.py --latest 5 --json
 python3 evals/check_state_schema.py
+python3 evals/check_run_diffs.py
 python3 evals/check_learning_log.py
 python3 evals/check_skill_contract.py --skill SKILL.md
 python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
@@ -78,6 +79,20 @@ and invalid state payloads. It covers:
 - `unit_manifest` enum, write-scope, and terminal-completion requirements
 
 Add or update these cases whenever `references/state-schema.md` changes.
+
+## Diff Policy Checks
+
+`evals/check_run_diffs.py` creates temporary git repositories and verifies
+`scripts/check_run_diffs.py` against changed files from the worktree, index,
+and untracked set. It covers:
+
+- changed file allowed by both task contract and manifest
+- changed file outside `allowed_edits`
+- changed file matching forbidden globs
+- read-only manifest with no changed files
+- docs policy allowing `docs/**`
+
+Add cases here whenever the post-diff policy changes.
 
 ## Learning Log Checks
 
