@@ -651,6 +651,16 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 
    - **When in doubt, be conservative:** If dependency analysis is unreliable for any segment, treat tasks as DEPENDENT and restrict compaction points to explicit plan phase boundaries. `compaction_points` must always include the index of the final task (or the final task before Phase 2). Fewer compaction points are safer than wrong ones.
    - **SKIPPED propagation:** If task X is SKIPPED, automatically mark all tasks with X in their deps as SKIPPED as well. Record each propagated SKIPPED with reason 'dependency task_X was SKIPPED'.
+   - **Compute task_to_sections (C1):** For each task in the plan, populate `<active>.spec_manifest.task_to_sections[task_id]`:
+
+     a. Parse task body for `**Spec Refs:**` block (comma-separated section IDs, e.g. `**Spec Refs:** S1.2, S3.1`). If present: use those IDs verbatim. Validate each in `spec_manifest.sections` — any unknown ID is recorded as a Plan Reviewer **BLOCKER** input (consumed at Step 6.5).
+
+     b. Else (heuristic from **Files:** block): for each file in the task's Files block, compare path components against each `spec_manifest.sections[*].title` (case-insensitive substring match). Collect and dedupe matches across all files.
+
+     c. If step b yields no matches: set the entry to `{"sections": ["*"], "fallback_used": true}` — the Implementer will receive the full spec for this task. Otherwise: `{"sections": [<ids>], "fallback_used": false}`.
+
+     Write final values into `<active>.spec_manifest.task_to_sections`. Unknown-ID rows from step (a) are still written (with the unknown IDs intact) so the Plan Reviewer in Step 6.5 can see and BLOCKER them.
+
    - **Compute `global_constraints.shared_files`:** Build a map of file → list of task IDs that touch it (from each task's `**Files:**` block). Keep only files referenced by ≥ 2 tasks. Write this to **`<active>.global_constraints.shared_files`** in Step 7 (top-level `state.global_constraints.shared_files` for single-plan; `state.plan_chain[state.active_plan].global_constraints.shared_files` for v2.13 multi-plan; `state.plan2_state.global_constraints.shared_files` for v2.12 legacy plan2). The Implementer template's *Shared files alert* reads from the same resolved path.
 
    - **Compute `task_complexity` (P5 — effort scaling):** For each task, derive a complexity bucket SMALL / MEDIUM / LARGE used to scale the Implementer prompt at Phase 1 Step 1.
