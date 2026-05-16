@@ -1809,10 +1809,30 @@ If none: "WARN-tier tasks: 0".
 | Size | `<bytes formatted>` |
 | Redacted | `<yes/no>` |
 | Worktree | `<still present at> <path>` |
+| HTML report | `<file://path/to/REPORT.html or "FAILED (see render.log)">` |
 
 ### Remaining Risks
 - <risk description>: <mitigation taken or "accepted">
 ```
+
+### Step 3: Render HTML run report (F3)
+
+After Step 2's archive completes (regardless of archive success/failure), invoke the HTML renderer:
+
+```bash
+if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
+  ARCHIVE_DIR="$HOME/.claude/learning/kws-claude-multi-agent-executor/runs/$(date +%Y-%m-%d)/${MAE_LEARNING_RUN_ID}"
+  if [ -d "$ARCHIVE_DIR/artifacts" ]; then
+    python3 <skill_dir>/scripts/render_html_report.py \
+      --archive-dir "$ARCHIVE_DIR" \
+      --output "$ARCHIVE_DIR/artifacts/REPORT.html" \
+      2>"$ARCHIVE_DIR/artifacts/render.log" || \
+      echo "REPORT_RENDER: failed (see $ARCHIVE_DIR/artifacts/render.log)"
+  fi
+fi
+```
+
+Update state.json's `archive.report_html_path` if rendering succeeds (atomic R-M-W).
 
 ---
 
