@@ -56,6 +56,7 @@ python3 scripts/build_context_snapshot.py \
   --plan "$PLAN_REL" \
   --spec "${SPEC_REL:-}" \
   --docs "${DOCS_REL:-}" \
+  --max-chars "${CONTEXT_MAX_CHARS:-120000}" \
   --output "$RUN_DIR/context.json"
 ```
 
@@ -66,6 +67,8 @@ The snapshot records:
 - `workspace`
 - `sources[]` with `role`, repo-relative `path`, and SHA-256
 - `basis_hash`, derived from the sorted source list
+- `context_budget` with status, estimated chars, included sections, and omitted
+  sections
 
 The state file stores:
 
@@ -74,6 +77,10 @@ The state file stores:
 
 This makes resume and handoff grounded in the actual plan/spec/docs used at
 execution start rather than implicit chat memory.
+
+`context_budget.status` is `green` below 70% of the max, `yellow` between 70%
+and 100%, and `red` when the source exceeds the max or sections are omitted.
+The budget is character-based approximation, not exact token accounting.
 
 ## Context Health
 

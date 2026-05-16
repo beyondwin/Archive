@@ -108,6 +108,22 @@ Optional top-level `drift` records the last drift reconciliation result:
 When `lifecycle_outcome=finished`, `drift.unrepaired_blockers` must be empty
 and `drift.records` cannot contain any record with `severity=blocking`.
 
+Optional top-level `context_budget` mirrors the budget summary from
+`context.json` when a run wants budget state in `state.json`:
+
+```json
+"context_budget": {
+  "status": "green",
+  "max_chars": 120000,
+  "estimated_chars": 42100,
+  "included_sections": [],
+  "omitted_sections": []
+}
+```
+
+`status` must be `green`, `yellow`, or `red`; `max_chars` must be positive;
+`estimated_chars` must be non-negative; section fields must be arrays.
+
 `context_health` is required for `interactive` and `headless` execution after
 preflight initializes. It is a compact answer to: "Can another agent resume
 from state without relying on hidden chat context?"

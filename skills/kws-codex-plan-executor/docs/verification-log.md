@@ -156,6 +156,37 @@ risk. Do not paste long logs or sensitive output.
   - Safe repair remains intentionally narrow; source hash mismatches and
     unresolved task evidence block rather than repair.
 
+## 2026-05-16 - GSD-2 adoption task 6 context budget
+
+- Branch: `codex/gsd-2-adoption-20260516-074140`
+- Commit: pending at time of verification
+- Scope: added `context_budget` metadata to `context.json`, a `--max-chars`
+  snapshot option, optional state validation for budget shape, deterministic
+  snapshot evals, and docs for context-budget interpretation.
+- TDD evidence:
+  - RED: `python3 evals/check_context_snapshot.py` failed before implementation
+    because `build_context_snapshot.py` had no `--max-chars` or
+    `context_budget` support.
+  - GREEN: `python3 evals/check_context_snapshot.py` passed with green, yellow,
+    red/omission, and stability cases true.
+- Commands:
+  - `python3 evals/check_context_snapshot.py`
+    - result: pass, JSON payload had `"passed": true` and no failures.
+  - `python3 evals/check_state_schema.py`
+    - result: pass, JSON payload had `"passed": true` and no failures.
+  - `python3 evals/check_skill_contract.py --skill SKILL.md`
+    - result: pass, JSON payload had `"passed": true`.
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .`
+    - result: pass, `Skill is valid!`
+  - `python3 -m py_compile scripts/build_context_snapshot.py scripts/validate_state.py evals/check_context_snapshot.py`
+    - result: pass, no syntax errors.
+  - `python3 scripts/check_run_diffs.py --repo-root /Users/kws/source/private/worktrees/gsd-2-adoption-074140 --state /Users/kws/source/private/worktrees/gsd-2-adoption-074140/.codex-orchestrator/runs/20260516T074231Z-archive-codex-gsd-2-adoption-20260516-074140-f4e9b30fbbc1-c17bdf/state.json --task task_6 --json`
+    - result: pass, no violations for changed Task 6 files.
+  - `git diff --check -- skills/kws-codex-plan-executor`
+    - result: pass, no whitespace errors.
+- Residual risk:
+  - Budgeting is character-based approximation, not exact tokenizer accounting.
+
 ## 2026-05-14 - Log-driven executor hardening implementation
 
 - Branch: `codex/log-driven-executor-hardening`
