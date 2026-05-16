@@ -36,6 +36,7 @@ VALID_LIFECYCLE_OUTCOMES = {
 }
 NON_SUCCESS_OUTCOMES = {"blocked", "failed", "userinterlude", "askuserQuestion"}
 VALID_CONTEXT_HEALTH_STATUSES = {"green", "yellow", "red"}
+VALID_CONTEXT_BUDGET_STATUSES = {"green", "yellow", "red"}
 REQUIRED_CONTEXT_HEALTH_FIELDS = {
     "status",
     "last_checked_at",
@@ -235,6 +236,25 @@ def _validate_context_health(data: dict, errors: list[str]) -> None:
             errors.append(
                 "context_health.last_checked_at must not be older than timestamps.updated_at when lifecycle_outcome is finished"
             )
+
+
+def _validate_context_budget(data: dict, errors: list[str]) -> None:
+    budget = data.get("context_budget")
+    if budget is None:
+        return
+    if not isinstance(budget, dict):
+        errors.append("context_budget must be an object")
+        return
+    if budget.get("status") not in VALID_CONTEXT_BUDGET_STATUSES:
+        errors.append(f"context_budget.status must be one of {sorted(VALID_CONTEXT_BUDGET_STATUSES)}")
+    for key in ("max_chars", "estimated_chars"):
+        if key in budget and (not isinstance(budget[key], int) or budget[key] < 0):
+            errors.append(f"context_budget.{key} must be a non-negative integer")
+    if isinstance(budget.get("max_chars"), int) and budget["max_chars"] <= 0:
+        errors.append("context_budget.max_chars must be a positive integer")
+    for key in ("included_sections", "omitted_sections"):
+        if key in budget and not isinstance(budget[key], list):
+            errors.append(f"context_budget.{key} must be a list")
 
 
 def _validate_completion_audit(data: dict, errors: list[str]) -> None:
@@ -561,6 +581,7 @@ def validate(data: object) -> list[str]:
 
     _validate_context_snapshot(data, errors)
     _validate_context_health(data, errors)
+    _validate_context_budget(data, errors)
     _validate_unit_manifest(data, errors)
     _validate_event_journal(data, errors)
     _validate_drift(data, errors)

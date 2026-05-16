@@ -18,6 +18,7 @@ python3 evals/check_state_schema.py
 python3 evals/check_run_diffs.py
 python3 evals/check_event_journal.py
 python3 evals/check_state_reconciliation.py
+python3 evals/check_context_snapshot.py
 python3 evals/check_learning_log.py
 python3 evals/check_skill_contract.py --skill SKILL.md
 python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
@@ -125,6 +126,19 @@ drift detection. It covers:
 
 Add cases here whenever drift types, repair policy, or terminal drift
 validation changes.
+
+## Context Snapshot Checks
+
+`evals/check_context_snapshot.py` verifies context-budget metadata from
+`scripts/build_context_snapshot.py`. It covers:
+
+- small sources producing `green`
+- sources above 70% of max producing `yellow`
+- sources over max producing `red` with omitted section records
+- stable repeated `basis_hash` and section metadata
+
+Add cases here when snapshot source hashing, section extraction, or budget
+status rules change.
 
 ## Learning Log Checks
 

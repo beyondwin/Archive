@@ -37,10 +37,22 @@ Snapshot-level summary:
 }
 ```
 
+Build snapshots with a budget:
+
+```bash
+python3 scripts/build_context_snapshot.py \
+  --repo-root "$WORKTREE_ABS" \
+  --run-id "$RUN_ID" \
+  --plan "$PLAN_REL" \
+  --spec "${SPEC_REL:-}" \
+  --docs "${DOCS_REL:-}" \
+  --max-chars 120000 \
+  --output "$RUN_DIR/context.json"
+```
+
 Truncate or omit at Markdown section boundaries. Never truncate inside fenced
 code blocks when the section is included.
 
 Required source omission is always red. Optional source omission can be yellow
 when the snapshot still preserves the active plan, spec, and docs needed for
 the next task.
-

@@ -62,6 +62,7 @@ CONTEXT_BASIS_HASH="$(python3 "$SKILL_DIR/scripts/build_context_snapshot.py" \
   --plan "$PLAN_REL" \
   --spec "${SPEC_REL:-}" \
   --docs "${DOCS_REL:-}" \
+  --max-chars "${CONTEXT_MAX_CHARS:-120000}" \
   --output "$RUN_DIR/context.json")"
 
 codex exec \
@@ -93,6 +94,7 @@ CONTEXT_BASIS_HASH="$(python3 "$SKILL_DIR/scripts/build_context_snapshot.py" \
   --plan "$PLAN_REL" \
   --spec "${SPEC_REL:-}" \
   --docs "${DOCS_REL:-}" \
+  --max-chars "${CONTEXT_MAX_CHARS:-120000}" \
   --output "$RUN_DIR/context.json")"
 
 codex exec \

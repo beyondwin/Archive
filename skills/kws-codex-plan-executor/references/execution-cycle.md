@@ -51,6 +51,9 @@ Use this for `mode=interactive`.
   `scripts/build_context_snapshot.py` after `run_id` initialization and before
   task contracts. Store `context_snapshot_path` and `context_basis_hash` in
   `.codex-orchestrator/runs/<run_id>/state.json`.
+  Pass `--max-chars` when a run needs an explicit context budget; the snapshot
+  records `context_budget.status`, `estimated_chars`, `included_sections`, and
+  `omitted_sections` without changing the source-list `basis_hash`.
 - Initialize `context_health` in state after the context snapshot is created.
   It must include `status`, `last_checked_at`, `context_snapshot_present`,
   `context_basis_hash_recorded`, `active_task_contract_present`, `next_action`,
