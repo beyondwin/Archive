@@ -351,3 +351,31 @@ risk. Do not paste long logs or sensitive output.
   - Health reporting still cannot prove a live Codex desktop session; it
     classifies persisted project state and git evidence, with old inactive
     state reported as `stale_candidate`.
+
+## 2026-05-16 - GSD-2 adoption planning docs
+
+- Branch: `main`
+- Commit: pending at time of verification
+- Scope: added detailed experiment planning documents for selectively applying
+  `gsd-build/gsd-2` orchestration patterns to `kws-codex-plan-executor`.
+- Commands:
+  - `test -f skills/kws-codex-plan-executor/docs/experiments/2026-05-16-gsd-2-adoption/PLAN.md && test -f skills/kws-codex-plan-executor/docs/experiments/2026-05-16-gsd-2-adoption/IMPLEMENTATION.md`
+    - result: pass
+  - `rg -n "[T]BD|[T]ODO|fill[ -]in|implement[ -]later|Similar to [T]ask" skills/kws-codex-plan-executor/docs/experiments/2026-05-16-gsd-2-adoption || true`
+    - result: pass, no placeholder matches
+  - `git diff --check -- skills/kws-codex-plan-executor`
+    - result: pass, no whitespace errors
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/kws-codex-plan-executor`
+    - result: pass, `Skill is valid!`
+- Skipped checks:
+  - Runtime evals are expected to be skipped for this docs-only planning pass
+    because no scripts, prompt templates, runtime references, or skill metadata
+    are changed.
+- Documentation impact:
+  - Added package-internal experiment docs under `docs/experiments/`.
+  - No root Archive catalog update is needed because these are skill-package
+    implementation planning artifacts, not Archive library notes.
+- Residual risk:
+  - The docs describe a desired future implementation. A later execution pass
+    still needs to update scripts, evals, runtime references, prompt templates,
+    release docs, and history before any behavior becomes active.
