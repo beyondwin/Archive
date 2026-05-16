@@ -730,6 +730,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 
    Build the Plan Reviewer prompt from `references/plan-reviewer-prompt.md`. Fill in:
    - `{plan_path}`, `{plan_full_text}` — the plan document
+   - `{spec_manifest_json}` — the rendered JSON of `<active>.spec_manifest` (sections + task_to_sections; built in Steps 3.7 and 6) for the spec_manifest rubric items (C1)
    - `{spec_path}`, `{spec_full_text}` — the spec document
    - `{risk_levels_yaml}` — from Step 4 (YAML-formatted `task_N: <risk>`)
    - `{result_json_path}` — `<worktree_path>/.orchestrator/plan_review.json`
