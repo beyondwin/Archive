@@ -43,6 +43,10 @@ Use this for `mode=interactive`.
 - Initialize `.codex-orchestrator/runs/<run_id>/state.json` and keep
   `.codex-orchestrator/state.json` as a latest-state compatibility copy or
   pointer.
+- Initialize project-local event evidence by appending `run_started` with
+  `scripts/append_run_event.py` when the helper is available. Store
+  `event_journal_path` and `last_event_seq` in state; this journal is replay
+  evidence and does not replace `state.json` or user-local learning logs.
 - Build `.codex-orchestrator/runs/<run_id>/context.json` with
   `scripts/build_context_snapshot.py` after `run_id` initialization and before
   task contracts. Store `context_snapshot_path` and `context_basis_hash` in
@@ -78,6 +82,8 @@ For each task:
    `context_mode`, `required_skills`, `tool_policy`, `allowed_write_globs`,
    `forbidden_write_globs`, `artifact_policy`, and `max_context_chars`.
    Finished runs require every completed task to have a valid manifest.
+   Append `task_contract_recorded` after the contract is saved when the event
+   journal is active.
 2. Re-check task skills before edits. Invoke `using-superpowers` as the
    per-task skill gate. For feature, bugfix, refactor, behavior change, or
    executable-code edits, invoke `test-driven-development` before writing
@@ -122,6 +128,8 @@ For each task:
    files are checked against `contract.allowed_edits`,
    `unit_manifest.allowed_write_globs`, `contract.forbidden_edits`, and
    `unit_manifest.forbidden_write_globs`.
+   Append `verification_passed` or `verification_failed` for task-level
+   verification boundaries when the event journal is active.
 6. Record raw output paths for failures.
 7. Update state and checkpoint.
    Task completion must set the task `status` to `completed`, `blocked`, or

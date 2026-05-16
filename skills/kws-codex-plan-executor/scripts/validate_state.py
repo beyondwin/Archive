@@ -89,6 +89,23 @@ VALID_UNIT_TYPES = {
 VALID_CONTEXT_MODES = {"minimal", "focused", "expanded", "full"}
 VALID_TOOL_POLICIES = {"read-only", "planning", "implementation", "docs", "verification"}
 VALID_ARTIFACT_POLICIES = {"inline", "inline-summary", "excerpt", "on-demand"}
+VALID_EVENT_TYPES = {
+    "run_started",
+    "context_snapshot_created",
+    "pre_dispatch_checked",
+    "dispatch_gate_failed",
+    "task_contract_recorded",
+    "task_started",
+    "task_completed",
+    "verification_started",
+    "verification_passed",
+    "verification_failed",
+    "drift_detected",
+    "drift_repaired",
+    "blocked",
+    "failed",
+    "finished",
+}
 REQUIRED_UNIT_MANIFEST_FIELDS = {
     "unit_type",
     "context_mode",
@@ -338,6 +355,26 @@ def _validate_unit_manifest(data: dict, errors: list[str]) -> None:
             errors.append(f"{task_id}: read-only unit_manifest must not allow write globs")
 
 
+def _validate_event_journal(data: dict, errors: list[str]) -> None:
+    if data.get("lifecycle_outcome") != "finished":
+        return
+
+    run_id = data.get("run_id")
+    if not isinstance(run_id, str) or not run_id:
+        return
+
+    expected_path = _required_project_path(run_id, "events.jsonl")
+    journal_path = data.get("event_journal_path")
+    if not isinstance(journal_path, str) or not journal_path.strip():
+        errors.append("event_journal_path must be a non-empty string when lifecycle_outcome is finished")
+    elif journal_path != expected_path:
+        errors.append(f"event_journal_path must be {expected_path}")
+
+    last_seq = data.get("last_event_seq")
+    if not isinstance(last_seq, int) or last_seq <= 0:
+        errors.append("last_event_seq must be a positive integer when lifecycle_outcome is finished")
+
+
 def _method_skill(entry: object) -> str | None:
     if isinstance(entry, str):
         return entry
@@ -504,6 +541,7 @@ def validate(data: object) -> list[str]:
     _validate_context_snapshot(data, errors)
     _validate_context_health(data, errors)
     _validate_unit_manifest(data, errors)
+    _validate_event_journal(data, errors)
     _validate_completion_audit(data, errors)
     _validate_carried_acceptance(data, errors)
     _validate_method_audit(data, errors)

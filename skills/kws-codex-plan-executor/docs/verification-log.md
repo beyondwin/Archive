@@ -87,6 +87,40 @@ risk. Do not paste long logs or sensitive output.
   - The checker is post-facto evidence; it cannot prevent writes before they
     happen.
 
+## 2026-05-16 - GSD-2 adoption task 4 event journal
+
+- Branch: `codex/gsd-2-adoption-20260516-074140`
+- Commit: pending at time of verification
+- Scope: added `scripts/append_run_event.py`, event journal evals, terminal
+  state validation for `event_journal_path` and `last_event_seq`, and docs for
+  project-local journal semantics.
+- TDD evidence:
+  - RED: `python3 evals/check_event_journal.py` failed before implementation
+    because append script behavior and terminal journal validation were absent.
+  - GREEN: `python3 evals/check_event_journal.py` passed after implementation
+    with create, increment, run-id rejection, redaction, and terminal validation
+    cases true.
+- Commands:
+  - `python3 evals/check_event_journal.py`
+    - result: pass, JSON payload had `"passed": true` and no failures.
+  - `python3 evals/check_state_schema.py`
+    - result: pass, including `finished_missing_event_journal_path_fails`,
+      `finished_wrong_event_journal_path_fails`, and
+      `finished_stale_last_event_seq_fails`.
+  - `python3 evals/check_skill_contract.py --skill SKILL.md`
+    - result: pass, JSON payload had `"passed": true`.
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .`
+    - result: pass, `Skill is valid!`
+  - `python3 -m py_compile scripts/append_run_event.py scripts/validate_state.py evals/check_event_journal.py evals/check_state_schema.py`
+    - result: pass, no syntax errors.
+  - `python3 scripts/check_run_diffs.py --repo-root /Users/kws/source/private/worktrees/gsd-2-adoption-074140 --state /Users/kws/source/private/worktrees/gsd-2-adoption-074140/.codex-orchestrator/runs/20260516T074231Z-archive-codex-gsd-2-adoption-20260516-074140-f4e9b30fbbc1-c17bdf/state.json --task task_4 --json`
+    - result: pass, no violations for changed Task 4 files.
+  - `git diff --check -- skills/kws-codex-plan-executor`
+    - result: pass, no whitespace errors.
+- Residual risk:
+  - The event journal is audit evidence, not the source of truth; state remains
+    authoritative.
+
 ## 2026-05-14 - Log-driven executor hardening implementation
 
 - Branch: `codex/log-driven-executor-hardening`

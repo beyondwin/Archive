@@ -30,6 +30,8 @@ python3 scripts/validate_state.py .codex-orchestrator/runs/<run_id>/state.json
   "state_path": ".codex-orchestrator/runs/20260513T142233Z-archive-codex-example-7e884a0-a1b2c3/state.json",
   "context_snapshot_path": ".codex-orchestrator/runs/20260513T142233Z-archive-codex-example-7e884a0-a1b2c3/context.json",
   "context_basis_hash": "<sha256-of-source-list>",
+  "event_journal_path": ".codex-orchestrator/runs/20260513T142233Z-archive-codex-example-7e884a0-a1b2c3/events.jsonl",
+  "last_event_seq": 1,
   "context_health": {
     "status": "green",
     "last_checked_at": null,
@@ -86,6 +88,12 @@ after preflight initializes. It must equal
 `.codex-orchestrator/runs/<run_id>/context.json`. `context_basis_hash` must be
 non-empty and match the `basis_hash` inside that snapshot. `prompt` and
 `handoff` modes may omit these fields.
+
+`event_journal_path` is project-local replay evidence for execution modes. For
+`lifecycle_outcome=finished`, it must equal
+`.codex-orchestrator/runs/<run_id>/events.jsonl`, and `last_event_seq` must be a
+positive integer. The state validator checks only state metadata; journal file
+contents are covered by `evals/check_event_journal.py`.
 
 `context_health` is required for `interactive` and `headless` execution after
 preflight initializes. It is a compact answer to: "Can another agent resume

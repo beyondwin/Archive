@@ -112,6 +112,7 @@ codex exec \
   `.codex-orchestrator/runs/<run_id>/headless-final.json`
 - `.codex-orchestrator/runs/<run_id>/context.json`
 - `.codex-orchestrator/runs/<run_id>/state.json`
+- `.codex-orchestrator/runs/<run_id>/events.jsonl`
 - `.codex-orchestrator/state.json` as latest-state compatibility copy/pointer
 - raw verification output paths for failures
 
@@ -135,6 +136,12 @@ When a task records `unit_manifest`, the target should run or honestly
 substitute `scripts/check_run_diffs.py --repo-root "$WORKTREE_ABS" --state
 "$RUN_DIR/state.json" --task <task_id>` before task completion. The diff check
 is post-facto policy evidence, not a low-level write hook.
+
+The target should append project-local events with
+`scripts/append_run_event.py`. The event journal is run evidence only; terminal
+success still depends on `state.json`, `context_health`, and
+`completion_audit`. Finished state must include matching `event_journal_path`
+and a positive `last_event_seq`.
 
 When a headless target records required phase methods, it must use
 `method_audit` evidence instead of skill-invocation intent. Implementation TDD
