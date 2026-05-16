@@ -100,7 +100,11 @@ For each task:
    no-findings residual-risk statement, and completion verification requires
    command evidence. Do not record routine helper skills; record required
    methods and explicit waivers only.
-3. Implement locally unless subagents are explicitly allowed.
+3. Implement locally unless subagents are explicitly allowed. If subagents are
+   explicitly allowed, set `subagents_requested=true` in state and record each
+   delegated run under `subagent_runs` with owner task, write scope, status,
+   result summary, changed files, review status, and any overlap rationale.
+   Finished runs cannot contain running or unreviewed subagent records.
 4. Review spec compliance and code quality on `gpt-5.5 high`.
 5. Run risk-scaled verification.
    Parallel verification is allowed only when commands do not share mutable

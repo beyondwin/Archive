@@ -222,6 +222,22 @@ Mitigation:
 Residual risk: model/tool availability can differ by environment, and fixture
 runs can be slower or flaky because they execute real Codex sessions.
 
+### Subagent Record Trust Boundary
+
+Risk: delegated work can be mistaken for reviewed parent work if subagent output
+is accepted at face value.
+
+Mitigation:
+
+- Subagent records are opt-in and require `subagents_requested=true`.
+- Completed records must include `changed_files` and `review_status`.
+- Finished runs cannot carry running or unreviewed subagent records.
+- `changed_files` must match declared `write_scope`.
+- Overlap with the current task write scope requires an explicit rationale.
+
+Residual risk: the validator proves record shape and obvious scope violations;
+the parent executor must still inspect diffs and run final verification.
+
 ## Intentional Deferrals
 
 ### No Full OMX Runtime
