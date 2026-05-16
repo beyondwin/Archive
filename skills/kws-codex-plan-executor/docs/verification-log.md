@@ -7,6 +7,27 @@ verification before final responses, commits, pushes, or PRs.
 Keep entries concise. Store commands, outcomes, skipped checks, and residual
 risk. Do not paste long logs or sensitive output.
 
+## 2026-05-16 - GSD-2 adoption task 1 contracts
+
+- Branch: `codex/gsd-2-adoption-20260516-074140`
+- Commit: pending at time of verification
+- Scope: added contract-only reference docs for unit manifests, pre-dispatch
+  gates, event journals, drift reconciliation, context budget, headless
+  results, opt-in subagent runs, and command observations. Recorded GSD-2
+  adoption/rejection decisions and new residual risks. No runtime code changed.
+- Commands:
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .`
+    - result: pass, `Skill is valid!`
+  - `git diff --check -- skills/kws-codex-plan-executor`
+    - result: pass, no whitespace errors
+- Skipped checks:
+  - Runtime/eval checks skipped for this task because the milestone is
+    contract-only documentation and intentionally changes no scripts, prompts,
+    or state validation behavior.
+- Residual risk:
+  - The new contracts are advisory until later tasks add deterministic
+    validation and runtime references.
+
 ## 2026-05-14 - Log-driven executor hardening implementation
 
 - Branch: `codex/log-driven-executor-hardening`
