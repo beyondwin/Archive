@@ -1469,6 +1469,13 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
      python3 <skill_dir>/scripts/append_learning_event.py close-run \
        --run-id "$MAE_LEARNING_RUN_ID" --outcome blocked >/dev/null 2>&1 || true
    fi
+   # Archive run (F1): best-effort archive before HEADLESS_HALTED marker.
+   if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
+     <skill_dir>/scripts/archive_run.sh \
+       --worktree <worktree_path> \
+       --run-id "$MAE_LEARNING_RUN_ID" \
+       --outcome blocked 2>&1 || echo "ARCHIVE: failed (see archive output above) — worktree retained"
+   fi
    printf 'reason: budget_exceeded\n' > <worktree_path>/.orchestrator/HEADLESS_HALTED.txt
    ```
    Then exit (headless child) or halt (interactive). The Monitor watcher will surface the HALTED line on its next loop.
@@ -1520,6 +1527,16 @@ options:
    if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
      python3 <skill_dir>/scripts/append_learning_event.py close-run \
        --run-id "$MAE_LEARNING_RUN_ID" --outcome aborted >/dev/null 2>&1 || true
+   fi
+   ```
+
+   **Archive run (F1):** after close-run, call archive_run.sh with `--outcome aborted`. Best-effort — failure is silent (the run has already been closed):
+   ```bash
+   if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
+     <skill_dir>/scripts/archive_run.sh \
+       --worktree <worktree_path> \
+       --run-id "$MAE_LEARNING_RUN_ID" \
+       --outcome aborted 2>&1 || echo "ARCHIVE: failed (see archive output above) — worktree retained"
    fi
    ```
    For the more common case (task-only halt that lets the orchestrator continue), do NOT close-run — the run is still alive. Phase 2 Step 2 closes it with `outcome=success` if subsequent tasks finish, or the final hard-halt block does so with `outcome=blocked` if the orchestrator gives up entirely.
@@ -1717,6 +1734,19 @@ fi
 
 Close-run failure is silent. The summary report below still prints unchanged.
 
+**Archive run (F1):** call scripts/archive_run.sh with the worktree path, run ID (from MAE_LEARNING_RUN_ID), and outcome. Failure is silent — log to user but do NOT halt; close-run already succeeded.
+
+```bash
+if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
+  <skill_dir>/scripts/archive_run.sh \
+    --worktree "$WORKTREE_ABS" \
+    --run-id "$MAE_LEARNING_RUN_ID" \
+    --outcome success 2>&1 || echo "ARCHIVE: failed (see archive output above) — worktree retained"
+fi
+```
+
+After archive completes, populate the "Archive" section of the Final Summary Report below using fields from `<worktree>/.orchestrator/state.json` `archive` object (written by archive_run.sh): `archive.tar_path`, `archive.size_bytes`, `archive.redacted`. If the archive call failed, write `FAILED` for archive_path and omit size/redacted. The worktree is always retained — record its absolute path.
+
 Output:
 
 ```markdown
@@ -1770,6 +1800,15 @@ If none: "WARN-tier tasks: 0".
 - Worktree: **active** — branch `<name>` at `<path>`. Merge or delete when ready.
 - Debug artifacts: none found
 - Temp files: none found
+
+### Archive (F1)
+
+| Item | Value |
+|------|-------|
+| Archive path | `<archive_meta.tar_path or "FAILED">` |
+| Size | `<bytes formatted>` |
+| Redacted | `<yes/no>` |
+| Worktree | `<still present at> <path>` |
 
 ### Remaining Risks
 - <risk description>: <mitigation taken or "accepted">
