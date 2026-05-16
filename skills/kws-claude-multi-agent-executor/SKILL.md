@@ -1567,6 +1567,31 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
    ```
    Append failure is silent (`|| true`) per the learning-log failure policy. **Do not use these counters to alter orchestrator behavior** — Goodhart's-law guard. Behavior changes require a follow-on experiment.
 
+3.5. **Emit `chain_trigger_eval` (C3 — v2.15):** compute the trigger result via the should_chain logic (Resume Chain "Trigger (v2.15 — token-aware)" section). Update `state.context_budget.last_evaluation_tokens = session_input_tokens` and `state.context_budget.last_evaluation_at = <iso8601 now>`. Then write a candidate event to `<worktree>/.orchestrator/learning_events/trigger_<compaction_index>-orchestrator.json`:
+
+   ```json
+   {
+     "schema_version": "1",
+     "phase": "phase_transition",
+     "event_type": "context_health",
+     "severity": "low",
+     "execution": {"task_id": "transition_<compaction_index>", "issue_key": "chain_trigger_eval"},
+     "subagent": {"role": "orchestrator", "model": "opus", "dispatch": "orchestrator"},
+     "summary": "Chain trigger eval: <chained|not_chained> | tokens=<N>/<threshold> | compactions=<N>/2 | completed=<N>/8",
+     "context": {
+       "trigger_decision": "chained" | "not_chained",
+       "trigger_reason": "token_threshold" | "legacy_floor" | "none",
+       "session_input_tokens": <int>,
+       "threshold_tokens": <int>,
+       "compactions_reached": <int>,
+       "completed_count": <int>
+     },
+     "privacy": {"redacted": true, "notes": "Counters only — no path/content."}
+   }
+   ```
+
+   Append silently (`|| true`). One event PER Phase Transition T3 regardless of decision — enables post-hoc A/B analysis of token-vs-legacy trigger lift. If `trigger_decision == "chained"`: proceed with the existing Resume Chain procedure (Phase 0 Step 0 Resume Chain section). If `not_chained`: continue execution.
+
 4. **Evaluate budget (F2):** governed by spec §F2.4. Placement is **after** the state-anchor write (step 1) **and after** the `context_health` snapshot (step 3) — the spec timing supersedes the plan's "step 2.5" label.
 
    ```
