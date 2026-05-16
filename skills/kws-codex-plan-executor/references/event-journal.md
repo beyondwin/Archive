@@ -28,6 +28,19 @@ Event shape:
 `seq` is monotonic per run and starts at 1. `state.last_event_seq` should match
 the last appended sequence before terminal completion.
 
+Append an event with:
+
+```bash
+python3 scripts/append_run_event.py \
+  --state .codex-orchestrator/runs/<run_id>/state.json \
+  --type task_contract_recorded \
+  --payload '{"task_id":"task_2"}'
+```
+
+The helper resolves `.codex-orchestrator/runs/<run_id>/events.jsonl`, rejects a
+payload `run_id` that does not match `state.run_id`, appends the next sequence,
+and updates `state.event_journal_path` plus `state.last_event_seq`.
+
 ## Redaction
 
 Reject or redact keys matching `token`, `secret`, `password`, `api_key`,
@@ -44,3 +57,20 @@ flow, such as `run_started`, `task_contract_recorded`, `task_completed`,
 types should remain short, factual, and derived from project-local execution
 state.
 
+Current event type vocabulary:
+
+- `run_started`
+- `context_snapshot_created`
+- `pre_dispatch_checked`
+- `dispatch_gate_failed`
+- `task_contract_recorded`
+- `task_started`
+- `task_completed`
+- `verification_started`
+- `verification_passed`
+- `verification_failed`
+- `drift_detected`
+- `drift_repaired`
+- `blocked`
+- `failed`
+- `finished`

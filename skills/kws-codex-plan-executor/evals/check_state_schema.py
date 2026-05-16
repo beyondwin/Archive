@@ -48,6 +48,8 @@ def base_state() -> dict:
         "state_path": ".codex-orchestrator/runs/20260513T000000Z-archive-codex-example-abcdef0-a1b2c3/state.json",
         "context_snapshot_path": ".codex-orchestrator/runs/20260513T000000Z-archive-codex-example-abcdef0-a1b2c3/context.json",
         "context_basis_hash": "0" * 64,
+        "event_journal_path": ".codex-orchestrator/runs/20260513T000000Z-archive-codex-example-abcdef0-a1b2c3/events.jsonl",
+        "last_event_seq": 1,
         "context_health": {
             "status": "green",
             "last_checked_at": "2026-05-14T10:00:00Z",
@@ -306,6 +308,37 @@ def main() -> int:
     )
     if not checks["finished_empty_evidence_fails"]:
         failures.append("finished completion_audit should require verification evidence")
+
+    finished_missing_event_journal_path = base_state()
+    del finished_missing_event_journal_path["event_journal_path"]
+    missing_journal_path = run_validator(script, finished_missing_event_journal_path)
+    checks["finished_missing_event_journal_path_fails"] = (
+        missing_journal_path.returncode != 0 and "event_journal_path" in (
+            missing_journal_path.stderr + missing_journal_path.stdout
+        )
+    )
+    if not checks["finished_missing_event_journal_path_fails"]:
+        failures.append("finished lifecycle outcome should require event_journal_path")
+
+    finished_wrong_event_journal_path = base_state()
+    finished_wrong_event_journal_path["event_journal_path"] = ".codex-orchestrator/events.jsonl"
+    wrong_journal_path = run_validator(script, finished_wrong_event_journal_path)
+    checks["finished_wrong_event_journal_path_fails"] = (
+        wrong_journal_path.returncode != 0 and "event_journal_path must be" in (
+            wrong_journal_path.stderr + wrong_journal_path.stdout
+        )
+    )
+    if not checks["finished_wrong_event_journal_path_fails"]:
+        failures.append("finished lifecycle outcome should require matching event_journal_path")
+
+    finished_stale_last_event_seq = base_state()
+    finished_stale_last_event_seq["last_event_seq"] = 0
+    stale_event_seq = run_validator(script, finished_stale_last_event_seq)
+    checks["finished_stale_last_event_seq_fails"] = (
+        stale_event_seq.returncode != 0 and "last_event_seq" in (stale_event_seq.stderr + stale_event_seq.stdout)
+    )
+    if not checks["finished_stale_last_event_seq_fails"]:
+        failures.append("finished lifecycle outcome should require positive last_event_seq")
 
     finished_open_carried_acceptance = base_state()
     finished_open_carried_acceptance["tasks"]["task_0"]["carried_acceptance"] = {

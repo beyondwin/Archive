@@ -16,6 +16,7 @@ python3 scripts/check_learning_log_health.py --help
 python3 scripts/check_learning_log_health.py --latest 5 --json
 python3 evals/check_state_schema.py
 python3 evals/check_run_diffs.py
+python3 evals/check_event_journal.py
 python3 evals/check_learning_log.py
 python3 evals/check_skill_contract.py --skill SKILL.md
 python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
@@ -93,6 +94,20 @@ and untracked set. It covers:
 - docs policy allowing `docs/**`
 
 Add cases here whenever the post-diff policy changes.
+
+## Event Journal Checks
+
+`evals/check_event_journal.py` verifies `scripts/append_run_event.py` and the
+terminal state metadata expected for project-local `events.jsonl`. It covers:
+
+- first append creates `events.jsonl` and sets `last_event_seq=1`
+- second append increments sequence
+- payload run-id mismatch rejection
+- secret-like payload key redaction and long-string truncation
+- finished state rejecting missing or stale event journal metadata
+
+Add cases here when event types, redaction policy, or terminal event metadata
+changes.
 
 ## Learning Log Checks
 

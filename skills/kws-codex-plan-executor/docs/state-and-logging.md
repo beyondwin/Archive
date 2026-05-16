@@ -1,7 +1,7 @@
 # State And Logging
 
-This document explains the project-local execution state, source snapshots, and
-user-local learning log.
+This document explains the project-local execution state, source snapshots,
+project-local event journal, and user-local learning log.
 
 ## State Files
 
@@ -146,6 +146,29 @@ Successful terminal state must include:
 The checklist maps prompt/plan requirements to artifacts. Verification evidence
 records commands or honest substitutes. This prevents a run from claiming
 completion solely because a narrow command passed.
+
+## Project-Local Event Journal
+
+Execution modes may write replay evidence to:
+
+```text
+.codex-orchestrator/runs/<run_id>/events.jsonl
+```
+
+Append with:
+
+```bash
+python3 scripts/append_run_event.py \
+  --state .codex-orchestrator/runs/<run_id>/state.json \
+  --type task_contract_recorded \
+  --payload '{"task_id":"task_2"}'
+```
+
+The event journal is not the source of truth. State remains authoritative.
+Events are compact evidence of run boundaries, while the user-local learning
+log remains cross-repository process learning. Finished state must include
+`event_journal_path=".codex-orchestrator/runs/<run_id>/events.jsonl"` and a
+positive `last_event_seq`.
 
 ## Method Audit
 
