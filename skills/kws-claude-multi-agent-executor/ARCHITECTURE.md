@@ -166,9 +166,12 @@ Step 4: Agent Cleanup
   },
   "task_complexity": {"0": "SMALL", "1": "LARGE", ...},
   "spec_edits": [{"task", "spec_line", "reason", "commit", "ts", "fault"}],
-  "plan_review_warnings": []
+  "plan_review_warnings": [],
+  "implementer_model": {"used": "sonnet | opus", "default": "sonnet"}
 }
 ```
+
+**v2.12 추가 — `implementer_model`**: Implementer 서브에이전트의 모델을 선택. `used` 는 이번 실행에서 dispatch에 쓴 모델, `default` 는 스킬이 인자 없을 때 쓰는 contemporaneous 기본값 (현재 항상 `"sonnet"`). 인자는 인터랙티브 부모(Phase -1 step b 또는 mode=interactive 의 Phase 0 Step 7)에서만 파싱되며 — 헤들리스 자식 `claude -p` 는 원래 인자에 접근하지 못하므로 state.json 에서 읽어 보존합니다. Reviewer / Verifier 는 영향 없음 (judge 일정성 — `docs/experiments/v2.12-implementer-opus-vs-sonnet/decisions/D001-...` 참조).
 
 **재개(Resumption)**: 모든 상태가 JSON에 있으므로, 새 오케스트레이터 세션은 state.json만 읽어서 기록된 태스크/스텝에서 이어 실행할 수 있습니다. 이것이 `mode: headless_pending` 의 동작 원리입니다 — 스폰하는 세션이 최소 상태를 쓰고, 스폰된 세션이 채워 넣습니다.
 

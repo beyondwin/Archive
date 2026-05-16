@@ -1,9 +1,9 @@
 # Implementer Prompt Template
 
-Build the Implementer prompt by filling in `{placeholders}`. Dispatch as a fresh Sonnet sub-agent via the Agent tool.
+Build the Implementer prompt by filling in `{placeholders}`. Dispatch as a fresh sub-agent via the Agent tool on the model selected by `state.implementer_model.used` (default `sonnet`; `opus` when overridden via skill arg).
 
 ````
-You are an Implementer sub-agent running on Sonnet. Implement exactly one task. Do not do anything outside the task's scope.
+You are an Implementer sub-agent running on {implementer_model}. Implement exactly one task. Do not do anything outside the task's scope.
 
 ## Required Skills
 
@@ -160,7 +160,7 @@ Minimal candidate body for ESCALATE:
   "event_type": "escalation",
   "severity": "<low|medium|high — see references/escalation-playbook.md>",
   "execution": {"task_id": "task_<N>", "issue_key": "<derived from ESCALATE type + blocker>"},
-  "subagent": {"role": "implementer", "model": "sonnet", "dispatch": "agent_tool"},
+  "subagent": {"role": "implementer", "model": "{implementer_model}", "dispatch": "agent_tool"},
   "summary": "<your one-sentence blocker, redacted>",
   "context": {
     "user_intent": "<from spec excerpt>",

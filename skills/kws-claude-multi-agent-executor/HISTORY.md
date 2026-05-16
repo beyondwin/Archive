@@ -21,6 +21,24 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.12 — Implementer model selection (experiment branch, 2026-05-16)
+
+**Status**: Ships on `experiment/v2.12-implementer-opus-vs-sonnet` only — NOT yet merged to main. Awaiting findings from the 6-run A/B comparison before promotion.
+
+Adds an optional skill argument `implementer_model=<opus|sonnet>` (default `sonnet`) so the Implementer sub-agent can be dispatched on Opus or Sonnet without modifying the rest of the pipeline. Reviewer and Verifier remain on Sonnet for judge consistency (ADR D001 in `docs/experiments/v2.12-implementer-opus-vs-sonnet/decisions/`).
+
+State schema addition: `state.implementer_model = {"used": "<sonnet|opus>", "default": "sonnet"}`. The `default` field records the contemporaneous skill default (always `"sonnet"` in v2.12) for reproducibility — distinct from `used`, which records what actually ran.
+
+Critical propagation detail: the arg is parsed in the **interactive parent** (Phase -1 step b or Phase 0 Step 7 under `mode=interactive`). The headless child `claude -p` only sees the headless prompt text, NOT the original skill args — so it reads `state.implementer_model` from the minimal state.json the parent wrote, never re-parsing. This propagation path is the most likely silent-failure mode if extended in future; the relevant guardrail in SKILL.md spells it out explicitly.
+
+Companion experiment artifacts under `docs/experiments/v2.12-implementer-opus-vs-sonnet/`:
+- `bench/spec.md` + `bench/plan.md` — 6-task `flagset` benchmark, deliberately partitioned 2× SMALL / 2× MEDIUM / 2× LARGE so per-bucket Δ is measurable
+- `bench/aggregate.py` — stdlib-only multi-run aggregator (per-arm summary, per-complexity breakdown, Δ Opus−Sonnet, optional CSV)
+- `bench/repo-skeleton/` — drop-in starting repo for the benchmark
+- `RUN.md` — end-to-end procedure for 6 runs + collection
+
+Backward compatible. Old state.json without `implementer_model` is interpreted as `{"used": "sonnet", "default": "sonnet"}` by aggregate.py and the resume protocol.
+
 ### v2.11 — Method audit and codex-cross-pollinated hardening (2026-05-14)
 
 Five features, drawn from sibling `kws-codex-plan-executor` learning-log review (commit `1d10f13`) plus an MAE-internal gap analysis:
