@@ -587,3 +587,19 @@ risk. Do not paste long logs or sensitive output.
   - The docs describe a desired future implementation. A later execution pass
     still needs to update scripts, evals, runtime references, prompt templates,
     release docs, and history before any behavior becomes active.
+
+## 2026-05-16 - GSD-2 adoption Task 8 subagent run store
+
+- Branch: `codex/gsd-2-adoption-20260516-074140`
+- Commit: pending at time of verification
+- Scope: added opt-in `subagents_requested` and `subagent_runs` state
+  validation, deterministic fixtures, prompt guidance, and reference docs.
+- Commands:
+  - `python3 evals/check_state_schema.py`
+    - RED result: failed as expected before validator changes for opt-in,
+      completed changed-files, terminal review/running status, and
+      overlap-rationale fixtures.
+    - GREEN result: pass, `"passed": true`
+- Residual risk:
+  - Subagent records remain audit artifacts, not a scheduler. Parent execution
+    still owns diff review and final verification.

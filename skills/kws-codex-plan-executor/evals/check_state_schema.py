@@ -91,6 +91,20 @@ def base_state() -> dict:
     }
 
 
+def completed_subagent_run() -> dict:
+    return {
+        "id": "agent_123",
+        "owner_task": "task_0",
+        "mode": "fork_context",
+        "write_scope": ["docs/subagent.md"],
+        "status": "completed",
+        "result_summary": "Updated the delegated docs note.",
+        "changed_files": ["docs/subagent.md"],
+        "review_status": "accepted",
+        "merged_at": "2026-05-14T09:45:00Z",
+    }
+
+
 def run_validator(script: Path, payload: dict) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory(prefix="codex-state-schema-") as temp:
         state_path = Path(temp) / "state.json"
@@ -115,6 +129,101 @@ def main() -> int:
     checks["valid_unit_manifest_passes"] = valid.returncode == 0
     if not checks["valid_unit_manifest_passes"]:
         failures.append("valid unit_manifest should pass")
+
+    no_subagents_requested = base_state()
+    no_subagents_requested["subagents_requested"] = False
+    no_subagents_requested["subagent_runs"] = []
+    no_subagents = run_validator(script, no_subagents_requested)
+    checks["subagents_off_without_runs_passes"] = no_subagents.returncode == 0
+    if not checks["subagents_off_without_runs_passes"]:
+        failures.append("subagents off with no subagent_runs should pass")
+
+    completed_subagent = base_state()
+    completed_subagent["subagents_requested"] = True
+    completed_subagent["subagent_runs"] = [completed_subagent_run()]
+    completed_subagent_result = run_validator(script, completed_subagent)
+    checks["completed_reviewed_subagent_passes"] = completed_subagent_result.returncode == 0
+    if not checks["completed_reviewed_subagent_passes"]:
+        failures.append("completed reviewed subagent record should pass")
+
+    subagent_without_opt_in = base_state()
+    subagent_without_opt_in["subagent_runs"] = [completed_subagent_run()]
+    subagent_without_opt_in_result = run_validator(script, subagent_without_opt_in)
+    checks["subagent_runs_without_opt_in_fails"] = (
+        subagent_without_opt_in_result.returncode != 0
+        and "subagent_runs requires subagents_requested=true" in (
+            subagent_without_opt_in_result.stderr + subagent_without_opt_in_result.stdout
+        )
+    )
+    if not checks["subagent_runs_without_opt_in_fails"]:
+        failures.append("subagent_runs should require subagents_requested=true")
+
+    completed_subagent_missing_changed_files = base_state()
+    completed_subagent_missing_changed_files["subagents_requested"] = True
+    missing_changed_run = completed_subagent_run()
+    del missing_changed_run["changed_files"]
+    completed_subagent_missing_changed_files["subagent_runs"] = [missing_changed_run]
+    missing_changed_result = run_validator(script, completed_subagent_missing_changed_files)
+    checks["completed_subagent_missing_changed_files_fails"] = (
+        missing_changed_result.returncode != 0
+        and "changed_files" in (missing_changed_result.stderr + missing_changed_result.stdout)
+    )
+    if not checks["completed_subagent_missing_changed_files_fails"]:
+        failures.append("completed subagent record missing changed_files should fail")
+
+    finished_unreviewed_subagent = base_state()
+    finished_unreviewed_subagent["subagents_requested"] = True
+    unreviewed_run = completed_subagent_run()
+    unreviewed_run["review_status"] = "unreviewed"
+    finished_unreviewed_subagent["subagent_runs"] = [unreviewed_run]
+    unreviewed_result = run_validator(script, finished_unreviewed_subagent)
+    checks["finished_unreviewed_subagent_fails"] = (
+        unreviewed_result.returncode != 0
+        and "review_status=unreviewed" in (unreviewed_result.stderr + unreviewed_result.stdout)
+    )
+    if not checks["finished_unreviewed_subagent_fails"]:
+        failures.append("finished run with unreviewed subagent result should fail")
+
+    finished_running_subagent = base_state()
+    finished_running_subagent["subagents_requested"] = True
+    running_run = completed_subagent_run()
+    running_run["status"] = "running"
+    running_run["review_status"] = "unreviewed"
+    running_run["changed_files"] = []
+    finished_running_subagent["subagent_runs"] = [running_run]
+    running_result = run_validator(script, finished_running_subagent)
+    checks["finished_running_subagent_fails"] = (
+        running_result.returncode != 0
+        and "running subagent" in (running_result.stderr + running_result.stdout)
+    )
+    if not checks["finished_running_subagent_fails"]:
+        failures.append("finished run with running subagent should fail")
+
+    overlapping_subagent_without_rationale = base_state()
+    overlapping_subagent_without_rationale["subagents_requested"] = True
+    overlapping_run = completed_subagent_run()
+    overlapping_run["write_scope"] = ["docs/example.md"]
+    overlapping_run["changed_files"] = ["docs/example.md"]
+    overlapping_subagent_without_rationale["subagent_runs"] = [overlapping_run]
+    overlapping_result = run_validator(script, overlapping_subagent_without_rationale)
+    checks["subagent_current_task_overlap_without_rationale_fails"] = (
+        overlapping_result.returncode != 0
+        and "overlap_rationale" in (overlapping_result.stderr + overlapping_result.stdout)
+    )
+    if not checks["subagent_current_task_overlap_without_rationale_fails"]:
+        failures.append("subagent write_scope overlapping current task should require overlap_rationale")
+
+    overlapping_subagent_with_rationale = base_state()
+    overlapping_subagent_with_rationale["subagents_requested"] = True
+    overlapping_allowed_run = completed_subagent_run()
+    overlapping_allowed_run["write_scope"] = ["docs/example.md"]
+    overlapping_allowed_run["changed_files"] = ["docs/example.md"]
+    overlapping_allowed_run["overlap_rationale"] = "Parent task delegated one declared docs file and will review before merge."
+    overlapping_subagent_with_rationale["subagent_runs"] = [overlapping_allowed_run]
+    overlapping_allowed_result = run_validator(script, overlapping_subagent_with_rationale)
+    checks["subagent_current_task_overlap_with_rationale_passes"] = overlapping_allowed_result.returncode == 0
+    if not checks["subagent_current_task_overlap_with_rationale_passes"]:
+        failures.append("subagent write_scope overlapping current task should pass with overlap_rationale")
 
     invalid_unit_type = base_state()
     invalid_unit_type["tasks"]["task_0"]["unit_manifest"]["unit_type"] = "mystery"

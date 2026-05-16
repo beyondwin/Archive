@@ -22,12 +22,20 @@ Record shape:
 
 Rules:
 
-- `subagent_runs` requires explicit `subagents=on` or a recorded user request.
+- `subagent_runs` requires explicit `subagents=on`, `delegation`, `parallel
+  work`, `subagents`, or another recorded user request. Empty
+  `subagent_runs` may appear with `subagents_requested=false`.
+- `owner_task` must reference a task in state.
+- `write_scope` must be a non-empty list of globs owned by that delegated run.
+- Completed records require `changed_files` and `review_status`.
+- Completed `changed_files` must match `write_scope`.
 - Finished runs cannot have running, failed-without-review, or unreviewed
   subagent records.
-- `changed_files` must match `write_scope`.
-- Overlapping `write_scope` with another active subagent requires a rationale.
+- Overlapping `write_scope` with the current task requires an
+  `overlap_rationale`, because the parent executor still owns merge review and
+  final verification.
+- Overlapping `write_scope` between multiple active subagents also requires a
+  rationale before dispatch.
 
 Subagent records are state artifacts, not a scheduler. The parent executor
 still owns review, merge decisions, and final verification evidence.
-

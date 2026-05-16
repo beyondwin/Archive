@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import sys
 from datetime import datetime, timezone
@@ -117,6 +118,17 @@ REQUIRED_UNIT_MANIFEST_FIELDS = {
     "artifact_policy",
     "max_context_chars",
 }
+VALID_SUBAGENT_STATUSES = {"queued", "running", "completed", "failed", "cancelled"}
+VALID_SUBAGENT_REVIEW_STATUSES = {"unreviewed", "accepted", "rejected", "changes_requested"}
+REQUIRED_SUBAGENT_FIELDS = {
+    "id",
+    "owner_task",
+    "mode",
+    "write_scope",
+    "status",
+    "result_summary",
+}
+COMPLETED_SUBAGENT_FIELDS = {"changed_files", "review_status"}
 
 
 def _required_project_path(run_id: str, name: str) -> str:
@@ -416,6 +428,114 @@ def _validate_drift(data: dict, errors: list[str]) -> None:
                 )
 
 
+def _path_matches_any(path: str, patterns: list[str]) -> bool:
+    return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
+
+
+def _patterns_overlap(left: str, right: str) -> bool:
+    return (
+        fnmatch.fnmatchcase(left, right)
+        or fnmatch.fnmatchcase(right, left)
+        or left.startswith(right.rstrip("*"))
+        or right.startswith(left.rstrip("*"))
+    )
+
+
+def _current_task_write_patterns(data: dict) -> list[str]:
+    tasks = data.get("tasks")
+    current_task_id = data.get("current_task")
+    if not isinstance(tasks, dict) or not isinstance(current_task_id, str):
+        return []
+    current_task = tasks.get(current_task_id)
+    if not isinstance(current_task, dict):
+        return []
+
+    patterns: list[str] = []
+    contract = current_task.get("contract")
+    if isinstance(contract, dict) and isinstance(contract.get("allowed_edits"), list):
+        patterns.extend(item for item in contract["allowed_edits"] if isinstance(item, str))
+    manifest = current_task.get("unit_manifest")
+    if isinstance(manifest, dict) and isinstance(manifest.get("allowed_write_globs"), list):
+        patterns.extend(item for item in manifest["allowed_write_globs"] if isinstance(item, str))
+    return patterns
+
+
+def _validate_subagent_runs(data: dict, errors: list[str]) -> None:
+    requested = data.get("subagents_requested", False)
+    if "subagents_requested" in data and not isinstance(requested, bool):
+        errors.append("subagents_requested must be a boolean when present")
+        requested = False
+
+    runs = data.get("subagent_runs", [])
+    if runs is None:
+        return
+    if not isinstance(runs, list):
+        errors.append("subagent_runs must be a list when present")
+        return
+    if runs and requested is not True:
+        errors.append("subagent_runs requires subagents_requested=true")
+
+    tasks = data.get("tasks") if isinstance(data.get("tasks"), dict) else {}
+    current_patterns = _current_task_write_patterns(data)
+    outcome = data.get("lifecycle_outcome")
+
+    for index, run in enumerate(runs):
+        prefix = f"subagent_runs[{index}]"
+        if not isinstance(run, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+
+        for key in sorted(REQUIRED_SUBAGENT_FIELDS):
+            if key not in run:
+                errors.append(f"{prefix} missing field {key}")
+
+        owner_task = run.get("owner_task")
+        if not isinstance(owner_task, str) or not owner_task.strip():
+            errors.append(f"{prefix}.owner_task must be a non-empty string")
+        elif owner_task not in tasks:
+            errors.append(f"{prefix}.owner_task must reference an existing task")
+
+        status = run.get("status")
+        if status not in VALID_SUBAGENT_STATUSES:
+            errors.append(f"{prefix}.status must be one of {sorted(VALID_SUBAGENT_STATUSES)}")
+        if outcome == "finished" and status == "running":
+            errors.append(f"{prefix}: running subagent is not allowed when lifecycle_outcome is finished")
+
+        write_scope = run.get("write_scope")
+        if not isinstance(write_scope, list) or not write_scope or not all(isinstance(item, str) and item for item in write_scope):
+            errors.append(f"{prefix}.write_scope must be a non-empty list of strings")
+            write_scope_patterns: list[str] = []
+        else:
+            write_scope_patterns = write_scope
+
+        review_status = run.get("review_status")
+        if "review_status" in run and review_status not in VALID_SUBAGENT_REVIEW_STATUSES:
+            errors.append(f"{prefix}.review_status must be one of {sorted(VALID_SUBAGENT_REVIEW_STATUSES)}")
+        if outcome == "finished" and review_status == "unreviewed":
+            errors.append(f"{prefix}: review_status=unreviewed is not allowed when lifecycle_outcome is finished")
+
+        if status == "completed":
+            for key in sorted(COMPLETED_SUBAGENT_FIELDS):
+                if key not in run:
+                    errors.append(f"{prefix} completed record missing field {key}")
+            changed_files = run.get("changed_files")
+            if not isinstance(changed_files, list) or not all(isinstance(item, str) and item for item in changed_files):
+                errors.append(f"{prefix}.changed_files must be a list of strings for completed subagents")
+            else:
+                for changed_file in changed_files:
+                    if write_scope_patterns and not _path_matches_any(changed_file, write_scope_patterns):
+                        errors.append(f"{prefix}.changed_files entry {changed_file} does not match write_scope")
+
+        if current_patterns and write_scope_patterns:
+            overlaps_current = any(
+                _patterns_overlap(subagent_pattern, current_pattern)
+                for subagent_pattern in write_scope_patterns
+                for current_pattern in current_patterns
+            )
+            if overlaps_current and not _has_substantive_value(run.get("overlap_rationale")):
+                errors.append(f"{prefix}.overlap_rationale is required when write_scope overlaps current task")
+
+
 def _method_skill(entry: object) -> str | None:
     if isinstance(entry, str):
         return entry
@@ -585,6 +705,7 @@ def validate(data: object) -> list[str]:
     _validate_unit_manifest(data, errors)
     _validate_event_journal(data, errors)
     _validate_drift(data, errors)
+    _validate_subagent_runs(data, errors)
     _validate_completion_audit(data, errors)
     _validate_carried_acceptance(data, errors)
     _validate_method_audit(data, errors)

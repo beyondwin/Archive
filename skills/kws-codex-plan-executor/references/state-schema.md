@@ -50,6 +50,8 @@ python3 scripts/validate_state.py .codex-orchestrator/runs/<run_id>/state.json
   "lifecycle_outcome": null,
   "handoff_reason": "",
   "completion_audit": null,
+  "subagents_requested": false,
+  "subagent_runs": [],
   "risk_levels": {},
   "tasks": {},
   "execution_dag": [],
@@ -123,6 +125,40 @@ Optional top-level `context_budget` mirrors the budget summary from
 
 `status` must be `green`, `yellow`, or `red`; `max_chars` must be positive;
 `estimated_chars` must be non-negative; section fields must be arrays.
+
+Optional top-level `subagents_requested` and `subagent_runs` record delegated
+execution only when the user explicitly allowed subagents:
+
+```json
+"subagents_requested": true,
+"subagent_runs": [
+  {
+    "id": "agent_123",
+    "owner_task": "task_4",
+    "mode": "fork_context",
+    "write_scope": ["docs/**"],
+    "status": "completed",
+    "result_summary": "Updated delegated docs wording.",
+    "changed_files": ["docs/example.md"],
+    "review_status": "accepted",
+    "merged_at": "2026-05-16T07:40:00Z",
+    "overlap_rationale": "Parent task delegated one docs subset and reviewed before merge."
+  }
+]
+```
+
+Rules:
+
+- `subagents_requested` is optional and defaults to false.
+- Non-empty `subagent_runs` requires `subagents_requested=true`.
+- Each `owner_task` must reference an existing task id.
+- Each `write_scope` must be a non-empty list of path globs.
+- Completed subagent records require `changed_files` and `review_status`.
+- Completed `changed_files` must match the record's `write_scope`.
+- `lifecycle_outcome=finished` cannot contain running or unreviewed subagent
+  records.
+- If a subagent `write_scope` overlaps the current task's allowed write scope,
+  the record must include a non-empty `overlap_rationale`.
 
 `context_health` is required for `interactive` and `headless` execution after
 preflight initializes. It is a compact answer to: "Can another agent resume
