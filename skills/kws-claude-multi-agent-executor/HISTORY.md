@@ -21,6 +21,20 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.14 — Forensics & cost (2026-05-16)
+
+Bundle of four forensic/observability features that all share the same axis: making post-run state inspectable, queryable, and budget-aware. None of them change Orchestrator or sub-agent logic during a run — they all act at run boundaries (close-run, post-task) or as out-of-band read-only tooling.
+
+- **F1 — Archive `.orchestrator/` to user-local store after close-run.** When a run finishes (close-run path), the entire `.orchestrator/` directory is copied to `~/.claude-multi-agent-executor/archive/<run-id>/` so that subsequent `git clean` / branch deletion / worktree teardown does not vaporize the audit trail. A `redact_archive.py` helper strips obvious secrets (API keys, tokens, env-style `KEY=value` lines matching well-known patterns) before archival; redaction is best-effort, not a security boundary — see `docs/experiments/v2.14-forensics-and-cost/spec.md §F1` for the exact regex set and the §F1.5 clarification on anchor handling.
+
+- **F2 — Cost ledger + budget cap.** Every sub-agent dispatch records token usage to `cost_ledger` (broken down `by_task`, `by_role`, `by_model`, and `totals`) using `scripts/price_table.py` for $/token conversion. A new run-level `budget_cap_usd` arg + `budget_action` (`warn` | `halt`) lets the Orchestrator stop dispatching new sub-agents once cumulative cost exceeds the cap. Price table is a flat dict keyed by model id; update on Anthropic price changes.
+
+- **F3 — HTML run report.** `scripts/render_html_report.py` runs at Phase 2 Step 3 (post-run docs phase) and produces a single-file `report.html` summarizing tasks, durations, cost, escalations, and per-task verification evidence. Pure templating, no LLM, no external deps beyond stdlib. Designed to be opened from the archive long after the worktree is gone.
+
+- **F4 — Query scripts.** `scripts/query_state.sh` and `scripts/query_run.sh` are no-LLM read-only `jq`-based query helpers. `query_state.sh` queries the live `.orchestrator/state.json` of an in-progress run; `query_run.sh` queries an archived run by `<run-id>` against the user-local archive (F1). Both expose the same query verbs (`tasks`, `cost`, `escalations`, `timeline`) so muscle memory carries across live/archived inspection.
+
+Acceptance signal for the bundle: all 15 tasks (`task_0`…`task_14`) green, plus the spec clarification recorded for `task_6` regex anchor in `docs/experiments/v2.14-forensics-and-cost/spec.md §F1.5`.
+
 ### v2.13 — Natural-language args + multi-plan auto-chain (experiment branch, 2026-05-16)
 
 **Status**: Ships on `experiment/v2.13-natural-multi-plan` only — NOT yet merged to main. Awaiting a real multi-plan run + advisor sign-off before promotion.
