@@ -91,7 +91,7 @@ Operates on the tarball *after* tar creation, before final mv into `artifacts/`.
    - If binary (heuristic: contains null byte in first 8KB): skip — do not modify.
    - If text: in-place rewrite with these substitutions, in order:
      - `<HOME>` token replaces absolute `os.environ['HOME']`.
-     - `<HOME>/` replaces `/Users/<username>/` patterns matching `^/Users/[^/]+/`.
+     - `<HOME>/` replaces `/Users/<username>/` patterns matching `/Users/[^/]+/` (intentionally un-anchored so embedded paths in log lines and JSON values are scrubbed, not just line-start paths).
      - `<WORKTREE>` replaces the run's actual worktree absolute path (read from `meta.json.worktree_path` if available, otherwise from state.json).
      - `<REPO>` replaces the run's actual repo root absolute path (similar lookup).
 3. Stream-json `headless.jsonl` files: for each line that parses as JSON, redact:
