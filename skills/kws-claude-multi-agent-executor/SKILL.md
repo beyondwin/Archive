@@ -1063,6 +1063,23 @@ Build the implementer prompt from the **Implementer Prompt Template** below. Fil
 - `{task_size}` — SMALL / MEDIUM / LARGE from `<active>.task_complexity.task_N` (P5)
 - `{effort_guidance}` — the matching guidance string from Phase 0 Step 6 (P5)
 - `{implementer_model}` — value of `state.implementer_model.used` ("sonnet" or "opus"). Used in the prompt header and the learning-log `subagent.model` field.
+- `{decisions_register}` — **v2.15 decisions_register substitution (C2)**:
+  ```
+  register = <active>.decisions_register (list)
+  if register is empty: spec_text = ""
+  else:
+    lines = ["## Project decisions so far (do NOT re-decide; raise objection via Reviewer if any seem wrong):"]
+    for entry in register sorted by made_at ascending:
+      if entry["supersedes"] is not None:
+        prefix = "~~[SUPERSEDED by " + entry["supersedes"] + "]~~ "
+      else:
+        prefix = ""
+      file_list = ", ".join(entry["files"]) if entry.get("files") else "(no files)"
+      lines.append("- " + prefix + "[" + entry["task"] + "] " + entry["decision"] + " — " + file_list)
+    spec_text = "\n".join(lines) + "\n\n"
+  Substitute {decisions_register} → spec_text
+  ```
+  Empty register → placeholder substitutes to empty string (section omitted entirely). Superseded entries render with strikethrough prefix `~~[SUPERSEDED by task_X]~~`.
 
 Re-dispatch rules (always append `## Fix Required\n{issues}`):
 - After **Combined Reviewer FAIL** OR **Verifier FAIL**: include Required Skills bullet 5 (`receiving-code-review`). The skill's discipline (verify each issue is real before patching; push back on false positives like baseline drift or flaky tests) applies to verifier feedback the same as reviewer feedback.
