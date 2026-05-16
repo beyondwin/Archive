@@ -1509,6 +1509,8 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
    - Update `low_tasks_pending_verification = []`
    - Write the file and verify it is readable.
 
+1.5. **Project decisions to DECISIONS.md (C2):** render `<worktree>/.orchestrator/DECISIONS.md` from `<active>.decisions_register`. Format: a markdown table with columns `[Task, Decision, Files, Made at, Supersedes]`. Sort by `made_at` ascending. Group superseded entries (`supersedes != null`) at the bottom in a separate subsection. Use an atomic write: write to `DECISIONS.md.tmp`, then `mv` over `DECISIONS.md`. The file is included in the archive tarball (F1). Empty register → write a stub file with header `# Decisions register (empty)`. Failure → log warning, continue (best-effort like the register itself).
+
 2. **Actively drop prior task context:** from this point forward, do not reference individual task details from before this compaction point. Work only from your structured task summary (what you have in internal notes from Agent Cleanup steps). If you need details from an earlier task, re-read the state file — do not hold raw sub-agent output in active context.
 
 3. **Emit `context_health` passive snapshot (v2.10):** if `MAE_LEARNING_RUN_ID` is set, write a candidate JSON to `<worktree>/.orchestrator/learning_events/transition_<compaction_index>-orchestrator.json` and `append` it. The event is informational — never alters control flow. Fields per `references/learning-log.md` "`context_health` (v2.10) — passive observation contract". Minimum body:
@@ -1743,6 +1745,8 @@ This guarantees LOW task verification even when `compaction_points=[]` (short pl
 If a Phase Docs Updater was NOT dispatched for the last phase of the active plan (no compaction point after the last task): dispatch one now for that plan first (per-plan, with `_p<active>` suffix in multi-plan mode), then proceed to the chain-level summary if multi-plan.
 
 If per-plan updaters already covered all phases: dispatch only the top-level chain summary (multi-plan) or the un-suffixed single-plan final (single-plan).
+
+**Final DECISIONS.md projection (C2):** re-render `<worktree>/.orchestrator/DECISIONS.md` from the full union of `<active>.decisions_register` across every plan (iterate `state.plan_chain[*]` for multi-plan; top-level + `plan2_state` for legacy). Same format and atomic-write contract as Phase Transition T3 step 1.5. This is the canonical, end-of-run snapshot — the per-T3 projections are intermediate.
 
 Build from the **Final Docs Updater Prompt Template** with:
 - All files changed: consolidated from state file across all tasks (all plans for chain runs)
