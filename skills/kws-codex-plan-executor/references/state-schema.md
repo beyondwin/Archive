@@ -95,6 +95,19 @@ non-empty and match the `basis_hash` inside that snapshot. `prompt` and
 positive integer. The state validator checks only state metadata; journal file
 contents are covered by `evals/check_event_journal.py`.
 
+Optional top-level `drift` records the last drift reconciliation result:
+
+```json
+"drift": {
+  "last_checked_at": "2026-05-16T07:35:00Z",
+  "records": [],
+  "unrepaired_blockers": []
+}
+```
+
+When `lifecycle_outcome=finished`, `drift.unrepaired_blockers` must be empty
+and `drift.records` cannot contain any record with `severity=blocking`.
+
 `context_health` is required for `interactive` and `headless` execution after
 preflight initializes. It is a compact answer to: "Can another agent resume
 from state without relying on hidden chat context?"

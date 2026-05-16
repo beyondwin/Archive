@@ -213,6 +213,10 @@ details.
 ## Phase 2: Finish
 
 - Run final verification.
+- Run drift reconciliation with `scripts/reconcile_state.py --check` or
+  `--repair-safe` before terminal `lifecycle_outcome=finished`. Unrepaired
+  blocking drift prevents a finished outcome and requires a concrete
+  `handoff_reason` or `context_health.next_action`.
 - Check documentation impact.
 - Refresh `context_health` before final state validation. Finished runs must be
   `handoff_ready=true`, not `red`, and have `context_health.last_checked_at`
