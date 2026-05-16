@@ -1,6 +1,7 @@
 # Source of truth for docs/INDEX.md.
 # Keep entries sorted by topic, then title.
-# Exclude docs/superpowers/* working plans from this library index.
+# Exclude executor-skill experiment records from this library index unless they
+# are later promoted into curated notes.
 
 - title: Redis, Optimistic Lock, UPSERT로 타임딜 재고 차감 설계하기
   path: docs/notes/backend/concurrency/time-deal-stock-decrement-redis-db_kr.md

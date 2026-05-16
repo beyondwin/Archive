@@ -16,7 +16,7 @@ Section record:
 ```json
 {
   "role": "plan",
-  "path": "docs/superpowers/plans/example.md",
+  "path": "skills/kws-codex-plan-executor/docs/experiments/example/PLAN.md",
   "section": "Task 2: Implement validator",
   "estimated_chars": 4210,
   "sha256": "..."

@@ -10,9 +10,6 @@ intake, source material, curated notes, generated wiki pages, and metadata.
   exported PDFs converted to Markdown, or other reference material.
 - `notes/` - human-curated documents organized by topic. This is the primary
   long-term library.
-- `superpowers/` - implementation plans and design specs produced while
-  building or changing skills. These are working artifacts, not cataloged
-  library notes.
 - `wiki/` - AI-maintained wiki pages compiled from `raw/` and `notes/`.
 - `_index/` - catalog and topic metadata used to build `INDEX.md`.
 - `_graph/` - notes about generated graph artifacts. Graphify's default runtime
@@ -24,7 +21,8 @@ Use this priority order when answers conflict:
 
 1. Original material in `raw/`
 2. Curated notes in `notes/`
-3. Working plans and specs in `superpowers/`
+3. Skill-local experiment records under `../skills/<skill>/docs/experiments/`
+   when the question is about executor-skill implementation history
 4. Generated summaries and relationship maps in `wiki/` or `graphify-out/`
 
 Generated wiki pages are useful for speed, but they are not the final authority.
@@ -41,8 +39,9 @@ navigation output local unless it is a lightweight placeholder:
 - `docs/_graph/README.md` documents graph artifacts, but generated graph files
   are ignored.
 - `graphify-out/` is a local generated knowledge graph and is ignored.
-- `docs/superpowers/` is tracked because the plans and specs are source
-  artifacts for executor-skill work.
+- Local working plans under ignored directories such as `docs/superpowers/`
+  are not part of the curated library. Durable executor-skill plans should live
+  under the relevant `skills/<skill>/docs/experiments/` directory.
 
 ## Intake Workflow
 
@@ -52,9 +51,9 @@ navigation output local unless it is a lightweight placeholder:
 4. Update `_index/catalog.yml`, `_index/topics.yml`, and `INDEX.md`.
 5. Regenerate `wiki/` or `graphify-out/` when enough material has changed.
 
-Do not add `docs/superpowers/` plans to the library catalog unless a plan is
-converted into a durable curated note. Link them from the relevant skill README
-or experiment record instead.
+Do not add local working plans to the library catalog unless a plan is converted
+into a durable curated note. Link durable executor-skill experiment records from
+the relevant skill README or experiment index instead.
 
 ## Graphify Workflow
 

@@ -70,6 +70,10 @@ For behavior history:
 
 - [HISTORY.md](HISTORY.md) - versioned skill-level changes.
 - [ARCHITECTURE.md](ARCHITECTURE.md) - stable design summary.
+- [docs/experiments/2026-05-16-gsd-2-adoption/PLAN.md](docs/experiments/2026-05-16-gsd-2-adoption/PLAN.md)
+  and
+  [IMPLEMENTATION.md](docs/experiments/2026-05-16-gsd-2-adoption/IMPLEMENTATION.md)
+  - source analysis and implementation details behind v1.9.0.
 - [docs/experiments/2026-05-14-oh-my-codex-adoption/PLAN.md](docs/experiments/2026-05-14-oh-my-codex-adoption/PLAN.md)
   and
   [IMPLEMENTATION.md](docs/experiments/2026-05-14-oh-my-codex-adoption/IMPLEMENTATION.md)
