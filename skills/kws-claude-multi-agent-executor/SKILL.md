@@ -552,6 +552,23 @@ This is a fallback — the primary expectation is that one headless subprocess c
 
    **Why this gate exists:** Every ambiguity caught here saves one Implementer dispatch + SPEC_BLOCKER escalation + git reset cycle downstream.
 
+3.7. **Build spec manifest (C1):**
+   Call: `python3 <skill_dir>/scripts/build_spec_manifest.py <spec_path>`
+   Capture stdout JSON. If parse fails: halt with `"spec_manifest build failed: <stderr>"`.
+
+   Write to `<active>.spec_manifest`:
+   ```json
+   {
+     "spec_path": "<spec_path>",
+     "spec_total_chars": <int from stdout sum>,
+     "sections": <parsed JSON>,
+     "task_to_sections": {},  
+     "fallback_policy": "<state.manifest_fallback arg-set; default 'full_spec_on_blocker'>"
+   }
+   ```
+
+   `task_to_sections` starts empty here; it is populated at Step 6 (Compute task_to_sections — C1, added by Task 2). The Plan Reviewer (Step 6.5) validates downstream references.
+
 4. **Assign risk levels** to each task:
    - `low` — isolated change, single file or module, no shared state, no API surface change
    - `mid` — touches 2+ modules, shared state, moderate coupling, or config changes
