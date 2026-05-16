@@ -2,7 +2,7 @@
 name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation. NOTE — single-session execution is preferable for ≤5-task plans or plans with deep cross-task coupling (multi-agent overhead exceeds the parallelism win).
 metadata:
-  version: "2.12.0"
+  version: "2.13.0"
   updated_at: "2026-05-16"
 ---
 
@@ -13,11 +13,49 @@ metadata:
 You are the **Orchestrator** running on Opus. Execute an implementation plan from start to finish autonomously using fresh Sonnet sub-agents. Do not ask the user for approval between tasks.
 
 **At invocation, the user provides:**
-- **Plan path** — path to the implementation plan document
-- **Spec path** — path to the design spec document
-- Optionally: `risk=<low|mid|high>` to override risk level for all tasks
-- Optionally: `docs_scope=<file1,file2>` to override which docs are updated
+- **Plan path** — `plan=<path>` (required). For multi-plan sequential runs (v2.13), add `plan2=<path>`, `plan3=<path>`, … `planN=<path>` and matching `specN=<path>` pairs; the skill auto-chains them in numeric order with `manifest=` NOT required.
+- **Spec path** — `spec=<path>` (required for the primary plan). For multi-plan runs add `spec2=`, `spec3=`, … paired with each `planN=`.
+- Optionally: `risk=<low|mid|high>` to override risk level for all tasks (run-level — shared across all plans in a chain).
+- Optionally: `docs_scope=<file1,file2>` to override which docs are updated.
 - Optionally: `implementer_model=<opus|sonnet>` — override the Implementer sub-agent's model. Default is `sonnet`. The Reviewer and Verifier always run on Sonnet regardless (judge consistency). See `docs/experiments/v2.12-implementer-opus-vs-sonnet/` for the rationale.
+- Optionally: `parallel=off` to force sequential task dispatch (default is parallel where possible).
+- Optionally: `mode=interactive` for single-session execution (no headless self-spawn — uses subscription pool instead of Agent SDK credits).
+
+**Natural-language args (v2.13):** instead of writing `implementer_model=opus parallel=off`, you may include the words `opus` (or `오푸스`) and `순차` (or `sequential`) anywhere in the args text. The skill scans free-text tokens and applies them. Explicit `key=value` always wins; contradictions halt. See Phase -1.0 for the full lexicon and conflict rules.
+
+---
+
+## Active-tree resolution (v2.13)
+
+Throughout the rest of this document, the placeholder **`<active>`** refers to the JSON path of the currently-active plan's per-plan state. It expands at runtime as follows:
+
+| State.json shape | `<active>` expands to |
+|------------------|------------------------|
+| `state.plan_chain` present (v2.13 multi-plan) | `state.plan_chain[state.active_plan]` |
+| `state.plan_chain` absent + `state.active_plan == "plan2"` (v2.12 legacy two-plan) | `state.plan2_state` |
+| Otherwise (single-plan, or `state.active_plan == "plan1"`) | `state` (top-level) |
+
+**Per-plan fields** (live under `<active>`, NOT directly under `state` in multi-plan runs):
+`tasks`, `task_summaries`, `quality_trend`, `baseline`, `low_tasks_pending_verification`, `global_constraints`, `compaction_points`, `execution_plan`, `risk_levels`, `task_complexity`, `last_compaction_after_task`, `last_completed_task`, `last_completed_at`, `plan_review`.
+
+**Run-level fields** (always at top-level `state.*`, shared across all plans in a chain):
+`active_plan`, `plan_chain`, `implementer_model`, `spec_edits`, `test_command`, `mode`, `branch`, `worktree`, `timestamps`, `chain_resume`, `plan`, `spec` (legacy mirrors of plan_chain[0]).
+
+Every read or write to a per-plan field MUST go through `<active>` resolution. Hard-coding `state.tasks` or `state.quality_trend` for a multi-plan run silently corrupts the chain: plan 0's data writes to top-level while plan 1's writes to `plan_chain[1]`, and the two trees diverge. The placeholder is **not optional** — wherever you see `<active>.foo` below, substitute the correct path before reading or writing.
+
+In bash/jq fragments throughout the skill (e.g., Monitor scripts), the same rule applies via the `active_plan` dispatch:
+
+```bash
+if jq -e '.plan_chain' state.json >/dev/null 2>&1; then
+  ACTIVE='.plan_chain[.active_plan]'
+elif [ "$(jq -r '.active_plan' state.json)" = "plan2" ]; then
+  ACTIVE='.plan2_state'
+else
+  ACTIVE='.'
+fi
+```
+
+Use `$ACTIVE.tasks`, `$ACTIVE.quality_trend`, etc. in jq queries downstream.
 
 ---
 
@@ -25,11 +63,73 @@ You are the **Orchestrator** running on Opus. Execute an implementation plan fro
 
 At invocation, before any other work:
 
-Detection (in order):
-1. Parse skill arguments. Args are space-separated `key=value` pairs (e.g., `plan=/path/to/plan.md spec=/path/to/spec.md mode=interactive`).
-2. If parsed args contain `mode=interactive` (case-insensitive): legacy single-session mode — skip Phase -1, proceed to Phase 0.
-3. If invocation prompt contains literal `<<HEADLESS_KWS_ORCHESTRATOR>>` anywhere: this is the headless instance — skip Phase -1, proceed to Phase 0.
-4. Otherwise: execute Self-Spawn Procedure below, then exit.
+### Phase -1.0: Argument Parser (v2.13)
+
+Args are a mix of explicit `key=value` pairs and free-text natural-language hints, separated by whitespace. Order doesn't matter. Parse in three deterministic passes:
+
+**Pass 1 — collect `key=value` pairs.**
+
+Recognized keys: `plan`, `plan2`, `plan3`, …, `planN`, `spec`, `spec2`, `spec3`, …, `specN` (matching plan numbers), `implementer_model`, `parallel`, `risk`, `docs_scope`, `mode`, `manifest`. Each appears as `key=value` with no surrounding spaces around `=`. Unknown keys → halt: `"Unknown argument: <key>=<value>"`.
+
+**Pass 2 — multi-plan auto-detection.**
+
+- Collect every key matching `^plan(\d*)$`. Treat `plan=` as index 0, `planN=` as index N−1 (so `plan2=` is index 1, matching the v2.12 convention). This yields a set of plan indices.
+- Required: index 0 (`plan=`) is always present. Halt if missing: `"Missing required arg: plan=<path>"`.
+- Gaps in the numeric sequence halt: e.g. `plan=A plan3=C` (missing `plan2=`) → `"Plan index gap: expected plan2= but only plan, plan3 provided. Renumber consecutively or fill the gap."`
+- For each present `planN=`, the matching `specN=` must also be present (with the same suffix). Missing pair → halt: `"plan<N>= present but spec<N>= missing"`.
+- If `manifest=` is also present → halt: `"manifest= is mutually exclusive with planN=/specN= args."` (manifest support is reserved; the auto-detection covers the use case.)
+- Result: an ordered list `[(plan_path_0, spec_path_0), (plan_path_1, spec_path_1), ...]`. Length 1 → single-plan run (v2.12 schema). Length ≥ 2 → multi-plan run (v2.13 `plan_chain[]` schema; see Phase 0 Step 7).
+
+**Pass 3 — natural-language keyword lexicon (v2.13).**
+
+Tokenize the args by whitespace and process every token NOT consumed by Pass 1 (i.e., free text not matching `key=value`).
+
+For each token:
+
+1. **Skip exclusion guards.** If the token contains any of `/`, `.`, `=`, or backtick → skip (paths or code-like; never match).
+2. **Strip Korean particles.** Korean grammatical particles attach without word boundaries, so Python `\b` regex doesn't catch them (e.g., `오푸스로` is one `\w+` token). Strip the **longest matching trailing particle** from the token once. Particle suffixes in priority order (longest first):
+   - `적으로`, `에서`, `으로`, `적인`, `적`, `로`, `을`, `를`, `이`, `가`, `의`, `에`
+   
+   Examples: `오푸스로` → `오푸스`; `순차적으로` → `순차`; `대화형으로` → `대화형`; `직렬로` → `직렬`; `시리얼로` → `시리얼`; `소넷이` → `소넷`. If no particle matches, keep the token as-is. ASCII tokens are unaffected by this step (no Korean particles to strip).
+3. **Lowercase the stripped token** (case-insensitive match for ASCII; Korean has no case).
+4. **Exact-match against the lexicon.**
+
+Lexicon (exact match on the stripped+lowercased token; word-boundary regex `\b` works only after particle stripping):
+
+| Stripped token | Maps to |
+|----------------|---------|
+| `opus`, `오푸스` | `implementer_model=opus` |
+| `sonnet`, `소넷` | `implementer_model=sonnet` |
+| `순차`, `sequential`, `직렬`, `시리얼` | `parallel=off` |
+| `대화형`, `interactive` | `mode=interactive` |
+
+The reference implementation lives at `docs/experiments/v2.13-natural-multi-plan/bench/nl_parser_reference.py` — the orchestrator's prose interpretation MUST produce the same parse result as that script. Test fixtures at `bench/test_nl_parser.py` validate the script against every example in `examples/invocations.md`.
+
+Application rule (explicit always wins):
+- If the corresponding key was already set in Pass 1 AND the NL match agrees → no-op (record `"NL keyword '<word>' agrees with explicit <key>=<value>"` in the echo).
+- If the corresponding key was already set in Pass 1 AND the NL match contradicts → halt with: `"Argument conflict: explicit <key>=<val_explicit> contradicts natural-language '<word>' (→ <val_nl>). Remove one or align them."`
+- If the corresponding key was unset → set it from the NL match.
+- If two NL matches map to the same key with different values (e.g., args contain both "opus" and "sonnet" as free text) → halt with: `"Natural-language conflict: '<word1>' (→ <val1>) and '<word2>' (→ <val2>) both target <key>. Disambiguate explicitly."`
+
+**Echo line (v2.13 — required output before self-spawn or Phase 0).**
+
+After Pass 3, output ONE line to the user summarizing the resolved interpretation, before doing any other work:
+
+```
+Parsed: <N> plan(s) [<index 0 slug>→<index 1 slug>→...], implementer_model=<value> [from <source>], parallel=<value> [from <source>], mode=<value> [from <source>], risk=<value or "per-task">.
+```
+
+`<source>` is one of: `explicit` (Pass 1 set it), `NL '<word>'` (Pass 3 set it from a keyword), or `default` (not set; using built-in default). The slug is derived from the plan filename per Phase 0 Step 2 rule.
+
+The user sees this single line and can interrupt if interpretation is wrong. In headless mode (`mode=interactive` not set), the line still prints to the interactive parent's stdout before self-spawn.
+
+### Phase -1.1: Mode detection
+
+After Phase -1.0 parsing:
+
+1. If parsed args contain `mode=interactive` (any source — explicit or NL): legacy single-session mode — skip Phase -1, proceed to Phase 0.
+2. If invocation prompt contains literal `<<HEADLESS_KWS_ORCHESTRATOR>>` anywhere: this is the headless instance — skip Phase -1, proceed to Phase 0.
+3. Otherwise: execute Self-Spawn Procedure below, then exit.
 
 ### Self-Spawn Procedure
 
@@ -39,16 +139,21 @@ Execute Phase 0 Step 1 (working tree clean check), Step 1.5 (cross-run isolation
 
 **b. Initialize a minimal `.orchestrator/state.json` in the worktree.**
 
-Before writing: parse the optional `implementer_model=<opus|sonnet>` skill argument here in the interactive parent — this is the only place where the original skill args are available, since the headless subprocess only sees the headless prompt text (NOT the original args). Case-insensitive. Unknown value → halt with: "Unknown implementer_model=<value>. Allowed: opus, sonnet." If unset → use `"sonnet"`.
+All arg-derived values come from Phase -1.0's three-pass parser (`implementer_model`, plan/spec pairs, `parallel`, `mode`, etc.). The headless subprocess will NOT re-parse args — only the headless prompt text reaches it, NOT the original args. The interactive parent persists everything needed into state.json here.
 
-Write `<worktree_path>/.orchestrator/state.json` using the Write tool:
+Validate `implementer_model` value: must be `opus` or `sonnet` (case-insensitive). Unknown value → halt: `"Unknown implementer_model=<value>. Allowed: opus, sonnet."` Unset → use `"sonnet"`.
+
+**Multi-plan vs single-plan write rules (v2.13):**
+
+If the parsed plan list has length 1: write the minimal state.json in v2.12 shape (no `plan_chain` field):
+
 ```json
 {
   "schema_version": "2",
   "mode": "headless_pending",
   "interactive_setup_complete": true,
-  "plan": "<plan path>",
-  "spec": "<spec path>",
+  "plan": "<plan_path_0>",
+  "spec": "<spec_path_0>",
   "branch": "<branch name>",
   "worktree": "<worktree path>",
   "implementer_model": {"used": "<parsed value or sonnet>", "default": "sonnet"},
@@ -59,9 +164,52 @@ Write `<worktree_path>/.orchestrator/state.json` using the Write tool:
   }
 }
 ```
-Fill in actual values from Phase 0 Steps 1–2.5. The full state.json fields (analysis, risk_levels, baseline, etc.) will be populated by the headless instance in its Phase 0 run.
 
-**Why `implementer_model` is set HERE (v2.12):** Phase -1 step c writes `headless_prompt.txt` with no arg propagation, and `claude -p` in step d sees only that prompt — not the original skill args. If we deferred parsing to Phase 0 Step 7 in the child, the arg would be lost and both arms would silently fall back to Sonnet. The child reads `state.implementer_model` from state.json in its resume path; it does NOT re-parse skill args. See Phase 0 Step 7 "field rule" below.
+If the parsed plan list has length ≥ 2: write the v2.13 multi-plan minimal state.json. `state.plan` / `state.spec` mirror index 0 for legacy reader compatibility; the authoritative source is `plan_chain[]`:
+
+```json
+{
+  "schema_version": "2",
+  "mode": "headless_pending",
+  "interactive_setup_complete": true,
+  "plan": "<plan_path_0>",
+  "spec": "<spec_path_0>",
+  "branch": "<branch name>",
+  "worktree": "<worktree path>",
+  "implementer_model": {"used": "<parsed value or sonnet>", "default": "sonnet"},
+  "plan_chain": [
+    {"index": 0, "plan_path": "<plan_path_0>", "spec_path": "<spec_path_0>", "status": "running",
+     "blocked_until": null, "baseline": null,
+     "tasks": {}, "task_summaries": {}, "quality_trend": [],
+     "risk_levels": {}, "task_complexity": {}, "compaction_points": [],
+     "execution_plan": [], "global_constraints": {"shared_files": {}},
+     "low_tasks_pending_verification": [], "last_compaction_after_task": -1,
+     "last_completed_task": null, "last_completed_at": null,
+     "plan_review": {"status": "SKIPPED", "warnings": []}},
+    {"index": 1, "plan_path": "<plan_path_1>", "spec_path": "<spec_path_1>", "status": "queued",
+     "blocked_until": "plan_chain[0].all_tasks_complete_or_skipped",
+     "baseline": null, "tasks": {}, "task_summaries": {}, "quality_trend": [],
+     "risk_levels": {}, "task_complexity": {}, "compaction_points": [],
+     "execution_plan": [], "global_constraints": {"shared_files": {}},
+     "low_tasks_pending_verification": [], "last_compaction_after_task": -1,
+     "last_completed_task": null, "last_completed_at": null,
+     "plan_review": {"status": "SKIPPED", "warnings": []}},
+    {"index": 2, "...same as index 1 with own paths...": "..."}
+  ],
+  "active_plan": 0,
+  "timestamps": {
+    "interactive_setup_at": "<iso8601 now>",
+    "headless_started_at": null,
+    "completed_at": null
+  }
+}
+```
+
+Fill in actual values. Each `plan_chain[i].blocked_until` references the previous index (`plan_chain[i-1].all_tasks_complete_or_skipped`) for i≥1; index 0 has `blocked_until: null`.
+
+Full state.json fields (baselines, risk_levels for each plan, etc.) will be populated by the headless instance — once for each plan_chain entry as its turn comes up.
+
+**Why everything is set HERE (v2.13 propagation rule):** Phase -1 step c writes `headless_prompt.txt` with no arg propagation, and `claude -p` in step d sees only that prompt — not the original skill args. If parsing were deferred to the child, both the model override and the multi-plan list would be lost. The child reads `implementer_model`, `plan_chain` (if multi-plan), and `plan/spec` (single-plan) from state.json in its resume path; it does NOT re-parse skill args. See Phase 0 Step 7 "field rule" below.
 
 **c. Write the headless prompt at `<worktree_path>/.orchestrator/headless_prompt.txt`:**
 
@@ -118,7 +266,7 @@ Monitor live (stream-json events):
   tail -f <worktree>/.orchestrator/headless.jsonl | jq -c 'select(.type=="text" or .type=="tool_use")'
 
 Status snapshot:
-  jq '{current_task, mode, completed: (.tasks | to_entries | map(select(.value.status=="COMPLETE")) | length)}' <worktree>/.orchestrator/state.json
+  jq 'def active: if .plan_chain then .plan_chain[.active_plan] elif .active_plan=="plan2" then .plan2_state else . end; {current_task, mode, completed: (active.tasks | to_entries | map(select(.value.status=="COMPLETE")) | length)}' <worktree>/.orchestrator/state.json
 
 Completion check:
   test -f <worktree>/.orchestrator/HEADLESS_DONE.txt && cat <worktree>/.orchestrator/HEADLESS_DONE.txt
@@ -141,19 +289,34 @@ while true; do
   # Re-read PID each loop — Resume Chain (see below) may have replaced it.
   HEADLESS_PID=$(cat $WT/.orchestrator/headless.pid 2>/dev/null || echo "")
   if [ -f $WT/.orchestrator/state.json ]; then
-    # Use active_plan pointer to select the right task tree (Plan 1 vs Plan 2 nested).
+    # Resolve active task tree (v2.13 plan_chain[N] > v2.12 plan2_state > top-level).
+    HAS_CHAIN=$(jq -r '.plan_chain != null' $WT/.orchestrator/state.json 2>/dev/null)
     AP=$(jq -r '.active_plan // "plan1"' $WT/.orchestrator/state.json 2>/dev/null)
-    if [ "$AP" = "plan2" ]; then TASKS_FILTER='.plan2_state.tasks'; else TASKS_FILTER='.tasks'; fi
+    if [ "$HAS_CHAIN" = "true" ]; then
+      TASKS_FILTER=".plan_chain[$AP].tasks"
+      LATEST_FILTER=".plan_chain[$AP].tasks"
+      LABEL="plan_chain[$AP]"
+    elif [ "$AP" = "plan2" ]; then
+      TASKS_FILTER='.plan2_state.tasks'
+      LATEST_FILTER='.plan2_state.tasks'
+      LABEL="plan2"
+    else
+      TASKS_FILTER='.tasks'
+      LATEST_FILTER='.tasks'
+      LABEL="plan1"
+    fi
     cur_c=$(jq -r "[$TASKS_FILTER[]|select(.status==\"COMPLETE\")]|length" $WT/.orchestrator/state.json 2>/dev/null || echo 0)
     cur_s=$(jq -r "[$TASKS_FILTER[]|select(.status==\"SKIPPED\")]|length" $WT/.orchestrator/state.json 2>/dev/null || echo 0)
     if [ "$cur_c" != "$prev_c" ] || [ "$cur_s" != "$prev_s" ]; then
       # P14: read explicit last_completed_task field (NOT JSON insertion order).
-      latest=$(jq -r '.last_completed_task as $t | if $t then
-                       (if .active_plan == "plan2" then .plan2_state.tasks[$t] else .tasks[$t] end)
-                       | "\($t) \(.status) risk=\(.risk) review_retries=\(.review_retries // 0)"
-                       else "(no task recorded yet)" end' \
-                $WT/.orchestrator/state.json 2>/dev/null)
-      echo "[$(date +%H:%M:%S)] [$AP] $latest | totals: ${cur_c}C ${cur_s}S"
+      # last_completed_task lives under <active> for multi-plan; resolve same way.
+      LCT_PATH=$(jq -r "if .plan_chain then .plan_chain[.active_plan].last_completed_task elif .active_plan==\"plan2\" then .plan2_state.last_completed_task else .last_completed_task end" $WT/.orchestrator/state.json 2>/dev/null)
+      if [ "$LCT_PATH" != "null" ] && [ -n "$LCT_PATH" ]; then
+        latest=$(jq -r "$LATEST_FILTER[\"$LCT_PATH\"] | \"$LCT_PATH \\(.status) risk=\\(.risk) review_retries=\\(.review_retries // 0)\"" $WT/.orchestrator/state.json 2>/dev/null)
+      else
+        latest="(no task recorded yet)"
+      fi
+      echo "[$(date +%H:%M:%S)] [$LABEL] $latest | totals: ${cur_c}C ${cur_s}S"
       prev_c=$cur_c; prev_s=$cur_s
     fi
   fi
@@ -182,7 +345,7 @@ This emits one notification per task transition + final DONE/HALTED/DIED. Pollin
 
 **Trigger (deterministic, introspectable from state.json):**
 Chain ONLY when **both** are observed by the headless instance just after Phase Transition T3:
-- `state.compaction_points` reached **≥ 2** AND
+- `<active>.compaction_points` reached **≥ 2** AND
 - count of tasks with `status == "COMPLETE"` is **≥ 8**
 
 Do NOT chain on token-count heuristics (not introspectable) or after every compaction point. If neither threshold is met, continue in the same subprocess.
@@ -238,7 +401,7 @@ This is a fallback — the primary expectation is that one headless subprocess c
    Check if `<worktree_path>/.orchestrator/state.json` exists by attempting to read it.
    - If it does NOT exist: proceed normally to Step 1.
    - If it EXISTS and is valid JSON with `schema_version: "2"`:
-     - If `"mode": "headless_pending"`: freshly-spawned headless instance — Phase -1 already ran Steps 1, 1.5, 2, 2.5 in interactive context and wrote minimal state. **MUST skip Phase 0 Steps 1, 1.5, 2, 2.5** (clean check, cross-run isolation, worktree creation, safety hooks — re-running breaks: `git status` flags pre-written `.orchestrator/` and `.claude/settings.json` as dirty; `git worktree add` errors on the existing branch; Step 1.5 mode-exclusivity check would self-block on the freshly-created `.orchestrator/headless.pid`). PROCEED with Phase 0 Step 0.5 onward (`0.5 → 3 → 3.5 → 4 → 5 → 6 → 7`) to populate baseline, risk_levels, compaction_points, full task data. After Step 7, update `state.json.mode` from `"headless_pending"` to `"headless_running"` and write. **Preserve `state.implementer_model` exactly as the parent wrote it (v2.12)** — the parent already parsed the skill arg; do NOT overwrite. If the field is absent (legacy state.json), default to `{"used": "sonnet", "default": "sonnet"}`.
+     - If `"mode": "headless_pending"`: freshly-spawned headless instance — Phase -1 already ran Steps 1, 1.5, 2, 2.5 in interactive context and wrote minimal state. **MUST skip Phase 0 Steps 1, 1.5, 2, 2.5** (clean check, cross-run isolation, worktree creation, safety hooks — re-running breaks: `git status` flags pre-written `.orchestrator/` and `.claude/settings.json` as dirty; `git worktree add` errors on the existing branch; Step 1.5 mode-exclusivity check would self-block on the freshly-created `.orchestrator/headless.pid`). PROCEED with Phase 0 Step 0.5 onward (`0.5 → 3 → 3.5 → 4 → 5 → 6 → 7`) to populate baseline, risk_levels, compaction_points, full task data. After Step 7, update `state.json.mode` from `"headless_pending"` to `"headless_running"` and write. **Preserve `state.implementer_model` exactly as the parent wrote it (v2.12)** — the parent already parsed the skill arg; do NOT overwrite. If the field is absent (legacy state.json), default to `{"used": "sonnet", "default": "sonnet"}`. **Preserve `state.plan_chain` exactly as the parent wrote it (v2.13)** — the parent already parsed the plan/plan2/.../planN args and constructed the chain. The child reads plan paths from `state.plan_chain[state.active_plan].plan_path` for multi-plan runs; do NOT re-parse skill args. If `plan_chain` is absent → this is a single-plan run, read from top-level `state.plan` and `state.spec`.
      - If `"mode": "headless_running"`, `"headless_chained"`, `"plan2_running"`, `"interactive_session"`, or no mode field: Standard resume path — load all fields. Do NOT overwrite. Verify git branch and worktree match `state.branch` / `state.worktree`. Set internal tracking from state.json: `current_task`, `current_step_within_task`, `current_pre_task_sha`, per-task counters. Output: "Resuming from state file: Task <N>, Step <M> (mode=<value or null>)." Skip Phase 0 Steps 1–7 (setup already done). Go directly to Phase 1 at the recorded task/step.
    - If it EXISTS but is invalid (empty, malformed JSON):
      - Warn user: "State file exists but is corrupted at <path>. Recommend manual inspection before proceeding."
@@ -430,13 +593,13 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 5. Never halt on preflight. ENV_BLOCKER triage (`references/escalation-playbook.md`) cross-references `state.preflight_warnings` when baseline or task tests fail — a `dependencies_likely_stale` warning matches a `module not found` symptom and short-circuits dependency-install triage.
 
 5. **Take baseline test snapshot:**
-   Before running: derive the test command from `Makefile`, `package.json`, `pyproject.toml`, or `Cargo.toml`. Record this exact command in state.json `test_command` field. Use this same command everywhere in the skill (Verifier prompts, Phase Transition batch Verifier). Verifiers do NOT need to re-derive the test command.
+   Before running: derive the test command from `Makefile`, `package.json`, `pyproject.toml`, or `Cargo.toml`. Record this exact command in **run-level** `state.test_command` (top-level — shared across all plans in a chain). Use this same command everywhere in the skill (Verifier prompts, Phase Transition batch Verifier). Verifiers do NOT need to re-derive the test command.
 
    Run the full test suite in the worktree before any changes:
    ```bash
    cd <worktree_path> && <test_command>
    ```
-   Record: `baseline: <N> passing, <M> failing`. This is your regression reference — Verifiers must not introduce new failures beyond baseline.
+   Record `baseline: <N> passing, <M> failing` into **`<active>.baseline`** (resolves to `state.plan_chain[state.active_plan].baseline` for v2.13 multi-plan, top-level `state.baseline` otherwise). This is the regression reference for the CURRENT plan — multi-plan chains re-measure baseline at every Cross-Plan Trigger (Phase 2 Step -1) because each plan's starting state is the post-completion HEAD of its predecessor.
 
 6. **Build dependency graph and identify compaction points:**
    For each task, note which prior tasks it depends on (by shared files or logical data flow). Record:
@@ -450,7 +613,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 
    - **When in doubt, be conservative:** If dependency analysis is unreliable for any segment, treat tasks as DEPENDENT and restrict compaction points to explicit plan phase boundaries. `compaction_points` must always include the index of the final task (or the final task before Phase 2). Fewer compaction points are safer than wrong ones.
    - **SKIPPED propagation:** If task X is SKIPPED, automatically mark all tasks with X in their deps as SKIPPED as well. Record each propagated SKIPPED with reason 'dependency task_X was SKIPPED'.
-   - **Compute `global_constraints.shared_files`:** Build a map of file → list of task IDs that touch it (from each task's `**Files:**` block). Keep only files referenced by ≥ 2 tasks. Write this to `state.global_constraints.shared_files` in Step 7. The Implementer template's *Shared files alert* reads from here — not from any external `analysis.json` (no such file exists in this skill).
+   - **Compute `global_constraints.shared_files`:** Build a map of file → list of task IDs that touch it (from each task's `**Files:**` block). Keep only files referenced by ≥ 2 tasks. Write this to **`<active>.global_constraints.shared_files`** in Step 7 (top-level `state.global_constraints.shared_files` for single-plan; `state.plan_chain[state.active_plan].global_constraints.shared_files` for v2.13 multi-plan; `state.plan2_state.global_constraints.shared_files` for v2.12 legacy plan2). The Implementer template's *Shared files alert* reads from the same resolved path.
 
    - **Compute `task_complexity` (P5 — effort scaling):** For each task, derive a complexity bucket SMALL / MEDIUM / LARGE used to scale the Implementer prompt at Phase 1 Step 1.
 
@@ -467,7 +630,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
      | `file_count >= 4` OR `risk_mult == 3` OR `new_decls >= 4` | LARGE |
      | (else) | MEDIUM |
 
-     Heuristic biases upward — under-instructing is worse than mild over-engineering. Record per-task: `state.task_complexity.task_N = "SMALL" | "MEDIUM" | "LARGE"`.
+     Heuristic biases upward — under-instructing is worse than mild over-engineering. Record per-task: `<active>.task_complexity.task_N = "SMALL" | "MEDIUM" | "LARGE"`.
 
      Effort-guidance strings (the Implementer prompt at Phase 1 Step 1 injects one of these into `{effort_guidance}`):
      - SMALL: `aim for ≤8 tool calls; TDD is still required for executable code or behavior; docs/config/generated-only tasks may mark TDD not applicable; do not add abstractions, helpers, or refactors`
@@ -495,13 +658,13 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
      1. Build a `resource_key → [task_ids]` map for tasks in this wave.
      2. For each key with ≥ 2 task IDs in the same wave:
         - Move each affected task to its own singleton group within the wave. If a multi-task group contained two collision-tagged tasks, split into singletons.
-        - Annotate each resulting singleton group in `state.execution_plan` with `"serialization_reason": "resource_key=<key>"`.
+        - Annotate each resulting singleton group in `<active>.execution_plan` with `"serialization_reason": "resource_key=<key>"`.
 
      The wave still respects the file-disjointness invariant (groups within a wave never share files). Splits only widen serialization — they never merge file-overlapping tasks.
 
      Tasks with no `Resource Key:` block are unaffected. The annotation is opt-in.
 
-     Write to `state.execution_plan`:
+     Write to `<active>.execution_plan`:
      ```json
      [
        {"wave": 0, "parallel_groups": [["task_0", "task_2"], ["task_1"]]},
@@ -527,10 +690,10 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 
    **Parse the result:**
 
-   - `status: "PASS"` → record `state.plan_review = {status: "PASS", warnings: []}` at Step 7. Proceed.
+   - `status: "PASS"` → record `<active>.plan_review = {status: "PASS", warnings: []}` at Step 7. Proceed.
    - `status: "ISSUES_FOUND"` →
      - Partition issues by severity: `BLOCKER` vs `WARN`.
-     - All `WARN` only: record `state.plan_review = {status: "WARN", warnings: [...]}`. Log to user as a one-line summary. Proceed.
+     - All `WARN` only: record `<active>.plan_review = {status: "WARN", warnings: [...]}`. Log to user as a one-line summary. Proceed.
      - Any `BLOCKER`: ask the user ONE batched question with all blocker issues listed:
        ```
        Plan Reviewer found <N> BLOCKER issue(s) that will likely cause SPEC_BLOCKER escalations during Phase 1:
@@ -548,7 +711,15 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
    ```bash
    mkdir -p <worktree_path>/.orchestrator
    ```
-   Write `<worktree_path>/.orchestrator/state.json` using the Write tool:
+
+   **Branch on plan count (v2.13):**
+
+   *Single-plan run* (`state.plan_chain` was NOT written by Phase -1 step b, OR this is a fresh interactive run with one plan): write state.json in v2.12 shape. The fields below populate top-level — `tasks`, `risk_levels`, `compaction_points`, etc. all live at the root of state.json. `active_plan = "plan1"` (string, v2.12 form).
+
+   *Multi-plan run* (`state.plan_chain` IS present from Phase -1 step b, OR this is a fresh interactive run with `plan2=` or beyond): write state.json with `plan_chain[]` as the source of truth. Populate the CURRENT plan's entry (`plan_chain[state.active_plan]`) with the same fields v2.12 wrote at the top level — `tasks`, `task_summaries`, `risk_levels`, `task_complexity`, `compaction_points`, `execution_plan`, `global_constraints`, `quality_trend`, `low_tasks_pending_verification`, `last_compaction_after_task`, `plan_review`. Top-level `tasks` etc. are NOT written for multi-plan runs — code reads through `state.plan_chain[state.active_plan]`. `active_plan` is an integer index (0, 1, 2, ...).
+
+   Write `<worktree_path>/.orchestrator/state.json` using the Write tool. Schema below shows the SINGLE-PLAN shape; multi-plan moves the per-plan fields into `plan_chain[active].*`:
+
    ```json
    {
      "schema_version": "2",
@@ -594,9 +765,74 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
      }
    }
    ```
+
    Fill in the actual values from steps 4–6.
 
+   **Multi-plan shape (v2.13):** when `plan_chain` exists, the equivalent state.json is:
+
+   ```json
+   {
+     "schema_version": "2",
+     "mode": "<...>",
+     "active_plan": 0,
+     "plan": "<plan_path_0 — mirrors plan_chain[0] for legacy readers>",
+     "spec": "<spec_path_0 — mirror>",
+     "branch": "...",
+     "worktree": "...",
+     "test_command": "<shared across all plans — derived once>",
+     "implementer_model": {"used": "...", "default": "sonnet"},
+     "plan_chain": [
+       {
+         "index": 0, "plan_path": "...", "spec_path": "...",
+         "status": "running", "blocked_until": null,
+         "baseline": {"passing": N, "failing": M},
+         "tasks": {"task_0": {...}, ...},
+         "task_summaries": {...},
+         "risk_levels": {...},
+         "task_complexity": {...},
+         "compaction_points": [...],
+         "execution_plan": [...],
+         "global_constraints": {"shared_files": {...}},
+         "quality_trend": [...],
+         "low_tasks_pending_verification": [...],
+         "last_compaction_after_task": -1,
+         "last_completed_task": null,
+         "last_completed_at": null,
+         "plan_review": {"status": "PASS", "warnings": []}
+       },
+       {
+         "index": 1, "plan_path": "...", "spec_path": "...",
+         "status": "queued", "blocked_until": "plan_chain[0].all_tasks_complete_or_skipped",
+         "baseline": null, "tasks": {}, "task_summaries": {}, "...": "..."
+       }
+     ],
+     "spec_edits": [...],
+     "current_task": 0,
+     "current_step_within_task": 1,
+     "current_pre_task_sha": null,
+     "current_review_retries": 0,
+     "current_verifier_retries": 0,
+     "current_escalation_count": 0,
+     "current_previous_issues": [],
+     "phase_summaries": [],
+     "phase_doc_commits": [],
+     "chain_resume": null,
+     "plan2_state": null,
+     "timestamps": {"started_at": "...", "completed_at": null}
+   }
+   ```
+
+   For multi-plan runs at the START of Phase 0 (active_plan == 0): populate `plan_chain[0]` with all the data Steps 3–6 produced for plan 0. Other plan_chain entries (i ≥ 1) keep their `status: "queued"` placeholders and only become populated when their swap fires at Phase 2 Step -1.
+
    **Mode field rule (P13a):** `mode` MUST always be a string — never `null`. Set to `"interactive_session"` when not under Phase -1 self-spawn, `"headless_running"` immediately after Phase 0 completes under `headless_pending` resume.
+
+   **Active task tree resolution rule (v2.13):** every subsequent step in Phase 1 / Phase Transition / Phase 2 that reads or writes "the current plan's tasks/summaries/quality_trend/etc." MUST do so through this resolution:
+
+   - `state.plan_chain` exists → active tree is `state.plan_chain[state.active_plan]`. Read `state.plan_chain[state.active_plan].tasks` (not top-level `state.tasks`). Same for task_summaries, quality_trend, risk_levels, compaction_points, execution_plan, global_constraints, low_tasks_pending_verification, last_compaction_after_task, last_completed_task, last_completed_at, plan_review.
+   - `state.plan_chain` absent + `state.plan2_state` present → legacy v2.12 two-plan. Read top-level for plan 1 (`active_plan == "plan1"`), `state.plan2_state.*` for plan 2 (`active_plan == "plan2"`).
+   - Neither → single-plan. Read top-level fields.
+
+   All earlier prose in this SKILL.md that says "read `state.tasks`" or "write to top-level `quality_trend`" should be interpreted with this resolution rule applied. Where v2.12 said `active_plan == "plan2"`, multi-plan code reads "active_plan is an integer index ≥ 1" via plan_chain.
 
    **`implementer_model` field rule (v2.12):**
 
@@ -639,7 +875,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 
    Sub-agents do NOT call the helper. They write event candidate JSON files to `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`. The orchestrator scans this directory after each cycle step and invokes `append` itself. See `references/learning-log.md` for the schema and 10 event types.
 
-   **active_plan pointer (P13b):** `"plan1"` while executing the primary plan, `"plan2"` after Phase 2 Step -1 swap. Phase Transition / Phase 2 / Monitor scripts MUST use this pointer to select between `state.tasks` and `state.plan2_state.tasks` — see Phase 2 Step -1.
+   **active_plan pointer (P13b + v2.13):** Single-plan or v2.12 legacy two-plan run: `"plan1"` then `"plan2"` (string). v2.13 multi-plan run: integer index `0, 1, 2, ...` into `state.plan_chain[]`. All Phase 1 / Phase Transition / Phase 2 / Monitor code MUST resolve through `<active>` per the placeholder rule. Phase 2 Step -1 swaps this pointer at every cross-plan boundary.
 
    **plan2_state initialization (Previous #5):** If invocation includes `plan2=<path>`, populate at Phase 0 Step 7:
    ```json
@@ -654,7 +890,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
    ```
    If no `plan2=`, leave as `null`.
 
-   Each task entry written into `tasks` (or `plan2_state.tasks`) later uses this format:
+   Each task entry written into `<active>.tasks` (resolving to top-level `tasks`, `plan2_state.tasks`, or `plan_chain[N].tasks` per the resolution table) later uses this format:
    ```json
    "task_N": {
      "status": "COMPLETE | SKIPPED | IN_PROGRESS",
@@ -689,7 +925,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 
 ## Phase 1: Per-Task Cycle
 
-Iterate `state.execution_plan` (waves outer, parallel groups inner). Within each parallel group:
+Iterate `<active>.execution_plan` (waves outer, parallel groups inner). Within each parallel group:
 - **Singleton group** (one task): run the standard sequential per-task flow described below (Steps 1–4).
 - **Multi-task group** (size ≥ 2): run the **Parallel Sub-Flow** (described after the standard flow). Combined Reviewer and Verifier still run sequentially after the parallel Implementer merge.
 
@@ -716,7 +952,7 @@ Build the implementer prompt from the **Implementer Prompt Template** below. Fil
 - `{risk level}` — from your Phase 0 assignment
 - `{worktree_path}` — the worktree path
 - `{deps_for_this_task}` — list of task IDs that this task depends on (from Phase 0 Step 6 dependency graph)
-- `{task_size}` — SMALL / MEDIUM / LARGE from `state.task_complexity.task_N` (P5)
+- `{task_size}` — SMALL / MEDIUM / LARGE from `<active>.task_complexity.task_N` (P5)
 - `{effort_guidance}` — the matching guidance string from Phase 0 Step 6 (P5)
 - `{implementer_model}` — value of `state.implementer_model.used` ("sonnet" or "opus"). Used in the prompt header and the learning-log `subagent.model` field.
 
@@ -756,16 +992,15 @@ Dispatch as a **fresh Sonnet sub-agent**.
 | **WARN** | (PASS not met) AND `SPEC_SCORE >= 0.70` AND `QUALITY_SCORE >= 0.60` |
 | **FAIL** | otherwise (either score below the WARN floor) |
 
-Record per-task into the active task tree (`state.tasks.task_N` or `state.plan2_state.tasks.task_N`):
+Record per-task into the active task tree at **`<active>.tasks.task_N`** (resolves per the placeholder rule — `state.plan_chain[state.active_plan].tasks.task_N` for multi-plan):
 ```json
 "spec_score": <float>,
 "quality_score": <float>,
 "review_tier": "PASS | WARN | FAIL"
 ```
 
-Update the rolling quality-trend buffer at top level (active-plan-aware):
-- For `active_plan == "plan1"`: append `quality_score` to `state.quality_trend` (max 10, drop oldest).
-- For `active_plan == "plan2"`: append to `state.plan2_state.quality_trend` (same rule).
+Update the rolling quality-trend buffer (active-tree-aware):
+- Append `quality_score` to `<active>.quality_trend` (max 10, drop oldest). This resolves to `state.plan_chain[state.active_plan].quality_trend` for v2.13 multi-plan, `state.plan2_state.quality_trend` for v2.12 legacy plan2, top-level `state.quality_trend` otherwise.
 - After append, if length ≥ 5 AND mean of last 5 < mean of first 5 by > 0.10: surface at the NEXT compaction point (T3 message) — `"Quality trending down: last 5 tasks averaged X.XX vs first 5 at Y.YY. Consider manual review of recent tasks."`. Do NOT halt automatically.
 
 Then branch on tier:
@@ -773,7 +1008,7 @@ Then branch on tier:
 **Tier: PASS** → proceed to Step 3.
 
 **Tier: WARN** → proceed to Step 3, but ALSO:
-1. Record the QUALITY_ISSUES (and any non-blocking SPEC_ISSUES) under `state.task_summaries.task_N.warnings = [...]` (active-tree-aware).
+1. Record the QUALITY_ISSUES (and any non-blocking SPEC_ISSUES) under `<active>.task_summaries.task_N.warnings = [...]`.
 2. Do NOT retry. WARN exists precisely to avoid burning a retry on borderline work that ships.
 3. The Final Summary Report (Phase 2 Step 2) lists WARN tasks in a dedicated row so the user sees the pattern.
 4. If three consecutive tasks land in WARN: surface at the next compaction point as a quality-trend signal even if the rolling mean rule did not trip.
@@ -883,7 +1118,7 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
 
 2. **Update state file** — write this task's result into the active task tree.
 
-   **Active tree selection (P13b):** if `state.active_plan == "plan2"`, write under `state.plan2_state.tasks.task_N`; otherwise under `state.tasks.task_N`. Same rule for `task_summaries`.
+   **Active tree selection (v2.13):** write under **`<active>.tasks.task_N`** (resolves per the table at the top of the document: `state.plan_chain[state.active_plan].tasks.task_N` for multi-plan, `state.plan2_state.tasks.task_N` for v2.12 legacy plan2, `state.tasks.task_N` otherwise). Same rule for `task_summaries`. Note `state.active_plan` is an **integer** (0, 1, 2, ...) when `plan_chain` is in use — do NOT string-compare `== "plan2"` for multi-plan runs.
 
    ```json
    "task_N": {
@@ -924,7 +1159,7 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
    }
    ```
 
-   `files_test` comes from the Implementer's `FILES_TEST_CHANGED:` output (empty list if none). `complexity` comes from `state.task_complexity.task_N` (set in Phase 0 Step 6 per P5). `spec_score` / `quality_score` / `review_tier` come from Phase 1 Step 2 score parsing — PASS or WARN reached this point; FAIL would have looped back to Step 1.
+   `files_test` comes from the Implementer's `FILES_TEST_CHANGED:` output (empty list if none). `complexity` comes from `<active>.task_complexity.task_N` (set in Phase 0 Step 6 per P5). `spec_score` / `quality_score` / `review_tier` come from Phase 1 Step 2 score parsing — PASS or WARN reached this point; FAIL would have looped back to Step 1.
 
    **Also update top-level latest pointers (P14)** — required for Monitor and any consumer that needs "most recent task":
    ```json
@@ -967,7 +1202,7 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
 
 ### Parallel Sub-Flow (P2 — multi-task parallel group)
 
-Triggered when the current parallel group from `state.execution_plan` has size ≥ 2.
+Triggered when the current parallel group from `<active>.execution_plan` has size ≥ 2.
 
 **Pre-flight invariant:** all tasks in the group have disjoint `Files:` sets (Phase 0 Step 6 partition guarantees this). If you observe the group has size ≥ 2 but the tasks share any file: halt — `execution_plan` is corrupt; do not proceed.
 
@@ -1075,7 +1310,7 @@ If `low_tasks_pending_verification` is non-empty: build the Verifier prompt from
 
 **Result: PASS** → clear `low_tasks_pending_verification` in the state file.  
 **Result: FAIL** → apply this recovery algorithm:
-0. **Pre-filter** (docs-only exclusion): For each task in `low_tasks_pending_verification`, read its entry under the active task tree (`state.tasks` or `state.plan2_state.tasks`). The task is docs-only if **either**:
+0. **Pre-filter** (docs-only exclusion): For each task in `<active>.low_tasks_pending_verification`, read its entry under `<active>.tasks.task_N`. The task is docs-only if **either**:
    - `files_test` is present and equals `[]`, **or**
    - `files_test` is missing/null AND every entry in `files` ends with `.md` (heuristic fallback for legacy state.json).
 
@@ -1216,9 +1451,49 @@ See `references/escalation-playbook.md` (the ENV_BLOCKER Triage section). Read i
 
 After all tasks are processed (COMPLETE or SKIPPED):
 
-### Step -1: Cross-Plan Trigger (only if multi-plan invocation)
+### Step -1: Cross-Plan Trigger (multi-plan only)
 
-Precondition: `state.plan2_state` is a non-null object initialized at Phase 0 Step 7 with `status: "queued"` (see Phase 0 Step 7). If `plan2_state` is null, this whole step is skipped — proceed to Step 0.
+Two code paths share this section by schema detection:
+
+- **v2.13 multi-plan** (`state.plan_chain` exists, length ≥ 2): generalize swap to "advance `active_plan` from index i to i+1". See "v2.13 path" below.
+- **v2.12 two-plan legacy** (`state.plan_chain` absent + `state.plan2_state` non-null): use the original plan2-only swap. See "v2.12 legacy path" below.
+
+If neither precondition is met: this step is a no-op — proceed to Step 0.
+
+#### v2.13 path — generalized chain advance
+
+If `state.plan_chain` exists and there is some i where `state.active_plan == i` and `state.plan_chain[i+1]` exists with `status: "queued"`:
+
+1. **Verify LOW batch sweep for current plan PASSED.** Read the active tree (`state.plan_chain[i]`). Check `low_tasks_pending_verification == []` AND that any `<worktree>/.orchestrator/verifier_results/batch_final_p<i>.json` (per-plan suffix; see below) has no `status: FAIL`.
+
+2. **Verify all tasks in `plan_chain[i]` are COMPLETE or SKIPPED.** The `blocked_until` for index i+1 is `"plan_chain[<i>].all_tasks_complete_or_skipped"` — resolve by scanning `plan_chain[i].tasks` for any task whose `status` is neither COMPLETE nor SKIPPED. If any remain: skip Step -1, proceed to Step 1 (Final Docs Updater handles whatever did finish).
+
+3. **Swap pointer:** `state.active_plan = i + 1`. Update `state.plan = plan_chain[i+1].plan_path`, `state.spec = plan_chain[i+1].spec_path`. Update `state.mode = "plan_chain_running"`.
+
+4. **Reset transient counters:** `current_task = 0`, `current_step_within_task = 1`, `current_pre_task_sha = null`, `current_review_retries = 0`, `current_verifier_retries = 0`, `current_escalation_count = 0`, `current_previous_issues = []`. These are run-level, not plan-level — same fields v2.12 used.
+
+5. **Re-run Phase 0 Steps 3, 3.5, 4, 6 against Plan i+1.** Write the results (Plan i+1's `risk_levels`, `task_complexity`, `compaction_points`, `execution_plan`, `global_constraints.shared_files`) INTO `plan_chain[i+1]` — NOT top-level. The plan_chain entry for index i+1 keeps `plan_chain[i]`'s contents intact for archival.
+
+6. **Re-take baseline.** Plan i's changes are now in HEAD. Run Phase 0 Step 5 fresh — `test_command` unchanged but counts re-measured. Write to `plan_chain[i+1].baseline`.
+
+7. Set `plan_chain[i+1].status = "running"`. (Keep `plan_chain[i].status = "complete"` after step 2 succeeds; mark `"failed"` if step 1 found unresolved batch failures and recovery doesn't apply.)
+
+8. Begin Phase 1 Task 0 of plan i+1.
+
+After Plan N-1 (final plan in chain) completes Step 0 (LOW batch sweep), this Cross-Plan Trigger is skipped (no `plan_chain[N]` exists) and execution falls through to Step 1 (Final Docs Updater for the whole chain).
+
+**Per-plan result file paths (v2.13):** Verifier and Docs Updater output files under `<worktree>/.orchestrator/` need a per-plan suffix to avoid collision when one chain has multiple plans. Use `_p<index>` suffix:
+- Phase Transition T1 batch: `verifier_results/batch_p<i>_<compaction_index>.json`
+- Phase 2 Step 0 final LOW sweep: `verifier_results/batch_final_p<i>.json`
+- Phase Transition T2 phase docs: `docs_results/phase_p<i>_<compaction_index>.json`
+- Phase 2 Step 1 final docs: `docs_results/final_p<i>.json` PER PLAN, OR `docs_results/final_chain.json` for the cross-plan summary
+- For v2.12 single-plan and legacy two-plan runs: keep existing un-suffixed paths.
+
+#### v2.12 legacy path — plan2_state two-plan
+
+(Retained verbatim from v2.12 for legacy state.json compatibility.)
+
+Precondition: `state.plan2_state` is a non-null object initialized at Phase 0 Step 7 with `status: "queued"`. If `plan2_state` is null AND `plan_chain` is absent, this whole step is skipped — proceed to Step 0.
 
 If `plan2_state.status == "queued"`:
 
@@ -1235,22 +1510,31 @@ If `plan2_state.status == "queued"`:
 
 ### Step 0: LOW Batch Verifier Sweep
 
-If `low_tasks_pending_verification` is non-empty: dispatch headless batch Verifier (same headless pattern as Phase Transition T1, using `batch_final.json` as result path). On PASS: clear the list. On FAIL: apply standard `verifier_retries` per affected task. Only after PASS proceed to Step 1.
+Read the active tree's `low_tasks_pending_verification` (resolution rule from Phase 0 Step 7: `state.plan_chain[state.active_plan].low_tasks_pending_verification` for v2.13 multi-plan; `state.plan2_state.low_tasks_pending_verification` for v2.12 legacy plan2; top-level for single-plan). If non-empty: dispatch headless batch Verifier (same pattern as Phase Transition T1).
+
+**Result path:** when `state.plan_chain` is in use, use `batch_final_p<active>.json` (consistent with Phase 2 Step -1 check). For single-plan or v2.12 legacy two-plan: `batch_final.json` un-suffixed.
+
+On PASS: clear the active tree's list. On FAIL: apply standard `verifier_retries` per affected task. Only after PASS proceed to Step -1 (Cross-Plan Trigger checks whether to advance to the next plan) or to Step 1 (Final Docs Updater) if no next plan.
 
 This guarantees LOW task verification even when `compaction_points=[]` (short plans with no compaction points).
 
 ### Step 1: Final Docs Updater
 
-If a Phase Docs Updater was NOT dispatched for the last phase (no compaction point after the last task): dispatch one now covering all remaining changes.
+**Scope rule (v2.13):**
 
-If phase updaters already covered all phases: dispatch the Final Docs Updater only for top-level summary docs (`CHANGELOG.md` and top-level README) to ensure the complete run is captured as a unit.
+- *Single-plan run* (no `plan_chain`): unchanged from v2.12 — one Final Docs Updater dispatch covering all tasks. Result path: `docs_results/final.json`.
+- *Multi-plan run* (`plan_chain` present): TWO-tier behavior. Per-plan Phase Docs Updater already ran at each plan's compaction points (Phase Transition T2 with `_p<i>` suffix). Step 1 here dispatches ONE chain-level Final Docs Updater that summarizes the ENTIRE chain — input is the consolidated `task_summaries` from every `plan_chain[*].task_summaries`. Result path: `docs_results/final_chain.json`. Per-plan docs commits stay intact; the chain-level commit adds a top-level summary to `README.md` / `CHANGELOG.md` only.
+
+If a Phase Docs Updater was NOT dispatched for the last phase of the active plan (no compaction point after the last task): dispatch one now for that plan first (per-plan, with `_p<active>` suffix in multi-plan mode), then proceed to the chain-level summary if multi-plan.
+
+If per-plan updaters already covered all phases: dispatch only the top-level chain summary (multi-plan) or the un-suffixed single-plan final (single-plan).
 
 Build from the **Final Docs Updater Prompt Template** with:
-- All files changed: consolidated from state file across all tasks
+- All files changed: consolidated from state file across all tasks (all plans for chain runs)
 - Docs scope: user-provided or default (`README.md`, `CHANGELOG.md`, `docs/*runbook*`, `docs/*operator*`)
-- `{result_json_path}`: `<worktree_path>/.orchestrator/docs_results/final.json`
+- `{result_json_path}`: per scope rule above
 
-**Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<worktree_path>/.orchestrator/docs_prompts/final.txt` and result path `<worktree_path>/.orchestrator/docs_results/final.json`. Missing/malformed result → ENV_BLOCKER ESCALATE.
+**Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<worktree_path>/.orchestrator/docs_prompts/final{_chain | }.txt` and result path matching `{result_json_path}`. Missing/malformed result → ENV_BLOCKER ESCALATE.
 
 ### Step 1.5: Method Audit Validation (v2.11)
 
@@ -1291,11 +1575,12 @@ Parse the JSON output:
   ```
   Then halt:
 
-  Substitute `<task_path_prefix>` in the message below with `state.tasks` when
-  `state.active_plan == "plan1"` and with `state.plan2_state.tasks` when
-  `state.active_plan == "plan2"` — the validator script itself reads the right
-  tree via `--active-plan`, but this user-facing diagnostic must point at the
-  correct path so the operator edits the right node.
+  Substitute `<task_path_prefix>` in the message below per the active-tree resolution:
+  - v2.13 multi-plan (`state.plan_chain` present): use `state.plan_chain[<N>].tasks` where `<N>` is the index that owns the failing task. If failures span multiple plans, list each prefix on its own line.
+  - v2.12 legacy two-plan: `state.tasks` for `active_plan == "plan1"`, `state.plan2_state.tasks` for `active_plan == "plan2"`.
+  - Single-plan: `state.tasks`.
+  
+  The validator script itself iterates all plans via `--active-plan auto`, but this user-facing diagnostic must point at the correct path so the operator edits the right node.
 
   ```
   Method audit FAILED for tasks: <comma-separated list>.
@@ -1350,7 +1635,7 @@ Output:
 
 ### WARN-tier tasks (P4)
 
-For each task in `state.tasks` (and `state.plan2_state.tasks`) where `review_tier == "WARN"`, list one row:
+For each task across every plan's task tree (`<active>.tasks` for each value of `state.active_plan` — iterate over `state.plan_chain[*].tasks` for v2.13 multi-plan; top-level `state.tasks` + `state.plan2_state.tasks` for v2.12 legacy) where `review_tier == "WARN"`, list one row:
 - `task_<id>` — spec=<score>, quality=<score> — warnings: <one-line summary from task_summaries.task_N.warnings>
 
 If none: "WARN-tier tasks: 0".
@@ -1362,7 +1647,7 @@ If none: "WARN-tier tasks: 0".
 - Delta: <signed>
 - Note: <"stable" | "declining — review recent tasks" | "improving">
 
-(Pull from `state.quality_trend` and `state.plan2_state.quality_trend` when relevant.)
+(Pull from each plan's quality_trend — iterate `state.plan_chain[*].quality_trend` for v2.13 multi-plan, top-level + `state.plan2_state.quality_trend` for v2.12 legacy.)
 
 ### Performance
 - Total wall time: <HH:MM from timestamps.started_at to completed_at>
@@ -1423,7 +1708,7 @@ These rules are absolute. No exceptions.
 | **Effort scaling is heuristic and biased upward** | Phase 0 Step 6 assigns SMALL/MEDIUM/LARGE per task for tool budget and review/verification routing only. Task size is not a TDD skip condition: any Implementer task that writes or modifies executable code or behavior must use `superpowers:test-driven-development` and report RED evidence before implementation, whether SMALL, MEDIUM, or LARGE. Docs-only, config-only, or generated-only tasks may report TDD as not applicable. Mis-estimation is acceptable as mild over-engineering; never silently under-instruct a HIGH-risk task (risk_mult forces LARGE). |
 | **Quality scoring thresholds are not user-configurable** | SPEC threshold 0.85, QUALITY threshold 0.75, WARN floors 0.70/0.60 (P4). Calibrated against the P6 eval suite. Re-tune only when re-calibrating against a new Claude version, not per-run. |
 | **WARN tier does not retry** | A WARN-tier review proceeds to Verifier with warnings recorded in `task_summaries.task_N.warnings`. WARN exists to prevent burning the 3-retry budget on borderline work. Three consecutive WARN tasks → surface at next compaction (signal, not halt). |
-| **`quality_trend` is rolling, max 10** | Phase 1 Step 2 appends `quality_score` to `state.quality_trend` (drop oldest at length 10). Mean-of-last-5 < mean-of-first-5 by > 0.10 → surface at next compaction. Plan 2 has its own buffer at `state.plan2_state.quality_trend`. |
+| **`quality_trend` is rolling, max 10** | Phase 1 Step 2 appends `quality_score` to `<active>.quality_trend` (drop oldest at length 10). Each plan in a v2.13 chain has its own buffer at `state.plan_chain[N].quality_trend`. Mean-of-last-5 < mean-of-first-5 by > 0.10 → surface at next compaction. |
 | **Parallel Implementer outputs must respect declared Files: blocks** | Step P.4 verifies each sub-worktree's `FILES_CHANGED` is a subset of its task's declared `Files:` block AND that no two sub-worktrees in the same group touched the same file. Violation halts the group, removes sub-worktrees, and re-dispatches the offender sequentially. Never silently merge an out-of-scope parallel edit. |
 | **Sub-worktrees inherit safety + gate hooks** | Step P.1 copies `.claude/settings.json` and `.orchestrator/hooks/*.sh` into every sub-worktree. The settings.json absolute path MUST be rewritten to point at the sub-worktree, not the parent — otherwise hooks reference a different worktree's helper scripts and silently no-op. |
 | **External-resource contention in parallel waves is the user's responsibility** | If two parallel tasks contend for the same DB port, file lock, or external service, mark one of them `serial: true` in the plan. The Phase 0 Step 6 partition respects `serial` and keeps such tasks in singleton groups. The skill cannot detect arbitrary external contention. |
@@ -1434,7 +1719,7 @@ These rules are absolute. No exceptions.
 | **Out-of-repo paths halt execution** | Files blocks referencing paths outside repo root halt at Phase 0 Step 3.5. Never infer a correction — always ask the user. |
 | **Phase -1 self-spawn is the default** | Interactive invocations auto-detach unless `mode=interactive` is explicitly passed. The headless sentinel `<<HEADLESS_KWS_ORCHESTRATOR>>` distinguishes spawned instances. Self-spawn is gated by Phase 0 Steps 1, 2, 2.5 completing successfully — failures abort the spawn and surface to the user. |
 | **`mode` field is always a string** | `state.mode ∈ {interactive_session, headless_pending, headless_running, headless_chained, plan2_running}`. Never null. Resume protocol (Phase 0 Step 0) dispatches on this value — null breaks the headless_pending branch. |
-| **`active_plan` pointer is authoritative for plan selection** | Phase 1 / Phase Transition / Phase 2 / Monitor scripts ALWAYS dereference `state.active_plan` (`"plan1"` → `state.tasks`, `"plan2"` → `state.plan2_state.tasks`). Never assume top-level `state.tasks` is the active tree. |
+| **`active_plan` pointer is authoritative for plan selection** | All Phase 1 / Phase Transition / Phase 2 / Monitor code dereferences `<active>` per the resolution table near the top of this document. v2.13 multi-plan: integer index into `state.plan_chain[]`. v2.12 legacy: string `"plan1"` / `"plan2"`. Never assume top-level `state.tasks` is the active tree without checking — hard-coding it for a multi-plan run silently corrupts the chain. |
 | **`last_completed_task` is the only authoritative "most recent" field** | Phase 1 Step 4 Agent Cleanup writes it. Monitor and any post-hoc query MUST use it — never `to_entries \| last` over `tasks` (key insertion order is mutated by re-writes; this caused a real observed bug). |
 | **Spec-edit branch uses `spec_clarifications`, not `review_retries`** | When `SPEC_FAULT ∈ {spec_contradicts, unclear}`, increment `spec_clarifications` (max 3 per task). Implementer retry budget stays intact for actual implementer mistakes. |
 | **Resume Chain trigger is deterministic** | Chain only when `compaction_points reached ≥ 2` AND `completed tasks ≥ 8`. No token-count heuristics — not introspectable. Chain procedure MUST update `headless.pid` atomically so Monitor sees `CHAIN_HANDOFF`, not `PROCESS_DIED`. |
@@ -1446,11 +1731,17 @@ These rules are absolute. No exceptions.
 | **Polite-stop anti-pattern is forbidden (v2.10.1)** | A sub-agent returning PASS / APPROVED is a checkpoint inside the autonomous loop, never a reporting moment. The orchestrator MUST proceed immediately to the next phase step in the same turn. The only legitimate reporting moments are: Phase 2 success completion, ESCALATE that exceeds `escalation_count > 3`, headless `HEADLESS_HALTED.txt`, or hook denial. Any prompt edit that introduces "summarize and wait for user acknowledgment" between PASS and the next step IS the regression this invariant exists to prevent. |
 | **Cross-run isolation is enforced (v2.10.1)** | Phase 0 Step 1.5 refuses to start when another worktree of this skill has a live headless PID. Mode exclusivity is concurrent-safe by halt, not by lock — the user is responsible for choosing which run continues. Orphan worktrees with no state.json + >7d mtime are reported but never auto-deleted (may hold uncommitted manual debugging). |
 | **Method audit fields are populated at Agent Cleanup (v2.11)** | Method audit fields are populated at Phase 1 Step 4 from structured sub-agent output. |
-| **Method audit must pass before Phase 2 close-run** | Phase 2 Step 1.5 runs `scripts/validate_method_audit.py`. A task is `applied` only when it has evidence references (RED command, GREEN command, commands_run, findings_count). FAIL halts before close-run; user re-dispatches or edits `state.tasks.<id>.method_audit.waived` with a reason. |
-| **Method audit fields populated at Phase 1 Step 4** | Orchestrator parses `METHOD_AUDIT:` from Implementer, `REVIEW_FINDINGS:` from Combined Reviewer, `commands_run` from Verifier result JSON. Written under the active task tree (`state.tasks` or `state.plan2_state.tasks` per `active_plan`). |
+| **Method audit must pass before Phase 2 close-run** | Phase 2 Step 1.5 runs `scripts/validate_method_audit.py`. A task is `applied` only when it has evidence references (RED command, GREEN command, commands_run, findings_count). FAIL halts before close-run; user re-dispatches or edits `<active>.tasks.<id>.method_audit.waived` with a reason. v2.13: the validator must iterate every `state.plan_chain[N].tasks` for chain runs, not just top-level. |
+| **Method audit fields populated at Phase 1 Step 4** | Orchestrator parses `METHOD_AUDIT:` from Implementer, `REVIEW_FINDINGS:` from Combined Reviewer, `commands_run` from Verifier result JSON. Written under `<active>.tasks` per the resolution table. |
 | **TDD waive reasons are restricted** | `METHOD_AUDIT: tdd waived` accepts only `reason=docs-only-task`, `config-only-task`, or `generated-only-task`. Other reasons fail validation. |
-| **Resource-key collisions force serialization in same wave** | Phase 0 Step 6 resource_key partition rule: tasks in the same wave that share a `**Resource Key:** <slug>` annotation are placed in singleton groups (never merged). The `serialization_reason: "resource_key=<key>"` field is written to each affected `state.execution_plan` group. WARN is emitted by the Plan Reviewer; correctness is automatic. |
+| **Resource-key collisions force serialization in same wave** | Phase 0 Step 6 resource_key partition rule: tasks in the same wave that share a `**Resource Key:** <slug>` annotation are placed in singleton groups (never merged). The `serialization_reason: "resource_key=<key>"` field is written to each affected `<active>.execution_plan` group. WARN is emitted by the Plan Reviewer; correctness is automatic. |
 | **`implementer_model` records both used and default** (v2.12) | Arg is parsed in the **interactive parent** (Phase -1 step b OR Phase 0 Step 7 when mode=interactive) and written into state.json. The headless child reads it FROM state.json — it cannot re-parse skill args since `claude -p` only sees the headless prompt text. Phase 0 Step 7 in the child preserves the field as-is. `state.implementer_model = {"used": <effective>, "default": "sonnet"}`. `default` is the contemporaneous skill default, NOT the parsed arg. Phase 1 Step 1 reads `used` and passes it as the Agent tool `model` parameter — `sonnet` may omit the parameter, `opus` MUST set it explicitly (omitting silently falls back to the agent default and invalidates A/B comparisons). **Parallel Sub-Flow Step P.2 dispatches MUST also pass `model`** under the same rule — forgetting it there silently downgrades parallel-merged tasks to Sonnet regardless of the run's selection. Reviewer and Verifier are unaffected — they always run on Sonnet for judge consistency. Plan 2 inherits Plan 1's selection. |
+| **Multi-plan auto-chain detection** (v2.13) | Phase -1.0 Pass 2 scans `plan\d*=` keys. `plan=` is index 0, `plan2=` is index 1, etc. Gaps halt. Missing `specN=` for present `planN=` halts. Length 1 → v2.12 single-plan schema. Length ≥ 2 → `plan_chain[]` schema with `active_plan` as integer index. `manifest=` is mutually exclusive (reserved; halt if combined). |
+| **NL keyword lexicon is fixed and conservative** (v2.13) | Phase -1.0 Pass 3 scans free-text tokens (excluding tokens with `/`, `.`, `=`, backticks) for the closed lexicon: opus/오푸스, sonnet/소넷, 순차/sequential/직렬/시리얼, 대화형/interactive. Explicit `key=value` always wins; NL fills unset keys only. Conflicts halt with batched question — never silently disambiguate. Lexicon additions require an ADR (see `docs/experiments/v2.13-natural-multi-plan/decisions/D001`). |
+| **Phase -1 echo line is mandatory** (v2.13) | Before any other work, Phase -1.0 prints ONE line summarizing parsed args (plan count, implementer_model, parallel, mode, risk) with the source of each value (explicit / NL / default). This is the user's one chance to spot mis-interpretation before the headless subprocess detaches. The line goes to stdout of the interactive parent — visible even before the spawn. Never skip. |
+| **`plan_chain[]` is authoritative when present** (v2.13) | When `state.plan_chain` exists in state.json, code MUST dereference `state.plan_chain[state.active_plan].*` for tasks, task_summaries, quality_trend, risk_levels, task_complexity, compaction_points, execution_plan, global_constraints, low_tasks_pending_verification, last_compaction_after_task, last_completed_task, last_completed_at, plan_review. Top-level `state.tasks` etc. are NOT written for multi-plan runs. `state.plan` and `state.spec` mirror `plan_chain[active].plan_path / .spec_path` for legacy reader convenience but are NOT the source of truth. `state.active_plan` is an integer (not a string) when chain is in use. |
+| **Per-plan result file suffix** (v2.13) | Verifier/Docs Updater output JSON files under `.orchestrator/{verifier,docs}_results/` get a `_p<index>` suffix in multi-plan runs to avoid collision across plans (`batch_p0_2.json`, `phase_p1_4.json`, `final_p2.json`). Single-plan and legacy v2.12 two-plan runs keep their un-suffixed paths for compatibility. Aggregators that scan these directories must accept both shapes. |
+| **Run-level args propagate across all chain plans** (v2.13) | `implementer_model`, `parallel`, `risk`, `docs_scope` are written to state.json top-level (NOT into each plan_chain entry). The Cross-Plan Trigger does NOT reset them at swap. Every plan in the chain inherits the same model selection, parallel toggle, etc. Plan-specific overrides are deliberately NOT supported — if a user wants different models for different plans, they invoke the skill once per plan, not as a chain. |
 
 ---
 

@@ -21,6 +21,38 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.13 — Natural-language args + multi-plan auto-chain (experiment branch, 2026-05-16)
+
+**Status**: Ships on `experiment/v2.13-natural-multi-plan` only — NOT yet merged to main. Awaiting a real multi-plan run + advisor sign-off before promotion.
+
+Two invocation-UX features ship together because both touch Phase -1's argument parsing layer:
+
+1. **Multi-plan auto-chain.** Users can pass `plan=A spec=A.spec plan2=B spec2=B.spec plan3=C spec3=C.spec …planN=…` and the skill auto-chains them in numeric order. No `manifest=` arg required; no separate manifest file. Schema generalizes v2.12's `plan2_state` (single nested object) to `plan_chain[]` (array) when N≥2 plans are provided. Single-plan invocations keep the exact v2.12 schema (no `plan_chain` field, top-level `state.tasks`). Phase 2 Step -1 Cross-Plan Trigger generalizes from "swap to plan2" to "advance active_plan from i to i+1 if next entry exists and current plan finished cleanly".
+
+2. **Natural-language keyword lexicon.** Users can write `오푸스로 순차적으로 진행해줘` (or `use Opus, sequential`) and the skill parses the keywords:
+   - `opus` / `오푸스` → `implementer_model=opus`
+   - `sonnet` / `소넷` → `implementer_model=sonnet`
+   - `순차` / `sequential` / `직렬` / `시리얼` → `parallel=off`
+   - `대화형` / `interactive` → `mode=interactive`
+
+   Explicit `key=value` always wins; NL only fills unset keys. Conflicts halt with a batched question — never silent disambiguation. False-positive guard: tokens with `/`, `.`, `=`, or backtick neighbors are excluded from NL scanning, so plan paths containing model names don't trigger.
+
+The lexicon is intentionally small (4 keys) and additive only; future expansions require an ADR under the v2.13 experiment dir.
+
+**Echo line:** Phase -1.0 prints one mandatory summary line to the interactive parent's stdout before any other work, showing the parsed plans count, each setting's resolved value, and the source (`explicit` / `NL '<word>'` / `default`). This is the user's checkpoint before headless self-spawn detaches.
+
+**Schema additions (additive — no migration needed):**
+- `state.plan_chain: [...]` — present only when multi-plan; each entry has `{index, plan_path, spec_path, status, blocked_until, baseline, tasks, task_summaries, quality_trend, risk_levels, task_complexity, compaction_points, execution_plan, global_constraints, low_tasks_pending_verification, last_compaction_after_task, last_completed_task, last_completed_at, plan_review}`.
+- `state.active_plan` becomes an integer (0, 1, 2, ...) when `plan_chain` is in use; remains the v2.12 string (`"plan1"` / `"plan2"`) for legacy and single-plan runs.
+- Verifier/Docs Updater result files under `.orchestrator/{verifier,docs}_results/` carry a `_p<index>` suffix in multi-plan runs.
+
+**Backward compatibility:** the v2.12 single-plan schema is preserved bit-for-bit. The v2.12 implementer-model benchmark (`docs/experiments/v2.12-implementer-opus-vs-sonnet/bench/`) runs unchanged. Legacy v2.12 two-plan state files (with `plan2_state` field) are still readable via the dedicated "v2.12 legacy path" branch in Phase 2 Step -1; v2.13 never writes new `plan2_state` fields.
+
+Companion experiment artifacts under `docs/experiments/v2.13-natural-multi-plan/`:
+- `decisions/D001-nl-lexicon-scope.md` — why the lexicon stays small and additive only
+- `decisions/D002-plan-chain-schema.md` — why single-plan keeps v2.12 schema while multi-plan introduces `plan_chain[]`
+- `examples/` — sample invocations with their parsed-args echo outputs
+
 ### v2.12 — Implementer model selection (experiment branch, 2026-05-16)
 
 **Status**: Ships on `experiment/v2.12-implementer-opus-vs-sonnet` only — NOT yet merged to main. Awaiting findings from the 6-run A/B comparison before promotion.
