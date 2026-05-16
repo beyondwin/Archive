@@ -17,6 +17,7 @@ python3 scripts/check_learning_log_health.py --latest 5 --json
 python3 evals/check_state_schema.py
 python3 evals/check_run_diffs.py
 python3 evals/check_event_journal.py
+python3 evals/check_state_reconciliation.py
 python3 evals/check_learning_log.py
 python3 evals/check_skill_contract.py --skill SKILL.md
 python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
@@ -108,6 +109,22 @@ terminal state metadata expected for project-local `events.jsonl`. It covers:
 
 Add cases here when event types, redaction policy, or terminal event metadata
 changes.
+
+## Drift Reconciliation Checks
+
+`evals/check_state_reconciliation.py` verifies safe drift repair and blocking
+drift detection. It covers:
+
+- stale root compatibility state pointer repair
+- missing `context_health.last_checked_at` repair
+- missing `event_journal_path` repair
+- stale `last_event_seq` repair
+- open carried acceptance blocking terminal success
+- completed task missing `unit_manifest` blocking terminal success
+- context basis hash mismatch blocking terminal success
+
+Add cases here whenever drift types, repair policy, or terminal drift
+validation changes.
 
 ## Learning Log Checks
 

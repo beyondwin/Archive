@@ -5,6 +5,28 @@ state, context snapshots, and project-local event evidence. Detection is
 read-only by default. Repair mode may apply only explicitly safe mechanical
 repairs.
 
+Run detection:
+
+```bash
+python3 scripts/reconcile_state.py \
+  --state .codex-orchestrator/runs/<run_id>/state.json \
+  --check
+```
+
+Run safe repair:
+
+```bash
+python3 scripts/reconcile_state.py \
+  --state .codex-orchestrator/runs/<run_id>/state.json \
+  --repair-safe
+```
+
+Exit codes:
+
+- `0`: no blocking drift remains
+- `1`: blocking drift remains
+- `2`: unreadable state or invalid arguments
+
 Drift record shape:
 
 ```json
@@ -46,3 +68,18 @@ Severity enum:
 Blocking drift must leave a concrete `handoff_reason` or `context_health`
 `next_action` when it stops a run.
 
+After every check or repair, the state should record:
+
+```json
+{
+  "drift": {
+    "last_checked_at": "2026-05-16T07:35:00Z",
+    "records": [],
+    "unrepaired_blockers": []
+  }
+}
+```
+
+When repair mode changes state and an event journal exists, append a
+`drift_repaired` event. This event is audit evidence only; the repaired
+`state.json` remains the source of truth.

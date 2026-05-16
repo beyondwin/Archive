@@ -143,6 +143,11 @@ success still depends on `state.json`, `context_health`, and
 `completion_audit`. Finished state must include matching `event_journal_path`
 and a positive `last_event_seq`.
 
+Before claiming terminal success, run `scripts/reconcile_state.py --check` or
+`--repair-safe`. If blocking drift remains, the target must report a blocked or
+failed lifecycle outcome with a concrete resume action instead of
+`lifecycle_outcome=finished`.
+
 When a headless target records required phase methods, it must use
 `method_audit` evidence instead of skill-invocation intent. Implementation TDD
 needs RED and GREEN evidence references, review needs findings or an explicit

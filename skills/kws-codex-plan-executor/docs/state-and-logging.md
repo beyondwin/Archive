@@ -170,6 +170,30 @@ log remains cross-repository process learning. Finished state must include
 `event_journal_path=".codex-orchestrator/runs/<run_id>/events.jsonl"` and a
 positive `last_event_seq`.
 
+## Drift Reconciliation
+
+Use drift reconciliation to detect stale compatibility state, event-journal
+sequence drift, missing terminal health timestamps, and blocking contradictions
+such as context hash mismatches or completed tasks without manifests.
+
+```bash
+python3 scripts/reconcile_state.py \
+  --state .codex-orchestrator/runs/<run_id>/state.json \
+  --check
+```
+
+Safe mechanical repairs are opt-in:
+
+```bash
+python3 scripts/reconcile_state.py \
+  --state .codex-orchestrator/runs/<run_id>/state.json \
+  --repair-safe
+```
+
+Finished state cannot contain `drift.unrepaired_blockers` or blocking drift
+records. Safe repair may append a `drift_repaired` project-local event when the
+event journal exists.
+
 ## Method Audit
 
 `method_audit` is optional state evidence for required phase methods. It records

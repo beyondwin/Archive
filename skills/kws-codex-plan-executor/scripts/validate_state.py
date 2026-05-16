@@ -375,6 +375,27 @@ def _validate_event_journal(data: dict, errors: list[str]) -> None:
         errors.append("last_event_seq must be a positive integer when lifecycle_outcome is finished")
 
 
+def _validate_drift(data: dict, errors: list[str]) -> None:
+    if data.get("lifecycle_outcome") != "finished":
+        return
+    drift = data.get("drift")
+    if drift is None:
+        return
+    if not isinstance(drift, dict):
+        errors.append("drift must be an object")
+        return
+    blockers = drift.get("unrepaired_blockers", [])
+    if blockers:
+        errors.append("drift.unrepaired_blockers must be empty when lifecycle_outcome is finished")
+    records = drift.get("records", [])
+    if isinstance(records, list):
+        for index, record_item in enumerate(records):
+            if isinstance(record_item, dict) and record_item.get("severity") == "blocking":
+                errors.append(
+                    f"drift.records[{index}] blocking drift is not allowed when lifecycle_outcome is finished"
+                )
+
+
 def _method_skill(entry: object) -> str | None:
     if isinstance(entry, str):
         return entry
@@ -542,6 +563,7 @@ def validate(data: object) -> list[str]:
     _validate_context_health(data, errors)
     _validate_unit_manifest(data, errors)
     _validate_event_journal(data, errors)
+    _validate_drift(data, errors)
     _validate_completion_audit(data, errors)
     _validate_carried_acceptance(data, errors)
     _validate_method_audit(data, errors)
