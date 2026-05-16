@@ -187,6 +187,34 @@ risk. Do not paste long logs or sensitive output.
 - Residual risk:
   - Budgeting is character-based approximation, not exact tokenizer accounting.
 
+## 2026-05-16 - GSD-2 adoption task 7 headless result schema
+
+- Branch: `codex/gsd-2-adoption-20260516-074140`
+- Commit: pending at time of verification
+- Scope: added `templates/headless-output-schema.json`, manual headless result
+  evals, and prompt/headless runner docs for structured final output.
+- TDD evidence:
+  - RED: `python3 evals/check_headless_result.py` failed before implementation
+    because `templates/headless-output-schema.json` did not exist.
+  - GREEN: `python3 evals/check_headless_result.py` passed with schema parse,
+    required fields, status enum, valid payload, and negative cases true.
+- Commands:
+  - `python3 evals/check_headless_result.py`
+    - result: pass, JSON payload had `"passed": true` and no failures.
+  - `python3 evals/check_skill_contract.py --skill SKILL.md`
+    - result: pass, including `headless_result_schema_contract`.
+  - `python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .`
+    - result: pass, `Skill is valid!`
+  - `python3 -m py_compile evals/check_headless_result.py evals/check_skill_contract.py`
+    - result: pass, no syntax errors.
+  - `python3 scripts/check_run_diffs.py --repo-root /Users/kws/source/private/worktrees/gsd-2-adoption-074140 --state /Users/kws/source/private/worktrees/gsd-2-adoption-074140/.codex-orchestrator/runs/20260516T074231Z-archive-codex-gsd-2-adoption-20260516-074140-f4e9b30fbbc1-c17bdf/state.json --task task_7 --json`
+    - result: pass, no violations for changed Task 7 files.
+  - `git diff --check -- skills/kws-codex-plan-executor`
+    - result: pass, no whitespace errors.
+- Residual risk:
+  - The eval intentionally validates a small manual subset instead of using an
+    external JSON Schema package.
+
 ## 2026-05-14 - Log-driven executor hardening implementation
 
 - Branch: `codex/log-driven-executor-hardening`

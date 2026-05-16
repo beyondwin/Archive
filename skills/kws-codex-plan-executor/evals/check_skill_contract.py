@@ -27,6 +27,7 @@ def main() -> int:
     skill_dir = skill_path.resolve().parent
     text = skill_path.read_text(encoding="utf-8")
     template_path = skill_dir / "templates" / "fresh-session-prompt.txt"
+    headless_schema_path = skill_dir / "templates" / "headless-output-schema.json"
     checklist_path = skill_dir / "references" / "prompt-export-checklist.md"
     execution_path = skill_dir / "references" / "execution-cycle.md"
     headless_path = skill_dir / "references" / "headless-runner.md"
@@ -37,6 +38,7 @@ def main() -> int:
     eval_run_path = skill_dir / "evals" / "run.sh"
 
     template = template_path.read_text(encoding="utf-8") if template_path.is_file() else ""
+    headless_schema = headless_schema_path.read_text(encoding="utf-8") if headless_schema_path.is_file() else ""
     checklist = checklist_path.read_text(encoding="utf-8") if checklist_path.is_file() else ""
     execution = execution_path.read_text(encoding="utf-8") if execution_path.is_file() else ""
     headless = headless_path.read_text(encoding="utf-8") if headless_path.is_file() else ""
@@ -202,6 +204,21 @@ def main() -> int:
             for surface in unit_manifest_surfaces
         )
         and "finished runs require every completed task to have a valid manifest" in normalized_runtime_text,
+        "headless_result_schema_contract": all(
+            token in (headless + template + headless_schema)
+            for token in (
+                "status",
+                "run_id",
+                "state_path",
+                "changed_files",
+                "verification",
+                "open_gaps",
+                "residual_risk",
+                "next_action",
+            )
+        )
+        and "templates/headless-output-schema.json" in headless
+        and "templates/headless-output-schema.json" in template,
     }
 
     checks.update(expectations)
