@@ -75,6 +75,30 @@ REQUIRED_CONTRACT_FIELDS = {
 }
 CONTRACT_LIST_FIELDS = {"files_to_inspect", "allowed_edits", "forbidden_edits"}
 CONTRACT_STRING_FIELDS = {"scope", "acceptance_command_or_honest_substitute"}
+VALID_UNIT_TYPES = {
+    "research",
+    "plan",
+    "execute-task",
+    "reactive-execute",
+    "validate",
+    "complete",
+    "docs",
+    "review",
+    "handoff",
+}
+VALID_CONTEXT_MODES = {"minimal", "focused", "expanded", "full"}
+VALID_TOOL_POLICIES = {"read-only", "planning", "implementation", "docs", "verification"}
+VALID_ARTIFACT_POLICIES = {"inline", "inline-summary", "excerpt", "on-demand"}
+REQUIRED_UNIT_MANIFEST_FIELDS = {
+    "unit_type",
+    "context_mode",
+    "required_skills",
+    "tool_policy",
+    "allowed_write_globs",
+    "forbidden_write_globs",
+    "artifact_policy",
+    "max_context_chars",
+}
 
 
 def _required_project_path(run_id: str, name: str) -> str:
@@ -263,6 +287,57 @@ def _validate_carried_acceptance(data: dict, errors: list[str]) -> None:
                 )
 
 
+def _validate_unit_manifest(data: dict, errors: list[str]) -> None:
+    outcome = data.get("lifecycle_outcome")
+    tasks = data.get("tasks")
+    if not isinstance(tasks, dict):
+        return
+
+    for task_id, task in tasks.items():
+        if not isinstance(task, dict):
+            continue
+        manifest = task.get("unit_manifest")
+        completed = task.get("status") in {"completed", "verified", "done"}
+        if outcome == "finished" and completed and manifest is None:
+            errors.append(
+                f"{task_id}: unit_manifest is required for completed tasks when lifecycle_outcome is finished"
+            )
+            continue
+        if manifest is None:
+            continue
+        if not isinstance(manifest, dict):
+            errors.append(f"{task_id}: unit_manifest must be an object")
+            continue
+
+        for key in sorted(REQUIRED_UNIT_MANIFEST_FIELDS):
+            if key not in manifest:
+                errors.append(f"{task_id}: unit_manifest missing field {key}")
+
+        if manifest.get("unit_type") not in VALID_UNIT_TYPES:
+            errors.append(f"{task_id}: unit_manifest.unit_type must be one of {sorted(VALID_UNIT_TYPES)}")
+        if manifest.get("context_mode") not in VALID_CONTEXT_MODES:
+            errors.append(f"{task_id}: unit_manifest.context_mode must be one of {sorted(VALID_CONTEXT_MODES)}")
+        if manifest.get("tool_policy") not in VALID_TOOL_POLICIES:
+            errors.append(f"{task_id}: unit_manifest.tool_policy must be one of {sorted(VALID_TOOL_POLICIES)}")
+        if manifest.get("artifact_policy") not in VALID_ARTIFACT_POLICIES:
+            errors.append(f"{task_id}: unit_manifest.artifact_policy must be one of {sorted(VALID_ARTIFACT_POLICIES)}")
+
+        for key in ("required_skills", "allowed_write_globs", "forbidden_write_globs"):
+            if key in manifest and not isinstance(manifest[key], list):
+                errors.append(f"{task_id}: unit_manifest.{key} must be a list")
+
+        max_chars = manifest.get("max_context_chars")
+        if not isinstance(max_chars, int) or max_chars <= 0:
+            errors.append(f"{task_id}: unit_manifest.max_context_chars must be a positive integer")
+
+        policy = manifest.get("tool_policy")
+        allowed = manifest.get("allowed_write_globs")
+        if policy == "implementation" and not _has_substantive_value(allowed):
+            errors.append(f"{task_id}: implementation unit_manifest requires allowed_write_globs")
+        if policy == "read-only" and isinstance(allowed, list) and allowed:
+            errors.append(f"{task_id}: read-only unit_manifest must not allow write globs")
+
+
 def _method_skill(entry: object) -> str | None:
     if isinstance(entry, str):
         return entry
@@ -428,6 +503,7 @@ def validate(data: object) -> list[str]:
 
     _validate_context_snapshot(data, errors)
     _validate_context_health(data, errors)
+    _validate_unit_manifest(data, errors)
     _validate_completion_audit(data, errors)
     _validate_carried_acceptance(data, errors)
     _validate_method_audit(data, errors)

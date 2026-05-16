@@ -124,6 +124,13 @@ be `handoff_ready=true` and not `red`. Blocked or failed targets must set a
 non-success `lifecycle_outcome`, a concrete `handoff_reason`, and a
 `context_health.next_action` suitable for resume.
 
+For executable tasks, the target may record `unit_manifest` with `unit_type`,
+`context_mode`, `required_skills`, `tool_policy`, `allowed_write_globs`,
+`forbidden_write_globs`, `artifact_policy`, and `max_context_chars`. Finished
+runs require every completed task to have a valid manifest. `implementation`
+manifests must include non-empty `allowed_write_globs`; `read-only` manifests
+must not allow write globs.
+
 When a headless target records required phase methods, it must use
 `method_audit` evidence instead of skill-invocation intent. Implementation TDD
 needs RED and GREEN evidence references, review needs findings or an explicit

@@ -74,6 +74,10 @@ For each task:
    - `acceptance_command_or_honest_substitute`
    Record the same contract under the task entry in
    `.codex-orchestrator/runs/<run_id>/state.json`.
+   Executable tasks may also record `unit_manifest` with `unit_type`,
+   `context_mode`, `required_skills`, `tool_policy`, `allowed_write_globs`,
+   `forbidden_write_globs`, `artifact_policy`, and `max_context_chars`.
+   Finished runs require every completed task to have a valid manifest.
 2. Re-check task skills before edits. Invoke `using-superpowers` as the
    per-task skill gate. For feature, bugfix, refactor, behavior change, or
    executable-code edits, invoke `test-driven-development` before writing

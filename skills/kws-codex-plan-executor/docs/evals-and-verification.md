@@ -75,6 +75,7 @@ and invalid state payloads. It covers:
 - lifecycle outcomes
 - completion audit proof
 - non-success `handoff_reason`
+- `unit_manifest` enum, write-scope, and terminal-completion requirements
 
 Add or update these cases whenever `references/state-schema.md` changes.
 
