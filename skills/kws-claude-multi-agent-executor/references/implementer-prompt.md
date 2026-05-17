@@ -36,7 +36,7 @@ Stay within the tool-call budget. If you find yourself exceeding it for a SMALL/
 
 ## Your Task
 
-{full text of the task from the plan — copy the entire ### Task N: section verbatim}
+{full text of the task from the plan — copy the entire task section verbatim, at whichever heading level the plan uses (`### Task N:` or `## Task N:`), including all substeps and blocks belonging to that task}
 
 ## Spec Requirement (governs this task)
 

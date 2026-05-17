@@ -445,7 +445,11 @@ This is a fallback — the primary expectation is that one headless subprocess c
 0.5. **Validate plan file (pre-flight):**
    Read the plan file. Before proceeding:
    - If the file is unreadable or missing: halt. "Plan file not found or unreadable at <path>."
-   - If no `### Task N:` sections are found: halt. "Plan has no `### Task N:` sections. Cannot execute."
+   - **Detect task header level (v2.17):** scan for both `### Task N:` (H3) and `## Task N:` (H2) section headers via case-sensitive line-anchored regex `^(##|###)\s+Task\s+\d+:`. Resolve which level the plan uses:
+     - If `### Task N:` matches exist: use H3 (`### `). This is the canonical format; H2 occurrences (if any) are treated as Phase headers per Step 3.
+     - Else if `## Task N:` matches exist: use H2 (`## `). The plan's internal `### N. <step>` substeps under each task are then *substeps*, NOT tasks — the detected level is what scoping uses for "the task block".
+     - Else: halt. "Plan has no `## Task N:` or `### Task N:` sections. Cannot execute."
+   - Hold the detected prefix in your internal notes as `task_header_prefix` (literal string `"### "` or `"## "`). It is persisted into `<active>.task_header_prefix` at Step 7. Every later mention in this SKILL.md of `### Task N:` (Steps 3, 3.5, 6, prompt placeholders) refers to "Task N: at the detected level"; substitute `task_header_prefix` when constructing regex or instructions for sub-agents.
    
    This gate runs before worktree creation — structural failures cost zero infrastructure.
 
@@ -547,13 +551,15 @@ This is a fallback — the primary expectation is that one headless subprocess c
    **Why this layering matters (P1):** prior versions kept these checks in prose (Orchestrator-driven), so a context drift or malformed reply could silently skip the gate. With hooks they cannot be bypassed.
 
 3. **Read both documents fully:**
-   - Read the plan document. Extract the ordered task list: every `### Task N:` section with full text. Note any explicit phase groupings (e.g., `## Phase 1`, `## Phase 2`) — these define phase boundaries.
+   - Read the plan document. Extract the ordered task list: every section whose header matches the detected `task_header_prefix` from Step 0.5 followed by `Task N:` (so either `### Task N:` for H3 plans or `## Task N:` for H2 plans). Capture each task's full text from its header up to the next header at the same or higher level. Note any explicit phase groupings:
+     - For H3 plans: `## Phase 1`, `## Phase 2` define phase boundaries.
+     - For H2 plans: phases come from `# Phase 1` (H1) or any non-`Task` H2 header (e.g., `## Phase 1: Foundation`). Do NOT treat substep headers (`### 1. <step>`) inside an H2 task as task or phase boundaries — they are scoped to their parent task.
    - Read the spec document. Keep relevant sections in context for prompt construction.
 
 3.5. **Validate document content (Ambiguity Gate):**
    After reading both documents, before assigning risk levels:
 
-   1. **Missing Files blocks:** List every `### Task N:` section that has no `**Files:**` block. If any found: ask the user one short question — "Tasks N, M have no Files block. Should I infer from task descriptions, or halt for you to add them?" Halt until answered.
+   1. **Missing Files blocks:** List every task section (header at the detected `task_header_prefix` from Step 0.5) that has no `**Files:**` block. If any found: ask the user one short question — "Tasks N, M have no Files block. Should I infer from task descriptions, or halt for you to add them?" Halt until answered.
 
    2. **Ambiguity scan:** Check each task description for:
       - Verbs without referents: "fix the bug", "optimize the query", "update the config" — which one?
@@ -797,6 +803,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
      "risk_levels": {},
      "compaction_points": [],
      "execution_plan": [],
+     "task_header_prefix": "### ",
      "global_constraints": {
        "shared_files": {}
      },
@@ -1055,7 +1062,7 @@ Advance only when the current task (or parallel group) reaches Agent Cleanup suc
 ### Step 1: Dispatch Implementer
 
 Build the implementer prompt from the **Implementer Prompt Template** below. Fill in:
-- `{full text of the task}` — copy the entire `### Task N:` section verbatim
+- `{full text of the task}` — copy the entire task section verbatim, using whichever heading level Step 0.5 detected (`### Task N:` for H3 plans, `## Task N:` for H2 plans). Include all of the task's substeps and blocks up to the next header at the same or higher level.
 - `{relevant spec excerpt}` — spec section(s) that govern this task. **v2.15 substitution rule (C1):**
   ```
   section_entry = <active>.spec_manifest.task_to_sections["task_<N>"]
@@ -2033,7 +2040,7 @@ These rules are absolute. No exceptions.
 | **External-resource contention in parallel waves is the user's responsibility** | If two parallel tasks contend for the same DB port, file lock, or external service, mark one of them `serial: true` in the plan. The Phase 0 Step 6 partition respects `serial` and keeps such tasks in singleton groups. The skill cannot detect arbitrary external contention. |
 | **Disable parallel dispatch via `parallel=off`** | Writes a degenerate `execution_plan` where every parallel group is singleton. Use when sub-worktree creation is constrained (shallow clones, low disk, fsmonitor races). |
 | **Acceptance Criteria shell is primary PASS condition** | If a task has an `## Acceptance Criteria` block with executable shell, the Verifier runs those commands first. All must exit 0. Risk-tiered test instructions are the fallback when no AC block is present. |
-| **Plan structural validation is mandatory** | Step 0.5 runs before worktree creation. A plan without `### Task N:` headers halts immediately. A plan with missing Files blocks halts with a user question. Never skip this gate. |
+| **Plan structural validation is mandatory** | Step 0.5 runs before worktree creation. A plan must have either `### Task N:` (H3, canonical) OR `## Task N:` (H2) task headers — neither present halts immediately. Detected level is persisted as `<active>.task_header_prefix` and used consistently in all downstream parsing, Plan Reviewer prompts, and sub-agent task excerpts. A plan with missing Files blocks halts with a user question. Never skip this gate. |
 | **Ambiguity gate clears before risk assignment** | Step 3.5 must complete with zero unresolved ambiguities before Step 4 begins. Unclear task descriptions answered downstream cost one full sub-agent dispatch + reset cycle. |
 | **Out-of-repo paths halt execution** | Files blocks referencing paths outside repo root halt at Phase 0 Step 3.5. Never infer a correction — always ask the user. |
 | **Phase -1 self-spawn is the default** | Interactive invocations auto-detach unless `mode=interactive` is explicitly passed. The headless sentinel `<<HEADLESS_KWS_ORCHESTRATOR>>` distinguishes spawned instances. Self-spawn is gated by Phase 0 Steps 1, 2, 2.5 completing successfully — failures abort the spawn and surface to the user. |
