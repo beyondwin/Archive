@@ -1044,6 +1044,7 @@ Advance only when the current task (or parallel group) reaches Agent Cleanup suc
 **Before Step 1 of each task:**
 - Run `git -C <worktree_path> rev-parse HEAD` and **record the literal SHA** (e.g., `Task 3: pre_sha=abc1234`). Use this literal string in all subsequent revert and diff commands — do not use shell variables, which do not persist between Bash calls.
 - Update `current_task` in the state file.
+- **Record `timing.started` (v2.16):** initialize the task's entry under `<active>.tasks.task_<N>` if not yet present (use the per-task schema from Phase 0 Step 7), and set `<active>.tasks.task_<N>.timing.started = <iso8601 now>` via atomic R-M-W of state.json. Failure to write timing.started is a non-fatal warning — log and continue; do NOT halt. Without this field the Final Summary Report's duration column cannot be computed (observed regression: jq strptime errors in all v2.11–v2.15 runs because timing.started stayed null).
 
 **Per-task counters (reset for each task — all are task-level):**
 - `review_retries` — re-dispatches of Implementer due to Combined Reviewer FAIL (max 3)
@@ -1270,30 +1271,37 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
 
    If you suspect the hook was misfired or disabled (e.g., user manually edited settings.json mid-run): re-enable and continue. Do not re-introduce the manual grep — it duplicates the hook and was the silent-bypass risk that motivated P1.
 
-1.5. **Accumulate cost (F2):**
-   Use `scripts/price_table.py` (`compute_cost(model, usage)`) to compute per-task cost.
+1.5. **Accumulate cost (F2 — v2.16 helper-script enforced):**
 
-   For the just-completed Agent tool dispatch (Implementer / Combined Reviewer), extract `usage` from the Agent result. For just-completed headless subprocess (Verifier / Plan Reviewer / Docs Updater), parse the final `result` stream-json line from `<name>.stdout`.
+   **MANDATORY for every sub-agent dispatch.** Pre-v2.16 runs left `cost_ledger.totals.dispatches=0` across every observed run because this step was prose-only and got silently skipped. Always call `scripts/accumulate_cost.py` — it does the price lookup, R-M-W of state.json under flock, and aggregation for you. The orchestrator's job is reduced to (a) extracting `usage` from the just-completed dispatch, (b) calling the helper.
 
-   Compute:
-   ```
-   cost_usd = compute_cost(model, usage) via scripts/price_table.py
-   key      = "<active_plan>::<task_id>"
+   **Extract `usage`:**
+
+   - *Agent tool dispatch* (Implementer / Combined Reviewer): the Agent tool result returned to this turn includes a `usage` object with `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`. Normalize to the helper's field names: `cached_read_tokens` ← `cache_read_input_tokens`, `cached_write_tokens` ← `cache_creation_input_tokens`. If the Agent result has no `usage` block (transport error, schema drift): use `{"input_tokens": 0, "output_tokens": 0}` and pass `--model unknown` so cost is recorded as 0 without misattributing tokens. Do NOT skip the helper call — the dispatch count is itself signal.
+   - *Headless `claude -p --output-format stream-json` subprocess* (Verifier / Plan Reviewer / Docs Updater): tail the result file `<worktree>/.orchestrator/{verifier,docs,plan_review}_results/...` OR the matching `.stdout`. The final line of stream-json is `{"type":"result","usage":{...},...}`. Extract `usage`, normalize the same way.
+
+   **Invoke the helper:**
+
+   ```bash
+   python3 <skill_dir>/scripts/accumulate_cost.py \
+     --state "<worktree_path>/.orchestrator/state.json" \
+     --task-id "task_<N>" \
+     --role "implementer|reviewer|verifier|plan_reviewer|docs_updater" \
+     --model "<state.implementer_model.used for implementer; 'sonnet' for reviewer/verifier/docs/plan_reviewer; 'unknown' if missing>" \
+     --usage-json '<JSON string of normalized usage>' \
+     >/dev/null 2>&1 || echo "COST_ACCUMULATE: failed (non-fatal; ledger may under-count this dispatch)"
    ```
 
-   Update `state.cost_ledger` atomically:
-   ```
-   by_task[key] = {input_tokens, output_tokens, cached_read_tokens, cached_write_tokens,
-                   cost_usd, model, role, dispatched_at}
-   by_role[<role>]   += increments
-   by_model[<model>] += increments
-   totals            += increments
-   ```
+   The helper's exit code is intentionally NOT enforced (`|| echo`) — accumulation failure is observability degradation, not a correctness issue. The next compaction-point budget check (Phase Transition T3 step 4) reads whatever is in the ledger.
 
-   Failure modes:
-   - Missing `usage` block → record entry with zeros, `model="unknown"`, `role="<role>"`. Do not halt.
-   - `state.json` write failure → existing hard-halt rule applies (state-file write guardrail).
-   - `price_table` import failure → log warning, record `cost_usd=0.0`, continue.
+   **by_task key shape:** `<active_plan>::<task_id>::<role>` so implementer + reviewer + verifier each persist under the same task without overwriting each other. Same-role retries overwrite (latest dispatch wins); by_role / by_model / totals always increment so cumulative spend stays correct across retries.
+
+   **Failure modes:**
+   - Missing `usage` block → call helper with `{"input_tokens":0,"output_tokens":0}` and `--model unknown`. Cost recorded as 0, dispatch count still increments.
+   - `state.json` write failure inside helper → helper exits 1; orchestrator logs and continues (no halt — this is the F2 budget guardrail's downside vs. the state-file write guardrail; budget tracking is best-effort by design).
+   - `price_table` import failure → helper exits 1 at startup; same handling.
+
+   **Budget evaluation** (Phase Transition T3 step 4 and Phase 2 Step 0) is unchanged — it reads `state.cost_ledger.totals.cost_usd` and compares to `state.budget_cap_usd`. The fix here only ensures the ledger is actually populated so the comparison is meaningful.
 
 2. **Update state file** — write this task's result into the active task tree.
 
@@ -1869,14 +1877,16 @@ Parse the JSON output:
 
 Before generating the report, invoke `Skill("superpowers:finishing-a-development-branch")` and include its recommendation in Cleanup Status.
 
-**Learning-log close-run (v2.8):** before printing the summary, close the
-run record. Use `--outcome=success` when Phase 2 completes normally:
+**Stamp `state.timestamps.completed_at` (v2.16):** before close-run, set `state.timestamps.completed_at = <iso8601 now>` via atomic R-M-W of state.json. This is the canonical wall-clock end-marker that the Final Summary Report's "Total wall time" row depends on. If state.json write fails: the standard state-file write guardrail applies (hard halt). Observed regression: pre-v2.16 runs left `completed_at: null` even when `meta.json.outcome=success`, because nothing in the Phase 2 prose explicitly wrote it.
+
+**Learning-log close-run (v2.8, v2.16 idempotent):** before printing the summary, close the
+run record. Use `--outcome=success` when Phase 2 completes normally. The `--if-open` flag (v2.16) makes close-run a no-op when the run is already closed — important for chained meta-runs where the final child re-enters Phase 2 Step 2 after a chain handoff and would otherwise overwrite an earlier outcome:
 
 ```bash
 if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
   python3 <skill_dir>/scripts/append_learning_event.py close-run \
     --run-id "$MAE_LEARNING_RUN_ID" \
-    --outcome success >/dev/null 2>&1 || true
+    --outcome success --if-open >/dev/null 2>&1 || true
 fi
 ```
 
@@ -2034,7 +2044,9 @@ These rules are absolute. No exceptions.
 | **Resume Chain trigger is deterministic** (v2.15) | Chain when EITHER token threshold OR legacy floor fires (additive). Token threshold: `session_input_tokens (= cost_ledger.totals.input_tokens − cached_read_tokens) ≥ state.context_budget.threshold_tokens`. Legacy floor: `compaction_points reached ≥ 2` AND `completed tasks ≥ 8` (always evaluated). `budget_action == "off"` disables the token trigger, leaving the legacy floor as the sole criterion. Chain procedure MUST update `headless.pid` atomically so Monitor sees `CHAIN_HANDOFF`, not `PROCESS_DIED`. |
 | **`files_test` discrimination for batch verifier** | Implementer outputs `FILES_TEST_CHANGED` separately from `FILES_CHANGED`. T1 batch pre-filter uses it (or `.md`-only heuristic for legacy state) to route docs-only tasks to lint instead of test runs. |
 | **Plan 2 re-takes baseline** | When Phase 2 Step -1 swaps `active_plan` to `"plan2"`, run Phase 0 Step 5 fresh against current HEAD (Plan 1's changes are now Plan 2's starting point). Never reuse Plan 1's baseline as Plan 2's regression reference. |
-| **Learning log lifecycle (v2.8)** | Phase 0 Step 7.5 calls `init-run` and exports `MAE_LEARNING_RUN_ID`. Phase 1 Step 3.5 scans `<worktree>/.orchestrator/learning_events/` for sub-agent candidate JSON and calls `append`. Phase 2 Step 2 closes with `outcome=success`; orchestrator-level abort closes with `outcome=aborted`; whole-orchestrator hard-halt (state-write fail, exhausted escalations halting the run) closes with `outcome=blocked`. Resume Chain preserves `MAE_LEARNING_RUN_ID` via env propagation and calls `append-session-id`, never `init-run`. **Learning-log failure must never block plan execution** — every helper invocation is wrapped with `\|\| true`. See `references/learning-log.md`. |
+| **Learning log lifecycle (v2.8, v2.16 idempotent success)** | Phase 0 Step 7.5 calls `init-run` and exports `MAE_LEARNING_RUN_ID`. Phase 1 Step 3.5 scans `<worktree>/.orchestrator/learning_events/` for sub-agent candidate JSON and calls `append`. Phase 2 Step 2 closes with `outcome=success` AND `--if-open` (v2.16) — the flag makes success-close a no-op when the run is already terminal (e.g., a prior child in a chained meta-run already wrote `aborted` or `blocked`). Orchestrator-level abort closes with `outcome=aborted`; whole-orchestrator hard-halt (state-write fail, exhausted escalations halting the run) closes with `outcome=blocked`. **Halt-paths intentionally omit `--if-open`** so an outer halt overwrites an inner success when the run truly failed. Resume Chain preserves `MAE_LEARNING_RUN_ID` via env propagation and calls `append-session-id`, never `init-run`. **Learning-log failure must never block plan execution** — every helper invocation is wrapped with `\|\| true`. See `references/learning-log.md`. |
+| **`state.timestamps.completed_at` is stamped at Phase 2 Step 2** (v2.16) | The first action of Step 2 is an atomic R-M-W of state.json setting `timestamps.completed_at = <iso8601 now>`. This is the canonical wall-clock end-marker; the Final Summary Report's "Total wall time" row depends on it. Pre-v2.16 runs left this field null even on `outcome=success` because nothing in the prose explicitly wrote it. State-file write failure here is a hard halt (existing guardrail). |
+| **`timing.started` is stamped before Step 1 dispatch** (v2.16) | The "Before Step 1 of each task" block writes `<active>.tasks.task_<N>.timing.started = <iso8601 now>` via atomic R-M-W. Without this field the per-task duration column cannot be computed (observed: `jq strptime` errors across all v2.11–v2.15 runs because the field stayed null). Failure to write is a non-fatal warning, not a halt. |
 | **Single-writer for learning events** | Only the orchestrator invokes the helper. Sub-agents write event candidates as JSON files under `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`; the orchestrator reads and forwards them. Never let a sub-agent prompt instruct direct helper invocation. |
 | **`context_health` is observation-only (v2.10)** | Emitted at Phase Transition T3 and Resume Chain chained-orchestrator startup. Counts compaction index, completed tasks, chain handoffs. **MUST NOT alter orchestrator control flow** — Goodhart's-law guard. Behavior changes require a follow-on experiment under `docs/experiments/v2.10-context-health/` after ≥ 2 weeks of real-run data. See `references/learning-log.md`. |
 | **Polite-stop anti-pattern is forbidden (v2.10.1)** | A sub-agent returning PASS / APPROVED is a checkpoint inside the autonomous loop, never a reporting moment. The orchestrator MUST proceed immediately to the next phase step in the same turn. The only legitimate reporting moments are: Phase 2 success completion, ESCALATE that exceeds `escalation_count > 3`, headless `HEADLESS_HALTED.txt`, or hook denial. Any prompt edit that introduces "summarize and wait for user acknowledgment" between PASS and the next step IS the regression this invariant exists to prevent. |
@@ -2052,6 +2064,7 @@ These rules are absolute. No exceptions.
 | **Per-plan result file suffix** (v2.13) | Verifier/Docs Updater output JSON files under `.orchestrator/{verifier,docs}_results/` get a `_p<index>` suffix in multi-plan runs to avoid collision across plans (`batch_p0_2.json`, `phase_p1_4.json`, `final_p2.json`). Single-plan and legacy v2.12 two-plan runs keep their un-suffixed paths for compatibility. Aggregators that scan these directories must accept both shapes. |
 | **Run-level args propagate across all chain plans** (v2.13) | `implementer_model`, `parallel`, `risk`, `docs_scope` are written to state.json top-level (NOT into each plan_chain entry). The Cross-Plan Trigger does NOT reset them at swap. Every plan in the chain inherits the same model selection, parallel toggle, etc. Plan-specific overrides are deliberately NOT supported — if a user wants different models for different plans, they invoke the skill once per plan, not as a chain. |
 | **Cost ledger frozen pricing** | `scripts/price_table.py` hardcodes rates at commit time. Historical runs reflect contemporaneous rates — re-running with a later price_table does NOT retroactively recompute past runs. Update price_table when Anthropic adjusts rates; do NOT auto-fetch. |
+| **Cost-accumulate helper is mandatory per dispatch** (v2.16) | Every sub-agent dispatch (Implementer / Reviewer / Verifier / Plan Reviewer / Docs Updater) ends with a `scripts/accumulate_cost.py` invocation in Phase 1 Step 4 substep 1.5. Pre-v2.16 prose ("extract usage from Agent result, update by_task atomically") was silently skipped in every observed run — `cost_ledger.totals.dispatches=0` across runs 1/2/3 confirmed the regression. The helper is single-call, flock-protected, and handles unknown-model and missing-usage gracefully. Skipping the helper call means budget cap (`budget_cap_usd`) and `chain_trigger_eval` token threshold cannot fire correctly. by_task key is `<plan>::<task>::<role>` so same-task multi-role dispatches don't overwrite. |
 | **`budget_action=pause` halts at compaction boundaries only** | Budget is evaluated at Phase Transition T3 and Phase 2 Step 0 — never mid-task. Cost overruns within a single task complete the task, then the next compaction triggers halt. This is intentional: aborting mid-task wastes the in-flight dispatch. |
 | **Cost ledger is run-level** | `cost_ledger`, `budget_cap_usd`, `budget_action` live at top-level state.json (never inside `plan_chain[N]`). Cross-plan chains accumulate one unified ledger. Per-plan totals derivable via `by_task` key prefix `<plan_index>::`. |
 | **Archive on close-run is best-effort** | `scripts/archive_run.sh` is invoked AFTER `close-run` succeeds. Archive failure is logged but does NOT halt the orchestrator (the primary run already completed). The worktree is never auto-deleted by archive — user retains it for manual recovery if archive fails. |

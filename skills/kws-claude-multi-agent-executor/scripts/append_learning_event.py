@@ -435,6 +435,13 @@ def cmd_close_run(args: argparse.Namespace) -> int:
     if not (rd / "meta.json").is_file():
         rd = ensure_run_dir_with_meta(log_root, args.run_id, None)
     meta = load_meta(rd)
+    if getattr(args, "if_open", False) and meta.get("ended_at"):
+        prior = meta.get("outcome", "unknown")
+        print(
+            f"close-run skipped (already closed): {args.run_id} outcome={prior}",
+            file=sys.stderr,
+        )
+        return 0
     events_path = rd / "events.jsonl"
     if events_path.is_file():
         event_count = sum(1 for _ in events_path.open("r", encoding="utf-8"))
@@ -562,6 +569,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_close.add_argument("--log-root", default=str(DEFAULT_LOG_ROOT))
     p_close.add_argument("--run-id", required=True)
     p_close.add_argument("--outcome", required=True)
+    p_close.add_argument(
+        "--if-open",
+        action="store_true",
+        help=(
+            "No-op when meta.ended_at is already set. Use for idempotent close "
+            "from chained meta-runs where the final child may re-enter Phase 2 "
+            "Step 2 after a chain handoff and would otherwise overwrite an "
+            "earlier outcome."
+        ),
+    )
     p_close.set_defaults(func=cmd_close_run)
 
     p_sid = sub.add_parser("append-session-id", help="add a session UUID to session_ids[]")
