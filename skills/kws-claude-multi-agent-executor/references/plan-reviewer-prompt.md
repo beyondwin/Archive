@@ -33,7 +33,7 @@ You are a Plan Reviewer sub-agent running on Sonnet. Audit the Plan + Spec again
 
 ## Rubric — flag each item that fails
 
-1. **Files block presence**: Every `### Task N:` section MUST have a non-empty `**Files:**` block. Already partially checked by Phase 0.5; re-verify mechanically.
+1. **Files block presence**: Every task section MUST have a non-empty `**Files:**` block. Task sections are headed by either `### Task N:` (H3, canonical) or `## Task N:` (H2) — accept whichever the plan uses; Phase 0.5 detected the level. Already partially checked by Phase 0.5; re-verify mechanically.
 
 2. **Acceptance criteria presence**: For every task whose risk is MID or HIGH, the task body MUST contain either:
    - an `## Acceptance Criteria` block with at least one executable shell line, OR
