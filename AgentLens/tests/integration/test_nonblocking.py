@@ -1,4 +1,4 @@
-"""M5 non-blocking fault-injection passthrough (spec §5.16, §S1.6.17).
+"""M5/M8 non-blocking fault-injection passthrough (spec §5.16, §S1.6.17, §10.4).
 
 Verifies the §5.16 invariant: ``WrapperResult.exit_code`` ALWAYS reflects the
 child's real exit code (or ``128+signum`` on signal), regardless of any
@@ -8,21 +8,35 @@ Each test injects a fault at a specific pipeline stage via
 ``unittest.mock.patch`` and asserts the wrapper still returns the child's
 real exit code. The pipeline stages exercised:
 
+  * ``compute_workspace_id``         (run-init / workspace_id derivation)
   * ``write_run_meta``               (run-init / ER-1 fix)
   * ``append_event(run.started)``    (run-init)
   * ``append_event(command.*)``      (best-effort during pipeline)
   * ``write_final``                  (final.json branches)
   * ``seal(pre_eval)``               (manifest pre-eval seal)
   * ``evaluate``                     (evaluator crash)
-  * ``seal(final)``                  (final seal)
+  * ``seal(final)``                  (final seal — manifest write)
   * ``index_run``                    (SQLite update)
+  * SIGINT forwarding                (signal handler path)
 
 Plus the "pre_eval seal fails → recording_incomplete marked" scenario.
+
+The §10.4 6-fault-inject contract requires NAMED coverage of:
+
+  1. run initialization (workspace_id compute fails)
+  2. manifest write fails (pre_eval seal / final seal)
+  3. evaluator crash
+  4. SQLite update fails
+  5. pre_eval seal fails (→ recording_incomplete)
+  6. SIGINT received (→ 128+signum, agent_outcome=cancelled)
 """
 from __future__ import annotations
 
 import json
+import os
+import signal
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 from unittest import mock
@@ -392,3 +406,94 @@ def test_init_failure_with_zero_exit_still_returns_zero(
         )
     assert result.exit_code == 0
     assert result.run_id is None
+
+
+# ---------------------------------------------------------------------------
+# §10.4 fault-inject scenario 1: compute_workspace_id raises during init
+# ---------------------------------------------------------------------------
+
+
+def test_compute_workspace_id_failure_preserves_child_exit_code(
+    isolated_home: Path,
+) -> None:
+    """When ``compute_workspace_id`` raises in init, the wrapper takes the
+    ER-1 passthrough branch: child still runs, exit code is the child's, and
+    ``run_id`` is ``None`` because recording never came up (spec §S1.6.17)."""
+    with mock.patch.object(
+        proc,
+        "compute_workspace_id",
+        side_effect=RuntimeError("workspace_id basis lookup blew up"),
+    ):
+        result = wrap_command(
+            _exit42_argv(),
+            agent_name="generic",
+            agent_mode="cli",
+            mode="minimal",
+        )
+    assert result.exit_code == 42
+    assert result.run_id is None
+    # No run_dir was created — the init function bailed before mkdir.
+    assert _find_run_dir(isolated_home) is None
+
+
+# ---------------------------------------------------------------------------
+# §10.4 fault-inject scenario 6: SIGINT received → 128+SIGINT, cancelled
+# ---------------------------------------------------------------------------
+
+
+def _sigint_self_after(delay: float) -> threading.Timer:
+    """Schedule ``os.kill(os.getpid(), SIGINT)`` after ``delay`` seconds.
+
+    The Timer thread fires SIGINT to the test process; wrap_command's signal
+    handler (installed on the main thread) catches it, forwards to the child,
+    and the wrapper returns ``128 + SIGINT`` as the exit code.
+    """
+    t = threading.Timer(delay, lambda: os.kill(os.getpid(), signal.SIGINT))
+    t.daemon = True
+    t.start()
+    return t
+
+
+def test_sigint_forwarded_yields_128_plus_signum_and_cancelled_final(
+    isolated_home: Path,
+) -> None:
+    """SIGINT delivered to the parent must be forwarded to the long-running
+    child; the wrapper exit code is ``128 + signal.SIGINT`` (typically 130),
+    ``cancelled_by_signal == "SIGINT"``, and ``final.json`` carries
+    ``agent_outcome == "cancelled"`` with ``exit_signal == "SIGINT"``."""
+    # Child sleeps long enough for the timer to fire (~0.5s after spawn).
+    sleep_argv = [
+        sys.executable,
+        "-c",
+        "import time; time.sleep(30)",
+    ]
+    timer = _sigint_self_after(0.5)
+    try:
+        result = wrap_command(
+            sleep_argv,
+            agent_name="generic",
+            agent_mode="cli",
+            mode="minimal",
+        )
+    finally:
+        timer.cancel()
+
+    assert result.cancelled_by_signal == "SIGINT"
+    assert result.exit_code == 128 + int(signal.SIGINT)
+    # Run was initialised (signal hit during drain, not during init).
+    assert result.run_id is not None
+
+    run_dir = _find_run_dir(isolated_home)
+    assert run_dir is not None
+
+    # final.json reflects cancellation.
+    final_doc = json.loads((run_dir / "final.json").read_text(encoding="utf-8"))
+    assert final_doc["agent_outcome"] == "cancelled"
+    assert final_doc.get("exit_signal") == "SIGINT"
+    # The child's real exit code (which the kernel reports as -SIGINT) is
+    # stored verbatim — separate from the wrapper's 128+signum return value.
+    assert "exit_code" in final_doc
+
+    # Cancelled runs still seal to "final" so the post-drain pipeline ran.
+    manifest = _read_manifest(run_dir)
+    assert manifest["sealed_phase"] == "final"

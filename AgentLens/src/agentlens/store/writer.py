@@ -4,11 +4,12 @@ All structured writes go through ``atomic_write_json``: validate → tempfile
 + ``fsync`` → ``os.rename`` → cleanup-on-error. The events log uses
 ``append_event`` with a sibling lock (see :mod:`agentlens.store.lock`).
 
-Schema validation runs **after** any redaction pass to ensure the on-disk
-payload matches the v1 contract. Redaction is wired in via task_22
-(``agentlens.redaction.redact.apply_to_doc``); until that module exists,
-``_maybe_redact`` is an identity function — the lazy import returns input
-unchanged on ``ImportError``.
+Schema validation runs **after** the redaction pass (§5.6 ER-6) to ensure
+the on-disk payload matches the v1 contract. Redaction is provided by
+:func:`agentlens.redaction.redact.apply_to_doc` (task_22). The lazy import
+in :func:`_maybe_redact` keeps the writer importable even if the redaction
+module is ever stripped from a build — it falls back to identity on
+``ImportError`` rather than failing at module load.
 
 Public API:
     atomic_write_json(path, data, *, redact=True)
@@ -41,11 +42,14 @@ class WriteError(Exception):
 def _maybe_redact(data: dict[str, Any]) -> dict[str, Any]:
     """Apply redaction if the module is available, else return unchanged.
 
-    The redaction module (task_22) is not yet present. When it lands it must
-    expose ``agentlens.redaction.redact.apply_to_doc(data) -> dict``.
+    The redaction module ships with the package (task_22); the lazy import
+    is defensive against build-time stripping. If ``apply_to_doc`` cannot
+    be imported, the writer falls back to identity rather than refusing to
+    persist — operators get a clearer downstream error than ``ImportError``
+    deep inside the write path.
     """
     try:
-        from agentlens.redaction.redact import apply_to_doc  # type: ignore[import-not-found]
+        from agentlens.redaction.redact import apply_to_doc
     except ImportError:
         return data
     return apply_to_doc(data)

@@ -125,7 +125,7 @@ $ agentlens failures --since-days 7 --format json | jq '.[].category' | sort -u
 - **`agentlens on | off`** — convenience toggles equivalent to `mode set full` / `mode set disabled`.
 - **`AGENTLENS_DISABLE=1`** is an **unconditional kill switch**: when set in the environment, `load_config` returns `{"mode": "disabled"}` regardless of any YAML file or other env var, and `agentlens mode show` reports `disabled`. This is the recommended way to silence AgentLens in a one-off shell without editing config files.
 - **Nested invocation policy.** When a child process started under `agentlens run` itself invokes `agentlens run`, the wrapper detects the parent via `AGENTLENS_RUN_ID` in the environment. `AGENTLENS_NESTED_POLICY=passthrough` (the default) causes the nested call to skip re-recording and act as a transparent passthrough; `AGENTLENS_NESTED_POLICY=nested` opens a new run whose `run.json` records the outer run's id as `parent_run_id`. The recording-path environment variables (`AGENTLENS_RUN_ID`, `AGENTLENS_RUN_DIR`, `AGENTLENS_RUN_PID_STAMP`) are only propagated to children on the recording path.
-- **`agentlens gc [--dry-run]`** — enforces the retention budget; `--dry-run` reports what would be deleted.
+- **`agentlens gc [--dry-run]`** — enforces the retention budget (`RetentionPolicy`, spec §5.9). Defaults: `sealed_runs_days=30`, `large_artifacts_days=7`, `max_artifact_mb_per_run=50`, `max_total_store_gb=5`, `keep_eval_summaries=true` — summary JSON (`run.json`/`final.json`/`eval.json`/`manifest.json`) is preserved when the quota path triggers. SQLite-independent (scans the filesystem only). `--dry-run` lists candidates and projected freed bytes without unlinking. See `runbook.md` §5 for the full defaults table.
 
 ## 5. Output conventions
 
