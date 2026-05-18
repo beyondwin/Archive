@@ -77,10 +77,38 @@ def test_shim_template_uses_real_path_lockfile(home: Path, tmp_path: Path) -> No
     install_shim("claude", binary)
     shim = (home / ".agentlens" / "shims" / "claude").read_text(encoding="utf-8")
     assert "REAL_LOCKFILE=\"$HOME/.agentlens/shims/claude.real\"" in shim
-    assert "agentlens run --agent claude" in shim
+    # Shim delegates to the canonical adapter name (claude → claude_code).
+    assert "run --agent claude_code" in shim
+    # CLI lookup falls back to passthrough when agentlens isn't on PATH,
+    # per the §S1.6.17 non-blocking invariant.
+    assert "command -v agentlens" in shim
+    assert 'exec "$REAL_PATH"' in shim
     # Curly braces correctly de-escaped by .format
     assert "${REAL_LOCKFILE}" not in shim  # spec template does not use this form
     assert "{name}" not in shim  # no unsubstituted placeholders
+    assert "{agent_name}" not in shim
+
+
+def test_shim_binary_name_maps_to_canonical_agent(home: Path, tmp_path: Path) -> None:
+    """Binary names users type (`claude`, `codex`) must map to the canonical
+    adapter names that `agentlens run --agent` accepts.
+    """
+    bin_claude = _make_fake_binary(tmp_path, "claude")
+    bin_codex = _make_fake_binary(tmp_path, "codex")
+    bin_other = _make_fake_binary(tmp_path, "weird-tool")
+
+    install_shim("claude", bin_claude)
+    install_shim("codex", bin_codex)
+    install_shim("weird-tool", bin_other)
+
+    shim_claude = (home / ".agentlens/shims/claude").read_text()
+    shim_codex = (home / ".agentlens/shims/codex").read_text()
+    shim_other = (home / ".agentlens/shims/weird-tool").read_text()
+
+    assert "run --agent claude_code" in shim_claude
+    assert "run --agent codex_cli" in shim_codex
+    # Unmapped names fall back to 'generic' (still in the _AGENT_NAMES allowlist).
+    assert "run --agent generic" in shim_other
 
 
 def test_verify_shim_integrity_missing(home: Path) -> None:

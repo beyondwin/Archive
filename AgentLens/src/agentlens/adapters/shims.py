@@ -46,7 +46,15 @@ fi
 case "${{1:-}}" in
   auth|login|update|plugin|mcp) exec "$REAL_PATH" "$@" ;;
 esac
-exec agentlens run --agent {name} --mode auto -- "$REAL_PATH" "$@"
+# Locate the agentlens CLI. The non-blocking invariant (§S1.6.17) forbids
+# letting an AgentLens-internal lookup failure alter the child's behaviour,
+# so if the CLI isn't on PATH (e.g. installed in a venv that's not active),
+# fall back to passthrough rather than aborting under `set -e`.
+if AGENTLENS_BIN="$(command -v agentlens 2>/dev/null)" && [ -x "$AGENTLENS_BIN" ]; then
+  exec "$AGENTLENS_BIN" run --agent {agent_name} -- "$REAL_PATH" "$@"
+fi
+echo "agentlens: CLI not on PATH — passthrough (no recording)" >&2
+exec "$REAL_PATH" "$@"
 """
 
 
@@ -81,6 +89,15 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+# Binary name → canonical agent name (must match `run.py:_AGENT_NAMES`).
+# Users install with the binary they type (`claude`, `codex`), but the
+# `agentlens run --agent` flag only accepts the canonical adapter names.
+_BIN_TO_AGENT_NAME = {
+    "claude": "claude_code",
+    "codex": "codex_cli",
+}
+
+
 def install_shim(name: str, real_path: Path) -> None:
     """Install a shim for ``name`` pointing at ``real_path``.
 
@@ -103,7 +120,11 @@ def install_shim(name: str, real_path: Path) -> None:
     )
 
     shim = shim_dir / name
-    shim.write_text(SHIM_TEMPLATE.format(name=name), encoding="utf-8")
+    agent_name = _BIN_TO_AGENT_NAME.get(name, "generic")
+    shim.write_text(
+        SHIM_TEMPLATE.format(name=name, agent_name=agent_name),
+        encoding="utf-8",
+    )
     os.chmod(shim, 0o755)
 
 
