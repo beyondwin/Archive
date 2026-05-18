@@ -61,3 +61,7 @@ docs/superpowers/
 # AgentLens runtime state (recorder home, default `<repo>/.agentlens`)
 .agentlens/
 *.egg-info/
+
+# Superpowers brainstorming scratchpad (top-level dir; persisted
+# spec/plan files live under AgentLens/docs/spec/ and AgentLens/docs/plan/)
+.superpowers/
