@@ -1,97 +1,91 @@
-"""Evaluator engine — v0 stub (spec §S1.6.16, §S1.7.3).
+"""Evaluator engine (spec §5.15, §6.3).
 
-Implements two required checks:
+Loads the four canonical run-tree JSON documents, dispatches the 12
+:data:`agentlens.evaluator.checks.REQUIRED_CHECKS` in alphabetical order
+by ``__name__``, aggregates per-check ``CheckResult``/``Failure`` entries,
+and writes a v1-conformant ``eval.json``.
 
-* ``schema_valid`` — re-validates ``run.json``, every line of
-  ``events.jsonl``, and ``final.json`` (if present) against the v1 schemas.
-* ``final_present`` — asserts that ``final.json`` exists.
+Status resolution (spec §6.3):
 
-The result is written to ``run_dir/eval.json`` and matches
-``agentlens.eval.v1``. Status resolution follows the spec table:
+* evaluator internal raise         → ``"error"`` (engine top-level catch)
+* ``final.json`` missing           → ``"incomplete"``
+* any required check ``failed``    → ``"failed"``
+* otherwise                        → ``"passed"``
 
-* evaluator internal raise        -> ``"error"``
-* ``final.json`` missing          -> ``"incomplete"``
-* ``schema_valid`` failed         -> ``"failed"``
-* any required check failed       -> ``"failed"``
-* all required checks passed      -> ``"passed"``
-
-The full failure taxonomy lands with task_6; this module emits only the
-minimal failure entries needed for ``eval.schema.json`` to validate.
+``needs_eval`` is owned by the query layer (when ``eval.json`` is absent).
 """
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+import re
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from agentlens.constants import SCHEMA_EVAL_V1
-from agentlens.schema.validate import (
-    EventLineError,
-    SchemaError,
-    validate_doc,
-    validate_event_line,
-)
 from agentlens.store.writer import atomic_write_json
 from agentlens.time import utc_now_iso
 
+from .checks import (
+    REQUIRED_CHECKS,
+    CheckFn,
+    CheckResult,
+    EvalContext,
+)
+from .failures import Failure, FailureCategory
+
+__all__ = [
+    "CheckFn",
+    "CheckResult",
+    "EvalContext",
+    "Failure",
+    "FailureCategory",
+    "REQUIRED_CHECKS",
+    "evaluate",
+    "load_context",
+    "normalize_for_diff",
+    "resolve_status",
+]
+
 
 # ---------------------------------------------------------------------------
-# Data classes
+# Determinism helper (spec §9.5)
 # ---------------------------------------------------------------------------
 
+# Spec-pinned placeholder for masked timestamps. Note this is distinct from
+# the ``agentlens.time.normalize_for_diff`` *string* helper, which uses a
+# microsecond-precision placeholder. The evaluator determinism contract in
+# spec §9.5 fixes the second-precision form ``0000-00-00T00:00:00Z``.
+_DIFF_PLACEHOLDER = "0000-00-00T00:00:00Z"
+_ISO_UTC_RE = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z$"
+)
 
-@dataclass(frozen=True)
-class Failure:
-    """Minimal failure entry conforming to ``eval.schema.json``.
 
-    The full FailureCategory taxonomy lands with task_6; v0 stub uses a
-    small subset of the enum that's sufficient for schema_valid /
-    final_present.
+def normalize_for_diff(doc: Any) -> Any:
+    """Return a deep copy of *doc* with every ``*_at`` timestamp masked.
+
+    Used by the determinism regression test (spec §9.5) so two back-to-back
+    ``evaluate(run_dir)`` calls can be compared byte-for-byte. Keys ending
+    in ``_at`` whose value is an ISO8601-UTC string are replaced with the
+    fixed placeholder ``"0000-00-00T00:00:00Z"``. The walk recurses into
+    nested dicts and lists. The original input is **not** mutated.
     """
-
-    category: str
-    severity: str
-    source: str
-    blame_scope: str
-    recoverability: str
-    confidence: float
-    summary: str
-    evidence: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "category": self.category,
-            "severity": self.severity,
-            "source": self.source,
-            "blame_scope": self.blame_scope,
-            "recoverability": self.recoverability,
-            "confidence": self.confidence,
-            "summary": self.summary,
-            "evidence": list(self.evidence),
-        }
-
-
-@dataclass
-class CheckResult:
-    name: str
-    status: str  # "passed" | "failed" | "skipped"
-    message: str | None = None
-    failures: list[Failure] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"name": self.name, "status": self.status}
-        if self.message is not None:
-            out["message"] = self.message
+    if isinstance(doc, dict):
+        out: dict[str, Any] = {}
+        for k, v in doc.items():
+            if (
+                isinstance(k, str)
+                and k.endswith("_at")
+                and isinstance(v, str)
+                and _ISO_UTC_RE.match(v)
+            ):
+                out[k] = _DIFF_PLACEHOLDER
+            else:
+                out[k] = normalize_for_diff(v)
         return out
-
-
-@dataclass
-class EvalContext:
-    run_dir: Path
-    run: dict[str, Any]
-    events_lines: list[str]
-    final: dict[str, Any] | None
+    if isinstance(doc, list):
+        return [normalize_for_diff(item) for item in doc]
+    return doc
 
 
 # ---------------------------------------------------------------------------
@@ -99,144 +93,60 @@ class EvalContext:
 # ---------------------------------------------------------------------------
 
 
-def _load_context(run_dir: Path) -> EvalContext:
+def _load_optional_json(path: Path) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+
+
+def load_context(run_dir: Path) -> EvalContext:
+    """Load the four canonical documents from *run_dir*.
+
+    ``run.json`` is required; the others may be absent (the corresponding
+    checks then return ``skipped`` or ``failed`` per their own rules).
+    Malformed event lines are kept as raw strings so
+    :func:`check_schema_valid` / :func:`check_events_well_formed` can flag
+    them per-line.
+    """
     run_path = run_dir / "run.json"
     if not run_path.is_file():
         raise FileNotFoundError(f"run.json not found under {run_dir}")
     run = json.loads(run_path.read_text(encoding="utf-8"))
 
+    events_lines: list[str] = []
+    events: list[dict[str, Any]] = []
     events_path = run_dir / "events.jsonl"
     if events_path.is_file():
-        events_lines = events_path.read_text(encoding="utf-8").splitlines()
-    else:
-        events_lines = []
+        text = events_path.read_text(encoding="utf-8")
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            events_lines.append(line)
+            try:
+                parsed = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                events.append(parsed)
 
-    final_path = run_dir / "final.json"
-    final: dict[str, Any] | None
-    if final_path.is_file():
-        try:
-            final = json.loads(final_path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError:
-            final = None
-    else:
-        final = None
+    final = _load_optional_json(run_dir / "final.json")
+    manifest = _load_optional_json(run_dir / "manifest.json")
 
     return EvalContext(
-        run_dir=run_dir,
         run=run,
+        events=events,
         events_lines=events_lines,
         final=final,
+        manifest=manifest,
+        run_dir=run_dir,
     )
 
 
 # ---------------------------------------------------------------------------
-# Checks
-# ---------------------------------------------------------------------------
-
-
-def _failure(
-    *,
-    category: str,
-    summary: str,
-    evidence: list[str] | None = None,
-    severity: str = "medium",
-    recoverability: str = "rerun_or_fix",
-) -> Failure:
-    return Failure(
-        category=category,
-        severity=severity,
-        source="evaluator",
-        blame_scope="agent",
-        recoverability=recoverability,
-        confidence=1.0,
-        summary=summary,
-        evidence=list(evidence or []),
-    )
-
-
-def check_schema_valid(ctx: EvalContext) -> CheckResult:
-    """Re-validate run.json, every event line, and final.json (if present)."""
-    failures: list[Failure] = []
-    messages: list[str] = []
-
-    try:
-        validate_doc(ctx.run, schema_name="run")
-    except SchemaError as exc:
-        failures.append(
-            _failure(
-                category="INVALID_RUN_SCHEMA",
-                summary=f"run.json failed schema validation: {exc}",
-                evidence=list(exc.errors)[:5],
-                severity="high",
-            )
-        )
-        messages.append(f"run.json: {exc}")
-
-    for idx, line in enumerate(ctx.events_lines, start=1):
-        if not line.strip():
-            continue
-        try:
-            validate_event_line(line)
-        except EventLineError as exc:
-            failures.append(
-                _failure(
-                    category="INVALID_EVENT_SCHEMA",
-                    summary=f"events.jsonl line {idx} failed: {exc}",
-                    evidence=list(exc.errors)[:5],
-                    severity="high",
-                )
-            )
-            messages.append(f"events.jsonl[{idx}]: {exc}")
-
-    if ctx.final is not None:
-        try:
-            validate_doc(ctx.final, schema_name="final")
-        except SchemaError as exc:
-            failures.append(
-                _failure(
-                    category="INVALID_FINAL_SCHEMA",
-                    summary=f"final.json failed schema validation: {exc}",
-                    evidence=list(exc.errors)[:5],
-                    severity="high",
-                )
-            )
-            messages.append(f"final.json: {exc}")
-
-    status = "failed" if failures else "passed"
-    return CheckResult(
-        name="schema_valid",
-        status=status,
-        message="; ".join(messages) if messages else None,
-        failures=failures,
-    )
-
-
-def check_final_present(ctx: EvalContext) -> CheckResult:
-    if ctx.final is None:
-        return CheckResult(
-            name="final_present",
-            status="failed",
-            message="final.json not found",
-            failures=[
-                _failure(
-                    category="MISSING_FINAL",
-                    summary="final.json was not written before evaluation",
-                    severity="high",
-                    recoverability="rerun_or_fix",
-                )
-            ],
-        )
-    return CheckResult(name="final_present", status="passed")
-
-
-REQUIRED_CHECKS: tuple[Callable[[EvalContext], CheckResult], ...] = (
-    check_schema_valid,
-    check_final_present,
-)
-
-
-# ---------------------------------------------------------------------------
-# Status resolution
+# Status resolution (spec §6.3)
 # ---------------------------------------------------------------------------
 
 
@@ -249,37 +159,54 @@ def resolve_status(ctx: EvalContext, results: list[CheckResult]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# Internal helpers
 # ---------------------------------------------------------------------------
 
 
+def _short_name(fn: CheckFn) -> str:
+    return getattr(fn, "__name__", "unknown").removeprefix("check_")
+
+
+def _evaluator_error(summary: str, evidence: tuple[str, ...] = ()) -> Failure:
+    return Failure(
+        category=FailureCategory.EVALUATOR_ERROR,
+        severity="critical",
+        source="evaluator",
+        blame_scope="unknown",
+        recoverability="non_recoverable",
+        confidence=1.0,
+        summary=summary,
+        evidence=evidence,
+    )
+
+
 def _minimal_error_eval(run_dir: Path, message: str) -> dict[str, Any]:
-    run_id = run_dir.name
-    doc = {
+    return {
         "schema": SCHEMA_EVAL_V1,
-        "run_id": run_id,
+        "run_id": run_dir.name,
         "evaluated_at": utc_now_iso(),
         "status": "error",
         "agent_outcome": "unknown",
         "checks": [],
         "failures": [
-            _failure(
-                category="EVALUATOR_ERROR",
-                summary=f"evaluator failed to load context: {message}",
-                severity="critical",
-                recoverability="non_recoverable",
+            _evaluator_error(
+                f"evaluator failed to load context: {message}"
             ).to_dict()
         ],
     }
-    return doc
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
 
 
 def evaluate(run_dir: Path) -> dict[str, Any]:
-    """Run the v0 evaluator stub against *run_dir* and write ``eval.json``."""
+    """Run all 12 required checks against *run_dir* and write ``eval.json``."""
     run_dir = Path(run_dir)
 
     try:
-        ctx = _load_context(run_dir)
+        ctx = load_context(run_dir)
     except (FileNotFoundError, json.JSONDecodeError, OSError) as exc:
         doc = _minimal_error_eval(run_dir, str(exc))
         atomic_write_json(run_dir / "eval.json", doc, redact=False)
@@ -289,29 +216,45 @@ def evaluate(run_dir: Path) -> dict[str, Any]:
     failures: list[Failure] = []
     internal_error = False
 
-    for fn in REQUIRED_CHECKS:
+    # Per spec §5.15 the engine dispatches in alphabetical order. This is
+    # deterministic across platforms and independent of REQUIRED_CHECKS'
+    # declared ordering.
+    for fn in sorted(REQUIRED_CHECKS, key=lambda f: f.__name__):
+        short = _short_name(fn)
         try:
             res = fn(ctx)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — surface as EVALUATOR_ERROR
             internal_error = True
             results.append(
                 CheckResult(
-                    name=getattr(fn, "__name__", "unknown").removeprefix("check_"),
+                    name=short,
                     status="failed",
-                    message=f"evaluator internal error: {exc}",
+                    message=f"evaluator internal error: {exc!r}",
                 )
             )
             failures.append(
-                _failure(
-                    category="EVALUATOR_ERROR",
-                    summary=f"evaluator check raised: {exc}",
-                    severity="critical",
-                    recoverability="non_recoverable",
+                Failure(
+                    category=FailureCategory.EVALUATOR_ERROR,
+                    severity="high",
+                    source="evaluator",
+                    blame_scope="unknown",
+                    recoverability="rerun_or_fix",
+                    confidence=1.0,
+                    summary=f"Evaluator check {fn.__name__} raised",
+                    evidence=(repr(exc),),
                 )
             )
             continue
-        # Normalise check name: drop the "check_" prefix.
-        res.name = res.name or getattr(fn, "__name__", "").removeprefix("check_")
+        # Normalise the check name to the spec-canonical short form even if
+        # a check returns an empty/unset name.
+        if not res.name:
+            res = CheckResult(
+                name=short,
+                status=res.status,
+                message=res.message,
+                evidence=res.evidence,
+                failures=res.failures,
+            )
         results.append(res)
         failures.extend(res.failures)
 
@@ -319,7 +262,7 @@ def evaluate(run_dir: Path) -> dict[str, Any]:
     agent_outcome = (ctx.final or {}).get("agent_outcome", "unknown")
 
     sorted_results = sorted(results, key=lambda r: r.name)
-    sorted_failures = sorted(failures, key=lambda f: (f.category, f.summary))
+    sorted_failures = sorted(failures, key=lambda f: (f.category.value, f.summary))
 
     doc: dict[str, Any] = {
         "schema": SCHEMA_EVAL_V1,
@@ -332,15 +275,3 @@ def evaluate(run_dir: Path) -> dict[str, Any]:
     }
     atomic_write_json(run_dir / "eval.json", doc, redact=False)
     return doc
-
-
-__all__ = [
-    "CheckResult",
-    "EvalContext",
-    "Failure",
-    "REQUIRED_CHECKS",
-    "check_final_present",
-    "check_schema_valid",
-    "evaluate",
-    "resolve_status",
-]

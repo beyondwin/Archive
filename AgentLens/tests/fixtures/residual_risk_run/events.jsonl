@@ -1,0 +1,4 @@
+{"schema":"agentlens.event.v1","event_id":"evt_dddddddddd01","run_id":"run_20260101_000003_dddddd","ts":"2026-01-01T00:00:00Z","type":"run.started","payload":{}}
+{"schema":"agentlens.event.v1","event_id":"evt_dddddddddd02","run_id":"run_20260101_000003_dddddd","ts":"2026-01-01T00:00:01Z","type":"command.started","payload":{"command_hash":"sha256:42cc940e0158657a61bc8a9dc32887a1451be517663e4df854dc6324b9e5f256"}}
+{"schema":"agentlens.event.v1","event_id":"evt_dddddddddd03","run_id":"run_20260101_000003_dddddd","ts":"2026-01-01T00:00:02Z","type":"command.finished","payload":{"command_hash":"sha256:42cc940e0158657a61bc8a9dc32887a1451be517663e4df854dc6324b9e5f256","status":"passed","exit_code":0}}
+{"schema":"agentlens.event.v1","event_id":"evt_dddddddddd04","run_id":"run_20260101_000003_dddddd","ts":"2026-01-01T00:00:03Z","type":"run.finalized","payload":{}}

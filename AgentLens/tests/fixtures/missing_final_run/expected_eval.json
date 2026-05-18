@@ -1,0 +1,75 @@
+{
+  "agent_outcome": "unknown",
+  "checks": [
+    {
+      "message": "final.json absent",
+      "name": "agent_outcome_valid",
+      "status": "skipped"
+    },
+    {
+      "name": "artifact_hashes_valid",
+      "status": "passed"
+    },
+    {
+      "message": "check applies only when agent_outcome=success",
+      "name": "changed_files_present_when_success",
+      "status": "skipped"
+    },
+    {
+      "message": "no command.started events to resolve",
+      "name": "commands_resolved",
+      "status": "passed"
+    },
+    {
+      "name": "events_well_formed",
+      "status": "passed"
+    },
+    {
+      "name": "failed_commands_acknowledged",
+      "status": "passed"
+    },
+    {
+      "message": "final.json not found",
+      "name": "final_present",
+      "status": "failed"
+    },
+    {
+      "name": "manifest_sealed",
+      "status": "passed"
+    },
+    {
+      "message": "final.json absent",
+      "name": "residual_risks_explicit",
+      "status": "skipped"
+    },
+    {
+      "name": "run_started",
+      "status": "passed"
+    },
+    {
+      "name": "schema_valid",
+      "status": "passed"
+    },
+    {
+      "message": "check applies only when agent_outcome=success",
+      "name": "verification_present",
+      "status": "skipped"
+    }
+  ],
+  "evaluated_at": "1970-01-01T00:00:00Z",
+  "failures": [
+    {
+      "blame_scope": "agent",
+      "category": "MISSING_FINAL",
+      "confidence": 1.0,
+      "evidence": [],
+      "recoverability": "rerun_or_fix",
+      "severity": "high",
+      "source": "evaluator",
+      "summary": "final.json was not written before evaluation"
+    }
+  ],
+  "run_id": "run_20260101_000002_cccccc",
+  "schema": "agentlens.eval.v1",
+  "status": "incomplete"
+}

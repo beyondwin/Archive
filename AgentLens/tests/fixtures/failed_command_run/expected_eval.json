@@ -1,0 +1,72 @@
+{
+  "agent_outcome": "success",
+  "checks": [
+    {
+      "name": "agent_outcome_valid",
+      "status": "passed"
+    },
+    {
+      "name": "artifact_hashes_valid",
+      "status": "passed"
+    },
+    {
+      "name": "changed_files_present_when_success",
+      "status": "passed"
+    },
+    {
+      "name": "commands_resolved",
+      "status": "passed"
+    },
+    {
+      "name": "events_well_formed",
+      "status": "passed"
+    },
+    {
+      "message": "1 failed command(s) not acknowledged in verification",
+      "name": "failed_commands_acknowledged",
+      "status": "failed"
+    },
+    {
+      "name": "final_present",
+      "status": "passed"
+    },
+    {
+      "name": "manifest_sealed",
+      "status": "passed"
+    },
+    {
+      "name": "residual_risks_explicit",
+      "status": "passed"
+    },
+    {
+      "name": "run_started",
+      "status": "passed"
+    },
+    {
+      "name": "schema_valid",
+      "status": "passed"
+    },
+    {
+      "name": "verification_present",
+      "status": "passed"
+    }
+  ],
+  "evaluated_at": "1970-01-01T00:00:00Z",
+  "failures": [
+    {
+      "blame_scope": "agent",
+      "category": "UNACKNOWLEDGED_FAILED_COMMAND",
+      "confidence": 1.0,
+      "evidence": [
+        "sha256:fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa"
+      ],
+      "recoverability": "rerun_or_fix",
+      "severity": "high",
+      "source": "evaluator",
+      "summary": "success outcome but failed commands not acknowledged"
+    }
+  ],
+  "run_id": "run_20260101_000001_bbbbbb",
+  "schema": "agentlens.eval.v1",
+  "status": "failed"
+}
