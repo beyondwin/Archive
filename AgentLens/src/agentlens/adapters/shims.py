@@ -13,11 +13,15 @@ from __future__ import annotations
 
 import hashlib
 import os
+import shutil
+import sys
 from pathlib import Path
 from typing import Literal
 
 SHIM_TEMPLATE = r"""#!/usr/bin/env bash
 # AgentLens shim for {name} — managed file, do not edit.
+# agentlens CLI baked at install time (preferred over PATH lookup).
+INSTALLED_AGENTLENS_BIN="{agentlens_bin}"
 set -euo pipefail
 REAL_LOCKFILE="$HOME/.agentlens/shims/{name}.real"
 if [ ! -f "$REAL_LOCKFILE" ]; then
@@ -46,14 +50,18 @@ fi
 case "${{1:-}}" in
   auth|login|update|plugin|mcp) exec "$REAL_PATH" "$@" ;;
 esac
-# Locate the agentlens CLI. The non-blocking invariant (§S1.6.17) forbids
-# letting an AgentLens-internal lookup failure alter the child's behaviour,
-# so if the CLI isn't on PATH (e.g. installed in a venv that's not active),
-# fall back to passthrough rather than aborting under `set -e`.
+# Locate the agentlens CLI. Prefer the install-time baked path so a shim
+# created from a venv works even when the venv isn't activated; fall back
+# to PATH lookup; finally passthrough so the §S1.6.17 non-blocking
+# invariant (AgentLens-internal lookup failures never alter child exit
+# code) is preserved.
+if [ -n "$INSTALLED_AGENTLENS_BIN" ] && [ -x "$INSTALLED_AGENTLENS_BIN" ]; then
+  exec "$INSTALLED_AGENTLENS_BIN" run --agent {agent_name} -- "$REAL_PATH" "$@"
+fi
 if AGENTLENS_BIN="$(command -v agentlens 2>/dev/null)" && [ -x "$AGENTLENS_BIN" ]; then
   exec "$AGENTLENS_BIN" run --agent {agent_name} -- "$REAL_PATH" "$@"
 fi
-echo "agentlens: CLI not on PATH — passthrough (no recording)" >&2
+echo "agentlens: CLI not on PATH and install-time path missing — passthrough (no recording)" >&2
 exec "$REAL_PATH" "$@"
 """
 
@@ -98,6 +106,34 @@ _BIN_TO_AGENT_NAME = {
 }
 
 
+def _resolve_agentlens_cli() -> str:
+    """Best-effort absolute path to the currently-installed ``agentlens`` CLI.
+
+    Tried in order:
+    1. ``sys.argv[0]`` if it resolves to an executable file named ``agentlens``
+       (catches venv installs invoked as ``./.venv/bin/agentlens install ...``).
+    2. ``shutil.which("agentlens")`` (catches system / pipx installs on PATH).
+    3. Empty string — the shim then falls back to runtime PATH lookup, and
+       finally to passthrough, per the §S1.6.17 non-blocking invariant.
+    """
+    argv0 = Path(sys.argv[0]) if sys.argv and sys.argv[0] else None
+    if argv0 is not None:
+        try:
+            resolved = argv0.resolve(strict=True)
+        except (OSError, RuntimeError):
+            resolved = None
+        if (
+            resolved is not None
+            and resolved.name == "agentlens"
+            and os.access(resolved, os.X_OK)
+        ):
+            return str(resolved)
+    on_path = shutil.which("agentlens")
+    if on_path:
+        return str(Path(on_path).resolve())
+    return ""
+
+
 def install_shim(name: str, real_path: Path) -> None:
     """Install a shim for ``name`` pointing at ``real_path``.
 
@@ -121,8 +157,11 @@ def install_shim(name: str, real_path: Path) -> None:
 
     shim = shim_dir / name
     agent_name = _BIN_TO_AGENT_NAME.get(name, "generic")
+    agentlens_bin = _resolve_agentlens_cli()
     shim.write_text(
-        SHIM_TEMPLATE.format(name=name, agent_name=agent_name),
+        SHIM_TEMPLATE.format(
+            name=name, agent_name=agent_name, agentlens_bin=agentlens_bin
+        ),
         encoding="utf-8",
     )
     os.chmod(shim, 0o755)

@@ -89,6 +89,39 @@ def test_shim_template_uses_real_path_lockfile(home: Path, tmp_path: Path) -> No
     assert "{agent_name}" not in shim
 
 
+def test_shim_bakes_install_time_agentlens_path(home: Path, tmp_path: Path) -> None:
+    """The shim must record the absolute path to the agentlens CLI at
+    install time so a venv-only install still self-records when the user
+    types ``claude`` from a non-activated shell.
+    """
+    import shutil as _shutil
+    import sys as _sys
+
+    binary = _make_fake_binary(tmp_path, "claude")
+
+    # Simulate a venv install: argv[0] points at .venv/bin/agentlens.
+    fake_cli = tmp_path / "bin" / "agentlens"
+    fake_cli.parent.mkdir()
+    fake_cli.write_text("#!/usr/bin/env bash\nexit 0\n")
+    os.chmod(fake_cli, 0o755)
+
+    saved_argv0 = _sys.argv[0]
+    _sys.argv[0] = str(fake_cli)
+    try:
+        install_shim("claude", binary)
+    finally:
+        _sys.argv[0] = saved_argv0
+
+    shim = (home / ".agentlens/shims/claude").read_text()
+    expected_path = str(fake_cli.resolve())
+    assert f'INSTALLED_AGENTLENS_BIN="{expected_path}"' in shim
+    # Falls back to PATH lookup if baked path is missing/non-executable.
+    assert 'command -v agentlens' in shim
+    # And finally to passthrough.
+    assert 'exec "$REAL_PATH"' in shim
+    del _shutil  # silence unused import marker
+
+
 def test_shim_binary_name_maps_to_canonical_agent(home: Path, tmp_path: Path) -> None:
     """Binary names users type (`claude`, `codex`) must map to the canonical
     adapter names that `agentlens run --agent` accepts.
