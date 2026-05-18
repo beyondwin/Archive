@@ -539,6 +539,7 @@ def _run_post_drain_pipeline(
     rc: int,
     exit_code: int,
     sig_name: str | None,
+    command_hash: str | None = None,
 ) -> None:
     """Run the §5.16 finalization pipeline.
 
@@ -546,15 +547,24 @@ def _run_post_drain_pipeline(
     wrapper's exit code (spec §S1.6.17 invariant). On pre_eval seal or
     evaluator failure, the pipeline marks the run ``recording_incomplete``
     and returns early.
+
+    ``command_hash`` echoes the value emitted on the prior ``command.started``
+    event so the evaluator's ``commands_resolved`` check (matches started
+    against finished by hash) can pair them. Without it the run always
+    reports a spurious ``RECORDING_INCOMPLETE`` failure.
     """
-    # command.finished — best-effort.
+    # command.finished — best-effort. Echo command_hash so the evaluator
+    # pairs this against the matching command.started.
+    finished_payload: dict = {"exit_code": exit_code}
+    if command_hash is not None:
+        finished_payload["command_hash"] = command_hash
     with contextlib.suppress(Exception):
         append_event(
             run_dir,
             _make_event(
                 run_id=run_id,
                 event_type="command.finished",
-                payload={"exit_code": exit_code},
+                payload=finished_payload,
             ),
         )
 
@@ -681,6 +691,9 @@ def wrap_command(
     )
 
     # command.started — best-effort; only meaningful when recording is on.
+    command_hash = "sha256:" + sha256(
+        "\x00".join(argv).encode("utf-8")
+    ).hexdigest()
     if recording_enabled and run_id is not None and run_dir is not None:
         with contextlib.suppress(Exception):
             append_event(
@@ -688,12 +701,7 @@ def wrap_command(
                 _make_event(
                     run_id=run_id,
                     event_type="command.started",
-                    payload={
-                        "command_hash": "sha256:"
-                        + sha256(
-                            "\x00".join(argv).encode("utf-8")
-                        ).hexdigest(),
-                    },
+                    payload={"command_hash": command_hash},
                 ),
             )
 
@@ -745,6 +753,7 @@ def wrap_command(
         rc=rc,
         exit_code=child_exit_code,
         sig_name=sig_name,
+        command_hash=command_hash,
     )
 
     return WrapperResult(
