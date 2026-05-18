@@ -208,6 +208,45 @@ def test_wrap_command_initializes_sqlite_schema_on_fresh_home(
     assert {"runs", "checks", "failures", "artifacts"}.issubset(tables)
 
 
+def test_wrap_command_pairs_command_started_and_finished_by_hash(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """``command.started`` and ``command.finished`` must share the same
+    ``command_hash`` payload so the evaluator's ``check_commands_resolved``
+    can pair them. Previously ``command.finished`` only carried ``exit_code``,
+    triggering a spurious ``RECORDING_INCOMPLETE`` failure on every run.
+    """
+    import json
+
+    home = tmp_path / "home"
+    monkeypatch.setenv("AGENTLENS_HOME", str(home))
+    monkeypatch.delenv("AGENTLENS_RUN_ID", raising=False)
+    result = wrap_command(
+        [sys.executable, "-c", "print('ok')"],
+        agent_name="generic",
+        agent_mode="cli",
+        mode="minimal",
+    )
+    assert result.exit_code == 0
+
+    run_dirs = list((home / "runs").rglob("events.jsonl"))
+    assert len(run_dirs) == 1
+    events = [
+        json.loads(line)
+        for line in run_dirs[0].read_text().splitlines()
+        if line.strip()
+    ]
+    started = [e for e in events if e.get("type") == "command.started"]
+    finished = [e for e in events if e.get("type") == "command.finished"]
+    assert len(started) == 1 and len(finished) == 1
+    s_hash = started[0]["payload"]["command_hash"]
+    f_hash = finished[0]["payload"].get("command_hash")
+    assert s_hash == f_hash
+    assert s_hash.startswith("sha256:")
+    assert finished[0]["payload"]["exit_code"] == 0
+
+
 # ---------------------------------------------------------------------------
 # excerpt
 # ---------------------------------------------------------------------------
