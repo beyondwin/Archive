@@ -9,8 +9,22 @@ degraded store, or audit the integration surface on a new machine.
 ## 1. Overview
 
 AgentLens records agent runs into `~/.agentlens/` (or `$AGENTLENS_HOME`) as
-*durable*, evaluator-ready trees. Three v0 invariants drive every operational
-response:
+*durable*, evaluator-ready trees.
+
+**Two distinct `.agentlens` directories** (do not confuse):
+
+| Dir | Resolution | Purpose |
+|---|---|---|
+| `agentlens_home()` | `$AGENTLENS_HOME` if set, else `~/.agentlens` | Durable run store: `runs/<workspace_id>/<run_id>/{run,final,eval,manifest}.json`, `index.db`, fixtures. |
+| `workspace_pointer_dir()` | Always `<workspace_root>/.agentlens` (cwd-anchored) | Per-workspace pointer (`current-runs/<run_id>`, workspace `config.yaml`). Lets `agentlens attach` / `latest` find runs scoped to a checkout. |
+
+So `agentlens run` from a project checkout writes the canonical run tree into
+`~/.agentlens/runs/...` (unless `$AGENTLENS_HOME` overrides it) *and* drops a
+small pointer under `<checkout>/.agentlens/current-runs/`. Add `.agentlens/`
+to `.gitignore` in any repo that hosts an AgentLens-wrapped agent — the
+pointer dir is not meant to be committed.
+
+Three v0 invariants drive every operational response:
 
 1. **Non-blocking** (spec §5.16): AgentLens-internal failures never alter the
    wrapped child's exit code. If the child returned 42, the wrapper returns 42
