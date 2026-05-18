@@ -1,0 +1,22 @@
+{
+  "schema": "agentlens.final.v1",
+  "run_id": "run_20260101_000001_bbbbbb",
+  "ended_at": "2026-01-01T00:00:05Z",
+  "agent_outcome": "success",
+  "summary": "agent claimed success despite a failed command (exit 42)",
+  "changed_files": [
+    {
+      "path_label": "./src/foo.py",
+      "path_hash": "sha256:3aef59f462f1ba71ec1449d98ca7f04d449c942a51ac5f821ed93198322acbac"
+    }
+  ],
+  "verification": [
+    {
+      "kind": "manual",
+      "command_hash": "sha256:584a331fd6b02dcb1ecbe2eba731f609a2e1e3dac0bb73ae998dfad14c309a77",
+      "status": "passed",
+      "excerpt": "looked fine"
+    }
+  ],
+  "residual_risks": []
+}
