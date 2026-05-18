@@ -30,7 +30,7 @@ Each command supports `--help`. Subcommand names are part of the v1 contract and
 
 ## 2. Lifecycle commands
 
-- **`agentlens run -- <command> [args...]`** — recommended entry point. Wraps the child process, creates the run directory, emits a `start` event, then `exec`s the child. The child's exit code is propagated verbatim. If AgentLens cannot create the run directory it degrades to silent passthrough (S1.2 invariant #6).
+- **`agentlens run -- <command> [args...]`** — recommended entry point. Spawns the child under the wrapper (not `exec`), drains stdout/stderr concurrently via a selector loop so large output cannot deadlock on pipe buffers, and forwards both streams verbatim to the parent's tty/pipes. The child's exit code is propagated verbatim; on signal cancellation the wrapper exits with `128 + signum` (e.g. SIGINT → 130, SIGTERM → 143). SIGINT and SIGTERM received by the wrapper are forwarded to the child and original handlers are restored after the child exits. The post-drain recording pipeline (write_run_meta → append_event → write_workspace_pointer → write_final → seal(pre_eval) → evaluate → seal(final) → index_run) is **non-blocking**: every stage is guarded so that AgentLens-internal failures never alter the child's exit code. Pre-eval / evaluate failures are surfaced by marking the manifest `recording_incomplete`; bounded excerpts (allow-listed extractors, capped at `MAX_EXCERPT_CHARS = 4096` with a `<TRUNCATED>` marker) are attached to `final.json`. If AgentLens cannot create the run directory it degrades to silent passthrough (S1.2 invariant #6).
 - **`agentlens start --agent <name> --mode <cli|app|code|unknown>`** — manual start for adapters that cannot use `run`. Optional `--parent <run_id>` links a child run to its caller.
 - **`agentlens mark <event_type>`** — appends a timeline event. Supports `--task-id` and `--name` for structured task boundaries.
 - **`agentlens attach --kind <kind> --path <path>`** — registers a file under `artifacts/` and adds a manifest entry with its sha256.
@@ -120,7 +120,7 @@ $ agentlens failures --since-days 7 --format json | jq '.[].category' | sort -u
 - **`--format json`** emits a schema-stable JSON document that is snapshot-tested. New fields may be added only as optional/additive members; existing field names and types are locked under v1.
 - **`stdout` carries query results only.** Diagnostics, warnings, progress, and errors go to `stderr`. Scripts may safely pipe `stdout` into `jq`.
 - **Absolute paths are never printed.** Query commands render workspace identity via `workspace_short = workspace_id[:11]` (§3.1); artifact paths are rendered relative to the run directory.
-- Exit codes: `0` on success, `1` on user error, `2` on AgentLens-internal error, and for `agentlens run` the child's exit code is propagated verbatim.
+- Exit codes: `0` on success, `1` on user error, `2` on AgentLens-internal error. For `agentlens run` the child's exit code is propagated verbatim, and on signal cancellation the wrapper exits with `128 + signum` (e.g. SIGINT → 130, SIGTERM → 143). AgentLens-internal failures in the post-drain recording pipeline never alter the child's exit code.
 
 ## 6. Hidden v0 commands
 

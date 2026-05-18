@@ -15,6 +15,7 @@ from .commands import final as final_cmd
 from .commands import latest as latest_cmd
 from .commands import mark as mark_cmd
 from .commands import risks as risks_cmd
+from .commands import run as run_cmd
 from .commands import seal as seal_cmd
 from .commands import show as show_cmd
 from .commands import start as start_cmd
@@ -38,6 +39,10 @@ app.command(name="latest")(latest_cmd.latest)
 app.command(name="status")(status_cmd.status)
 app.command(name="failures")(failures_cmd.failures)
 app.command(name="risks")(risks_cmd.risks)
+app.command(
+    name="run",
+    context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
+)(run_cmd.run)
 
 
 def main() -> None:
