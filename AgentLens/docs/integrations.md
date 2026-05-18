@@ -44,7 +44,35 @@ The R1 policy exists because the Codex App does not expose a stable, first-party
 3. It then clamps that state to the adapter's allow-list above.
 4. The configured `mode` (`minimal` vs `full`) can further down-clamp to `watcher-only` or `none` if the user wants a lighter footprint.
 
-## 5. v1 잠금 정책 (v1 lock policy)
+## 5. Adapter probes and install/uninstall (M7)
+
+This section documents the concrete probe surface and install/uninstall behavior implemented for each adapter in M7.
+
+### 5.1 `claude` — Claude Code CLI
+
+- **Probe.** `ClaudeAdapter.detect()` shells out to `claude --version` and `claude --help` and inspects the help output for three flags: `--include-hook-events`, `--output-format stream-json`, and `--bare`.
+- **Level mapping.**
+  - Missing binary → `unavailable`.
+  - `--bare` build (no settings file support) → `shim-only`.
+  - Both `--include-hook-events` and `--output-format stream-json` present → `full`.
+  - Otherwise → `shim-only`.
+- **Install.** `install(consent=True)` backs up `~/.claude/settings.json` to `<path>.agentlens.bak` (byte-equal copy) and injects a managed `"agentlens"` block with keys `managed_by`, `version`, `hooks.include_hook_events`, and `output_format`. Other top-level keys in `settings.json` are preserved untouched.
+- **Uninstall.** `uninstall()` restores the `.agentlens.bak` byte-equal if present; otherwise it strips only the `"agentlens"` key and leaves the rest of `settings.json` intact.
+
+### 5.2 `codex_cli` — Codex CLI
+
+- **Probe.** `CodexCliAdapter.detect()` runs `codex --version` and a fan-out of subcommand probes: `codex exec --help`, `codex plugin --help`, `codex mcp --help`, and `codex app-server --help`.
+- **Level mapping.** `exec` is **load-bearing** for `full` — if `codex exec --help` succeeds the adapter reports `full`; the `plugin`, `mcp`, and `app-server` probes are recorded as bonus markers in `detect().notes` but do not by themselves promote the level.
+- **Install / uninstall.** Both operations delegate to the shared shim infrastructure: `adapters.shims.install_shim("codex", binary)` and `uninstall_shim("codex")`. The Codex CLI adapter does not edit any Codex-owned settings files.
+
+### 5.3 `codex_app` — Codex desktop app (R1 enforced)
+
+- **R1 invariant (locked).** `detect().level` is **never** `"full"`. Allowed values are exactly `native-experimental`, `watcher-only`, and `unavailable`. This is enforced in the adapter regardless of probe outcome.
+- **Probe.** The adapter checks the session directories `~/.codex/sessions` and `~/.codex/archived_sessions` and runs `codex app-server --help`. An `[experimental]` marker in `app-server --help` promotes the reported level from `watcher-only` to `native-experimental`.
+- **Pinned session format.** Session JSONL parsing is pinned to `PINNED_CODEX_APP_VERSION = "0.129.0"`. If the observed session format does not match the pin, `detect().notes` surfaces a `"fixture update required"` advisory and the adapter stays at `watcher-only`. The matching fixture lives at `AgentLens/tests/fixtures/codex_app_sessions/0.129.0/sample_session.jsonl`.
+- **Install / uninstall.** `install()` writes a marker file at `~/.agentlens/integrations/codex_app/enabled`; `uninstall()` removes it. No Codex App files are modified.
+
+## 6. v1 잠금 정책 (v1 lock policy)
 
 - The five state names (`none`, `watcher-only`, `shim`, `full`, `native-experimental`) and the four numbered levels (`Level 0` … `Level 3`) are **locked**.
 - The R1 rule (Codex App is never `full`) is **locked**.
