@@ -90,7 +90,7 @@ def test_drain_streams_concurrently_handles_large_output() -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    stdout, stderr = drain_streams_concurrently(child)
+    stdout, stderr = drain_streams_concurrently(child, tee=False)
     exit_code = child.wait(timeout=30)
     assert exit_code == 0
     assert len(stdout) == payload_bytes
@@ -116,7 +116,7 @@ def test_drain_streams_concurrently_with_interleaved_writes() -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    stdout, stderr = drain_streams_concurrently(child)
+    stdout, stderr = drain_streams_concurrently(child, tee=False)
     child.wait(timeout=10)
     out_lines = stdout.decode().splitlines()
     err_lines = stderr.decode().splitlines()
@@ -140,6 +140,72 @@ def test_wrap_command_large_output_does_not_deadlock() -> None:
         mode="minimal",
     )
     assert result.exit_code == 0
+
+
+def test_wrap_command_tees_child_stdout_and_stderr_to_parent(
+    capfd: pytest.CaptureFixture[str],
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """``agentlens run -- <cmd>`` is a transparent wrapper: the user MUST
+    see child stdout/stderr live. Regression for the captured-only drain
+    that swallowed all child output.
+    """
+    monkeypatch.setenv("AGENTLENS_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("AGENTLENS_RUN_ID", raising=False)
+    result = wrap_command(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.stdout.write('TEE_OUT\\n'); "
+            "sys.stderr.write('TEE_ERR\\n')",
+        ],
+        agent_name="generic",
+        agent_mode="cli",
+        mode="minimal",
+    )
+    assert result.exit_code == 0
+    captured = capfd.readouterr()
+    assert "TEE_OUT" in captured.out
+    assert "TEE_ERR" in captured.err
+
+
+def test_wrap_command_initializes_sqlite_schema_on_fresh_home(
+    capfd: pytest.CaptureFixture[str],
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """First-ever ``agentlens run`` against a brand-new AGENTLENS_HOME must
+    initialize the SQLite schema; previously only ``open_db`` was called,
+    leaving stderr with ``no such table: runs`` on every fresh install.
+    """
+    home = tmp_path / "fresh_home"
+    monkeypatch.setenv("AGENTLENS_HOME", str(home))
+    monkeypatch.delenv("AGENTLENS_RUN_ID", raising=False)
+    result = wrap_command(
+        [sys.executable, "-c", "print('ok')"],
+        agent_name="generic",
+        agent_mode="cli",
+        mode="minimal",
+    )
+    assert result.exit_code == 0
+    err = capfd.readouterr().err
+    assert "no such table" not in err
+    assert (home / "index.db").is_file()
+
+    import sqlite3
+
+    conn = sqlite3.connect(str(home / "index.db"))
+    try:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            )
+        }
+    finally:
+        conn.close()
+    assert {"runs", "checks", "failures", "artifacts"}.issubset(tables)
 
 
 # ---------------------------------------------------------------------------

@@ -351,9 +351,9 @@ def test_index_run_failure_preserves_child_exit_code(
 def test_open_db_failure_preserves_child_exit_code(
     isolated_home: Path,
 ) -> None:
-    """open_db failing (before index_run can be called) must be swallowed too."""
+    """init_db failing (before index_run can be called) must be swallowed too."""
     with mock.patch.object(
-        proc, "open_db", side_effect=RuntimeError("cannot open db")
+        proc, "init_db", side_effect=RuntimeError("cannot open db")
     ):
         result = wrap_command(
             _exit42_argv(),

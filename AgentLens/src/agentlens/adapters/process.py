@@ -26,6 +26,7 @@ import re
 import selectors
 import signal
 import subprocess
+import sys
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -42,7 +43,7 @@ from agentlens.ids import compute_workspace_id, make_event_id, make_run_id
 from agentlens.store.manifest import seal
 from agentlens.store.paths import agentlens_home
 from agentlens.store.paths import run_dir as build_run_dir
-from agentlens.store.sqlite_index import index_run, open_db
+from agentlens.store.sqlite_index import index_run, init_db
 from agentlens.store.writer import (
     append_event,
     write_final,
@@ -103,6 +104,8 @@ class WrapperResult:
 
 def drain_streams_concurrently(
     child: subprocess.Popen,
+    *,
+    tee: bool = True,
 ) -> tuple[bytes, bytes]:
     """Drain ``child.stdout`` and ``child.stderr`` concurrently.
 
@@ -113,6 +116,14 @@ def drain_streams_concurrently(
     Spec §5.16: "POSIX v0에서는 ``selectors`` 또는 두 reader thread를 사용한다.
     한 stream만 순차로 읽는 구현은 stderr/stdout pipe buffer가 꽉 찰 때
     deadlock을 만들 수 있으므로 금지한다."
+
+    When ``tee`` is ``True`` (default), each chunk read from the child is
+    *also* written to the parent's ``sys.stdout.buffer`` / ``sys.stderr.buffer``
+    and flushed. This preserves the user-facing contract of
+    ``agentlens run -- <cmd>`` as a transparent wrapper (cf. ``time``,
+    ``strace``): the user sees child output live while AgentLens captures it
+    for excerpt extraction. ``tee=False`` is for tests that need to capture
+    large payloads without polluting test output.
 
     Returns the captured ``(stdout_bytes, stderr_bytes)``. The child file
     descriptors are closed by this function once both reach EOF.
@@ -142,6 +153,15 @@ def drain_streams_concurrently(
                 open_fds -= 1
                 continue
             buffers[key.data].extend(chunk)
+            if tee:
+                sink = sys.stdout if key.data == fd_stdout else sys.stderr
+                try:
+                    sink.buffer.write(chunk)
+                    sink.buffer.flush()
+                except (AttributeError, OSError):
+                    # Wrapped/redirected sinks may lack .buffer or be closed;
+                    # never let tee failure break drain (non-blocking invariant).
+                    pass
     sel.close()
     return bytes(buffers[fd_stdout]), bytes(buffers[fd_stderr])
 
@@ -575,8 +595,11 @@ def _run_post_drain_pipeline(
         seal(run_dir, "final")
 
     # SQLite index update — best-effort per spec §7.3.
+    # init_db() composes open_db + init_schema so a fresh AGENTLENS_HOME
+    # (no prior `agentlens` command run) gets the tables before index_run
+    # tries to INSERT; otherwise stderr emits "no such table: runs".
     try:
-        conn = open_db(agentlens_home() / "index.db")
+        conn = init_db(agentlens_home())
     except Exception:
         return
     try:

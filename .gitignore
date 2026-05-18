@@ -57,3 +57,7 @@ docs/_graph/*
 .orchestrator/
 .parallel/
 docs/superpowers/
+
+# AgentLens runtime state (recorder home, default `<repo>/.agentlens`)
+.agentlens/
+*.egg-info/
