@@ -1,0 +1,115 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentlens.dev/schemas/agentlens.run.v1.json",
+  "$comment": "v1 is locked. Breaking changes require v2 namespace.",
+  "title": "agentlens.run.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "run_id",
+    "workspace_id",
+    "started_at",
+    "agent",
+    "workspace",
+    "recording"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "agentlens.run.v1"
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^run_\\d{8}_\\d{6}_[a-z0-9]{6}$"
+    },
+    "workspace_id": {
+      "type": "string",
+      "pattern": "^ws_[a-f0-9]{16}$"
+    },
+    "parent_run_id": {
+      "type": ["string", "null"]
+    },
+    "started_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "mode"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": ["claude_code", "codex_cli", "codex_app", "generic"]
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["cli", "app", "code", "unknown"]
+        },
+        "version": {
+          "type": "string"
+        }
+      }
+    },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["root_label", "root_hash", "id_basis"],
+      "properties": {
+        "root_label": {
+          "type": "string"
+        },
+        "root_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "id_basis": {
+          "type": "string",
+          "enum": ["git", "path"]
+        },
+        "git_remote_hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "git_branch": {
+          "type": "string"
+        },
+        "commit_before": {
+          "type": "string"
+        }
+      }
+    },
+    "recording": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "adapter"],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["minimal", "full"]
+        },
+        "adapter": {
+          "type": "string"
+        }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "hash": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        }
+      }
+    }
+  }
+}

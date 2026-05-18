@@ -1,0 +1,19 @@
+{
+  "schema": "agentlens.run.v1",
+  "run_id": "run_20260518_211328_abc123",
+  "workspace_id": "ws_0123456789abcdef",
+  "started_at": "2026-05-18T21:13:28Z",
+  "agent": {
+    "name": "unknown_agent",
+    "mode": "cli"
+  },
+  "workspace": {
+    "root_label": "<workspace>",
+    "root_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "id_basis": "git"
+  },
+  "recording": {
+    "mode": "minimal",
+    "adapter": "claude_code_shim"
+  }
+}
