@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentlens"
+version = "0.1.0"
+description = "AgentLens: agent-agnostic recording/evaluation contract (v0)."
+readme = "docs/spec/agentlens_v0_implementation_spec.md"
+requires-python = ">=3.11"
+license = { text = "Proprietary" }
+authors = [{ name = "AgentLens contributors" }]
+dependencies = [
+    "jsonschema>=4",
+    "typer",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+# NOTE: agentlens.cli is created by Task 5; pyproject does not validate the
+# target at install time, so this entry is harmless until then.
+agentlens = "agentlens.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"agentlens.schema.jsonschema" = ["*.schema.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

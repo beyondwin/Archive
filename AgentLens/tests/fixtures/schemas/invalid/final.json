@@ -1,0 +1,10 @@
+{
+  "schema": "agentlens.final.v1",
+  "run_id": "run_20260518_211328_abc123",
+  "ended_at": "2026-05-18T21:30:00Z",
+  "agent_outcome": "maybe",
+  "summary": "Completed task successfully.",
+  "changed_files": [],
+  "verification": [],
+  "residual_risks": []
+}

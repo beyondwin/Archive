@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentlens.dev/schemas/agentlens.manifest.v1.json",
+  "$comment": "v1 is locked. Breaking changes require v2 namespace.",
+  "title": "agentlens.manifest.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "run_id",
+    "sealed_at",
+    "sealed",
+    "sealed_phase",
+    "files",
+    "redaction"
+  ],
+  "properties": {
+    "schema": {
+      "type": "string",
+      "const": "agentlens.manifest.v1"
+    },
+    "run_id": {
+      "type": "string"
+    },
+    "sealed_at": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+    },
+    "sealed": {
+      "type": "boolean"
+    },
+    "sealed_phase": {
+      "type": "string",
+      "enum": ["pre_eval", "final", "recording_incomplete"]
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^sha256:[a-f0-9]{64}$"
+          }
+        }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "absolute_paths",
+        "secret_like_values",
+        "full_prompts",
+        "full_command_output"
+      ],
+      "properties": {
+        "absolute_paths": {
+          "type": "string",
+          "const": "masked"
+        },
+        "secret_like_values": {
+          "type": "string",
+          "const": "masked"
+        },
+        "full_prompts": {
+          "type": "string",
+          "enum": ["not_stored", "hashed"]
+        },
+        "full_command_output": {
+          "type": "string",
+          "enum": ["not_stored", "excerpted"]
+        }
+      }
+    }
+  }
+}
