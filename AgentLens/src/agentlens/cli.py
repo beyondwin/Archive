@@ -13,6 +13,7 @@ from .commands import doctor as doctor_cmd
 from .commands import eval as eval_cmd
 from .commands import failures as failures_cmd
 from .commands import final as final_cmd
+from .commands import gc as gc_cmd
 from .commands import install as install_cmd
 from .commands import latest as latest_cmd
 from .commands import mark as mark_cmd
@@ -50,6 +51,7 @@ app.command(
 app.command(name="install")(install_cmd.install)
 app.command(name="uninstall")(uninstall_cmd.uninstall)
 app.command(name="doctor")(doctor_cmd.doctor)
+app.command(name="gc")(gc_cmd.gc)
 app.add_typer(mode_cmd.app, name="mode")
 
 

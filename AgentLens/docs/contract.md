@@ -52,7 +52,15 @@ If **any** AgentLens write fails after `agentlens start` has produced a run dire
 
 `pre_eval` and `final` seals on an incomplete run are permitted and preserve the `recording_incomplete` flag — sealing locks the partial state in place rather than erasing it.
 
-## 5. v1 잠금 정책 (v1 lock policy)
+## 5. Retention & garbage collection
+
+`agentlens gc` enforces a `RetentionPolicy` (frozen dataclass in `store/retention.py`) against the durable run tree and returns a `GcReport` summarising `deleted_paths`, `freed_bytes`, `kept_summaries`, and the `dry_run` flag. The policy is filesystem-only — it never touches `index.db` — so it is safe to run when the SQLite cache is offline or corrupt. Summary JSON (`run.json`, `final.json`, `eval.json`, `manifest.json`) is preserved under the default `keep_eval_summaries=true`, so query commands continue to surface run identity and outcome after the heavy artifacts are reaped. See `runbook.md` §5 for the defaults table and `security.md` §6 for the privacy framing.
+
+## 6. Non-blocking fault-inject contract
+
+The §10.4 non-blocking contract is a six-scenario regression LOCK pinned by `tests/integration/test_nonblocking.py`. The wrapped child's exit code MUST be propagated verbatim across all six AgentLens-internal failures: (1) `compute_workspace_id` raise at init, (2) `manifest` seal failure, (3) evaluator crash, (4) SQLite index update failure, (5) `pre_eval` seal failure, and (6) SIGINT delivered to the child (wrapper exits `128 + signum`, `agent_outcome=cancelled`). Determinism is similarly locked at `tests/integration/test_eval_determinism.py::test_evaluate_three_run_byte_lock_regression` — three evaluator runs × five fixtures, pairwise byte-equal under `sort_keys=True` and `normalize_for_diff` timestamp masking.
+
+## 7. v1 잠금 정책 (v1 lock policy)
 
 - File names (`run.json`, `events.jsonl`, `final.json`, `eval.json`, `manifest.json`) are **locked**.
 - Schema names (`agentlens.run.v1`, `agentlens.event.v1`, `agentlens.final.v1`, `agentlens.eval.v1`, `agentlens.manifest.v1`) are **locked**.

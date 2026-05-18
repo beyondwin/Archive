@@ -91,3 +91,65 @@ def test_normalize_for_diff_does_not_mutate_input(tmp_path: Path) -> None:
     _ = normalize_for_diff(doc)
     assert doc["evaluated_at"] == original_evaluated_at
     assert doc["evaluated_at"] != _PLACEHOLDER
+
+
+# ---------------------------------------------------------------------------
+# §10.5 determinism REGRESSION LOCK — 3 runs × 5 fixtures, byte-equal
+# ---------------------------------------------------------------------------
+#
+# This test is the explicit regression LOCK described in spec §10.5: the
+# evaluator MUST produce byte-identical ``eval.json`` output (after timestamp
+# normalisation) across repeated runs on the same inputs. A failure here means
+# nondeterminism has been introduced — likely an unstable iteration order
+# (dict/set), an unmasked timestamp, or a non-pure check function that pulls
+# in process-level state. Track down the culprit before unblocking releases.
+#
+# DO NOT relax this test. Adding a new check? Make it deterministic FIRST.
+# Adding a new fixture? Extend FIXTURE_NAMES above and rerun.
+
+
+@pytest.mark.parametrize("fixture_name", FIXTURE_NAMES)
+def test_evaluate_three_run_byte_lock_regression(
+    tmp_path: Path, fixture_name: str
+) -> None:
+    """REGRESSION LOCK: 3 evaluator runs on the same fixture must produce the
+    same normalised JSON bytes (spec §10.5).
+
+    Two-run equality (above) is the baseline; a third independent run guards
+    against accidental coupling where two consecutive calls share hidden state
+    (e.g. ``functools.lru_cache``, mutated module globals) but a third call
+    diverges. If this test fails, do not skip it — investigate.
+    """
+    fixture_src = FIXTURES_DIR / fixture_name
+    serialised: list[bytes] = []
+    for i in range(3):
+        run_dir = _copy_fixture(fixture_src, tmp_path / f"run_{i}")
+        doc = evaluate(run_dir)
+        normalised = normalize_for_diff(doc)
+        serialised.append(
+            json.dumps(normalised, sort_keys=True).encode("utf-8")
+        )
+    # Pairwise byte-equality across all three independent invocations.
+    assert serialised[0] == serialised[1], (
+        f"{fixture_name}: evaluator output drifted between run 1 and run 2"
+    )
+    assert serialised[1] == serialised[2], (
+        f"{fixture_name}: evaluator output drifted between run 2 and run 3"
+    )
+    assert serialised[0] == serialised[2], (
+        f"{fixture_name}: evaluator output drifted between run 1 and run 3"
+    )
+
+
+def test_determinism_lock_covers_all_five_fixtures() -> None:
+    """Sanity guard: the regression lock must parametrise over exactly the
+    five M2 fixtures (task_7). If a fixture is added/removed without intent,
+    this test surfaces the change."""
+    assert len(FIXTURE_NAMES) == 5
+    assert set(FIXTURE_NAMES) == {
+        "minimal_run",
+        "failed_command_run",
+        "missing_final_run",
+        "residual_risk_run",
+        "corrupt_manifest_run",
+    }
