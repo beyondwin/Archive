@@ -1,0 +1,15 @@
+{
+  "agent_mode": "cli",
+  "agent_name": "generic",
+  "agent_outcome": "success",
+  "ended_at": "0000-00-00T00:00:00Z",
+  "eval_status": "passed",
+  "parent_run_id": null,
+  "recording_mode": "minimal",
+  "residual_risks": [],
+  "run_id": "run_20260101_000000_aaaaaa",
+  "sealed_phase": "pre_eval",
+  "started_at": "0000-00-00T00:00:00Z",
+  "status": "passed",
+  "workspace_id": "ws_0000000000000001"
+}

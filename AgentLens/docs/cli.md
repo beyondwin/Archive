@@ -41,25 +41,70 @@ Each command supports `--help`. Subcommand names are part of the v1 contract and
 
 ## 3. Query commands
 
-- **`agentlens latest [--format json]`** — most recent run for the current workspace.
-- **`agentlens status [--format json]`** — currently-active runs.
-- **`agentlens show <--latest | run_id> [--format json]`** — detailed view of a single run.
-- **`agentlens failures [--since-days 30] [--format json]`** — rollup of failure-outcome runs.
-- **`agentlens risks [--since-days 30] [--format json]`** — rollup of risk signals surfaced by `eval`.
+- **`agentlens latest [--format json]`** — most recent run for the current workspace. Text emits a single one-line row; `--format json` emits a locked `run_row` object (or `null` when no runs exist).
+- **`agentlens status [--format json]`** — currently-active runs (one row per non-sealed run). Text emits one row per active run; `--format json` emits an array of `run_row` objects.
+- **`agentlens show <--latest | run_id> [--format json]`** — detailed view of a single run. Resolves the run by `--latest` (current workspace) or by positional `run_id`. Text output is a multi-line summary with `failures` and `risks` sections; `--format json` emits the `show` object (see §3.2).
+- **`agentlens failures [--since-days 30] [--format json]`** — rollup of failure-outcome runs over the trailing window (default 30 days). Text emits one line per failure; `--format json` emits an array of `failure` objects.
+- **`agentlens risks [--since-days 30] [--format json]`** — rollup of residual-risk signals surfaced by `eval` over the trailing window. Text emits one line per risk; `--format json` emits an array of `risk` objects.
 
 All query commands route through the `store/query.py` facade. They never mutate durable artifacts.
 
-### Examples
+### 3.1 Text output rules (query commands)
+
+- **No absolute paths.** Workspace identity is rendered using `workspace_short`, defined as `workspace_id[:11]` (e.g. `ws_3f7a8b9c` → `ws_3f7a8b9c`; empty/missing → `-`). This mirrors the git short-SHA convention and never reveals filesystem layout.
+- **Canonical one-line row** (used by `latest` and `status`):
+  ```
+  <run_id>  <workspace_short>  <agent_outcome>  <eval_status>  <sealed_phase>
+  ```
+  Missing string fields render as `-`. `eval_status` defaults to `needs_eval` when `eval.json` is absent.
+- **stdout/stderr separation.** Query results go to `stdout`; warnings, progress, and errors go to `stderr` (§5). Scripts can safely pipe `--format json` output through `jq`.
+
+### 3.2 JSON schema v1 — wire contract
+
+The `--format json` output of every query command is **locked at v1** (`JSON_SCHEMA_VERSION = "v1"` in `agentlens.commands._format`). The locked shapes are:
+
+| Command     | Top level                                                      |
+|-------------|----------------------------------------------------------------|
+| `latest`    | `run_row` object, or `null` when there are no runs             |
+| `status`    | array of `run_row` objects (possibly empty)                    |
+| `show`      | `show` object (always emitted; embeds `failures` and `risks`)  |
+| `failures`  | array of `failure` objects (possibly empty)                    |
+| `risks`     | array of `risk` objects (possibly empty)                       |
+
+Locked object shapes (each object always emits **all** the listed keys, in this order, with the documented defaults for missing values):
+
+- **`run_row`** (11 canonical keys, plus optional `status` / `residual_risks` / `schema_invalid` when present): `run_id`, `workspace_id`, `parent_run_id`, `started_at`, `ended_at`, `agent_name`, `agent_mode`, `recording_mode`, `agent_outcome`, `eval_status` (default `"needs_eval"`), `sealed_phase`. String defaults: `""`; `parent_run_id` defaults to `null`.
+- **`show`** (10 keys): `run_id`, `agent` (default `"unknown"`), `started_at`, `agent_outcome` (default `"unknown"`), `eval_status` (default `"needs_eval"`), `sealed_phase`, `workspace_id`, `workspace_short` (default `"-"`), `failures` (array of `failure`), `risks` (array of `risk`).
+- **`failure`** (10 keys): `run_id`, `workspace_id`, `category`, `severity`, `source`, `blame_scope`, `summary`, `confidence` (number or `null`), `recoverability`, `evidence` (array; default `[]`).
+- **`risk`** (6 keys): `run_id`, `workspace_id`, `category`, `source`, `severity`, `summary`.
+
+**No absolute paths leak.** The `_source_dir` field used internally by `store.query.full_scan_runs` for schema-invalid rows is stripped by the projectors before emission.
+
+**Snapshot test contract.** The wire contract is pinned by snapshot tests at `tests/integration/test_format_json_snapshot.py` against golden files at `tests/fixtures/format_snapshots/<cmd>.json` (one each for `latest`, `status`, `show`, `failures`, `risks`). Any change in JSON output shape MUST be reflected in those goldens; a snapshot diff blocks CI. Regenerate the goldens (after an intentional, contract-compatible change) with:
+
+```
+AGENTLENS_UPDATE_SNAPSHOTS=1 pytest tests/integration/test_format_json_snapshot.py
+```
+
+A breaking shape change requires bumping `JSON_SCHEMA_VERSION` and is governed by the v1 lock policy (§7).
+
+### 3.3 Examples
 
 ```
 $ agentlens latest
-ws/3f7a  01HXY...  agent=claude  outcome=success  sealed=final
+01HXY7K...  ws_3f7a8b9c  success  passed  final
 ```
 
 ```
-$ agentlens show --latest --format json | jq '.run_id, .outcome'
+$ agentlens show --latest --format json | jq '.run_id, .agent_outcome'
 "01HXY..."
 "success"
+```
+
+```
+$ agentlens failures --since-days 7 --format json | jq '.[].category' | sort -u
+"tool_misuse"
+"unhandled_exception"
 ```
 
 ## 4. Configuration & maintenance commands
@@ -74,7 +119,7 @@ $ agentlens show --latest --format json | jq '.run_id, .outcome'
 - **Default output is human-readable text** at a target width of 80 columns, with color when `stdout` is a TTY.
 - **`--format json`** emits a schema-stable JSON document that is snapshot-tested. New fields may be added only as optional/additive members; existing field names and types are locked under v1.
 - **`stdout` carries query results only.** Diagnostics, warnings, progress, and errors go to `stderr`. Scripts may safely pipe `stdout` into `jq`.
-- **Absolute paths are never printed.** Run identifiers use a short `workspace_id` prefix plus the `run_id` (`ws/3f7a 01HXY…`); artifact paths are rendered relative to the run directory.
+- **Absolute paths are never printed.** Query commands render workspace identity via `workspace_short = workspace_id[:11]` (§3.1); artifact paths are rendered relative to the run directory.
 - Exit codes: `0` on success, `1` on user error, `2` on AgentLens-internal error, and for `agentlens run` the child's exit code is propagated verbatim.
 
 ## 6. Hidden v0 commands
