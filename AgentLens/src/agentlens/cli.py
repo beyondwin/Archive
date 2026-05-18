@@ -10,11 +10,15 @@ import typer
 
 from .commands import attach as attach_cmd
 from .commands import eval as eval_cmd
+from .commands import failures as failures_cmd
 from .commands import final as final_cmd
+from .commands import latest as latest_cmd
 from .commands import mark as mark_cmd
+from .commands import risks as risks_cmd
 from .commands import seal as seal_cmd
 from .commands import show as show_cmd
 from .commands import start as start_cmd
+from .commands import status as status_cmd
 
 app = typer.Typer(
     name="agentlens",
@@ -30,6 +34,10 @@ app.command(name="final")(final_cmd.final)
 app.command(name="seal")(seal_cmd.seal)
 app.command(name="eval")(eval_cmd.eval_cmd)
 app.command(name="show")(show_cmd.show)
+app.command(name="latest")(latest_cmd.latest)
+app.command(name="status")(status_cmd.status)
+app.command(name="failures")(failures_cmd.failures)
+app.command(name="risks")(risks_cmd.risks)
 
 
 def main() -> None:
