@@ -4,7 +4,7 @@ This document defines the four-level integration taxonomy AgentLens uses to desc
 
 ## 1. The five reported states
 
-`agentlens doctor integrations` reports each adapter with one of five states:
+`agentlens doctor integrations` reports each adapter with one of five states. (The `doctor` command also accepts `paths` and `all` scopes — see `cli.md` §4 — and a `--format text|json` flag; integration reporting is the focus of this document.) For each adapter, the reported record contains `integration_level` and, when a shim is installed, `shim_integrity` (`ok` | `drift_warning`) so the four-level taxonomy below can be paired with the live shim sha256 check from `security.md` §4:
 
 - **`none`** — no integration, AgentLens is not aware of the tool.
 - **`watcher-only`** — file/log watcher only, no behavioral wiring.

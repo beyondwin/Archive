@@ -7,9 +7,12 @@ This document re-narrates spec section S1.11 (CLI UX). The subcommand surface, t
 The user-visible subcommand set is:
 
 ```
-agentlens install [--yes]
-agentlens doctor [integrations] [--format json]
-agentlens on | off | mode <minimal|full>
+agentlens install <agent> [--real PATH] [--yes]
+agentlens uninstall <agent>
+agentlens doctor [integrations | paths | all] [--format text|json]
+agentlens on | off
+agentlens mode show
+agentlens mode set <disabled|minimal|full>
 agentlens run -- <command> [args...]
 agentlens start --agent <name> --mode <cli|app|code|unknown> [--parent <run_id>]
 agentlens mark <event_type> [--task-id ...] [--name ...]
@@ -109,9 +112,19 @@ $ agentlens failures --since-days 7 --format json | jq '.[].category' | sort -u
 
 ## 4. Configuration & maintenance commands
 
-- **`agentlens install [--yes]`** — installs PATH shims after explicit consent (see `security.md`).
-- **`agentlens doctor [integrations] [--format json]`** — environment diagnostics; with `integrations`, reports per-adapter Levels.
-- **`agentlens on | off | mode <minimal|full>`** — toggles recording globally or down-clamps to `minimal`.
+- **`agentlens install <agent> [--real PATH] [--yes]`** — writes a PATH shim plus a sibling `.real` sha256 lockfile under `~/.agentlens/shims/`. The real binary is auto-detected via `shutil.which(agent)` unless `--real PATH` is passed. Requires explicit user consent at an interactive prompt; `--yes` bypasses the prompt for CI/automation only. **The command never edits the user's shell rc** — it prints the `export PATH="$HOME/.agentlens/shims:$PATH"` hint and the user must add it manually. See `security.md` for the shim trust model.
+- **`agentlens uninstall <agent>`** — removes `~/.agentlens/shims/<agent>` and the matching `.real` lockfile. Idempotent: succeeds even when no shim is installed.
+- **`agentlens doctor [integrations | paths | all] [--format text|json]`** — environment diagnostics. Scopes:
+  - `integrations` — per known agent (`claude`, `codex`), reports `integration_level` (one of `none`, `watcher-only`, `shim`, `full`, `native-experimental` per the taxonomy in `integrations.md`) and, when a shim is installed, `shim_integrity` (`ok` | `drift_warning`). `missing` shims collapse to `integration_level=none`.
+  - `paths` — resolved `AGENTLENS_HOME`, `workspace_id` (with `id_basis`), and the shim directory, each annotated with whether the path exists.
+  - `all` (default) — both blocks.
+
+  Output is human-readable text by default; `--format json` emits a deterministic JSON document (keys sorted) suitable for piping into `jq`.
+- **`agentlens mode show`** — prints the resolved mode (one token, one line: `disabled` | `minimal` | `full`) according to the config priority chain: `AGENTLENS_DISABLE=1` > `AGENTLENS_MODE` env > `<cwd>/.agentlens/config.yaml` > `~/.agentlens/config.yaml` > default `minimal`.
+- **`agentlens mode set <disabled|minimal|full>`** — persists `mode` to `<cwd>/.agentlens/config.yaml` (merging with existing keys). Rejects values outside the three-token allow-list.
+- **`agentlens on | off`** — convenience toggles equivalent to `mode set full` / `mode set disabled`.
+- **`AGENTLENS_DISABLE=1`** is an **unconditional kill switch**: when set in the environment, `load_config` returns `{"mode": "disabled"}` regardless of any YAML file or other env var, and `agentlens mode show` reports `disabled`. This is the recommended way to silence AgentLens in a one-off shell without editing config files.
+- **Nested invocation policy.** When a child process started under `agentlens run` itself invokes `agentlens run`, the wrapper detects the parent via `AGENTLENS_RUN_ID` in the environment. `AGENTLENS_NESTED_POLICY=passthrough` (the default) causes the nested call to skip re-recording and act as a transparent passthrough; `AGENTLENS_NESTED_POLICY=nested` opens a new run whose `run.json` records the outer run's id as `parent_run_id`. The recording-path environment variables (`AGENTLENS_RUN_ID`, `AGENTLENS_RUN_DIR`, `AGENTLENS_RUN_PID_STAMP`) are only propagated to children on the recording path.
 - **`agentlens gc [--dry-run]`** — enforces the retention budget; `--dry-run` reports what would be deleted.
 
 ## 5. Output conventions

@@ -7,10 +7,10 @@ final.json branches, seal/eval/index_run). EVERY recording stage is guarded
 so that an AgentLens-internal failure NEVER alters the child's exit code —
 this is the §5.16 non-blocking-passthrough invariant (spec §S1.6.17).
 
-Out-of-scope extension points retained for follow-on tasks:
-
-  - Nested-invocation policy (``AGENTLENS_NESTED_POLICY``). Hook reserved
-    at the top of :func:`wrap_command`; task 18 fills it in.
+Nested-invocation policy (``AGENTLENS_NESTED_POLICY``, spec §S1.7.4 / §S1.8.4):
+when the wrapper detects an inherited ``AGENTLENS_RUN_ID`` from a parent
+wrapper, the default ``passthrough`` policy skips recording (the child runs
+unchanged); ``nested`` opts into a fresh child run that records ``parent_run_id``.
 
 Excerpt extraction obeys an **allow-list only** policy enforcing
 ``MAX_EXCERPT_CHARS=4096`` with a ``<TRUNCATED>`` marker (spec §8.2).
@@ -267,6 +267,7 @@ def _build_run_doc(
     agent_name: str,
     agent_mode: str,
     mode: str,
+    parent_run_id: str | None = None,
 ) -> dict:
     workspace_block: dict = {
         "root_label": "<workspace>",
@@ -278,7 +279,7 @@ def _build_run_doc(
     if "git_branch" in metadata:
         workspace_block["git_branch"] = metadata["git_branch"]
 
-    return {
+    doc: dict = {
         "schema": SCHEMA_RUN_V1,
         "run_id": run_id,
         "workspace_id": workspace_id,
@@ -290,6 +291,11 @@ def _build_run_doc(
             "adapter": _ADAPTER_FOR_AGENT.get(agent_name, "generic_shim"),
         },
     }
+    # Spec §S1.8.4: nested runs carry parent_run_id linking back to the
+    # outer run id, so query/lineage tooling can traverse the chain.
+    if parent_run_id:
+        doc["parent_run_id"] = parent_run_id
+    return doc
 
 
 def _make_event(
@@ -314,6 +320,7 @@ def _init_recording(
     agent_name: str,
     agent_mode: str,
     mode: Literal["minimal", "full"],
+    parent_run_id: str | None = None,
 ) -> tuple[bool, str | None, Path | None]:
     """Recording initialization (spec §5.16).
 
@@ -324,6 +331,8 @@ def _init_recording(
       ``None``. On any internal failure the function swallows the exception
       and returns ``(False, None, None)`` so the wrapper's passthrough
       branch executes (spec §S1.6.17 — ER-1 fix: child must still run).
+    - ``parent_run_id`` is propagated into ``run.json`` when the policy
+      resolves to ``nested`` (spec §S1.8.4).
     """
     try:
         workspace_root = Path.cwd()
@@ -341,6 +350,7 @@ def _init_recording(
             agent_name=agent_name,
             agent_mode=agent_mode,
             mode=mode,
+            parent_run_id=parent_run_id,
         )
         write_run_meta(target_dir, run_doc)
 
@@ -599,11 +609,52 @@ def wrap_command(
     AgentLens-internal failure NEVER alters the child's exit code
     (spec §S1.6.17 non-blocking-passthrough invariant).
     """
-    # Task 18 hook: AGENTLENS_NESTED_POLICY nested-invocation guard goes
-    # here (e.g. allow|warn|forbid). Intentionally not implemented in M5.
+    # Task 18: nested-invocation policy (spec §S1.7.4, §S1.8.4).
+    # When we are already inside an AgentLens run (i.e. a parent wrapper has
+    # exported AGENTLENS_RUN_ID), the default policy is ``passthrough`` —
+    # the child runs without re-recording so we don't double-record agents
+    # that re-invoke themselves. ``nested`` opts into a fresh child run that
+    # carries ``parent_run_id`` linking back to the outer run.
+    policy = os.environ.get("AGENTLENS_NESTED_POLICY", "passthrough")
+    inherited_run_id = os.environ.get("AGENTLENS_RUN_ID")
+    inherited_stamp = os.environ.get("AGENTLENS_RUN_PID_STAMP", "")
+    nested_passthrough = bool(inherited_run_id) and policy != "nested"
+
+    # The PID stamp (set by the parent wrapper as ``f"{pid}:{run_id}"``)
+    # lets shims short-circuit re-entry from the same wrapper PID; if the
+    # stamp's prefix matches *our* parent PID, we treat it as a true nested
+    # call. The variable is read here to document the contract, but actual
+    # shim-level re-entry guarding lives in adapters/shims.py (SHIM_TEMPLATE).
+    _ = inherited_stamp
+
+    if nested_passthrough:
+        # No recording — spawn directly, preserve exit code, forward signals.
+        child = subprocess.Popen(
+            argv,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        sig_received, prior_handlers = _install_signal_handlers(child)
+        try:
+            drain_streams_concurrently(child)
+            child_exit_code = child.wait()
+        finally:
+            _restore_signal_handlers(prior_handlers)
+        sig_name = sig_received["name"]
+        rc = (128 + _signum_of(sig_name)) if sig_name else child_exit_code
+        return WrapperResult(
+            run_id=None, exit_code=rc, cancelled_by_signal=sig_name
+        )
+
+    # Recording branch (possibly nested with parent_run_id).
+    parent_run_id = inherited_run_id if inherited_run_id else None
 
     recording_enabled, run_id, run_dir = _init_recording(
-        argv, agent_name=agent_name, agent_mode=agent_mode, mode=mode
+        argv,
+        agent_name=agent_name,
+        agent_mode=agent_mode,
+        mode=mode,
+        parent_run_id=parent_run_id,
     )
 
     # command.started — best-effort; only meaningful when recording is on.
@@ -623,11 +674,20 @@ def wrap_command(
                 ),
             )
 
-    child = subprocess.Popen(
-        argv,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    # When recording, propagate run-id / run-dir / PID stamp into the child
+    # so nested shims can detect re-entry (spec §S1.7.4 — PID stamp pattern).
+    popen_kwargs: dict = {
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.PIPE,
+    }
+    if recording_enabled and run_id is not None and run_dir is not None:
+        child_env = os.environ.copy()
+        child_env["AGENTLENS_RUN_ID"] = run_id
+        child_env["AGENTLENS_RUN_DIR"] = str(run_dir)
+        child_env["AGENTLENS_RUN_PID_STAMP"] = f"{os.getpid()}:{run_id}"
+        popen_kwargs["env"] = child_env
+
+    child = subprocess.Popen(argv, **popen_kwargs)
     sig_received, prior_handlers = _install_signal_handlers(child)
     try:
         # Concurrent dual-stream drain — mandated by spec §5.16. Sequential
