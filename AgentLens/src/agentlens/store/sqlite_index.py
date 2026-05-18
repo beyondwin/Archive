@@ -232,10 +232,19 @@ def rebuild_index(home: Path) -> int:
     home = Path(home)
     conn = open_db(home / "index.db")
     try:
+        # Disable FK enforcement during the drop sweep. `failures` has a FK
+        # to `runs(run_id)`; dropping `runs` first while `failures` still
+        # contains rows fails with `FOREIGN KEY constraint failed` even
+        # though both tables are about to disappear. The pragma is per-
+        # connection so re-enabling on the same conn after init_schema
+        # restores the production invariant for the subsequent index_run
+        # inserts.
+        conn.execute("PRAGMA foreign_keys = OFF")
         for tbl in _INDEX_TABLES:
             conn.execute(f"DROP TABLE IF EXISTS {tbl}")
         conn.commit()
         init_schema(conn)
+        conn.execute("PRAGMA foreign_keys = ON")
 
         runs_root = home / "runs"
         if not runs_root.is_dir():

@@ -181,6 +181,32 @@ def test_latest_empty_home_returns_none(tmp_path: Path) -> None:
     assert latest(tmp_path) is None
 
 
+def test_rebuild_index_idempotent_when_failures_rows_present(tmp_path: Path) -> None:
+    """`failures` has a FK to `runs(run_id)`. With PRAGMA foreign_keys=ON,
+    a naive `DROP TABLE runs` while failures rows reference it raises
+    `FOREIGN KEY constraint failed`. Regression for that — rebuild_index
+    must work on a populated DB, not just an empty one.
+    """
+    _write_run(
+        tmp_path,
+        RUN_NEW,
+        workspace_id=WS_A,
+        failures_list=[
+            {
+                "category": "MISSING_FINAL",
+                "severity": "blocker",
+                "source": "evaluator",
+                "blame_scope": "agent",
+                "summary": "no final.json",
+            }
+        ],
+    )
+    # First build populates both `runs` and `failures` tables.
+    assert rebuild_index(tmp_path) == 1
+    # Second call MUST succeed without FK error — the bug surfaced here.
+    assert rebuild_index(tmp_path) == 1
+
+
 # ---------------------------------------------------------------------------
 # failures()
 # ---------------------------------------------------------------------------
