@@ -1,0 +1,37 @@
+{
+  "agent_mode": "cli",
+  "agent_name": "claude_code",
+  "agent_outcome": "success",
+  "display_title": "fixture imported session title",
+  "ended_at": "0000-00-00T00:00:00Z",
+  "eval_status": "passed",
+  "import_state": "full",
+  "parent_run_id": null,
+  "recording_mode": "minimal",
+  "residual_risks": [],
+  "run_id": "run_20260101_000004_eeeeee",
+  "sealed_phase": "pre_eval",
+  "started_at": "0000-00-00T00:00:00Z",
+  "status": "passed",
+  "usage": {
+    "input_tokens": 1000,
+    "output_tokens": 500,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 0,
+    "reasoning_tokens": 0,
+    "cost_usd": 0.0125,
+    "pricing_source": "frozen_table_2026_05",
+    "confidence": "exact",
+    "model_breakdown": [
+      {
+        "model": "claude-opus-4-7",
+        "input_tokens": 1000,
+        "output_tokens": 500,
+        "cache_creation_tokens": 0,
+        "cache_read_tokens": 0,
+        "reasoning_tokens": 0
+      }
+    ]
+  },
+  "workspace_id": "ws_0000000000000005"
+}
