@@ -7,24 +7,46 @@ parses them into a :class:`ParsedSession` describing session boundaries
 and a list of opaque ``claude.*`` events ready for the importer to write
 through :func:`agentlens.store.writer.append_event`.
 
-Defensive parsing: malformed JSONL lines are skipped (a stderr warning is
-emitted by callers if desired); the parser itself never raises on bad
-input. The session id is taken from the filename, not the line payloads,
+Defensive parsing: malformed JSONL lines, oversized lines, and lines past
+the byte cap are tracked on the returned :class:`ImportReport` rather than
+raised. The session id is taken from the filename, not the line payloads,
 to match how Claude Code names the file.
 
+Streaming model: the parser opens the source in ``"rb"`` mode and iterates
+line-by-line. We never call ``path.read_text()`` — large sessions must not
+balloon to whole-file allocations.
+
 Public API:
-    ParsedSession                       (dataclass)
-    parse_session(path) -> ParsedSession
+    ParsedSession                       (dataclass, frozen)
+    parse_session(path, *, byte_cap=64MiB, deep_parse_only=False)
+        -> tuple[ParsedSession, ImportReport]
     find_session(home, session_id, project=None) -> Path | None
     list_sessions(home, project=None, latest_only=False) -> list[Path]
 """
 from __future__ import annotations
 
 import json
-import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterator
+
+from ..importers.report import ImportReport
+
+
+# Per-line cap (2 MiB). Lines longer than this are skipped without
+# attempting json.loads — pathological vendor lines must not OOM the parser.
+_LINE_CAP_BYTES = 2 * 1024 * 1024
+
+# Default whole-file cap (64 MiB). Matches the spec §4.1 default; callers
+# may pass a smaller cap via ``--byte-cap`` / ``AGENTLENS_IMPORT_BYTE_CAP``.
+_DEFAULT_BYTE_CAP = 64 * 1024 * 1024
+
+# Vendor allowlist — only record `unsupported_type:<x>` for lines outside
+# this set. Adding a type here means "the parser understands this shape".
+_KNOWN_CLAUDE_TYPES: frozenset[str] = frozenset(
+    {"user", "assistant", "system", "tool_result", "summary", "file-history-snapshot"}
+)
 
 
 @dataclass(frozen=True)
@@ -39,6 +61,10 @@ class ParsedSession:
         events: opaque ``claude.*`` event dicts (sans schema/event_id/run_id;
             the importer fills those in).
         line_count: number of *parseable* JSONL lines.
+        first_user_message_text: concatenated text from the first user
+            message in the session (``None`` if no user message seen).
+        usage_records: raw line dicts for every billable assistant message,
+            preserved verbatim so :func:`extract_usage` can aggregate.
     """
 
     session_id: str
@@ -47,45 +73,48 @@ class ParsedSession:
     ended_at: str | None
     events: list[dict[str, Any]] = field(default_factory=list)
     line_count: int = 0
+    first_user_message_text: str | None = None
+    usage_records: list[dict[str, Any]] = field(default_factory=list)
 
 
-def _iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
-    """Yield parsed JSON objects from *path*, skipping malformed lines."""
+def _iter_raw_lines(
+    path: Path, byte_cap: int, report: ImportReport
+) -> Iterator[tuple[int, int, bytes]]:
+    """Yield ``(line_number, byte_offset, raw_bytes)`` until byte cap or EOF.
+
+    ``byte_offset`` is the offset where this line *started* in the file.
+    When the next line would push the running cursor past ``byte_cap``, the
+    iterator stops *without* yielding that line and marks ``report``'s
+    byte-cap-hit flag.
+    """
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        print(
-            f"warning: cannot read {path}: {exc}", file=sys.stderr
-        )  # pragma: no cover
+        fh = path.open("rb")
+    except OSError:
         return
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            print(
-                f"warning: skipping malformed line in {path.name}",
-                file=sys.stderr,
-            )
-            continue
-        if isinstance(obj, dict):
-            yield obj
+    with fh:
+        running_offset = 0
+        line_number = 0
+        for raw in fh:
+            line_number += 1
+            line_start = running_offset
+            line_len = len(raw)
+            # If this line would push us over the byte cap, stop *before*
+            # processing it. We keep prior lines and mark the report.
+            if line_start + line_len > byte_cap:
+                report.record_byte_cap_hit()
+                return
+            running_offset += line_len
+            # Strip trailing newline bytes (\r\n or \n) so downstream
+            # length checks and json.loads see only the payload.
+            stripped = raw.rstrip(b"\r\n")
+            if not stripped:
+                # Blank line; do not count toward parsed/skip counters.
+                continue
+            yield line_number, line_start, stripped
 
 
 def _extract_tool_use(line: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return one ``claude.tool_use`` event per tool_use block in *line*.
-
-    The Claude session line shape is::
-
-        {"type":"assistant",
-         "message":{"content":[{"type":"tool_use","name":...,"input":{...}}]},
-         "timestamp":"..."}
-
-    We are deliberately defensive: a missing or non-list ``content`` short-
-    circuits to an empty result so malformed lines never crash the importer.
-    """
+    """Return one ``claude.tool_use`` event per tool_use block in *line*."""
     if line.get("type") != "assistant":
         return []
     message = line.get("message")
@@ -111,44 +140,178 @@ def _extract_tool_use(line: dict[str, Any]) -> list[dict[str, Any]]:
             "tool_use_id": str(tool_use_id),
         }
         if isinstance(tool_input, dict):
-            # Keep keys but values opaque; the importer is responsible for
-            # any redaction.
             payload["input_keys"] = sorted(tool_input.keys())
         out.append({"type": "claude.tool_use", "ts": ts, "payload": payload})
     return out
 
 
-def parse_session(path: Path) -> ParsedSession:
-    """Parse a Claude Code session JSONL into a :class:`ParsedSession`.
+def _extract_first_user_text(line: dict[str, Any]) -> str | None:
+    """Return concatenated text from a Claude user-message line, or ``None``.
 
-    The session id is the filename stem. Boundaries come from the first
-    and last lines with a string ``timestamp`` field; malformed lines are
-    skipped silently (warning on stderr).
+    Accepts both the wrapper shape (``{"message": {"role": "user", ...}}``)
+    and the bare shape (``{"role": "user", ...}``). Content may be a string
+    or a list of content blocks; only ``type=="text"`` blocks contribute.
+    """
+    msg = line.get("message")
+    if not isinstance(msg, dict):
+        msg = line
+    if msg.get("role") != "user":
+        return None
+    content = msg.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") != "text":
+                continue
+            text = block.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+        return "\n".join(parts) if parts else None
+    return None
+
+
+def _is_billable_assistant(line: dict[str, Any]) -> bool:
+    """A line counts as billable iff ``type=="assistant"`` and message is dict.
+
+    We deliberately accept records that lack ``message.usage`` or
+    ``message.model`` — :func:`extract_usage` knows how to treat missing
+    fields, and tracking "we *saw* an assistant turn but it had no usage"
+    is what makes the confidence heuristic meaningful.
+    """
+    if line.get("type") != "assistant":
+        return False
+    return isinstance(line.get("message"), dict)
+
+
+def parse_session(
+    path: Path,
+    *,
+    byte_cap: int = _DEFAULT_BYTE_CAP,
+    deep_parse_only: bool = False,
+) -> tuple[ParsedSession, ImportReport]:
+    """Parse a Claude Code session JSONL with full import-report accounting.
+
+    Args:
+        path: source ``<session-id>.jsonl``.
+        byte_cap: maximum bytes to deep-parse. Lines past the cap are
+            dropped and ``report.byte_cap_hit`` is set.
+        deep_parse_only: when True, files whose total size already exceeds
+            ``byte_cap`` are short-circuited — a stub ParsedSession (no
+            events, no boundaries) is returned and
+            ``report.deep_parse_only_skipped`` is set so callers can route
+            the import to a metadata-only path.
+
+    Returns:
+        ``(parsed, report)`` — `parsed` carries the parsed events the
+        importer must turn into ``claude.*`` events; `report` carries the
+        spec §4.1 accounting (skips, byte-cap status, parsed total).
     """
     p = Path(path)
     session_id = p.stem
+    start_ns = time.perf_counter_ns()
+
+    report = ImportReport(source="claude-session", source_session_id=session_id)
+    report.set_source_path(p)
+    report.byte_cap_bytes = byte_cap
+    # The CLI overrides byte_cap_source with the real provenance (flag/env);
+    # default suits in-process callers and tests.
+    report.byte_cap_source = "default"
+
+    try:
+        source_bytes = p.stat().st_size
+    except OSError:
+        source_bytes = 0
+    report.source_bytes = source_bytes
+
+    # Short-circuit: source larger than cap AND caller asked for deep-only.
+    if source_bytes > byte_cap and deep_parse_only:
+        report.deep_parse_only_skipped = True
+        duration_ms = (time.perf_counter_ns() - start_ns) // 1_000_000
+        report.finalize(int(duration_ms))
+        stub = ParsedSession(
+            session_id=session_id,
+            path=p,
+            started_at=None,
+            ended_at=None,
+        )
+        return stub, report
+
     first_ts: str | None = None
     last_ts: str | None = None
     events: list[dict[str, Any]] = []
     line_count = 0
+    first_user_text: str | None = None
+    usage_records: list[dict[str, Any]] = []
 
-    for line in _iter_jsonl(p):
+    for line_number, byte_offset, raw_bytes in _iter_raw_lines(
+        p, byte_cap, report
+    ):
+        # Per-line oversized guard *before* json.loads, so a 200 MiB line
+        # never enters the JSON parser.
+        if len(raw_bytes) > _LINE_CAP_BYTES:
+            report.record_skip("line_too_large", line_number, byte_offset)
+            continue
+
+        try:
+            obj = json.loads(raw_bytes)
+        except json.JSONDecodeError:
+            report.record_skip("json_decode", line_number, byte_offset)
+            continue
+
+        if not isinstance(obj, dict):
+            # Non-object top-levels (lists, strings, …) aren't a Claude
+            # event shape — treat as unsupported with the value's JSON type.
+            type_label = type(obj).__name__
+            report.record_skip(
+                f"unsupported_type:{type_label}", line_number, byte_offset
+            )
+            continue
+
+        line_type = obj.get("type")
+        if isinstance(line_type, str) and line_type not in _KNOWN_CLAUDE_TYPES:
+            report.record_skip(
+                f"unsupported_type:{line_type}", line_number, byte_offset
+            )
+            continue
+
+        # Supported line — record success and harvest fields.
+        report.record_parsed()
         line_count += 1
-        ts = line.get("timestamp")
+
+        ts = obj.get("timestamp")
         if isinstance(ts, str):
             if first_ts is None:
                 first_ts = ts
             last_ts = ts
-        events.extend(_extract_tool_use(line))
 
-    return ParsedSession(
+        events.extend(_extract_tool_use(obj))
+
+        if first_user_text is None:
+            candidate = _extract_first_user_text(obj)
+            if candidate is not None:
+                first_user_text = candidate
+
+        if _is_billable_assistant(obj):
+            usage_records.append(obj)
+
+    duration_ms = (time.perf_counter_ns() - start_ns) // 1_000_000
+    report.finalize(int(duration_ms))
+
+    parsed = ParsedSession(
         session_id=session_id,
         path=p,
         started_at=first_ts,
         ended_at=last_ts,
         events=events,
         line_count=line_count,
+        first_user_message_text=first_user_text,
+        usage_records=usage_records,
     )
+    return parsed, report
 
 
 def _projects_root(home: Path) -> Path:
