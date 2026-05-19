@@ -28,6 +28,8 @@ Snapshot-level summary:
 ```json
 {
   "context_budget": {
+    "active_strategy": "source_snapshot",
+    "packet_count": 0,
     "status": "green",
     "max_chars": 120000,
     "estimated_chars": 4210,
@@ -36,6 +38,11 @@ Snapshot-level summary:
   }
 }
 ```
+
+When task packets are present, `context.json` does not inline packet text.
+Instead it records `active_strategy: "task_packet"`, `packet_count`, and a
+`task_packet_index` with task id, packet path, packet hash, and estimated
+characters.
 
 Build snapshots with a budget:
 
@@ -46,6 +53,8 @@ python3 scripts/build_context_snapshot.py \
   --plan "$PLAN_REL" \
   --spec "${SPEC_REL:-}" \
   --docs "${DOCS_REL:-}" \
+  --spec-manifest "$RUN_DIR/spec_manifest.json" \
+  --task-packet-dir "$RUN_DIR/task_packets" \
   --max-chars 120000 \
   --output "$RUN_DIR/context.json"
 ```

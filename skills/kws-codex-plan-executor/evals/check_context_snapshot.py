@@ -37,6 +37,47 @@ def run_snapshot(script: Path, repo: Path, plan_text: str, max_chars: int) -> tu
     return result, data
 
 
+def run_snapshot_with_packets(script: Path, repo: Path) -> tuple[subprocess.CompletedProcess[str], dict]:
+    plan = repo / "plan.md"
+    plan.write_text("# Plan\n\nSmall body.\n", encoding="utf-8")
+    manifest = repo / "spec_manifest.json"
+    manifest.write_text(
+        json.dumps({"schema_version": "1", "section_order": ["S1"], "sections": {"S1": {"title": "Feature"}}}),
+        encoding="utf-8",
+    )
+    packet_dir = repo / "task_packets"
+    packet_dir.mkdir()
+    for task_id, chars in (("task_0", 123), ("task_1", 456)):
+        (packet_dir / f"{task_id}.json").write_text(
+            json.dumps({"task_id": task_id, "context_budget": {"estimated_chars": chars}}),
+            encoding="utf-8",
+        )
+    output = repo / "context-with-packets.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(script),
+            "--repo-root",
+            str(repo),
+            "--run-id",
+            "context-plan-20260519-143022",
+            "--plan",
+            "plan.md",
+            "--spec-manifest",
+            str(manifest),
+            "--task-packet-dir",
+            str(packet_dir),
+            "--output",
+            str(output),
+        ],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    data = json.loads(output.read_text(encoding="utf-8")) if output.is_file() else {}
+    return result, data
+
+
 def main() -> int:
     script = Path(__file__).resolve().parents[1] / "scripts" / "build_context_snapshot.py"
     checks: dict[str, bool] = {}
@@ -79,6 +120,17 @@ def main() -> int:
         )
         if not checks["section_hashes_stable"]:
             failures.append("repeated snapshot should produce stable basis and included section metadata")
+
+        packet_result, packet_snapshot = run_snapshot_with_packets(script, repo)
+        packet_budget = packet_snapshot.get("context_budget", {})
+        checks["packet_index_strategy"] = (
+            packet_result.returncode == 0
+            and packet_budget.get("active_strategy") == "task_packet"
+            and packet_budget.get("packet_count") == 2
+            and len(packet_snapshot.get("task_packet_index", [])) == 2
+        )
+        if not checks["packet_index_strategy"]:
+            failures.append("snapshot with task packets should record task_packet strategy and packet index")
 
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, indent=2))
