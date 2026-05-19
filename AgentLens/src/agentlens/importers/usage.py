@@ -305,7 +305,7 @@ def extract_usage(source: Source, usage_records: list[dict[str, Any]]) -> UsageS
     elif events_with_usage * 2 < total:
         # Strictly fewer than 50 %.
         confidence = "unknown"
-    elif any_partial:
+    elif any_partial or events_missing_usage > 0:
         confidence = "estimated"
     else:
         confidence = "exact"

@@ -282,3 +282,31 @@ def test_returns_frozen_dataclass() -> None:
     summary = extract_usage("claude-session", [])
     with pytest.raises(Exception):
         summary.input_tokens = 999  # type: ignore[misc]
+
+
+def test_mixed_full_and_no_usage_records_force_estimated() -> None:
+    """5 records with full usage + 5 records with no usage block → estimated.
+
+    Spec §4.3: 'Mix of populated and inferred' includes per-record absence.
+    """
+    records = [
+        {
+            "message": {
+                "model": "claude-opus-4-7",
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "cache_creation_input_tokens": 0,
+                    "cache_read_input_tokens": 0,
+                },
+            }
+        }
+        for _ in range(5)
+    ] + [
+        {"message": {"model": "claude-opus-4-7"}}  # no usage block
+        for _ in range(5)
+    ]
+    summary = extract_usage("claude-session", records)
+    assert summary.confidence == "estimated", summary
+    assert summary.events_with_usage == 5
+    assert summary.events_missing_usage == 5
