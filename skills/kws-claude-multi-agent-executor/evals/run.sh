@@ -156,9 +156,9 @@ GI
   local total_tokens
   total_tokens="$(jq -s '[.[] | select(.type=="usage") | (.input_tokens // 0) + (.output_tokens // 0)] | add // 0' "$tmpdir/.harness/run.jsonl" 2>/dev/null || echo 0)"
 
-  # Capture artifacts.
+  # Capture artifacts. v2.18 layout: state lives at ~/.claude/orchestrator/<RUN_ID>/state.json.
   local state_file
-  state_file="$(ls -t "$tmpdir"/../worktrees/*/.orchestrator/state.json "$tmpdir"/.claude/worktrees/*/.orchestrator/state.json 2>/dev/null | head -1 || true)"
+  state_file="$(ls -t "$HOME"/.claude/orchestrator/*/state.json 2>/dev/null | head -1 || true)"
   local task_statuses=""
   local git_log=""
   local files_changed=""
@@ -166,7 +166,7 @@ GI
     task_statuses="$(jq '.tasks' "$state_file" 2>/dev/null || echo '{}')"
     files_changed="$(jq -r '[.tasks[].files // []] | flatten | unique | join("\n")' "$state_file" 2>/dev/null || echo '')"
     local worktree_path
-    worktree_path="$(dirname "$(dirname "$state_file")")"
+    worktree_path="$(jq -r '.worktree // ""' "$state_file" 2>/dev/null || echo '')"
     git_log="$(git -C "$worktree_path" log --oneline -n 30 2>/dev/null || echo '')"
   fi
 

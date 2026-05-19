@@ -88,7 +88,7 @@ After writing the file, print its contents to stdout for logging.
 ## Learning log emit (v2.8)
 
 If your final status is FAIL or ESCALATE, also write a learning-event candidate
-to `<worktree>/.orchestrator/learning_events/task_<N>-verifier.json` (use
+to `<orch_dir>/learning_events/task_<N>-verifier.json` (use
 `batch` instead of `<N>` for LOW-batch verifier). **Do not call the helper
 script yourself** — the orchestrator scans the directory and invokes `append`.
 

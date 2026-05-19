@@ -145,7 +145,7 @@ EVENT_TYPES = [
 ```markdown
 ## Learning log emit (vX.Y.Z)
 
-<트리거 조건> 이면, 출력 반환 전 `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json` 에 learning-event 후보 JSON 파일 작성. **헬퍼 스크립트를 직접 호출하지 마세요** — 오케스트레이터가 이 디렉터리를 스캔하고 `append` 호출.
+<트리거 조건> 이면, 출력 반환 전 `<orch_dir>/learning_events/<task_id>-<role>.json` 에 learning-event 후보 JSON 파일 작성. **헬퍼 스크립트를 직접 호출하지 마세요** — 오케스트레이터가 이 디렉터리를 스캔하고 `append` 호출.
 
 최소 후보 본문:
 

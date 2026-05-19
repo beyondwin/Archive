@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # PostToolUse hook — debug-artifact scan.
 #
-# Materialized into <worktree_path>/.orchestrator/hooks/scan-debug-artifacts.sh
+# Materialized into <orch_dir>/hooks/scan-debug-artifacts.sh
 # at Phase 0 Step 2.5. Wired in <worktree_path>/.claude/settings.json under
 # hooks.PostToolUse with matcher "Edit|Write".
 #
@@ -42,7 +42,7 @@ NEW_CONTENT="$(printf '%s' "$INPUT" | jq -r '.new_string // .content // empty' 2
 
 # Allow-list paths.
 case "$PATH_FIELD" in
-  *CHANGELOG.md|*/docs/*|*.md.template|*/.orchestrator/*) exit 0 ;;
+  *CHANGELOG.md|*/docs/*|*.md.template) exit 0 ;;
 esac
 
 # Scan added content. Strip strings and fenced blocks first.

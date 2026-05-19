@@ -186,9 +186,9 @@ The orchestrator parses this line to populate `state.tasks.task_N.method_audit.a
 
 If your tier is WARN or FAIL (QUALITY_SCORE < 0.75 OR SPEC_SCORE < 0.85), write
 a learning-event candidate JSON file to
-`<worktree>/.orchestrator/learning_events/task_<N>-reviewer.json` before
+`<orch_dir>/learning_events/task_<N>-reviewer.json` before
 returning your output. **Do not call the helper script yourself** — the
-orchestrator scans `.orchestrator/learning_events/` and invokes `append`.
+orchestrator scans `<orch_dir>/learning_events/` and publishes to AgentLens.
 
 Minimal candidate body (fill in actual values):
 

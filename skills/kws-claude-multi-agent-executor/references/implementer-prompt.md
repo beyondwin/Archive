@@ -50,7 +50,7 @@ Spec sections included: `{spec_section_label}` (per `<active>.spec_manifest.task
 
 ## Context from Previous Tasks
 
-Read `{worktree_path}/.orchestrator/state.json`. Resolve which task tree applies to you using this rule (v2.13):
+Read `{orch_dir}/state.json`. Resolve which task tree applies to you using this rule (v2.13):
 
 - `state.plan_chain` exists (multi-plan) → active tree is `state.plan_chain[state.active_plan]`. Read `task_summaries` and `global_constraints.shared_files` from there.
 - `state.plan_chain` absent + `state.active_plan == "plan2"` (v2.12 legacy two-plan) → read from `state.plan2_state.task_summaries` and `state.plan2_state.global_constraints.shared_files`.
@@ -154,7 +154,7 @@ METHOD_AUDIT: tdd waived reason=docs-only-task
 ## Learning log emit (v2.8)
 
 If you ESCALATE (any type), write a learning-event candidate JSON to
-`<worktree>/.orchestrator/learning_events/task_<N>-implementer.json` before
+`<orch_dir>/learning_events/task_<N>-implementer.json` before
 ending your turn. If a root-cause-based recovery during this dispatch produced
 a reusable executor-improvement insight (e.g., "the prompt should specify X to
 prevent this confusion"), also write a `successful_workaround` candidate.

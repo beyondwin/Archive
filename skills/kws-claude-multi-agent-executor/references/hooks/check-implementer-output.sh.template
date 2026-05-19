@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SubagentStop hook — Implementer output sanity check.
 #
-# Materialized into <worktree_path>/.orchestrator/hooks/check-implementer-output.sh
+# Materialized into <orch_dir>/hooks/check-implementer-output.sh
 # at Phase 0 Step 2.5. Wired in <worktree_path>/.claude/settings.json under
 # hooks.SubagentStop.
 #
