@@ -138,7 +138,11 @@ def _import_one(
     Idempotent: if a run already carries ``input.import_key`` matching this
     session, the existing run dir is returned without further writes.
     """
-    parsed = parse_session(source)
+    # task_14: parse_session now returns (ParsedSession, ImportReport). The
+    # full report-plumbing wire-up (write_artifact_json + display_title + usage
+    # block on run.json) is task_16 — for now we just unpack so the existing
+    # importer keeps working.
+    parsed, _report = parse_session(source)
     import_key = f"claude-session:{parsed.session_id}"
 
     existing = _existing_run_for_import_key(import_key)
