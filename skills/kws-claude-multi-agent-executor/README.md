@@ -128,13 +128,16 @@ skills/kws-claude-multi-agent-executor/
 │   ├── run.sh                      ← 픽스처별 하네스 (bash + jq)
 │   ├── rubric.py                   ← 결정론적 정확성 측정
 │   ├── judge.md                    ← LLM-as-judge 프롬프트
-│   ├── check_learning_log.py       ← 16개 결정론적 체크
 │   ├── check_skill_contract.py     ← 18개 결정론적 체크
 │   ├── fixtures/                   ← 8개 YAML 픽스처 (01-08)
 │   ├── baselines/                  ← 버전별 judge 평균 + 점수
 │   └── calibration/                ← judge 캘리브레이션 (v2.7 산출물)
 ├── scripts/
-│   └── append_learning_event.py    ← 4개 서브커맨드 헬퍼
+│   ├── compare_agentlens_events.py  ← (v2.17) 레거시 events.jsonl ↔ AgentLens kws-cme.* 패리티 검증
+│   ├── accumulate_cost.py
+│   ├── archive_run.sh
+│   ├── render_html_report.py
+│   └── ...                          ← (v2.17 cutover: append_learning_event.py 제거됨 — AgentLens 단독 싱크)
 └── templates/
     └── (현재 비어있음 — 향후 스캐폴드 예약)
 ```

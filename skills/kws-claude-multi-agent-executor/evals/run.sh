@@ -21,9 +21,12 @@ mkdir -p "$EVAL_DIR/baselines"
 # Deterministic preflight checks — fail fast before running the (expensive)
 # fixture loop.
 echo "=== Preflight: deterministic checks ==="
-python3 "$EVAL_DIR/check_learning_log.py" >/dev/null || {
-  echo "FATAL: check_learning_log.py failed; see output above" >&2
-  python3 "$EVAL_DIR/check_learning_log.py" >&2
+# v2.17 cutover (Task 11): check_learning_log.py removed alongside
+# scripts/append_learning_event.py. AgentLens parity is verified via
+# scripts/compare_agentlens_events.py --self-test instead.
+python3 "$SKILL_DIR/scripts/compare_agentlens_events.py" --self-test >/dev/null || {
+  echo "FATAL: compare_agentlens_events.py --self-test failed; see output above" >&2
+  python3 "$SKILL_DIR/scripts/compare_agentlens_events.py" --self-test >&2
   exit 1
 }
 python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md" >/dev/null || {

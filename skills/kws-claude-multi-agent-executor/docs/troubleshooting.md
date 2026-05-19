@@ -4,6 +4,16 @@
 
 *리스크* 나 *인정된 한계* 를 찾고 있다면 [`./risks-and-limitations.md`](./risks-and-limitations.md) 참조. 이 파일은 *구체적 해결 방법이 있는 운영 문제* 용입니다.
 
+> **v2.17 cutover (Task 11) — 읽기 전 안내**
+>
+> v2.17 부터 레거시 `append_learning_event.py` 헬퍼와 `~/.claude/learning/kws-claude-multi-agent-executor/runs/...` 경로의 `meta.json` / `events.jsonl` 작성이 제거되었습니다. 신규 실행은 AgentLens 가 단독 이벤트 싱크입니다 (`kws-cme.*` 타입). 아래 항목들은 *역사적 진단 절차* 로 유지되며 cutover 이전 실행 디버깅에만 적용됩니다.
+>
+> 신규 실행 진단:
+> - 이벤트 조회: `agentlens events --run <ORCH_RUN_ID> --type 'kws-cme.*'`
+> - run id 확인: `<worktree>/.orchestrator/state.json` 의 `agentlens_orchestration_run` 필드, 또는 `agentlens runs --agent kws-cme-orchestrator`
+> - 페이즈 0 시작 마커: AgentLens 에서 `kws-cme.phase_0_started` 이벤트 존재 여부 (이전의 `LEARNING_LOG_INIT:` grep 대체)
+> - 레거시 ↔ AgentLens 패리티 검증: `python3 scripts/compare_agentlens_events.py <legacy events.jsonl> <agentlens run dir>` (`--self-test` 로 매핑 자체 검증)
+
 ---
 
 ## 스킬 실행 문제
