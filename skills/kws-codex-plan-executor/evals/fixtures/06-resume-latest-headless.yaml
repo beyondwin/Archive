@@ -14,23 +14,29 @@ plan: |
   ```
 spec: |
   This fixture intentionally conflicts with the persisted state. With
-  resume=latest, the existing .codex-orchestrator/state.json is the source of
-  truth and the executor must continue the state task instead of creating the
-  plan target.
+  resume=latest, the existing state under the user Codex orchestrator directory
+  is the source of truth and the executor must continue the state task instead
+  of creating the plan target.
 initial_state:
   schema_version: "1"
+  run_id: "resume-latest-20260519-143022"
   mode: "headless"
   workspace: "__WORKDIR__"
   plan: "__WORKDIR__/plan.md"
   spec: "__WORKDIR__/spec.md"
-  branch: "main"
-  worktree: "__WORKDIR__"
-  test_command: "test -f docs/resume-target.md && grep -q 'resumed execution from state' docs/resume-target.md"
-  baseline:
-    status: "passed"
-    summary: "bootstrap state exists"
+  branch: "codex/resume-latest-20260519-143022"
+  worktree: "__HOME__/.codex/worktrees/resume-latest-20260519-143022"
+  run_dir: "__HOME__/.codex/orchestrator/resume-latest-20260519-143022"
+  state_path: "__HOME__/.codex/orchestrator/resume-latest-20260519-143022/state.json"
+  context_snapshot_path: "__HOME__/.codex/orchestrator/resume-latest-20260519-143022/context.json"
+  context_basis_hash: "0000000000000000000000000000000000000000000000000000000000000000"
   current_task: "task_0"
   current_phase: "task_loop"
+  lifecycle_outcome: null
+  handoff_reason: ""
+  completion_audit: null
+  subagents_requested: true
+  subagent_runs: []
   risk_levels:
     task_0: "low"
   resume_marker: "resume-latest-source-of-truth"
@@ -49,32 +55,35 @@ initial_state:
           - docs/resume-target.md
         allowed_edits:
           - docs/resume-target.md
-          - .codex-orchestrator/state.json
         forbidden_edits:
           - docs/plan-target.md
         acceptance_command_or_honest_substitute: "test -f docs/resume-target.md && grep -q 'resumed execution from state' docs/resume-target.md"
-      pre_task_sha: null
-      commit: null
+      unit_manifest:
+        unit_type: execute-task
+        context_mode: focused
+        required_skills:
+          - using-superpowers
+          - test-driven-development
+        tool_policy: implementation
+        allowed_write_globs:
+          - docs/resume-target.md
+        forbidden_write_globs:
+          - docs/plan-target.md
+        artifact_policy: inline-summary
+        max_context_chars: 60000
       review_retries: 0
       verifier_retries: 0
-      issue_keys: []
-      verification: []
-      summary: "Create docs/resume-target.md with exact text: resumed execution from state"
-      started_at: null
-      completed_at: null
   review_issue_keys: {}
   verification: {}
   session_owned_resources: []
   last_checkpoint: null
   timestamps:
-    started_at: null
-    updated_at: null
+    started_at: "2026-05-19T14:30:22Z"
+    updated_at: "2026-05-19T14:30:22Z"
     completed_at: null
 expected:
   files_changed:
     - docs/resume-target.md
-  allowed_extra_files:
-    - .codex-orchestrator/state.json
   must_not_change:
     - docs/plan-target.md
   state_must_include:

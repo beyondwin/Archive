@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "2.18.0"
+  version: "2.19.0"
   updated_at: "2026-05-19"
 ---
 
@@ -14,8 +14,9 @@ Execute implementation plans in Codex or export a paste-ready prompt from the
 same inputs.
 
 Default behavior is interactive execution in the current Codex session, with
-implementation isolated in a dedicated non-conflicting `codex/...` git
-worktree. Headless execution and prompt export require explicit mode selection.
+implementation isolated in a dedicated non-conflicting git worktree under
+`~/.codex/worktrees/`. Runtime state, hooks, learning event payloads, and other
+orchestration-only artifacts live under `~/.codex/orchestrator/`.
 
 ## Invocation
 
@@ -28,9 +29,11 @@ Supported arguments:
 - `resume=latest|<state-path>|<run_id>` optional; if multiple candidate active
   runs exist, stop and ask which run/state to resume.
 - `mode=interactive|headless|prompt|handoff` optional, default `interactive`.
-- `subagents=on|off` optional, default `off` unless the user explicitly asked for subagents, delegation, or parallel work.
-- `headless_sandbox=workspace-write|read-only` optional, default `workspace-write`;
-  `read-only` is for preflight/prompt verification and blocks edit execution.
+- `subagents=on|off` optional, default `on`; pass `subagents=off` for a
+  local-only run.
+- `headless_sandbox=workspace-write|read-only` optional, default
+  `workspace-write`; `read-only` is for preflight/prompt verification and
+  blocks edit execution.
 
 ## Hard Boundary
 
@@ -39,11 +42,13 @@ explicitly requests it and the target is an isolated throwaway repo or CI
 sandbox.
 
 Execution modes must not implement from `main` or the caller's original
-checkout. If a dedicated non-conflicting `codex/...` git worktree cannot be
-created or selected before task contracts and edits, stop with a blocker.
+checkout. If a dedicated non-conflicting worktree under `~/.codex/worktrees/`
+cannot be created or selected before task contracts and edits, stop with a
+blocker.
 
-Use `spawn_agent` only when the user explicitly asks for subagents, delegation,
-parallel work, or passes `subagents=on`.
+Use `spawn_agent` by default for independent implementation, review,
+verification, or documentation tasks when they can run in parallel without
+overlapping write scopes. Do not spawn subagents when `subagents=off`.
 
 ## Core Invariants
 
@@ -53,53 +58,41 @@ parallel work, or passes `subagents=on`.
 - Executable tasks may record `unit_manifest` with context, skill, tool, and
   write policy; finished runs require every completed task to have a valid
   manifest, including `allowed_write_globs` and `forbidden_write_globs`.
-  Before closing a task with a manifest, run or honestly substitute the
-  post-diff policy check against the recorded task contract and manifest.
-- For every new `interactive` or `headless` execution run, create a dedicated
-  non-conflicting `codex/...` git worktree before any task contract or edits.
-  Do not implement from `main` or the caller's original checkout. Check
-  `git worktree list --porcelain` and existing branches; when a branch name
-  already exists, append the run_id or another unique pre-run suffix and record
-  the final branch/worktree in state.
+- For every new `interactive` or `headless` execution run, create a run id using
+  `<plan-slug>-<YYYYMMDD-HHMMSS>`. Create code worktrees at
+  `~/.codex/worktrees/<run_id>` and orchestration directories at
+  `~/.codex/orchestrator/<run_id>`. If the worktree path already exists, append
+  a short random suffix before creating it.
+- The worktree contains only normal repository files and git metadata. Store
+  `state.json`, `context.json`, `hooks/`, `learning_events/`, headless logs, and
+  other executor artifacts under `~/.codex/orchestrator/<run_id>/`.
 - Before execution, classify dirty worktree changes as `related` or
   `unrelated`. Continue past unrelated dirty files only when they are outside
   the declared task files; stop before touching related dirty files.
 - Execution plans may use `Files`, `Affected files`, `Modified files`,
   `Changed files`, `수정 파일`, `변경 파일`, `대상 파일`, or `파일` headings for
   task file blocks. Execution mode still stops if no file block is present.
-- Each execution has a `run_id`. Primary project-local state and artifacts live
-  under `.codex-orchestrator/runs/<run_id>/`; `.codex-orchestrator/state.json`
-  is only a backwards-compatible latest-state copy or pointer.
 - Resume mode uses an explicit state path/run id, or the only active run found
-  under `.codex-orchestrator/runs/`. Do not infer between multiple ambiguous
-  active runs.
+  under `~/.codex/orchestrator/`. Do not infer between multiple ambiguous active
+  runs. `resume=latest` scans `~/.codex/orchestrator/*/state.json`.
 - In `interactive` and `headless` execution, record execution-only redacted
   notable-boundary learning events directly to AgentLens under the
   `kws-cpe.learning.<event>` namespace per `references/learning-log.md`. Include
   `run_id`, `run_dir`, and `state_path` in payload metadata. `prompt` and
   `handoff` are not logging modes.
-- Execution runs maintain project-local replay evidence by emitting AgentLens
-  events under `kws-cpe.<event>` per `references/event-journal.md`. State
-  remains authoritative; finished state records the AgentLens orchestration
-  run id and (for resume) the last event timestamp.
+- Execution runs maintain replay evidence through AgentLens events under
+  `kws-cpe.<event>` per `references/event-journal.md`. State remains
+  authoritative; finished state records the AgentLens orchestration run id and,
+  for resume, the last AgentLens event timestamp.
 - At run init the orchestrator opens an AgentLens run with
   `agentlens run-open --agent kws-cpe-orchestrator --workspace "$WORKTREE_ABS"
-  --meta plan=...` and persists the returned id as the run-level
-  `agentlens_orchestration_run` field in
-  `.codex-orchestrator/runs/<run_id>/state.json` (root
-  `.codex-orchestrator/state.json` remains a compatibility latest-state
-  copy/pointer). Every AgentLens call is guarded by
-  `[ -n "${ORCH_RUN_ID:-}" ]` and suffixed with `2>/dev/null || true`; AgentLens
-  failures must never block plan execution. Headless `codex exec` spawns must
-  propagate the parent id via `AGENTLENS_PARENT_RUN_ID="$ORCH_RUN_ID"` when
-  non-empty. The legacy `scripts/append_run_event.py` and
-  `scripts/append_learning_event.py` helpers were removed at the v2.18 cutover;
-  parity with the historical streams is verified by
-  `scripts/compare_agentlens_events.py --self-test`.
-- Execution runs record `.codex-orchestrator/runs/<run_id>/context.json` before
+  --meta plan=...` and persists the returned id as
+  `agentlens_orchestration_run` in
+  `~/.codex/orchestrator/<run_id>/state.json`. Every AgentLens call is guarded
+  by `[ -n "${ORCH_RUN_ID:-}" ]` and suffixed with `2>/dev/null || true`;
+  AgentLens failures must never block plan execution.
+- Execution runs record `~/.codex/orchestrator/<run_id>/context.json` before
   edits and store `context_snapshot_path` plus `context_basis_hash` in state.
-  The snapshot may record `context_budget` so oversized plan/spec/doc sources
-  are visible before task execution.
 - Execution runs maintain `context_health` in state at semantic boundaries:
   after context snapshot creation, after each task, after blocker/error events,
   before handoff/resume, and before final completion. It must include
@@ -112,9 +105,9 @@ parallel work, or passes `subagents=on`.
   drift prevents a finished outcome.
 - Blocked or failed terminal runs set a non-success `lifecycle_outcome` and a
   concrete `handoff_reason`.
-- Subagent records are opt-in. If subagents were explicitly allowed, record
-  `subagents_requested=true` and `subagent_runs[]`; finished runs cannot retain
-  running or unreviewed subagent records.
+- Since subagents default to on, new execution state records
+  `subagents_requested=true` unless `subagents=off` was passed. Finished runs
+  cannot retain running or unreviewed subagent records.
 - Command observations classify bounded command evidence before root cause is
   assigned. Finished runs with `category=unknown` observations must mention the
   command in `completion_audit.residual_risk`.
@@ -122,8 +115,8 @@ parallel work, or passes `subagents=on`.
   behavior-change implementation must invoke `using-superpowers` as the skill
   gate and `test-driven-development` before implementation code. This is not a
   headless-only rule; headless only needs extra prompt bootstrap because it is a
-  fresh `codex exec` process. Record RED evidence (command/eval and expected
-  failure) before implementing, then GREEN evidence after the fix.
+  fresh `codex exec` process. Record RED evidence before implementing, then
+  GREEN evidence after the fix.
 - Headless `codex exec` prompts must bootstrap applicable skills because parent
   session skill state is not assumed to carry over. Explicitly include
   `using-superpowers` and `test-driven-development` for implementation work.
@@ -139,16 +132,13 @@ parallel work, or passes `subagents=on`.
    `references/prompt-export-checklist.md`.
 4. For `interactive`, follow `references/execution-cycle.md`.
 5. For `headless`, follow `references/headless-runner.md`.
-6. Maintain `.codex-orchestrator/runs/<run_id>/state.json` using
-   `references/state-schema.md`; keep `.codex-orchestrator/state.json` as the
-   latest-state compatibility copy/pointer. At run init, open an AgentLens
-   orchestration run and persist its id under `agentlens_orchestration_run`
-   in per-run state; mirror downstream events to AgentLens alongside the legacy
-   helpers per `references/event-journal.md` and `references/learning-log.md`.
+6. Maintain `~/.codex/orchestrator/<run_id>/state.json` using
+   `references/state-schema.md`; keep repository worktrees free of executor
+   runtime artifacts.
 7. Build `context.json` for execution modes before edits, maintain
    `context_health`, and record completion proof before reporting a finished
    lifecycle outcome.
-8. For execution modes, record learning events at notable boundaries using
+8. For execution modes, record notable-boundary learning events using
    `references/learning-log.md`.
 9. Validate using scripts before claiming completion.
 
@@ -177,12 +167,12 @@ For prompt/handoff mode:
    asks for broader Spark/model scout routing.
 5. Run the checklist in `references/prompt-export-checklist.md`.
 
-Prompt and handoff modes are export-only. Do not create `.codex-orchestrator`
-artifacts, execute tasks, or report completion artifacts in these modes. Return
-exactly one fenced `text` block containing the generated prompt. Handoff export
-must include the literal `HANDOFF CHECKPOINT`; no-Spark or `gpt-5.5 only`
-exports must still include the literal `gpt-5.5 high` while omitting Spark
-routes.
+Prompt and handoff modes are export-only. Do not create `~/.codex/orchestrator`
+artifacts, create worktrees, execute tasks, or report completion artifacts in
+these modes. Return exactly one fenced `text` block containing the generated
+prompt. Handoff export must include the literal `HANDOFF CHECKPOINT`; no-Spark
+or `gpt-5.5 only` exports must still include the literal `gpt-5.5 high` while
+omitting Spark routes.
 
 ## Validation Matrix
 
@@ -199,6 +189,6 @@ Use `references/change-protocol.md` before editing this skill. Update
 `HISTORY.md`, `ARCHITECTURE.md`, package metadata, and eval baselines for
 behavior changes.
 
-For eval harness runs, the outer harness runs `evals/check_execution.py`.
-The target executor must not inspect fixture YAML, baseline files, `.harness`
+For eval harness runs, the outer harness runs `evals/check_execution.py`. The
+target executor must not inspect fixture YAML, baseline files, `.harness`
 metadata, or expected values.

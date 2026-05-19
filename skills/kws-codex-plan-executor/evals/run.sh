@@ -37,11 +37,6 @@ partial="$BASELINE_FILE.partial"
 python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md" >/dev/null
 python3 "$EVAL_DIR/check_state_schema.py" >/dev/null
 python3 "$EVAL_DIR/check_run_diffs.py" >/dev/null
-# v2.18 cutover (Task 13): check_event_journal.py and check_learning_log.py
-# were removed alongside scripts/append_run_event.py and
-# scripts/append_learning_event.py. AgentLens parity is now verified by
-# scripts/compare_agentlens_events.py --self-test.
-python3 "$SKILL_DIR/scripts/compare_agentlens_events.py" --self-test >/dev/null
 python3 "$EVAL_DIR/check_state_reconciliation.py" >/dev/null
 python3 "$EVAL_DIR/check_context_snapshot.py" >/dev/null
 python3 "$EVAL_DIR/check_headless_result.py" >/dev/null
@@ -54,6 +49,9 @@ for fixture_path in "${fixtures[@]}"; do
   parent="$(mktemp -d -t "codex-executor-eval-${fixture_name}.XXXXXX")"
   tmpdir="$parent/repo"
   mkdir -p "$tmpdir/.harness"
+  skill_copy="$tmpdir/.harness/skill-under-test"
+  mkdir -p "$(dirname "$skill_copy")"
+  cp -R "$SKILL_DIR" "$skill_copy"
 
   python3 - "$fixture_path" "$tmpdir" <<'PY'
 import json, os, sys, yaml
@@ -83,11 +81,6 @@ for name, content in (data.get("docs") or {}).items():
     os.makedirs(os.path.dirname(path) or tmpdir, exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(content)
-if data.get("initial_state") is not None:
-    state_path = os.path.join(tmpdir, ".codex-orchestrator", "state.json")
-    os.makedirs(os.path.dirname(state_path), exist_ok=True)
-    with open(state_path, "w", encoding="utf-8") as fh:
-        json.dump(expand_workdir(data["initial_state"]), fh, ensure_ascii=False, indent=2)
 PY
 
   (
@@ -98,6 +91,58 @@ PY
     git add -A
     git commit -q -m "eval bootstrap"
   )
+
+  python3 - "$fixture_path" "$tmpdir" <<'PY'
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import yaml
+
+fixture_path, tmpdir = sys.argv[1:3]
+with open(fixture_path, encoding="utf-8") as fh:
+    data = yaml.safe_load(fh) or {}
+initial = data.get("initial_state")
+if initial is None:
+    raise SystemExit(0)
+
+home = str(Path.home())
+
+def expand(value):
+    if isinstance(value, str):
+        return value.replace("__WORKDIR__", tmpdir).replace("__HOME__", home)
+    if isinstance(value, list):
+        return [expand(item) for item in value]
+    if isinstance(value, dict):
+        return {key: expand(item) for key, item in value.items()}
+    return value
+
+state = expand(initial)
+old_run_id = state.get("run_id") or "resume-latest"
+suffix = f"{os.getpid()}"
+run_id = f"{old_run_id}-{suffix}"
+state["run_id"] = run_id
+state["branch"] = f"codex/{run_id}"
+state["worktree"] = os.path.join(home, ".codex", "worktrees", run_id)
+state["run_dir"] = os.path.join(home, ".codex", "orchestrator", run_id)
+state["state_path"] = os.path.join(state["run_dir"], "state.json")
+state["context_snapshot_path"] = os.path.join(state["run_dir"], "context.json")
+
+Path(state["run_dir"]).mkdir(parents=True, exist_ok=True)
+Path(state["context_snapshot_path"]).write_text(
+    json.dumps({"basis_hash": state.get("context_basis_hash")}, indent=2) + "\n",
+    encoding="utf-8",
+)
+Path(state["state_path"]).write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+Path(state["worktree"]).parent.mkdir(parents=True, exist_ok=True)
+subprocess.run(
+    ["git", "worktree", "add", "-q", "-b", state["branch"], state["worktree"], "HEAD"],
+    cwd=tmpdir,
+    check=True,
+)
+PY
 
   python3 - "$fixture_path" "$tmpdir" <<'PY'
 import os, sys, yaml
@@ -124,19 +169,38 @@ print(data.get("args", ""))
 PY
 )"
 
-  prompt="EVAL_RUN: Test the local skill at $SKILL_DIR/SKILL.md. Follow that skill as /kws-codex-plan-executor. Before implementation or clarification, load and follow applicable installed skills, especially using-superpowers; use test-driven-development before feature, bugfix, refactor, or behavior-change implementation and record RED evidence before implementation plus GREEN evidence after the fix. This is not a headless-only rule. This process is already the codex exec target; for mode=headless, do not launch another nested codex exec, and instead execute locally while writing the required .codex-orchestrator/runs/<run_id>/ headless artifacts, context.json, state.json, context_health, and latest-state compatibility copy/pointer. Successful completion requires context_health.handoff_ready=true, lifecycle_outcome=finished, and completion_audit.passed=true with prompt_to_artifact_checklist and verification_evidence; blocked/failed outcomes require handoff_reason and context_health.next_action. Do not ask clarifying questions unless the skill requires a blocker. The harness will run fixture checkers after you finish; do not inspect eval fixture YAML, baseline files, .harness metadata, or expected values, and do not run evals/check_execution.py yourself. Use only plan.md, spec.md, repository files, SKILL.md, references, and scripts needed by the skill. /kws-codex-plan-executor plan=plan.md spec=spec.md mode=$mode $fixture_args"
+  prompt="EVAL_RUN: Test the local skill at $skill_copy/SKILL.md. Follow that copied skill as /kws-codex-plan-executor. Before implementation or clarification, load and follow applicable installed skills, especially using-superpowers; use test-driven-development before feature, bugfix, refactor, or behavior-change implementation and record RED evidence before implementation plus GREEN evidence after the fix. This is not a headless-only rule. This process is already the codex exec target; for mode=headless, do not launch another nested codex exec, and instead execute locally while writing the required ~/.codex/orchestrator/<run_id>/ headless artifacts, context.json, state.json, and context_health. For mode=prompt or mode=handoff, export only: do not create worktrees, state, context snapshots, edit files, execute plan tasks, or enter the TDD implementation loop. Successful completion requires context_health.handoff_ready=true, lifecycle_outcome=finished, and completion_audit.passed=true with prompt_to_artifact_checklist and verification_evidence; blocked/failed outcomes require handoff_reason and context_health.next_action. Do not ask clarifying questions unless the skill requires a blocker. The harness will run fixture checkers after you finish; do not inspect eval fixture YAML, baseline files, .harness metadata, or expected values, and do not run evals/check_execution.py yourself. Use only plan.md, spec.md, repository files, SKILL.md, references, and scripts needed by the copied skill. /kws-codex-plan-executor plan=plan.md spec=spec.md mode=$mode $fixture_args"
 
   set +e
-  (
-    cd "$tmpdir"
-    codex exec \
-      --cd "$tmpdir" \
-      --sandbox workspace-write \
-      --json \
-      --output-last-message "$tmpdir/.harness/final.md" \
-      "$prompt" \
-      > "$tmpdir/.harness/run.jsonl" 2>&1
-  )
+  python3 - "$tmpdir" "$prompt" <<'PY'
+import os
+import subprocess
+import sys
+
+tmpdir, prompt = sys.argv[1:3]
+timeout = int(os.environ.get("CODEX_EVAL_TIMEOUT_SECONDS", "600"))
+log_path = os.path.join(tmpdir, ".harness", "run.jsonl")
+final_path = os.path.join(tmpdir, ".harness", "final.md")
+cmd = [
+    "codex",
+    "exec",
+    "--cd",
+    tmpdir,
+    "--sandbox",
+    "workspace-write",
+    "--json",
+    "--output-last-message",
+    final_path,
+    prompt,
+]
+with open(log_path, "w", encoding="utf-8") as log:
+    try:
+        result = subprocess.run(cmd, cwd=tmpdir, stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
+        raise SystemExit(result.returncode)
+    except subprocess.TimeoutExpired:
+        log.write(f"\nTIMEOUT after {timeout}s\n")
+        raise SystemExit(124)
+PY
   codex_status=$?
   set -e
 

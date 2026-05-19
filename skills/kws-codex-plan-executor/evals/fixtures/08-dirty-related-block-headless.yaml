@@ -23,7 +23,6 @@ expected:
   must_block: true
   allowed_extra_files:
     - docs/related-target.md
-    - .codex-orchestrator/state.json
   forbidden_log_patterns:
     - "evals/fixtures/"
     - "\\.harness/fixture"

@@ -20,7 +20,6 @@ expected:
   files_changed:
     - docs/task-note.md
   allowed_extra_files:
-    - .codex-orchestrator/state.json
     - docs/user-note.md
   forbidden_log_patterns:
     - "evals/fixtures/"

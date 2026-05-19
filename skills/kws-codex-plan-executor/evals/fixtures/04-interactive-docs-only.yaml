@@ -16,8 +16,6 @@ spec: |
 expected:
   files_changed:
     - docs/example.md
-  allowed_extra_files:
-    - .codex-orchestrator/state.json
   contract_required: true
   forbidden_log_patterns:
     - "evals/fixtures/"

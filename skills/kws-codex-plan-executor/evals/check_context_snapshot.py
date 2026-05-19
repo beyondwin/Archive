@@ -21,7 +21,7 @@ def run_snapshot(script: Path, repo: Path, plan_text: str, max_chars: int) -> tu
             "--repo-root",
             str(repo),
             "--run-id",
-            "20260516T000000Z-archive-codex-context-abcdef0-a1b2c3",
+            "context-plan-20260519-143022",
             "--plan",
             "plan.md",
             "--max-chars",

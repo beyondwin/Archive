@@ -1,71 +1,33 @@
-작업 workspace: {{WORKSPACE_PATH}}
+다음 계획을 새 Codex 세션에서 `/kws-codex-plan-executor`로 실행해.
 
-아래 문서 기준으로 작업해줘.
+입력:
+- workspace: {{WORKSPACE}}
+- plan: {{PLAN}}
+- spec: {{SPEC}}
+- docs: {{DOCS}}
+- mode: {{MODE}}
+- subagents: {{SUBAGENTS_OR_DEFAULT_ON}}
 
-기준 문서:
-- 구현 계획 문서: {{PLAN_PATH}}
-{{OPTIONAL_DOCUMENT_BULLETS}}
+계약:
+- `interactive`/`headless` 실행은 `run_id=<plan-slug>-<YYYYMMDD-HHMMSS>`를 만들고, 코드는 `~/.codex/worktrees/<run_id>`에 git worktree로 격리해. 같은 경로가 있으면 짧은 random suffix를 붙여 중복을 피한다.
+- 오케스트레이션 상태는 `~/.codex/orchestrator/<run_id>/state.json`에 유지해. `context.json`, `hooks/`, `learning_events/`, headless logs, raw command evidence도 `~/.codex/orchestrator/<run_id>/` 하위에 둔다.
+- 작업 worktree에는 코드와 일반 git working tree 파일만 둔다.
+- `prompt`와 `handoff` 모드는 export-only다. worktree, state, context snapshot, hooks, logs, task artifact를 만들지 말고 plan task를 실행하지 마.
+- `subagents=off`가 아니면 subagents 기본값은 on이다. 독립 task는 disjoint write scope로 subagent에 맡기고, 결과를 리뷰한 뒤 state의 `subagent_runs`에 기록해.
+- 편집 전 항상 `TASK EXECUTION CONTRACT` 5줄(`scope`, `files_to_inspect`, `allowed_edits`, `forbidden_edits`, `acceptance_command_or_honest_substitute`)을 말하고 state에 기록해.
+- `using-superpowers`와 `test-driven-development`를 implementation work 전에 적용해. 이 규칙은 interactive and headless 모두에 적용되며 not a headless-only rule이다. RED evidence를 먼저 기록하고 GREEN evidence로 닫아.
+- `context.json`, `context_snapshot_path`, `context_basis_hash`, `context_health`, `handoff_ready`, `next_action`, `completion_audit`, `prompt_to_artifact_checklist`, `verification_evidence`, `lifecycle_outcome`, `handoff_reason`을 state에 유지해.
+- high-risk verification matrix를 사용해 misleading success, stale state, hung command/process 리스크를 확인해.
+- `main` 또는 호출자의 원래 checkout에서 구현하지 마. `git worktree list --porcelain`로 확인하고 branch name already exists면 append the run_id.
+- headless 실행이면 `templates/headless-output-schema.json`의 `status`, `run_id`, `state_path`, `changed_files`, `verification`, `open_gaps`, `residual_risk`, `next_action` shape를 지켜. Do not launch another nested `codex exec`.
+- AgentLens learning event는 execution-only best-effort로만 남겨. payload에는 `run_id`, `run_dir`, `state_path`를 포함하고 secrets/raw transcript/긴 로그는 저장하지 마.
 
-위 workspace나 문서 경로가 존재하지 않거나 열 수 없으면 추측하지 말고 blocker로 보고해.
+완료 전:
+- `scripts/reconcile_state.py --state "$STATE_PATH" --check` 또는 `--repair-safe`
+- `scripts/validate_state.py "$STATE_PATH"`
+- 계획에 적힌 acceptance command 또는 honest substitute
 
-작업 원칙:
-- 실행 시작 직후 적용 가능한 installed skills를 먼저 load/follow해. 특히 `using-superpowers`를 먼저 적용하고, feature/bugfix/refactor/behavior change 구현 전에는 `test-driven-development`를 적용해 failing test/eval을 먼저 확인해. 이건 headless-only rule이 아니라 interactive and headless 실행 모두의 구현 규칙이다. 각 구현 Task는 구현 전 RED evidence(명령/eval + 예상 실패)와 수정 후 GREEN evidence를 state/checkpoint에 남겨라.
-- 편집 전에 repo-local instructions를 확인해. 예: `AGENTS.md`, `CLAUDE.md`, task-specific agent guide.
-- 문서 계획과 repo instructions가 충돌하면 repo instructions를 우선하고, 계획 의도에 맞는 최소 수정으로 적응해.
-- 계획 문서의 첫 Task(Task 0 또는 Task 1)부터 마지막 Task까지 순서대로 수행해. 기본 목표는 현재 세션에서 가능한 한 끝까지 완료하는 것이다. subagent는 사용자가 `subagents=on`, delegation, parallel work, subagents를 명시한 경우에만 사용해. 사용한 경우 state에 `subagents_requested=true`와 `subagent_runs[]`를 기록하고, parent executor가 file-change list, review status, write-scope overlap rationale, 최종 검증을 직접 확인해.
-- 시작 직후 계획 문서의 Task 목록을 훑고 각 Task에 `risk: low | mid | high`와 한 줄 이유를 부여해. `low`는 단일 파일/모듈의 고립 변경, `mid`는 2개 이상 모듈/공유 상태/config 변경, `high`는 cross-area/API/schema/auth/persistence/breaking change다. 같은 파일을 여러 Task가 수정하면 뒤 Task는 최소 `mid`로 승격해.
-- 실행 시작 시 `run_id`를 만들고 작업 worktree 안에 `.codex-orchestrator/runs/<run_id>/`를 만든 뒤, primary state를 `.codex-orchestrator/runs/<run_id>/state.json`에 유지해. `.codex-orchestrator/state.json`은 resume 호환용 latest-state copy 또는 pointer로만 갱신해. 같은 프로젝트에서 여러 executor가 동시에 실행될 수 있으므로 실행 중 source of truth는 항상 per-run state_path다. 필드는 `schema_version`, `run_id`, `mode`, `workspace`, `plan`, `spec`, `branch`, `worktree`, `run_dir`, `state_path`, `context_snapshot_path`, `context_basis_hash`, `context_health`, `current_task`, `current_phase`, `lifecycle_outcome`, `handoff_reason`, `completion_audit`, `subagents_requested`, `subagent_runs`, `tasks`, `risk_levels`, `review_issue_keys`, `verification`, `session_owned_resources`, `last_checkpoint`, `timestamps`를 포함해. `HANDOFF CHECKPOINT`는 사람이 읽는 요약이고, 이 JSON은 재개용 source of truth다.
-- 편집 전에 `.codex-orchestrator/runs/<run_id>/context.json`을 만들고, plan/spec/docs source path와 SHA-256, `basis_hash`를 기록해. state에는 `context_snapshot_path=".codex-orchestrator/runs/<run_id>/context.json"`과 `context_basis_hash`를 저장해. source snapshot은 repo-relative source path와 hash만 담고, out-of-repo source는 blocker로 처리해.
-- `context.json` 생성 직후, 각 Task/Phase 종료 후, blocker/error 발생 시, handoff/resume 전, final 직전에 state의 `context_health`를 갱신해. 필드는 `status=green|yellow|red`, `last_checked_at`, `context_snapshot_present`, `context_basis_hash_recorded`, `active_task_contract_present`, `next_action`, `open_questions`, `known_assumptions`, `handoff_ready`다. `green`은 state와 artifacts만으로 이어받을 수 있음, `yellow`는 진행 가능하지만 가정/open question이 있음, `red`는 안전한 진행에 blocker/user decision/handoff가 필요함을 뜻한다.
-- Task 종료 시 `.codex-orchestrator/runs/<run_id>/state.json`의 해당 task `status`를 `completed`, `blocked`, 또는 `error` 중 하나로 명확히 갱신해. `completed_at`만 설정하고 `status`를 `in_progress`로 남기지 마.
-- `interactive`와 `headless` 실행 중 notable boundary가 발생하면 redacted 학습 이벤트를 AgentLens에 직접 기록해. 실행 시작 시 deterministic `run_id`를 생성하고(예: `<utc>-<repo-slug>-<branch-slug>-<head>-<rand>`), AgentLens 오케스트레이션 런을 `agentlens run-open --agent kws-cpe-orchestrator --workspace "$WORKTREE_ABS" --meta plan=... --meta mode=$MODE`로 열어 그 id를 `.codex-orchestrator/runs/<run_id>/state.json`의 `agentlens_orchestration_run`에 저장해. 각 이벤트는 `agentlens event append --run "$ORCH_RUN_ID" --type "kws-cpe.learning.${EVENT_TYPE}" --payload-json '<json>' 2>/dev/null || true`로 추가하고 (`init-run`/`append`/`close-run` 같은 별도 helper 호출은 v2.18 cutover로 제거됨), 종료 시 `agentlens run-close --run "$ORCH_RUN_ID" --outcome success|blocked|aborted`를 best-effort로 호출해. 과거 user-local 아카이브는 `~/.codex/learning/kws-codex-plan-executor/runs/<YYYY-MM-DD>/<run_id>/events.jsonl` 경로에 남아 있을 수 있지만 더 이상 새로 쓰지 않는다. 모든 payload에는 `run_id`, `run_dir=".codex-orchestrator/runs/<run_id>"`, `state_path=".codex-orchestrator/runs/<run_id>/state.json"`을 포함해. 기록 대상은 `blocker`, `error`, `verification_failure`, `recurring_issue`, `user_correction`, `successful_workaround`, actionable `completion_learning`이다. `prompt`와 `handoff` 생성 자체는 logging mode가 아니다. secrets, 전체 대화 transcript, 긴 raw log, 절대 home path는 저장하지 마. AgentLens 실패는 user implementation을 막지 않는다.
-- headless 실행의 마지막 결과는 structured headless result shape를 따라라: `status`, `run_id`, `state_path`, `summary`, `changed_files`, `verification`, `open_gaps`, `residual_risk`, `next_action`. `templates/headless-output-schema.json`를 사용할 수 있으면 `codex exec --output-schema`에 사용하고, 사용할 수 없으면 같은 JSON shape를 마지막 메시지로 남겨라.
-- 각 Task 시작 전에 본문 5줄 이내 `TASK EXECUTION CONTRACT`를 확정해: `scope`, `files_to_inspect`, `allowed_edits`, `forbidden_edits`, `acceptance_command_or_honest_substitute`. 계획 문서만으로 채울 수 없으면 repo를 확인해 보강하고, 실행 범위를 바꿀 수 있는 공백이면 blocker로 보고해.
-- 실행 가능한 Task는 `unit_manifest`를 기록할 수 있다. 필드는 `unit_type`, `context_mode`, `required_skills`, `tool_policy`, `allowed_write_globs`, `forbidden_write_globs`, `artifact_policy`, `max_context_chars`다. 완료된 Task를 포함해 `lifecycle_outcome="finished"`를 기록하려면 각 completed Task의 manifest가 유효해야 한다. `implementation` manifest는 비어 있지 않은 `allowed_write_globs`가 필요하고, `read-only` manifest는 write glob을 허용하면 안 된다.
-- 계획의 Task가 여러 레이어나 모듈을 동시에 넓게 건드리면 문서 의도는 유지하되 Task 내부 Phase를 한 레이어/모듈 중심으로 나누어 진행해. 각 Phase도 필요한 파일, 허용/금지 수정 범위, 검증 기준을 자기완결적으로 명시해.
-- 각 Task는 현재 Codex 세션에서 직접 구현해. subagent 사용이 명시적으로 허용된 경우에도 subagent의 자기 보고만으로 review를 대체하지 말고, `gpt-5.5 high`가 spec compliance review와 code quality review를 수행해. 고위험/큰 Task는 subagent 사용 허용 범위 안에서 별도 fresh reviewer를 둘 수 있다. 필요한 수정/재리뷰, 검증, agent cleanup까지 끝난 뒤 Task를 닫아.
-- 리뷰/검증 실패를 재시도할 때는 각 이슈에 가능한 한 `ISSUE_KEY=<file>:<line-or-symbol>:<category>`를 붙이고 `.codex-orchestrator/runs/<run_id>/state.json`의 `review_issue_keys`에 기록해. 이전 재시도와 같은 `ISSUE_KEY`가 다시 나오면 `[RECURRING - previous fix did not address this]`로 표시하고, 같은 방식의 수정 반복 전에 root cause를 다시 확인해.
-- 기본 판단 라우팅은 `gpt-5.5` + reasoning effort `high`다. 구현 방향, 파일 수정, 리뷰, root-cause, 결과 해석, 검증 해석, architecture/state/auth/persistence/shared-module 판단, 완료 판단은 모두 `gpt-5.5 high`로 수행해.
-- 보수적 자동 Spark 예외: 사용자가 Spark/model optimization을 금지하거나 `gpt-5.5 only`를 요구하지 않았다면, `gpt-5.5 high`가 명시적으로 선택한 read-only 명령/파일에 한해 `gpt-5.3-codex-spark` + reasoning effort `high`를 evidence packing 용도로 자동 사용할 수 있다.
-- Spark evidence packing은 non-mutating verification command 실행, raw stdout/stderr 파일 보존, exit code/cwd/command/duration 기록, failing test name/error excerpt/stack trace anchor 추출, `git status`/`git diff --stat`/`git diff --name-only` 같은 read-only 상태 요약, `HANDOFF CHECKPOINT`의 `verification`/`raw_output` 필드 초안에만 허용된다.
-- Spark는 관련 소스 파일을 스스로 고르거나 탐색 범위를 넓히지 않는다. 구현 방향, root-cause 가설/결론, 리뷰 코멘트, 검증 해석, 완료 판단, 파일 편집, formatter/dependency install/migration/cleanup/service lifecycle, staging/commit/merge/push/PR/release/version/changelog 결정은 금지한다.
-- Spark 출력은 증거 패킷일 뿐이다. root-cause, 수정, 리뷰, 검증 해석, 완료 판단 전에는 `gpt-5.5 high`가 핵심 파일과 raw output 경로 또는 핵심 excerpt를 직접 확인해.
-- 위 보수적 Spark evidence packing과 사용자가 명시한 모델별 예외 외에는 다른 모델로 Task나 지원 작업을 라우팅하지 마.
-{{OPTIONAL_SPARK_SCOUT_BULLETS}}
-- 체크박스 기반 계획 문서라면 진행 상태를 문서에 반영해.
-- 계획 문서 체크박스나 진행 상태를 원본 workspace에 갱신해야 한다면, 시작 시 해당 계획 문서의 git 상태(tracked/untracked/dirty)를 확인하고 커밋 포함 여부를 Task contract, checkpoint, final summary에 명시해. 원본 계획 문서가 untracked이거나 unrelated change와 섞여 있으면 추측해서 stage/commit하지 말고 관련 상태만 보고해.
-- 시작 전에 git 상태와 현재 브랜치를 확인해.
-- 실행 모드에서는 원본 작업트리를 직접 수정하지 마. 편집 또는 `TASK EXECUTION CONTRACT` 전에 반드시 dedicated non-conflicting `codex/...` git worktree를 만들고 그 안에서만 작업해. `main`이나 호출 세션의 원래 checkout에서 구현하지 마. `git worktree list --porcelain`과 로컬 브랜치를 확인하고, branch name already exists 또는 path 충돌이 있으면 append the run_id 또는 고유 pre-run suffix를 붙여 중복을 피한 뒤 최종 branch/worktree를 state에 기록해. 전체 실행용 worktree는 하나로 유지해.
-- 원본 workspace의 unrelated change는 건드리지 마. 관련 uncommitted change를 새 worktree에 어떻게 반영해야 할지 불명확하면 blocker로 보고해.
-- 각 Task 경계에서 완료된 subagent가 있다면 종료하고, 이 세션이 직접 띄운 Node/Vite/dev server/Playwright/browser/exec session만 정리해. 가능한 경우 owner, command, PID/session id, port를 기록하고 확인된 session-owned resource만 종료해. `killall node`, `pkill node`, `killall chrome`, `pkill playwright` 같은 광역 정리는 하지 마.
-- background process 확인도 `.codex-orchestrator/runs/<run_id>/state.json`에 기록된 PID/session id/port/worktree path 중심으로 좁혀라. 전체 `ps`에서 나온 unrelated Node/Java/Playwright 프로세스를 session-owned resource로 간주하지 마.
-- 시스템 compaction은 제어할 수 없으므로, Task/Phase boundary마다 짧은 `HANDOFF CHECKPOINT`를 남겨 자동 compaction 후에도 이어갈 수 있게 해.
-- checkpoint는 마지막 checkpoint 이후 delta 중심으로 헤더 제외 10줄 이내의 고정 필드로 작성해: `status: completed | blocked | error`, `completed_scope`, `changed_files`, `contracts_confirmed`, `verification`, `raw_output`, `remaining_risk`, `next_action`, `worktree_branch`, `session_owned_resources`.
-- summary나 checkpoint는 재개에 필요한 사실만 남겨: 생성/수정 파일, 확정된 interface/contract, 검증 결과, 다음 액션. 감상, 일반 설명, 긴 로그 전문은 넣지 마.
-- 자발적으로 `CONTINUATION PROMPT`를 출력하고 멈추는 것은 예외다. 사용자 결정 필요, unresolved root cause/verification failure, 다음 고위험 작업을 안정적으로 재구성할 수 없음, 실제 context 압박이 명확한 경우에만 멈춰.
-- mid-task, mid-review, failed-verification 분석 중에는 handoff하지 말고 먼저 원인과 상태를 정리해 semantic boundary를 만들어라. Task 개수, 영역 전환, 변경 파일 증가, 긴 로그 누적만으로는 멈추지 마.
+HANDOFF CHECKPOINT:
+{{HANDOFF_CHECKPOINT}}
 
-실행 기준:
-- 설계/계획 범위를 임의로 넓히지 말고, 문서 범위만 정확히 구현해.
-- 문서와 실제 코드베이스가 다르면 문서 의도를 유지하는 가장 작은 수정으로 적응해.
-- 정말 막히는 경우에만 blocker 를 명확히 정리해서 보고해.
-- 검증은 비용과 리스크에 맞춰 계층화해: 조사-only Phase는 결정/다음 검증 계획만 기록, 구현 Phase는 targeted check, Task 완료나 high-risk/cross-area 변경은 관련 범위 확장, 마지막에는 계획의 final verification command 또는 가장 정직한 대체 full check를 실행해.
-- `risk=high` Task는 compact high-risk verification matrix를 남겨. 관련 있는 scenario만 `passed|failed|blocked|not-applicable`로 기록하고, 명령 또는 manual check와 evidence path/excerpt를 붙여라: malformed or unexpected input, stale state or resume path, dirty worktree preservation, hung or long-running command behavior, misleading success output or skipped tests, cancellation/interruption recovery. 무관한 scenario는 실행하지 말고 한 줄 이유와 함께 `not-applicable`로 표시해.
-- test config, build input, test property, Dockerfile, migration, generated artifact 입력을 바꾼 Task의 targeted verification은 cache/up-to-date가 변경 검증을 숨기지 않도록 `clean`, `--rerun-tasks`, fresh output path, 또는 동등한 honest substitute를 사용해. cache-busting을 하지 않는다면 raw output의 `UP-TO-DATE` 여부와 이유를 기록하고 Task/final verification에서 실제 실행되는 broader check로 닫아.
-- 검증 실패가 나오면 raw output을 보존하고 `gpt-5.5 high`로 root-cause analysis를 수행해. 긴 raw output은 대화에 전문을 붙이지 말고 파일 경로 또는 핵심 excerpt와 재현 명령을 기록해.
-- 실패가 환경 문제일 가능성이 있으면 blocker로 멈추기 전에 4단계를 순서대로 확인해: 1) test command 자체가 실행되는가, 2) dependency가 빠졌는가, 3) path/config가 worktree와 맞는가, 4) DB/server/external service가 필요하고 시작 가능한가. 각 단계의 명령, 결과, raw output 위치를 `verification`과 checkpoint에 기록해.
-- 원인 없이 우회하거나 테스트를 약화하지 마.
-- 수정 후 같은 검증 또는 더 작은 재현 검증을 다시 실행해.
-- 같은 root cause에 대한 수정 재시도는 최대 3회로 제한해. 3회 후에도 실패하면 `status: error` 또는 `status: blocked` checkpoint로 시도한 수정, raw output 위치, 남은 가설, 다음 검증을 정리하고 멈춰.
-
-마지막 문서 영향 확인:
-- 계획 문서에 문서 업데이트 Task가 있으면 그 범위만 수행해.
-- 구현 결과가 README, AGENTS.md, 운영 문서, prompt/operator docs, agent-facing instructions와 명확히 어긋나게 만들거나 사용자가 문서 업데이트를 요구한 경우에만 관련 문서를 좁게 업데이트해.
-- 문서 업데이트는 실제 동작과 검증 결과에 근거하고, repo-local 문서 검증 명령이 있으면 실행해. 실행하지 못한 검증은 이유와 대체 확인을 기록해.
-- public-safety, secret, path, link scan은 기본적으로 변경된 문서 또는 added lines로 범위를 좁혀 실행해. public release나 scanner 자체 변경처럼 전체 스캔이 필요한 경우에만 넓히고, 기존 false positive와 이번 변경에서 새로 생긴 위험을 구분해 기록해.
-- 문서 영향이 없으면 문서를 수정하지 말고 최종 요약에 “문서 업데이트 없음: <이유>”를 기록해.
-
-마무리 기준:
-- 성공 완료 전 state에 `context_health.handoff_ready=true`, `context_health.status!="red"`, `lifecycle_outcome="finished"`와 `completion_audit`를 기록해. `completion_audit.passed=true`, 비어 있지 않은 `prompt_to_artifact_checklist`, 비어 있지 않은 `verification_evidence`, `open_gaps`, `residual_risk`를 포함한다.
-- blocked/failed/userinterlude/askuserQuestion으로 끝나면 `lifecycle_outcome`을 해당 값으로 설정하고, `handoff_reason`에 다음 사람이 바로 판단할 수 있는 구체 이유를 남겨라.
-- 마지막에는 무엇을 바꿨는지, 문서를 업데이트했다면 어떤 문서를 왜 바꿨는지, 문서를 바꾸지 않았다면 왜 불필요했는지, 어떤 검증을 실제로 돌렸는지, 어떤 모델을 썼는지, worktree 경로와 브랜치, 정리한 background process/agent 상태, 남은 리스크가 있는지만 간단히 정리해.
+모델 라우팅 기본값은 `gpt-5.5 high`다. Spark scout route는 사용자가 명시적으로 요청한 경우에만 추가해.
