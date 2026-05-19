@@ -185,7 +185,8 @@ def test_malformed_source_partial_analysis_with_manifest_coverage(
     show = runner.invoke(app, ["show", run_id, "--format", "json"])
     assert show.exit_code == 0, (show.stdout, show.stderr)
     payload = json.loads(show.stdout)
-    # The v1 projection always emits these 10 keys.
+    # The v1 projection always emits these 10 keys + the three task_18
+    # importer-artifact projections (display_title / usage / import_state).
     for k in (
         "run_id",
         "agent",
@@ -197,11 +198,24 @@ def test_malformed_source_partial_analysis_with_manifest_coverage(
         "workspace_short",
         "failures",
         "risks",
+        "display_title",
+        "usage",
+        "import_state",
     ):
         assert k in payload
     assert payload["run_id"] == run_id
     assert payload["agent_outcome"] == "partial"
     assert payload["sealed_phase"] == "final"
+    # task_18 projection passthrough: ``show`` MUST surface the same keys
+    # ``latest`` / ``status`` do. Container-run fallback would be ``None`` for
+    # all three; a non-null trio confirms the import-report path resolved.
+    assert payload["display_title"] == "Hello AgentLens"
+    assert payload["import_state"] == "partial"
+    assert payload["usage"] is not None
+    assert payload["usage"]["input_tokens"] == 12
+    # ``eval_status`` MUST come from eval.json (status field), not default to
+    # ``needs_eval`` because of merge-key drift in ``query.get_run``.
+    assert payload["eval_status"] != "needs_eval"
 
 
 def test_duplicate_import_is_no_op_for_report_and_usage(

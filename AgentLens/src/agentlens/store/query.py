@@ -602,6 +602,12 @@ def get_run(home: Path, run_id: str) -> dict[str, Any] | None:
     merged.update(final_doc)
     merged.update(eval_doc)
     merged.update(manifest_doc)
+    # eval.json stores the evaluator outcome under ``status``; the canonical
+    # query-row contract exposes it as ``eval_status`` (matches
+    # ``_row_from_run_dir`` used by ``latest``/``status``). Promote without
+    # clobbering an existing canonical key.
+    if eval_doc.get("status") is not None and "eval_status" not in merged:
+        merged["eval_status"] = eval_doc.get("status")
     # Importer artifacts — projected as three additive keys. Container runs
     # legitimately have ``(None, None, None)`` here.
     import_report = _read_json(target / "artifacts" / "import_report.json")

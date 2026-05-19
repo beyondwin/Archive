@@ -259,11 +259,22 @@ def test_cli_with_full_usage_writes_exact_summary(
         "workspace_short",
         "failures",
         "risks",
+        "display_title",
+        "usage",
+        "import_state",
     ):
         assert k in payload
     assert payload["run_id"] == run_id
     assert payload["agent_outcome"] == "unknown"
     assert payload["sealed_phase"] == "final"
+    # task_18 projection passthrough: ``show`` MUST surface
+    # display_title / usage / import_state from artifacts/, matching the
+    # ``latest`` and ``status`` row contract.
+    assert payload["import_state"] is not None
+    assert payload["usage"] is not None
+    # eval_status MUST be promoted from eval.json status, never silently
+    # default to needs_eval because of query.get_run merge-key drift.
+    assert payload["eval_status"] != "needs_eval"
 
 
 def test_desktop_no_tokens_writes_unknown_usage(
