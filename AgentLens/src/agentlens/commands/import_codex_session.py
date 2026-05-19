@@ -27,6 +27,14 @@ Subagent linkage (``payload.source.subagent.thread_spawn``):
     import scans all existing runs for matching pending fields and
     backfills ``parent_run_id`` when the parent is finally imported.
 
+    The backfill explicitly runs AFTER :func:`finalize_imported_run` so
+    a newly imported parent fully seals before mutating an existing
+    child's ``run.json``. The child's sealed manifest was hashed before
+    backfill — by design, the manifest hash for the child's
+    ``run.json`` does not re-cover the post-backfill bytes. Re-sealing
+    a previously finalized run is out of scope for this importer (spec
+    §4.2.6).
+
 This module registers its sub-command on the existing ``import`` Typer
 group exposed by ``import_claude_session.import_app`` (Task 7 wired the
 group on the root CLI).
@@ -34,6 +42,7 @@ group on the root CLI).
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from datetime import datetime, timezone
 from hashlib import sha256
@@ -42,12 +51,20 @@ from typing import Optional
 
 import typer
 
+from agentlens.commands.import_common import (
+    finalize_imported_run,
+    resolve_byte_cap,
+    validate_byte_cap,
+)
 from agentlens.constants import (
     DEFAULT_MODE,
     SCHEMA_EVENT_V1,
     SCHEMA_RUN_V1,
 )
 from agentlens.ids import compute_workspace_id, make_event_id, make_run_id
+from agentlens.importers.artifacts import write_artifact_json
+from agentlens.importers.title import extract_display_title
+from agentlens.importers.usage import extract_usage
 from agentlens.store.codex_session import (
     ParsedCodexSession,
     find_rollout,
@@ -66,6 +83,14 @@ from agentlens.time import utc_now_iso
 # Reuse the import Typer group registered by Task 7's command module so
 # we land as a sibling sub-command of ``import claude-session``.
 from agentlens.commands.import_claude_session import import_app
+
+# Mirrors store.codex_session._ROLLOUT_RE — duplicated here so the
+# pre-parse duplicate-check can extract the UUID suffix without depending
+# on a private symbol.
+_ROLLOUT_FILENAME_RE = re.compile(
+    r"^rollout-.+-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
+    r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$"
+)
 
 
 def _root_hash(workspace_root: Path) -> str:
@@ -95,6 +120,24 @@ def _existing_run_for_import_key(import_key: str) -> Optional[Path]:
     return None
 
 
+def _peek_session_id(source: Path) -> str:
+    """Return the session id implied by *source* without parsing it.
+
+    For Codex rollouts the id is the UUID suffix of the filename
+    (``rollout-<ISO>-<UUID>.jsonl``); if the filename does not match the
+    expected shape we fall back to the bare stem. Used for the pre-parse
+    duplicate-import check so a re-import is a true no-op (no parse, no
+    transcript copy, no artifact writes — E9). The session_meta
+    ``payload.id`` is the canonical id and overrides during parse, so a
+    belt-and-braces second check after :func:`parse_rollout` returns
+    handles the (rare) filename/id mismatch.
+    """
+    m = _ROLLOUT_FILENAME_RE.match(Path(source).name)
+    if m:
+        return m.group(1)
+    return Path(source).stem
+
+
 def _iter_all_run_dirs() -> list[Path]:
     """Return every ``<runs_root>/<ws>/<run>/`` directory with a run.json."""
     root = runs_root()
@@ -117,6 +160,13 @@ def _backfill_pending_parents(imported_session_id: str, imported_run_id: str) ->
     *imported_session_id*, set ``parent_run_id=<imported_run_id>`` and
     drop the pending field, then atomically rewrite the run.json (which
     validates against the schema again on the way out).
+
+    Note: backfill is intentionally invoked AFTER ``finalize_imported_run``
+    on the parent. The child's manifest was sealed at the child's
+    original finalize time and therefore does NOT re-cover the
+    post-backfill ``run.json`` bytes. Re-sealing a previously finalized
+    run is out of scope here (and would require teaching the manifest
+    layer to handle late mutations).
     """
     for candidate in _iter_all_run_dirs():
         run_json = candidate / "run.json"
@@ -225,13 +275,41 @@ def _resolve_sources(
     return list_rollouts(home, include_archived=include_archived)
 
 
-def _import_one(source: Path, *, workspace_root: Path) -> Optional[Path]:
-    """Import a single rollout JSONL; returns the run dir or ``None`` on no-op."""
-    # task_15 introduced a tuple return for parse_rollout; task_17 will
-    # plumb the ImportReport into artifacts/import_report.json.
-    parsed, _report = parse_rollout(source)
-    import_key = f"codex-rollout:{parsed.session_id}"
+def _import_one(
+    source: Path,
+    *,
+    workspace_root: Path,
+    byte_cap: int,
+    byte_cap_source: str,
+    deep_parse_only: bool,
+) -> Optional[Path]:
+    """Import a single rollout JSONL; returns the run dir or ``None`` on no-op.
 
+    Idempotent: if a run already carries ``input.import_key`` matching this
+    rollout, the existing run dir is returned without further writes.
+    Duplicate detection runs BEFORE the (potentially expensive) parse and
+    BEFORE any writes so a re-import never disturbs the prior run tree (E9).
+    """
+    # E9: short-circuit before any work — the rollout filename embeds the
+    # canonical UUID suffix, so we can compute the import key without
+    # parsing.
+    pre_session_id = _peek_session_id(source)
+    pre_import_key = f"codex-rollout:{pre_session_id}"
+    existing = _existing_run_for_import_key(pre_import_key)
+    if existing is not None:
+        return existing
+
+    parsed, report = parse_rollout(
+        source, byte_cap=byte_cap, deep_parse_only=deep_parse_only
+    )
+    # parse_rollout pins byte_cap_source="default"; override with the real
+    # provenance the CLI resolved (flag / env / default).
+    report.byte_cap_source = byte_cap_source  # type: ignore[assignment]
+
+    # Belt-and-braces: re-check in case the filename heuristic disagreed
+    # (e.g., file was renamed on disk and session_meta.payload.id is the
+    # canonical id). parse_rollout is the source of truth.
+    import_key = f"codex-rollout:{parsed.session_id}"
     existing = _existing_run_for_import_key(import_key)
     if existing is not None:
         return existing
@@ -241,10 +319,27 @@ def _import_one(source: Path, *, workspace_root: Path) -> Optional[Path]:
     target_dir = build_run_dir(workspace_id, new_run_id)
     target_dir.mkdir(parents=True, exist_ok=True)
 
+    # Copy the transcript before writing run.json so the manifest writer
+    # observes the artifact when seal(pre_eval) runs in finalize.
     transcript_dir = target_dir / "artifacts" / "transcripts"
     transcript_dir.mkdir(parents=True, exist_ok=True)
-    transcript_dst = transcript_dir / f"{parsed.session_id}.jsonl"
+    transcript_rel = Path("artifacts") / "transcripts" / f"{parsed.session_id}.jsonl"
+    transcript_dst = target_dir / transcript_rel
     shutil.copyfile(source, transcript_dst)
+    try:
+        transcript_bytes = transcript_dst.stat().st_size
+    except OSError:
+        transcript_bytes = 0
+    report.set_transcript_artifact(transcript_rel.as_posix(), transcript_bytes)
+
+    # Derive display title from the first user message (heuristic in
+    # importers.title — pure, redaction-safe).
+    display_title = extract_display_title(
+        explicit=None, first_user_message=parsed.first_user_message_text
+    )
+    report.set_display_title(
+        display_title, "first_user_message" if display_title else "null"
+    )
 
     workspace_block: dict = {
         "root_label": "<workspace>",
@@ -286,7 +381,7 @@ def _import_one(source: Path, *, workspace_root: Path) -> Optional[Path]:
 
     meta = _build_meta(parsed)
 
-    # Subagent linkage.
+    # Subagent linkage (CLI-time parent resolution).
     if parsed.parent_thread_id:
         parent_dir = _existing_run_for_import_key(
             f"codex-rollout:{parsed.parent_thread_id}"
@@ -303,7 +398,7 @@ def _import_one(source: Path, *, workspace_root: Path) -> Optional[Path]:
                 pass
         if "parent_run_id" not in run_doc:
             # Parent not imported yet — record pending linkage so a later
-            # import can backfill.
+            # import can backfill (see :func:`_backfill_pending_parents`).
             meta["pending_parent_thread_id"] = parsed.parent_thread_id
 
     if meta:
@@ -311,7 +406,23 @@ def _import_one(source: Path, *, workspace_root: Path) -> Optional[Path]:
 
     write_run_meta(target_dir, run_doc)
 
-    # command.started
+    # Event ordering: run.started → command.started → codex.* → command.finished.
+    append_event(
+        target_dir,
+        {
+            "schema": SCHEMA_EVENT_V1,
+            "event_id": make_event_id(),
+            "run_id": new_run_id,
+            "ts": started_at,
+            "type": "run.started",
+            "payload": {
+                "agent": "codex_cli",
+                "mode": mode,
+                "label": label,
+            },
+        },
+    )
+
     append_event(
         target_dir,
         {
@@ -327,7 +438,8 @@ def _import_one(source: Path, *, workspace_root: Path) -> Optional[Path]:
         },
     )
 
-    # Opaque codex.* events.
+    # Opaque codex.* events (preserves source order). Empty when the deep
+    # parse was skipped (deep_parse_only short-circuit).
     for evt in parsed.events:
         append_event(
             target_dir,
@@ -341,7 +453,6 @@ def _import_one(source: Path, *, workspace_root: Path) -> Optional[Path]:
             },
         )
 
-    # command.finished
     append_event(
         target_dir,
         {
@@ -354,14 +465,35 @@ def _import_one(source: Path, *, workspace_root: Path) -> Optional[Path]:
                 "source": "codex-rollout-jsonl",
                 "session_id": parsed.session_id,
                 "line_count": parsed.line_count,
+                "analysis_state": report.analysis_state,
             },
         },
     )
 
+    # Compute usage summary from billable Codex records (extract_usage is
+    # pure; no I/O). Desktop sessions / deep-parse-only short-circuits with
+    # no records still get a deterministic all-zero record (confidence
+    # "unknown") so query-layer projections are stable.
+    usage = extract_usage("codex-rollout", parsed.usage_records)
+
+    # Persist artifacts BEFORE finalize_imported_run so seal(pre_eval) covers
+    # them in manifest.json.
+    artifacts_dir = target_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    write_artifact_json(artifacts_dir / "import_report.json", report.to_dict())
+    write_artifact_json(artifacts_dir / "usage.json", usage.to_dict())
+
     write_workspace_pointer(workspace_root, new_run_id, target_dir)
 
-    # Backfill any previously imported children that were waiting on
-    # this session-id as their parent.
+    finalize_imported_run(
+        target_dir, new_run_id, analysis_state=report.analysis_state
+    )
+
+    # Backfill any previously imported children that were waiting on this
+    # session-id as their parent. Runs AFTER finalize_imported_run so the
+    # newly imported parent is fully sealed (manifest, eval, index) before
+    # we mutate any existing child's run.json — see module docstring for
+    # the trade-off this implies for the child's sealed manifest hash.
     _backfill_pending_parents(parsed.session_id, new_run_id)
     return target_dir
 
@@ -384,6 +516,23 @@ def codex_session(
         False,
         "--include-archived",
         help="also search ~/.codex/archived_sessions/",
+    ),
+    byte_cap: Optional[int] = typer.Option(
+        None,
+        "--byte-cap",
+        help=(
+            "deep-parse byte cap (1 MiB–1 GiB). Defaults to 64 MiB; "
+            "AGENTLENS_IMPORT_BYTE_CAP env var overrides default."
+        ),
+        callback=validate_byte_cap,
+    ),
+    deep_parse_only: bool = typer.Option(
+        False,
+        "--deep-parse-only/--no-deep-parse-only",
+        help=(
+            "skip the deep parse entirely when the source exceeds --byte-cap; "
+            "transcript is still copied and the run is sealed (analysis_state=skipped)."
+        ),
     ),
 ) -> None:
     """Import one or more Codex rollout JSONL files as capture runs.
@@ -408,10 +557,18 @@ def codex_session(
         )
         return
 
+    effective_cap, cap_source = resolve_byte_cap(byte_cap)
+
     workspace_root = Path.cwd().resolve()
     for src in sources:
         try:
-            _import_one(src, workspace_root=workspace_root)
+            _import_one(
+                src,
+                workspace_root=workspace_root,
+                byte_cap=effective_cap,
+                byte_cap_source=cap_source,
+                deep_parse_only=deep_parse_only,
+            )
         except Exception as exc:  # pragma: no cover - defensive
             typer.echo(
                 f"warning: failed to import {src.name}: {exc}", err=True
