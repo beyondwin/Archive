@@ -80,7 +80,7 @@ failure, sub-agent ESCALATE, recurring issue, successful workaround,
 user correction, completion learning), emit a learning event.
 
 Sub-agents emit by writing JSON candidates to
-`<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`.
+`<orch_dir>/learning_events/<task_id>-<role>.json`.
 **Never call the helper script directly** — see
 [`../references/learning-log.md`](../references/learning-log.md) for the
 single-writer contract.

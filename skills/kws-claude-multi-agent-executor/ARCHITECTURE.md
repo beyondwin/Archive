@@ -126,7 +126,7 @@ Step 4: Agent Cleanup
 
 ## 5. 상태 관리 (외부 메모리)
 
-`<worktree>/.orchestrator/state.json` 은 **유일한 진실의 출처**입니다. 모든 오케스트레이터 결정: state.json 읽기 → 계산 → 변경 → 쓰기.
+`<orch_dir>/state.json` 은 **유일한 진실의 출처**입니다. 모든 오케스트레이터 결정: state.json 읽기 → 계산 → 변경 → 쓰기.
 
 주요 필드 (전체 스키마는 `SKILL.md` Phase 0 Step 6):
 
@@ -309,7 +309,7 @@ agentlens_orchestration_run = <id>         # state.json top-level (string|null)
 
 ### 단일 작성자 계약 (cutover 후 그대로 유지)
 
-**오케스트레이터만 AgentLens emit을 합니다.** 서브에이전트(Agent 툴 / `claude -p`)들은 여전히 `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json` 에 이벤트 후보 JSON 을 준비하고, 오케스트레이터의 Phase 1 Step 3.5 candidate-drain 루프가 각 사이클 스텝 후 디렉터리를 스캔해서 `agentlens event append --type kws-cme.<event_type> --payload-json @<candidate>` 로 publish합니다. 후보 JSON → `.appended` 로 rename. 이 indirection 은 환경변수 전파 퍼즐을 피하기 위해 v2.8 부터 유지된 패턴 — 컷오버는 발산 사이트만 바꿨습니다.
+**오케스트레이터만 AgentLens emit을 합니다.** 서브에이전트(Agent 툴 / `claude -p`)들은 여전히 `<orch_dir>/learning_events/<task_id>-<role>.json` 에 이벤트 후보 JSON 을 준비하고, 오케스트레이터의 Phase 1 Step 3.5 candidate-drain 루프가 각 사이클 스텝 후 디렉터리를 스캔해서 `agentlens event append --type kws-cme.<event_type> --payload-json @<candidate>` 로 publish합니다. 후보 JSON → `.appended` 로 rename. 이 indirection 은 환경변수 전파 퍼즐을 피하기 위해 v2.8 부터 유지된 패턴 — 컷오버는 발산 사이트만 바꿨습니다.
 
 ### 오케스트레이터 직접 emit 사이트 (4개)
 

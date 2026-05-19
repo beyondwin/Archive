@@ -44,13 +44,15 @@ assert_eq() {
 
 make_worktree() {
   # make_worktree <name> <state_json_content>
-  # Returns absolute path on stdout.
+  # Returns absolute path to the orchestrator state dir on stdout.
+  # (Named make_worktree for historical reasons; in v2.18 layout this is
+  # actually the <orch_dir>, a sibling of the worktree under ~/.claude/.)
   local name="$1"
   local content="$2"
-  local wt="${tmpdir}/${name}"
-  mkdir -p "${wt}/.orchestrator"
-  printf '%s' "${content}" > "${wt}/.orchestrator/state.json"
-  printf '%s' "${wt}"
+  local od="${tmpdir}/${name}"
+  mkdir -p "${od}"
+  printf '%s' "${content}" > "${od}/state.json"
+  printf '%s' "${od}"
 }
 
 # ---------- Case 1: single-plan (v2.12 layout, no plan_chain) ----------
@@ -66,7 +68,7 @@ wt1=$(make_worktree "single-plan" '{
   "task_summaries": {"2": {"warnings": ["minor style nit"]}},
   "quality_trend": [0.7, 0.8, 0.9]
 }')
-out1=$("${QUERY_STATE}" --worktree "${wt1}" progress)
+out1=$("${QUERY_STATE}" --orch-dir "${wt1}" progress)
 assert_eq "single-plan progress aggregates top-level tasks" \
   "2/3 COMPLETE | 1 WARN | 0 FAIL | 0 SKIPPED | 1 active" \
   "${out1}"
@@ -90,12 +92,12 @@ wt2=$(make_worktree "multi-active-0" '{
     }, "task_summaries": {}, "quality_trend": []}
   ]
 }')
-out2=$("${QUERY_STATE}" --worktree "${wt2}" progress)
+out2=$("${QUERY_STATE}" --orch-dir "${wt2}" progress)
 assert_eq "multi-plan progress aggregates across all plans (active=0)" \
   "2/3 COMPLETE | 0 WARN | 1 FAIL | 0 SKIPPED | 1 active" \
   "${out2}"
 
-tier2=$("${QUERY_STATE}" --worktree "${wt2}" tier-dist)
+tier2=$("${QUERY_STATE}" --orch-dir "${wt2}" tier-dist)
 assert_eq "multi-plan tier-dist aggregates across all plans" \
   "PASS=1 WARN=0 FAIL=1 SKIPPED=0" \
   "${tier2}"
@@ -119,12 +121,12 @@ wt3=$(make_worktree "multi-active-1" '{
     }, "task_summaries": {"1": {"warnings": ["plan2-warn"]}}, "quality_trend": [0.7]}
   ]
 }')
-out3=$("${QUERY_STATE}" --worktree "${wt3}" progress)
+out3=$("${QUERY_STATE}" --orch-dir "${wt3}" progress)
 assert_eq "multi-plan progress sees plan_chain[1] data (active=1)" \
   "3/4 COMPLETE | 1 WARN | 0 FAIL | 0 SKIPPED | 1 active" \
   "${out3}"
 
-warn3=$("${QUERY_STATE}" --worktree "${wt3}" warn)
+warn3=$("${QUERY_STATE}" --orch-dir "${wt3}" warn)
 case "${warn3}" in
   *"plan2-warn"*) assert_eq "multi-plan warn surfaces plan_chain[1] warnings" "found" "found" ;;
   *) assert_eq "multi-plan warn surfaces plan_chain[1] warnings" "found" "missing: ${warn3}" ;;
@@ -134,7 +136,7 @@ esac
 # plan_chain[0].quality_trend = [0.9, 0.85], plan_chain[1].quality_trend = [0.7]
 # concatenated: [0.9, 0.85, 0.7] → first5 = (0.9+0.85+0.7)/3 ≈ 0.82, last5 same.
 echo "Case 4: quality aggregates across plan_chain"
-qual3=$("${QUERY_STATE}" --worktree "${wt3}" quality)
+qual3=$("${QUERY_STATE}" --orch-dir "${wt3}" quality)
 case "${qual3}" in
   *"n=3"*) assert_eq "quality trend includes scores from every plan" "n=3" "n=3" ;;
   *) assert_eq "quality trend includes scores from every plan" "n=3" "missing: ${qual3}" ;;
@@ -149,7 +151,7 @@ wt5=$(make_worktree "plan-chain-null" '{
   "plan_chain": null,
   "tasks": {"1": {"status": "COMPLETE", "review_tier": "PASS"}}
 }')
-out5=$("${QUERY_STATE}" --worktree "${wt5}" progress 2>&1) || true
+out5=$("${QUERY_STATE}" --orch-dir "${wt5}" progress 2>&1) || true
 assert_eq "plan_chain=null does not crash; reads top-level" \
   "1/1 COMPLETE | 0 WARN | 0 FAIL | 0 SKIPPED | 0 active" \
   "${out5}"

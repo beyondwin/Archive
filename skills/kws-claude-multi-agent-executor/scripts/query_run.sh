@@ -129,14 +129,13 @@ state_final_for() {
   fi
 }
 
-# Build a temporary worktree-shaped dir from a state.final.json so we can reuse
-# query_state.sh logic. Caller responsible for cleanup.
+# Build a temporary orch-dir-shaped directory from a state.final.json so we
+# can reuse query_state.sh logic. Caller responsible for cleanup.
 build_shim_worktree() {
   local state_path="$1"
   local tmp
   tmp="$(mktemp -d -t qrun.XXXXXX)"
-  mkdir -p "${tmp}/.orchestrator"
-  cp "${state_path}" "${tmp}/.orchestrator/state.json"
+  cp "${state_path}" "${tmp}/state.json"
   echo "${tmp}"
 }
 
@@ -160,7 +159,7 @@ run_subcmd_on_dir() {
   shim="$(build_shim_worktree "${sf}")"
   # Append to global cleanup list (avoid trap-local unbound-var issues under set -u).
   SHIM_DIRS+=("${shim}")
-  "${QUERY_STATE}" --worktree "${shim}" "${sub}" "$@"
+  "${QUERY_STATE}" --orch-dir "${shim}" "${sub}" "$@"
 }
 
 cmd_list_runs() {

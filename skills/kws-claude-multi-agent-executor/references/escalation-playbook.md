@@ -24,7 +24,7 @@ options:
    HALTED: Task <N> exceeded maximum escalations (3).
    Last escalation: <blocker text>
    Branch: <branch name>
-   State file: <worktree_path>/.orchestrator/state.json
+   State file: <orch_dir>/state.json
    Manual intervention required for Task <N>.
    ```
    Record the task as SKIPPED in state.json with the escalation reason. The orchestrator continues with subsequent tasks (subject to SKIPPED propagation from Phase 0 Step 6).
@@ -90,7 +90,7 @@ When the 4-step generic triage produces a clear root cause, classify it into a c
 ## Learning log: ESCALATE → event mapping (v2.8)
 
 When a sub-agent ESCALATEs, it writes a candidate JSON to
-`<worktree>/.orchestrator/learning_events/task_<N>-<role>.json`. The
+`<orch_dir>/learning_events/task_<N>-<role>.json`. The
 orchestrator's Phase 1 Step 3.5 scan picks it up and forwards to `append`.
 
 Severity mapping by ESCALATE type:

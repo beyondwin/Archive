@@ -12,7 +12,7 @@
 >
 > - **Event taxonomy and candidate-file schema** (sections "Event types" below).
 >   Sub-agents still write candidate JSON to
->   `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`; the
+>   `<orch_dir>/learning_events/<task_id>-<role>.json`; the
 >   orchestrator now publishes each to AgentLens as `kws-cme.<event_type>`
 >   instead of calling the deleted helper.
 > - **Field semantics**: `event_type`, `severity`, `phase`, `execution`,
@@ -97,7 +97,7 @@ do **NOT** call the helper directly. They prepare event candidate JSON files
 under:
 
 ```text
-<worktree>/.orchestrator/learning_events/<task_id>-<role>.json
+<orch_dir>/learning_events/<task_id>-<role>.json
 ```
 
 The orchestrator reads candidate files, validates them with the helper's
@@ -339,7 +339,7 @@ Rejects an event whose `run_id` field does not match `--run-id`.
 ```bash
 python3 scripts/append_learning_event.py append \
   --run-id "$MAE_LEARNING_RUN_ID" \
-  --event-json <worktree>/.orchestrator/learning_events/task_3-reviewer.json \
+  --event-json <orch_dir>/learning_events/task_3-reviewer.json \
   --repo-root "$WORKTREE_ABS"
 ```
 
@@ -377,7 +377,7 @@ python3 scripts/append_learning_event.py append-session-id \
 Phase 0 setup ──▶ init-run (capture run_id; export MAE_LEARNING_RUN_ID)
               │
 Phase 0–2 ────▶ orchestrator reads sub-agent candidate JSON from
-              │   <worktree>/.orchestrator/learning_events/ and calls append
+              │   <orch_dir>/learning_events/ and calls append
               │
 Resume Chain ─▶ chained orchestrator: append-session-id (NOT init-run)
               │
@@ -412,7 +412,7 @@ write candidate files, never call the helper.
 ### Phase 1 / Transition / 2 emit path
 
 When a sub-agent surfaces a notable boundary, it writes a candidate JSON to
-`<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`. The
+`<orch_dir>/learning_events/<task_id>-<role>.json`. The
 orchestrator reads candidates after each cycle step and invokes `append`.
 
 If no event is needed, no file is written — no `append` call is made.
@@ -456,7 +456,7 @@ If helper validation fails:
 - do not weaken any blocker, verification, or retry rule
 
 If the log path cannot be written:
-- preserve the candidate under `<worktree>/.orchestrator/raw/` if that
+- preserve the candidate under `<orch_dir>/raw/` if that
   directory exists
 - mention the write failure in the checkpoint or final summary
 - do not retry indefinitely

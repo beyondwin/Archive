@@ -10,7 +10,7 @@
 >
 > 신규 실행 진단:
 > - 이벤트 조회: `agentlens events --run <ORCH_RUN_ID> --type 'kws-cme.*'`
-> - run id 확인: `<worktree>/.orchestrator/state.json` 의 `agentlens_orchestration_run` 필드, 또는 `agentlens runs --agent kws-cme-orchestrator`
+> - run id 확인: `<orch_dir>/state.json` 의 `agentlens_orchestration_run` 필드, 또는 `agentlens runs --agent kws-cme-orchestrator`
 > - 페이즈 0 시작 마커: AgentLens 에서 `kws-cme.phase_0_started` 이벤트 존재 여부 (이전의 `LEARNING_LOG_INIT:` grep 대체)
 > - 레거시 ↔ AgentLens 패리티 검증: `python3 scripts/compare_agentlens_events.py <legacy events.jsonl> <agentlens run dir>` (`--self-test` 로 매핑 자체 검증)
 
@@ -246,7 +246,7 @@ ls ~/.claude/learning/kws-claude-multi-agent-executor/runs/<today>/
 
 ```bash
 # 1. 실패 시점 상태
-cat <worktree>/.orchestrator/state.json | jq '.tasks'
+cat <orch_dir>/state.json | jq '.tasks'
 
 # 2. run.jsonl 마지막 100줄
 tail -100 <tmpdir>/.harness/run.jsonl

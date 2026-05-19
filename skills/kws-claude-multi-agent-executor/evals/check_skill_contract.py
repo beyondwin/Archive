@@ -167,7 +167,7 @@ def main() -> int:
         )
         record(
             "learning_log_candidate_file_contract",
-            "<worktree>/.orchestrator/learning_events/" in learning_log_text
+            "<orch_dir>/learning_events/" in learning_log_text
             and ("single-writer" in learning_log_text.lower() or "single writer" in learning_log_text.lower()),
             "learning-log.md must describe candidate-file path + single-writer contract",
         )
@@ -288,7 +288,7 @@ def main() -> int:
         body = full.read_text(encoding="utf-8")
         record(
             f"candidate_file_contract_in_{rel_path.replace('/', '_')}",
-            ".orchestrator/learning_events/" in body and "Do not call the helper" in body,
+            "<orch_dir>/learning_events/" in body and "Do not call the helper" in body,
             f"{rel_path} must describe candidate-file emission and forbid direct helper calls",
         )
 

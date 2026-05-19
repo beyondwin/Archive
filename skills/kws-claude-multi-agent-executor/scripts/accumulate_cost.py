@@ -8,12 +8,15 @@ an exclusive flock on state.json).
 
 Usage:
     python3 accumulate_cost.py \\
-      --state <worktree>/.orchestrator/state.json \\
+      --state <orch_dir>/state.json \\
       --task-id task_3 \\
       --role implementer \\
       --model opus \\
       --usage-json '{"input_tokens": 1234, "output_tokens": 567,
                      "cached_read_tokens": 800, "cached_write_tokens": 0}'
+
+`<orch_dir>` = ~/.claude/orchestrator/<RUN_ID>/ (sibling of worktree under
+~/.claude/, NOT nested inside it).
 
 Alternatively pass --usage-file <path> with the same JSON shape, useful when
 parsing a headless `claude -p --output-format stream-json` stdout file (caller

@@ -146,17 +146,17 @@ jq '{
   last_completed_task,
   completed: ([.tasks[] | select(.status=="COMPLETE")] | length),
   skipped:   ([.tasks[] | select(.status=="SKIPPED")]  | length)
-}' <worktree>/.orchestrator/state.json
+}' <orch_dir>/state.json
 
 # 마지막 5개 태스크의 점수
-jq '.tasks | to_entries[-5:] | map({key, status: .value.status, spec: .value.spec_score, quality: .value.quality_score, tier: .value.review_tier})' <worktree>/.orchestrator/state.json
+jq '.tasks | to_entries[-5:] | map({key, status: .value.status, spec: .value.spec_score, quality: .value.quality_score, tier: .value.review_tier})' <orch_dir>/state.json
 
 # 라이브 이벤트 스트림 (headless)
-tail -f <worktree>/.orchestrator/headless.jsonl | jq -c 'select(.type=="text")'
+tail -f <orch_dir>/headless.jsonl | jq -c 'select(.type=="text")'
 
 # 완료 여부
-test -f <worktree>/.orchestrator/HEADLESS_DONE.txt && cat <worktree>/.orchestrator/HEADLESS_DONE.txt
-test -f <worktree>/.orchestrator/HEADLESS_HALTED.txt && cat <worktree>/.orchestrator/HEADLESS_HALTED.txt  # 실패 시
+test -f <orch_dir>/HEADLESS_DONE.txt && cat <orch_dir>/HEADLESS_DONE.txt
+test -f <orch_dir>/HEADLESS_HALTED.txt && cat <orch_dir>/HEADLESS_HALTED.txt  # 실패 시
 ```
 
 ---
@@ -202,10 +202,10 @@ Phase 2 Step 2 가 markdown 표를 출력 (interactive 모드는 채팅에, head
 
 - **코드 변경**: `<worktree_path>/` (별도 git worktree). 메인 체크아웃에는 영향 없음.
 - **커밋**: 브랜치 `<plan-slug>-<timestamp>` 위에. `feat:` (구현)와 `chore:` (오케스트레이터 상태)가 번갈아.
-- **state.json**: `<worktree>/.orchestrator/state.json` — 사후 디버깅·재개의 진실의 출처.
+- **state.json**: `<orch_dir>/state.json` — 사후 디버깅·재개의 진실의 출처.
 - **이벤트 스트림 (v2.17 cutover)**: AgentLens 의 `kws-cme.*` 이벤트 타입. 조회: `agentlens events --run <ORCH_RUN_ID> --type 'kws-cme.*'`. 크로스-실행 제도적 메모리는 AgentLens 가 보존. `state.json.agentlens_orchestration_run` 에 run id 가 기록됨.
 - **레거시 학습 로그 (읽기 전용, 역사적)**: `~/.claude/learning/kws-claude-multi-agent-executor/runs/<YYYY-MM-DD>/<run_id>/` — v2.17 cutover (Task 11) 이전 실행만 존재. 신규 실행은 작성하지 않음. 레거시 ↔ AgentLens 패리티 검증: `python3 scripts/compare_agentlens_events.py <legacy events.jsonl> <agentlens run dir>`.
-- **서브에이전트 결과**: `<worktree>/.orchestrator/{verifier,docs}_results/` — 헤드리스 JSON 결과 파일들.
+- **서브에이전트 결과**: `<orch_dir>/{verifier,docs}_results/` — 헤드리스 JSON 결과 파일들.
 
 ### 4.3. 머지하기
 
@@ -294,7 +294,7 @@ git branch -d <branch_name>  # 머지 후
 
 ## 7. 재개 (Resume)
 
-`<worktree>/.orchestrator/state.json` 이 존재하면 스킬을 다시 호출했을 때 **자동으로 재개**합니다.
+`<orch_dir>/state.json` 이 존재하면 스킬을 다시 호출했을 때 **자동으로 재개**합니다.
 
 조건:
 - `schema_version: "2"` 인 유효한 JSON

@@ -2,11 +2,26 @@
 name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation. NOTE — single-session execution is preferable for ≤5-task plans or plans with deep cross-task coupling (multi-agent overhead exceeds the parallelism win).
 metadata:
-  version: "2.17.0"
+  version: "2.18.0"
   updated_at: "2026-05-19"
 ---
 
 # KWS Claude Multi-Agent Executor
+
+## Path layout
+
+**All persistent state lives under `~/.claude/`, NOT inside the source repo or repo-sibling directories.** The two key locations are paired by a shared `<plan-slug>-<YYYYMMDD-HHMMSS>` suffix derived once per run:
+
+| Placeholder | Resolved path | Contains |
+|-------------|---------------|----------|
+| `<worktree>` (a.k.a. `<worktree_path>`, `WORKTREE_ABS`) | `~/.claude/worktrees/<plan-slug>-<YYYYMMDD-HHMMSS>/` | The git worktree — code, working tree, `.git`, `.claude/settings.json` only |
+| `<orch_dir>` (a.k.a. `ORCH_DIR`) | `~/.claude/orchestrator/<plan-slug>-<YYYYMMDD-HHMMSS>/` | All orchestrator state — `state.json`, hooks, learning_events, verifier/docs prompts+results, headless logs, DECISIONS.md |
+
+The shared suffix is computed ONCE in Phase 0 Step 2 (or Phase -1 step a when self-spawning) and persisted into `state.worktree` and `state.orchestrator_dir`. Every downstream step reads these fields rather than re-deriving paths. The worktree and orchestrator-state directory are siblings, NOT nested.
+
+**Worktree contents:** code + `.git` + `<worktree>/.claude/settings.json` (claude code loads project-local settings from cwd; the file's `command` strings reference absolute paths under `<orch_dir>/hooks/...`). Nothing else added by this skill. Sub-worktrees in the Parallel Sub-Flow get the same settings.json byte-identical — no path rewrite needed because hook scripts live outside every worktree.
+
+**Tilde expansion:** `~/.claude/` MUST be expanded to `$HOME/.claude/` (or the absolute equivalent) before being written into state.json or passed to sub-agents. Sub-agents and headless subprocesses cannot reliably expand `~` themselves. Bash command examples in this document write the literal `~/.claude/...` for readability; the orchestrator MUST substitute the absolute path before execution.
 
 ## Overview
 
@@ -146,7 +161,7 @@ After Phase -1.0 parsing:
 
 Execute Phase 0 Step 1 (working tree clean check), Step 1.5 (cross-run isolation checks — mode exclusivity + orphan-worktree report; v2.10.1), Step 2 (worktree creation), and Step 2.5 (safety hooks) now, in the interactive session. These steps are quick (~2 min) and must complete before the subprocess starts — the subprocess requires an existing worktree to operate in. If any of these steps fail, abort the spawn and surface the failure to the user. Do NOT proceed to step b.
 
-**b. Initialize a minimal `.orchestrator/state.json` in the worktree.**
+**b. Initialize a minimal `state.json` in `<orch_dir>`.**
 
 All arg-derived values come from Phase -1.0's three-pass parser (`implementer_model`, plan/spec pairs, `parallel`, `mode`, etc.). The headless subprocess will NOT re-parse args — only the headless prompt text reaches it, NOT the original args. The interactive parent persists everything needed into state.json here.
 
@@ -179,7 +194,8 @@ If the parsed plan list has length 1: write the minimal state.json in v2.12 shap
   "plan": "<plan_path_0>",
   "spec": "<spec_path_0>",
   "branch": "<branch name>",
-  "worktree": "<worktree path>",
+  "worktree": "<$HOME/.claude/worktrees/<RUN_ID>>",
+  "orchestrator_dir": "<$HOME/.claude/orchestrator/<RUN_ID>>",
   "implementer_model": {"used": "<parsed value or sonnet>", "default": "sonnet"},
   "agentlens_orchestration_run": "<$ORCH_RUN_ID or null>",
   "timestamps": {
@@ -200,7 +216,8 @@ If the parsed plan list has length ≥ 2: write the v2.13 multi-plan minimal sta
   "plan": "<plan_path_0>",
   "spec": "<spec_path_0>",
   "branch": "<branch name>",
-  "worktree": "<worktree path>",
+  "worktree": "<$HOME/.claude/worktrees/<RUN_ID>>",
+  "orchestrator_dir": "<$HOME/.claude/orchestrator/<RUN_ID>>",
   "implementer_model": {"used": "<parsed value or sonnet>", "default": "sonnet"},
   "agentlens_orchestration_run": "<$ORCH_RUN_ID or null>",
   "plan_chain": [
@@ -237,26 +254,27 @@ Full state.json fields (baselines, risk_levels for each plan, etc.) will be popu
 
 **Why everything is set HERE (v2.13 propagation rule):** Phase -1 step c writes `headless_prompt.txt` with no arg propagation, and `claude -p` in step d sees only that prompt — not the original skill args. If parsing were deferred to the child, both the model override and the multi-plan list would be lost. The child reads `implementer_model`, `plan_chain` (if multi-plan), and `plan/spec` (single-plan) from state.json in its resume path; it does NOT re-parse skill args. See Phase 0 Step 7 "field rule" below.
 
-**c. Write the headless prompt at `<worktree_path>/.orchestrator/headless_prompt.txt`:**
+**c. Write the headless prompt at `<orch_dir>/headless_prompt.txt`:**
 
 ```
 <<HEADLESS_KWS_ORCHESTRATOR>>
 You are the kws-claude-multi-agent-executor running HEADLESSLY. No user available.
 Working directory: <abs worktree path>
+Orchestrator state dir: <abs orch_dir path>
 Plan: <plan path>
 Spec: <spec path>
 
-Resume protocol applies — read .orchestrator/state.json. If state shows mode=headless_pending, proceed with full Phase 0 (analysis, baseline, dependency graph, state population). Otherwise resume from current_task.
+Resume protocol applies — read <abs orch_dir path>/state.json. If state shows mode=headless_pending, proceed with full Phase 0 (analysis, baseline, dependency graph, state population). Otherwise resume from current_task.
 
 Run Phase 0 → Phase 1 → Phase 2 to completion. NEVER ask for user input.
 Halt only on: per-task escalation_count > 3 (record SKIPPED, continue) OR all tasks COMPLETE/SKIPPED.
-On completion, write .orchestrator/HEADLESS_DONE.txt with summary.
-On critical failure, write .orchestrator/HEADLESS_HALTED.txt with diagnostics.
+On completion, write <abs orch_dir path>/HEADLESS_DONE.txt with summary.
+On critical failure, write <abs orch_dir path>/HEADLESS_HALTED.txt with diagnostics.
 
 Begin.
 ```
 
-Fill in `<abs worktree path>`, `<plan path>`, `<spec path>` with the actual resolved paths before writing.
+Fill in `<abs worktree path>`, `<abs orch_dir path>`, `<plan path>`, `<spec path>` with the actual resolved paths before writing. The headless child cwd's into `<abs worktree path>` for `git` operations but reads/writes state via the absolute `<abs orch_dir path>` because the two are no longer nested (v2.18).
 
 **d. Spawn detached background process:**
 
@@ -264,20 +282,24 @@ Fill in `<abs worktree path>`, `<plan path>`, `<spec path>` with the actual reso
 
 ```bash
 WORKTREE_ABS="$(cd <worktree> && pwd -P)"
+ORCH_DIR="$HOME/.claude/orchestrator/<RUN_ID>"
+mkdir -p "$ORCH_DIR"
 AGENTLENS_PARENT_RUN_ID="${ORCH_RUN_ID:-}" \
 nohup claude -p --dangerously-skip-permissions \
   --output-format stream-json --verbose \
-  "$(cat "$WORKTREE_ABS/.orchestrator/headless_prompt.txt")" \
-  > "$WORKTREE_ABS/.orchestrator/headless.jsonl" 2>&1 &
-echo $! > "$WORKTREE_ABS/.orchestrator/headless.pid"
+  "$(cat "$ORCH_DIR/headless_prompt.txt")" \
+  > "$ORCH_DIR/headless.jsonl" 2>&1 &
+echo $! > "$ORCH_DIR/headless.pid"
 disown
 ```
+
+Both `WORKTREE_ABS` and `ORCH_DIR` must be exported / inlined into the spawn — the headless child does not inherit shell variables, so the `nohup ... claude -p` invocation needs both paths available before launch (cwd defaults to the parent's cwd; child cd's to `WORKTREE_ABS` for git via the prompt instructions and reads state from `ORCH_DIR` absolute).
 
 **d.5. Verify spawn lived past startup**:
    ```bash
    sleep 3
-   if ! kill -0 $(cat "$WORKTREE_ABS/.orchestrator/headless.pid") 2>/dev/null; then
-     echo "FATAL: headless subprocess died within 3 seconds. Check $WORKTREE_ABS/.orchestrator/headless.jsonl for diagnostic." >&2
+   if ! kill -0 $(cat "$ORCH_DIR/headless.pid") 2>/dev/null; then
+     echo "FATAL: headless subprocess died within 3 seconds. Check $ORCH_DIR/headless.jsonl for diagnostic." >&2
      # Read first 50 lines of headless.jsonl and surface to user; do NOT proceed to step e (no Monitor)
      exit 1
    fi
@@ -288,22 +310,23 @@ disown
 
 ```
 Orchestrator running headless.
-Worktree: <abs path>
-PID: $(cat .orchestrator/headless.pid)
+Worktree:   <abs worktree path>      (~/.claude/worktrees/<RUN_ID>/)
+State dir:  <abs orch_dir path>      (~/.claude/orchestrator/<RUN_ID>/)
+PID: $(cat <abs orch_dir path>/headless.pid)
 
 Monitor live (stream-json events):
-  tail -f <worktree>/.orchestrator/headless.jsonl | jq -c 'select(.type=="text" or .type=="tool_use")'
+  tail -f <orch_dir>/headless.jsonl | jq -c 'select(.type=="text" or .type=="tool_use")'
 
 Status snapshot:
-  jq 'def active: if .plan_chain then .plan_chain[.active_plan] elif .active_plan=="plan2" then .plan2_state else . end; {current_task, mode, completed: (active.tasks | to_entries | map(select(.value.status=="COMPLETE")) | length)}' <worktree>/.orchestrator/state.json
+  jq 'def active: if .plan_chain then .plan_chain[.active_plan] elif .active_plan=="plan2" then .plan2_state else . end; {current_task, mode, completed: (active.tasks | to_entries | map(select(.value.status=="COMPLETE")) | length)}' <orch_dir>/state.json
 
 Completion check:
-  test -f <worktree>/.orchestrator/HEADLESS_DONE.txt && cat <worktree>/.orchestrator/HEADLESS_DONE.txt
+  test -f <orch_dir>/HEADLESS_DONE.txt && cat <orch_dir>/HEADLESS_DONE.txt
 
 Quick queries (no LLM, ~10ms each):
-  <skill_dir>/scripts/query_state.sh --worktree <abs_path> progress
-  <skill_dir>/scripts/query_state.sh --worktree <abs_path> cost
-  <skill_dir>/scripts/query_state.sh --worktree <abs_path> warn
+  <skill_dir>/scripts/query_state.sh --orch-dir <abs_orch_dir> progress
+  <skill_dir>/scripts/query_state.sh --orch-dir <abs_orch_dir> cost
+  <skill_dir>/scripts/query_state.sh --orch-dir <abs_orch_dir> warn
 
 Post-run, archived analysis:
   <skill_dir>/scripts/query_run.sh list-runs
@@ -320,16 +343,16 @@ After confirming the spawn lived (step d.5), set up live progress notifications:
 2. Invoke Monitor with `persistent: true` and the following watcher script:
 
 ```bash
-WT="$WORKTREE_ABS"
+OD="$ORCH_DIR"   # absolute path to ~/.claude/orchestrator/<RUN_ID>/
 prev_c=0; prev_s=0
 
 while true; do
   # Re-read PID each loop — Resume Chain (see below) may have replaced it.
-  HEADLESS_PID=$(cat $WT/.orchestrator/headless.pid 2>/dev/null || echo "")
-  if [ -f $WT/.orchestrator/state.json ]; then
+  HEADLESS_PID=$(cat $OD/headless.pid 2>/dev/null || echo "")
+  if [ -f $OD/state.json ]; then
     # Resolve active task tree (v2.13 plan_chain[N] > v2.12 plan2_state > top-level).
-    HAS_CHAIN=$(jq -r '.plan_chain != null' $WT/.orchestrator/state.json 2>/dev/null)
-    AP=$(jq -r '.active_plan // "plan1"' $WT/.orchestrator/state.json 2>/dev/null)
+    HAS_CHAIN=$(jq -r '.plan_chain != null' $OD/state.json 2>/dev/null)
+    AP=$(jq -r '.active_plan // "plan1"' $OD/state.json 2>/dev/null)
     if [ "$HAS_CHAIN" = "true" ]; then
       TASKS_FILTER=".plan_chain[$AP].tasks"
       LATEST_FILTER=".plan_chain[$AP].tasks"
@@ -343,14 +366,14 @@ while true; do
       LATEST_FILTER='.tasks'
       LABEL="plan1"
     fi
-    cur_c=$(jq -r "[$TASKS_FILTER[]|select(.status==\"COMPLETE\")]|length" $WT/.orchestrator/state.json 2>/dev/null || echo 0)
-    cur_s=$(jq -r "[$TASKS_FILTER[]|select(.status==\"SKIPPED\")]|length" $WT/.orchestrator/state.json 2>/dev/null || echo 0)
+    cur_c=$(jq -r "[$TASKS_FILTER[]|select(.status==\"COMPLETE\")]|length" $OD/state.json 2>/dev/null || echo 0)
+    cur_s=$(jq -r "[$TASKS_FILTER[]|select(.status==\"SKIPPED\")]|length" $OD/state.json 2>/dev/null || echo 0)
     if [ "$cur_c" != "$prev_c" ] || [ "$cur_s" != "$prev_s" ]; then
       # P14: read explicit last_completed_task field (NOT JSON insertion order).
       # last_completed_task lives under <active> for multi-plan; resolve same way.
-      LCT_PATH=$(jq -r "if .plan_chain then .plan_chain[.active_plan].last_completed_task elif .active_plan==\"plan2\" then .plan2_state.last_completed_task else .last_completed_task end" $WT/.orchestrator/state.json 2>/dev/null)
+      LCT_PATH=$(jq -r "if .plan_chain then .plan_chain[.active_plan].last_completed_task elif .active_plan==\"plan2\" then .plan2_state.last_completed_task else .last_completed_task end" $OD/state.json 2>/dev/null)
       if [ "$LCT_PATH" != "null" ] && [ -n "$LCT_PATH" ]; then
-        latest=$(jq -r "$LATEST_FILTER[\"$LCT_PATH\"] | \"$LCT_PATH \\(.status) risk=\\(.risk) review_retries=\\(.review_retries // 0)\"" $WT/.orchestrator/state.json 2>/dev/null)
+        latest=$(jq -r "$LATEST_FILTER[\"$LCT_PATH\"] | \"$LCT_PATH \\(.status) risk=\\(.risk) review_retries=\\(.review_retries // 0)\"" $OD/state.json 2>/dev/null)
       else
         latest="(no task recorded yet)"
       fi
@@ -358,12 +381,12 @@ while true; do
       prev_c=$cur_c; prev_s=$cur_s
     fi
   fi
-  test -f $WT/.orchestrator/HEADLESS_DONE.txt && echo "[$(date +%H:%M:%S)] DONE: $(head -1 $WT/.orchestrator/HEADLESS_DONE.txt)" && exit 0
-  test -f $WT/.orchestrator/HEADLESS_HALTED.txt && echo "[$(date +%H:%M:%S)] HALTED: $(head -1 $WT/.orchestrator/HEADLESS_HALTED.txt)" && exit 1
+  test -f $OD/HEADLESS_DONE.txt && echo "[$(date +%H:%M:%S)] DONE: $(head -1 $OD/HEADLESS_DONE.txt)" && exit 0
+  test -f $OD/HEADLESS_HALTED.txt && echo "[$(date +%H:%M:%S)] HALTED: $(head -1 $OD/HEADLESS_HALTED.txt)" && exit 1
   if [ -n "$HEADLESS_PID" ] && ! kill -0 $HEADLESS_PID 2>/dev/null; then
     # Grace period for Resume Chain handoff — .pid is rewritten by the child.
     sleep 2
-    NEW_PID=$(cat $WT/.orchestrator/headless.pid 2>/dev/null || echo "")
+    NEW_PID=$(cat $OD/headless.pid 2>/dev/null || echo "")
     if [ "$NEW_PID" != "$HEADLESS_PID" ] && [ -n "$NEW_PID" ] && kill -0 $NEW_PID 2>/dev/null; then
       echo "[$(date +%H:%M:%S)] CHAIN_HANDOFF: PID $HEADLESS_PID → $NEW_PID"
     else
@@ -405,24 +428,26 @@ Procedure:
 2. Flush state: set `mode: "headless_chained"`, write `chain_resume: {session_id: $RESUME_UUID, from_task: <N>, parent_pid: <current PID>, chained_at: "<iso8601>"}`. Verify state.json is readable after write (per existing State-file write guardrail). If write fails: hard halt — do NOT spawn child.
 3. Write the chain prompt file:
    ```bash
-   cat > "$WORKTREE_ABS/.orchestrator/headless_chain_<N>_prompt.txt" <<EOF
+   cat > "$ORCH_DIR/headless_chain_<N>_prompt.txt" <<EOF
    <<HEADLESS_KWS_ORCHESTRATOR>>
-   Continue from state.json. Worktree: $WORKTREE_ABS.
+   Continue from state.json.
+   Worktree: $WORKTREE_ABS
+   Orchestrator state dir: $ORCH_DIR
    EOF
    ```
-   (Note: use unquoted heredoc so `$WORKTREE_ABS` interpolates.)
+   (Note: use unquoted heredoc so `$WORKTREE_ABS` and `$ORCH_DIR` interpolate.)
 4. Spawn child AND atomically swap the PID file so the Monitor watcher (step e′) picks up the new process. **Pass `AGENTLENS_PARENT_RUN_ID` explicitly** so the chained orchestrator publishes to the same AgentLens run as its parent (v2.17 — replaces the legacy `MAE_LEARNING_RUN_ID` propagation; see Task 11 cutover):
    ```bash
    env AGENTLENS_PARENT_RUN_ID="${ORCH_RUN_ID:-${AGENTLENS_PARENT_RUN_ID:-}}" \
      nohup claude -p --session-id "$RESUME_UUID" --dangerously-skip-permissions \
      --output-format stream-json --verbose \
-     "$(cat "$WORKTREE_ABS/.orchestrator/headless_chain_<N>_prompt.txt")" \
-     > "$WORKTREE_ABS/.orchestrator/headless_chain_<N>.jsonl" 2>&1 &
+     "$(cat "$ORCH_DIR/headless_chain_<N>_prompt.txt")" \
+     > "$ORCH_DIR/headless_chain_<N>.jsonl" 2>&1 &
    CHILD_PID=$!
    disown
    # Atomic-ish swap: write-then-rename
-   echo $CHILD_PID > "$WORKTREE_ABS/.orchestrator/headless.pid.new"
-   mv "$WORKTREE_ABS/.orchestrator/headless.pid.new" "$WORKTREE_ABS/.orchestrator/headless.pid"
+   echo $CHILD_PID > "$ORCH_DIR/headless.pid.new"
+   mv "$ORCH_DIR/headless.pid.new" "$ORCH_DIR/headless.pid"
    sleep 3
    kill -0 $CHILD_PID 2>/dev/null || { echo "FATAL: chain child died within 3s" >&2; exit 1; }
    ```
@@ -430,7 +455,7 @@ Procedure:
 
 6. **Chained child startup (v2.17 — AgentLens session join):** at Phase 0 Step 0 (Resume Protocol), after detecting `state.mode == "headless_chained"`, the chained orchestrator does NOT open a new AgentLens run — `ORCH_RUN_ID` (propagated via `AGENTLENS_PARENT_RUN_ID` → re-exported on resume) refers to the original orchestrator run and remains in use across the handoff. The legacy `append-session-id` step is removed in v2.17 (see Task 11 cutover); AgentLens does not need a session-id append because it tracks events by run, not by session.
 
-   **Emit a `kws-cme.context_health` snapshot (v2.17):** the chained orchestrator writes a candidate JSON to `<worktree>/.orchestrator/learning_events/chain_handoff-orchestrator.json` and the candidate-drain loop (Phase 1 Step 3.5) publishes it to AgentLens as `kws-cme.context_health`. Use `phase: "phase_0"`, `execution.task_id: "chain_handoff"`, `execution.issue_key: "context_health_snapshot"`, `context.compaction_index: -1`, `context.completed_tasks_count: <count of COMPLETE tasks from state>`, `context.resume_chain_handoffs: <new chain depth>`. This marks the boundary in the event stream so downstream analysis can attribute pre/post-handoff metrics. Emit failure is silent.
+   **Emit a `kws-cme.context_health` snapshot (v2.17):** the chained orchestrator writes a candidate JSON to `<orch_dir>/learning_events/chain_handoff-orchestrator.json` and the candidate-drain loop (Phase 1 Step 3.5) publishes it to AgentLens as `kws-cme.context_health`. Use `phase: "phase_0"`, `execution.task_id: "chain_handoff"`, `execution.issue_key: "context_health_snapshot"`, `context.compaction_index: -1`, `context.completed_tasks_count: <count of COMPLETE tasks from state>`, `context.resume_chain_handoffs: <new chain depth>`. This marks the boundary in the event stream so downstream analysis can attribute pre/post-handoff metrics. Emit failure is silent.
 
 This is a fallback — the primary expectation is that one headless subprocess completes a typical 10-25 task plan within its own context budget.
 
@@ -439,10 +464,10 @@ This is a fallback — the primary expectation is that one headless subprocess c
 ## Phase 0: Setup
 
 0. **Check for existing state file (Resume Protocol):**
-   Check if `<worktree_path>/.orchestrator/state.json` exists by attempting to read it.
+   Check if `<orch_dir>/state.json` exists by attempting to read it.
    - If it does NOT exist: proceed normally to Step 1.
    - If it EXISTS and is valid JSON with `schema_version: "2"`:
-     - If `"mode": "headless_pending"`: freshly-spawned headless instance — Phase -1 already ran Steps 1, 1.5, 2, 2.5 in interactive context and wrote minimal state. **MUST skip Phase 0 Steps 1, 1.5, 2, 2.5** (clean check, cross-run isolation, worktree creation, safety hooks — re-running breaks: `git status` flags pre-written `.orchestrator/` and `.claude/settings.json` as dirty; `git worktree add` errors on the existing branch; Step 1.5 mode-exclusivity check would self-block on the freshly-created `.orchestrator/headless.pid`). PROCEED with Phase 0 Step 0.5 onward (`0.5 → 3 → 3.5 → 4 → 5 → 6 → 7`) to populate baseline, risk_levels, compaction_points, full task data. After Step 7, update `state.json.mode` from `"headless_pending"` to `"headless_running"` and write. **Preserve `state.implementer_model` exactly as the parent wrote it (v2.12)** — the parent already parsed the skill arg; do NOT overwrite. If the field is absent (legacy state.json), default to `{"used": "sonnet", "default": "sonnet"}`. **Preserve `state.plan_chain` exactly as the parent wrote it (v2.13)** — the parent already parsed the plan/plan2/.../planN args and constructed the chain. The child reads plan paths from `state.plan_chain[state.active_plan].plan_path` for multi-plan runs; do NOT re-parse skill args. If `plan_chain` is absent → this is a single-plan run, read from top-level `state.plan` and `state.spec`.
+     - If `"mode": "headless_pending"`: freshly-spawned headless instance — Phase -1 already ran Steps 1, 1.5, 2, 2.5 in interactive context and wrote minimal state. **MUST skip Phase 0 Steps 1, 1.5, 2, 2.5** (clean check, cross-run isolation, worktree creation, safety hooks — re-running breaks: `git status` flags `.claude/settings.json` inside the worktree as dirty; `git worktree add` errors on the existing branch; Step 1.5 mode-exclusivity check would self-block on the freshly-created `$ORCH_DIR/headless.pid`). PROCEED with Phase 0 Step 0.5 onward (`0.5 → 3 → 3.5 → 4 → 5 → 6 → 7`) to populate baseline, risk_levels, compaction_points, full task data. After Step 7, update `state.json.mode` from `"headless_pending"` to `"headless_running"` and write. **Preserve `state.implementer_model` exactly as the parent wrote it (v2.12)** — the parent already parsed the skill arg; do NOT overwrite. If the field is absent (legacy state.json), default to `{"used": "sonnet", "default": "sonnet"}`. **Preserve `state.plan_chain` exactly as the parent wrote it (v2.13)** — the parent already parsed the plan/plan2/.../planN args and constructed the chain. The child reads plan paths from `state.plan_chain[state.active_plan].plan_path` for multi-plan runs; do NOT re-parse skill args. If `plan_chain` is absent → this is a single-plan run, read from top-level `state.plan` and `state.spec`.
      - If `"mode": "headless_running"`, `"headless_chained"`, `"plan2_running"`, `"interactive_session"`, or no mode field: Standard resume path — load all fields. Do NOT overwrite. Verify git branch and worktree match `state.branch` / `state.worktree`. Set internal tracking from state.json: `current_task`, `current_step_within_task`, `current_pre_task_sha`, per-task counters. Output: "Resuming from state file: Task <N>, Step <M> (mode=<value or null>)." Skip Phase 0 Steps 1–7 (setup already done). Go directly to Phase 1 at the recorded task/step.
      - **Legacy state.json defaults (v2.14 — RUN-LEVEL fields):** before continuing the resume, backfill the four v2.14 run-level fields if missing (pre-v2.14 state.json will not have them). Apply each as a `setdefault` (write-only-if-absent) at the TOP level of `state` (NOT inside `plan_chain[i]`):
        - `state.setdefault('cost_ledger', {"by_task": {}, "by_role": {}, "by_model": {}, "totals": {"input_tokens": 0, "output_tokens": 0, "cached_read_tokens": 0, "cached_write_tokens": 0, "cost_usd": 0.0, "dispatches": 0}})`
@@ -451,7 +476,7 @@ This is a fallback — the primary expectation is that one headless subprocess c
        - `state.setdefault('archive', None)`
        - `state.setdefault('agentlens_orchestration_run', None)` (v2.17 — RUN-LEVEL; AgentLens orchestration run ID opened by Phase -1 step b)
        If `state.cost_ledger` is already present (v2.14+ state.json), preserve it as-is and continue accumulating. Same for `budget_cap_usd` and `budget_action`. These fields span the whole chain, so the resume MUST NOT reset them on plan2 swap or chain handoff.
-     - **Source `ORCH_RUN_ID` (v2.17):** every Phase 1 / Phase Transition / Phase 2 emit site that talks to AgentLens reads from a shell variable named `ORCH_RUN_ID`. On any resume path (headless_pending child startup, headless_chained handoff, interactive resume), set it once near the top of Phase 0 Step 0 after state load: `ORCH_RUN_ID="${AGENTLENS_PARENT_RUN_ID:-$(jq -r '.agentlens_orchestration_run // ""' "$WORKTREE_ABS/.orchestrator/state.json" 2>/dev/null)}"`. The env var (set by Phase -1 step d / Resume Chain step 4) takes precedence; state.json is the fallback for resume paths that did not inherit the env (e.g., the user manually re-attaching). If both are empty the value stays `""` and every `agentlens event append` guarded by `[ -n "${ORCH_RUN_ID:-}" ]` becomes a silent no-op — the run proceeds without AgentLens.
+     - **Source `ORCH_RUN_ID` (v2.17):** every Phase 1 / Phase Transition / Phase 2 emit site that talks to AgentLens reads from a shell variable named `ORCH_RUN_ID`. On any resume path (headless_pending child startup, headless_chained handoff, interactive resume), set it once near the top of Phase 0 Step 0 after state load: `ORCH_RUN_ID="${AGENTLENS_PARENT_RUN_ID:-$(jq -r '.agentlens_orchestration_run // ""' "$ORCH_DIR/state.json" 2>/dev/null)}"`. The env var (set by Phase -1 step d / Resume Chain step 4) takes precedence; state.json is the fallback for resume paths that did not inherit the env (e.g., the user manually re-attaching). If both are empty the value stays `""` and every `agentlens event append` guarded by `[ -n "${ORCH_RUN_ID:-}" ]` becomes a silent no-op — the run proceeds without AgentLens.
    - If it EXISTS but is invalid (empty, malformed JSON):
      - Warn user: "State file exists but is corrupted at <path>. Recommend manual inspection before proceeding."
      - Do NOT overwrite. Halt.
@@ -473,58 +498,68 @@ This is a fallback — the primary expectation is that one headless subprocess c
    ```
    If there are uncommitted changes, stop immediately. Tell the user: "Working tree is dirty. Please commit or stash changes before running multi-agent-executor." Do not proceed.
 
-1.5. **Cross-run isolation checks (v2.10.1):**
-   These run in the **outer repo** (not in any worktree) and catch state that prior crashed runs left behind. Two independent checks:
+1.5. **Cross-run isolation checks:**
+   Enumerate every orchestrator-state directory under `~/.claude/orchestrator/` and catch state that prior crashed runs left behind. Two independent checks:
 
-   **(a) Mode exclusivity** — refuse to start if another run is alive. Enumerate all worktrees matching this skill's pattern via `git worktree list --porcelain | awk '/^worktree /{print $2}'`. For each candidate path:
+   **(a) Mode exclusivity** — refuse to start if another run is alive. Enumerate every orchestrator-state directory directly:
    ```bash
-   pid_file="$path/.orchestrator/headless.pid"
-   done_file="$path/.orchestrator/HEADLESS_DONE.txt"
-   halted_file="$path/.orchestrator/HEADLESS_HALTED.txt"
-   if [ -f "$pid_file" ] && [ ! -f "$done_file" ] && [ ! -f "$halted_file" ]; then
-     pid=$(cat "$pid_file")
-     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-       echo "BLOCKED: active run at $path (PID $pid). Halt with 'kill $pid' or wait for HEADLESS_DONE.txt. To force-clear after confirming the process is dead, remove $pid_file." >&2
-       exit 1
+   for dir in "$HOME/.claude/orchestrator/"*/; do
+     [ -d "$dir" ] || continue
+     pid_file="${dir}headless.pid"
+     done_file="${dir}HEADLESS_DONE.txt"
+     halted_file="${dir}HEADLESS_HALTED.txt"
+     if [ -f "$pid_file" ] && [ ! -f "$done_file" ] && [ ! -f "$halted_file" ]; then
+       pid=$(cat "$pid_file")
+       if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+         echo "BLOCKED: active run at $dir (PID $pid). Halt with 'kill $pid' or wait for HEADLESS_DONE.txt. To force-clear after confirming the process is dead, remove $pid_file." >&2
+         exit 1
+       fi
      fi
-   fi
+   done
    ```
-   On detection: halt with the message above. Do NOT silently proceed — concurrent runs on the same source repo can race on git fetches, the user-local learning log, and the parent-repo branch namespace.
+   On detection: halt with the message above. Do NOT silently proceed — concurrent runs can race on git fetches, AgentLens emits, and the user-local branch namespace.
 
-   **(b) Stale-worktree report (advisory, NOT auto-delete)** — for any worktree path matching this skill's pattern with **no `.orchestrator/state.json`** AND mtime > 7 days, list it to the user once:
-   > "Orphan worktrees detected (no state.json, last modified >7d ago):
+   **(b) Stale-state report (advisory, NOT auto-delete)** — for any `$HOME/.claude/orchestrator/<RUN_ID>/` directory with **no `state.json`** AND mtime > 7 days, list it to the user once:
+   > "Orphan orchestrator-state directories detected (no state.json, last modified >7d ago):
    >   - `<path1>` (<age> days)
    >   - `<path2>` (<age> days)
-   > These appear to be from interrupted runs. Inspect manually with `ls <path>/.orchestrator/` and remove with `git worktree remove <path> --force && git worktree prune` if no in-progress work. Continuing with this run."
+   > These appear to be from interrupted runs. Inspect manually with `ls <path>` and the matching worktree under `~/.claude/worktrees/<same-suffix>/`. Remove the worktree with `git worktree remove <wt-path> --force && git worktree prune` and the state dir with `rm -rf <path>` if no in-progress work. Continuing with this run."
 
-   **Do NOT auto-delete.** A worktree with no state.json may still hold uncommitted manual debugging work; the user must decide. The report is one-shot per invocation; it does not halt.
+   **Do NOT auto-delete.** A state directory missing state.json may still pair with a worktree holding uncommitted manual debugging work; the user must decide. The report is one-shot per invocation; it does not halt.
 
    **Headless skip:** when the resume protocol detects `mode == "headless_pending"`, this step is part of the "MUST skip" set (already covered by Phase -1's interactive run).
 
 2. **Create worktree:**
    - First invoke `Skill("superpowers:using-git-worktrees")` and follow its guidance.
-   - Capture the timestamp once now (e.g., `20260508-143022`) — use the **same value** for both the branch name and the worktree path.
-   - Before executing: run `git branch --list "<plan-slug>-*"` to check for an existing branch with the same slug prefix. If a match is found and no state.json exists at the expected worktree path (i.e., this is not a resume): ask the user — "Branch <name> already exists with no state file. Rename with a new timestamp suffix, or halt?" Do not silently overwrite.
-   - Execute:
+   - Capture the timestamp once now (e.g., `20260508-143022`) — used as the shared suffix for BOTH the branch name, the worktree path, AND the orchestrator-state path. The three names MUST stay in sync.
+   - Derive `plan-slug` from the plan filename: lowercase, replace spaces and underscores with hyphens, strip the date prefix (e.g., `2026-05-08-my-feature.md` → `my-feature`). The combined `<plan-slug>-<YYYYMMDD-HHMMSS>` is the run identifier — record it internally as `RUN_ID`.
+   - Compute absolute paths (expand `~` to `$HOME`):
+     - `WORKTREE_ABS = $HOME/.claude/worktrees/<RUN_ID>`
+     - `ORCH_DIR    = $HOME/.claude/orchestrator/<RUN_ID>`
+   - Before executing: run `git branch --list "<plan-slug>-*"` to check for an existing branch with the same slug prefix. If a match is found and no state.json exists at `$ORCH_DIR/state.json` (i.e., this is not a resume): ask the user — "Branch <name> already exists with no state file. Rename with a new timestamp suffix, or halt?" Do not silently overwrite. Also halt if `$WORKTREE_ABS` or `$ORCH_DIR` already exist on disk without a matching state.json (collision is impossible with a fresh timestamp, but defends against clock skew).
+   - Ensure parent directories exist, then create the worktree:
    ```bash
-   git worktree add -b <plan-slug>-<YYYYMMDD-HHMMSS> ../worktrees/<plan-slug>-<YYYYMMDD-HHMMSS>
+   mkdir -p $HOME/.claude/worktrees $HOME/.claude/orchestrator
+   git worktree add -b <plan-slug>-<YYYYMMDD-HHMMSS> $HOME/.claude/worktrees/<plan-slug>-<YYYYMMDD-HHMMSS>
+   mkdir -p $HOME/.claude/orchestrator/<plan-slug>-<YYYYMMDD-HHMMSS>
    ```
-   Derive `plan-slug` from the plan filename: lowercase, replace spaces and underscores with hyphens, strip the date prefix (e.g., `2026-05-08-my-feature.md` → `my-feature`).
+   - Capture both paths into your internal notes; they will be persisted into `state.worktree` and `state.orchestrator_dir` at Step 7.
+   - Throughout the rest of this document, `<worktree_path>` (or `<worktree>`) refers to `WORKTREE_ABS` and `<orch_dir>` refers to `ORCH_DIR`. The two are no longer nested — `<orch_dir>` is NOT under `<worktree_path>`.
 
-2.5. **Write worktree safety hooks + gate hooks (P1):**
-   Create `.claude/settings.json` and the helper-script directory inside the worktree:
+2.5. **Write worktree safety hooks + gate hooks (P1) — v2.18 paths:**
+   `<worktree_path>/.claude/settings.json` is the only file this step writes inside the worktree (claude code loads it from cwd). All helper scripts live in `<orch_dir>/hooks/` so they survive worktree teardown and don't pollute the working tree.
    ```bash
    mkdir -p <worktree_path>/.claude
-   mkdir -p <worktree_path>/.orchestrator/hooks
+   mkdir -p <orch_dir>/hooks
    ```
 
-   **Materialize hook scripts** by copying the templates from this skill's `references/hooks/` into the worktree, stripping the `.template` suffix and making them executable:
+   **Materialize hook scripts** by copying the templates from this skill's `references/hooks/` into `<orch_dir>/hooks/`, stripping the `.template` suffix and making them executable:
    ```bash
    cp <skill_dir>/references/hooks/scan-debug-artifacts.sh.template \
-      <worktree_path>/.orchestrator/hooks/scan-debug-artifacts.sh
+      <orch_dir>/hooks/scan-debug-artifacts.sh
    cp <skill_dir>/references/hooks/check-implementer-output.sh.template \
-      <worktree_path>/.orchestrator/hooks/check-implementer-output.sh
-   chmod +x <worktree_path>/.orchestrator/hooks/*.sh
+      <orch_dir>/hooks/check-implementer-output.sh
+   chmod +x <orch_dir>/hooks/*.sh
    ```
    `<skill_dir>` is the directory containing this SKILL.md. Resolve via `dirname` of the skill path or the absolute path captured when the skill was invoked.
 
@@ -543,13 +578,13 @@ This is a fallback — the primary expectation is that one headless subprocess c
          "matcher": "Edit|Write",
          "hooks": [{
            "type": "command",
-           "command": "<worktree_path>/.orchestrator/hooks/scan-debug-artifacts.sh"
+           "command": "<orch_dir>/hooks/scan-debug-artifacts.sh"
          }]
        }],
        "SubagentStop": [{
          "hooks": [{
            "type": "command",
-           "command": "<worktree_path>/.orchestrator/hooks/check-implementer-output.sh"
+           "command": "<orch_dir>/hooks/check-implementer-output.sh"
          }]
        }]
      }
@@ -767,9 +802,9 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
    - `{spec_manifest_json}` — the rendered JSON of `<active>.spec_manifest` (sections + task_to_sections; built in Steps 3.7 and 6) for the spec_manifest rubric items (C1)
    - `{spec_path}`, `{spec_full_text}` — the spec document
    - `{risk_levels_yaml}` — from Step 4 (YAML-formatted `task_N: <risk>`)
-   - `{result_json_path}` — `<worktree_path>/.orchestrator/plan_review.json`
+   - `{result_json_path}` — `<orch_dir>/plan_review.json`
 
-   **Dispatch headless** via `claude -p --dangerously-skip-permissions` (same pattern as Verifier — Phase 1 Step 3). Prompt path: `<worktree_path>/.orchestrator/plan_review_prompt.txt`. Result path: `<worktree_path>/.orchestrator/plan_review.json`. Missing/malformed result → log warning and proceed (Plan Reviewer is advisory; absence is NOT a halt).
+   **Dispatch headless** via `claude -p --dangerously-skip-permissions` (same pattern as Verifier — Phase 1 Step 3). Prompt path: `<orch_dir>/plan_review_prompt.txt`. Result path: `<orch_dir>/plan_review.json`. Missing/malformed result → log warning and proceed (Plan Reviewer is advisory; absence is NOT a halt).
 
    **Parse the result:**
 
@@ -792,8 +827,9 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 
 7. **Initialize state file:**
    ```bash
-   mkdir -p <worktree_path>/.orchestrator
+   mkdir -p <orch_dir>
    ```
+   `<orch_dir>` was already created in Step 2 alongside the worktree; this mkdir is idempotent and defends against resume paths that may have skipped Step 2.
 
    **Branch on plan count (v2.13):**
 
@@ -801,7 +837,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 
    *Multi-plan run* (`state.plan_chain` IS present from Phase -1 step b, OR this is a fresh interactive run with `plan2=` or beyond): write state.json with `plan_chain[]` as the source of truth. Populate the CURRENT plan's entry (`plan_chain[state.active_plan]`) with the same fields v2.12 wrote at the top level — `tasks`, `task_summaries`, `risk_levels`, `task_complexity`, `compaction_points`, `execution_plan`, `global_constraints`, `quality_trend`, `low_tasks_pending_verification`, `last_compaction_after_task`, `plan_review`. Top-level `tasks` etc. are NOT written for multi-plan runs — code reads through `state.plan_chain[state.active_plan]`. `active_plan` is an integer index (0, 1, 2, ...).
 
-   Write `<worktree_path>/.orchestrator/state.json` using the Write tool. Schema below shows the SINGLE-PLAN shape; multi-plan moves the per-plan fields into `plan_chain[active].*`:
+   Write `<orch_dir>/state.json` using the Write tool. Schema below shows the SINGLE-PLAN shape; multi-plan moves the per-plan fields into `plan_chain[active].*`:
 
    ```json
    {
@@ -811,7 +847,8 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
      "plan": "<plan path>",
      "spec": "<spec path>",
      "branch": "<branch name>",
-     "worktree": "<worktree path>",
+     "worktree": "<worktree path — $HOME/.claude/worktrees/<RUN_ID>>",
+     "orchestrator_dir": "<orch_dir path — $HOME/.claude/orchestrator/<RUN_ID>>",
      "test_command": "<derived in Phase 0 baseline step>",
      "baseline": {"passing": 0, "failing": 0},
      "risk_levels": {},
@@ -892,7 +929,8 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
      "plan": "<plan_path_0 — mirrors plan_chain[0] for legacy readers>",
      "spec": "<spec_path_0 — mirror>",
      "branch": "...",
-     "worktree": "...",
+     "worktree": "<$HOME/.claude/worktrees/<RUN_ID>>",
+     "orchestrator_dir": "<$HOME/.claude/orchestrator/<RUN_ID>>",
      "test_command": "<shared across all plans — derived once>",
      "implementer_model": {"used": "...", "default": "sonnet"},
      "plan_chain": [
@@ -991,7 +1029,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
        --payload-json "$(jq -nc \
          --arg plan "$PLAN_PATH" \
          --arg spec "$SPEC_PATH" \
-         --argjson tasks "$(jq -r '[<active>.tasks | keys[]] | length' "$WORKTREE_ABS/.orchestrator/state.json" 2>/dev/null || echo 0)" \
+         --argjson tasks "$(jq -r '[<active>.tasks | keys[]] | length' "$ORCH_DIR/state.json" 2>/dev/null || echo 0)" \
          '{plan:$plan, spec:$spec, task_count:$tasks}')" \
        2>/dev/null || true
    fi
@@ -999,7 +1037,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 
    The taxonomy name is verbatim per spec — it fires at END of Phase 0 (about to enter Phase 1), not at Phase 0 start; don't rename. AgentLens emit failure is silent (`|| true`) — observability must not block execution. If `ORCH_RUN_ID` is empty (AgentLens CLI absent or registry write failed at Phase -1 step b), the block is a no-op and the orchestrator proceeds normally. **Failure to attempt this emit IS the regression we are guarding against.**
 
-   Sub-agents do NOT publish to AgentLens directly. They write event candidate JSON files to `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`. The orchestrator scans this directory after each cycle step (Phase 1 Step 3.5) and publishes each candidate to AgentLens as `kws-cme.<event_type>`. See `references/learning-log.md` for the schema and event types.
+   Sub-agents do NOT publish to AgentLens directly. They write event candidate JSON files to `<orch_dir>/learning_events/<task_id>-<role>.json`. The orchestrator scans this directory after each cycle step (Phase 1 Step 3.5) and publishes each candidate to AgentLens as `kws-cme.<event_type>`. See `references/learning-log.md` for the schema and event types.
 
    **active_plan pointer (P13b + v2.13):** Single-plan or v2.12 legacy two-plan run: `"plan1"` then `"plan2"` (string). v2.13 multi-plan run: integer index `0, 1, 2, ...` into `state.plan_chain[]`. All Phase 1 / Phase Transition / Phase 2 / Monitor code MUST resolve through `<active>` per the placeholder rule. Phase 2 Step -1 swaps this pointer at every cross-plan boundary.
 
@@ -1231,20 +1269,20 @@ Decision table:
 - `{baseline}` — passing/failing counts from Phase 0
 - `{test_command}` — from state.json `test_command`
 - `{acceptance_criteria}` — the `## Acceptance Criteria` shell block from the task, or "none provided"
-- `{result_json_path}` — `<worktree_path>/.orchestrator/verifier_results/task_<N>.json`
+- `{result_json_path}` — `<orch_dir>/verifier_results/task_<N>.json`
 
 **Dispatch as a headless `claude -p` subprocess (not Agent tool):**
-1. Write the prompt to `<worktree_path>/.orchestrator/verifier_prompts/task_<N>.txt` using the Write tool.
+1. Write the prompt to `<orch_dir>/verifier_prompts/task_<N>.txt` using the Write tool.
 2. Create the results directory:
    ```bash
-   mkdir -p <worktree_path>/.orchestrator/verifier_results
+   mkdir -p <orch_dir>/verifier_results
    ```
 3. Run the Verifier:
    ```bash
-   claude -p --dangerously-skip-permissions "$(cat <worktree_path>/.orchestrator/verifier_prompts/task_<N>.txt)" \
-     > <worktree_path>/.orchestrator/verifier_results/task_<N>.stdout 2>&1
+   claude -p --dangerously-skip-permissions "$(cat <orch_dir>/verifier_prompts/task_<N>.txt)" \
+     > <orch_dir>/verifier_results/task_<N>.stdout 2>&1
    ```
-4. Read the result file: `<worktree_path>/.orchestrator/verifier_results/task_<N>.json`
+4. Read the result file: `<orch_dir>/verifier_results/task_<N>.json`
    - If the file exists and is valid JSON: parse `status` field for PASS/FAIL/ESCALATE.
    - If the file is missing or malformed: treat as ESCALATE with `type: ENV_BLOCKER, blocker: "Verifier subprocess produced no result file — check task_<N>.stdout for diagnostics"`.
 
@@ -1266,7 +1304,7 @@ written by Implementer / Reviewer / Verifier during this cycle and forward
 them in a single batch:
 
 ```bash
-CANDIDATE_DIR="<worktree_path>/.orchestrator/learning_events"
+CANDIDATE_DIR="<orch_dir>/learning_events"
 if [ -d "$CANDIDATE_DIR" ]; then
   for cand in "$CANDIDATE_DIR"/task_<N>-*.json; do
     [ -f "$cand" ] || continue
@@ -1293,7 +1331,7 @@ Emit failures are silent (`|| true`) — observability must not block execution.
 
 You (Orchestrator) perform these checks directly — no sub-agent needed:
 
-1. **Debug artifact scan — REMOVED in v2.5.0.** This check is now runtime-enforced by the `PostToolUse(Edit|Write)` hook at `<worktree>/.orchestrator/hooks/scan-debug-artifacts.sh` (materialized at Phase 0 Step 2.5). If an Implementer attempted to write `console.log|debugger|TODO|FIXME` outside of allow-listed contexts, the hook already exit-2'd and the Implementer auto-retried before reaching this step. No orchestrator-side grep needed.
+1. **Debug artifact scan — REMOVED in v2.5.0.** This check is now runtime-enforced by the `PostToolUse(Edit|Write)` hook at `<orch_dir>/hooks/scan-debug-artifacts.sh` (materialized at Phase 0 Step 2.5). If an Implementer attempted to write `console.log|debugger|TODO|FIXME` outside of allow-listed contexts, the hook already exit-2'd and the Implementer auto-retried before reaching this step. No orchestrator-side grep needed.
 
    If you suspect the hook was misfired or disabled (e.g., user manually edited settings.json mid-run): re-enable and continue. Do not re-introduce the manual grep — it duplicates the hook and was the silent-bypass risk that motivated P1.
 
@@ -1304,13 +1342,13 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
    **Extract `usage`:**
 
    - *Agent tool dispatch* (Implementer / Combined Reviewer): the Agent tool result returned to this turn includes a `usage` object with `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`. Normalize to the helper's field names: `cached_read_tokens` ← `cache_read_input_tokens`, `cached_write_tokens` ← `cache_creation_input_tokens`. If the Agent result has no `usage` block (transport error, schema drift): use `{"input_tokens": 0, "output_tokens": 0}` and pass `--model unknown` so cost is recorded as 0 without misattributing tokens. Do NOT skip the helper call — the dispatch count is itself signal.
-   - *Headless `claude -p --output-format stream-json` subprocess* (Verifier / Plan Reviewer / Docs Updater): tail the result file `<worktree>/.orchestrator/{verifier,docs,plan_review}_results/...` OR the matching `.stdout`. The final line of stream-json is `{"type":"result","usage":{...},...}`. Extract `usage`, normalize the same way.
+   - *Headless `claude -p --output-format stream-json` subprocess* (Verifier / Plan Reviewer / Docs Updater): tail the result file `<orch_dir>/{verifier,docs,plan_review}_results/...` OR the matching `.stdout`. The final line of stream-json is `{"type":"result","usage":{...},...}`. Extract `usage`, normalize the same way.
 
    **Invoke the helper:**
 
    ```bash
    python3 <skill_dir>/scripts/accumulate_cost.py \
-     --state "<worktree_path>/.orchestrator/state.json" \
+     --state "<orch_dir>/state.json" \
      --task-id "task_<N>" \
      --role "implementer|reviewer|verifier|plan_reviewer|docs_updater" \
      --model "<state.implementer_model.used for implementer; 'sonnet' for reviewer/verifier/docs/plan_reviewer; 'unknown' if missing>" \
@@ -1416,12 +1454,8 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
    ```
    Atomic R-M-W of state.json. If the write fails: log a warning, continue (decisions_register is best-effort enrichment, NOT load-bearing). The register accumulates per plan and is projected to `DECISIONS.md` at each Phase Transition T3 and at Phase 2 Step 1 (see Task 9).
 
-2.5. **Commit orchestrator state separately:**
-   ```bash
-   git -C <worktree_path> add .orchestrator/
-   git -C <worktree_path> diff --cached --quiet || \
-     git -C <worktree_path> commit -m "chore(<plan-slug>): task <N> orchestrator state"
-   ```
+2.5. **(Removed — no orchestrator-state commits.)**
+   Orchestrator state lives at `<orch_dir>/` (outside the worktree, untracked by git). The Implementer's `feat:` commit from Step 1 is the only commit per task. State persistence is via atomic R-M-W of `<orch_dir>/state.json` with readback. For forensic snapshots see the post-run archive step (Phase 2) which tarballs `<orch_dir>/` to `archive.path`.
    This keeps implementation commits (`feat:`) separate from orchestrator state commits (`chore:`). Reviewers can filter `git log --grep '^feat'` to see only code changes.
 
 2.6. **AgentLens dual-write — `kws-cme.task_completed` event (v2.17):** after the state-write + chore-commit pair lands, emit a task-completion event to AgentLens. This is one of the four explicit orchestrator emit sites (alongside `phase_0_started` at Phase 0 Step 7.5, `compaction` at T3, and `phase_2_complete` at Phase 2 Step 2). The candidate-drain in Step 3.5 covers sub-agent emits; this fires regardless of whether candidates were dropped.
@@ -1458,7 +1492,7 @@ git -C <worktree_path> rev-parse HEAD
 ```
 Record as `current_pre_group_sha` in state.json. Every task in the group will branch off this SHA.
 
-**Step P.1: Create sub-worktrees + replicate safety hooks**
+**Step P.1: Create sub-worktrees + copy settings.json**
 
 For each task `task_<N>` in the group:
 ```bash
@@ -1466,15 +1500,13 @@ mkdir -p <worktree_path>/.parallel
 git -C <worktree_path> worktree add \
   <worktree_path>/.parallel/task_<N> \
   HEAD
-# Replicate safety + gate hooks into the sub-worktree
+# Copy the worktree-local settings.json so claude code in the sub-worktree
+# finds the same PreToolUse/PostToolUse/SubagentStop hook bindings.
 mkdir -p <worktree_path>/.parallel/task_<N>/.claude
-mkdir -p <worktree_path>/.parallel/task_<N>/.orchestrator/hooks
 cp <worktree_path>/.claude/settings.json \
    <worktree_path>/.parallel/task_<N>/.claude/settings.json
-cp <worktree_path>/.orchestrator/hooks/*.sh \
-   <worktree_path>/.parallel/task_<N>/.orchestrator/hooks/
 ```
-Rewrite the absolute `<worktree_path>` in the copied `settings.json` to point at the sub-worktree path (sed/Edit). Otherwise hooks reference the parent and silently no-op.
+Leave settings.json byte-identical to the parent — its hook `command` strings reference absolute paths under `<orch_dir>/hooks/...`, which lives outside every worktree, so all sub-worktrees hit the same hook scripts. Do not rewrite paths.
 
 **Step P.2: Dispatch all Implementers in one Orchestrator message**
 
@@ -1549,9 +1581,9 @@ If `low_tasks_pending_verification` is non-empty: build the Verifier prompt from
 - Baseline: from Phase 0
 - `{test_command}`: from state.json
 - `{acceptance_criteria}`: "run all test files for changed files combined"
-- `{result_json_path}`: `<worktree_path>/.orchestrator/verifier_results/batch_<compaction_index>.json`
+- `{result_json_path}`: `<orch_dir>/verifier_results/batch_<compaction_index>.json`
 
-**Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<worktree_path>/.orchestrator/verifier_prompts/batch_<compaction_index>.txt` and result path `<worktree_path>/.orchestrator/verifier_results/batch_<compaction_index>.json`. Missing/malformed result → ENV_BLOCKER ESCALATE.
+**Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<orch_dir>/verifier_prompts/batch_<compaction_index>.txt` and result path `<orch_dir>/verifier_results/batch_<compaction_index>.json`. Missing/malformed result → ENV_BLOCKER ESCALATE.
 
 **Result: PASS** → clear `low_tasks_pending_verification` in the state file.  
 **Result: FAIL** → apply this recovery algorithm:
@@ -1574,9 +1606,9 @@ If `low_tasks_pending_verification` is non-empty: build the Verifier prompt from
 Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Template** with:
 - Files changed in this phase: all files from state file tasks since `last_compaction_after_task`
 - Docs scope: user-provided or default (`README.md`, `CHANGELOG.md`, `docs/*runbook*`, `docs/*operator*`)
-- `{result_json_path}`: `<worktree_path>/.orchestrator/docs_results/phase_<compaction_index>.json`
+- `{result_json_path}`: `<orch_dir>/docs_results/phase_<compaction_index>.json`
 
-**Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<worktree_path>/.orchestrator/docs_prompts/phase_<compaction_index>.txt` and result path `<worktree_path>/.orchestrator/docs_results/phase_<compaction_index>.json`. Missing/malformed result → treat as ESCALATE; record `phase_docs_skipped` in state.json. The Final Docs Updater in Phase 2 will recover.
+**Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<orch_dir>/docs_prompts/phase_<compaction_index>.txt` and result path `<orch_dir>/docs_results/phase_<compaction_index>.json`. Missing/malformed result → treat as ESCALATE; record `phase_docs_skipped` in state.json. The Final Docs Updater in Phase 2 will recover.
 
 ### Step T3: State Anchor + Context Drop
 
@@ -1594,7 +1626,7 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
        --payload-json "$(jq -nc \
          --argjson idx "<compaction_index>" \
          --argjson after_task "<current_task>" \
-         --argjson completed "$(jq -r '[<active>.tasks[] | select(.status==\"COMPLETE\")] | length' "$WORKTREE_ABS/.orchestrator/state.json" 2>/dev/null || echo 0)" \
+         --argjson completed "$(jq -r '[<active>.tasks[] | select(.status==\"COMPLETE\")] | length' "$ORCH_DIR/state.json" 2>/dev/null || echo 0)" \
          '{compaction_index:$idx, after_task:$after_task, completed_tasks:$completed}')" \
        2>/dev/null || true
    fi
@@ -1602,11 +1634,11 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
 
    Failure is silent. The `context_health` candidate JSON in step 3 below remains unchanged — the AgentLens `compaction` event is in addition to (not replacing) `context_health`. Step 3.5's candidate drain (Phase 1 Step 3.5) publishes `context_health` to AgentLens; this `compaction` emit is the explicit orchestrator-boundary event distinct from passive snapshots.
 
-1.5. **Project decisions to DECISIONS.md (C2):** render `<worktree>/.orchestrator/DECISIONS.md` from `<active>.decisions_register`. Format: a markdown table with columns `[Task, Decision, Files, Made at, Supersedes]`. Sort by `made_at` ascending. Group superseded entries (`supersedes != null`) at the bottom in a separate subsection. Use an atomic write: write to `DECISIONS.md.tmp`, then `mv` over `DECISIONS.md`. The file is included in the archive tarball (F1). Empty register → write a stub file with header `# Decisions register (empty)`. Failure → log warning, continue (best-effort like the register itself).
+1.5. **Project decisions to DECISIONS.md (C2):** render `<orch_dir>/DECISIONS.md` from `<active>.decisions_register`. Format: a markdown table with columns `[Task, Decision, Files, Made at, Supersedes]`. Sort by `made_at` ascending. Group superseded entries (`supersedes != null`) at the bottom in a separate subsection. Use an atomic write: write to `DECISIONS.md.tmp`, then `mv` over `DECISIONS.md`. The file is included in the archive tarball (F1). Empty register → write a stub file with header `# Decisions register (empty)`. Failure → log warning, continue (best-effort like the register itself).
 
 2. **Actively drop prior task context:** from this point forward, do not reference individual task details from before this compaction point. Work only from your structured task summary (what you have in internal notes from Agent Cleanup steps). If you need details from an earlier task, re-read the state file — do not hold raw sub-agent output in active context.
 
-3. **Emit `context_health` passive snapshot (v2.10, v2.17 cutover):** write a candidate JSON to `<worktree>/.orchestrator/learning_events/transition_<compaction_index>-orchestrator.json`. The Phase 1 Step 3.5 candidate-drain loop will publish it to AgentLens as `kws-cme.context_health` on the next orchestrator cycle. The event is informational — never alters control flow. Fields per `references/learning-log.md` "`context_health` (v2.10) — passive observation contract". Minimum body:
+3. **Emit `context_health` passive snapshot (v2.10, v2.17 cutover):** write a candidate JSON to `<orch_dir>/learning_events/transition_<compaction_index>-orchestrator.json`. The Phase 1 Step 3.5 candidate-drain loop will publish it to AgentLens as `kws-cme.context_health` on the next orchestrator cycle. The event is informational — never alters control flow. Fields per `references/learning-log.md` "`context_health` (v2.10) — passive observation contract". Minimum body:
    ```json
    {
      "schema_version": "1",
@@ -1637,7 +1669,7 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
    ```
    Append failure is silent (`|| true`) per the learning-log failure policy. **Do not use these counters to alter orchestrator behavior** — Goodhart's-law guard. Behavior changes require a follow-on experiment.
 
-3.5. **Emit `chain_trigger_eval` (C3 — v2.15):** compute the trigger result via the should_chain logic (Resume Chain "Trigger (v2.15 — token-aware)" section). Update `state.context_budget.last_evaluation_tokens = session_input_tokens` and `state.context_budget.last_evaluation_at = <iso8601 now>`. Then write a candidate event to `<worktree>/.orchestrator/learning_events/trigger_<compaction_index>-orchestrator.json`:
+3.5. **Emit `chain_trigger_eval` (C3 — v2.15):** compute the trigger result via the should_chain logic (Resume Chain "Trigger (v2.15 — token-aware)" section). Update `state.context_budget.last_evaluation_tokens = session_input_tokens` and `state.context_budget.last_evaluation_at = <iso8601 now>`. Then write a candidate event to `<orch_dir>/learning_events/trigger_<compaction_index>-orchestrator.json`:
 
    ```json
    {
@@ -1677,7 +1709,7 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
        Exit orchestrator (headless child) or halt (interactive).
    ```
 
-   The `warn` event is written as a candidate JSON under `<worktree>/.orchestrator/learning_events/transition_<compaction_index>-budget.json` and drained to AgentLens by the Phase 1 Step 3.5 candidate-drain loop on the next orchestrator cycle — same pattern as the `context_health` snapshot in step 3, but with `severity: "high"` and `execution.issue_key: "budget_warning"`. Emit failure is silent.
+   The `warn` event is written as a candidate JSON under `<orch_dir>/learning_events/transition_<compaction_index>-budget.json` and drained to AgentLens by the Phase 1 Step 3.5 candidate-drain loop on the next orchestrator cycle — same pattern as the `context_health` snapshot in step 3, but with `severity: "high"` and `execution.issue_key: "budget_warning"`. Emit failure is silent.
 
    The `pause` branch emits a blocker event + closes the AgentLens run:
    ```bash
@@ -1687,7 +1719,7 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
        --payload-json '{"reason":"budget_exceeded"}' 2>/dev/null || true
      agentlens run-close --run "$ORCH_RUN_ID" --outcome blocked 2>/dev/null || true
    fi
-   printf 'reason: budget_exceeded\n' > <worktree_path>/.orchestrator/HEADLESS_HALTED.txt
+   printf 'reason: budget_exceeded\n' > <orch_dir>/HEADLESS_HALTED.txt
    ```
    Then exit (headless child) or halt (interactive). The Monitor watcher will surface the HALTED line on its next loop.
 
@@ -1727,7 +1759,7 @@ options:
    HALTED: Task <N> exceeded maximum escalations (3).
    Last escalation: <blocker text>
    Branch: <branch name>
-   State file: <worktree_path>/.orchestrator/state.json
+   State file: <orch_dir>/state.json
    Manual intervention required for Task <N>.
    ```
    Record the task as SKIPPED in state.json with the escalation reason. The orchestrator continues with subsequent tasks (subject to SKIPPED propagation rules from Phase 0 Step 6).
@@ -1784,7 +1816,7 @@ If neither precondition is met: this step is a no-op — proceed to Step 0.
 
 If `state.plan_chain` exists and there is some i where `state.active_plan == i` and `state.plan_chain[i+1]` exists with `status: "queued"`:
 
-1. **Verify LOW batch sweep for current plan PASSED.** Read the active tree (`state.plan_chain[i]`). Check `low_tasks_pending_verification == []` AND that any `<worktree>/.orchestrator/verifier_results/batch_final_p<i>.json` (per-plan suffix; see below) has no `status: FAIL`.
+1. **Verify LOW batch sweep for current plan PASSED.** Read the active tree (`state.plan_chain[i]`). Check `low_tasks_pending_verification == []` AND that any `<orch_dir>/verifier_results/batch_final_p<i>.json` (per-plan suffix; see below) has no `status: FAIL`.
 
 2. **Verify all tasks in `plan_chain[i]` are COMPLETE or SKIPPED.** The `blocked_until` for index i+1 is `"plan_chain[<i>].all_tasks_complete_or_skipped"` — resolve by scanning `plan_chain[i].tasks` for any task whose `status` is neither COMPLETE nor SKIPPED. If any remain: skip Step -1, proceed to Step 1 (Final Docs Updater handles whatever did finish).
 
@@ -1802,7 +1834,7 @@ If `state.plan_chain` exists and there is some i where `state.active_plan == i` 
 
 After Plan N-1 (final plan in chain) completes Step 0 (LOW batch sweep), this Cross-Plan Trigger is skipped (no `plan_chain[N]` exists) and execution falls through to Step 1 (Final Docs Updater for the whole chain).
 
-**Per-plan result file paths (v2.13):** Verifier and Docs Updater output files under `<worktree>/.orchestrator/` need a per-plan suffix to avoid collision when one chain has multiple plans. Use `_p<index>` suffix:
+**Per-plan result file paths (v2.13):** Verifier and Docs Updater output files under `<orch_dir>/` need a per-plan suffix to avoid collision when one chain has multiple plans. Use `_p<index>` suffix:
 - Phase Transition T1 batch: `verifier_results/batch_p<i>_<compaction_index>.json`
 - Phase 2 Step 0 final LOW sweep: `verifier_results/batch_final_p<i>.json`
 - Phase Transition T2 phase docs: `docs_results/phase_p<i>_<compaction_index>.json`
@@ -1817,7 +1849,7 @@ Precondition: `state.plan2_state` is a non-null object initialized at Phase 0 St
 
 If `plan2_state.status == "queued"`:
 
-1. Verify Plan 1 Phase 2 Step 0 (LOW batch sweep) PASSED — check `state.low_tasks_pending_verification == []` AND no batch verifier result file in `<worktree>/.orchestrator/verifier_results/batch_final.json` has `status: FAIL`.
+1. Verify Plan 1 Phase 2 Step 0 (LOW batch sweep) PASSED — check `state.low_tasks_pending_verification == []` AND no batch verifier result file in `<orch_dir>/verifier_results/batch_final.json` has `status: FAIL`.
 2. Verify `plan2_state.blocked_until` condition is satisfied. The condition string takes the form `task_<id>=COMPLETE`; resolve by looking up `state.tasks[<id>].status`. If not COMPLETE: skip Step -1, proceed to Step 1 (Plan 1 Final Docs Updater only).
 3. If both pass, initialize Plan 2 orchestration:
    - Swap the active-plan pointer: set `state.active_plan = "plan2"`. All Phase 1 / Phase Transition / Phase 2 logic from this point reads/writes through `state.plan2_state.tasks` and `state.plan2_state.task_summaries` — NOT top-level `state.tasks`. Plan 1 results remain intact under `state.tasks` (no archival move; the pointer is authoritative).
@@ -1830,7 +1862,7 @@ If `plan2_state.status == "queued"`:
 
 ### Step 0: LOW Batch Verifier Sweep
 
-**Phase 2 Step 0 — Budget evaluation (F2):** before dispatching the LOW batch verifier, run the same evaluation as Phase Transition T3 step 4 — this is the last chance to halt before incurring more cost. If `budget_action=pause` AND `state.cost_ledger.totals.cost_usd >= state.budget_cap_usd`: call `close-run --outcome=blocked`, write `<worktree_path>/.orchestrator/HEADLESS_HALTED.txt` with first line `reason: budget_exceeded`, and exit. If `budget_action=warn` AND the same threshold is crossed: emit ONE `context_health` learning event (severity=high, issue_key=budget_warning, summary referencing totals/cap) under `<worktree>/.orchestrator/learning_events/phase2_step0-budget.json` and continue. If `budget_action=off` OR `budget_cap_usd is None`: skip the check. The cap is compared against the run-level totals, so chained plans share one budget.
+**Phase 2 Step 0 — Budget evaluation (F2):** before dispatching the LOW batch verifier, run the same evaluation as Phase Transition T3 step 4 — this is the last chance to halt before incurring more cost. If `budget_action=pause` AND `state.cost_ledger.totals.cost_usd >= state.budget_cap_usd`: call `close-run --outcome=blocked`, write `<orch_dir>/HEADLESS_HALTED.txt` with first line `reason: budget_exceeded`, and exit. If `budget_action=warn` AND the same threshold is crossed: emit ONE `context_health` learning event (severity=high, issue_key=budget_warning, summary referencing totals/cap) under `<orch_dir>/learning_events/phase2_step0-budget.json` and continue. If `budget_action=off` OR `budget_cap_usd is None`: skip the check. The cap is compared against the run-level totals, so chained plans share one budget.
 
 Read the active tree's `low_tasks_pending_verification` (resolution rule from Phase 0 Step 7: `state.plan_chain[state.active_plan].low_tasks_pending_verification` for v2.13 multi-plan; `state.plan2_state.low_tasks_pending_verification` for v2.12 legacy plan2; top-level for single-plan). If non-empty: dispatch headless batch Verifier (same pattern as Phase Transition T1).
 
@@ -1851,14 +1883,14 @@ If a Phase Docs Updater was NOT dispatched for the last phase of the active plan
 
 If per-plan updaters already covered all phases: dispatch only the top-level chain summary (multi-plan) or the un-suffixed single-plan final (single-plan).
 
-**Final DECISIONS.md projection (C2):** re-render `<worktree>/.orchestrator/DECISIONS.md` from the full union of `<active>.decisions_register` across every plan (iterate `state.plan_chain[*]` for multi-plan; top-level + `plan2_state` for legacy). Same format and atomic-write contract as Phase Transition T3 step 1.5. This is the canonical, end-of-run snapshot — the per-T3 projections are intermediate.
+**Final DECISIONS.md projection (C2):** re-render `<orch_dir>/DECISIONS.md` from the full union of `<active>.decisions_register` across every plan (iterate `state.plan_chain[*]` for multi-plan; top-level + `plan2_state` for legacy). Same format and atomic-write contract as Phase Transition T3 step 1.5. This is the canonical, end-of-run snapshot — the per-T3 projections are intermediate.
 
 Build from the **Final Docs Updater Prompt Template** with:
 - All files changed: consolidated from state file across all tasks (all plans for chain runs)
 - Docs scope: user-provided or default (`README.md`, `CHANGELOG.md`, `docs/*runbook*`, `docs/*operator*`)
 - `{result_json_path}`: per scope rule above
 
-**Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<worktree_path>/.orchestrator/docs_prompts/final{_chain | }.txt` and result path matching `{result_json_path}`. Missing/malformed result → ENV_BLOCKER ESCALATE.
+**Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<orch_dir>/docs_prompts/final{_chain | }.txt` and result path matching `{result_json_path}`. Missing/malformed result → ENV_BLOCKER ESCALATE.
 
 ### Step 1.5: Method Audit Validation (v2.11)
 
@@ -1866,7 +1898,7 @@ After the Final Docs Updater commit and before generating the Final Summary Repo
 
 ```bash
 python3 <skill_dir>/scripts/validate_method_audit.py \
-  --state <worktree>/.orchestrator/state.json
+  --state <orch_dir>/state.json
 ```
 
 Parse the JSON output:
@@ -1936,7 +1968,7 @@ if [ -n "${ORCH_RUN_ID:-}" ]; then
     --type kws-cme.phase_2_complete \
     --payload-json "$(jq -nc \
       --arg outcome success \
-      --argjson tasks "$(jq -r '[<active>.tasks[] | select(.status==\"COMPLETE\")] | length' "$WORKTREE_ABS/.orchestrator/state.json" 2>/dev/null || echo 0)" \
+      --argjson tasks "$(jq -r '[<active>.tasks[] | select(.status==\"COMPLETE\")] | length' "$ORCH_DIR/state.json" 2>/dev/null || echo 0)" \
       '{outcome:$outcome, completed_tasks:$tasks}')" \
     2>/dev/null || true
   agentlens run-close --run "$ORCH_RUN_ID" --outcome success 2>/dev/null || true
@@ -1958,7 +1990,7 @@ Output:
 **Spec:** <path>
 **Branch:** <branch name>
 **Worktree:** <worktree path>
-**State file:** <worktree_path>/.orchestrator/state.json
+**State file:** <orch_dir>/state.json
 **Models:** Orchestrator=Opus, Sub-agents=Sonnet
 **Date:** <YYYY-MM-DD>
 
@@ -2015,6 +2047,7 @@ These rules are absolute. No exceptions.
 
 | Rule | Detail |
 |------|--------|
+| **Path layout — `<worktree>` and `<orch_dir>` are siblings under `~/.claude/`** | `<worktree>` = `$HOME/.claude/worktrees/<RUN_ID>/`. `<orch_dir>` = `$HOME/.claude/orchestrator/<RUN_ID>/`. Same `<RUN_ID>` suffix (`<plan-slug>-<YYYYMMDD-HHMMSS>`) pairs them. Orchestrator state is NOT inside the worktree. `<worktree>/.claude/settings.json` is the only file this skill writes inside the worktree; its hook commands reference absolute paths under `<orch_dir>/hooks/`. |
 | **No dirty worktree start** | Run `git status` first. Uncommitted changes → abort with clear message. |
 | **Orchestrator never writes code** | All implementation goes through sub-agents. You read, plan, dispatch, and decide. |
 | **Sub-agents never self-resolve blockers** | Guessing around a blocker instead of escalating → output is invalid; re-dispatch. |
@@ -2033,18 +2066,18 @@ These rules are absolute. No exceptions.
 | **ISSUE_KEY matching for RECURRING** | RECURRING labels are determined by ISSUE_KEY exact match (file:line:category), never by fuzzy text comparison. |
 | **test_command is cached** | Derived once in Phase 0 Step 5; stored in state.json. Verifiers receive it pre-filled — do not re-derive. |
 | **State file write must be verified** | After every Write to state.json, immediately verify it is readable. If write fails: hard halt. |
-| **Headless subprocess dispatch** | Verifier and Docs Updaters run via `claude -p --dangerously-skip-permissions` (never Agent tool). Results in `.orchestrator/{verifier,docs}_results/`. Missing result JSON → ENV_BLOCKER ESCALATE; check `.stdout` for diagnostics. |
+| **Headless subprocess dispatch** | Verifier and Docs Updaters run via `claude -p --dangerously-skip-permissions` (never Agent tool). Results in `<orch_dir>/{verifier,docs}_results/`. Missing result JSON → ENV_BLOCKER ESCALATE; check `.stdout` for diagnostics. |
 | **Two-phase commits** | See Phase 1 Step 2.5. `chore:` orchestrator state and `feat:` code are always separate commits. |
 | **PreToolUse hooks in worktree** | Phase 0 Step 2.5 writes `.claude/settings.json` blocking `rm -rf /`, force-push to protected branches, and `DROP TABLE/DATABASE/SCHEMA`. |
-| **PostToolUse hook is the only debug-artifact gate** | `<worktree>/.orchestrator/hooks/scan-debug-artifacts.sh` (materialized at Phase 0 Step 2.5) is runtime-enforced. The orchestrator does NOT run a parallel manual grep — that duplication was removed in v2.5.0 because prose discipline silently bypassed. If the hook is disabled or missing, fix it; do not re-introduce the manual scan. |
-| **SubagentStop hook validates Implementer output structure** | `<worktree>/.orchestrator/hooks/check-implementer-output.sh` exits 2 if STATUS / SUMMARY / FILES_CHANGED / FILES_TEST_CHANGED (or COMMIT on DONE, ESCALATE fields on ESCALATE) are missing. Sub-agent auto-retries; no orchestrator action needed. |
+| **PostToolUse hook is the only debug-artifact gate** | `<orch_dir>/hooks/scan-debug-artifacts.sh` (materialized at Phase 0 Step 2.5) is runtime-enforced. The orchestrator does NOT run a parallel manual grep — that duplication was removed in v2.5.0 because prose discipline silently bypassed. If the hook is disabled or missing, fix it; do not re-introduce the manual scan. |
+| **SubagentStop hook validates Implementer output structure** | `<orch_dir>/hooks/check-implementer-output.sh` exits 2 if STATUS / SUMMARY / FILES_CHANGED / FILES_TEST_CHANGED (or COMMIT on DONE, ESCALATE fields on ESCALATE) are missing. Sub-agent auto-retries; no orchestrator action needed. |
 | **Plan Reviewer is mechanical, not subjective** | Phase 0 Step 6.5 audits the plan/spec against a fixed rubric (missing Files, missing AC on MID/HIGH, contract mismatch, dep cycles, out-of-repo paths). Style/architecture suggestions are out of scope and MUST be ignored if the sub-agent returns them. BLOCKER issues halt with a batched user question; WARN issues are recorded and bypass. Skip the entire step via `preflight=off`. |
 | **Effort scaling is heuristic and biased upward** | Phase 0 Step 6 assigns SMALL/MEDIUM/LARGE per task for tool budget and review/verification routing only. Task size is not a TDD skip condition: any Implementer task that writes or modifies executable code or behavior must use `superpowers:test-driven-development` and report RED evidence before implementation, whether SMALL, MEDIUM, or LARGE. Docs-only, config-only, or generated-only tasks may report TDD as not applicable. Mis-estimation is acceptable as mild over-engineering; never silently under-instruct a HIGH-risk task (risk_mult forces LARGE). |
 | **Quality scoring thresholds are not user-configurable** | SPEC threshold 0.85, QUALITY threshold 0.75, WARN floors 0.70/0.60 (P4). Calibrated against the P6 eval suite. Re-tune only when re-calibrating against a new Claude version, not per-run. |
 | **WARN tier does not retry** | A WARN-tier review proceeds to Verifier with warnings recorded in `task_summaries.task_N.warnings`. WARN exists to prevent burning the 3-retry budget on borderline work. Three consecutive WARN tasks → surface at next compaction (signal, not halt). |
 | **`quality_trend` is rolling, max 10** | Phase 1 Step 2 appends `quality_score` to `<active>.quality_trend` (drop oldest at length 10). Each plan in a v2.13 chain has its own buffer at `state.plan_chain[N].quality_trend`. Mean-of-last-5 < mean-of-first-5 by > 0.10 → surface at next compaction. |
 | **Parallel Implementer outputs must respect declared Files: blocks** | Step P.4 verifies each sub-worktree's `FILES_CHANGED` is a subset of its task's declared `Files:` block AND that no two sub-worktrees in the same group touched the same file. Violation halts the group, removes sub-worktrees, and re-dispatches the offender sequentially. Never silently merge an out-of-scope parallel edit. |
-| **Sub-worktrees inherit safety + gate hooks** | Step P.1 copies `.claude/settings.json` and `.orchestrator/hooks/*.sh` into every sub-worktree. The settings.json absolute path MUST be rewritten to point at the sub-worktree, not the parent — otherwise hooks reference a different worktree's helper scripts and silently no-op. |
+| **Sub-worktrees inherit `.claude/settings.json` byte-identical** | Step P.1 copies ONLY `<worktree>/.claude/settings.json` into every sub-worktree. Hook scripts live in `<orch_dir>/hooks/` (outside any worktree), referenced by absolute path inside settings.json — so every sub-worktree hits the same hook binaries with no path rewrite. Rewriting paths is a bug (sub-worktrees would point at non-existent paths). |
 | **External-resource contention in parallel waves is the user's responsibility** | If two parallel tasks contend for the same DB port, file lock, or external service, mark one of them `serial: true` in the plan. The Phase 0 Step 6 partition respects `serial` and keeps such tasks in singleton groups. The skill cannot detect arbitrary external contention. |
 | **Disable parallel dispatch via `parallel=off`** | Writes a degenerate `execution_plan` where every parallel group is singleton. Use when sub-worktree creation is constrained (shallow clones, low disk, fsmonitor races). |
 | **Acceptance Criteria shell is primary PASS condition** | If a task has an `## Acceptance Criteria` block with executable shell, the Verifier runs those commands first. All must exit 0. Risk-tiered test instructions are the fallback when no AC block is present. |
@@ -2059,10 +2092,10 @@ These rules are absolute. No exceptions.
 | **Resume Chain trigger is deterministic** (v2.15) | Chain when EITHER token threshold OR legacy floor fires (additive). Token threshold: `session_input_tokens (= cost_ledger.totals.input_tokens − cached_read_tokens) ≥ state.context_budget.threshold_tokens`. Legacy floor: `compaction_points reached ≥ 2` AND `completed tasks ≥ 8` (always evaluated). `budget_action == "off"` disables the token trigger, leaving the legacy floor as the sole criterion. Chain procedure MUST update `headless.pid` atomically so Monitor sees `CHAIN_HANDOFF`, not `PROCESS_DIED`. |
 | **`files_test` discrimination for batch verifier** | Implementer outputs `FILES_TEST_CHANGED` separately from `FILES_CHANGED`. T1 batch pre-filter uses it (or `.md`-only heuristic for legacy state) to route docs-only tasks to lint instead of test runs. |
 | **Plan 2 re-takes baseline** | When Phase 2 Step -1 swaps `active_plan` to `"plan2"`, run Phase 0 Step 5 fresh against current HEAD (Plan 1's changes are now Plan 2's starting point). Never reuse Plan 1's baseline as Plan 2's regression reference. |
-| **AgentLens event lifecycle (v2.17 cutover)** | Phase -1 step b opens an AgentLens run and captures `ORCH_RUN_ID`. Phase 0 Step 7.5 emits `kws-cme.phase_0_started`. Phase 1 Step 3.5 scans `<worktree>/.orchestrator/learning_events/` for sub-agent candidate JSON and publishes each as `kws-cme.<event_type>`. Phase 1 Step 2.6 emits `kws-cme.task_completed`. Phase Transition T3 emits `kws-cme.compaction` plus drains `context_health` candidates. Phase 2 Step 2 emits `kws-cme.phase_2_complete` then `agentlens run-close --outcome success`. Hard-halt paths (escalation exhaustion, budget pause, T3 state-write failure) emit `kws-cme.blocker` and call `agentlens run-close --outcome aborted\|blocked`. Resume Chain propagates `AGENTLENS_PARENT_RUN_ID` (= parent `ORCH_RUN_ID`) into the chained child's env so the child re-exports it as `ORCH_RUN_ID` and continues publishing to the same run. **Every `agentlens` invocation is `2>/dev/null \|\| true`** — observability failure must never block plan execution. The legacy `append_learning_event.py` helper was removed in Task 11 after parity verification (`scripts/compare_agentlens_events.py`). See `references/learning-log.md`. |
+| **AgentLens event lifecycle (v2.17 cutover)** | Phase -1 step b opens an AgentLens run and captures `ORCH_RUN_ID`. Phase 0 Step 7.5 emits `kws-cme.phase_0_started`. Phase 1 Step 3.5 scans `<orch_dir>/learning_events/` for sub-agent candidate JSON and publishes each as `kws-cme.<event_type>`. Phase 1 Step 2.6 emits `kws-cme.task_completed`. Phase Transition T3 emits `kws-cme.compaction` plus drains `context_health` candidates. Phase 2 Step 2 emits `kws-cme.phase_2_complete` then `agentlens run-close --outcome success`. Hard-halt paths (escalation exhaustion, budget pause, T3 state-write failure) emit `kws-cme.blocker` and call `agentlens run-close --outcome aborted\|blocked`. Resume Chain propagates `AGENTLENS_PARENT_RUN_ID` (= parent `ORCH_RUN_ID`) into the chained child's env so the child re-exports it as `ORCH_RUN_ID` and continues publishing to the same run. **Every `agentlens` invocation is `2>/dev/null \|\| true`** — observability failure must never block plan execution. The legacy `append_learning_event.py` helper was removed in Task 11 after parity verification (`scripts/compare_agentlens_events.py`). See `references/learning-log.md`. |
 | **`state.timestamps.completed_at` is stamped at Phase 2 Step 2** (v2.16) | The first action of Step 2 is an atomic R-M-W of state.json setting `timestamps.completed_at = <iso8601 now>`. This is the canonical wall-clock end-marker; the Final Summary Report's "Total wall time" row depends on it. Pre-v2.16 runs left this field null even on `outcome=success` because nothing in the prose explicitly wrote it. State-file write failure here is a hard halt (existing guardrail). |
 | **`timing.started` is stamped before Step 1 dispatch** (v2.16) | The "Before Step 1 of each task" block writes `<active>.tasks.task_<N>.timing.started = <iso8601 now>` via atomic R-M-W. Without this field the per-task duration column cannot be computed (observed: `jq strptime` errors across all v2.11–v2.15 runs because the field stayed null). Failure to write is a non-fatal warning, not a halt. |
-| **Single-writer for learning events** | Only the orchestrator invokes the helper. Sub-agents write event candidates as JSON files under `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`; the orchestrator reads and forwards them. Never let a sub-agent prompt instruct direct helper invocation. |
+| **Single-writer for learning events** | Only the orchestrator invokes the helper. Sub-agents write event candidates as JSON files under `<orch_dir>/learning_events/<task_id>-<role>.json`; the orchestrator reads and forwards them. Never let a sub-agent prompt instruct direct helper invocation. |
 | **`context_health` is observation-only (v2.10)** | Emitted at Phase Transition T3 and Resume Chain chained-orchestrator startup. Counts compaction index, completed tasks, chain handoffs. **MUST NOT alter orchestrator control flow** — Goodhart's-law guard. Behavior changes require a follow-on experiment under `docs/experiments/v2.10-context-health/` after ≥ 2 weeks of real-run data. See `references/learning-log.md`. |
 | **Polite-stop anti-pattern is forbidden (v2.10.1)** | A sub-agent returning PASS / APPROVED is a checkpoint inside the autonomous loop, never a reporting moment. The orchestrator MUST proceed immediately to the next phase step in the same turn. The only legitimate reporting moments are: Phase 2 success completion, ESCALATE that exceeds `escalation_count > 3`, headless `HEADLESS_HALTED.txt`, or hook denial. Any prompt edit that introduces "summarize and wait for user acknowledgment" between PASS and the next step IS the regression this invariant exists to prevent. |
 | **Cross-run isolation is enforced (v2.10.1)** | Phase 0 Step 1.5 refuses to start when another worktree of this skill has a live headless PID. Mode exclusivity is concurrent-safe by halt, not by lock — the user is responsible for choosing which run continues. Orphan worktrees with no state.json + >7d mtime are reported but never auto-deleted (may hold uncommitted manual debugging). |
@@ -2076,7 +2109,7 @@ These rules are absolute. No exceptions.
 | **NL keyword lexicon is fixed and conservative** (v2.13) | Phase -1.0 Pass 3 scans free-text tokens (excluding tokens with `/`, `.`, `=`, backticks) for the closed lexicon: opus/오푸스, sonnet/소넷, 순차/sequential/직렬/시리얼, 대화형/interactive. Explicit `key=value` always wins; NL fills unset keys only. Conflicts halt with batched question — never silently disambiguate. Lexicon additions require an ADR (see `docs/experiments/v2.13-natural-multi-plan/decisions/D001`). |
 | **Phase -1 echo line is mandatory** (v2.13) | Before any other work, Phase -1.0 prints ONE line summarizing parsed args (plan count, implementer_model, parallel, mode, risk) with the source of each value (explicit / NL / default). This is the user's one chance to spot mis-interpretation before the headless subprocess detaches. The line goes to stdout of the interactive parent — visible even before the spawn. Never skip. |
 | **`plan_chain[]` is authoritative when present** (v2.13) | When `state.plan_chain` exists in state.json, code MUST dereference `state.plan_chain[state.active_plan].*` for tasks, task_summaries, quality_trend, risk_levels, task_complexity, compaction_points, execution_plan, global_constraints, low_tasks_pending_verification, last_compaction_after_task, last_completed_task, last_completed_at, plan_review. Top-level `state.tasks` etc. are NOT written for multi-plan runs. `state.plan` and `state.spec` mirror `plan_chain[active].plan_path / .spec_path` for legacy reader convenience but are NOT the source of truth. `state.active_plan` is an integer (not a string) when chain is in use. |
-| **Per-plan result file suffix** (v2.13) | Verifier/Docs Updater output JSON files under `.orchestrator/{verifier,docs}_results/` get a `_p<index>` suffix in multi-plan runs to avoid collision across plans (`batch_p0_2.json`, `phase_p1_4.json`, `final_p2.json`). Single-plan and legacy v2.12 two-plan runs keep their un-suffixed paths for compatibility. Aggregators that scan these directories must accept both shapes. |
+| **Per-plan result file suffix** (v2.13) | Verifier/Docs Updater output JSON files under `<orch_dir>/{verifier,docs}_results/` get a `_p<index>` suffix in multi-plan runs to avoid collision across plans (`batch_p0_2.json`, `phase_p1_4.json`, `final_p2.json`). Single-plan and legacy v2.12 two-plan runs keep their un-suffixed paths for compatibility. Aggregators that scan these directories must accept both shapes. |
 | **Run-level args propagate across all chain plans** (v2.13) | `implementer_model`, `parallel`, `risk`, `docs_scope` are written to state.json top-level (NOT into each plan_chain entry). The Cross-Plan Trigger does NOT reset them at swap. Every plan in the chain inherits the same model selection, parallel toggle, etc. Plan-specific overrides are deliberately NOT supported — if a user wants different models for different plans, they invoke the skill once per plan, not as a chain. |
 | **Cost ledger frozen pricing** | `scripts/price_table.py` hardcodes rates at commit time. Historical runs reflect contemporaneous rates — re-running with a later price_table does NOT retroactively recompute past runs. Update price_table when Anthropic adjusts rates; do NOT auto-fetch. |
 | **Cost-accumulate helper is mandatory per dispatch** (v2.16) | Every sub-agent dispatch (Implementer / Reviewer / Verifier / Plan Reviewer / Docs Updater) ends with a `scripts/accumulate_cost.py` invocation in Phase 1 Step 4 substep 1.5. Pre-v2.16 prose ("extract usage from Agent result, update by_task atomically") was silently skipped in every observed run — `cost_ledger.totals.dispatches=0` across runs 1/2/3 confirmed the regression. The helper is single-call, flock-protected, and handles unknown-model and missing-usage gracefully. Skipping the helper call means budget cap (`budget_cap_usd`) and `chain_trigger_eval` token threshold cannot fire correctly. by_task key is `<plan>::<task>::<role>` so same-task multi-role dispatches don't overwrite. |

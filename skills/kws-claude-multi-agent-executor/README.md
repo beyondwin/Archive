@@ -91,7 +91,7 @@
 이들은 골격을 떠받치는 규칙입니다. 위반하면 한참 뒤에 표면화되는 방식으로 스킬이 깨집니다.
 
 1. **오케스트레이터 1개, worktree 1개, `state.json` 1개.** worktree당 계획 실행은 순차적입니다. 동시 실행은 별도 worktree (공유 상태 없음). [`ARCHITECTURE.md`](./ARCHITECTURE.md) §5-§6 참조.
-2. **서브 에이전트는 학습 로그 헬퍼를 절대 직접 호출하지 않습니다.** 후보 JSON을 `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json` 에 쓰고, 오케스트레이터(단일 작성자)가 `append`를 호출합니다. [`references/learning-log.md`](./references/learning-log.md) 참조.
+2. **서브 에이전트는 학습 로그 헬퍼를 절대 직접 호출하지 않습니다.** 후보 JSON을 `<orch_dir>/learning_events/<task_id>-<role>.json` 에 쓰고, 오케스트레이터(단일 작성자)가 `append`를 호출합니다. [`references/learning-log.md`](./references/learning-log.md) 참조.
 3. **Step 7.5 `init-run`은 필수입니다** (v2.8.1). 건너뛰면 실행 전체의 관측성이 깨집니다 (meta.json 없음, events.jsonl 없음). `run.jsonl`의 `LEARNING_LOG_INIT:` 마커가 사후 감사 신호입니다.
 4. **`close-run`은 모든 종료 경로에서 호출됩니다**: `outcome=success` (Phase 2 정상 종료), `outcome=blocked` (state 쓰기 실패, 에스컬레이션 소진), `outcome=aborted` (사용자/훅 중단). 하드 크래시는 `outcome=unknown` (정직).
 5. **위험 등급은 TDD 엄격도를 결정합니다 — 모델 선택이 아닙니다.** 모델 선택은 Orchestrator=Opus / Sub-agents=Sonnet으로 문서화되어 있지만, 아직 `--model` 플래그가 `claude -p` 서브프로세스에 전달되지 않습니다 ([`docs/risks-and-limitations.md`](./docs/risks-and-limitations.md) §Headless model gap).

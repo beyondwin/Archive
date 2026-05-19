@@ -21,7 +21,7 @@
 ## 상태와 격리
 
 - **Worktree** — `<repo>/../worktrees/plan-<timestamp>/` (또는 모드에 따라 `<repo>/.claude/worktrees/...`) 하위의 git worktree. 오케스트레이터가 실행당 하나 생성; 모든 태스크 커밋이 여기 안착, 부모 체크아웃에서 계획 실행을 격리.
-- **`state.json`** — 오케스트레이터의 외부 메모리, `<worktree>/.orchestrator/state.json` 에 있음. 태스크 상태, 점수, 사이클 카운트, 에스컬레이션 히스토리 기록. 오케스트레이터가 모든 스텝 시작에서 이걸 읽어 컨텍스트 컴팩션에서 복구.
+- **`state.json`** — 오케스트레이터의 외부 메모리, `<orch_dir>/state.json` 에 있음. 태스크 상태, 점수, 사이클 카운트, 에스컬레이션 히스토리 기록. 오케스트레이터가 모든 스텝 시작에서 이걸 읽어 컨텍스트 컴팩션에서 복구.
 - **Resume Chain** — `compaction_points >= 2 AND complete >= 8` 일 때, 오케스트레이터가 `claude -p` 를 띄워 새 세션에서 실행을 계속. `MAE_LEARNING_RUN_ID` 를 env 로 전달해 학습 로그 실행이 이어짐.
 - **Compaction point (컴팩션 포인트)** — Claude Code 대화 자동 컴팩션 이벤트. state.json 에 추적되어 Resume Chain 을 적절한 임계에서 트리거.
 
@@ -39,7 +39,7 @@
 - **Run dir (실행 디렉터리)** — `~/.claude/learning/kws-claude-multi-agent-executor/runs/<date>/<run_id>/`, `meta.json` (항상) + `events.jsonl` (≥1 이벤트 시) 포함.
 - **`meta.json`** — 실행 요약: outcome (`success | blocked | aborted | unknown`), event_count, session_ids[], started_at, ended_at, plan_path, spec_path, worktree_path (상대화됨).
 - **Event (이벤트)** — JSONL 한 줄. 10개 이벤트 타입: `blocker`, `error`, `verification_failure`, `reviewer_warn_or_fail`, `escalation`, `recurring_issue`, `user_correction`, `parallel_dispatch_failure`, `successful_workaround`, `completion_learning`. [`../references/learning-log.md`](../references/learning-log.md) 참조.
-- **Candidate file (후보 파일)** — 서브에이전트가 `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json` 에 작성한 JSON. 오케스트레이터가 이 디렉터리를 스캔하고 `append` 호출. 단일 작성자 계약.
+- **Candidate file (후보 파일)** — 서브에이전트가 `<orch_dir>/learning_events/<task_id>-<role>.json` 에 작성한 JSON. 오케스트레이터가 이 디렉터리를 스캔하고 `append` 호출. 단일 작성자 계약.
 - **Adherence marker (준수 마커)** — Step 7.5 가 run.jsonl 에 출력하는 `LEARNING_LOG_INIT: RUN_ID=<id>` (또는 `SKIPPED`). eval 하네스가 이 마커를 grep 해서 v2.8.1 의 필수 init-run 준수 검출.
 
 ## Eval 시스템

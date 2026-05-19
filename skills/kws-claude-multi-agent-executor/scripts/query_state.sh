@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# query_state.sh - Read-only no-LLM queries against a LIVE worktree's state.json.
+# query_state.sh - Read-only no-LLM queries against a LIVE run's state.json.
 #
 # Usage:
-#   query_state.sh --worktree <abs_path> <subcommand> [opts]
+#   query_state.sh --orch-dir <abs_path> <subcommand> [opts]
 #   query_state.sh --run-id <id> <subcommand> [opts]       (forwards to query_run.sh)
+#
+# Path layout: <abs_path> is the orchestrator state directory at
+# ~/.claude/orchestrator/<RUN_ID>/; the script reads <abs_path>/state.json directly.
 #
 # Subcommands:
 #   current      current task + step within task
@@ -25,8 +28,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 usage() {
   cat <<'EOF' >&2
-Usage: query_state.sh --worktree <abs_path> <subcommand> [opts]
+Usage: query_state.sh --orch-dir <abs_path> <subcommand> [opts]
        query_state.sh --run-id <id> <subcommand> [opts]   (forwards to query_run.sh)
+
+<abs_path> is the orchestrator state dir, e.g. ~/.claude/orchestrator/<RUN_ID>/
 
 Subcommands:
   current  progress  cost  warn  tier-dist  quality  eta  failures
@@ -56,17 +61,17 @@ QS_FILTER_ALL_TASKS='
 '
 
 # ---------- arg parse ----------
-MODE=""        # "worktree" | "run-id"
-WORKTREE=""
+MODE=""        # "orch-dir" | "run-id"
+ORCH_DIR=""
 RUN_ID=""
 SUBCMD=""
 EXTRA_ARGS=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --worktree)
-      MODE="worktree"
-      WORKTREE="${2:-}"
+    --orch-dir)
+      MODE="orch-dir"
+      ORCH_DIR="${2:-}"
       shift 2
       ;;
     --run-id)
@@ -90,7 +95,7 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "${MODE}" ]; then
-  echo "query_state.sh: must pass --worktree <path> or --run-id <id>" >&2
+  echo "query_state.sh: must pass --orch-dir <path> or --run-id <id>" >&2
   usage
   exit 3
 fi
@@ -100,8 +105,8 @@ if [ "${MODE}" = "run-id" ]; then
   exec "${SCRIPT_DIR}/query_run.sh" --run-id "${RUN_ID}" "${SUBCMD}" ${EXTRA_ARGS+"${EXTRA_ARGS[@]}"}
 fi
 
-if [ -z "${WORKTREE}" ]; then
-  echo "query_state.sh: --worktree value is empty" >&2
+if [ -z "${ORCH_DIR}" ]; then
+  echo "query_state.sh: --orch-dir value is empty" >&2
   exit 3
 fi
 
@@ -111,7 +116,7 @@ if [ -z "${SUBCMD}" ]; then
   exit 3
 fi
 
-STATE="${WORKTREE}/.orchestrator/state.json"
+STATE="${ORCH_DIR%/}/state.json"
 if [ ! -f "${STATE}" ]; then
   echo "query_state.sh: state.json not found at ${STATE}" >&2
   exit 1
