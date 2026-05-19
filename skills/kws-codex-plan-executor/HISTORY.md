@@ -1,5 +1,20 @@
 # History
 
+## 2.20.0 - 2026-05-19
+
+- Added context-intelligence artifacts: spec manifests, task packets,
+  decisions register rendering, and packet-aware context snapshots.
+- Added deterministic invocation parsing for key/value args and Korean/English
+  natural-language hints.
+- Added read-only local environment preflight and stale-run inspection.
+- Extended state validation for v2.20 packet, timing, warning, decision, and
+  compaction fields while preserving v2.19 state compatibility.
+- Constrained opt-in subagent dispatch to task packets with parent post-diff
+  and state review.
+- Updated headless result output with context artifact paths and wired
+  deterministic prompt/execution fixture runners into the harness so evals do
+  not depend on nested `codex exec` model calls.
+
 ## 2.19.1 - 2026-05-19
 
 - Changed `subagents` default to `auto`; subagent spawning now requires an

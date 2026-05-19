@@ -16,6 +16,7 @@ REQUIRED = [
     "verification",
     "open_gaps",
     "residual_risk",
+    "context_artifacts",
     "next_action",
 ]
 STATUSES = {"success", "blocked", "failed", "cancelled"}
@@ -35,6 +36,16 @@ def validate_sample(payload: dict) -> list[str]:
     for key in ("changed_files", "verification", "open_gaps", "residual_risk"):
         if key in payload and not isinstance(payload[key], list):
             errors.append(f"{key} must be a list")
+    if "context_artifacts" in payload:
+        artifacts = payload["context_artifacts"]
+        if not isinstance(artifacts, dict):
+            errors.append("context_artifacts must be an object")
+        else:
+            for key in ("spec_manifest_path", "task_packet_dir", "decisions_path"):
+                if key not in artifacts:
+                    errors.append(f"context_artifacts.{key} missing")
+                elif artifacts[key] is not None and not isinstance(artifacts[key], str):
+                    errors.append(f"context_artifacts.{key} must be string or null")
     for index, item in enumerate(payload.get("verification", [])):
         if not isinstance(item, dict):
             errors.append(f"verification[{index}] must be an object")
@@ -56,6 +67,11 @@ def valid_payload() -> dict:
         "verification": [{"command": "python3 evals/check_state_schema.py", "status": "passed"}],
         "open_gaps": [],
         "residual_risk": [],
+        "context_artifacts": {
+            "spec_manifest_path": "~/.codex/orchestrator/headless-plan-20260519-143022/spec_manifest.json",
+            "task_packet_dir": "~/.codex/orchestrator/headless-plan-20260519-143022/task_packets",
+            "decisions_path": "~/.codex/orchestrator/headless-plan-20260519-143022/DECISIONS.md",
+        },
         "next_action": "Review diff and commit.",
     }
 
@@ -106,6 +122,14 @@ def main() -> int:
     )
     if not checks["invalid_verification_status_fails"]:
         failures.append("invalid verification status should fail")
+
+    bad_artifacts = valid_payload()
+    del bad_artifacts["context_artifacts"]["task_packet_dir"]
+    checks["missing_context_artifact_fails"] = "context_artifacts.task_packet_dir missing" in validate_sample(
+        bad_artifacts
+    )
+    if not checks["missing_context_artifact_fails"]:
+        failures.append("missing context artifact path should fail")
 
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, indent=2))

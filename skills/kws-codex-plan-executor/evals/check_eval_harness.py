@@ -38,6 +38,14 @@ def main() -> int:
     if not checks["prompt_export_fast_path"]:
         failures.append("run.sh should keep prompt/handoff evals on an export-only fast path")
 
+    checks["static_execution_runner"] = "static_execution_runner.py" in run_sh and 'mode" != "prompt"' in run_sh
+    if not checks["static_execution_runner"]:
+        failures.append("run.sh should use the deterministic static runner for execution fixtures")
+
+    checks["static_prompt_runner"] = "static_prompt_runner.py" in run_sh
+    if not checks["static_prompt_runner"]:
+        failures.append("run.sh should use the deterministic static runner for prompt fixtures")
+
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, indent=2))
     return 0 if not failures else 1

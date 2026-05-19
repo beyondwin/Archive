@@ -21,7 +21,7 @@
 - `context.json`, `context_snapshot_path`, `context_basis_hash`, `context_health`, `handoff_ready`, `next_action`, `completion_audit`, `prompt_to_artifact_checklist`, `verification_evidence`, `lifecycle_outcome`, `handoff_reason`을 state에 유지해.
 - high-risk verification matrix를 사용해 misleading success, stale state, hung command/process 리스크를 확인해.
 - `main` 또는 호출자의 원래 checkout에서 구현하지 마. `git worktree list --porcelain`로 확인하고 branch name already exists면 append the run_id.
-- headless 실행이면 `templates/headless-output-schema.json`의 `status`, `run_id`, `state_path`, `summary`, `changed_files`, `verification`, `open_gaps`, `residual_risk`, `next_action` shape를 지켜. Do not launch another nested `codex exec`.
+- headless 실행이면 `templates/headless-output-schema.json`의 `status`, `run_id`, `state_path`, `summary`, `changed_files`, `verification`, `open_gaps`, `residual_risk`, `context_artifacts`, `next_action` shape를 지켜. Do not launch another nested `codex exec`.
 - AgentLens learning event는 execution-only best-effort로만 남겨. payload에는 `run_id`, `run_dir_ref`, `state_path_ref`를 포함하고 absolute home paths, secrets, raw transcript, 긴 로그는 저장하지 마.
 
 완료 전:

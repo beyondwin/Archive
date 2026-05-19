@@ -10,9 +10,17 @@ python3 evals/check_eval_harness.py
 python3 evals/check_run_diffs.py
 python3 evals/check_context_snapshot.py
 python3 evals/check_headless_result.py
+python3 evals/check_spec_manifest.py
+python3 evals/check_task_packet.py
+python3 evals/check_local_env_preflight.py
+python3 evals/check_invocation_args.py
+python3 evals/check_inspect_runs.py
+python3 evals/check_decisions_register.py
 python3 -m py_compile scripts/*.py evals/*.py
 bash -n evals/run.sh
 ```
 
-The dynamic harness copies the skill under test into a fixture repository before
-running `codex exec`, so target agents cannot mutate the source skill package.
+The fixture harness copies the skill under test into a fixture repository, then
+uses deterministic runners to generate prompt/handoff outputs and execution
+repository/state artifacts. `check_prompt.py` and `check_execution.py` still
+validate the generated outputs, state, context snapshots, and forbidden edits.
