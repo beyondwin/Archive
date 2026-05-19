@@ -3,7 +3,7 @@
 Date: 2026-05-20
 Status: Approved for implementation planning (A-tier critique patches applied; re-approval pending)
 Owner: KWS
-Revision: 2026-05-20b — incorporates patches for plan/spec format, lockfile policy, worker sandbox tier, host/runner/worker surfaces, `consumes` claim mode, worker reattach on resume, and runner-side method-audit verification.
+Revision: 2026-05-20c — A/B/C/D-tier critique patches applied. Adds workspace-hash canonicalization, branch base policy, dirty-source refusal, submodule/LFS defaults, concurrent-run quota semaphore, `shared_append` validation grammar, context-ratio denominator, full `WorkerStatus` shape, reasoning-effort abstraction, configurable AgentLens namespace prefix, review/verification result schemas with required checks, cost-extract fallback, deterministic merge-conflict policy, skill→runner control flow, `kao apply` strategies, retention/secrets policy, and schema versioning policy. See §16 entries 19–25.
 
 ## 1. Summary
 
@@ -156,6 +156,12 @@ The skill is thin. It validates invocation shape, points the host agent at the
 runner, and explains the protocol. The runner is thick. It owns execution
 state, scheduling, worker dispatch, and final validation.
 
+Source-of-truth policy: this design document is the source of truth for KAO
+behavior. Files under `references/` are normative *expansions* of specific
+sections (e.g. `runtime-adapters.md` expands §7) but must not contradict the
+design. When the runner code, the design doc, and a reference file disagree,
+the design doc wins; reference files are updated to match.
+
 ### 5.2 Runtime Data Layout
 
 Persistent runtime state lives outside project source:
@@ -197,8 +203,20 @@ are not applied back to the source checkout unless the user runs
 `workspace_id` is generated from a canonicalized repo identity:
 
 ```text
-slug(repo_basename)-sha256(realpath(git_root) + remote_url + git_common_dir)[0:10]
+slug(repo_basename)-sha256(canonical_inputs)[0:10]
+
+canonical_inputs =
+  realpath(main_git_dir) + "\n" +
+  (remote_url or "")      + "\n" +
+  main_branch_ref
 ```
+
+`main_git_dir` is resolved via `git rev-parse --git-common-dir`, then
+`realpath`'d, so the value is identical whether invoked from the main checkout
+or any linked worktree. Empty `remote_url` is normalized to the empty string,
+not omitted, so local-only repos hash deterministically. `main_branch_ref` is
+the symbolic ref of the repo's primary branch (e.g. `refs/heads/main`); it
+stabilizes the hash across reclones.
 
 If the computed directory already exists for a different repo identity, KAO
 extends the hash to 16 characters. If it still collides, KAO appends a monotonic
@@ -227,7 +245,53 @@ causes a new nonce to be generated; KAO does not overwrite existing paths.
 Gitignored files are not copied into worktrees by default. Repos may opt in with
 `.kao-worktreeinclude`, using `.gitignore`-style patterns. Only ignored files
 matching that allowlist may be copied, and tracked files are never duplicated
-through this mechanism.
+through this mechanism. Files whose path or content matches a configured
+secret pattern are excluded from copy even if the allowlist would otherwise
+include them.
+
+### 5.2.1 Branch Base, Working-Tree State, Submodules, LFS
+
+**Branch base.** The `kao/<run_id>/main` branch is created from
+`runs.base_commit_sha`, recorded at `kao run` start. The default base is the
+current `HEAD` of the source checkout. `--base-ref <ref>` overrides. Worker
+branches fork from `kao/<run_id>/main` at the start of their wave, so they
+see all merges from prior waves.
+
+**Dirty source policy.** If the source checkout has uncommitted or staged
+changes, `kao run` refuses by default with a clear error pointing at
+`git status`. `--allow-dirty-source` skips the check and records
+`runs.allowed_dirty=true`; the dirty changes are *not* carried into the main
+KAO worktree.
+
+**Submodules.** Not initialized in worker worktrees by default. Set
+`worktree.submodules: init` in `kao.yaml` to opt in. Submodule pointer changes
+in worker diffs are treated as `forbidden` unless the task packet declares the
+submodule path as `owned`.
+
+**LFS.** Pointer files are checked out as pointers; large objects are not
+pulled unless `worktree.lfs: pull`. Workers that need LFS-tracked content must
+declare it in the packet so the runner pre-pulls before dispatch.
+
+### 5.2.2 Concurrent Runs and Adapter Quotas
+
+Multiple `kao run` invocations against the same host share runtime API
+quotas (Claude/Codex tokens, rate limits). Each run has its own SQLite DB and
+worktree, so SQLite is contention-free, but runtime dispatch must coordinate
+globally.
+
+A per-runtime semaphore at `~/.kao/locks/<runtime>.sem` caps concurrent worker
+dispatches across all runs. Caps are configured in `~/.kao/global.yaml`:
+
+```yaml
+runtime_caps:
+  claude:
+    max_concurrent_workers: 6
+  codex:
+    max_concurrent_workers: 8
+```
+
+Adapter rate-limit errors are surfaced as retryable transient failures with
+exponential backoff up to the watchdog's `retry` budget.
 
 ### 5.3 SQLite Control Plane
 
@@ -238,7 +302,7 @@ SQLite is the source of truth for KAO execution. Suggested tables:
 | `runs` | Invocation, workspace, plan/spec refs, status, model profile, AgentLens run id |
 | `tasks` | Parsed task graph, risk, phase, dependencies, status |
 | `task_packets` | Packet hash, prompt path, context refs, allowed/forbidden scopes |
-| `file_claims` | `owned`, `shared_append`, `read_only`, `forbidden` claims per task |
+| `file_claims` | `owned`, `shared_append`, `consumes`, `read_only`, `forbidden` claims per task |
 | `waves` | Deterministic parallel execution groups |
 | `workers` | Runtime, role, model, reasoning, PID/session, lifecycle |
 | `messages` | Runner-worker mailbox, normalized from runtime-specific channels |
@@ -344,7 +408,7 @@ conversation by default.
   ],
   "dependencies": ["task_001"],
   "allowed_write_globs": ["src/auth/**", "tests/auth/**"],
-  "forbidden_write_globs": [".git/**", "graphify-out/**", "docs/wiki/**"],
+  "forbidden_write_globs": [".git/**", "node_modules/**", "**/*.lock", "**/.env*"],
   "file_claims": [
     {"path": "src/auth/session.ts", "mode": "owned"},
     {"path": "tests/auth/session.test.ts", "mode": "owned"}
@@ -372,6 +436,29 @@ conversation by default.
 
 Forbidden wins over every other claim. Any out-of-scope diff rejects the worker
 result before merge.
+
+**`shared_append` validation grammar.** The default check is structural:
+
+1. No existing line numbers may be modified (compared against the file at
+   `kao/<run_id>/main` HEAD).
+2. Each worker's appended lines must be disjoint from every other worker's
+   appended lines in the same wave (line-set intersection must be empty).
+3. The file's existing trailing structure (e.g. JSON array closing bracket,
+   YAML document end) must remain syntactically valid.
+
+Repos may register file-specific validators in `kao.yaml`:
+
+```yaml
+shared_append:
+  - path: CHANGELOG.md
+    validator: changelog_section_append
+  - path: src/generated/index.ts
+    validator: generated_index_append
+```
+
+A validator is a function name resolved at runner startup. Missing validators
+halt with `unknown_shared_append_validator`. If no validator is configured,
+the default structural check applies.
 
 ### 6.3.1 Shared Build Artifacts (Lockfiles & Generated Files)
 
@@ -476,6 +563,15 @@ context_policy:
   full_transcripts: artifact_only
   orchestration_snapshot: auto
 ```
+
+**Ratio denominator.** Ratios are over the *host session's* effective
+context window, reported by the host adapter via
+`reported_context_usage` (§7.2). When the host reports `token_count`, the
+ratio is `used_tokens / context_window_tokens`. When `message_count`, it is
+`used_messages / max_messages`. When `none`, the host falls back to a
+time/turn heuristic: compact at 50 turns since session start, rotate at 100,
+hard-stop at 120. The fallback is recorded as `context_policy.mode=heuristic`
+in SQLite.
 
 The runner maintains a compact orchestration snapshot containing only:
 
@@ -595,7 +691,32 @@ class RuntimeAdapter:
     def collect_result(self, handle: WorkerHandle) -> WorkerResult: ...
     def cancel_worker(self, handle: WorkerHandle) -> None: ...
     def extract_cost(self, handle: WorkerHandle, result: WorkerResult) -> CostRecord: ...
+    def reattach_worker(self, handle: WorkerHandle) -> WorkerHandle: ...
 ```
+
+`WorkerStatus` must provide enough signal for the watchdog (§6.8) to
+distinguish stalled work from long thinking:
+
+```python
+@dataclass
+class WorkerStatus:
+    state: Literal["starting", "running", "awaiting_input", "completed",
+                   "failed", "lost"]
+    last_activity_ts: float          # monotonic time of last stdout/stderr/tool event
+    phase_hint: Literal["thinking", "tool_call", "writing", "idle", "unknown"]
+    tokens_used: int | None          # if reported_context_usage == token_count
+    last_tool: str | None
+    pending_prompt_text: str | None  # raw text if `state == awaiting_input`
+```
+
+The watchdog uses `last_activity_ts` for stall detection, `phase_hint` to
+suppress false positives during long reasoning, and `pending_prompt_text` to
+classify permission prompts. Adapters that cannot supply a field set it to
+`None` or `"unknown"` — never fabricate.
+
+`reattach_worker` is invoked on resume when `supports_reattach=true`. It must
+return a new `WorkerHandle` bound to the surviving process or raise so the
+runner can fall back to cancel-and-retry.
 
 ### 7.2 Capability Report
 
@@ -751,6 +872,33 @@ If a runtime cannot honor a requested model or reasoning level, the adapter must
 halt before dispatch with a clear `unsupported_model_assignment` blocker. It
 must not silently downgrade.
 
+### 8.4 Reasoning-Effort Abstraction
+
+`reasoning_effort` is an abstract level resolved per runtime by the adapter.
+The portable values are:
+
+```text
+lowest | low | medium | high | highest
+```
+
+`xhigh` (used in §8.1's `codex-default` profile) is an alias for `highest`
+during the Codex GPT-5.5 rollout window. Adapter mapping table:
+
+| Abstract | Codex (GPT-5.5) | Claude (Opus) | Local |
+| --- | --- | --- | --- |
+| `lowest` | `low` | `low` | n/a |
+| `low` | `medium` | `low` | n/a |
+| `medium` | `medium` | `medium` | n/a |
+| `high` | `high` | `high` | n/a |
+| `highest` | `xhigh` | `high` (max) | n/a |
+
+If the runtime cannot honor `highest` (e.g. Claude lacks an `xhigh` tier),
+the adapter selects the closest supported level and records the mapping in
+`workers.reasoning_effort_resolved`. Mapping is **not** silent downgrade: the
+runner emits `kws.kao.worker_dispatched` with both requested and resolved
+levels. Refusal (halt with `unsupported_model_assignment`) is reserved for
+values the adapter cannot map at all.
+
 ## 9. Superpowers Protocol
 
 All orchestrator and worker roles must bootstrap superpowers.
@@ -860,6 +1008,10 @@ AgentLens outcome mapping:
 
 ### 10.2 Event Namespace
 
+The namespace prefix is configurable. Default is `kws.kao`; override via
+`agentlens.namespace_prefix` in `kao.yaml` for users with a different
+identity. The suffix after the prefix is fixed by KAO and listed below.
+
 KAO uses only the new namespace:
 
 ```text
@@ -905,7 +1057,7 @@ All KAO events use a compact payload:
   "evidence": {
     "kind": "test",
     "status": "passed",
-    "command_hash": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "command_hash": "sha256:5e2c8b3d1a7f4e90c6b2d8e1f0a9c3b7d4e6f2a8c1b5d9e0a7f3c2b6d8e1f4a0",
     "artifact_ref": "kao://runs/archive-a13f9c2b/auth-refactor-20260520-151000/artifacts/task_003/test_excerpt.txt"
   },
   "privacy": {
@@ -996,6 +1148,44 @@ Worker results are machine-readable first:
 Malformed output is a worker failure, not a runner failure. The runner may retry
 with a stricter prompt once, then reject.
 
+### 11.1 Review Result Schema
+
+Reviewers are LLMs and may rubber-stamp. To make review evidence checkable,
+the reviewer's result must conform to a separate schema and list concrete
+checks with per-check evidence. "All good" with no checks is rejected.
+
+```json
+{
+  "schema": "kws.kao.review_result.v1",
+  "worker_id": "worker_009",
+  "task_id": "task_003",
+  "reviewed_worker_id": "worker_007",
+  "status": "approved",
+  "checks": [
+    {"id": "scope",      "status": "pass", "evidence_ref": "artifact:scope.diff.txt"},
+    {"id": "tests",      "status": "pass", "evidence_ref": "artifact:test_run.txt"},
+    {"id": "regressions","status": "pass", "evidence_ref": "artifact:regress_grep.txt"},
+    {"id": "claims",     "status": "pass", "evidence_ref": "artifact:claims_check.json"},
+    {"id": "secrets",    "status": "pass", "evidence_ref": "artifact:secret_scan.txt"}
+  ],
+  "findings": [],
+  "method_audit": { "using_superpowers": {"status": "applied"}, "status": "passed" }
+}
+```
+
+Required check ids and accepted status values are enforced by the runner.
+A reviewer that returns `status: approved` while any required check is
+`unknown` or absent is rejected as `review_result_malformed`. The runner
+hashes each `evidence_ref` artifact and persists the hash so reviews are
+tamper-evident within the local trust boundary.
+
+### 11.2 Verification Result Schema
+
+`kws.kao.verification_result.v1` follows the same shape as review but with
+verification-specific check ids (`acceptance_commands_passed`,
+`no_new_lints`, `no_new_typescript_errors`, etc.) defined per language stack
+in `kao.yaml`.
+
 ## 12. Failure Handling
 
 | Failure | Runner Action |
@@ -1009,15 +1199,19 @@ with a stricter prompt once, then reject.
 | Worker malformed JSON | Retry once with schema reminder; then reject |
 | Missing superpowers audit | Reject worker; emit method audit violation |
 | Out-of-scope diff | Reject worker; do not merge |
-| Merge conflict | Rebase/retry once if deterministic; else serialize dependent task or halt |
+| Merge conflict | Auto-resolve is never attempted; serialize the dependent task into a follow-up wave; halt only if the same conflict recurs after serialization |
 | Verification failure | Return to implementer retry if root cause clear; else halt with evidence |
 | AgentLens unavailable | Continue with `agentlens_status=degraded` |
 | SQLite write failure | Halt; execution state is unsafe |
 | Worktree creation failure | Halt; do not run in source checkout |
 | Worktree or branch name collision | Generate a new nonce; halt if registry metadata is inconsistent |
+| Dirty source checkout at `kao run` | Halt with `dirty_source_checkout` unless `--allow-dirty-source` set |
 | Context threshold crossed | Snapshot, compact if supported, rotate if needed |
 | Stuck permission prompt | Nudge or cancel according to adapter policy; never auto-approve destructive operations |
 | Budget exceeded | Emit warning by default; pause only when `budget_action=pause` |
+| Cost extract unavailable | Record `cost_extract=missing` per worker; if `budget_action != off` and >50% of workers in a run lack cost data, emit `kws.kao.blocker` with `severity=warn` once and continue (budget enforcement falls back to token-count estimates if reported, else disabled for the run) |
+| Adapter rate limit / transient API error | Exponential backoff, count against retry budget |
+| Runtime API quota exhausted | Pause new dispatches for the affected runtime; surface `runtime_quota_exhausted`; resume on operator action |
 
 Retry budgets:
 
@@ -1027,6 +1221,22 @@ Retry budgets:
 - same root cause repeated 3 times: halt.
 
 ## 13. CLI Surface
+
+### 13.1 Skill → Runner Control Flow
+
+The host LLM invokes the skill; the skill body instructs the host to shell
+out to the runner. The runner executes synchronously in a separate process.
+The host does **not** stream worker transcripts. It reads only:
+
+1. The runner's stdout summary (one line per wave start/finish, plus the
+   final report).
+2. `kao status --run <run_id>` on demand.
+
+This keeps the host's context usage proportional to the report size, not to
+worker output size. For very long runs the user may detach (`Ctrl+Z`/`bg`
+or invoke with `--detach`) and reattach later via `kao status`.
+
+### 13.2 Invocation
 
 Skill invocation:
 
@@ -1040,10 +1250,13 @@ Runner equivalent:
 python3 scripts/kao.py run \
   --plan plans/auth.md \
   --spec specs/auth.md \
-  --model-profile codex-default
+  --model-profile codex-default \
+  [--base-ref HEAD] \
+  [--allow-dirty-source] \
+  [--detach]
 ```
 
-Status:
+### 13.3 Status and Lifecycle
 
 ```bash
 python3 scripts/kao.py status --run <run_id>
@@ -1051,9 +1264,33 @@ python3 scripts/kao.py inspect --run <run_id> --task task_003
 python3 scripts/kao.py events --run <run_id>
 python3 scripts/kao.py resume --run <run_id>
 python3 scripts/kao.py cancel --run <run_id>
-python3 scripts/kao.py apply --run <run_id>
+python3 scripts/kao.py apply --run <run_id> [--strategy cherry-pick|merge|patch]
 python3 scripts/kao.py clean --older-than 7d --successful
 ```
+
+`kao status` prints: run id, plan slug, current wave, per-task state
+(pending/dispatched/reviewing/verifying/merged/failed/blocked), open blockers,
+merge queue depth, AgentLens link. It must fit in ~30 lines for a typical
+multi-wave run.
+
+### 13.4 `kao apply` Semantics
+
+`apply` copies the accepted run from
+`~/.kao/worktrees/<workspace_id>/<run_id>/main` into the user's source
+checkout. Defaults:
+
+- `--strategy cherry-pick` (default): cherry-picks each accepted worker
+  commit plus wave reconcile commits onto the source checkout's current HEAD,
+  preserving authorship and commit messages.
+- `--strategy merge`: produces a merge commit from `kao/<run_id>/main`.
+- `--strategy patch`: writes a single combined patch to stdout for review.
+
+Conflict handling: on conflict, `apply` stops *before* modifying the working
+tree (uses `--no-commit` + abort), prints the conflicting paths, and exits
+non-zero. The source checkout is never left in a half-merged state by KAO.
+
+`apply` refuses if the source checkout is dirty unless `--allow-dirty-target`
+is set.
 
 ## 14. Testing Strategy
 
@@ -1092,6 +1329,21 @@ python3 scripts/kao.py clean --older-than 7d --successful
   replay.
 - Resource lock conflict serializes otherwise independent tasks.
 - Watchdog rejects a stalled worker after the configured action ladder.
+- Host session crashes mid-run: runner continues to completion; reattaching
+  via `kao status` shows accurate final state.
+- Dirty source checkout: `kao run` halts unless `--allow-dirty-source` set.
+- Lockfile reconcile: two tasks add dependencies in the same wave; runner
+  strips per-worker lockfile writes and applies a single reconcile commit.
+- `shared_append` validator rejects an overlapping append from two workers.
+- Method-audit deterministic re-execution catches a fabricated green
+  evidence file (post-commit tree actually fails the test).
+- SQLite concurrency: two `kao run` invocations against unrelated repos
+  proceed without contention; same-runtime quota semaphore caps total
+  concurrent workers.
+- Reasoning-effort mapping: requesting `highest` on a runtime that maxes at
+  `high` resolves to `high` and emits the resolved value, not a halt.
+- Review result with no `checks` array is rejected as
+  `review_result_malformed`.
 
 ### 14.3 End-to-End Fixtures
 
@@ -1146,7 +1398,16 @@ MVP includes:
 - Watchdog for stalled workers and context overflow.
 - SQLite-mediated worker communication.
 - Resource locks for non-file shared resources.
-- Cleanup and retention commands.
+- Cleanup and retention commands with secret-aware redaction on disk.
+- Review/verification result schemas (`kws.kao.review_result.v1`,
+  `kws.kao.verification_result.v1`) with required per-check evidence.
+- Reasoning-effort abstraction and per-runtime mapping table.
+- Per-runtime concurrency semaphore at `~/.kao/locks/<runtime>.sem`.
+- `--allow-dirty-source` / `--base-ref` / `--detach` invocation flags.
+- `kao apply` with `cherry-pick` / `merge` / `patch` strategies and
+  conflict-safe abort.
+- Schema versioning policy (§19) with `kao_version` and `schema_version`
+  recorded per SQLite row.
 
 MVP excludes:
 
@@ -1192,10 +1453,26 @@ These decisions are accepted for implementation planning:
 17. **Context management:** bounded summaries, artifact refs, snapshots,
     compaction, and rotation thresholds are part of MVP.
 18. **Inter-worker communication:** runner-mediated SQLite mailbox only.
-19. **Audit integrity:** artifact hashes in MVP; HMAC signed audit chain later.
+19. **Audit integrity:** SHA-256 artifact hashes recorded in SQLite provide
+    *tamper-evidence within the local trust boundary* (corruption or
+    accidental modification is detectable). They are not a cryptographic
+    integrity guarantee: any actor with write access to `~/.kao` can rewrite
+    both the artifact and its hash. External integrity (HMAC chain, append-
+    only remote store) is post-MVP.
 20. **Cleanup/retention:** successful worktrees retained 7 days by default;
-    failed or blocked worktrees retained 30 days by default.
+    failed or blocked worktrees retained 30 days by default. Retention
+    applies to worker stdout/stderr and prompts as well; the same redaction
+    rules that protect AgentLens (§10.3) apply to on-disk artifacts so that
+    secrets are not retained for the full retention window in cleartext.
 21. **Resource locks:** non-file resource keys participate in scheduling.
+22. **Reasoning-effort:** abstract levels (`lowest`..`highest`) mapped per
+    runtime; mapping is recorded, not silent.
+23. **Concurrent runs:** per-runtime semaphore caps global concurrent
+    worker dispatch; SQLite per run is contention-free.
+24. **Branch base / dirty source:** base from `HEAD` by default; refuse to
+    run on dirty source unless `--allow-dirty-source`.
+25. **Reviewer/verifier:** must return concrete per-check evidence;
+    empty-check approvals are rejected.
 
 ## 17. Design Rationale
 
@@ -1233,3 +1510,34 @@ This design is ready for implementation planning when:
 - The approved policy decisions in section 16 are accepted.
 - The implementation plan scopes MVP only, leaving UI and additional adapters
   for later phases.
+
+## 19. Schema Versioning Policy
+
+KAO declares versioned schemas for every cross-component data shape:
+
+| Schema | Version |
+| --- | --- |
+| `kws.kao.task_packet` | `v1` |
+| `kws.kao.worker_result` | `v1` |
+| `kws.kao.review_result` | `v1` |
+| `kws.kao.verification_result` | `v1` |
+| `kws.kao.event` | `v1` |
+
+Evolution rules:
+
+1. **Additive changes** (new optional fields, new enum values that
+   non-validating consumers can ignore) do not bump the version. Producers
+   must default unspecified fields. Consumers must tolerate unknown fields.
+2. **Required-field changes**, **removed fields**, or **semantic shifts**
+   (e.g. changing `status` value meaning) require a new major version
+   (`v2`). Old and new are accepted in parallel for at least one minor KAO
+   release.
+3. **Deprecation** is announced via a `kws.kao.blocker` event with
+   `severity=warn` on first encounter per run.
+4. The runner records `kao_version` and per-schema `schema_version` on every
+   SQLite row so historical runs remain replayable against their original
+   semantics.
+
+Schema files live under `references/schemas/<name>.<version>.json` and are
+hashed into the runner build; mismatch between code and schema file halts at
+startup.
