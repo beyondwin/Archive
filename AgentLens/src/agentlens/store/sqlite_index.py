@@ -44,10 +44,16 @@ CREATE TABLE IF NOT EXISTS runs (
     recording_mode TEXT NOT NULL,
     agent_outcome TEXT,
     eval_status TEXT,
-    sealed_phase TEXT
+    sealed_phase TEXT,
+    run_kind TEXT DEFAULT 'capture',
+    agent_label TEXT,
+    has_transcript INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_eval_status ON runs(eval_status);
+-- NOTE: ``idx_runs_parent_run_id`` and ``idx_runs_kind_started`` are created
+-- explicitly in ``init_schema`` AFTER the additive ALTER TABLE migrations
+-- so they remain valid against pre-v1 tables that lack ``run_kind``.
 
 CREATE TABLE IF NOT EXISTS checks (
     run_id TEXT,
@@ -77,6 +83,15 @@ CREATE TABLE IF NOT EXISTS artifacts (
 
 _INDEX_TABLES = ("runs", "checks", "failures", "artifacts")
 
+# Additive ALTER TABLE migrations for pre-v1 ``runs`` tables. Each entry is a
+# (column_name, "ADD COLUMN <name> <type> <default/constraints>") pair. Applied
+# idempotently via ``PRAGMA table_info(runs)`` detection in ``init_schema``.
+_RUNS_V1_ADDITIVE_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("run_kind", "ADD COLUMN run_kind TEXT DEFAULT 'capture'"),
+    ("agent_label", "ADD COLUMN agent_label TEXT"),
+    ("has_transcript", "ADD COLUMN has_transcript INTEGER NOT NULL DEFAULT 0"),
+)
+
 
 def open_db(path: Path | None = None) -> sqlite3.Connection:
     """Open (or create) the SQLite index database.
@@ -95,9 +110,38 @@ def open_db(path: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+def _migrate_runs_v1_columns(conn: sqlite3.Connection) -> None:
+    """Add v1 additive columns to a pre-existing ``runs`` table.
+
+    Idempotent: detects existing columns via ``PRAGMA table_info(runs)`` and
+    only emits ``ALTER TABLE runs ADD COLUMN ...`` for missing ones. Safe on
+    fresh DBs (the ``CREATE TABLE`` in ``_SCHEMA_SQL`` already includes them).
+    """
+    rows = conn.execute("PRAGMA table_info(runs)").fetchall()
+    existing = {r[1] for r in rows}
+    for name, alter_clause in _RUNS_V1_ADDITIVE_COLUMNS:
+        if name in existing:
+            continue
+        conn.execute(f"ALTER TABLE runs {alter_clause}")
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Create all index tables and indexes. Idempotent."""
+    """Create all index tables and indexes. Idempotent.
+
+    Includes v1 additive ALTER TABLE migrations so connections opened against
+    a pre-v1 ``runs`` table gain ``run_kind`` / ``agent_label`` /
+    ``has_transcript`` without manual intervention.
+    """
     conn.executescript(_SCHEMA_SQL)
+    _migrate_runs_v1_columns(conn)
+    # Recreate v1 indexes after potential ALTER TABLE — `CREATE INDEX IF NOT
+    # EXISTS` is a no-op when they already exist from the initial script.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_runs_parent_run_id ON runs(parent_run_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_runs_kind_started ON runs(run_kind, started_at DESC)"
+    )
     conn.commit()
 
 
@@ -142,6 +186,11 @@ def index_run(conn: sqlite3.Connection, run_dir: Path) -> None:
         agent_mode = agent.get("mode")
         recording_mode = recording.get("mode")
         parent_run_id = run_doc.get("parent_run_id")
+        # v1 additive derived columns (S1.5.1 / Engineering Review R1): read
+        # directly from run.json — meta.json is no longer the source of truth.
+        run_kind = run_doc.get("run_kind") or "capture"
+        agent_label = agent.get("label")
+        has_transcript = 1 if bool(recording.get("has_transcript")) else 0
 
         if not (run_id and workspace_id and started_at and agent_name and agent_mode and recording_mode):
             logger.warning("sqlite_index: %s missing required run.json fields", run_dir)
@@ -161,13 +210,15 @@ def index_run(conn: sqlite3.Connection, run_dir: Path) -> None:
             INSERT OR REPLACE INTO runs (
                 run_id, workspace_id, parent_run_id, started_at, ended_at,
                 agent_name, agent_mode, recording_mode,
-                agent_outcome, eval_status, sealed_phase
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                agent_outcome, eval_status, sealed_phase,
+                run_kind, agent_label, has_transcript
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id, workspace_id, parent_run_id, started_at, ended_at,
                 agent_name, agent_mode, recording_mode,
                 agent_outcome, eval_status, sealed_phase,
+                run_kind, agent_label, has_transcript,
             ),
         )
 

@@ -362,3 +362,161 @@ def test_open_db_default_uses_agentlens_home(tmp_path: Path, monkeypatch: pytest
     init_schema(conn)
     conn.close()
     assert (tmp_path / "index.db").is_file()
+
+
+# ---------------------------------------------------------------------------
+# v1 derived columns (Task 2): run_kind, agent_label, has_transcript
+# ---------------------------------------------------------------------------
+
+
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return {r[1] for r in rows}
+
+
+def _index_names(conn: sqlite3.Connection, table: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA index_list({table})").fetchall()
+    return {r[1] for r in rows}
+
+
+def test_init_schema_adds_v1_derived_columns(tmp_path: Path) -> None:
+    conn = open_db(tmp_path / "index.db")
+    init_schema(conn)
+    cols = _table_columns(conn, "runs")
+    assert {"run_kind", "agent_label", "has_transcript"} <= cols
+    conn.close()
+
+
+def test_init_schema_creates_v1_indexes(tmp_path: Path) -> None:
+    conn = open_db(tmp_path / "index.db")
+    init_schema(conn)
+    idx = _index_names(conn, "runs")
+    assert "idx_runs_parent_run_id" in idx
+    assert "idx_runs_kind_started" in idx
+    conn.close()
+
+
+def test_init_schema_v1_migration_is_idempotent(tmp_path: Path) -> None:
+    conn = open_db(tmp_path / "index.db")
+    init_schema(conn)
+    init_schema(conn)  # second call must not raise nor duplicate columns
+    cols_list = [r[1] for r in conn.execute("PRAGMA table_info(runs)").fetchall()]
+    assert cols_list.count("run_kind") == 1
+    assert cols_list.count("agent_label") == 1
+    assert cols_list.count("has_transcript") == 1
+    conn.close()
+
+
+def test_init_schema_migrates_pre_v1_runs_table(tmp_path: Path) -> None:
+    """init_schema must add missing v1 columns to a pre-existing runs table."""
+    conn = open_db(tmp_path / "index.db")
+    # Simulate pre-v1 schema (no run_kind/agent_label/has_transcript).
+    conn.executescript(
+        """
+        CREATE TABLE runs (
+            run_id TEXT PRIMARY KEY,
+            workspace_id TEXT NOT NULL,
+            parent_run_id TEXT,
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            agent_name TEXT NOT NULL,
+            agent_mode TEXT NOT NULL,
+            recording_mode TEXT NOT NULL,
+            agent_outcome TEXT,
+            eval_status TEXT,
+            sealed_phase TEXT
+        );
+        """
+    )
+    conn.commit()
+    init_schema(conn)
+    cols = _table_columns(conn, "runs")
+    assert {"run_kind", "agent_label", "has_transcript"} <= cols
+    conn.close()
+
+
+def test_index_run_populates_capture_defaults(tmp_path: Path) -> None:
+    run_dir = _write_run_dir(tmp_path, RUN_ID_A)
+    conn = open_db(tmp_path / "index.db")
+    init_schema(conn)
+    index_run(conn, run_dir)
+    row = conn.execute(
+        "SELECT run_kind, agent_label, has_transcript FROM runs WHERE run_id = ?",
+        (RUN_ID_A,),
+    ).fetchone()
+    # No run_kind in run.json → defaults to 'capture'; no label → NULL;
+    # no recording.has_transcript → 0.
+    assert row == ("capture", None, 0)
+    conn.close()
+
+
+def test_index_run_populates_container_with_label_and_transcript(tmp_path: Path) -> None:
+    run_dir = tmp_path / "runs" / WS_ID / RUN_ID_A
+    run_dir.mkdir(parents=True)
+    run_doc = {
+        "schema": "agentlens.run.v1",
+        "run_id": RUN_ID_A,
+        "workspace_id": WS_ID,
+        "started_at": "2026-01-01T00:00:00Z",
+        "run_kind": "container",
+        "agent": {"name": "claude_code", "mode": "code", "label": "Container session"},
+        "workspace": {
+            "root_label": "./workspace",
+            "root_hash": "sha256:" + "0" * 64,
+            "id_basis": "path",
+        },
+        "recording": {
+            "mode": "full",
+            "adapter": "claude_code",
+            "has_transcript": True,
+        },
+    }
+    (run_dir / "run.json").write_text(json.dumps(run_doc), encoding="utf-8")
+
+    conn = open_db(tmp_path / "index.db")
+    init_schema(conn)
+    index_run(conn, run_dir)
+    row = conn.execute(
+        "SELECT run_kind, agent_label, has_transcript FROM runs WHERE run_id = ?",
+        (RUN_ID_A,),
+    ).fetchone()
+    assert row == ("container", "Container session", 1)
+    conn.close()
+
+
+def test_rebuild_index_preserves_v1_derived_columns(tmp_path: Path) -> None:
+    home = tmp_path
+    run_dir = home / "runs" / WS_ID / RUN_ID_A
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "schema": "agentlens.run.v1",
+                "run_id": RUN_ID_A,
+                "workspace_id": WS_ID,
+                "started_at": "2026-01-01T00:00:00Z",
+                "run_kind": "container",
+                "agent": {"name": "codex_cli", "mode": "cli", "label": "demo"},
+                "workspace": {
+                    "root_label": "./workspace",
+                    "root_hash": "sha256:" + "0" * 64,
+                    "id_basis": "path",
+                },
+                "recording": {
+                    "mode": "minimal",
+                    "adapter": "codex_cli",
+                    "has_transcript": True,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    count = rebuild_index(home)
+    assert count == 1
+    conn = open_db(home / "index.db")
+    row = conn.execute(
+        "SELECT run_kind, agent_label, has_transcript FROM runs WHERE run_id = ?",
+        (RUN_ID_A,),
+    ).fetchone()
+    assert row == ("container", "demo", 1)
+    conn.close()
