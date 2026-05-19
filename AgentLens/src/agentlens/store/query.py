@@ -52,6 +52,23 @@ _RUN_ROW_COLUMNS = (
 _REQUIRED_RUN_FIELDS = ("run_id", "workspace_id", "started_at")
 
 
+# Public subset of usage.json surfaced through query projections (spec §4.3).
+# These are the only fields propagated to ``--format json`` and the web API;
+# internal diagnostic counters stay on disk in usage.json. Keep this lean and
+# CONSISTENT between full-scan and SQLite-rehydrated paths.
+_USAGE_PUBLIC_KEYS: tuple[str, ...] = (
+    "input_tokens",
+    "output_tokens",
+    "cache_creation_tokens",
+    "cache_read_tokens",
+    "reasoning_tokens",
+    "cost_usd",
+    "pricing_source",
+    "confidence",
+    "model_breakdown",
+)
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -96,6 +113,95 @@ def _read_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
+def _project_usage(usage_doc: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Project the public subset of a usage.json doc, or ``None`` if absent.
+
+    Output keeps only the spec §4.3 user-facing fields (token counters, cost,
+    pricing source, confidence, model_breakdown). Diagnostics counters and the
+    schema_version sentinel stay on disk — they are not part of the projected
+    contract. Returns ``None`` when *usage_doc* is missing entirely so the
+    projector layer can distinguish container runs (no artifacts) from
+    imported runs (artifact present but with zero billable records).
+    """
+    if not isinstance(usage_doc, dict):
+        return None
+    out: dict[str, Any] = {}
+    for key in _USAGE_PUBLIC_KEYS:
+        if key in usage_doc:
+            out[key] = usage_doc[key]
+        else:
+            # Provide deterministic defaults so the shape stays stable even
+            # when an older usage.json predates a field.
+            if key == "model_breakdown":
+                out[key] = []
+            elif key == "confidence":
+                out[key] = "unknown"
+            elif key == "pricing_source":
+                out[key] = "unknown"
+            elif key == "cost_usd":
+                out[key] = None
+            else:
+                out[key] = 0
+    return out
+
+
+def _read_import_artifacts(
+    home: Path, workspace_id: str | None, run_id: str | None
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+    """Best-effort read of ``artifacts/{import_report,usage}.json`` for a run.
+
+    Returns ``(import_report, usage)`` — either may be ``None`` if the file
+    is absent or malformed. Container runs (run_open/seal lifecycle) never
+    produce these artifacts, so a ``(None, None)`` return is the expected
+    norm; only imported runs get enriched.
+
+    A missing ``workspace_id`` triggers a search across the runs root so the
+    SQLite-rehydrated path can call into this helper with the few identity
+    fields it has on hand.
+    """
+    if not run_id:
+        return None, None
+    runs_root = _runs_root(Path(home))
+    if not runs_root.is_dir():
+        return None, None
+    candidate_dirs: list[Path] = []
+    if workspace_id:
+        candidate_dirs.append(runs_root / workspace_id / run_id)
+    else:
+        for ws_dir in sorted(p for p in runs_root.iterdir() if p.is_dir()):
+            candidate = ws_dir / run_id
+            if candidate.is_dir():
+                candidate_dirs.append(candidate)
+                break
+    for run_dir in candidate_dirs:
+        if not run_dir.is_dir():
+            continue
+        artifacts_dir = run_dir / "artifacts"
+        report = _read_json(artifacts_dir / "import_report.json")
+        usage = _read_json(artifacts_dir / "usage.json")
+        return report, usage
+    return None, None
+
+
+def _enrich_row_with_artifacts(
+    row: dict[str, Any], home: Path
+) -> dict[str, Any]:
+    """Add display_title/usage/import_state to *row* in place and return it.
+
+    All three keys are emitted with explicit ``None`` defaults when artifacts
+    are absent so callers (projectors, API) get a stable shape regardless of
+    whether the run was imported.
+    """
+    report, usage_doc = _read_import_artifacts(
+        home, row.get("workspace_id"), row.get("run_id")
+    )
+    derived = (report or {}).get("derived") or {}
+    row["display_title"] = derived.get("display_title")
+    row["usage"] = _project_usage(usage_doc)
+    row["import_state"] = (report or {}).get("analysis_state")
+    return row
+
+
 def _row_from_run_dir(run_dir: Path) -> dict[str, Any] | None:
     """Build a canonical run-row dict from a run directory.
 
@@ -116,6 +222,12 @@ def _row_from_run_dir(run_dir: Path) -> dict[str, Any] | None:
     final_doc = _read_json(run_dir / "final.json") or {}
     eval_doc = _read_json(run_dir / "eval.json") or {}
     manifest_doc = _read_json(run_dir / "manifest.json") or {}
+    # Importer artifacts (spec §4.1, §4.3). Container runs lack them entirely;
+    # imported runs always have both. Always emit the three projected keys
+    # (with ``None`` when absent) so downstream projectors get a stable shape.
+    import_report = _read_json(run_dir / "artifacts" / "import_report.json")
+    usage_doc = _read_json(run_dir / "artifacts" / "usage.json")
+    derived = (import_report or {}).get("derived") or {}
 
     row: dict[str, Any] = {
         "run_id": run_doc.get("run_id"),
@@ -129,6 +241,9 @@ def _row_from_run_dir(run_dir: Path) -> dict[str, Any] | None:
         "agent_outcome": final_doc.get("agent_outcome"),
         "eval_status": eval_doc.get("status"),
         "sealed_phase": manifest_doc.get("sealed_phase"),
+        "display_title": derived.get("display_title"),
+        "usage": _project_usage(usage_doc),
+        "import_state": (import_report or {}).get("analysis_state"),
     }
     # Merge eval-doc top-level "status" for callers that look at the raw key.
     if eval_doc.get("status") is not None:
@@ -209,6 +324,25 @@ def _latest_via_sqlite(
     return dict(zip(_RUN_ROW_COLUMNS, row))
 
 
+def _enrich_sqlite_row(row: dict[str, Any], home: Path) -> dict[str, Any]:
+    """Add display_title/usage/import_state to a SQLite-rehydrated row.
+
+    Re-reads the importer artifacts off disk using ``(workspace_id, run_id)``
+    from *row* so the projected fields are byte-identical to the full-scan
+    path. We deliberately do NOT use the SQLite ``usage_confidence`` column
+    as a substitute for the full ``usage`` artifact (it's the index cache,
+    not the canonical doc — spec §S1.6.9).
+    """
+    report, usage_doc = _read_import_artifacts(
+        home, row.get("workspace_id"), row.get("run_id")
+    )
+    derived = (report or {}).get("derived") or {}
+    row["display_title"] = derived.get("display_title")
+    row["usage"] = _project_usage(usage_doc)
+    row["import_state"] = (report or {}).get("analysis_state")
+    return row
+
+
 def _latest_via_full_scan(
     home: Path, workspace_id: str | None
 ) -> dict[str, Any] | None:
@@ -240,7 +374,11 @@ def latest(home: Path, workspace_id: str | None = None) -> dict[str, Any] | None
             except sqlite3.Error:
                 pass
         if row is not None:
-            return row
+            # SQLite-backed path rehydrates the importer-artifact fields by
+            # re-reading the on-disk artifacts. This keeps full-scan parity
+            # for display_title / usage / import_state without bloating the
+            # index schema with the full usage payload.
+            return _enrich_sqlite_row(row, home)
         # SQLite returned no row OR query errored → cross-check via full-scan
         # before declaring "no runs"; the index may simply be empty (we still
         # want the canonical answer) or have been corrupted between connect()
@@ -464,6 +602,14 @@ def get_run(home: Path, run_id: str) -> dict[str, Any] | None:
     merged.update(final_doc)
     merged.update(eval_doc)
     merged.update(manifest_doc)
+    # Importer artifacts — projected as three additive keys. Container runs
+    # legitimately have ``(None, None, None)`` here.
+    import_report = _read_json(target / "artifacts" / "import_report.json")
+    usage_doc = _read_json(target / "artifacts" / "usage.json")
+    derived = (import_report or {}).get("derived") or {}
+    merged["display_title"] = derived.get("display_title")
+    merged["usage"] = _project_usage(usage_doc)
+    merged["import_state"] = (import_report or {}).get("analysis_state")
     return merged
 
 

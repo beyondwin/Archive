@@ -22,6 +22,9 @@ describe("RunListTable", () => {
               agent_outcome: "success",
               eval_status: "failed",
               sealed_phase: "final",
+              display_title: null,
+              usage: null,
+              import_state: null,
             },
           ]}
         />
@@ -49,6 +52,9 @@ describe("RunListTable", () => {
               eval_status: "failed",
               sealed_phase: "final",
               failures_count: 3,
+              display_title: null,
+              usage: null,
+              import_state: null,
             },
           ]}
         />
@@ -76,6 +82,9 @@ describe("RunListTable", () => {
               agent_outcome: "success",
               eval_status: "failed",
               sealed_phase: "final",
+              display_title: null,
+              usage: null,
+              import_state: null,
             },
           ]}
         />
@@ -102,6 +111,9 @@ describe("RunListTable", () => {
               agent_outcome: "failed",
               eval_status: "failed",
               sealed_phase: "final",
+              display_title: null,
+              usage: null,
+              import_state: null,
             },
           ]}
         />

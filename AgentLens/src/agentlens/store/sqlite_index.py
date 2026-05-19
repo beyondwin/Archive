@@ -47,7 +47,10 @@ CREATE TABLE IF NOT EXISTS runs (
     sealed_phase TEXT,
     run_kind TEXT DEFAULT 'capture',
     agent_label TEXT,
-    has_transcript INTEGER NOT NULL DEFAULT 0
+    has_transcript INTEGER NOT NULL DEFAULT 0,
+    display_title TEXT,
+    usage_confidence TEXT,
+    import_state TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_runs_workspace ON runs(workspace_id, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_runs_eval_status ON runs(eval_status);
@@ -90,6 +93,14 @@ _RUNS_V1_ADDITIVE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("run_kind", "ADD COLUMN run_kind TEXT DEFAULT 'capture'"),
     ("agent_label", "ADD COLUMN agent_label TEXT"),
     ("has_transcript", "ADD COLUMN has_transcript INTEGER NOT NULL DEFAULT 0"),
+    # task_18: cache importer-artifact-derived projections so common list
+    # queries can avoid the per-row artifact read. The canonical source of
+    # truth remains ``artifacts/{import_report,usage}.json`` — the query
+    # facade always re-reads them when projecting display_title / full
+    # usage / import_state.
+    ("display_title", "ADD COLUMN display_title TEXT"),
+    ("usage_confidence", "ADD COLUMN usage_confidence TEXT"),
+    ("import_state", "ADD COLUMN import_state TEXT"),
 )
 
 
@@ -199,11 +210,20 @@ def index_run(conn: sqlite3.Connection, run_dir: Path) -> None:
         final_doc = _read_json(run_dir / "final.json") or {}
         eval_doc = _read_json(run_dir / "eval.json") or {}
         manifest_doc = _read_json(run_dir / "manifest.json") or {}
+        # Importer artifacts (task_18). Container runs have none; imported
+        # runs always have both. Read best-effort and cache the derived
+        # display_title / usage_confidence / import_state columns.
+        import_report = _read_json(run_dir / "artifacts" / "import_report.json") or {}
+        usage_doc = _read_json(run_dir / "artifacts" / "usage.json") or {}
 
         ended_at = final_doc.get("ended_at")
         agent_outcome = final_doc.get("agent_outcome")
         eval_status = eval_doc.get("status")
         sealed_phase = manifest_doc.get("sealed_phase")
+        derived = import_report.get("derived") or {}
+        display_title = derived.get("display_title")
+        usage_confidence = usage_doc.get("confidence")
+        import_state = import_report.get("analysis_state")
 
         conn.execute(
             """
@@ -211,14 +231,16 @@ def index_run(conn: sqlite3.Connection, run_dir: Path) -> None:
                 run_id, workspace_id, parent_run_id, started_at, ended_at,
                 agent_name, agent_mode, recording_mode,
                 agent_outcome, eval_status, sealed_phase,
-                run_kind, agent_label, has_transcript
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                run_kind, agent_label, has_transcript,
+                display_title, usage_confidence, import_state
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 run_id, workspace_id, parent_run_id, started_at, ended_at,
                 agent_name, agent_mode, recording_mode,
                 agent_outcome, eval_status, sealed_phase,
                 run_kind, agent_label, has_transcript,
+                display_title, usage_confidence, import_state,
             ),
         )
 

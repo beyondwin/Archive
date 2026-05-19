@@ -2,6 +2,29 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import { getJson, getNdjson } from "./client";
 
+export type ModelUsageRow = {
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  reasoning_tokens: number;
+};
+
+export type UsageProjection = {
+  input_tokens: number;
+  output_tokens: number;
+  cache_creation_tokens: number;
+  cache_read_tokens: number;
+  reasoning_tokens: number;
+  cost_usd: number | null;
+  pricing_source: string;
+  confidence: "exact" | "estimated" | "unknown";
+  model_breakdown: ModelUsageRow[];
+};
+
+export type ImportState = "full" | "partial" | "skipped";
+
 export type RunRow = {
   run_id: string;
   workspace_id: string;
@@ -14,6 +37,11 @@ export type RunRow = {
   agent_outcome: string;
   eval_status: string;
   sealed_phase: string;
+  // task_18: importer-artifact projections. ``null`` for container runs that
+  // have no ``artifacts/{import_report,usage}.json``.
+  display_title: string | null;
+  usage: UsageProjection | null;
+  import_state: ImportState | null;
   failures_count?: number | null;
   failure_count?: number | null;
 };
@@ -59,6 +87,10 @@ export type RunDetail = {
   workspace_id: string;
   workspace_short: string;
   summary?: string;
+  // task_18: importer-artifact projections. ``null`` for container runs.
+  display_title: string | null;
+  usage: UsageProjection | null;
+  import_state: ImportState | null;
   failures: Failure[];
   risks: Risk[];
   artifacts?: RunArtifact[];
