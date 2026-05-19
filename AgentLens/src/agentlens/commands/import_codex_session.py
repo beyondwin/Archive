@@ -227,7 +227,9 @@ def _resolve_sources(
 
 def _import_one(source: Path, *, workspace_root: Path) -> Optional[Path]:
     """Import a single rollout JSONL; returns the run dir or ``None`` on no-op."""
-    parsed = parse_rollout(source)
+    # task_15 introduced a tuple return for parse_rollout; task_17 will
+    # plumb the ImportReport into artifacts/import_report.json.
+    parsed, _report = parse_rollout(source)
     import_key = f"codex-rollout:{parsed.session_id}"
 
     existing = _existing_run_for_import_key(import_key)

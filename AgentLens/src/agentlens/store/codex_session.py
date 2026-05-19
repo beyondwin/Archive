@@ -18,14 +18,19 @@ archived tree (e.g. a stale active copy after archival), :func:`find_rollout`
 returns the active path. The importer's ``input.import_key`` scan then
 deduplicates if a previous run already exists for that id.
 
-Defensive parsing: malformed JSONL lines are skipped (warning on stderr);
-the parser never raises on bad input. The session id comes from the
-filename UUID suffix (and is cross-checked against ``payload.id`` for
-``session_meta``).
+Defensive parsing: malformed/oversized lines and lines past the byte cap
+are tracked on the returned :class:`ImportReport` rather than raised. The
+session id comes from the filename UUID suffix (and is cross-checked
+against ``payload.id`` for ``session_meta``).
+
+Streaming model: the parser opens the source in ``"rb"`` mode and iterates
+line-by-line. We never call ``path.read_text()`` — large rollouts must not
+balloon to whole-file allocations.
 
 Public API:
-    ParsedCodexSession                          (dataclass)
-    parse_rollout(path) -> ParsedCodexSession
+    ParsedCodexSession                                       (dataclass)
+    parse_rollout(path, *, byte_cap=64MiB, deep_parse_only=False)
+        -> tuple[ParsedCodexSession, ImportReport]
     find_rollout(home, session_id, include_archived=False) -> Path | None
     list_rollouts(home, latest_only=False, since_epoch=None,
                   include_archived=False) -> list[Path]
@@ -34,10 +39,12 @@ from __future__ import annotations
 
 import json
 import re
-import sys
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
+
+from ..importers.report import ImportReport
 
 
 # Matches ``rollout-<ISO>-<UUIDv7>.jsonl`` and captures the UUIDv7.
@@ -46,6 +53,35 @@ from typing import Any, Iterable
 _ROLLOUT_RE = re.compile(
     r"^rollout-.+-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
     r"[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\.jsonl$"
+)
+
+
+# Per-line cap (2 MiB). Lines longer than this are skipped without
+# attempting json.loads — pathological vendor lines must not OOM the parser.
+_LINE_CAP_BYTES = 2 * 1024 * 1024
+
+# Default whole-file cap (64 MiB). Matches the spec §4.1 default; callers
+# may pass a smaller cap via ``--byte-cap`` / ``AGENTLENS_IMPORT_BYTE_CAP``.
+_DEFAULT_BYTE_CAP = 64 * 1024 * 1024
+
+# Vendor allowlist — only record `unsupported_type:<x>` for lines outside
+# this set. Adding a type here means "the parser understands this shape".
+# We include both ``tool_use`` (used by older rollouts and fixtures) and
+# ``tool_call`` (newer name) defensively so neither inflates the unsupported
+# counter on real-world data.
+_KNOWN_CODEX_TYPES: frozenset[str] = frozenset(
+    {
+        "session_meta",
+        "message",
+        "tool_use",
+        "tool_call",
+        "tool_result",
+        "reasoning",
+        "turn_context",
+        "event_msg",
+        "response_item",
+        "session_end",
+    }
 )
 
 
@@ -71,6 +107,12 @@ class ParsedCodexSession:
         events: opaque ``codex.*`` event dicts (sans schema/event_id/run_id;
             the importer fills those in).
         line_count: number of *parseable* JSONL lines (incl. session_meta).
+        first_user_message_text: text from the first user message in the
+            rollout (``None`` if no user message seen).
+        usage_records: raw line dicts for every billable Codex record
+            (``turn_context``/``event_msg``/``response_item`` carrying
+            ``payload.info``), preserved verbatim so :func:`extract_usage`
+            can aggregate.
     """
 
     session_id: str
@@ -85,31 +127,39 @@ class ParsedCodexSession:
     ended_at: str | None
     events: list[dict[str, Any]] = field(default_factory=list)
     line_count: int = 0
+    first_user_message_text: str | None = None
+    usage_records: list[dict[str, Any]] = field(default_factory=list)
 
 
-def _iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
-    """Yield parsed JSON objects from *path*, skipping malformed lines."""
+def _iter_raw_lines(
+    path: Path, byte_cap: int, report: ImportReport
+) -> Iterator[tuple[int, int, bytes]]:
+    """Yield ``(line_number, byte_offset, raw_bytes)`` until byte cap or EOF.
+
+    ``byte_offset`` is the offset where this line *started* in the file.
+    When the next line would push the running cursor past ``byte_cap``, the
+    iterator stops *without* yielding that line and marks ``report``'s
+    byte-cap-hit flag.
+    """
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        print(
-            f"warning: cannot read {path}: {exc}", file=sys.stderr
-        )  # pragma: no cover
+        fh = path.open("rb")
+    except OSError:
         return
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            print(
-                f"warning: skipping malformed line in {path.name}",
-                file=sys.stderr,
-            )
-            continue
-        if isinstance(obj, dict):
-            yield obj
+    with fh:
+        running_offset = 0
+        line_number = 0
+        for raw in fh:
+            line_number += 1
+            line_start = running_offset
+            line_len = len(raw)
+            if line_start + line_len > byte_cap:
+                report.record_byte_cap_hit()
+                return
+            running_offset += line_len
+            stripped = raw.rstrip(b"\r\n")
+            if not stripped:
+                continue
+            yield line_number, line_start, stripped
 
 
 def _session_id_from_filename(path: Path) -> str:
@@ -117,7 +167,6 @@ def _session_id_from_filename(path: Path) -> str:
     m = _ROLLOUT_RE.match(path.name)
     if m:
         return m.group(1)
-    # Fall back to filename stem; the importer treats this as opaque.
     return path.stem
 
 
@@ -142,7 +191,7 @@ def _line_to_codex_event(line: dict[str, Any]) -> dict[str, Any] | None:
     ``type`` + ``ts`` + opaque payload so the importer can stream them
     through :func:`store.writer.append_event`. Lines without a string
     ``timestamp`` are dropped (the AgentLens event schema requires a
-    string ``ts``).
+    string ``ts``) — but they still count as ``parsed`` for the report.
     """
     raw_type = line.get("type")
     if not isinstance(raw_type, str):
@@ -155,22 +204,124 @@ def _line_to_codex_event(line: dict[str, Any]) -> dict[str, Any] | None:
         return None
 
     event_type = f"codex.{raw_type}"
-    # Build an opaque payload that strips top-level type/timestamp; the
-    # rest is preserved so the dashboard can render whatever the rollout
-    # carried.
     payload = {k: v for k, v in line.items() if k not in ("type", "timestamp")}
     return {"type": event_type, "ts": ts, "payload": payload}
 
 
-def parse_rollout(path: Path) -> ParsedCodexSession:
-    """Parse a Codex rollout JSONL into a :class:`ParsedCodexSession`.
+def _extract_first_user_text(line: dict[str, Any]) -> str | None:
+    """Return text from a Codex user-message line, or ``None``.
 
-    The first line should be a ``session_meta`` event; if it is missing
-    the parser still returns a :class:`ParsedCodexSession` with
-    ``originator=None`` so the importer can decide how to handle it.
+    Codex messages may appear in two shapes:
+      * Top-level: ``{"type":"message","role":"user","content":...}``
+      * Nested: ``{"type":"message","payload":{"role":"user","content":...}}``
+
+    ``content`` may be a string OR a list of content blocks; only blocks
+    with ``type=="text"`` (or ``type=="input_text"``) contribute, mirroring
+    the Claude analog. Returns ``None`` if the line isn't a user message
+    or no text content is present.
+    """
+    if line.get("type") != "message":
+        return None
+    # Prefer top-level role/content; fall back to payload.* for newer rollouts.
+    role = line.get("role")
+    content: Any = line.get("content")
+    if role is None or content is None:
+        payload = line.get("payload")
+        if isinstance(payload, dict):
+            if role is None:
+                role = payload.get("role")
+            if content is None:
+                content = payload.get("content")
+    if role != "user":
+        return None
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if not isinstance(block, dict):
+                continue
+            btype = block.get("type")
+            if btype not in ("text", "input_text"):
+                continue
+            text = block.get("text")
+            if isinstance(text, str):
+                parts.append(text)
+        return "\n".join(parts) if parts else None
+    return None
+
+
+def _is_billable_codex(line: dict[str, Any]) -> bool:
+    """A line counts as billable iff it carries ``payload.info`` shape.
+
+    Codex stores token usage on records whose ``payload.info`` is a dict
+    (e.g. ``turn_context``, ``event_msg``, ``response_item``). We deliberately
+    accept records whose ``payload.info.tokens`` is missing — the
+    confidence heuristic in :func:`extract_usage` depends on seeing
+    "billable record without tokens" cases.
+    """
+    payload = line.get("payload")
+    if not isinstance(payload, dict):
+        return False
+    return isinstance(payload.get("info"), dict)
+
+
+def parse_rollout(
+    path: Path,
+    *,
+    byte_cap: int = _DEFAULT_BYTE_CAP,
+    deep_parse_only: bool = False,
+) -> tuple[ParsedCodexSession, ImportReport]:
+    """Parse a Codex rollout JSONL into ``(parsed, report)``.
+
+    Args:
+        path: source ``rollout-<ISO>-<UUIDv7>.jsonl``.
+        byte_cap: maximum bytes to deep-parse. Lines past the cap are
+            dropped and ``report.byte_cap_hit`` is set.
+        deep_parse_only: when True, files whose total size already exceeds
+            ``byte_cap`` are short-circuited — a stub ParsedCodexSession
+            (no events, no boundaries) is returned and
+            ``report.deep_parse_only_skipped`` is set so callers can route
+            the import to a metadata-only path.
+
+    Returns:
+        ``(parsed, report)`` — `parsed` carries the events the importer
+        must turn into ``codex.*`` events; `report` carries the spec §4.1
+        accounting (skips, byte-cap status, parsed total).
     """
     p = Path(path)
     session_id = _session_id_from_filename(p)
+    start_ns = time.perf_counter_ns()
+
+    report = ImportReport(source="codex-rollout", source_session_id=session_id)
+    report.set_source_path(p)
+    report.byte_cap_bytes = byte_cap
+    report.byte_cap_source = "default"
+
+    try:
+        source_bytes = p.stat().st_size
+    except OSError:
+        source_bytes = 0
+    report.source_bytes = source_bytes
+
+    # Short-circuit: source larger than cap AND caller asked for deep-only.
+    if source_bytes > byte_cap and deep_parse_only:
+        report.deep_parse_only_skipped = True
+        duration_ms = (time.perf_counter_ns() - start_ns) // 1_000_000
+        report.finalize(int(duration_ms))
+        stub = ParsedCodexSession(
+            session_id=session_id,
+            path=p,
+            originator=None,
+            cli_version=None,
+            cwd=None,
+            model_provider=None,
+            source=None,
+            parent_thread_id=None,
+            started_at=None,
+            ended_at=None,
+        )
+        return stub, report
 
     originator: str | None = None
     cli_version: str | None = None
@@ -184,28 +335,64 @@ def parse_rollout(path: Path) -> ParsedCodexSession:
     events: list[dict[str, Any]] = []
     line_count = 0
     saw_meta = False
+    first_user_text: str | None = None
+    usage_records: list[dict[str, Any]] = []
 
-    for line in _iter_jsonl(p):
+    for line_number, byte_offset, raw_bytes in _iter_raw_lines(
+        p, byte_cap, report
+    ):
+        # Per-line oversized guard *before* json.loads.
+        if len(raw_bytes) > _LINE_CAP_BYTES:
+            report.record_skip("line_too_large", line_number, byte_offset)
+            continue
+
+        try:
+            obj = json.loads(raw_bytes)
+        except json.JSONDecodeError:
+            report.record_skip("json_decode", line_number, byte_offset)
+            continue
+
+        if not isinstance(obj, dict):
+            type_label = type(obj).__name__
+            report.record_skip(
+                f"unsupported_type:{type_label}", line_number, byte_offset
+            )
+            continue
+
+        raw_type = obj.get("type")
+        if isinstance(raw_type, str) and raw_type not in _KNOWN_CODEX_TYPES:
+            report.record_skip(
+                f"unsupported_type:{raw_type}", line_number, byte_offset
+            )
+            continue
+
+        # Supported line — count it before any per-shape handling, so even
+        # known-type lines without ``timestamp`` (which yield no event)
+        # still inflate ``parsed`` rather than disappear from accounting.
+        report.record_parsed()
         line_count += 1
-        if not saw_meta and line.get("type") == "session_meta":
+
+        # Session meta handling — preserve existing behaviour: pull
+        # originator/cli_version/cwd/model_provider/source plus boundary
+        # start. Do NOT re-emit as a codex.session_meta event.
+        if not saw_meta and raw_type == "session_meta":
             saw_meta = True
-            payload = line.get("payload")
+            payload = obj.get("payload")
             if isinstance(payload, dict):
                 pid = payload.get("id")
                 if isinstance(pid, str) and pid:
                     session_id = pid
-                originator = payload.get("originator") if isinstance(
-                    payload.get("originator"), str
-                ) else None
-                cli_version = payload.get("cli_version") if isinstance(
-                    payload.get("cli_version"), str
-                ) else None
-                cwd = payload.get("cwd") if isinstance(
-                    payload.get("cwd"), str
-                ) else None
-                model_provider = payload.get("model_provider") if isinstance(
-                    payload.get("model_provider"), str
-                ) else None
+                    # Sync the report's session id label too.
+                    report.source_session_id = pid
+                    report.set_source_path(p)
+                orig_raw = payload.get("originator")
+                originator = orig_raw if isinstance(orig_raw, str) else None
+                cli_raw = payload.get("cli_version")
+                cli_version = cli_raw if isinstance(cli_raw, str) else None
+                cwd_raw = payload.get("cwd")
+                cwd = cwd_raw if isinstance(cwd_raw, str) else None
+                mp_raw = payload.get("model_provider")
+                model_provider = mp_raw if isinstance(mp_raw, str) else None
                 source = payload.get("source")
                 parent_thread_id = _extract_parent_thread_id(source)
                 ts = payload.get("timestamp")
@@ -213,18 +400,31 @@ def parse_rollout(path: Path) -> ParsedCodexSession:
                     started_at = ts
             continue
 
-        # Body line: maybe emit a codex.* event AND track the latest ts.
-        ts = line.get("timestamp")
+        # Body line — track latest timestamp + maybe emit codex.* event.
+        ts = obj.get("timestamp")
         if isinstance(ts, str):
             ended_at = ts
-        evt = _line_to_codex_event(line)
+        evt = _line_to_codex_event(obj)
         if evt is not None:
             events.append(evt)
+
+        # First user message extraction.
+        if first_user_text is None:
+            candidate = _extract_first_user_text(obj)
+            if candidate is not None:
+                first_user_text = candidate
+
+        # Usage record capture.
+        if _is_billable_codex(obj):
+            usage_records.append(obj)
 
     if ended_at is None:
         ended_at = started_at
 
-    return ParsedCodexSession(
+    duration_ms = (time.perf_counter_ns() - start_ns) // 1_000_000
+    report.finalize(int(duration_ms))
+
+    parsed = ParsedCodexSession(
         session_id=session_id,
         path=p,
         originator=originator,
@@ -237,7 +437,10 @@ def parse_rollout(path: Path) -> ParsedCodexSession:
         ended_at=ended_at,
         events=events,
         line_count=line_count,
+        first_user_message_text=first_user_text,
+        usage_records=usage_records,
     )
+    return parsed, report
 
 
 def _sessions_root(home: Path) -> Path:
