@@ -135,10 +135,12 @@ GI
   local eval_preamble="EVAL_RUN: This is an automated regression test of the kws-claude-multi-agent-executor skill. Execute the skill exactly as written — do not substitute direct edits for the orchestrator workflow, do not ask clarifying questions, do not bypass steps based on perceived task triviality. The eval is scored on BOTH outcome correctness AND skill adherence (worktree created, state.json populated, sub-agent commits visible)."
   local start_ts
   start_ts="$(date +%s)"
-  # Drop a startmark file so the adherence post-check can use `find -newer`
-  # to scope which learning-log run dirs (if any) belong to this fixture.
-  touch "$tmpdir/.harness/run.jsonl.startmark"
-  ( cd "$tmpdir" && \
+  # Per-fixture isolated AgentLens home so adherence detection scans only
+  # events emitted by THIS fixture, never the user's main DB. Inherited by
+  # the headless claude child via the environment.
+  local agentlens_home="$tmpdir/.harness/agentlens"
+  mkdir -p "$agentlens_home"
+  ( cd "$tmpdir" && AGENTLENS_HOME="$agentlens_home" \
     claude -p --dangerously-skip-permissions \
       --output-format stream-json --verbose \
       "${eval_preamble}
@@ -198,21 +200,28 @@ GI
   fi
   echo "  rubric pass_rate: $rubric_pass_rate"
 
-  # Learning-log adherence check (v2.8.1) — detect whether the orchestrator
-  # actually executed Step 7.5 init-run. Grep run.jsonl for the
-  # LEARNING_LOG_INIT marker, then cross-check by scanning ~/.claude/learning
-  # for a run dir whose started_at falls within the fixture's wall window.
-  local llog_marker_count
-  llog_marker_count="$(grep -o 'LEARNING_LOG_INIT:' "$tmpdir/.harness/run.jsonl" 2>/dev/null | wc -l | tr -d ' ')"
-  local llog_run_dirs
-  llog_run_dirs="$(find "$HOME/.claude/learning/kws-claude-multi-agent-executor/runs" -type d -name "*-eval-*" -newer "$tmpdir/.harness/run.jsonl.startmark" 2>/dev/null | wc -l | tr -d ' ' || echo 0)"
-  local adherence
-  if [ "$llog_marker_count" -gt 0 ]; then
-    adherence="yes (marker emitted)"
-  else
-    adherence="no (Step 7.5 skipped)"
+  # Learning-log adherence check (v2.17+) — detect whether the orchestrator
+  # actually executed the Phase 0 boundary emit step that publishes
+  # `kws-cme.phase_0_started` to AgentLens. Pre-v2.17 evals grepped run.jsonl
+  # for a `LEARNING_LOG_INIT:` marker; the AgentLens cutover (Task 11)
+  # removed that helper. The equivalent AgentLens query against the
+  # per-fixture isolated AGENTLENS_HOME is now authoritative.
+  local llog_marker_count=0
+  local agentlens_bin
+  agentlens_bin="$(command -v agentlens 2>/dev/null || true)"
+  if [ -n "$agentlens_bin" ] && [ -d "$agentlens_home/runs" ]; then
+    llog_marker_count="$(AGENTLENS_HOME="$agentlens_home" "$agentlens_bin" events \
+        --type 'kws-cme.phase_0_started' 2>/dev/null | wc -l | tr -d ' ' || echo 0)"
   fi
-  echo "  learning_log_adherence: $adherence (markers=$llog_marker_count)"
+  local adherence
+  if [ -z "$agentlens_bin" ]; then
+    adherence="unknown (agentlens CLI not on PATH — install AgentLens to enable adherence detection)"
+  elif [ "$llog_marker_count" -gt 0 ]; then
+    adherence="yes (AgentLens event emitted)"
+  else
+    adherence="no (Phase 0 boundary emit skipped)"
+  fi
+  echo "  learning_log_adherence: $adherence (events=$llog_marker_count)"
 
   local judge_prompt
   judge_prompt="$(python3 -c '
