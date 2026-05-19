@@ -15,6 +15,7 @@ import hashlib
 import os
 import shutil
 import stat
+import subprocess
 import sys
 from pathlib import Path
 from typing import Literal
@@ -180,28 +181,86 @@ def _resolve_agentlens_cli() -> str:
     return ""
 
 
+def _rollback_install_shim(
+    shim: Path,
+    lockfile: Path,
+    prior_shim_bytes: bytes | None,
+    prior_shim_mode: int | None,
+    prior_lockfile_bytes: bytes | None,
+) -> None:
+    """Delete the just-written shim+lockfile; restore prior snapshots if any.
+
+    Helper for the Layer-4 post-install selftest probe (spec §S1.4.4). When
+    the probe fails, we must leave the filesystem in its pre-install state:
+    either no files (fresh install rolled back) or the original bytes
+    (re-install rolled back).
+    """
+    shim.unlink(missing_ok=True)
+    lockfile.unlink(missing_ok=True)
+    if prior_shim_bytes is not None:
+        shim.write_bytes(prior_shim_bytes)
+        if prior_shim_mode is not None:
+            os.chmod(shim, prior_shim_mode)
+    if prior_lockfile_bytes is not None:
+        lockfile.write_bytes(prior_lockfile_bytes)
+
+
+def _parse_selftest_stdout(stdout_text: str) -> dict[str, str]:
+    """Parse `key=value` lines from selftest stdout into a dict."""
+    parsed: dict[str, str] = {}
+    for line in stdout_text.splitlines():
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        parsed[key] = value
+    return parsed
+
+
 def install_shim(
-    name: str, real_path: Path, *, allow_wrapper: bool = False
+    name: str,
+    real_path: Path,
+    *,
+    allow_wrapper: bool = False,
+    skip_selftest: bool = False,
 ) -> None:
     """Install a shim for ``name`` pointing at ``real_path``.
 
-    Algorithm (spec §S1.6.18):
+    Algorithm (spec §S1.6.18, §S1.4.4):
 
     1. Create ``~/.agentlens/shims`` (0700, owner-verified).
-    2. Resolve ``real_path`` to an absolute, existing path.
-    3. Self-reference / ``.app`` / wrapper-signature guards.
-    4. Compute real binary sha256.
-    5. Write ``<name>.real`` lockfile (path=..., sha256=...).
-    6. Write ``<name>`` shim script (0755) from ``SHIM_TEMPLATE``.
+    2. Snapshot any prior shim + lockfile bytes (for Layer-4 rollback).
+    3. Resolve ``real_path`` to an absolute, existing path.
+    4. Self-reference / ``.app`` / wrapper-signature guards.
+    5. Compute real binary sha256.
+    6. Write ``<name>.real`` lockfile (path=..., sha256=...).
+    7. Write ``<name>`` shim script (0755) from ``SHIM_TEMPLATE``.
+    8. Run the Layer-4 post-install selftest probe (unless ``skip_selftest``).
+       On any probe failure, delete the just-written files, restore prior
+       snapshots if present, and raise ``RuntimeError``.
 
     Parameters:
         allow_wrapper: When ``True``, bypass the Layer-1 wrapper-signature
             scan (spec §S1.4.1). Reserved for ``--no-wrapper-detect`` opt-in;
             the self-reference and ``.app`` guards still apply.
+        skip_selftest: When ``True``, bypass the Layer-4 selftest probe.
+            Reserved for ``--skip-selftest`` opt-in and for unit-test
+            fixtures that intentionally install non-executable byte files.
     """
     from .wrapper_detect import scan_real_candidate
 
     shim_dir = _ensure_shim_dir()
+    # Snapshot prior shim + lockfile (Layer-4 rollback). Read into memory
+    # BEFORE any writes so a failed selftest can restore them verbatim.
+    shim = shim_dir / name
+    lockfile = shim_dir / f"{name}.real"
+    prior_shim_bytes: bytes | None = None
+    prior_shim_mode: int | None = None
+    prior_lockfile_bytes: bytes | None = None
+    if shim.exists():
+        prior_shim_bytes = shim.read_bytes()
+        prior_shim_mode = stat.S_IMODE(shim.stat().st_mode)
+    if lockfile.exists():
+        prior_lockfile_bytes = lockfile.read_bytes()
     real = Path(real_path).resolve(strict=True)
     # Self-reference guard (spec §S1.4.2): refuse to bake a binary that is
     # itself inside the AgentLens shim directory. This catches the common
@@ -238,13 +297,11 @@ def install_shim(
             )
     digest = _sha256_file(real)
 
-    lockfile = shim_dir / f"{name}.real"
     lockfile.write_text(
         f"path={real}\nsha256={digest}\n",
         encoding="utf-8",
     )
 
-    shim = shim_dir / name
     agent_name = _BIN_TO_AGENT_NAME.get(name, "generic")
     agentlens_bin = _resolve_agentlens_cli()
     shim.write_text(
@@ -254,6 +311,54 @@ def install_shim(
         encoding="utf-8",
     )
     os.chmod(shim, 0o755)
+
+    if skip_selftest:
+        return
+
+    # Layer-4 post-install selftest probe (spec §S1.4.4). We intentionally
+    # simulate the user's future PATH by putting the shim dir first so the
+    # depth-1 invocation re-resolves through it if the real binary is itself
+    # a wrapper that loops back into AgentLens.
+    probe_env = {
+        **os.environ,
+        "PATH": f"{shim.parent}{os.pathsep}{os.environ.get('PATH', '')}",
+        "AGENTLENS_INSTALL_SELFTEST": "1",
+        "AGENTLENS_INSTALL_SELFTEST_DEPTH": "0",
+        "AGENTLENS_INSTALL_SELFTEST_SHIM": str(shim),
+    }
+    try:
+        result = subprocess.run(
+            [str(shim), "--version"],
+            timeout=5,
+            capture_output=True,
+            env=probe_env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        _rollback_install_shim(
+            shim, lockfile, prior_shim_bytes, prior_shim_mode, prior_lockfile_bytes
+        )
+        raise RuntimeError(
+            f"install_shim selftest timed out after 5s for {shim}"
+        ) from exc
+
+    stdout_text = result.stdout.decode("utf-8", errors="replace")
+    stderr_text = result.stderr.decode("utf-8", errors="replace")
+    parsed = _parse_selftest_stdout(stdout_text)
+    ok = (
+        result.returncode == 0
+        and parsed.get("chain_depth") == "1"
+        and parsed.get("shim_path") == str(shim)
+        and "agentlens_selftest_reentry" not in parsed
+    )
+    if not ok:
+        _rollback_install_shim(
+            shim, lockfile, prior_shim_bytes, prior_shim_mode, prior_lockfile_bytes
+        )
+        raise RuntimeError(
+            f"install_shim selftest failed for {shim}: "
+            f"exit={result.returncode} stdout={stdout_text!r} stderr={stderr_text!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
