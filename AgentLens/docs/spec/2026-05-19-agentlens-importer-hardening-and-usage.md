@@ -9,15 +9,28 @@
 
 ---
 
+## 0.1 Deep Source Review Corrections (2026-05-19)
+
+This section supersedes earlier wording in this spec where there is a conflict. The review checked the current source at `019347ee37747572c28943e80fb18cfad6e58651`; `graphify-out/GRAPH_REPORT.md` was read first per repo policy, but it was built from older commit `2b964330`, so source files below are authoritative.
+
+1. **Importer lifecycle correction.** `commands/import_claude_session.py` and `commands/import_codex_session.py` currently write `run.json`, `events.jsonl`, a transcript copy, and a workspace pointer only. They do **not** write `final.json`, `eval.json`, `manifest.json`, or `index.db` rows. This feature must add an importer finalization pipeline before any claim that `import_report.json` / `usage.json` are manifest-covered or dashboard-queryable.
+2. **Evaluator first-event correction.** The evaluator requires the first event to be `run.started`. Current importers begin with `command.started`. Import hardening must prepend a `run.started` event and keep the existing `command.started` / `command.finished` events for compatibility.
+3. **Parser memory correction.** Both `_iter_jsonl()` helpers currently call `path.read_text()` and split the entire file. The byte cap cannot be a wrapper around the existing iterator; the parser must be replaced with a binary streaming iterator that tracks byte offsets and line sizes before JSON decoding.
+4. **Projection contract correction.** Adding `display_title`, `usage`, and `import_state` is not only a `store/query.py` change. It also requires `commands/_format.py`, snapshot fixtures under `tests/fixtures/format_snapshots/`, generated frontend types (`web/scripts/gen-types.ts` output), and `/api/v1/runs` route payload coverage.
+5. **Title source correction.** Current parsed dataclasses do not carry a first user message. The parser must capture `first_user_message_text` while streaming. The redacted display title is **not** written to `run.json`; it is stored as derived data in `artifacts/import_report.json` and may be cached in SQLite.
+6. **Transcript privacy correction.** Existing importers copy vendor JSONL with `shutil.copyfile()`; that copy bypasses `store.writer` redaction. This feature must not claim that imported transcripts are newly redacted. It may only claim that the new `import_report.json` and `usage.json` artifacts avoid full prompt/output content, except for the derived redacted title field.
+7. **Idempotency correction.** Existing `input.import_key` behaviour is a true no-op on re-import. Re-importing an already-imported session must not overwrite `import_report.json` or `usage.json` in this patch. A future `--refresh` flag can revisit that policy.
+
 ## 1. Problem
 
-The current importers (`commands/import_claude_session.py`, `commands/import_codex_session.py`) handle the happy path: locate JSONL, parse line-by-line, write canonical artifacts, seal the manifest. Three gaps surface as soon as real-world history is imported:
+The current importers (`commands/import_claude_session.py`, `commands/import_codex_session.py`) handle the narrow happy path: locate JSONL, parse parseable lines, write `run.json` / `events.jsonl`, copy the transcript, and stop. Four gaps surface as soon as real-world history is imported:
 
 1. **Partial parses are invisible.** A malformed or oversized line is skipped with a `stderr` warning and the import is otherwise reported as successful. Downstream tooling cannot tell "fully parsed" from "best-effort parsed" from "skipped".
 2. **No human-readable run identity.** The dashboard runs list (per the v1 design spec) needs a `display_title`, but importers never extract one. The choices today are `run_id` (random uuid) or empty.
 3. **No usage/cost summary.** Tools like `ccusage` already answer "what did this run cost?" from raw vendor logs. AgentLens has the strictly better substrate (sealed, evidence-linked) but does not expose token or cost data at all, so users still leave AgentLens to answer that question.
+4. **Imported runs are not sealed/indexed.** The current importer code does not run the wrapper's post-drain pipeline (`final.json` → `seal(pre_eval)` → `eval.json` → `seal(final)` → `index_run`). That makes current docs that say transcripts are manifest-covered aspirational rather than true.
 
-This spec fills the three gaps with **additive, contract-stable** changes. Nothing in the locked v1 schema moves. All new fields land as artifacts or query projections.
+This spec fills these gaps with **additive, contract-stable** changes. Nothing in the locked v1 schema moves. All new fields land as artifacts or query projections.
 
 ## 2. Goals & Non-Goals
 
@@ -26,7 +39,8 @@ This spec fills the three gaps with **additive, contract-stable** changes. Nothi
 - Make every importer emit a **structured `import_report`** that distinguishes `full` / `partial` / `skipped` analysis and counts skipped lines, oversized rows, and unsupported event types.
 - Bound importer memory and runtime via an explicit per-file **byte cap**, with `partial` semantics when the cap is hit.
 - Extract a redacted **`display_title`** from each session via a pure heuristic; surface it through query projections only.
-- Emit an additive **`usage`** artifact + query projection (input/output/cache/reasoning tokens, optional cost, mandatory `confidence` field).
+- Emit an additive **`usage`** artifact + query projection for every imported run (input/output/cache/reasoning tokens, optional cost, mandatory `confidence` field).
+- Finalize imported runs so `final.json`, `eval.json`, `manifest.json`, and the SQLite cache reflect imported sessions like other capture runs.
 - Keep all new data covered by `manifest.json` like every other artifact.
 
 ### Non-Goals
@@ -34,6 +48,7 @@ This spec fills the three gaps with **additive, contract-stable** changes. Nothi
 - Modifying the locked v1 `run.json` / `events.jsonl` / `final.json` / `eval.json` schemas.
 - Pricing-table maintenance and currency conversion (v1.x emits `pricing_source="unknown"` and leaves `cost_usd=null`; pricing comes later).
 - Sanitized transcript copies for export (§5.5 — deferred).
+- Redacting or rewriting the existing raw transcript artifact. This patch may add a future-safe hook, but safe transcript export/sanitization remains §5.5.
 - TUI / fuzzy search (§5.7 — deferred).
 - Vendor session mutation. Importers remain read-only against `~/.claude/projects/*` and `~/.codex/{sessions,archived_sessions}/*`.
 
@@ -76,6 +91,11 @@ Shape (frozen for v1.x; additive thereafter):
     "path": "artifacts/transcripts/<source-session-id>.jsonl",
     "bytes": 12345678
   } | null,
+  "derived": {
+    "display_title": "<redacted title or null>",
+    "title_source": "explicit|first_user_message|null",
+    "title_algorithm": "agentlens.title.v1"
+  },
   "duration_ms": 0,
   "byte_cap_source": "default" | "env:AGENTLENS_IMPORT_BYTE_CAP" | "flag:--byte-cap"
 }
@@ -87,17 +107,19 @@ Shape (frozen for v1.x; additive thereafter):
 |-----------|------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `full`    | All lines parsed within `byte_cap_bytes` and no skips of any kind.                                                                                   |
 | `partial` | At least one line skipped (malformed / oversized / unsupported), OR `byte_cap_hit=true`. Run is still written; canonical events come from parsed lines only. |
-| `skipped` | Source larger than `byte_cap_bytes` AND `--deep-parse-only` opt-out is set. Run is created (so the user has a record), `events.jsonl` is empty, transcript artifact is still copied. |
+| `skipped` | Source larger than `byte_cap_bytes` AND `--deep-parse-only` is set. Run is created (so the user has a record), no vendor-derived events are emitted, transcript artifact is still copied. |
 
 **Byte cap defaults:**
 
-- Default: 64 MiB (`67_108_864` bytes). Rationale: Codex rollouts of dozens of MB are common; loading more than this into memory + jsonl-parsing line-by-line still works, but bounded.
+- Default: 64 MiB (`67_108_864` bytes). Rationale: Codex rollouts of dozens of MB are common; parsing more than this line-by-line may still work, but the default import path must remain bounded and predictable.
 - Override 1: `AGENTLENS_IMPORT_BYTE_CAP=<bytes>` environment variable.
 - Override 2: `--byte-cap <bytes>` on the import command.
 
 Cap is **per-source-file**; multi-session imports re-apply it per session.
 
-**Per-line size cap:** any single JSONL row over **2 MiB** is treated as `skipped_oversized` (counted in the report, never loaded into memory beyond the size probe).
+**Per-line size cap:** any single JSONL row over **2 MiB** is treated as `skipped_oversized` (counted in the report, never passed to `json.loads`).
+
+**Unsupported event counting:** a valid vendor line that is intentionally not normalized into an AgentLens event is not automatically unsupported. For Claude, top-level `user`, `assistant`, `system`, and tool-result shapes are supported even if only `assistant.message.content[].tool_use` becomes a `claude.tool_use` event. For Codex, known rollout types such as `session_meta`, `message`, `tool_use`, `tool_result`, `reasoning`, and lifecycle/status records are supported. Increment `skipped_unsupported_type` only when the parser cannot classify the line at all.
 
 ### 3.2 Display-title heuristic
 
@@ -133,12 +155,12 @@ def extract_display_title(
 
 **Where it runs:**
 
-- Claude importer: `first_user_message` = first event with `role=="user"` (text content), pre-redaction.
-- Codex importer: `first_user_message` = first event with `kind=="user_message"` in the rollout's `payload.content`.
+- Claude importer: `first_user_message` = first top-level `type=="user"` line whose `message.content` is a string or text block list.
+- Codex importer: `first_user_message` = first body line with `type=="message"` and `role=="user"`; content comes from `content` or `payload.content` depending on rollout shape.
 
-**Storage:** the title is **not** written to canonical `run.json`. It lives in the query projection only (see §3.4). The full first-user-message is **not** persisted — the heuristic runs in-memory during import, only the resulting title (or `None`) is emitted as a derived field on the run JSON projection. This keeps the §2 redaction promise: full prompts never persist.
+**Storage:** the title is **not** written to canonical `run.json`. The redacted title (or `null`) is stored under `import_report.derived.display_title`, then surfaced in the query projection (see §3.4) and optionally cached in SQLite. The full first-user-message is not persisted by this feature, but the existing raw transcript artifact may already contain it; this spec does not claim otherwise.
 
-**Why a projection and not a contract field:** title heuristics will evolve (different vendors, future runtimes). Locking the canonical schema to today's algorithm guarantees regrets. The query projection rebuilds from artifacts when needed.
+**Why a projection and not a contract field:** title heuristics will evolve (different vendors, future runtimes). Locking the canonical schema to today's algorithm guarantees regrets. The query projection reads a derived artifact field and can be rebuilt by re-import or a future refresh command.
 
 ### 3.3 Usage summary
 
@@ -196,7 +218,7 @@ Shape:
 **Vendor extractors:**
 
 - Claude: read `usage.input_tokens`, `usage.output_tokens`, `usage.cache_creation_input_tokens`, `usage.cache_read_input_tokens` from `message` events. `model` from `message.model`.
-- Codex: read `payload.info.tokens` (where present) and `payload.info.model` from rollout events. Codex Desktop sometimes omits tokens entirely → `confidence="unknown"` for those runs.
+- Codex: read `payload.info.tokens` / `payload.info.model` where present; tolerate both top-level rollout fields and nested `payload` fields. Codex Desktop sometimes omits tokens entirely → `confidence="unknown"` for those runs.
 
 **Eval interaction:** `eval.json` MUST NOT fail when usage is missing or partial. Usage is observation, not evidence; it does not satisfy or break any verification check.
 
@@ -224,7 +246,7 @@ Extend `store/query.py`'s run projection (the in-memory view returned by `agentl
 ```
 
 - `display_title` is `null` for runs without a recovered title.
-- `usage` is `null` for runs without a `usage.json` artifact (e.g., container runs from `kws-cme`).
+- `usage` is `null` for non-imported runs without a `usage.json` artifact (e.g., container runs from `kws-cme`). Imported runs always write `usage.json`; when no tokens are recoverable, all counters are `0` and `confidence="unknown"`.
 - `import_state` is `null` for non-imported runs (live captures). Imported runs always have a state.
 
 Existing consumers see only added keys; no rename, no removal. The dashboard runs-list spec (`docs/spec/2026-05-19-agentlens-dashboard-design.md`) gains:
@@ -249,9 +271,9 @@ agentlens import codex-session  [--byte-cap BYTES] [--deep-parse-only]
 ```
 
 - `--byte-cap`: override the per-file byte cap; min 1 MiB, max 1 GiB. Out-of-range → `typer.BadParameter`.
-- `--deep-parse-only`: when set, sources over the byte cap produce `analysis_state="skipped"` (a stub run with empty `events.jsonl`) instead of `partial`. Default is `partial`.
+- `--deep-parse-only`: when set, sources over the byte cap produce `analysis_state="skipped"` (a stub imported run with no vendor-derived events) instead of `partial`. Default is `partial`.
 
-Existing default behaviour is unchanged when both flags are absent.
+Existing selector and idempotency behaviour is unchanged when both flags are absent. The run tree gains additional derived artifacts and finalization output.
 
 ## 4. Architecture
 
@@ -264,11 +286,13 @@ AgentLens/src/agentlens/
     title.py              ← NEW: extract_display_title()
     usage.py              ← NEW: extract_usage(parsed) → UsageSummary
     report.py             ← NEW: ImportReport dataclass + emit()
+    artifacts.py          ← NEW: atomic writer for non-schema derived artifact JSON
   store/
     claude_session.py     ← MODIFY: track lines/skips/oversized; cap bytes; return populated ImportReport
     codex_session.py      ← MODIFY: same
     query.py              ← MODIFY: merge display_title / usage / import_state into projection
   commands/
+    import_common.py          ← NEW: shared byte-cap validation + imported-run finalization
     import_claude_session.py  ← MODIFY: --byte-cap, --deep-parse-only, write artifacts
     import_codex_session.py   ← MODIFY: same
 ```
@@ -297,24 +321,29 @@ stream JSONL line-by-line (buffered read)
 build ParsedSession (existing) + ImportReport (new) + UsageSummary (new) + display_title (new)
     │
     ▼
-writer.write_run() + write_events() + write_final() + write_eval()  [unchanged]
-manifest.seal(pre_eval)                                              [unchanged]
+copy source JSONL → artifacts/transcripts/<source-session-id>.jsonl
+write run.started as first event
+write command.started / vendor-derived events / command.finished
 write artifacts/import_report.json
-write artifacts/usage.json  (when extractor returned a non-empty summary)
-copy source JSONL → artifacts/transcripts/<source-session-id>.jsonl  [existing]
-manifest.seal(final)                                                 [covers new artifacts]
+write artifacts/usage.json
+write final.json with agent_outcome = "unknown" or "partial" when import_state != full
+manifest.seal(pre_eval)
+evaluate(run_dir)
+manifest.seal(final)
+sqlite_index.index_run(run_dir)
 ```
 
 ### 4.3 Manifest coverage
 
-`manifest.json`'s `final` phase already iterates `artifacts/**` and seals every file with sha256. The two new artifacts (`import_report.json`, `usage.json`) are picked up automatically — no manifest change required. Tests must verify the manifest covers both files and the existing transcript file.
+`manifest.json`'s `final` phase already iterates the run directory and seals every durable file with sha256. The importer must write `import_report.json`, `usage.json`, and the transcript before `seal(pre_eval)` so evaluator hash checks and the final manifest cover them. No manifest schema change is required. Tests must verify the manifest covers both new files and the existing transcript file.
 
 ## 5. Security & Privacy
 
-- **No new persisted prompt content.** Title heuristic runs in-memory; only the redacted title (≤120 chars after stripping fences, agents blocks, paths, control chars) reaches disk. If the user's first message was a 4 KB code-pasted prompt, what lands on disk is the title-strip result, capped.
+- **No new full prompt/output artifact.** Title heuristic runs in-memory; only the redacted title (≤120 chars after stripping fences, agents blocks, paths, control chars) reaches `import_report.json`. If the user's first message was a 4 KB code-pasted prompt, what lands in the new artifact is the title-strip result, capped.
+- **Raw transcript reality.** The existing transcript artifact is a vendor JSONL copy. It may contain prompts and outputs. This patch does not newly sanitize it; safe export/sanitized transcript copies remain deferred.
 - **Usage is non-sensitive by definition** (token counts, model names). No new redaction needed.
-- **Import report contains file paths** (`source_path` is absolute). This is already true of `run.json`'s `input.import_key` in spirit; `source_path` matches the existing precedent (`store/writer.py` already records the source path on imported runs). It is **not** redacted out; it identifies the source file unambiguously for re-imports.
-- `docs/security.md` patch: add one bullet to "Storage rules" — *"Importers may write `artifacts/import_report.json` and `artifacts/usage.json`. Neither contains prompt or output text."*
+- **Import report contains file paths** (`source_path` is absolute). It is **not** exposed through query/API projections and is intended only for local forensic traceability.
+- `docs/security.md` patch: add one bullet to "Imported transcripts" — *"Importers also write `artifacts/import_report.json` (line counts, byte-cap state, absolute source path, and a redacted display title) and `artifacts/usage.json` (token totals, model breakdown, optional cost). They do not contain full prompt or output bodies."*
 
 ## 6. Backward compatibility
 
@@ -324,12 +353,12 @@ manifest.seal(final)                                                 [covers new
 | `events.jsonl` schema    | Unchanged.                                                                 |
 | `final.json` / `eval.json` | Unchanged.                                                              |
 | `manifest.json`          | Unchanged (existing globbing picks up new artifacts).                      |
-| `agentlens import` CLI   | New optional flags; default behaviour unchanged when flags are absent.     |
-| `agentlens show --format json` | Three new keys appended (`display_title`, `usage`, `import_state`); null when absent. |
+| `agentlens import` CLI   | New optional flags; selectors/idempotency unchanged when flags are absent; imported run trees gain final/eval/manifest/index artifacts. |
+| `agentlens latest/status/show --format json` | Three new keys appended (`display_title`, `usage`, `import_state`); null when absent. Snapshot fixtures and frontend generated types must update. |
 | Existing runs on disk    | `display_title=null`, `usage=null`, `import_state=null`; no migration required. |
 | SQLite index             | Three columns added (nullable); rebuild from JSON unchanged.               |
 
-Re-importing a session that already has a run is still idempotent (existing `input.import_key` scan). The re-import will overwrite the prior `import_report.json` and `usage.json` because the report counts may differ (e.g., a previously-`partial` import that now parses `full` after a byte-cap bump).
+Re-importing a session that already has a run remains a no-op via the existing `input.import_key` scan. This patch does not overwrite `import_report.json` or `usage.json` on duplicate import; a future `--refresh` flag can deliberately rebuild derived artifacts.
 
 ## 7. Test plan
 
@@ -364,11 +393,12 @@ Re-importing a session that already has a run is still idempotent (existing `inp
   - Codex CLI fixture with full token fields → `usage.json` `confidence="exact"`.
   - Codex Desktop fixture (no tokens) → `usage.json` `confidence="unknown"`, `cost_usd=null`.
 - `tests/integration/test_import_byte_cap.py`
-  - Source > cap with default `--partial` → `analysis_state="partial"`, events present up to cap.
-  - Same source with `--deep-parse-only` → `analysis_state="skipped"`, empty `events.jsonl`, transcript still copied.
+  - Source > cap with default behaviour → `analysis_state="partial"`, vendor-derived events present up to cap.
+  - Same source with `--deep-parse-only` → `analysis_state="skipped"`, no vendor-derived events, `events.jsonl` still starts with `run.started`, transcript still copied.
 - `tests/integration/test_query_projection_usage_title.py`
-  - `agentlens show --format json` returns `display_title` + `usage` + `import_state` for an imported run.
-  - Same call returns `display_title=null`, `usage=null`, `import_state=null` for a container run (no regression).
+  - `agentlens latest/status/show --format json` returns `display_title` + `usage` + `import_state` for an imported run.
+  - Same calls return `display_title=null`, `usage=null`, `import_state=null` for a container run (no regression).
+  - `/api/v1/runs` returns the three fields through `project_run_row()`.
 
 ### 7.3 Fixtures
 
@@ -390,7 +420,7 @@ Create under `tests/fixtures/sessions/`:
 | Byte cap defaults too small → large real sessions silently truncate. | Data loss on real history.      | Default 64 MiB covers >99% of observed Codex rollouts; emit `byte_cap_hit=true` loudly in the report; dashboard surfaces `partial` badge. |
 | Usage confidence appears `exact` when source data was partially fabricated. | Misleading reporting.   | `events_missing_usage` is reported in `diagnostics`; any non-zero value forces `estimated` at minimum; "all-zero with `events_with_usage=0`" forces `unknown`. |
 | Projection drift: dashboard expects keys importer omits.            | Dashboard render error.         | Projection layer in `store/query.py` always emits the three new keys (with `null`) regardless of whether artifacts exist. |
-| Re-import overwrites a `full` report with `partial` after a regression. | Forensics confusion.          | Allowed by design; `manifest.json` history (sha256 of each version sealed at final time) lets the user reconstruct prior states from backup. Documented in `docs/security.md`. |
+| Re-import is a no-op, so derived artifacts can become stale if the vendor source changes. | User expects a refreshed report but sees the first import. | Preserve v1 idempotency; document that refresh is out of scope and add a future `--refresh` open question. |
 | Pricing patch arrives and changes `cost_usd` semantics.             | Future contract churn.          | Shape is reserved from day one (`cost_usd: null`, `pricing_source: "unknown"`); pricing patch only changes value, not key. |
 
 ## 9. Open questions
@@ -398,6 +428,7 @@ Create under `tests/fixtures/sessions/`:
 1. **Should `display_title` truncation length be a CLI flag?** Default 120 chars feels right for a runs-list cell; we will hardcode for v1.x and revisit when the dashboard ships.
 2. **Codex Desktop reasoning tokens — are they recoverable?** Initial reading of fixtures suggests no. v1.x emits `reasoning_tokens=0` with `confidence="unknown"` for those runs and revisits in a follow-up once Desktop fixtures are richer.
 3. **Pricing follow-up scope.** Will pricing live in AgentLens (bundled YAML, periodically refreshed) or a separate plugin? Decided in a later spec; this design only reserves the shape.
+4. **Should duplicate imports gain `--refresh`?** This patch preserves the existing no-op idempotency contract. A later refresh mode can intentionally rebuild `import_report.json`, `usage.json`, manifest, eval, and index rows.
 
 ## 10. References
 
