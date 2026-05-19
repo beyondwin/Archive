@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -52,7 +53,8 @@ def task_statuses_complete(state: dict, allow_blocked: bool) -> bool:
 
 
 def select_state_path(workdir: Path) -> Path | None:
-    candidates = sorted((Path.home() / ".codex" / "orchestrator").glob("*/state.json"))
+    home = Path(os.environ.get("CODEX_EVAL_HOME", "~")).expanduser()
+    candidates = sorted((home / ".codex" / "orchestrator").glob("*/state.json"))
     matches: list[Path] = []
     for candidate in candidates:
         try:

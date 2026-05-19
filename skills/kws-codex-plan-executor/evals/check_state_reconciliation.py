@@ -132,6 +132,13 @@ def main() -> int:
         state = base_state(home, repo)
         state["context_health"]["last_checked_at"] = None
         state_path = write_run(state)
+        before = state_path.read_text(encoding="utf-8")
+        check_result = run_reconcile(script, state_path, repair=False)
+        after = state_path.read_text(encoding="utf-8")
+        checks["check_does_not_mutate_state_file"] = check_result.returncode == 0 and before == after
+        if not checks["check_does_not_mutate_state_file"]:
+            failures.append("--check should report drift without modifying state.json")
+
         result = run_reconcile(script, state_path, repair=True)
         repaired = json.loads(state_path.read_text(encoding="utf-8"))
         checks["missing_context_health_timestamp_repairs"] = (

@@ -31,10 +31,11 @@ def main() -> int:
     state_schema = (skill_dir / "references" / "state-schema.md").read_text(encoding="utf-8")
     learning = (skill_dir / "references" / "learning-log.md").read_text(encoding="utf-8")
     event_journal = (skill_dir / "references" / "event-journal.md").read_text(encoding="utf-8")
+    subagents = (skill_dir / "references" / "subagent-run-store.md").read_text(encoding="utf-8")
     checklist = (skill_dir / "references" / "prompt-export-checklist.md").read_text(encoding="utf-8")
     eval_run = (skill_dir / "evals" / "run.sh").read_text(encoding="utf-8")
     invocation = section(text, "## Invocation", "## Hard Boundary")
-    runtime = "\n".join([text, template, execution, headless, state_schema, learning, event_journal])
+    runtime = "\n".join([text, template, execution, headless, state_schema, learning, event_journal, subagents])
     normalized = re.sub(r"\s+", " ", runtime)
 
     banned = [
@@ -47,14 +48,17 @@ def main() -> int:
         "last_" + "event_seq",
         "latest-state " + "compatibility",
         "backwards-" + "compatible",
-        "Subagents remain " + "opt-in",
-        "opt-in " + "subagent",
     ]
 
     checks = {
-        "version_219": 'version: "2.19.0"' in text,
+        "version_2191": 'version: "2.19.1"' in text,
         "resume_argument": "resume=latest|<state-path>" in invocation,
-        "subagents_default_on": "subagents=on|off" in invocation and "default `on`" in invocation,
+        "subagents_auto_default": "subagents=auto|on|off" in invocation and "default `auto`" in invocation,
+        "subagents_on_is_explicit": "explicitly permits subagents for this run" in invocation
+        and "Subagent records are opt-in execution artifacts" in subagents,
+        "no_subagents_by_default": "Use `spawn_agent` by default" not in runtime
+        and "Dispatch subagents by default" not in runtime
+        and "subagents 기본값은 on" not in template,
         "subagents_off_local_only": "subagents=off" in text and "local-only" in text,
         "worktree_root_contract": "dedicated non-conflicting git worktree under\n`~/.codex/worktrees/`" in text
         or "dedicated non-conflicting git worktree under `~/.codex/worktrees/`" in text,
@@ -91,11 +95,28 @@ def main() -> int:
         and "handoff" in learning
         and "not logging modes" in learning,
         "learning_log_lifecycle": all(token in learning for token in ("agentlens event append", "run-close", "kws-cpe.learning.")),
+        "agentlens_outcome_mapping": all(
+            token in learning
+            for token in (
+                "finished -> success",
+                "blocked -> partial",
+                "failed -> failed",
+                "cancelled -> cancelled",
+            )
+        ),
         "agentlens_replay_contract": "kws-cpe.<event>" in event_journal and "State remains authoritative" in event_journal,
-        "learning_events_include_run_identity": all(token in learning + event_journal for token in ("run_id", "run_dir", "state_path")),
+        "learning_events_include_redacted_run_identity": all(
+            token in learning + event_journal for token in ("run_id", "run_dir_ref", "state_path_ref")
+        )
+        and "absolute home paths" in learning
+        and "absolute home paths" in event_journal,
         "learning_privacy_guard": all(token in learning for token in ("redacted-context", "Do not store full conversation transcripts", "Do not store secrets")),
         "high_risk_matrix_contract": all(token in template for token in ("high-risk verification matrix", "misleading success", "stale state", "hung")),
-        "headless_result_schema_contract": all(token in runtime for token in ("status", "run_id", "state_path", "changed_files", "verification", "open_gaps", "residual_risk", "next_action")),
+        "headless_result_schema_contract": all(token in runtime for token in ("status", "run_id", "state_path", "summary", "changed_files", "verification", "open_gaps", "residual_risk", "next_action")),
+        "headless_sandbox_template_mapping": "headless_sandbox: {{HEADLESS_SANDBOX}}" in template
+        and "HEADLESS_SANDBOX" in template,
+        "handoff_checkpoint_handoff_only": "HANDOFF CHECKPOINT:\n{{HANDOFF_CHECKPOINT}}" not in template
+        and "HANDOFF CHECKPOINT" in text,
         "legacy_runtime_removed": not any(token in runtime for token in banned),
         "removed_scripts_absent": not (skill_dir / "scripts" / ("compare_" + "agentlens_events.py")).exists()
         and not (skill_dir / "scripts" / ("check_" + "learning_log_health.py")).exists(),

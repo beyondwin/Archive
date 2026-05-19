@@ -6,28 +6,29 @@
 - spec: {{SPEC}}
 - docs: {{DOCS}}
 - mode: {{MODE}}
-- subagents: {{SUBAGENTS_OR_DEFAULT_ON}}
+- subagents: {{SUBAGENTS_OR_DEFAULT_AUTO}}
+- headless_sandbox: {{HEADLESS_SANDBOX}}
 
 계약:
 - `interactive`/`headless` 실행은 `run_id=<plan-slug>-<YYYYMMDD-HHMMSS>`를 만들고, 코드는 `~/.codex/worktrees/<run_id>`에 git worktree로 격리해. 같은 경로가 있으면 짧은 random suffix를 붙여 중복을 피한다.
 - 오케스트레이션 상태는 `~/.codex/orchestrator/<run_id>/state.json`에 유지해. `context.json`, `hooks/`, `learning_events/`, headless logs, raw command evidence도 `~/.codex/orchestrator/<run_id>/` 하위에 둔다.
 - 작업 worktree에는 코드와 일반 git working tree 파일만 둔다.
 - `prompt`와 `handoff` 모드는 export-only다. worktree, state, context snapshot, hooks, logs, task artifact를 만들지 말고 plan task를 실행하지 마.
-- `subagents=off`가 아니면 subagents 기본값은 on이다. 독립 task는 disjoint write scope로 subagent에 맡기고, 결과를 리뷰한 뒤 state의 `subagent_runs`에 기록해.
+- `subagents=auto`가 기본값이다. 사용자가 subagents/delegation/parallel work를 명시했거나 `subagents=on`을 전달한 경우에만 subagent를 사용할 수 있다. `subagents=off`면 반드시 local-only로 실행한다. subagent를 쓰면 disjoint write scope를 부여하고, 결과를 리뷰한 뒤 state의 `subagent_runs`에 기록해.
+- headless 실행이면 `headless_sandbox` 값을 `HEADLESS_SANDBOX`로 매핑한다. `HEADLESS_SANDBOX=read-only`에서는 preflight와 prompt verification만 수행하고 편집하지 마.
 - 편집 전 항상 `TASK EXECUTION CONTRACT` 5줄(`scope`, `files_to_inspect`, `allowed_edits`, `forbidden_edits`, `acceptance_command_or_honest_substitute`)을 말하고 state에 기록해.
 - `using-superpowers`와 `test-driven-development`를 implementation work 전에 적용해. 이 규칙은 interactive and headless 모두에 적용되며 not a headless-only rule이다. RED evidence를 먼저 기록하고 GREEN evidence로 닫아.
 - `context.json`, `context_snapshot_path`, `context_basis_hash`, `context_health`, `handoff_ready`, `next_action`, `completion_audit`, `prompt_to_artifact_checklist`, `verification_evidence`, `lifecycle_outcome`, `handoff_reason`을 state에 유지해.
 - high-risk verification matrix를 사용해 misleading success, stale state, hung command/process 리스크를 확인해.
 - `main` 또는 호출자의 원래 checkout에서 구현하지 마. `git worktree list --porcelain`로 확인하고 branch name already exists면 append the run_id.
-- headless 실행이면 `templates/headless-output-schema.json`의 `status`, `run_id`, `state_path`, `changed_files`, `verification`, `open_gaps`, `residual_risk`, `next_action` shape를 지켜. Do not launch another nested `codex exec`.
-- AgentLens learning event는 execution-only best-effort로만 남겨. payload에는 `run_id`, `run_dir`, `state_path`를 포함하고 secrets/raw transcript/긴 로그는 저장하지 마.
+- headless 실행이면 `templates/headless-output-schema.json`의 `status`, `run_id`, `state_path`, `summary`, `changed_files`, `verification`, `open_gaps`, `residual_risk`, `next_action` shape를 지켜. Do not launch another nested `codex exec`.
+- AgentLens learning event는 execution-only best-effort로만 남겨. payload에는 `run_id`, `run_dir_ref`, `state_path_ref`를 포함하고 absolute home paths, secrets, raw transcript, 긴 로그는 저장하지 마.
 
 완료 전:
 - `scripts/reconcile_state.py --state "$STATE_PATH" --check` 또는 `--repair-safe`
 - `scripts/validate_state.py "$STATE_PATH"`
 - 계획에 적힌 acceptance command 또는 honest substitute
 
-HANDOFF CHECKPOINT:
-{{HANDOFF_CHECKPOINT}}
+{{HANDOFF_SECTION}}
 
 모델 라우팅 기본값은 `gpt-5.5 high`다. Spark scout route는 사용자가 명시적으로 요청한 경우에만 추가해.

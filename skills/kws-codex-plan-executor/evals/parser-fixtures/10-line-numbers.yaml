@@ -1,0 +1,29 @@
+name: line-numbers
+mode: interactive
+plan: |
+  # Release plan
+
+  Intro text.
+
+  ## Task 0: Add docs
+
+  Notes before files.
+
+  **Files:**
+  - Create: docs/example.md
+  - Modify: docs/other.md
+
+  ## Acceptance Criteria
+
+  ```bash
+  test -f docs/example.md
+  ```
+expected:
+  files:
+    - docs/example.md
+    - docs/other.md
+  task_lines:
+    task_0: 5
+  file_line_numbers:
+    docs/example.md: 10
+    docs/other.md: 11

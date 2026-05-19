@@ -70,6 +70,22 @@ def main() -> int:
         if not checks["depends_on_match"]:
             failures.append(f"expected dependencies {expected_depends}, got {actual_depends}")
 
+    expected_task_lines = expected.get("task_lines") or {}
+    if expected_task_lines:
+        actual_task_lines = {task.get("id"): task.get("line") for task in parsed.get("tasks", [])}
+        checks["task_lines_match"] = expected_task_lines == actual_task_lines
+        if not checks["task_lines_match"]:
+            failures.append(f"expected task lines {expected_task_lines}, got {actual_task_lines}")
+
+    expected_file_line_numbers = expected.get("file_line_numbers") or {}
+    if expected_file_line_numbers:
+        actual_file_line_numbers = {}
+        for task in parsed.get("tasks", []):
+            actual_file_line_numbers.update(task.get("file_line_numbers", {}))
+        checks["file_line_numbers_match"] = expected_file_line_numbers == actual_file_line_numbers
+        if not checks["file_line_numbers_match"]:
+            failures.append(f"expected file line numbers {expected_file_line_numbers}, got {actual_file_line_numbers}")
+
     payload = {
         "fixture": fixture.get("name") or fixture_path.stem,
         "passed": not failures,

@@ -248,6 +248,10 @@ def _validate_unit_manifest(task_id: str, task: dict, outcome: object, errors: l
     for key in ("required_skills", "allowed_write_globs", "forbidden_write_globs"):
         if key in manifest and not isinstance(manifest[key], list):
             errors.append(f"{task_id}: unit_manifest.{key} must be a list")
+    if manifest.get("tool_policy") in {"implementation", "docs"}:
+        allowed = manifest.get("allowed_write_globs")
+        if not isinstance(allowed, list) or not any(isinstance(item, str) and item.strip() for item in allowed):
+            errors.append(f"{task_id}: unit_manifest.allowed_write_globs must be non-empty for write-capable units")
     if not isinstance(manifest.get("max_context_chars"), int) or manifest.get("max_context_chars", 0) <= 0:
         errors.append(f"{task_id}: unit_manifest.max_context_chars must be a positive integer")
 
@@ -278,11 +282,34 @@ def _matches_any(path: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
+def _glob_prefix(pattern: str) -> str:
+    wildcard_positions = [position for position in (pattern.find("*"), pattern.find("?"), pattern.find("[")) if position != -1]
+    if not wildcard_positions:
+        return pattern
+    return pattern[: min(wildcard_positions)]
+
+
+def _globs_overlap(left: list[str], right: list[str]) -> bool:
+    for left_pattern in left:
+        if not isinstance(left_pattern, str) or not left_pattern.strip():
+            continue
+        for right_pattern in right:
+            if not isinstance(right_pattern, str) or not right_pattern.strip():
+                continue
+            if fnmatch.fnmatch(left_pattern, right_pattern) or fnmatch.fnmatch(right_pattern, left_pattern):
+                return True
+            left_prefix = _glob_prefix(left_pattern)
+            right_prefix = _glob_prefix(right_pattern)
+            if left_prefix and right_prefix and (left_prefix.startswith(right_prefix) or right_prefix.startswith(left_prefix)):
+                return True
+    return False
+
+
 def _validate_subagents(data: dict, errors: list[str]) -> None:
     requested = data.get("subagents_requested")
     runs = data.get("subagent_runs", [])
     if requested is None:
-        errors.append("subagents_requested must be recorded; default is true unless subagents=off")
+        errors.append("subagents_requested must be recorded; default is false unless subagents=on or explicitly requested")
     elif not isinstance(requested, bool):
         errors.append("subagents_requested must be a boolean")
     if runs is None:
@@ -294,10 +321,12 @@ def _validate_subagents(data: dict, errors: list[str]) -> None:
         errors.append("subagent_runs requires subagents_requested=true")
     outcome = data.get("lifecycle_outcome")
     current_task = data.get("current_task")
-    current_files: list[str] = []
     tasks = data.get("tasks")
+    task_ids = set(tasks.keys()) if isinstance(tasks, dict) else set()
+    current_files: list[str] = []
     if isinstance(tasks, dict) and isinstance(tasks.get(current_task), dict):
         current_files = tasks[current_task].get("files_declared") or []
+    active_scopes: list[tuple[int, list[str], object]] = []
     for index, run in enumerate(runs):
         prefix = f"subagent_runs[{index}]"
         if not isinstance(run, dict):
@@ -306,23 +335,48 @@ def _validate_subagents(data: dict, errors: list[str]) -> None:
         for key in sorted(REQUIRED_SUBAGENT_FIELDS):
             if key not in run:
                 errors.append(f"{prefix} missing field {key}")
+        owner_task = run.get("owner_task")
+        if owner_task not in task_ids:
+            errors.append(f"{prefix}.owner_task must reference a task in state")
         if run.get("status") not in VALID_SUBAGENT_STATUSES:
             errors.append(f"{prefix}.status invalid")
+        write_scope = run.get("write_scope")
+        if not isinstance(write_scope, list) or not any(isinstance(item, str) and item.strip() for item in write_scope):
+            errors.append(f"{prefix}.write_scope must be a non-empty list")
+            write_scope = []
+        else:
+            write_scope = [item for item in write_scope if isinstance(item, str) and item.strip()]
         if run.get("status") == "completed":
             for key in sorted(COMPLETED_SUBAGENT_FIELDS):
                 if key not in run:
                     errors.append(f"{prefix} missing completed field {key}")
             if run.get("review_status") not in VALID_SUBAGENT_REVIEW_STATUSES:
                 errors.append(f"{prefix}.review_status invalid")
+            changed = run.get("changed_files")
+            if not isinstance(changed, list):
+                errors.append(f"{prefix}.changed_files must be a list")
+                changed = []
+            for changed_file in changed:
+                if isinstance(changed_file, str) and changed_file.strip() and not _matches_any(changed_file, write_scope):
+                    errors.append(f"{prefix}.changed_files must match write_scope: {changed_file}")
         if outcome == "finished" and run.get("status") in {"queued", "running"}:
             errors.append(f"{prefix}: running subagent cannot remain in finished state")
         if outcome == "finished" and run.get("review_status") == "unreviewed":
             errors.append(f"{prefix}: review_status=unreviewed cannot remain in finished state")
-        write_scope = run.get("write_scope") if isinstance(run.get("write_scope"), list) else []
         changed = run.get("changed_files") if isinstance(run.get("changed_files"), list) else []
         overlaps = [path for path in changed + write_scope if isinstance(path, str) and _matches_any(path, current_files)]
         if overlaps and not _has_substantive_value(run.get("overlap_rationale")):
             errors.append(f"{prefix}: overlap_rationale required for current task write overlap")
+        if run.get("status") in {"queued", "running"} and write_scope:
+            active_scopes.append((index, write_scope, run.get("overlap_rationale")))
+    for left_index, (index, scope, rationale) in enumerate(active_scopes):
+        for other_index, other_scope, other_rationale in active_scopes[left_index + 1 :]:
+            if _globs_overlap(scope, other_scope) and not (
+                _has_substantive_value(rationale) and _has_substantive_value(other_rationale)
+            ):
+                errors.append(
+                    f"subagent_runs[{index}] and subagent_runs[{other_index}]: active subagent write_scope overlap requires overlap_rationale"
+                )
 
 
 def _validate_command_observations(data: dict, errors: list[str]) -> None:

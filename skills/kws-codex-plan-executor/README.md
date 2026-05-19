@@ -17,10 +17,11 @@ before creating the worktree or orchestrator directory.
 ## Defaults
 
 - `mode=interactive`
-- `subagents=on`
+- `subagents=auto`
 - `headless_sandbox=workspace-write`
 
-Pass `subagents=off` for a local-only run.
+Pass `subagents=on` to explicitly permit subagents, or `subagents=off` for a
+local-only run.
 
 ## Validation
 
@@ -28,6 +29,7 @@ Pass `subagents=off` for a local-only run.
 python3 evals/check_skill_contract.py --skill SKILL.md
 python3 evals/check_state_schema.py
 python3 evals/check_state_reconciliation.py
+python3 evals/check_eval_harness.py
 python3 evals/check_run_diffs.py
 python3 evals/check_context_snapshot.py
 python3 evals/check_headless_result.py

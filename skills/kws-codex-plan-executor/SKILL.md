@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "2.19.0"
+  version: "2.19.1"
   updated_at: "2026-05-19"
 ---
 
@@ -29,7 +29,8 @@ Supported arguments:
 - `resume=latest|<state-path>|<run_id>` optional; if multiple candidate active
   runs exist, stop and ask which run/state to resume.
 - `mode=interactive|headless|prompt|handoff` optional, default `interactive`.
-- `subagents=on|off` optional, default `on`; pass `subagents=off` for a
+- `subagents=auto|on|off` optional, default `auto`; `subagents=on`
+  explicitly permits subagents for this run, and `subagents=off` forces a
   local-only run.
 - `headless_sandbox=workspace-write|read-only` optional, default
   `workspace-write`; `read-only` is for preflight/prompt verification and
@@ -46,9 +47,10 @@ checkout. If a dedicated non-conflicting worktree under `~/.codex/worktrees/`
 cannot be created or selected before task contracts and edits, stop with a
 blocker.
 
-Use `spawn_agent` by default for independent implementation, review,
-verification, or documentation tasks when they can run in parallel without
-overlapping write scopes. Do not spawn subagents when `subagents=off`.
+Only use `spawn_agent` when the user explicitly requests subagents,
+delegation, or parallel agent work, or passes `subagents=on`. Do not spawn
+subagents when `subagents=auto` without an explicit user request, or when
+`subagents=off`.
 
 ## Core Invariants
 
@@ -78,7 +80,8 @@ overlapping write scopes. Do not spawn subagents when `subagents=off`.
 - In `interactive` and `headless` execution, record execution-only redacted
   notable-boundary learning events directly to AgentLens under the
   `kws-cpe.learning.<event>` namespace per `references/learning-log.md`. Include
-  `run_id`, `run_dir`, and `state_path` in payload metadata. `prompt` and
+  `run_id`, `run_dir_ref`, and `state_path_ref` in payload metadata. These refs
+  are redacted/home-relative, not absolute home paths. `prompt` and
   `handoff` are not logging modes.
 - Execution runs maintain replay evidence through AgentLens events under
   `kws-cpe.<event>` per `references/event-journal.md`. State remains
@@ -101,12 +104,14 @@ overlapping write scopes. Do not spawn subagents when `subagents=off`.
   passing `completion_audit` with `prompt_to_artifact_checklist` and
   `verification_evidence`.
 - Before terminal `lifecycle_outcome=finished`, run drift reconciliation with
-  `scripts/reconcile_state.py --check` or `--repair-safe`; unresolved blocking
-  drift prevents a finished outcome.
+  `scripts/reconcile_state.py --check`; use `--repair-safe` only when a safe
+  repair should be persisted. Unresolved blocking drift prevents a finished
+  outcome.
 - Blocked or failed terminal runs set a non-success `lifecycle_outcome` and a
   concrete `handoff_reason`.
-- Since subagents default to on, new execution state records
-  `subagents_requested=true` unless `subagents=off` was passed. Finished runs
+- New execution state records `subagents_requested=false` by default.
+  Record `subagents_requested=true` only when the user explicitly requested
+  subagents/delegation/parallel work or passed `subagents=on`. Finished runs
   cannot retain running or unreviewed subagent records.
 - Command observations classify bounded command evidence before root cause is
   assigned. Finished runs with `category=unknown` observations must mention the

@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 
-TASK_RE = re.compile(r"(?m)^(#{2,4})\s+Task\s+(\d+)\s*:\s*(.+?)\s*$")
+TASK_RE = re.compile(r"(?m)^(#{2,4})\s+(?:Task|작업)\s+(\d+)\s*(?::|-|–)\s*(.+?)\s*$")
 FENCE_RE = re.compile(r"^(?: {0,3})(?P<marker>`{3,}|~{3,})(?P<suffix>[^\r\n]*)$")
 FENCE_CLOSE_SUFFIX_RE = re.compile(r"^[ \t]*$")
 COMMENT_OPEN = "<!--"
@@ -18,12 +18,16 @@ COMMENT_CLOSE = "-->"
 COMMENT_LINE_RE = re.compile(r"^(?: {0,3})<!--")
 INDENTED_CODE_RE = re.compile(r"^(?: {4,}|\t)")
 FILES_HEADING_RE = re.compile(
-    r"(?mi)^\s*(?:\*\*)?"
+    r"(?mi)^[ \t]*(?:\*\*)?"
     r"(?:Files|Affected files|Modified files|Changed files|수정 파일|변경 파일|대상 파일|파일)"
-    r"\s*:\s*(?:\*\*)?\s*$"
+    r"[ \t]*:[ \t]*(?:\*\*)?[ \t]*$"
 )
 AC_RE = re.compile(r"(?mi)^\s*(#{2,5}\s*)?(Acceptance Criteria|Verification|검증)\b")
-DEPENDS_RE = re.compile(r"(?mi)^\s*(?:\*\*)?Depends on\s*:\s*(?P<value>.+?)\s*(?:\*\*)?\s*$")
+DEPENDS_RE = re.compile(
+    r"(?mi)^[ \t]*(?:\*\*)?"
+    r"(?:Depends on|Depends|Dependencies|의존|선행 작업)"
+    r"[ \t]*:[ \t]*(?P<value>.+?)[ \t]*(?:\*\*)?[ \t]*$"
+)
 FILE_LINE_RE = re.compile(
     r"^\s*-\s+"
     r"(?:(?:Create|Modify|Read|Delete|Move|Update|생성|수정|읽기|삭제|이동|변경|갱신):\s*)?"
@@ -132,13 +136,19 @@ def _repo_relative(path_text: str, repo_root: Path) -> str:
     return rel.as_posix()
 
 
-def _extract_files(body: str, repo_root: Path) -> tuple[list[str], bool]:
+def _line_number(markdown: str, offset: int) -> int:
+    return markdown.count("\n", 0, offset) + 1
+
+
+def _extract_files(body: str, repo_root: Path, body_start_line: int) -> tuple[list[str], bool, dict[str, int]]:
     match = FILES_HEADING_RE.search(body)
     if not match:
-        return [], False
+        return [], False, {}
 
     files: list[str] = []
-    for line in body[match.end() :].splitlines():
+    locations: dict[str, int] = {}
+    base_line = body_start_line + body.count("\n", 0, match.start())
+    for line_offset, line in enumerate(body[match.end() :].splitlines(), start=1):
         stripped = line.strip()
         if not stripped:
             if files:
@@ -154,9 +164,11 @@ def _extract_files(body: str, repo_root: Path) -> tuple[list[str], bool]:
         value = item.group(1).strip()
         if value.lower() in {"n/a", "none"}:
             continue
-        files.append(_repo_relative(value, repo_root))
+        repo_path = _repo_relative(value, repo_root)
+        files.append(repo_path)
+        locations.setdefault(repo_path, base_line + line_offset - 1)
 
-    return sorted(dict.fromkeys(files)), True
+    return sorted(dict.fromkeys(files)), True, locations
 
 
 def _extract_depends_on(body: str) -> list[str]:
@@ -208,8 +220,9 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
     for index, match in enumerate(matches):
         body_start = match.end()
         body_end = matches[index + 1].start() if index + 1 < len(matches) else len(markdown)
-        body = markdown[body_start:body_end].strip()
-        files, has_files = _extract_files(body, repo_root)
+        body_raw = markdown[body_start:body_end]
+        body = body_raw.strip()
+        files, has_files, file_line_numbers = _extract_files(body_raw, repo_root, _line_number(markdown, body_start))
         if mode in EXECUTION_MODES and not has_files:
             _die(f"task_{match.group(2)} has no Files block")
         tasks.append(
@@ -217,8 +230,10 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
                 "id": f"task_{match.group(2)}",
                 "number": int(match.group(2)),
                 "title": match.group(3).strip(),
+                "line": _line_number(markdown, match.start()),
                 "body": body,
                 "files": files,
+                "file_line_numbers": file_line_numbers,
                 "depends_on": _extract_depends_on(body),
                 "has_acceptance_criteria": bool(AC_RE.search(body)),
             }

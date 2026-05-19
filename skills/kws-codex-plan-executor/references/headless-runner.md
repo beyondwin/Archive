@@ -20,9 +20,10 @@ The headless prompt must include `using-superpowers` and
 and must instruct the target: `Do not launch another nested codex exec`.
 Do not launch another nested `codex exec`.
 
-Respect `HEADLESS_SANDBOX`, with supported values `workspace-write` and
-`read-only`. In `read-only`, run preflight and prompt verification only.
+Map `headless_sandbox=<value>` to `HEADLESS_SANDBOX=<value>`, with supported
+values `workspace-write` and `read-only`. In `read-only`, run preflight and
+prompt verification only.
 
 Write final JSON using `templates/headless-output-schema.json` with `status`,
-`run_id`, `state_path`, `changed_files`, `verification`, `open_gaps`,
+`run_id`, `state_path`, `summary`, `changed_files`, `verification`, `open_gaps`,
 `residual_risk`, and `next_action`.

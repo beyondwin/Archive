@@ -7,6 +7,9 @@ python3 scripts/reconcile_state.py --state "$STATE_PATH" --check
 python3 scripts/reconcile_state.py --state "$STATE_PATH" --repair-safe
 ```
 
+`--check` reports drift without modifying `state.json`. `--repair-safe`
+persists the narrow safe repairs and records drift metadata in state.
+
 Safe repair is intentionally narrow:
 
 | type | repair |
