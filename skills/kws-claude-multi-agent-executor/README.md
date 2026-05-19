@@ -2,9 +2,13 @@
 
 구현 계획(plan)과 디자인 스펙(spec)을 입력받아 **자율적으로** 끝까지 실행하는 Claude Code 스킬. Opus **오케스트레이터** 한 명이 새로 생성되는 Sonnet **서브 에이전트**들(Implementer / Reviewer / Verifier / Plan Reviewer / Docs Updater)에게 작업을 분배합니다. 오케스트레이터는 3단계 라이프사이클을 결정론적으로 진행하며, 각 실행은 별도의 git worktree에 격리되고, 모든 태스크는 구조화된 루브릭으로 채점되며, 주요 이벤트는 사용자 로컬 학습 로그에 영구 저장되어 스킬 자체의 개선에 사용됩니다.
 
-**현재 버전**: `2.10.2` (2026-05-14) — 버전 타임라인은 [`HISTORY.md`](./HISTORY.md) 참조.
+**현재 버전**: `2.15.0` (2026-05-16) — 버전 타임라인은 [`HISTORY.md`](./HISTORY.md) 참조.
 
 **최근 변경 (Recent changes)**:
+- **v2.15** — Context engineering: 티어드 spec injection (`spec_manifest`), per-plan `decisions_register`, 토큰 기반 Resume Chain 트리거.
+- **v2.14** — Forensics & cost: archive on close-run, cost ledger, query helpers, run reports (post-v2.17 AgentLens cutover로 archive/HTML 파이프라인은 제거됨).
+- **v2.13** — Natural multi-plan: `planN=/specN=` 자동 체인 + NL 키워드 lexicon (opus/순차/대화형 등).
+- **v2.12** — Implementer 모델 선택 (`implementer_model=opus|sonnet`); Reviewer/Verifier 는 Sonnet 고정.
 - **v2.11** — Method audit gate at Phase 2; ENV_BLOCKER triage categories; local-env preflight; `resource_key` plan annotation; learning-log outcome coherence.
 
 ---

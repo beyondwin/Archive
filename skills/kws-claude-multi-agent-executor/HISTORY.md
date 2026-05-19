@@ -21,7 +21,7 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
-### v2.15 — Context engineering (2026-05-16)
+### v2.15.0 — Context engineering (2026-05-16)
 
 Three additive features for context efficiency on large plans:
 
