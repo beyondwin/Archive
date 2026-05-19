@@ -26,6 +26,15 @@ def changed_files(workdir: Path) -> set[str]:
     return files
 
 
+def changed_files_for_state(workdir: Path, state: dict) -> tuple[Path, set[str]]:
+    inspected = Path(state.get("worktree") or workdir).expanduser()
+    if not inspected.is_absolute():
+        inspected = (workdir / inspected).resolve()
+    if not (inspected / ".git").exists():
+        inspected = workdir
+    return inspected, changed_files(inspected)
+
+
 def task_statuses_complete(state: dict, allow_blocked: bool) -> bool:
     tasks = state.get("tasks") or {}
     if not tasks:
@@ -42,11 +51,19 @@ def task_statuses_complete(state: dict, allow_blocked: bool) -> bool:
     return True
 
 
-def select_state_path(workdir: Path) -> Path:
-    run_states = sorted((workdir / ".codex-orchestrator" / "runs").glob("*/state.json"))
-    if run_states:
-        return run_states[-1]
-    return workdir / ".codex-orchestrator" / "state.json"
+def select_state_path(workdir: Path) -> Path | None:
+    candidates = sorted((Path.home() / ".codex" / "orchestrator").glob("*/state.json"))
+    matches: list[Path] = []
+    for candidate in candidates:
+        try:
+            state = json.loads(candidate.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        workspace = str(state.get("workspace") or "")
+        plan = str(state.get("plan") or "")
+        if workspace == str(workdir) or plan.startswith(str(workdir)):
+            matches.append(candidate)
+    return matches[-1] if matches else None
 
 
 def main() -> int:
@@ -67,10 +84,10 @@ def main() -> int:
     checks: dict[str, bool] = {}
 
     state_path = select_state_path(workdir)
-    checks["state_exists"] = state_path.is_file()
+    checks["state_exists"] = bool(state_path and state_path.is_file())
     allow_no_state = bool(expected.get("allow_no_state"))
     if not checks["state_exists"] and not allow_no_state:
-        failures.append("missing .codex-orchestrator/state.json")
+        failures.append("missing ~/.codex/orchestrator/<run_id>/state.json")
         state = {}
     elif not checks["state_exists"]:
         state = {}
@@ -82,35 +99,16 @@ def main() -> int:
             failures.append("state validation failed: " + (result.stderr.strip() or result.stdout.strip()))
         state = json.loads(state_path.read_text(encoding="utf-8"))
 
+    inspected_worktree, actual_files = changed_files_for_state(workdir, state) if state else (workdir, changed_files(workdir))
     expected_files = set(expected.get("files_changed") or [])
-    actual_files = changed_files(workdir)
     checks["expected_files_changed"] = expected_files.issubset(actual_files)
     if not checks["expected_files_changed"]:
         failures.append(f"missing expected changed files: {sorted(expected_files - actual_files)}")
 
     allowed_extra = set(expected.get("allowed_extra_files") or [])
-    allowed_extra.add(".codex-orchestrator/state.json")
-    allowed_extra.update(
-        {
-            ".codex-orchestrator/headless-final.json",
-            ".codex-orchestrator/headless-final.md",
-            ".codex-orchestrator/headless.jsonl",
-            ".codex-orchestrator/blocker-event.json",
-            ".codex-orchestrator/learning-event.json",
-            ".codex-orchestrator/parsed-plan.json",
-            ".codex-orchestrator/final.schema.json",
-            ".harness/fixture.json",
-            ".harness/final.md",
-            ".harness/run.jsonl",
-        }
-    )
-    allowed_prefixes = (
-        ".codex-orchestrator/runs/",
-        ".codex-orchestrator/raw/",
-        ".codex-orchestrator/learning",
-        ".codex-orchestrator/events",
-    )
-    allowed_name_fragments = ("learning-event",)
+    allowed_extra.update({".harness/fixture.json", ".harness/final.md", ".harness/run.jsonl"})
+    allowed_prefixes = (".harness/",)
+    allowed_name_fragments: tuple[str, ...] = ()
     out_of_scope = {
         path
         for path in actual_files - expected_files - allowed_extra
@@ -139,7 +137,9 @@ def main() -> int:
     )
     if context_required:
         context_path = state.get("context_snapshot_path")
-        context_file = workdir / context_path if isinstance(context_path, str) else None
+        context_file = Path(context_path).expanduser() if isinstance(context_path, str) else None
+        if context_file and not context_file.is_absolute():
+            context_file = Path(state_path).parent / context_file
         checks["context_snapshot_exists"] = bool(context_file and context_file.is_file())
         if not checks["context_snapshot_exists"]:
             failures.append("missing per-run context.json snapshot")
@@ -185,7 +185,7 @@ def main() -> int:
 
     test_after = expected.get("test_after")
     if test_after:
-        result = subprocess.run(test_after, cwd=workdir, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        result = subprocess.run(test_after, cwd=inspected_worktree, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         checks["test_after"] = result.returncode == 0
         if result.returncode != 0:
             failures.append("test_after failed: " + (result.stderr.strip() or result.stdout.strip()))

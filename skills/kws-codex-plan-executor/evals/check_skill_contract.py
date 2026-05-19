@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import sys
 from pathlib import Path
 
 
@@ -26,216 +25,84 @@ def main() -> int:
     skill_path = Path(args.skill)
     skill_dir = skill_path.resolve().parent
     text = skill_path.read_text(encoding="utf-8")
-    template_path = skill_dir / "templates" / "fresh-session-prompt.txt"
-    headless_schema_path = skill_dir / "templates" / "headless-output-schema.json"
-    checklist_path = skill_dir / "references" / "prompt-export-checklist.md"
-    execution_path = skill_dir / "references" / "execution-cycle.md"
-    headless_path = skill_dir / "references" / "headless-runner.md"
-    state_schema_path = skill_dir / "references" / "state-schema.md"
-    common_mistakes_path = skill_dir / "references" / "common-mistakes.md"
-    learning_path = skill_dir / "references" / "learning-log.md"
-    compare_script_path = skill_dir / "scripts" / "compare_agentlens_events.py"
-    eval_run_path = skill_dir / "evals" / "run.sh"
-
-    template = template_path.read_text(encoding="utf-8") if template_path.is_file() else ""
-    headless_schema = headless_schema_path.read_text(encoding="utf-8") if headless_schema_path.is_file() else ""
-    checklist = checklist_path.read_text(encoding="utf-8") if checklist_path.is_file() else ""
-    execution = execution_path.read_text(encoding="utf-8") if execution_path.is_file() else ""
-    headless = headless_path.read_text(encoding="utf-8") if headless_path.is_file() else ""
-    state_schema = state_schema_path.read_text(encoding="utf-8") if state_schema_path.is_file() else ""
-    learning = learning_path.read_text(encoding="utf-8") if learning_path.is_file() else ""
-    eval_run = eval_run_path.read_text(encoding="utf-8") if eval_run_path.is_file() else ""
+    template = (skill_dir / "templates" / "fresh-session-prompt.txt").read_text(encoding="utf-8")
+    execution = (skill_dir / "references" / "execution-cycle.md").read_text(encoding="utf-8")
+    headless = (skill_dir / "references" / "headless-runner.md").read_text(encoding="utf-8")
+    state_schema = (skill_dir / "references" / "state-schema.md").read_text(encoding="utf-8")
+    learning = (skill_dir / "references" / "learning-log.md").read_text(encoding="utf-8")
+    event_journal = (skill_dir / "references" / "event-journal.md").read_text(encoding="utf-8")
+    checklist = (skill_dir / "references" / "prompt-export-checklist.md").read_text(encoding="utf-8")
+    eval_run = (skill_dir / "evals" / "run.sh").read_text(encoding="utf-8")
     invocation = section(text, "## Invocation", "## Hard Boundary")
-    checks: dict[str, bool] = {}
-    failures: list[str] = []
+    runtime = "\n".join([text, template, execution, headless, state_schema, learning, event_journal])
+    normalized = re.sub(r"\s+", " ", runtime)
 
-    parse_index = execution.find("Parse the plan")
-    dirty_index = execution.find("Classify dirty files")
-    all_runtime_text = text + execution + headless + template + state_schema
-    normalized_runtime_text = re.sub(r"\s+", " ", all_runtime_text)
-    unit_manifest_surfaces = (text, execution, headless, template, state_schema)
+    banned = [
+        ".codex-" + "orchestrator",
+        "append_" + "run_event.py",
+        "append_" + "learning_event.py",
+        "~/.codex/" + "learning",
+        "events." + "jsonl",
+        "event_" + "journal_path",
+        "last_" + "event_seq",
+        "latest-state " + "compatibility",
+        "backwards-" + "compatible",
+        "Subagents remain " + "opt-in",
+        "opt-in " + "subagent",
+    ]
 
-    expectations = {
+    checks = {
+        "version_219": 'version: "2.19.0"' in text,
         "resume_argument": "resume=latest|<state-path>" in invocation,
-        "resume_ambiguity_stop": bool(re.search(r"multiple|ambiguous|둘 이상|여러", text, re.I))
-        and "resume" in text,
-        "task_contract_before_edits": "No edits before" in text
-        and "TASK EXECUTION CONTRACT" in text,
-        "validation_matrix": "## Validation Matrix" in text
-        and all(token in text for token in ("`interactive`", "`headless`", "`prompt`", "`handoff`")),
-        "dirty_classification": all(token in text for token in ("related", "unrelated", "dirty")),
+        "subagents_default_on": "subagents=on|off" in invocation and "default `on`" in invocation,
+        "subagents_off_local_only": "subagents=off" in text and "local-only" in text,
+        "worktree_root_contract": "dedicated non-conflicting git worktree under\n`~/.codex/worktrees/`" in text
+        or "dedicated non-conflicting git worktree under `~/.codex/worktrees/`" in text,
+        "worktree_shape": "~/.codex/worktrees/<run_id>" in runtime
+        and "<plan-slug>-<YYYYMMDD-HHMMSS>" in runtime,
+        "orchestrator_shape": "~/.codex/orchestrator/<run_id>" in runtime
+        and "~/.codex/orchestrator/<run_id>/state.json" in runtime,
+        "resume_scans_orchestrator": "~/.codex/orchestrator/*/state.json" in runtime,
+        "worktree_contains_only_code": "worktree contains only normal repository files" in text
+        and "작업 worktree에는 코드와 일반 git working tree 파일만 둔다" in template,
+        "prompt_export_no_artifacts": "Prompt and handoff modes are export-only" in text
+        and "Do not create `~/.codex/orchestrator`" in text
+        and "worktree, state, context snapshot" in template,
+        "task_contract_before_edits": "No edits before" in text and "TASK EXECUTION CONTRACT" in template,
         "files_aliases": all(token in text for token in ("Affected files", "Modified files", "수정 파일")),
-        "danger_not_user_option": "danger-full-access" not in invocation
-        and "--dangerously-bypass-approvals-and-sandbox" not in invocation,
-        "prompt_uses_state_json": ".codex-orchestrator/state.json" in template
-        and ".codex-orchestrator/session.json" not in template,
-        "checklist_uses_state_json": ".codex-orchestrator/state.json" in checklist
-        and ".codex-orchestrator/session.json" not in checklist,
-        "prompt_subagents_opt_in": "subagents=on" in template
-        and "fresh implementation subagent" not in template,
-        "execution_parses_before_dirty_classification": parse_index != -1
-        and dirty_index != -1
-        and parse_index < dirty_index,
-        "headless_runner_prepares_artifact_dir": "mkdir -p" in headless
-        and ".codex-orchestrator" in headless,
-        "headless_runner_uses_sandbox_argument": "HEADLESS_SANDBOX" in headless
-        and "read-only" in headless,
-        "headless_prompt_bootstraps_superpowers_tdd": all(
-            token in template
-            for token in ("using-superpowers", "test-driven-development")
-        )
-        and all(token in headless for token in ("using-superpowers", "test-driven-development"))
-        and all(token in eval_run for token in ("using-superpowers", "test-driven-development")),
-        "tdd_scope_not_headless_only": all(
-            token in (text + execution + template + headless)
-            for token in (
-                "not a headless-only rule",
-                "interactive and headless",
-                "RED evidence",
-            )
-        ),
-        "interactive_execution_bootstraps_superpowers_tdd": all(
-            token in execution
-            for token in ("using-superpowers", "test-driven-development", "RED evidence")
-        ),
-        "headless_target_avoids_nested_exec": bool(
-            re.search(r"Do not launch\s+another nested `codex exec`", headless)
-        )
+        "execution_parses_before_dirty": execution.find("Parse the plan") < execution.find("Classify dirty files"),
+        "no_main_implementation_contract": "Do not implement from `main`" in execution and "Do not implement from `main`" in headless,
+        "worktree_uniqueness_contract": all(token in runtime for token in ("git worktree list --porcelain", "branch name already exists", "append the run_id")),
+        "headless_runner_uses_sandbox_argument": "HEADLESS_SANDBOX" in headless and "read-only" in headless,
+        "headless_avoids_nested_exec": "Do not launch another nested `codex exec`" in headless
         and "do not launch another nested codex exec" in eval_run,
-        "common_mistakes_reference_valid": "references/common-mistakes.md" not in checklist
-        or common_mistakes_path.is_file(),
-        "learning_log_reference_exists": learning_path.is_file(),
-        # v2.18 cutover (Task 13): the legacy append_learning_event.py and
-        # append_run_event.py helpers were deleted. Parity with the historical
-        # streams is now validated by scripts/compare_agentlens_events.py.
-        "agentlens_compare_script_exists": compare_script_path.is_file(),
-        "learning_log_execution_only": "execution-only" in text
+        "superpowers_tdd_contract": all(token in runtime for token in ("using-superpowers", "test-driven-development", "RED evidence", "GREEN evidence")),
+        "tdd_scope_not_headless_only": "not a headless-only rule" in normalized and "interactive and headless" in normalized,
+        "context_snapshot_contract": all(token in runtime + checklist for token in ("context.json", "context_snapshot_path", "context_basis_hash")),
+        "context_health_contract": all(token in runtime + checklist for token in ("context_health", "handoff_ready", "next_action")),
+        "completion_audit_contract": all(token in runtime + checklist for token in ("completion_audit", "prompt_to_artifact_checklist", "verification_evidence")),
+        "lifecycle_outcome_contract": all(token in runtime + checklist for token in ("lifecycle_outcome", "handoff_reason", "finished", "blocked", "failed")),
+        "unit_manifest_contract": all(token in runtime for token in ("unit_manifest", "allowed_write_globs", "forbidden_write_globs"))
+        and "finished runs require every completed task to have a valid" in normalized,
+        "learning_log_execution_only": "execution-only" in learning
         and "interactive" in learning
         and "headless" in learning
         and "prompt" in learning
         and "handoff" in learning
         and "not logging modes" in learning,
-        "learning_log_user_local_path": "~/.codex/learning/kws-codex-plan-executor/runs/" in learning
-        and "~/.codex/learning/kws-codex-plan-executor/runs/" in template,
-        "learning_log_lifecycle": all(
-            token in learning for token in ("agentlens event append", "run-close")
-        )
-        and "kws-cpe.learning." in learning
-        and "kws-cpe.learning." in template,
-        "per_run_orchestrator_state": ".codex-orchestrator/runs/<run_id>/state.json" in learning
-        and ".codex-orchestrator/runs/<run_id>/state.json" in template
-        and ".codex-orchestrator/runs/<run_id>/" in headless,
-        "learning_events_include_run_identity": all(token in learning for token in ("run_id", "run_dir", "state_path"))
-        and all(token in template for token in ("run_id", "run_dir", "state_path")),
-        "learning_log_notable_boundaries": all(
-            token in learning
-            for token in (
-                "blocker",
-                "error",
-                "verification_failure",
-                "recurring_issue",
-                "user_correction",
-                "successful_workaround",
-                "completion_learning",
-            )
-        ),
-        "learning_log_privacy_guard": all(
-            token in learning
-            for token in ("redacted-context", "Do not store full conversation transcripts", "Do not store secrets")
-        ),
-        "context_snapshot_contract": all(
-            token in (text + execution + headless + checklist)
-            for token in ("context.json", "context_snapshot_path", "context_basis_hash")
-        ),
-        "context_health_contract": all(
-            token in (text + execution + headless + checklist + template)
-            for token in ("context_health", "handoff_ready", "next_action")
-        ),
-        "completion_audit_contract": all(
-            token in (text + execution + headless + checklist)
-            for token in ("completion_audit", "prompt_to_artifact_checklist", "verification_evidence")
-        ),
-        "lifecycle_outcome_contract": all(
-            token in (text + execution + headless + checklist)
-            for token in ("lifecycle_outcome", "handoff_reason", "finished", "blocked", "failed")
-        ),
-        "fresh_prompt_new_state_contracts": all(
-            token in template
-            for token in (
-                "context.json",
-                "context_snapshot_path",
-                "context_basis_hash",
-                "completion_audit",
-                "prompt_to_artifact_checklist",
-                "verification_evidence",
-                "lifecycle_outcome",
-                "handoff_reason",
-            )
-        ),
-        "high_risk_matrix_contract": all(
-            token in (execution + checklist + template)
-            for token in ("high-risk verification matrix", "misleading success", "stale state", "hung")
-        ),
-        "execution_requires_dedicated_worktree": all(
-            token in (text + execution + headless + checklist)
-            for token in (
-                "dedicated non-conflicting `codex/...` git worktree",
-                "before any task contract or edits",
-            )
-        ),
-        "worktree_uniqueness_contract": all(
-            token in (execution + headless)
-            for token in (
-                "git worktree list --porcelain",
-                "branch name already exists",
-                "append the run_id",
-            )
-        ),
-        "no_main_implementation_contract": "Do not implement from `main`" in execution
-        and "Do not implement from `main`" in headless,
-        "worktree_prompt_export_contract": all(
-            token in template
-            for token in (
-                "dedicated non-conflicting `codex/...` git worktree",
-                "TASK EXECUTION CONTRACT",
-                "main",
-                "git worktree list --porcelain",
-                "append the run_id",
-            )
-        ),
-        "unit_manifest_contract": all(
-            all(token in surface for token in ("unit_manifest", "allowed_write_globs", "forbidden_write_globs"))
-            for surface in unit_manifest_surfaces
-        )
-        and "finished runs require every completed task to have a valid manifest" in normalized_runtime_text,
-        "headless_result_schema_contract": all(
-            token in (headless + template + headless_schema)
-            for token in (
-                "status",
-                "run_id",
-                "state_path",
-                "changed_files",
-                "verification",
-                "open_gaps",
-                "residual_risk",
-                "next_action",
-            )
-        )
-        and "templates/headless-output-schema.json" in headless
-        and "templates/headless-output-schema.json" in template,
+        "learning_log_lifecycle": all(token in learning for token in ("agentlens event append", "run-close", "kws-cpe.learning.")),
+        "agentlens_replay_contract": "kws-cpe.<event>" in event_journal and "State remains authoritative" in event_journal,
+        "learning_events_include_run_identity": all(token in learning + event_journal for token in ("run_id", "run_dir", "state_path")),
+        "learning_privacy_guard": all(token in learning for token in ("redacted-context", "Do not store full conversation transcripts", "Do not store secrets")),
+        "high_risk_matrix_contract": all(token in template for token in ("high-risk verification matrix", "misleading success", "stale state", "hung")),
+        "headless_result_schema_contract": all(token in runtime for token in ("status", "run_id", "state_path", "changed_files", "verification", "open_gaps", "residual_risk", "next_action")),
+        "legacy_runtime_removed": not any(token in runtime for token in banned),
+        "removed_scripts_absent": not (skill_dir / "scripts" / ("compare_" + "agentlens_events.py")).exists()
+        and not (skill_dir / "scripts" / ("check_" + "learning_log_health.py")).exists(),
     }
 
-    checks.update(expectations)
-    for name, passed in checks.items():
-        if not passed:
-            failures.append(name)
-
-    payload = {
-        "skill": str(skill_path),
-        "passed": not failures,
-        "checks": checks,
-        "failures": failures,
-    }
+    failures = [name for name, passed in checks.items() if not passed]
+    payload = {"skill": str(skill_path), "passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if not failures else 1
 

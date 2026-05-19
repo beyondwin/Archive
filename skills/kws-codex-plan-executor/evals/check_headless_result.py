@@ -49,8 +49,8 @@ def validate_sample(payload: dict) -> list[str]:
 def valid_payload() -> dict:
     return {
         "status": "success",
-        "run_id": "20260516T000000Z-archive-codex-headless-abcdef0-a1b2c3",
-        "state_path": ".codex-orchestrator/runs/20260516T000000Z-archive-codex-headless-abcdef0-a1b2c3/state.json",
+        "run_id": "headless-plan-20260519-143022",
+        "state_path": "~/.codex/orchestrator/headless-plan-20260519-143022/state.json",
         "summary": "Implemented task 2 and verified state schema checks.",
         "changed_files": ["scripts/validate_state.py", "evals/check_state_schema.py"],
         "verification": [{"command": "python3 evals/check_state_schema.py", "status": "passed"}],

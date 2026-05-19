@@ -10,20 +10,21 @@ import tempfile
 from pathlib import Path
 
 
-RUN_ID = "20260516T000000Z-archive-codex-diff-policy-abcdef0-a1b2c3"
+RUN_ID = "diff-policy-20260519-143022"
 
 
 def base_state(repo: Path, task_id: str = "task_0") -> dict:
+    run_dir = repo / ".codex-test" / "orchestrator" / RUN_ID
     return {
         "schema_version": "1",
         "run_id": RUN_ID,
         "mode": "interactive",
         "workspace": str(repo),
         "plan": str(repo / "plan.md"),
-        "branch": "codex/diff-policy",
-        "worktree": str(repo),
-        "run_dir": f".codex-orchestrator/runs/{RUN_ID}",
-        "state_path": f".codex-orchestrator/runs/{RUN_ID}/state.json",
+        "branch": f"codex/{RUN_ID}",
+        "worktree": str(repo / ".codex" / "worktrees" / RUN_ID),
+        "run_dir": str(run_dir),
+        "state_path": str(run_dir / "state.json"),
         "current_task": task_id,
         "current_phase": "task_loop",
         "tasks": {
