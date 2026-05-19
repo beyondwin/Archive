@@ -1,9 +1,11 @@
 # Design: KWS Agent Orchestrator
 
 Date: 2026-05-20
-Status: Approved for implementation planning (A-tier critique patches applied; re-approval pending)
+Status: Approved for implementation planning (A/B/C/D-tier critique patches applied; E-tier defect patches applied; re-approval pending)
 Owner: KWS
-Revision: 2026-05-20c — A/B/C/D-tier critique patches applied. Adds workspace-hash canonicalization, branch base policy, dirty-source refusal, submodule/LFS defaults, concurrent-run quota semaphore, `shared_append` validation grammar, context-ratio denominator, full `WorkerStatus` shape, reasoning-effort abstraction, configurable AgentLens namespace prefix, review/verification result schemas with required checks, cost-extract fallback, deterministic merge-conflict policy, skill→runner control flow, `kao apply` strategies, retention/secrets policy, and schema versioning policy. See §16 entries 19–25.
+Revision: 2026-05-20d — E-tier defect patches applied. Fixes pre/post-commit tree extraction primitive (§9.1 now uses `git worktree add --detach` instead of incorrect `git stash`); multi-commit worker output (`commits[]`) with merge/apply cascade (§§6.9, 9.1, 11, 13.4); `shared_append` base reference (wave base commit, not moving `main` HEAD); operational semantics of merge-conflict re-dispatch (§§6.9, 12); semaphore primitive and stale-slot reclamation (§5.2.2); reattach handle reconstruction (§7.1); reviewer status enum, findings rule, and review-round budget separate from failure-retry budget (§11.1); main exec worktree provenance via `git worktree add` (§5.2); cross-workspace collision detection via global registry at `~/.kao/registry.sqlite` (§5.2); orphan verify-worktree reclamation on runner crash (§12). Adds: per-task wall-clock timeout, sandbox tier and LFS in packet (§6.2); `network_egress` allowlist (§7.0); reconcile-step network note (§6.3.1); candidate selection rule for high-risk dual-implementer tasks (§6.5); watchdog wording aligned with polling model (§6.8); `fs_scope` enforcement realism (§15); `serial: false` semantics and `schemas/` subdir (§§5.1, 6.1.5); §14.2 integration tests for the new behaviors. New §16 entries 26–31.
+Revision history: 2026-05-20c — A/B/C/D-tier critique patches (workspace-hash canonicalization, branch base policy, dirty-source refusal, submodule/LFS defaults, concurrent-run quota semaphore, `shared_append` grammar, context-ratio denominator, full `WorkerStatus`, reasoning-effort abstraction, configurable AgentLens namespace prefix, review/verification schemas with required checks, cost-extract fallback, deterministic merge-conflict policy, skill→runner control flow, `kao apply` strategies, retention/secrets policy, schema versioning).
+Implementation Plan: `docs/superpowers/plans/2026-05-20-kws-agent-orchestrator.md`
 
 ## 1. Summary
 
@@ -127,6 +129,12 @@ kws-agent-orchestrator/
     worktree-policy.md
     watchdog.md
     failure-policy.md
+    schemas/
+      task_packet.v1.json
+      worker_result.v1.json
+      review_result.v1.json
+      verification_result.v1.json
+      event.v1.json
   scripts/
     kao.py
     kao/
@@ -199,6 +207,28 @@ worktrees contain only normal repo files and git metadata. By default, accepted
 changes are integrated into `~/.kao/worktrees/<workspace_id>/<run_id>/main` and
 are not applied back to the source checkout unless the user runs
 `kao apply --run <run_id>` or sets `apply_to_source=on`.
+
+`~/.kao/worktrees/<workspace_id>/<run_id>/main` is created via `git worktree add
+<path> -b kao/<run_id>/main <base_commit_sha>` against the source repo's git
+directory (`git rev-parse --git-common-dir`). It shares git objects with the
+source checkout, which is load-bearing for `kao apply` (§13.4) — cherry-picking
+from this worktree into the source checkout does not require `git fetch` because
+the commits are reachable in the same object store. Worker worktrees fork from
+`kao/<run_id>/main` the same way. If the source repo is a bare clone or has no
+shared git dir reachable from `~/.kao/worktrees/...`, `kao run` halts with
+`unreachable_source_git_dir` rather than silently degrading to a clone.
+
+**Global workspace registry.** Per-workspace SQLite (§5.3 `worktree_registry`)
+cannot detect collisions *across* workspaces — by definition it lives inside a
+workspace. A global registry at `~/.kao/registry.sqlite` maps
+`workspace_id → (canonical_inputs_hash, source_git_dir, created_at, last_seen_at)`
+and is the authority for "does the computed hash collide with a different repo
+identity?" before extending the hash or appending the monotonic suffix. The
+global registry is also append-only for `run_id → workspace_id`, so a partial
+crash that loses per-workspace SQLite can still locate orphan worktrees for
+cleanup. Concurrent writes to the global registry use SQLite's default rollback
+journal + `BEGIN IMMEDIATE`; contention is negligible because writes are rare
+(workspace creation, run open, run close, cleanup).
 
 `workspace_id` is generated from a canonicalized repo identity:
 
@@ -290,8 +320,20 @@ runtime_caps:
     max_concurrent_workers: 8
 ```
 
+**Implementation.** The semaphore is a slot-array file: one fixed-width record
+per slot, each holding `(slot_index, holder_pid, kao_run_id, worker_id,
+acquired_at)`. Acquire is `fcntl(LOCK_EX)` on a sentinel byte, scan for a free
+slot or a slot whose `holder_pid` is no longer alive (POSIX `kill(pid, 0)`
+returns `ESRCH`), write the new holder, release the file lock. Release is the
+same dance to clear the slot. Stale slots from crashed runners are reclaimed
+opportunistically by any subsequent acquirer; an explicit
+`kao clean --reclaim-locks` performs the same scan without acquiring. The slot
+count equals `max_concurrent_workers`; raising the cap requires `kao clean
+--reclaim-locks` because the file is resized on next acquire.
+
 Adapter rate-limit errors are surfaced as retryable transient failures with
-exponential backoff up to the watchdog's `retry` budget.
+exponential backoff up to the watchdog's `retry` budget. Rate-limit retries do
+*not* hold a semaphore slot during backoff.
 
 ### 5.3 SQLite Control Plane
 
@@ -318,6 +360,12 @@ SQLite is the source of truth for KAO execution. Suggested tables:
 
 SQLite gives the orchestrator low context pressure: every resume can ask the DB
 what happened instead of keeping all worker details in conversation.
+
+Column-level schemas (including `waves.base_commit_sha`,
+`workers.timeout_seconds`, `workers.reasoning_effort_resolved`,
+`merge_queue.applied_commit_shas`, `runs.allowed_dirty`, `runs.base_commit_sha`,
+`runs.agentlens_status`) live in `scripts/kao/db.py`. The table above names
+purpose, not columns — `db.py` is the source of truth for the SQL schema.
 
 ## 6. Execution Flow
 
@@ -370,7 +418,20 @@ acceptance_commands:
 resource_keys: []           # optional, e.g. [db, port:3000, external-api]
 required_skills: [test-driven-development]
 serial: false               # optional explicit serial marker
+wall_clock_timeout_seconds: 1800   # optional; runner default applies if unset
+sandbox_tier_required: fs_scope    # optional; defaults to fs_scope (§7.0)
+lfs_paths: []                # optional; runner pre-pulls these before dispatch
 ```
+
+**`serial`** forces the task to run alone in its wave (no parallel siblings) even
+when claim/resource analysis would otherwise permit batching. Use for tasks
+that race against external state the runner cannot model (e.g. dev-server
+restarts, machine-wide caches). The flag is honored by the scheduler in §6.4.
+
+**`wall_clock_timeout_seconds`** is the per-task budget enforced by the
+watchdog (§6.8). If unset, the runner applies `worker.default_timeout_seconds`
+from `kao.yaml` (default `1800`). High-risk tasks may set a higher budget; the
+runner records the resolved value on `workers.timeout_seconds`.
 
 Markdown narrative under the H2 (outside the fenced block) is captured into
 the task packet's `objective`, truncated to
@@ -420,9 +481,19 @@ conversation by default.
     "runtime": "codex",
     "model": "gpt-5.5",
     "reasoning_effort": "high"
-  }
+  },
+  "sandbox_tier_required": "fs_scope",
+  "wall_clock_timeout_seconds": 1800,
+  "lfs_paths": [],
+  "wave_base_commit_sha": "f0a1c2b3d4e5f6...",
+  "candidate_index": 0
 }
 ```
+
+`wave_base_commit_sha` is the commit `kao/<run_id>/main` pointed at when the
+wave started; workers must branch from it and `shared_append` validation
+(§6.3) measures against it. `candidate_index` distinguishes implementer
+candidates when a high-risk task dispatches more than one (§6.5).
 
 ### 6.3 File Claim Modes
 
@@ -437,14 +508,28 @@ conversation by default.
 Forbidden wins over every other claim. Any out-of-scope diff rejects the worker
 result before merge.
 
-**`shared_append` validation grammar.** The default check is structural:
+**`shared_append` validation grammar.** The default check is structural and is
+performed against the **wave base** — the commit `kao/<run_id>/main` pointed at
+when the wave started (recorded in `waves.base_commit_sha` and replicated in
+each packet as `wave_base_commit_sha`). Validating against a moving `main` HEAD
+would be wrong: as wave merges land, the file changes underneath later workers
+in the same wave even though they branched from the same base.
 
-1. No existing line numbers may be modified (compared against the file at
-   `kao/<run_id>/main` HEAD).
+1. No line that exists in the wave-base file may be modified or deleted.
+   Diffs are computed against the wave-base file, not the current `main` HEAD.
 2. Each worker's appended lines must be disjoint from every other worker's
-   appended lines in the same wave (line-set intersection must be empty).
+   appended lines in the same wave (line-set intersection must be empty,
+   measured by content hash of normalized lines so that two workers writing the
+   same byte-identical line still conflict).
 3. The file's existing trailing structure (e.g. JSON array closing bracket,
-   YAML document end) must remain syntactically valid.
+   YAML document end) must remain syntactically valid after the merge of all
+   accepted worker appends from the wave.
+
+The runner enforces these by materializing all candidate appends against the
+wave base, applying them in deterministic worker-id order, and rejecting the
+wave if any of (1)–(3) fail. Rejection is per-worker when the offending append
+is attributable; otherwise the whole `shared_append` file is held out of merge
+and the runner emits `kws.kao.blocker` with `severity=warn`.
 
 Repos may register file-specific validators in `kao.yaml`:
 
@@ -495,6 +580,15 @@ strips that file from the merge candidate before applying and lets the
 reconcile step regenerate it. Stripping is recorded in artifacts so the
 worker's intent is preserved as evidence.
 
+**Network policy.** Reconcile commands run in the **runner's** process inside
+the main execution worktree, not in a worker sandbox. They therefore use the
+host's normal network egress; `net_blocked` (§7.0) applies only to workers.
+If a reconcile command itself needs network (e.g. `npm install
+--package-lock-only` contacting the registry) and the host has no outbound
+connectivity, reconcile fails and the runner emits `kws.kao.blocker` with
+`severity=error` and the affected lockfile path. Configure offline reconcile
+(e.g. `--offline`) in `kao.yaml` if the project supports it.
+
 ### 6.4 Wave Scheduling
 
 The scheduler builds waves from:
@@ -543,6 +637,24 @@ Meaning:
 Worker identity is persisted with `role`, `task_id`, `candidate_index`,
 `attempt`, `runtime`, `model`, `reasoning_effort`, and `parent_worker_id` where
 applicable.
+
+**Multi-candidate selection.** When `candidates_per_task > 1` (default for
+`high_risk_candidates_per_task`), the runner dispatches N implementer
+candidates in parallel and selects one winner before queueing for review. The
+selection rule is deterministic:
+
+1. Drop any candidate whose worker result fails schema validation, method
+   audit, or diff-scope check.
+2. Drop any candidate whose acceptance commands fail (re-executed by the
+   runner per §9.1).
+3. Among survivors, choose by `(diff_size_lines_asc, command_runtime_ms_asc,
+   candidate_index_asc)`. Smallest correct diff wins; ties broken by faster
+   acceptance run, then by candidate index.
+4. If no candidates survive, the task is marked `failed_all_candidates` and
+   queued for the recovery role (not retried directly).
+
+The losing candidates' artifacts are retained per §16 entry 20 so reviewers
+can inspect them; their commits are not cherry-picked.
 
 ### 6.6 Context Policy
 
@@ -606,13 +718,23 @@ stalls silently.
 
 It records and reacts to:
 
-- no heartbeat,
-- repeated command loops,
-- context overflow or compaction prompts,
-- stuck permission prompts,
-- timeout without file or commit progress,
-- dead process or missing session,
-- repeated malformed JSON output.
+- no advance in `WorkerStatus.last_activity_ts` for the configured stall
+  window (`worker.stall_seconds`, default `300`) while
+  `phase_hint != "thinking"`, or for `worker.thinking_stall_seconds`
+  (default `1200`) while `phase_hint == "thinking"`,
+- repeated command loops (same `last_tool` ≥ N times with no diff progress),
+- context overflow or compaction prompts (heuristic on `pending_prompt_text`),
+- stuck permission prompts (`state == "awaiting_input"` past
+  `worker.prompt_response_seconds`),
+- wall-clock budget exceeded (`workers.timeout_seconds`),
+- dead process or missing session (`state == "lost"`),
+- repeated malformed JSON output across retries.
+
+Workers do not emit heartbeats; "heartbeat" in earlier drafts was shorthand
+for adapter-polled `last_activity_ts` advancement. The watchdog ticks on a
+runner-side timer (default `5s`) and inspects each live worker via
+`poll_worker(handle)`; it never assumes the worker is alive without a fresh
+`WorkerStatus`.
 
 Default action ladder:
 
@@ -626,21 +748,28 @@ Watchdog actions are recorded in SQLite and emitted to AgentLens as compact
 ### 6.9 Merge Queue
 
 Implementation workers do not write directly into the main execution worktree.
-They produce a commit or patch in their worker worktree. The runner queues it:
+They produce one or more commits (or a patch fallback) on their worker branch.
+The runner queues the commit sequence:
 
 ```text
-worker worktree commit
-  -> diff scope validation
+worker worktree commit(s)
+  -> diff scope validation (against wave base)
   -> review gate
   -> verification gate
-  -> dry-run merge/cherry-pick
+  -> dry-run cherry-pick of the full commit sequence
   -> apply to main execution worktree
-  -> record merge_applied
+  -> record merge_applied with applied_commit_shas[]
 ```
 
-Default merge strategy: worker produces one commit; runner cherry-picks that
-commit into `~/.kao/worktrees/<workspace_id>/<run_id>/main`. Patch fallback is
-allowed when a runtime cannot reliably commit.
+Default merge strategy: worker produces one or more commits (e.g. TDD red/green
+commits); the runner cherry-picks them in order from the worker branch onto
+`~/.kao/worktrees/<workspace_id>/<run_id>/main`, preserving authorship and
+commit messages. The full sequence is recorded in
+`worker_result.commits[]` (§11) and `merge_queue.applied_commit_shas[]`. If
+any commit in the sequence conflicts, the entire sequence is aborted (no
+partial merges); see §12 for the recovery path. Patch fallback is allowed when
+a runtime cannot reliably commit; it is collapsed to a single synthetic commit
+attributed to the worker.
 
 ## 7. Runtime Adapter Contract
 
@@ -655,7 +784,7 @@ mitigates this via a declared sandbox tier per adapter, negotiated at dispatch.
 | --- | --- | --- | --- | --- |
 | `unsandboxed` | Inherits host | Full | Full | Dev/dry-run only; emits `kws.kao.blocker` with `severity=warn` per run. |
 | `fs_scope` | Same UID, chdir + path allowlist | Restricted to worktree + repo-declared allowlist | Full | Default for hosts without OS sandbox. Enforced by adapter wrapper that rejects absolute paths outside the allowlist before exec. |
-| `net_blocked` | Same UID | `fs_scope` | Blocked except declared egress (e.g. package registry, model API) | Default when network policy is set in `kao.yaml`. |
+| `net_blocked` | Same UID | `fs_scope` | Blocked except declared egress (see `network_egress` below) | Default when `worktree.network: blocked` is set in `kao.yaml`. |
 | `full_sandbox` | OS sandbox (`bwrap`, `sandbox-exec`, container) | Mounted worktree only | Per-policy | Required for `risk: high` tasks unless explicitly waived. |
 
 Each adapter reports its **maximum** supported tier in
@@ -676,6 +805,27 @@ Allowlisted values are injected as environment variables in the worker
 process only; they are never written into prompts, packets, or artifacts.
 The runner redacts any literal match of a passthrough value from worker
 stdout/stderr before persisting to artifacts.
+
+Network egress allowlist for `net_blocked` is declared in `kao.yaml`:
+
+```yaml
+worktree:
+  network: blocked          # blocked | full
+network_egress:
+  - host: registry.npmjs.org
+    ports: [443]
+  - host: api.anthropic.com
+    ports: [443]
+  - host: api.openai.com
+    ports: [443]
+```
+
+Enforcement is adapter-dependent. Adapters that support OS sandboxing
+(`bwrap`, `sandbox-exec`, container runtimes) translate the allowlist into
+the underlying mechanism. Adapters that cannot enforce egress at the OS
+level report `sandbox_tier_max < net_blocked`; if the packet requires
+`net_blocked` and the adapter cannot supply it, dispatch halts with
+`unsupported_sandbox_tier` rather than running unprotected.
 
 ### 7.1 Adapter Interface
 
@@ -714,9 +864,19 @@ suppress false positives during long reasoning, and `pending_prompt_text` to
 classify permission prompts. Adapters that cannot supply a field set it to
 `None` or `"unknown"` — never fabricate.
 
-`reattach_worker` is invoked on resume when `supports_reattach=true`. It must
-return a new `WorkerHandle` bound to the surviving process or raise so the
-runner can fall back to cancel-and-retry.
+`reattach_worker` is invoked on resume when `supports_reattach=true`. The
+runner has no live `WorkerHandle` in memory after a crash; it constructs a
+**partial handle** from persisted SQLite state — `(pid, session_id, runtime,
+worker_id, worktree_path, started_at, packet_hash)` — and hands that to the
+adapter. The adapter validates that the process is still alive (`kill(pid, 0)`
+plus optional session ping), that `worktree_path` exists and is owned by the
+expected `kao_run_id`, and that the session's `packet_hash` (if reported)
+matches the persisted one. On success it returns a live `WorkerHandle` and
+resumes polling; on failure it raises `ReattachFailed` and the runner falls
+back to cancel-and-retry, charging the attempt against the retry budget.
+Reattach never re-prompts the worker — if the session's reply has already
+been emitted to stdout before reattach, the adapter must surface it via
+`collect_result` without re-running the worker.
 
 ### 7.2 Capability Report
 
@@ -948,9 +1108,29 @@ Method audit fields are worker self-reports — an LLM can fabricate
 trust them at face value. After a worker returns:
 
 1. For each `commands_run` entry tagged `kind: test`, the runner re-executes
-   the command in a fresh checkout of the worker's pre-commit and post-commit
-   trees (`git stash` of the worker commit, then `git stash pop`). Pre-commit
-   must fail; post-commit must pass. Mismatch → `method_audit_violation`.
+   the command against two ephemeral checkouts of the worker's commit
+   sequence (§11 `worker_result.commits[]`):
+
+   ```bash
+   # post-commit tree: last commit in the sequence
+   git worktree add --detach \
+     ~/.kao/runs/.../verify/<task_id>/post \
+     <commits[-1]>
+
+   # pre-commit tree: parent of the first commit in the sequence
+   git worktree add --detach \
+     ~/.kao/runs/.../verify/<task_id>/pre \
+     <commits[0]>^
+   ```
+
+   Pre-commit must fail; post-commit must pass. Mismatch →
+   `method_audit_violation`. The two verify worktrees are isolated from each
+   other and from any other concurrent verification (a separate path under
+   the run dir), so parallel verifications never race. Both are removed via
+   `git worktree remove` once the check completes, pass or fail. `git stash`
+   is **not** used for this — stash operates on working-tree changes, not
+   on committed state, and would not give a clean pre-commit tree.
+
 2. Evidence artifacts are re-hashed; the runner computes `command_hash` from
    the actual executed command and rejects packets where the worker's
    reported hash diverges.
@@ -1127,7 +1307,8 @@ Worker results are machine-readable first:
   "role": "implementer",
   "status": "success",
   "changed_files": ["src/auth/session.ts", "tests/auth/session.test.ts"],
-  "commit": "abc1234",
+  "commits": ["abc1234", "def5678"],
+  "branch": "kao/auth-refactor-20260520-151000/task_003-implementer-001",
   "summary": "Implemented retry handling.",
   "commands_run": [
     {
@@ -1144,6 +1325,14 @@ Worker results are machine-readable first:
   "residual_risks": []
 }
 ```
+
+`commits` is an ordered list (oldest first) of SHAs on the worker's branch
+since the wave base. A worker that follows TDD typically produces two:
+red-test commit then green-implementation commit. Single-commit workers
+still use the array (length 1). The merge queue (§6.9) cherry-picks the
+sequence as a unit; method-audit re-execution (§9.1) extracts pre-commit
+state from `commits[0]^` and post-commit state from `commits[-1]`; `kao
+apply --strategy cherry-pick` (§13.4) iterates over each entry.
 
 Malformed output is a worker failure, not a runner failure. The runner may retry
 with a stricter prompt once, then reject.
@@ -1173,6 +1362,31 @@ checks with per-check evidence. "All good" with no checks is rejected.
 }
 ```
 
+`status` is an enum: `approved | changes_requested | rejected`. Semantics:
+
+- `approved` — all required checks pass; `findings` MUST be empty. The
+  worker's commits are eligible for merge after verification.
+- `changes_requested` — at least one finding with `severity ∈ {block,
+  warn}`; `findings` MUST be non-empty. The worker is sent back for retry
+  within a **separate review-round budget** of `1` round by default
+  (`review.max_rounds` in `kao.yaml`), independent of the implementer
+  retry budget in §12. A review round does *not* consume one of the
+  implementer's 2 failure retries — those are reserved for malformed
+  output, timeouts, and infra failures. The two budgets compose: an
+  implementer may consume both review rounds and then up to 2 failure
+  retries before the task is queued for recovery. Findings are forwarded
+  in the retry packet. If the reviewer returns `changes_requested` again
+  after the review budget is exhausted, the runner treats it as
+  `rejected` and queues recovery.
+- `rejected` — irrecoverable problem (scope violation, fabricated audit,
+  unaddressable design issue); `findings` MUST be non-empty. No retry; the
+  task is queued for the recovery role.
+
+Each finding has `{id, severity, summary, evidence_ref}` with
+`severity ∈ {block, warn, info}`. A reviewer returning `approved` with any
+non-empty `findings`, or `changes_requested`/`rejected` with empty
+`findings`, is rejected as `review_result_malformed`.
+
 Required check ids and accepted status values are enforced by the runner.
 A reviewer that returns `status: approved` while any required check is
 `unknown` or absent is rejected as `review_result_malformed`. The runner
@@ -1199,11 +1413,12 @@ in `kao.yaml`.
 | Worker malformed JSON | Retry once with schema reminder; then reject |
 | Missing superpowers audit | Reject worker; emit method audit violation |
 | Out-of-scope diff | Reject worker; do not merge |
-| Merge conflict | Auto-resolve is never attempted; serialize the dependent task into a follow-up wave; halt only if the same conflict recurs after serialization |
+| Merge conflict | Auto-resolve is never attempted. The runner aborts the cherry-pick sequence (no partial merges), discards the worker branch's commits from this wave, and schedules a *re-implementation* of the same task in a new follow-up wave whose base is the current `kao/<run_id>/main` HEAD (i.e. post-conflict). The re-implementation gets a fresh packet, fresh worker, and `attempt += 1`. It is a re-dispatch, not a re-cherry-pick. If the same task hits a merge conflict on its retry, the runner halts with `recurring_merge_conflict` and surfaces the conflicting paths plus both attempts' diffs as artifacts. |
 | Verification failure | Return to implementer retry if root cause clear; else halt with evidence |
 | AgentLens unavailable | Continue with `agentlens_status=degraded` |
 | SQLite write failure | Halt; execution state is unsafe |
 | Worktree creation failure | Halt; do not run in source checkout |
+| Orphan verify worktree (§9.1) | On runner crash between `git worktree add --detach` and `git worktree remove`, the verify worktree is left behind. The global registry (§5.2) records each verify-worktree path on creation; `kao clean` and `kao resume` both scan the registry, prune entries whose owner run is no longer live, and `git worktree remove --force` the orphans. |
 | Worktree or branch name collision | Generate a new nonce; halt if registry metadata is inconsistent |
 | Dirty source checkout at `kao run` | Halt with `dirty_source_checkout` unless `--allow-dirty-source` set |
 | Context threshold crossed | Snapshot, compact if supported, rotate if needed |
@@ -1279,9 +1494,13 @@ multi-wave run.
 `~/.kao/worktrees/<workspace_id>/<run_id>/main` into the user's source
 checkout. Defaults:
 
-- `--strategy cherry-pick` (default): cherry-picks each accepted worker
-  commit plus wave reconcile commits onto the source checkout's current HEAD,
-  preserving authorship and commit messages.
+- `--strategy cherry-pick` (default): cherry-picks each accepted worker's
+  full `commits[]` sequence (in worker order, then wave reconcile commits)
+  onto the source checkout's current HEAD, preserving authorship and commit
+  messages. A worker's sequence is applied atomically — if cherry-pick of
+  any commit in a worker's sequence conflicts, `apply` aborts the entire
+  sequence before modifying the working tree (per the conflict-handling
+  rule below), not just the offending commit.
 - `--strategy merge`: produces a merge commit from `kao/<run_id>/main`.
 - `--strategy patch`: writes a single combined patch to stdout for review.
 
@@ -1344,6 +1563,32 @@ is set.
   `high` resolves to `high` and emits the resolved value, not a halt.
 - Review result with no `checks` array is rejected as
   `review_result_malformed`.
+- Review result with `status: approved` and non-empty `findings`, or
+  `status: changes_requested` / `rejected` with empty `findings`, is
+  rejected as `review_result_malformed`.
+- Multi-commit worker sequence: a worker produces two commits and the
+  cherry-pick of the second commit conflicts; the runner aborts the entire
+  sequence (no partial merges) and triggers the merge-conflict re-dispatch
+  path in §12.
+- Method-audit verify worktrees: `git worktree add --detach` extracts
+  pre-commit (`commits[0]^`) and post-commit (`commits[-1]`) trees,
+  re-executes the test, and confirms pre fails / post passes. A worker
+  whose pre-commit tree also passes the test is rejected as fabricated
+  red evidence.
+- Multi-candidate selection: three candidates dispatched, one fails
+  acceptance, two survive with different diff sizes; the smaller diff
+  wins; the loser's artifacts are retained and discoverable.
+- Merge conflict → re-dispatch: a worker's accepted commits conflict at
+  cherry-pick; the runner re-dispatches the *same task* with a fresh
+  packet whose `wave_base_commit_sha` is post-conflict main. The retry
+  worker produces new commits; no commits from the discarded attempt are
+  merged. A second conflict on the retry halts with
+  `recurring_merge_conflict`.
+- Stale semaphore slot: a runner crashes while holding a runtime slot; a
+  subsequent acquirer detects the dead `holder_pid` and reclaims the
+  slot without operator intervention.
+- `kao clean --reclaim-locks` reclaims slots for dead holders without
+  acquiring a fresh slot.
 
 ### 14.3 End-to-End Fixtures
 
@@ -1381,7 +1626,20 @@ MVP includes:
 - Deterministic wave scheduler with documented tie-breaking.
 - Isolated worktree creation.
 - Worker sandbox tier negotiation (`fs_scope` default; halt on
-  `unsupported_sandbox_tier`).
+  `unsupported_sandbox_tier`). MVP enforcement of `fs_scope` is layered and
+  explicitly **best-effort, not a security boundary**: (a) the adapter
+  wrapper chdir's the worker process into the worktree before exec and
+  rejects absolute-path arguments outside the allowlist at exec time; (b)
+  post-run diff-scope validation (§6.9) rejects any committed write outside
+  the allowed globs. Workers that ship their own bash/file tools (Claude
+  Code, Codex CLI) can still *read* outside the worktree via those tools;
+  the diff-scope check catches *writes* that landed in the commit but does
+  not catch ephemeral side effects (writing to `/tmp`, contacting external
+  services). True isolation requires `full_sandbox` (OS sandbox via
+  `bwrap`/`sandbox-exec`/container) which remains opt-in. This limitation
+  is documented in `references/runtime-adapters.md` and surfaced in
+  `kws.kao.run_started` payloads as `sandbox_enforcement=best_effort` when
+  `fs_scope` is used.
 - Secrets passthrough allowlist with stdout/stderr redaction.
 - Merge queue.
 - Lockfile reconcile step per wave with `kao.yaml` configuration.
@@ -1473,6 +1731,31 @@ These decisions are accepted for implementation planning:
     run on dirty source unless `--allow-dirty-source`.
 25. **Reviewer/verifier:** must return concrete per-check evidence;
     empty-check approvals are rejected.
+26. **Global workspace registry:** `~/.kao/registry.sqlite` is the
+    cross-workspace authority for collision detection and orphan-worktree
+    discovery. Per-workspace SQLite is not sufficient on its own.
+27. **Reviewer status enum:** `approved | changes_requested | rejected`.
+    `approved` requires `findings: []`; the other two require non-empty
+    `findings`. Each finding carries `{id, severity, summary, evidence_ref}`.
+28. **Multi-candidate selection (high-risk):** deterministic ranking by
+    `(diff_size_lines_asc, command_runtime_ms_asc, candidate_index_asc)`
+    over candidates that pass schema, audit, scope, and acceptance checks.
+    Losing candidates' artifacts are retained for inspection.
+29. **Per-task wall-clock timeout:** plan tasks may set
+    `wall_clock_timeout_seconds`; the runner default is
+    `worker.default_timeout_seconds` (1800s). The watchdog enforces it.
+30. **Merge-conflict resolution policy:** on cherry-pick conflict, the
+    runner discards the worker's commits and re-dispatches the *task* with
+    a fresh worker against the post-conflict `kao/<run_id>/main`. This is
+    a deliberate trade — re-running the implementation costs tokens but
+    preserves determinism (no LLM-driven conflict resolution, no manual
+    intervention loop). A second conflict halts the run with
+    `recurring_merge_conflict`. The discarded attempt's artifacts are
+    retained per §16 entry 20 for inspection.
+31. **Review-round budget:** reviewer-driven `changes_requested` rounds
+    are budgeted separately from implementer failure retries (default
+    `review.max_rounds: 1`). The two budgets compose; review exhaustion
+    promotes `changes_requested` to `rejected` and queues recovery.
 
 ## 17. Design Rationale
 
