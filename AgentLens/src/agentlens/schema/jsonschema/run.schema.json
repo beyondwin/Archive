@@ -136,6 +136,28 @@
           "type": "string"
         }
       }
+    },
+    "meta": {
+      "$comment": "Open additive block for importer-preserved metadata (e.g. Codex rollout originator/cli_version/source, pending subagent linkage). Keys are namespaced ad-hoc; downstream consumers must treat unknown keys as opaque.",
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "originator": {
+          "type": "string"
+        },
+        "codex_cli_version": {
+          "type": "string"
+        },
+        "codex_source": {
+          "oneOf": [
+            {"type": "string"},
+            {"type": "object"}
+          ]
+        },
+        "pending_parent_thread_id": {
+          "type": "string"
+        }
+      }
     }
   }
 }
