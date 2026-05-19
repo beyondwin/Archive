@@ -11,6 +11,11 @@ STATE_PATH="$RUN_DIR/state.json"
 mkdir -p "$CODEX_HOME/worktrees" "$RUN_DIR/hooks" "$RUN_DIR/learning_events"
 ```
 
+Before worktree creation, run `scripts/inspect_runs.py` for the target plan. If
+one unambiguous active run exists and the invocation did not request resume,
+stop and ask whether to resume or start a new run. If multiple active runs
+exist, stop with the stale-run report. Do not mutate stale runs automatically.
+
 Before task execution, create the git worktree under `$WORKTREE`; if the branch
 name already exists, append the run_id or another unique suffix. Do not implement from `main`.
 Do not implement from the caller's original checkout.
