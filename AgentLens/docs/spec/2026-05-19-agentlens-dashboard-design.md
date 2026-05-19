@@ -14,6 +14,18 @@ A **read-only web viewer** for AgentLens runs, packaged as `agentlens serve`. Si
 
 The v1 signature demo: a runs list with a red row where `agent_outcome=success` but `eval_status=failed`. Clicking opens a run detail with the outcome ↔ eval contrast prominent and a Sentry-style failures panel with evidence links into the transcript. This single GIF showcases AgentLens's three differentiators (everyday list, trust-model split, evidence-linked taxonomy) in one screen.
 
+## 0.1 Deep Review Corrections (2026-05-19)
+
+This section supersedes any earlier wording in this spec where there is a conflict.
+
+1. **Manifest contract correction.** `agentlens.manifest.v1` contains `files:[{path, sha256}]`; it does not contain `artifacts`, `manifest_sha256`, `integrity`, `size`, or `kind`. Dashboard integrity must be computed by the server with `agentlens.store.manifest.verify(run_dir)`. If the UI needs a manifest digest, compute it from the `manifest.json` bytes and expose it as `manifest_digest`; do not read a non-existent field.
+2. **Run schema version correction.** Existing artifacts use `schema:"agentlens.run.v1"`, not `schema_version:"v1"`. Unknown-schema handling must parse the `schema` string and reject non-`agentlens.*.v1` artifacts with 412.
+3. **Fixture directory correction.** Test fixture directory names such as `failed_command_run` are not run IDs. The run ID lives inside `run.json`. Demo data and API tests must copy fixtures into `runs/<workspace_id>/<run_id>/` where `<run_id>` is read from the fixture's `run.json`.
+4. **API projection correction.** Public API payloads must go through the locked JSON projectors in `agentlens.commands._format` or an explicitly documented API projector. Returning raw `store.query.get_run()` output leaks merge-order quirks and does not match CLI `--format json`.
+5. **Package data correction.** `src/agentlens/web_assets/` must be a Python package, with `__init__.py`, if it is accessed via `importlib.resources.files("agentlens.web_assets")`. A `.gitkeep` alone is not enough for setuptools package discovery.
+6. **Doctor contract correction.** `agentlens doctor` currently has `doctor(scope="all", fmt="text")`. A shared collector must preserve `scope` and existing CLI behaviour, then add dashboard-friendly `warnings:[]` in a backward-compatible way.
+7. **License release blocker.** The spec chooses public PyPI + MIT, but the current `pyproject.toml` says `Proprietary`. Before any public release, resolve the license decision and add the corresponding license file; do not silently flip licensing in a feature commit without owner approval.
+
 ## 1. Context & Motivation
 
 AgentLens v0 (M0–M8) is complete: contract, store, deterministic evaluator, SQLite index, query CLI, process wrapper, install/shim/doctor, adapters, redaction, retention. Every read path has CLI surface with `--format json`. ADR §16 deferred a Dashboard to post-v0 because the core contract and evaluator had to settle first.
@@ -78,7 +90,7 @@ Going public (PyPI) raises the bar on first-touch UX: install → see something 
 │  │   - StaticFiles("/")     → web_assets/  (SPA)            │ │
 │  │   - APIRouter("/api/v1") → read-only endpoints           │ │
 │  │   - APIRouter("/healthz")→ liveness                      │ │
-│  │   - Lifespan: open SQLite read-only once, reuse          │ │
+│  │   - Lifespan: settings only; query facade owns reads     │ │
 │  └────────────────────┬─────────────────────────────────────┘ │
 └───────────────────────┼────────────────────────────────────────┘
                         │  reuse EXISTING facade — unchanged
@@ -99,7 +111,7 @@ Going public (PyPI) raises the bar on first-touch UX: install → see something 
 
 ### Core principles
 1. **Read-only strict.** Viewer never writes to the store. SQLite is opened with `mode=ro&immutable=0`. Write actions (mark, seal, gc) remain CLI-only.
-2. **Reuse first.** `agentlens.store.query` functions are called as-is. JSON output shapes match the existing `tests/fixtures/format_snapshots/*.json` — API and CLI become two faces of the same contract.
+2. **Reuse first.** `agentlens.store.query` remains the read facade. Public JSON output shapes are projected through the existing CLI projectors in `agentlens.commands._format` or an explicitly documented API projector, with `tests/fixtures/format_snapshots/*.json` as the shared contract baseline.
 3. **Single process.** SPA and API live on the same port; no CORS. Dev mode uses Vite proxy (:5173 → :5757) only.
 4. **Safe defaults for public distribution.** Localhost-only by default; no auth; no write surface. `--host 0.0.0.0` triggers a visible red warning banner.
 5. **Future-proof hooks.** Live tail / cross-run diff / search extend within this architecture (new SSE endpoint, new query.py function, new SPA page) without a redesign.
@@ -131,8 +143,8 @@ AgentLens/
 │   │       ├── failures.py              #   /api/v1/failures, /api/v1/risks
 │   │       ├── doctor.py                #   /api/v1/doctor
 │   │       └── meta.py                  #   /api/v1/meta
-│   └── web_assets/                      # NEW: built SPA, embedded in wheel
-│       └── .gitkeep                     #   (created during impl; tree exists, contents gitignored)
+│   └── web_assets/                      # NEW: Python package containing built SPA
+│       └── __init__.py                  #   required for importlib.resources package-data access
 │
 ├── web/                                 # NEW: frontend source (outside Python pkg)
 │   ├── package.json                     #   react@19, vite, tailwind, radix, tanstack-query, react-router, lucide
@@ -193,7 +205,7 @@ store/sqlite_index.py, store/manifest.py, schema/*  (unchanged)
 
 ### Rules
 - `web/*` calls only `store.query.*` functions. No direct SQLite handles, no direct file IO.
-- `web/routers/*` decides JSON shape only; zero business logic. Wraps `dict[str, Any]` from query into a `JSONResponse`, maps exceptions.
+- `web/routers/*` adapts query data into locked public shapes, maps exceptions, and performs read-only manifest verification. It must not expose raw merged dictionaries from `query.get_run()` directly.
 - Static asset serving happens once in `web/app.py` via `StaticFiles`. If `web_assets/` is empty (dev), a fallback HTML explains how to build or use `--dev-proxy`.
 
 ### Frontend module boundaries
@@ -212,8 +224,8 @@ Wrapped behind a single `Makefile` target (or `scripts/release.sh`) so contribut
 ## 6. REST API Contract (`/api/v1`)
 
 ### Principles
-- Base path versioned (`/api/v1`); independent of run schema version (`v1` of contract, encoded in payload `schema_version`).
-- JSON shapes mirror `tests/fixtures/format_snapshots/*.json`. CLI `--format json` and API responses are identical for the same entity.
+- Base path versioned (`/api/v1`); independent of artifact schema strings such as `agentlens.run.v1`. The API contract version is surfaced in `/api/v1/meta` as `schema_version`.
+- JSON shapes mirror `tests/fixtures/format_snapshots/*.json` where the API overlaps the CLI. CLI `--format json` and API responses must share projectors for the same entity.
 - Errors use RFC 7807 `application/problem+json` (`{type, title, status, detail, instance, correlation_id?}`).
 - All timestamps: UTC ISO8601 with `Z`.
 - Pagination: cursor-based (`?cursor=<opaque>&limit=50`, response `next_cursor`). Never offset.
@@ -226,14 +238,14 @@ Wrapped behind a single `Makefile` target (or `scripts/release.sh`) so contribut
 | GET | `/api/v1/meta` | `{agentlens_version, schema_version, store_path, store_exists, demo_mode}` | Header/footer + onboarding logic |
 | GET | `/api/v1/workspaces` | `[{workspace_id, workspace_short, id_basis, run_count, latest_started_at}]` | Sidebar |
 | GET | `/api/v1/workspaces/{workspace_id}` | `{workspace_id, …, recent_runs:[…], eval_pass_rate_30d, agent_breakdown}` | Workspace page |
-| GET | `/api/v1/runs` | `{items:[<latest.json shape>], next_cursor}` | List page; filters: `workspace_id`, `agent`, `eval_status`, `agent_outcome`, `since_days` |
-| GET | `/api/v1/runs/{run_id}` | `<show.json shape>` + `manifest_seal:{phase, sealed_at, manifest_sha256, integrity?}` | Run detail |
+| GET | `/api/v1/runs` | `{items:[<run_row shape>], next_cursor}` | List page; filters: `workspace_id`, `agent` (maps to `agent_name`), `eval_status`, `agent_outcome`, optional `since_days`; default shows all runs |
+| GET | `/api/v1/runs/{run_id}` | `<show/detail shape>` + `manifest_seal:{phase, sealed_at, manifest_digest, integrity, mismatches_count}` | Run detail |
 | GET | `/api/v1/runs/{run_id}/events` | `application/x-ndjson` (one event per line) | Transcript; v1 dumps full sealed events.jsonl. SSE reserved for v1.x |
 | GET | `/api/v1/runs/{run_id}/failures` | `[<failure shape>]` | Cache-separable |
 | GET | `/api/v1/runs/{run_id}/risks` | `[<risk shape>]` | Same |
-| GET | `/api/v1/runs/{run_id}/artifacts` | `[{path, sha256, size, kind}]` | Manifest's artifact list |
-| GET | `/api/v1/runs/{run_id}/artifacts/{sha256}` | raw bytes (redacted view only) | `Content-Disposition: attachment`; header `X-AgentLens-Redacted: true` |
-| GET | `/api/v1/runs/{run_id}/verify` | `{ok:bool, expected, actual}` | Server-side manifest hash verification |
+| GET | `/api/v1/runs/{run_id}/artifacts` | `[{path, sha256, downloadable}]` | Derived from `manifest.files`; only files under `artifacts/` are downloadable |
+| GET | `/api/v1/runs/{run_id}/artifacts/{sha256}` | raw bytes for a matching `artifacts/*` file | Finds the manifest entry by sha256, then reads `run_dir / entry.path`; never trusts a client path |
+| GET | `/api/v1/runs/{run_id}/verify` | `{ok:bool, mismatches:[{path, expected, actual}]}` | Server-side `manifest.verify(run_dir)` |
 | GET | `/api/v1/failures` | `[…]` | Global; filters: `workspace_id`, `since_days` |
 | GET | `/api/v1/risks` | `[…]` | Same |
 | GET | `/api/v1/doctor` | `<doctor json>` — `integrations, paths, modes, warnings[]` | Sidebar footer + diag modal |
@@ -251,7 +263,7 @@ Wrapped behind a single `Makefile` target (or `scripts/release.sh`) so contribut
 - `Cache-Control: no-store`
 - `X-AgentLens-Warning: bound-to-non-loopback` (only when host is non-loopback)
 - `X-AgentLens-Redacted: true` (artifact endpoints; informational)
-- `X-AgentLens-Index: fallback` (when SQLite missing/corrupt and full-scan in use)
+- `X-AgentLens-Index: fallback` only when the web/query layer can prove the full-scan path was used. Do not infer this header from a successful response.
 
 ### CORS
 - Default: same-origin only (no `Access-Control-Allow-Origin`).
@@ -272,14 +284,15 @@ Wrapped behind a single `Makefile` target (or `scripts/release.sh`) so contribut
   "eval_status": "failed",
   "sealed_phase": "final",
   "started_at": "2026-01-01T00:00:01Z",
-  "finished_at": "2026-01-01T00:14:33Z",
+  "ended_at": "2026-01-01T00:14:33Z",
   "failures": [ /* show.json shape */ ],
   "risks":    [ /* show.json shape */ ],
   "manifest_seal": {
     "phase": "final",
     "sealed_at": "2026-01-01T00:14:35Z",
-    "manifest_sha256": "sha256:ab12...f9",
-    "integrity": "ok"
+    "manifest_digest": "sha256:ab12...f9",
+    "integrity": "ok",
+    "mismatches_count": 0
   }
 }
 ```
@@ -344,11 +357,11 @@ Wrapped behind a single `Makefile` target (or `scripts/release.sh`) so contribut
 | Scenario | Behaviour |
 |---|---|
 | `AGENTLENS_HOME` absent | Server starts; `/api/v1/meta` returns `store_exists:false`; SPA enters empty state. |
-| `index.db` missing/corrupt | `store.query` falls back to full-scan (already implemented). Responses include `X-AgentLens-Index: fallback`; SPA shows a yellow banner. |
+| `index.db` missing/corrupt | `store.query` falls back to full-scan (already implemented). Responses include `X-AgentLens-Index: fallback` only after fallback is explicitly detected; SPA shows a yellow banner when the header is present. |
 | Run dir partial (some files missing) | `get_run` returns dict with nulls; API: 200 + `partial:true`; SPA detail page shows "incomplete run" notice. |
-| Manifest hash mismatch | API: 200 + `manifest_seal.integrity:"broken"`; SPA shows orange integrity banner. Data still rendered (user's call). |
+| Manifest hash mismatch | API: 200 + `manifest_seal.integrity:"broken"` based on `manifest.verify(run_dir)` mismatches; SPA shows orange integrity banner. Data still rendered (user's call). |
 | Malformed line in `events.jsonl` | That line emitted as `{"_error":"parse","line":N}`; rest of stream intact. |
-| Unknown schema version (e.g. v2 run) | API: 412 Precondition Failed; SPA shows "viewer update needed". Other runs unaffected. |
+| Unknown schema version (e.g. `schema:"agentlens.run.v2"`) | API: 412 Precondition Failed; SPA shows "viewer update needed". Other runs unaffected. |
 | FS permission denied | 403 ProblemDetails; that run only is unreadable; list page intact. |
 | Internal 5xx | RFC 7807 response; `correlation_id` in body and in stderr log line. No stacktrace unless `--debug`. |
 | Port 5757 in use | Default: fail-fast with helpful message. `--auto-port` opt-in tries +1, +2, +3. |
@@ -387,7 +400,7 @@ Wrapped behind a single `Makefile` target (or `scripts/release.sh`) so contribut
 ## 9. Distribution & Release
 
 - **Package**: `agentlens` on PyPI; `pipx install agentlens && agentlens serve`.
-- **License**: MIT (matches AgentTrace, AgentPrism, ecosystem norm).
+- **License**: MIT is the intended public-release license, pending owner approval and a matching repository license file. Current project metadata is proprietary, so this is a release blocker rather than a mechanical dashboard task.
 - **Wheel layout**: includes built `src/agentlens/web_assets/*` via `[tool.setuptools.package-data]`.
 - **node** is required only for contributors editing the frontend; never at user install time.
 - **CI matrix**: Python 3.11 / 3.12 / 3.13 / 3.14 × Node LTS 20/22 × Ubuntu + macOS. (Windows: post-v1.)
