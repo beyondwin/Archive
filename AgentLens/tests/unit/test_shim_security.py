@@ -37,7 +37,9 @@ def test_shim_install_creates_directory_with_0700_perms(home: Path, tmp_path: Pa
 
 def test_shim_install_writes_lockfile_with_path_and_sha(home: Path, tmp_path: Path) -> None:
     binary = _make_fake_binary(tmp_path, "claude", b"hello world\n")
-    install_shim("claude", binary)
+    # byte-blob fixture (no shebang); test only checks lockfile path+sha so
+    # the Layer-4 selftest probe is intentionally bypassed (spec §S1.4.4).
+    install_shim("claude", binary, skip_selftest=True)
     lockfile = home / ".agentlens" / "shims" / "claude.real"
     text = lockfile.read_text(encoding="utf-8")
     lines = text.splitlines()
