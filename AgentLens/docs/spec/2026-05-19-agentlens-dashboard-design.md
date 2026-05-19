@@ -314,10 +314,28 @@ Wrapped behind a single `Makefile` target (or `scripts/release.sh`) so contribut
 - Tone: dark sidebar + light main (Hybrid A). Single token system; no dark-mode toggle in v1.
 
 ### Run list — signature screen
-- Table columns: Started (relative; hover absolute) · Agent (badge) · Outcome · Eval · Failures · Duration · Run ID (mono, truncated).
+- Table columns: Started (relative; hover absolute) · Agent (badge) · **Title** · Outcome · Eval · Failures · **Usage** · **Cost** · **Confidence** · **Import** · Duration · Run ID (mono, truncated).
 - Row highlight: when `agent_outcome=success` and `eval_status=failed`, row gets a light-red background to make false-successes glanceable.
 - Filters in top bar: Agent, Eval status, Since (7/30/90d).
 - "Load more" pagination (cursor); v1.x considers virtualization.
+
+#### Importer-artifact projections (added 2026-05-19)
+
+Five additional cells surface importer-derived data alongside the original signature columns:
+
+| Cell | Source | Fallback |
+|---|---|---|
+| **Title** | `RunRow.display_title` | Short run_id prefix (first 12 chars) when null/blank. |
+| **Usage** | `RunRow.usage.input_tokens / RunRow.usage.output_tokens` | `—` when `usage` is null. |
+| **Cost** | `RunRow.usage.cost_usd` formatted as `$0.42` | `—` when `usage` or `cost_usd` is null. |
+| **Confidence** | `RunRow.usage.confidence` badge — `exact` (green) / `estimated` (blue) / `unknown` (muted) | `—` when `usage` is null. |
+| **Import** | `RunRow.import_state` badge — `full` (green) / `partial` (amber, visually flagged) / `skipped` (red, visually flagged) | `—` when `import_state` is null (e.g. container runs without `artifacts/{import_report,usage}.json`). |
+
+**Source-of-truth rule.** All five fields come from the run projection
+(`store.query` / projectors); web routes never read derived importer artifacts
+directly for list rendering. `partial` and `skipped` import states are visually
+distinct from `full` so users can spot incomplete imports at a glance without
+opening the detail page.
 
 ### Run detail — three primary affordances
 1. **Outcome ↔ Eval split** at the top: two equal columns under a single card. Left: "AGENT CLAIMS" with `agent_outcome`. Right: "EVALUATOR SAYS" with `eval_status`. If they disagree, a one-line discrepancy note.

@@ -120,6 +120,14 @@ agentlens doctor
 Until you reinstall, the agent works — only recording is paused for that
 binary. There is no exit-code regression.
 
+**Variant — `shim_integrity: wrapper_chain_warning`** (spec §3.5): doctor
+detected that the recorded `.real` target itself looks like a wrapper
+(`agentlens_self`, `cmux`, or a PATH-lookup script). The shim still works,
+but the chain is misconfigured. Doctor prints both a `wrapper_detected=<category>`
+label and a `remediation` line containing the exact `agentlens install …`
+command to fix it (for `cmux`, this is `agentlens install claude --cmux`).
+Run the printed command — no automatic mutation is performed.
+
 ### 3.4 A run sealed as `recording_incomplete`
 
 **Symptoms**: `agentlens show <run_id>` reports `sealed_phase: recording_incomplete`,
@@ -213,6 +221,27 @@ export PATH="$HOME/.agentlens/shims:$PATH"
 `agentlens doctor` verifies each installed shim's ownership, mode, and
 real-binary sha256 against the lockfile. See `docs/security.md` §4 for the
 full integrity contract.
+
+`agentlens install` also runs two install-safety layers before the shim is
+considered installed: a wrapper-signature scan on the resolved real binary
+(refuses to wrap something that already looks like a wrapper) and a
+post-install selftest probe that executes the shim with a no-op argument.
+A selftest failure rolls back the shim + lockfile and exits with code `1`.
+
+Bypass flags (use sparingly):
+
+- `--no-wrapper-detect` — skip the wrapper-signature scan. Must be paired with
+  `--yes` so the bypass is always explicit. Use only when you know the resolved
+  binary is the real target (e.g. a known-good wrapper chain you control).
+- `--skip-selftest` — skip only the post-install probe. Use when the probe
+  itself is unreliable in your environment (e.g. the agent refuses any no-op
+  argument). The shim is still written and the wrapper-signature scan still
+  runs.
+
+If `agentlens install` exits `1` with `install failed — …`, the selftest
+probe rejected the shim and the install was rolled back (no shim or lockfile
+left behind). Inspect the printed error, then either fix the underlying issue
+or retry with `--skip-selftest` if the probe is the unreliable surface.
 
 ## 7. Determinism & evals
 

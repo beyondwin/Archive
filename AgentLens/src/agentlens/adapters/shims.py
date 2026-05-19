@@ -15,6 +15,7 @@ import hashlib
 import os
 import shutil
 import stat
+import subprocess
 import sys
 from pathlib import Path
 from typing import Literal
@@ -36,6 +37,30 @@ if [ ! -f "$REAL_LOCKFILE" ]; then
 fi
 REAL_PATH="$(awk -F= '$1=="path"{{print $2}}' "$REAL_LOCKFILE")"
 REAL_SHA="$(awk -F= '$1=="sha256"{{print $2}}' "$REAL_LOCKFILE")"
+# AgentLens install self-test (reserved env var). Only honoured when the
+# first positional arg is --version; everything else falls through to the
+# normal exec path so a real invocation cannot be hijacked.
+if [ "${{AGENTLENS_INSTALL_SELFTEST:-}}" = "1" ] && [ "${{1:-}}" = "--version" ]; then
+  depth="${{AGENTLENS_INSTALL_SELFTEST_DEPTH:-0}}"
+  if [ "$depth" != "0" ]; then
+    printf 'agentlens_selftest_reentry=%s\n' "1"
+    printf 'shim_path=%s\n' "$0"
+    printf 'chain_depth=%s\n' "$((depth + 1))"
+    exit 70
+  fi
+  real_exit_code=0
+  child_out="$(AGENTLENS_INSTALL_SELFTEST_DEPTH=1 "$REAL_PATH" --version 2>&1)" || real_exit_code="$?"
+  if printf '%s\n' "$child_out" | grep -q '^agentlens_selftest_reentry=1$'; then
+    printf '%s\n' "$child_out"
+    exit 70
+  fi
+  printf 'shim_path=%s\n' "$0"
+  printf 'real_path=%s\n' "$REAL_PATH"
+  printf 'real_kind=%s\n' "$(file -b "$REAL_PATH" 2>/dev/null | awk -F, '{{print $1}}')"
+  printf 'chain_depth=%s\n' "1"
+  printf 'real_exit_code=%s\n' "$real_exit_code"
+  exit 0
+fi
 CUR_SHA="$(shasum -a 256 "$REAL_PATH" | awk '{{print $1}}')"
 if [ "$REAL_SHA" != "$CUR_SHA" ]; then
   echo "agentlens: real binary sha256 drift — passthrough only" >&2
@@ -156,19 +181,97 @@ def _resolve_agentlens_cli() -> str:
     return ""
 
 
-def install_shim(name: str, real_path: Path) -> None:
+def _rollback_install_shim(
+    shim: Path,
+    lockfile: Path,
+    prior_shim_bytes: bytes | None,
+    prior_shim_mode: int | None,
+    prior_lockfile_bytes: bytes | None,
+) -> None:
+    """Delete the just-written shim+lockfile; restore prior snapshots if any.
+
+    Helper for the Layer-4 post-install selftest probe (spec §S1.4.4). When
+    the probe fails, we must leave the filesystem in its pre-install state:
+    either no files (fresh install rolled back) or the original bytes
+    (re-install rolled back).
+    """
+    shim.unlink(missing_ok=True)
+    lockfile.unlink(missing_ok=True)
+    if prior_shim_bytes is not None:
+        shim.write_bytes(prior_shim_bytes)
+        if prior_shim_mode is not None:
+            os.chmod(shim, prior_shim_mode)
+    if prior_lockfile_bytes is not None:
+        lockfile.write_bytes(prior_lockfile_bytes)
+
+
+def _parse_selftest_stdout(stdout_text: str) -> dict[str, str]:
+    """Parse `key=value` lines from selftest stdout into a dict."""
+    parsed: dict[str, str] = {}
+    for line in stdout_text.splitlines():
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        parsed[key] = value
+    return parsed
+
+
+def install_shim(
+    name: str,
+    real_path: Path,
+    *,
+    allow_wrapper: bool = False,
+    skip_selftest: bool = False,
+) -> None:
     """Install a shim for ``name`` pointing at ``real_path``.
 
-    Algorithm (spec §S1.6.18):
+    Algorithm (spec §S1.6.18, §S1.4.4):
 
     1. Create ``~/.agentlens/shims`` (0700, owner-verified).
-    2. Resolve ``real_path`` to an absolute, existing path.
-    3. Compute real binary sha256.
-    4. Write ``<name>.real`` lockfile (path=..., sha256=...).
-    5. Write ``<name>`` shim script (0755) from ``SHIM_TEMPLATE``.
+    2. Snapshot any prior shim + lockfile bytes (for Layer-4 rollback).
+    3. Resolve ``real_path`` to an absolute, existing path.
+    4. Self-reference / ``.app`` / wrapper-signature guards.
+    5. Compute real binary sha256.
+    6. Write ``<name>.real`` lockfile (path=..., sha256=...).
+    7. Write ``<name>`` shim script (0755) from ``SHIM_TEMPLATE``.
+    8. Run the Layer-4 post-install selftest probe (unless ``skip_selftest``).
+       On any probe failure, delete the just-written files, restore prior
+       snapshots if present, and raise ``RuntimeError``.
+
+    Parameters:
+        allow_wrapper: When ``True``, bypass the Layer-1 wrapper-signature
+            scan (spec §S1.4.1). Reserved for ``--no-wrapper-detect`` opt-in;
+            the self-reference and ``.app`` guards still apply.
+        skip_selftest: When ``True``, bypass the Layer-4 selftest probe.
+            Reserved for ``--skip-selftest`` opt-in and for unit-test
+            fixtures that intentionally install non-executable byte files.
     """
+    from .wrapper_detect import scan_real_candidate
+
     shim_dir = _ensure_shim_dir()
+    # Snapshot prior shim + lockfile (Layer-4 rollback). Read into memory
+    # BEFORE any writes so a failed selftest can restore them verbatim.
+    shim = shim_dir / name
+    lockfile = shim_dir / f"{name}.real"
+    prior_shim_bytes: bytes | None = None
+    prior_shim_mode: int | None = None
+    prior_lockfile_bytes: bytes | None = None
+    if shim.exists():
+        prior_shim_bytes = shim.read_bytes()
+        prior_shim_mode = stat.S_IMODE(shim.stat().st_mode)
+    if lockfile.exists():
+        prior_lockfile_bytes = lockfile.read_bytes()
     real = Path(real_path).resolve(strict=True)
+    # Self-reference guard (spec §S1.4.2): refuse to bake a binary that is
+    # itself inside the AgentLens shim directory. This catches the common
+    # re-install accident where `shutil.which` returns the already-installed
+    # shim. `.resolve()` on both sides ensures symlink indirection cannot
+    # bypass the check.
+    if real.parent.resolve() == _shim_dir().resolve():
+        raise ValueError(
+            f"refusing to bake {real} as .real — it is itself in the "
+            f"AgentLens shim directory. Pass --real <ultimate binary>."
+        )
     # v1 regression guard: refuse to operate on a binary inside a macOS
     # .app bundle (e.g. Codex Desktop's bundled `codex`). Replacing such a
     # binary would break the code-signed bundle, and Desktop transcript
@@ -179,15 +282,26 @@ def install_shim(name: str, real_path: Path) -> None:
             f"refusing to shim binary inside .app bundle: {real} "
             "(Desktop transcripts are captured via the rollout importer)"
         )
+    # Layer 1 wrapper-signature scan (spec §S1.4.1): refuse shebang scripts
+    # that loop back into AgentLens, chain through a third-party launcher
+    # (cmux), or resolve their target through PATH. Bypassed only when the
+    # caller passes ``allow_wrapper=True`` (CLI ``--no-wrapper-detect``).
+    if not allow_wrapper:
+        detection = scan_real_candidate(real)
+        if detection.category is not None:
+            raise ValueError(
+                f"refusing to bake {real} as .real — wrapper-signature "
+                f"detection matched category={detection.category!r} "
+                f"pattern={detection.matched_pattern!r}. "
+                f"Remediation: {detection.remediation}"
+            )
     digest = _sha256_file(real)
 
-    lockfile = shim_dir / f"{name}.real"
     lockfile.write_text(
         f"path={real}\nsha256={digest}\n",
         encoding="utf-8",
     )
 
-    shim = shim_dir / name
     agent_name = _BIN_TO_AGENT_NAME.get(name, "generic")
     agentlens_bin = _resolve_agentlens_cli()
     shim.write_text(
@@ -197,6 +311,54 @@ def install_shim(name: str, real_path: Path) -> None:
         encoding="utf-8",
     )
     os.chmod(shim, 0o755)
+
+    if skip_selftest:
+        return
+
+    # Layer-4 post-install selftest probe (spec §S1.4.4). We intentionally
+    # simulate the user's future PATH by putting the shim dir first so the
+    # depth-1 invocation re-resolves through it if the real binary is itself
+    # a wrapper that loops back into AgentLens.
+    probe_env = {
+        **os.environ,
+        "PATH": f"{shim.parent}{os.pathsep}{os.environ.get('PATH', '')}",
+        "AGENTLENS_INSTALL_SELFTEST": "1",
+        "AGENTLENS_INSTALL_SELFTEST_DEPTH": "0",
+        "AGENTLENS_INSTALL_SELFTEST_SHIM": str(shim),
+    }
+    try:
+        result = subprocess.run(
+            [str(shim), "--version"],
+            timeout=5,
+            capture_output=True,
+            env=probe_env,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        _rollback_install_shim(
+            shim, lockfile, prior_shim_bytes, prior_shim_mode, prior_lockfile_bytes
+        )
+        raise RuntimeError(
+            f"install_shim selftest timed out after 5s for {shim}"
+        ) from exc
+
+    stdout_text = result.stdout.decode("utf-8", errors="replace")
+    stderr_text = result.stderr.decode("utf-8", errors="replace")
+    parsed = _parse_selftest_stdout(stdout_text)
+    ok = (
+        result.returncode == 0
+        and parsed.get("chain_depth") == "1"
+        and parsed.get("shim_path") == str(shim)
+        and "agentlens_selftest_reentry" not in parsed
+    )
+    if not ok:
+        _rollback_install_shim(
+            shim, lockfile, prior_shim_bytes, prior_shim_mode, prior_lockfile_bytes
+        )
+        raise RuntimeError(
+            f"install_shim selftest failed for {shim}: "
+            f"exit={result.returncode} stdout={stdout_text!r} stderr={stderr_text!r}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +395,30 @@ REAL_PATH="{backup_path}"
 if [ ! -x "$REAL_PATH" ]; then
   echo "agentlens: cmux backup missing at $REAL_PATH — re-run \`agentlens install claude --cmux\`" >&2
   exit 127
+fi
+# AgentLens install self-test (reserved env var). Only honoured when the
+# first positional arg is --version; everything else falls through to the
+# normal exec path so a real invocation cannot be hijacked.
+if [ "${{AGENTLENS_INSTALL_SELFTEST:-}}" = "1" ] && [ "${{1:-}}" = "--version" ]; then
+  depth="${{AGENTLENS_INSTALL_SELFTEST_DEPTH:-0}}"
+  if [ "$depth" != "0" ]; then
+    printf 'agentlens_selftest_reentry=%s\n' "1"
+    printf 'shim_path=%s\n' "$0"
+    printf 'chain_depth=%s\n' "$((depth + 1))"
+    exit 70
+  fi
+  real_exit_code=0
+  child_out="$(AGENTLENS_INSTALL_SELFTEST_DEPTH=1 "$REAL_PATH" --version 2>&1)" || real_exit_code="$?"
+  if printf '%s\n' "$child_out" | grep -q '^agentlens_selftest_reentry=1$'; then
+    printf '%s\n' "$child_out"
+    exit 70
+  fi
+  printf 'shim_path=%s\n' "$0"
+  printf 'real_path=%s\n' "$REAL_PATH"
+  printf 'real_kind=%s\n' "$(file -b "$REAL_PATH" 2>/dev/null | awk -F, '{{print $1}}')"
+  printf 'chain_depth=%s\n' "1"
+  printf 'real_exit_code=%s\n' "$real_exit_code"
+  exit 0
 fi
 # v1 §4.5 TTY-aware passthrough — for the cmux chain we always wrap because
 # cmux only ships the non-interactive print/exec wrapper.
@@ -530,13 +716,17 @@ def _parse_lockfile(lockfile: Path) -> dict[str, str]:
     return out
 
 
-def verify_shim_integrity(name: str) -> Literal["ok", "drift_warning", "missing"]:
+def verify_shim_integrity(
+    name: str,
+) -> Literal["ok", "drift_warning", "missing", "wrapper_chain_warning"]:
     """Compare the lockfile's recorded sha256 to the real binary's current sha256.
 
     Returns:
-        ``"ok"`` if the sha matches.
+        ``"ok"`` if the sha matches and no wrapper signature is present.
         ``"drift_warning"`` if the real binary's sha differs from the lockfile.
         ``"missing"`` if the lockfile or the real binary is missing.
+        ``"wrapper_chain_warning"`` if sha matches but the target file matches
+            a Layer-1 wrapper signature (spec §3.5).
     """
     lockfile = _shim_dir() / f"{name}.real"
     if not lockfile.is_file():
@@ -550,7 +740,17 @@ def verify_shim_integrity(name: str) -> Literal["ok", "drift_warning", "missing"
     if not real.is_file():
         return "missing"
     current_sha = _sha256_file(real)
-    return "ok" if current_sha == recorded_sha else "drift_warning"
+    if current_sha != recorded_sha:
+        return "drift_warning"
+    # sha matches — run Layer-1 wrapper scan against the .real target so that
+    # post-install wrapper-chain creep (e.g. user replaced /usr/local/bin/claude
+    # with a cmux launcher and re-ran install with the same sha) is surfaced.
+    from .wrapper_detect import scan_real_candidate
+
+    detection = scan_real_candidate(real)
+    if detection.category is not None:
+        return "wrapper_chain_warning"
+    return "ok"
 
 
 __all__ = [

@@ -54,6 +54,22 @@ def install(
             "Used for testing; in production the default is correct."
         ),
     ),
+    no_wrapper_detect: bool = typer.Option(
+        False,
+        "--no-wrapper-detect",
+        help=(
+            "Bypass the Layer-1 wrapper-signature scan (spec §S1.4.1). "
+            "Reserved for power users; requires --yes to ensure intent."
+        ),
+    ),
+    skip_selftest: bool = typer.Option(
+        False,
+        "--skip-selftest",
+        help=(
+            "Skip the Layer-4 post-install selftest probe (spec §S1.4.4). "
+            "For environments where the probe itself is unreliable."
+        ),
+    ),
 ) -> None:
     """Install an AgentLens shim for ``agent``.
 
@@ -80,6 +96,15 @@ def install(
         _install_cmux_chain_command(cmux_app=cmux_app, yes=yes)
         return
 
+    # Spec §S1.4.1: --no-wrapper-detect must be paired with --yes so that
+    # users cannot bypass wrapper detection unintentionally. Validate BEFORE
+    # any path resolution or I/O.
+    if no_wrapper_detect and not yes:
+        raise typer.BadParameter(
+            "--no-wrapper-detect bypasses install-safety checks and must be "
+            "paired with --yes to confirm intent."
+        )
+
     if real_path is None:
         detected = shutil.which(agent)
         if not detected:
@@ -87,6 +112,14 @@ def install(
                 f"no real binary found in PATH for {agent!r}; pass --real <path>"
             )
         real_path = Path(detected)
+
+    # Spec §S1.4.3: capture the user's current PATH resolution BEFORE any
+    # install writes (so we can advise them, post-install, if the proposed
+    # PATH change bypasses a wrapper script they may have relied on). The
+    # captured value is consulted AFTER install_shim returns — using a fresh
+    # post-install lookup here would resolve to the just-installed shim and
+    # silently mask the bypass.
+    pre_install_resolution = shutil.which(agent)
 
     if not yes:
         confirmed = typer.confirm(
@@ -98,11 +131,95 @@ def install(
             typer.echo("aborted — no files written")
             return
 
-    install_shim(agent, real_path)
+    if no_wrapper_detect:
+        typer.echo(
+            "WARNING: wrapper detection bypassed via --no-wrapper-detect",
+            err=True,
+        )
+    if skip_selftest:
+        typer.echo(
+            "WARNING: install selftest skipped via --skip-selftest",
+            err=True,
+        )
+    try:
+        install_shim(
+            agent,
+            real_path,
+            allow_wrapper=no_wrapper_detect,
+            skip_selftest=skip_selftest,
+        )
+    except ValueError as exc:
+        # Surface install-safety refusals (self-reference, .app, wrapper
+        # signatures) as a structured CLI error instead of an opaque traceback.
+        typer.echo(f"agentlens: install refused — {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        # Layer-4 selftest probe failure — shim/lockfile already rolled back
+        # by install_shim. Surface as a structured CLI error.
+        typer.echo(f"agentlens: install failed — {exc}", err=True)
+        raise typer.Exit(code=1) from exc
     typer.echo(f"installed shim for {agent} -> {real_path}")
+
+    # Spec §S1.4.3 Layer 3: advisory PATH-conflict warning. Use the
+    # pre-install resolution captured above; a fresh lookup here would
+    # resolve to the just-installed shim and silently mask the bypass.
+    _maybe_emit_path_conflict_warning(
+        agent=agent,
+        pre_install_resolution=pre_install_resolution,
+        real_path=real_path,
+    )
+
     typer.echo("")
     typer.echo("Add to your shell rc:")
     typer.echo('  export PATH="$HOME/.agentlens/shims:$PATH"')
+
+
+def _maybe_emit_path_conflict_warning(
+    *,
+    agent: str,
+    pre_install_resolution: Optional[str],
+    real_path: Path,
+) -> None:
+    """Emit the spec §S1.4.3 PATH-conflict warning to stderr if applicable.
+
+    The warning is purely advisory (non-blocking). Emission requires ALL of:
+    - ``pre_install_resolution`` is not None,
+    - it does NOT already resolve to ``real_path`` (post-resolve equality),
+    - the file's first two bytes are ``#!`` (a shell wrapper, not a binary).
+
+    Any unexpected I/O error (file vanished, permission denied, etc.) is
+    treated as "no warning" — we never block install on advisory output.
+    """
+    if pre_install_resolution is None:
+        return
+    try:
+        current_resolved = Path(pre_install_resolution).resolve()
+        real_resolved = Path(real_path).resolve()
+    except (OSError, RuntimeError):
+        return
+    if current_resolved == real_resolved:
+        return
+    try:
+        with open(pre_install_resolution, "rb") as fh:
+            head = fh.read(2)
+    except OSError:
+        return
+    if head != b"#!":
+        return
+    warning_text = (
+        f"warning: your shell currently resolves `{agent}` to "
+        f"{pre_install_resolution},\n"
+        "which is a wrapper script. The proposed PATH change makes "
+        "AgentLens's shim\n"
+        f"resolve first, but that shim execs {real_path} — bypassing "
+        f"{pre_install_resolution}.\n"
+        "If you intended the wrapper to remain in the chain, use:\n"
+        f"  agentlens install {agent} --real <wrapper> --no-wrapper-detect"
+        "   (NOT RECOMMENDED)\n"
+        "or for cmux specifically:\n"
+        "  agentlens install claude --cmux"
+    )
+    typer.echo(warning_text, err=True)
 
 
 def _install_cmux_chain_command(

@@ -107,3 +107,7 @@ The §10.4 non-blocking contract is a six-scenario regression LOCK pinned by `te
 - Field semantics for `sealed_phase ∈ {none, pre_eval, final}` and `recording_incomplete: bool` are **locked**.
 - New fields may be added only when they are optional and additive; renames or removals require `v2`.
 - The directory layout under `~/.agentlens/runs/<workspace_id>/<run_id>/` is **locked**; tooling outside AgentLens may rely on this path shape.
+
+## 8. Additive changes log
+
+**2026-05-19 — additive:** Importers gained `artifacts/import_report.json` and `artifacts/usage.json`; query/API/dashboard projections gained `display_title`, `usage`, `import_state` (additive null when absent). No v1 schema changed. Install gained wrapper-detection + selftest-probe safety; `agentlens doctor` gained `shim_integrity=wrapper_chain_warning`. No CLI breakage; new flags optional.

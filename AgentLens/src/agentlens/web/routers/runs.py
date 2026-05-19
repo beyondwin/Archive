@@ -158,6 +158,14 @@ def _detail_payload(home: Path, run_id: str, run_dir: Path) -> dict[str, Any]:
         "sealed_phase": manifest_doc.get("sealed_phase") or row.get("sealed_phase"),
         "workspace_id": workspace_id,
         "workspace_short": workspace_short(workspace_id),
+        # task_18: importer-artifact projections come from store.query (via
+        # store.query.get_run), which is the *only* layer that reads
+        # ``artifacts/{import_report,usage}.json``. The web router never
+        # touches importer artifacts directly — that contract is what keeps
+        # ``source_path`` out of the API payload.
+        "display_title": row.get("display_title"),
+        "usage": row.get("usage"),
+        "import_state": row.get("import_state"),
     }
     failures = [
         f for f in store_query.failures(home, since_days=36500) if f.get("run_id") == run_id
