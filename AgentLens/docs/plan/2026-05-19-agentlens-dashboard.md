@@ -24,6 +24,68 @@
 
 ---
 
+## Deep Review Update (2026-05-19)
+
+This plan is still the right implementation direction, but the review found several contract mismatches that would make a literal task-by-task execution fail or publish the wrong API. The corrections below are binding: when a later task conflicts with this section, this section wins.
+
+### P0 corrections before implementation
+
+1. **Manifest API shape.** Current `manifest.schema.json` exposes `files:[{path, sha256}]`; it does not expose `artifacts`, `manifest_sha256`, `integrity`, `size`, or `kind`. Implement `/verify` with `agentlens.store.manifest.verify(run_dir)`, and expose `manifest_seal.manifest_digest` only as a server-computed sha256 of the `manifest.json` bytes.
+2. **Fixture copy semantics.** `tests/fixtures/*_run/` directory names are fixture labels, not run IDs. Any test/demo setup that copies a fixture under `runs/<ws>/<fixture_name>` is wrong for routes that use `run_id`. Read `run.json`, then copy to `runs/<workspace_id>/<run_id>/`.
+3. **Run schema version detection.** Detect `agentlens.run.v1` from the `schema` field. Do not test or implement `schema_version` inside `run.json`.
+4. **API projection boundary.** Do not return raw `store.query.get_run()` dictionaries. Use `project_run_row`, `project_failure`, `project_risk`, and a shared show/detail projector so API and CLI JSON contracts stay aligned.
+5. **`web_assets` packaging.** Create `src/agentlens/web_assets/__init__.py`; a `.gitkeep` directory is not importable through `importlib.resources.files("agentlens.web_assets")`.
+6. **Doctor collector.** Preserve the existing CLI signature: `doctor(scope="all", fmt="text")`. Extract `collect_doctor_report(scope: str = "all")`, and add `warnings: []` in the shared report or a web-specific wrapper without breaking current JSON tests.
+7. **CORS flag.** `--allow-origin` is currently only parsed in the plan. Add `CORSMiddleware` when the tuple is non-empty, and test both "absent by default" and "explicit origin allowed".
+8. **License gate.** Do not silently change `license = { text = "Proprietary" }` to MIT unless the owner confirms public licensing and a matching `LICENSE` file is added.
+
+### Shared fixture helper required for API tests and demo data
+
+Use this helper pattern in each affected test file, or put it in a shared test helper imported by Tasks 8-17 and Task 31, instead of copying fixture directories by their fixture label:
+
+```python
+import json
+import shutil
+from pathlib import Path
+
+
+def copy_fixture_as_run_id(fixtures: Path, fixture_name: str, runs_root: Path) -> tuple[str, str]:
+    src = fixtures / fixture_name
+    run_doc = json.loads((src / "run.json").read_text(encoding="utf-8"))
+    run_id = run_doc["run_id"]
+    workspace_id = run_doc["workspace_id"]
+    workspace_dir = runs_root / workspace_id
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    dest = workspace_dir / run_id
+    shutil.copytree(src, dest)
+    return workspace_id, run_id
+```
+
+For demo data, preserve the same invariant:
+
+```bash
+cd AgentLens
+for fixture in minimal_run failed_command_run residual_risk_run missing_final_run corrupt_manifest_run; do
+  run_id=$(.venv/bin/python -c 'import json, pathlib, sys; print(json.loads((pathlib.Path("tests/fixtures")/sys.argv[1]/"run.json").read_text())["run_id"])' "$fixture")
+  workspace_id=$(.venv/bin/python -c 'import json, pathlib, sys; print(json.loads((pathlib.Path("tests/fixtures")/sys.argv[1]/"run.json").read_text())["workspace_id"])' "$fixture")
+  mkdir -p "src/agentlens/demo_data/runs/$workspace_id"
+  cp -R "tests/fixtures/$fixture" "src/agentlens/demo_data/runs/$workspace_id/$run_id"
+done
+find src/agentlens/demo_data -name expected_eval.json -delete
+```
+
+### API implementation overrides
+
+- Extend `store.query.list_runs` or filter in the web adapter for `agent` (`agent_name`) and `since_days`; current `list_runs` only understands `workspace_id`, `agent_outcome`, and `eval_status`.
+- Keep `/api/v1/runs` `since_days` optional; the default list must show all runs so bundled demo fixtures and older local runs are not hidden on first launch.
+- Sort run lists by `started_at` descending before pagination, so cursor pages are stable and the default list shows newest first.
+- Apply projectors before returning: `project_run_row` for `/runs` and workspace `recent_runs`, `project_failure` for failures, `project_risk` for risks.
+- For `X-AgentLens-Index: fallback`, either add explicit fallback metadata to the query facade or defer the header. Do not emit it just because a response came from `list_runs`.
+- For artifact download, locate a manifest entry whose `sha256` matches and whose `path` starts with `artifacts/`; read `run_dir / path`. Do not construct `run_dir / "artifacts" / sha256`.
+- Remove `--open` from docs unless the serve command actually implements it.
+
+---
+
 ## M0 — Project Skeleton
 
 ### Task 1: Add web backend dependencies and scaffold the `web/` Python package
@@ -33,6 +95,7 @@
 - Create: `AgentLens/src/agentlens/web/__init__.py`
 - Create: `AgentLens/src/agentlens/web/routers/__init__.py`
 - Create: `AgentLens/src/agentlens/demo_data/.gitkeep`
+- Create: `AgentLens/src/agentlens/web_assets/__init__.py`
 
 - [ ] **Step 1: Write the failing test for new dependencies**
 
@@ -102,6 +165,12 @@ Read-only HTTP layer over ``agentlens.store.query``. Public surface:
 
 `AgentLens/src/agentlens/demo_data/.gitkeep` — empty file (the curated fixture set is populated in Task 15).
 
+`AgentLens/src/agentlens/web_assets/__init__.py`:
+
+```python
+"""Built dashboard SPA assets packaged with AgentLens."""
+```
+
 - [ ] **Step 5: Install dependencies and verify the test passes**
 
 ```bash
@@ -112,7 +181,7 @@ Expected: PASS for all 4 tests.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add AgentLens/pyproject.toml AgentLens/src/agentlens/web/ AgentLens/src/agentlens/demo_data/.gitkeep AgentLens/tests/unit/test_web_imports.py
+git add AgentLens/pyproject.toml AgentLens/src/agentlens/web/ AgentLens/src/agentlens/demo_data/.gitkeep AgentLens/src/agentlens/web_assets/__init__.py AgentLens/tests/unit/test_web_imports.py
 git commit -m "feat(agentlens-dashboard): add fastapi/uvicorn deps and scaffold web package"
 ```
 
@@ -650,6 +719,8 @@ git commit -m "feat(agentlens-dashboard): RFC 7807 ProblemDetails error handlers
 
 ### Task 5: Common security headers + non-loopback warning header
 
+**Review correction:** this task must also cover the already-planned `--allow-origin` flag. Default responses should have no CORS allow-origin header. When `ServeSettings.allow_origin` is non-empty, install FastAPI/Starlette `CORSMiddleware` with that explicit allowlist and add an integration test for a matching Origin.
+
 **Files:**
 - Create: `AgentLens/src/agentlens/web/middleware.py`
 - Modify: `AgentLens/src/agentlens/web/app.py`
@@ -998,17 +1069,15 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 @pytest.fixture()
 def populated_home(monkeypatch, tmp_path):
-    runs = tmp_path / "runs" / "ws_demo"
-    runs.mkdir(parents=True)
     for name in ("minimal_run", "failed_command_run", "residual_risk_run"):
-        shutil.copytree(FIXTURES / name, runs / name)
+        copy_fixture_as_run_id(FIXTURES, name, tmp_path / "runs")
     monkeypatch.setenv("AGENTLENS_HOME", str(tmp_path))
     return tmp_path
 
 
 def test_runs_list_returns_items(populated_home):
     c = TestClient(create_app(ServeSettings()))
-    r = c.get("/api/v1/runs")
+    r = c.get("/api/v1/runs?since_days=36500")
     assert r.status_code == 200
     body = r.json()
     assert isinstance(body["items"], list)
@@ -1018,11 +1087,11 @@ def test_runs_list_returns_items(populated_home):
 
 def test_runs_list_pagination(populated_home):
     c = TestClient(create_app(ServeSettings()))
-    r = c.get("/api/v1/runs?limit=2")
+    r = c.get("/api/v1/runs?limit=2&since_days=36500")
     body = r.json()
     assert len(body["items"]) == 2
     assert body["next_cursor"] is not None
-    r2 = c.get(f"/api/v1/runs?cursor={body['next_cursor']}&limit=2")
+    r2 = c.get(f"/api/v1/runs?cursor={body['next_cursor']}&limit=2&since_days=36500")
     body2 = r2.json()
     assert len(body2["items"]) == 1
     assert body2["next_cursor"] is None
@@ -1030,7 +1099,7 @@ def test_runs_list_pagination(populated_home):
 
 def test_runs_list_filter_eval_status(populated_home):
     c = TestClient(create_app(ServeSettings()))
-    r = c.get("/api/v1/runs?eval_status=failed")
+    r = c.get("/api/v1/runs?eval_status=failed&since_days=36500")
     body = r.json()
     for item in body["items"]:
         assert item["eval_status"] == "failed"
@@ -1053,14 +1122,25 @@ from __future__ import annotations
 
 import base64
 import json
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import JSONResponse
 
+from agentlens.commands._format import project_run_row
 from agentlens.store import query as store_query
 from agentlens.web.deps import resolve_home
 
 router = APIRouter(prefix="/api/v1/runs", tags=["runs"])
+
+
+def _parse_iso(ts: str | None) -> datetime | None:
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _encode_cursor(offset: int) -> str:
@@ -1084,7 +1164,7 @@ def list_runs(
     agent: str | None = Query(None),
     eval_status: str | None = Query(None),
     agent_outcome: str | None = Query(None),
-    since_days: int = Query(30, ge=1, le=3650),
+    since_days: int | None = Query(None, ge=1, le=36500),
 ) -> JSONResponse:
     home = resolve_home()
     offset = _decode_cursor(cursor)
@@ -1100,7 +1180,16 @@ def list_runs(
         if v is not None
     }
     rows = store_query.list_runs(home, filters=filters)
-    page = rows[offset : offset + limit]
+    if agent is not None:
+        rows = [r for r in rows if r.get("agent_name") == agent]
+    if since_days is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+        rows = [
+            r for r in rows
+            if (dt := _parse_iso(r.get("started_at"))) is None or dt >= cutoff
+        ]
+    rows = sorted(rows, key=lambda r: r.get("started_at") or "", reverse=True)
+    page = [project_run_row(r) for r in rows[offset : offset + limit]]
     next_cursor = _encode_cursor(offset + limit) if offset + limit < len(rows) else None
     return JSONResponse({"items": page, "next_cursor": next_cursor})
 
@@ -1140,6 +1229,8 @@ git commit -m "feat(agentlens-dashboard): /api/v1/runs list with cursor paginati
 
 ### Task 9: Run detail endpoint + manifest_seal + verify
 
+**Review correction:** the implementation below must use the real manifest contract. `manifest.json` has `files`, not `artifacts`, and no `manifest_sha256` field. Use `agentlens.store.manifest.verify(run_dir)` for integrity and compute any `manifest_digest` from the manifest file bytes. Tests should request the actual run ID from `run.json`, not the fixture directory name.
+
 **Files:**
 - Modify: `AgentLens/src/agentlens/web/routers/runs.py`
 - Create: `AgentLens/tests/integration/test_web_e2e_run_detail.py`
@@ -1152,6 +1243,7 @@ git commit -m "feat(agentlens-dashboard): /api/v1/runs list with cursor paginati
 """Tests for /api/v1/runs/{id} and /api/v1/runs/{id}/verify."""
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -1166,18 +1258,17 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 @pytest.fixture()
 def home_with_minimal(monkeypatch, tmp_path):
-    runs = tmp_path / "runs" / "ws_demo"
-    runs.mkdir(parents=True)
-    shutil.copytree(FIXTURES / "minimal_run", runs / "minimal_run")
+    copy_fixture_as_run_id(FIXTURES, "minimal_run", tmp_path / "runs")
     monkeypatch.setenv("AGENTLENS_HOME", str(tmp_path))
     return tmp_path
 
 
 def test_run_detail_present(home_with_minimal):
-    r = TestClient(create_app(ServeSettings())).get("/api/v1/runs/minimal_run")
+    run_id = json.loads((FIXTURES / "minimal_run" / "run.json").read_text())["run_id"]
+    r = TestClient(create_app(ServeSettings())).get(f"/api/v1/runs/{run_id}")
     assert r.status_code == 200
     body = r.json()
-    assert body["run_id"] == "minimal_run"
+    assert body["run_id"] == run_id
     assert "agent_outcome" in body
     assert "eval_status" in body
     assert "manifest_seal" in body
@@ -1190,12 +1281,12 @@ def test_run_detail_404(home_with_minimal):
 
 
 def test_run_verify(home_with_minimal):
-    r = TestClient(create_app(ServeSettings())).get("/api/v1/runs/minimal_run/verify")
+    run_id = json.loads((FIXTURES / "minimal_run" / "run.json").read_text())["run_id"]
+    r = TestClient(create_app(ServeSettings())).get(f"/api/v1/runs/{run_id}/verify")
     assert r.status_code == 200
     body = r.json()
     assert "ok" in body
-    assert "expected" in body
-    assert "actual" in body
+    assert "mismatches" in body
 ```
 
 - [ ] **Step 2: Run to verify it fails**
@@ -1214,24 +1305,44 @@ import hashlib
 import json as _json
 from pathlib import Path
 
+from agentlens.store import manifest as manifest_store
 
-def _load_manifest(home, run_id: str) -> dict | None:
-    # Search for the run_id under home/runs/*/<run_id>/manifest.json
+
+def _run_dir_for(home, run_id: str) -> Path | None:
     runs_root = Path(home) / "runs"
     for ws_dir in runs_root.iterdir() if runs_root.exists() else []:
-        manifest = ws_dir / run_id / "manifest.json"
-        if manifest.is_file():
-            return _json.loads(manifest.read_text())
+        candidate = ws_dir / run_id
+        if candidate.is_dir():
+            return candidate
     return None
 
 
+def _load_manifest(home, run_id: str) -> dict | None:
+    run_dir = _run_dir_for(home, run_id)
+    if run_dir is None:
+        return None
+    manifest = run_dir / "manifest.json"
+    if manifest.is_file():
+        return _json.loads(manifest.read_text())
+    return None
+
+
+def _manifest_digest(run_dir: Path) -> str | None:
+    manifest_path = run_dir / "manifest.json"
+    if not manifest_path.is_file():
+        return None
+    return "sha256:" + hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+
+
 def _enrich_with_manifest(row: dict, home) -> dict:
-    manifest = _load_manifest(home, row["run_id"])
+    run_dir = _run_dir_for(home, row["run_id"])
     seal = {"phase": row.get("sealed_phase")}
-    if manifest:
+    if run_dir is not None and (manifest := _load_manifest(home, row["run_id"])):
+        mismatches = manifest_store.verify(run_dir)
         seal["sealed_at"] = manifest.get("sealed_at")
-        seal["manifest_sha256"] = manifest.get("manifest_sha256")
-        seal["integrity"] = manifest.get("integrity", "ok")
+        seal["manifest_digest"] = _manifest_digest(run_dir)
+        seal["integrity"] = "ok" if not mismatches else "broken"
+        seal["mismatches_count"] = len(mismatches)
     row["manifest_seal"] = seal
     return row
 
@@ -1248,20 +1359,16 @@ def get_run(run_id: str) -> JSONResponse:
 @router.get("/{run_id}/verify")
 def verify_run(run_id: str) -> JSONResponse:
     home = resolve_home()
-    runs_root = Path(home) / "runs"
-    for ws_dir in runs_root.iterdir() if runs_root.exists() else []:
-        manifest_path = ws_dir / run_id / "manifest.json"
-        if not manifest_path.is_file():
-            continue
-        manifest = _json.loads(manifest_path.read_text())
-        expected = manifest.get("manifest_sha256")
-        # Recompute hash over manifest minus the hash field.
-        copy = {k: v for k, v in manifest.items() if k != "manifest_sha256"}
-        actual = "sha256:" + hashlib.sha256(
-            _json.dumps(copy, sort_keys=True).encode()
-        ).hexdigest()
-        return JSONResponse({"ok": expected == actual, "expected": expected, "actual": actual})
-    raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+    run_dir = _run_dir_for(home, run_id)
+    if run_dir is None or not (run_dir / "manifest.json").is_file():
+        raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+    manifest = _json.loads((run_dir / "manifest.json").read_text())
+    expected = {item["path"]: item["sha256"] for item in manifest.get("files", [])}
+    mismatches = [
+        {"path": m.path, "expected": expected.get(m.path), "actual": m.sha256 or None}
+        for m in manifest_store.verify(run_dir)
+    ]
+    return JSONResponse({"ok": not mismatches, "mismatches": mismatches})
 ```
 
 - [ ] **Step 4: Run to verify it passes**
@@ -1309,15 +1416,14 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 @pytest.fixture()
 def home(monkeypatch, tmp_path):
-    runs = tmp_path / "runs" / "ws_demo"
-    runs.mkdir(parents=True)
-    shutil.copytree(FIXTURES / "minimal_run", runs / "minimal_run")
+    copy_fixture_as_run_id(FIXTURES, "minimal_run", tmp_path / "runs")
     monkeypatch.setenv("AGENTLENS_HOME", str(tmp_path))
     return tmp_path
 
 
 def test_events_returns_ndjson(home):
-    r = TestClient(create_app(ServeSettings())).get("/api/v1/runs/minimal_run/events")
+    run_id = json.loads((FIXTURES / "minimal_run" / "run.json").read_text())["run_id"]
+    r = TestClient(create_app(ServeSettings())).get(f"/api/v1/runs/{run_id}/events")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("application/x-ndjson")
     lines = [ln for ln in r.text.splitlines() if ln.strip()]
@@ -1405,6 +1511,8 @@ git commit -m "feat(agentlens-dashboard): /api/v1/runs/{id}/events NDJSON stream
 
 ### Task 11: Per-run failures / risks / artifacts endpoints
 
+**Review correction:** per-run failures and risks cannot come from `query.get_run(...).get("failures")` or `.get("risks")`; `get_run` merges top-level JSON files and does not build those arrays. Filter `query.failures(home, since_days=36500)` and `query.risks(home, since_days=36500)` by `run_id`, then apply `project_failure` / `project_risk`. Artifact listing must derive from `manifest.files`, and raw download is allowed only for entries whose relative path starts with `artifacts/`.
+
 **Files:**
 - Modify: `AgentLens/src/agentlens/web/routers/runs.py`
 - Create: `AgentLens/tests/integration/test_web_e2e_run_aux.py`
@@ -1417,6 +1525,7 @@ git commit -m "feat(agentlens-dashboard): /api/v1/runs/{id}/events NDJSON stream
 """Tests for per-run failures/risks/artifacts endpoints."""
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -1431,16 +1540,15 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 @pytest.fixture()
 def home(monkeypatch, tmp_path):
-    runs = tmp_path / "runs" / "ws_demo"
-    runs.mkdir(parents=True)
-    shutil.copytree(FIXTURES / "failed_command_run", runs / "failed_command_run")
+    copy_fixture_as_run_id(FIXTURES, "failed_command_run", tmp_path / "runs")
     monkeypatch.setenv("AGENTLENS_HOME", str(tmp_path))
     return tmp_path
 
 
 def test_per_run_failures(home):
+    run_id = json.loads((FIXTURES / "failed_command_run" / "run.json").read_text())["run_id"]
     r = TestClient(create_app(ServeSettings())).get(
-        "/api/v1/runs/failed_command_run/failures"
+        f"/api/v1/runs/{run_id}/failures"
     )
     assert r.status_code == 200
     body = r.json()
@@ -1448,16 +1556,18 @@ def test_per_run_failures(home):
 
 
 def test_per_run_risks(home):
+    run_id = json.loads((FIXTURES / "failed_command_run" / "run.json").read_text())["run_id"]
     r = TestClient(create_app(ServeSettings())).get(
-        "/api/v1/runs/failed_command_run/risks"
+        f"/api/v1/runs/{run_id}/risks"
     )
     assert r.status_code == 200
     assert isinstance(r.json(), list)
 
 
 def test_per_run_artifacts(home):
+    run_id = json.loads((FIXTURES / "failed_command_run" / "run.json").read_text())["run_id"]
     r = TestClient(create_app(ServeSettings())).get(
-        "/api/v1/runs/failed_command_run/artifacts"
+        f"/api/v1/runs/{run_id}/artifacts"
     )
     assert r.status_code == 200
     assert isinstance(r.json(), list)
@@ -1475,22 +1585,25 @@ Expected: FAIL — endpoints missing (404).
 Append to `AgentLens/src/agentlens/web/routers/runs.py`:
 
 ```python
+from agentlens.commands._format import project_failure, project_risk
+
+
 @router.get("/{run_id}/failures")
 def run_failures(run_id: str) -> JSONResponse:
     home = resolve_home()
-    row = store_query.get_run(home, run_id)
-    if row is None:
+    if _run_dir_for(home, run_id) is None:
         raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
-    return JSONResponse(list(row.get("failures") or []))
+    rows = [f for f in store_query.failures(home, since_days=36500) if f.get("run_id") == run_id]
+    return JSONResponse([project_failure(f) for f in rows])
 
 
 @router.get("/{run_id}/risks")
 def run_risks(run_id: str) -> JSONResponse:
     home = resolve_home()
-    row = store_query.get_run(home, run_id)
-    if row is None:
+    if _run_dir_for(home, run_id) is None:
         raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
-    return JSONResponse(list(row.get("risks") or []))
+    rows = [r for r in store_query.risks(home, since_days=36500) if r.get("run_id") == run_id]
+    return JSONResponse([project_risk(r) for r in rows])
 
 
 @router.get("/{run_id}/artifacts")
@@ -1499,13 +1612,12 @@ def run_artifacts(run_id: str) -> JSONResponse:
     manifest = _load_manifest(home, run_id)
     if manifest is None:
         raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
-    artifacts = manifest.get("artifacts") or []
+    artifacts = manifest.get("files") or []
     return JSONResponse([
         {
             "path": a.get("path"),
             "sha256": a.get("sha256"),
-            "size": a.get("size"),
-            "kind": a.get("kind"),
+            "downloadable": str(a.get("path", "")).startswith("artifacts/"),
         }
         for a in artifacts
     ])
@@ -1527,15 +1639,15 @@ def test_artifact_download_redacted_header(monkeypatch, tmp_path):
     runs = tmp_path / "runs" / "ws_demo" / "art_run"
     runs.mkdir(parents=True)
     (runs / "manifest.json").write_text(
-        '{"artifacts":[{"path":"out.txt","sha256":"sha256:deadbeef","size":5,"kind":"text"}]}'
+        '{"files":[{"path":"artifacts/out.txt","sha256":"sha256:' + '0' * 64 + '"}]}'
     )
     artifacts_dir = runs / "artifacts"
     artifacts_dir.mkdir()
-    (artifacts_dir / "sha256:deadbeef").write_bytes(b"hello")
+    (artifacts_dir / "out.txt").write_bytes(b"hello")
     monkeypatch.setenv("AGENTLENS_HOME", str(tmp_path))
 
     r = TestClient(create_app(ServeSettings())).get(
-        "/api/v1/runs/art_run/artifacts/sha256:deadbeef"
+        "/api/v1/runs/art_run/artifacts/sha256:" + "0" * 64
     )
     assert r.status_code == 200
     assert r.content == b"hello"
@@ -1551,21 +1663,23 @@ from fastapi.responses import Response
 @router.get("/{run_id}/artifacts/{sha256}")
 def download_artifact(run_id: str, sha256: str) -> Response:
     home = resolve_home()
-    runs_root = Path(home) / "runs"
-    for ws_dir in runs_root.iterdir() if runs_root.exists() else []:
-        run_dir = ws_dir / run_id
-        if not run_dir.is_dir():
-            continue
-        candidate = run_dir / "artifacts" / sha256
-        if candidate.is_file():
-            return Response(
-                content=candidate.read_bytes(),
-                media_type="application/octet-stream",
-                headers={
-                    "Content-Disposition": f'attachment; filename="{sha256}"',
-                    "X-AgentLens-Redacted": "true",
-                },
-            )
+    run_dir = _run_dir_for(home, run_id)
+    manifest = _load_manifest(home, run_id)
+    if run_dir is None or manifest is None:
+        raise HTTPException(status_code=404, detail=f"run not found: {run_id}")
+    for entry in manifest.get("files") or []:
+        rel = str(entry.get("path", ""))
+        if entry.get("sha256") == sha256 and rel.startswith("artifacts/"):
+            candidate = run_dir / rel
+            if candidate.is_file():
+                return Response(
+                    content=candidate.read_bytes(),
+                    media_type="application/octet-stream",
+                    headers={
+                        "Content-Disposition": f'attachment; filename="{Path(rel).name}"',
+                        "X-AgentLens-Redacted": "true",
+                    },
+                )
     raise HTTPException(status_code=404, detail=f"artifact not found: {sha256}")
 ```
 
@@ -1614,10 +1728,8 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 @pytest.fixture()
 def home(monkeypatch, tmp_path):
-    for ws in ("ws_alpha", "ws_beta"):
-        runs = tmp_path / "runs" / ws
-        runs.mkdir(parents=True)
-        shutil.copytree(FIXTURES / "minimal_run", runs / "minimal_run")
+    copy_fixture_as_run_id(FIXTURES, "minimal_run", tmp_path / "runs")
+    copy_fixture_as_run_id(FIXTURES, "failed_command_run", tmp_path / "runs")
     monkeypatch.setenv("AGENTLENS_HOME", str(tmp_path))
     return tmp_path
 
@@ -1626,13 +1738,13 @@ def test_workspaces_list(home):
     r = TestClient(create_app(ServeSettings())).get("/api/v1/workspaces")
     assert r.status_code == 200
     ids = {w["workspace_id"] for w in r.json()}
-    assert ids == {"ws_alpha", "ws_beta"}
+    assert ids == {"ws_0000000000000001", "ws_0000000000000002"}
 
 
 def test_workspace_detail(home):
-    r = TestClient(create_app(ServeSettings())).get("/api/v1/workspaces/ws_alpha")
+    r = TestClient(create_app(ServeSettings())).get("/api/v1/workspaces/ws_0000000000000001")
     body = r.json()
-    assert body["workspace_id"] == "ws_alpha"
+    assert body["workspace_id"] == "ws_0000000000000001"
     assert "run_count" in body
     assert "recent_runs" in body
     assert "eval_pass_rate_30d" in body
@@ -1790,10 +1902,8 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
 @pytest.fixture()
 def home(monkeypatch, tmp_path):
-    runs = tmp_path / "runs" / "ws_demo"
-    runs.mkdir(parents=True)
-    shutil.copytree(FIXTURES / "failed_command_run", runs / "failed_command_run")
-    shutil.copytree(FIXTURES / "residual_risk_run", runs / "residual_risk_run")
+    copy_fixture_as_run_id(FIXTURES, "failed_command_run", tmp_path / "runs")
+    copy_fixture_as_run_id(FIXTURES, "residual_risk_run", tmp_path / "runs")
     monkeypatch.setenv("AGENTLENS_HOME", str(tmp_path))
     return tmp_path
 
@@ -1812,7 +1922,7 @@ def test_global_risks(home):
 
 def test_global_failures_filter(home):
     r = TestClient(create_app(ServeSettings())).get(
-        "/api/v1/failures?workspace_id=ws_demo&since_days=7"
+        "/api/v1/failures?workspace_id=ws_0000000000000002&since_days=36500"
     )
     assert r.status_code == 200
 ```
@@ -1898,6 +2008,8 @@ git commit -m "feat(agentlens-dashboard): /api/v1/failures + /api/v1/risks globa
 
 ### Task 14: Doctor router (parity with CLI)
 
+**Review correction:** preserve the existing CLI API: `doctor(scope: str = "all", fmt: str = "--format")`. Do not replace it with `doctor(format=...)`. Extract `collect_doctor_report(scope: str = "all")` from the existing JSON-building logic, preserve current `integrations` / `paths` behaviour, and add `warnings: []` as an additive key for dashboard consumers.
+
 **Files:**
 - Create: `AgentLens/src/agentlens/web/routers/doctor.py`
 - Modify: `AgentLens/src/agentlens/web/app.py`
@@ -1939,23 +2051,30 @@ Expected: FAIL — endpoint missing.
 Read `AgentLens/src/agentlens/commands/doctor.py`. Identify the block that builds the JSON payload returned when `--format json` is passed. Extract that block into a new module-level function:
 
 ```python
-def collect_doctor_report() -> dict[str, object]:
+def collect_doctor_report(scope: str = "all") -> dict[str, object]:
     """Return the structured doctor report (same shape as ``doctor --format json``)."""
-    # … move the existing JSON-building logic verbatim into this function …
+    # Move the existing scoped JSON-building logic verbatim into this function.
+    # Preserve scope in {"integrations", "paths", "all"}.
+    report.setdefault("warnings", [])
     return report
 ```
 
 Then change the existing `doctor()` Typer command to call this helper:
 
 ```python
-def doctor(format: str = typer.Option("text", "--format", help="output format")) -> None:
-    if format not in {"text", "json"}:
-        raise typer.BadParameter(f"unknown --format {format!r}")
-    report = collect_doctor_report()
-    if format == "json":
+def doctor(
+    scope: str = typer.Argument("all", help="What to inspect: integrations | paths | all."),
+    fmt: str = typer.Option("text", "--format", help="Output format: text | json."),
+) -> None:
+    if scope not in {"integrations", "paths", "all"}:
+        raise typer.BadParameter(f"invalid scope {scope!r}; expected integrations | paths | all")
+    if fmt not in {"text", "json"}:
+        raise typer.BadParameter(f"invalid --format {fmt!r}; expected text | json")
+    report = collect_doctor_report(scope)
+    if fmt == "json":
         typer.echo(json.dumps(report, sort_keys=True))
         return
-    # … unchanged text rendering …
+    # unchanged text rendering, using only blocks present for the requested scope
 ```
 
 Run the existing CLI test to confirm no behaviour drift:
@@ -1983,7 +2102,7 @@ router = APIRouter(prefix="/api/v1", tags=["doctor"])
 
 @router.get("/doctor")
 def doctor() -> JSONResponse:
-    return JSONResponse(collect_doctor_report())
+    return JSONResponse(collect_doctor_report("all"))
 
 
 __all__ = ["router"]
@@ -2023,7 +2142,7 @@ git commit -m "feat(agentlens-dashboard): /api/v1/doctor + refactor CLI doctor t
 
 **Files:**
 - Create: `AgentLens/src/agentlens/demo_data/__init__.py`
-- Create: `AgentLens/src/agentlens/demo_data/runs/ws_demo/<5 runs>/...` (copy from `tests/fixtures`)
+- Create: `AgentLens/src/agentlens/demo_data/runs/<workspace_id>/<run_id>/...` (copy from `tests/fixtures`, preserving IDs from each fixture's `run.json`)
 - Modify: `AgentLens/pyproject.toml` (package-data)
 - Create: `AgentLens/tests/unit/test_demo_data.py`
 
@@ -2057,7 +2176,7 @@ def test_demo_root_contains_runs():
                 import json
 
                 eval_doc = json.loads((run / "eval.json").read_text())
-                if eval_doc.get("eval_status") == "failed":
+                if eval_doc.get("status") == "failed":
                     has_false_success = True
     assert has_false_success, "demo data should include at least one failed-eval run"
 ```
@@ -2097,17 +2216,17 @@ __all__ = ["demo_root"]
 
 - [ ] **Step 4: Populate demo runs**
 
-Copy these fixtures from `AgentLens/tests/fixtures/` into `AgentLens/src/agentlens/demo_data/runs/ws_demo/`:
+Copy these fixtures from `AgentLens/tests/fixtures/` into `AgentLens/src/agentlens/demo_data/runs/<workspace_id>/<run_id>/`, reading both IDs from each fixture's `run.json`:
 
 ```bash
-mkdir -p AgentLens/src/agentlens/demo_data/runs/ws_demo
-cp -R AgentLens/tests/fixtures/minimal_run         AgentLens/src/agentlens/demo_data/runs/ws_demo/
-cp -R AgentLens/tests/fixtures/failed_command_run  AgentLens/src/agentlens/demo_data/runs/ws_demo/
-cp -R AgentLens/tests/fixtures/residual_risk_run   AgentLens/src/agentlens/demo_data/runs/ws_demo/
-cp -R AgentLens/tests/fixtures/missing_final_run   AgentLens/src/agentlens/demo_data/runs/ws_demo/
-cp -R AgentLens/tests/fixtures/corrupt_manifest_run AgentLens/src/agentlens/demo_data/runs/ws_demo/
+cd AgentLens
+for fixture in minimal_run failed_command_run residual_risk_run missing_final_run corrupt_manifest_run; do
+  read workspace_id run_id <<< "$(.venv/bin/python -c 'import json, pathlib, sys; d=json.loads((pathlib.Path("tests/fixtures")/sys.argv[1]/"run.json").read_text()); print(d["workspace_id"], d["run_id"])' "$fixture")"
+  mkdir -p "src/agentlens/demo_data/runs/$workspace_id"
+  cp -R "tests/fixtures/$fixture" "src/agentlens/demo_data/runs/$workspace_id/$run_id"
+done
 # Remove the expected_eval.json files (they're test artifacts, not part of a real run).
-find AgentLens/src/agentlens/demo_data -name expected_eval.json -delete
+find src/agentlens/demo_data -name expected_eval.json -delete
 ```
 
 - [ ] **Step 5: Update pyproject package-data**
@@ -2274,6 +2393,8 @@ git commit -m "feat(agentlens-dashboard): --demo flag materialises bundled demo 
 
 ### Task 17: Edge cases — schema_version mismatch and partial runs
 
+**Review correction:** there is no `schema_version` field in `run.json`. The test fixture for a future run should write `{"schema":"agentlens.run.v2", ...}` with enough required fields to be a plausible future artifact, and the handler should reject by parsing the `schema` value. Corrupt manifest detection should use `manifest.verify(run_dir)`, not a non-existent `manifest_sha256` field.
+
 **Files:**
 - Modify: `AgentLens/src/agentlens/web/routers/runs.py`
 - Create: `AgentLens/tests/integration/test_web_e2e_run_edge_cases.py`
@@ -2309,8 +2430,8 @@ def home(monkeypatch, tmp_path):
 
 def test_partial_run_returns_200_with_marker(home, tmp_path):
     runs = tmp_path / "runs" / "ws_demo"
-    shutil.copytree(FIXTURES / "missing_final_run", runs / "missing_final_run")
-    r = TestClient(create_app(ServeSettings())).get("/api/v1/runs/missing_final_run")
+    run_id = copy_fixture_as_run_id(FIXTURES, "missing_final_run", tmp_path / "runs")[1]
+    r = TestClient(create_app(ServeSettings())).get(f"/api/v1/runs/{run_id}")
     assert r.status_code == 200
     assert r.json().get("partial") is True
 
@@ -2318,7 +2439,12 @@ def test_partial_run_returns_200_with_marker(home, tmp_path):
 def test_unknown_schema_version_returns_412(home, tmp_path):
     rd = tmp_path / "runs" / "ws_demo" / "future_run"
     rd.mkdir(parents=True)
-    (rd / "run.json").write_text(json.dumps({"run_id": "future_run", "schema_version": "v2"}))
+    (rd / "run.json").write_text(json.dumps({
+        "schema": "agentlens.run.v2",
+        "run_id": "future_run",
+        "workspace_id": "ws_demo",
+        "started_at": "2026-01-01T00:00:00Z",
+    }))
     (rd / "events.jsonl").write_text("")
     r = TestClient(create_app(ServeSettings())).get("/api/v1/runs/future_run")
     assert r.status_code == 412
@@ -2328,8 +2454,8 @@ def test_unknown_schema_version_returns_412(home, tmp_path):
 
 def test_corrupt_manifest_flagged_but_200(home, tmp_path):
     runs = tmp_path / "runs" / "ws_demo"
-    shutil.copytree(FIXTURES / "corrupt_manifest_run", runs / "corrupt_manifest_run")
-    r = TestClient(create_app(ServeSettings())).get("/api/v1/runs/corrupt_manifest_run")
+    run_id = copy_fixture_as_run_id(FIXTURES, "corrupt_manifest_run", tmp_path / "runs")[1]
+    r = TestClient(create_app(ServeSettings())).get(f"/api/v1/runs/{run_id}")
     assert r.status_code == 200
     seal = r.json().get("manifest_seal") or {}
     assert seal.get("integrity") == "broken"
@@ -2361,7 +2487,8 @@ def _detect_schema_version(run_dir: Path) -> str:
     if rj.is_file():
         try:
             data = _json.loads(rj.read_text())
-            return str(data.get("schema_version") or "v1")
+            schema = str(data.get("schema") or "agentlens.run.v1")
+            return schema.rsplit(".", 1)[-1]
         except _json.JSONDecodeError:
             return "v1"
     return "v1"
@@ -2373,15 +2500,14 @@ def _detect_partial(run_dir: Path) -> bool:
 
 
 def _enrich_with_manifest(row: dict, home) -> dict:
-    manifest = _load_manifest(home, row["run_id"])
+    run_dir = _run_dir_for(home, row["run_id"])
     seal = {"phase": row.get("sealed_phase")}
-    if manifest:
+    if run_dir is not None and (manifest := _load_manifest(home, row["run_id"])):
+        mismatches = manifest_store.verify(run_dir)
         seal["sealed_at"] = manifest.get("sealed_at")
-        expected = manifest.get("manifest_sha256")
-        copy = {k: v for k, v in manifest.items() if k != "manifest_sha256"}
-        actual = "sha256:" + hashlib.sha256(_json.dumps(copy, sort_keys=True).encode()).hexdigest()
-        seal["manifest_sha256"] = expected
-        seal["integrity"] = "ok" if expected == actual else "broken"
+        seal["manifest_digest"] = _manifest_digest(run_dir)
+        seal["integrity"] = "ok" if not mismatches else "broken"
+        seal["mismatches_count"] = len(mismatches)
     row["manifest_seal"] = seal
     return row
 
@@ -2396,7 +2522,7 @@ def get_run(run_id: str) -> JSONResponse:
     if schema_version != "v1":
         raise HTTPException(
             status_code=412,
-            detail=f"unsupported schema_version {schema_version!r}; viewer supports v1",
+            detail=f"unsupported run schema {schema_version!r}; viewer supports v1",
         )
     row = store_query.get_run(home, run_id) or {"run_id": run_id, "workspace_id": run_dir.parent.name}
     row = _enrich_with_manifest(dict(row), home)
@@ -2619,6 +2745,8 @@ git commit -m "feat(agentlens-dashboard): --auto-port fallback + --dev-proxy rev
 
 ### Task 19: Frontend project scaffolding
 
+**Review correction:** Vite must not delete `src/agentlens/web_assets/__init__.py`. Either set `emptyOutDir:false` and clean generated files with a command that preserves `__init__.py`, or build into a child directory such as `src/agentlens/web_assets/static/` and mount that child directory. Do not use `emptyOutDir:true` directly against the Python package root.
+
 **Files:**
 - Create: `AgentLens/web/package.json`
 - Create: `AgentLens/web/vite.config.ts`
@@ -2702,7 +2830,7 @@ export default defineConfig({
   },
   build: {
     outDir: path.resolve(__dirname, "../src/agentlens/web_assets"),
-    emptyOutDir: true,
+    emptyOutDir: false,
     sourcemap: true,
   },
   server: {
@@ -4111,9 +4239,9 @@ export function RunDetailRoute() {
       <div className="flex gap-4 mt-3 text-xs text-zinc-600">
         <span><b className="text-zinc-900">{r?.agent_name ?? "unknown"}</b></span>
         <span>sealed: {seal.phase ?? "—"}</span>
-        {seal.manifest_sha256 && (
+        {seal.manifest_digest && (
           <span>
-            manifest: <code className="text-[10px]">{String(seal.manifest_sha256).slice(0, 24)}…</code>{" "}
+            manifest: <code className="text-[10px]">{String(seal.manifest_digest).slice(0, 24)}…</code>{" "}
             {seal.integrity === "broken" && (
               <span className="text-amber-700">⚠ integrity broken</span>
             )}
@@ -4604,14 +4732,16 @@ git commit -m "test(agentlens-dashboard): Playwright e2e for the signature false
 
 ### Task 32: Wheel packaging + static asset serving
 
+**Review correction:** preserve `src/agentlens/web_assets/__init__.py` during `clean` and `build`; otherwise `importlib.resources.files("agentlens.web_assets")` will fail after a frontend build.
+
 **Files:**
 - Modify: `AgentLens/pyproject.toml` (package-data + license)
 - Modify: `AgentLens/src/agentlens/web/app.py` (StaticFiles mount unless dev_proxy)
 - Create: `AgentLens/Makefile`
 
-- [ ] **Step 1: Update pyproject for license + package-data**
+- [ ] **Step 1: Update pyproject for package-data; gate license change on owner approval**
 
-Update top-level fields in `AgentLens/pyproject.toml`:
+Do **not** change the current proprietary license mechanically. If the owner explicitly approves MIT publication, update top-level fields in `AgentLens/pyproject.toml` and add a matching `LICENSE` file in the same commit:
 
 ```toml
 license = { text = "MIT" }
@@ -4683,6 +4813,7 @@ wheel: build
 
 clean:
 	rm -rf web/node_modules web/.vite src/agentlens/web_assets/*
+	touch src/agentlens/web_assets/__init__.py
 	find . -name __pycache__ -exec rm -rf {} +
 	rm -rf dist build *.egg-info
 ```
@@ -4807,7 +4938,7 @@ A read-only web view of every run AgentLens has recorded on this machine.
 
 ```
 pipx install agentlens
-agentlens serve --demo --open
+agentlens serve --demo
 ```
 
 `--demo` boots with bundled sample runs so the UI is populated immediately.
