@@ -89,13 +89,12 @@
 
 [`how-to/extend-event-type.md`](./how-to/extend-event-type.md) 의 완전한 단계별 사용.
 
-**필수 (5곳)**:
+**필수 (4곳)** — v2.17 cutover 이후 AgentLens 단독 싱크:
 
 - [ ] `references/learning-log.md` — 스키마 문서
-- [ ] `scripts/append_learning_event.py` — `EVENT_TYPES` 셋
-- [ ] `evals/check_learning_log.py` — 양성 + 음성 테스트 케이스
 - [ ] `evals/check_skill_contract.py` — `EVENT_TYPES` 리스트
-- [ ] 적어도 하나의 `references/<role>-prompt.md` — 발산자
+- [ ] `scripts/compare_agentlens_events.py` — legacy → `kws-cme.*` rename 계약 + `--self-test` 케이스
+- [ ] 적어도 하나의 `references/<role>-prompt.md` — 발산자 (서브에이전트면 후보 JSON; 오케스트레이터면 `agentlens event append` 직접 호출)
 
 ### 픽스처 추가
 
@@ -257,10 +256,9 @@ DOC_FRESHNESS_STRICT=1 python3 evals/check_doc_freshness.py
 이벤트 타입 추가. [`how-to/extend-event-type.md`](./how-to/extend-event-type.md) 사용:
 
 - [ ] `references/learning-log.md` — 스키마 문서 갱신 (이제 11개 이벤트 타입)
-- [ ] `scripts/append_learning_event.py` — `EVENT_TYPES` 셋 + 타입별 검증
-- [ ] `evals/check_learning_log.py` — 양성 + 음성 테스트
 - [ ] `evals/check_skill_contract.py` — `EVENT_TYPES` 리스트 확장
-- [ ] 적어도 하나의 `references/<role>-prompt.md` — 발산자 연결
+- [ ] `scripts/compare_agentlens_events.py` — 새 타입의 legacy → `kws-cme.*` rename 케이스 + `--self-test`
+- [ ] 적어도 하나의 `references/<role>-prompt.md` — 발산자 연결 (후보 JSON 작성 또는 orchestrator `agentlens event append` 호출)
 - [ ] 버전 번프 (스키마 확장이므로 마이너)
 - [ ] HISTORY.md 항목
 - [ ] 마이너 번프면 스냅샷
