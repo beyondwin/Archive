@@ -16,6 +16,7 @@ from .commands import events as events_cmd
 from .commands import failures as failures_cmd
 from .commands import final as final_cmd
 from .commands import gc as gc_cmd
+from .commands import import_claude_session as import_claude_session_cmd
 from .commands import install as install_cmd
 from .commands import latest as latest_cmd
 from .commands import mark as mark_cmd
@@ -60,6 +61,7 @@ app.command(name="doctor")(doctor_cmd.doctor)
 app.command(name="gc")(gc_cmd.gc)
 app.add_typer(mode_cmd.app, name="mode")
 app.add_typer(event_cmd.event_app, name="event")
+app.add_typer(import_claude_session_cmd.import_app, name="import")
 app.command(name="events")(events_cmd.events)
 
 
