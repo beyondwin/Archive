@@ -67,15 +67,18 @@ log. As an agent editing this skill, you should:
 - **Do not write events yourself when running the skill.** The skill's
   own runtime (orchestrator) handles emission. Manual writes from
   outside an orchestrator run would pollute the dataset.
-- **Treat the log as observability, not state.** Plan execution must never
-  depend on it; conversely, deleting old run directories never breaks the
-  skill. The `meta.json` `outcome` field is the canonical "did this run
-  finish cleanly?" signal — use it when summarizing skill performance.
+- **Treat the event stream as observability, not state.** Plan execution must
+  never depend on it; conversely, AgentLens being absent never breaks the
+  skill — emit sites guard on `ORCH_RUN_ID` and `2>/dev/null || true`.
+  After v2.17 cutover the canonical "did this run finish cleanly?" signal is
+  the AgentLens `run-close --outcome` value (`success|blocked|aborted`); use
+  it (or `state.lifecycle_outcome`) when summarizing skill performance.
 - **When changing event types or schemas**, update `references/learning-log.md`,
-  ARCHITECTURE.md §14, and `evals/check_learning_log.py` in the same commit.
-  Bump skill minor version. Past events on disk retain the older schema —
-  the `schema_version` field on each event records which contract it was
-  written under.
+  ARCHITECTURE.md §14, and `scripts/compare_agentlens_events.py` (rename
+  contract + `--self-test` cases) in the same commit. Bump skill minor
+  version. The `schema_version` field on each event records which contract
+  it was written under; cutover-pre-v2.17 disk archives keep their old
+  schema but are read-only.
 - **Privacy is non-negotiable.** If you encounter an event with a secret,
   absolute home path, full transcript, or other forbidden content, treat
   it as a helper bug and fix the rejection path. Do not weaken redaction

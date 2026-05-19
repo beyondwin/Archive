@@ -1,10 +1,12 @@
 # kws-claude-multi-agent-executor
 
-구현 계획(plan)과 디자인 스펙(spec)을 입력받아 **자율적으로** 끝까지 실행하는 Claude Code 스킬. Opus **오케스트레이터** 한 명이 새로 생성되는 Sonnet **서브 에이전트**들(Implementer / Reviewer / Verifier / Plan Reviewer / Docs Updater)에게 작업을 분배합니다. 오케스트레이터는 3단계 라이프사이클을 결정론적으로 진행하며, 각 실행은 별도의 git worktree에 격리되고, 모든 태스크는 구조화된 루브릭으로 채점되며, 주요 이벤트는 사용자 로컬 학습 로그에 영구 저장되어 스킬 자체의 개선에 사용됩니다.
+구현 계획(plan)과 디자인 스펙(spec)을 입력받아 **자율적으로** 끝까지 실행하는 Claude Code 스킬. Opus **오케스트레이터** 한 명이 새로 생성되는 Sonnet **서브 에이전트**들(Implementer / Reviewer / Verifier / Plan Reviewer / Docs Updater)에게 작업을 분배합니다. 오케스트레이터는 3단계 라이프사이클을 결정론적으로 진행하며, 각 실행은 별도의 git worktree에 격리되고, 모든 태스크는 구조화된 루브릭으로 채점되며, 주요 이벤트는 **AgentLens** (`kws-cme.*` 이벤트 네임스페이스) 에 기록되어 스킬 자체의 개선에 사용됩니다.
 
-**현재 버전**: `2.15.0` (2026-05-16) — 버전 타임라인은 [`HISTORY.md`](./HISTORY.md) 참조.
+**현재 버전**: `2.17.0` (2026-05-19) — 버전 타임라인은 [`HISTORY.md`](./HISTORY.md) 참조.
 
 **최근 변경 (Recent changes)**:
+- **v2.17** — AgentLens 컷오버 (Task 11): `append_learning_event.py` + 평행 `~/.claude/learning/...` 쓰기 경로 제거. AgentLens 단독 이벤트 싱크 (`kws-cme.*`). `agentlens_orchestration_run` run-level 필드, `ORCH_RUN_ID` env 전파, Resume Chain handoff에서 `kws-cme.context_health` 스냅샷 emit. dormant `archive_run.sh` + `render_html_report.py` 체인(v2.14 F1/F3) 제거. 패리티는 `scripts/compare_agentlens_events.py --self-test`로 검증.
+- **v2.16** — Timing/cost 헬퍼 강화: `timing.started` (태스크 디스패치 전), `state.timestamps.completed_at` (Phase 2 Step 2), `scripts/accumulate_cost.py` (F2 비용 집계가 v2.14에서는 prose-only로 silent skip 됐던 회귀 수정).
 - **v2.15** — Context engineering: 티어드 spec injection (`spec_manifest`), per-plan `decisions_register`, 토큰 기반 Resume Chain 트리거.
 - **v2.14** — Forensics & cost: archive on close-run, cost ledger, query helpers, run reports (post-v2.17 AgentLens cutover로 archive/HTML 파이프라인은 제거됨).
 - **v2.13** — Natural multi-plan: `planN=/specN=` 자동 체인 + NL 키워드 lexicon (opus/순차/대화형 등).
@@ -138,10 +140,12 @@ skills/kws-claude-multi-agent-executor/
 │   └── calibration/                ← judge 캘리브레이션 (v2.7 산출물)
 ├── scripts/
 │   ├── compare_agentlens_events.py  ← (v2.17) 레거시 events.jsonl ↔ AgentLens kws-cme.* 패리티 검증
-│   ├── accumulate_cost.py
-│   ├── archive_run.sh
-│   ├── render_html_report.py
-│   └── ...                          ← (v2.17 cutover: append_learning_event.py 제거됨 — AgentLens 단독 싱크)
+│   ├── accumulate_cost.py           ← (v2.16) F2 cost-ledger 집계 (flock-guarded R-M-W)
+│   ├── build_spec_manifest.py       ← (v2.15 C1) tiered spec injection
+│   ├── validate_method_audit.py     ← Phase 2 method audit 게이트
+│   ├── query_state.sh / query_run.sh ← (v2.14 F4) jq read-only 조회 헬퍼
+│   ├── price_table.py / test_price_table.py
+│   └── ...                          ← v2.17 cutover: append_learning_event.py / archive_run.sh / render_html_report.py 제거 — AgentLens 단독 싱크
 └── templates/
     └── (현재 비어있음 — 향후 스캐폴드 예약)
 ```
