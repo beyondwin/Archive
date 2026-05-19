@@ -17,6 +17,7 @@ from .commands import failures as failures_cmd
 from .commands import final as final_cmd
 from .commands import gc as gc_cmd
 from .commands import import_claude_session as import_claude_session_cmd
+from .commands import import_codex_session as import_codex_session_cmd  # noqa: F401  (decorator side-effect)
 from .commands import install as install_cmd
 from .commands import latest as latest_cmd
 from .commands import mark as mark_cmd
