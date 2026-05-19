@@ -716,13 +716,17 @@ def _parse_lockfile(lockfile: Path) -> dict[str, str]:
     return out
 
 
-def verify_shim_integrity(name: str) -> Literal["ok", "drift_warning", "missing"]:
+def verify_shim_integrity(
+    name: str,
+) -> Literal["ok", "drift_warning", "missing", "wrapper_chain_warning"]:
     """Compare the lockfile's recorded sha256 to the real binary's current sha256.
 
     Returns:
-        ``"ok"`` if the sha matches.
+        ``"ok"`` if the sha matches and no wrapper signature is present.
         ``"drift_warning"`` if the real binary's sha differs from the lockfile.
         ``"missing"`` if the lockfile or the real binary is missing.
+        ``"wrapper_chain_warning"`` if sha matches but the target file matches
+            a Layer-1 wrapper signature (spec §3.5).
     """
     lockfile = _shim_dir() / f"{name}.real"
     if not lockfile.is_file():
@@ -736,7 +740,17 @@ def verify_shim_integrity(name: str) -> Literal["ok", "drift_warning", "missing"
     if not real.is_file():
         return "missing"
     current_sha = _sha256_file(real)
-    return "ok" if current_sha == recorded_sha else "drift_warning"
+    if current_sha != recorded_sha:
+        return "drift_warning"
+    # sha matches — run Layer-1 wrapper scan against the .real target so that
+    # post-install wrapper-chain creep (e.g. user replaced /usr/local/bin/claude
+    # with a cmux launcher and re-ran install with the same sha) is surfaced.
+    from .wrapper_detect import scan_real_candidate
+
+    detection = scan_real_candidate(real)
+    if detection.category is not None:
+        return "wrapper_chain_warning"
+    return "ok"
 
 
 __all__ = [
