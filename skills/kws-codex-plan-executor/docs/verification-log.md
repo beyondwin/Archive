@@ -6,9 +6,12 @@ Scope:
 
 - v2.19 path split: code worktrees under `~/.codex/worktrees/<run_id>`.
 - Orchestrator state and runtime artifacts under `~/.codex/orchestrator/<run_id>`.
-- Subagents default on; `subagents=off` is local-only.
+- v2.19.1 subagent default is `auto`; spawning requires explicit user request
+  or `subagents=on`, and `subagents=off` is local-only.
 - Retired local replay and learning helper surface removed from active docs,
   scripts, and eval expectations.
+- AgentLens outcome mapping, redacted payload refs, non-mutating reconcile
+  checks, and eval harness failure propagation were tightened.
 
 Commands:
 
@@ -16,6 +19,7 @@ Commands:
 python3 evals/check_skill_contract.py --skill SKILL.md
 python3 evals/check_state_schema.py
 python3 evals/check_state_reconciliation.py
+python3 evals/check_eval_harness.py
 python3 evals/check_run_diffs.py
 python3 evals/check_context_snapshot.py
 python3 evals/check_headless_result.py

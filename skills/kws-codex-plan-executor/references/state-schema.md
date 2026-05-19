@@ -26,7 +26,7 @@ Example:
   "lifecycle_outcome": null,
   "handoff_reason": "",
   "completion_audit": null,
-  "subagents_requested": true,
+  "subagents_requested": false,
   "subagent_runs": [],
   "tasks": {},
   "risk_levels": {},
@@ -50,3 +50,6 @@ Required path invariants:
 - `context_snapshot_path`, when present, equals `run_dir/context.json`.
 - Old local journal metadata is rejected; AgentLens metadata belongs in
   `agentlens_orchestration_run` and `last_agentlens_event_at`.
+- `subagents_requested` defaults to `false`; set it to `true` only when the
+  user explicitly requested subagents/delegation/parallel work or passed
+  `subagents=on`.

@@ -6,6 +6,7 @@ Run deterministic checks before shipping skill changes:
 python3 evals/check_skill_contract.py --skill SKILL.md
 python3 evals/check_state_schema.py
 python3 evals/check_state_reconciliation.py
+python3 evals/check_eval_harness.py
 python3 evals/check_run_diffs.py
 python3 evals/check_context_snapshot.py
 python3 evals/check_headless_result.py

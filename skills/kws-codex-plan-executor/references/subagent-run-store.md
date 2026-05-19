@@ -2,7 +2,7 @@
 
 Subagent records are opt-in execution artifacts. They exist only when the user
 explicitly requests subagents, delegation, parallel work, or passes
-`subagents=on`.
+`subagents=on`. `subagents=auto` does not by itself authorize spawning.
 
 Record shape:
 

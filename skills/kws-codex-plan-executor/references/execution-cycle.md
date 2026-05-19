@@ -17,9 +17,11 @@
    invoke `using-superpowers`, invoke `test-driven-development` for code
    changes, capture RED evidence, implement, capture GREEN evidence, then run
    the post-diff policy check.
-9. Dispatch subagents by default when work can be split safely. Give each
+9. Dispatch subagents only when the user explicitly requested subagents,
+   delegation, or parallel agent work, or passed `subagents=on`. Give each
    worker a disjoint write scope and review results before marking the task
-   complete. Skip subagents only when `subagents=off`.
+   complete. Keep the run local for `subagents=auto` without an explicit
+   request, and always keep it local for `subagents=off`.
 10. Maintain `context_health` at every semantic boundary.
 11. Before `lifecycle_outcome=finished`, run `scripts/reconcile_state.py` and
     `scripts/validate_state.py`.

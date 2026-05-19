@@ -147,11 +147,12 @@ def main() -> int:
         failures.append("valid v2.19 state should pass: " + (valid.stderr or valid.stdout))
 
     subagents_default_on = base_state()
+    subagents_default_on["subagents_requested"] = False
     subagents_default_on["subagent_runs"] = []
     result = run_validator(script, subagents_default_on)
-    checks["subagents_default_on_without_runs_passes"] = result.returncode == 0
-    if not checks["subagents_default_on_without_runs_passes"]:
-        failures.append("subagents default-on with no runs should pass")
+    checks["subagents_auto_without_runs_passes"] = result.returncode == 0
+    if not checks["subagents_auto_without_runs_passes"]:
+        failures.append("subagents auto with no explicit request should pass")
 
     subagents_off = base_state()
     subagents_off["subagents_requested"] = False
@@ -167,6 +168,71 @@ def main() -> int:
     checks["completed_reviewed_subagent_passes"] = result.returncode == 0
     if not checks["completed_reviewed_subagent_passes"]:
         failures.append("completed reviewed subagent record should pass")
+
+    unknown_owner = base_state()
+    run = completed_subagent_run()
+    run["owner_task"] = "task_404"
+    unknown_owner["subagent_runs"] = [run]
+    result = run_validator(script, unknown_owner)
+    checks["subagent_unknown_owner_task_fails"] = (
+        result.returncode != 0 and "owner_task must reference a task in state" in (result.stderr + result.stdout)
+    )
+    if not checks["subagent_unknown_owner_task_fails"]:
+        failures.append("subagent owner_task should reference an existing task")
+
+    empty_scope = base_state()
+    run = completed_subagent_run()
+    run["write_scope"] = []
+    empty_scope["subagent_runs"] = [run]
+    result = run_validator(script, empty_scope)
+    checks["subagent_empty_write_scope_fails"] = (
+        result.returncode != 0 and "write_scope must be a non-empty list" in (result.stderr + result.stdout)
+    )
+    if not checks["subagent_empty_write_scope_fails"]:
+        failures.append("subagent write_scope should be non-empty")
+
+    changed_outside_scope = base_state()
+    run = completed_subagent_run()
+    run["changed_files"] = ["src/outside.py"]
+    changed_outside_scope["subagent_runs"] = [run]
+    result = run_validator(script, changed_outside_scope)
+    checks["subagent_changed_files_outside_scope_fails"] = (
+        result.returncode != 0 and "changed_files must match write_scope" in (result.stderr + result.stdout)
+    )
+    if not checks["subagent_changed_files_outside_scope_fails"]:
+        failures.append("completed subagent changed_files should match write_scope")
+
+    active_overlap = base_state()
+    active_a = completed_subagent_run()
+    active_a["id"] = "agent_active_a"
+    active_a["status"] = "running"
+    active_a["review_status"] = "unreviewed"
+    active_a["changed_files"] = []
+    active_a["write_scope"] = ["docs/**"]
+    active_b = completed_subagent_run()
+    active_b["id"] = "agent_active_b"
+    active_b["status"] = "queued"
+    active_b["review_status"] = "unreviewed"
+    active_b["changed_files"] = []
+    active_b["write_scope"] = ["docs/example.md"]
+    active_overlap["lifecycle_outcome"] = None
+    active_overlap["completion_audit"] = None
+    active_overlap["subagent_runs"] = [active_a, active_b]
+    result = run_validator(script, active_overlap)
+    checks["active_subagent_write_scope_overlap_fails"] = (
+        result.returncode != 0 and "active subagent write_scope overlap" in (result.stderr + result.stdout)
+    )
+    if not checks["active_subagent_write_scope_overlap_fails"]:
+        failures.append("active subagent write scope overlap should require a rationale")
+
+    empty_allowed_globs = base_state()
+    empty_allowed_globs["tasks"]["task_0"]["unit_manifest"]["allowed_write_globs"] = []
+    result = run_validator(script, empty_allowed_globs)
+    checks["unit_manifest_empty_allowed_globs_fails"] = (
+        result.returncode != 0 and "unit_manifest.allowed_write_globs must be non-empty" in (result.stderr + result.stdout)
+    )
+    if not checks["unit_manifest_empty_allowed_globs_fails"]:
+        failures.append("implementation unit_manifest should require non-empty allowed_write_globs")
 
     subagent_without_opt_in = base_state()
     subagent_without_opt_in["subagents_requested"] = False

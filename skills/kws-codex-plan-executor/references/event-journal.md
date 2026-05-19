@@ -10,11 +10,14 @@ execution.
 Every event payload should include:
 
 - `run_id`
-- `run_dir`
-- `state_path`
-- `workspace`
-- `worktree`
+- `run_dir_ref`
+- `state_path_ref`
+- `workspace_ref`
+- `worktree_ref`
 - redacted task or verification metadata
+
+Use home-relative or repo-relative refs and do not store absolute home paths in
+AgentLens payloads.
 
 For resume, persist `agentlens_orchestration_run` and
 `last_agentlens_event_at` in state when available.

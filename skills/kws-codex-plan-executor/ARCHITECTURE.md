@@ -20,9 +20,10 @@ The worktree stores repository files only. The orchestrator directory stores
 `state.json`, `context.json`, `hooks/`, `learning_events/`, raw evidence, and
 headless result files.
 
-Subagents are enabled by default. Each delegated worker must have a bounded
-write scope; finished state cannot retain running or unreviewed subagent
-records.
+Subagents are opt-in. `subagents=auto` stays local unless the user explicitly
+requests delegation or passes `subagents=on`. Each delegated worker must have a
+bounded write scope; finished state cannot retain running or unreviewed
+subagent records.
 
 AgentLens events provide best-effort replay and learning telemetry. State in
 `~/.codex/orchestrator/<run_id>/state.json` remains the source of truth.

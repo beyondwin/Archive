@@ -135,12 +135,13 @@ def reconcile(state_path: Path, repair_safe: bool) -> tuple[dict, int]:
     if repair_safe:
         repaired = apply_repairs(state, records)
     blockers = [item for item in records if item.get("severity") == "blocking"]
-    drift = state.get("drift") if isinstance(state.get("drift"), dict) else {}
-    drift["last_checked_at"] = now_iso()
-    drift["records"] = records
-    drift["unrepaired_blockers"] = blockers
-    state["drift"] = drift
-    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if repair_safe:
+        drift = state.get("drift") if isinstance(state.get("drift"), dict) else {}
+        drift["last_checked_at"] = now_iso()
+        drift["records"] = records
+        drift["unrepaired_blockers"] = blockers
+        state["drift"] = drift
+        state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     payload = {
         "passed": not blockers,
         "state_path": str(state_path),
