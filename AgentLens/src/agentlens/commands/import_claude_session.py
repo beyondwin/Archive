@@ -28,12 +28,20 @@ from typing import Optional
 
 import typer
 
+from agentlens.commands.import_common import (
+    finalize_imported_run,
+    resolve_byte_cap,
+    validate_byte_cap,
+)
 from agentlens.constants import (
     DEFAULT_MODE,
     SCHEMA_EVENT_V1,
     SCHEMA_RUN_V1,
 )
 from agentlens.ids import compute_workspace_id, make_event_id, make_run_id
+from agentlens.importers.artifacts import write_artifact_json
+from agentlens.importers.title import extract_display_title
+from agentlens.importers.usage import extract_usage
 from agentlens.store.claude_session import (
     find_session,
     list_sessions,
@@ -89,6 +97,17 @@ def _existing_run_for_import_key(import_key: str) -> Optional[Path]:
     return None
 
 
+def _peek_session_id(source: Path) -> str:
+    """Return the session id implied by *source* without parsing it.
+
+    The session id is the filename stem (matches what
+    ``parse_session`` records on ``ParsedSession.session_id``). Used for the
+    pre-parse duplicate-import check so a re-import is a true no-op (no parse,
+    no transcript copy, no artifact writes — E9).
+    """
+    return Path(source).stem
+
+
 def _resolve_source(
     latest: bool,
     session_id: Optional[str],
@@ -132,19 +151,36 @@ def _import_one(
     *,
     workspace_root: Path,
     parent: Optional[str],
+    byte_cap: int,
+    byte_cap_source: str,
+    deep_parse_only: bool,
 ) -> Optional[Path]:
     """Import a single session JSONL; returns the run dir or ``None`` on no-op.
 
     Idempotent: if a run already carries ``input.import_key`` matching this
     session, the existing run dir is returned without further writes.
+    Duplicate detection runs BEFORE the (potentially expensive) parse and
+    BEFORE any writes so a re-import never disturbs the prior run tree (E9).
     """
-    # task_14: parse_session now returns (ParsedSession, ImportReport). The
-    # full report-plumbing wire-up (write_artifact_json + display_title + usage
-    # block on run.json) is task_16 — for now we just unpack so the existing
-    # importer keeps working.
-    parsed, _report = parse_session(source)
-    import_key = f"claude-session:{parsed.session_id}"
+    # E9: short-circuit before any work — the session id is the filename stem,
+    # so we can compute the import key without parsing.
+    pre_session_id = _peek_session_id(source)
+    pre_import_key = f"claude-session:{pre_session_id}"
+    existing = _existing_run_for_import_key(pre_import_key)
+    if existing is not None:
+        return existing
 
+    parsed, report = parse_session(
+        source, byte_cap=byte_cap, deep_parse_only=deep_parse_only
+    )
+    # parse_session pins byte_cap_source="default"; override with the real
+    # provenance the CLI resolved (flag / env / default).
+    report.byte_cap_source = byte_cap_source  # type: ignore[assignment]
+
+    # Belt-and-braces: re-check in case the stem heuristic disagreed (e.g.,
+    # the filename was renamed on disk). parse_session is the source of truth
+    # for the canonical session id.
+    import_key = f"claude-session:{parsed.session_id}"
     existing = _existing_run_for_import_key(import_key)
     if existing is not None:
         return existing
@@ -155,11 +191,26 @@ def _import_one(
     target_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy the transcript before writing run.json so the manifest writer
-    # (Task ≥ 5) can observe the artifact when it ultimately runs.
+    # observes the artifact when seal(pre_eval) runs in finalize.
     transcript_dir = target_dir / "artifacts" / "transcripts"
     transcript_dir.mkdir(parents=True, exist_ok=True)
-    transcript_dst = transcript_dir / f"{parsed.session_id}.jsonl"
+    transcript_rel = Path("artifacts") / "transcripts" / f"{parsed.session_id}.jsonl"
+    transcript_dst = target_dir / transcript_rel
     shutil.copyfile(source, transcript_dst)
+    try:
+        transcript_bytes = transcript_dst.stat().st_size
+    except OSError:
+        transcript_bytes = 0
+    report.set_transcript_artifact(transcript_rel.as_posix(), transcript_bytes)
+
+    # Derive display title from the first user message (heuristic in
+    # importers.title — pure, redaction-safe).
+    display_title = extract_display_title(
+        explicit=None, first_user_message=parsed.first_user_message_text
+    )
+    report.set_display_title(
+        display_title, "first_user_message" if display_title else "null"
+    )
 
     workspace_block: dict = {
         "root_label": "<workspace>",
@@ -202,7 +253,23 @@ def _import_one(
 
     write_run_meta(target_dir, run_doc)
 
-    # command.started
+    # Event ordering: run.started → command.started → claude.* → command.finished.
+    append_event(
+        target_dir,
+        {
+            "schema": SCHEMA_EVENT_V1,
+            "event_id": make_event_id(),
+            "run_id": new_run_id,
+            "ts": started_at,
+            "type": "run.started",
+            "payload": {
+                "agent": "claude_code",
+                "mode": "code",
+                "label": "claude-code-session-import",
+            },
+        },
+    )
+
     append_event(
         target_dir,
         {
@@ -218,7 +285,7 @@ def _import_one(
         },
     )
 
-    # Opaque claude.* events from the session.
+    # Opaque claude.* events from the session (preserves source order).
     for evt in parsed.events:
         append_event(
             target_dir,
@@ -232,7 +299,6 @@ def _import_one(
             },
         )
 
-    # command.finished
     append_event(
         target_dir,
         {
@@ -245,11 +311,28 @@ def _import_one(
                 "source": "claude-session-jsonl",
                 "session_id": parsed.session_id,
                 "line_count": parsed.line_count,
+                "analysis_state": report.analysis_state,
             },
         },
     )
 
+    # Compute usage summary from billable assistant records (extract_usage is
+    # pure; no I/O). Desktop sessions with no usage still get a deterministic
+    # all-zero record so query-layer projections are stable.
+    usage = extract_usage("claude-session", parsed.usage_records)
+
+    # Persist artifacts BEFORE finalize_imported_run so seal(pre_eval) covers
+    # them in manifest.json.
+    artifacts_dir = target_dir / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    write_artifact_json(artifacts_dir / "import_report.json", report.to_dict())
+    write_artifact_json(artifacts_dir / "usage.json", usage.to_dict())
+
     write_workspace_pointer(workspace_root, new_run_id, target_dir)
+
+    finalize_imported_run(
+        target_dir, new_run_id, analysis_state=report.analysis_state
+    )
     return target_dir
 
 
@@ -274,6 +357,23 @@ def claude_session(
         "--parent",
         help="parent run_id for explicit linkage in the recorded run.json",
     ),
+    byte_cap: Optional[int] = typer.Option(
+        None,
+        "--byte-cap",
+        help=(
+            "deep-parse byte cap (1 MiB–1 GiB). Defaults to 64 MiB; "
+            "AGENTLENS_IMPORT_BYTE_CAP env var overrides default."
+        ),
+        callback=validate_byte_cap,
+    ),
+    deep_parse_only: bool = typer.Option(
+        False,
+        "--deep-parse-only/--no-deep-parse-only",
+        help=(
+            "skip the deep parse entirely when the source exceeds --byte-cap; "
+            "transcript is still copied and the run is sealed (analysis_state=skipped)."
+        ),
+    ),
 ) -> None:
     """Import one or more Claude Code session JSONLs as capture runs.
 
@@ -289,10 +389,19 @@ def claude_session(
         )
         return
 
+    effective_cap, cap_source = resolve_byte_cap(byte_cap)
+
     workspace_root = Path.cwd().resolve()
     for src in sources:
         try:
-            _import_one(src, workspace_root=workspace_root, parent=parent)
+            _import_one(
+                src,
+                workspace_root=workspace_root,
+                parent=parent,
+                byte_cap=effective_cap,
+                byte_cap_source=cap_source,
+                deep_parse_only=deep_parse_only,
+            )
         except Exception as exc:  # pragma: no cover - defensive
             typer.echo(
                 f"warning: failed to import {src.name}: {exc}", err=True

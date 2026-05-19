@@ -181,7 +181,7 @@ $ agentlens failures --since-days 7 --format json | jq '.[].category' | sort -u
 
 The importers turn an external CLI's native session log into one AgentLens **capture** run per session, with the full transcript material copied into the run's `artifacts/transcripts/` directory. Both commands are **idempotent**: a session with a known `input.import_key` is detected and skipped on re-import.
 
-- **`agentlens import claude-session (--latest | --id <id> | --all) [--project <encoded-name>] [--parent <run_id>]`** — imports Claude Code session JSONL from `~/.claude/projects/<encoded-name>/<session-id>.jsonl`. Each session becomes one run with:
+- **`agentlens import claude-session (--latest | --id <id> | --all) [--project <encoded-name>] [--parent <run_id>] [--byte-cap N] [--deep-parse-only]`** — imports Claude Code session JSONL from `~/.claude/projects/<encoded-name>/<session-id>.jsonl`. Each session becomes one run with:
 
   - `agent.name = "claude_code"`
   - `run_kind = "capture"`
@@ -189,7 +189,7 @@ The importers turn an external CLI's native session log into one AgentLens **cap
   - `recording.transcript_source = "claude-session-jsonl"`
   - `input.import_key = "claude-session:<id>"` (idempotency)
 
-  The session JSONL is **copied** (not symlinked) to `artifacts/transcripts/<session-id>.jsonl` and registered in `manifest.json` like any other artifact.
+  The session JSONL is **copied** (not symlinked) to `artifacts/transcripts/<session-id>.jsonl` and registered in `manifest.json` like any other artifact. Two sibling artifacts are written alongside it: `artifacts/import_report.json` (parse-time accounting per spec §4.1 — counters, first-error, byte-cap status, derived display title, redacted source label + sha256 hash) and `artifacts/usage.json` (aggregated per-model token usage per spec §4.3). Both are manifest-covered.
 
   | Flag                       | Meaning                                                                              |
   |----------------------------|--------------------------------------------------------------------------------------|
@@ -198,10 +198,16 @@ The importers turn an external CLI's native session log into one AgentLens **cap
   | `--all`                    | Import every session not yet present (idempotent against `input.import_key`).        |
   | `--project <encoded-name>` | Restrict to a specific encoded project directory under `~/.claude/projects/`.        |
   | `--parent <run_id>`        | Link imported runs to a caller run via `parent_run_id`.                              |
+  | `--byte-cap N`             | Deep-parse byte cap (1 MiB–1 GiB; default 64 MiB). Lines past the cap are dropped from the deep parse and `import_report.byte_cap_hit` is set. The `AGENTLENS_IMPORT_BYTE_CAP` env var provides the default when the flag is omitted. |
+  | `--deep-parse-only`        | When the source exceeds `--byte-cap`, skip the deep parse entirely (no `claude.*` events). The transcript is still copied and the run is sealed; `import_report.analysis_state="skipped"` and `final.json.agent_outcome="partial"`. |
+
+  Re-importing a session is a no-op: the existing `import_report.json` and `usage.json` are preserved byte-for-byte. The query layer surfaces a derived `display_title`, the `usage` summary, and an `import_state` per run; the field names are projected from `import_report.json` / `usage.json` and appear in `agentlens latest --format json`, `agentlens show <run_id> --format json`, and the dashboard `/api/v1/runs` response (additive — `null` for runs without an import report).
 
   Example:
   ```
   agentlens import claude-session --latest
+  agentlens import claude-session --id <id> --byte-cap 16777216
+  AGENTLENS_IMPORT_BYTE_CAP=8388608 agentlens import claude-session --all
   ```
 
 - **`agentlens import codex-session (--latest | --id <id> | --since <iso8601> | --all) [--include-archived] [--parent <run_id>]`** — imports Codex rollout JSONL. Active rollouts live under `~/.codex/sessions/YYYY/MM/DD/rollout-<ISO>-<UUIDv7>.jsonl`; with `--include-archived`, the importer also walks `~/.codex/archived_sessions/`. **Both Codex CLI and Codex Desktop are covered** by this single command — the originator (CLI vs Desktop) is preserved in the run's `meta` block. Each rollout becomes one capture run with:
