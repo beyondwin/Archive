@@ -37,3 +37,8 @@ python3 evals/check_headless_result.py
 
 Prompt and handoff modes are export-only and must not create worktrees or
 orchestrator artifacts.
+
+## Design Notes
+
+- `docs/experiments/v2.20-context-intelligence/PLAN.md`
+- `docs/experiments/v2.20-context-intelligence/IMPLEMENTATION.md`
