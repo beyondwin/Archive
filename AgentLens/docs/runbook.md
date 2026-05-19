@@ -120,6 +120,14 @@ agentlens doctor
 Until you reinstall, the agent works — only recording is paused for that
 binary. There is no exit-code regression.
 
+**Variant — `shim_integrity: wrapper_chain_warning`** (spec §3.5): doctor
+detected that the recorded `.real` target itself looks like a wrapper
+(`agentlens_self`, `cmux`, or a PATH-lookup script). The shim still works,
+but the chain is misconfigured. Doctor prints both a `wrapper_detected=<category>`
+label and a `remediation` line containing the exact `agentlens install …`
+command to fix it (for `cmux`, this is `agentlens install claude --cmux`).
+Run the printed command — no automatic mutation is performed.
+
 ### 3.4 A run sealed as `recording_incomplete`
 
 **Symptoms**: `agentlens show <run_id>` reports `sealed_phase: recording_incomplete`,
