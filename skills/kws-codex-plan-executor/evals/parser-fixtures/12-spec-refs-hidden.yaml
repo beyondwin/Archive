@@ -1,0 +1,18 @@
+name: spec-refs-hidden
+mode: interactive
+plan: |
+  ## Task 0: Add parser
+
+  **Files:**
+  - Modify: scripts/parse_plan.py
+
+  ```markdown
+  **Spec Refs:** S9
+  ```
+
+  **Acceptance Criteria**
+  - Parser ignores hidden spec refs.
+expected:
+  tasks:
+    - id: task_0
+      spec_refs: []
