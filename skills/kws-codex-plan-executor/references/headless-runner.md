@@ -45,14 +45,8 @@ copying or record an honest substitute.
 ## Safe Default Command
 
 ```bash
-RUN_ID="$(python3 "$SKILL_DIR/scripts/append_learning_event.py" init-run \
-  --repo-root "$WORKTREE_ABS" \
-  --repo-name "$REPO_NAME" \
-  --branch "$BRANCH" \
-  --head "$HEAD_SHA" \
-  --plan-path "$PLAN_REL" \
-  --spec-path "${SPEC_REL:-}" \
-  --mode headless)"
+RUN_ID="$(python3 "$SKILL_DIR/scripts/generate_run_id.py" \
+  --repo-name "$REPO_NAME" --branch "$BRANCH" --head "$HEAD_SHA")"
 RUN_DIR="$WORKTREE_ABS/.codex-orchestrator/runs/$RUN_ID"
 mkdir -p "$RUN_DIR/raw"
 HEADLESS_SANDBOX="${HEADLESS_SANDBOX:-workspace-write}"
@@ -65,8 +59,9 @@ CONTEXT_BASIS_HASH="$(python3 "$SKILL_DIR/scripts/build_context_snapshot.py" \
   --max-chars "${CONTEXT_MAX_CHARS:-120000}" \
   --output "$RUN_DIR/context.json")"
 
-# AgentLens dual-write — open an orchestration run alongside the learning run.
-# Empty result (CLI absent, registry error) means downstream emits no-op.
+# AgentLens is the canonical event sink (v2.18 cutover; the legacy
+# append_run_event.py / append_learning_event.py helpers were removed).
+# Empty ORCH_RUN_ID (CLI absent, registry error) means downstream emits no-op.
 ORCH_RUN_ID="$(agentlens run-open \
   --agent kws-cpe-orchestrator \
   --workspace "$WORKTREE_ABS" \
@@ -88,6 +83,11 @@ codex exec \
   > "$RUN_DIR/headless.jsonl" 2>&1
 ```
 
+`generate_run_id.py` is illustrative — any deterministic helper that yields a
+`<utc>-<repo-slug>-<branch-slug>-<head>-<rand>` id is acceptable, as long as
+the id is reused across project-local state, headless artifacts, and every
+AgentLens emit.
+
 The child `codex exec` reads `AGENTLENS_PARENT_RUN_ID` from its environment and
 exports it as `ORCH_RUN_ID` for all emit-site code so events publish into the
 same AgentLens orchestration run as the supervisor. If `ORCH_RUN_ID` is empty,
@@ -96,14 +96,8 @@ every guarded `agentlens event append` becomes a silent no-op.
 ## Schema Output Variant
 
 ```bash
-RUN_ID="$(python3 "$SKILL_DIR/scripts/append_learning_event.py" init-run \
-  --repo-root "$WORKTREE_ABS" \
-  --repo-name "$REPO_NAME" \
-  --branch "$BRANCH" \
-  --head "$HEAD_SHA" \
-  --plan-path "$PLAN_REL" \
-  --spec-path "${SPEC_REL:-}" \
-  --mode headless)"
+RUN_ID="$(python3 "$SKILL_DIR/scripts/generate_run_id.py" \
+  --repo-name "$REPO_NAME" --branch "$BRANCH" --head "$HEAD_SHA")"
 RUN_DIR="$WORKTREE_ABS/.codex-orchestrator/runs/$RUN_ID"
 mkdir -p "$RUN_DIR/raw"
 HEADLESS_SANDBOX="${HEADLESS_SANDBOX:-workspace-write}"
@@ -172,16 +166,12 @@ substitute `scripts/check_run_diffs.py --repo-root "$WORKTREE_ABS" --state
 "$RUN_DIR/state.json" --task <task_id>` before task completion. The diff check
 is post-facto policy evidence, not a low-level write hook.
 
-The target should append project-local events with
-`scripts/append_run_event.py`. The event journal is run evidence only; terminal
-success still depends on `state.json`, `context_health`, and
-`completion_audit`. Finished state must include matching `event_journal_path`
-and a positive `last_event_seq`.
-
-The target must also dual-write every event-journal append to AgentLens during
-the parity window. Read `ORCH_RUN_ID` from the `AGENTLENS_PARENT_RUN_ID` env or
-from the per-run `state.json` field `agentlens_orchestration_run`; if both are
-empty the dual-write no-ops silently:
+The target emits replay events directly to AgentLens under `kws-cpe.<event>`
+(see `references/event-journal.md` for the namespace mapping). The event
+stream is run evidence only; terminal success still depends on `state.json`,
+`context_health`, and `completion_audit`. Read `ORCH_RUN_ID` from the
+`AGENTLENS_PARENT_RUN_ID` env or from the per-run `state.json` field
+`agentlens_orchestration_run`; if both are empty the emit no-ops silently:
 
 ```bash
 ORCH_RUN_ID="${AGENTLENS_PARENT_RUN_ID:-$(jq -r '.agentlens_orchestration_run // ""' \
@@ -194,9 +184,9 @@ if [ -n "${ORCH_RUN_ID:-}" ]; then
 fi
 ```
 
-The legacy `append_run_event.py` call remains alongside the AgentLens append
-during the parity window. The first state.json write must persist
-`agentlens_orchestration_run` (the supervisor-captured `ORCH_RUN_ID` or `null`).
+The first state.json write must persist `agentlens_orchestration_run` (the
+supervisor-captured `ORCH_RUN_ID` or `null`). The legacy
+`scripts/append_run_event.py` helper was removed at the v2.18 cutover.
 
 Before claiming terminal success, run `scripts/reconcile_state.py --check` or
 `--repair-safe`. If blocking drift remains, the target must report a blocked or
@@ -219,23 +209,19 @@ status, taxonomy category, bounded evidence, and next action. Use
 ## Learning Log
 
 Headless artifacts remain under `.codex-orchestrator/runs/<run_id>/`. Learning
-events are separate user-local records written to:
-
-```text
-~/.codex/learning/kws-codex-plan-executor/runs/<YYYY-MM-DD>/<run_id>/events.jsonl
-```
-
-Use `references/learning-log.md` and `scripts/append_learning_event.py` for
-`init-run`, `append`, and `close-run` around `blocker`, `error`,
-`verification_failure`, `recurring_issue`,
+events are recorded directly to AgentLens under the
+`kws-cpe.learning.<event>` namespace per `references/learning-log.md`. Cover
+`blocker`, `error`, `verification_failure`, `recurring_issue`,
 `successful_workaround`, and actionable `completion_learning` events. `prompt`
 and `handoff` are not logging modes.
 
-Each `scripts/append_learning_event.py append` call must also dual-write to
-AgentLens under the `kws-cpe.learning.<event>` namespace when `ORCH_RUN_ID` is
-non-empty (e.g. `kws-cpe.learning.successful_workaround`,
-`kws-cpe.learning.verification_failure`). The legacy helper stays in place
-during the parity window — keep both calls.
+Emit when `ORCH_RUN_ID` is non-empty (e.g.
+`kws-cpe.learning.successful_workaround`,
+`kws-cpe.learning.verification_failure`); failures are silent. The legacy
+`scripts/append_learning_event.py` helper was removed at the v2.18 cutover —
+AgentLens is now the sole sink for these events. Historical
+`~/.codex/learning/kws-codex-plan-executor/` archives remain on disk but are
+no longer written by this skill.
 
 ## Sandbox Selection
 

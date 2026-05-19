@@ -3,6 +3,29 @@
 Source of truth for current behavior: `SKILL.md`, `templates/`, and
 `references/`. This file tracks release intent and migration history.
 
+## v2.18 — AgentLens cutover; legacy event helpers removed (2026-05-19)
+
+- Deleted `scripts/append_run_event.py` and `scripts/append_learning_event.py`
+  after the Task 12 dual-write window. AgentLens is now the sole sink for
+  `kws-cpe.*` (replay) and `kws-cpe.learning.*` (cross-repo learning) events.
+- Added `scripts/compare_agentlens_events.py` with `--self-test`. Encodes the
+  rename contract (`task_contract_recorded → kws-cpe.task_started`,
+  `blocked → kws-cpe.blocker`, `finished → kws-cpe.run_completed`) so mapping
+  regressions fail fast.
+- Removed `evals/check_event_journal.py` and `evals/check_learning_log.py`
+  (tested only the removed helpers); `evals/run.sh` now runs the compare
+  self-test as the deterministic substitute.
+- Updated SKILL.md, `references/event-journal.md`,
+  `references/learning-log.md`, `references/execution-cycle.md`,
+  `references/headless-runner.md`, `docs/state-and-logging.md`, and
+  `templates/fresh-session-prompt.txt` to point at AgentLens emit sites
+  instead of legacy helper invocations. The state schema remains
+  backwards-compatible: `event_journal_path` / `last_event_seq` stay
+  honored when present.
+- Inlined a no-op for the `drift_repaired` legacy-journal append in
+  `scripts/reconcile_state.py` (drift evidence now lives in
+  `state.drift.records` only).
+
 ## v1.9.0 - Adopt selected GSD-2 execution safeguards (2026-05-16)
 
 - Added task `unit_manifest` validation and post-diff policy checks so

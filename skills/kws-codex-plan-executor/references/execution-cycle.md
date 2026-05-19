@@ -37,9 +37,11 @@ Use this for `mode=interactive`.
   Do not silently copy ignored files. If a missing local file blocks baseline
   verification, ask the user, copy only after explicit approval, or record an
   honest substitute explaining the environment blocker.
-- Initialize a learning run inside the selected worktree with
-  `scripts/append_learning_event.py init-run` and keep its `run_id` for all
-  state, headless artifacts, and learning events.
+- Generate the run id and create the project-local run dir before any edits.
+  The run id encodes UTC time, repo slug, branch slug, head hash, and a random
+  suffix (e.g. `20260519T085338Z-archive-codex-events-abcdef0-a1b2c3`). Keep
+  the same `run_id` across project-local state, headless artifacts, and every
+  AgentLens emit for this run.
 - Open an AgentLens orchestration run alongside the learning run init, capturing
   the id for the lifetime of this execution:
 
@@ -59,11 +61,9 @@ Use this for `mode=interactive`.
   pointer. Persist `agentlens_orchestration_run` at the top of the per-run
   state.json (string id or `null`); this field is run-level and must be
   preserved across resume/handoff.
-- Initialize project-local event evidence by appending `run_started` with
-  `scripts/append_run_event.py` when the helper is available. Store
-  `event_journal_path` and `last_event_seq` in state; this journal is replay
-  evidence and does not replace `state.json` or user-local learning logs.
-  Dual-write the same event to AgentLens during the parity window:
+- Initialize replay evidence by emitting `kws-cpe.run_started` to AgentLens.
+  This is now the canonical event sink — the legacy
+  `scripts/append_run_event.py` helper was removed at the v2.18 cutover.
 
   ```bash
   if [ -n "${ORCH_RUN_ID:-}" ]; then
@@ -73,8 +73,9 @@ Use this for `mode=interactive`.
       2>/dev/null || true
   fi
   ```
-  Keep both the legacy `append_run_event.py` call and the AgentLens append until
-  parity is verified.
+
+  `state.json` remains the authoritative resumable record; the AgentLens stream
+  is replay evidence and does not replace it.
 - Build `.codex-orchestrator/runs/<run_id>/context.json` with
   `scripts/build_context_snapshot.py` after `run_id` initialization and before
   task contracts. Store `context_snapshot_path` and `context_basis_hash` in
@@ -88,10 +89,9 @@ Use this for `mode=interactive`.
   `open_questions`, `known_assumptions`, and `handoff_ready`.
 - For `blocker` outcomes such as unreadable plans, ambiguous resume state,
   related dirty task files, unusable execution worktree, or unclear mid/high-risk
-  acceptance criteria, write a redacted learning event using
-  `references/learning-log.md` and `scripts/append_learning_event.py append`
-  when a run_id exists. Dual-write the mirror to AgentLens as
-  `kws-cpe.learning.blocker` when `ORCH_RUN_ID` is non-empty:
+  acceptance criteria, write a redacted learning event directly to AgentLens
+  per `references/learning-log.md`. Emit `kws-cpe.learning.blocker` when
+  `ORCH_RUN_ID` is non-empty:
 
   ```bash
   if [ -n "${ORCH_RUN_ID:-}" ]; then
@@ -315,13 +315,12 @@ details.
 - Validate state file.
 - Record `completion_learning` only when final completion reveals an actionable
   improvement for this executor. Do not log routine successful completions.
-- Close the learning run with `scripts/append_learning_event.py close-run` using
-  `success`, `blocked`, or `error` for whole-run outcome. Learning-log failure
-  must not block the user's implementation result. Dual-write the terminal
-  AgentLens event before closing the AgentLens run; pick the event type by
-  outcome (`finished` → `kws-cpe.run_completed`, blocked/failed → emit
-  `kws-cpe.blocker` / `kws-cpe.failed` from the relevant taxonomy site) and then
-  close the AgentLens orchestration run. Both calls are guarded and silent:
+- Close the AgentLens orchestration run with the terminal event and
+  `run-close`. Pick the event type by outcome (`finished` →
+  `kws-cpe.run_completed`, blocked/failed → emit `kws-cpe.blocker` /
+  `kws-cpe.failed` from the relevant taxonomy site) and then close the run.
+  AgentLens failure must not block the user's implementation result. Both
+  calls are guarded and silent:
 
   ```bash
   if [ -n "${ORCH_RUN_ID:-}" ]; then
