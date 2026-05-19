@@ -83,11 +83,19 @@ class TestInstallCommand:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         # Place fake "claude" in a dir on PATH so shutil.which finds it.
+        # Preserve /usr/bin:/bin in PATH so the Layer-4 selftest probe can
+        # still resolve the shim's `#!/usr/bin/env bash` shebang.
         bindir = tmp_path / "bin"
         bindir.mkdir()
         binary = _fake_binary(bindir, "claude")
-        monkeypatch.setenv("PATH", str(bindir))
-        result = runner.invoke(app, ["install", "claude", "--yes"])
+        monkeypatch.setenv("PATH", f"{bindir}:/usr/bin:/bin")
+        # The fake binary doesn't gracefully handle `--version` but exits 0;
+        # the selftest's depth-1 invocation will succeed and produce no
+        # re-entry marker, so the probe passes. Pass --skip-selftest to keep
+        # this test focused on PATH auto-detection only.
+        result = runner.invoke(
+            app, ["install", "claude", "--yes", "--skip-selftest"]
+        )
         assert result.exit_code == 0, result.output
         shim = home / ".agentlens" / "shims" / "claude"
         assert shim.is_file()

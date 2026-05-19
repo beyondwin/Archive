@@ -62,6 +62,14 @@ def install(
             "Reserved for power users; requires --yes to ensure intent."
         ),
     ),
+    skip_selftest: bool = typer.Option(
+        False,
+        "--skip-selftest",
+        help=(
+            "Skip the Layer-4 post-install selftest probe (spec §S1.4.4). "
+            "For environments where the probe itself is unreliable."
+        ),
+    ),
 ) -> None:
     """Install an AgentLens shim for ``agent``.
 
@@ -120,12 +128,27 @@ def install(
             "WARNING: wrapper detection bypassed via --no-wrapper-detect",
             err=True,
         )
+    if skip_selftest:
+        typer.echo(
+            "WARNING: install selftest skipped via --skip-selftest",
+            err=True,
+        )
     try:
-        install_shim(agent, real_path, allow_wrapper=no_wrapper_detect)
+        install_shim(
+            agent,
+            real_path,
+            allow_wrapper=no_wrapper_detect,
+            skip_selftest=skip_selftest,
+        )
     except ValueError as exc:
         # Surface install-safety refusals (self-reference, .app, wrapper
         # signatures) as a structured CLI error instead of an opaque traceback.
         typer.echo(f"agentlens: install refused — {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except RuntimeError as exc:
+        # Layer-4 selftest probe failure — shim/lockfile already rolled back
+        # by install_shim. Surface as a structured CLI error.
+        typer.echo(f"agentlens: install failed — {exc}", err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(f"installed shim for {agent} -> {real_path}")
     typer.echo("")
