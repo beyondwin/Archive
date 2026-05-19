@@ -10,7 +10,7 @@
 
 **Companion design spec:** `AgentLens/docs/spec/2026-05-19-agentlens-install-safety-and-importer-hardening.md` (read first — its §0 source-review corrections are binding).
 
-**Tech stack:** Python 3.12, Typer, JSON Schema, pytest, FastAPI, React/Vite/TypeScript, existing `src/agentlens/` and `web/` trees.
+**Tech stack:** Python >=3.11, Typer, JSON Schema, pytest, FastAPI, React/Vite/TypeScript, existing `src/agentlens/` and `web/` trees.
 
 **Total scope:** 20 tasks across 8 phases. Estimated single-implementer time: ~24h. Wall-clock with Sonnet implementers in parallel: ~8-10h.
 
@@ -63,13 +63,16 @@ Phase 4: docs + smoke (A)            Phase 8: dashboard + close-out
 |----|----------|---------|-----------------|
 | W1 | Blocker | `.app` refusal at `adapters/shims.py:177-181` landed at commit `7c8df6f` (2026-05-19 09:26). Installs before that timestamp baked unsafe lockfiles; no later code or `doctor` detects them. | Task 8 surfaces existing broken installs via doctor + remediation string. |
 | W2 | Blocker | `commands/install.py:84` calls `shutil.which(agent)` and accepts the result unconditionally. | Tasks 1-3 add signature detection (Layer 1), self-reference check (Layer 2), and PATH-conflict warning (Layer 3). |
-| W3 | High | Novel wrapper shapes can slip past signature detection. | Task 5 adds post-install selftest probe (Layer 4) that runs the shim once with a reserved env var. |
-| W4 | High | `SHIM_TEMPLATE` invariant to the selftest probe. | Task 4 adds inert selftest branch; only entered when `AGENTLENS_INSTALL_SELFTEST=1` AND argv exactly `--version`. |
-| W5 | High | Existing tests use shell-script fixtures for `install_shim`. | Task 7 audits, swaps to Mach-O markers or adds explicit `allow_wrapper=True`. |
+| W3 | High | Novel wrapper shapes can slip past signature detection. | Task 5 adds a post-install guarded re-entry selftest (Layer 4) that runs the shim with a reserved env var and executes the candidate `.real` under depth control. |
+| W4 | High | `SHIM_TEMPLATE` invariant to the selftest probe. | Task 4 adds a guarded selftest branch after lockfile parsing; only entered when `AGENTLENS_INSTALL_SELFTEST=1` AND argv exactly `--version`. |
+| W5 | High | Existing tests use shell-script fixtures and chmodded byte blobs for `install_shim`. | Task 7 audits, keeps binary markers scanner-only, swaps selftest-reaching cases to benign executable fixtures, or adds explicit `allow_wrapper=True` / `skip_selftest=True` where the assertion requires it. |
 | W6 | Medium | Layer 3 warning is non-blocking; tests must check stderr, not stdout. | Task 6 includes a regression assertion. |
 | W7 | Medium | New `shim_integrity` enum value `wrapper_chain_warning` may break strict JSON consumers. | Task 8 surveys consumers (`web/`, text formatter, `scripts/`). |
 | W8 | Medium | `--no-wrapper-detect` is a footgun. | Task 3 pairs it with `--yes` (cannot be used in interactive mode without explicit consent) and prints a loud stderr line. |
 | W9 | Low | `--repair` mode considered but deferred. | Documented in spec §10 as deferred. |
+| W10 | Blocker | A selftest branch that only prints `chain_depth=1` from the first shim never executes the `.real` candidate, so it cannot catch the residual wrapper loops it is supposed to catch. | Tasks 4-5 implement a guarded re-entry probe: depth 0 executes `$REAL_PATH --version` with the shim dir first in `PATH`; depth 1 reports `agentlens_selftest_reentry=1` and fails the install. |
+| W11 | Medium | The PATH-conflict warning must inspect the pre-install `PATH` result; after the shim is written, `shutil.which(agent)` can return the newly installed shim. | Task 6 captures `pre_install_resolution` before `install_shim()` and warns from that captured path after install succeeds. |
+| W12 | Medium | Some existing tests use chmodded byte blobs as "binaries". Those are fine for scanner tests but invalid for a selftest that executes the target. | Task 7 distinguishes detection-only binary markers from selftest-reaching fixtures; lockfile-only unit tests pass `skip_selftest=True` or use a real benign executable. |
 
 ### Importer hardening (E*)
 
@@ -87,6 +90,10 @@ Phase 4: docs + smoke (A)            Phase 8: dashboard + close-out
 | E10 | Medium | `shutil.copyfile()` transcript copy bypasses redaction. | Don't claim transcript redaction. Patch `docs/security.md` honestly. |
 | E11 | Medium | Counting normal vendor lines as unsupported marks sessions partial. | Use a per-vendor allowlist; count `skipped_unsupported_type` only for unclassifiable lines. |
 | E12 | Medium | `hypothesis` not in test deps. | Use deterministic fuzz with `random.Random(0)` in title tests. |
+| E13 | High | Persisting an absolute `source_path` in `import_report.json` bypasses writer redaction and contradicts the absolute-home-path masking contract. | Task 13 stores `source_path` as a redacted label plus `source_path_hash`; tests assert raw `$HOME` is absent. |
+| E14 | High | `extract_usage()` cannot compute `events_missing_usage` or safe `confidence` if parsers only pass records that already contain usage. | Tasks 12/14/15 define `usage_records` as all billable vendor records, including records with missing usage. |
+| E15 | High | `sqlite_index.index_run()` requires a connection; a naked `index_run()` call in the finalizer would fail at runtime. | Task 16 opens via `sqlite_index.init_db(agentlens_home())`, calls `index_run(conn, run_dir)`, then closes the connection. |
+| E16 | Low | Manual smoke steps used a non-existent `--session` flag. Current importers use `--id`. | Task 20 uses `--id <id>` for both Claude and Codex. |
 
 ---
 
@@ -108,7 +115,7 @@ Phase 4: docs + smoke (A)            Phase 8: dashboard + close-out
 | `AgentLens/tests/fixtures/install_wrapper_safety/cmux-launcher.sh` | Cmux signature fixture. |
 | `AgentLens/tests/fixtures/install_wrapper_safety/self-shim.sh` | Self-reference signature fixture. |
 | `AgentLens/tests/fixtures/install_wrapper_safety/path-lookup.sh` | Generic-PATH-lookup signature fixture. |
-| `AgentLens/tests/fixtures/install_wrapper_safety/safe-binary.bin` | Mach-O-shaped marker (no shebang). |
+| `AgentLens/tests/fixtures/install_wrapper_safety/safe-binary.bin` | Scanner-only binary marker (no shebang; never used for executable selftest). |
 | `AgentLens/tests/fixtures/install_wrapper_safety/loop-trap.sh` | Pathological recursive script for selftest. |
 
 **Importer hardening:**
@@ -145,7 +152,7 @@ Phase 4: docs + smoke (A)            Phase 8: dashboard + close-out
 | `AgentLens/src/agentlens/adapters/shims.py` | `install_shim`: call `wrapper_detect.scan_real_candidate`; self-reference check; selftest probe + rollback. Update `SHIM_TEMPLATE` + `CMUX_SHIM_TEMPLATE` with selftest branch. Add `wrapper_chain_warning` to `verify_shim_integrity` return type. |
 | `AgentLens/src/agentlens/commands/install.py` | Add `--no-wrapper-detect` (requires `--yes`) and `--skip-selftest` flags. PATH-conflict warning before rc-hint. Wire flags to `install_shim`. |
 | `AgentLens/src/agentlens/commands/doctor.py` | Layer 5: scan each lockfile target; surface `wrapper_chain_warning`, `wrapper_detected`, `remediation` in JSON; print remediation line in text mode. |
-| `AgentLens/tests/unit/test_install_shim.py` (existing) | Convert script fixtures to Mach-O marker or add `allow_wrapper=True`. |
+| `AgentLens/tests/unit/test_shim_security.py` (existing) | Convert non-executable byte blobs that reach selftest to real benign executable fixtures, or pass `skip_selftest=True` for pure lockfile/security assertions. |
 | `AgentLens/tests/integration/test_doctor.py` (existing, if present) | Add wrapper-chain branch coverage. |
 | `AgentLens/docs/cli.md` | Document `--no-wrapper-detect`, `--skip-selftest`, doctor's new fields. |
 | `AgentLens/docs/security.md` | One paragraph on wrapper detection (denylist) + selftest (catch-all). |
@@ -229,22 +236,35 @@ None.
 
 **Files:** `adapters/shims.py::SHIM_TEMPLATE`, `adapters/shims.py::CMUX_SHIM_TEMPLATE`, `tests/unit/test_shim_template.py` (existing or new)
 
-- [ ] In `SHIM_TEMPLATE`, insert selftest branch immediately after the `set -euo pipefail` line and the existing CLI baked variable, BEFORE the lockfile check:
+- [ ] In `SHIM_TEMPLATE`, insert the selftest branch **after** the lockfile exists check and `REAL_PATH`/`REAL_SHA` extraction, but before the normal sha-drift passthrough / TTY / nested / `agentlens run` branches. Do not place it before `REAL_PATH` is set.
   ```bash
   # AgentLens install self-test (reserved env var). Only honoured when the
   # first positional arg is --version; everything else falls through to the
   # normal exec path so a real invocation cannot be hijacked.
   if [ "${AGENTLENS_INSTALL_SELFTEST:-}" = "1" ] && [ "${1:-}" = "--version" ]; then
+    depth="${AGENTLENS_INSTALL_SELFTEST_DEPTH:-0}"
+    if [ "$depth" != "0" ]; then
+      printf 'agentlens_selftest_reentry=%s\n' "1"
+      printf 'shim_path=%s\n' "$0"
+      printf 'chain_depth=%s\n' "$((depth + 1))"
+      exit 70
+    fi
+    real_exit_code=0
+    child_out="$(AGENTLENS_INSTALL_SELFTEST_DEPTH=1 "$REAL_PATH" --version 2>&1)" || real_exit_code="$?"
+    if printf '%s\n' "$child_out" | grep -q '^agentlens_selftest_reentry=1$'; then
+      printf '%s\n' "$child_out"
+      exit 70
+    fi
     printf 'shim_path=%s\n' "$0"
     printf 'real_path=%s\n' "$REAL_PATH"
     printf 'real_kind=%s\n' "$(file -b "$REAL_PATH" 2>/dev/null | awk -F, '{print $1}')"
-    printf 'chain_depth=%s\n' "${AGENTLENS_INSTALL_SELFTEST_DEPTH:-1}"
+    printf 'chain_depth=%s\n' "1"
+    printf 'real_exit_code=%s\n' "$real_exit_code"
     exit 0
   fi
   ```
-  Verify `REAL_PATH` is set before this block (it currently is via `REAL_PATH="$(awk -F= …)"` reading the lockfile — confirm ordering).
 - [ ] Mirror into `CMUX_SHIM_TEMPLATE` for defensive parity.
-- [ ] Unit test: render template with sample format args; assert selftest line is present.
+- [ ] Unit test: render template with sample format args; assert the selftest line is present after `REAL_PATH=` and before the TTY passthrough branch.
 - [ ] Run `pytest tests/unit/test_shim_template.py -q`.
 
 ### Task 5: Post-install selftest probe + rollback
@@ -252,20 +272,27 @@ None.
 **Files:** `adapters/shims.py::install_shim`, `tests/integration/test_install_selftest_probe.py`, `commands/install.py`
 
 - [ ] At top of `install_shim` (before any writes), snapshot the prior shim and lockfile if they exist (read bytes into temp memory).
-- [ ] At end of `install_shim`, BEFORE returning, run the selftest:
+- [ ] Extend `install_shim` signature: `def install_shim(name: str, real_path: Path, *, allow_wrapper: bool = False, skip_selftest: bool = False) -> None`.
+- [ ] At end of `install_shim`, BEFORE returning, run the selftest unless `skip_selftest=True`:
   ```python
   result = subprocess.run(
       [str(shim), "--version"],
       timeout=5,
       capture_output=True,
-      env={**os.environ, "AGENTLENS_INSTALL_SELFTEST": "1"},
+      env={
+          **os.environ,
+          "PATH": f"{shim.parent}{os.pathsep}{os.environ.get('PATH', '')}",
+          "AGENTLENS_INSTALL_SELFTEST": "1",
+          "AGENTLENS_INSTALL_SELFTEST_DEPTH": "0",
+          "AGENTLENS_INSTALL_SELFTEST_SHIM": str(shim),
+      },
       check=False,
   )
   ```
-- [ ] Parse `result.stdout` into a `dict[str, str]` of `key=value` lines. Validate: exit code 0; `chain_depth == "1"`; `shim_path` equals the installed shim path.
-- [ ] On any failure (timeout/non-zero/malformed/depth-mismatch): delete `shim`+`lockfile`; restore snapshots if present; raise `RuntimeError` with captured stderr.
+- [ ] Parse `result.stdout` into a `dict[str, str]` of `key=value` lines. Validate: exit code 0; `chain_depth == "1"`; `shim_path` equals the installed shim path; `agentlens_selftest_reentry` is absent.
+- [ ] On any failure (timeout/non-zero/malformed/depth-mismatch/re-entry marker): delete `shim`+`lockfile`; restore snapshots if present; raise `RuntimeError` with captured stderr/stdout.
 - [ ] Add `--skip-selftest` Typer option in `commands/install.py`. When set, pass `skip_selftest=True` into `install_shim` and document loud stderr.
-- [ ] Integration tests: with `safe-binary.bin` (a real Mach-O surrogate or pass `allow_wrapper=True` and use a benign shell script that just `echo`s) → install succeeds and selftest output captured for inspection. With `loop-trap.sh` (after `allow_wrapper=True` bypass to reach the selftest) → install fails, no shim, no lockfile.
+- [ ] Integration tests: with a benign executable fixture that handles `--version` and contains no wrapper signatures → install succeeds. With `loop-trap.sh` (after `allow_wrapper=True` bypass to reach the selftest) → selftest re-enters the shim, install fails, no shim, no lockfile. Add one pure lockfile unit test with `skip_selftest=True` for non-executable byte-marker coverage.
 - [ ] Run `pytest tests/integration/test_install_selftest_probe.py -q`.
 
 ## Phase 3 — Advisory + diagnostics (parallel)
@@ -274,9 +301,9 @@ None.
 
 **Files:** `commands/install.py`, `tests/unit/test_install_path_conflict_warning.py`
 
-- [ ] In `commands/install.py` after `install_shim()` returns, BEFORE the "Add to your shell rc" hint:
+- [ ] In `commands/install.py`, capture `pre_install_resolution = shutil.which(agent)` before `install_shim()`. After `install_shim()` returns, BEFORE the "Add to your shell rc" hint, inspect that captured path:
   ```python
-  current = shutil.which(agent)
+  current = pre_install_resolution
   if current and Path(current).resolve() != Path(real_path).resolve():
       with open(current, "rb") as fh:
           head = fh.read(2)
@@ -285,7 +312,7 @@ None.
   ```
 - [ ] Construct `WARNING_TEXT` per spec §3.3 with the two paths substituted.
 - [ ] Unit tests:
-  - Mock `shutil.which("claude")` returning a wrapper script path different from `real_path` → warning to stderr.
+  - Mock `shutil.which("claude")` returning a wrapper script path different from `real_path` before install → warning to stderr, even if a second lookup would return the new shim.
   - Same path → no warning.
   - Mach-O current → no warning.
   - `None` current → no warning.
@@ -293,10 +320,11 @@ None.
 
 ### Task 7: Existing-test audit
 
-**Files:** `tests/unit/test_install_shim.py` (existing), `tests/integration/test_install.py` (if present), `tests/integration/test_shim_tty_passthrough.py`, `tests/integration/test_cmux_chain.py`
+**Files:** `tests/unit/test_shim_security.py` (existing), `tests/integration/test_install.py` (if present), `tests/integration/test_shim_tty_passthrough.py`, `tests/integration/test_cmux_chain.py`, `tests/integration/test_install_doctor.py`
 
 - [ ] grep across all `tests/` for: `install_shim(`, `agentlens install`, and `.real` file writes.
-- [ ] For each test creating a shim from a shell-script fixture: either swap to a Mach-O marker (binary header), OR add `allow_wrapper=True` (or pass `--no-wrapper-detect --yes` for CLI tests) with a one-line comment explaining why.
+- [ ] For each test creating a shim from a suspicious wrapper script: either swap to a benign executable fixture, add `allow_wrapper=True`, or pass `--no-wrapper-detect --yes` for CLI tests with a one-line comment explaining why.
+- [ ] For each test creating a shim from a non-executable byte blob (for example `b"hello world\n"`): pass `skip_selftest=True` if the assertion is only about lockfile/hash/template output, or replace the blob with a real executable fixture if selftest behaviour is under test.
 - [ ] Run `pytest tests/unit/ tests/integration/ -q` and confirm pre-existing tests pass after the audit.
 
 ### Task 8: Doctor wrapper-chain warning
@@ -366,20 +394,21 @@ None.
 **Files:** `importers/usage.py`, `tests/unit/test_importers_usage.py`, fixtures `claude-with-usage.jsonl`/`claude-mixed-usage.jsonl`/`codex-cli-with-usage.jsonl`/`codex-desktop-no-usage.jsonl`
 
 - [ ] Define `UsageSummary` and `ModelUsage` dataclasses matching spec §4.3 (`cost_usd=None`, `pricing_source="unknown"` defaults).
-- [ ] Input type: `usage_records: list[dict[str, Any]]` (raw vendor-line dicts, captured by parsers — NOT normalized events).
-- [ ] Write failing tests: Claude exact (10 events, all tokens); Claude estimated (3 missing cache fields); Codex CLI exact; Codex Desktop unknown (no token fields anywhere); missing model field; multi-model aggregation.
+- [ ] Input type: `usage_records: list[dict[str, Any]]` (all billable raw vendor-line dicts, captured by parsers — NOT normalized events, and NOT limited to rows that already contain usage).
+- [ ] Write failing tests: Claude exact (10 billable events, all token fields); Claude estimated (3 billable events missing cache fields); Claude/Codex unknown when fewer than 50% of billable records have any usage; Codex CLI exact; Codex Desktop unknown (billable records present but no token fields anywhere); missing model field; multi-model aggregation.
 - [ ] Implement `extract_usage(source: Literal["claude-session","codex-rollout"], usage_records: list[dict]) -> UsageSummary`. Confidence rules per spec §4.3 table.
-- [ ] Empty `usage_records` → all-zero summary with `confidence="unknown"`, `diagnostics.events_with_usage=0`.
+- [ ] Empty `usage_records` → all-zero summary with `confidence="unknown"`, `diagnostics.events_with_usage=0`, `diagnostics.events_missing_usage=0`. Non-empty billable records with missing usage increment `events_missing_usage`.
 - [ ] Run `pytest tests/unit/test_importers_usage.py -q`.
 
 ### Task 13: `ImportReport` + artifact writer
 
 **Files:** `importers/report.py`, `importers/artifacts.py`, `tests/unit/test_importers_report.py`
 
-- [ ] Define `ImportReport` dataclass with: counters (`total_scanned`, `parsed`, `skipped_malformed`, `skipped_unsupported_type`, `skipped_oversized`), `first_error`, `transcript_artifact`, `derived.display_title`, `byte_cap_bytes`, `byte_cap_hit`, `byte_cap_source`, `source_bytes`, `duration_ms`, `source` (literal), `source_path`, `source_session_id`.
+- [ ] Define `ImportReport` dataclass with: counters (`total_scanned`, `parsed`, `skipped_malformed`, `skipped_unsupported_type`, `skipped_oversized`), `first_error`, `transcript_artifact`, `derived.display_title`, `byte_cap_bytes`, `byte_cap_hit`, `byte_cap_source`, `source_bytes`, `duration_ms`, `source` (literal), `source_path` (redacted label, never raw absolute), `source_path_hash`, `source_session_id`.
 - [ ] Methods: `record_parsed()`, `record_skip(reason, line_number, byte_offset)` (first-error captured only on first call), `record_byte_cap_hit()`, `set_transcript_artifact(path, bytes)`, `set_display_title(title, source)`, `finalize(duration_ms)`, `analysis_state` property (computed from counters + byte_cap_hit + deep_parse_only_skipped flag), `to_dict()`.
 - [ ] Implement `importers/artifacts.py::write_artifact_json(path: Path, data: dict)`: temp file in same dir → `fsync` → `os.replace` (atomic). Deterministic `json.dumps(data, sort_keys=True, indent=2)`. No schema validation.
-- [ ] Tests: counter aggregation (100 parsed + 3 malformed + 1 oversized → totals); state derivation (`full`/`partial`/`skipped`); `byte_cap_hit=True` → `partial`; deep-parse-only flag → `skipped`; first-error preservation (later errors don't overwrite); atomic write (interrupted write leaves no partial file at target path).
+- [ ] Implement source path redaction helper for import reports: raw resolved path becomes a redacted label plus `sha256:<absolute-path-hash>`. Reuse existing redaction primitives where possible; tests must assert the raw `$HOME` prefix and full project/session directory do not appear in `import_report.json`.
+- [ ] Tests: counter aggregation (100 parsed + 3 malformed + 1 oversized → totals); state derivation (`full`/`partial`/`skipped`); `byte_cap_hit=True` → `partial`; deep-parse-only flag → `skipped`; first-error preservation (later errors don't overwrite); source path redaction/hash; atomic write (interrupted write leaves no partial file at target path).
 - [ ] Run `pytest tests/unit/test_importers_report.py -q`.
 
 ## Phase 6 — Parser integration (parallel across vendors)
@@ -388,7 +417,7 @@ None.
 
 **Files:** `store/claude_session.py`, `tests/unit/test_claude_session_parser.py`, fixture `claude-malformed-line.jsonl`
 
-- [ ] Extend `ParsedSession` with `first_user_message_text: str | None` and `usage_records: list[dict[str, Any]]`.
+- [ ] Extend `ParsedSession` with `first_user_message_text: str | None` and `usage_records: list[dict[str, Any]]` where `usage_records` means all Claude billable assistant records, not just records containing `message.usage`.
 - [ ] Change signature: `parse_session(path: Path, *, byte_cap: int = 64 * 1024 * 1024, deep_parse_only: bool = False) -> tuple[ParsedSession, ImportReport]`.
 - [ ] Replace `_iter_jsonl()` with a binary streaming iterator that opens the file in `"rb"` mode and yields `(line_number, byte_offset, raw_bytes)`. NEVER call `path.read_text()` or load the whole file.
 - [ ] If `path.stat().st_size > byte_cap and deep_parse_only`: return stub `ParsedSession` (no events, no first_user_message, empty usage_records) + `ImportReport` with `analysis_state="skipped"`.
@@ -396,8 +425,8 @@ None.
 - [ ] Per-line: `len(raw_bytes) > 2 MiB` → `report.record_skip("line_too_large", …)`, do NOT call `json.loads` on it.
 - [ ] `json.JSONDecodeError` → `report.record_skip("json_decode", …)`.
 - [ ] Unknown event type (not in vendor allowlist) → `report.record_skip(f"unsupported_type:<type>", …)`. **Do NOT count normal `user`/`assistant`/`system`/tool-result lines as unsupported** (per E11) — these are supported event sources, not unsupported.
-- [ ] Capture first user message: first line where `role == "user"` AND `content` is string OR text-block list. Extract concatenated text, pass to ImportReport via `set_display_title()` later (in the command, not the parser).
-- [ ] Capture usage records: every line with `message.usage` and `message.model` → append raw dict to `usage_records`.
+- [ ] Capture first user message: first line where `line.message.role == "user"` (or top-level `role == "user"` if present) AND content is string OR text-block list. Extract concatenated text, pass to ImportReport via `set_display_title()` later (in the command, not the parser).
+- [ ] Capture usage records: append every billable assistant message record, including records with missing `message.usage` or missing `message.model`, so `extract_usage()` can compute missing-usage diagnostics.
 - [ ] Update existing parser tests for tuple return; add malformed/byte-cap/oversized/title/usage assertions.
 - [ ] Run `pytest tests/unit/test_claude_session_parser.py -q`.
 
@@ -409,7 +438,7 @@ None.
 - [ ] Preserve existing session-meta extraction, originator/mode handling, parent-thread extraction.
 - [ ] Define a known Codex type allowlist (`session_meta`, `message`, `tool_call`, `tool_result`, lifecycle markers, etc.) — only lines OUTSIDE this allowlist count as `skipped_unsupported_type`.
 - [ ] Capture first user message: `type=="message" AND role=="user"`, extract `content` or nested `payload.content`.
-- [ ] Capture usage records: every line with `payload.info.tokens` OR equivalent top-level rollout shape → raw dict to `usage_records`.
+- [ ] Capture usage records: append every billable Codex response/message record, including records with missing `payload.info.tokens`, so `extract_usage()` can compute missing-usage diagnostics. Preserve the raw dict rather than normalized events.
 - [ ] Create `codex-oversized-line.jsonl`: one row with `payload.content` padded to >2 MiB.
 - [ ] Tests: oversized/malformed/byte-cap/skipped/first-user/usage-record cases.
 - [ ] Run `pytest tests/unit/test_codex_session_parser.py -q`.
@@ -426,9 +455,10 @@ None.
   - `finalize_imported_run(run_dir: Path, run_id: str, analysis_state: str) -> None`:
     - Write `final.json` (`agent_outcome="unknown"` if `analysis_state=="full"`, else `"partial"`).
     - `manifest.seal(pre_eval)`.
-    - `evaluate()` → `eval.json`.
+    - `evaluate()` -> `eval.json`.
     - `manifest.seal(final)`.
-    - `sqlite_index.index_run()` (best-effort; absorb exceptions).
+    - `conn = sqlite_index.init_db(agentlens_home())`; `sqlite_index.index_run(conn, run_dir)`; close `conn` in `finally` (best-effort; absorb indexing exceptions only).
+    - If `seal(pre_eval)` or `evaluate()` raises, attempt `manifest.seal(recording_incomplete)` before surfacing the warning; do not leave an unsealed half-finalized import silently.
 - [ ] Update `import_claude_session._import_one()`:
   - Preserve duplicate-import no-op via existing `_existing_run_for_import_key` BEFORE any writes (E9).
   - Call `parse_session(path, byte_cap=byte_cap, deep_parse_only=deep_parse_only)`.
@@ -436,6 +466,7 @@ None.
   - Compute `usage = extract_usage("claude-session", parsed.usage_records)`.
   - Write events in order: `run.started` → `command.started` → all parsed `claude.*` events (preserved order) → `command.finished` (with `line_count`, `analysis_state` in payload).
   - Copy transcript to `artifacts/transcripts/<source-session-id>.jsonl`; `report.set_transcript_artifact(...)`.
+  - Ensure `report.source_path` is the redacted label and `report.source_path_hash` is populated before serialization; never write the raw absolute source path.
   - Write `artifacts/import_report.json` via `write_artifact_json`.
   - Write `artifacts/usage.json` via `write_artifact_json` (always, even all-zero for Desktop).
   - Call `finalize_imported_run(run_dir, run_id, analysis_state=report.analysis_state)`.
@@ -463,10 +494,10 @@ None.
 
 **Files:** `store/query.py`, `store/sqlite_index.py`, `commands/_format.py`, `web/routers/runs.py`, `web/src/api/runs.ts`, `web/src/types/api.ts`, `tests/fixtures/format_snapshots/*.json`, `tests/integration/test_query_projection_usage_title.py`, `tests/integration/test_format_json_snapshot.py`, `tests/integration/test_web_e2e_runs_list.py`, `tests/integration/test_web_e2e_run_detail.py`
 
-- [ ] In `store/query.py`: add helper that locates the run dir from `(home, workspace_id, run_id)` and safely reads `artifacts/import_report.json` + `artifacts/usage.json` (returns `None` on absent/malformed).
+- [ ] In `store/query.py`: add helper that locates the run dir from `(home, workspace_id, run_id)` and safely reads `artifacts/import_report.json` + `artifacts/usage.json` (returns `None` on absent/malformed). Use this helper for both full-scan rows and SQLite rows.
 - [ ] Enrich `latest()`, `full_scan_runs()`, `list_runs()`, `get_run()` with three additive keys: `display_title` (from `import_report.derived.display_title`), `usage` (public subset of `usage.json`), `import_state` (from `import_report.analysis_state`). Emit `None` when artifacts are missing (container runs).
-- [ ] Update `_RUN_ROW_COLUMNS` / SQLite SELECT so SQLite-backed `latest()` returns same enriched shape as full-scan.
-- [ ] In `sqlite_index.py`: add nullable columns `display_title TEXT`, `usage_confidence TEXT`, `import_state TEXT`. Idempotent migration (`ALTER TABLE … ADD COLUMN IF NOT EXISTS …` for SQLite — use `PRAGMA table_info` check then `ALTER` because SQLite lacks `IF NOT EXISTS` on `ADD COLUMN`). Populate from artifacts during `index_run()`.
+- [ ] Update `_RUN_ROW_COLUMNS` / SQLite SELECT so SQLite-backed `latest()` returns enough identity fields (`run_id`, `workspace_id`) to rehydrate the same artifact-derived `display_title`, full `usage` object, and `import_state` as full-scan. Do not treat the SQLite `usage_confidence` column as a substitute for the `usage` artifact.
+- [ ] In `sqlite_index.py`: add nullable columns `display_title TEXT`, `usage_confidence TEXT`, `import_state TEXT`. Idempotent migration (`ALTER TABLE … ADD COLUMN IF NOT EXISTS …` for SQLite — use `PRAGMA table_info` check then `ALTER` because SQLite lacks `IF NOT EXISTS` on `ADD COLUMN`). Populate from artifacts during `index_run()` for cache/filter use only.
 - [ ] In `commands/_format.py`: add three keys to `project_run_row()` and `project_show()` with defaults `None`/`None`/`None`. Always emit keys (never omit) so dashboard/consumers see stable shape.
 - [ ] Regenerate snapshot fixtures: `AGENTLENS_UPDATE_SNAPSHOTS=1 pytest tests/integration/test_format_json_snapshot.py`. Commit the updated fixtures.
 - [ ] Update `/api/v1/runs` and `/api/v1/runs/{id}` tests so payloads include projector-derived fields and do NOT expose `source_path` (web layer rule: never read importer artifacts directly).
@@ -504,10 +535,11 @@ None.
 - [ ] Run full Python suite: `pytest -q`. All green.
 - [ ] Run frontend tests: `npm --prefix AgentLens/web test`. All green.
 - [ ] Manual import on real local history:
-  - Pick one real Claude session under `~/.claude/projects/*/*.jsonl` → `agentlens import claude-session --session <id>`.
-  - Pick one real Codex session under `~/.codex/sessions/*/*.jsonl` → `agentlens import codex-session --session <id>`.
+  - Pick one real Claude session under `~/.claude/projects/*/*.jsonl` → `agentlens import claude-session --id <id>`.
+  - Pick one real Codex session under `~/.codex/sessions/*/*.jsonl` → `agentlens import codex-session --id <id>`.
   - For both, confirm:
     - `manifest.json` final phase covers `artifacts/transcripts/*`, `artifacts/import_report.json`, and `artifacts/usage.json` (non-empty sha256 each).
+    - `artifacts/import_report.json` contains no raw `$HOME` path or full vendor session directory; it includes `source_path_hash`.
     - `eval.json` exists; eval status is not `failed` solely because usage is unknown or import state is partial.
     - `agentlens latest --format json`, `agentlens status --format json`, `agentlens show <run_id> --format json`, and `curl http://localhost:<port>/api/v1/runs` (start web with `agentlens serve`) include `display_title`, `usage`, `import_state`.
     - Re-import → no second run, no overwrite of report/usage.

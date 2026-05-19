@@ -12,7 +12,7 @@ This document is the single source of truth for both topics. Two prior per-topic
 
 ## 0. Source-Review Corrections (binding)
 
-These corrections were applied after reading current source at `019347ee37747572c28943e80fb18cfad6e58651`. Where this list contradicts earlier wording elsewhere, this list wins.
+These corrections were applied after reading current source at `019347ee37747572c28943e80fb18cfad6e58651` and re-checking against `e94babd0144ad4fbbfc41cda096e56bf43319a90`. Where this list contradicts earlier wording elsewhere, this list wins.
 
 ### 0.1 Install / shim subsystem
 
@@ -20,19 +20,22 @@ These corrections were applied after reading current source at `019347ee37747572
 |----|----------|---------|------------|
 | W1 | Blocker | `.app` refusal at `adapters/shims.py:177-181` landed at commit `7c8df6f` (2026-05-19 09:26). Installs from before that timestamp baked unsafe lockfiles; no later code or `doctor` check detects and corrects them. | Layer 5 (`doctor` wrapper detection) surfaces existing broken installs and prints the exact remediation command. No automatic mutation. |
 | W2 | Blocker | `commands/install.py:84` calls `shutil.which(agent)` and accepts the result unconditionally. The result can be any wrapper script that itself routes through PATH. | Layer 1 signature detection + Layer 2 self-reference + Layer 3 PATH-conflict warning at install time. |
-| W3 | High | Even with install-time guards, novel wrapper shapes can slip past signature detection. | Layer 4 post-install selftest probe runs the shim once with a reserved env var and rolls back if the chain depth is wrong. |
-| W4 | High | `SHIM_TEMPLATE` is invariant to the selftest probe. | Add an inert selftest branch at the top of the template; only enters when `AGENTLENS_INSTALL_SELFTEST=1` AND argv is exactly `--version`. |
-| W5 | High | Existing tests use shell-script fixtures for `install_shim`; they will fail under wrapper detection. | Test audit task swaps fixtures to Mach-O markers or adds explicit `--no-wrapper-detect`. |
+| W3 | High | Even with install-time guards, novel wrapper shapes can slip past signature detection. | Layer 4 post-install selftest probe runs the shim once with a reserved env var, actually executes the candidate `.real` under guarded depth, and rolls back if AgentLens re-entry is detected. |
+| W4 | High | `SHIM_TEMPLATE` is invariant to the selftest probe. | Add a guarded selftest branch after `REAL_PATH` is read; only enters when `AGENTLENS_INSTALL_SELFTEST=1` AND argv is exactly `--version`. |
+| W5 | High | Existing tests use shell-script fixtures and chmodded byte blobs for `install_shim`; wrapper detection and the executable selftest will fail some of them for the wrong reason. | Test audit keeps binary markers scanner-only, uses benign executable fixtures for tests that reach selftest, and uses `skip_selftest=True` / explicit wrapper bypasses only for narrow lockfile or bypass assertions. |
+| W6 | Blocker | A print-only selftest branch that exits from the first AgentLens shim never executes the candidate `.real` wrapper, so it cannot catch the novel wrapper loops Layer 4 is meant to catch. | Layer 4 is a guarded **re-entry probe**: the first shim invocation executes `$REAL_PATH --version` under `AGENTLENS_INSTALL_SELFTEST_DEPTH=1` with the new shim dir first in `PATH`; any re-entry into the shim prints `agentlens_selftest_reentry=1` / `chain_depth>1` and fails the install. |
+| W7 | Medium | The PATH-conflict warning cannot be computed reliably after the shim is written; if `~/.agentlens/shims` is already on `PATH`, `shutil.which(agent)` may now return the new shim instead of the pre-install wrapper. | Capture `pre_install_resolution = shutil.which(agent)` before any writes and base Layer 3 warning on that captured path after install succeeds. |
+| W8 | Medium | Existing shim tests include fake files like `b"hello world\n"` that are chmodded executable but are not valid executables. A real selftest probe would fail them for the wrong reason. | Detection-only tests may use binary markers. Any test that reaches selftest must use a real executable fixture (for example a benign shell script with `--version` support and no wrapper signatures) or pass `skip_selftest=True` in pure lockfile/security unit tests. |
 
 ### 0.2 Importer subsystem
 
 | ID | Severity | Finding | Correction |
 |----|----------|---------|------------|
 | E1 | Blocker | The locked v1 schemas (`run.json`, `events.jsonl`, `final.json`, `eval.json`, `manifest.json`) have `additionalProperties:false`. Adding fields would break the contract. | All new data lands in `artifacts/import_report.json`, `artifacts/usage.json`, query/API projection keys, and nullable SQLite cache columns. **Zero schema diffs.** |
-| E2 | Blocker | Current `commands/import_*_session.py` write `run.json`, `events.jsonl`, transcript copy, and workspace pointer only. They do NOT write `final.json`, `eval.json`, `manifest.json`, or index rows. Earlier wording claiming imported transcripts are manifest-covered is false for current code. | Add `commands/import_common.py::finalize_imported_run()` that writes `final.json`, seals `pre_eval`, runs `evaluate()`, seals `final`, then `index_run()`. This becomes the importer finalization pipeline. |
+| E2 | Blocker | Current `commands/import_*_session.py` write `run.json`, `events.jsonl`, transcript copy, and workspace pointer only. They do NOT write `final.json`, `eval.json`, `manifest.json`, or index rows. Earlier wording claiming imported transcripts are manifest-covered is false for current code. | Add `commands/import_common.py::finalize_imported_run()` that writes `final.json`, seals `pre_eval`, runs `evaluate()`, seals `final`, then opens SQLite via `init_db(agentlens_home())` and calls `index_run(conn, run_dir)`. This becomes the importer finalization pipeline. |
 | E3 | Blocker | Evaluator check `run_started` requires the first event to be `run.started`; current importers begin with `command.started`. | Importers prepend `run.started`, then keep existing `command.started` / `command.finished` events for compatibility. |
 | E4 | High | `_iter_jsonl()` in both parsers loads the entire source with `path.read_text()`. A byte cap wrapped around the existing iterator is unsafe. | Replace with a binary streaming iterator that counts byte offsets and line sizes before decoding. |
-| E5 | High | `ParsedSession` / `ParsedCodexSession` do not expose first user message or usage-bearing raw records. | Extend with `first_user_message_text: str | None` and `usage_records: list[dict[str, Any]]`. |
+| E5 | High | `ParsedSession` / `ParsedCodexSession` do not expose first user message or billable raw records. | Extend with `first_user_message_text: str | None` and `usage_records: list[dict[str, Any]]`. |
 | E6 | High | Title needs a source of truth; Claude normalized events do not include user messages. | Store the redacted derived title under `import_report.derived.display_title`; query/API project it from that artifact. |
 | E7 | High | `store.writer.atomic_write_json()` requires a `schema` field; `import_report.json` and `usage.json` are deliberately not schema documents. | Add `importers/artifacts.py::write_artifact_json()` for atomic non-schema artifact JSON writes (temp + fsync + replace, deterministic sort). |
 | E8 | High | Adding `display_title`, `usage`, `import_state` affects locked JSON projectors, snapshots, generated TS types, AND `/api/v1/runs` — not just `store/query.py`. | Single task owns all of `store/query.py`, `commands/_format.py`, snapshot fixtures, generated frontend types, API typings, and route tests. |
@@ -40,6 +43,9 @@ These corrections were applied after reading current source at `019347ee37747572
 | E10 | Medium | Imported transcript copy uses `shutil.copyfile()` and bypasses `store.writer` redaction. | Do not claim transcript redaction. New artifacts must avoid full prompt/output bodies except the capped redacted title. Patch `docs/security.md` honestly. |
 | E11 | Medium | Counting every non-emitted vendor line as unsupported would mark normal sessions partial. | Count `skipped_unsupported_type` only for lines the parser cannot classify; valid-but-not-emitted vendor lines remain supported (use an allowlist). |
 | E12 | Medium | `pyproject.toml` test extras only include `pytest`; Hypothesis is not available. | Use deterministic fuzz loops in title tests; do not add `hypothesis` as a dependency. |
+| E13 | High | `import_report.source_path` as an absolute vendor JSONL path would bypass the writer redaction pipeline and contradict `docs/security.md`'s absolute-home-path masking contract. | Store a redacted `source_path` label plus `source_path_hash`; never persist the raw absolute source path in `import_report.json`. |
+| E14 | High | If parsers only append raw records that already contain usage fields to `usage_records`, `extract_usage()` cannot know how many billable lines were missing usage, so `confidence="exact"` can be falsely emitted. | `usage_records` contains **all billable vendor records**, including records with missing/empty usage. The extractor computes `events_with_usage` and `events_missing_usage` from that full denominator. |
+| E15 | High | `sqlite_index.index_run()` requires an initialized SQLite connection (`index_run(conn, run_dir)`), but earlier wording made the finalizer sound like it could call `index_run()` directly. | `finalize_imported_run()` opens via `sqlite_index.init_db(agentlens_home())`, calls `index_run(conn, run_dir)`, closes the connection, and absorbs indexing errors only after JSON artifacts are durable. |
 
 ---
 
@@ -142,10 +148,10 @@ Catches re-install accidents where `shutil.which` returns the already-installed 
 
 ### 3.3 Layer 3 — PATH-conflict warning (advisory)
 
-Immediately before printing the "Add to your shell rc" hint, compute `current = shutil.which(agent)` and:
-- If `current is None` → no warning.
-- If `Path(current).resolve() == Path(real_path).resolve()` → no warning.
-- If `current` is NOT a shell script (no `#!` prefix) → no warning (binary-vs-binary is normal homebrew/cask state).
+Before any install writes, capture `pre_install_resolution = shutil.which(agent)`. Immediately before printing the "Add to your shell rc" hint, evaluate the captured path (not a fresh post-install lookup) and:
+- If `pre_install_resolution is None` → no warning.
+- If `Path(pre_install_resolution).resolve() == Path(real_path).resolve()` → no warning.
+- If `pre_install_resolution` is NOT a shell script (no `#!` prefix) → no warning (binary-vs-binary is normal homebrew/cask state).
 - Otherwise → emit to stderr:
 
 ```
@@ -162,33 +168,43 @@ Non-blocking.
 
 ### 3.4 Layer 4 — Post-install selftest probe + rollback
 
-After writing shim+lockfile and BEFORE returning success:
+After writing shim+lockfile and BEFORE returning success, run a guarded re-entry probe. The install command intentionally simulates the user's future PATH by putting the shim directory first:
 
 ```python
 result = subprocess.run(
     [str(shim_path), "--version"],
     timeout=5,
     capture_output=True,
-    env={**os.environ, "AGENTLENS_INSTALL_SELFTEST": "1"},
+    env={
+        **os.environ,
+        "PATH": f"{shim_path.parent}{os.pathsep}{os.environ.get('PATH', '')}",
+        "AGENTLENS_INSTALL_SELFTEST": "1",
+        "AGENTLENS_INSTALL_SELFTEST_DEPTH": "0",
+        "AGENTLENS_INSTALL_SELFTEST_SHIM": str(shim_path),
+    },
     check=False,
 )
 ```
 
-The shim template detects `AGENTLENS_INSTALL_SELFTEST=1` AND `$1 == "--version"` and prints:
+The shim template detects `AGENTLENS_INSTALL_SELFTEST=1` AND `$1 == "--version"` after it has read `REAL_PATH` from the lockfile. In depth `0`, it executes `"$REAL_PATH" --version` with `AGENTLENS_INSTALL_SELFTEST_DEPTH=1` and captures the child output. If that child resolves back to the AgentLens shim, the depth `1` invocation prints `agentlens_selftest_reentry=1` and exits with a reserved non-zero status. The depth `0` invocation then reports failure to the installer.
+
+On a non-reentering candidate, the depth `0` invocation prints:
 
 ```
 shim_path=<shim path>
 real_path=<resolved real path>
 real_kind=<output of `file -b $REAL_PATH` first comma-segment>
 chain_depth=1
+real_exit_code=<exit code from REAL_PATH --version, informational only>
 ```
 
 then `exit 0`. The probe parses stdout as key=value lines and validates:
 - exit code is 0
 - `chain_depth == 1`
 - `shim_path` matches the installed shim
+- `agentlens_selftest_reentry` is absent
 
-On any failure (timeout, non-zero exit, malformed output, `chain_depth != 1`) → delete shim + lockfile, restore prior versions if a snapshot exists, raise `RuntimeError` with captured stderr.
+On any failure (timeout, malformed output, `chain_depth != 1`, re-entry marker, reserved re-entry exit code) → delete shim + lockfile, restore prior versions if a snapshot exists, raise `RuntimeError` with captured stderr. A non-zero `real_exit_code` from the underlying binary's own `--version` handler is informational and does not by itself fail the install; the selftest is about AgentLens re-entry, not vendor CLI option support.
 
 The selftest branch in the shim only triggers when argv is **exactly** `--version`; every other invocation falls through normally so a real user invocation cannot be hijacked.
 
@@ -227,7 +243,8 @@ Shape (frozen for v1.x; additive thereafter):
 {
   "schema_version": "1",
   "source": "claude-session" | "codex-rollout",
-  "source_path": "<absolute path to vendor JSONL>",
+  "source_path": "<redacted path label; never raw absolute>",
+  "source_path_hash": "sha256:<hash of resolved absolute source path>",
   "source_session_id": "<id from filename>",
   "analysis_state": "full" | "partial" | "skipped",
   "source_bytes": 12345678,
@@ -299,7 +316,7 @@ Pure function `importers/title.py::extract_display_title()`:
 
 ### 4.3 Usage summary
 
-Pure function `importers/usage.py::extract_usage()` consumes vendor-specific `usage_records` (raw vendor-line dicts, captured by the parser per E5) and emits:
+Pure function `importers/usage.py::extract_usage()` consumes vendor-specific `usage_records` (raw billable vendor-line dicts, captured by the parser per E5/E14, including records with missing usage fields) and emits:
 
 ```
 ~/.agentlens/runs/<workspace_id>/<run_id>/artifacts/usage.json
@@ -369,7 +386,7 @@ Per E2, current importers stop after writing `run.json` + `events.jsonl` + trans
 [NEW]            → manifest.seal(pre_eval)
 [NEW]            → evaluate() → eval.json  (NEVER fails on usage missing or import_state=partial)
 [NEW]            → manifest.seal(final)
-[NEW]            → sqlite_index.index_run()  (best-effort; absorbed exceptions)
+[NEW]            → sqlite_index.init_db(agentlens_home()) → index_run(conn, run_dir)  (best-effort; absorbed exceptions)
 ```
 
 `finalize_imported_run` is the shared entry point — both importer commands call it.
@@ -383,7 +400,7 @@ Per E8, "additive projection" touches more than `store/query.py`. The full set:
 | Layer | File | Change |
 |-------|------|--------|
 | Store query | `store/query.py` | `latest`/`full_scan_runs`/`list_runs`/`get_run` enrich each row by reading `artifacts/import_report.json` + `artifacts/usage.json`; emit `null` when absent. |
-| SQLite cache | `store/sqlite_index.py` | Add nullable columns `display_title`, `usage_confidence`, `import_state`. Idempotent migration. Populated from artifacts during `index_run()`. |
+| SQLite cache | `store/sqlite_index.py` | Add nullable columns `display_title`, `usage_confidence`, `import_state`. Idempotent migration. Populated from artifacts during `index_run()`. SQLite rows are still rehydrated through the same artifact helper before projection; the DB columns are cache hints, not the source of the full `usage` object. |
 | CLI projector | `commands/_format.py` | Three keys added to `project_run_row()` and `project_show()` (always present; default `None`). |
 | Snapshot fixtures | `tests/fixtures/format_snapshots/*.json` | Regenerate with `AGENTLENS_UPDATE_SNAPSHOTS=1`. |
 | Web API | `web/routers/runs.py` | `/api/v1/runs` and `/api/v1/runs/{id}` carry projector-derived fields only; never read artifacts directly from route handlers. |
@@ -427,7 +444,7 @@ No file is modified by both parts. The combined test audit in Part B Task 14 onl
 | `agentlens show --format json` / `latest` / `status` | Three new keys appended (`display_title`, `usage`, `import_state`); `null` when absent. |
 | Existing `.real` lockfiles | Untouched. If wrapper, Layer 5 surfaces it on next `doctor` call. |
 | Existing imported runs on disk | No migration. `display_title=null`, `usage=null`, `import_state=null`. |
-| SHIM_TEMPLATE | Adds an inert selftest branch (no behaviour change without `AGENTLENS_INSTALL_SELFTEST=1`). |
+| SHIM_TEMPLATE | Adds a guarded selftest branch (no behaviour change without `AGENTLENS_INSTALL_SELFTEST=1` and exact `--version` argv). |
 | SQLite index | Three nullable columns added; rebuild from JSON unchanged. |
 | Re-importing a session | Still a no-op for run, report, and usage artifacts. |
 
@@ -436,7 +453,7 @@ No file is modified by both parts. The combined test audit in Part B Task 14 onl
 - **Wrapper detection is a denylist defense.** Layer 4 selftest is the catch-all. Users who bypass with `--no-wrapper-detect` accept exec-loop risk.
 - **No new persisted prompt content.** Title heuristic runs in-memory; only the redacted, capped title (≤120 chars) reaches disk.
 - **Usage is non-sensitive by definition** (token counts, model names). No new redaction.
-- **Import report contains `source_path` (absolute).** Matches existing `run.json` precedent. Not redacted.
+- **Import report does not persist raw absolute source paths.** `source_path` is a redacted label and `source_path_hash` preserves provenance identity without leaking `$HOME` layout. This is required because `import_report.json` is deliberately not written through `store.writer.atomic_write_json()`.
 - **Imported transcripts are NOT newly redacted** (per E10). `shutil.copyfile()` copies vendor JSONL bytes. Patch `docs/security.md` to state this honestly.
 - **Reserved env var `AGENTLENS_INSTALL_SELFTEST`** is documented as reserved; the shim only honours it when argv is exactly `--version` so normal invocation cannot be hijacked.
 
@@ -459,7 +476,7 @@ No file is modified by both parts. The combined test audit in Part B Task 14 onl
 
 **Install safety:**
 - `test_install_cmux_detection.py`: cmux fixture refused; `--no-wrapper-detect --yes` succeeds with stderr warning; `--no-wrapper-detect` without `--yes` errors.
-- `test_install_selftest_probe.py`: safe Mach-O passes; `loop-trap.sh` triggers rollback (no shim, no lockfile on disk).
+- `test_install_selftest_probe.py`: benign executable fixture passes; `loop-trap.sh` triggers rollback (no shim, no lockfile on disk). Binary marker files remain scanner-only fixtures.
 - `test_doctor_wrapper_warning.py`: hand-written wrapper lockfile → `shim_integrity=wrapper_chain_warning` + correct remediation string.
 
 **Importer hardening:**
