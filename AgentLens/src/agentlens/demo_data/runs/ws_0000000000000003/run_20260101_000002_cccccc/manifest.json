@@ -1,0 +1,23 @@
+{
+  "schema": "agentlens.manifest.v1",
+  "run_id": "run_20260101_000002_cccccc",
+  "sealed_at": "2026-01-01T00:00:10Z",
+  "sealed": true,
+  "sealed_phase": "recording_incomplete",
+  "files": [
+    {
+      "path": "run.json",
+      "sha256": "sha256:160e7ce037b760fb8a397ed1a84c5cca97fc3d2466229af069965421662c3089"
+    },
+    {
+      "path": "events.jsonl",
+      "sha256": "sha256:680d33296fb22658ff90d53861de511670381d7b8c71a0fa1bc37769e72377ee"
+    }
+  ],
+  "redaction": {
+    "absolute_paths": "masked",
+    "secret_like_values": "masked",
+    "full_prompts": "not_stored",
+    "full_command_output": "excerpted"
+  }
+}

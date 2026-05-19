@@ -21,6 +21,7 @@ from .commands import mode as mode_cmd
 from .commands import risks as risks_cmd
 from .commands import run as run_cmd
 from .commands import seal as seal_cmd
+from .commands import serve as serve_cmd
 from .commands import show as show_cmd
 from .commands import start as start_cmd
 from .commands import status as status_cmd
@@ -39,6 +40,7 @@ app.command(name="attach")(attach_cmd.attach)
 app.command(name="final")(final_cmd.final)
 app.command(name="seal")(seal_cmd.seal)
 app.command(name="eval")(eval_cmd.eval_cmd)
+app.command(name="serve")(serve_cmd.serve)
 app.command(name="show")(show_cmd.show)
 app.command(name="latest")(latest_cmd.latest)
 app.command(name="status")(status_cmd.status)

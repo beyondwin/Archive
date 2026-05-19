@@ -97,6 +97,21 @@ def _format_text_paths(paths: dict) -> str:
     )
 
 
+def collect_doctor_report(scope: str = "all") -> dict[str, object]:
+    """Return the structured doctor report used by CLI and web routes."""
+    if scope not in {"integrations", "paths", "all"}:
+        raise ValueError(
+            f"invalid scope {scope!r}; expected integrations | paths | all"
+        )
+    report: dict[str, object] = {}
+    if scope in {"integrations", "all"}:
+        report["integrations"] = _integrations_block()
+    if scope in {"paths", "all"}:
+        report["paths"] = _paths_block()
+    report.setdefault("warnings", [])
+    return report
+
+
 def doctor(
     scope: str = typer.Argument(
         "all", help="What to inspect: integrations | paths | all."
@@ -115,11 +130,7 @@ def doctor(
             f"invalid --format {fmt!r}; expected text | json"
         )
 
-    doc: dict = {}
-    if scope in {"integrations", "all"}:
-        doc["integrations"] = _integrations_block()
-    if scope in {"paths", "all"}:
-        doc["paths"] = _paths_block()
+    doc = collect_doctor_report(scope)
 
     if fmt == "json":
         typer.echo(json.dumps(doc, sort_keys=True))
@@ -133,4 +144,4 @@ def doctor(
     typer.echo("\n".join(parts))
 
 
-__all__ = ["doctor"]
+__all__ = ["collect_doctor_report", "doctor"]
