@@ -94,6 +94,8 @@ def build_context_budget(repo_root: Path, sources: list[dict], max_chars: int) -
     if omitted_sections:
         status = "red"
     return {
+        "active_strategy": "source_snapshot",
+        "packet_count": 0,
         "status": status,
         "max_chars": max_chars,
         "estimated_chars": estimated_chars,
@@ -102,7 +104,60 @@ def build_context_budget(repo_root: Path, sources: list[dict], max_chars: int) -
     }
 
 
-def build_snapshot(repo_root: Path, run_id: str, plan: str, spec: str | None, docs: list[str], max_chars: int) -> dict:
+def load_spec_manifest_summary(path_text: str | None) -> dict | None:
+    if not path_text:
+        return None
+    path = Path(path_text).expanduser().resolve()
+    if not path.is_file():
+        die(f"spec manifest is not readable: {path_text}")
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        die(f"spec manifest is invalid JSON: {path_text}: {exc}")
+    sections = manifest.get("sections") if isinstance(manifest, dict) else {}
+    section_order = manifest.get("section_order") if isinstance(manifest, dict) else []
+    return {
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "section_count": len(sections) if isinstance(sections, dict) else 0,
+        "section_order": section_order if isinstance(section_order, list) else [],
+    }
+
+
+def build_task_packet_index(path_text: str | None) -> list[dict]:
+    if not path_text:
+        return []
+    packet_dir = Path(path_text).expanduser().resolve()
+    if not packet_dir.is_dir():
+        die(f"task packet dir is not readable: {path_text}")
+    records: list[dict] = []
+    for packet_path in sorted(packet_dir.glob("task_*.json")):
+        try:
+            packet = json.loads(packet_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            die(f"task packet is invalid JSON: {packet_path}: {exc}")
+        budget = packet.get("context_budget") if isinstance(packet, dict) else {}
+        records.append(
+            {
+                "task_id": packet.get("task_id") if isinstance(packet, dict) else packet_path.stem,
+                "path": str(packet_path),
+                "sha256": sha256_file(packet_path),
+                "estimated_chars": budget.get("estimated_chars") if isinstance(budget, dict) else None,
+            }
+        )
+    return records
+
+
+def build_snapshot(
+    repo_root: Path,
+    run_id: str,
+    plan: str,
+    spec: str | None,
+    docs: list[str],
+    max_chars: int,
+    spec_manifest: str | None = None,
+    task_packet_dir: str | None = None,
+) -> dict:
     sources = []
     for role, raw_path in [("plan", plan), ("spec", spec)]:
         if not raw_path:
@@ -114,8 +169,19 @@ def build_snapshot(repo_root: Path, run_id: str, plan: str, spec: str | None, do
         rel = repo_relative(raw_path, repo_root)
         abs_path = repo_root / rel
         sources.append({"role": "doc", "path": rel, "sha256": sha256_file(abs_path)})
+    spec_manifest_summary = load_spec_manifest_summary(spec_manifest)
+    task_packet_index = build_task_packet_index(task_packet_dir)
 
-    basis_input = json.dumps(sources, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    basis_input = json.dumps(
+        {
+            "sources": sources,
+            "spec_manifest": spec_manifest_summary,
+            "task_packet_index": task_packet_index,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
     snapshot = {
         "schema_version": "1",
         "run_id": run_id,
@@ -124,6 +190,12 @@ def build_snapshot(repo_root: Path, run_id: str, plan: str, spec: str | None, do
         "basis_hash": hashlib.sha256(basis_input.encode("utf-8")).hexdigest(),
     }
     snapshot["context_budget"] = build_context_budget(repo_root, sources, max_chars)
+    if spec_manifest_summary is not None:
+        snapshot["spec_manifest"] = spec_manifest_summary
+    if task_packet_index:
+        snapshot["task_packet_index"] = task_packet_index
+        snapshot["context_budget"]["active_strategy"] = "task_packet"
+        snapshot["context_budget"]["packet_count"] = len(task_packet_index)
     return snapshot
 
 
@@ -135,6 +207,8 @@ def main() -> int:
     parser.add_argument("--spec")
     parser.add_argument("--docs", default="")
     parser.add_argument("--max-chars", type=int, default=120000)
+    parser.add_argument("--spec-manifest")
+    parser.add_argument("--task-packet-dir")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
@@ -144,7 +218,16 @@ def main() -> int:
     docs = [item.strip() for item in args.docs.split(",") if item.strip()]
     if args.max_chars <= 0:
         die("--max-chars must be a positive integer")
-    snapshot = build_snapshot(repo_root, args.run_id, args.plan, args.spec, docs, args.max_chars)
+    snapshot = build_snapshot(
+        repo_root,
+        args.run_id,
+        args.plan,
+        args.spec,
+        docs,
+        args.max_chars,
+        args.spec_manifest,
+        args.task_packet_dir,
+    )
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")

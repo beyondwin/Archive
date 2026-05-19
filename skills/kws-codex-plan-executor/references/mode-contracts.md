@@ -15,6 +15,11 @@ target must bootstrap required skills in its prompt, must not launch another
 nested `codex exec`, and must write the structured headless result described by
 `templates/headless-output-schema.json`.
 
+When `CODEX_EVAL_HOME` is present, the current `codex exec --cd` repository is
+the isolated execution workspace. Do not run `git worktree add` or write git
+refs in that eval runtime; record the logical worktree path in state and write
+orchestrator artifacts under `$CODEX_EVAL_HOME/.codex/orchestrator/<run_id>`.
+
 ## prompt
 
 Export a fresh-session prompt only. Do not create worktrees, state, context

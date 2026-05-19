@@ -82,6 +82,27 @@ VALID_COMMAND_OBSERVATION_CATEGORIES = {
     "unknown",
 }
 REQUIRED_COMMAND_OBSERVATION_FIELDS = {"command", "status", "category", "evidence", "next_action"}
+V220_TOP_LEVEL_FIELDS = {
+    "spec_manifest_path",
+    "task_packet_dir",
+    "current_task_packet_path",
+    "decisions_register",
+    "preflight_warnings",
+    "last_completed_task",
+    "last_completed_at",
+    "compaction",
+}
+REQUIRED_DECISION_FIELDS = {
+    "id",
+    "task",
+    "decision",
+    "files",
+    "made_at",
+    "supersedes",
+    "superseded_by",
+    "reason",
+}
+VALID_PREFLIGHT_WARNING_KINDS = {"missing_local_config", "dependencies_likely_stale"}
 
 
 def _has_substantive_value(value: object) -> bool:
@@ -407,6 +428,149 @@ def _validate_command_observations(data: dict, errors: list[str]) -> None:
                 errors.append(f"unknown command observation must be mentioned in completion_audit.residual_risk: {command}")
 
 
+def _is_v220_state(data: dict) -> bool:
+    if any(key in data for key in V220_TOP_LEVEL_FIELDS):
+        return True
+    tasks = data.get("tasks")
+    if isinstance(tasks, dict):
+        for task in tasks.values():
+            if isinstance(task, dict) and any(
+                key in task
+                for key in (
+                    "task_packet_path",
+                    "task_packet_sha256",
+                    "spec_section_ids",
+                    "fallback_spec_used",
+                    "timing",
+                )
+            ):
+                return True
+    return False
+
+
+def _path_is_under(child: str, parent: str) -> bool:
+    try:
+        Path(child).resolve(strict=False).relative_to(Path(parent).resolve(strict=False))
+    except (ValueError, TypeError):
+        return False
+    return True
+
+
+def _validate_decisions_register(value: object, errors: list[str]) -> None:
+    if not isinstance(value, list):
+        errors.append("decisions_register must be a list")
+        return
+    for index, decision in enumerate(value):
+        prefix = f"decisions_register[{index}]"
+        if not isinstance(decision, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        for key in sorted(REQUIRED_DECISION_FIELDS):
+            if key not in decision:
+                errors.append(f"{prefix} missing field {key}")
+        for key in ("id", "task", "decision", "made_at"):
+            if key in decision and not isinstance(decision[key], str):
+                errors.append(f"{prefix}.{key} must be a string")
+        if "made_at" in decision and _parse_ts(decision.get("made_at")) is None:
+            errors.append(f"{prefix}.made_at must be an ISO timestamp")
+        if "files" in decision and not isinstance(decision["files"], list):
+            errors.append(f"{prefix}.files must be a list")
+        for key in ("supersedes", "superseded_by", "reason"):
+            if key in decision and decision[key] is not None and not isinstance(decision[key], str):
+                errors.append(f"{prefix}.{key} must be null or a string")
+
+
+def _validate_preflight_warnings(value: object, errors: list[str]) -> None:
+    if not isinstance(value, list):
+        errors.append("preflight_warnings must be a list")
+        return
+    for index, warning in enumerate(value):
+        prefix = f"preflight_warnings[{index}]"
+        if not isinstance(warning, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        if warning.get("kind") not in VALID_PREFLIGHT_WARNING_KINDS:
+            errors.append(f"{prefix}.kind must be one of {sorted(VALID_PREFLIGHT_WARNING_KINDS)}")
+        if _parse_ts(warning.get("detected_at")) is None:
+            errors.append(f"{prefix}.detected_at must be an ISO timestamp")
+
+
+def _validate_compaction(value: object, errors: list[str]) -> None:
+    if not isinstance(value, dict):
+        errors.append("compaction must be an object")
+        return
+    if not isinstance(value.get("points"), list):
+        errors.append("compaction.points must be a list")
+    if value.get("last_compaction_after_task") is not None and not isinstance(value.get("last_compaction_after_task"), str):
+        errors.append("compaction.last_compaction_after_task must be null or a string")
+    if not isinstance(value.get("context_drop_count"), int) or value.get("context_drop_count", -1) < 0:
+        errors.append("compaction.context_drop_count must be a non-negative integer")
+
+
+def _validate_v220_task(task_id: str, task: dict, data: dict, errors: list[str]) -> None:
+    run_dir = data.get("run_dir")
+    packet_dir = data.get("task_packet_dir")
+    packet_path = task.get("task_packet_path")
+    if packet_path is not None:
+        if not isinstance(packet_path, str) or not packet_path.strip():
+            errors.append(f"{task_id}: task_packet_path must be a non-empty string")
+        elif isinstance(packet_dir, str) and not _path_is_under(packet_path, packet_dir):
+            errors.append(f"{task_id}: task_packet_path must live under task_packet_dir")
+    if "task_packet_sha256" in task and not _has_substantive_value(task.get("task_packet_sha256")):
+        errors.append(f"{task_id}: task_packet_sha256 must be non-empty")
+    if "spec_section_ids" in task and not isinstance(task.get("spec_section_ids"), list):
+        errors.append(f"{task_id}: spec_section_ids must be a list")
+    if "fallback_spec_used" in task and not isinstance(task.get("fallback_spec_used"), bool):
+        errors.append(f"{task_id}: fallback_spec_used must be a boolean")
+    timing = task.get("timing")
+    completed = str(task.get("status", "")).lower() in {"complete", "completed", "done", "verified", "pass", "passed"}
+    if completed and data.get("lifecycle_outcome") == "finished":
+        if not isinstance(timing, dict):
+            errors.append(f"{task_id}: completed v2.20 task missing timing")
+            return
+        for key in ("started", "completed"):
+            if _parse_ts(timing.get(key)) is None:
+                errors.append(f"{task_id}: timing.{key} must be an ISO timestamp")
+    elif timing is not None and not isinstance(timing, dict):
+        errors.append(f"{task_id}: timing must be an object")
+    if isinstance(run_dir, str) and isinstance(packet_path, str) and not packet_path.startswith(run_dir):
+        errors.append(f"{task_id}: task_packet_path must be under run_dir")
+
+
+def _validate_v220(data: dict, errors: list[str]) -> None:
+    if not _is_v220_state(data):
+        return
+    run_dir = data.get("run_dir")
+    if not isinstance(run_dir, str) or not run_dir.strip():
+        return
+    expected_manifest = str(Path(run_dir) / "spec_manifest.json")
+    if data.get("spec_manifest_path") is not None and data.get("spec_manifest_path") != expected_manifest:
+        errors.append("spec_manifest_path must equal run_dir/spec_manifest.json")
+    expected_packet_dir = str(Path(run_dir) / "task_packets")
+    if data.get("task_packet_dir") is not None and data.get("task_packet_dir") != expected_packet_dir:
+        errors.append("task_packet_dir must equal run_dir/task_packets")
+    current_packet = data.get("current_task_packet_path")
+    packet_dir = data.get("task_packet_dir")
+    if current_packet is not None:
+        if not isinstance(current_packet, str) or not current_packet.strip():
+            errors.append("current_task_packet_path must be a non-empty string")
+        elif isinstance(packet_dir, str) and not _path_is_under(current_packet, packet_dir):
+            errors.append("current_task_packet_path must live under task_packet_dir")
+    _validate_decisions_register(data.get("decisions_register", []), errors)
+    _validate_preflight_warnings(data.get("preflight_warnings", []), errors)
+    if "compaction" in data:
+        _validate_compaction(data.get("compaction"), errors)
+    tasks = data.get("tasks") if isinstance(data.get("tasks"), dict) else {}
+    last_completed_task = data.get("last_completed_task")
+    if last_completed_task is not None and last_completed_task not in tasks:
+        errors.append("last_completed_task must be null or reference a task in state")
+    if data.get("last_completed_at") is not None and _parse_ts(data.get("last_completed_at")) is None:
+        errors.append("last_completed_at must be an ISO timestamp or null")
+    for task_id, task in tasks.items():
+        if isinstance(task, dict):
+            _validate_v220_task(task_id, task, data, errors)
+
+
 def validate(data: dict) -> list[str]:
     errors: list[str] = []
     for key in sorted(REQUIRED_TOP_LEVEL):
@@ -423,6 +587,7 @@ def validate(data: dict) -> list[str]:
     _validate_tasks(data, errors)
     _validate_subagents(data, errors)
     _validate_command_observations(data, errors)
+    _validate_v220(data, errors)
     return errors
 
 

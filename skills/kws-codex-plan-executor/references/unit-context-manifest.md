@@ -77,6 +77,9 @@ rather than a true runtime write gate.
 It should agree with the task contract's `allowed_edits`. For implementation
 tasks, an empty `allowed_write_globs` value is invalid.
 
+For v2.20+ task-packet runs, `unit_manifest.max_context_chars` should match the
+packet builder's `--max-chars` value. The default for both is `60000`.
+
 `forbidden_write_globs` always wins over allowed globs. Use it for generated
 navigation layers, `.git/**`, run-external state, and other files that must not
 be touched by the unit.

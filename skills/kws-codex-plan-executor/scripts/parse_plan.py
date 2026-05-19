@@ -28,6 +28,12 @@ DEPENDS_RE = re.compile(
     r"(?:Depends on|Depends|Dependencies|의존|선행 작업)"
     r"[ \t]*:[ \t]*(?P<value>.+?)[ \t]*(?:\*\*)?[ \t]*$"
 )
+SPEC_REFS_RE = re.compile(
+    r"(?mi)^[ \t]*(?:\*\*)?"
+    r"(?:Spec Refs|Spec refs|Spec references|스펙 참조)"
+    r"[ \t]*:[ \t]*(?:\*\*)?[ \t]*(?P<value>.+?)[ \t]*(?:\*\*)?[ \t]*$"
+)
+SPEC_REF_RE = re.compile(r"\bS\d+(?:\.\d+)*\b")
 FILE_LINE_RE = re.compile(
     r"^\s*-\s+"
     r"(?:(?:Create|Modify|Read|Delete|Move|Update|생성|수정|읽기|삭제|이동|변경|갱신):\s*)?"
@@ -183,6 +189,28 @@ def _extract_depends_on(body: str) -> list[str]:
     return sorted(dict.fromkeys(values))
 
 
+def _extract_spec_refs(body: str) -> list[str]:
+    match = SPEC_REFS_RE.search(body)
+    if not match:
+        return []
+    return list(dict.fromkeys(SPEC_REF_RE.findall(match.group("value"))))
+
+
+def _body_line_range(markdown: str, body_start: int, body_end: int) -> tuple[int, int]:
+    body = markdown[body_start:body_end]
+    base_line = _line_number(markdown, body_start)
+    first: int | None = None
+    last: int | None = None
+    for offset, line in enumerate(body.splitlines()):
+        if line.strip():
+            if first is None:
+                first = base_line + offset
+            last = base_line + offset
+    if first is None:
+        return base_line, base_line
+    return first, last if last is not None else first
+
+
 def _validate_task_dependencies(tasks: list[dict]) -> None:
     ids = {task["id"] for task in tasks}
     for task in tasks:
@@ -222,6 +250,7 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
         body_end = matches[index + 1].start() if index + 1 < len(matches) else len(markdown)
         body_raw = markdown[body_start:body_end]
         body = body_raw.strip()
+        body_line_start, body_line_end = _body_line_range(markdown, body_start, body_end)
         files, has_files, file_line_numbers = _extract_files(body_raw, repo_root, _line_number(markdown, body_start))
         if mode in EXECUTION_MODES and not has_files:
             _die(f"task_{match.group(2)} has no Files block")
@@ -232,8 +261,11 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
                 "title": match.group(3).strip(),
                 "line": _line_number(markdown, match.start()),
                 "body": body,
+                "body_line_start": body_line_start,
+                "body_line_end": body_line_end,
                 "files": files,
                 "file_line_numbers": file_line_numbers,
+                "spec_refs": _extract_spec_refs(body_raw),
                 "depends_on": _extract_depends_on(body),
                 "has_acceptance_criteria": bool(AC_RE.search(body)),
             }
