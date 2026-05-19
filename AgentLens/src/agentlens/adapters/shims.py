@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import stat
 import sys
 from pathlib import Path
 from typing import Literal
@@ -198,6 +199,320 @@ def install_shim(name: str, real_path: Path) -> None:
     os.chmod(shim, 0o755)
 
 
+# ---------------------------------------------------------------------------
+# cmux chain shim — spec §4.6 cmux auto-detection at install.
+#
+# The cmux chain is the deliberate exception to ``install_shim``'s
+# ``.app``-bundle refusal (Task 6). When the user explicitly opts in via
+# ``agentlens install claude --cmux`` (or interactive consent), we:
+#
+#   1. Back up the cmux wrapper at ``<cmux.app>/.../bin/claude`` to a sibling
+#      ``claude.cmux-original`` (preserving file mode).
+#   2. Install an AgentLens shim at the cmux ``claude`` path that exec's
+#      ``agentlens run --agent claude_code -- <backup> "$@"`` — so the
+#      runtime chain is ``shim → cmux wrapper → real claude``.
+#   3. Write a co-located ``claude.cmux-lockfile`` recording the backup
+#      path + sha256; ``agentlens doctor`` reads this to detect drift.
+#
+# We intentionally use a separate template here (rather than reusing
+# SHIM_TEMPLATE) because:
+#   - The lockfile lives next to the binary, not under ~/.agentlens/shims/.
+#   - The chain target is the BACKUP (cmux wrapper), not the underlying
+#     Claude binary — so cmux's own session-id injection still happens.
+#   - We must bypass install_shim's .app refusal — but only for this opt-in
+#     path. install_shim itself keeps refusing .app bundles in the general
+#     case.
+# ---------------------------------------------------------------------------
+
+CMUX_SHIM_TEMPLATE = r"""#!/usr/bin/env bash
+# AgentLens shim for cmux-bundled claude — managed file, do not edit.
+# Installed by `agentlens install claude --cmux`.
+set -euo pipefail
+INSTALLED_AGENTLENS_BIN="{agentlens_bin}"
+REAL_PATH="{backup_path}"
+if [ ! -x "$REAL_PATH" ]; then
+  echo "agentlens: cmux backup missing at $REAL_PATH — re-run \`agentlens install claude --cmux\`" >&2
+  exit 127
+fi
+# v1 §4.5 TTY-aware passthrough — for the cmux chain we always wrap because
+# cmux only ships the non-interactive print/exec wrapper.
+if [ -t 0 ]; then
+  case "${{1:-}}" in
+    -p|--print|--output-format) ;;  # non-TTY print mode → wrap
+    *) exec "$REAL_PATH" "$@" ;;     # interactive TUI → passthrough to cmux wrapper
+  esac
+fi
+# Nested-invocation handling.
+if [ -n "${{AGENTLENS_RUN_ID:-}}" ]; then
+  policy="${{AGENTLENS_NESTED_POLICY:-passthrough}}"
+  if [ "$policy" = "passthrough" ]; then exec "$REAL_PATH" "$@"; fi
+fi
+# Admin/auth subcommands pass-through.
+case "${{1:-}}" in
+  auth|login|update|plugin|mcp) exec "$REAL_PATH" "$@" ;;
+esac
+if [ -n "$INSTALLED_AGENTLENS_BIN" ] && [ -x "$INSTALLED_AGENTLENS_BIN" ]; then
+  exec "$INSTALLED_AGENTLENS_BIN" run --agent claude_code -- "$REAL_PATH" "$@"
+fi
+if AGENTLENS_BIN="$(command -v agentlens 2>/dev/null)" && [ -x "$AGENTLENS_BIN" ]; then
+  exec "$AGENTLENS_BIN" run --agent claude_code -- "$REAL_PATH" "$@"
+fi
+echo "agentlens: CLI not on PATH and install-time path missing — passthrough (no recording)" >&2
+exec "$REAL_PATH" "$@"
+"""
+
+
+def install_cmux_chain(cmux_app: Path) -> dict:
+    """Install the AgentLens cmux chain shim at *cmux_app*.
+
+    *cmux_app* is the path to a ``cmux.app`` directory; the cmux-bundled
+    ``claude`` binary is expected at ``<cmux_app>/Contents/Resources/bin/claude``.
+
+    Side effects:
+      1. Backs up ``.../bin/claude`` → ``.../bin/claude.cmux-original``
+         (preserving file mode). If the backup already exists, it is left
+         in place and treated as the source of truth — this lets the user
+         re-run the install command without re-shimming the shim.
+      2. Writes the cmux-chain shim at ``.../bin/claude`` (0755).
+      3. Writes a co-located lockfile ``.../bin/claude.cmux-lockfile``
+         with ``path=...`` and ``sha256=...`` of the backup.
+      4. Records metadata in ``~/.agentlens/cmux-install.json``.
+
+    Returns the metadata dict that was written (also written to disk).
+
+    Raises ``FileNotFoundError`` if the cmux ``claude`` binary is missing,
+    or ``PermissionError`` if the install cannot proceed.
+    """
+    import json as _json
+    from datetime import datetime, timezone
+
+    cmux_app = Path(cmux_app)
+    binary = cmux_app / "Contents" / "Resources" / "bin" / "claude"
+    if not binary.is_file():
+        raise FileNotFoundError(
+            f"cmux claude binary not found at {binary}; is cmux.app installed?"
+        )
+    backup = binary.with_name("claude.cmux-original")
+
+    # Step 1: back up — only if a backup does not already exist or it is no
+    # longer the original cmux wrapper (i.e. someone already shimmed). To
+    # decide, we treat the BACKUP as the source of truth if it exists.
+    if not backup.exists():
+        # Preserve mode by reading the current binary's stat first.
+        original_mode = stat.S_IMODE(binary.stat().st_mode)
+        backup.write_bytes(binary.read_bytes())
+        os.chmod(backup, original_mode)
+    backup_sha = _sha256_file(backup)
+    backup_mtime = backup.stat().st_mtime
+
+    # Step 2: write shim at the cmux path.
+    agentlens_bin = _resolve_agentlens_cli()
+    shim_text = CMUX_SHIM_TEMPLATE.format(
+        agentlens_bin=agentlens_bin,
+        backup_path=str(backup),
+    )
+    binary.write_text(shim_text, encoding="utf-8")
+    os.chmod(binary, 0o755)
+
+    # Step 3: lockfile co-located with the binary.
+    lockfile = binary.with_name("claude.cmux-lockfile")
+    lockfile.write_text(
+        f"path={backup}\nsha256={backup_sha}\n",
+        encoding="utf-8",
+    )
+
+    # Step 4: metadata.
+    version = _read_cmux_app_version(cmux_app)
+    meta = {
+        "cmux_app_path": str(cmux_app),
+        "cmux_binary_path": str(binary),
+        "cmux_backup_path": str(backup),
+        "cmux_backup_sha256": backup_sha,
+        "cmux_app_version": version,
+        "cmux_binary_mtime": backup_mtime,
+        "installed_at": datetime.now(timezone.utc).isoformat(),
+    }
+    meta_path = Path.home() / ".agentlens" / "cmux-install.json"
+    meta_path.parent.mkdir(parents=True, exist_ok=True)
+    meta_path.write_text(_json.dumps(meta, sort_keys=True, indent=2), encoding="utf-8")
+    return meta
+
+
+def _read_cmux_app_version(cmux_app: Path) -> str | None:
+    """Best-effort read of ``CFBundleShortVersionString`` from Info.plist.
+
+    Uses a minimal XML scan to avoid a dependency on ``plistlib`` quirks
+    across Python versions. Returns ``None`` if the file is missing or the
+    key cannot be located.
+    """
+    info_plist = cmux_app / "Contents" / "Info.plist"
+    if not info_plist.is_file():
+        return None
+    try:
+        text = info_plist.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    # Locate <key>CFBundleShortVersionString</key> then the next <string>...</string>.
+    key = "<key>CFBundleShortVersionString</key>"
+    idx = text.find(key)
+    if idx == -1:
+        return None
+    s_open = text.find("<string>", idx)
+    s_close = text.find("</string>", s_open)
+    if s_open == -1 or s_close == -1:
+        return None
+    return text[s_open + len("<string>") : s_close].strip()
+
+
+def read_cmux_install_metadata() -> dict | None:
+    """Return the recorded cmux install metadata, or ``None`` if missing."""
+    import json as _json
+
+    meta_path = Path.home() / ".agentlens" / "cmux-install.json"
+    if not meta_path.is_file():
+        return None
+    try:
+        return _json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def verify_cmux_chain() -> dict:
+    """Inspect the cmux chain install for drift; used by ``agentlens doctor``.
+
+    Returns a dict with shape::
+
+        {
+          "status": "ok" | "drift" | "missing_backup" | "missing_shim" |
+                    "permission_error" | "version_drift" | "not_installed",
+          "backup_present": bool,
+          "backup_sha_match": bool,
+          "shim_installed": bool,
+          "cmux_app_version_recorded": str | None,
+          "cmux_app_version_current": str | None,
+          "cmux_binary_mtime_recorded": float | None,
+          "cmux_binary_mtime_current": float | None,
+          "message": str,
+        }
+    """
+    meta = read_cmux_install_metadata()
+    if meta is None:
+        return {
+            "status": "not_installed",
+            "backup_present": False,
+            "backup_sha_match": False,
+            "shim_installed": False,
+            "cmux_app_version_recorded": None,
+            "cmux_app_version_current": None,
+            "cmux_binary_mtime_recorded": None,
+            "cmux_binary_mtime_current": None,
+            "message": "no cmux chain install recorded",
+        }
+    backup_path = Path(meta["cmux_backup_path"])
+    binary_path = Path(meta["cmux_binary_path"])
+    cmux_app = Path(meta["cmux_app_path"])
+
+    shim_installed = binary_path.is_file()
+    backup_present = backup_path.is_file()
+
+    if not backup_present:
+        return {
+            "status": "missing_backup",
+            "backup_present": False,
+            "backup_sha_match": False,
+            "shim_installed": shim_installed,
+            "cmux_app_version_recorded": meta.get("cmux_app_version"),
+            "cmux_app_version_current": _read_cmux_app_version(cmux_app),
+            "cmux_binary_mtime_recorded": meta.get("cmux_binary_mtime"),
+            "cmux_binary_mtime_current": None,
+            "message": (
+                f"backup missing at {backup_path}; "
+                f"re-run `agentlens install claude --cmux`"
+            ),
+        }
+
+    try:
+        backup_sha = _sha256_file(backup_path)
+    except PermissionError as exc:
+        return {
+            "status": "permission_error",
+            "backup_present": True,
+            "backup_sha_match": False,
+            "shim_installed": shim_installed,
+            "cmux_app_version_recorded": meta.get("cmux_app_version"),
+            "cmux_app_version_current": _read_cmux_app_version(cmux_app),
+            "cmux_binary_mtime_recorded": meta.get("cmux_binary_mtime"),
+            "cmux_binary_mtime_current": None,
+            "message": f"cannot read backup ({exc}); check file permissions",
+        }
+
+    sha_match = backup_sha == meta.get("cmux_backup_sha256")
+    cur_version = _read_cmux_app_version(cmux_app)
+    rec_version = meta.get("cmux_app_version")
+    cur_mtime = backup_path.stat().st_mtime
+    rec_mtime = meta.get("cmux_binary_mtime")
+
+    if not shim_installed:
+        return {
+            "status": "missing_shim",
+            "backup_present": True,
+            "backup_sha_match": sha_match,
+            "shim_installed": False,
+            "cmux_app_version_recorded": rec_version,
+            "cmux_app_version_current": cur_version,
+            "cmux_binary_mtime_recorded": rec_mtime,
+            "cmux_binary_mtime_current": cur_mtime,
+            "message": (
+                f"shim missing at {binary_path}; "
+                f"re-run `agentlens install claude --cmux`"
+            ),
+        }
+
+    if not sha_match:
+        return {
+            "status": "drift",
+            "backup_present": True,
+            "backup_sha_match": False,
+            "shim_installed": True,
+            "cmux_app_version_recorded": rec_version,
+            "cmux_app_version_current": cur_version,
+            "cmux_binary_mtime_recorded": rec_mtime,
+            "cmux_binary_mtime_current": cur_mtime,
+            "message": (
+                f"backup sha256 drift at {backup_path}; "
+                f"re-run `agentlens install claude --cmux`"
+            ),
+        }
+
+    if cur_version is not None and rec_version is not None and cur_version != rec_version:
+        return {
+            "status": "version_drift",
+            "backup_present": True,
+            "backup_sha_match": True,
+            "shim_installed": True,
+            "cmux_app_version_recorded": rec_version,
+            "cmux_app_version_current": cur_version,
+            "cmux_binary_mtime_recorded": rec_mtime,
+            "cmux_binary_mtime_current": cur_mtime,
+            "message": (
+                f"cmux.app version changed from {rec_version} to {cur_version}; "
+                f"re-run `agentlens install claude --cmux`"
+            ),
+        }
+
+    return {
+        "status": "ok",
+        "backup_present": True,
+        "backup_sha_match": True,
+        "shim_installed": True,
+        "cmux_app_version_recorded": rec_version,
+        "cmux_app_version_current": cur_version,
+        "cmux_binary_mtime_recorded": rec_mtime,
+        "cmux_binary_mtime_current": cur_mtime,
+        "message": "cmux chain install ok",
+    }
+
+
 def uninstall_shim(name: str) -> None:
     """Remove the shim script and lockfile for ``name``. Idempotent."""
     shim_dir = _shim_dir()
@@ -239,8 +554,12 @@ def verify_shim_integrity(name: str) -> Literal["ok", "drift_warning", "missing"
 
 
 __all__ = [
+    "CMUX_SHIM_TEMPLATE",
     "SHIM_TEMPLATE",
+    "install_cmux_chain",
     "install_shim",
+    "read_cmux_install_metadata",
     "uninstall_shim",
+    "verify_cmux_chain",
     "verify_shim_integrity",
 ]
