@@ -1687,13 +1687,6 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
        --payload-json '{"reason":"budget_exceeded"}' 2>/dev/null || true
      agentlens run-close --run "$ORCH_RUN_ID" --outcome blocked 2>/dev/null || true
    fi
-   # Archive run (F1): best-effort archive before HEADLESS_HALTED marker.
-   if [ -n "${ORCH_RUN_ID:-}" ]; then
-     <skill_dir>/scripts/archive_run.sh \
-       --worktree <worktree_path> \
-       --run-id "$ORCH_RUN_ID" \
-       --outcome blocked 2>&1 || echo "ARCHIVE: failed (see archive output above) — worktree retained"
-   fi
    printf 'reason: budget_exceeded\n' > <worktree_path>/.orchestrator/HEADLESS_HALTED.txt
    ```
    Then exit (headless child) or halt (interactive). The Monitor watcher will surface the HALTED line on its next loop.
@@ -1749,15 +1742,6 @@ options:
    fi
    ```
 
-   **Archive run (F1):** after run-close, call archive_run.sh with `--outcome aborted`. Best-effort — failure is silent (the run has already been closed):
-   ```bash
-   if [ -n "${ORCH_RUN_ID:-}" ]; then
-     <skill_dir>/scripts/archive_run.sh \
-       --worktree <worktree_path> \
-       --run-id "$ORCH_RUN_ID" \
-       --outcome aborted 2>&1 || echo "ARCHIVE: failed (see archive output above) — worktree retained"
-   fi
-   ```
    For the more common case (task-only halt that lets the orchestrator continue), do NOT close-run — the run is still alive. Phase 2 Step 2 closes it with `outcome=success` if subsequent tasks finish, or the final hard-halt block does so with `outcome=blocked` if the orchestrator gives up entirely.
 
 2. Reset to pre-task state using the literal SHA from your notes:
@@ -1965,25 +1949,6 @@ Idempotency note: `agentlens run-close` is idempotent — a re-entered Phase 2 S
 
 The hard-halt branches above (escalation exhaustion, budget pause, T3 state-write failure) similarly emit `kws-cme.blocker` and call `agentlens run-close --outcome aborted|blocked` per the spec §6.2 event taxonomy. v2.17 cutover (Task 11) removed the parallel legacy `append_learning_event.py close-run` calls.
 
-**Archive run (F1):** call scripts/archive_run.sh with the worktree path, legacy run ID (`MAE_LEARNING_RUN_ID`), and outcome. Failure is silent — log to user but do NOT halt; run-close already succeeded.
-
-```bash
-# v2.17 cutover note: MAE_LEARNING_RUN_ID is no longer set in new runs (the
-# init-run helper was removed in Task 11). This block therefore becomes a
-# silent no-op for new runs — archive + HTML render currently target the
-# legacy ~/.claude/learning/.../runs/<date>/<run_id> layout and have not yet
-# been rewired to ORCH_RUN_ID / AgentLens artifact storage. Pending follow-on
-# work; the block is intentionally retained for legacy compatibility.
-if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
-  <skill_dir>/scripts/archive_run.sh \
-    --worktree "$WORKTREE_ABS" \
-    --run-id "$MAE_LEARNING_RUN_ID" \
-    --outcome success 2>&1 || echo "ARCHIVE: failed (see archive output above) — worktree retained"
-fi
-```
-
-After archive completes, populate the "Archive" section of the Final Summary Report below using fields from `<worktree>/.orchestrator/state.json` `archive` object (written by archive_run.sh): `archive.tar_path`, `archive.size_bytes`, `archive.redacted`. If the archive call failed, write `FAILED` for archive_path and omit size/redacted. The worktree is always retained — record its absolute path.
-
 Output:
 
 ```markdown
@@ -2038,41 +2003,9 @@ If none: "WARN-tier tasks: 0".
 - Debug artifacts: none found
 - Temp files: none found
 
-### Archive (F1)
-
-| Item | Value |
-|------|-------|
-| Archive path | `<archive_meta.tar_path or "FAILED">` |
-| Size | `<bytes formatted>` |
-| Redacted | `<yes/no>` |
-| Worktree | `<still present at> <path>` |
-| HTML report | `<file://path/to/REPORT.html or "FAILED (see render.log)">` |
-
 ### Remaining Risks
 - <risk description>: <mitigation taken or "accepted">
 ```
-
-### Step 3: Render HTML run report (F3)
-
-After Step 2's archive completes (regardless of archive success/failure), invoke the HTML renderer:
-
-```bash
-# v2.17 cutover note: same dormancy as the archive_run.sh block above.
-# `MAE_LEARNING_RUN_ID` is unset in new runs; this becomes a silent no-op
-# until the HTML-report pipeline is rewired against AgentLens artifacts.
-if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
-  ARCHIVE_DIR="$HOME/.claude/learning/kws-claude-multi-agent-executor/runs/$(date +%Y-%m-%d)/${MAE_LEARNING_RUN_ID}"
-  if [ -d "$ARCHIVE_DIR/artifacts" ]; then
-    python3 <skill_dir>/scripts/render_html_report.py \
-      --archive-dir "$ARCHIVE_DIR" \
-      --output "$ARCHIVE_DIR/artifacts/REPORT.html" \
-      2>"$ARCHIVE_DIR/artifacts/render.log" || \
-      echo "REPORT_RENDER: failed (see $ARCHIVE_DIR/artifacts/render.log)"
-  fi
-fi
-```
-
-Update state.json's `archive.report_html_path` if rendering succeeds (atomic R-M-W).
 
 ---
 
@@ -2149,8 +2082,6 @@ These rules are absolute. No exceptions.
 | **Cost-accumulate helper is mandatory per dispatch** (v2.16) | Every sub-agent dispatch (Implementer / Reviewer / Verifier / Plan Reviewer / Docs Updater) ends with a `scripts/accumulate_cost.py` invocation in Phase 1 Step 4 substep 1.5. Pre-v2.16 prose ("extract usage from Agent result, update by_task atomically") was silently skipped in every observed run — `cost_ledger.totals.dispatches=0` across runs 1/2/3 confirmed the regression. The helper is single-call, flock-protected, and handles unknown-model and missing-usage gracefully. Skipping the helper call means budget cap (`budget_cap_usd`) and `chain_trigger_eval` token threshold cannot fire correctly. by_task key is `<plan>::<task>::<role>` so same-task multi-role dispatches don't overwrite. |
 | **`budget_action=pause` halts at compaction boundaries only** | Budget is evaluated at Phase Transition T3 and Phase 2 Step 0 — never mid-task. Cost overruns within a single task complete the task, then the next compaction triggers halt. This is intentional: aborting mid-task wastes the in-flight dispatch. |
 | **Cost ledger is run-level** | `cost_ledger`, `budget_cap_usd`, `budget_action` live at top-level state.json (never inside `plan_chain[N]`). Cross-plan chains accumulate one unified ledger. Per-plan totals derivable via `by_task` key prefix `<plan_index>::`. |
-| **Archive on close-run is best-effort** | `scripts/archive_run.sh` is invoked AFTER `close-run` succeeds. Archive failure is logged but does NOT halt the orchestrator (the primary run already completed). The worktree is never auto-deleted by archive — user retains it for manual recovery if archive fails. |
-| **Redaction is mandatory** | `redact_archive.py` MUST run before the tar moves to its final path. Redaction failure → tar discarded, `archive_meta.json` written with `redaction_applied: false, error: ...`, user-visible warning. Never write a non-redacted tar to `~/.claude/learning/`. |
 | **Spec manifest is per-plan** (v2.15 C1) | `spec_manifest` lives under `<active>` per the v2.13 resolution rule. Each plan in a chain has its own manifest (sections + task_to_sections + fallback_policy). `task_to_sections` references are validated by the Plan Reviewer at Phase 0 Step 6.5 — unknown section IDs are BLOCKER. Manifest is rebuilt at the spec-edit branch (Phase 1 Step 2 sub-step 6.5). |
 | **Decisions register is per-plan, append-only** (v2.15 C2) | `decisions_register` lives under `<active>`. Entries are never deleted — supersession is recorded via the `supersedes` field (still rendered, with strikethrough prefix). Empty `key_decision` from `task_summaries` is ignored (not appended). Append failure logs a warning and continues (best-effort). |
 | **decision_conflict is a QUALITY issue, not SPEC** (v2.15 C2) | Combined Reviewer flags `decision_conflict` under `QUALITY_ISSUES`. Does NOT downgrade `SPEC_SCORE`. Standard `review_retries` budget applies — no spec-edit branch. Use it to nudge sub-agents toward consistency, not to halt. Intentional supersession (diff includes `supersedes <task_id>` comment) emits an ADVISORY note instead of an ISSUE. |
