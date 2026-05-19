@@ -17,14 +17,15 @@ before creating the worktree or orchestrator directory.
 ## Defaults
 
 - `mode=interactive`
-- `subagents=auto`
+- `subagents=on`
 - `headless_sandbox=workspace-write`
 - `context_mode=auto`
 - `context_budget=60000`
 - `manifest_fallback=full_spec_on_blocker`
 
-Pass `subagents=on` to explicitly permit subagents, or `subagents=off` for a
-local-only run.
+`subagents=on` permits task-packet-scoped subagents by default. Pass
+`subagents=auto` for conservative spawning only after an explicit delegation or
+parallel-work request, or `subagents=off` for a local-only run.
 
 ## Validation
 

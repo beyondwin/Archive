@@ -29,9 +29,10 @@ Supported arguments:
 - `resume=latest|<state-path>|<run_id>` optional; if multiple candidate active
   runs exist, stop and ask which run/state to resume.
 - `mode=interactive|headless|prompt|handoff` optional, default `interactive`.
-- `subagents=auto|on|off` optional, default `auto`; `subagents=on`
-  explicitly permits subagents for this run, and `subagents=off` forces a
-  local-only run.
+- `subagents=auto|on|off` optional, default `on`; `subagents=on` permits
+  subagents for this run, `subagents=off` forces a local-only run, and
+  `subagents=auto` uses conservative spawning only when the user explicitly
+  requested subagents, delegation, or parallel work.
 - `headless_sandbox=workspace-write|read-only` optional, default
   `workspace-write`; `read-only` is for preflight/prompt verification and
   blocks edit execution.
@@ -56,10 +57,10 @@ checkout. If a dedicated non-conflicting worktree under `~/.codex/worktrees/`
 cannot be created or selected before task contracts and edits, stop with a
 blocker.
 
-Only use `spawn_agent` when the user explicitly requests subagents,
-delegation, or parallel agent work, or passes `subagents=on`. Do not spawn
-subagents when `subagents=auto` without an explicit user request, or when
-`subagents=off`.
+Only use `spawn_agent` when the resolved invocation has `subagents=on`, or when
+`subagents=auto` and the user explicitly requested subagents, delegation, or
+parallel agent work. Do not spawn subagents when `subagents=auto` without an
+explicit user request, or when `subagents=off`.
 
 When subagents are permitted, dispatch from task packets, not raw full-plan
 context. Do not ask a subagent to infer its write scope from the entire plan.
@@ -123,10 +124,11 @@ accepting subagent output.
   outcome.
 - Blocked or failed terminal runs set a non-success `lifecycle_outcome` and a
   concrete `handoff_reason`.
-- New execution state records `subagents_requested=false` by default.
-  Record `subagents_requested=true` only when the user explicitly requested
-  subagents/delegation/parallel work or passed `subagents=on`. Finished runs
-  cannot retain running or unreviewed subagent records.
+- New execution state records `subagents_requested=true` by default because
+  `subagents=on` is the default. Record `subagents_requested=false` only when
+  the run is explicitly local-only (`subagents=off`) or conservative auto mode
+  without an explicit subagent/delegation/parallel request. Finished runs cannot
+  retain running or unreviewed subagent records.
 - Command observations classify bounded command evidence before root cause is
   assigned. Finished runs with `category=unknown` observations must mention the
   command in `completion_audit.residual_risk`.

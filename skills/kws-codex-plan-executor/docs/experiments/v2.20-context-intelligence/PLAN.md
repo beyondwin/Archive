@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Port the useful context-management ideas from `kws-claude-multi-agent-executor` into `kws-codex-plan-executor` without changing CPE's conservative subagent safety boundary.
+**Goal:** Port the useful context-management ideas from `kws-claude-multi-agent-executor` into `kws-codex-plan-executor` while keeping subagent dispatch task-packet-scoped and review-gated.
 
-**Architecture:** Keep CPE state-authoritative and Codex-native. Add a spec manifest, per-task packet builder, decisions register, local environment preflight, compaction state anchors, natural-language invocation parsing, and stale-run inspection as small deterministic scripts plus explicit skill contract updates. Subagents remain opt-in through explicit user request or `subagents=on`; task packets make opt-in delegation cheaper and safer.
+**Architecture:** Keep CPE state-authoritative and Codex-native. Add a spec manifest, per-task packet builder, decisions register, local environment preflight, compaction state anchors, natural-language invocation parsing, and stale-run inspection as small deterministic scripts plus explicit skill contract updates. `subagents=on` is the default; task packets make delegation cheaper and safer, while `subagents=auto` remains the conservative explicit-request mode.
 
 **Tech Stack:** Python 3 standard library, Markdown plan/spec files, JSON state under `~/.codex/orchestrator/<run_id>`, shell eval harness, existing CPE eval scripts.
 
@@ -29,7 +29,7 @@ Included:
 
 Excluded from v2.20:
 
-- Default autonomous multi-agent execution. CPE keeps `subagents=auto` as non-spawning unless the user explicitly asks.
+- Unscoped autonomous multi-agent execution. Default `subagents=on` still requires task packets, disjoint write scopes, and parent review.
 - Claude-specific runtime write hooks. Codex cannot rely on `.claude/settings.json` style write interception.
 - CME `plan_chain` multi-plan execution.
 - Cost ledger and budget pause behavior.
@@ -937,6 +937,7 @@ git commit -m "feat(cpe): index task packets in context snapshots"
 
 Extend `check_skill_contract.py` to require:
 
+- `subagents=on` is the default and still requires task packets before dispatch.
 - `subagents=auto` does not spawn without explicit user request.
 - `subagents=on` requires a task packet before dispatch.
 - Delegated subagents receive only packet path, task id, write scope, state path, and verification expectation.
@@ -958,7 +959,9 @@ Replace the pre-dispatch pipeline with:
 ```markdown
 Before delegating work:
 
-1. Confirm explicit user request or `subagents=on`.
+1. Confirm the resolved invocation has `subagents=on`, or has
+   `subagents=auto` plus an explicit user request for subagents, delegation, or
+   parallel work.
 2. Confirm `current_task_packet_path` exists and is readable.
 3. Confirm declared files are non-empty.
 4. Confirm dirty files do not overlap the task.
@@ -1099,8 +1102,8 @@ Expected:
 - Python compile succeeds.
 - Shell syntax check succeeds.
 - Deterministic eval harness succeeds.
-- No v2.19 regression in subagent default behavior.
+- No regression in task-packet-scoped subagent dispatch behavior.
 
 ## Rollout Notes
 
-Ship as `2.20.0` because this adds visible invocation args, state fields, runtime artifacts, and eval coverage. Keep `subagents=auto` conservative. If future data shows task packets are stable, a later version can consider richer opt-in parallel groups, but v2.20 should not import CME's default autonomous multi-agent loop.
+Ship as `2.20.0` because this adds visible invocation args, state fields, runtime artifacts, and eval coverage. Keep `subagents=auto` conservative. Default `subagents=on` may use richer opt-in parallel groups only through task packets, disjoint write scopes, and parent review; v2.20 should not import CME's unscoped autonomous multi-agent loop.

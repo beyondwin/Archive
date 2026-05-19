@@ -2,7 +2,9 @@
 
 Before delegating work:
 
-1. Confirm explicit user request or `subagents=on`.
+1. Confirm the resolved invocation has `subagents=on`, or has
+   `subagents=auto` plus an explicit user request for subagents, delegation, or
+   parallel work.
 2. Confirm `current_task_packet_path` exists and is readable.
 3. Confirm declared files are non-empty.
 4. Confirm dirty files do not overlap the task.

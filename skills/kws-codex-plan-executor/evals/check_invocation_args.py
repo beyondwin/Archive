@@ -25,15 +25,25 @@ def main() -> int:
     failures: list[str] = []
     checks: dict[str, bool] = {}
 
+    default_result, default_payload = run_args("plan=a.md")
+    checks["default_subagents_on"] = (
+        default_result.returncode == 0
+        and default_payload.get("values", {}).get("subagents") == "on"
+        and default_payload.get("sources", {}).get("subagents") == "default"
+    )
+    if not checks["default_subagents_on"]:
+        failures.append("subagents should default to on")
+
     result, payload = run_args("plan=a.md spec=s.md 순차")
     checks["sequential_sets_parallel_off"] = (
         result.returncode == 0
         and payload.get("values", {}).get("plan") == "a.md"
         and payload.get("values", {}).get("spec") == "s.md"
         and payload.get("values", {}).get("parallel") == "off"
+        and payload.get("values", {}).get("subagents") == "on"
     )
     if not checks["sequential_sets_parallel_off"]:
-        failures.append("순차 should resolve parallel=off while preserving explicit plan/spec")
+        failures.append("순차 should resolve parallel=off while preserving explicit plan/spec and default subagents=on")
 
     opus_result, opus = run_args("오푸스로")
     checks["korean_particle_stripped_opus"] = (

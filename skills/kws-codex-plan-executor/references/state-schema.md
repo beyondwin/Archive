@@ -38,7 +38,7 @@ Example:
   "lifecycle_outcome": null,
   "handoff_reason": "",
   "completion_audit": null,
-  "subagents_requested": false,
+  "subagents_requested": true,
   "subagent_runs": [],
   "tasks": {},
   "risk_levels": {},
@@ -65,9 +65,10 @@ Required path invariants:
 - `current_task_packet_path`, when present, lives under `task_packet_dir`.
 - Old local journal metadata is rejected; AgentLens metadata belongs in
   `agentlens_orchestration_run` and `last_agentlens_event_at`.
-- `subagents_requested` defaults to `false`; set it to `true` only when the
-  user explicitly requested subagents/delegation/parallel work or passed
-  `subagents=on`.
+- `subagents_requested` defaults to `true` because `subagents=on` is the
+  default. Set it to `false` only for `subagents=off`, or for `subagents=auto`
+  when there was no explicit user request for subagents/delegation/parallel
+  work.
 
 v2.20 context-intelligence state may add per-task fields:
 

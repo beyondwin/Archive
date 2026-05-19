@@ -6,8 +6,9 @@ Scope:
 
 - v2.19 path split: code worktrees under `~/.codex/worktrees/<run_id>`.
 - Orchestrator state and runtime artifacts under `~/.codex/orchestrator/<run_id>`.
-- v2.19.1 subagent default is `auto`; spawning requires explicit user request
-  or `subagents=on`, and `subagents=off` is local-only.
+- v2.20.0 subagent default is `on`; spawning remains task-packet-scoped,
+  `subagents=auto` is conservative explicit-request mode, and `subagents=off`
+  is local-only.
 - Retired local replay and learning helper surface removed from active docs,
   scripts, and eval expectations.
 - AgentLens outcome mapping, redacted payload refs, non-mutating reconcile

@@ -330,7 +330,7 @@ def _validate_subagents(data: dict, errors: list[str]) -> None:
     requested = data.get("subagents_requested")
     runs = data.get("subagent_runs", [])
     if requested is None:
-        errors.append("subagents_requested must be recorded; default is false unless subagents=on or explicitly requested")
+        errors.append("subagents_requested must be recorded; default is true because subagents=on is the default")
     elif not isinstance(requested, bool):
         errors.append("subagents_requested must be a boolean")
     if runs is None:

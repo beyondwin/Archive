@@ -138,7 +138,7 @@ def build_state(
             ],
             "verification_evidence": [acceptance],
         },
-        "subagents_requested": False,
+        "subagents_requested": True,
         "subagent_runs": [],
         "tasks": {
             "task_0": {
