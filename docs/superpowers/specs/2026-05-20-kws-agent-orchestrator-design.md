@@ -1,8 +1,9 @@
 # Design: KWS Agent Orchestrator
 
 Date: 2026-05-20
-Status: Approved for implementation planning
+Status: Approved for implementation planning (A-tier critique patches applied; re-approval pending)
 Owner: KWS
+Revision: 2026-05-20b — incorporates patches for plan/spec format, lockfile policy, worker sandbox tier, host/runner/worker surfaces, `consumes` claim mode, worker reattach on resume, and runner-side method-audit verification.
 
 ## 1. Summary
 
@@ -79,6 +80,34 @@ KAO should selectively borrow these patterns:
 | Ruah / Shard-like patterns | File ownership claims, bounded retries, DAG execution | Small-project assumptions without enough validation |
 
 ## 5. Architecture
+
+### 5.0 Roles & Surfaces
+
+KAO has three execution surfaces. Each has a different lifecycle, state model,
+and context budget. Confusing them is the most common source of design drift.
+
+| Surface | Process | LLM | State | Lifetime |
+| --- | --- | --- | --- | --- |
+| Host session | Claude Code or Codex CLI/App where the user invoked the skill | Yes (host model) | Conversation only | User session |
+| Runner | `scripts/kao.py` Python process | No | SQLite + filesystem | Per `kao run` |
+| Worker | Adapter-launched CLI/headless session in a worktree | Yes (worker model) | Task packet + worktree | Per task attempt |
+
+Responsibilities:
+
+- **Host session**: invokes the skill, shells out to the runner, surfaces
+  status to the user, and applies accepted runs to the source checkout on
+  explicit request. It does not own execution state and does not receive worker
+  transcripts.
+- **Runner**: deterministic scheduling, file claims, worktree lifecycle, merge
+  queue, redaction, AgentLens emission. It is the only writer to SQLite and
+  AgentLens. It has no LLM and no conversation.
+- **Worker**: performs one task attempt in one worktree, returns a result
+  envelope. It never writes to SQLite or AgentLens directly.
+
+The context policy in §6.6 governs the **host session**, not the runner. The
+runner's state lives in SQLite and does not compact. Workers run to completion
+inside their own bounded context; if they exceed it, the watchdog (§6.8)
+reacts.
 
 ### 5.1 Components
 
@@ -251,6 +280,52 @@ what happened instead of keeping all worker details in conversation.
 10. Print concise completion or blocked report.
 ```
 
+### 6.1.5 Plan/Spec Format
+
+The runner parses a plan markdown file and an optional spec markdown file.
+Both are deterministic inputs: KAO computes SHA-256 over canonicalized bytes
+(LF line endings, trailing whitespace stripped) and stores them as
+`plan_hash` / `spec_hash` in `runs`.
+
+**Plan file** — markdown with one H2 per task. Each task contains a fenced
+```yaml kao-task``` block with required fields:
+
+```yaml
+task_id: task_003
+title: Token refresh retry handling
+risk: medium                # low|medium|high
+phase: implementation       # planning|implementation|verification|docs
+dependencies: [task_001]
+spec_refs: [S2.1, S2.4]
+file_claims:
+  - {path: src/auth/session.ts, mode: owned}
+  - {path: tests/auth/session.test.ts, mode: owned}
+  - {path: src/auth/types.ts, mode: consumes}
+acceptance_commands:
+  - npm test -- tests/auth/session.test.ts
+resource_keys: []           # optional, e.g. [db, port:3000, external-api]
+required_skills: [test-driven-development]
+serial: false               # optional explicit serial marker
+```
+
+Markdown narrative under the H2 (outside the fenced block) is captured into
+the task packet's `objective`, truncated to
+`max_inline_worker_summary_chars`.
+
+**Spec file** — markdown with H2/H3 anchors. The parser builds a section
+manifest keyed by anchor id. `spec_refs: [S2.1]` resolves to the heading whose
+slug is `s2-1` or whose first inline token is `S2.1`. The runner stores
+`(spec_section_id, content_sha256)` per ref and rejects a task packet whose
+referenced spec content changes between plan parse and worker dispatch.
+
+**Determinism guarantee:** given identical `(plan_bytes, spec_bytes,
+kao_version, profile)`, the runner produces the same task graph, wave
+assignment, and packet hashes. Wave-internal tie-breaking is
+`(risk_desc, dependency_count_desc, task_id_asc)`.
+
+Plan parse failures halt before worktree creation (§12) and report the
+offending task id and line.
+
 ### 6.2 Task Packet
 
 Every worker receives a compact packet. It never receives the entire source
@@ -291,11 +366,47 @@ conversation by default.
 | --- | --- |
 | `owned` | Exactly one active worker may modify the file. |
 | `shared_append` | Multiple workers may append non-overlapping entries, e.g. changelog or generated index. Requires post-diff structural check. |
-| `read_only` | Worker may inspect but not modify. |
+| `consumes` | Worker reads the file as part of its task. If any sibling task in the same wave declares the same path as `owned`, the scheduler inserts a dependency edge so the consumer runs after the producer. Out-of-wave reads add no edge. |
+| `read_only` | Worker may inspect but must not modify. No scheduling effect; use `consumes` to express read-after-write ordering. |
 | `forbidden` | Worker must not read or write unless explicitly elevated by the runner. |
 
 Forbidden wins over every other claim. Any out-of-scope diff rejects the worker
 result before merge.
+
+### 6.3.1 Shared Build Artifacts (Lockfiles & Generated Files)
+
+Lockfiles (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `Cargo.lock`,
+`poetry.lock`, `uv.lock`, `Gemfile.lock`, `go.sum`) and other auto-generated
+files (`*.generated.ts`, codegen output) are nearly always touched by any task
+that adds or upgrades a dependency. Treating them as `owned` forces every such
+task to serialize, defeating wave parallelism.
+
+KAO handles them with two mechanisms:
+
+1. **Reconcile step.** After each wave's accepted merges land in main, the
+   runner runs a configured reconcile command (e.g. `npm install
+   --package-lock-only`, `cargo generate-lockfile`) in the main execution
+   worktree. The resulting lockfile delta is committed by the runner as a
+   wave reconcile commit, not attributed to any worker.
+
+2. **Resource lock fallback.** If reconcile is not available for a stack,
+   tasks that touch dependencies must declare `resource_keys: [lockfile:<id>]`
+   so the scheduler serializes them within a wave.
+
+Defaults are configured in `kao.yaml`:
+
+```yaml
+lockfiles:
+  - path: package-lock.json
+    reconcile: npm install --package-lock-only --ignore-scripts
+  - path: Cargo.lock
+    reconcile: cargo generate-lockfile
+```
+
+If a worker's diff modifies a registered lockfile path directly, the runner
+strips that file from the merge candidate before applying and lets the
+reconcile step regenerate it. Stripping is recorded in artifacts so the
+worker's intent is preserved as evidence.
 
 ### 6.4 Wave Scheduling
 
@@ -437,6 +548,41 @@ allowed when a runtime cannot reliably commit.
 
 ## 7. Runtime Adapter Contract
 
+### 7.0 Worker Sandbox Tier
+
+Diff-scope validation catches what a worker *committed*, not what a worker
+*did*. A worker can exfiltrate via `curl`, write absolute paths under `~`, or
+mutate state outside the worktree without leaving any tracked diff. KAO
+mitigates this via a declared sandbox tier per adapter, negotiated at dispatch.
+
+| Tier | Process isolation | Filesystem | Network | Notes |
+| --- | --- | --- | --- | --- |
+| `unsandboxed` | Inherits host | Full | Full | Dev/dry-run only; emits `kws.kao.blocker` with `severity=warn` per run. |
+| `fs_scope` | Same UID, chdir + path allowlist | Restricted to worktree + repo-declared allowlist | Full | Default for hosts without OS sandbox. Enforced by adapter wrapper that rejects absolute paths outside the allowlist before exec. |
+| `net_blocked` | Same UID | `fs_scope` | Blocked except declared egress (e.g. package registry, model API) | Default when network policy is set in `kao.yaml`. |
+| `full_sandbox` | OS sandbox (`bwrap`, `sandbox-exec`, container) | Mounted worktree only | Per-policy | Required for `risk: high` tasks unless explicitly waived. |
+
+Each adapter reports its **maximum** supported tier in
+`CapabilityReport.sandbox_tier_max`. The packet declares
+`sandbox_tier_required`. If `required > max`, the runner halts with
+`unsupported_sandbox_tier` before dispatch — never silently downgrades.
+
+Secrets passthrough: environment variables are not forwarded to workers by
+default. `kao.yaml` declares an allowlist:
+
+```yaml
+secrets_passthrough:
+  - GITHUB_TOKEN
+  - DATABASE_URL
+```
+
+Allowlisted values are injected as environment variables in the worker
+process only; they are never written into prompts, packets, or artifacts.
+The runner redacts any literal match of a passthrough value from worker
+stdout/stderr before persisting to artifacts.
+
+### 7.1 Adapter Interface
+
 Every runtime adapter implements the same interface:
 
 ```python
@@ -451,10 +597,11 @@ class RuntimeAdapter:
     def extract_cost(self, handle: WorkerHandle, result: WorkerResult) -> CostRecord: ...
 ```
 
-### 7.1 Capability Report
+### 7.2 Capability Report
 
 Adapters must declare capabilities. The scheduler uses these to choose safe
-routing.
+routing and to halt cleanly when a packet requires a capability the runtime
+cannot satisfy.
 
 ```json
 {
@@ -466,11 +613,25 @@ routing.
   "supports_cost_extract": "best_effort",
   "supports_hard_tool_guard": false,
   "supports_skill_injection": true,
-  "supports_worktree": true
+  "supports_worktree": true,
+  "supports_reattach": false,
+  "sandbox_tier_max": "fs_scope",
+  "reported_context_usage": "token_count"
 }
 ```
 
-### 7.2 Initial Adapters
+`supports_reattach`: when true, the adapter can resume polling and result
+collection against a worker process that outlived a runner crash, keyed by
+`(pid, session_id, worktree_path)` persisted in SQLite. When false, the
+runner cancels orphaned workers on resume and retries within budget.
+
+`sandbox_tier_max`: highest sandbox tier (§7.0) this runtime can run a
+worker under on this host.
+
+`reported_context_usage`: how the adapter measures worker context pressure
+for the watchdog — `token_count`, `message_count`, or `none`.
+
+### 7.3 Initial Adapters
 
 | Adapter | MVP Status | Notes |
 | --- | --- | --- |
@@ -631,6 +792,27 @@ Worker result must include:
 
 Missing or malformed method audit causes `worker_rejected` and
 `method_audit_violation`.
+
+### 9.1 Runner-Side Verification of Method Audit
+
+Method audit fields are worker self-reports — an LLM can fabricate
+`red_evidence_ref` and `green_evidence_ref` content. The runner must not
+trust them at face value. After a worker returns:
+
+1. For each `commands_run` entry tagged `kind: test`, the runner re-executes
+   the command in a fresh checkout of the worker's pre-commit and post-commit
+   trees (`git stash` of the worker commit, then `git stash pop`). Pre-commit
+   must fail; post-commit must pass. Mismatch → `method_audit_violation`.
+2. Evidence artifacts are re-hashed; the runner computes `command_hash` from
+   the actual executed command and rejects packets where the worker's
+   reported hash diverges.
+3. For docs-only/config-only/generated-only waivers, the runner verifies the
+   diff actually matches the waiver scope before accepting `status: applied`
+   without test evidence.
+
+This deterministic re-check is the only mechanism that converts self-reported
+audit into trusted evidence. Re-execution uses the same `sandbox_tier` and
+`acceptance_commands` from the packet; it does not call any LLM.
 
 ## 10. AgentLens Integration
 
@@ -821,6 +1003,9 @@ with a stricter prompt once, then reject.
 | Plan parse fails | Halt before worktree creation; emit blocker if AgentLens run exists |
 | Unsupported model assignment | Halt before dispatch |
 | Worker timeout | Cancel worker, record failure, retry within budget |
+| Runner crash mid-wave | On resume, reattach surviving workers if `supports_reattach=true`; else cancel orphans and retry within budget |
+| Host session crash, runner alive | Runner continues to completion; on next host invocation, `kao status --run <id>` resumes visibility |
+| Unsupported sandbox tier | Halt before dispatch with `unsupported_sandbox_tier`; never silently downgrade |
 | Worker malformed JSON | Retry once with schema reminder; then reject |
 | Missing superpowers audit | Reject worker; emit method audit violation |
 | Out-of-scope diff | Reject worker; do not merge |
@@ -937,19 +1122,27 @@ MVP includes:
 - Claude adapter.
 - Codex adapter.
 - Local fake adapter for tests.
+- Plan/spec markdown parser with `kao-task` block schema and content hashing.
 - Task packet builder.
-- File claim validator.
-- Deterministic wave scheduler.
+- File claim validator with `owned` / `shared_append` / `consumes` /
+  `read_only` / `forbidden` modes.
+- Deterministic wave scheduler with documented tie-breaking.
 - Isolated worktree creation.
+- Worker sandbox tier negotiation (`fs_scope` default; halt on
+  `unsupported_sandbox_tier`).
+- Secrets passthrough allowlist with stdout/stderr redaction.
 - Merge queue.
+- Lockfile reconcile step per wave with `kao.yaml` configuration.
 - Reviewer/verifier janitor gates.
-- Superpowers method audit enforcement.
+- Superpowers method audit enforcement with runner-side deterministic
+  re-execution of red/green evidence.
 - AgentLens `kws.kao.*` emission.
 - CLI status/inspect/resume.
+- Adapter `supports_reattach` negotiation on resume after runner crash.
 - Explicit `apply_to_source=off` default with `kao apply --run <run_id>`.
 - Worktree naming collision avoidance and registry checks.
 - `.kao-worktreeinclude` for opt-in ignored-file copying.
-- Context snapshot, compaction, and rotation policy.
+- Context snapshot, compaction, and rotation policy (host session only).
 - Watchdog for stalled workers and context overflow.
 - SQLite-mediated worker communication.
 - Resource locks for non-file shared resources.
