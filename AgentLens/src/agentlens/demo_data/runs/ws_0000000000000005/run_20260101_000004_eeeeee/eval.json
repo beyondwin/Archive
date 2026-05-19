@@ -1,0 +1,72 @@
+{
+  "agent_outcome": "success",
+  "checks": [
+    {
+      "name": "agent_outcome_valid",
+      "status": "passed"
+    },
+    {
+      "message": "1 hash mismatch(es), 0 missing file(s)",
+      "name": "artifact_hashes_valid",
+      "status": "failed"
+    },
+    {
+      "name": "changed_files_present_when_success",
+      "status": "passed"
+    },
+    {
+      "name": "commands_resolved",
+      "status": "passed"
+    },
+    {
+      "name": "events_well_formed",
+      "status": "passed"
+    },
+    {
+      "name": "failed_commands_acknowledged",
+      "status": "passed"
+    },
+    {
+      "name": "final_present",
+      "status": "passed"
+    },
+    {
+      "name": "manifest_sealed",
+      "status": "passed"
+    },
+    {
+      "name": "residual_risks_explicit",
+      "status": "passed"
+    },
+    {
+      "name": "run_started",
+      "status": "passed"
+    },
+    {
+      "name": "schema_valid",
+      "status": "passed"
+    },
+    {
+      "name": "verification_present",
+      "status": "passed"
+    }
+  ],
+  "evaluated_at": "1970-01-01T00:00:00Z",
+  "failures": [
+    {
+      "blame_scope": "environment",
+      "category": "ARTIFACT_HASH_MISMATCH",
+      "confidence": 1.0,
+      "evidence": [
+        "run.json: expected sha256:0000000000000000000000000000000000000000000000000000000000000000 actual sha256:66bc3a0beb3244023455691af3124bc19b18a8f05394aa4ac97f75f60858f94f"
+      ],
+      "recoverability": "non_recoverable",
+      "severity": "critical",
+      "source": "evaluator",
+      "summary": "1 hash mismatch(es), 0 missing file(s)"
+    }
+  ],
+  "run_id": "run_20260101_000004_eeeeee",
+  "schema": "agentlens.eval.v1",
+  "status": "failed"
+}

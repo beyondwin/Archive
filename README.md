@@ -41,3 +41,11 @@ graphify update .
 
 The generated docs wiki can be rebuilt locally, but only
 `docs/wiki/README.md` is kept in Git as a placeholder.
+
+## AgentLens Dashboard
+
+See `AgentLens/docs/dashboard.md`. Launch with:
+
+```bash
+agentlens serve --demo
+```

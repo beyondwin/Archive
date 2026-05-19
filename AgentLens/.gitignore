@@ -14,3 +14,4 @@ web/*.tsbuildinfo
 web/coverage/
 web/playwright-report/
 web/test-results/
+web/tests/e2e/test-results/

@@ -14,6 +14,10 @@ dependencies = [
     "jsonschema>=4",
     "typer",
     "pyyaml",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic-settings>=2.2",
+    "httpx>=0.27",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +31,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "agentlens.schema.jsonschema" = ["*.schema.json"]
+"agentlens.demo_data" = ["**/*.json", "**/*.jsonl"]
+"agentlens.web_assets" = ["**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

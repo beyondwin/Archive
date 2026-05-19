@@ -26,6 +26,8 @@ agentlens status [--format json]
 agentlens show <--latest | run_id> [--format json]
 agentlens failures [--since-days 30] [--format json]
 agentlens risks [--since-days 30] [--format json]
+agentlens serve [--host HOST] [--port PORT] [--demo] [--debug] [--auto-port]
+                [--dev-proxy URL] [--allow-origin URL]...
 agentlens gc [--dry-run]
 ```
 
@@ -153,3 +155,16 @@ agentlens compile
 - Subcommand names, the `--format json` schema shape, and the stdout/stderr separation rule are **locked** for v1.
 - New subcommands may be added; existing ones may not be renamed or have their flags' meanings changed.
 - Hidden v0 commands (section 6) are explicitly **not** part of the v1 lock and may be removed or restructured at any time.
+
+## 8. `agentlens serve`
+
+Boot the dashboard. See [dashboard.md](dashboard.md) for full options.
+
+```bash
+agentlens serve [--host HOST] [--port PORT] [--demo] [--debug]
+                [--auto-port] [--dev-proxy URL] [--allow-origin URL]...
+```
+
+The default URL is `http://127.0.0.1:5757`. The dashboard is read-only: it
+views runs, failures, risks, transcripts, workspace summaries, and doctor
+status without mutating the AgentLens store.
