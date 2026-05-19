@@ -169,6 +169,16 @@ def install_shim(name: str, real_path: Path) -> None:
     """
     shim_dir = _ensure_shim_dir()
     real = Path(real_path).resolve(strict=True)
+    # Self-reference guard (spec §S1.4.2): refuse to bake a binary that is
+    # itself inside the AgentLens shim directory. This catches the common
+    # re-install accident where `shutil.which` returns the already-installed
+    # shim. `.resolve()` on both sides ensures symlink indirection cannot
+    # bypass the check.
+    if real.parent.resolve() == _shim_dir().resolve():
+        raise ValueError(
+            f"refusing to bake {real} as .real — it is itself in the "
+            f"AgentLens shim directory. Pass --real <ultimate binary>."
+        )
     # v1 regression guard: refuse to operate on a binary inside a macOS
     # .app bundle (e.g. Codex Desktop's bundled `codex`). Replacing such a
     # binary would break the code-signed bundle, and Desktop transcript
