@@ -35,6 +35,15 @@ Supported arguments:
 - `headless_sandbox=workspace-write|read-only` optional, default
   `workspace-write`; `read-only` is for preflight/prompt verification and
   blocks edit execution.
+- `context_mode=auto|sliced|full` optional, default `auto`; `auto` uses task
+  packets when a spec exists.
+- `context_budget=<positive-int>` optional, default `60000` per task packet.
+- `context_threshold=<float>` optional, default `0.70`; values must be in
+  `[0.05,0.95]`.
+- `manifest_fallback=full_spec_on_blocker|halt_on_blocker` optional, default
+  `full_spec_on_blocker`.
+- Natural-language hints are accepted only after deterministic parser
+  resolution; print the parsed echo line before preflight.
 
 ## Hard Boundary
 
