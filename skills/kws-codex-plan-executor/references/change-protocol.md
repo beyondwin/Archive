@@ -50,14 +50,18 @@ Run the narrowest relevant checks first, then package checks:
 ```bash
 python3 scripts/parse_plan.py --help
 python3 scripts/validate_state.py --help
+python3 scripts/compare_agentlens_events.py --self-test
 python3 evals/check_prompt.py --help
 python3 evals/check_execution.py --help
 python3 evals/check_parse_plan.py --help
 python3 evals/check_state_schema.py
-python3 evals/check_learning_log.py
 python3 evals/check_skill_contract.py --help
 python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
 ```
+
+(`evals/check_event_journal.py` and `evals/check_learning_log.py` were removed at
+the v2.18 cutover. The AgentLens rename contract is checked by
+`scripts/compare_agentlens_events.py --self-test` instead.)
 
 After verification, append the command outcomes and any skipped-check rationale
 to `docs/verification-log.md` before finalizing the change.
