@@ -12,7 +12,7 @@ from pathlib import Path
 
 DEFAULTS = {
     "mode": "interactive",
-    "subagents": "auto",
+    "subagents": "on",
     "context_mode": "auto",
     "context_budget": 60000,
     "context_threshold": 0.70,

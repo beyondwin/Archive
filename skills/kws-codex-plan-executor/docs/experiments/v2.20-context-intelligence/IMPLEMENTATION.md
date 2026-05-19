@@ -4,7 +4,7 @@
 
 v2.20 makes `kws-codex-plan-executor` use less main-agent context by replacing broad plan/spec carryover with structured, durable, per-task context artifacts.
 
-The design intentionally does not make CPE a default autonomous multi-agent executor. Codex can use subagents, but CPE must keep the v2.19 safety boundary: subagents are permitted only when the user explicitly asks for delegation/parallel work or passes `subagents=on`.
+The design intentionally does not make CPE an unscoped autonomous multi-agent executor. Codex can use subagents by default through `subagents=on`, but CPE keeps the v2.20 safety boundary: subagents are dispatched only from task packets with explicit write scopes and parent review. `subagents=auto` remains the conservative mode that spawns only after an explicit user request for delegation/parallel work.
 
 ## Design Principles
 
@@ -480,6 +480,11 @@ Finished runs must not have:
 
 ## Subagent Behavior
 
+`subagents=on`:
+
+- default mode.
+- subagents may be used when task packet, write scope, and state-review prerequisites are satisfied.
+
 `subagents=auto`:
 
 - no spawning unless the user's message explicitly asks for subagents, delegation, or parallel work.
@@ -488,10 +493,7 @@ Finished runs must not have:
 
 - no spawning.
 
-`subagents=on`:
-
-- subagents may be used.
-- each worker receives:
+Each worker receives:
   - task id.
   - task packet path.
   - state path.
@@ -577,5 +579,5 @@ Mitigation: every generated artifact is rebuildable from plan, spec, state, and 
 - Update README validation list.
 - Run static checks.
 - Run full eval harness.
-- Confirm `subagents=auto` remains non-spawning by contract text and eval.
+- Confirm `subagents=on` is the default and `subagents=auto` remains non-spawning without explicit user request by contract text and eval.
 - Confirm `graphify update .` is run if implementation changes code files in this repository session.

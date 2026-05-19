@@ -54,11 +54,11 @@ def main() -> int:
     checks = {
         "version_2200": 'version: "2.20.0"' in text,
         "resume_argument": "resume=latest|<state-path>" in invocation,
-        "subagents_auto_default": "subagents=auto|on|off" in invocation and "default `auto`" in invocation,
-        "subagents_on_is_explicit": "explicitly permits subagents for this run" in invocation
-        and "Subagent records are opt-in execution artifacts" in subagents,
+        "subagents_on_default": "subagents=auto|on|off" in invocation and "default `on`" in invocation,
+        "subagents_on_is_default_permission": "permits subagents for this run" in normalized
+        and "Subagent records are execution artifacts" in subagents,
         "subagents_auto_requires_user_request": "`subagents=auto` does not by itself authorize spawning" in subagents
-        and "Do not spawn\nsubagents when `subagents=auto` without an explicit user request" in text,
+        and "Do not spawn subagents when `subagents=auto` without an explicit user request" in normalized,
         "subagents_on_requires_task_packet": "`subagents=on`" in pre_dispatch
         and "current_task_packet_path" in pre_dispatch
         and "readable" in pre_dispatch,
@@ -70,9 +70,9 @@ def main() -> int:
         and "before accepting subagent output" in runtime,
         "subagents_not_raw_full_plan_context": "dispatch from task packets, not raw full-plan\ncontext" in text
         and "Do not ask a subagent to infer its write scope from the entire plan" in text,
-        "no_subagents_by_default": "Use `spawn_agent` by default" not in runtime
-        and "Dispatch subagents by default" not in runtime
-        and "subagents 기본값은 on" not in template,
+        "subagents_on_default_documented": "subagents=on" in template
+        and "기본값" in template
+        and "subagents=off" in template,
         "subagents_off_local_only": "subagents=off" in text and "local-only" in text,
         "worktree_root_contract": "dedicated non-conflicting git worktree under\n`~/.codex/worktrees/`" in text
         or "dedicated non-conflicting git worktree under `~/.codex/worktrees/`" in text,

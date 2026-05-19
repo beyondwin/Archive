@@ -20,8 +20,10 @@ The worktree stores repository files only. The orchestrator directory stores
 `state.json`, `context.json`, `hooks/`, `learning_events/`, raw evidence, and
 headless result files.
 
-Subagents are opt-in. `subagents=auto` stays local unless the user explicitly
-requests delegation or passes `subagents=on`. Each delegated worker must have a
+Subagents are enabled by default through `subagents=on`, but delegation is
+task-packet scoped rather than raw full-plan scoped. `subagents=auto` stays local
+unless the user explicitly requests delegation or parallel work, and
+`subagents=off` forces a local-only run. Each delegated worker must have a
 bounded write scope; finished state cannot retain running or unreviewed
 subagent records.
 

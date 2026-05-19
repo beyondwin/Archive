@@ -9,8 +9,8 @@
   `verification_evidence`, `lifecycle_outcome`, `handoff_reason`, `finished`,
   `blocked`, and `failed`.
 - The prompt requires `TASK EXECUTION CONTRACT` before edits.
-- The prompt states `subagents=auto` default, documents `subagents=on` as
-  explicit permission, and documents `subagents=off`.
+- The prompt states `subagents=on` default, documents `subagents=auto` as
+  conservative explicit-request mode, and documents `subagents=off`.
 - The prompt includes the high-risk verification matrix terms: misleading
   success, stale state, hung.
 - Handoff prompts include `HANDOFF CHECKPOINT`.

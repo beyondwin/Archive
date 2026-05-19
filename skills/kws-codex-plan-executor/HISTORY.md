@@ -2,6 +2,9 @@
 
 ## 2.20.0 - 2026-05-19
 
+- Changed the CPE default back to `subagents=on`; `subagents=off` remains
+  local-only and `subagents=auto` remains the conservative explicit-request
+  mode.
 - Added context-intelligence artifacts: spec manifests, task packets,
   decisions register rendering, and packet-aware context snapshots.
 - Added deterministic invocation parsing for key/value args and Korean/English

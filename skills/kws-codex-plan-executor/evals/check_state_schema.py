@@ -204,13 +204,13 @@ def main() -> int:
     if not checks["valid_contract_passes"]:
         failures.append("valid v2.19 state should pass: " + (valid.stderr or valid.stdout))
 
-    subagents_default_on = base_state()
-    subagents_default_on["subagents_requested"] = False
-    subagents_default_on["subagent_runs"] = []
-    result = run_validator(script, subagents_default_on)
-    checks["subagents_auto_without_runs_passes"] = result.returncode == 0
-    if not checks["subagents_auto_without_runs_passes"]:
-        failures.append("subagents auto with no explicit request should pass")
+    subagents_on_without_runs = base_state()
+    subagents_on_without_runs["subagents_requested"] = True
+    subagents_on_without_runs["subagent_runs"] = []
+    result = run_validator(script, subagents_on_without_runs)
+    checks["subagents_on_without_runs_passes"] = result.returncode == 0
+    if not checks["subagents_on_without_runs_passes"]:
+        failures.append("subagents on with no delegated runs should pass")
 
     subagents_off = base_state()
     subagents_off["subagents_requested"] = False

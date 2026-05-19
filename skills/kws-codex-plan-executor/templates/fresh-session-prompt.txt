@@ -6,7 +6,7 @@
 - spec: {{SPEC}}
 - docs: {{DOCS}}
 - mode: {{MODE}}
-- subagents: {{SUBAGENTS_OR_DEFAULT_AUTO}}
+- subagents: {{SUBAGENTS_OR_DEFAULT_ON}}
 - headless_sandbox: {{HEADLESS_SANDBOX}}
 
 계약:
@@ -14,7 +14,7 @@
 - 오케스트레이션 상태는 `~/.codex/orchestrator/<run_id>/state.json`에 유지해. `context.json`, `hooks/`, `learning_events/`, headless logs, raw command evidence도 `~/.codex/orchestrator/<run_id>/` 하위에 둔다.
 - 작업 worktree에는 코드와 일반 git working tree 파일만 둔다.
 - `prompt`와 `handoff` 모드는 export-only다. worktree, state, context snapshot, hooks, logs, task artifact를 만들지 말고 plan task를 실행하지 마.
-- `subagents=auto`가 기본값이다. 사용자가 subagents/delegation/parallel work를 명시했거나 `subagents=on`을 전달한 경우에만 subagent를 사용할 수 있다. `subagents=off`면 반드시 local-only로 실행한다. subagent를 쓰면 disjoint write scope를 부여하고, 결과를 리뷰한 뒤 state의 `subagent_runs`에 기록해.
+- `subagents=on`이 기본값이다. 기본 실행은 task packet과 disjoint write scope가 준비된 경우 subagent를 사용할 수 있다. `subagents=auto`는 사용자가 subagents/delegation/parallel work를 명시한 경우에만 subagent를 사용할 수 있는 보수 모드이고, `subagents=off`면 반드시 local-only로 실행한다. subagent를 쓰면 disjoint write scope를 부여하고, 결과를 리뷰한 뒤 state의 `subagent_runs`에 기록해.
 - headless 실행이면 `headless_sandbox` 값을 `HEADLESS_SANDBOX`로 매핑한다. `HEADLESS_SANDBOX=read-only`에서는 preflight와 prompt verification만 수행하고 편집하지 마.
 - 편집 전 항상 `TASK EXECUTION CONTRACT` 5줄(`scope`, `files_to_inspect`, `allowed_edits`, `forbidden_edits`, `acceptance_command_or_honest_substitute`)을 말하고 state에 기록해.
 - `using-superpowers`와 `test-driven-development`를 implementation work 전에 적용해. 이 규칙은 interactive and headless 모두에 적용되며 not a headless-only rule이다. RED evidence를 먼저 기록하고 GREEN evidence로 닫아.
