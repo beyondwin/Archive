@@ -20,6 +20,8 @@ from .commands import mark as mark_cmd
 from .commands import mode as mode_cmd
 from .commands import risks as risks_cmd
 from .commands import run as run_cmd
+from .commands import run_close as run_close_cmd
+from .commands import run_open as run_open_cmd
 from .commands import seal as seal_cmd
 from .commands import show as show_cmd
 from .commands import start as start_cmd
@@ -48,6 +50,8 @@ app.command(
     name="run",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )(run_cmd.run)
+app.command(name="run-open")(run_open_cmd.run_open)
+app.command(name="run-close")(run_close_cmd.run_close)
 app.command(name="install")(install_cmd.install)
 app.command(name="uninstall")(uninstall_cmd.uninstall)
 app.command(name="doctor")(doctor_cmd.doctor)
