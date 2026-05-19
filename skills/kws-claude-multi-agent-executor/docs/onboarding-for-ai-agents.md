@@ -81,13 +81,14 @@ user correction, completion learning), emit a learning event.
 
 Sub-agents emit by writing JSON candidates to
 `<orch_dir>/learning_events/<task_id>-<role>.json`.
-**Never call the helper script directly** — see
+**Never publish to AgentLens directly** — see
 [`../references/learning-log.md`](../references/learning-log.md) for the
 single-writer contract.
 
-Orchestrator (you, if you're the top-level session) calls
-`scripts/append_learning_event.py append --run-id $MAE_LEARNING_RUN_ID ...`
-after scanning the candidate directory.
+Orchestrator (you, if you're the top-level session) drains the candidate
+directory at Phase 1 Step 3.5 and publishes each as `kws-cme.<event_type>`
+via `agentlens event append --run "$ORCH_RUN_ID" --type kws-cme.<...> ...`.
+AgentLens is the sole event sink as of v2.17.
 
 ### 3. Call advisor before substantive work
 
@@ -174,7 +175,7 @@ See [`./risks-and-limitations.md`](./risks-and-limitations.md) §Branch hygiene.
 1. Read [`../evals/README.md`](../evals/README.md) §Fixture format.
 2. Add `evals/fixtures/0N-<short-name>.yaml` matching the format.
 3. Verify spec-vs-rubric alignment (no v2.9 Phase 2-style ambiguity).
-4. Run preflight (`evals/check_skill_contract.py` + `check_learning_log.py`).
+4. Run preflight (`evals/check_skill_contract.py` + `scripts/compare_agentlens_events.py --self-test`).
 5. Run the new fixture once in isolation to capture a baseline.
 6. Commit fixture + baseline.
 
@@ -187,11 +188,16 @@ See [`./risks-and-limitations.md`](./risks-and-limitations.md) §Branch hygiene.
   record. It's cheap insurance.
 - **Treating advisor output as optional.** It frequently catches real
   flaws the agent missed. Honor it unless evidence contradicts.
-- **Hallucinating helper invocation locations.** The helper is at
-  `scripts/append_learning_event.py`, invoked by SKILL.md's Step 7.5 +
-  Step 3.5 (Phase 1) + Phase 2 Step 2 + escalation playbook + Resume Chain.
-- **Forgetting the single-writer contract.** Sub-agents NEVER call the
-  helper. They write candidate JSON only.
+- **Hallucinating AgentLens invocation locations.** The orchestrator
+  publishes via `agentlens event append --run "$ORCH_RUN_ID" --type kws-cme.<...>`
+  at five sites: Phase -1 step b (`run-open`), Phase 0 Step 7.5
+  (`phase_0_started`), Phase 1 Step 2.6 (`task_completed`) + Step 3.5
+  (sub-agent candidate drain), Phase Transition T3 (`compaction`), Phase 2
+  Step 2 (`phase_2_complete` + `run-close`). Hard-halt branches emit
+  `kws-cme.blocker` and call `run-close --outcome aborted|blocked`.
+- **Forgetting the single-writer contract.** Sub-agents NEVER call
+  `agentlens` directly. They write candidate JSON only; the orchestrator
+  drains and publishes.
 - **Bundling unrelated changes in one experiment.** v2.7 D008 is the
   cautionary tale — 150-line SKILL.md change deferred forever because it
   bundled too many things. Keep experiments single-purpose.

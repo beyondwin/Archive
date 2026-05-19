@@ -118,7 +118,7 @@ python3 evals/check_doc_freshness.py
 **진단**:
 ```bash
 python3 evals/check_skill_contract.py --skill SKILL.md
-python3 evals/check_learning_log.py
+python3 scripts/compare_agentlens_events.py --self-test
 ```
 
 출력이 어느 체크가 실패했는지 알려줌.

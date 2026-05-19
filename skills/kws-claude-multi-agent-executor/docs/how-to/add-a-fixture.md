@@ -109,7 +109,7 @@ python3 -c "import yaml; yaml.safe_load(open('evals/fixtures/0N-<slug>.yaml'))"
 
 # 2. 계약 eval 통과 (필드 누락 등 잡음)
 python3 evals/check_skill_contract.py --skill SKILL.md
-python3 evals/check_learning_log.py
+python3 scripts/compare_agentlens_events.py --self-test
 
 # 3. 베이스라인 캡처 위해 픽스처 1회 실행
 bash evals/run.sh evals/fixtures/0N-<slug>.yaml > /tmp/0N-baseline.log 2>&1
