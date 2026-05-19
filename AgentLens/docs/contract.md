@@ -42,6 +42,46 @@ A run transitions through two seal points; the current state is recorded in `man
 
 The two-phase shape exists to give the evaluator a hermetic input set without coupling its completion to the freeze of its own output. Both seals are recorded in `manifest.json` with timestamps and sha256 sums for every artifact present.
 
+## 3a. Additive v1 schema fields (S1.5.1 unification)
+
+The v1 lock is preserved by adding **only** additive optional fields. Three groups land in `run.json` and one pattern lands in `events.jsonl`. None of them rename, remove, or change the meaning of an existing field.
+
+### 3a.1 `run.json` additive fields
+
+| Field                                | Type / values                                                                                                | Default          | Purpose                                                                                                                                                  |
+|--------------------------------------|--------------------------------------------------------------------------------------------------------------|------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `run_kind`                           | `"capture"` \| `"container"`                                                                                 | `"capture"`      | `"capture"` is a normal recorded run. `"container"` is an orchestrator-scope run opened by `agentlens run-open` that does not own a child process.       |
+| `agent.label`                        | string                                                                                                       | `agent.name`     | Human-facing label distinct from the canonical `agent.name` enum. Lets container runs carry a skill-specific identity (e.g. `kws-cme-orchestrator`).     |
+| `recording.has_transcript`           | boolean                                                                                                      | `false`          | True when this run has a full prompt-level transcript attached. Process-wrapper runs are always `false`.                                                 |
+| `recording.transcript_source`        | `"none"` \| `"claude-session-jsonl"` \| `"codex-rollout-jsonl"` \| `"wrapper-stream-json"` \| `"external"`    | `"none"`         | Provenance for the transcript when `has_transcript=true`. The wrapper itself never produces transcripts — see §3a.3.                                     |
+| `input.import_key`                   | string                                                                                                       | absent           | Idempotency key for importers. Convention: `"claude-session:<id>"`, `"codex-rollout:<id>"`. A re-import with the same key is a no-op.                    |
+
+**Container-run shape.** When `run_kind="container"` the writer also stamps:
+
+- `agent.name = "generic"`
+- `agent.mode = "unknown"`
+- `agent.label = "<skill>-orchestrator"` (caller-supplied)
+- `recording.adapter = "agentlens_container"`
+- `recording.has_transcript = false`
+
+### 3a.2 `events.jsonl` namespace pattern
+
+The `type` field is no longer a fixed enum; it is a lower-case dotted namespace:
+
+```
+^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$
+```
+
+Reserved core namespaces — `run.*`, `command.*`, `checkpoint.*`, `artifact.*`, `task.*`, `failure.*`, `recording.*`, `agentlens.*` — remain pinned to their locked event-name enum (see `event.schema.json`). Skill namespaces (`kws-cme.*`, `kws-cpe.*`, …) and importer namespaces (`claude.*`, `codex.*`) are unconstrained beyond the general pattern, so external producers can append structured events under their own prefix without coordinating an enum change.
+
+### 3a.3 Transcript source policy
+
+A note that belongs at the contract layer because it interacts with §1 (run directory layout) and `security.md` §1:
+
+- The **process wrapper does not capture full prompt transcripts.** `agentlens run -- <cmd>` always produces a run with `recording.has_transcript=false` and `recording.transcript_source="none"`. The wrapper sees stdout/stderr fragments only, and those are filtered by the allow-list excerpt extractors (§3 of `security.md`).
+- Transcripts come from **session-JSONL importers** only — `agentlens import claude-session` and `agentlens import codex-session` (see `cli.md`). Those importers set `recording.has_transcript=true` and a matching `transcript_source`.
+- Imported session JSONL is copied into `artifacts/transcripts/<session-id>.jsonl` under the run directory; it is never written to a root-level `transcript.jsonl` and it is manifest-covered (`manifest.json` records sha256 and size like any other artifact). It is therefore subject to the same retention rules as other heavy artifacts — see `security.md` §6.
+
 ## 4. `recording_incomplete` semantics
 
 If **any** AgentLens write fails after `agentlens start` has produced a run directory — a `events.jsonl` append error, a `final.json` schema failure, a disk-full error during seal — the run is marked `recording_incomplete=true` in `manifest.json` with a structured `reason` field. The contract is intentionally asymmetric:

@@ -180,28 +180,31 @@ The checklist maps prompt/plan requirements to artifacts. Verification evidence
 records commands or honest substitutes. This prevents a run from claiming
 completion solely because a narrow command passed.
 
-## Project-Local Event Journal
+## AgentLens Event Stream
 
-Execution modes may write replay evidence to:
+Execution modes record replay evidence to AgentLens under the
+`kws-cpe.<event>` namespace; the legacy
+`.codex-orchestrator/runs/<run_id>/events.jsonl` journal and
+`scripts/append_run_event.py` were retired at the v2.18 cutover.
 
-```text
-.codex-orchestrator/runs/<run_id>/events.jsonl
-```
-
-Append with:
+Emit:
 
 ```bash
-python3 scripts/append_run_event.py \
-  --state .codex-orchestrator/runs/<run_id>/state.json \
-  --type task_contract_recorded \
-  --payload '{"task_id":"task_2"}'
+if [ -n "${ORCH_RUN_ID:-}" ]; then
+  agentlens event append --run "$ORCH_RUN_ID" \
+    --type kws-cpe.task_started \
+    --payload-json '{"task_id":"task_2"}' \
+    2>/dev/null || true
+fi
 ```
 
-The event journal is not the source of truth. State remains authoritative.
-Events are compact evidence of run boundaries, while the user-local learning
-log remains cross-repository process learning. Finished state must include
-`event_journal_path=".codex-orchestrator/runs/<run_id>/events.jsonl"` and a
-positive `last_event_seq`.
+The AgentLens stream is not the source of truth. State remains authoritative;
+events are compact evidence of run boundaries. Query a run with `agentlens
+events --run "$ORCH_RUN_ID" --type 'kws-cpe.*'`. See
+`references/event-journal.md` for the active vocabulary, the rename contract
+(e.g. `task_contract_recorded → kws-cpe.task_started`, `blocked →
+kws-cpe.blocker`, `finished → kws-cpe.run_completed`), and the
+`scripts/compare_agentlens_events.py --self-test` parity validator.
 
 ## Drift Reconciliation
 
@@ -346,39 +349,43 @@ Inspect recent run health with:
 python3 scripts/check_learning_log_health.py --latest 5 --json
 ```
 
-## Learning Helper Lifecycle
+## AgentLens Emit Lifecycle (replaces the legacy learning helper)
 
-Initialize:
-
-```bash
-python3 scripts/append_learning_event.py init-run \
-  --repo-root "$WORKTREE_ABS" \
-  --repo-name "$REPO_NAME" \
-  --branch "$BRANCH" \
-  --head "$HEAD_SHA" \
-  --plan-path "$PLAN_REL" \
-  --spec-path "${SPEC_REL:-}" \
-  --mode "$MODE"
-```
-
-Append a notable event:
+Open the orchestration run at execution init:
 
 ```bash
-python3 scripts/append_learning_event.py append \
-  --run-id "$RUN_ID" \
-  --event-json /tmp/kws-codex-plan-executor-event.json \
-  --repo-root "$WORKTREE_ABS"
+ORCH_RUN_ID="$(agentlens run-open \
+  --agent kws-cpe-orchestrator \
+  --workspace "$WORKTREE_ABS" \
+  --meta plan="$PLAN_REL" \
+  --meta spec="${SPEC_REL:-}" \
+  --meta mode="$MODE" \
+  2>/dev/null || echo "")"
+# Persist ORCH_RUN_ID as state.agentlens_orchestration_run at first state.json write.
 ```
 
-Close:
+Emit a notable event:
 
 ```bash
-python3 scripts/append_learning_event.py close-run \
-  --run-id "$RUN_ID" \
-  --outcome success
+if [ -n "${ORCH_RUN_ID:-}" ]; then
+  agentlens event append --run "$ORCH_RUN_ID" \
+    --type "kws-cpe.learning.${EVENT_TYPE}" \
+    --payload-json "$(cat /tmp/kws-codex-plan-executor-event.json)" \
+    2>/dev/null || true
+fi
 ```
 
-Valid close outcomes are `success`, `blocked`, `error`, and `unknown`.
+Close at terminal:
+
+```bash
+if [ -n "${ORCH_RUN_ID:-}" ]; then
+  agentlens run-close --run "$ORCH_RUN_ID" \
+    --outcome "$OUTCOME" 2>/dev/null || true
+fi
+```
+
+Valid `run-close` outcomes are `success`, `blocked`, and `aborted`.
+`scripts/append_learning_event.py` was removed at the v2.18 cutover.
 
 ## What To Log
 
@@ -421,8 +428,8 @@ Forbidden:
 - bulky file contents
 - unrelated user files or unrelated process details
 
-`append_learning_event.py` validates required fields, event enums, run identity,
-secret-like strings, and project-local `run_dir`/`state_path` values.
-
-Learning-log failure must not fail the user's primary implementation task. Note
-the logging failure briefly, then continue from the execution state.
+The orchestrator validates required fields, event enums, run identity,
+secret-like strings, and project-local `run_dir`/`state_path` values in the
+payload before each AgentLens emit. AgentLens emit failure must not fail the
+user's primary implementation task. Note the emit failure briefly, then
+continue from the execution state.

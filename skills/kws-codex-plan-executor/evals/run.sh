@@ -37,11 +37,14 @@ partial="$BASELINE_FILE.partial"
 python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md" >/dev/null
 python3 "$EVAL_DIR/check_state_schema.py" >/dev/null
 python3 "$EVAL_DIR/check_run_diffs.py" >/dev/null
-python3 "$EVAL_DIR/check_event_journal.py" >/dev/null
+# v2.18 cutover (Task 13): check_event_journal.py and check_learning_log.py
+# were removed alongside scripts/append_run_event.py and
+# scripts/append_learning_event.py. AgentLens parity is now verified by
+# scripts/compare_agentlens_events.py --self-test.
+python3 "$SKILL_DIR/scripts/compare_agentlens_events.py" --self-test >/dev/null
 python3 "$EVAL_DIR/check_state_reconciliation.py" >/dev/null
 python3 "$EVAL_DIR/check_context_snapshot.py" >/dev/null
 python3 "$EVAL_DIR/check_headless_result.py" >/dev/null
-python3 "$EVAL_DIR/check_learning_log.py" >/dev/null
 while IFS= read -r parser_fixture; do
   python3 "$EVAL_DIR/check_parse_plan.py" --fixture "$parser_fixture" >/dev/null
 done < <(find "$EVAL_DIR/parser-fixtures" -name '*.yaml' -type f | sort)

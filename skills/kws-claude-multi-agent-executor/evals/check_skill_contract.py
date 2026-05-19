@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """Skill contract checks for kws-claude-multi-agent-executor.
 
-Verifies that SKILL.md + references + scripts collectively wire the v2.8
-learning-log behavior and the review-side superpowers Skill invocations.
+Verifies that SKILL.md + references + scripts collectively wire the v2.17
+AgentLens event-publishing contract and the review-side superpowers Skill
+invocations. Pre-v2.17 runs published to a parallel
+`~/.claude/learning/.../events.jsonl`; that helper was removed in Task 11
+of the AgentLens v1 cutover and the contract now checks the AgentLens
+equivalents (`agentlens run-open`, `agentlens event append`,
+`agentlens run-close`, `kws-cme.phase_0_started` boundary marker).
 """
 
 from __future__ import annotations
@@ -69,8 +74,6 @@ def main() -> int:
     learning_log_md = skill_dir / "references" / "learning-log.md"
     learning_log_text = learning_log_md.read_text(encoding="utf-8") if learning_log_md.is_file() else ""
 
-    helper = skill_dir / "scripts" / "append_learning_event.py"
-
     checks: dict[str, bool] = {}
     failures: list[str] = []
 
@@ -82,51 +85,50 @@ def main() -> int:
     # ---- learning-log artifact existence ----
     record("learning_log_reference_exists", learning_log_md.is_file(),
            "references/learning-log.md must exist")
-    record("learning_log_helper_exists", helper.is_file(),
-           "scripts/append_learning_event.py must exist")
 
-    # ---- SKILL.md mentions execution-only learning-log behavior ----
+    # ---- SKILL.md wires AgentLens event publishing (v2.17 cutover) ----
     record(
-        "skill_md_mentions_learning_log",
+        "skill_md_mentions_agentlens_lifecycle",
         all(token in skill_text for token in [
-            "MAE_LEARNING_RUN_ID",
-            "init-run",
-            "append",
-            "close-run",
+            "ORCH_RUN_ID",
+            "agentlens run-open",
+            "agentlens event append",
+            "agentlens run-close",
             "references/learning-log.md",
         ]),
-        "SKILL.md must reference MAE_LEARNING_RUN_ID + init-run/append/close-run + learning-log.md",
+        "SKILL.md must wire AgentLens lifecycle: ORCH_RUN_ID + run-open/event append/run-close + learning-log.md",
     )
 
     record(
         "skill_md_describes_exit_paths",
         all(token in skill_text for token in [
-            "outcome=success",
-            "outcome=blocked",
-            "outcome=aborted",
+            "--outcome success",
+            "--outcome blocked",
+            "--outcome aborted",
         ]),
-        "SKILL.md must describe close-run on success/blocked/aborted exit paths",
+        "SKILL.md must describe agentlens run-close on success/blocked/aborted exit paths",
     )
 
     record(
-        "skill_md_describes_resume_chain_handoff",
+        "skill_md_describes_chained_run_propagation",
         all(token in skill_text for token in [
-            "append-session-id",
+            "AGENTLENS_PARENT_RUN_ID",
             "Resume Chain",
         ]),
-        "SKILL.md must describe append-session-id in Resume Chain handoff",
+        "SKILL.md must describe AGENTLENS_PARENT_RUN_ID propagation in Resume Chain handoff",
     )
 
-    # v2.8.1 enforcement: Step 7.5 must use MANDATORY framing + emit a
-    # LEARNING_LOG_INIT marker that the eval harness can detect.
+    # v2.17 enforcement: the Phase 0 boundary emit step must use MANDATORY
+    # framing and reference the kws-cme.phase_0_started event so the eval
+    # harness can detect adherence via AgentLens.
     record(
-        "skill_md_v281_mandatory_framing",
+        "skill_md_v217_mandatory_framing",
         all(token in skill_text for token in [
             "MANDATORY",
             "DO NOT SKIP THIS STEP",
-            "LEARNING_LOG_INIT:",
+            "kws-cme.phase_0_started",
         ]),
-        "SKILL.md Step 7.5 must use MANDATORY framing and emit LEARNING_LOG_INIT marker (v2.8.1)",
+        "SKILL.md Phase 0 boundary emit step must use MANDATORY framing and emit kws-cme.phase_0_started (v2.17)",
     )
 
     record(
@@ -150,15 +152,18 @@ def main() -> int:
             all(p in learning_log_text for p in PRIVACY_PHRASES),
             "learning-log.md must include privacy phrases: " + ", ".join(PRIVACY_PHRASES),
         )
+        # v2.17 cutover banner — learning-log.md must document the AgentLens
+        # equivalents instead of the deleted helper subcommands. The banner
+        # explicitly lists pre-v2.17 → v2.17+ replacements.
         record(
-            "learning_log_per_run_path",
-            "~/.claude/learning/kws-claude-multi-agent-executor/runs/" in learning_log_text,
-            "learning-log.md must document the per-run path",
-        )
-        record(
-            "learning_log_helper_subcommands",
-            all(t in learning_log_text for t in ["init-run", "append", "close-run", "append-session-id"]),
-            "learning-log.md must mention all 4 helper subcommands",
+            "learning_log_v217_cutover_banner",
+            all(t in learning_log_text for t in [
+                "v2.17 cutover",
+                "agentlens run-open",
+                "agentlens event append",
+                "agentlens run-close",
+            ]),
+            "learning-log.md must document the v2.17 AgentLens cutover (run-open / event append / run-close replacements)",
         )
         record(
             "learning_log_candidate_file_contract",
@@ -307,7 +312,7 @@ def main() -> int:
         ("## Guardrails", "Method audit must pass before Phase 2 close-run"),
         ("## Guardrails", "Resource-key collisions force serialization in same wave"),
     ]
-    SECTION_WINDOW = 15000  # chars to scan forward from anchor (Guardrails table spans >12k chars)
+    SECTION_WINDOW = 20000  # chars to scan forward from anchor (Guardrails table grew past 15k as new invariants accreted)
 
     for anchor, substring in REQUIRED_WORDING:
         check_key = f"wording_v211_{anchor[:20].lower().replace(' ', '_').replace('`', '').replace(':', '').replace('#', '').strip()}_{substring[:15].lower().replace(' ', '_').replace('-', '_')}"

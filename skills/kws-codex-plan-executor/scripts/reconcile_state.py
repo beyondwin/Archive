@@ -9,8 +9,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from append_run_event import append_event
-
 
 SAFE_REPAIRS = {
     "stale-root-state-pointer",
@@ -285,8 +283,11 @@ def reconcile(state_path: Path, repair_safe: bool) -> tuple[dict, int]:
     state["drift"] = drift
     state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    if repair_safe and repaired and (state_path.parent / "events.jsonl").is_file():
-        append_event(state_path, "drift_repaired", {"repaired": [item["type"] for item in repaired]})
+    if repair_safe and repaired:
+        # v2.18 cutover: legacy events.jsonl journal + scripts/append_run_event.py
+        # were removed. drift_repaired evidence now lives only in state.drift.records.
+        # AgentLens emits a `kws-cpe.drift_repaired`-style event from the
+        # orchestrator boundary, not from this reconciliation script.
         state = json.loads(state_path.read_text(encoding="utf-8"))
         if state.get("lifecycle_outcome") == "finished":
             health = state.get("context_health")

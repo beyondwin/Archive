@@ -203,7 +203,8 @@ Phase 2 Step 2 가 markdown 표를 출력 (interactive 모드는 채팅에, head
 - **코드 변경**: `<worktree_path>/` (별도 git worktree). 메인 체크아웃에는 영향 없음.
 - **커밋**: 브랜치 `<plan-slug>-<timestamp>` 위에. `feat:` (구현)와 `chore:` (오케스트레이터 상태)가 번갈아.
 - **state.json**: `<worktree>/.orchestrator/state.json` — 사후 디버깅·재개의 진실의 출처.
-- **학습 로그**: `~/.claude/learning/kws-claude-multi-agent-executor/runs/<YYYY-MM-DD>/<run_id>/` — `meta.json` + `events.jsonl`. 크로스-실행 제도적 메모리.
+- **이벤트 스트림 (v2.17 cutover)**: AgentLens 의 `kws-cme.*` 이벤트 타입. 조회: `agentlens events --run <ORCH_RUN_ID> --type 'kws-cme.*'`. 크로스-실행 제도적 메모리는 AgentLens 가 보존. `state.json.agentlens_orchestration_run` 에 run id 가 기록됨.
+- **레거시 학습 로그 (읽기 전용, 역사적)**: `~/.claude/learning/kws-claude-multi-agent-executor/runs/<YYYY-MM-DD>/<run_id>/` — v2.17 cutover (Task 11) 이전 실행만 존재. 신규 실행은 작성하지 않음. 레거시 ↔ AgentLens 패리티 검증: `python3 scripts/compare_agentlens_events.py <legacy events.jsonl> <agentlens run dir>`.
 - **서브에이전트 결과**: `<worktree>/.orchestrator/{verifier,docs}_results/` — 헤드리스 JSON 결과 파일들.
 
 ### 4.3. 머지하기

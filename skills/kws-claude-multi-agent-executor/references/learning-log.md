@@ -1,5 +1,50 @@
 # Learning Log
 
+> **v2.17 cutover banner (Task 11)**
+>
+> The legacy helper `scripts/append_learning_event.py` and its per-run sharded
+> storage under `~/.claude/learning/kws-claude-multi-agent-executor/runs/...`
+> were REMOVED in v2.17. AgentLens is now the sole event sink: every event the
+> orchestrator emits is published as `kws-cme.<event_type>` via
+> `agentlens event append --run "$ORCH_RUN_ID" --type kws-cme.<...>`.
+>
+> What still applies from this document:
+>
+> - **Event taxonomy and candidate-file schema** (sections "Event types" below).
+>   Sub-agents still write candidate JSON to
+>   `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`; the
+>   orchestrator now publishes each to AgentLens as `kws-cme.<event_type>`
+>   instead of calling the deleted helper.
+> - **Field semantics**: `event_type`, `severity`, `phase`, `execution`,
+>   `subagent`, `context`, `improvement`, `privacy`. AgentLens preserves the
+>   candidate JSON as the event payload, so every field documented below is
+>   queryable via `agentlens events --type 'kws-cme.<event_type>'`.
+>
+> What no longer applies (read as historical reference for pre-v2.17 runs only):
+>
+> - The "Storage layout" `~/.claude/learning/.../runs/<date>/<run_id>/` paths.
+> - The `meta.json` / `events.jsonl` / `final.json` files and the precedence
+>   rules around them.
+> - Every `scripts/append_learning_event.py` subcommand reference (`init-run`,
+>   `append`, `close-run`, `append-session-id`, `resolve-outcome`).
+> - The `MAE_LEARNING_RUN_ID` environment variable.
+>
+> Replacements:
+>
+> | Pre-v2.17 | v2.17+ |
+> |-----------|--------|
+> | `append_learning_event.py init-run ...` | `agentlens run-open --agent kws-cme-orchestrator ...` at Phase -1 step b |
+> | `append_learning_event.py append --event-json <cand>` | `agentlens event append --type "kws-cme.$(jq -r .event_type <cand>)" --payload-json "@<cand>"` |
+> | `append_learning_event.py close-run --outcome <X>` | `agentlens run-close --outcome <X>` |
+> | `append_learning_event.py resolve-outcome --run-id <id>` | `agentlens runs --filter id=<id>` |
+> | `MAE_LEARNING_RUN_ID` | `ORCH_RUN_ID` (propagated to chained children as `AGENTLENS_PARENT_RUN_ID`) |
+> | `~/.claude/learning/.../events.jsonl` | `agentlens events --run <id> --type 'kws-cme.*'` |
+>
+> Parity verification on historical runs that retain a legacy `events.jsonl`
+> alongside an AgentLens stream: `python3 scripts/compare_agentlens_events.py
+> <legacy_events.jsonl> <agentlens_run_dir>`. The script also has a
+> `--self-test` mode that exercises six synthetic cases without any real run.
+
 Execution-only learning events from `kws-claude-multi-agent-executor`. Records
 notable boundaries from a real orchestrator run so the skill itself can be
 improved over time. **This is not the resume source of truth** — that is

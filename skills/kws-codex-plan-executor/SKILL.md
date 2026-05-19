@@ -74,14 +74,28 @@ parallel work, or passes `subagents=on`.
   under `.codex-orchestrator/runs/`. Do not infer between multiple ambiguous
   active runs.
 - In `interactive` and `headless` execution, record execution-only redacted
-  notable-boundary learning events with `scripts/append_learning_event.py` and
-  `references/learning-log.md`; initialize with `init-run`, append with
-  `append`, close with `close-run`, and include `run_id`, `run_dir`, and
-  `state_path`. `prompt` and `handoff` are not logging modes.
-- Execution runs maintain project-local replay evidence in
-  `.codex-orchestrator/runs/<run_id>/events.jsonl` when the event helper is
-  available. State remains authoritative, but finished state records the event
-  journal path and last event sequence.
+  notable-boundary learning events directly to AgentLens under the
+  `kws-cpe.learning.<event>` namespace per `references/learning-log.md`. Include
+  `run_id`, `run_dir`, and `state_path` in payload metadata. `prompt` and
+  `handoff` are not logging modes.
+- Execution runs maintain project-local replay evidence by emitting AgentLens
+  events under `kws-cpe.<event>` per `references/event-journal.md`. State
+  remains authoritative; finished state records the AgentLens orchestration
+  run id and (for resume) the last event timestamp.
+- At run init the orchestrator opens an AgentLens run with
+  `agentlens run-open --agent kws-cpe-orchestrator --workspace "$WORKTREE_ABS"
+  --meta plan=...` and persists the returned id as the run-level
+  `agentlens_orchestration_run` field in
+  `.codex-orchestrator/runs/<run_id>/state.json` (root
+  `.codex-orchestrator/state.json` remains a compatibility latest-state
+  copy/pointer). Every AgentLens call is guarded by
+  `[ -n "${ORCH_RUN_ID:-}" ]` and suffixed with `2>/dev/null || true`; AgentLens
+  failures must never block plan execution. Headless `codex exec` spawns must
+  propagate the parent id via `AGENTLENS_PARENT_RUN_ID="$ORCH_RUN_ID"` when
+  non-empty. The legacy `scripts/append_run_event.py` and
+  `scripts/append_learning_event.py` helpers were removed at the v2.18 cutover;
+  parity with the historical streams is verified by
+  `scripts/compare_agentlens_events.py --self-test`.
 - Execution runs record `.codex-orchestrator/runs/<run_id>/context.json` before
   edits and store `context_snapshot_path` plus `context_basis_hash` in state.
   The snapshot may record `context_budget` so oversized plan/spec/doc sources
@@ -127,7 +141,10 @@ parallel work, or passes `subagents=on`.
 5. For `headless`, follow `references/headless-runner.md`.
 6. Maintain `.codex-orchestrator/runs/<run_id>/state.json` using
    `references/state-schema.md`; keep `.codex-orchestrator/state.json` as the
-   latest-state compatibility copy/pointer.
+   latest-state compatibility copy/pointer. At run init, open an AgentLens
+   orchestration run and persist its id under `agentlens_orchestration_run`
+   in per-run state; mirror downstream events to AgentLens alongside the legacy
+   helpers per `references/event-journal.md` and `references/learning-log.md`.
 7. Build `context.json` for execution modes before edits, maintain
    `context_health`, and record completion proof before reporting a finished
    lifecycle outcome.

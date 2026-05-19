@@ -34,7 +34,7 @@ def main() -> int:
     state_schema_path = skill_dir / "references" / "state-schema.md"
     common_mistakes_path = skill_dir / "references" / "common-mistakes.md"
     learning_path = skill_dir / "references" / "learning-log.md"
-    learning_script_path = skill_dir / "scripts" / "append_learning_event.py"
+    compare_script_path = skill_dir / "scripts" / "compare_agentlens_events.py"
     eval_run_path = skill_dir / "evals" / "run.sh"
 
     template = template_path.read_text(encoding="utf-8") if template_path.is_file() else ""
@@ -105,7 +105,10 @@ def main() -> int:
         "common_mistakes_reference_valid": "references/common-mistakes.md" not in checklist
         or common_mistakes_path.is_file(),
         "learning_log_reference_exists": learning_path.is_file(),
-        "learning_log_helper_exists": learning_script_path.is_file(),
+        # v2.18 cutover (Task 13): the legacy append_learning_event.py and
+        # append_run_event.py helpers were deleted. Parity with the historical
+        # streams is now validated by scripts/compare_agentlens_events.py.
+        "agentlens_compare_script_exists": compare_script_path.is_file(),
         "learning_log_execution_only": "execution-only" in text
         and "interactive" in learning
         and "headless" in learning
@@ -113,11 +116,12 @@ def main() -> int:
         and "handoff" in learning
         and "not logging modes" in learning,
         "learning_log_user_local_path": "~/.codex/learning/kws-codex-plan-executor/runs/" in learning
-        and "~/.codex/learning/kws-codex-plan-executor/runs/" in template
-        and "index.jsonl" in learning,
-        "learning_log_lifecycle": all(token in learning for token in ("init-run", "append", "close-run"))
-        and all(token in text for token in ("init-run", "close-run"))
-        and all(token in template for token in ("init-run", "close-run")),
+        and "~/.codex/learning/kws-codex-plan-executor/runs/" in template,
+        "learning_log_lifecycle": all(
+            token in learning for token in ("agentlens event append", "run-close")
+        )
+        and "kws-cpe.learning." in learning
+        and "kws-cpe.learning." in template,
         "per_run_orchestrator_state": ".codex-orchestrator/runs/<run_id>/state.json" in learning
         and ".codex-orchestrator/runs/<run_id>/state.json" in template
         and ".codex-orchestrator/runs/<run_id>/" in headless,
