@@ -152,6 +152,41 @@ The helper validates required fields, enum values, redaction constraints, and
 secret-like strings before appending one compact JSON object per line. It also
 rejects candidates whose `run_id` does not match `--run-id`.
 
+## AgentLens Dual-Write (parity window)
+
+During the parity window, every `append` call also mirrors to AgentLens under
+the `kws-cpe.learning.<event>` namespace. The orchestration run id is opened at
+execution init with `agentlens run-open --agent kws-cpe-orchestrator
+--workspace "$WORKTREE_ABS" --meta plan=...` and is persisted as the run-level
+`agentlens_orchestration_run` field in
+`.codex-orchestrator/runs/<run_id>/state.json`. Guard every emit:
+
+```bash
+if [ -n "${ORCH_RUN_ID:-}" ]; then
+  agentlens event append --run "$ORCH_RUN_ID" \
+    --type "kws-cpe.learning.${EVENT_TYPE}" \
+    --payload-json "$(cat /tmp/kws-codex-plan-executor-event.json)" \
+    2>/dev/null || true
+fi
+```
+
+Expected `kws-cpe.learning.<event>` mirror types:
+
+- `kws-cpe.learning.blocker`
+- `kws-cpe.learning.error`
+- `kws-cpe.learning.verification_failure`
+- `kws-cpe.learning.recurring_issue`
+- `kws-cpe.learning.user_correction`
+- `kws-cpe.learning.successful_workaround`
+- `kws-cpe.learning.completion_learning`
+
+At `close-run` time, also call `agentlens run-close --run "$ORCH_RUN_ID"
+--outcome <success|blocked|aborted> 2>/dev/null || true`. Headless `codex exec`
+spawns must propagate the parent id with
+`AGENTLENS_PARENT_RUN_ID="$ORCH_RUN_ID"`. The legacy `append_learning_event.py`
+helper stays in place alongside the AgentLens append until parity is verified.
+AgentLens failures are never blocking.
+
 ## Minimal Event Shape
 
 ```json
