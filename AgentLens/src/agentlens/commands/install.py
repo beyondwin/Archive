@@ -113,6 +113,14 @@ def install(
             )
         real_path = Path(detected)
 
+    # Spec §S1.4.3: capture the user's current PATH resolution BEFORE any
+    # install writes (so we can advise them, post-install, if the proposed
+    # PATH change bypasses a wrapper script they may have relied on). The
+    # captured value is consulted AFTER install_shim returns — using a fresh
+    # post-install lookup here would resolve to the just-installed shim and
+    # silently mask the bypass.
+    pre_install_resolution = shutil.which(agent)
+
     if not yes:
         confirmed = typer.confirm(
             f"Install shim for {agent}? This places a shim in "
@@ -151,9 +159,67 @@ def install(
         typer.echo(f"agentlens: install failed — {exc}", err=True)
         raise typer.Exit(code=1) from exc
     typer.echo(f"installed shim for {agent} -> {real_path}")
+
+    # Spec §S1.4.3 Layer 3: advisory PATH-conflict warning. Use the
+    # pre-install resolution captured above; a fresh lookup here would
+    # resolve to the just-installed shim and silently mask the bypass.
+    _maybe_emit_path_conflict_warning(
+        agent=agent,
+        pre_install_resolution=pre_install_resolution,
+        real_path=real_path,
+    )
+
     typer.echo("")
     typer.echo("Add to your shell rc:")
     typer.echo('  export PATH="$HOME/.agentlens/shims:$PATH"')
+
+
+def _maybe_emit_path_conflict_warning(
+    *,
+    agent: str,
+    pre_install_resolution: Optional[str],
+    real_path: Path,
+) -> None:
+    """Emit the spec §S1.4.3 PATH-conflict warning to stderr if applicable.
+
+    The warning is purely advisory (non-blocking). Emission requires ALL of:
+    - ``pre_install_resolution`` is not None,
+    - it does NOT already resolve to ``real_path`` (post-resolve equality),
+    - the file's first two bytes are ``#!`` (a shell wrapper, not a binary).
+
+    Any unexpected I/O error (file vanished, permission denied, etc.) is
+    treated as "no warning" — we never block install on advisory output.
+    """
+    if pre_install_resolution is None:
+        return
+    try:
+        current_resolved = Path(pre_install_resolution).resolve()
+        real_resolved = Path(real_path).resolve()
+    except (OSError, RuntimeError):
+        return
+    if current_resolved == real_resolved:
+        return
+    try:
+        with open(pre_install_resolution, "rb") as fh:
+            head = fh.read(2)
+    except OSError:
+        return
+    if head != b"#!":
+        return
+    warning_text = (
+        f"warning: your shell currently resolves `{agent}` to "
+        f"{pre_install_resolution},\n"
+        "which is a wrapper script. The proposed PATH change makes "
+        "AgentLens's shim\n"
+        f"resolve first, but that shim execs {real_path} — bypassing "
+        f"{pre_install_resolution}.\n"
+        "If you intended the wrapper to remain in the chain, use:\n"
+        f"  agentlens install {agent} --real <wrapper> --no-wrapper-detect"
+        "   (NOT RECOMMENDED)\n"
+        "or for cmux specifically:\n"
+        "  agentlens install claude --cmux"
+    )
+    typer.echo(warning_text, err=True)
 
 
 def _install_cmux_chain_command(
