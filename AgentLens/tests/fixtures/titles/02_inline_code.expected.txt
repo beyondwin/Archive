@@ -1,0 +1,1 @@
+Use instead of string concatenation in the helper.

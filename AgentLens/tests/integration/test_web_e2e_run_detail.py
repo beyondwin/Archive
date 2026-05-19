@@ -45,3 +45,22 @@ def test_run_verify(home_with_minimal):
     assert r.status_code == 200
     assert "ok" in body
     assert "mismatches" in body
+
+
+def test_run_detail_includes_import_projection_keys_and_no_source_path(
+    home_with_minimal,
+):
+    """task_18: detail payload carries display_title/usage/import_state and
+    must not expose the importer artifact's ``source_path`` field."""
+    run_id = json.loads((FIXTURES / "minimal_run" / "run.json").read_text())["run_id"]
+    r = TestClient(create_app(ServeSettings())).get(f"/api/v1/runs/{run_id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert "display_title" in body
+    assert "usage" in body
+    assert "import_state" in body
+    # minimal_run is a container run with no importer artifacts.
+    assert body["display_title"] is None
+    assert body["usage"] is None
+    assert body["import_state"] is None
+    assert "source_path" not in json.dumps(body)

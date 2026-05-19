@@ -60,6 +60,11 @@ def _build_summary(row: dict[str, Any]) -> dict[str, Any]:
         "sealed_phase": row.get("sealed_phase") or "",
         "workspace_id": row.get("workspace_id") or "",
         "workspace_short": workspace_short(row.get("workspace_id")),
+        # task_18: importer-artifact projections passed through to project_show.
+        # Container runs legitimately have ``None`` for all three.
+        "display_title": row.get("display_title"),
+        "usage": row.get("usage"),
+        "import_state": row.get("import_state"),
         "failures": _failures_for_run(run_id) if run_id else [],
         "risks": _risks_for_run(run_id) if run_id else [],
     }
