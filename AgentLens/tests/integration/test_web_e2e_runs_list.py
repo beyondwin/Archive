@@ -63,3 +63,25 @@ def test_runs_list_includes_numeric_failures_count(populated_home):
     )
     assert failed_run["eval_status"] == "failed"
     assert failed_run["failures_count"] == 1
+
+
+def test_runs_list_includes_import_projection_keys_and_no_source_path(
+    populated_home,
+):
+    """task_18: each item carries display_title/usage/import_state and the
+    payload never exposes the importer artifact's ``source_path`` field."""
+    r = TestClient(create_app(ServeSettings())).get("/api/v1/runs?since_days=36500")
+    body = r.json()
+    assert r.status_code == 200
+    assert body["items"]
+    for item in body["items"]:
+        assert "display_title" in item
+        assert "usage" in item
+        assert "import_state" in item
+        # Container fixtures have no importer artifacts → all three are null.
+        assert item["display_title"] is None
+        assert item["usage"] is None
+        assert item["import_state"] is None
+    # Web layer must NEVER expose importer artifact's source_path.
+    import json as _json
+    assert "source_path" not in _json.dumps(body)

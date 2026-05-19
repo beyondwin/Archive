@@ -21,8 +21,10 @@ export const LatestSchema = z.object({
   "agent_mode": z.string(),
   "agent_name": z.string(),
   "agent_outcome": z.string(),
+  "display_title": z.null(),
   "ended_at": z.string(),
   "eval_status": z.string(),
+  "import_state": z.null(),
   "parent_run_id": z.null(),
   "recording_mode": z.string(),
   "residual_risks": z.array(z.unknown()),
@@ -30,6 +32,7 @@ export const LatestSchema = z.object({
   "sealed_phase": z.string(),
   "started_at": z.string(),
   "status": z.string(),
+  "usage": z.null(),
   "workspace_id": z.string(),
 });
 export type Latest = z.infer<typeof LatestSchema>;
@@ -47,6 +50,7 @@ export type Risks = z.infer<typeof RisksSchema>;
 export const ShowSchema = z.object({
   "agent": z.string(),
   "agent_outcome": z.string(),
+  "display_title": z.null(),
   "eval_status": z.string(),
   "failures": z.array(z.object({
     "blame_scope": z.string(),
@@ -60,6 +64,7 @@ export const ShowSchema = z.object({
     "summary": z.string(),
     "workspace_id": z.string(),
   })),
+  "import_state": z.null(),
   "risks": z.array(z.object({
     "category": z.string(),
     "run_id": z.string(),
@@ -71,6 +76,7 @@ export const ShowSchema = z.object({
   "run_id": z.string(),
   "sealed_phase": z.string(),
   "started_at": z.string(),
+  "usage": z.null(),
   "workspace_id": z.string(),
   "workspace_short": z.string(),
 });
@@ -80,8 +86,10 @@ export const StatusSchema = z.array(z.object({
   "agent_mode": z.string(),
   "agent_name": z.string(),
   "agent_outcome": z.string(),
+  "display_title": z.null(),
   "ended_at": z.string(),
   "eval_status": z.string(),
+  "import_state": z.null(),
   "parent_run_id": z.null(),
   "recording_mode": z.string(),
   "residual_risks": z.array(z.object({
@@ -92,6 +100,7 @@ export const StatusSchema = z.array(z.object({
   "sealed_phase": z.string(),
   "started_at": z.string(),
   "status": z.string(),
+  "usage": z.null(),
   "workspace_id": z.string(),
 }));
 export type Status = z.infer<typeof StatusSchema>;

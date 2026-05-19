@@ -23,6 +23,9 @@ export const falseSuccessRun: RunRow = {
   agent_outcome: "success",
   eval_status: "failed",
   sealed_phase: "final",
+  display_title: null,
+  usage: null,
+  import_state: null,
 };
 
 export const defaultMeta: Meta = {
@@ -58,6 +61,9 @@ export const falseSuccessDetail: RunDetail = {
   workspace_id: falseSuccessRun.workspace_id,
   workspace_short: "demo",
   summary: "Agent reported success, evaluator found failed command evidence.",
+  display_title: null,
+  usage: null,
+  import_state: null,
   failures: [falseSuccessFailure],
   risks: [],
   manifest_seal: {

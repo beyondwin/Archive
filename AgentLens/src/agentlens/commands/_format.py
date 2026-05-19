@@ -59,6 +59,15 @@ _RUN_ROW_OPTIONAL_KEYS: tuple[str, ...] = (
     "residual_risks",
 )
 
+# task_18: importer-artifact projections. Always emitted (None default) so
+# the projected row shape stays stable for both container runs (no artifacts)
+# and imported runs.
+_IMPORT_PROJECTION_KEYS: tuple[str, ...] = (
+    "display_title",
+    "usage",
+    "import_state",
+)
+
 # Failure dict locked keys. Includes evaluator-emitted detail fields
 # (confidence, evidence, recoverability) so the snapshot pins the full
 # evaluator output surface.
@@ -137,6 +146,10 @@ def project_run_row(row: dict[str, Any]) -> dict[str, Any]:
         if row.get("workspace_id"):
             out["workspace_id"] = str(row.get("workspace_id"))
         out["parent_run_id"] = None
+        # task_18: importer-artifact projections are always emitted, even on
+        # schema-invalid rows, so the shape is stable for consumers.
+        for key in _IMPORT_PROJECTION_KEYS:
+            out[key] = None
         out["schema_invalid"] = True
         return out
 
@@ -151,6 +164,10 @@ def project_run_row(row: dict[str, Any]) -> dict[str, Any]:
     for key in _RUN_ROW_OPTIONAL_KEYS:
         if key in row and row[key] is not None:
             out[key] = row[key]
+    # task_18: always emit the three importer-projection keys (None when the
+    # run is a container run without import artifacts).
+    for key in _IMPORT_PROJECTION_KEYS:
+        out[key] = row.get(key)
     return out
 
 
@@ -208,6 +225,10 @@ def project_show(
         "sealed_phase": _coalesce(row.get("sealed_phase"), ""),
         "workspace_id": _coalesce(row.get("workspace_id"), ""),
         "workspace_short": _coalesce(row.get("workspace_short"), "-"),
+        # task_18: importer-artifact projections. ``None`` for container runs.
+        "display_title": row.get("display_title"),
+        "usage": row.get("usage"),
+        "import_state": row.get("import_state"),
         "failures": [project_failure(f) for f in failures],
         "risks": [project_risk(r) for r in risks],
     }

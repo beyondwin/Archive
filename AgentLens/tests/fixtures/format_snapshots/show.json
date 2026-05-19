@@ -1,6 +1,7 @@
 {
   "agent": "generic",
   "agent_outcome": "success",
+  "display_title": null,
   "eval_status": "needs_eval",
   "failures": [
     {
@@ -18,6 +19,7 @@
       "workspace_id": "ws_0000000000000002"
     }
   ],
+  "import_state": null,
   "risks": [
     {
       "category": "UNACKNOWLEDGED_FAILED_COMMAND",
@@ -31,6 +33,7 @@
   "run_id": "run_20260101_000001_bbbbbb",
   "sealed_phase": "pre_eval",
   "started_at": "0000-00-00T00:00:00Z",
+  "usage": null,
   "workspace_id": "ws_0000000000000002",
   "workspace_short": "ws_00000000"
 }
