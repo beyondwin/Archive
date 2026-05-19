@@ -266,7 +266,7 @@ Fill in `<abs worktree path>`, `<plan path>`, `<spec path>` with the actual reso
 WORKTREE_ABS="$(cd <worktree> && pwd -P)"
 AGENTLENS_PARENT_RUN_ID="${ORCH_RUN_ID:-}" \
 nohup claude -p --dangerously-skip-permissions \
-  --output-format stream-json \
+  --output-format stream-json --verbose \
   "$(cat "$WORKTREE_ABS/.orchestrator/headless_prompt.txt")" \
   > "$WORKTREE_ABS/.orchestrator/headless.jsonl" 2>&1 &
 echo $! > "$WORKTREE_ABS/.orchestrator/headless.pid"
@@ -415,7 +415,7 @@ Procedure:
    ```bash
    env AGENTLENS_PARENT_RUN_ID="${ORCH_RUN_ID:-${AGENTLENS_PARENT_RUN_ID:-}}" \
      nohup claude -p --session-id "$RESUME_UUID" --dangerously-skip-permissions \
-     --output-format stream-json \
+     --output-format stream-json --verbose \
      "$(cat "$WORKTREE_ABS/.orchestrator/headless_chain_<N>_prompt.txt")" \
      > "$WORKTREE_ABS/.orchestrator/headless_chain_<N>.jsonl" 2>&1 &
    CHILD_PID=$!
