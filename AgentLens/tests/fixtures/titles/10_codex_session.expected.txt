@@ -1,0 +1,1 @@
+Investigate why the rollout parser drops the final row when the file ends without a trailing newline.
