@@ -152,9 +152,24 @@ All arg-derived values come from Phase -1.0's three-pass parser (`implementer_mo
 
 Validate `implementer_model` value: must be `opus` or `sonnet` (case-insensitive). Unknown value → halt: `"Unknown implementer_model=<value>. Allowed: opus, sonnet."` Unset → use `"sonnet"`.
 
+**AgentLens orchestration run-open (v2.17 — RUN-LEVEL, NULL-safe):**
+
+Immediately before writing state.json, attempt to open an AgentLens orchestration run. The returned ID (or empty string if AgentLens is absent / errors out) is the value substituted into the `agentlens_orchestration_run` field of the JSON written below. This field is **run-level** (top-level of state.json, parallel to `cost_ledger`/`test_command`/`budget_cap_usd`) — one orchestrator invocation owns at most one AgentLens run regardless of plan_chain length.
+
+```bash
+ORCH_RUN_ID=$(agentlens run-open \
+  --agent kws-cme-orchestrator \
+  --workspace "$WORKTREE_ABS" \
+  --meta plan="$PLAN_PATH" \
+  --meta spec="$SPEC_PATH" \
+  2>/dev/null || echo "")
+```
+
+If `ORCH_RUN_ID` is empty (AgentLens CLI missing, registry write failure, etc.), substitute `null` into the JSON (not the empty string) so the field type is `string|null`. This is **never** a blocking failure — the orchestrator proceeds regardless. The value persists for the lifetime of the run and is read by Phase 0 / Phase 1 / Phase Transition / Phase 2 emit sites that publish events into AgentLens. (v2.17 cutover, Task 11: the legacy learning-log helper `append_learning_event.py` has been removed — AgentLens is now the sole event sink. See `scripts/compare_agentlens_events.py` for parity verification on historical runs.)
+
 **Multi-plan vs single-plan write rules (v2.13):**
 
-If the parsed plan list has length 1: write the minimal state.json in v2.12 shape (no `plan_chain` field):
+If the parsed plan list has length 1: write the minimal state.json in v2.12 shape (no `plan_chain` field). Substitute `$ORCH_RUN_ID` (or `null`) for the `agentlens_orchestration_run` field — the Write tool cannot capture shell variables, so template it in before calling Write:
 
 ```json
 {
@@ -166,6 +181,7 @@ If the parsed plan list has length 1: write the minimal state.json in v2.12 shap
   "branch": "<branch name>",
   "worktree": "<worktree path>",
   "implementer_model": {"used": "<parsed value or sonnet>", "default": "sonnet"},
+  "agentlens_orchestration_run": "<$ORCH_RUN_ID or null>",
   "timestamps": {
     "interactive_setup_at": "<iso8601 now>",
     "headless_started_at": null,
@@ -174,7 +190,7 @@ If the parsed plan list has length 1: write the minimal state.json in v2.12 shap
 }
 ```
 
-If the parsed plan list has length ≥ 2: write the v2.13 multi-plan minimal state.json. `state.plan` / `state.spec` mirror index 0 for legacy reader compatibility; the authoritative source is `plan_chain[]`:
+If the parsed plan list has length ≥ 2: write the v2.13 multi-plan minimal state.json. `state.plan` / `state.spec` mirror index 0 for legacy reader compatibility; the authoritative source is `plan_chain[]`. Same `agentlens_orchestration_run` substitution rule as the single-plan shape — `$ORCH_RUN_ID` (or `null`) is templated in at write time:
 
 ```json
 {
@@ -186,6 +202,7 @@ If the parsed plan list has length ≥ 2: write the v2.13 multi-plan minimal sta
   "branch": "<branch name>",
   "worktree": "<worktree path>",
   "implementer_model": {"used": "<parsed value or sonnet>", "default": "sonnet"},
+  "agentlens_orchestration_run": "<$ORCH_RUN_ID or null>",
   "plan_chain": [
     {"index": 0, "plan_path": "<plan_path_0>", "spec_path": "<spec_path_0>", "status": "running",
      "blocked_until": null, "baseline": null,
@@ -243,8 +260,11 @@ Fill in `<abs worktree path>`, `<plan path>`, `<spec path>` with the actual reso
 
 **d. Spawn detached background process:**
 
+`AGENTLENS_PARENT_RUN_ID` propagates the run ID captured in step b into the headless child's environment. The child reads it back as `ORCH_RUN_ID` (see Phase 0 Step 0 Resume Protocol; canonical name is `ORCH_RUN_ID` for all emit-site code) and guards every `agentlens event append` with `[ -n "${ORCH_RUN_ID:-}" ]`. If AgentLens was absent (step b set `$ORCH_RUN_ID=""`), the env var is empty and every emit becomes a silent no-op:
+
 ```bash
 WORKTREE_ABS="$(cd <worktree> && pwd -P)"
+AGENTLENS_PARENT_RUN_ID="${ORCH_RUN_ID:-}" \
 nohup claude -p --dangerously-skip-permissions \
   --output-format stream-json \
   "$(cat "$WORKTREE_ABS/.orchestrator/headless_prompt.txt")" \
@@ -391,9 +411,9 @@ Procedure:
    EOF
    ```
    (Note: use unquoted heredoc so `$WORKTREE_ABS` interpolates.)
-4. Spawn child AND atomically swap the PID file so the Monitor watcher (step e′) picks up the new process. **Pass `MAE_LEARNING_RUN_ID` explicitly** so the chained orchestrator continues writing to the same learning-log run (v2.8):
+4. Spawn child AND atomically swap the PID file so the Monitor watcher (step e′) picks up the new process. **Pass `AGENTLENS_PARENT_RUN_ID` explicitly** so the chained orchestrator publishes to the same AgentLens run as its parent (v2.17 — replaces the legacy `MAE_LEARNING_RUN_ID` propagation; see Task 11 cutover):
    ```bash
-   env MAE_LEARNING_RUN_ID="${MAE_LEARNING_RUN_ID:-}" \
+   env AGENTLENS_PARENT_RUN_ID="${ORCH_RUN_ID:-${AGENTLENS_PARENT_RUN_ID:-}}" \
      nohup claude -p --session-id "$RESUME_UUID" --dangerously-skip-permissions \
      --output-format stream-json \
      "$(cat "$WORKTREE_ABS/.orchestrator/headless_chain_<N>_prompt.txt")" \
@@ -408,17 +428,9 @@ Procedure:
    ```
 5. Parent exits **without calling `close-run`** — the run is still alive in the child. Child takes over. The Monitor watcher re-reads `headless.pid` each loop (see step e′) so the handoff is observed as `CHAIN_HANDOFF`, not `PROCESS_DIED`.
 
-6. **Chained child startup (v2.8 learning log):** at Phase 0 Step 0 (Resume Protocol), after detecting `state.mode == "headless_chained"`, the chained orchestrator runs:
-   ```bash
-   if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
-     python3 <skill_dir>/scripts/append_learning_event.py append-session-id \
-       --run-id "$MAE_LEARNING_RUN_ID" \
-       --session-id "${CLAUDE_SESSION_ID:-$RESUME_UUID}" >/dev/null 2>&1 || true
-   fi
-   ```
-   It does NOT call `init-run` — that would fragment the run record. If `MAE_LEARNING_RUN_ID` is unset (env not propagated, helper missing), it proceeds without learning-log support rather than starting a new run.
+6. **Chained child startup (v2.17 — AgentLens session join):** at Phase 0 Step 0 (Resume Protocol), after detecting `state.mode == "headless_chained"`, the chained orchestrator does NOT open a new AgentLens run — `ORCH_RUN_ID` (propagated via `AGENTLENS_PARENT_RUN_ID` → re-exported on resume) refers to the original orchestrator run and remains in use across the handoff. The legacy `append-session-id` step is removed in v2.17 (see Task 11 cutover); AgentLens does not need a session-id append because it tracks events by run, not by session.
 
-   **After `append-session-id` succeeds, emit a `context_health` snapshot (v2.10):** the chained orchestrator writes a candidate JSON to `<worktree>/.orchestrator/learning_events/chain_handoff-orchestrator.json` and `append`s it. Use `phase: "phase_0"`, `execution.task_id: "chain_handoff"`, `execution.issue_key: "context_health_snapshot"`, `context.compaction_index: -1`, `context.completed_tasks_count: <count of COMPLETE tasks from state>`, `context.resume_chain_handoffs: <new len(session_ids) - 1>`. This marks the boundary in the event stream so downstream analysis can attribute pre/post-handoff metrics. Append failure is silent.
+   **Emit a `kws-cme.context_health` snapshot (v2.17):** the chained orchestrator writes a candidate JSON to `<worktree>/.orchestrator/learning_events/chain_handoff-orchestrator.json` and the candidate-drain loop (Phase 1 Step 3.5) publishes it to AgentLens as `kws-cme.context_health`. Use `phase: "phase_0"`, `execution.task_id: "chain_handoff"`, `execution.issue_key: "context_health_snapshot"`, `context.compaction_index: -1`, `context.completed_tasks_count: <count of COMPLETE tasks from state>`, `context.resume_chain_handoffs: <new chain depth>`. This marks the boundary in the event stream so downstream analysis can attribute pre/post-handoff metrics. Emit failure is silent.
 
 This is a fallback — the primary expectation is that one headless subprocess completes a typical 10-25 task plan within its own context budget.
 
@@ -437,7 +449,9 @@ This is a fallback — the primary expectation is that one headless subprocess c
        - `state.setdefault('budget_cap_usd', None)`
        - `state.setdefault('budget_action', 'warn')`
        - `state.setdefault('archive', None)`
+       - `state.setdefault('agentlens_orchestration_run', None)` (v2.17 — RUN-LEVEL; AgentLens orchestration run ID opened by Phase -1 step b)
        If `state.cost_ledger` is already present (v2.14+ state.json), preserve it as-is and continue accumulating. Same for `budget_cap_usd` and `budget_action`. These fields span the whole chain, so the resume MUST NOT reset them on plan2 swap or chain handoff.
+     - **Source `ORCH_RUN_ID` (v2.17):** every Phase 1 / Phase Transition / Phase 2 emit site that talks to AgentLens reads from a shell variable named `ORCH_RUN_ID`. On any resume path (headless_pending child startup, headless_chained handoff, interactive resume), set it once near the top of Phase 0 Step 0 after state load: `ORCH_RUN_ID="${AGENTLENS_PARENT_RUN_ID:-$(jq -r '.agentlens_orchestration_run // ""' "$WORKTREE_ABS/.orchestrator/state.json" 2>/dev/null)}"`. The env var (set by Phase -1 step d / Resume Chain step 4) takes precedence; state.json is the fallback for resume paths that did not inherit the env (e.g., the user manually re-attaching). If both are empty the value stays `""` and every `agentlens event append` guarded by `[ -n "${ORCH_RUN_ID:-}" ]` becomes a silent no-op — the run proceeds without AgentLens.
    - If it EXISTS but is invalid (empty, malformed JSON):
      - Warn user: "State file exists but is corrupted at <path>. Recommend manual inspection before proceeding."
      - Do NOT overwrite. Halt.
@@ -845,6 +859,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
        }
      },
      "archive": null,
+     "agentlens_orchestration_run": null,
      "context_budget": {
        "effective_input_budget": 170000,
        "threshold_ratio": 0.60,
@@ -864,6 +879,8 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
    Fill in the actual values from steps 4–6.
 
    **Run-level cost/budget/archive fields (v2.14):** the four fields `cost_ledger`, `budget_cap_usd`, `budget_action`, and `archive` are **RUN-LEVEL** — they live at the top of `state.json` and span the entire orchestrator invocation, including every plan in a multi-plan chain. They are NOT per-plan and MUST NOT be duplicated inside `plan_chain[i]`. `cost_ledger.by_task` is keyed `"<plan_index_or_'top'>::<task_id>"` so a single ledger covers the chain. `budget_cap_usd` is a number (USD) or `null` (no cap). `budget_action ∈ {"pause", "warn", "off"}` controls behavior when the cap is crossed. `archive` defaults to `null` and is populated by the post-run forensics archive step (v2.14).
+
+   **Run-level AgentLens orchestration field (v2.17):** `agentlens_orchestration_run` is a `string | null` — the AgentLens run ID opened by Phase -1 step b via `agentlens run-open`. It is RUN-LEVEL (top of state.json, NOT inside `plan_chain[i]`); a single orchestrator invocation owns at most one AgentLens orchestration run regardless of plan chain length. If AgentLens was unavailable at Phase -1 step b the field is `null` and all subsequent emit sites no-op. Preserved across plan2 swap and Resume Chain handoff. Already initialized in the minimal state.json from Phase -1 step b; this Step 7 write must preserve whatever was written there (do NOT reset to `null`).
 
    **Multi-plan shape (v2.13):** when `plan_chain` exists, the equivalent state.json is:
 
@@ -931,11 +948,12 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
        }
      },
      "archive": null,
+     "agentlens_orchestration_run": null,
      "timestamps": {"started_at": "...", "completed_at": null}
    }
    ```
 
-   Note: in the multi-plan shape, `budget_cap_usd`, `budget_action`, `cost_ledger`, and `archive` appear at the TOP level (siblings of `plan_chain`, NOT inside any `plan_chain[i]` entry). See the "Run-level cost/budget/archive fields (v2.14)" paragraph above — these four fields are shared across all plans in the chain and accumulate end-to-end.
+   Note: in the multi-plan shape, `budget_cap_usd`, `budget_action`, `cost_ledger`, `archive`, and `agentlens_orchestration_run` appear at the TOP level (siblings of `plan_chain`, NOT inside any `plan_chain[i]` entry). See the "Run-level cost/budget/archive fields (v2.14)" and "Run-level AgentLens orchestration field (v2.17)" paragraphs above — these fields are shared across all plans in the chain.
 
    For multi-plan runs at the START of Phase 0 (active_plan == 0): populate `plan_chain[0]` with all the data Steps 3–6 produced for plan 0. Other plan_chain entries (i ≥ 1) keep their `status: "queued"` placeholders and only become populated when their swap fires at Phase 2 Step -1.
 
@@ -958,37 +976,30 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 
    On Phase 2 Step -1 plan2 swap: do NOT reset this field. Plan 2 inherits the same Implementer model selection as Plan 1 within one orchestrator invocation.
 
-7.5. **Learning log init-run (v2.8 — MANDATORY, v2.8.1 enforced):**
+7.5. **Phase 0 boundary emit (v2.17 — MANDATORY):**
 
-   **DO NOT SKIP THIS STEP.** This is a required Phase 0 checkpoint, equivalent in priority to git worktree creation and state.json initialization. Even on simple single-task plans, even when the plan looks trivial, even under headless `claude -p`, you MUST execute this block in the orchestrator session before any Phase 1 work begins. Skipping it disables institutional-memory observability for the entire run (no meta.json, no events.jsonl) and is the most reproducible adherence regression observed in v2.8 F001 Smoke B.
+   **DO NOT SKIP THIS STEP.** This is a required Phase 0 checkpoint, equivalent in priority to git worktree creation and state.json initialization. Even on simple single-task plans, even when the plan looks trivial, even under headless `claude -p`, you MUST execute this block in the orchestrator session before any Phase 1 work begins. Skipping it disables institutional-memory observability for the entire run (no `kws-cme.phase_0_started` event in AgentLens) and is the most reproducible adherence regression observed historically (v2.8 F001 Smoke B).
 
-   After state.json is written, initialize the user-local learning log:
+   v2.17 cutover note: pre-v2.17 versions also ran `scripts/append_learning_event.py init-run` here to create a parallel `~/.claude/learning/.../events.jsonl`. That helper was removed in Task 11 after AgentLens parity was verified. AgentLens is now the sole event sink; `ORCH_RUN_ID` (opened at Phase -1 step b) is the run identifier for the entire orchestrator invocation.
+
+   **Emit `kws-cme.phase_0_started` to AgentLens:**
 
    ```bash
-   # Skill dir is the directory containing this SKILL.md.
-   RUN_ID="$(python3 <skill_dir>/scripts/append_learning_event.py init-run \
-     --repo-root "$WORKTREE_ABS" \
-     --repo-name "$(basename $(git -C "$WORKTREE_ABS" rev-parse --show-toplevel))" \
-     --branch "$(git -C "$WORKTREE_ABS" branch --show-current)" \
-     --plan-path "$PLAN_PATH" \
-     --spec-path "$SPEC_PATH" \
-     --session-id "${CLAUDE_SESSION_ID:-}" || echo "")"
-   if [ -n "$RUN_ID" ]; then
-     export MAE_LEARNING_RUN_ID="$RUN_ID"
-     echo "LEARNING_LOG_INIT: RUN_ID=$RUN_ID"
-   else
-     echo "LEARNING_LOG_INIT: SKIPPED (helper missing or write failure — observability degraded for this run)"
+   if [ -n "${ORCH_RUN_ID:-}" ]; then
+     agentlens event append --run "$ORCH_RUN_ID" \
+       --type kws-cme.phase_0_started \
+       --payload-json "$(jq -nc \
+         --arg plan "$PLAN_PATH" \
+         --arg spec "$SPEC_PATH" \
+         --argjson tasks "$(jq -r '[<active>.tasks | keys[]] | length' "$WORKTREE_ABS/.orchestrator/state.json" 2>/dev/null || echo 0)" \
+         '{plan:$plan, spec:$spec, task_count:$tasks}')" \
+       2>/dev/null || true
    fi
    ```
 
-   Note v2.8.1 changes vs v2.8.0:
-   - `2>/dev/null` removed — helper script stderr now surfaces in run.jsonl. If init-run breaks, you see why.
-   - Explicit `echo` on both success and failure paths — this line appears in `run.jsonl` and lets eval/audit verify adherence (the absence of either `LEARNING_LOG_INIT:` line proves the step was skipped entirely, not just that the helper failed).
-   - Heading text strengthens MANDATORY framing. Under headless multi-task plans (F001 Smoke B baseline) the previous "must NOT block" language was being read as "may skip".
+   The taxonomy name is verbatim per spec — it fires at END of Phase 0 (about to enter Phase 1), not at Phase 0 start; don't rename. AgentLens emit failure is silent (`|| true`) — observability must not block execution. If `ORCH_RUN_ID` is empty (AgentLens CLI absent or registry write failed at Phase -1 step b), the block is a no-op and the orchestrator proceeds normally. **Failure to attempt this emit IS the regression we are guarding against.**
 
-   `MAE_LEARNING_RUN_ID` is captured in shell env and used for the lifetime of the run. If helper init fails (script missing, write failure), `RUN_ID` is empty and no `MAE_LEARNING_RUN_ID` is exported — subsequent emit attempts (Phase 1/Transition/2) check the env var and skip silently. The plan execution proceeds normally. **Failure of init-run must NEVER block plan execution; failure to even attempt init-run IS the regression we are guarding against.**
-
-   Sub-agents do NOT call the helper. They write event candidate JSON files to `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`. The orchestrator scans this directory after each cycle step and invokes `append` itself. See `references/learning-log.md` for the schema and 10 event types.
+   Sub-agents do NOT publish to AgentLens directly. They write event candidate JSON files to `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`. The orchestrator scans this directory after each cycle step (Phase 1 Step 3.5) and publishes each candidate to AgentLens as `kws-cme.<event_type>`. See `references/learning-log.md` for the schema and event types.
 
    **active_plan pointer (P13b + v2.13):** Single-plan or v2.12 legacy two-plan run: `"plan1"` then `"plan2"` (string). v2.13 multi-plan run: integer index `0, 1, 2, ...` into `state.plan_chain[]`. All Phase 1 / Phase Transition / Phase 2 / Monitor code MUST resolve through `<active>` per the placeholder rule. Phase 2 Step -1 swaps this pointer at every cross-plan boundary.
 
@@ -1256,19 +1267,27 @@ them in a single batch:
 
 ```bash
 CANDIDATE_DIR="<worktree_path>/.orchestrator/learning_events"
-if [ -n "${MAE_LEARNING_RUN_ID:-}" ] && [ -d "$CANDIDATE_DIR" ]; then
+if [ -d "$CANDIDATE_DIR" ]; then
   for cand in "$CANDIDATE_DIR"/task_<N>-*.json; do
     [ -f "$cand" ] || continue
-    python3 <skill_dir>/scripts/append_learning_event.py append \
-      --run-id "$MAE_LEARNING_RUN_ID" \
-      --event-json "$cand" \
-      --repo-root "$WORKTREE_ABS" >/dev/null 2>&1 || true
+    # Publish to AgentLens. Derive event type from candidate's own event_type field.
+    if [ -n "${ORCH_RUN_ID:-}" ]; then
+      ETYPE=$(jq -r '.event_type // ""' "$cand" 2>/dev/null)
+      if [ -n "$ETYPE" ]; then
+        agentlens event append --run "$ORCH_RUN_ID" \
+          --type "kws-cme.$ETYPE" \
+          --payload-json "@$cand" \
+          2>/dev/null || true
+      fi
+    fi
     mv "$cand" "$cand.appended"  # mark consumed; avoid double-emit
   done
 fi
 ```
 
-Append failures are silent (`|| true`) — observability must not block execution. Candidate files are renamed `.appended` after consumption to prevent duplicate emission on the next cycle step. Sub-agents writing fresh candidates always overwrite (per-task-per-role one file at a time).
+Emit failures are silent (`|| true`) — observability must not block execution. Candidate files are renamed `.appended` after consumption to prevent duplicate emission on the next cycle step. Sub-agents writing fresh candidates always overwrite (per-task-per-role one file at a time).
+
+**v2.17 cutover (Task 11):** the legacy `append_learning_event.py append` call was removed from this drain after AgentLens parity was verified. AgentLens emit derives its `--type` from the candidate's `event_type` field (`blocker`, `verification_failure`, `reviewer_warn_or_fail`, `context_health`, etc.) prefixed with `kws-cme.` per the spec §6.2 taxonomy. If `ORCH_RUN_ID` is empty (AgentLens absent), the candidate is still consumed (`.appended`) — it is not retried, and execution continues. Use `scripts/compare_agentlens_events.py` to audit parity on historical runs that still have a legacy `events.jsonl` alongside an AgentLens stream.
 
 ### Step 4: Agent Cleanup
 
@@ -1404,6 +1423,25 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
      git -C <worktree_path> commit -m "chore(<plan-slug>): task <N> orchestrator state"
    ```
    This keeps implementation commits (`feat:`) separate from orchestrator state commits (`chore:`). Reviewers can filter `git log --grep '^feat'` to see only code changes.
+
+2.6. **AgentLens dual-write — `kws-cme.task_completed` event (v2.17):** after the state-write + chore-commit pair lands, emit a task-completion event to AgentLens. This is one of the four explicit orchestrator emit sites (alongside `phase_0_started` at Phase 0 Step 7.5, `compaction` at T3, and `phase_2_complete` at Phase 2 Step 2). The candidate-drain in Step 3.5 covers sub-agent emits; this fires regardless of whether candidates were dropped.
+
+   ```bash
+   if [ -n "${ORCH_RUN_ID:-}" ]; then
+     agentlens event append --run "$ORCH_RUN_ID" \
+       --type kws-cme.task_completed \
+       --payload-json "$(jq -nc \
+         --arg task "task_<N>" \
+         --arg status "COMPLETE" \
+         --arg risk "<risk level>" \
+         --arg tier "<review_tier>" \
+         --arg commit "<sha>" \
+         '{task:$task, status:$status, risk:$risk, review_tier:$tier, commit:$commit}')" \
+       2>/dev/null || true
+   fi
+   ```
+
+   Failure is silent. `task_completed` is an AgentLens-only phase/task transition (no legacy counterpart historically and none post-v2.17). The per-task signal lives in the sub-agent candidate files drained at Step 3.5.
 
 3. **Check for compaction point:** if this task is a compaction point, go to **Phase Transition** before advancing. Otherwise, advance to the next task.
 
@@ -1547,11 +1585,28 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
    - Update `low_tasks_pending_verification = []`
    - Write the file and verify it is readable.
 
+1.1. **AgentLens dual-write — `kws-cme.compaction` event (v2.17):** after the state-anchor write succeeds, emit a compaction event to AgentLens. This marks a phase boundary in the AgentLens event stream so downstream viewers can segment per-phase metrics.
+
+   ```bash
+   if [ -n "${ORCH_RUN_ID:-}" ]; then
+     agentlens event append --run "$ORCH_RUN_ID" \
+       --type kws-cme.compaction \
+       --payload-json "$(jq -nc \
+         --argjson idx "<compaction_index>" \
+         --argjson after_task "<current_task>" \
+         --argjson completed "$(jq -r '[<active>.tasks[] | select(.status==\"COMPLETE\")] | length' "$WORKTREE_ABS/.orchestrator/state.json" 2>/dev/null || echo 0)" \
+         '{compaction_index:$idx, after_task:$after_task, completed_tasks:$completed}')" \
+       2>/dev/null || true
+   fi
+   ```
+
+   Failure is silent. The `context_health` candidate JSON in step 3 below remains unchanged — the AgentLens `compaction` event is in addition to (not replacing) `context_health`. Step 3.5's candidate drain (Phase 1 Step 3.5) publishes `context_health` to AgentLens; this `compaction` emit is the explicit orchestrator-boundary event distinct from passive snapshots.
+
 1.5. **Project decisions to DECISIONS.md (C2):** render `<worktree>/.orchestrator/DECISIONS.md` from `<active>.decisions_register`. Format: a markdown table with columns `[Task, Decision, Files, Made at, Supersedes]`. Sort by `made_at` ascending. Group superseded entries (`supersedes != null`) at the bottom in a separate subsection. Use an atomic write: write to `DECISIONS.md.tmp`, then `mv` over `DECISIONS.md`. The file is included in the archive tarball (F1). Empty register → write a stub file with header `# Decisions register (empty)`. Failure → log warning, continue (best-effort like the register itself).
 
 2. **Actively drop prior task context:** from this point forward, do not reference individual task details from before this compaction point. Work only from your structured task summary (what you have in internal notes from Agent Cleanup steps). If you need details from an earlier task, re-read the state file — do not hold raw sub-agent output in active context.
 
-3. **Emit `context_health` passive snapshot (v2.10):** if `MAE_LEARNING_RUN_ID` is set, write a candidate JSON to `<worktree>/.orchestrator/learning_events/transition_<compaction_index>-orchestrator.json` and `append` it. The event is informational — never alters control flow. Fields per `references/learning-log.md` "`context_health` (v2.10) — passive observation contract". Minimum body:
+3. **Emit `context_health` passive snapshot (v2.10, v2.17 cutover):** write a candidate JSON to `<worktree>/.orchestrator/learning_events/transition_<compaction_index>-orchestrator.json`. The Phase 1 Step 3.5 candidate-drain loop will publish it to AgentLens as `kws-cme.context_health` on the next orchestrator cycle. The event is informational — never alters control flow. Fields per `references/learning-log.md` "`context_health` (v2.10) — passive observation contract". Minimum body:
    ```json
    {
      "schema_version": "1",
@@ -1622,20 +1677,15 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
        Exit orchestrator (headless child) or halt (interactive).
    ```
 
-   The `warn` event is written as a candidate JSON under `<worktree>/.orchestrator/learning_events/transition_<compaction_index>-budget.json` and appended via `scripts/append_learning_event.py append` — same pattern as the `context_health` snapshot in step 3, but with `severity: "high"` and `execution.issue_key: "budget_warning"`. Append failure is silent.
+   The `warn` event is written as a candidate JSON under `<worktree>/.orchestrator/learning_events/transition_<compaction_index>-budget.json` and drained to AgentLens by the Phase 1 Step 3.5 candidate-drain loop on the next orchestrator cycle — same pattern as the `context_health` snapshot in step 3, but with `severity: "high"` and `execution.issue_key: "budget_warning"`. Emit failure is silent.
 
-   The `pause` branch invokes the same close-run helper used by the exhausted-escalation halt:
+   The `pause` branch emits a blocker event + closes the AgentLens run:
    ```bash
-   if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
-     python3 <skill_dir>/scripts/append_learning_event.py close-run \
-       --run-id "$MAE_LEARNING_RUN_ID" --outcome blocked >/dev/null 2>&1 || true
-   fi
-   # Archive run (F1): best-effort archive before HEADLESS_HALTED marker.
-   if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
-     <skill_dir>/scripts/archive_run.sh \
-       --worktree <worktree_path> \
-       --run-id "$MAE_LEARNING_RUN_ID" \
-       --outcome blocked 2>&1 || echo "ARCHIVE: failed (see archive output above) — worktree retained"
+   if [ -n "${ORCH_RUN_ID:-}" ]; then
+     agentlens event append --run "$ORCH_RUN_ID" \
+       --type kws-cme.blocker \
+       --payload-json '{"reason":"budget_exceeded"}' 2>/dev/null || true
+     agentlens run-close --run "$ORCH_RUN_ID" --outcome blocked 2>/dev/null || true
    fi
    printf 'reason: budget_exceeded\n' > <worktree_path>/.orchestrator/HEADLESS_HALTED.txt
    ```
@@ -1644,11 +1694,10 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
 **Phase Transition failure handling:**
 - If T1 batch Verifier FAIL exceeds retries for any task: halt that task, record SKIPPED in state.json, continue Phase Transition.
 - If T2 Phase Docs Updater sends ESCALATE: skip docs for this phase. Record `phase_docs_skipped: [<phase_id>]` in state.json. The Final Docs Updater in Phase 2 will recover.
-- If T3 state file write fails (Write tool error or Read-back fails): close the learning log with `outcome=blocked` (best-effort, silent on failure) and then **hard halt immediately** — 'State file write failed at <path>. Risk of state corruption. Manual inspection required.' Do not proceed.
+- If T3 state file write fails (Write tool error or Read-back fails): close the AgentLens run with `outcome=blocked` (best-effort, silent on failure) and then **hard halt immediately** — 'State file write failed at <path>. Risk of state corruption. Manual inspection required.' Do not proceed.
   ```bash
-  if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
-    python3 <skill_dir>/scripts/append_learning_event.py close-run \
-      --run-id "$MAE_LEARNING_RUN_ID" --outcome blocked >/dev/null 2>&1 || true
+  if [ -n "${ORCH_RUN_ID:-}" ]; then
+    agentlens run-close --run "$ORCH_RUN_ID" --outcome blocked 2>/dev/null || true
   fi
   ```
 
@@ -1683,23 +1732,16 @@ options:
    ```
    Record the task as SKIPPED in state.json with the escalation reason. The orchestrator continues with subsequent tasks (subject to SKIPPED propagation rules from Phase 0 Step 6).
 
-   **Learning-log (v2.8):** if this exhausted-escalation halt aborts the entire run (whole-orchestrator halt, not just task skip), call `close-run --outcome=aborted` before exiting:
+   **Run close (v2.17):** if this exhausted-escalation halt aborts the entire run (whole-orchestrator halt, not just task skip), emit a `kws-cme.blocker` event and close the AgentLens run before exiting:
    ```bash
-   if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
-     python3 <skill_dir>/scripts/append_learning_event.py close-run \
-       --run-id "$MAE_LEARNING_RUN_ID" --outcome aborted >/dev/null 2>&1 || true
+   if [ -n "${ORCH_RUN_ID:-}" ]; then
+     agentlens event append --run "$ORCH_RUN_ID" \
+       --type kws-cme.blocker \
+       --payload-json "$(jq -nc --arg task "task_<N>" --arg reason "escalation_exhausted" '{task:$task, reason:$reason}')" 2>/dev/null || true
+     agentlens run-close --run "$ORCH_RUN_ID" --outcome aborted 2>/dev/null || true
    fi
    ```
 
-   **Archive run (F1):** after close-run, call archive_run.sh with `--outcome aborted`. Best-effort — failure is silent (the run has already been closed):
-   ```bash
-   if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
-     <skill_dir>/scripts/archive_run.sh \
-       --worktree <worktree_path> \
-       --run-id "$MAE_LEARNING_RUN_ID" \
-       --outcome aborted 2>&1 || echo "ARCHIVE: failed (see archive output above) — worktree retained"
-   fi
-   ```
    For the more common case (task-only halt that lets the orchestrator continue), do NOT close-run — the run is still alive. Phase 2 Step 2 closes it with `outcome=success` if subsequent tasks finish, or the final hard-halt block does so with `outcome=blocked` if the orchestrator gives up entirely.
 
 2. Reset to pre-task state using the literal SHA from your notes:
@@ -1886,31 +1928,26 @@ Before generating the report, invoke `Skill("superpowers:finishing-a-development
 
 **Stamp `state.timestamps.completed_at` (v2.16):** before close-run, set `state.timestamps.completed_at = <iso8601 now>` via atomic R-M-W of state.json. This is the canonical wall-clock end-marker that the Final Summary Report's "Total wall time" row depends on. If state.json write fails: the standard state-file write guardrail applies (hard halt). Observed regression: pre-v2.16 runs left `completed_at: null` even when `meta.json.outcome=success`, because nothing in the Phase 2 prose explicitly wrote it.
 
-**Learning-log close-run (v2.8, v2.16 idempotent):** before printing the summary, close the
-run record. Use `--outcome=success` when Phase 2 completes normally. The `--if-open` flag (v2.16) makes close-run a no-op when the run is already closed — important for chained meta-runs where the final child re-enters Phase 2 Step 2 after a chain handoff and would otherwise overwrite an earlier outcome:
+**AgentLens `kws-cme.phase_2_complete` event + `run-close` (v2.17):** before printing the summary, emit the final phase-2 boundary event to AgentLens AND close the AgentLens orchestration run. The order is intentional: emit the event first (so the event lands in the run before it's marked closed), then close. Failure of either is silent.
 
 ```bash
-if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
-  python3 <skill_dir>/scripts/append_learning_event.py close-run \
-    --run-id "$MAE_LEARNING_RUN_ID" \
-    --outcome success --if-open >/dev/null 2>&1 || true
+if [ -n "${ORCH_RUN_ID:-}" ]; then
+  agentlens event append --run "$ORCH_RUN_ID" \
+    --type kws-cme.phase_2_complete \
+    --payload-json "$(jq -nc \
+      --arg outcome success \
+      --argjson tasks "$(jq -r '[<active>.tasks[] | select(.status==\"COMPLETE\")] | length' "$WORKTREE_ABS/.orchestrator/state.json" 2>/dev/null || echo 0)" \
+      '{outcome:$outcome, completed_tasks:$tasks}')" \
+    2>/dev/null || true
+  agentlens run-close --run "$ORCH_RUN_ID" --outcome success 2>/dev/null || true
 fi
 ```
 
-Close-run failure is silent. The summary report below still prints unchanged.
+`run-close` failure is silent. The summary report below still prints unchanged.
 
-**Archive run (F1):** call scripts/archive_run.sh with the worktree path, run ID (from MAE_LEARNING_RUN_ID), and outcome. Failure is silent — log to user but do NOT halt; close-run already succeeded.
+Idempotency note: `agentlens run-close` is idempotent — a re-entered Phase 2 Step 2 (e.g., chained meta-run where the final child reaches Step 2 after a chain handoff) calling it again is a no-op.
 
-```bash
-if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
-  <skill_dir>/scripts/archive_run.sh \
-    --worktree "$WORKTREE_ABS" \
-    --run-id "$MAE_LEARNING_RUN_ID" \
-    --outcome success 2>&1 || echo "ARCHIVE: failed (see archive output above) — worktree retained"
-fi
-```
-
-After archive completes, populate the "Archive" section of the Final Summary Report below using fields from `<worktree>/.orchestrator/state.json` `archive` object (written by archive_run.sh): `archive.tar_path`, `archive.size_bytes`, `archive.redacted`. If the archive call failed, write `FAILED` for archive_path and omit size/redacted. The worktree is always retained — record its absolute path.
+The hard-halt branches above (escalation exhaustion, budget pause, T3 state-write failure) similarly emit `kws-cme.blocker` and call `agentlens run-close --outcome aborted|blocked` per the spec §6.2 event taxonomy. v2.17 cutover (Task 11) removed the parallel legacy `append_learning_event.py close-run` calls.
 
 Output:
 
@@ -1966,38 +2003,9 @@ If none: "WARN-tier tasks: 0".
 - Debug artifacts: none found
 - Temp files: none found
 
-### Archive (F1)
-
-| Item | Value |
-|------|-------|
-| Archive path | `<archive_meta.tar_path or "FAILED">` |
-| Size | `<bytes formatted>` |
-| Redacted | `<yes/no>` |
-| Worktree | `<still present at> <path>` |
-| HTML report | `<file://path/to/REPORT.html or "FAILED (see render.log)">` |
-
 ### Remaining Risks
 - <risk description>: <mitigation taken or "accepted">
 ```
-
-### Step 3: Render HTML run report (F3)
-
-After Step 2's archive completes (regardless of archive success/failure), invoke the HTML renderer:
-
-```bash
-if [ -n "${MAE_LEARNING_RUN_ID:-}" ]; then
-  ARCHIVE_DIR="$HOME/.claude/learning/kws-claude-multi-agent-executor/runs/$(date +%Y-%m-%d)/${MAE_LEARNING_RUN_ID}"
-  if [ -d "$ARCHIVE_DIR/artifacts" ]; then
-    python3 <skill_dir>/scripts/render_html_report.py \
-      --archive-dir "$ARCHIVE_DIR" \
-      --output "$ARCHIVE_DIR/artifacts/REPORT.html" \
-      2>"$ARCHIVE_DIR/artifacts/render.log" || \
-      echo "REPORT_RENDER: failed (see $ARCHIVE_DIR/artifacts/render.log)"
-  fi
-fi
-```
-
-Update state.json's `archive.report_html_path` if rendering succeeds (atomic R-M-W).
 
 ---
 
@@ -2051,7 +2059,7 @@ These rules are absolute. No exceptions.
 | **Resume Chain trigger is deterministic** (v2.15) | Chain when EITHER token threshold OR legacy floor fires (additive). Token threshold: `session_input_tokens (= cost_ledger.totals.input_tokens − cached_read_tokens) ≥ state.context_budget.threshold_tokens`. Legacy floor: `compaction_points reached ≥ 2` AND `completed tasks ≥ 8` (always evaluated). `budget_action == "off"` disables the token trigger, leaving the legacy floor as the sole criterion. Chain procedure MUST update `headless.pid` atomically so Monitor sees `CHAIN_HANDOFF`, not `PROCESS_DIED`. |
 | **`files_test` discrimination for batch verifier** | Implementer outputs `FILES_TEST_CHANGED` separately from `FILES_CHANGED`. T1 batch pre-filter uses it (or `.md`-only heuristic for legacy state) to route docs-only tasks to lint instead of test runs. |
 | **Plan 2 re-takes baseline** | When Phase 2 Step -1 swaps `active_plan` to `"plan2"`, run Phase 0 Step 5 fresh against current HEAD (Plan 1's changes are now Plan 2's starting point). Never reuse Plan 1's baseline as Plan 2's regression reference. |
-| **Learning log lifecycle (v2.8, v2.16 idempotent success)** | Phase 0 Step 7.5 calls `init-run` and exports `MAE_LEARNING_RUN_ID`. Phase 1 Step 3.5 scans `<worktree>/.orchestrator/learning_events/` for sub-agent candidate JSON and calls `append`. Phase 2 Step 2 closes with `outcome=success` AND `--if-open` (v2.16) — the flag makes success-close a no-op when the run is already terminal (e.g., a prior child in a chained meta-run already wrote `aborted` or `blocked`). Orchestrator-level abort closes with `outcome=aborted`; whole-orchestrator hard-halt (state-write fail, exhausted escalations halting the run) closes with `outcome=blocked`. **Halt-paths intentionally omit `--if-open`** so an outer halt overwrites an inner success when the run truly failed. Resume Chain preserves `MAE_LEARNING_RUN_ID` via env propagation and calls `append-session-id`, never `init-run`. **Learning-log failure must never block plan execution** — every helper invocation is wrapped with `\|\| true`. See `references/learning-log.md`. |
+| **AgentLens event lifecycle (v2.17 cutover)** | Phase -1 step b opens an AgentLens run and captures `ORCH_RUN_ID`. Phase 0 Step 7.5 emits `kws-cme.phase_0_started`. Phase 1 Step 3.5 scans `<worktree>/.orchestrator/learning_events/` for sub-agent candidate JSON and publishes each as `kws-cme.<event_type>`. Phase 1 Step 2.6 emits `kws-cme.task_completed`. Phase Transition T3 emits `kws-cme.compaction` plus drains `context_health` candidates. Phase 2 Step 2 emits `kws-cme.phase_2_complete` then `agentlens run-close --outcome success`. Hard-halt paths (escalation exhaustion, budget pause, T3 state-write failure) emit `kws-cme.blocker` and call `agentlens run-close --outcome aborted\|blocked`. Resume Chain propagates `AGENTLENS_PARENT_RUN_ID` (= parent `ORCH_RUN_ID`) into the chained child's env so the child re-exports it as `ORCH_RUN_ID` and continues publishing to the same run. **Every `agentlens` invocation is `2>/dev/null \|\| true`** — observability failure must never block plan execution. The legacy `append_learning_event.py` helper was removed in Task 11 after parity verification (`scripts/compare_agentlens_events.py`). See `references/learning-log.md`. |
 | **`state.timestamps.completed_at` is stamped at Phase 2 Step 2** (v2.16) | The first action of Step 2 is an atomic R-M-W of state.json setting `timestamps.completed_at = <iso8601 now>`. This is the canonical wall-clock end-marker; the Final Summary Report's "Total wall time" row depends on it. Pre-v2.16 runs left this field null even on `outcome=success` because nothing in the prose explicitly wrote it. State-file write failure here is a hard halt (existing guardrail). |
 | **`timing.started` is stamped before Step 1 dispatch** (v2.16) | The "Before Step 1 of each task" block writes `<active>.tasks.task_<N>.timing.started = <iso8601 now>` via atomic R-M-W. Without this field the per-task duration column cannot be computed (observed: `jq strptime` errors across all v2.11–v2.15 runs because the field stayed null). Failure to write is a non-fatal warning, not a halt. |
 | **Single-writer for learning events** | Only the orchestrator invokes the helper. Sub-agents write event candidates as JSON files under `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json`; the orchestrator reads and forwards them. Never let a sub-agent prompt instruct direct helper invocation. |
@@ -2074,8 +2082,6 @@ These rules are absolute. No exceptions.
 | **Cost-accumulate helper is mandatory per dispatch** (v2.16) | Every sub-agent dispatch (Implementer / Reviewer / Verifier / Plan Reviewer / Docs Updater) ends with a `scripts/accumulate_cost.py` invocation in Phase 1 Step 4 substep 1.5. Pre-v2.16 prose ("extract usage from Agent result, update by_task atomically") was silently skipped in every observed run — `cost_ledger.totals.dispatches=0` across runs 1/2/3 confirmed the regression. The helper is single-call, flock-protected, and handles unknown-model and missing-usage gracefully. Skipping the helper call means budget cap (`budget_cap_usd`) and `chain_trigger_eval` token threshold cannot fire correctly. by_task key is `<plan>::<task>::<role>` so same-task multi-role dispatches don't overwrite. |
 | **`budget_action=pause` halts at compaction boundaries only** | Budget is evaluated at Phase Transition T3 and Phase 2 Step 0 — never mid-task. Cost overruns within a single task complete the task, then the next compaction triggers halt. This is intentional: aborting mid-task wastes the in-flight dispatch. |
 | **Cost ledger is run-level** | `cost_ledger`, `budget_cap_usd`, `budget_action` live at top-level state.json (never inside `plan_chain[N]`). Cross-plan chains accumulate one unified ledger. Per-plan totals derivable via `by_task` key prefix `<plan_index>::`. |
-| **Archive on close-run is best-effort** | `scripts/archive_run.sh` is invoked AFTER `close-run` succeeds. Archive failure is logged but does NOT halt the orchestrator (the primary run already completed). The worktree is never auto-deleted by archive — user retains it for manual recovery if archive fails. |
-| **Redaction is mandatory** | `redact_archive.py` MUST run before the tar moves to its final path. Redaction failure → tar discarded, `archive_meta.json` written with `redaction_applied: false, error: ...`, user-visible warning. Never write a non-redacted tar to `~/.claude/learning/`. |
 | **Spec manifest is per-plan** (v2.15 C1) | `spec_manifest` lives under `<active>` per the v2.13 resolution rule. Each plan in a chain has its own manifest (sections + task_to_sections + fallback_policy). `task_to_sections` references are validated by the Plan Reviewer at Phase 0 Step 6.5 — unknown section IDs are BLOCKER. Manifest is rebuilt at the spec-edit branch (Phase 1 Step 2 sub-step 6.5). |
 | **Decisions register is per-plan, append-only** (v2.15 C2) | `decisions_register` lives under `<active>`. Entries are never deleted — supersession is recorded via the `supersedes` field (still rendered, with strikethrough prefix). Empty `key_decision` from `task_summaries` is ignored (not appended). Append failure logs a warning and continues (best-effort). |
 | **decision_conflict is a QUALITY issue, not SPEC** (v2.15 C2) | Combined Reviewer flags `decision_conflict` under `QUALITY_ISSUES`. Does NOT downgrade `SPEC_SCORE`. Standard `review_retries` budget applies — no spec-edit branch. Use it to nudge sub-agents toward consistency, not to halt. Intentional supersession (diff includes `supersedes <task_id>` comment) emits an ADVISORY note instead of an ISSUE. |

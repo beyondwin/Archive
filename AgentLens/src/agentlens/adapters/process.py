@@ -651,7 +651,24 @@ def wrap_command(
     policy = os.environ.get("AGENTLENS_NESTED_POLICY", "passthrough")
     inherited_run_id = os.environ.get("AGENTLENS_RUN_ID")
     inherited_stamp = os.environ.get("AGENTLENS_RUN_PID_STAMP", "")
-    nested_passthrough = bool(inherited_run_id) and policy != "nested"
+
+    # Task 5 (spec §4.4 — Parent-link env contract).
+    # ``AGENTLENS_PARENT_RUN_ID`` is an explicit opt-in signal: when set and
+    # non-empty it forces the wrapper onto the recording branch even when an
+    # inherited ``AGENTLENS_RUN_ID`` would normally trigger passthrough, AND
+    # it overrides the inherited run-id as the value populated into the new
+    # child's ``run.json::parent_run_id`` field. Empty-string is treated as
+    # unset (spec wording: "set and non-empty").
+    explicit_parent = os.environ.get("AGENTLENS_PARENT_RUN_ID", "").strip() or None
+
+    if explicit_parent:
+        # Explicit parent linkage wins over the inherited-RUN_ID passthrough
+        # default; we MUST record a child run with parent_run_id = explicit.
+        nested_passthrough = False
+        parent_run_id = explicit_parent
+    else:
+        nested_passthrough = bool(inherited_run_id) and policy != "nested"
+        parent_run_id = inherited_run_id or None
 
     # The PID stamp (set by the parent wrapper as ``f"{pid}:{run_id}"``)
     # lets shims short-circuit re-entry from the same wrapper PID; if the
@@ -680,8 +697,9 @@ def wrap_command(
         )
 
     # Recording branch (possibly nested with parent_run_id).
-    parent_run_id = inherited_run_id if inherited_run_id else None
-
+    # ``parent_run_id`` was computed above: explicit ``AGENTLENS_PARENT_RUN_ID``
+    # wins; otherwise inherited ``AGENTLENS_RUN_ID`` (only relevant when the
+    # nested policy is "nested" — passthrough already returned upstream).
     recording_enabled, run_id, run_dir = _init_recording(
         argv,
         agent_name=agent_name,

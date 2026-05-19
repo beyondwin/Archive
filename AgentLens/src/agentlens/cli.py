@@ -11,15 +11,21 @@ import typer
 from .commands import attach as attach_cmd
 from .commands import doctor as doctor_cmd
 from .commands import eval as eval_cmd
+from .commands import event as event_cmd
+from .commands import events as events_cmd
 from .commands import failures as failures_cmd
 from .commands import final as final_cmd
 from .commands import gc as gc_cmd
+from .commands import import_claude_session as import_claude_session_cmd
+from .commands import import_codex_session as import_codex_session_cmd  # noqa: F401  (decorator side-effect)
 from .commands import install as install_cmd
 from .commands import latest as latest_cmd
 from .commands import mark as mark_cmd
 from .commands import mode as mode_cmd
 from .commands import risks as risks_cmd
 from .commands import run as run_cmd
+from .commands import run_close as run_close_cmd
+from .commands import run_open as run_open_cmd
 from .commands import seal as seal_cmd
 from .commands import serve as serve_cmd
 from .commands import show as show_cmd
@@ -50,11 +56,16 @@ app.command(
     name="run",
     context_settings={"allow_extra_args": True, "ignore_unknown_options": True},
 )(run_cmd.run)
+app.command(name="run-open")(run_open_cmd.run_open)
+app.command(name="run-close")(run_close_cmd.run_close)
 app.command(name="install")(install_cmd.install)
 app.command(name="uninstall")(uninstall_cmd.uninstall)
 app.command(name="doctor")(doctor_cmd.doctor)
 app.command(name="gc")(gc_cmd.gc)
 app.add_typer(mode_cmd.app, name="mode")
+app.add_typer(event_cmd.event_app, name="event")
+app.add_typer(import_claude_session_cmd.import_app, name="import")
+app.command(name="events")(events_cmd.events)
 
 
 def main() -> None:

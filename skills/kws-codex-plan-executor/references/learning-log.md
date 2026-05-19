@@ -4,29 +4,25 @@ Use this for execution-only learning events from `interactive` and `headless`
 mode. `prompt` and `handoff` are not logging modes, although prompts exported
 for future execution must carry this same contract.
 
-The log is user-local and sharded by run:
+After the v2.18 cutover, learning events are recorded directly to AgentLens
+under the `kws-cpe.learning.<event>` namespace; the legacy
+`scripts/append_learning_event.py` helper and the user-local sharded log
+(`~/.codex/learning/kws-codex-plan-executor/runs/<date>/<run_id>/`) were
+retired. Historical archives may still exist on disk for older runs but are no
+longer written by this skill.
 
-```text
-~/.codex/learning/kws-codex-plan-executor/
-~/.codex/learning/kws-codex-plan-executor/runs/<YYYY-MM-DD>/<run_id>/events.jsonl
-  index.jsonl
-  runs/<YYYY-MM-DD>/<run_id>/
-    meta.json
-    events.jsonl
-    final.json
-```
-
-This log is for improving `kws-codex-plan-executor` across repositories. It is
-not the resume source of truth for a single run. Keep the project-local
-`.codex-orchestrator/runs/<run_id>/state.json` as the per-run state file.
+This stream is for improving `kws-codex-plan-executor` across repositories. It
+is not the resume source of truth for a single run; the project-local
+`.codex-orchestrator/runs/<run_id>/state.json` remains the per-run state file.
 `.codex-orchestrator/state.json` may exist only as a backwards-compatible
 latest-state copy or pointer.
 
-`index.jsonl` is a run start index. Health reporters resolve status from
-`runs/<date>/<run_id>/final.json` when present, then project-local
-`.codex-orchestrator/runs/<run_id>/state.json` when available, then learning-log
-metadata. A reporter may note that an index row still says `unknown`, but that
-does not override a terminal `final.json` outcome.
+Query the cross-repo learning stream by run with `agentlens events --run
+"$ORCH_RUN_ID" --type 'kws-cpe.learning.*'`. Health reporters resolve a run's
+terminal outcome from project-local
+`.codex-orchestrator/runs/<run_id>/state.json` (the source of truth) and the
+AgentLens `run-close` outcome; index/learning-log metadata is not consulted at
+the post-cutover surface.
 
 ## Run Identity
 
@@ -97,60 +93,91 @@ files, or unrelated process details.
 If a field cannot be safely summarized, omit the field or replace it with a
 short redacted summary before calling the helper.
 
-## Helper
+## Emit Lifecycle
 
-Initialize the run after the worktree, plan, branch, and head are known:
+Generate the run id and open the AgentLens orchestration run after the
+worktree, plan, branch, and head are known:
 
 ```bash
-RUN_ID="$(python3 scripts/append_learning_event.py init-run \
-  --repo-root "$WORKTREE_ABS" \
-  --repo-name "$REPO_NAME" \
-  --branch "$BRANCH" \
-  --head "$HEAD_SHA" \
-  --plan-path "$PLAN_REL" \
-  --spec-path "$SPEC_REL" \
-  --mode "$MODE")"
+RUN_ID="$(python3 scripts/generate_run_id.py \
+  --repo-name "$REPO_NAME" --branch "$BRANCH" --head "$HEAD_SHA")"
 RUN_DIR=".codex-orchestrator/runs/$RUN_ID"
 STATE_PATH="$RUN_DIR/state.json"
+ORCH_RUN_ID="$(agentlens run-open \
+  --agent kws-cpe-orchestrator \
+  --workspace "$WORKTREE_ABS" \
+  --meta plan="$PLAN_REL" \
+  --meta spec="${SPEC_REL:-}" \
+  --meta mode="$MODE" \
+  2>/dev/null || echo "")"
+# Persist ORCH_RUN_ID as state.agentlens_orchestration_run at the first
+# state.json write.
 ```
 
-Create an event candidate JSON file and append it:
+Emit a notable-boundary event when one occurs (`run-id`, `run_dir`, and
+`state_path` belong in the payload so future agents can correlate back to the
+run):
 
 ```bash
-python3 scripts/append_learning_event.py append \
-  --run-id "$RUN_ID" \
-  --event-json /tmp/kws-codex-plan-executor-event.json \
-  --repo-root "$WORKTREE_ABS"
+if [ -n "${ORCH_RUN_ID:-}" ]; then
+  agentlens event append --run "$ORCH_RUN_ID" \
+    --type "kws-cpe.learning.${EVENT_TYPE}" \
+    --payload-json "$(cat /tmp/kws-codex-plan-executor-event.json)" \
+    2>/dev/null || true
+fi
 ```
 
-Close the run at the end or on whole-run halt:
+Close the AgentLens orchestration run at the end or on whole-run halt:
 
 ```bash
-python3 scripts/append_learning_event.py close-run \
-  --run-id "$RUN_ID" \
-  --outcome success
+if [ -n "${ORCH_RUN_ID:-}" ]; then
+  agentlens run-close --run "$ORCH_RUN_ID" \
+    --outcome "$OUTCOME" 2>/dev/null || true
+fi
 ```
 
-Valid outcomes are `success`, `blocked`, `error`, and `unknown`. For tests,
-pass `--log-root <temp-root>`. For preflight validation, pass `--dry-run` to
-`append`.
+Valid `run-close` outcomes are `success`, `blocked`, and `aborted`.
+AgentLens-emit failure must not block the user's primary implementation task.
 
-Summarize recent run health without mutating logs:
+Query recent runs and their outcomes:
 
 ```bash
-python3 scripts/check_learning_log_health.py --latest 5 --json
+agentlens runs --agent kws-cpe-orchestrator --latest 5
+agentlens events --run "$ORCH_RUN_ID" --type 'kws-cpe.learning.*'
 ```
 
-The health report uses public statuses `success`, `blocked`, `error`, `failed`,
-`in_progress`, `needs_finalization`, `stale_candidate`, and `unknown`. It
-includes `project_state` when the project-local state file is readable and
-`git_state` when the recorded worktree can be inspected. The legacy top-level
-`warnings` array mirrors `diagnostics.warnings`; new callers should prefer
-`diagnostics.info` and `diagnostics.warnings`.
+Compare a live run's project-local journal and historical user-local learning
+log against the AgentLens stream with:
 
-The helper validates required fields, enum values, redaction constraints, and
-secret-like strings before appending one compact JSON object per line. It also
-rejects candidates whose `run_id` does not match `--run-id`.
+```bash
+python3 scripts/compare_agentlens_events.py \
+  --journal .codex-orchestrator/runs/<run_id>/events.jsonl \
+  --learning ~/.codex/learning/kws-codex-plan-executor/runs/<date>/<run_id>/events.jsonl \
+  <agentlens_run_dir>
+```
+
+The script reports matched / missing-in-agentlens / missing-in-legacy /
+ordering-mismatch counts and exits non-zero if either layer drifts. The
+embedded `--self-test` covers the rename contract (e.g.
+`task_contract_recorded → kws-cpe.task_started`, `blocked → kws-cpe.blocker`,
+`finished → kws-cpe.run_completed`) so mapping regressions fail fast.
+
+## AgentLens Namespace Vocabulary
+
+Active `kws-cpe.learning.<event>` types (clean prefix of legacy event types):
+
+- `kws-cpe.learning.blocker`
+- `kws-cpe.learning.error`
+- `kws-cpe.learning.verification_failure`
+- `kws-cpe.learning.recurring_issue`
+- `kws-cpe.learning.user_correction`
+- `kws-cpe.learning.successful_workaround`
+- `kws-cpe.learning.completion_learning`
+
+Headless `codex exec` spawns must propagate the parent id with
+`AGENTLENS_PARENT_RUN_ID="$ORCH_RUN_ID"`. AgentLens failures are never
+blocking. The legacy `scripts/append_learning_event.py` helper was removed at
+the v2.18 cutover — AgentLens is the sole sink for these events.
 
 ## Minimal Event Shape
 

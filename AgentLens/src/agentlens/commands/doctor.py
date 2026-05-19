@@ -19,7 +19,11 @@ from pathlib import Path
 
 import typer
 
-from ..adapters.shims import verify_shim_integrity
+from ..adapters.shims import (
+    read_cmux_install_metadata,
+    verify_cmux_chain,
+    verify_shim_integrity,
+)
 from ..ids import compute_workspace_id
 from ..store.paths import agentlens_home
 
@@ -81,6 +85,27 @@ def _format_text_integrations(integrations: dict) -> str:
     return "\n".join(lines)
 
 
+def _cmux_block() -> dict | None:
+    """Return the cmux-chain status block, or ``None`` if not installed.
+
+    The block is omitted from the doctor output when no cmux install
+    metadata exists (the common case). When metadata is present, the
+    block reports drift, missing-backup, sha mismatch, version drift,
+    and permission errors — see ``verify_cmux_chain`` for shape.
+    """
+    if read_cmux_install_metadata() is None:
+        return None
+    return verify_cmux_chain()
+
+
+def _format_text_cmux(cmux: dict) -> str:
+    status = cmux.get("status", "unknown")
+    lines = [f"Cmux chain: status={status}"]
+    if "message" in cmux:
+        lines.append(f"  {cmux['message']}")
+    return "\n".join(lines)
+
+
 def _format_text_paths(paths: dict) -> str:
     home = paths["AGENTLENS_HOME"]
     ws = paths["workspace_id"]
@@ -131,6 +156,10 @@ def doctor(
         )
 
     doc = collect_doctor_report(scope)
+    if scope in {"integrations", "all"}:
+        cmux = _cmux_block()
+        if cmux is not None:
+            doc["cmux"] = cmux
 
     if fmt == "json":
         typer.echo(json.dumps(doc, sort_keys=True))
@@ -141,6 +170,8 @@ def doctor(
         parts.append(_format_text_integrations(doc["integrations"]))
     if "paths" in doc:
         parts.append(_format_text_paths(doc["paths"]))
+    if "cmux" in doc:
+        parts.append(_format_text_cmux(doc["cmux"]))
     typer.echo("\n".join(parts))
 
 

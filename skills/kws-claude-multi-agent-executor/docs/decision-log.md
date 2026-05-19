@@ -56,6 +56,20 @@
 - [F001-T4.5-dry-run.md](../docs/experiments/v2.9-reviewer-spec-coverage/findings/F001-T4.5-dry-run.md) — 1-rep 파일럿; walk 메커니즘 PASSED, 실패 모드 이동 (silent miss → spec 모호성 노출)
 - [F002-T5-n4-results.md](../docs/experiments/v2.9-reviewer-spec-coverage/findings/F002-T5-n4-results.md) — v2.8.1 + 명확화된 스펙 + v2.9 프롬프트 아래 n=4 reps; 네 개 통과 기준 모두 만족; SHIP
 
+## v2.12 — Implementer 모델 선택 (출하 2026-05-15)
+
+| ADR | 주제 | 결과 |
+|-----|------|------|
+| [D001 Hold Reviewer on Sonnet](../docs/experiments/v2.12-implementer-opus-vs-sonnet/decisions/D001-hold-reviewer-on-sonnet.md) | Reviewer/Verifier 도 Opus 로 올려야 하는가 vs Sonnet 고정 | **결정**: Sonnet 고정 — judge consistency 가 implementer 품질 향상 효과를 흐림 |
+| [D002 Record used and default](../docs/experiments/v2.12-implementer-opus-vs-sonnet/decisions/D002-record-used-and-default.md) | `state.implementer_model` 필드 모양 — string 만 vs `{used, default}` 객체 | **결정**: `{used, default}` 객체로 contemporaneous default 보존; A/B 분석시 baseline 식별 가능 |
+
+## v2.13 — Natural multi-plan (출하 2026-05-15)
+
+| ADR | 주제 | 결과 |
+|-----|------|------|
+| [D001 NL lexicon scope](../docs/experiments/v2.13-natural-multi-plan/decisions/D001-nl-lexicon-scope.md) | 자연어 키워드 lexicon 의 보수성 — open vs closed set | **결정**: closed 4-키 lexicon (opus/sonnet/순차/대화형 + 동의어) + 한국어 particle 분리 알고리즘; 확장은 ADR 필수 |
+| [D002 Plan chain schema](../docs/experiments/v2.13-natural-multi-plan/decisions/D002-plan-chain-schema.md) | 멀티 플랜 state shape — top-level 평탄화 vs `plan_chain[]` 배열 | **결정**: `plan_chain[]` 배열 + `active_plan` integer pointer; v2.12 legacy `plan2_state` 는 schema 감지로 호환 |
+
 ---
 
 ## 가로지르는 결정 (한 실험 아래에 속하지 않음)

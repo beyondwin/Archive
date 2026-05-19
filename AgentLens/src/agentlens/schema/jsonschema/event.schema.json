@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agentlens.dev/schemas/agentlens.event.v1.json",
-  "$comment": "v1 is locked. Breaking changes require v2 namespace.",
+  "$comment": "v1 is locked. Breaking changes require v2 namespace. v1-unification (S1.5.1, R2) extends event type from a fixed enum to a namespace pattern: reserved AgentLens core namespaces keep their fixed event-name enum; skill and importer namespaces (kws-*, claude.*, codex.*, etc.) accept any lower-case dotted token.",
   "title": "agentlens.event.v1",
   "type": "object",
   "additionalProperties": false,
@@ -24,17 +24,31 @@
     },
     "type": {
       "type": "string",
-      "enum": [
-        "run.started",
-        "checkpoint.marked",
-        "command.started",
-        "command.finished",
-        "artifact.attached",
-        "task.started",
-        "task.finished",
-        "failure.observed",
-        "run.finalized",
-        "run.cancelled"
+      "allOf": [
+        {
+          "$comment": "General namespace pattern: <namespace>.<event> in lower-kebab/snake. At least one dot required; segments start with a lower-case letter.",
+          "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)+$"
+        },
+        {
+          "$comment": "Reserved AgentLens core namespaces must use the locked event-name enum. Skill (e.g. kws-cme.*, kws-cpe.*) and importer (claude.*, codex.*) namespaces are intentionally not constrained beyond the general pattern.",
+          "if": {
+            "pattern": "^(run|command|checkpoint|artifact|task|failure|recording|agentlens)\\."
+          },
+          "then": {
+            "enum": [
+              "run.started",
+              "checkpoint.marked",
+              "command.started",
+              "command.finished",
+              "artifact.attached",
+              "task.started",
+              "task.finished",
+              "failure.observed",
+              "run.finalized",
+              "run.cancelled"
+            ]
+          }
+        }
       ]
     },
     "payload": {

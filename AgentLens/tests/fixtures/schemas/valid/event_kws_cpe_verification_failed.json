@@ -1,0 +1,8 @@
+{
+  "schema": "agentlens.event.v1",
+  "event_id": "evt_kwscpe000001",
+  "run_id": "run_20260519_000000_cont01",
+  "ts": "2026-05-19T00:00:02Z",
+  "type": "kws-cpe.verification_failed",
+  "payload": {"reason": "tests failed"}
+}

@@ -6,7 +6,7 @@ This document re-narrates spec section S1.9 (보안 / 프라이버시 구현 디
 
 AgentLens stores the **minimum** information needed to reconstruct a run timeline. Everything else is either masked, excerpted, or simply not captured. Concretely:
 
-- **Full prompt transcripts** are never persisted. `manifest.redaction.full_prompts` is permanently set to `"not_stored"`.
+- **Full prompt transcripts are never captured by the process wrapper.** `agentlens run -- <cmd>` and the PATH-shim path do not store prompt-level conversation; `manifest.redaction.full_prompts` is permanently set to `"not_stored"` for these runs, and the resulting `run.json` always carries `recording.has_transcript=false`, `recording.transcript_source="none"`. The only path that can attach a transcript to a run is an **explicit session importer** (`agentlens import claude-session` or `agentlens import codex-session`, see `cli.md` §3a and §6 below).
 - **Full command output** is never persisted; only allow-list-extracted excerpts.
 - **Absolute home paths** are masked. Any path under the user's `$HOME` is rewritten on the way to disk as `<HOME>/<HASH8>` where `HASH8` is the first 8 hex characters of a salted SHA-256 of the relative remainder. This preserves stable identity across events without leaking the user's directory layout.
 - **Credentials** are masked via redaction patterns. The default set covers OpenAI/Anthropic-style API keys, AWS access keys, Bearer/Authorization headers, GitHub tokens, and PEM private-key bodies. Each mask uses a typed sentinel such as `<REDACTED:openai_key>` so downstream tooling can reason about *what* was masked.
@@ -49,6 +49,38 @@ If the real binary's sha256 has drifted from the lockfile — a system update, a
 ## 6. Retention
 
 Stored runs are bounded by `max_total_store_gb` (default 5). When the cap is exceeded, `agentlens gc` deletes the oldest **sealed** runs' `artifacts/` directories first; `eval.json`, `final.json`, and `manifest.json` are preserved under `keep_eval_summaries=true` so query commands can still surface the run's existence and outcome long after the heavy artifacts are gone. Unsealed and `recording_incomplete` runs are never reaped automatically — the user must seal or remove them explicitly.
+
+### 6.1 Imported transcripts
+
+Session JSONL imported by `agentlens import claude-session` and `agentlens import codex-session` is stored **only** at `artifacts/transcripts/<session-id>.jsonl` under the importing run. There is no root-level `transcript.jsonl` and no other duplicate copy — this single path is the source of truth for the transcript.
+
+- **Manifest-covered.** Each imported transcript file is registered in `manifest.json` with its sha256 and byte size, the same as any other artifact. Tampering or partial writes are detectable via the manifest.
+- **Subject to retention.** Imported transcripts live inside `artifacts/` and are therefore reaped by the same `large_artifacts_days` and `max_total_store_gb` rules that govern any other heavy artifact. The summary JSON (`run.json`, `final.json`, `eval.json`, `manifest.json`) is still preserved under `keep_eval_summaries=true`, so a query after garbage collection will surface the run's existence — and the fact that it once had `recording.has_transcript=true` — even after the transcript bytes themselves are gone.
+- **Redaction.** Transcript material flows through the same redaction pipeline (§2) on its way to disk: API keys, bearer tokens, PEM bodies, and `$HOME` prefixes are masked before the file is finalized and hashed into the manifest.
+- **No transcripts from the wrapper.** The process wrapper never writes into `artifacts/transcripts/`. Only the named session importers do, and they are the only paths that can flip `recording.has_transcript` to `true`.
+
+## 6.2 Host-isolation invariant (failure containment)
+
+AgentLens calls embedded in host orchestrators (kws-cme, kws-cpe, and any
+future skill) are wired so that AgentLens **never blocks the host
+workflow**. The contract has two enforcement points:
+
+- **Host snippet shape.** Orchestrators invoke AgentLens with
+  `agentlens <subcommand> ... 2>/dev/null || true`, which guarantees a
+  missing CLI on `PATH` produces a no-op (exit 0). The shape is
+  user-visible by design — it is the only mechanism that survives
+  scenarios where the user has uninstalled AgentLens entirely.
+- **CLI-side non-blocking.** Inside `agentlens event append`,
+  `agentlens run-close`, and `agentlens mark`, unexpected exceptions —
+  including an unreadable `$AGENTLENS_HOME/runs/`, a stale `run_id`, a
+  corrupt index, or a permission-denied transient — are swallowed,
+  surfaced on stderr as a single `warning:` line, and the process exits
+  with code `0`. The host orchestrator therefore sees a uniformly
+  non-error response regardless of AgentLens's internal state.
+
+Automated coverage lives in
+`AgentLens/tests/integration/test_failure_isolation.py` (PATH-missing,
+unreadable-home, unknown-run-id, namespace-glob, tree-traversal).
 
 ## 7. v1 잠금 정책 (v1 lock policy)
 
