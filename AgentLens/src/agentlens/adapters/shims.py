@@ -156,17 +156,27 @@ def _resolve_agentlens_cli() -> str:
     return ""
 
 
-def install_shim(name: str, real_path: Path) -> None:
+def install_shim(
+    name: str, real_path: Path, *, allow_wrapper: bool = False
+) -> None:
     """Install a shim for ``name`` pointing at ``real_path``.
 
     Algorithm (spec §S1.6.18):
 
     1. Create ``~/.agentlens/shims`` (0700, owner-verified).
     2. Resolve ``real_path`` to an absolute, existing path.
-    3. Compute real binary sha256.
-    4. Write ``<name>.real`` lockfile (path=..., sha256=...).
-    5. Write ``<name>`` shim script (0755) from ``SHIM_TEMPLATE``.
+    3. Self-reference / ``.app`` / wrapper-signature guards.
+    4. Compute real binary sha256.
+    5. Write ``<name>.real`` lockfile (path=..., sha256=...).
+    6. Write ``<name>`` shim script (0755) from ``SHIM_TEMPLATE``.
+
+    Parameters:
+        allow_wrapper: When ``True``, bypass the Layer-1 wrapper-signature
+            scan (spec §S1.4.1). Reserved for ``--no-wrapper-detect`` opt-in;
+            the self-reference and ``.app`` guards still apply.
     """
+    from .wrapper_detect import scan_real_candidate
+
     shim_dir = _ensure_shim_dir()
     real = Path(real_path).resolve(strict=True)
     # Self-reference guard (spec §S1.4.2): refuse to bake a binary that is
@@ -189,6 +199,19 @@ def install_shim(name: str, real_path: Path) -> None:
             f"refusing to shim binary inside .app bundle: {real} "
             "(Desktop transcripts are captured via the rollout importer)"
         )
+    # Layer 1 wrapper-signature scan (spec §S1.4.1): refuse shebang scripts
+    # that loop back into AgentLens, chain through a third-party launcher
+    # (cmux), or resolve their target through PATH. Bypassed only when the
+    # caller passes ``allow_wrapper=True`` (CLI ``--no-wrapper-detect``).
+    if not allow_wrapper:
+        detection = scan_real_candidate(real)
+        if detection.category is not None:
+            raise ValueError(
+                f"refusing to bake {real} as .real — wrapper-signature "
+                f"detection matched category={detection.category!r} "
+                f"pattern={detection.matched_pattern!r}. "
+                f"Remediation: {detection.remediation}"
+            )
     digest = _sha256_file(real)
 
     lockfile = shim_dir / f"{name}.real"

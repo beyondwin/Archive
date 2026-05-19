@@ -54,6 +54,14 @@ def install(
             "Used for testing; in production the default is correct."
         ),
     ),
+    no_wrapper_detect: bool = typer.Option(
+        False,
+        "--no-wrapper-detect",
+        help=(
+            "Bypass the Layer-1 wrapper-signature scan (spec §S1.4.1). "
+            "Reserved for power users; requires --yes to ensure intent."
+        ),
+    ),
 ) -> None:
     """Install an AgentLens shim for ``agent``.
 
@@ -80,6 +88,15 @@ def install(
         _install_cmux_chain_command(cmux_app=cmux_app, yes=yes)
         return
 
+    # Spec §S1.4.1: --no-wrapper-detect must be paired with --yes so that
+    # users cannot bypass wrapper detection unintentionally. Validate BEFORE
+    # any path resolution or I/O.
+    if no_wrapper_detect and not yes:
+        raise typer.BadParameter(
+            "--no-wrapper-detect bypasses install-safety checks and must be "
+            "paired with --yes to confirm intent."
+        )
+
     if real_path is None:
         detected = shutil.which(agent)
         if not detected:
@@ -98,7 +115,18 @@ def install(
             typer.echo("aborted — no files written")
             return
 
-    install_shim(agent, real_path)
+    if no_wrapper_detect:
+        typer.echo(
+            "WARNING: wrapper detection bypassed via --no-wrapper-detect",
+            err=True,
+        )
+    try:
+        install_shim(agent, real_path, allow_wrapper=no_wrapper_detect)
+    except ValueError as exc:
+        # Surface install-safety refusals (self-reference, .app, wrapper
+        # signatures) as a structured CLI error instead of an opaque traceback.
+        typer.echo(f"agentlens: install refused — {exc}", err=True)
+        raise typer.Exit(code=1) from exc
     typer.echo(f"installed shim for {agent} -> {real_path}")
     typer.echo("")
     typer.echo("Add to your shell rc:")
