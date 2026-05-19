@@ -19,7 +19,9 @@ from pathlib import Path
 
 import typer
 
+from ..adapters import wrapper_detect
 from ..adapters.shims import (
+    _parse_lockfile,
     read_cmux_install_metadata,
     verify_cmux_chain,
     verify_shim_integrity,
@@ -42,6 +44,18 @@ def _integrations_block() -> dict:
         integrity = verify_shim_integrity(name)
         if integrity == "missing":
             out[name] = {"integration_level": "none"}
+        elif integrity == "wrapper_chain_warning":
+            # Re-scan to surface the category + remediation alongside the
+            # integrity verdict (spec §3.5).
+            lockfile = _shim_dir() / f"{name}.real"
+            target = Path(_parse_lockfile(lockfile)["path"])
+            detection = wrapper_detect.scan_real_candidate(target)
+            out[name] = {
+                "integration_level": "shim",
+                "shim_integrity": "wrapper_chain_warning",
+                "wrapper_detected": detection.category,
+                "remediation": detection.remediation,
+            }
         else:
             out[name] = {
                 "integration_level": "shim",
@@ -80,6 +94,11 @@ def _format_text_integrations(integrations: dict) -> str:
                 f"  {name}: integration_level={level} "
                 f"shim_integrity={info['shim_integrity']}"
             )
+            if info["shim_integrity"] == "wrapper_chain_warning":
+                lines.append(
+                    f"    wrapper_detected={info.get('wrapper_detected')} "
+                    f"— fix: {info.get('remediation', '')}"
+                )
         else:
             lines.append(f"  {name}: integration_level={level}")
     return "\n".join(lines)
