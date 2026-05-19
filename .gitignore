@@ -25,6 +25,9 @@ tmp/
 temp/
 .cache/
 
+# In-progress eval baseline scratch (committed baselines use .json only)
+*.json.partial
+
 # Python tooling
 __pycache__/
 *.py[cod]
