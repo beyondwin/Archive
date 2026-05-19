@@ -2,7 +2,7 @@
   "agent": "generic",
   "agent_outcome": "success",
   "display_title": null,
-  "eval_status": "needs_eval",
+  "eval_status": "failed",
   "failures": [
     {
       "blame_scope": "agent",
