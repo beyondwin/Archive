@@ -15,7 +15,11 @@ agentlens mode show
 agentlens mode set <disabled|minimal|full>
 agentlens run -- <command> [args...]
 agentlens start --agent <name> --mode <cli|app|code|unknown> [--parent <run_id>]
+agentlens run-open --agent <label> [--workspace <path>] [--parent <run_id>] [--meta k=v]...
+agentlens run-close --run <run_id> [--outcome success|failed|partial|cancelled|unknown] [--summary <text>]
 agentlens mark <event_type> [--task-id ...] [--name ...]
+agentlens event append --run <run_id> --type <type_string> (--payload-json <inline> | --payload-file <path> | --payload-stdin) [--ts <iso8601>]
+agentlens events [--run <id>] [--type <glob>] [--since <ts>] [--tree] [--follow]
 agentlens attach --kind <kind> --path <path>
 agentlens final --outcome <success|failed|partial|cancelled|unknown>
 agentlens seal [--final]
@@ -26,6 +30,8 @@ agentlens status [--format json]
 agentlens show <--latest | run_id> [--format json]
 agentlens failures [--since-days 30] [--format json]
 agentlens risks [--since-days 30] [--format json]
+agentlens import claude-session (--latest | --id <id> | --all) [--project <encoded-name>] [--parent <run_id>]
+agentlens import codex-session (--latest | --id <id> | --since <iso8601> | --all) [--include-archived] [--parent <run_id>]
 agentlens gc [--dry-run]
 ```
 
@@ -35,7 +41,66 @@ Each command supports `--help`. Subcommand names are part of the v1 contract and
 
 - **`agentlens run -- <command> [args...]`** — recommended entry point. Spawns the child under the wrapper (not `exec`), drains stdout/stderr concurrently via a selector loop so large output cannot deadlock on pipe buffers, and forwards both streams verbatim to the parent's tty/pipes. The child's exit code is propagated verbatim; on signal cancellation the wrapper exits with `128 + signum` (e.g. SIGINT → 130, SIGTERM → 143). SIGINT and SIGTERM received by the wrapper are forwarded to the child and original handlers are restored after the child exits. The post-drain recording pipeline (write_run_meta → append_event → write_workspace_pointer → write_final → seal(pre_eval) → evaluate → seal(final) → index_run) is **non-blocking**: every stage is guarded so that AgentLens-internal failures never alter the child's exit code. Pre-eval / evaluate failures are surfaced by marking the manifest `recording_incomplete`; bounded excerpts (allow-listed extractors, capped at `MAX_EXCERPT_CHARS = 4096` with a `<TRUNCATED>` marker) are attached to `final.json`. If AgentLens cannot create the run directory it degrades to silent passthrough (S1.2 invariant #6).
 - **`agentlens start --agent <name> --mode <cli|app|code|unknown>`** — manual start for adapters that cannot use `run`. Optional `--parent <run_id>` links a child run to its caller.
+- **`agentlens run-open --agent <label>`** — opens a **container run** (no child process). Writes a valid `run.json` with `run_kind="container"`, `agent.name="generic"`, `agent.mode="unknown"`, `agent.label=<label>`, `recording.adapter="agentlens_container"`, `recording.has_transcript=false`, appends a `run.started` event, and prints the new `run_id` to stdout. Returns `0` on success.
+
+  | Flag                 | Required | Meaning                                                                                      |
+  |----------------------|----------|----------------------------------------------------------------------------------------------|
+  | `--agent <label>`    | yes      | Human label stamped into `agent.label` (e.g. `kws-cme-orchestrator`).                        |
+  | `--workspace <path>` | no       | Override workspace root; defaults to cwd.                                                    |
+  | `--parent <run_id>`  | no       | Records the caller's run id in `parent_run_id` for tree/lineage queries.                     |
+  | `--meta k=v`         | repeat   | Additional key/value pairs persisted under the run's `meta` block; values are redacted.      |
+
+  Example:
+  ```
+  RUN_ID=$(agentlens run-open --agent kws-cme-orchestrator --meta plan=task_1)
+  ```
+
+- **`agentlens run-close --run <run_id>`** — closes a container run by writing `final.json`. Unknown `run_id` is **non-blocking**: stderr warning, exit `0`.
+
+  | Flag                                                            | Required | Meaning                                                       |
+  |-----------------------------------------------------------------|----------|---------------------------------------------------------------|
+  | `--run <run_id>`                                                | yes      | Run to close.                                                 |
+  | `--outcome <success\|failed\|partial\|cancelled\|unknown>`      | no       | Final outcome stamped into `final.json`; default `unknown`.   |
+  | `--summary <text>`                                              | no       | One-line summary persisted on the final record.               |
+
+  Example:
+  ```
+  agentlens run-close --run "$RUN_ID" --outcome success --summary "task_1 docs"
+  ```
+
 - **`agentlens mark <event_type>`** — appends a timeline event. Supports `--task-id` and `--name` for structured task boundaries.
+- **`agentlens event append --run <run_id> --type <type_string>`** — appends a single event to `events.jsonl`. The run is resolved via filesystem-safe lookup (SQLite is optional acceleration only). The full `agentlens.event.v1` line is constructed via `append_event()`, which performs writer locking, redaction, and schema validation. Any unexpected failure is non-blocking: stderr warning and exit `0`.
+
+  | Flag                       | Required           | Meaning                                                                                                 |
+  |----------------------------|--------------------|---------------------------------------------------------------------------------------------------------|
+  | `--run <run_id>`           | yes                | Target run.                                                                                             |
+  | `--type <type_string>`     | yes                | Dotted lower-case namespace, e.g. `kws-cme.task.started`. Reserved core namespaces stay enum-locked.    |
+  | `--payload-json <inline>`  | one of three       | Inline JSON payload object.                                                                             |
+  | `--payload-file <path>`    | one of three       | Read payload object from a file.                                                                        |
+  | `--payload-stdin`          | one of three       | Read payload object from stdin.                                                                         |
+  | `--ts <iso8601>`           | no                 | Explicit timestamp; defaults to wall-clock UTC.                                                         |
+
+  Example:
+  ```
+  echo '{"task_id":"task_1","status":"started"}' \
+    | agentlens event append --run "$RUN_ID" --type kws-cme.task.started --payload-stdin
+  ```
+
+- **`agentlens events`** — reads `events.jsonl` directly and streams JSONL on stdout. The reader never goes through SQLite.
+
+  | Flag              | Meaning                                                                                                       |
+  |-------------------|---------------------------------------------------------------------------------------------------------------|
+  | `--run <id>`      | Restrict to the given run (otherwise: all runs in the current workspace).                                     |
+  | `--type <glob>`   | Glob filter against the event `type`, e.g. `--type 'kws-cme.*'` or `--type 'failure.*'`.                       |
+  | `--since <ts>`    | Only emit events with `ts >= <iso8601>`.                                                                      |
+  | `--tree`          | Include descendants reachable through `parent_run_id`; output is ordered by `(ts, run_id)`.                   |
+  | `--follow`        | Tail mode: keep the file open and emit new lines as they arrive.                                              |
+
+  Example:
+  ```
+  agentlens events --run "$RUN_ID" --type 'kws-cme.*' --tree
+  ```
+
 - **`agentlens attach --kind <kind> --path <path>`** — registers a file under `artifacts/` and adds a manifest entry with its sha256.
 - **`agentlens final --outcome <success|failed|partial|cancelled|unknown>`** — writes `final.json`.
 - **`agentlens seal [--final]`** — takes the `pre_eval` seal by default; with `--final`, takes the `final` seal after `eval.json` has been written.
@@ -110,6 +175,59 @@ $ agentlens failures --since-days 7 --format json | jq '.[].category' | sort -u
 "unhandled_exception"
 ```
 
+## 3a. Session importers
+
+The importers turn an external CLI's native session log into one AgentLens **capture** run per session, with the full transcript material copied into the run's `artifacts/transcripts/` directory. Both commands are **idempotent**: a session with a known `input.import_key` is detected and skipped on re-import.
+
+- **`agentlens import claude-session (--latest | --id <id> | --all) [--project <encoded-name>] [--parent <run_id>]`** — imports Claude Code session JSONL from `~/.claude/projects/<encoded-name>/<session-id>.jsonl`. Each session becomes one run with:
+
+  - `agent.name = "claude_code"`
+  - `run_kind = "capture"`
+  - `recording.has_transcript = true`
+  - `recording.transcript_source = "claude-session-jsonl"`
+  - `input.import_key = "claude-session:<id>"` (idempotency)
+
+  The session JSONL is **copied** (not symlinked) to `artifacts/transcripts/<session-id>.jsonl` and registered in `manifest.json` like any other artifact.
+
+  | Flag                       | Meaning                                                                              |
+  |----------------------------|--------------------------------------------------------------------------------------|
+  | `--latest`                 | Import the newest session for the (resolved) project.                                |
+  | `--id <id>`                | Import one specific session id.                                                      |
+  | `--all`                    | Import every session not yet present (idempotent against `input.import_key`).        |
+  | `--project <encoded-name>` | Restrict to a specific encoded project directory under `~/.claude/projects/`.        |
+  | `--parent <run_id>`        | Link imported runs to a caller run via `parent_run_id`.                              |
+
+  Example:
+  ```
+  agentlens import claude-session --latest
+  ```
+
+- **`agentlens import codex-session (--latest | --id <id> | --since <iso8601> | --all) [--include-archived] [--parent <run_id>]`** — imports Codex rollout JSONL. Active rollouts live under `~/.codex/sessions/YYYY/MM/DD/rollout-<ISO>-<UUIDv7>.jsonl`; with `--include-archived`, the importer also walks `~/.codex/archived_sessions/`. **Both Codex CLI and Codex Desktop are covered** by this single command — the originator (CLI vs Desktop) is preserved in the run's `meta` block. Each rollout becomes one capture run with:
+
+  - `agent.name = "codex_cli"`
+  - `run_kind = "capture"`
+  - `recording.has_transcript = true`
+  - `recording.transcript_source = "codex-rollout-jsonl"`
+  - `input.import_key = "codex-rollout:<id>"` (idempotency)
+
+  Subagent lineage is recovered from `session_meta.payload.source.subagent.thread_spawn.parent_thread_id`: when the parent rollout has already been imported, the child's `parent_run_id` is wired to the parent's `run_id`. Unresolved parents are recorded as `null` and may be linked by a later re-import.
+
+  | Flag                  | Meaning                                                                                                                       |
+  |-----------------------|-------------------------------------------------------------------------------------------------------------------------------|
+  | `--latest`            | Import the newest rollout.                                                                                                    |
+  | `--id <id>`           | Import one specific rollout id.                                                                                               |
+  | `--since <iso8601>`   | Import rollouts started at or after the given timestamp.                                                                      |
+  | `--all`               | Import every rollout not yet present (idempotent against `input.import_key`).                                                 |
+  | `--include-archived`  | Also walk `~/.codex/archived_sessions/`. By default only the active `~/.codex/sessions/` tree is scanned.                     |
+  | `--parent <run_id>`   | Link imported runs to a caller run via `parent_run_id`.                                                                       |
+
+  Example:
+  ```
+  agentlens import codex-session --since 2026-05-01T00:00:00Z --include-archived
+  ```
+
+Both importers store transcript material **only** under `artifacts/transcripts/<session-id>.jsonl` (never a root-level `transcript.jsonl`), and the resulting files are manifest-covered and subject to retention; see `contract.md` §3a.3 and `security.md` §6.
+
 ## 4. Configuration & maintenance commands
 
 - **`agentlens install <agent> [--real PATH] [--yes]`** — writes a PATH shim plus a sibling `.real` sha256 lockfile under `~/.agentlens/shims/`. The real binary is auto-detected via `shutil.which(agent)` unless `--real PATH` is passed. Requires explicit user consent at an interactive prompt; `--yes` bypasses the prompt for CI/automation only. **The command never edits the user's shell rc** — it prints the `export PATH="$HOME/.agentlens/shims:$PATH"` hint and the user must add it manually. See `security.md` for the shim trust model.
@@ -140,13 +258,14 @@ $ agentlens failures --since-days 7 --format json | jq '.[].category' | sort -u
 The following commands exist in the v0 binary but are intentionally **not** advertised in `--help` listings or this reference. They are subject to change without notice and are not part of the v1 contract:
 
 ```
-agentlens import
 agentlens dashboard
 agentlens studio
 agentlens mcp
 agentlens patch
 agentlens compile
 ```
+
+Note: `agentlens import claude-session` and `agentlens import codex-session` (§3a) are **promoted** v1 surface and are governed by the v1 lock. Any other `agentlens import …` subcommand remains hidden/v0.
 
 ## 7. v1 잠금 정책 (v1 lock policy)
 
