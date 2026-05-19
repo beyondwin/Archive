@@ -11,6 +11,8 @@ import typer
 from .commands import attach as attach_cmd
 from .commands import doctor as doctor_cmd
 from .commands import eval as eval_cmd
+from .commands import event as event_cmd
+from .commands import events as events_cmd
 from .commands import failures as failures_cmd
 from .commands import final as final_cmd
 from .commands import gc as gc_cmd
@@ -57,6 +59,8 @@ app.command(name="uninstall")(uninstall_cmd.uninstall)
 app.command(name="doctor")(doctor_cmd.doctor)
 app.command(name="gc")(gc_cmd.gc)
 app.add_typer(mode_cmd.app, name="mode")
+app.add_typer(event_cmd.event_app, name="event")
+app.command(name="events")(events_cmd.events)
 
 
 def main() -> None:
