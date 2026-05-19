@@ -2,8 +2,8 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "1.9.0"
-  updated_at: "2026-05-16"
+  version: "2.18.0"
+  updated_at: "2026-05-19"
 ---
 
 # KWS Codex Plan Executor

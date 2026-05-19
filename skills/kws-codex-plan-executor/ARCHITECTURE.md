@@ -23,7 +23,12 @@ execution and prompt export. It fully replaces the former
 2. Validate plan structure with `scripts/parse_plan.py` for execution modes.
 3. Create or select a dedicated non-conflicting `codex/...` git worktree.
 4. Initialize a `run_id` and update `.codex-orchestrator/runs/<run_id>/state.json`.
-5. Append project-local event evidence when the event helper is available.
+5. Open an AgentLens orchestration run (`agentlens run-open --agent
+   kws-cpe-orchestrator ...`) and persist its id as `agentlens_orchestration_run`
+   in per-run state. Emit replay evidence as `kws-cpe.<event>` events on
+   AgentLens; the legacy project-local `events.jsonl` helper was retired at
+   the v2.18 cutover. AgentLens failures are non-blocking — empty
+   `ORCH_RUN_ID` silently no-ops downstream emits.
 6. Build `.codex-orchestrator/runs/<run_id>/context.json` and store
    `context_snapshot_path`, `context_basis_hash`, and optional context-budget
    metadata.
@@ -111,34 +116,53 @@ Plans may include optional task dependencies via visible `Depends on:` lines.
 dependencies, then emits `depends_on` metadata. This metadata is advisory only
 and does not replace task contracts.
 
-## Learning Log Contract
+## Event And Learning Stream Contract (v2.18 AgentLens cutover)
 
-Execution modes may append redacted notable-boundary events to a user-local
-per-run log:
+Execution modes emit redacted notable-boundary events to **AgentLens** under
+the per-run `agentlens_orchestration_run` id. Two namespaces:
 
-```text
-~/.codex/learning/kws-codex-plan-executor/
-  index.jsonl
-  runs/<YYYY-MM-DD>/<run_id>/{meta.json,events.jsonl,final.json}
-```
+- `kws-cpe.<event>` — replay evidence (`run_started`, `task_started`,
+  `task_completed`, `verification_passed`, `verification_failed`,
+  `compaction`, `blocker`, `failed`, `run_completed`).
+- `kws-cpe.learning.<event>` — cross-repo learning (`blocker`, `error`,
+  `verification_failure`, `recurring_issue`, `successful_workaround`,
+  actionable `completion_learning`).
 
 `run_id` is generated from UTC time, repo slug, branch slug, head hash, and a
-random suffix. The helper lifecycle is `init-run`, `append`, and `close-run`.
-Events include `run_id`, `execution.run_dir`, and `execution.state_path` so logs
-from multiple projects or multiple same-project executors remain queryable and
-do not logically mix. This log is for improving the executor across
+random suffix; the same id is reused across project-local state, headless
+artifacts, and every AgentLens emit. The orchestrator lifecycle is
+`agentlens run-open` (Phase 0 init) → `agentlens event append --type
+kws-cpe.<event>` (notable boundaries) → `agentlens run-close --outcome
+success|blocked|aborted` (Phase 2). Payload metadata includes `run_id`,
+`run_dir`, and `state_path` so events from multiple projects remain queryable
+and do not logically mix. AgentLens is for improving the executor across
 repositories. It does not replace per-run state, checkpoints, headless logs, or
 raw verification artifacts.
 
-`index.jsonl` is a start index. Health is resolved from terminal `final.json`
-when present, then project-local state, then learning-log metadata. New run
-metadata writes `helper_pid` while retaining legacy `pid`; both identify the
-short-lived helper process, not the durable Codex executor session. The
-read-only `scripts/check_learning_log_health.py` reporter summarizes recent
-runs, treats zero-event success as normal, reports append-only index mismatch
-as informational, includes project-state and git-state summaries when
-available, and reports `stale_candidate` only from inactive project state rather
-than helper-pid liveness.
+**v2.18 cutover (2026-05-19, Task 13):** the legacy helpers
+`scripts/append_run_event.py` and `scripts/append_learning_event.py`, the
+project-local `.codex-orchestrator/runs/<run_id>/events.jsonl` journal, and the
+user-local `~/.codex/learning/kws-codex-plan-executor/runs/...` archive are no
+longer written. Pre-cutover archives remain read-only on disk. State remains
+authoritative; AgentLens carries the event stream. The rename contract
+(`task_contract_recorded → kws-cpe.task_started`, `blocked → kws-cpe.blocker`,
+`finished → kws-cpe.run_completed`) is encoded and regression-checked in
+`scripts/compare_agentlens_events.py --self-test`.
+
+Every AgentLens call is guarded (`[ -n "${ORCH_RUN_ID:-}" ]`) and silent
+(`2>/dev/null || true`). Headless `codex exec` spawns propagate the parent
+via `AGENTLENS_PARENT_RUN_ID="$ORCH_RUN_ID"` so the child emit sites join the
+same orchestration run.
+
+Run health is resolved from terminal `final.json` when present, then
+project-local state, then AgentLens `run-close` outcome. New run metadata
+writes `helper_pid` while retaining legacy `pid`; both identify the short-lived
+helper process, not the durable Codex executor session. The read-only
+`scripts/check_learning_log_health.py` reporter summarizes recent runs (now
+backed by AgentLens), treats zero-event success as normal, includes
+project-state and git-state summaries when available, and reports
+`stale_candidate` only from inactive project state rather than helper-pid
+liveness.
 
 ## Subagent Policy
 
@@ -199,19 +223,19 @@ Deterministic scripts own mechanical correctness:
 - `scripts/validate_state.py`
 - `scripts/check_learning_log_health.py`
 - `scripts/check_run_diffs.py`
-- `scripts/append_run_event.py`
 - `scripts/reconcile_state.py`
 - `scripts/build_context_snapshot.py`
+- `scripts/compare_agentlens_events.py` (legacy → `kws-cpe.*` rename contract
+  + `--self-test`; replaces the removed `evals/check_event_journal.py` and
+  `evals/check_learning_log.py` after the v2.18 cutover)
 - `evals/check_prompt.py`
 - `evals/check_execution.py`
 - `evals/check_parse_plan.py`
 - `evals/check_state_schema.py`
 - `evals/check_run_diffs.py`
-- `evals/check_event_journal.py`
 - `evals/check_state_reconciliation.py`
 - `evals/check_context_snapshot.py`
 - `evals/check_headless_result.py`
-- `evals/check_learning_log.py`
 - `evals/check_skill_contract.py`
 
 `evals/judge.md` is reserved for subjective quality after deterministic checks.

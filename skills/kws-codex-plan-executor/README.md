@@ -12,7 +12,7 @@ read [docs/user-guide.ko.md](docs/user-guide.ko.md).
 
 ## Current Contract
 
-- Skill version: `1.9.0`
+- Skill version: `2.18.0` (2026-05-19 — AgentLens cutover, Task 13)
 - Execution worktree: mandatory dedicated non-conflicting `codex/...` git
   worktree for `interactive` and `headless`
 - Primary state: `.codex-orchestrator/runs/<run_id>/state.json`
@@ -20,7 +20,13 @@ read [docs/user-guide.ko.md](docs/user-guide.ko.md).
 - Source snapshot: `.codex-orchestrator/runs/<run_id>/context.json`
 - Context budget: optional `context_budget` summary from context snapshotting
 - Context health: `context_health` inside per-run `state.json`
-- Event journal: `.codex-orchestrator/runs/<run_id>/events.jsonl`
+- Event stream: AgentLens, `kws-cpe.<event>` types under
+  `agentlens_orchestration_run` (replay evidence; state stays authoritative).
+  Project-local `events.jsonl` was retired at the v2.18 cutover.
+- Learning stream: AgentLens, `kws-cpe.learning.<event>` types under the same
+  run. The user-local `~/.codex/learning/kws-codex-plan-executor/` archive is
+  no longer written; cutover-pre-2026-05-19 directories remain read-only on
+  disk.
 - Unit manifest: completed execution tasks declare context, tool, and
   write-scope policy
 - Diff policy: post-task check compares changed files against task contract and
@@ -31,9 +37,11 @@ read [docs/user-guide.ko.md](docs/user-guide.ko.md).
 - Subagent run store: optional opt-in `subagent_runs` records
 - Command observations: optional bounded command triage evidence
 - Headless result schema: `templates/headless-output-schema.json`
-- Learning log: `~/.codex/learning/kws-codex-plan-executor/`
+- Parent propagation: headless `codex exec` spawns receive
+  `AGENTLENS_PARENT_RUN_ID="$ORCH_RUN_ID"` so child emits join the same
+  AgentLens run.
 - Run health reporting: terminal `final.json`, then project-local state, then
-  learning-log metadata; helper pid liveness is informational only
+  AgentLens run-close `outcome`; helper pid liveness is informational only.
 
 ## Read Order
 
@@ -141,13 +149,12 @@ python3 scripts/parse_plan.py --help
 python3 scripts/build_context_snapshot.py --help
 python3 scripts/validate_state.py --help
 python3 scripts/check_learning_log_health.py --latest 5 --json
+python3 scripts/compare_agentlens_events.py --self-test
 python3 evals/check_state_schema.py
 python3 evals/check_run_diffs.py
-python3 evals/check_event_journal.py
 python3 evals/check_state_reconciliation.py
 python3 evals/check_context_snapshot.py
 python3 evals/check_headless_result.py
-python3 evals/check_learning_log.py
 python3 evals/check_skill_contract.py --skill SKILL.md
 bash evals/run.sh
 python3 /Users/kws/.codex/skills/.system/skill-creator/scripts/quick_validate.py .
