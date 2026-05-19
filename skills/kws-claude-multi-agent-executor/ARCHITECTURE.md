@@ -289,36 +289,40 @@ evals/
 
 ---
 
-## 14. 학습 로그 계약 (v2.8)
+## 14. 학습/이벤트 로그 계약 (v2.8 → v2.17 AgentLens 컷오버)
 
-스킬은 구조화·민감정보 제거된 학습 이벤트를 사용자 로컬 JSONL 로그로 발산해서 스킬 자체가 여러 실행에 걸쳐 개선될 수 있도록 합니다. 이것은 **관측성 계층**입니다 — 스킬의 정확성은 여기에 의존하지 않으며, 모든 헬퍼 호출은 조용히 실패하도록 감싸져 있습니다.
+스킬은 구조화·민감정보 제거된 이벤트를 **AgentLens** (`kws-cme.*` 네임스페이스) 로 발산해서 스킬 자체가 여러 실행에 걸쳐 개선될 수 있도록 합니다. 이것은 **관측성 계층**입니다 — 스킬의 정확성은 여기에 의존하지 않으며, 모든 emit은 `2>/dev/null || true` 로 감싸져 있고 `ORCH_RUN_ID` 가 비어있으면 silent no-op 입니다.
+
+> **v2.17 cutover (2026-05-19, Task 11)**: `scripts/append_learning_event.py` 와 평행 `~/.claude/learning/kws-claude-multi-agent-executor/runs/<YYYY-MM-DD>/<run_id>/{meta.json,events.jsonl}` 쓰기 경로는 제거되었습니다. AgentLens 가 단독 이벤트 싱크입니다. 과거 (cutover 이전) run의 디스크 아카이브는 그대로 남아있지만 신규 쓰기는 없습니다.
 
 ### 저장소 레이아웃
 
-실행별 샤딩된 디렉터리, `~/.claude/learning/kws-claude-multi-agent-executor/` 하위:
+이벤트는 AgentLens 의 run-scoped 스토어에 거주:
 
 ```
-runs/<YYYY-MM-DD>/<run_id>/
-├── meta.json       # 실행 메타데이터; outcome, event_count, session_ids
-└── events.jsonl    # 0+ 이벤트; 줄당 컴팩트 JSON 1개
+agentlens_orchestration_run = <id>         # state.json top-level (string|null)
+├── run metadata  (agent=kws-cme-orchestrator, workspace, meta=plan/spec/...)
+└── events        (type 별 kws-cme.<event_type>; payload + timestamp)
 ```
 
-`run_id = <UTC-compact-timestamp>-<session_short>-<pid>` (사전식 정렬 가능, 세션 UUID + pid로 모호성 제거). 동시 실행(같은 레포든 다른 레포든)은 별도 실행 디렉터리에 작성 — 두 작성자가 같은 파일을 절대 만지지 않으므로 락 경합 없음.
+`ORCH_RUN_ID` 는 Phase -1 step b 에서 `agentlens run-open` 으로 한 번 열리고, Resume Chain handoff에는 `AGENTLENS_PARENT_RUN_ID` env로 child에 전파됩니다 (child는 새 run을 열지 않음).
 
-### 단일 작성자 계약
+### 단일 작성자 계약 (cutover 후 그대로 유지)
 
-**오케스트레이터만 헬퍼를 호출합니다.** 서브에이전트들은 `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json` 에 이벤트 후보 JSON 파일을 준비합니다. 오케스트레이터의 Phase 1 Step 3.5 가 각 사이클 스텝 후 이 디렉터리를 스캔하고 `append` 를 호출. 이는 Agent 툴 서브에이전트(Implementer/Reviewer)와 `claude -p` 서브프로세스(Plan Reviewer/Verifier/Docs Updater) 사이의 환경변수 전파 퍼즐을 피하기 위함.
+**오케스트레이터만 AgentLens emit을 합니다.** 서브에이전트(Agent 툴 / `claude -p`)들은 여전히 `<worktree>/.orchestrator/learning_events/<task_id>-<role>.json` 에 이벤트 후보 JSON 을 준비하고, 오케스트레이터의 Phase 1 Step 3.5 candidate-drain 루프가 각 사이클 스텝 후 디렉터리를 스캔해서 `agentlens event append --type kws-cme.<event_type> --payload-json @<candidate>` 로 publish합니다. 후보 JSON → `.appended` 로 rename. 이 indirection 은 환경변수 전파 퍼즐을 피하기 위해 v2.8 부터 유지된 패턴 — 컷오버는 발산 사이트만 바꿨습니다.
 
-### 헬퍼 서브커맨드
+### 오케스트레이터 직접 emit 사이트 (4개)
 
-`scripts/append_learning_event.py`:
+| Phase | Step | 이벤트 |
+|---|---|---|
+| 0 | Step 7.5 | `kws-cme.phase_0_started` |
+| 1 | Step 2.6 | `kws-cme.task_completed` |
+| Transition | T3 | `kws-cme.compaction` + `kws-cme.context_health` (Resume Chain handoff시) |
+| 2 | Step 2 | `kws-cme.phase_2_complete` → `agentlens run-close --outcome success` |
 
-- `init-run` — Phase 0 Step 7.5; `run_id` 에코; `(session_id, repo, plan)` 에 대해 멱등
-- `append` — Phase 1 Step 3.5 / Phase Transition / Phase 2; 검증 + 살균 + 한 줄 작성
-- `close-run` — Phase 2 Step 2 (success), 에스컬레이션 소진 halt (aborted), 하드 halt (blocked)
-- `append-session-id` — Resume Chain 체인 오케스트레이터 시작; `init-run` 절대 호출 안 함
+Hard-halt 분기(에스컬레이션 소진, 예산 pause, T3 state-write 실패): `kws-cme.blocker` emit + `agentlens run-close --outcome aborted|blocked`.
 
-### 10개 이벤트 타입
+### 10개 이벤트 타입 (네임스페이스: `kws-cme.<event_type>`)
 
 - `blocker` (orchestrator) — Phase 0를 막는 plan/spec/baseline 누락, dirty worktree
 - `error` (orchestrator) — 스킬 절차 실패 (state 손상, worktree 생성 실패)
@@ -333,17 +337,21 @@ runs/<YYYY-MM-DD>/<run_id>/
 
 ### 살균 가드
 
-헬퍼는 다음을 거부: 비밀(Authorization: Bearer / api_key / sk-...), 전체 트랜스크립트, 절대 홈 경로, 과도한 발췌 (> 400자). `--repo-root` 하위 경로는 상대화. 서브에이전트 트랜스크립트는 `meta.json` 의 `session_id` 로 참조, 복제하지 않음.
+후보 JSON 은 발산 전 다음을 거부/마스킹: 비밀(Authorization: Bearer / api_key / sk-...), 전체 트랜스크립트, 절대 홈 경로, 과도한 발췌 (> 400자). `--repo-root` 하위 경로는 상대화. 서브에이전트 트랜스크립트는 AgentLens run-scope 안의 child run id 로 참조, 복제하지 않음.
 
 ### 실패 격리
 
-SKILL.md 의 모든 학습 로그 호출은 `... || true` 로 감싸지거나 `>/dev/null 2>&1` 로 라우팅됩니다. 헬퍼 누락, 쓰기 실패, 스키마 거부 — 이 중 어느 것도 계획 실행을 막지 않습니다. `MAE_LEARNING_RUN_ID` 가 설정되지 않으면 Phase 1 Step 3.5 는 append 루프 전에 단락됩니다.
+SKILL.md 의 모든 AgentLens 호출은 `[ -n "${ORCH_RUN_ID:-}" ]` 가드 + `2>/dev/null || true` 접미사로 감싸져 있습니다. AgentLens CLI 누락, registry 오류, 스키마 거부 — 이 중 어느 것도 계획 실행을 막지 않습니다. `ORCH_RUN_ID` 가 비어있으면 Phase 1 Step 3.5 의 candidate-drain 루프는 후보 파일을 `.appended` 로 옮기되 publish는 silently 건너뜁니다 (재시도 없음).
 
 ### `state.json` 과의 관계
 
-`state.json` 은 실행당 재개 진실의 출처 (worktree에 거주). 학습 로그는 실행 교차 제도적 메모리 (`~/.claude/` 에 거주). 둘은 독립적입니다: 오케스트레이터는 학습 로그를 만지지 않고도 끝까지 실행할 수 있고(헬퍼 누락 / init 실패), 학습 로그는 `state.json` 이 삭제된 실행의 이벤트도 기록할 수 있습니다.
+`state.json` 은 실행당 재개 진실의 출처 (worktree에 거주). AgentLens 이벤트 스트림은 실행 교차 제도적 메모리. 둘은 독립적입니다: 오케스트레이터는 AgentLens가 없어도 끝까지 실행할 수 있고(CLI 누락 / run-open 실패), AgentLens 는 `state.json` 이 삭제된 실행의 이벤트도 기록할 수 있습니다. `state.agentlens_orchestration_run` 필드(run-level, top-level)가 두 계층의 유일한 연결점입니다.
 
-전체 스키마와 코드 예시는 `references/learning-log.md` 참조.
+### 패리티 검증
+
+cutover-이전 run의 디스크 아카이브(`~/.claude/learning/.../events.jsonl`)와 AgentLens 스트림을 비교하려면 `scripts/compare_agentlens_events.py` 사용. `--self-test` 모드는 legacy `event_type` → `kws-cme.<event_type>` rename 계약을 합성 케이스로 검증하고, `evals/run.sh` 의 deterministic preflight 로 실행됩니다.
+
+전체 스키마와 코드 예시는 `references/learning-log.md` 참조 (cutover-이전 헬퍼 호출 예시는 *historical diagnostic procedures* 로 보존되어 있습니다).
 
 ## Method Audit (v2.11)
 

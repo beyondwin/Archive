@@ -23,7 +23,7 @@
 |-----------|-----------|------|
 | 스킬 동작 (SKILL.md 편집) | SKILL.md 버전 + README + HISTORY + ARCHITECTURE | [스킬 동작](#스킬-동작-변경) |
 | 서브에이전트 프롬프트 | references/<role>-prompt.md + 구조 변경 시 check_skill_contract.py + ≥50줄 시 실험 기록 | [서브에이전트 프롬프트](#서브에이전트-프롬프트-변경) |
-| 헬퍼 스크립트 | scripts/append_learning_event.py + 스키마 변경 시 check_learning_log.py + references/learning-log.md | [헬퍼 스크립트](#헬퍼-스크립트-변경) |
+| 헬퍼 스크립트 | scripts/compare_agentlens_events.py (rename contract + --self-test) + 스키마 변경 시 references/learning-log.md (v2.17 cutover: append_learning_event.py / check_learning_log.py 제거됨) | [헬퍼 스크립트](#헬퍼-스크립트-변경) |
 | 학습 로그 이벤트 타입 추가 | [extend-event-type.md](./how-to/extend-event-type.md) 의 5곳 모두 | [이벤트 타입 추가](#이벤트-타입-추가) |
 | Eval 픽스처 추가 | evals/fixtures/<N>.yaml + baselines/v<X>.json + 필요 시 HISTORY 항목 | [픽스처 추가](#픽스처-추가) |
 | 새 리스크 발견 | docs/risks-and-limitations.md (항상) + 액션 연기 시 deferred-candidates 에 추적 | [리스크 발견](#리스크-발견) |
@@ -73,13 +73,13 @@
 
 ### 헬퍼 스크립트 변경
 
-**정의**: `scripts/append_learning_event.py` 편집.
+**정의**: `scripts/compare_agentlens_events.py` (legacy → `kws-cme.*` rename 계약 + `--self-test`) 편집. v2.17 cutover에서 `scripts/append_learning_event.py` 와 `evals/check_learning_log.py` 는 제거되었으므로 더 이상 갱신 대상이 아닙니다.
 
 **필수 갱신**:
 
-- [ ] 스크립트 자체
-- [ ] `evals/check_learning_log.py` — 새 동작을 커버하는 테스트 추가
-- [ ] `references/learning-log.md` — 스키마 또는 서브커맨드 변경 시
+- [ ] 스크립트 자체 (`--self-test` 케이스 포함)
+- [ ] `references/learning-log.md` — 이벤트 타입/페이로드 스키마 변경 시 (cutover 이전 헬퍼 호출 예시는 *historical diagnostic procedures* 로 보존; 새 동작 가이드는 AgentLens emit 사이트로 작성)
+- [ ] `ARCHITECTURE.md` §14 — 발산 사이트 또는 candidate-drain 흐름이 바뀐 경우
 
 **선택**:
 - [ ] HISTORY.md 항목 — 사용자 가시면

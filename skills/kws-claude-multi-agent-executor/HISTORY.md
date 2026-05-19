@@ -21,6 +21,26 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.17.0 — AgentLens cutover (2026-05-19, Task 11 of agentlens-v1-and-kws-unification)
+
+Closes the dual-write window opened in the unification plan: AgentLens is now the sole event sink for `kws-cme.*` events. Five orchestrator emit sites are documented and enforced: Phase -1 step b (`agentlens run-open` → `ORCH_RUN_ID`), Phase 0 Step 7.5 (`kws-cme.phase_0_started`), Phase 1 Step 2.6 (`kws-cme.task_completed`), Phase Transition T3 (`kws-cme.compaction` + `context_health` candidate drain), Phase 2 Step 2 (`kws-cme.phase_2_complete` + `agentlens run-close --outcome success`). The candidate-drain loop in Phase 1 Step 3.5 republishes sub-agent `<worktree>/.orchestrator/learning_events/*.json` candidates as `kws-cme.<event_type>`. Hard-halt branches emit `kws-cme.blocker` and call `agentlens run-close --outcome aborted|blocked`.
+
+Run-level field `agentlens_orchestration_run: string|null` lives at the top of `state.json` (sibling of `plan_chain`, not inside any `plan_chain[i]`); preserved across plan2 swap and Resume Chain handoff. Resume Chain (chained child) propagates the parent run id via `AGENTLENS_PARENT_RUN_ID` env var; the child does NOT open a new AgentLens run and emits a `kws-cme.context_health` snapshot at handoff so downstream analysis can segment pre/post-handoff metrics. Every `agentlens` invocation is `2>/dev/null || true` — observability failure must never block plan execution; empty `ORCH_RUN_ID` makes every guarded emit a silent no-op.
+
+Removed: `scripts/append_learning_event.py` (~400 LOC) and the parallel `~/.claude/learning/kws-claude-multi-agent-executor/runs/<date>/<run_id>/{meta,events,final}.json` write path. Removed: `evals/check_learning_log.py` (tested only the removed helper). Removed: dormant `scripts/archive_run.sh` + `scripts/render_html_report.py` chain (v2.14 F1/F3, never wired into the post-cutover lifecycle). Added: `scripts/compare_agentlens_events.py --self-test` encodes the legacy → `kws-cme.*` rename contract and replaces `check_learning_log.py` as the deterministic preflight in `evals/run.sh`. `evals/check_skill_contract.py` and `evals/learning_log_adherence` were rewired to read AgentLens events.
+
+Historical `~/.claude/learning/kws-claude-multi-agent-executor/runs/...` archives remain on disk but are no longer written. `references/learning-log.md` and `docs/troubleshooting.md` retain the legacy helper subcommand examples as *historical diagnostic procedures* (cutover-pre-2026-05-19 runs only) — they are explicitly prefaced as such and are not stale guidance.
+
+### v2.16.0 — Timing/cost helper hardening (2026-05-19)
+
+Three small but observable regressions across v2.11–v2.15 runs are fixed by promoting Phase prose into mandatory helper-script calls:
+
+- **`timing.started` stamp before task dispatch:** atomic R-M-W of `<active>.tasks.task_<N>.timing.started = <iso8601 now>` before Step 1. Without this field the per-task duration column in the Final Summary Report cannot be computed (observed: `jq strptime` errors across all v2.11–v2.15 runs).
+- **`state.timestamps.completed_at` stamp at Phase 2 Step 2:** the canonical wall-clock end-marker that "Total wall time" depends on. Pre-v2.16 runs left this null even on `outcome=success`.
+- **`scripts/accumulate_cost.py` enforcement:** F2 cost-ledger aggregation was prose-only in v2.14 and silently skipped — `cost_ledger.totals.dispatches` came back 0 across every observed run. Now mandatory for every sub-agent dispatch; the helper owns price lookup, flock-guarded R-M-W of state.json, and aggregation.
+
+Failure to write `timing.started` is a non-fatal warning; `completed_at` failure follows the standard state-write hard-halt guardrail.
+
 ### v2.15.0 — Context engineering (2026-05-16)
 
 Three additive features for context efficiency on large plans:
