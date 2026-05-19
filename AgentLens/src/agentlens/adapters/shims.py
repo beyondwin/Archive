@@ -36,6 +36,30 @@ if [ ! -f "$REAL_LOCKFILE" ]; then
 fi
 REAL_PATH="$(awk -F= '$1=="path"{{print $2}}' "$REAL_LOCKFILE")"
 REAL_SHA="$(awk -F= '$1=="sha256"{{print $2}}' "$REAL_LOCKFILE")"
+# AgentLens install self-test (reserved env var). Only honoured when the
+# first positional arg is --version; everything else falls through to the
+# normal exec path so a real invocation cannot be hijacked.
+if [ "${{AGENTLENS_INSTALL_SELFTEST:-}}" = "1" ] && [ "${{1:-}}" = "--version" ]; then
+  depth="${{AGENTLENS_INSTALL_SELFTEST_DEPTH:-0}}"
+  if [ "$depth" != "0" ]; then
+    printf 'agentlens_selftest_reentry=%s\n' "1"
+    printf 'shim_path=%s\n' "$0"
+    printf 'chain_depth=%s\n' "$((depth + 1))"
+    exit 70
+  fi
+  real_exit_code=0
+  child_out="$(AGENTLENS_INSTALL_SELFTEST_DEPTH=1 "$REAL_PATH" --version 2>&1)" || real_exit_code="$?"
+  if printf '%s\n' "$child_out" | grep -q '^agentlens_selftest_reentry=1$'; then
+    printf '%s\n' "$child_out"
+    exit 70
+  fi
+  printf 'shim_path=%s\n' "$0"
+  printf 'real_path=%s\n' "$REAL_PATH"
+  printf 'real_kind=%s\n' "$(file -b "$REAL_PATH" 2>/dev/null | awk -F, '{{print $1}}')"
+  printf 'chain_depth=%s\n' "1"
+  printf 'real_exit_code=%s\n' "$real_exit_code"
+  exit 0
+fi
 CUR_SHA="$(shasum -a 256 "$REAL_PATH" | awk '{{print $1}}')"
 if [ "$REAL_SHA" != "$CUR_SHA" ]; then
   echo "agentlens: real binary sha256 drift — passthrough only" >&2
@@ -266,6 +290,30 @@ REAL_PATH="{backup_path}"
 if [ ! -x "$REAL_PATH" ]; then
   echo "agentlens: cmux backup missing at $REAL_PATH — re-run \`agentlens install claude --cmux\`" >&2
   exit 127
+fi
+# AgentLens install self-test (reserved env var). Only honoured when the
+# first positional arg is --version; everything else falls through to the
+# normal exec path so a real invocation cannot be hijacked.
+if [ "${{AGENTLENS_INSTALL_SELFTEST:-}}" = "1" ] && [ "${{1:-}}" = "--version" ]; then
+  depth="${{AGENTLENS_INSTALL_SELFTEST_DEPTH:-0}}"
+  if [ "$depth" != "0" ]; then
+    printf 'agentlens_selftest_reentry=%s\n' "1"
+    printf 'shim_path=%s\n' "$0"
+    printf 'chain_depth=%s\n' "$((depth + 1))"
+    exit 70
+  fi
+  real_exit_code=0
+  child_out="$(AGENTLENS_INSTALL_SELFTEST_DEPTH=1 "$REAL_PATH" --version 2>&1)" || real_exit_code="$?"
+  if printf '%s\n' "$child_out" | grep -q '^agentlens_selftest_reentry=1$'; then
+    printf '%s\n' "$child_out"
+    exit 70
+  fi
+  printf 'shim_path=%s\n' "$0"
+  printf 'real_path=%s\n' "$REAL_PATH"
+  printf 'real_kind=%s\n' "$(file -b "$REAL_PATH" 2>/dev/null | awk -F, '{{print $1}}')"
+  printf 'chain_depth=%s\n' "1"
+  printf 'real_exit_code=%s\n' "$real_exit_code"
+  exit 0
 fi
 # v1 §4.5 TTY-aware passthrough — for the cmux chain we always wrap because
 # cmux only ships the non-interactive print/exec wrapper.
