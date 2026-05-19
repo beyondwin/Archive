@@ -168,8 +168,10 @@ def test_agent_name_enum_rejects_invalid() -> None:
 
 
 def test_event_type_enum_rejects_invalid() -> None:
+    # Under the v1-unification namespace pattern, uppercase characters and
+    # reserved-but-unknown core names are still rejected.
     doc = _load_fixture(VALID_DIR, "event")
-    doc["type"] = "not.a.real.event"
+    doc["type"] = "Run.Started"
     with pytest.raises(SchemaError):
         validate_doc(doc)
 
@@ -347,3 +349,134 @@ def test_event_payload_variants(event_type: str, payload: dict) -> None:
     doc["type"] = event_type
     doc["payload"] = payload
     validate_doc(doc)
+
+
+# ---------------------------------------------------------------------------
+# v1-unification: additive run schema fields (S1.5.1)
+# ---------------------------------------------------------------------------
+
+
+def test_existing_valid_run_fixture_still_passes() -> None:
+    """Pre-unification run fixture must continue to validate unchanged."""
+    doc = _load_fixture(VALID_DIR, "run")
+    validate_doc(doc)
+
+
+def test_existing_valid_event_fixture_still_passes() -> None:
+    """Pre-unification event fixture must continue to validate unchanged."""
+    doc = _load_fixture(VALID_DIR, "event")
+    validate_doc(doc)
+
+
+def test_container_run_fixture_validates() -> None:
+    doc = _load_fixture(VALID_DIR, "run_container")
+    assert doc["run_kind"] == "container"
+    assert doc["agent"]["name"] == "generic"
+    assert doc["agent"]["mode"] == "unknown"
+    assert doc["agent"]["label"] == "kws-cme-orchestrator"
+    assert doc["recording"]["has_transcript"] is False
+    assert doc["recording"]["transcript_source"] == "none"
+    validate_doc(doc)
+
+
+def test_codex_capture_run_fixture_validates() -> None:
+    doc = _load_fixture(VALID_DIR, "run_codex_capture")
+    assert doc["agent"]["name"] == "codex_cli"
+    assert doc["recording"]["transcript_source"] == "codex-rollout-jsonl"
+    assert doc["input"]["import_key"].startswith("codex-rollout:")
+    validate_doc(doc)
+
+
+def test_run_kind_rejects_unknown_value() -> None:
+    doc = _load_fixture(VALID_DIR, "run")
+    doc["run_kind"] = "bogus"
+    with pytest.raises(SchemaError):
+        validate_doc(doc)
+
+
+def test_transcript_source_rejects_unknown_value() -> None:
+    doc = _load_fixture(VALID_DIR, "run_container")
+    doc["recording"]["transcript_source"] = "not-a-source"
+    with pytest.raises(SchemaError):
+        validate_doc(doc)
+
+
+def test_transcript_source_accepts_codex_rollout_jsonl() -> None:
+    doc = _load_fixture(VALID_DIR, "run")
+    doc["recording"]["has_transcript"] = True
+    doc["recording"]["transcript_source"] = "codex-rollout-jsonl"
+    validate_doc(doc)
+
+
+# ---------------------------------------------------------------------------
+# v1-unification: event namespace pattern (S1.5.1, R2)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "fixture_name,expected_type",
+    [
+        ("event_kws_cme_task_started", "kws-cme.task_started"),
+        ("event_kws_cpe_verification_failed", "kws-cpe.verification_failed"),
+        ("event_claude_tool_use", "claude.tool_use"),
+        ("event_codex_tool_use", "codex.tool_use"),
+    ],
+)
+def test_namespaced_event_fixtures_validate(
+    fixture_name: str, expected_type: str
+) -> None:
+    doc = _load_fixture(VALID_DIR, fixture_name)
+    assert doc["type"] == expected_type
+    validate_doc(doc)
+
+
+def test_event_type_rejects_uppercase_namespace() -> None:
+    doc = _load_fixture(INVALID_DIR, "event_uppercase_namespace")
+    with pytest.raises(SchemaError):
+        validate_doc(doc)
+
+
+def test_event_type_rejects_missing_dot() -> None:
+    doc = _load_fixture(INVALID_DIR, "event_missing_dot")
+    with pytest.raises(SchemaError):
+        validate_doc(doc)
+
+
+def test_event_type_rejects_reserved_but_unknown_core_name() -> None:
+    """Unknown event names under reserved AgentLens namespaces are rejected."""
+    doc = _load_fixture(INVALID_DIR, "event_reserved_unknown")
+    with pytest.raises(SchemaError):
+        validate_doc(doc)
+
+
+def test_event_type_rejects_trailing_dot() -> None:
+    doc = _load_fixture(VALID_DIR, "event")
+    doc["type"] = "kws-cme."
+    with pytest.raises(SchemaError):
+        validate_doc(doc)
+
+
+def test_event_type_rejects_leading_digit() -> None:
+    doc = _load_fixture(VALID_DIR, "event")
+    doc["type"] = "1bad.namespace"
+    with pytest.raises(SchemaError):
+        validate_doc(doc)
+
+
+def test_core_event_names_still_accepted() -> None:
+    """Existing core event names from constants.EVENT_TYPES remain valid."""
+    doc = _load_fixture(VALID_DIR, "event")
+    for core_type in (
+        "run.started",
+        "checkpoint.marked",
+        "command.started",
+        "command.finished",
+        "artifact.attached",
+        "task.started",
+        "task.finished",
+        "failure.observed",
+        "run.finalized",
+        "run.cancelled",
+    ):
+        doc["type"] = core_type
+        validate_doc(doc)

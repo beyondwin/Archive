@@ -1,0 +1,8 @@
+{
+  "schema": "agentlens.event.v1",
+  "event_id": "evt_codexabc1234",
+  "run_id": "run_20260519_000000_cdx001",
+  "ts": "2026-05-19T00:00:04Z",
+  "type": "codex.tool_use",
+  "payload": {"tool_name": "shell", "command": ["ls"]}
+}

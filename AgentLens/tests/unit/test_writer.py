@@ -154,3 +154,71 @@ def test_write_workspace_pointer_creates_marker(tmp_path: Path) -> None:
     marker = workspace_root / ".agentlens" / "current-runs" / run_id
     assert marker.is_dir()
     assert (marker / "run_dir").read_text(encoding="utf-8") == str(run_dir.resolve())
+
+
+# ---------------------------------------------------------------------------
+# v1-unification: writer accepts container/codex runs and namespaced events
+# (Task 0; S1.5.1)
+# ---------------------------------------------------------------------------
+
+
+def test_write_run_meta_accepts_container_run(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    run = _load_fixture("run_container")
+    write_run_meta(run_dir, run)
+    assert (run_dir / "run.json").exists()
+    loaded = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert loaded["run_kind"] == "container"
+    assert loaded["agent"]["label"] == "kws-cme-orchestrator"
+    assert loaded["recording"]["transcript_source"] == "none"
+
+
+def test_write_run_meta_accepts_codex_capture_run(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    run = _load_fixture("run_codex_capture")
+    write_run_meta(run_dir, run)
+    loaded = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+    assert loaded["agent"]["name"] == "codex_cli"
+    assert loaded["recording"]["transcript_source"] == "codex-rollout-jsonl"
+    assert loaded["input"]["import_key"].startswith("codex-rollout:")
+
+
+@pytest.mark.parametrize(
+    "fixture_name",
+    [
+        "event_kws_cme_task_started",
+        "event_kws_cpe_verification_failed",
+        "event_claude_tool_use",
+        "event_codex_tool_use",
+    ],
+)
+def test_append_event_accepts_namespaced_event(
+    tmp_path: Path, fixture_name: str
+) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    evt = _load_fixture(fixture_name)
+    append_event(run_dir, evt)
+    lines = (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    assert json.loads(lines[0])["type"] == evt["type"]
+
+
+def test_append_event_rejects_uppercase_namespace(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    bad = _load_fixture("event")
+    bad["type"] = "KWS-CME.task_started"
+    with pytest.raises(WriteError):
+        append_event(run_dir, bad)
+
+
+def test_append_event_rejects_reserved_unknown_core_name(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    bad = _load_fixture("event")
+    bad["type"] = "run.bogus_event"
+    with pytest.raises(WriteError):
+        append_event(run_dir, bad)

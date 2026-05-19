@@ -1,0 +1,28 @@
+{
+  "schema": "agentlens.run.v1",
+  "run_id": "run_20260519_000000_cdx001",
+  "workspace_id": "ws_0123456789abcdef",
+  "started_at": "2026-05-19T00:00:00Z",
+  "run_kind": "capture",
+  "agent": {
+    "name": "codex_cli",
+    "mode": "cli",
+    "version": "0.1.0"
+  },
+  "workspace": {
+    "root_label": "<workspace>",
+    "root_hash": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "id_basis": "git",
+    "git_branch": "main"
+  },
+  "recording": {
+    "mode": "minimal",
+    "adapter": "codex_rollout_importer",
+    "has_transcript": true,
+    "transcript_source": "codex-rollout-jsonl"
+  },
+  "input": {
+    "kind": "import",
+    "import_key": "codex-rollout:1f9a4d2e-2c3a-4cf2-9b1d-7f0aa1c2d3e4"
+  }
+}
