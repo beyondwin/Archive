@@ -59,6 +59,29 @@ Session JSONL imported by `agentlens import claude-session` and `agentlens impor
 - **Redaction.** Transcript material flows through the same redaction pipeline (§2) on its way to disk: API keys, bearer tokens, PEM bodies, and `$HOME` prefixes are masked before the file is finalized and hashed into the manifest.
 - **No transcripts from the wrapper.** The process wrapper never writes into `artifacts/transcripts/`. Only the named session importers do, and they are the only paths that can flip `recording.has_transcript` to `true`.
 
+## 6.2 Host-isolation invariant (failure containment)
+
+AgentLens calls embedded in host orchestrators (kws-cme, kws-cpe, and any
+future skill) are wired so that AgentLens **never blocks the host
+workflow**. The contract has two enforcement points:
+
+- **Host snippet shape.** Orchestrators invoke AgentLens with
+  `agentlens <subcommand> ... 2>/dev/null || true`, which guarantees a
+  missing CLI on `PATH` produces a no-op (exit 0). The shape is
+  user-visible by design — it is the only mechanism that survives
+  scenarios where the user has uninstalled AgentLens entirely.
+- **CLI-side non-blocking.** Inside `agentlens event append`,
+  `agentlens run-close`, and `agentlens mark`, unexpected exceptions —
+  including an unreadable `$AGENTLENS_HOME/runs/`, a stale `run_id`, a
+  corrupt index, or a permission-denied transient — are swallowed,
+  surfaced on stderr as a single `warning:` line, and the process exits
+  with code `0`. The host orchestrator therefore sees a uniformly
+  non-error response regardless of AgentLens's internal state.
+
+Automated coverage lives in
+`AgentLens/tests/integration/test_failure_isolation.py` (PATH-missing,
+unreadable-home, unknown-run-id, namespace-glob, tree-traversal).
+
 ## 7. v1 잠금 정책 (v1 lock policy)
 
 - The default-deny posture, the redaction sentinel format (`<REDACTED:*>`), the `<HOME>/<HASH8>` rewrite, the `MAX_EXCERPT_CHARS=4096` budget, the `0700` shim directory permission, and the shim sha256 drift check are **locked** for v1. Relaxing any of them requires a major-version bump and an explicit opt-in flag.
