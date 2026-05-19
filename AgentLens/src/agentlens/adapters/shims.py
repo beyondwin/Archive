@@ -40,6 +40,27 @@ if [ "$REAL_SHA" != "$CUR_SHA" ]; then
   echo "agentlens: real binary sha256 drift — passthrough only" >&2
   exec "$REAL_PATH" "$@"
 fi
+# v1 §4.5 TTY-aware passthrough.
+# When invoked interactively (stdin is a TTY) and the requested mode is the
+# agent's TUI, we cannot safely wrap with subprocess.Popen+PIPE. Pass
+# through to the real binary; the rollout/JSONL importer captures the
+# transcript post-hoc.
+if [ -t 0 ]; then
+  case "{name}" in
+    claude)
+      case "${{1:-}}" in
+        -p|--print|--output-format) ;;  # non-TTY print mode → wrap
+        *) exec "$REAL_PATH" "$@" ;;     # interactive TUI → passthrough
+      esac
+      ;;
+    codex)
+      case "${{1:-}}" in
+        exec|e) ;;  # non-interactive by design → wrap
+        *) exec "$REAL_PATH" "$@" ;;     # bare/resume/fork/review/apply/login/mcp/app → passthrough
+      esac
+      ;;
+  esac
+fi
 # Nested invocation handling
 if [ -n "${{AGENTLENS_RUN_ID:-}}" ]; then
   policy="${{AGENTLENS_NESTED_POLICY:-passthrough}}"
@@ -147,6 +168,16 @@ def install_shim(name: str, real_path: Path) -> None:
     """
     shim_dir = _ensure_shim_dir()
     real = Path(real_path).resolve(strict=True)
+    # v1 regression guard: refuse to operate on a binary inside a macOS
+    # .app bundle (e.g. Codex Desktop's bundled `codex`). Replacing such a
+    # binary would break the code-signed bundle, and Desktop transcript
+    # capture is import-only via the rollout JSONL importer. Callers
+    # wanting a Desktop install must take an explicit, separate path.
+    if any(part.endswith(".app") for part in real.parts):
+        raise ValueError(
+            f"refusing to shim binary inside .app bundle: {real} "
+            "(Desktop transcripts are captured via the rollout importer)"
+        )
     digest = _sha256_file(real)
 
     lockfile = shim_dir / f"{name}.real"
