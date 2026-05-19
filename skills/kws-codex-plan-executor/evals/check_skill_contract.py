@@ -32,10 +32,11 @@ def main() -> int:
     learning = (skill_dir / "references" / "learning-log.md").read_text(encoding="utf-8")
     event_journal = (skill_dir / "references" / "event-journal.md").read_text(encoding="utf-8")
     subagents = (skill_dir / "references" / "subagent-run-store.md").read_text(encoding="utf-8")
+    pre_dispatch = (skill_dir / "references" / "pre-dispatch-pipeline.md").read_text(encoding="utf-8")
     checklist = (skill_dir / "references" / "prompt-export-checklist.md").read_text(encoding="utf-8")
     eval_run = (skill_dir / "evals" / "run.sh").read_text(encoding="utf-8")
     invocation = section(text, "## Invocation", "## Hard Boundary")
-    runtime = "\n".join([text, template, execution, headless, state_schema, learning, event_journal, subagents])
+    runtime = "\n".join([text, template, execution, headless, state_schema, learning, event_journal, subagents, pre_dispatch])
     normalized = re.sub(r"\s+", " ", runtime)
 
     banned = [
@@ -51,11 +52,24 @@ def main() -> int:
     ]
 
     checks = {
-        "version_2191": 'version: "2.19.1"' in text,
+        "version_2200": 'version: "2.20.0"' in text,
         "resume_argument": "resume=latest|<state-path>" in invocation,
         "subagents_auto_default": "subagents=auto|on|off" in invocation and "default `auto`" in invocation,
         "subagents_on_is_explicit": "explicitly permits subagents for this run" in invocation
         and "Subagent records are opt-in execution artifacts" in subagents,
+        "subagents_auto_requires_user_request": "`subagents=auto` does not by itself authorize spawning" in subagents
+        and "Do not spawn\nsubagents when `subagents=auto` without an explicit user request" in text,
+        "subagents_on_requires_task_packet": "`subagents=on`" in pre_dispatch
+        and "current_task_packet_path" in pre_dispatch
+        and "readable" in pre_dispatch,
+        "delegated_subagent_context_limited": all(
+            token in runtime
+            for token in ("task id", "task packet path", "state path", "write scope", "verification expectation")
+        ),
+        "main_agent_reviews_post_diff_and_state": "post-diff and state" in runtime
+        and "before accepting subagent output" in runtime,
+        "subagents_not_raw_full_plan_context": "dispatch from task packets, not raw full-plan\ncontext" in text
+        and "Do not ask a subagent to infer its write scope from the entire plan" in text,
         "no_subagents_by_default": "Use `spawn_agent` by default" not in runtime
         and "Dispatch subagents by default" not in runtime
         and "subagents 기본값은 on" not in template,

@@ -28,6 +28,16 @@ def changed_files(workdir: Path) -> set[str]:
 
 
 def changed_files_for_state(workdir: Path, state: dict) -> tuple[Path, set[str]]:
+    resolved_workdir = workdir.resolve(strict=False)
+    workspace = str(state.get("workspace") or "")
+    plan = str(state.get("plan") or "")
+    resolved_workspace = Path(workspace).expanduser().resolve(strict=False) if workspace else None
+    resolved_plan = Path(plan).expanduser().resolve(strict=False) if plan else None
+    if resolved_workspace == resolved_workdir or (
+        resolved_plan is not None and str(resolved_plan).startswith(str(resolved_workdir))
+    ):
+        return workdir, changed_files(workdir)
+
     inspected = Path(state.get("worktree") or workdir).expanduser()
     if not inspected.is_absolute():
         inspected = (workdir / inspected).resolve()
@@ -55,16 +65,30 @@ def task_statuses_complete(state: dict, allow_blocked: bool) -> bool:
 def select_state_path(workdir: Path) -> Path | None:
     home = Path(os.environ.get("CODEX_EVAL_HOME", "~")).expanduser()
     candidates = sorted((home / ".codex" / "orchestrator").glob("*/state.json"))
+    resolved_workdir = str(workdir.resolve(strict=False))
+    worktree_root = home / ".codex" / "worktrees"
+    resolved_worktree_root = str(worktree_root.resolve(strict=False))
     matches: list[Path] = []
+    fallback_matches: list[Path] = []
     for candidate in candidates:
         try:
             state = json.loads(candidate.read_text(encoding="utf-8"))
         except Exception:
             continue
+
         workspace = str(state.get("workspace") or "")
         plan = str(state.get("plan") or "")
-        if workspace == str(workdir) or plan.startswith(str(workdir)):
+        resolved_workspace = str(Path(workspace).expanduser().resolve(strict=False)) if workspace else ""
+        resolved_plan = str(Path(plan).expanduser().resolve(strict=False)) if plan else ""
+        if resolved_workspace == resolved_workdir or resolved_plan.startswith(resolved_workdir):
             matches.append(candidate)
+            continue
+        if resolved_workspace.startswith(resolved_worktree_root) or resolved_plan.startswith(resolved_worktree_root):
+            fallback_matches.append(candidate)
+    if matches:
+        return matches[-1]
+    if len(fallback_matches) == 1:
+        return fallback_matches[0]
     return matches[-1] if matches else None
 
 

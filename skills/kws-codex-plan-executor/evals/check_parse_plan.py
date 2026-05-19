@@ -86,6 +86,24 @@ def main() -> int:
         if not checks["file_line_numbers_match"]:
             failures.append(f"expected file line numbers {expected_file_line_numbers}, got {actual_file_line_numbers}")
 
+    expected_tasks = expected.get("tasks") or []
+    if expected_tasks:
+        actual_tasks = {task.get("id"): task for task in parsed.get("tasks", [])}
+        task_failures = []
+        for expected_task in expected_tasks:
+            task_id = expected_task.get("id")
+            actual_task = actual_tasks.get(task_id)
+            if not actual_task:
+                task_failures.append(f"missing task {task_id}")
+                continue
+            for key, expected_value in expected_task.items():
+                if key == "id":
+                    continue
+                if actual_task.get(key) != expected_value:
+                    task_failures.append(f"{task_id}.{key}: expected {expected_value!r}, got {actual_task.get(key)!r}")
+        checks["tasks_match"] = not task_failures
+        failures.extend(task_failures)
+
     payload = {
         "fixture": fixture.get("name") or fixture_path.stem,
         "passed": not failures,

@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "2.19.1"
+  version: "2.20.0"
   updated_at: "2026-05-19"
 ---
 
@@ -35,6 +35,15 @@ Supported arguments:
 - `headless_sandbox=workspace-write|read-only` optional, default
   `workspace-write`; `read-only` is for preflight/prompt verification and
   blocks edit execution.
+- `context_mode=auto|sliced|full` optional, default `auto`; `auto` uses task
+  packets when a spec exists.
+- `context_budget=<positive-int>` optional, default `60000` per task packet.
+- `context_threshold=<float>` optional, default `0.70`; values must be in
+  `[0.05,0.95]`.
+- `manifest_fallback=full_spec_on_blocker|halt_on_blocker` optional, default
+  `full_spec_on_blocker`.
+- Natural-language hints are accepted only after deterministic parser
+  resolution; print the parsed echo line before preflight.
 
 ## Hard Boundary
 
@@ -51,6 +60,11 @@ Only use `spawn_agent` when the user explicitly requests subagents,
 delegation, or parallel agent work, or passes `subagents=on`. Do not spawn
 subagents when `subagents=auto` without an explicit user request, or when
 `subagents=off`.
+
+When subagents are permitted, dispatch from task packets, not raw full-plan
+context. Do not ask a subagent to infer its write scope from the entire plan.
+The main agent remains responsible for post-diff and state review before
+accepting subagent output.
 
 ## Core Invariants
 

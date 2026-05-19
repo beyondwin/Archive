@@ -11,6 +11,7 @@
     "verification",
     "open_gaps",
     "residual_risk",
+    "context_artifacts",
     "next_action"
   ],
   "properties": {
@@ -62,6 +63,22 @@
     "residual_risk": {
       "type": "array",
       "items": {"type": "string"}
+    },
+    "context_artifacts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["spec_manifest_path", "task_packet_dir", "decisions_path"],
+      "properties": {
+        "spec_manifest_path": {
+          "type": ["string", "null"]
+        },
+        "task_packet_dir": {
+          "type": ["string", "null"]
+        },
+        "decisions_path": {
+          "type": ["string", "null"]
+        }
+      }
     },
     "next_action": {
       "type": "string",

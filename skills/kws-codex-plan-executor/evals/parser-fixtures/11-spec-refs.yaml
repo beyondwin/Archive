@@ -1,0 +1,18 @@
+name: spec-refs
+mode: interactive
+plan: |
+  ## Task 0: Add parser
+
+  **Files:**
+  - Modify: scripts/parse_plan.py
+
+  **Spec Refs:** S1, S2.1
+
+  **Acceptance Criteria**
+  - Parser returns spec refs.
+expected:
+  tasks:
+    - id: task_0
+      spec_refs: ["S1", "S2.1"]
+      body_line_start: 3
+      body_line_end: 9
