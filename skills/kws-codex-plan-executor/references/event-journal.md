@@ -74,3 +74,39 @@ Current event type vocabulary:
 - `blocked`
 - `failed`
 - `finished`
+
+## AgentLens Dual-Write (parity window)
+
+During the parity window, every event-journal append also mirrors to AgentLens
+under the `kws-cpe.<event>` namespace. Open the AgentLens orchestration run at
+execution init with `agentlens run-open --agent kws-cpe-orchestrator
+--workspace "$WORKTREE_ABS" --meta plan=...` and persist the returned id as the
+run-level `agentlens_orchestration_run` field of
+`.codex-orchestrator/runs/<run_id>/state.json`. Then guard every emit:
+
+```bash
+if [ -n "${ORCH_RUN_ID:-}" ]; then
+  agentlens event append --run "$ORCH_RUN_ID" \
+    --type kws-cpe.<event> \
+    --payload-json '<json>' \
+    2>/dev/null || true
+fi
+```
+
+Expected `kws-cpe.<event>` mirror types (one per event-journal vocabulary
+item) at minimum:
+
+- `kws-cpe.run_started`
+- `kws-cpe.task_started`
+- `kws-cpe.task_completed`
+- `kws-cpe.verification_passed`
+- `kws-cpe.verification_failed`
+- `kws-cpe.compaction` (emitted at phase transitions when applicable)
+- `kws-cpe.blocker`
+- `kws-cpe.failed`
+- `kws-cpe.run_completed` (terminal `finished`)
+
+Headless `codex exec` spawns must propagate the parent id with
+`AGENTLENS_PARENT_RUN_ID="$ORCH_RUN_ID"`. The legacy
+`scripts/append_run_event.py` call stays in place alongside the AgentLens
+append until parity is verified. AgentLens failures are never blocking.

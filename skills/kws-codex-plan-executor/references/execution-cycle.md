@@ -40,13 +40,41 @@ Use this for `mode=interactive`.
 - Initialize a learning run inside the selected worktree with
   `scripts/append_learning_event.py init-run` and keep its `run_id` for all
   state, headless artifacts, and learning events.
+- Open an AgentLens orchestration run alongside the learning run init, capturing
+  the id for the lifetime of this execution:
+
+  ```bash
+  ORCH_RUN_ID=$(agentlens run-open \
+    --agent kws-cpe-orchestrator \
+    --workspace "$WORKTREE_ABS" \
+    --meta plan="$PLAN_REL" \
+    --meta spec="${SPEC_REL:-}" \
+    2>/dev/null || echo "")
+  ```
+
+  If `ORCH_RUN_ID` is empty (CLI absent, registry error), all later AgentLens
+  emit sites no-op silently. AgentLens failure is never a blocker.
 - Initialize `.codex-orchestrator/runs/<run_id>/state.json` and keep
   `.codex-orchestrator/state.json` as a latest-state compatibility copy or
-  pointer.
+  pointer. Persist `agentlens_orchestration_run` at the top of the per-run
+  state.json (string id or `null`); this field is run-level and must be
+  preserved across resume/handoff.
 - Initialize project-local event evidence by appending `run_started` with
   `scripts/append_run_event.py` when the helper is available. Store
   `event_journal_path` and `last_event_seq` in state; this journal is replay
   evidence and does not replace `state.json` or user-local learning logs.
+  Dual-write the same event to AgentLens during the parity window:
+
+  ```bash
+  if [ -n "${ORCH_RUN_ID:-}" ]; then
+    agentlens event append --run "$ORCH_RUN_ID" \
+      --type kws-cpe.run_started \
+      --payload-json '{"mode":"interactive","run_id":"<run_id>"}' \
+      2>/dev/null || true
+  fi
+  ```
+  Keep both the legacy `append_run_event.py` call and the AgentLens append until
+  parity is verified.
 - Build `.codex-orchestrator/runs/<run_id>/context.json` with
   `scripts/build_context_snapshot.py` after `run_id` initialization and before
   task contracts. Store `context_snapshot_path` and `context_basis_hash` in
@@ -62,7 +90,17 @@ Use this for `mode=interactive`.
   related dirty task files, unusable execution worktree, or unclear mid/high-risk
   acceptance criteria, write a redacted learning event using
   `references/learning-log.md` and `scripts/append_learning_event.py append`
-  when a run_id exists.
+  when a run_id exists. Dual-write the mirror to AgentLens as
+  `kws-cpe.learning.blocker` when `ORCH_RUN_ID` is non-empty:
+
+  ```bash
+  if [ -n "${ORCH_RUN_ID:-}" ]; then
+    agentlens event append --run "$ORCH_RUN_ID" \
+      --type kws-cpe.learning.blocker \
+      --payload-json '<redacted-event-json>' \
+      2>/dev/null || true
+  fi
+  ```
 - Assign task risk:
   - `low`: one isolated file or module.
   - `mid`: multiple files, shared config, repeated edits to the same file, or
@@ -86,7 +124,17 @@ For each task:
    `forbidden_write_globs`, `artifact_policy`, and `max_context_chars`.
    Finished runs require every completed task to have a valid manifest.
    Append `task_contract_recorded` after the contract is saved when the event
-   journal is active.
+   journal is active. Dual-write the mirror to AgentLens as
+   `kws-cpe.task_started` when `ORCH_RUN_ID` is non-empty:
+
+   ```bash
+   if [ -n "${ORCH_RUN_ID:-}" ]; then
+     agentlens event append --run "$ORCH_RUN_ID" \
+       --type kws-cpe.task_started \
+       --payload-json '{"task_id":"<task_id>"}' \
+       2>/dev/null || true
+   fi
+   ```
 2. Re-check task skills before edits. Invoke `using-superpowers` as the
    per-task skill gate. For feature, bugfix, refactor, behavior change, or
    executable-code edits, invoke `test-driven-development` before writing
@@ -141,12 +189,36 @@ For each task:
    `unit_manifest.allowed_write_globs`, `contract.forbidden_edits`, and
    `unit_manifest.forbidden_write_globs`.
    Append `verification_passed` or `verification_failed` for task-level
-   verification boundaries when the event journal is active.
+   verification boundaries when the event journal is active. Dual-write to
+   AgentLens as `kws-cpe.verification_failed` (the failure case is the spec'd
+   primary event; emit `kws-cpe.verification_passed` for symmetry on success)
+   when `ORCH_RUN_ID` is non-empty:
+
+   ```bash
+   if [ -n "${ORCH_RUN_ID:-}" ]; then
+     agentlens event append --run "$ORCH_RUN_ID" \
+       --type "kws-cpe.verification_${RESULT}" \
+       --payload-json '{"task_id":"<task_id>","command":"<cmd>"}' \
+       2>/dev/null || true
+   fi
+   ```
 6. Record raw output paths for failures.
 7. Update state and checkpoint.
    Task completion must set the task `status` to `completed`, `blocked`, or
    `error`; do not leave a finished task as `in_progress` with only
    `completed_at` populated.
+   When `task_completed` is appended to the project-local event journal,
+   dual-write the mirror to AgentLens as `kws-cpe.task_completed` when
+   `ORCH_RUN_ID` is non-empty:
+
+   ```bash
+   if [ -n "${ORCH_RUN_ID:-}" ]; then
+     agentlens event append --run "$ORCH_RUN_ID" \
+       --type kws-cpe.task_completed \
+       --payload-json '{"task_id":"<task_id>","status":"completed"}' \
+       2>/dev/null || true
+   fi
+   ```
 8. Refresh `context_health` at the same semantic boundary. Use `green` when
    another agent can resume from state and artifacts, `yellow` when assumptions
    or open questions remain but execution can continue, and `red` when safe
@@ -245,7 +317,22 @@ details.
   improvement for this executor. Do not log routine successful completions.
 - Close the learning run with `scripts/append_learning_event.py close-run` using
   `success`, `blocked`, or `error` for whole-run outcome. Learning-log failure
-  must not block the user's implementation result.
+  must not block the user's implementation result. Dual-write the terminal
+  AgentLens event before closing the AgentLens run; pick the event type by
+  outcome (`finished` → `kws-cpe.run_completed`, blocked/failed → emit
+  `kws-cpe.blocker` / `kws-cpe.failed` from the relevant taxonomy site) and then
+  close the AgentLens orchestration run. Both calls are guarded and silent:
+
+  ```bash
+  if [ -n "${ORCH_RUN_ID:-}" ]; then
+    agentlens event append --run "$ORCH_RUN_ID" \
+      --type kws-cpe.run_completed \
+      --payload-json '{"outcome":"<finished|blocked|failed>"}' \
+      2>/dev/null || true
+    agentlens run-close --run "$ORCH_RUN_ID" \
+      --outcome "<success|blocked|aborted>" 2>/dev/null || true
+  fi
+  ```
 - Summarize changed files, verification, branch/worktree, session-owned
   resources, `lifecycle_outcome`, evidence, artifacts/state, `handoff_reason`
   when not finished, and residual risk.

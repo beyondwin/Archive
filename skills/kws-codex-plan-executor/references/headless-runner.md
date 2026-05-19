@@ -65,6 +65,20 @@ CONTEXT_BASIS_HASH="$(python3 "$SKILL_DIR/scripts/build_context_snapshot.py" \
   --max-chars "${CONTEXT_MAX_CHARS:-120000}" \
   --output "$RUN_DIR/context.json")"
 
+# AgentLens dual-write — open an orchestration run alongside the learning run.
+# Empty result (CLI absent, registry error) means downstream emits no-op.
+ORCH_RUN_ID="$(agentlens run-open \
+  --agent kws-cpe-orchestrator \
+  --workspace "$WORKTREE_ABS" \
+  --meta plan="$PLAN_REL" \
+  --meta spec="${SPEC_REL:-}" \
+  --meta mode=headless \
+  2>/dev/null || echo "")"
+# Persist ORCH_RUN_ID under .codex-orchestrator/runs/$RUN_ID/state.json field
+# `agentlens_orchestration_run` (string or null) at first state.json write;
+# .codex-orchestrator/state.json stays as the latest-state compatibility copy.
+
+AGENTLENS_PARENT_RUN_ID="${ORCH_RUN_ID:-}" \
 codex exec \
   --cd "$WORKTREE_ABS" \
   --sandbox "$HEADLESS_SANDBOX" \
@@ -73,6 +87,11 @@ codex exec \
   "$PROMPT" \
   > "$RUN_DIR/headless.jsonl" 2>&1
 ```
+
+The child `codex exec` reads `AGENTLENS_PARENT_RUN_ID` from its environment and
+exports it as `ORCH_RUN_ID` for all emit-site code so events publish into the
+same AgentLens orchestration run as the supervisor. If `ORCH_RUN_ID` is empty,
+every guarded `agentlens event append` becomes a silent no-op.
 
 ## Schema Output Variant
 
@@ -97,6 +116,15 @@ CONTEXT_BASIS_HASH="$(python3 "$SKILL_DIR/scripts/build_context_snapshot.py" \
   --max-chars "${CONTEXT_MAX_CHARS:-120000}" \
   --output "$RUN_DIR/context.json")"
 
+ORCH_RUN_ID="$(agentlens run-open \
+  --agent kws-cpe-orchestrator \
+  --workspace "$WORKTREE_ABS" \
+  --meta plan="$PLAN_REL" \
+  --meta spec="${SPEC_REL:-}" \
+  --meta mode=headless \
+  2>/dev/null || echo "")"
+
+AGENTLENS_PARENT_RUN_ID="${ORCH_RUN_ID:-}" \
 codex exec \
   --cd "$WORKTREE_ABS" \
   --sandbox "$HEADLESS_SANDBOX" \
@@ -150,6 +178,26 @@ success still depends on `state.json`, `context_health`, and
 `completion_audit`. Finished state must include matching `event_journal_path`
 and a positive `last_event_seq`.
 
+The target must also dual-write every event-journal append to AgentLens during
+the parity window. Read `ORCH_RUN_ID` from the `AGENTLENS_PARENT_RUN_ID` env or
+from the per-run `state.json` field `agentlens_orchestration_run`; if both are
+empty the dual-write no-ops silently:
+
+```bash
+ORCH_RUN_ID="${AGENTLENS_PARENT_RUN_ID:-$(jq -r '.agentlens_orchestration_run // ""' \
+  "$RUN_DIR/state.json" 2>/dev/null)}"
+if [ -n "${ORCH_RUN_ID:-}" ]; then
+  agentlens event append --run "$ORCH_RUN_ID" \
+    --type kws-cpe.<event> \
+    --payload-json '<json>' \
+    2>/dev/null || true
+fi
+```
+
+The legacy `append_run_event.py` call remains alongside the AgentLens append
+during the parity window. The first state.json write must persist
+`agentlens_orchestration_run` (the supervisor-captured `ORCH_RUN_ID` or `null`).
+
 Before claiming terminal success, run `scripts/reconcile_state.py --check` or
 `--repair-safe`. If blocking drift remains, the target must report a blocked or
 failed lifecycle outcome with a concrete resume action instead of
@@ -182,6 +230,12 @@ Use `references/learning-log.md` and `scripts/append_learning_event.py` for
 `verification_failure`, `recurring_issue`,
 `successful_workaround`, and actionable `completion_learning` events. `prompt`
 and `handoff` are not logging modes.
+
+Each `scripts/append_learning_event.py append` call must also dual-write to
+AgentLens under the `kws-cpe.learning.<event>` namespace when `ORCH_RUN_ID` is
+non-empty (e.g. `kws-cpe.learning.successful_workaround`,
+`kws-cpe.learning.verification_failure`). The legacy helper stays in place
+during the parity window — keep both calls.
 
 ## Sandbox Selection
 

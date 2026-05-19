@@ -82,6 +82,23 @@ parallel work, or passes `subagents=on`.
   `.codex-orchestrator/runs/<run_id>/events.jsonl` when the event helper is
   available. State remains authoritative, but finished state records the event
   journal path and last event sequence.
+- Execution runs additionally dual-write events to AgentLens during the parity
+  window. At run init the orchestrator opens an AgentLens run with
+  `agentlens run-open --agent kws-cpe-orchestrator --workspace "$WORKTREE_ABS"
+  --meta plan=...` and persists the returned id as the run-level
+  `agentlens_orchestration_run` field in
+  `.codex-orchestrator/runs/<run_id>/state.json` (root
+  `.codex-orchestrator/state.json` remains a compatibility latest-state
+  copy/pointer). Project-local journal events emitted through
+  `scripts/append_run_event.py` are mirrored to AgentLens as
+  `kws-cpe.<event>`; user-local learning events emitted through
+  `scripts/append_learning_event.py` are mirrored as
+  `kws-cpe.learning.<event>`. Every AgentLens call is guarded by
+  `[ -n "${ORCH_RUN_ID:-}" ]` and suffixed with `2>/dev/null || true`; AgentLens
+  failures must never block plan execution. The legacy helpers stay in place
+  during this parity window — dual-write, not replace. Headless `codex exec`
+  spawns must propagate the parent id via `AGENTLENS_PARENT_RUN_ID="$ORCH_RUN_ID"`
+  when non-empty.
 - Execution runs record `.codex-orchestrator/runs/<run_id>/context.json` before
   edits and store `context_snapshot_path` plus `context_basis_hash` in state.
   The snapshot may record `context_budget` so oversized plan/spec/doc sources
@@ -127,7 +144,10 @@ parallel work, or passes `subagents=on`.
 5. For `headless`, follow `references/headless-runner.md`.
 6. Maintain `.codex-orchestrator/runs/<run_id>/state.json` using
    `references/state-schema.md`; keep `.codex-orchestrator/state.json` as the
-   latest-state compatibility copy/pointer.
+   latest-state compatibility copy/pointer. At run init, open an AgentLens
+   orchestration run and persist its id under `agentlens_orchestration_run`
+   in per-run state; mirror downstream events to AgentLens alongside the legacy
+   helpers per `references/event-journal.md` and `references/learning-log.md`.
 7. Build `context.json` for execution modes before edits, maintain
    `context_health`, and record completion proof before reporting a finished
    lifecycle outcome.
