@@ -124,6 +124,64 @@ def valid_command_observation() -> dict:
     }
 
 
+def valid_decision() -> dict:
+    return {
+        "id": "dec_0001",
+        "task": "task_0",
+        "decision": "Use task packets for spec slicing.",
+        "files": ["docs/example.md"],
+        "made_at": "2026-05-19T14:32:00Z",
+        "supersedes": None,
+        "superseded_by": None,
+        "reason": None,
+    }
+
+
+def valid_warning() -> dict:
+    return {
+        "kind": "dependencies_likely_stale",
+        "manifest": "package.json",
+        "lockfile": "package-lock.json",
+        "suggestion": "Run install before baseline.",
+        "detected_at": "2026-05-19T14:32:00Z",
+    }
+
+
+def v220_state() -> dict:
+    state = base_state()
+    rd = run_dir()
+    state.update(
+        {
+            "spec_manifest_path": f"{rd}/spec_manifest.json",
+            "task_packet_dir": f"{rd}/task_packets",
+            "current_task_packet_path": f"{rd}/task_packets/task_0.json",
+            "decisions_register": [valid_decision()],
+            "preflight_warnings": [valid_warning()],
+            "last_completed_task": "task_0",
+            "last_completed_at": "2026-05-19T14:34:00Z",
+            "compaction": {
+                "points": [],
+                "last_compaction_after_task": "task_0",
+                "context_drop_count": 1,
+            },
+        }
+    )
+    state["tasks"]["task_0"].update(
+        {
+            "task_packet_path": f"{rd}/task_packets/task_0.json",
+            "task_packet_sha256": "a" * 64,
+            "spec_section_ids": ["S1"],
+            "fallback_spec_used": False,
+            "timing": {
+                "started": "2026-05-19T14:31:00Z",
+                "completed": "2026-05-19T14:34:00Z",
+                "verified": "2026-05-19T14:35:00Z",
+            },
+        }
+    )
+    return state
+
+
 def run_validator(script: Path, payload: dict) -> subprocess.CompletedProcess[str]:
     with tempfile.TemporaryDirectory(prefix="codex-state-schema-") as temp:
         state_path = Path(temp) / "state.json"
@@ -305,6 +363,55 @@ def main() -> int:
     checks["invalid_command_observation_category_fails"] = result.returncode != 0 and "command_observations[0].category" in (result.stderr + result.stdout)
     if not checks["invalid_command_observation_category_fails"]:
         failures.append("invalid command_observation category should fail")
+
+    valid_v220 = run_validator(script, v220_state())
+    checks["valid_v220_context_state_passes"] = valid_v220.returncode == 0
+    if not checks["valid_v220_context_state_passes"]:
+        failures.append("valid v2.20 context-intelligence state should pass: " + (valid_v220.stderr or valid_v220.stdout))
+
+    bad_manifest_path = v220_state()
+    bad_manifest_path["spec_manifest_path"] = f"{run_dir()}/wrong.json"
+    result = run_validator(script, bad_manifest_path)
+    checks["bad_spec_manifest_path_fails"] = result.returncode != 0 and "spec_manifest_path" in (result.stderr + result.stdout)
+    if not checks["bad_spec_manifest_path_fails"]:
+        failures.append("spec_manifest_path should equal run_dir/spec_manifest.json")
+
+    bad_packet_path = v220_state()
+    bad_packet_path["current_task_packet_path"] = f"{run_dir()}/other/task_0.json"
+    result = run_validator(script, bad_packet_path)
+    checks["current_task_packet_outside_dir_fails"] = (
+        result.returncode != 0 and "current_task_packet_path" in (result.stderr + result.stdout)
+    )
+    if not checks["current_task_packet_outside_dir_fails"]:
+        failures.append("current_task_packet_path should live under task_packet_dir")
+
+    bad_decisions = v220_state()
+    bad_decisions["decisions_register"] = {"id": "dec_0001"}
+    result = run_validator(script, bad_decisions)
+    checks["decisions_register_must_be_list"] = result.returncode != 0 and "decisions_register" in (result.stderr + result.stdout)
+    if not checks["decisions_register_must_be_list"]:
+        failures.append("decisions_register should be a list")
+
+    bad_warning = v220_state()
+    bad_warning["preflight_warnings"] = [{"kind": "unknown", "detected_at": "2026-05-19T14:32:00Z"}]
+    result = run_validator(script, bad_warning)
+    checks["preflight_warning_kind_validated"] = result.returncode != 0 and "preflight_warnings[0].kind" in (result.stderr + result.stdout)
+    if not checks["preflight_warning_kind_validated"]:
+        failures.append("preflight warning kind should be validated")
+
+    missing_timing = v220_state()
+    missing_timing["tasks"]["task_0"]["timing"] = {"started": "2026-05-19T14:31:00Z"}
+    result = run_validator(script, missing_timing)
+    checks["completed_v220_task_requires_timing"] = result.returncode != 0 and "timing.completed" in (result.stderr + result.stdout)
+    if not checks["completed_v220_task_requires_timing"]:
+        failures.append("completed v2.20 tasks should require timing.started and timing.completed")
+
+    bad_last_completed = v220_state()
+    bad_last_completed["last_completed_task"] = "task_404"
+    result = run_validator(script, bad_last_completed)
+    checks["last_completed_task_must_exist"] = result.returncode != 0 and "last_completed_task" in (result.stderr + result.stdout)
+    if not checks["last_completed_task_must_exist"]:
+        failures.append("last_completed_task should reference a task or be null")
 
     payload_out = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload_out, indent=2))
