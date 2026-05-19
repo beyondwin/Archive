@@ -16,7 +16,9 @@
 7. Create `~/.codex/orchestrator/<run_id>/` for `state.json`, `context.json`,
    `hooks/`, `learning_events/`, raw command evidence, and headless artifacts.
 8. Build `context.json` before edits and store `context_snapshot_path` plus
-   `context_basis_hash` in state.
+   `context_basis_hash` in state. When `spec_manifest.json` or task packets are
+   present, pass `--spec-manifest` and `--task-packet-dir` so the snapshot
+   records summaries and packet indexes instead of raw packet text.
 9. For each task, state the `TASK EXECUTION CONTRACT`, record `unit_manifest`,
    invoke `using-superpowers`, invoke `test-driven-development` for code
    changes, capture RED evidence, implement, capture GREEN evidence, then run
