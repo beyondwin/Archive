@@ -61,6 +61,11 @@ delegation, or parallel agent work, or passes `subagents=on`. Do not spawn
 subagents when `subagents=auto` without an explicit user request, or when
 `subagents=off`.
 
+When subagents are permitted, dispatch from task packets, not raw full-plan
+context. Do not ask a subagent to infer its write scope from the entire plan.
+The main agent remains responsible for post-diff and state review before
+accepting subagent output.
+
 ## Core Invariants
 
 - No edits before a 5-line `TASK EXECUTION CONTRACT` is stated and recorded:
