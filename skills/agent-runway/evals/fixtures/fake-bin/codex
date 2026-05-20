@@ -7,18 +7,37 @@ import subprocess
 from pathlib import Path
 
 
+def sequence_value(name: str, worker_id: str, default: str) -> str:
+    raw = os.environ.get(name, "")
+    if not raw:
+        return default
+    values = [item.strip() for item in raw.split(",") if item.strip()]
+    if not values:
+        return default
+    try:
+        attempt = int(worker_id.rsplit("-", 1)[1])
+    except (IndexError, ValueError):
+        attempt = 1
+    return values[min(attempt - 1, len(values) - 1)]
+
+
 def main() -> int:
     output = Path(os.environ["AGENTRUNWAY_WORKER_OUTPUT"])
     role = os.environ.get("AGENTRUNWAY_WORKER_ROLE", "implementer")
     if role == "reviewer":
+        status = sequence_value(
+            "AGENTRUNWAY_FAKE_REVIEW_SEQUENCE",
+            os.environ["AGENTRUNWAY_WORKER_ID"],
+            os.environ.get("AGENTRUNWAY_FAKE_REVIEW_STATUS", "approved"),
+        )
         payload = {
             "schema": "agentrunway.review_result.v1",
             "worker_id": os.environ["AGENTRUNWAY_WORKER_ID"],
             "task_id": os.environ["AGENTRUNWAY_TASK_ID"],
             "reviewed_worker_id": os.environ.get("AGENTRUNWAY_REVIEWED_WORKER_ID", ""),
-            "status": os.environ.get("AGENTRUNWAY_FAKE_REVIEW_STATUS", "approved"),
+            "status": status,
             "checks": [{"name": "fake review", "status": "passed"}],
-            "findings": [],
+            "findings": [] if status == "approved" else [{"severity": "major", "body": "fake requested change"}],
             "method_audit": {"superpowers_used": True},
         }
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -26,12 +45,17 @@ def main() -> int:
         print("fake codex wrote review")
         return 0
     if role == "verifier":
+        status = sequence_value(
+            "AGENTRUNWAY_FAKE_VERIFY_SEQUENCE",
+            os.environ["AGENTRUNWAY_WORKER_ID"],
+            os.environ.get("AGENTRUNWAY_FAKE_VERIFY_STATUS", "passed"),
+        )
         payload = {
             "schema": "agentrunway.verification_result.v1",
             "worker_id": os.environ["AGENTRUNWAY_WORKER_ID"],
             "task_id": os.environ["AGENTRUNWAY_TASK_ID"],
-            "status": os.environ.get("AGENTRUNWAY_FAKE_VERIFY_STATUS", "passed"),
-            "checks": [{"command": "fake acceptance", "status": "passed"}],
+            "status": status,
+            "checks": [{"command": "fake acceptance", "status": "passed" if status == "passed" else "failed"}],
             "method_audit": {"superpowers_used": True},
         }
         output.parent.mkdir(parents=True, exist_ok=True)

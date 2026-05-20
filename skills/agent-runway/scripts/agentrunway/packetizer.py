@@ -49,9 +49,24 @@ def materialize_prompt(packet: TaskPacket, prompt_dir: Path) -> Path:
     return path
 
 
-def materialize_worker_prompt(packet: TaskPacket, packet_path: Path, output_path: Path, prompt_dir: Path) -> Path:
+def materialize_worker_prompt(
+    packet: TaskPacket,
+    packet_path: Path,
+    output_path: Path,
+    prompt_dir: Path,
+    context: dict[str, object] | None = None,
+) -> Path:
     prompt_dir.mkdir(parents=True, exist_ok=True)
-    path = prompt_dir / f"{packet.task_id}.{packet.role}.prompt.txt"
+    worker_id = output_path.parent.name if output_path.parent.name else packet.role
+    path = prompt_dir / f"{packet.task_id}.{worker_id}.{packet.role}.prompt.txt"
+    context_text = ""
+    if context:
+        context_text = (
+            "\nRetry context JSON:\n"
+            "```json\n"
+            + json.dumps(context, ensure_ascii=False, indent=2, sort_keys=True)
+            + "\n```\n"
+        )
     path.write_text(
         "You are an AgentRunway worker. Complete the task described by the task packet below.\n"
         f"Packet path: {packet_path}\n"
@@ -63,7 +78,8 @@ def materialize_worker_prompt(packet: TaskPacket, packet_path: Path, output_path
         f"Use schema value {packet.output_schema!r}; status must be success, failed, blocked, or malformed.\n\n"
         "```json\n"
         + packet_to_json(packet)
-        + "\n```\n",
+        + "\n```\n"
+        + context_text,
         encoding="utf-8",
     )
     return path

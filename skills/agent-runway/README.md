@@ -65,6 +65,12 @@ writes task packets and prompts, supervises process lifecycle, collects
 runs `review_result` and `verification_result` gates, and cherry-picks accepted
 commits into the run main worktree.
 
+Reviewer `changes_requested` and verifier `failed` outcomes create one bounded
+implementer redispatch with the gate evidence threaded into the next prompt.
+The previous candidate remains in the merge queue with a non-mergeable status;
+only a later verifier `passed` outcome can promote a fresh candidate to
+`merge_ready`.
+
 Use fake CLI fixtures for deterministic tests:
 
 ```bash
@@ -79,3 +85,7 @@ local event artifacts remain authoritative.
 checkout by default and records applied commits in SQLite. Merge conflict
 handling aborts the cherry-pick and records the candidate state for retry or
 operator review.
+
+Graphify navigation remains a generated project layer. Completion evidence
+should record the `graphify update .` command result rather than checking
+`graphify-out/` into this skill package.
