@@ -865,7 +865,10 @@ def run(args: Any) -> dict[str, Any]:
             profile,
         )
         prompt_path = materialize_prompt(packet, run_dir / "prompts")
-        db.insert_packet(task.task_id, hashlib.sha256(packet_to_json(packet).encode()).hexdigest(), str(prompt_path), packet_to_json(packet))
+        packet_json = packet_to_json(packet)
+        packet_path = run_dir / "packets" / f"{task.task_id}.json"
+        packet_path.write_text(packet_json, encoding="utf-8")
+        db.insert_packet(task.task_id, hashlib.sha256(packet_json.encode()).hexdigest(), str(prompt_path), packet_json)
     waves = schedule_waves(tasks)
     run_json = {
         "run_id": run_id,

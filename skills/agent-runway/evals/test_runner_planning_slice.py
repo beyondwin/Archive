@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import subprocess
 import sys
@@ -40,5 +41,12 @@ def test_agentrunway_run_planning_only_creates_state(git_repo: Path, isolated_ho
     )
     assert "planning_only" in result.stdout
     db_path = next(isolated_home.glob("runs/*/*/state.sqlite"))
+    run_dir = db_path.parent
+    packet_path = run_dir / "packets" / "task_001.json"
     conn = sqlite3.connect(db_path)
     assert conn.execute("select count(*) from tasks").fetchone()[0] == 1
+    assert conn.execute("select count(*) from task_packets").fetchone()[0] == 1
+    assert packet_path.exists()
+    packet = json.loads(packet_path.read_text(encoding="utf-8"))
+    assert packet["task_id"] == "task_001"
+    assert packet["spec_refs"][0]["id"] == "S1.1"
