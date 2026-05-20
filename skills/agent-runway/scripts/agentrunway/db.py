@@ -71,6 +71,46 @@ CREATE TABLE IF NOT EXISTS context_snapshots (id INTEGER PRIMARY KEY AUTOINCREME
 CREATE TABLE IF NOT EXISTS worktree_registry (path TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, run_id TEXT NOT NULL, branch TEXT NOT NULL, lifecycle TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS resource_locks (run_id TEXT NOT NULL, resource_key TEXT NOT NULL, task_id TEXT NOT NULL, PRIMARY KEY(run_id, resource_key, task_id));
 CREATE TABLE IF NOT EXISTS watchdog_events (id INTEGER PRIMARY KEY AUTOINCREMENT, worker_id TEXT, action TEXT NOT NULL, reason TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+CREATE TABLE IF NOT EXISTS workflow_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  node_id TEXT,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS activities (
+  activity_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  idempotency_key TEXT NOT NULL,
+  task_id TEXT,
+  activity_type TEXT NOT NULL,
+  status TEXT NOT NULL,
+  input_refs_json TEXT NOT NULL DEFAULT '{}',
+  output_refs_json TEXT NOT NULL DEFAULT '{}',
+  failure_class TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_activities_idempotency_key ON activities(idempotency_key);
+CREATE TABLE IF NOT EXISTS checkpoints (
+  checkpoint_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  commit_sha TEXT NOT NULL,
+  parent_checkpoint_id TEXT,
+  merged_candidate_id INTEGER,
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS decision_packets (
+  decision_id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  task_id TEXT,
+  failure_class TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -430,4 +470,152 @@ class AgentRunwayDb:
             "SELECT commit_sha, strategy FROM applied_commits WHERE run_id=? ORDER BY applied_at, commit_sha",
             (run_id,),
         ).fetchall()
+        return [dict(row) for row in rows]
+
+    def insert_workflow_event(self, *, run_id: str, event_type: str, node_id: str | None, payload: dict[str, Any]) -> int:
+        cursor = self.conn.execute(
+            """
+            INSERT INTO workflow_events (run_id, event_type, node_id, payload_json)
+            VALUES (?, ?, ?, ?)
+            """,
+            (run_id, event_type, node_id, json.dumps(payload, ensure_ascii=False, sort_keys=True)),
+        )
+        self.conn.commit()
+        return int(cursor.lastrowid)
+
+    def list_workflow_events(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT * FROM workflow_events WHERE run_id=? ORDER BY id", (run_id,)).fetchall()
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data["payload"] = json.loads(data.pop("payload_json"))
+            events.append(data)
+        return events
+
+    def get_activity_by_idempotency_key(self, idempotency_key: str) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM activities WHERE idempotency_key=?", (idempotency_key,)).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        data["input_refs"] = json.loads(data.pop("input_refs_json"))
+        data["output_refs"] = json.loads(data.pop("output_refs_json"))
+        return data
+
+    def get_activity(self, activity_id: str) -> dict[str, Any]:
+        row = self.conn.execute("SELECT * FROM activities WHERE activity_id=?", (activity_id,)).fetchone()
+        if row is None:
+            raise KeyError(activity_id)
+        data = dict(row)
+        data["input_refs"] = json.loads(data.pop("input_refs_json"))
+        data["output_refs"] = json.loads(data.pop("output_refs_json"))
+        return data
+
+    def insert_activity(
+        self,
+        *,
+        activity_id: str,
+        run_id: str,
+        idempotency_key: str,
+        task_id: str | None,
+        activity_type: str,
+        status: str,
+        input_refs: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.conn.execute(
+            """
+            INSERT INTO activities
+              (activity_id, run_id, idempotency_key, task_id, activity_type, status, input_refs_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (activity_id, run_id, idempotency_key, task_id, activity_type, status, json.dumps(input_refs, ensure_ascii=False, sort_keys=True)),
+        )
+        self.conn.commit()
+        return self.get_activity(activity_id)
+
+    def update_activity(
+        self,
+        *,
+        activity_id: str,
+        status: str,
+        output_refs: dict[str, Any],
+        failure_class: str | None,
+    ) -> dict[str, Any]:
+        self.conn.execute(
+            """
+            UPDATE activities
+            SET status=?, output_refs_json=?, failure_class=?, updated_at=CURRENT_TIMESTAMP
+            WHERE activity_id=?
+            """,
+            (status, json.dumps(output_refs, ensure_ascii=False, sort_keys=True), failure_class, activity_id),
+        )
+        self.conn.commit()
+        return self.get_activity(activity_id)
+
+    def insert_checkpoint(
+        self,
+        *,
+        run_id: str,
+        checkpoint_id: str,
+        commit_sha: str,
+        parent_checkpoint_id: str | None,
+        merged_candidate_id: int | None,
+        reason: str,
+    ) -> dict[str, Any]:
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO checkpoints
+              (checkpoint_id, run_id, commit_sha, parent_checkpoint_id, merged_candidate_id, reason)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (checkpoint_id, run_id, commit_sha, parent_checkpoint_id, merged_candidate_id, reason),
+        )
+        self.conn.commit()
+        return self.get_checkpoint(checkpoint_id)
+
+    def get_checkpoint(self, checkpoint_id: str) -> dict[str, Any]:
+        row = self.conn.execute("SELECT * FROM checkpoints WHERE checkpoint_id=?", (checkpoint_id,)).fetchone()
+        if row is None:
+            raise KeyError(checkpoint_id)
+        return dict(row)
+
+    def latest_checkpoint(self, run_id: str) -> dict[str, Any] | None:
+        row = self.conn.execute(
+            "SELECT * FROM checkpoints WHERE run_id=? ORDER BY created_at DESC, checkpoint_id DESC LIMIT 1",
+            (run_id,),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def list_checkpoints(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT * FROM checkpoints WHERE run_id=? ORDER BY created_at, checkpoint_id", (run_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+    def insert_decision_packet(
+        self,
+        *,
+        run_id: str,
+        decision_id: str,
+        task_id: str | None,
+        failure_class: str,
+        summary: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO decision_packets
+              (decision_id, run_id, task_id, failure_class, summary, payload_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (decision_id, run_id, task_id, failure_class, summary, json.dumps(payload, ensure_ascii=False, sort_keys=True)),
+        )
+        self.conn.commit()
+        return self.get_decision_packet(decision_id)
+
+    def get_decision_packet(self, decision_id: str) -> dict[str, Any]:
+        row = self.conn.execute("SELECT * FROM decision_packets WHERE decision_id=?", (decision_id,)).fetchone()
+        if row is None:
+            raise KeyError(decision_id)
+        return dict(row)
+
+    def list_decision_packets(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT * FROM decision_packets WHERE run_id=? ORDER BY created_at, decision_id", (run_id,)).fetchall()
         return [dict(row) for row in rows]
