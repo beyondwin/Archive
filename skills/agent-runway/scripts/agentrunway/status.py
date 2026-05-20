@@ -10,7 +10,14 @@ from .db import AgentRunwayDb
 from .diagnostics import diagnose_run
 
 
+SIMULATION_NEXT_OPERATOR_ACTION = "run without --fake-success before applying artifacts"
+
+
 def next_operator_action(run_json: dict[str, Any], agentlens: dict[str, Any]) -> str:
+    status = str(run_json.get("status") or "unknown")
+    if status == "simulated_finished" or run_json.get("simulation") is True:
+        return SIMULATION_NEXT_OPERATOR_ACTION
+
     diagnosis = run_json.get("diagnosis")
     if isinstance(diagnosis, dict) and diagnosis.get("next_action"):
         return str(diagnosis["next_action"])
@@ -23,7 +30,6 @@ def next_operator_action(run_json: dict[str, Any], agentlens: dict[str, Any]) ->
         except Exception:
             pass
 
-    status = str(run_json.get("status") or "unknown")
     tasks = run_json.get("tasks") if isinstance(run_json.get("tasks"), list) else []
     blocked = any(isinstance(task, dict) and task.get("status") == "blocked" for task in tasks)
     if status == "finished":
@@ -47,15 +53,21 @@ def format_run_status(run: dict[str, object]) -> str:
     suffix = " ".join(f"{key}={value}" for key, value in sorted(counts.items()))
     agentlens = run.get("agentlens") if isinstance(run.get("agentlens"), dict) else {}
     diagnosis = run.get("diagnosis") if isinstance(run.get("diagnosis"), dict) else {}
-    next_action = diagnosis.get("next_action") or run.get("next_action")
+    simulated = run.get("simulation") is True or run.get("status") == "simulated_finished"
+    next_action = (
+        SIMULATION_NEXT_OPERATOR_ACTION
+        if simulated
+        else diagnosis.get("next_action") or run.get("next_operator_action") or run.get("next_action")
+    )
     diagnosis_bits = ""
     if diagnosis:
         diagnosis_bits = f" diagnosis={diagnosis.get('status')} reason={diagnosis.get('reason')}"
     notice = ""
     if isinstance(agentlens, dict) and agentlens.get("run_status") == "disabled":
         notice = " AgentLens disabled; local SQLite and artifacts are authoritative."
+    simulation = " simulation=true" if simulated else ""
     return (
-        f"{run.get('run_id')} status={run.get('status')} {suffix}{diagnosis_bits} "
+        f"{run.get('run_id')} status={run.get('status')}{simulation} {suffix}{diagnosis_bits} "
         f"agentlens={agentlens.get('last_status', 'unknown')} next_action={next_action}{notice}"
     ).strip()
 
@@ -84,6 +96,12 @@ def build_inspect_payload(*, run_json: dict[str, Any], db: AgentRunwayDb) -> dic
         )
     }
     tasks = db.list_tasks()
+    simulation = run_json.get("simulation") is True or run_json.get("status") == "simulated_finished"
+    next_action = (
+        SIMULATION_NEXT_OPERATOR_ACTION
+        if simulation
+        else durable_operator_next_action(durable, diagnosis["next_action"])
+    )
     quality_policy = [
         {
             "task_id": task.get("task_id"),
@@ -96,6 +114,7 @@ def build_inspect_payload(*, run_json: dict[str, Any], db: AgentRunwayDb) -> dic
     return {
         "run_id": run_json.get("run_id"),
         "status": run_json.get("status"),
+        "simulation": simulation,
         "run_dir": str(run_dir),
         "tasks": tasks,
         "workers": db.list_workers(),
@@ -115,7 +134,8 @@ def build_inspect_payload(*, run_json: dict[str, Any], db: AgentRunwayDb) -> dic
         "safe_wave": durable["safe_wave"],
         "blocked_node": durable["blocked_node"],
         "failure_class": durable["failure_class"],
-        "next_action": durable_operator_next_action(durable, diagnosis["next_action"]),
+        "next_action": next_action,
+        "next_operator_action": next_action,
     }
 
 

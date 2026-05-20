@@ -13,7 +13,7 @@ VERIFICATION_SCHEMA = "agentrunway.verification_result.v1"
 EVENT_SCHEMA = "agentrunway.event.v1"
 
 CLAIM_MODES = {"owned", "shared_append", "consumes", "read_only", "forbidden"}
-OUTCOMES = {"finished", "failed", "blocked", "cancelled", "unknown"}
+OUTCOMES = {"finished", "simulated_finished", "failed", "blocked", "cancelled", "unknown"}
 AGENTLENS_OUTCOMES = {"success", "failed", "partial", "cancelled", "unknown"}
 REASONING_LEVELS = {"lowest", "low", "medium", "high", "highest"}
 
@@ -25,6 +25,7 @@ class TaskStatus(str, Enum):
     REVIEWING = "reviewing"
     VERIFYING = "verifying"
     MERGED = "merged"
+    SIMULATED_COMPLETED = "simulated_completed"
     FAILED = "failed"
     BLOCKED = "blocked"
 

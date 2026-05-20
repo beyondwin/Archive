@@ -17,7 +17,16 @@ class LocalAdapter(RuntimeAdapter):
     def run(self, packet_path: Path, workdir: Path) -> WorkerResult:
         packet = json.loads(packet_path.read_text(encoding="utf-8"))
         task_id = packet.get("task_id", "task")
-        status = "success" if self.fake_success else "blocked"
+        status = "simulated_success" if self.fake_success else "blocked"
+        method_audit = (
+            {
+                "superpowers_used": True,
+                "simulation": True,
+                "tdd_workflow": "not_exercised_simulated",
+            }
+            if self.fake_success
+            else {"superpowers_used": True, "simulation": False}
+        )
         result = WorkerResult(
             schema=RESULT_SCHEMA,
             worker_id=f"{task_id}-implementer-001",
@@ -26,9 +35,9 @@ class LocalAdapter(RuntimeAdapter):
             status=status,
             changed_files=[],
             commit=None,
-            summary="local fake success" if self.fake_success else "local adapter requires fake_success",
+            summary="local simulated success" if self.fake_success else "local adapter requires fake_success",
             commands_run=[],
-            method_audit={"superpowers_used": True, "tdd_red": "failed", "tdd_green": "passed"},
+            method_audit=method_audit,
             residual_risks=[],
         )
         (workdir / "worker_result.json").write_text(json.dumps(asdict(result), indent=2, sort_keys=True), encoding="utf-8")
