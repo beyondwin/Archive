@@ -28,6 +28,65 @@ task is independently testable:
 No web dashboard, source checkout auto-apply, remote execution, CPE/CME bridge,
 or automatic merge-conflict editing is part of this plan.
 
+## Audit-Driven Refinements (2026-05-20)
+
+A source review against `skills/agent-runway/scripts/agentrunway/` and
+`AgentLens/src/agentlens/evaluator/agentrunway_events.py` surfaced gaps in the
+draft tasks below. These refinements are required for v1 to match the design
+in `docs/superpowers/specs/2026-05-20-agentrunway-operations-quality-engine-design.md`
+§14. Apply them inline when the relevant task runs.
+
+- **Task 3 (Diagnostics):** v1 intentionally covers only the subset of statuses
+  and reasons listed in design §14.1; the remaining ones fall back to existing
+  `needs_manual_action`/`unknown` defaults. The diagnostics module imports the
+  existing `_process_alive` from `reconciliation` (or copies it with a `# TODO:
+  share with reconciliation` comment); do not introduce a second slightly
+  different implementation. `agentlens_health` returns the full
+  `agentlens_summary` shape (`status`, `last_status`, `failed`, `last_error`).
+- **Task 4 (Status/Inspect):** compute the diagnosis exactly once. `runner.status`
+  attaches the diagnosis dict to the payload and `status.next_operator_action`
+  reads `run.get("diagnosis", {}).get("next_action")` first, falling back to the
+  legacy status-based hints. Extend `build_inspect_payload` to also include
+  `candidate_rankings`, `quality_decisions`, and `conflict_redispatch_plans`
+  derived from the event journal (filter `db.list_events()` by
+  `agentrunway.candidate_ranked`, `agentrunway.quality_decision`,
+  `agentrunway.conflict_redispatch_planned`) and a `quality_policy` snapshot
+  with `{task_id, candidate_count, review_retry_budget,
+  verification_retry_budget}` for each task derived from `db.list_tasks()` and
+  the policy module.
+- **Task 6 (Gate retry policy):** after replacing the review/verification
+  retry branches, delete the now-unused
+  `runner._verification_failure_actionable` helper in the same commit.
+- **Task 7 (High-risk multi-candidate):**
+  - Declare `review_retries = 0` and `verification_retries = 0` **inside** the
+    outer `while len(merge_ready_candidate_ids) < target_candidate_count`
+    loop, not above it. Each candidate gets a fresh gate-retry budget.
+  - Add `WorkerState.NOT_SELECTED = "not_selected"` to `models.py` and update
+    the ranking step in `runner.run` so non-selected candidates have both the
+    merge_candidate row AND the worker row set to `not_selected`.
+  - After ranking, if at least one candidate is in `merge_ready` status,
+    overwrite `task.status` back to `merge_ready` (a prior per-candidate
+    `block` path may have set it to `blocked`). If zero candidates reach
+    `merge_ready`, leave the existing block state in place.
+  - The score table is honest about v1 limitations: `_candidate_for_ranking`
+    is documented inline (one comment) as "v1 stub — signals 3-7 are
+    placeholders pending follow-up". Real signals require reading
+    `review_result.json` / `verification_result.json` and comparing diff
+    scope to `task.file_claims`; that is explicitly out-of-slice for this
+    plan.
+- **Task 8 (Conflict redispatch):** in `apply_reconciliation_plan`, when the
+  `conflict_redispatch` action is recorded for the first time for a task,
+  also call `record_conflict_redispatch_planned(journal, …)` so the
+  AgentLens projection's `conflict_redispatch_plans` populates from real
+  runs (currently only tests insert that event directly). `apply` still does
+  not auto-replay the merge; it records the decision and the operator triggers
+  a follow-up run. The `manual_action` branch already emits the failed-outcome
+  resume action — leave it as-is.
+- **Task 9 (Docs):** the README section explicitly notes (a) v1 candidate
+  ranking is rank-by-id + evidence; (b) conflict redispatch is advisory
+  (operator initiates the follow-up run); (c) high-risk tasks double local
+  compute (2× implementer + 2× reviewer + 2× verifier per task).
+
 ## File Structure
 
 ### Create

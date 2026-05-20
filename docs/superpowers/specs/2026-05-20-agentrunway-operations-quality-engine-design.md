@@ -460,3 +460,105 @@ not just an execution event; it is also the reason `status`, `inspect`, and
 The implementation should keep changes incremental. The first useful slice is
 diagnosis plus policy extraction. Multi-candidate execution and conflict
 redispatch should come after the shared decision model is tested.
+
+## 14. Code Audit Findings (2026-05-20)
+
+A source review against the current `skills/agent-runway/scripts/agentrunway/`
+and `AgentLens/src/agentlens/evaluator/agentrunway_events.py` modules surfaced
+gaps that change what this design can honestly promise in v1. The plan in
+`docs/superpowers/plans/2026-05-20-agentrunway-operations-quality-engine.md`
+incorporates these as additional steps under the existing tasks.
+
+### 14.1 Scope adjustments (binding)
+
+- **Candidate ranking v1 is rank-by-id with explanatory evidence.** Signals
+  3-7 in §6.3 (file-claim violation, required artifacts, acceptance evidence
+  derived from result artifacts, scope match, unexpected changed-file count)
+  require reading per-candidate review and verification result JSON and
+  comparing diff scope to `file_claims`. The first slice wires only signals
+  1, 2, and the deterministic id tie-break; merge_ready candidates therefore
+  tie on signals 1-2 and resolve by candidate id. The `candidate_ranked`
+  evidence event still ships so AgentLens can show the score table; the
+  remaining signals land in a follow-up slice that reads
+  `review_result.json`/`verification_result.json` and computes diff scope
+  against `file_claims`. Acceptance criteria (§12) "Candidate selection is
+  deterministic and evidence-backed" is satisfied; "weighted by validated
+  signals" is the v1 limitation.
+- **Conflict redispatch is advisory, not automatic.** `apply_reconciliation_plan`
+  records the decision (event + resume action) and asks the operator to start
+  a follow-up run rebased on the current run-main. Auto-replay of the merge
+  inside `resume` is out of scope for this slice. §3 wording "plan safe
+  conflict redispatch" is the load-bearing claim; "execute" is not.
+- **`conflict_redispatch_planned` is emitted from runtime, not only tests.**
+  `apply_reconciliation_plan` calls `record_conflict_redispatch_planned` when
+  it inserts the resume action, so the AgentLens projection's
+  `conflict_redispatch_plans` reflects real runs.
+- **Diagnostics initial slice covers a subset of §6.1.** Implemented in v1:
+  `finished`, `running`, `needs_resume` (dead worker missing result),
+  `blocked_by_gate`, `needs_conflict_redispatch`, `needs_manual_action`,
+  `missing`. Deferred to follow-up (reason will fall back to current
+  `unknown`/`blocked` until implemented): `cleanup_safe`, `cleanup_blocked`,
+  `dead_worker_valid_result` (today handled by reconciliation, not surfaced
+  as diagnosis status), `repeated_merge_conflict` (reconciliation reports it
+  via action; diagnosis still flags `needs_conflict_redispatch`),
+  `interrupted_cherry_pick`, `dirty_source_checkout`, `active_detached_run`,
+  `agentlens_degraded`. §6.1 listings stand as the target shape; the plan's
+  follow-up note flags which are out-of-slice.
+- **High-risk multi-candidate doubles local compute.** A `risk: high` task
+  spawns 2 implementer + 2 reviewer + 2 verifier worker attempts. This is
+  intentional (the redundancy is the quality control), but operators should
+  budget runtime and tokens accordingly. The design previously left this
+  implicit.
+
+### 14.2 Plan corrections (binding)
+
+- **Reset gate retry counters per candidate.** `review_retries` and
+  `verification_retries` are declared inside the high-risk candidate loop,
+  not at the task scope, so candidate 2 starts with a fresh retry budget.
+  Without this, candidate 1's retry exhausts the task budget and candidate
+  2 cannot use the gate-retry policy. Policy (§6.2) wording "retry budget
+  per task" is revised to "retry budget per candidate".
+- **Block-vs-ranking precedence in high-risk runs.** When at least one
+  candidate reaches `merge_ready`, the ranking step lifts the task back from
+  `blocked` to `merge_ready` before the global merge loop runs. A
+  per-candidate failure no longer leaves a successful sibling's task marked
+  blocked. The runner emits `run_blocked` only when zero candidates reach
+  `merge_ready`.
+- **Non-selected candidates transition to a terminal worker state.** After
+  ranking, the runner sets the merge_candidate row to `not_selected` AND the
+  worker row to `not_selected`. A new `WorkerState.NOT_SELECTED` enum member
+  is added so the workers table never carries a dangling `merge_ready` state
+  for a candidate that was discarded by ranking. The state is terminal; no
+  retention/reconciliation code re-runs it.
+- **Inspect payload exposes decision evidence at top level.** §9 lists
+  `quality_policy`, `candidate_rankings`, `decision_events`, `safe_actions`,
+  `manual_actions` as `inspect --json` fields. `safe_actions` and
+  `manual_actions` come from `diagnosis`. `candidate_rankings`,
+  `quality_decisions`, and `conflict_redispatch_plans` are derived from the
+  event journal (`agentrunway.candidate_ranked`,
+  `agentrunway.quality_decision`, `agentrunway.conflict_redispatch_planned`)
+  and surfaced as top-level lists. `quality_policy` is a snapshot of the
+  default policy (candidate counts and retry budgets) for the run's tasks.
+- **Dead code cleanup.** `runner._verification_failure_actionable` is removed
+  in the same task that introduces `quality_policy.gate_retry_decision` so
+  the runner has one source of truth.
+- **Diagnosis is computed once per status/inspect call.** `runner.status` is
+  the single entry point that calls `diagnose_run`; `status.next_operator_action`
+  reads the precomputed diagnosis off the run payload instead of re-opening
+  the database and re-computing.
+- **`agentlens_health` shape reflects implementation.** The example in §6.1
+  shows `{"status", "last_error"}`; the actual `agentlens_summary` produces
+  `{"status", "last_status", "failed", "last_error"}`. Diagnostics uses the
+  full shape so operators see emit-failure counts alongside last error.
+
+### 14.3 Known limitations (acknowledge, do not block)
+
+- `_process_alive` is duplicated in `reconciliation.py` and `diagnostics.py`.
+  Acceptable for the first slice (small function, no behavior drift) but
+  flagged as a refactor target.
+- PID-based liveness checks misreport when a run was detached on a different
+  host or in a different PID namespace. Existing reconciliation already has
+  this limitation; diagnostics inherits it.
+- The conflict-history counter scans the event journal per task (O(events)
+  per query). Acceptable for runs with <10⁴ events; if growth becomes a
+  problem, materialize a per-task counter column.
