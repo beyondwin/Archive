@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -19,6 +20,28 @@ def sequence_value(name: str, worker_id: str, default: str) -> str:
     except (IndexError, ValueError):
         attempt = 1
     return values[min(attempt - 1, len(values) - 1)]
+
+
+def map_value(name: str, task_id: str, default: str | None = None) -> str | None:
+    raw = os.environ.get(name, "")
+    if not raw:
+        return default
+    try:
+        values = json.loads(raw)
+    except json.JSONDecodeError:
+        for pair in raw.split(";"):
+            if not pair.strip() or "=" not in pair:
+                continue
+            key, value = pair.split("=", 1)
+            if key.strip() == task_id:
+                return value.strip()
+        return default
+    if not isinstance(values, dict):
+        return default
+    value = values.get(task_id, values.get("*", default))
+    if value is None:
+        return default
+    return str(value)
 
 
 def main() -> int:
@@ -63,7 +86,19 @@ def main() -> int:
         output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
         print("fake codex wrote verification")
         return 0
-    target = Path(os.environ.get("AGENTRUNWAY_FAKE_TARGET", "src/codex_worker.py"))
+    task_id = os.environ["AGENTRUNWAY_TASK_ID"]
+    target = Path(
+        map_value(
+            "AGENTRUNWAY_FAKE_TARGET_MAP",
+            task_id,
+            os.environ.get("AGENTRUNWAY_FAKE_TARGET", "src/codex_worker.py"),
+        )
+        or os.environ.get("AGENTRUNWAY_FAKE_TARGET", "src/codex_worker.py")
+    )
+    required = map_value("AGENTRUNWAY_FAKE_REQUIRED_FILE_MAP", task_id)
+    if required and not Path(required).exists():
+        print(f"fake codex required file missing for {task_id}: {required}", file=sys.stderr)
+        return 2
     target.parent.mkdir(parents=True, exist_ok=True)
     variant_enabled = os.environ.get("AGENTRUNWAY_FAKE_CANDIDATE_VARIANT") == "1"
     try:
