@@ -138,6 +138,16 @@ accepting subagent output.
   headless-only rule; headless only needs extra prompt bootstrap because it is a
   fresh `codex exec` process. Record RED evidence before implementing, then
   GREEN evidence after the fix.
+- Resolve skill paths from the active skill registry/root mapping before
+  reading local `SKILL.md` files manually. Do not hard-code `.system` or any
+  other skill root. If a skill path read fails, re-check the active registry
+  entry and root table before diagnosing the cause; classify it as an operator
+  path-resolution error unless the registry entry itself is proven stale.
+- When repository instructions mention graphify, read
+  `graphify-out/GRAPH_REPORT.md`, compare its `Built from commit` value with
+  `git rev-parse HEAD`, run `graphify update .` after code changes, and record
+  the outcome in `completion_audit.verification_evidence`. If `graphify-out/`
+  is ignored, record that the update ran but generated outputs were not tracked.
 - Headless `codex exec` prompts must bootstrap applicable skills because parent
   session skill state is not assumed to carry over. Explicitly include
   `using-superpowers` and `test-driven-development` for implementation work.
