@@ -16,6 +16,7 @@ from .adapters.local import LocalAdapter
 from .apply import apply_commits_to_source
 from .artifacts import ArtifactStore
 from .config import BuiltinProfiles, ModelProfile, load_effective_config
+from .contract import build_run_contract, write_contract
 from .db import AgentRunwayDb
 from .git_ops import Git, assert_clean_source
 from .merge_queue import MergeCandidate, MergeConflictError, apply_candidate
@@ -130,6 +131,21 @@ def run(args: Any) -> dict[str, Any]:
         apply_to_source=args.apply_to_source,
     )
     tasks = parse_plan(plan)
+    contract = build_run_contract(
+        run_id=run_id,
+        workspace_id=wsid,
+        repo_root=repo,
+        spec_path=spec,
+        plan_path=plan,
+        base_commit_sha=base_commit,
+        tasks=tasks,
+        adapter=args.adapter,
+        model_profile=cfg.default_profile,
+        allow_dirty_source=bool(args.allow_dirty_source),
+        apply_to_source=bool(args.apply_to_source),
+    )
+    contract_path = write_contract(run_dir, contract)
+    db.set_run_contract_path(run_id, str(contract_path))
     profile = cfg.profiles[cfg.default_profile]
     for task in tasks:
         db.upsert_task(task)

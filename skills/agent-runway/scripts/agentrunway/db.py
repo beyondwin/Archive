@@ -13,7 +13,7 @@ PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS runs (
   run_id TEXT PRIMARY KEY, workspace_id TEXT NOT NULL, repo_root TEXT NOT NULL, plan_path TEXT NOT NULL,
-  spec_path TEXT, plan_hash TEXT NOT NULL, spec_hash TEXT, base_commit_sha TEXT NOT NULL,
+  spec_path TEXT, contract_path TEXT, plan_hash TEXT NOT NULL, spec_hash TEXT, base_commit_sha TEXT NOT NULL,
   model_profile TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'created', allowed_dirty INTEGER NOT NULL DEFAULT 0,
   apply_to_source INTEGER NOT NULL DEFAULT 0, agentlens_run_id TEXT, agentlens_status TEXT NOT NULL DEFAULT 'disabled',
   agentrunway_version TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -86,6 +86,7 @@ class AgentRunwayDb:
         db = cls(conn)
         db._drop_legacy_merge_queue()
         db.conn.executescript(SCHEMA_SQL)
+        db._ensure_runs_contract_path_column()
         db.conn.commit()
         return db
 
@@ -103,6 +104,15 @@ class AgentRunwayDb:
     def table_names(self) -> set[str]:
         rows = self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
         return {str(row["name"]) for row in rows}
+
+    def _ensure_runs_contract_path_column(self) -> None:
+        columns = {
+            str(item["name"])
+            for item in self.conn.execute("PRAGMA table_info(runs)").fetchall()
+        }
+        if "contract_path" not in columns:
+            self.conn.execute("ALTER TABLE runs ADD COLUMN contract_path TEXT")
+            self.conn.commit()
 
     def create_run(self, **fields: Any) -> None:
         payload = {
@@ -130,6 +140,13 @@ class AgentRunwayDb:
 
     def set_run_status(self, run_id: str, status: str) -> None:
         self.conn.execute("UPDATE runs SET status=?, updated_at=CURRENT_TIMESTAMP WHERE run_id=?", (status, run_id))
+        self.conn.commit()
+
+    def set_run_contract_path(self, run_id: str, contract_path: str) -> None:
+        self.conn.execute(
+            "UPDATE runs SET contract_path=?, updated_at=CURRENT_TIMESTAMP WHERE run_id=?",
+            (contract_path, run_id),
+        )
         self.conn.commit()
 
     def get_run(self, run_id: str) -> dict[str, Any]:
