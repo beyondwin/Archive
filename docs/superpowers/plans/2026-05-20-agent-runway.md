@@ -113,7 +113,7 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "agentrunway.py"
 
 
-def test_kao_cli_prints_version() -> None:
+def test_agentrunway_cli_prints_version() -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--version"],
         cwd=ROOT,
@@ -124,7 +124,7 @@ def test_kao_cli_prints_version() -> None:
     assert result.stdout.strip().startswith("agentrunway ")
 
 
-def test_kao_cli_lists_core_commands() -> None:
+def test_agentrunway_cli_lists_core_commands() -> None:
     result = subprocess.run(
         [sys.executable, str(SCRIPT), "--help"],
         cwd=ROOT,
@@ -668,7 +668,7 @@ def test_parse_run_args_defaults_to_codex_profile() -> None:
     assert args.apply_to_source is False
 
 
-def test_config_precedence_invocation_over_kao_yaml(tmp_path: Path) -> None:
+def test_config_precedence_invocation_over_agentrunway_yaml(tmp_path: Path) -> None:
     (tmp_path / "agentrunway.yaml").write_text(
         "default_profile: claude-default\n"
         "profiles:\n"
@@ -1211,7 +1211,7 @@ def test_parse_plan_extracts_task_block(tmp_path: Path) -> None:
     assert "bounded retry" in task.objective
 
 
-def test_parse_plan_rejects_missing_kao_task_block(tmp_path: Path) -> None:
+def test_parse_plan_rejects_missing_agentrunway_task_block(tmp_path: Path) -> None:
     path = tmp_path / "plan.md"
     path.write_text("## Task 1: Missing\n\nNo block\n", encoding="utf-8")
     with pytest.raises(PlanParseError, match="missing agentrunway-task"):
@@ -3041,7 +3041,7 @@ from .scheduler import build_waves
 from .worktrees import build_run_id, compute_workspace_id
 
 
-def kao_home() -> Path:
+def agentrunway_home() -> Path:
     return Path(os.environ.get("AGENTRUNWAY_HOME", Path.home() / ".agentrunway")).expanduser()
 
 
@@ -3052,7 +3052,7 @@ def run(args) -> int:
     config = load_effective_config(repo.repo_root(), vars(args))
     workspace_id = compute_workspace_id(repo.repo_root())
     run_id = build_run_id(str(args.plan), time.strftime("%Y%m%d-%H%M%S"), secrets.token_hex(3)[:5])
-    run_root = kao_home() / "runs" / workspace_id / run_id
+    run_root = agentrunway_home() / "runs" / workspace_id / run_id
     db = AgentRunwayDb.open(run_root / "state.sqlite")
     plan_hash = canonical_hash(args.plan)
     spec_hash = canonical_hash(args.spec) if args.spec else None
@@ -3230,8 +3230,8 @@ Extend `skills/agent-runway/scripts/agentrunway/worktrees.py`:
 import subprocess
 
 
-def create_run_main_worktree(repo_root: Path, workspace_id: str, run_id: str, base_ref: str, kao_home: Path) -> Path:
-    path = kao_home / "worktrees" / workspace_id / run_id / "main"
+def create_run_main_worktree(repo_root: Path, workspace_id: str, run_id: str, base_ref: str, agentrunway_home: Path) -> Path:
+    path = agentrunway_home / "worktrees" / workspace_id / run_id / "main"
     path.parent.mkdir(parents=True, exist_ok=True)
     branch = f"agentrunway/{run_id}/main"
     subprocess.run(["git", "branch", branch, base_ref], cwd=repo_root, check=True, capture_output=True)
@@ -3259,7 +3259,7 @@ def _fake_commit_for_task(main_worktree: Path, task_id: str) -> str:
 Then in `run(args)`, after the `planning_only` branch:
 
 ```python
-main_worktree = create_run_main_worktree(repo.repo_root(), workspace_id, run_id, args.base_ref, kao_home())
+main_worktree = create_run_main_worktree(repo.repo_root(), workspace_id, run_id, args.base_ref, agentrunway_home())
 if args.fake_success:
     for task in tasks:
         _fake_commit_for_task(main_worktree, task.task_id)
@@ -3475,7 +3475,7 @@ Modify `skills/agent-runway/scripts/agentrunway/runner.py`:
 
 ```python
 def _find_state(run_id: str) -> Path | None:
-    for path in kao_home().glob(f"runs/*/{run_id}/state.sqlite"):
+    for path in agentrunway_home().glob(f"runs/*/{run_id}/state.sqlite"):
         return path
     return None
 
