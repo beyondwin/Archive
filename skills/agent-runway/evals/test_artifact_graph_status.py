@@ -6,7 +6,7 @@ from pathlib import Path
 from agentrunway.artifact_graph import build_artifact_graph, write_artifact_graph
 from agentrunway.db import AgentRunwayDb
 from agentrunway.models import FileClaim, TaskSpec
-from agentrunway.status import build_inspect_payload, format_inspect_payload
+from agentrunway.status import build_inspect_payload, format_inspect_payload, next_operator_action
 
 
 def _task() -> TaskSpec:
@@ -93,3 +93,35 @@ def test_inspect_payload_includes_agentlens_and_coverage(tmp_path: Path) -> None
     assert payload["agentlens"]["failed"] == 1
     assert payload["coverage"]["covered"] == ["S1"]
     assert "agentlens_failed=1" in text
+
+
+def test_next_operator_action_prioritizes_terminal_status_over_agentlens_failure() -> None:
+    agentlens = {"last_status": "agentlens_failed", "failed": 1}
+
+    assert (
+        next_operator_action({"run_id": "run-1", "status": "finished", "tasks": []}, agentlens)
+        == "apply or inspect artifacts"
+    )
+    assert (
+        next_operator_action({"run_id": "run-1", "status": "blocked", "tasks": []}, agentlens)
+        == "inspect blocked tasks and run resume --dry-run"
+    )
+
+
+def test_next_operator_action_for_running_agentlens_failure() -> None:
+    assert (
+        next_operator_action({"run_id": "run-1", "status": "running", "tasks": []}, {"failed": 2})
+        == "inspect AgentLens failures and continue monitoring"
+    )
+
+
+def test_inspect_payload_and_format_include_next_action(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    run_json = {"run_id": "run-1", "status": "finished", "run_dir": str(run_dir), "tasks": []}
+
+    payload = build_inspect_payload(run_json=run_json, db=db)
+    text = format_inspect_payload(payload)
+
+    assert payload["next_action"] == "apply or inspect artifacts"
+    assert "next_action=apply or inspect artifacts" in text

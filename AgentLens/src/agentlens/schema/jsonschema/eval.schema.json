@@ -34,6 +34,117 @@
       "type": "string",
       "enum": ["success", "failed", "partial", "cancelled", "unknown"]
     },
+    "evidence_coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "producer",
+        "observability",
+        "event_count",
+        "timeline_event_count",
+        "internal_actions",
+        "payload_safety",
+        "strength",
+        "artifacts",
+        "coverage",
+        "gates",
+        "projection"
+      ],
+      "properties": {
+        "producer": {
+          "type": "string",
+          "const": "agentrunway"
+        },
+        "observability": {
+          "type": "string",
+          "enum": ["present", "missing", "not_applicable", "disabled", "failed"]
+        },
+        "event_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "timeline_event_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "internal_actions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "payload_safety": {
+          "type": "string",
+          "enum": ["ok", "oversized"]
+        },
+        "strength": {
+          "type": "string",
+          "enum": ["strong", "partial", "weak", "none"]
+        },
+        "artifacts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["contract", "artifact_graph", "coverage"],
+          "properties": {
+            "contract": {
+              "type": "string",
+              "enum": ["present", "missing"]
+            },
+            "artifact_graph": {
+              "type": "string",
+              "enum": ["present", "missing"]
+            },
+            "coverage": {
+              "type": "string",
+              "enum": ["present", "missing"]
+            }
+          }
+        },
+        "coverage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["covered", "partial", "blocked", "unreferenced"],
+          "properties": {
+            "covered": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "partial": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "blocked": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "unreferenced": {
+              "type": "array",
+              "items": {"type": "string"}
+            }
+          }
+        },
+        "gates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["retry_count", "review_results", "verification_results"],
+          "properties": {
+            "retry_count": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "review_results": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "verification_results": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "projection": {
+          "type": "object"
+        }
+      }
+    },
     "checks": {
       "type": "array",
       "items": {

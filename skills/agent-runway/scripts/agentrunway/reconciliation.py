@@ -43,8 +43,49 @@ def _valid_worker_result(path: Path) -> bool:
     return True
 
 
+def _load_run_json(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "run.json"
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _git_metadata_dir(worktree: Path) -> Path:
+    dotgit = worktree / ".git"
+    if dotgit.is_dir():
+        return dotgit
+    if dotgit.is_file():
+        raw = dotgit.read_text(encoding="utf-8", errors="ignore").strip()
+        prefix = "gitdir:"
+        if raw.startswith(prefix):
+            path = Path(raw.removeprefix(prefix).strip())
+            return path if path.is_absolute() else (worktree / path).resolve()
+    return dotgit
+
+
+def _has_interrupted_cherry_pick(worktree: Path) -> bool:
+    return (_git_metadata_dir(worktree) / "CHERRY_PICK_HEAD").exists()
+
+
 def plan_reconciliation(*, run_id: str, run_dir: Path, db: AgentRunwayDb) -> dict[str, Any]:
     actions: list[dict[str, Any]] = []
+    run_json = _load_run_json(run_dir)
+    main_worktree_raw = run_json.get("main_worktree")
+    if isinstance(main_worktree_raw, str) and main_worktree_raw.strip():
+        main_worktree = Path(main_worktree_raw)
+        if _has_interrupted_cherry_pick(main_worktree):
+            actions.append(
+                {
+                    "target": str(main_worktree),
+                    "action": "abort_cherry_pick",
+                    "reason": "interrupted_cherry_pick",
+                    "writes": True,
+                }
+            )
     for worker in db.list_workers():
         state = str(worker["state"])
         if state in {"merged", "blocked", "cancelled", "validated", "result_collected"}:
@@ -61,6 +102,18 @@ def plan_reconciliation(*, run_id: str, run_dir: Path, db: AgentRunwayDb) -> dic
             )
             continue
         if state == "running" and not _process_alive(worker.get("handle_json", {})):
+            if db.count_worker_attempts(task_id=str(worker["task_id"]), role=str(worker["role"])) >= 2:
+                target = str(worker["task_id"])
+                if not any(item.get("target") == target and item.get("action") == "block" for item in actions):
+                    actions.append(
+                        {
+                            "target": target,
+                            "action": "block",
+                            "reason": "retry_budget_exhausted",
+                            "writes": True,
+                        }
+                    )
+                continue
             actions.append(
                 {
                     "target": worker["worker_id"],
@@ -118,4 +171,25 @@ def apply_reconciliation_plan(*, db: AgentRunwayDb, plan: dict[str, Any]) -> Non
                     "retry",
                     "partial",
                     "retry required",
+                )
+        elif action["action"] == "abort_cherry_pick":
+            _record_resume_action(
+                db,
+                str(plan["run_id"]),
+                target,
+                "abort_cherry_pick",
+                "partial",
+                "operator must abort interrupted cherry-pick",
+            )
+        elif action["action"] == "block":
+            task = db.get_task(target)
+            if task["status"] != "blocked":
+                db.set_task_status(target, "blocked")
+                _record_resume_action(
+                    db,
+                    str(plan["run_id"]),
+                    target,
+                    "block",
+                    "failed",
+                    "retry budget exhausted",
                 )

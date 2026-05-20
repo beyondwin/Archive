@@ -9,11 +9,35 @@ from .artifact_graph import build_artifact_graph
 from .db import AgentRunwayDb
 
 
+def next_operator_action(run_json: dict[str, Any], agentlens: dict[str, Any]) -> str:
+    status = str(run_json.get("status") or "unknown")
+    tasks = run_json.get("tasks") if isinstance(run_json.get("tasks"), list) else []
+    blocked = any(isinstance(task, dict) and task.get("status") == "blocked" for task in tasks)
+    if status == "finished":
+        return "apply or inspect artifacts"
+    if blocked or status in {"blocked", "failed"}:
+        return "inspect blocked tasks and run resume --dry-run"
+    if status == "cancelled":
+        return "inspect events before restarting"
+    if str(agentlens.get("last_status")) == "agentlens_failed" or int(agentlens.get("failed", 0) or 0) > 0:
+        return "inspect AgentLens failures and continue monitoring"
+    if status in {"created", "running"}:
+        return "continue monitoring"
+    if status == "missing":
+        return "none"
+    return "inspect run state"
+
+
 def format_run_status(run: dict[str, object]) -> str:
     tasks = run.get("tasks") if isinstance(run.get("tasks"), list) else []
     counts = Counter(str(task.get("status", "unknown")) for task in tasks if isinstance(task, dict))
     suffix = " ".join(f"{key}={value}" for key, value in sorted(counts.items()))
-    return f"{run.get('run_id')} status={run.get('status')} {suffix}".strip()
+    agentlens = run.get("agentlens") if isinstance(run.get("agentlens"), dict) else {}
+    next_action = run.get("next_action")
+    return (
+        f"{run.get('run_id')} status={run.get('status')} {suffix} "
+        f"agentlens={agentlens.get('last_status', 'unknown')} next_action={next_action}"
+    ).strip()
 
 
 def build_inspect_payload(*, run_json: dict[str, Any], db: AgentRunwayDb) -> dict[str, Any]:
@@ -21,6 +45,7 @@ def build_inspect_payload(*, run_json: dict[str, Any], db: AgentRunwayDb) -> dic
     graph = build_artifact_graph(run_dir=run_dir, db=db)
     coverage_path = run_dir / "coverage.json"
     coverage = json.loads(coverage_path.read_text(encoding="utf-8")) if coverage_path.exists() else graph["coverage"]
+    agentlens = db.agentlens_summary()
     return {
         "run_id": run_json.get("run_id"),
         "status": run_json.get("status"),
@@ -30,7 +55,8 @@ def build_inspect_payload(*, run_json: dict[str, Any], db: AgentRunwayDb) -> dic
         "merge_candidates": db.list_merge_candidates(),
         "artifact_graph": graph,
         "coverage": coverage,
-        "agentlens": db.agentlens_summary(),
+        "agentlens": agentlens,
+        "next_action": next_operator_action(run_json, agentlens),
     }
 
 
@@ -43,5 +69,6 @@ def format_inspect_payload(payload: dict[str, Any]) -> str:
         f"workers={len(payload.get('workers', []))} "
         f"covered={len(coverage.get('covered', []))} "
         f"blocked={len(coverage.get('blocked', []))} "
-        f"agentlens_failed={agentlens.get('failed', 0)}"
+        f"agentlens_failed={agentlens.get('failed', 0)} "
+        f"next_action={payload.get('next_action')}"
     )

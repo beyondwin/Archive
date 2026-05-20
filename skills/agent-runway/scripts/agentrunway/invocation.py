@@ -39,6 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--base-ref", default="HEAD")
     run.add_argument("--allow-dirty-source", action="store_true")
     run.add_argument("--detach", action="store_true")
+    run.add_argument("--run-id", help=argparse.SUPPRESS)
     run.add_argument("--apply-to-source", action="store_true")
     run.add_argument("--planning-only", action="store_true")
     run.add_argument("--adapter", default="local")
@@ -50,6 +51,8 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--last", action="store_true")
         if command in {"status", "inspect", "events", "resume"}:
             cmd.add_argument("--json", action="store_true")
+        if command == "events":
+            cmd.add_argument("--type")
         if command == "resume":
             cmd.add_argument("--dry-run", action="store_true")
     apply_parser = sub.add_parser("apply", help="apply a AgentRunway run")
@@ -59,6 +62,8 @@ def build_parser() -> argparse.ArgumentParser:
     clean = sub.add_parser("clean", help="clean retained AgentRunway artifacts")
     clean.add_argument("--older-than", default="7d")
     clean.add_argument("--successful", action="store_true")
+    clean.add_argument("--dry-run", action="store_true", default=True)
+    clean.add_argument("--apply", action="store_true")
     return parser
 
 
@@ -67,8 +72,9 @@ def parse_run_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    input_argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
-    args = parser.parse_args(argv)
+    args = parser.parse_args(input_argv)
     if args.command is None:
         parser.print_help()
         return 0
@@ -88,6 +94,52 @@ def main(argv: list[str] | None = None) -> int:
             args.plan = resolved.plan_path
             args.spec = resolved.spec_path
             args.adapter = resolved.adapter
+            if args.detach:
+                from .detach import build_detached_argv, launch_detached, python_executable, script_path
+
+                run_id = args.run_id or runner.allocate_run_id(repo_root, args.plan)
+                wsid = runner.workspace_id(repo_root)
+                run_dir, _ = runner._state_paths(run_id, wsid)
+                reentry = [
+                    "run",
+                    "--plan",
+                    str(args.plan),
+                    "--adapter",
+                    str(args.adapter),
+                    "--base-ref",
+                    str(args.base_ref),
+                ]
+                if args.spec:
+                    reentry.extend(["--spec", str(args.spec)])
+                if args.model_profile:
+                    reentry.extend(["--model-profile", str(args.model_profile)])
+                if args.allow_dirty_source:
+                    reentry.append("--allow-dirty-source")
+                if args.apply_to_source:
+                    reentry.append("--apply-to-source")
+                if args.planning_only:
+                    reentry.append("--planning-only")
+                if args.fake_success:
+                    reentry.append("--fake-success")
+                detached_argv = build_detached_argv(
+                    executable=python_executable(),
+                    script=script_path(),
+                    original_argv=reentry,
+                    invocation_cwd=repo_root,
+                    run_id=run_id,
+                )
+                launch = launch_detached(argv=detached_argv, cwd=repo_root, run_id=run_id, run_dir=run_dir)
+                payload = {
+                    "run_id": launch.run_id,
+                    "status": "detached",
+                    "pid": launch.pid,
+                    "pidfile": launch.pidfile,
+                    "stdout_path": launch.stdout_path,
+                    "stderr_path": launch.stderr_path,
+                }
+                write_last_run(repo_root, run_id)
+                print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+                return 0
             payload = runner.run(args)
             if isinstance(payload, dict) and payload.get("run_id"):
                 write_last_run(repo_root, str(payload["run_id"]))
@@ -96,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "inspect":
             payload = runner.inspect(resolve_run_alias(repo_root, args.run, bool(args.last)))
         elif args.command == "events":
-            payload = runner.events(resolve_run_alias(repo_root, args.run, bool(args.last)))
+            payload = runner.events(resolve_run_alias(repo_root, args.run, bool(args.last)), event_type=args.type)
         elif args.command == "resume":
             payload = runner.resume(resolve_run_alias(repo_root, args.run, bool(args.last)), dry_run=bool(args.dry_run))
         elif args.command == "cancel":
@@ -104,7 +156,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "apply":
             payload = runner.apply(resolve_run_alias(repo_root, args.run, bool(args.last)), strategy=args.strategy)
         elif args.command == "clean":
-            payload = runner.clean(args.older_than, successful=args.successful)
+            payload = runner.clean(args.older_than, successful=args.successful, dry_run=not bool(args.apply))
         else:
             parser.error(f"unknown command: {args.command}")
     except ResolutionError as exc:

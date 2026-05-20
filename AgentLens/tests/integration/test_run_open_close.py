@@ -44,7 +44,7 @@ def test_run_open_writes_container_run(runner: CliRunner, workspace: Path) -> No
         [
             "run-open",
             "--agent",
-            "kws-cme-orchestrator",
+            "agentrunway",
             "--workspace",
             str(workspace),
         ],
@@ -62,7 +62,7 @@ def test_run_open_writes_container_run(runner: CliRunner, workspace: Path) -> No
     assert run_doc["run_kind"] == "container"
     assert run_doc["agent"]["name"] == "generic"
     assert run_doc["agent"]["mode"] == "unknown"
-    assert run_doc["agent"]["label"] == "kws-cme-orchestrator"
+    assert run_doc["agent"]["label"] == "agentrunway"
     assert run_doc["recording"]["adapter"] == "agentlens_container"
     assert run_doc["recording"]["has_transcript"] is False
     assert run_doc["recording"]["transcript_source"] == "none"
@@ -110,7 +110,7 @@ def test_run_open_with_parent_and_meta(runner: CliRunner, workspace: Path) -> No
 
 def test_run_close_writes_final(runner: CliRunner, workspace: Path) -> None:
     result = runner.invoke(
-        app, ["run-open", "--agent", "kws-cme-orchestrator"]
+        app, ["run-open", "--agent", "agentrunway"]
     )
     assert result.exit_code == 0, result.stderr
     run_id = result.stdout.strip()

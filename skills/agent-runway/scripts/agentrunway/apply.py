@@ -6,7 +6,9 @@ from .git_ops import Git, assert_clean_source
 
 
 class ApplyError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, commit: str | None = None):
+        super().__init__(message)
+        self.commit = commit
 
 
 def apply_commits_to_source(
@@ -32,6 +34,7 @@ def apply_commits_to_source(
         result = git.run("cherry-pick", commit, check=False)
         if result.returncode != 0:
             git.run("cherry-pick", "--abort", check=False)
-            raise ApplyError(result.stderr.strip() or result.stdout.strip() or "apply conflict")
+            detail = result.stderr.strip() or result.stdout.strip() or "apply conflict"
+            raise ApplyError(f"cherry-pick conflict for {commit}: {detail}", commit=commit)
         applied.append(commit)
     return applied

@@ -25,6 +25,7 @@ Core event types:
 - `agentrunway.review_result`
 - `agentrunway.verification_dispatched`
 - `agentrunway.verification_result`
+- `agentrunway.gate_retry`
 - `agentrunway.merge_ready`
 - `agentrunway.merge_applied`
 - `agentrunway.merge_conflict`
@@ -37,4 +38,12 @@ Core event types:
 
 Payload redaction happens before local write and before AgentLens emission. Home
 paths become `~`; secret-like keys such as `token`, `api_key`, `secret`, and
-`password` become `[REDACTED]`.
+`password` become `[REDACTED]`. Payloads are bounded before local write and
+before AgentLens emission; oversized extras are replaced with truncation
+markers while preserving run id, phase, outcome, severity, summary, and privacy
+metadata.
+
+Payloads use `schema="agentrunway.event.v1"` and include
+`agentrunway_run_id`, `phase`, `outcome`, `severity`, `summary`, and bounded
+event-specific fields. AgentLens emission is best effort; failed emission must
+not stop plan execution.

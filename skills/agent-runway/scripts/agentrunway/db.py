@@ -149,6 +149,17 @@ class AgentRunwayDb:
         )
         self.conn.commit()
 
+    def set_run_agentlens(self, run_id: str, *, agentlens_run_id: str | None, status: str) -> None:
+        self.conn.execute(
+            """
+            UPDATE runs
+            SET agentlens_run_id=?, agentlens_status=?, updated_at=CURRENT_TIMESTAMP
+            WHERE run_id=?
+            """,
+            (agentlens_run_id, status, run_id),
+        )
+        self.conn.commit()
+
     def insert_event(self, *, event_type: str, payload: dict[str, Any], status: str, error: str | None = None) -> int:
         cursor = self.conn.execute(
             """
@@ -173,11 +184,20 @@ class AgentRunwayDb:
         rows = self.list_events()
         failed = [row for row in rows if row["status"] == "agentlens_failed"]
         emitted = [row for row in rows if row["status"] == "agentlens_emitted"]
+        disabled = [row for row in rows if row["status"] == "agentlens_disabled"]
+        run = self.conn.execute(
+            "SELECT agentlens_status, agentlens_run_id FROM runs ORDER BY created_at DESC, run_id DESC LIMIT 1"
+        ).fetchone()
+        last_error = next((str(row["error"]) for row in reversed(rows) if row.get("error")), None)
         return {
             "events": len(rows),
             "emitted": len(emitted),
             "failed": len(failed),
+            "disabled": len(disabled),
             "last_status": rows[-1]["status"] if rows else "none",
+            "last_error": last_error,
+            "run_status": str(run["agentlens_status"]) if run is not None else "unknown",
+            "run_id": run["agentlens_run_id"] if run is not None else None,
         }
 
     def get_run(self, run_id: str) -> dict[str, Any]:

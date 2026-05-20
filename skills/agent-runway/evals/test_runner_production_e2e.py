@@ -213,3 +213,44 @@ def test_verifier_failed_redispatches_implementer_once(git_repo: Path, isolated_
         ("task_001-implementer-002", "merged"),
     ]
     assert any("verification" in path.read_text(encoding="utf-8") and "failed" in path.read_text(encoding="utf-8") for path in prompts)
+
+
+def test_agentlens_fake_cli_receives_runner_events(git_repo: Path, isolated_home: Path, tmp_path: Path) -> None:
+    plan, spec = _write_plan(git_repo, path="src/agentlens_worker.py")
+    log = tmp_path / "agentlens.jsonl"
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET"] = "src/agentlens_worker.py"
+    env["AGENTLENS_FAKE_LOG"] = str(log)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    event_rows = [row for row in rows if "event_type" in row]
+    emitted_types = [row["event_type"] for row in event_rows]
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    db_statuses = [row["status"] for row in conn.execute("SELECT status FROM agentlens_events").fetchall()]
+
+    assert "agentrunway.worker_dispatched" in emitted_types
+    assert "agentrunway.worker_result" in emitted_types
+    assert "agentrunway.run_finished" in emitted_types
+    assert all(status == "agentlens_emitted" for status in db_statuses)
+    assert event_rows[-1]["payload"]["outcome"] == "success"

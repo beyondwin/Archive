@@ -30,3 +30,17 @@ def test_agentrunway_cli_lists_core_commands() -> None:
     )
     for command in ("run", "status", "inspect", "events", "resume", "cancel", "apply", "clean"):
         assert command in result.stdout
+
+
+def test_clean_help_lists_retention_safety_flags() -> None:
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "clean", "--help"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert "--older-than" in result.stdout
+    assert "--dry-run" in result.stdout
+    assert "--apply" in result.stdout

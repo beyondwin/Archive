@@ -119,7 +119,7 @@ def events(
         None, "--run", help="run_id to query (omit to query all runs)"
     ),
     type_: Optional[str] = typer.Option(
-        None, "--type", help="fnmatch glob over event types (e.g. kws-cme.*)"
+        None, "--type", help="fnmatch glob over event types (e.g. agentrunway.*)"
     ),
     since: Optional[str] = typer.Option(
         None, "--since", help="inclusive UTC ISO8601 lower bound on ts"

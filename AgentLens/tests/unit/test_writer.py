@@ -170,7 +170,7 @@ def test_write_run_meta_accepts_container_run(tmp_path: Path) -> None:
     assert (run_dir / "run.json").exists()
     loaded = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
     assert loaded["run_kind"] == "container"
-    assert loaded["agent"]["label"] == "kws-cme-orchestrator"
+    assert loaded["agent"]["label"] == "agentrunway"
     assert loaded["recording"]["transcript_source"] == "none"
 
 
@@ -188,8 +188,8 @@ def test_write_run_meta_accepts_codex_capture_run(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     "fixture_name",
     [
-        "event_kws_cme_task_started",
-        "event_kws_cpe_verification_failed",
+        "event_agentrunway_run_started",
+        "event_agentrunway_verification_result",
         "event_claude_tool_use",
         "event_codex_tool_use",
     ],
@@ -210,7 +210,7 @@ def test_append_event_rejects_uppercase_namespace(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     bad = _load_fixture("event")
-    bad["type"] = "KWS-CME.task_started"
+    bad["type"] = "AgentRunway.task_started"
     with pytest.raises(WriteError):
         append_event(run_dir, bad)
 

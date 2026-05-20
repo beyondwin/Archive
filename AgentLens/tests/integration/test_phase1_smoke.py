@@ -3,10 +3,10 @@
 Exercises the full Phase-1 surface in one flow:
 
 1. ``run-open``                   — container run for the orchestrator.
-2. ``event append --type kws-cme.phase_0_started``.
+2. ``event append --type agentrunway.run_started``.
 3. Wrapping a fake child process with ``AGENTLENS_PARENT_RUN_ID`` set to
    the orchestrator's run_id → records a linked child run.
-4. ``event append --type kws-cme.phase_2_complete``.
+4. ``event append --type agentrunway.run_finished``.
 5. ``run-close``                  — finalizes the container.
 6. ``import claude-session``      — synthetic Claude JSONL → capture run
    with ``transcript_source = "claude-session-jsonl"`` and
@@ -181,7 +181,7 @@ def test_phase1_end_to_end_smoke(
     # ---- 1. run-open: container run for the orchestrator. ----
     r = runner.invoke(
         app,
-        ["run-open", "--agent", "kws-cme-orchestrator", "--workspace", str(workspace)],
+        ["run-open", "--agent", "agentrunway", "--workspace", str(workspace)],
     )
     assert r.exit_code == 0, r.stderr
     orchestrator_run_id = r.stdout.strip().splitlines()[-1]
@@ -190,7 +190,7 @@ def test_phase1_end_to_end_smoke(
     orch_doc = json.loads((orch_run_dir / "run.json").read_text(encoding="utf-8"))
     assert orch_doc["run_kind"] == "container"
 
-    # ---- 2. event append: kws-cme.phase_0_started ----
+    # ---- 2. event append: agentrunway.run_started ----
     r = runner.invoke(
         app,
         [
@@ -199,7 +199,7 @@ def test_phase1_end_to_end_smoke(
             "--run",
             orchestrator_run_id,
             "--type",
-            "kws-cme.phase_0_started",
+            "agentrunway.run_started",
             "--payload-json",
             "{}",
         ],
@@ -227,7 +227,7 @@ def test_phase1_end_to_end_smoke(
     # accidentally inherit the explicit-parent contract.
     monkeypatch.delenv("AGENTLENS_PARENT_RUN_ID", raising=False)
 
-    # ---- 4. event append: kws-cme.phase_2_complete ----
+    # ---- 4. event append: agentrunway.run_finished ----
     r = runner.invoke(
         app,
         [
@@ -236,7 +236,7 @@ def test_phase1_end_to_end_smoke(
             "--run",
             orchestrator_run_id,
             "--type",
-            "kws-cme.phase_2_complete",
+            "agentrunway.run_finished",
             "--payload-json",
             "{}",
         ],
@@ -298,8 +298,8 @@ def test_phase1_end_to_end_smoke(
         json.loads(ln) for ln in r.stdout.strip().splitlines() if ln.strip()
     ]
     types = [e["type"] for e in events]
-    assert "kws-cme.phase_0_started" in types
-    assert "kws-cme.phase_2_complete" in types
+    assert "agentrunway.run_started" in types
+    assert "agentrunway.run_finished" in types
     # Orchestrator + child events both reachable.
     run_ids = {e["run_id"] for e in events}
     assert orchestrator_run_id in run_ids

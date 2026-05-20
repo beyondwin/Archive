@@ -8,9 +8,9 @@ Hardens the contract that AgentLens **never blocks the host orchestrator**:
 * **B. ``AGENTLENS_HOME`` unwritable.** ``agentlens event append`` against
   a chmod-stripped ``$AGENTLENS_HOME/runs`` must exit 0 with a stderr
   warning rather than raise.
-* **C. Glob namespace filtering.** ``agentlens events --type 'kws-cme.*'``
-  and ``'kws-cpe.*'`` must each surface only the matching namespace from
-  a mixed-namespace event stream.
+* **C. Glob namespace filtering.** ``agentlens events --type 'agentrunway.*'``
+  must surface only AgentRunway events from a mixed stream that also contains
+  ``example.*``, ``claude.*``, and ``codex.*`` namespaces.
 * **D. ``--tree`` smoke recap.** A parent + 2 children built via
   ``run-open`` and ``AGENTLENS_PARENT_RUN_ID`` must all surface when
   queried with ``events --run <parent> --tree``, in ``(ts, run_id)`` order.
@@ -77,7 +77,7 @@ def test_orchestrator_snippet_exits_zero_when_cli_missing_from_path(
     """Simulate `agentlens event append ... 2>/dev/null || true` in a shell
     where PATH does not contain the AgentLens CLI binary.
 
-    Spec contract: orchestrators (kws-cme / kws-cpe) wrap their AgentLens
+    Spec contract: host orchestrators wrap their AgentLens
     calls in ``|| true`` so a missing CLI is non-blocking. This test
     proves the snippet itself exits 0 — the contract works even before
     any prod code is involved.
@@ -86,7 +86,7 @@ def test_orchestrator_snippet_exits_zero_when_cli_missing_from_path(
     snippet.write_text(
         "#!/usr/bin/env bash\n"
         "set -e\n"
-        "agentlens event append --run X --type kws-cme.test --payload-json '{}' "
+        "agentlens event append --run X --type agentrunway.test --payload-json '{}' "
         "2>/dev/null || true\n"
         "echo done\n",
         encoding="utf-8",
@@ -146,7 +146,7 @@ def test_event_append_nonblocking_when_home_unreadable(
     if os.geteuid() == 0:
         pytest.skip("root bypasses chmod permission checks")
 
-    run_id = _open_run(runner, agent="kws-cme-orchestrator")
+    run_id = _open_run(runner, agent="agentrunway")
     home = isolated["home"]
     runs = home / "runs"
     assert runs.is_dir()
@@ -162,7 +162,7 @@ def test_event_append_nonblocking_when_home_unreadable(
                 "--run",
                 run_id,
                 "--type",
-                "kws-cme.failure_isolation_probe",
+                "agentrunway.failure_isolation_probe",
                 "--payload-json",
                 "{}",
             ],
@@ -192,7 +192,7 @@ def test_event_append_nonblocking_for_unknown_run(
             "--run",
             "run_does_not_exist_12345",
             "--type",
-            "kws-cme.failure_isolation_probe",
+            "agentrunway.failure_isolation_probe",
             "--payload-json",
             "{}",
         ],
@@ -208,22 +208,22 @@ def test_event_append_nonblocking_for_unknown_run(
 # ---------------------------------------------------------------------------
 
 
-def test_events_query_filters_by_kws_cme_and_kws_cpe_namespaces(
+def test_events_query_filters_agentrunway_without_leaking_other_namespaces(
     runner: CliRunner,
     isolated: dict[str, Path],
 ) -> None:
-    """``events --type 'kws-cme.*'`` returns only kws-cme events and
-    ``events --type 'kws-cpe.*'`` returns only kws-cpe events from a
-    multi-namespace stream that also contains a ``claude.*`` event.
+    """``events --type 'agentrunway.*'`` returns only AgentRunway events from
+    a stream that also contains ``example.*``, ``claude.*``, and ``codex.*``.
     """
-    run_id = _open_run(runner, agent="kws-cme-orchestrator")
+    run_id = _open_run(runner, agent="agentrunway")
 
     types = [
-        "kws-cme.task_started",
-        "kws-cme.task_finished",
-        "kws-cpe.phase_started",
-        "kws-cpe.phase_finished",
+        "agentrunway.task_started",
+        "agentrunway.task_finished",
+        "example.phase_started",
+        "example.phase_finished",
         "claude.session_started",
+        "codex.tool_use",
     ]
     for t in types:
         r = runner.invoke(
@@ -241,33 +241,34 @@ def test_events_query_filters_by_kws_cme_and_kws_cpe_namespaces(
         )
         assert r.exit_code == 0, r.stderr
 
-    # kws-cme.* — exactly the two cme events.
-    r = runner.invoke(app, ["events", "--run", run_id, "--type", "kws-cme.*"])
+    # agentrunway.* — exactly the two AgentRunway events.
+    r = runner.invoke(app, ["events", "--run", run_id, "--type", "agentrunway.*"])
     assert r.exit_code == 0, r.stderr
-    cme_types = [
+    agentrunway_types = [
         json.loads(ln)["type"]
         for ln in r.stdout.strip().splitlines()
         if ln.strip()
     ]
-    assert sorted(cme_types) == [
-        "kws-cme.task_finished",
-        "kws-cme.task_started",
+    assert sorted(agentrunway_types) == [
+        "agentrunway.task_finished",
+        "agentrunway.task_started",
     ]
-    assert all(t.startswith("kws-cme.") for t in cme_types)
+    assert all(t.startswith("agentrunway.") for t in agentrunway_types)
 
-    # kws-cpe.* — exactly the two cpe events; no leak from cme or claude.
-    r = runner.invoke(app, ["events", "--run", run_id, "--type", "kws-cpe.*"])
-    assert r.exit_code == 0, r.stderr
-    cpe_types = [
-        json.loads(ln)["type"]
-        for ln in r.stdout.strip().splitlines()
-        if ln.strip()
-    ]
-    assert sorted(cpe_types) == [
-        "kws-cpe.phase_finished",
-        "kws-cpe.phase_started",
-    ]
-    assert all(t.startswith("kws-cpe.") for t in cpe_types)
+    for namespace, expected in {
+        "example.*": ["example.phase_finished", "example.phase_started"],
+        "claude.*": ["claude.session_started"],
+        "codex.*": ["codex.tool_use"],
+    }.items():
+        r = runner.invoke(app, ["events", "--run", run_id, "--type", namespace])
+        assert r.exit_code == 0, r.stderr
+        other_types = [
+            json.loads(ln)["type"]
+            for ln in r.stdout.strip().splitlines()
+            if ln.strip()
+        ]
+        assert sorted(other_types) == expected
+        assert not any(t.startswith("agentrunway.") for t in other_types)
 
 
 # ---------------------------------------------------------------------------
@@ -284,7 +285,7 @@ def test_events_tree_includes_two_children_via_parent_env(
     all surface in ``events --run <parent> --tree``, in ``(ts, run_id)``
     ascending order.
     """
-    parent_id = _open_run(runner, agent="kws-cme-orchestrator")
+    parent_id = _open_run(runner, agent="agentrunway")
 
     monkeypatch.setenv("AGENTLENS_PARENT_RUN_ID", parent_id)
     monkeypatch.delenv("AGENTLENS_RUN_ID", raising=False)
@@ -313,7 +314,7 @@ def test_events_tree_includes_two_children_via_parent_env(
             "--run",
             parent_id,
             "--type",
-            "kws-cme.parent_note",
+            "agentrunway.parent_note",
             "--payload-json",
             "{}",
         ],

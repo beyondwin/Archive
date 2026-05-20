@@ -18,7 +18,7 @@ The test seeds three minimal-but-realistic run trees on disk:
    ``usage`` projection is present (not None) but carries
    ``confidence == "unknown"``.
 
-3. **Container run** (e.g., the kws-cme lifecycle) — has NO
+3. **Container run** (e.g., the agentrunway lifecycle) — has NO
    ``artifacts/`` directory at all. All three projected keys are ``None``.
 
 Both the SQLite-backed fast path and the full-scan fallback must produce
@@ -215,7 +215,7 @@ def seeded_home(tmp_path: Path) -> Path:
         },
     )
 
-    # Container run — no artifacts/ at all (kws-cme lifecycle).
+    # Container run — no artifacts/ at all (agentrunway lifecycle).
     _write_run_tree(home, RUN_CONTAINER, started_at="2026-03-03T00:00:00Z")
 
     return home

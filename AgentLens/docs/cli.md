@@ -47,14 +47,14 @@ Each command supports `--help`. Subcommand names are part of the v1 contract and
 
   | Flag                 | Required | Meaning                                                                                      |
   |----------------------|----------|----------------------------------------------------------------------------------------------|
-  | `--agent <label>`    | yes      | Human label stamped into `agent.label` (e.g. `kws-cme-orchestrator`).                        |
+  | `--agent <label>`    | yes      | Human label stamped into `agent.label` (e.g. `agentrunway`).                        |
   | `--workspace <path>` | no       | Override workspace root; defaults to cwd.                                                    |
   | `--parent <run_id>`  | no       | Records the caller's run id in `parent_run_id` for tree/lineage queries.                     |
   | `--meta k=v`         | repeat   | Additional key/value pairs persisted under the run's `meta` block; values are redacted.      |
 
   Example:
   ```
-  RUN_ID=$(agentlens run-open --agent kws-cme-orchestrator --meta plan=task_1)
+  RUN_ID=$(agentlens run-open --agent agentrunway --workspace "$PWD")
   ```
 
 - **`agentlens run-close --run <run_id>`** — closes a container run by writing `final.json`. Unknown `run_id` is **non-blocking**: stderr warning, exit `0`.
@@ -76,7 +76,7 @@ Each command supports `--help`. Subcommand names are part of the v1 contract and
   | Flag                       | Required           | Meaning                                                                                                 |
   |----------------------------|--------------------|---------------------------------------------------------------------------------------------------------|
   | `--run <run_id>`           | yes                | Target run.                                                                                             |
-  | `--type <type_string>`     | yes                | Dotted lower-case namespace, e.g. `kws-cme.task.started`. Reserved core namespaces stay enum-locked.    |
+  | `--type <type_string>`     | yes                | Dotted lower-case namespace, e.g. `agentrunway.worker_result`. Reserved core namespaces stay enum-locked.    |
   | `--payload-json <inline>`  | one of three       | Inline JSON payload object.                                                                             |
   | `--payload-file <path>`    | one of three       | Read payload object from a file.                                                                        |
   | `--payload-stdin`          | one of three       | Read payload object from stdin.                                                                         |
@@ -84,8 +84,7 @@ Each command supports `--help`. Subcommand names are part of the v1 contract and
 
   Example:
   ```
-  echo '{"task_id":"task_1","status":"started"}' \
-    | agentlens event append --run "$RUN_ID" --type kws-cme.task.started --payload-stdin
+  agentlens event append --run "$RUN_ID" --type agentrunway.run_started --payload-json '{"schema":"agentrunway.event.v1","summary":"started"}'
   ```
 
 - **`agentlens events`** — reads `events.jsonl` directly and streams JSONL on stdout. The reader never goes through SQLite.
@@ -93,14 +92,14 @@ Each command supports `--help`. Subcommand names are part of the v1 contract and
   | Flag              | Meaning                                                                                                       |
   |-------------------|---------------------------------------------------------------------------------------------------------------|
   | `--run <id>`      | Restrict to the given run (otherwise: all runs in the current workspace).                                     |
-  | `--type <glob>`   | Glob filter against the event `type`, e.g. `--type 'kws-cme.*'` or `--type 'failure.*'`.                       |
+  | `--type <glob>`   | Glob filter against the event `type`, e.g. `--type 'agentrunway.*'` or `--type 'failure.*'`.                       |
   | `--since <ts>`    | Only emit events with `ts >= <iso8601>`.                                                                      |
   | `--tree`          | Include descendants reachable through `parent_run_id`; output is ordered by `(ts, run_id)`.                   |
   | `--follow`        | Tail mode: keep the file open and emit new lines as they arrive.                                              |
 
   Example:
   ```
-  agentlens events --run "$RUN_ID" --type 'kws-cme.*' --tree
+  agentlens events --run "$RUN_ID" --type 'agentrunway.*'
   ```
 
 - **`agentlens attach --kind <kind> --path <path>`** — registers a file under `artifacts/` and adds a manifest entry with its sha256.

@@ -12,6 +12,7 @@ from .models import EVENT_SCHEMA
 
 
 SECRET_KEYS = {"token", "api_key", "secret", "password"}
+MAX_EVENT_PAYLOAD_BYTES = 3500
 
 
 def redact_payload(payload: Any) -> Any:
@@ -31,18 +32,60 @@ def redact_payload(payload: Any) -> Any:
     return deepcopy(payload)
 
 
+def _payload_size(payload: dict[str, Any]) -> int:
+    return len(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+
+
+def _bound_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if _payload_size(payload) <= MAX_EVENT_PAYLOAD_BYTES:
+        return payload
+    bounded = dict(payload)
+    omission = {"omitted": True, "reason": "size"}
+    for key in ("gate_result", "previous_candidate", "changed_files"):
+        if key in bounded:
+            bounded[key] = omission
+    bounded["payload_truncated"] = True
+    if _payload_size(bounded) <= MAX_EVENT_PAYLOAD_BYTES:
+        return bounded
+    protected = {
+        "schema",
+        "run_id",
+        "agentrunway_run_id",
+        "phase",
+        "outcome",
+        "severity",
+        "summary",
+        "privacy",
+        "payload_truncated",
+    }
+    truncated_keys = [key for key in bounded if key not in protected]
+    bounded["truncated_keys"] = truncated_keys
+    for key in truncated_keys:
+        bounded[key] = omission
+    if _payload_size(bounded) <= MAX_EVENT_PAYLOAD_BYTES:
+        return bounded
+    for key in truncated_keys:
+        bounded.pop(key, None)
+    if _payload_size(bounded) <= MAX_EVENT_PAYLOAD_BYTES:
+        return bounded
+    bounded["summary"] = str(bounded.get("summary", ""))[:512]
+    return bounded
+
+
 def build_event_payload(run_id: str, phase: str, outcome: str, summary: str, **extra: Any) -> dict[str, Any]:
     payload = {
         "schema": EVENT_SCHEMA,
+        "run_id": run_id,
         "agentrunway_run_id": run_id,
         "phase": phase,
         "outcome": outcome,
-        "severity": "info" if outcome == "success" else "warn",
+        "severity": "error" if outcome == "failed" else ("info" if outcome == "success" else "warn"),
         "summary": summary[:1200],
+        "payload_truncated": False,
         "privacy": {"redacted": True, "policy": "home paths and secret-like keys"},
     }
     payload.update(extra)
-    return redact_payload(payload)
+    return _bound_payload(redact_payload(payload))
 
 
 class AgentLensEmitter(Protocol):
