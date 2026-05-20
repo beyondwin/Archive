@@ -23,7 +23,7 @@ class CodexAdapter:
             "--model",
             self.model,
             "--sandbox",
-            "workspace-write",
+            "danger-full-access",
         ]
         if artifact_dir is not None:
             command.extend(["--add-dir", str(artifact_dir)])
