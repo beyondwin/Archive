@@ -13,6 +13,7 @@ from typing import Any
 from .adapters.claude import ClaudeAdapter
 from .adapters.codex import CodexAdapter
 from .adapters.local import LocalAdapter
+from .apply import apply_commits_to_source
 from .artifacts import ArtifactStore
 from .config import BuiltinProfiles, ModelProfile, load_effective_config
 from .db import AgentRunwayDb
@@ -267,11 +268,31 @@ def cancel(run_id: str) -> dict[str, Any]:
     return {"run_id": run_id, "status": "cancelled"}
 
 
-def apply(run_id: str) -> dict[str, Any]:
+def apply(run_id: str, strategy: str = "cherry-pick") -> dict[str, Any]:
     data = _load_run_json(run_id)
     if data is None:
         return _missing(run_id)
-    return {"run_id": run_id, "status": data.get("status"), "applied": False, "reason": "explicit source apply is not automatic in MVP"}
+    db = AgentRunwayDb.open(Path(data["state_db"]))
+    commits: list[str] = []
+    for candidate in db.list_merge_candidates():
+        if candidate["status"] == "merged":
+            commits.extend(candidate["commits"])
+    already_applied = tuple(row["commit_sha"] for row in db.list_applied_commits(run_id))
+    applied = apply_commits_to_source(
+        Path(data["repo_root"]),
+        tuple(commits),
+        strategy=strategy,
+        already_applied=already_applied,
+    )
+    for commit in applied:
+        db.record_applied_commit(run_id=run_id, commit_sha=commit, strategy=strategy)
+    return {
+        "run_id": run_id,
+        "status": data.get("status"),
+        "applied": True,
+        "commits": applied,
+        "already_applied": list(already_applied),
+    }
 
 
 def clean(older_than: str, *, successful: bool) -> dict[str, Any]:
