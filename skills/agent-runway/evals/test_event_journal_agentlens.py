@@ -171,6 +171,7 @@ def test_agentlens_event_envelope_uses_v2_trust_impact_enum() -> None:
     assert partial["trust_impact"] == "requires_attention"
     assert failed["trust_impact"] == "supports_failure"
     assert simulated["trust_impact"] == "downgrades_trust"
+    assert simulated["phase"] == "finish"
 
 
 def test_agentlens_event_envelope_is_strict_v2_shape() -> None:
