@@ -10,14 +10,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .adapters.claude import ClaudeAdapter
+from .adapters.codex import CodexAdapter
 from .adapters.local import LocalAdapter
 from .artifacts import ArtifactStore
-from .config import BuiltinProfiles, load_effective_config
+from .config import BuiltinProfiles, ModelProfile, load_effective_config
 from .db import AgentRunwayDb
 from .git_ops import Git, assert_clean_source
-from .packetizer import build_task_packet, materialize_prompt, packet_to_json
+from .packetizer import build_task_packet, materialize_prompt, materialize_worker_prompt, packet_to_json
 from .plan_parser import canonical_hash, parse_plan, parse_spec_manifest
 from .scheduler import schedule_waves
+from .supervisor import run_implementer_attempt
 from .worktrees import create_main_worktree, next_available_run_id, workspace_id
 
 
@@ -75,6 +78,18 @@ def _load_run_json(run_id: str) -> dict[str, Any] | None:
     if run_dir is None or not (run_dir / "run.json").exists():
         return None
     return json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+
+
+def _select_adapter(name: str, profile: ModelProfile, *, fake_success: bool = False) -> tuple[Any, str, str, str]:
+    model = profile.workers.get("default", profile.orchestrator)
+    effort = model.reasoning_effort_resolved or model.reasoning_effort
+    if name == "local":
+        return LocalAdapter(fake_success=fake_success), "local", "local", "n/a"
+    if name == "codex":
+        return CodexAdapter(model=model.model, reasoning_effort=effort), "codex", model.model, effort
+    if name == "claude":
+        return ClaudeAdapter(model=model.model, reasoning_effort=effort), "claude", model.model, effort
+    raise ValueError(f"unsupported adapter: {name}")
 
 
 def run(args: Any) -> dict[str, Any]:
@@ -136,7 +151,11 @@ def run(args: Any) -> dict[str, Any]:
         return run_json
 
     main_worktree = create_main_worktree(git, worktree_root / "main", run_id, base_commit)
-    adapter = LocalAdapter(fake_success=bool(args.fake_success)) if args.adapter == "local" else LocalAdapter(fake_success=False)
+    adapter, runtime, model, reasoning_effort = _select_adapter(
+        args.adapter,
+        profile,
+        fake_success=bool(args.fake_success),
+    )
     store = ArtifactStore(run_dir / "artifacts")
     for task in tasks:
         packet_path = run_dir / "packets" / f"{task.task_id}.json"
@@ -144,9 +163,33 @@ def run(args: Any) -> dict[str, Any]:
         packet_path.write_text(packet_json, encoding="utf-8")
         task_artifact_dir = run_dir / "artifacts" / task.task_id
         task_artifact_dir.mkdir(parents=True, exist_ok=True)
-        result = adapter.run(packet_path, task_artifact_dir)
-        store.write_text(task.task_id, "worker_result.json", json.dumps(asdict(result), indent=2, sort_keys=True))
-        db.set_task_status(task.task_id, "merged" if result.status == "success" else "blocked")
+        if runtime == "local":
+            result = adapter.run(packet_path, task_artifact_dir)
+            store.write_text(task.task_id, "worker_result.json", json.dumps(asdict(result), indent=2, sort_keys=True))
+            db.set_task_status(task.task_id, "merged" if result.status == "success" else "blocked")
+        else:
+            packet = build_task_packet(run_id, task, _spec_slices(spec, task.spec_refs) if spec else [], profile)
+            worker_id = f"{task.task_id}-implementer-001"
+            output_path = run_dir / "artifacts" / task.task_id / worker_id / "worker_result.json"
+            prompt_path = materialize_worker_prompt(packet, packet_path, output_path, run_dir / "prompts")
+            run_implementer_attempt(
+                db=db,
+                run_id=run_id,
+                git=git,
+                main_worktree=main_worktree,
+                worktree_root=worktree_root,
+                run_dir=run_dir,
+                task=task,
+                packet_path=packet_path,
+                prompt_path=prompt_path,
+                adapter=adapter,
+                runtime=runtime,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                attempt=1,
+                timeout_seconds=600,
+            )
+            db.set_task_status(task.task_id, "merge_ready")
     db.set_run_status(run_id, "finished")
     run_json.update({"status": "finished", "main_worktree": str(main_worktree)})
     _write_run_json(run_dir, run_json)
