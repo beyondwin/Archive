@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from agentrunway.db import AgentRunwayDb
-from agentrunway.events import EventJournal, build_event_payload
+from agentrunway.events import EventJournal, build_agentlens_event_envelope, build_event_payload
 
 
 class FailingEmitter:
@@ -93,3 +93,28 @@ def test_event_payload_includes_run_id_alias_and_bounds_large_extras() -> None:
     assert len(encoded) <= 3500
     assert payload["gate_result"] == {"omitted": True, "reason": "size"}
     assert payload["changed_files"] == {"omitted": True, "reason": "size"}
+
+
+def test_agentlens_event_envelope_uses_v2_trust_impact_enum() -> None:
+    partial = build_agentlens_event_envelope(
+        event_id=1,
+        event_type="agentrunway.agentlens_sink_unavailable",
+        payload=build_event_payload("run-1", "agentlens", "partial", "sink unavailable"),
+        occurred_at="2026-05-21T00:00:00Z",
+    )
+    failed = build_agentlens_event_envelope(
+        event_id=2,
+        event_type="agentrunway.run_blocked",
+        payload=build_event_payload("run-1", "run", "failed", "blocked"),
+        occurred_at="2026-05-21T00:00:00Z",
+    )
+    simulated = build_agentlens_event_envelope(
+        event_id=3,
+        event_type="agentrunway.run_finished",
+        payload=build_event_payload("run-1", "run", "success", "simulated", simulation=True),
+        occurred_at="2026-05-21T00:00:00Z",
+    )
+
+    assert partial["trust_impact"] == "requires_attention"
+    assert failed["trust_impact"] == "supports_failure"
+    assert simulated["trust_impact"] == "downgrades_trust"
