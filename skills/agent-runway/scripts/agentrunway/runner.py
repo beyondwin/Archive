@@ -271,12 +271,16 @@ def run(args: Any) -> dict[str, Any]:
         "tasks": [asdict(task) for task in tasks],
         "waves": waves,
     }
+    _write_run_json(run_dir, run_json)
     if args.planning_only:
         db.set_run_status(run_id, "planning_only")
         _write_run_json(run_dir, run_json)
         return run_json
 
     main_worktree = create_main_worktree(git, worktree_root / "main", run_id, base_commit)
+    db.set_run_status(run_id, "running")
+    run_json.update({"status": "running", "main_worktree": str(main_worktree)})
+    _write_run_json(run_dir, run_json)
     adapter, runtime, model, reasoning_effort = _select_adapter(
         args.adapter,
         profile,
@@ -361,6 +365,16 @@ def run(args: Any) -> dict[str, Any]:
                             error=str(exc),
                         ),
                     )
+                    db.set_run_status(run_id, "failed")
+                    run_json.update(
+                        {
+                            "status": "failed",
+                            "main_worktree": str(main_worktree),
+                            "tasks": db.list_tasks(),
+                            "error": str(exc),
+                        }
+                    )
+                    _write_run_json(run_dir, run_json)
                     raise
                 candidate = _merge_candidate(db, candidate_id)
                 journal.record(
@@ -405,6 +419,7 @@ def run(args: Any) -> dict[str, Any]:
                     reasoning_effort=reasoning_effort,
                     reviewed_worker_id=str(candidate["worker_id"]),
                     candidate_diff=diff,
+                    candidate_commits=tuple(candidate["commits"]),
                     attempt=review_attempt,
                     timeout_seconds=600,
                 )
