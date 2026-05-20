@@ -63,6 +63,75 @@ def _write_high_risk_plan(repo: Path) -> tuple[Path, Path]:
     return plan, spec
 
 
+def _write_safe_wave_plan(repo: Path) -> tuple[Path, Path]:
+    spec = repo / "spec.md"
+    plan = repo / "plan.md"
+    spec.write_text("# Spec\n\n## A\n\nAdd two independent files.\n", encoding="utf-8")
+    plan.write_text(
+        "## Task 1: A\n\n"
+        "```yaml agentrunway-task\n"
+        "task_id: task_001\n"
+        "title: A\n"
+        "risk: low\n"
+        "phase: implementation\n"
+        "dependencies: []\n"
+        "spec_refs: [S1.1]\n"
+        "file_claims:\n"
+        "  - {path: src/safe_a.py, mode: owned}\n"
+        "acceptance_commands:\n"
+        "  - python -m py_compile src/safe_a.py\n"
+        "required_skills: [test-driven-development]\n"
+        "```\n"
+        "Add first safe file.\n\n"
+        "## Task 2: B\n\n"
+        "```yaml agentrunway-task\n"
+        "task_id: task_002\n"
+        "title: B\n"
+        "risk: low\n"
+        "phase: implementation\n"
+        "dependencies: []\n"
+        "spec_refs: [S1.1]\n"
+        "file_claims:\n"
+        "  - {path: src/safe_b.py, mode: owned}\n"
+        "acceptance_commands:\n"
+        "  - python -m py_compile src/safe_b.py\n"
+        "required_skills: [test-driven-development]\n"
+        "```\n"
+        "Add second safe file.\n",
+        encoding="utf-8",
+    )
+    return plan, spec
+
+
+def _write_many_safe_wave_plan(repo: Path, count: int) -> tuple[Path, Path]:
+    spec = repo / "spec.md"
+    plan = repo / "plan.md"
+    spec.write_text("# Spec\n\n## A\n\nAdd independent files.\n", encoding="utf-8")
+    sections: list[str] = []
+    for index in range(1, count + 1):
+        task_id = f"task_{index:03d}"
+        target = f"src/safe_{index}.py"
+        sections.append(
+            f"## Task {index}: {task_id}\n\n"
+            "```yaml agentrunway-task\n"
+            f"task_id: {task_id}\n"
+            f"title: {task_id}\n"
+            "risk: low\n"
+            "phase: implementation\n"
+            "dependencies: []\n"
+            "spec_refs: [S1.1]\n"
+            "file_claims:\n"
+            f"  - {{path: {target}, mode: owned}}\n"
+            "acceptance_commands:\n"
+            f"  - python -m py_compile {target}\n"
+            "required_skills: [test-driven-development]\n"
+            "```\n"
+            f"Add {target}.\n"
+        )
+    plan.write_text("\n".join(sections), encoding="utf-8")
+    return plan, spec
+
+
 def test_codex_fake_implementer_reaches_validated_candidate(git_repo: Path, isolated_home: Path) -> None:
     plan, spec = _write_plan(git_repo)
     env = os.environ.copy()
@@ -406,7 +475,9 @@ def test_failed_implementer_run_persists_run_json(git_repo: Path, isolated_home:
     assert payload["main_worktree"]
 
 
-def test_reviewer_and_verifier_worktrees_include_candidate_files(git_repo: Path, isolated_home: Path) -> None:
+def test_diff_reviewer_uses_no_worktree_and_verifier_keeps_candidate_visibility(
+    git_repo: Path, isolated_home: Path
+) -> None:
     plan, spec = _write_plan(git_repo, path="src/review_visible.py")
     env = os.environ.copy()
     env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
@@ -432,14 +503,371 @@ def test_reviewer_and_verifier_worktrees_include_candidate_files(git_repo: Path,
     payload = json.loads(result.stdout)
     conn = sqlite3.connect(payload["state_db"])
     conn.row_factory = sqlite3.Row
-    rows = conn.execute(
-        "SELECT role, worktree_path FROM workers WHERE role IN ('reviewer', 'verifier') ORDER BY role"
-    ).fetchall()
+    rows = conn.execute("SELECT role, runtime, worktree_path FROM workers WHERE role IN ('reviewer', 'verifier') ORDER BY role").fetchall()
 
     assert {row["role"] for row in rows} == {"reviewer", "verifier"}
-    for row in rows:
-        reviewed_file = Path(row["worktree_path"]) / "src" / "review_visible.py"
-        assert reviewed_file.read_text(encoding="utf-8") == "VALUE = 'codex'\n"
+    reviewer = next(row for row in rows if row["role"] == "reviewer")
+    verifier = next(row for row in rows if row["role"] == "verifier")
+    assert reviewer["worktree_path"] is None
+    assert reviewer["runtime"] == "codex"
+    reviewed_file = Path(verifier["worktree_path"]) / "src" / "review_visible.py"
+    assert reviewed_file.read_text(encoding="utf-8") == "VALUE = 'codex'\n"
+
+
+def test_local_first_verifier_passes_without_llm_verifier_worktree(git_repo: Path, isolated_home: Path) -> None:
+    spec = git_repo / "spec.md"
+    plan = git_repo / "plan.md"
+    spec.write_text("# Spec\n\n## A\n\nAdd local-first file.\n", encoding="utf-8")
+    plan.write_text(
+        "## Task 1: A\n\n"
+        "```yaml agentrunway-task\n"
+        "task_id: task_001\n"
+        "title: A\n"
+        "risk: low\n"
+        "phase: implementation\n"
+        "dependencies: []\n"
+        "spec_refs: [S1.1]\n"
+        "file_claims:\n"
+        "  - {path: src/local_first.py, mode: owned}\n"
+        "acceptance_commands: [python -m py_compile src/local_first.py]\n"
+        "required_skills: [test-driven-development]\n"
+        "```\n"
+        "Add local-first file.\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET"] = "src/local_first.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    verifier = conn.execute("SELECT runtime, worktree_path, handle_json FROM workers WHERE role='verifier'").fetchone()
+    verification = json.loads(
+        (Path(payload["run_dir"]) / "artifacts" / "task_001" / "task_001-verifier-001" / "verification_result.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert payload["status"] == "finished"
+    assert verifier["runtime"] == "local"
+    assert verifier["worktree_path"] is None
+    assert json.loads(verifier["handle_json"])["local_gate"]["source"] == "local"
+    assert verification["status"] == "passed"
+    assert verification["checks"][0]["source"] == "local"
+
+
+def test_local_first_verifier_falls_back_if_acceptance_mutates_tracked_files(
+    git_repo: Path,
+    isolated_home: Path,
+) -> None:
+    tools = git_repo / "tools"
+    tools.mkdir()
+    (tools / "mutate_tracked.py").write_text(
+        "from pathlib import Path\n"
+        "import sys\n"
+        "Path(sys.argv[1]).write_text(\"VALUE = 'mutated'\\n\", encoding=\"utf-8\")\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "tools/mutate_tracked.py"], cwd=git_repo, check=True)
+    subprocess.run(["git", "commit", "-m", "add dirty acceptance helper"], cwd=git_repo, check=True, capture_output=True)
+    spec = git_repo / "spec.md"
+    plan = git_repo / "plan.md"
+    spec.write_text("# Spec\n\n## A\n\nAdd worker file.\n", encoding="utf-8")
+    plan.write_text(
+        "## Task 1: A\n\n"
+        "```yaml agentrunway-task\n"
+        "task_id: task_001\n"
+        "title: A\n"
+        "risk: low\n"
+        "phase: implementation\n"
+        "dependencies: []\n"
+        "spec_refs: [S1.1]\n"
+        "file_claims:\n"
+        "  - {path: src/local_dirty.py, mode: owned}\n"
+        "acceptance_commands:\n"
+        "  - python tools/mutate_tracked.py src/local_dirty.py\n"
+        "required_skills: [test-driven-development]\n"
+        "```\n"
+        "Add worker file.\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET"] = "src/local_dirty.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    verifier = dict(conn.execute("SELECT runtime, worktree_path FROM workers WHERE role='verifier'").fetchone())
+    implementer = dict(conn.execute("SELECT worktree_path FROM workers WHERE role='implementer'").fetchone())
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=Path(implementer["worktree_path"]),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert payload["status"] == "finished"
+    assert verifier["runtime"] == "codex"
+    assert verifier["worktree_path"] is not None
+    assert status.stdout == ""
+
+
+def test_high_risk_candidates_are_started_in_parallel(git_repo: Path, isolated_home: Path, tmp_path: Path) -> None:
+    plan, spec = _write_high_risk_plan(git_repo)
+    timing_log = tmp_path / "timing.jsonl"
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_CANDIDATE_VARIANT"] = "1"
+    env["AGENTRUNWAY_FAKE_TARGET"] = "src/high_risk.py"
+    env["AGENTRUNWAY_FAKE_IMPLEMENT_SLEEP_SECONDS"] = "1.0"
+    env["AGENTRUNWAY_FAKE_TIMING_LOG"] = str(timing_log)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    implementers = conn.execute("SELECT worker_id FROM workers WHERE role='implementer' ORDER BY worker_id").fetchall()
+    timing = [json.loads(line) for line in timing_log.read_text(encoding="utf-8").splitlines()]
+    starts = {item["worker_id"]: item["time"] for item in timing if item["event"] == "start"}
+    ends = {item["worker_id"]: item["time"] for item in timing if item["event"] == "end"}
+
+    assert [row["worker_id"] for row in implementers] == ["task_001-implementer-001", "task_001-implementer-002"]
+    assert max(starts.values()) < min(ends.values())
+
+
+def test_safe_wave_tasks_start_implementers_in_parallel(git_repo: Path, isolated_home: Path, tmp_path: Path) -> None:
+    plan, spec = _write_safe_wave_plan(git_repo)
+    timing_log = tmp_path / "safe-wave-timing.jsonl"
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET_MAP"] = json.dumps({"task_001": "src/safe_a.py", "task_002": "src/safe_b.py"})
+    env["AGENTRUNWAY_FAKE_IMPLEMENT_SLEEP_SECONDS"] = "1.0"
+    env["AGENTRUNWAY_FAKE_TIMING_LOG"] = str(timing_log)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    implementers = conn.execute("SELECT worker_id FROM workers WHERE role='implementer' ORDER BY worker_id").fetchall()
+    timing = [json.loads(line) for line in timing_log.read_text(encoding="utf-8").splitlines()]
+    starts = {item["worker_id"]: item["time"] for item in timing if item["event"] == "start"}
+    ends = {item["worker_id"]: item["time"] for item in timing if item["event"] == "end"}
+
+    assert payload["status"] == "finished"
+    assert [row["worker_id"] for row in implementers] == ["task_001-implementer-001", "task_002-implementer-001"]
+    assert max(starts.values()) < min(ends.values())
+
+
+def test_safe_wave_prestart_is_bounded_to_default_max_workers(
+    git_repo: Path,
+    isolated_home: Path,
+    tmp_path: Path,
+) -> None:
+    plan, spec = _write_many_safe_wave_plan(git_repo, 5)
+    timing_log = tmp_path / "bounded-safe-wave-timing.jsonl"
+    target_map = {f"task_{index:03d}": f"src/safe_{index}.py" for index in range(1, 6)}
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET_MAP"] = json.dumps(target_map)
+    env["AGENTRUNWAY_FAKE_IMPLEMENT_SLEEP_SECONDS"] = "1.0"
+    env["AGENTRUNWAY_FAKE_TIMING_LOG"] = str(timing_log)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    timing = [json.loads(line) for line in timing_log.read_text(encoding="utf-8").splitlines()]
+    starts = {item["worker_id"]: item["time"] for item in timing if item["event"] == "start"}
+    ends = {item["worker_id"]: item["time"] for item in timing if item["event"] == "end"}
+    first_four = [f"task_{index:03d}-implementer-001" for index in range(1, 5)]
+    fifth = "task_005-implementer-001"
+
+    assert payload["status"] == "finished"
+    assert max(starts[worker_id] for worker_id in first_four) < min(ends[worker_id] for worker_id in first_four)
+    assert starts[fifth] > min(ends[worker_id] for worker_id in first_four)
+
+
+def test_safe_wave_prestart_respects_runtime_cap(
+    git_repo: Path,
+    isolated_home: Path,
+    tmp_path: Path,
+) -> None:
+    plan, spec = _write_many_safe_wave_plan(git_repo, 3)
+    global_cfg = Path(os.environ["HOME"]) / ".agentrunway" / "global.yaml"
+    global_cfg.parent.mkdir(parents=True, exist_ok=True)
+    global_cfg.write_text(
+        "runtime_caps:\n"
+        "  codex:\n"
+        "    max_concurrent_workers: 2\n",
+        encoding="utf-8",
+    )
+    timing_log = tmp_path / "runtime-cap-safe-wave-timing.jsonl"
+    target_map = {f"task_{index:03d}": f"src/safe_{index}.py" for index in range(1, 4)}
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET_MAP"] = json.dumps(target_map)
+    env["AGENTRUNWAY_FAKE_IMPLEMENT_SLEEP_SECONDS"] = "1.0"
+    env["AGENTRUNWAY_FAKE_TIMING_LOG"] = str(timing_log)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    timing = [json.loads(line) for line in timing_log.read_text(encoding="utf-8").splitlines()]
+    starts = {item["worker_id"]: item["time"] for item in timing if item["event"] == "start"}
+    ends = {item["worker_id"]: item["time"] for item in timing if item["event"] == "end"}
+    first_two = ["task_001-implementer-001", "task_002-implementer-001"]
+    third = "task_003-implementer-001"
+
+    assert payload["status"] == "finished"
+    assert max(starts[worker_id] for worker_id in first_two) < min(ends[worker_id] for worker_id in first_two)
+    assert starts[third] > min(ends[worker_id] for worker_id in first_two)
+
+
+def test_prestarted_sibling_workers_are_cancelled_when_collect_fails(
+    git_repo: Path,
+    isolated_home: Path,
+    tmp_path: Path,
+) -> None:
+    plan, spec = _write_safe_wave_plan(git_repo)
+    timing_log = tmp_path / "cancel-sibling-timing.jsonl"
+    run_id = "cancel-prestarted-sibling"
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET_MAP"] = json.dumps({"task_001": "src/safe_a.py", "task_002": "src/safe_b.py"})
+    env["AGENTRUNWAY_FAKE_FAIL_TASKS"] = "task_001"
+    env["AGENTRUNWAY_FAKE_IMPLEMENT_SLEEP_SECONDS_MAP"] = json.dumps({"task_002": "2.0"})
+    env["AGENTRUNWAY_FAKE_TIMING_LOG"] = str(timing_log)
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--run-id",
+            run_id,
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    run_json = isolated_home / "runs" / workspace_id(git_repo) / run_id / "run.json"
+    payload = json.loads(run_json.read_text(encoding="utf-8"))
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    workers = {
+        row["worker_id"]: dict(row)
+        for row in conn.execute("SELECT worker_id, state, ended_at FROM workers ORDER BY worker_id").fetchall()
+    }
+
+    assert result.returncode != 0
+    assert workers["task_001-implementer-001"]["state"] == "malformed_result"
+    assert workers["task_002-implementer-001"]["state"] == "cancelled"
+    assert workers["task_002-implementer-001"]["ended_at"] is not None
 
 
 def test_reviewer_needs_context_escalates_once_to_full_tree(git_repo: Path, isolated_home: Path) -> None:

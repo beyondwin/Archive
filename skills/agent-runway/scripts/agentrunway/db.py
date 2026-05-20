@@ -111,6 +111,14 @@ CREATE TABLE IF NOT EXISTS decision_packets (
   payload_json TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE IF NOT EXISTS gate_cache (
+  gate TEXT NOT NULL,
+  cache_key TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(gate, cache_key)
+);
 """
 
 
@@ -622,6 +630,30 @@ class AgentRunwayDb:
         )
         self.conn.commit()
         return self.get_decision_packet(decision_id)
+
+    def put_gate_cache(self, *, gate: str, cache_key: str, result: dict[str, Any], metadata: dict[str, Any]) -> None:
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO gate_cache (gate, cache_key, result_json, metadata_json)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                gate,
+                cache_key,
+                json.dumps(result, ensure_ascii=False, sort_keys=True),
+                json.dumps(metadata, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        self.conn.commit()
+
+    def get_gate_cache(self, *, gate: str, cache_key: str) -> dict[str, Any] | None:
+        row = self.conn.execute("SELECT * FROM gate_cache WHERE gate=? AND cache_key=?", (gate, cache_key)).fetchone()
+        if row is None:
+            return None
+        data = dict(row)
+        data["result"] = json.loads(data.pop("result_json"))
+        data["metadata"] = json.loads(data.pop("metadata_json"))
+        return data
 
     def get_decision_packet(self, decision_id: str) -> dict[str, Any]:
         row = self.conn.execute("SELECT * FROM decision_packets WHERE decision_id=?", (decision_id,)).fetchone()

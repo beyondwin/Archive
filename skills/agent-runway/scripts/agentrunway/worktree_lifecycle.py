@@ -12,6 +12,7 @@ from .task_classifier import classify_task
 DIAGNOSIS_STATES = {
     "adapter_crashed",
     "blocked",
+    "cancelled",
     "diff_scope_failed",
     "failed",
     "malformed_result",

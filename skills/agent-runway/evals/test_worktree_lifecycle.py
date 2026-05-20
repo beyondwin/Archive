@@ -34,6 +34,7 @@ def test_lifecycle_keeps_quality_evidence_before_cleanup() -> None:
     assert lifecycle_for_worker(role="reviewer", state="validated") == "cleanup_eligible"
     assert lifecycle_for_worker(role="verifier", state="validated") == "cleanup_eligible"
     assert lifecycle_for_worker(role="verifier", state="malformed_result") == "retained_for_diagnosis"
+    assert lifecycle_for_worker(role="implementer", state="cancelled") == "retained_for_diagnosis"
 
 
 def test_reviewer_mode_escalates_for_high_risk_schema_and_generated_surface() -> None:
