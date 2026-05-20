@@ -6,7 +6,7 @@
 
 **Architecture:** Add a small durable workflow layer beside the existing SQLite state, then wire it into the current runner incrementally. The first implementation keeps the existing worker/reviewer/verifier supervisor path, but changes integration timing so dependent tasks start from the latest verified run-main checkpoint.
 
-**Slice boundary:** This plan delivers slice 1 of the design (see design §13.1). It persists activity records and classifies the merge-activity failure, but it does not yet route review/verification/plan failures through `FailureClassifier`, switch the runner from `schedule_waves` to checkpoint-aware scheduling, or change the `resume` command to dispatch the next node from activity artifacts. Those are explicitly deferred to follow-up plans.
+**Slice boundary:** This plan delivers slice 1 of the design (see design §13.1). The initial implementation persisted merge activity records and classified merge failures. The follow-up risk-closure pass also records implement/review/verification activities, routes review/verification/plan failures through `FailureClassifier`, writes decision packets for human-input failures, and exposes the next durable activity boundary from `resume --dry-run`. Runner replacement of `schedule_waves` with checkpoint-aware safe-wave scheduling remains a later slice.
 
 **Tech Stack:** Python 3, SQLite, pytest, git worktrees, existing AgentRunway fake Codex/Claude CLI fixtures.
 
@@ -1956,14 +1956,12 @@ cd /Users/kws/source/private/Archive && git status --short
 
 Expected final state (slice 1):
 
-- AgentRunway writes workflow events, activity rows, checkpoint rows, and is wired to write decision packets via `WorkflowStore.create_decision_packet` (gate-failure paths that emit them remain a follow-up slice).
+- AgentRunway writes workflow events, implement/review/verification/merge activity rows, checkpoint rows, and decision packets for human-input failures.
 - Verified selected candidates cherry-pick into run main before dependent tasks start, with `cp-000` initial and `cp-NNN` per-merge checkpoint rows.
 - Dependent fake-adapter regression passes and proves task 2 sees task 1's cherry-pick on run main.
-- `summarize` reports latest checkpoint, graph counts, blocked node, failure class, next automatic action, and human decision fields.
+- `summarize` reports latest checkpoint, graph counts, blocked node, failure class, next automatic action, and human decision fields; `resume --dry-run` reports the next durable activity boundary.
 - Full AgentRunway eval suite passes.
 
 Out of scope for this slice (tracked in design §13.1 and §15.2):
 
-- Runner-side resume that picks the next node from durable activity artifacts.
-- Routing review/verification/plan failures through `FailureClassifier` and writing decision packets from gate failures.
 - Replacing `schedule_waves` with `ready_tasks_after_checkpoints` / `schedule_safe_wave` in `runner.run()`.

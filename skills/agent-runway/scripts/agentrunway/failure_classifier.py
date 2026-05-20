@@ -105,3 +105,20 @@ def classify_merge_failure(*, previous_conflicts: int, error: str) -> FailureCla
         consume_implementer_retry=False,
         summary=f"repeated merge conflict requires operator decision: {error}",
     )
+
+
+def classify_plan_failure(*, lint_result: dict[str, Any]) -> FailureClassification:
+    body = _text(lint_result)
+    if "too_large" in body or "too large" in body or "broad" in body:
+        return FailureClassification(
+            failure_class=FailureClass.NEEDS_SPLIT.value,
+            next_action="split_task",
+            consume_implementer_retry=False,
+            summary="plan lint failure points to an oversized or broad task",
+        )
+    return FailureClassification(
+        failure_class=FailureClass.NEEDS_PLAN_FIX.value,
+        next_action="fix_plan",
+        consume_implementer_retry=False,
+        summary="plan lint failure requires plan metadata changes",
+    )

@@ -552,17 +552,20 @@ it adds:
 - summary fields for the latest checkpoint, activity graph counts, blocked
   node, failure class, next automatic action, and required human decision.
 
+The initial slice left some activity-boundary and failure-class routing work
+deferred. The 2026-05-20 risk-closure pass delivered the two highest-risk
+items:
+
+- runner-side `resume --dry-run` now selects the next node by inspecting
+  durable activity artifacts;
+- review, verification, and plan failures route through `FailureClassifier`;
+- human-input gate and repeated merge-conflict failures write decision packets.
+
 The following items remain explicitly deferred to later slices and must not be
 treated as delivered by slice 1:
 
-- runner-side resume that selects the next node by inspecting durable activity
-  artifacts (slice 1 only persists those activities; the existing `resume`
-  command still replays from worker state);
 - runner integration of `ready_tasks_after_checkpoints` /
   `schedule_safe_wave` in place of the existing `schedule_waves` loop;
-- routing review, verification, and plan failures through `FailureClassifier`
-  and writing decision packets from gate failures (slice 1 only classifies the
-  merge-activity failure inside `IntegrationManager`);
 - a dedicated `ActivityRunner` component (§7.3); slice 1 drives activities
   directly through `WorkflowStore` from `IntegrationManager` and is the
   smallest seam that preserves replayable evidence.
@@ -612,8 +615,8 @@ calls on an invalid plan or too-broad task.
 
 ### 15.2 Full design acceptance (later slices)
 
-- Resume restarts from the last durable activity boundary without rerunning
-  completed worker calls.
+- Resume dry-run reports the last durable activity boundary and next node
+  without rerunning completed worker calls.
 - Review, verification, and plan failures are routed through `FailureClassifier`
   and produce decision packets where the class requires human input.
 - The scheduler uses checkpoint-aware ready selection and safe-wave conflict

@@ -40,7 +40,9 @@ def _safe_events_tail(run_dir: Path, limit: int) -> list[dict[str, Any]]:
 _HUMAN_DECISION_BY_FAILURE_CLASS = {
     "needs_plan_fix": "fix plan",
     "needs_split": "approve task split",
+    "needs_infra_fix": "fix infrastructure",
     "needs_human_decision": "inspect decision packet",
+    "terminal_rejected": "inspect terminal rejection",
 }
 
 

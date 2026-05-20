@@ -193,6 +193,46 @@ def test_review_changes_requested_redispatches_implementer_once(git_repo: Path, 
     assert any("changes_requested" in path.read_text(encoding="utf-8") for path in prompts)
 
 
+def test_review_plan_fix_writes_decision_packet(git_repo: Path, isolated_home: Path) -> None:
+    plan, spec = _write_plan(git_repo, path="src/review_plan_fix.py")
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET"] = "src/review_plan_fix.py"
+    env["AGENTRUNWAY_FAKE_REVIEW_STATUS"] = "changes_requested"
+    env["AGENTRUNWAY_FAKE_REVIEW_FINDING_BODY"] = "file claim is missing for src/review_plan_fix.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    workers = conn.execute("SELECT role FROM workers ORDER BY worker_id").fetchall()
+    review_activity = dict(conn.execute("SELECT * FROM activities WHERE activity_type='review'").fetchone())
+    decision_packet = dict(conn.execute("SELECT * FROM decision_packets").fetchone())
+
+    assert payload["status"] == "blocked"
+    assert [row["role"] for row in workers] == ["implementer", "reviewer"]
+    assert review_activity["status"] == "blocked"
+    assert review_activity["failure_class"] == "needs_plan_fix"
+    assert decision_packet["failure_class"] == "needs_plan_fix"
+
+
 def test_verifier_failed_redispatches_implementer_once(git_repo: Path, isolated_home: Path) -> None:
     plan, spec = _write_plan(git_repo, path="src/verify_retry.py")
     env = os.environ.copy()
@@ -271,6 +311,8 @@ def test_verifier_blocked_does_not_redispatch(git_repo: Path, isolated_home: Pat
     conn.row_factory = sqlite3.Row
     workers = conn.execute("SELECT role FROM workers ORDER BY worker_id").fetchall()
     events = conn.execute("SELECT event_type, payload_json FROM agentlens_events ORDER BY id").fetchall()
+    verification_activity = dict(conn.execute("SELECT * FROM activities WHERE activity_type='verification'").fetchone())
+    decision_packet = dict(conn.execute("SELECT * FROM decision_packets").fetchone())
     quality_payloads = [
         json.loads(row["payload_json"])
         for row in events
@@ -281,6 +323,9 @@ def test_verifier_blocked_does_not_redispatch(git_repo: Path, isolated_home: Pat
     assert [row["role"] for row in workers] == ["implementer", "reviewer", "verifier"]
     assert quality_payloads[-1]["decision"] == "block"
     assert quality_payloads[-1]["reason"] == "verification_blocked"
+    assert verification_activity["status"] == "blocked"
+    assert verification_activity["failure_class"] == "needs_infra_fix"
+    assert decision_packet["failure_class"] == "needs_infra_fix"
 
 
 def test_failed_implementer_run_persists_run_json(git_repo: Path, isolated_home: Path) -> None:
@@ -481,9 +526,12 @@ def test_finished_run_records_initial_and_task_checkpoints(git_repo: Path, isola
         ("cp-001", "cp-000", "merged:task_001"),
     ]
     assert checkpoints[1]["merged_candidate_id"] == selected["id"]
-    assert [(row["task_id"], row["activity_type"], row["status"], row["failure_class"]) for row in activities] == [
+    assert {(row["task_id"], row["activity_type"], row["status"], row["failure_class"]) for row in activities} == {
+        ("task_001", "implement", "completed", None),
+        ("task_001", "review", "completed", None),
+        ("task_001", "verification", "completed", None),
         ("task_001", "merge", "completed", None),
-    ]
+    }
 
 
 def test_high_risk_task_ranks_two_candidates(git_repo: Path, isolated_home: Path) -> None:

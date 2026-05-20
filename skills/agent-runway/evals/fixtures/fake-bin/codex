@@ -61,7 +61,9 @@ def main() -> int:
             "status": status,
             "review_mode": os.environ.get("AGENTRUNWAY_REVIEW_MODE", "diff"),
             "checks": [{"name": "fake review", "status": "passed"}],
-            "findings": [] if status == "approved" else [{"severity": "major", "body": "fake requested context"}],
+            "findings": []
+            if status == "approved"
+            else [{"severity": "major", "body": os.environ.get("AGENTRUNWAY_FAKE_REVIEW_FINDING_BODY", "fake requested context")}],
             "method_audit": {"superpowers_used": True},
         }
         output.parent.mkdir(parents=True, exist_ok=True)
