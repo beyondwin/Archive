@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
 
+from .db import AgentRunwayDb
 from .models import ProcessSnapshot
+from .reconciliation import plan_reconciliation
 
 
 def classify_stall(started_at: datetime, *, timeout_seconds: int) -> str:
@@ -26,3 +30,7 @@ def classify_worker_snapshot(snapshot: ProcessSnapshot, *, result_exists: bool) 
     if snapshot.state == "running":
         return "running"
     return "unknown"
+
+
+def plan_watchdog_actions(*, run_id: str, run_dir: Path, db: AgentRunwayDb) -> dict[str, Any]:
+    return plan_reconciliation(run_id=run_id, run_dir=run_dir, db=db)

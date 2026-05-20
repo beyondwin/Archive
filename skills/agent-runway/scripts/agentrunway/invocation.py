@@ -52,6 +52,8 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--last", action="store_true")
         if command in {"status", "inspect", "events", "resume"}:
             cmd.add_argument("--json", action="store_true")
+        if command == "resume":
+            cmd.add_argument("--dry-run", action="store_true")
     apply_parser = sub.add_parser("apply", help="apply a AgentRunway run")
     apply_parser.add_argument("--run")
     apply_parser.add_argument("--last", action="store_true")
@@ -98,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "events":
             payload = runner.events(resolve_run_alias(repo_root, args.run, bool(args.last)))
         elif args.command == "resume":
-            payload = runner.resume(resolve_run_alias(repo_root, args.run, bool(args.last)))
+            payload = runner.resume(resolve_run_alias(repo_root, args.run, bool(args.last)), dry_run=bool(args.dry_run))
         elif args.command == "cancel":
             payload = runner.cancel(resolve_run_alias(repo_root, args.run, bool(args.last)))
         elif args.command == "apply":
