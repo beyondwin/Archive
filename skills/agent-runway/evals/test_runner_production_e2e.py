@@ -355,6 +355,51 @@ def test_reviewer_and_verifier_worktrees_include_candidate_files(git_repo: Path,
         assert reviewed_file.read_text(encoding="utf-8") == "VALUE = 'codex'\n"
 
 
+def test_reviewer_needs_context_escalates_once_to_full_tree(git_repo: Path, isolated_home: Path) -> None:
+    plan, spec = _write_plan(git_repo, path="src/needs_context.py")
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET"] = "src/needs_context.py"
+    env["AGENTRUNWAY_FAKE_REVIEW_SEQUENCE"] = "needs_context,approved"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    reviewers = conn.execute("SELECT worker_id, handle_json FROM workers WHERE role='reviewer' ORDER BY worker_id").fetchall()
+    events = conn.execute("SELECT event_type, payload_json FROM agentlens_events ORDER BY id").fetchall()
+    modes = [
+        json.loads(row["handle_json"])["metadata"]["spec"]["metadata"]["AGENTRUNWAY_REVIEW_MODE"]
+        for row in reviewers
+    ]
+    escalations = [
+        json.loads(row["payload_json"])
+        for row in events
+        if row["event_type"] == "agentrunway.review_escalated"
+    ]
+
+    assert payload["status"] == "finished"
+    assert [row["worker_id"] for row in reviewers] == ["task_001-reviewer-001", "task_001-reviewer-002"]
+    assert modes == ["diff", "full_tree"]
+    assert escalations[-1]["reason"] == "needs_context"
+
+
 def test_agentlens_fake_cli_receives_runner_events(git_repo: Path, isolated_home: Path, tmp_path: Path) -> None:
     plan, spec = _write_plan(git_repo, path="src/agentlens_worker.py")
     log = tmp_path / "agentlens.jsonl"
@@ -434,3 +479,12 @@ def test_high_risk_task_ranks_two_candidates(git_repo: Path, isolated_home: Path
         "task_001-implementer-002",
     ]
     assert json.loads(ranking["payload_json"])["selected_candidate_id"] is not None
+    non_selected = conn.execute(
+        "SELECT worker_id FROM merge_queue WHERE status='not_selected' ORDER BY worker_id"
+    ).fetchone()
+    assert non_selected is not None
+    evidence_dir = Path(payload["run_dir"]) / "artifacts" / "task_001" / non_selected["worker_id"] / "candidate_evidence"
+    assert json.loads((evidence_dir / "commits.json").read_text(encoding="utf-8"))
+    assert json.loads((evidence_dir / "changed_files.json").read_text(encoding="utf-8")) == ["src/high_risk.py"]
+    worker = json.loads((evidence_dir / "worker.json").read_text(encoding="utf-8"))
+    assert worker["worker_id"] == non_selected["worker_id"]

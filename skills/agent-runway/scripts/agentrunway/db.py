@@ -87,6 +87,7 @@ class AgentRunwayDb:
         db._drop_legacy_merge_queue()
         db.conn.executescript(SCHEMA_SQL)
         db._ensure_runs_contract_path_column()
+        db._ensure_worker_timing_columns()
         db.conn.commit()
         return db
 
@@ -113,6 +114,17 @@ class AgentRunwayDb:
         if "contract_path" not in columns:
             self.conn.execute("ALTER TABLE runs ADD COLUMN contract_path TEXT")
             self.conn.commit()
+
+    def _ensure_worker_timing_columns(self) -> None:
+        columns = {
+            str(item["name"])
+            for item in self.conn.execute("PRAGMA table_info(workers)").fetchall()
+        }
+        if "started_at" not in columns:
+            self.conn.execute("ALTER TABLE workers ADD COLUMN started_at TEXT")
+        if "ended_at" not in columns:
+            self.conn.execute("ALTER TABLE workers ADD COLUMN ended_at TEXT")
+        self.conn.commit()
 
     def create_run(self, **fields: Any) -> None:
         payload = {
@@ -280,12 +292,60 @@ class AgentRunwayDb:
         )
         self.conn.commit()
 
+    def mark_worker_started(self, worker_id: str) -> None:
+        self.conn.execute(
+            """
+            UPDATE workers
+            SET started_at=COALESCE(started_at, CURRENT_TIMESTAMP),
+                updated_at=CURRENT_TIMESTAMP
+            WHERE worker_id=?
+            """,
+            (worker_id,),
+        )
+        self.conn.commit()
+
+    def mark_worker_ended(self, worker_id: str, state: str) -> None:
+        self.conn.execute(
+            """
+            UPDATE workers
+            SET state=?,
+                ended_at=COALESCE(ended_at, CURRENT_TIMESTAMP),
+                updated_at=CURRENT_TIMESTAMP
+            WHERE worker_id=?
+            """,
+            (state, worker_id),
+        )
+        self.conn.commit()
+
     def set_worker_state(self, worker_id: str, state: str) -> None:
         self.conn.execute(
             "UPDATE workers SET state=?, updated_at=CURRENT_TIMESTAMP WHERE worker_id=?",
             (state, worker_id),
         )
         self.conn.commit()
+
+    def register_worktree(self, *, path: str, run_id: str, branch: str, lifecycle: str) -> None:
+        row = self.conn.execute("SELECT workspace_id FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        workspace_id = str(row["workspace_id"]) if row is not None else "unknown"
+        self.conn.execute(
+            """
+            INSERT OR REPLACE INTO worktree_registry (path, workspace_id, run_id, branch, lifecycle)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (path, workspace_id, run_id, branch, lifecycle),
+        )
+        self.conn.commit()
+
+    def set_worktree_lifecycle(self, path: str, lifecycle: str) -> None:
+        self.conn.execute(
+            "UPDATE worktree_registry SET lifecycle=? WHERE path=?",
+            (lifecycle, path),
+        )
+        self.conn.commit()
+
+    def list_worktrees(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT * FROM worktree_registry ORDER BY path").fetchall()
+        return [dict(row) for row in rows]
 
     def update_worker_handle(self, worker_id: str, handle_json: dict[str, Any]) -> None:
         self.conn.execute(

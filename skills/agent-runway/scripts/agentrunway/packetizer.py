@@ -98,12 +98,19 @@ def materialize_role_prompt(
     prompt_dir.mkdir(parents=True, exist_ok=True)
     schema = "agentrunway.review_result.v1" if role == "reviewer" else "agentrunway.verification_result.v1"
     path = prompt_dir / f"{task.task_id}.{role}.{worker_id}.prompt.txt"
+    role_instructions = (
+        "Reviewer statuses are approved, changes_requested, rejected, or needs_context. "
+        "Include review_mode as diff or full_tree.\n"
+        if role == "reviewer"
+        else ""
+    )
     path.write_text(
         f"You are an AgentRunway {role}. Use using-superpowers.\n"
         f"Task: {task.task_id} - {task.title}\n"
         f"Packet path: {packet_path}\n"
         f"Output path: {output_path}\n"
         f"Write JSON with schema {schema}.\n"
+        f"{role_instructions}"
         "Context JSON:\n"
         "```json\n"
         + json.dumps(context, ensure_ascii=False, indent=2, sort_keys=True)
