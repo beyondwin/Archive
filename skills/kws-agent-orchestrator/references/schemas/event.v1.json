@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "kws.kao.event.v1",
+  "type": "object",
+  "required": ["schema", "kao_run_id", "phase", "outcome", "severity", "summary", "privacy"],
+  "properties": {
+    "schema": {"const": "kws.kao.event.v1"},
+    "kao_run_id": {"type": "string"},
+    "phase": {"type": "string"},
+    "task_id": {"type": ["string", "null"]},
+    "worker_id": {"type": ["string", "null"]},
+    "runtime": {"type": ["string", "null"]},
+    "role": {"type": ["string", "null"]},
+    "model": {"type": ["string", "null"]},
+    "reasoning_effort": {"type": ["string", "null"]},
+    "outcome": {"enum": ["success", "failed", "partial", "cancelled", "unknown"]},
+    "severity": {"enum": ["info", "warn", "error"]},
+    "summary": {"type": "string", "maxLength": 1200},
+    "evidence": {"type": ["object", "null"]},
+    "privacy": {"type": "object"}
+  }
+}
