@@ -471,7 +471,7 @@ Required fields:
 {
   "run_id": "example",
   "status": "blocked",
-  "latest_checkpoint": {"id": "cp-003", "commit": "abc123"},
+  "latest_checkpoint": {"id": "cp-003", "commit": "abc123", "reason": "merged:task_003"},
   "graph": {"complete": 3, "ready": 1, "running": 0, "blocked": 1},
   "blocked_node": "task_004.review",
   "failure_class": "needs_plan_fix",
@@ -481,6 +481,10 @@ Required fields:
   "artifact_refs": {}
 }
 ```
+
+The `reason` field carries the merge or initialization label that produced the
+checkpoint (for example `initial` or `merged:task_003`) and lets operators
+correlate the latest checkpoint with the task it was created for.
 
 `inspect` remains available for deep diagnosis. It should point to exact
 activity, checkpoint, candidate, and decision artifacts.
@@ -528,6 +532,41 @@ This design should be implemented in slices.
 The first implementation plan should not attempt a full rewrite. It should keep
 existing modules working and move one boundary at a time behind tests.
 
+### 13.1 Slice 1 Scope (current plan)
+
+The companion plan
+`docs/superpowers/plans/2026-05-20-agentrunway-durable-integration-orchestrator.md`
+delivers slices 1, 2, and the data-model halves of slices 4, 5, and 7. Concretely
+it adds:
+
+- workflow events, checkpoints, activities, decision-packet tables and a
+  `WorkflowStore` wrapper;
+- immediate cherry-pick of the selected candidate into run main behind an
+  `IntegrationManager` activity, with `cp-000` initial checkpoint and
+  per-merge checkpoint records;
+- a pure `FailureClassifier` module and unit coverage for its recovery classes;
+- new scheduler helpers (`ready_tasks_after_checkpoints`, `schedule_safe_wave`)
+  and unit coverage for them;
+- a dependent-task fake-adapter regression that proves task 2 sees task 1's
+  cherry-pick on run main;
+- summary fields for the latest checkpoint, activity graph counts, blocked
+  node, failure class, next automatic action, and required human decision.
+
+The following items remain explicitly deferred to later slices and must not be
+treated as delivered by slice 1:
+
+- runner-side resume that selects the next node by inspecting durable activity
+  artifacts (slice 1 only persists those activities; the existing `resume`
+  command still replays from worker state);
+- runner integration of `ready_tasks_after_checkpoints` /
+  `schedule_safe_wave` in place of the existing `schedule_waves` loop;
+- routing review, verification, and plan failures through `FailureClassifier`
+  and writing decision packets from gate failures (slice 1 only classifies the
+  merge-activity failure inside `IntegrationManager`);
+- a dedicated `ActivityRunner` component (§7.3); slice 1 drives activities
+  directly through `WorkflowStore` from `IntegrationManager` and is the
+  smallest seam that preserves replayable evidence.
+
 ## 14. Risks and Mitigations
 
 Risk: immediate run-main merge can make rollback harder.
@@ -557,15 +596,25 @@ calls on an invalid plan or too-broad task.
 
 ## 15. Acceptance Criteria
 
+### 15.1 Slice 1 acceptance
+
 - AgentRunway can run a dependent multi-task plan where task 2 reads task 1's
   accepted change from run main.
 - A verified selected candidate is merged into run main before dependent tasks
-  start.
-- Resume restarts from the last durable activity boundary without rerunning
-  completed worker calls.
-- Gate and merge failures produce failure classes and strategy-specific next
-  actions.
-- `summarize` reports checkpoints, blocked graph node, failure class, and
-  artifact references without requiring raw log inspection.
+  start, and a checkpoint row is written before the next task is dispatched.
+- Merge-activity failures inside `IntegrationManager` produce a failure class
+  and an `ActivityFailed` workflow event.
+- `summarize` reports the latest checkpoint, activity graph counts, blocked
+  node, failure class, next automatic action, and human decision without
+  requiring raw log inspection.
 - The previous AgentRunway failure pattern involving sequential CLI changes is
   covered by a fake-adapter integration regression.
+
+### 15.2 Full design acceptance (later slices)
+
+- Resume restarts from the last durable activity boundary without rerunning
+  completed worker calls.
+- Review, verification, and plan failures are routed through `FailureClassifier`
+  and produce decision packets where the class requires human input.
+- The scheduler uses checkpoint-aware ready selection and safe-wave conflict
+  detection in the runner, not only in helper tests.
