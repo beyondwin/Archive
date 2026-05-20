@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
+from typing import Mapping
 
 from .models import RunContract, TaskSpec
 from .plan_parser import canonical_hash, parse_spec_manifest
+from .spec_refs import SpecRefResolver
 
 
 class ContractError(ValueError):
@@ -43,22 +45,53 @@ def _task_to_contract(task: TaskSpec) -> dict[str, object]:
     }
 
 
-def _spec_ref_aliases(manifest_sections: dict[str, str]) -> dict[str, str]:
-    aliases = {ref: ref for ref in manifest_sections}
-    for ref in manifest_sections:
-        if ref.startswith("S1."):
-            aliases.setdefault("S" + ref.removeprefix("S1."), ref)
-    return aliases
+def _load_manifest_sections(spec_path: Path) -> dict[str, dict[str, object]]:
+    manifest = parse_spec_manifest(spec_path)
+    sections = manifest["sections"]
+    if not sections:
+        raise ContractError(f"spec manifest is missing or empty: {spec_path}")
+    return sections
+
+
+def _canonicalize_task_refs(
+    tasks: list[TaskSpec],
+    sections: Mapping[str, Mapping[str, object]],
+) -> tuple[list[TaskSpec], list[tuple[str, str]]]:
+    resolver = SpecRefResolver(sections)
+    canonical_tasks: list[TaskSpec] = []
+    missing_refs: list[tuple[str, str]] = []
+    for task in tasks:
+        canonical_refs: list[str] = []
+        for ref in task.spec_refs:
+            resolution = resolver.resolve_one(ref)
+            if resolution.status == "unresolved" or resolution.canonical_ref is None:
+                missing_refs.append((task.task_id, ref))
+                continue
+            if not resolution.text.strip():
+                raise ContractError(f"empty spec_ref text: {task.task_id} -> {resolution.canonical_ref}")
+            canonical_refs.append(resolution.canonical_ref)
+        canonical_tasks.append(replace(task, spec_refs=tuple(canonical_refs)))
+    return canonical_tasks, missing_refs
+
+
+def canonicalize_task_spec_refs(tasks: list[TaskSpec], spec_path: Path | None) -> list[TaskSpec]:
+    if spec_path is None:
+        return tasks
+    sections = _load_manifest_sections(spec_path)
+    canonical_tasks, missing_refs = _canonicalize_task_refs(tasks, sections)
+    if missing_refs:
+        by_task: dict[str, list[str]] = {}
+        for task_id, ref in missing_refs:
+            by_task.setdefault(task_id, []).append(ref)
+        first_task_id, refs = next(iter(by_task.items()))
+        raise ContractError(f"missing spec_refs: {first_task_id} -> {', '.join(refs)}")
+    return canonical_tasks
 
 
 def _validate_tasks(tasks: list[TaskSpec], manifest_sections: dict[str, str]) -> tuple[dict[str, list[str]], tuple[str, ...]]:
     covered: set[str] = set()
     warnings: list[str] = []
-    aliases = _spec_ref_aliases(manifest_sections)
     for task in tasks:
-        missing_refs = [ref for ref in task.spec_refs if ref not in aliases]
-        if missing_refs:
-            raise ContractError(f"missing spec_refs: {task.task_id} -> {', '.join(missing_refs)}")
         if not task.acceptance_commands or any(not command.strip() for command in task.acceptance_commands):
             raise ContractError(f"{task.task_id} has no acceptance commands")
         if task.phase == "implementation" and not task.file_claims:
@@ -66,7 +99,7 @@ def _validate_tasks(tasks: list[TaskSpec], manifest_sections: dict[str, str]) ->
         for claim in task.file_claims:
             if claim.path in {"*", "**", "**/*"}:
                 warnings.append(f"{task.task_id} has broad file claim {claim.path}")
-        covered.update(aliases[ref] for ref in task.spec_refs)
+        covered.update(task.spec_refs)
     unreferenced = sorted(set(manifest_sections) - covered)
     warnings.extend(f"unreferenced spec section {ref}" for ref in unreferenced)
     return {"covered": sorted(covered), "partial": [], "blocked": [], "unreferenced": unreferenced}, tuple(warnings)
@@ -93,7 +126,15 @@ def build_run_contract(
         warnings: tuple[str, ...] = ()
         spec_entry: dict[str, object] = {"path": None, "hash": None, "manifest_sections": {}}
     else:
-        manifest_sections = parse_spec_manifest_sections(spec_path)
+        sections = _load_manifest_sections(spec_path)
+        manifest_sections = {section_id: str(data["title"]) for section_id, data in sections.items()}
+        tasks, missing_refs = _canonicalize_task_refs(tasks, sections)
+        if missing_refs:
+            by_task: dict[str, list[str]] = {}
+            for task_id, ref in missing_refs:
+                by_task.setdefault(task_id, []).append(ref)
+            first_task_id, refs = next(iter(by_task.items()))
+            raise ContractError(f"missing spec_refs: {first_task_id} -> {', '.join(refs)}")
         coverage, warnings = _validate_tasks(tasks, manifest_sections)
         spec_entry = {
             "path": str(spec_path),
