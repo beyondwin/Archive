@@ -14,7 +14,7 @@ def validate_worker_result(payload: dict[str, object]) -> dict[str, object]:
         raise ResultValidationError("missing worker result fields: " + ", ".join(missing))
     if payload.get("schema") != RESULT_SCHEMA:
         raise ResultValidationError("invalid worker result schema")
-    if payload.get("status") not in {"success", "failed", "blocked", "malformed"}:
+    if payload.get("status") not in {"success", "simulated_success", "failed", "blocked", "malformed"}:
         raise ResultValidationError("invalid worker status")
     if not isinstance(payload.get("changed_files"), list):
         raise ResultValidationError("changed_files must be a list")

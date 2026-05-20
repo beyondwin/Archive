@@ -75,7 +75,7 @@ def materialize_worker_prompt(
         "Commit your changes before writing the result artifact.\n"
         "Write worker_result JSON to the output path with required fields: "
         "schema, worker_id, task_id, role, status, changed_files, summary, method_audit.\n"
-        f"Use schema value {packet.output_schema!r}; status must be success, failed, blocked, or malformed.\n\n"
+        f"Use schema value {packet.output_schema!r}; status must be success, simulated_success, failed, blocked, or malformed.\n\n"
         "```json\n"
         + packet_to_json(packet)
         + "\n```\n"
