@@ -134,3 +134,58 @@ def test_invocation_keeps_lint_plan_and_summarize_commands() -> None:
     assert "summarize" in COMMANDS
     assert parse_run_args(["summarize", "--run", "run-1"]).run == "run-1"
     assert parse_run_args(["lint-plan", "--plan", "plan.md", "--spec", "spec.md"]).plan == Path("plan.md")
+
+
+def test_run_summary_includes_checkpoint_graph_and_failure_class(tmp_path: Path) -> None:
+    db = AgentRunwayDb.open(tmp_path / "state.sqlite")
+    db.create_run(
+        run_id="run-1",
+        workspace_id="ws",
+        repo_root=str(tmp_path),
+        plan_path=str(tmp_path / "plan.md"),
+        spec_path=None,
+        plan_hash="plan",
+        spec_hash=None,
+        base_commit_sha="base",
+        model_profile="default",
+        allowed_dirty=False,
+        apply_to_source=False,
+    )
+    db.insert_checkpoint(
+        run_id="run-1",
+        checkpoint_id="cp-000",
+        commit_sha="base",
+        parent_checkpoint_id=None,
+        merged_candidate_id=None,
+        reason="initial",
+    )
+    db.insert_activity(
+        activity_id="task_001.review.001",
+        run_id="run-1",
+        idempotency_key="run-1:task_001:review:001",
+        task_id="task_001",
+        activity_type="review",
+        status="failed",
+        input_refs={},
+    )
+    db.update_activity(
+        activity_id="task_001.review.001",
+        status="failed",
+        output_refs={"review_result": "artifacts/task_001/review_result.json"},
+        failure_class="needs_plan_fix",
+    )
+    run_json = {
+        "run_id": "run-1",
+        "status": "blocked",
+        "run_dir": str(tmp_path),
+        "state_db": str(tmp_path / "state.sqlite"),
+        "base_commit_sha": "base",
+    }
+
+    summary = build_run_summary(run_json=run_json, db=db)
+
+    assert summary["latest_checkpoint"] == {"id": "cp-000", "commit": "base", "reason": "initial"}
+    assert summary["graph"]["blocked"] == 1
+    assert summary["blocked_node"] == "task_001.review.001"
+    assert summary["failure_class"] == "needs_plan_fix"
+    assert summary["required_human_decision"] == "fix plan"
