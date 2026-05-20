@@ -203,3 +203,66 @@ def test_rootless_numbered_spec_refs_resolve(tmp_path: Path) -> None:
     result = lint_plan(plan_path=plan, spec_path=spec)
 
     assert result.ok is True
+
+
+def test_bare_numbered_spec_refs_resolve(tmp_path: Path) -> None:
+    spec = _write(
+        tmp_path / "trust-hardening.md",
+        "# AgentRunway Trust Hardening\n\n"
+        "## 1. Overview\n\n"
+        "Overview text.\n\n"
+        "## 2. Runner\n\n"
+        "Runner text.\n\n"
+        "## 3. Workers\n\n"
+        "Worker text.\n\n"
+        "## 4. Review\n\n"
+        "Review text.\n\n"
+        "## 5. Verification\n\n"
+        "Verification text.\n\n"
+        "## 6. Spec References\n\n"
+        "Spec reference text.\n\n"
+        "### 6.1 Manifest\n\n"
+        "Manifest text.\n\n"
+        "### 6.2 Contract\n\n"
+        "Contract text.\n\n"
+        "### 6.3 Canonical Resolver\n\n"
+        "Resolver text.\n",
+    )
+    plan = _write(tmp_path / "plan.md", _valid_plan().replace("spec_refs: [S1]", "spec_refs: [6.3]"))
+
+    errors = lint_plan(plan_path=plan, spec_path=spec).errors
+
+    assert not [error for error in errors if error.code == "unresolved_spec_ref"]
+
+
+def test_unresolved_numbered_spec_refs_include_canonical_suggestion(tmp_path: Path) -> None:
+    spec = _write(
+        tmp_path / "trust-hardening.md",
+        "# AgentRunway Trust Hardening\n\n"
+        "## 1. Overview\n\n"
+        "Overview text.\n\n"
+        "## 2. Runner\n\n"
+        "Runner text.\n\n"
+        "## 3. Workers\n\n"
+        "Worker text.\n\n"
+        "## 4. Review\n\n"
+        "Review text.\n\n"
+        "## 5. Verification\n\n"
+        "Verification text.\n\n"
+        "## 6. Spec References\n\n"
+        "Spec reference text.\n\n"
+        "### 6.1 Manifest\n\n"
+        "Manifest text.\n\n"
+        "### 6.2 Contract\n\n"
+        "Contract text.\n\n"
+        "### 6.3 Canonical Resolver\n\n"
+        "Resolver text.\n",
+    )
+    plan = _write(tmp_path / "plan.md", _valid_plan().replace("spec_refs: [S1]", "spec_refs: [6.30]"))
+
+    result = lint_plan(plan_path=plan, spec_path=spec)
+
+    assert any(
+        error.message == "unresolved_spec_ref task=task_001 ref=6.30 suggestion=S1.6.3"
+        for error in result.errors
+    )

@@ -22,7 +22,7 @@ from .artifact_graph import write_artifact_graph
 from .artifacts import ArtifactStore
 from .candidate_selection import select_candidate
 from .config import BuiltinProfiles, ModelProfile, load_effective_config
-from .contract import build_run_contract, write_contract
+from .contract import build_run_contract, canonicalize_task_spec_refs, write_contract
 from .db import AgentRunwayDb
 from .decision_events import record_candidate_ranked, record_quality_decision
 from .durable_resume import plan_activity_resume
@@ -93,13 +93,24 @@ def _find_run_dir(run_id: str) -> Path | None:
 def _spec_slices(spec: Path, task_refs: tuple[str, ...]) -> list[dict[str, str]]:
     if not spec:
         return []
+    from .spec_refs import SpecRefResolver
+
+    resolver = SpecRefResolver.from_spec(spec)
     manifest = parse_spec_manifest(spec)
-    sections = manifest["sections"]
     refs = task_refs or tuple(manifest["section_order"][:1])
-    return [
-        {"id": ref, "title": sections.get(ref, {}).get("title", ref), "text": sections.get(ref, {}).get("text", "")}
-        for ref in refs
-    ]
+    slices: list[dict[str, str]] = []
+    for ref in refs:
+        resolution = resolver.resolve_one(ref)
+        canonical_ref = resolution.canonical_ref or ref
+        slices.append(
+            {
+                "id": canonical_ref,
+                "input_ref": resolution.input_ref,
+                "title": resolution.title or canonical_ref,
+                "text": resolution.text,
+            }
+        )
+    return slices
 
 
 def _write_run_json(run_dir: Path, payload: dict[str, Any]) -> None:
@@ -659,7 +670,9 @@ def run(args: Any) -> dict[str, Any]:
         allowed_dirty=args.allow_dirty_source,
         apply_to_source=args.apply_to_source,
     )
-    tasks = parse_plan(plan)
+    raw_tasks = parse_plan(plan)
+    original_spec_refs_by_task = {task.task_id: task.spec_refs for task in raw_tasks}
+    tasks = canonicalize_task_spec_refs(raw_tasks, spec)
     contract = build_run_contract(
         run_id=run_id,
         workspace_id=wsid,
@@ -691,7 +704,12 @@ def run(args: Any) -> dict[str, Any]:
     profile = cfg.profiles[cfg.default_profile]
     for task in tasks:
         db.upsert_task(task)
-        packet = build_task_packet(run_id, task, _spec_slices(spec, task.spec_refs) if spec else [], profile)
+        packet = build_task_packet(
+            run_id,
+            task,
+            _spec_slices(spec, original_spec_refs_by_task.get(task.task_id, task.spec_refs)) if spec else [],
+            profile,
+        )
         prompt_path = materialize_prompt(packet, run_dir / "prompts")
         db.insert_packet(task.task_id, hashlib.sha256(packet_to_json(packet).encode()).hexdigest(), str(prompt_path), packet_to_json(packet))
     waves = schedule_waves(tasks)
@@ -776,7 +794,12 @@ def run(args: Any) -> dict[str, Any]:
                 ]
                 packet_path.write_text(packet_json, encoding="utf-8")
                 (run_dir / "artifacts" / task.task_id).mkdir(parents=True, exist_ok=True)
-                packet = build_task_packet(run_id, task, _spec_slices(spec, task.spec_refs) if spec else [], profile)
+                packet = build_task_packet(
+                    run_id,
+                    task,
+                    _spec_slices(spec, original_spec_refs_by_task.get(task.task_id, task.spec_refs)) if spec else [],
+                    profile,
+                )
                 try:
                     prestarted_wave[task.task_id] = _start_implementer_batch(
                         db=db,
@@ -859,7 +882,12 @@ def run(args: Any) -> dict[str, Any]:
                     db.set_task_status(task.task_id, "blocked")
                     _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason="local_worker_failed")
             else:
-                packet = build_task_packet(run_id, task, _spec_slices(spec, task.spec_refs) if spec else [], profile)
+                packet = build_task_packet(
+                    run_id,
+                    task,
+                    _spec_slices(spec, original_spec_refs_by_task.get(task.task_id, task.spec_refs)) if spec else [],
+                    profile,
+                )
                 target_candidate_count = candidate_count_for_task(task)
                 merge_ready_candidate_ids: list[int] = []
                 review_retries = 0

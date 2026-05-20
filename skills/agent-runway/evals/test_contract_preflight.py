@@ -20,6 +20,31 @@ def _write_spec(path: Path) -> None:
     )
 
 
+def _write_numbered_spec(path: Path) -> None:
+    path.write_text(
+        "# AgentRunway Trust Hardening\n\n"
+        "## 1. Overview\n\n"
+        "Overview text.\n\n"
+        "## 2. Runner\n\n"
+        "Runner text.\n\n"
+        "## 3. Workers\n\n"
+        "Worker text.\n\n"
+        "## 4. Review\n\n"
+        "Review text.\n\n"
+        "## 5. Verification\n\n"
+        "Verification text.\n\n"
+        "## 6. Spec References\n\n"
+        "Spec reference text.\n\n"
+        "### 6.1 Manifest\n\n"
+        "Manifest text.\n\n"
+        "### 6.2 Contract\n\n"
+        "Contract text.\n\n"
+        "### 6.3 Canonical Resolver\n\n"
+        "Resolver text.\n",
+        encoding="utf-8",
+    )
+
+
 def _write_plan(path: Path, *, spec_ref: str = "S1.1", acceptance: str = "python -m pytest") -> None:
     path.write_text(
         "## Task 1: Example\n\n"
@@ -114,6 +139,30 @@ def test_contract_accepts_rootless_numbered_spec_refs(tmp_path: Path, git_repo: 
     )
 
     assert contract.coverage["covered"] == ["S1.2"]
+
+
+def test_contract_canonicalizes_bare_numbered_spec_refs(tmp_path: Path, git_repo: Path) -> None:
+    spec = git_repo / "spec.md"
+    plan = git_repo / "plan.md"
+    _write_numbered_spec(spec)
+    _write_plan(plan, spec_ref="6.3")
+
+    contract = build_run_contract(
+        run_id="run-1",
+        workspace_id="workspace-1",
+        repo_root=git_repo,
+        spec_path=spec,
+        plan_path=plan,
+        base_commit_sha="abc123",
+        tasks=parse_plan(plan),
+        adapter="codex",
+        model_profile="default",
+        allow_dirty_source=False,
+        apply_to_source=False,
+    )
+
+    assert contract.tasks[0]["spec_refs"] == ["S1.6.3"]
+    assert contract.coverage["covered"] == ["S1.6.3"]
 
 
 def test_contract_rejects_empty_acceptance_commands(git_repo: Path) -> None:

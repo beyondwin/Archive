@@ -2,18 +2,17 @@ from __future__ import annotations
 
 import fnmatch
 import json
-import re
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .models import TaskSpec
-from .plan_parser import PlanParseError, parse_plan, parse_spec_manifest
+from .plan_parser import PlanParseError, parse_plan
+from .spec_refs import SpecRefResolver
 
 
 FORBIDDEN_OWNED_PREFIXES = ("graphify-out/", ".git/", ".agentrunway/")
 VALID_RISKS = {"low", "medium", "high"}
-NUMBERED_HEADING_RE = re.compile(r"^(\d+(?:\.\d+)*)\b")
 
 
 @dataclass(frozen=True)
@@ -213,30 +212,30 @@ def _claim_errors(tasks: list[TaskSpec]) -> list[LintIssue]:
     return errors
 
 
-def _valid_spec_refs(spec_path: Path) -> set[str]:
-    manifest = parse_spec_manifest(spec_path)
-    refs = set(manifest["sections"].keys())
-    for section_id, section in manifest["sections"].items():
-        if section_id.startswith("S1."):
-            refs.add("S" + section_id.removeprefix("S1."))
-        title_number = NUMBERED_HEADING_RE.match(str(section.get("title", "")))
-        if title_number:
-            refs.add("S" + title_number.group(1))
-    return refs
+def _canonical_suggestion(resolver: SpecRefResolver, suggestion: str | None) -> str | None:
+    if suggestion is None:
+        return None
+    resolution = resolver.resolve_one(suggestion)
+    return resolution.canonical_ref or suggestion
 
 
 def _spec_ref_errors(tasks: list[TaskSpec], spec_path: Path | None) -> list[LintIssue]:
     if spec_path is None:
         return []
-    sections = _valid_spec_refs(spec_path)
+    resolver = SpecRefResolver.from_spec(spec_path)
     errors: list[LintIssue] = []
     for task in tasks:
         for ref in task.spec_refs:
-            if ref and ref not in sections:
+            if not ref:
+                continue
+            resolution = resolver.resolve_one(ref)
+            if resolution.status == "unresolved":
+                suggestion = _canonical_suggestion(resolver, resolution.suggestion)
+                suggestion_text = f" suggestion={suggestion}" if suggestion else ""
                 errors.append(
                     LintIssue(
                         code="unresolved_spec_ref",
-                        message=f"{task.task_id} references missing spec section {ref}",
+                        message=f"unresolved_spec_ref task={task.task_id} ref={ref}{suggestion_text}",
                         task_id=task.task_id,
                     )
                 )
