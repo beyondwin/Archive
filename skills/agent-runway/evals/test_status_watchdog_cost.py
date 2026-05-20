@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from agentrunway.cost import normalize_cost
+from agentrunway.models import ProcessSnapshot
 from agentrunway.status import format_run_status
-from agentrunway.watchdog import classify_stall
+from agentrunway.watchdog import classify_stall, classify_worker_snapshot
 
 
 def test_status_formatter_summarizes_counts() -> None:
@@ -29,3 +30,13 @@ def test_cost_normalization_accepts_known_runtime_shapes() -> None:
     assert normalize_cost({"input_tokens": 10, "output_tokens": 5})["tokens_input"] == 10
     assert normalize_cost({"usage": {"prompt_tokens": 7, "completion_tokens": 3}})["tokens_output"] == 3
     assert normalize_cost({})["status"] == "unknown"
+
+
+def test_watchdog_classifies_missing_result_after_successful_exit() -> None:
+    snapshot = ProcessSnapshot(state="exited", pid=123, returncode=0, reason=None)
+    assert classify_worker_snapshot(snapshot, result_exists=False) == "malformed_result"
+
+
+def test_watchdog_classifies_nonzero_exit_as_adapter_crash() -> None:
+    snapshot = ProcessSnapshot(state="exited", pid=123, returncode=2, reason=None)
+    assert classify_worker_snapshot(snapshot, result_exists=False) == "adapter_crashed"
