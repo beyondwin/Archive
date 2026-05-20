@@ -44,3 +44,10 @@ Worker worktrees are created from the latest applicable run-main checkpoint.
 Dependent tasks must not start until every declared dependency has a successful
 checkpoint. This preserves isolation while ensuring later tasks see accepted
 earlier work.
+
+## Checkpoint Dispatch
+
+Runtime dispatch starts workers from run main after the latest successful
+checkpoint. Dependent tasks wait until their dependencies have checkpoint rows.
+Conflicting file claims, high-risk tasks, serial tasks, broad claims, and
+shared resource keys are serialized by the checkpoint scheduler.

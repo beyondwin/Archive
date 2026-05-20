@@ -112,16 +112,29 @@ AgentRunway advances run main as soon as a selected candidate passes review and
 verification. Dependent tasks start from the latest run-main checkpoint instead
 of the original base commit, so accepted earlier work is visible to later tasks.
 
-The runner records workflow events, activity rows, checkpoint rows, and (when
-written by gate failures in later slices) decision packets in SQLite with JSON
-artifacts for audit. These records are the durable evidence later slices will
-use to make `resume` advance from the last completed activity instead of
-replaying worker state.
+The runner records workflow events, activity rows, checkpoint rows, and
+decision packets in SQLite with JSON artifacts for audit. These records are the
+durable evidence `resume` uses to advance from the last completed activity
+instead of replaying worker state.
 
-Merge-activity failures are classified through `FailureClassifier` into
-recovery classes such as `needs_rebase`, `needs_full_context`, `needs_plan_fix`,
-and `needs_infra_fix`. Routing review and verification failures through the
-classifier is a follow-up slice.
+### Durable Orchestrator Hardening
+
+AgentRunway uses checkpoint evidence, not task status alone, to release
+dependent work. `inspect`, `summarize`, and `resume --dry-run` share the same
+durable projection for latest checkpoint, ready queue, safe wave, blocked
+activity, failure class, and required human decision.
+
+Automatic resume actions execute only through registered durable boundary
+handlers. Handler-less write actions block instead of being recorded as
+executed. Merge resume applies the verified candidate and writes a checkpoint;
+checkpoint verification can reconstruct a missing checkpoint row from completed
+merge activity output refs. Human-decision failure classes stop with decision
+packets so operators can inspect and decide without rerunning completed
+activity work.
+
+Review and verification failures are classified through `FailureClassifier`
+into recovery classes such as `needs_rebase`, `needs_full_context`,
+`needs_plan_fix`, and `needs_infra_fix`.
 
 Reviewer `changes_requested` and verifier `failed` outcomes create one bounded
 implementer redispatch with the gate evidence threaded into the next prompt.

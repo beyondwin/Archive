@@ -37,48 +37,32 @@ def _safe_events_tail(run_dir: Path, limit: int) -> list[dict[str, Any]]:
     return rows
 
 
-_HUMAN_DECISION_BY_FAILURE_CLASS = {
-    "needs_plan_fix": "fix plan",
-    "needs_split": "approve task split",
-    "needs_infra_fix": "fix infrastructure",
-    "needs_human_decision": "inspect decision packet",
-    "terminal_rejected": "inspect terminal rejection",
-}
-
-
 def _workflow_summary(db: AgentRunwayDb, run_id: str) -> dict[str, Any]:
     if not run_id:
         return {}
-    latest = db.latest_checkpoint(run_id)
-    activities = [
-        dict(row)
-        for row in db.conn.execute(
-            "SELECT activity_id, activity_type, task_id, status, failure_class "
-            "FROM activities WHERE run_id=? ORDER BY created_at, activity_id",
-            (run_id,),
-        ).fetchall()
-    ]
-    blocked = next((activity for activity in activities if activity.get("status") in {"failed", "blocked"}), None)
-    failure_class = blocked.get("failure_class") if blocked else None
-    human_decision = _HUMAN_DECISION_BY_FAILURE_CLASS.get(failure_class) if failure_class else None
+    from .durable_projection import durable_operator_next_action, read_durable_projection
+
+    projection = read_durable_projection(run_id=run_id, db=db)
+    payload = projection.to_dict()
+    latest = payload.get("latest_checkpoint")
     return {
         "latest_checkpoint": {
             "id": latest.get("checkpoint_id"),
             "commit": latest.get("commit_sha"),
             "reason": latest.get("reason"),
         }
-        if latest
+        if isinstance(latest, dict)
         else None,
-        "graph": {
-            "complete": sum(1 for activity in activities if activity.get("status") == "completed"),
-            "ready": 0,
-            "running": sum(1 for activity in activities if activity.get("status") == "started"),
-            "blocked": sum(1 for activity in activities if activity.get("status") in {"failed", "blocked"}),
-        },
-        "blocked_node": blocked.get("activity_id") if blocked else None,
-        "failure_class": failure_class,
-        "next_automatic_action": None if human_decision else ("resume" if blocked else None),
-        "required_human_decision": human_decision,
+        "graph": payload["graph"],
+        "blocked_node": payload["blocked_node"],
+        "failure_class": payload["failure_class"],
+        "next_automatic_action": payload["next_automatic_action"],
+        "required_human_decision": payload["required_human_decision"],
+        "ready_queue": payload["ready_queue"],
+        "safe_wave": payload["safe_wave"],
+        "decision_packet": payload["decision_packet"],
+        "durable": payload,
+        "next_action": durable_operator_next_action(payload),
     }
 
 
@@ -186,5 +170,11 @@ def build_run_summary(*, run_json: dict[str, Any], db: AgentRunwayDb, event_tail
         summary["reconstructed_from"] = run_json["reconstructed_from"]
     if "recovery" in run_json:
         summary["recovery"] = run_json["recovery"]
-    summary.update(_workflow_summary(db, str(run_json.get("run_id"))))
+    workflow = _workflow_summary(db, str(run_json.get("run_id")))
+    fallback_next_action = summary["next_action"]
+    summary.update(workflow)
+    if workflow:
+        from .durable_projection import durable_operator_next_action
+
+        summary["next_action"] = durable_operator_next_action(workflow["durable"], fallback_next_action)
     return summary

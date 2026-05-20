@@ -455,3 +455,16 @@ The hardening effort is complete when:
   mechanics directly.
 - Full AgentRunway evals, py_compile, diff check, and graphify update pass
   after implementation.
+
+## 13. Implementation Note
+
+This design is implemented by
+`docs/superpowers/plans/2026-05-21-agentrunway-durable-orchestrator-hardening.md`.
+The implementation plan preserves the design goals while extracting activity
+and gate boundaries before executable resume, so fresh runs and resume use the
+same durable execution path.
+
+Resume execution includes handler-gated automatic actions. Handler-less write
+actions block instead of being recorded as executed. Verified merge boundaries
+can be resumed into run main, and completed merge activities can reconstruct
+missing checkpoint rows from durable output refs.
