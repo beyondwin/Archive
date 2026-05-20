@@ -1,0 +1,2322 @@
+# AgentRunway Operations Hardening Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Add an AgentRunway operations layer that freezes Superpowers spec/plan inputs into a run contract, records local and AgentLens evidence, supports idempotent resume/watchdog reconciliation, and requires reviewer/verifier gates before production candidates merge.
+
+**Architecture:** Keep `runner.py` as the command-level coordinator and move operational responsibilities into focused helpers: contract preflight, event journal/outbox, artifact graph diagnostics, watchdog reconciliation planning, and role-generic worker supervision. Implement in the milestone order from the design: observability first, resume/watchdog second, review/verify gates third.
+
+**Tech Stack:** Python 3.11+ stdlib (`argparse`, `dataclasses`, `json`, `sqlite3`, `pathlib`, `subprocess`, `time`, `datetime`, `os`, `hashlib`), git worktrees/cherry-pick, pytest, deterministic fake Codex/Claude CLIs, AgentLens best-effort event mirroring.
+
+---
+
+## Source Documents
+
+- Design: `docs/superpowers/specs/2026-05-20-agent-runway-operations-hardening-design.md`
+- Parent design: `docs/superpowers/specs/2026-05-20-agent-runway-design.md`
+- Previous slice: `docs/superpowers/specs/2026-05-20-agent-runway-production-supervisor-design.md`
+- Current skill root: `skills/agent-runway/`
+
+## Scope Check
+
+The design covers three linked capabilities: observability, resume/watchdog, and review/verify gates. These are not independent subsystems for this implementation because all three depend on the same run contract, event journal, artifact graph, and worker lifecycle state. The plan still splits them into sequential tasks so each task leaves the runner in a testable state.
+
+## File Structure
+
+### Create
+
+| Path | Responsibility |
+| --- | --- |
+| `skills/agent-runway/scripts/agentrunway/contract.py` | Preflight Superpowers spec/plan into immutable `contract.json`, validate `spec_refs`, acceptance commands, and parsed task metadata. |
+| `skills/agent-runway/scripts/agentrunway/artifact_graph.py` | Build derived artifact graph and coverage summaries from DB, run files, tasks, workers, merge candidates, and applied commits. |
+| `skills/agent-runway/scripts/agentrunway/reconciliation.py` | Produce and apply idempotent resume/watchdog action plans from DB, filesystem, process, and git evidence. |
+| `skills/agent-runway/evals/test_contract_preflight.py` | Contract creation and preflight rejection tests. |
+| `skills/agent-runway/evals/test_artifact_graph_status.py` | Artifact graph, coverage, status, inspect, and JSON diagnostics tests. |
+| `skills/agent-runway/evals/test_event_journal_agentlens.py` | Local event journal, SQLite outbox, redaction, and best-effort AgentLens failure tests. |
+| `skills/agent-runway/evals/test_reconciliation.py` | Resume dry-run, reconcile-forward, retry, merge recovery, and idempotency tests. |
+| `skills/agent-runway/evals/test_review_verify_gates.py` | Reviewer/verifier gate sequencing and retry policy tests. |
+
+### Modify
+
+| Path | Change |
+| --- | --- |
+| `skills/agent-runway/scripts/agentrunway/models.py` | Add dataclasses and constants for run contracts, artifact graph nodes, coverage summaries, event records, and reconciliation actions. |
+| `skills/agent-runway/scripts/agentrunway/db.py` | Add repository methods for events/outbox, artifact records, worker listing, retry counting, run contract path, and task/merge summaries. |
+| `skills/agent-runway/scripts/agentrunway/events.py` | Replace one-file-per-event artifact writing with canonical `events.jsonl` plus SQLite outbox and optional AgentLens emitter hook. |
+| `skills/agent-runway/scripts/agentrunway/status.py` | Return human and JSON diagnostics for status, inspect, events, artifact graph, coverage, and AgentLens state. |
+| `skills/agent-runway/scripts/agentrunway/watchdog.py` | Keep low-level classification helpers and call reconciliation planning for resume/watchdog decisions. |
+| `skills/agent-runway/scripts/agentrunway/packetizer.py` | Materialize role-specific reviewer and verifier packets/prompts/output paths. |
+| `skills/agent-runway/scripts/agentrunway/supervisor.py` | Generalize implementer-only attempt execution into role-generic worker attempts and gate helpers. |
+| `skills/agent-runway/scripts/agentrunway/runner.py` | Wire preflight, contract persistence, event emission, artifact graph refresh, resume planning, and review/verify gate sequencing. |
+| `skills/agent-runway/scripts/agentrunway/invocation.py` | Add `--json` and `--dry-run` flags where needed and expose stable diagnostics command behavior. |
+| `skills/agent-runway/evals/fixtures/fake-bin/codex` | Make the fake runtime produce worker, review, or verification result JSON based on `AGENTRUNWAY_WORKER_ROLE`. |
+| `skills/agent-runway/evals/fixtures/fake-bin/claude` | Same role-aware fake runtime behavior for Claude. |
+| `skills/agent-runway/README.md` | Document operations hardening commands, event evidence, AgentLens behavior, resume dry-run, and gate behavior. |
+| `skills/agent-runway/references/agentlens-events.md` | Document canonical event types, local journal first, and outbox statuses. |
+| `skills/agent-runway/references/watchdog.md` | Document reconciliation actions and resume idempotency. |
+| `skills/agent-runway/references/protocol.md` | Document Superpowers spec/plan contract preflight and run evidence bundle. |
+
+---
+
+## Task 1: Contract Preflight and Run Evidence Manifest
+
+```yaml agentrunway-task
+task_id: task_001
+title: Contract preflight and run evidence manifest
+risk: medium
+phase: implementation
+dependencies: []
+spec_refs: [S5, S8, S13, S14]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/contract.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/models.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/db.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/runner.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_contract_preflight.py, mode: owned}
+acceptance_commands:
+  - cd skills/agent-runway && python -m pytest evals/test_contract_preflight.py -v
+  - cd skills/agent-runway && python -m pytest evals/test_runner_planning_slice.py evals/test_plan_parser.py -v
+required_skills: [test-driven-development]
+resource_keys: []
+serial: true
+```
+
+**Files:**
+- Create: `skills/agent-runway/scripts/agentrunway/contract.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/models.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/db.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/runner.py`
+- Create: `skills/agent-runway/evals/test_contract_preflight.py`
+
+- [ ] **Step 1: Write failing contract preflight tests**
+
+Create `skills/agent-runway/evals/test_contract_preflight.py`:
+
+```python
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from agentrunway.contract import ContractError, build_run_contract, write_contract
+from agentrunway.plan_parser import parse_plan
+
+
+def _write_spec(path: Path) -> None:
+    path.write_text(
+        "# Design: Example\n\n"
+        "## Spec Manifest\n\n"
+        "- S1: Summary\n"
+        "- S2: Acceptance\n\n"
+        "## S1. Summary\n\n"
+        "Build the feature.\n\n"
+        "## S2. Acceptance\n\n"
+        "The run SHALL verify the feature.\n",
+        encoding="utf-8",
+    )
+
+
+def _write_plan(path: Path, *, spec_ref: str = "S1", acceptance: str = "python -m pytest") -> None:
+    path.write_text(
+        "## Task 1: Example\n\n"
+        "```yaml agentrunway-task\n"
+        "task_id: task_001\n"
+        "title: Example\n"
+        "risk: low\n"
+        "phase: implementation\n"
+        "dependencies: []\n"
+        f"spec_refs: [{spec_ref}]\n"
+        "file_claims:\n"
+        "  - {path: src/example.py, mode: owned}\n"
+        f"acceptance_commands: [{acceptance}]\n"
+        "required_skills: [test-driven-development]\n"
+        "```\n"
+        "Implement the example.\n",
+        encoding="utf-8",
+    )
+
+
+def test_build_run_contract_records_hashes_tasks_and_manifest(tmp_path: Path, git_repo: Path) -> None:
+    spec = git_repo / "spec.md"
+    plan = git_repo / "plan.md"
+    _write_spec(spec)
+    _write_plan(plan)
+    tasks = parse_plan(plan)
+
+    contract = build_run_contract(
+        run_id="run-1",
+        workspace_id="workspace-1",
+        repo_root=git_repo,
+        spec_path=spec,
+        plan_path=plan,
+        base_commit_sha="abc123",
+        tasks=tasks,
+        adapter="codex",
+        model_profile="default",
+        allow_dirty_source=False,
+        apply_to_source=False,
+    )
+
+    assert contract.run_id == "run-1"
+    assert contract.spec["path"] == str(spec)
+    assert contract.plan["path"] == str(plan)
+    assert contract.spec["manifest_sections"] == {"S1": "Summary", "S2": "Acceptance"}
+    assert contract.tasks[0]["task_id"] == "task_001"
+    assert contract.tasks[0]["spec_refs"] == ["S1"]
+    assert contract.coverage["unreferenced"] == ["S2"]
+
+
+def test_contract_rejects_missing_spec_refs(tmp_path: Path, git_repo: Path) -> None:
+    spec = git_repo / "spec.md"
+    plan = git_repo / "plan.md"
+    _write_spec(spec)
+    _write_plan(plan, spec_ref="S404")
+
+    with pytest.raises(ContractError, match="missing spec_refs: task_001 -> S404"):
+        build_run_contract(
+            run_id="run-1",
+            workspace_id="workspace-1",
+            repo_root=git_repo,
+            spec_path=spec,
+            plan_path=plan,
+            base_commit_sha="abc123",
+            tasks=parse_plan(plan),
+            adapter="codex",
+            model_profile="default",
+            allow_dirty_source=False,
+            apply_to_source=False,
+        )
+
+
+def test_contract_rejects_empty_acceptance_commands(git_repo: Path) -> None:
+    spec = git_repo / "spec.md"
+    plan = git_repo / "plan.md"
+    _write_spec(spec)
+    _write_plan(plan, acceptance="")
+
+    with pytest.raises(ContractError, match="task_001 has no acceptance commands"):
+        build_run_contract(
+            run_id="run-1",
+            workspace_id="workspace-1",
+            repo_root=git_repo,
+            spec_path=spec,
+            plan_path=plan,
+            base_commit_sha="abc123",
+            tasks=parse_plan(plan),
+            adapter="codex",
+            model_profile="default",
+            allow_dirty_source=False,
+            apply_to_source=False,
+        )
+
+
+def test_write_contract_creates_immutable_contract_json(tmp_path: Path, git_repo: Path) -> None:
+    spec = git_repo / "spec.md"
+    plan = git_repo / "plan.md"
+    run_dir = tmp_path / "run"
+    _write_spec(spec)
+    _write_plan(plan)
+    contract = build_run_contract(
+        run_id="run-1",
+        workspace_id="workspace-1",
+        repo_root=git_repo,
+        spec_path=spec,
+        plan_path=plan,
+        base_commit_sha="abc123",
+        tasks=parse_plan(plan),
+        adapter="local",
+        model_profile="default",
+        allow_dirty_source=False,
+        apply_to_source=False,
+    )
+
+    path = write_contract(run_dir, contract)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert path == run_dir / "contract.json"
+    assert payload["run_id"] == "run-1"
+    assert payload["coverage"]["covered"] == ["S1"]
+```
+
+- [ ] **Step 2: Run the failing contract tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && python -m pytest evals/test_contract_preflight.py -v
+```
+
+Expected: FAIL with `ModuleNotFoundError: No module named 'agentrunway.contract'`.
+
+- [ ] **Step 3: Add run contract dataclasses**
+
+In `skills/agent-runway/scripts/agentrunway/models.py`, add these dataclasses after `WorkerResult`:
+
+```python
+@dataclass(frozen=True)
+class RunContract:
+    run_id: str
+    workspace_id: str
+    repo_root: str
+    base_commit_sha: str
+    spec: dict[str, Any]
+    plan: dict[str, Any]
+    tasks: tuple[dict[str, Any], ...]
+    adapter: str
+    model_profile: str
+    policy: dict[str, Any]
+    coverage: dict[str, list[str]]
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ArtifactGraphNode:
+    id: str
+    kind: str
+    status: str
+    path: str | None = None
+    task_id: str | None = None
+    worker_id: str | None = None
+    detail: str | None = None
+
+
+@dataclass(frozen=True)
+class ReconciliationAction:
+    target: str
+    action: str
+    reason: str
+    writes: bool = False
+```
+
+- [ ] **Step 4: Implement `contract.py`**
+
+Create `skills/agent-runway/scripts/agentrunway/contract.py`:
+
+```python
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import asdict
+from pathlib import Path
+
+from .models import RunContract, TaskSpec
+from .plan_parser import canonical_hash
+
+
+class ContractError(ValueError):
+    pass
+
+
+MANIFEST_ITEM_RE = re.compile(r"^-\s+(S[0-9]+(?:\.[0-9]+)?):\s+(.+?)\s*$")
+
+
+def parse_spec_manifest_sections(spec_path: Path) -> dict[str, str]:
+    sections: dict[str, str] = {}
+    in_manifest = False
+    for line in spec_path.read_text(encoding="utf-8").splitlines():
+        if line.strip() == "## Spec Manifest":
+            in_manifest = True
+            continue
+        if in_manifest and line.startswith("## ") and line.strip() != "## Spec Manifest":
+            break
+        if in_manifest:
+            match = MANIFEST_ITEM_RE.match(line.strip())
+            if match:
+                sections[match.group(1)] = match.group(2)
+    if not sections:
+        raise ContractError(f"spec manifest is missing or empty: {spec_path}")
+    return sections
+
+
+def _task_to_contract(task: TaskSpec) -> dict[str, object]:
+    return {
+        "task_id": task.task_id,
+        "title": task.title,
+        "risk": task.risk,
+        "phase": task.phase,
+        "dependencies": list(task.dependencies),
+        "spec_refs": list(task.spec_refs),
+        "file_claims": [{"path": claim.path, "mode": claim.mode} for claim in task.file_claims],
+        "acceptance_commands": list(task.acceptance_commands),
+        "resource_keys": list(task.resource_keys),
+        "required_skills": list(task.required_skills),
+        "serial": task.serial,
+        "line": task.line,
+    }
+
+
+def _validate_tasks(tasks: list[TaskSpec], manifest_sections: dict[str, str]) -> tuple[dict[str, list[str]], tuple[str, ...]]:
+    covered: set[str] = set()
+    warnings: list[str] = []
+    for task in tasks:
+        missing_refs = [ref for ref in task.spec_refs if ref not in manifest_sections]
+        if missing_refs:
+            raise ContractError(f"missing spec_refs: {task.task_id} -> {', '.join(missing_refs)}")
+        if not task.acceptance_commands or any(not command.strip() for command in task.acceptance_commands):
+            raise ContractError(f"{task.task_id} has no acceptance commands")
+        if task.phase == "implementation" and not task.file_claims:
+            raise ContractError(f"{task.task_id} has no file claims")
+        for claim in task.file_claims:
+            if claim.path in {"*", "**", "**/*"}:
+                warnings.append(f"{task.task_id} has broad file claim {claim.path}")
+        covered.update(task.spec_refs)
+    unreferenced = sorted(set(manifest_sections) - covered)
+    warnings.extend(f"unreferenced spec section {ref}" for ref in unreferenced)
+    return {"covered": sorted(covered), "partial": [], "blocked": [], "unreferenced": unreferenced}, tuple(warnings)
+
+
+def build_run_contract(
+    *,
+    run_id: str,
+    workspace_id: str,
+    repo_root: Path,
+    spec_path: Path,
+    plan_path: Path,
+    base_commit_sha: str,
+    tasks: list[TaskSpec],
+    adapter: str,
+    model_profile: str,
+    allow_dirty_source: bool,
+    apply_to_source: bool,
+) -> RunContract:
+    manifest_sections = parse_spec_manifest_sections(spec_path)
+    coverage, warnings = _validate_tasks(tasks, manifest_sections)
+    return RunContract(
+        run_id=run_id,
+        workspace_id=workspace_id,
+        repo_root=str(repo_root),
+        base_commit_sha=base_commit_sha,
+        spec={
+            "path": str(spec_path),
+            "hash": canonical_hash(spec_path),
+            "manifest_sections": manifest_sections,
+        },
+        plan={
+            "path": str(plan_path),
+            "hash": canonical_hash(plan_path),
+            "task_count": len(tasks),
+        },
+        tasks=tuple(_task_to_contract(task) for task in tasks),
+        adapter=adapter,
+        model_profile=model_profile,
+        policy={
+            "allow_dirty_source": bool(allow_dirty_source),
+            "apply_to_source": bool(apply_to_source),
+        },
+        coverage=coverage,
+        warnings=warnings,
+    )
+
+
+def write_contract(run_dir: Path, contract: RunContract) -> Path:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = run_dir / "contract.json"
+    if path.exists():
+        raise ContractError(f"contract already exists: {path}")
+    path.write_text(json.dumps(asdict(contract), ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    return path
+```
+
+- [ ] **Step 5: Add DB storage for contract path**
+
+In `skills/agent-runway/scripts/agentrunway/db.py`, add a `contract_path` column to the `runs` table definition:
+
+```sql
+contract_path TEXT,
+```
+
+Place it after `spec_path TEXT`. Then add:
+
+```python
+    def set_run_contract_path(self, run_id: str, contract_path: str) -> None:
+        self.conn.execute(
+            "UPDATE runs SET contract_path=?, updated_at=CURRENT_TIMESTAMP WHERE run_id=?",
+            (contract_path, run_id),
+        )
+        self.conn.commit()
+```
+
+Because tests create fresh SQLite databases, no migration alias is needed for old test DBs.
+
+- [ ] **Step 6: Wire contract creation into `runner.run`**
+
+In `skills/agent-runway/scripts/agentrunway/runner.py`, import:
+
+```python
+from .contract import build_run_contract, write_contract
+```
+
+After `tasks = parse_plan(plan)` and before packet creation, add:
+
+```python
+    contract = build_run_contract(
+        run_id=run_id,
+        workspace_id=wsid,
+        repo_root=repo,
+        spec_path=spec,
+        plan_path=plan,
+        base_commit_sha=base_commit,
+        tasks=tasks,
+        adapter=args.adapter,
+        model_profile=cfg.default_profile,
+        allow_dirty_source=bool(args.allow_dirty_source),
+        apply_to_source=bool(args.apply_to_source),
+    )
+    contract_path = write_contract(run_dir, contract)
+    db.set_run_contract_path(run_id, str(contract_path))
+```
+
+If `spec` is optional for planning-only legacy paths, require `--spec` for production adapter runs and keep local planning-only tests by passing a generated minimal spec in their fixtures.
+
+- [ ] **Step 7: Run contract tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && python -m pytest evals/test_contract_preflight.py -v
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 8: Run existing parser and planning tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && python -m pytest evals/test_runner_planning_slice.py evals/test_plan_parser.py -v
+```
+
+Expected: all tests pass. If a planning fixture has no `## Spec Manifest`, update that fixture spec with `S1` matching its task `spec_refs`.
+
+- [ ] **Step 9: Commit**
+
+Run:
+
+```bash
+git add skills/agent-runway/scripts/agentrunway/contract.py \
+  skills/agent-runway/scripts/agentrunway/models.py \
+  skills/agent-runway/scripts/agentrunway/db.py \
+  skills/agent-runway/scripts/agentrunway/runner.py \
+  skills/agent-runway/evals/test_contract_preflight.py
+git commit -m "feat: freeze AgentRunway run contracts"
+```
+
+## Task 2: Event Journal and AgentLens Outbox
+
+```yaml agentrunway-task
+task_id: task_002
+title: Event journal and AgentLens outbox
+risk: medium
+phase: implementation
+dependencies: [task_001]
+spec_refs: [S7, S9, S13, S14]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/events.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/db.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/runner.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_event_journal_agentlens.py, mode: owned}
+acceptance_commands:
+  - cd skills/agent-runway && python -m pytest evals/test_event_journal_agentlens.py evals/test_events_merge_queue.py -v
+required_skills: [test-driven-development]
+resource_keys: []
+serial: true
+```
+
+**Files:**
+- Modify: `skills/agent-runway/scripts/agentrunway/events.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/db.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/runner.py`
+- Create: `skills/agent-runway/evals/test_event_journal_agentlens.py`
+
+- [ ] **Step 1: Write failing event journal tests**
+
+Create `skills/agent-runway/evals/test_event_journal_agentlens.py`:
+
+```python
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from agentrunway.db import AgentRunwayDb
+from agentrunway.events import EventJournal, build_event_payload
+
+
+class FailingEmitter:
+    def emit(self, event_type: str, payload: dict[str, object]) -> None:
+        raise RuntimeError(f"agentlens down for {event_type}")
+
+
+def test_event_journal_writes_events_jsonl_and_db_outbox(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    journal = EventJournal(db=db, run_dir=run_dir, agentlens_emitter=None)
+
+    record = journal.record(
+        "agentrunway.run_started",
+        build_event_payload("run-1", "run", "success", "started", token="secret-value"),
+    )
+
+    assert record.event_type == "agentrunway.run_started"
+    assert record.status == "agentlens_disabled"
+    lines = (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+    payload = json.loads(lines[0])
+    assert payload["event_type"] == "agentrunway.run_started"
+    assert payload["payload"]["token"] == "[REDACTED]"
+
+    rows = db.list_events()
+    assert rows[0]["event_type"] == "agentrunway.run_started"
+    assert rows[0]["status"] == "agentlens_disabled"
+
+
+def test_event_journal_records_agentlens_failure_without_raising(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    journal = EventJournal(db=db, run_dir=run_dir, agentlens_emitter=FailingEmitter())
+
+    record = journal.record(
+        "agentrunway.contract_created",
+        build_event_payload("run-1", "contract", "success", "contract created"),
+    )
+
+    assert record.status == "agentlens_failed"
+    assert "agentlens down" in str(record.error)
+    rows = db.list_events()
+    assert rows[0]["status"] == "agentlens_failed"
+    assert "agentlens down" in str(rows[0]["error"])
+
+
+def test_event_journal_query_returns_redacted_payloads(tmp_path: Path, monkeypatch) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    journal = EventJournal(db=db, run_dir=run_dir)
+    journal.record(
+        "agentrunway.worker_result",
+        build_event_payload("run-1", "worker", "success", "done", path=str(home / "repo")),
+    )
+
+    events = journal.list()
+
+    assert events[0]["payload"]["path"] == "~/repo"
+```
+
+- [ ] **Step 2: Run the failing event tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && python -m pytest evals/test_event_journal_agentlens.py -v
+```
+
+Expected: FAIL with missing `EventJournal` or `list_events`.
+
+- [ ] **Step 3: Add event DB repository methods**
+
+In `skills/agent-runway/scripts/agentrunway/db.py`, add:
+
+```python
+    def insert_event(self, *, event_type: str, payload: dict[str, Any], status: str, error: str | None = None) -> int:
+        cursor = self.conn.execute(
+            """
+            INSERT INTO agentlens_events (event_type, payload_json, status, error)
+            VALUES (?, ?, ?, ?)
+            """,
+            (event_type, json.dumps(payload, ensure_ascii=False, sort_keys=True), status, error),
+        )
+        self.conn.commit()
+        return int(cursor.lastrowid)
+
+    def list_events(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT * FROM agentlens_events ORDER BY id").fetchall()
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data["payload"] = json.loads(data.pop("payload_json"))
+            events.append(data)
+        return events
+
+    def agentlens_summary(self) -> dict[str, Any]:
+        rows = self.list_events()
+        failed = [row for row in rows if row["status"] == "agentlens_failed"]
+        emitted = [row for row in rows if row["status"] == "agentlens_emitted"]
+        return {
+            "events": len(rows),
+            "emitted": len(emitted),
+            "failed": len(failed),
+            "last_status": rows[-1]["status"] if rows else "none",
+        }
+```
+
+- [ ] **Step 4: Implement `EventJournal`**
+
+Replace `write_event_artifact` in `skills/agent-runway/scripts/agentrunway/events.py` with a backward-compatible wrapper around `EventJournal`. Add:
+
+```python
+from dataclasses import dataclass
+from typing import Protocol
+
+from .db import AgentRunwayDb
+
+
+class AgentLensEmitter(Protocol):
+    def emit(self, event_type: str, payload: dict[str, object]) -> None:
+        ...
+
+
+@dataclass(frozen=True)
+class EventRecord:
+    id: int
+    event_type: str
+    status: str
+    payload: dict[str, Any]
+    error: str | None = None
+
+
+class EventJournal:
+    def __init__(self, *, db: AgentRunwayDb, run_dir: Path, agentlens_emitter: AgentLensEmitter | None = None):
+        self.db = db
+        self.run_dir = run_dir
+        self.agentlens_emitter = agentlens_emitter
+        self.events_path = run_dir / "events.jsonl"
+
+    def record(self, event_type: str, payload: dict[str, Any]) -> EventRecord:
+        redacted = redact_payload(payload)
+        status = "agentlens_disabled"
+        error: str | None = None
+        if self.agentlens_emitter is not None:
+            try:
+                self.agentlens_emitter.emit(event_type, redacted)
+            except Exception as exc:
+                status = "agentlens_failed"
+                error = str(exc)
+            else:
+                status = "agentlens_emitted"
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        event_line = {"event_type": event_type, "payload": redacted, "status": status, "error": error}
+        with self.events_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event_line, ensure_ascii=False, sort_keys=True) + "\n")
+        event_id = self.db.insert_event(event_type=event_type, payload=redacted, status=status, error=error)
+        return EventRecord(id=event_id, event_type=event_type, status=status, payload=redacted, error=error)
+
+    def list(self) -> list[dict[str, Any]]:
+        return self.db.list_events()
+```
+
+Keep this wrapper for existing tests:
+
+```python
+def write_event_artifact(run_dir: Path, event_type: str, payload: dict[str, Any]) -> Path:
+    event_dir = run_dir / "events"
+    event_dir.mkdir(parents=True, exist_ok=True)
+    safe_type = event_type.replace("/", "_").replace(" ", "_")
+    path = event_dir / f"{safe_type}.jsonl"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(redact_payload(payload), ensure_ascii=False, sort_keys=True) + "\n")
+    return path
+```
+
+- [ ] **Step 5: Emit initial runner events**
+
+In `runner.py`, import `EventJournal` and `build_event_payload`. After DB creation and contract write, create:
+
+```python
+    journal = EventJournal(db=db, run_dir=run_dir)
+    journal.record("agentrunway.run_started", build_event_payload(run_id, "run", "success", "run started"))
+    journal.record(
+        "agentrunway.contract_created",
+        build_event_payload(run_id, "contract", "success", "contract created", contract_path=str(contract_path)),
+    )
+```
+
+Before returning from a finished run, add:
+
+```python
+    journal.record("agentrunway.run_finished", build_event_payload(run_id, "run", "success", "run finished"))
+```
+
+- [ ] **Step 6: Run event tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && python -m pytest evals/test_event_journal_agentlens.py evals/test_events_merge_queue.py -v
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 7: Commit**
+
+Run:
+
+```bash
+git add skills/agent-runway/scripts/agentrunway/events.py \
+  skills/agent-runway/scripts/agentrunway/db.py \
+  skills/agent-runway/scripts/agentrunway/runner.py \
+  skills/agent-runway/evals/test_event_journal_agentlens.py
+git commit -m "feat: record AgentRunway event journal"
+```
+
+## Task 3: Artifact Graph, Coverage, and JSON Diagnostics
+
+```yaml agentrunway-task
+task_id: task_003
+title: Artifact graph, coverage, and JSON diagnostics
+risk: medium
+phase: implementation
+dependencies: [task_002]
+spec_refs: [S4, S7, S8, S9, S13, S14]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/artifact_graph.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/status.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/runner.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/invocation.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_artifact_graph_status.py, mode: owned}
+acceptance_commands:
+  - cd skills/agent-runway && python -m pytest evals/test_artifact_graph_status.py evals/test_status_watchdog_cost.py -v
+required_skills: [test-driven-development]
+resource_keys: []
+serial: true
+```
+
+**Files:**
+- Create: `skills/agent-runway/scripts/agentrunway/artifact_graph.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/status.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/runner.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/invocation.py`
+- Create: `skills/agent-runway/evals/test_artifact_graph_status.py`
+
+- [ ] **Step 1: Write failing artifact graph diagnostics tests**
+
+Create `skills/agent-runway/evals/test_artifact_graph_status.py`:
+
+```python
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from agentrunway.artifact_graph import build_artifact_graph, write_artifact_graph
+from agentrunway.db import AgentRunwayDb
+from agentrunway.models import FileClaim, TaskSpec
+from agentrunway.status import build_inspect_payload, format_inspect_payload
+
+
+def _task() -> TaskSpec:
+    return TaskSpec(
+        task_id="task_001",
+        title="Example",
+        risk="low",
+        phase="implementation",
+        dependencies=(),
+        spec_refs=("S1",),
+        file_claims=(FileClaim(path="src/example.py", mode="owned"),),
+        acceptance_commands=("python -m pytest",),
+    )
+
+
+def test_artifact_graph_marks_contract_packet_result_and_merge_nodes(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    (run_dir / "contract.json").parent.mkdir(parents=True)
+    (run_dir / "contract.json").write_text(json.dumps({"coverage": {"covered": ["S1"], "unreferenced": ["S2"]}}), encoding="utf-8")
+    (run_dir / "packets").mkdir()
+    (run_dir / "packets" / "task_001.json").write_text("{}", encoding="utf-8")
+    (run_dir / "artifacts" / "task_001" / "task_001-implementer-001").mkdir(parents=True)
+    (run_dir / "artifacts" / "task_001" / "task_001-implementer-001" / "worker_result.json").write_text("{}", encoding="utf-8")
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    db.upsert_task(_task())
+    db.enqueue_merge_candidate(
+        task_id="task_001",
+        worker_id="task_001-implementer-001",
+        commits=("abc123",),
+        changed_files=("src/example.py",),
+        status="merged",
+    )
+
+    graph = build_artifact_graph(run_dir=run_dir, db=db)
+
+    statuses = {node["id"]: node["status"] for node in graph["nodes"]}
+    assert statuses["contract"] == "done"
+    assert statuses["task_001:packet"] == "done"
+    assert statuses["task_001:task_001-implementer-001:worker_result"] == "done"
+    assert statuses["task_001:task_001-implementer-001:merge_candidate"] == "done"
+    assert graph["coverage"]["covered"] == ["S1"]
+
+
+def test_write_artifact_graph_creates_json_file(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    payload = write_artifact_graph(run_dir=run_dir, db=db)
+    assert (run_dir / "artifact_graph.json").exists()
+    assert payload["nodes"][0]["id"] == "contract"
+
+
+def test_inspect_payload_includes_agentlens_and_coverage(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    db.insert_event(event_type="agentrunway.run_started", payload={"run_id": "run-1"}, status="agentlens_failed", error="down")
+    (run_dir / "run.json").write_text(
+        json.dumps({"run_id": "run-1", "status": "finished", "run_dir": str(run_dir), "state_db": str(run_dir / "state.sqlite")}),
+        encoding="utf-8",
+    )
+    (run_dir / "coverage.json").write_text(json.dumps({"covered": ["S1"], "partial": [], "blocked": [], "unreferenced": []}), encoding="utf-8")
+
+    payload = build_inspect_payload(run_json=json.loads((run_dir / "run.json").read_text()), db=db)
+    text = format_inspect_payload(payload)
+
+    assert payload["agentlens"]["failed"] == 1
+    assert payload["coverage"]["covered"] == ["S1"]
+    assert "agentlens_failed=1" in text
+```
+
+- [ ] **Step 2: Run the failing artifact graph tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && python -m pytest evals/test_artifact_graph_status.py -v
+```
+
+Expected: FAIL with missing `agentrunway.artifact_graph`.
+
+- [ ] **Step 3: Implement `artifact_graph.py`**
+
+Create `skills/agent-runway/scripts/agentrunway/artifact_graph.py`:
+
+```python
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+from .db import AgentRunwayDb
+
+
+def _status_for_path(path: Path) -> str:
+    return "done" if path.exists() else "missing"
+
+
+def _load_coverage(run_dir: Path) -> dict[str, list[str]]:
+    contract_path = run_dir / "contract.json"
+    if contract_path.exists():
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        coverage = contract.get("coverage", {})
+        return {
+            "covered": list(coverage.get("covered", [])),
+            "partial": list(coverage.get("partial", [])),
+            "blocked": list(coverage.get("blocked", [])),
+            "unreferenced": list(coverage.get("unreferenced", [])),
+        }
+    return {"covered": [], "partial": [], "blocked": [], "unreferenced": []}
+
+
+def build_artifact_graph(*, run_dir: Path, db: AgentRunwayDb) -> dict[str, Any]:
+    nodes: list[dict[str, Any]] = [
+        {"id": "contract", "kind": "contract", "status": _status_for_path(run_dir / "contract.json"), "path": str(run_dir / "contract.json")},
+        {"id": "events", "kind": "events", "status": _status_for_path(run_dir / "events.jsonl"), "path": str(run_dir / "events.jsonl")},
+    ]
+    for task in db.list_tasks():
+        task_id = str(task["task_id"])
+        nodes.append({"id": f"{task_id}:packet", "kind": "task_packet", "task_id": task_id, "status": _status_for_path(run_dir / "packets" / f"{task_id}.json")})
+    for worker in db.list_workers():
+        task_id = str(worker["task_id"])
+        worker_id = str(worker["worker_id"])
+        result_name = "worker_result.json"
+        if worker["role"] == "reviewer":
+            result_name = "review_result.json"
+        if worker["role"] == "verifier":
+            result_name = "verification_result.json"
+        result_path = run_dir / "artifacts" / task_id / worker_id / result_name
+        nodes.append({
+            "id": f"{task_id}:{worker_id}:{result_name.removesuffix('.json')}",
+            "kind": result_name.removesuffix(".json"),
+            "task_id": task_id,
+            "worker_id": worker_id,
+            "status": _status_for_path(result_path),
+            "path": str(result_path),
+        })
+    for candidate in db.list_merge_candidates():
+        status = "done" if candidate["status"] == "merged" else "failed" if candidate["status"] == "merge_conflict" else "ready"
+        nodes.append({
+            "id": f"{candidate['task_id']}:{candidate['worker_id']}:merge_candidate",
+            "kind": "merge_candidate",
+            "task_id": candidate["task_id"],
+            "worker_id": candidate["worker_id"],
+            "status": status,
+            "detail": candidate["status"],
+        })
+    return {"nodes": nodes, "coverage": _load_coverage(run_dir)}
+
+
+def write_artifact_graph(*, run_dir: Path, db: AgentRunwayDb) -> dict[str, Any]:
+    payload = build_artifact_graph(run_dir=run_dir, db=db)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "artifact_graph.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    (run_dir / "coverage.json").write_text(json.dumps(payload["coverage"], ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    return payload
+```
+
+- [ ] **Step 4: Add `list_workers` to DB**
+
+In `db.py`, add:
+
+```python
+    def list_workers(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT * FROM workers ORDER BY worker_id").fetchall()
+        workers: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data["handle_json"] = json.loads(data["handle_json"])
+            workers.append(data)
+        return workers
+```
+
+- [ ] **Step 5: Implement inspect/status payloads**
+
+In `status.py`, keep `format_run_status` and add:
+
+```python
+import json
+from pathlib import Path
+from typing import Any
+
+from .artifact_graph import build_artifact_graph
+from .db import AgentRunwayDb
+
+
+def build_inspect_payload(*, run_json: dict[str, Any], db: AgentRunwayDb) -> dict[str, Any]:
+    run_dir = Path(str(run_json["run_dir"]))
+    graph = build_artifact_graph(run_dir=run_dir, db=db)
+    coverage_path = run_dir / "coverage.json"
+    coverage = json.loads(coverage_path.read_text(encoding="utf-8")) if coverage_path.exists() else graph["coverage"]
+    return {
+        "run_id": run_json.get("run_id"),
+        "status": run_json.get("status"),
+        "run_dir": str(run_dir),
+        "tasks": db.list_tasks(),
+        "workers": db.list_workers(),
+        "merge_candidates": db.list_merge_candidates(),
+        "artifact_graph": graph,
+        "coverage": coverage,
+        "agentlens": db.agentlens_summary(),
+    }
+
+
+def format_inspect_payload(payload: dict[str, Any]) -> str:
+    agentlens = payload.get("agentlens", {})
+    coverage = payload.get("coverage", {})
+    return (
+        f"{payload.get('run_id')} status={payload.get('status')} "
+        f"tasks={len(payload.get('tasks', []))} "
+        f"workers={len(payload.get('workers', []))} "
+        f"covered={len(coverage.get('covered', []))} "
+        f"blocked={len(coverage.get('blocked', []))} "
+        f"agentlens_failed={agentlens.get('failed', 0)}"
+    )
+```
+
+- [ ] **Step 6: Wire inspect/events JSON command output**
+
+In `runner.inspect`, open the DB and return `build_inspect_payload(...)` instead of the current minimal task list.
+
+In `runner.events`, open the DB and return:
+
+```python
+    db = AgentRunwayDb.open(Path(data["state_db"]))
+    return {"run_id": run_id, "events": db.list_events(), "agentlens": db.agentlens_summary()}
+```
+
+In `invocation.py`, add `--json` to `status`, `inspect`, `events`, and `resume` parsers:
+
+```python
+        cmd.add_argument("--json", action="store_true")
+```
+
+The command can continue printing JSON for all payloads in this slice; the flag reserves a stable interface and keeps backwards compatibility for scripts already parsing JSON.
+
+- [ ] **Step 7: Refresh artifact graph during run**
+
+In `runner.run`, call `write_artifact_graph(run_dir=run_dir, db=db)` after contract creation and after merge processing. Import it from `artifact_graph.py`.
+
+- [ ] **Step 8: Run artifact graph and status tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && python -m pytest evals/test_artifact_graph_status.py evals/test_status_watchdog_cost.py -v
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 9: Commit**
+
+Run:
+
+```bash
+git add skills/agent-runway/scripts/agentrunway/artifact_graph.py \
+  skills/agent-runway/scripts/agentrunway/status.py \
+  skills/agent-runway/scripts/agentrunway/runner.py \
+  skills/agent-runway/scripts/agentrunway/invocation.py \
+  skills/agent-runway/scripts/agentrunway/db.py \
+  skills/agent-runway/evals/test_artifact_graph_status.py
+git commit -m "feat: expose AgentRunway run diagnostics"
+```
+
+## Task 4: Reconciliation Planner and Resume Dry Run
+
+```yaml agentrunway-task
+task_id: task_004
+title: Reconciliation planner and resume dry run
+risk: high
+phase: implementation
+dependencies: [task_003]
+spec_refs: [S10, S12, S13, S14]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/reconciliation.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/watchdog.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/runner.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/invocation.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_reconciliation.py, mode: owned}
+acceptance_commands:
+  - cd skills/agent-runway && python -m pytest evals/test_reconciliation.py evals/test_resume_apply.py evals/test_status_watchdog_cost.py -v
+required_skills: [test-driven-development]
+resource_keys: []
+serial: true
+```
+
+**Files:**
+- Create: `skills/agent-runway/scripts/agentrunway/reconciliation.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/watchdog.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/runner.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/invocation.py`
+- Create: `skills/agent-runway/evals/test_reconciliation.py`
+
+- [ ] **Step 1: Write failing reconciliation tests**
+
+Create `skills/agent-runway/evals/test_reconciliation.py`:
+
+```python
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+from agentrunway.db import AgentRunwayDb
+from agentrunway.models import FileClaim, TaskSpec
+from agentrunway.reconciliation import apply_reconciliation_plan, plan_reconciliation
+
+
+def _task() -> TaskSpec:
+    return TaskSpec(
+        task_id="task_001",
+        title="Example",
+        risk="low",
+        phase="implementation",
+        dependencies=(),
+        spec_refs=("S1",),
+        file_claims=(FileClaim(path="src/example.py", mode="owned"),),
+        acceptance_commands=("python -m pytest",),
+    )
+
+
+def test_plan_reconciliation_reconciles_valid_result_artifact_forward(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    db.upsert_task(_task())
+    db.create_worker_attempt(
+        worker_id="task_001-implementer-001",
+        task_id="task_001",
+        role="implementer",
+        runtime="codex",
+        model="gpt-5.5",
+        reasoning_effort="high",
+        attempt=1,
+        worktree_path=str(tmp_path / "worker"),
+        branch="agentrunway/run/task_001-implementer-001",
+        state="running",
+        handle_json={},
+    )
+    result_path = run_dir / "artifacts" / "task_001" / "task_001-implementer-001" / "worker_result.json"
+    result_path.parent.mkdir(parents=True)
+    result_path.write_text(
+        json.dumps({
+            "schema": "agentrunway.worker_result.v1",
+            "worker_id": "task_001-implementer-001",
+            "task_id": "task_001",
+            "role": "implementer",
+            "status": "success",
+            "changed_files": [],
+            "summary": "ok",
+            "method_audit": {},
+        }),
+        encoding="utf-8",
+    )
+
+    plan = plan_reconciliation(run_id="run-1", run_dir=run_dir, db=db)
+
+    assert plan["actions"] == [
+        {
+            "target": "task_001-implementer-001",
+            "action": "reconcile_forward",
+            "reason": "valid_result_artifact_exists",
+            "writes": True,
+        }
+    ]
+
+
+def test_plan_reconciliation_retries_dead_worker_missing_result(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    db.upsert_task(_task())
+    db.create_worker_attempt(
+        worker_id="task_001-implementer-001",
+        task_id="task_001",
+        role="implementer",
+        runtime="codex",
+        model="gpt-5.5",
+        reasoning_effort="high",
+        attempt=1,
+        worktree_path=str(tmp_path / "worker"),
+        branch="agentrunway/run/task_001-implementer-001",
+        state="running",
+        handle_json={"pid": 999999},
+    )
+
+    plan = plan_reconciliation(run_id="run-1", run_dir=run_dir, db=db)
+
+    assert plan["actions"][0]["action"] == "retry"
+    assert plan["actions"][0]["reason"] == "dead_process_missing_result"
+
+
+def test_apply_reconciliation_plan_is_idempotent_for_reconcile_forward(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    db.upsert_task(_task())
+    db.create_worker_attempt(
+        worker_id="task_001-implementer-001",
+        task_id="task_001",
+        role="implementer",
+        runtime="codex",
+        model="gpt-5.5",
+        reasoning_effort="high",
+        attempt=1,
+        worktree_path=str(tmp_path / "worker"),
+        branch="agentrunway/run/task_001-implementer-001",
+        state="running",
+        handle_json={},
+    )
+    plan = {
+        "run_id": "run-1",
+        "actions": [
+            {
+                "target": "task_001-implementer-001",
+                "action": "reconcile_forward",
+                "reason": "valid_result_artifact_exists",
+                "writes": True,
+            }
+        ],
+    }
+
+    apply_reconciliation_plan(db=db, plan=plan)
+    apply_reconciliation_plan(db=db, plan=plan)
+
+    assert db.get_worker("task_001-implementer-001")["state"] == "result_collected"
+    events = [row for row in db.list_events() if row["event_type"] == "agentrunway.resume_action"]
+    assert len(events) == 1
+```
+
+- [ ] **Step 2: Run the failing reconciliation tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && python -m pytest evals/test_reconciliation.py -v
+```
+
+Expected: FAIL with missing `agentrunway.reconciliation`.
+
+- [ ] **Step 3: Implement `reconciliation.py`**
+
+Create `skills/agent-runway/scripts/agentrunway/reconciliation.py`:
+
+```python
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+from .db import AgentRunwayDb
+from .events import build_event_payload
+from .result_validation import ResultValidationError, validate_worker_result
+
+
+def _result_path(run_dir: Path, worker: dict[str, Any]) -> Path:
+    role = str(worker["role"])
+    filename = "worker_result.json"
+    if role == "reviewer":
+        filename = "review_result.json"
+    if role == "verifier":
+        filename = "verification_result.json"
+    return run_dir / "artifacts" / str(worker["task_id"]) / str(worker["worker_id"]) / filename
+
+
+def _process_alive(handle_json: dict[str, Any]) -> bool:
+    pid = handle_json.get("pid")
+    if pid is None and isinstance(handle_json.get("process"), dict):
+        pid = handle_json["process"].get("pid")
+    if pid is None:
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _valid_worker_result(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        validate_worker_result(json.loads(path.read_text(encoding="utf-8")))
+    except (json.JSONDecodeError, ResultValidationError):
+        return False
+    return True
+
+
+def plan_reconciliation(*, run_id: str, run_dir: Path, db: AgentRunwayDb) -> dict[str, Any]:
+    actions: list[dict[str, Any]] = []
+    for worker in db.list_workers():
+        state = str(worker["state"])
+        if state in {"merged", "blocked", "cancelled", "validated", "result_collected"}:
+            continue
+        result_path = _result_path(run_dir, worker)
+        if _valid_worker_result(result_path):
+            actions.append({
+                "target": worker["worker_id"],
+                "action": "reconcile_forward",
+                "reason": "valid_result_artifact_exists",
+                "writes": True,
+            })
+            continue
+        if state == "running" and not _process_alive(worker.get("handle_json", {})):
+            actions.append({
+                "target": worker["worker_id"],
+                "action": "retry",
+                "reason": "dead_process_missing_result",
+                "writes": True,
+            })
+    return {"run_id": run_id, "actions": actions}
+
+
+def apply_reconciliation_plan(*, db: AgentRunwayDb, plan: dict[str, Any]) -> None:
+    for action in plan.get("actions", []):
+        target = str(action["target"])
+        if action["action"] == "reconcile_forward":
+            worker = db.get_worker(target)
+            if worker["state"] != "result_collected":
+                db.set_worker_state(target, "result_collected")
+                db.insert_event(
+                    event_type="agentrunway.resume_action",
+                    payload=build_event_payload(str(plan["run_id"]), "resume", "success", "reconciled forward", target=target),
+                    status="agentlens_disabled",
+                )
+        elif action["action"] == "retry":
+            worker = db.get_worker(target)
+            if worker["state"] == "running":
+                db.set_worker_state(target, "stalled")
+                db.insert_event(
+                    event_type="agentrunway.resume_action",
+                    payload=build_event_payload(str(plan["run_id"]), "resume", "partial", "retry required", target=target),
+                    status="agentlens_disabled",
+                )
+```
+
+- [ ] **Step 4: Wire resume dry-run**
+
+In `invocation.py`, add to the `resume` parser only:
+
+```python
+    if command == "resume":
+        cmd.add_argument("--dry-run", action="store_true")
+```
+
+If keeping the loop over commands, split `resume` into its own parser so `--dry-run` is not accepted by `status`, `inspect`, `events`, or `cancel`.
+
+In `runner.resume`, change the signature:
+
+```python
+def resume(run_id: str, *, dry_run: bool = False) -> dict[str, Any]:
+```
+
+Then implement:
+
+```python
+    db = AgentRunwayDb.open(Path(data["state_db"]))
+    plan = plan_reconciliation(run_id=run_id, run_dir=Path(data["run_dir"]), db=db)
+    if dry_run:
+        return plan
+    apply_reconciliation_plan(db=db, plan=plan)
+    return {"run_id": run_id, "status": data.get("status"), "run_dir": data.get("run_dir"), "reconciliation": plan}
+```
+
+Update `invocation.main`:
+
+```python
+        elif args.command == "resume":
+            payload = runner.resume(args.run, dry_run=bool(args.dry_run))
+```
+
+- [ ] **Step 5: Keep watchdog classification helpers stable**
+
+In `watchdog.py`, do not remove `classify_stall` or `classify_worker_snapshot`; existing tests depend on them. Add only a delegating helper:
+
+```python
+from pathlib import Path
+from typing import Any
+
+from .db import AgentRunwayDb
+from .reconciliation import plan_reconciliation
+
+
+def plan_watchdog_actions(*, run_id: str, run_dir: Path, db: AgentRunwayDb) -> dict[str, Any]:
+    return plan_reconciliation(run_id=run_id, run_dir=run_dir, db=db)
+```
+
+- [ ] **Step 6: Run reconciliation tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && python -m pytest evals/test_reconciliation.py evals/test_resume_apply.py evals/test_status_watchdog_cost.py -v
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 7: Commit**
+
+Run:
+
+```bash
+git add skills/agent-runway/scripts/agentrunway/reconciliation.py \
+  skills/agent-runway/scripts/agentrunway/watchdog.py \
+  skills/agent-runway/scripts/agentrunway/runner.py \
+  skills/agent-runway/scripts/agentrunway/invocation.py \
+  skills/agent-runway/evals/test_reconciliation.py
+git commit -m "feat: plan AgentRunway resume reconciliation"
+```
+
+## Task 5: Role-Generic Supervisor and Gate Packets
+
+```yaml agentrunway-task
+task_id: task_005
+title: Role-generic supervisor and gate packets
+risk: high
+phase: implementation
+dependencies: [task_004]
+spec_refs: [S7, S11, S12, S13, S14]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/packetizer.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/supervisor.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/result_validation.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_review_verify_gates.py, mode: owned}
+acceptance_commands:
+  - cd skills/agent-runway && python -m pytest evals/test_review_verify_gates.py evals/test_result_validation.py -v
+required_skills: [test-driven-development]
+resource_keys: []
+serial: true
+```
+
+**Files:**
+- Modify: `skills/agent-runway/scripts/agentrunway/packetizer.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/supervisor.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/result_validation.py`
+- Create: `skills/agent-runway/evals/test_review_verify_gates.py`
+
+- [ ] **Step 1: Write failing gate helper tests**
+
+Create `skills/agent-runway/evals/test_review_verify_gates.py`:
+
+```python
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from agentrunway.db import AgentRunwayDb
+from agentrunway.models import FileClaim, TaskSpec
+from agentrunway.packetizer import materialize_role_prompt
+from agentrunway.result_validation import ResultValidationError
+from agentrunway.supervisor import gate_review_result, gate_verification_result, next_worker_id
+
+
+def _task() -> TaskSpec:
+    return TaskSpec(
+        task_id="task_001",
+        title="Example",
+        risk="low",
+        phase="implementation",
+        dependencies=(),
+        spec_refs=("S1",),
+        file_claims=(FileClaim(path="src/example.py", mode="owned"),),
+        acceptance_commands=("python -m pytest",),
+    )
+
+
+def test_next_worker_id_counts_existing_role_attempts(tmp_path: Path) -> None:
+    db = AgentRunwayDb.open(tmp_path / "state.sqlite")
+    db.create_worker_attempt(
+        worker_id="task_001-reviewer-001",
+        task_id="task_001",
+        role="reviewer",
+        runtime="codex",
+        model="gpt-5.5",
+        reasoning_effort="high",
+        attempt=1,
+        worktree_path=str(tmp_path / "w1"),
+        branch="b1",
+        state="running",
+        handle_json={},
+    )
+
+    assert next_worker_id(db=db, task_id="task_001", role="reviewer") == ("task_001-reviewer-002", 2)
+
+
+def test_review_gate_rejects_approved_findings() -> None:
+    with pytest.raises(ResultValidationError, match="approved review cannot include findings"):
+        gate_review_result(
+            {
+                "schema": "agentrunway.review_result.v1",
+                "worker_id": "task_001-reviewer-001",
+                "task_id": "task_001",
+                "reviewed_worker_id": "task_001-implementer-001",
+                "status": "approved",
+                "checks": [],
+                "findings": [{"severity": "major", "body": "bug"}],
+                "method_audit": {},
+            }
+        )
+
+
+def test_verification_gate_accepts_passed_status() -> None:
+    status = gate_verification_result(
+        {
+            "schema": "agentrunway.verification_result.v1",
+            "worker_id": "task_001-verifier-001",
+            "task_id": "task_001",
+            "status": "passed",
+            "checks": [{"command": "python -m pytest", "status": "passed"}],
+            "method_audit": {},
+        }
+    )
+    assert status == "passed"
+
+
+def test_materialize_role_prompt_names_output_schema(tmp_path: Path) -> None:
+    output_path = tmp_path / "review_result.json"
+    prompt_path = materialize_role_prompt(
+        role="reviewer",
+        task=_task(),
+        worker_id="task_001-reviewer-001",
+        packet_path=tmp_path / "task_001.json",
+        output_path=output_path,
+        prompt_dir=tmp_path,
+        context={
+            "reviewed_worker_id": "task_001-implementer-001",
+            "diff": "diff --git a/src/example.py b/src/example.py",
+        },
+    )
+
+    text = prompt_path.read_text(encoding="utf-8")
+    assert "agentrunway.review_result.v1" in text
+    assert str(output_path) in text
+    assert "task_001-implementer-001" in text
+```
+
+- [ ] **Step 2: Run the failing gate tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && python -m pytest evals/test_review_verify_gates.py -v
+```
+
+Expected: FAIL with missing `materialize_role_prompt` or `next_worker_id`.
+
+- [ ] **Step 3: Add role prompt materialization**
+
+In `packetizer.py`, add:
+
+```python
+def materialize_role_prompt(
+    *,
+    role: str,
+    task: TaskSpec,
+    worker_id: str,
+    packet_path: Path,
+    output_path: Path,
+    prompt_dir: Path,
+    context: dict[str, object],
+) -> Path:
+    prompt_dir.mkdir(parents=True, exist_ok=True)
+    schema = "agentrunway.review_result.v1" if role == "reviewer" else "agentrunway.verification_result.v1"
+    path = prompt_dir / f"{task.task_id}.{role}.{worker_id}.prompt.txt"
+    path.write_text(
+        f"You are an AgentRunway {role}. Use using-superpowers.\n"
+        f"Task: {task.task_id} - {task.title}\n"
+        f"Packet path: {packet_path}\n"
+        f"Output path: {output_path}\n"
+        f"Write JSON with schema {schema}.\n"
+        "Context JSON:\n"
+        "```json\n"
+        + json.dumps(context, ensure_ascii=False, indent=2, sort_keys=True)
+        + "\n```\n",
+        encoding="utf-8",
+    )
+    return path
+```
+
+- [ ] **Step 4: Add `next_worker_id` and role-aware worker helper**
+
+In `supervisor.py`, add:
+
+```python
+def next_worker_id(*, db: AgentRunwayDb, task_id: str, role: str) -> tuple[str, int]:
+    prefix = f"{task_id}-{role}-"
+    attempts = [
+        int(worker["worker_id"].removeprefix(prefix))
+        for worker in db.list_workers()
+        if str(worker["worker_id"]).startswith(prefix)
+    ]
+    attempt = max(attempts, default=0) + 1
+    return f"{prefix}{attempt:03d}", attempt
+```
+
+Then extract common creation logic from `run_implementer_attempt` into a new function:
+
+```python
+def run_worker_attempt(
+    *,
+    db: AgentRunwayDb,
+    run_id: str,
+    git: Git,
+    worktree_root: Path,
+    run_dir: Path,
+    task: TaskSpec,
+    prompt_path: Path,
+    output_path: Path,
+    adapter: RuntimeAdapter,
+    runtime: str,
+    model: str,
+    reasoning_effort: str,
+    role: str,
+    base_ref: str,
+    attempt: int,
+    timeout_seconds: int,
+) -> WorkerResultEnvelope:
+    worker_id = f"{task.task_id}-{role}-{attempt:03d}"
+    branch = f"agentrunway/{run_id}/{worker_id}"
+    worker_tree = create_worker_worktree(git, worktree_root / "workers" / worker_id, branch, base_ref)
+    spec = WorkerSpec(
+        run_id=run_id,
+        task_id=task.task_id,
+        worker_id=worker_id,
+        role=role,
+        runtime=runtime,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        prompt_path=str(prompt_path),
+        packet_path=str(run_dir / "packets" / f"{task.task_id}.json"),
+        output_path=str(output_path),
+        worktree_path=str(worker_tree),
+        artifact_dir=str(output_path.parent),
+        timeout_seconds=timeout_seconds,
+        attempt=attempt,
+    )
+    db.create_worker_attempt(
+        worker_id=worker_id,
+        task_id=task.task_id,
+        role=role,
+        runtime=runtime,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        attempt=attempt,
+        worktree_path=str(worker_tree),
+        branch=branch,
+        state="worktree_created",
+        handle_json={},
+    )
+    handle = adapter.start(adapter.prepare(spec))
+    db.set_worker_state(worker_id, "running")
+    db.update_worker_handle(worker_id, handle.to_json())
+    envelope = adapter.collect(handle)
+    db.set_worker_state(worker_id, "result_collected")
+    return envelope
+```
+
+Keep `run_implementer_attempt` as a wrapper for compatibility until Task 7 rewires runner gate sequencing.
+
+- [ ] **Step 5: Tighten result validation statuses**
+
+In `result_validation.py`, leave existing review and verification schema checks in place. Ensure `gate_review_result` raises `ResultValidationError` by not swallowing validation errors.
+
+- [ ] **Step 6: Run gate helper tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && python -m pytest evals/test_review_verify_gates.py evals/test_result_validation.py -v
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 7: Commit**
+
+Run:
+
+```bash
+git add skills/agent-runway/scripts/agentrunway/packetizer.py \
+  skills/agent-runway/scripts/agentrunway/supervisor.py \
+  skills/agent-runway/scripts/agentrunway/result_validation.py \
+  skills/agent-runway/evals/test_review_verify_gates.py
+git commit -m "feat: prepare AgentRunway gate workers"
+```
+
+## Task 6: Production Review and Verification Gate Sequencing
+
+```yaml agentrunway-task
+task_id: task_006
+title: Production review and verification gate sequencing
+risk: high
+phase: implementation
+dependencies: [task_005]
+spec_refs: [S11, S12, S13, S14]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/runner.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/supervisor.py, mode: owned}
+  - {path: skills/agent-runway/evals/fixtures/fake-bin/codex, mode: owned}
+  - {path: skills/agent-runway/evals/fixtures/fake-bin/claude, mode: owned}
+  - {path: skills/agent-runway/evals/test_runner_production_e2e.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_review_verify_gates.py, mode: owned}
+acceptance_commands:
+  - cd skills/agent-runway && PATH="$PWD/evals/fixtures/fake-bin:$PATH" python -m pytest evals/test_runner_production_e2e.py evals/test_review_verify_gates.py -v
+required_skills: [test-driven-development]
+resource_keys: []
+serial: true
+```
+
+**Files:**
+- Modify: `skills/agent-runway/scripts/agentrunway/runner.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/supervisor.py`
+- Modify: `skills/agent-runway/evals/fixtures/fake-bin/codex`
+- Modify: `skills/agent-runway/evals/fixtures/fake-bin/claude`
+- Modify: `skills/agent-runway/evals/test_runner_production_e2e.py`
+- Modify: `skills/agent-runway/evals/test_review_verify_gates.py`
+
+- [ ] **Step 1: Update production e2e tests for real gates**
+
+In `skills/agent-runway/evals/test_runner_production_e2e.py`, remove `--skip-review` and `--skip-verify` from the Codex and Claude production runs. Add assertions:
+
+```python
+    rows = conn.execute("SELECT role, state FROM workers ORDER BY worker_id").fetchall()
+    states = [(row["role"], row["state"]) for row in rows]
+    assert states == [
+        ("implementer", "merged"),
+        ("reviewer", "validated"),
+        ("verifier", "validated"),
+    ]
+```
+
+Update the merge candidate assertion:
+
+```python
+    assert candidate["status"] == "merged"
+```
+
+The full Codex test should still assert:
+
+```python
+    assert (main / "src" / "codex_worker.py").read_text(encoding="utf-8") == "VALUE = 'codex'\n"
+```
+
+The full Claude test should still assert:
+
+```python
+    assert (main / "src" / "claude_worker.py").read_text(encoding="utf-8") == "VALUE = 'claude'\n"
+```
+
+- [ ] **Step 2: Run the updated production e2e tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && PATH="$PWD/evals/fixtures/fake-bin:$PATH" python -m pytest evals/test_runner_production_e2e.py -v
+```
+
+Expected: FAIL because fake CLIs only emit worker results and runner still sends implementers directly to `merge_ready`.
+
+- [ ] **Step 3: Make fake CLIs role-aware**
+
+In both `evals/fixtures/fake-bin/codex` and `evals/fixtures/fake-bin/claude`, read:
+
+```python
+    role = os.environ.get("AGENTRUNWAY_WORKER_ROLE", "implementer")
+```
+
+For `role == "reviewer"`, write:
+
+```python
+    payload = {
+        "schema": "agentrunway.review_result.v1",
+        "worker_id": os.environ["AGENTRUNWAY_WORKER_ID"],
+        "task_id": os.environ["AGENTRUNWAY_TASK_ID"],
+        "reviewed_worker_id": os.environ.get("AGENTRUNWAY_REVIEWED_WORKER_ID", ""),
+        "status": os.environ.get("AGENTRUNWAY_FAKE_REVIEW_STATUS", "approved"),
+        "checks": [{"name": "fake review", "status": "passed"}],
+        "findings": [],
+        "method_audit": {"superpowers_used": True},
+    }
+```
+
+For `role == "verifier"`, write:
+
+```python
+    payload = {
+        "schema": "agentrunway.verification_result.v1",
+        "worker_id": os.environ["AGENTRUNWAY_WORKER_ID"],
+        "task_id": os.environ["AGENTRUNWAY_TASK_ID"],
+        "status": os.environ.get("AGENTRUNWAY_FAKE_VERIFY_STATUS", "passed"),
+        "checks": [{"command": "fake acceptance", "status": "passed"}],
+        "method_audit": {"superpowers_used": True},
+    }
+```
+
+Only implementer role should edit files and create commits.
+
+- [ ] **Step 4: Pass gate metadata through adapters**
+
+In `CodexAdapter.prepare` and `ClaudeAdapter.prepare`, include optional environment values from `WorkerSpec` metadata if present. The simplest implementation is to add fields to `WorkerSpec` in `models.py`:
+
+```python
+    metadata: dict[str, str] = field(default_factory=dict)
+```
+
+Then in both adapters' `env={...}` dictionaries, append:
+
+```python
+                **spec.metadata,
+```
+
+If adding `metadata` to a frozen dataclass with a mutable default, use `field(default_factory=dict)` and import `field` from `dataclasses`.
+
+- [ ] **Step 5: Add gate runner helper**
+
+In `supervisor.py`, add `run_reviewer_attempt` and `run_verifier_attempt` wrappers around `run_worker_attempt`. Use `materialize_role_prompt`, validate the role-specific JSON, and set worker state to `validated` when the result passes.
+
+Reviewer wrapper expected shape:
+
+```python
+def run_reviewer_attempt(
+    *,
+    db: AgentRunwayDb,
+    run_id: str,
+    git: Git,
+    worktree_root: Path,
+    run_dir: Path,
+    task: TaskSpec,
+    adapter: RuntimeAdapter,
+    runtime: str,
+    model: str,
+    reasoning_effort: str,
+    reviewed_worker_id: str,
+    candidate_diff: str,
+    attempt: int,
+    timeout_seconds: int,
+) -> dict[str, object]:
+    worker_id = f"{task.task_id}-reviewer-{attempt:03d}"
+    output_path = run_dir / "artifacts" / task.task_id / worker_id / "review_result.json"
+    prompt_path = materialize_role_prompt(
+        role="reviewer",
+        task=task,
+        worker_id=worker_id,
+        packet_path=run_dir / "packets" / f"{task.task_id}.json",
+        output_path=output_path,
+        prompt_dir=run_dir / "prompts",
+        context={"reviewed_worker_id": reviewed_worker_id, "diff": candidate_diff},
+    )
+    envelope = run_worker_attempt(
+        db=db,
+        run_id=run_id,
+        git=git,
+        worktree_root=worktree_root,
+        run_dir=run_dir,
+        task=task,
+        prompt_path=prompt_path,
+        output_path=output_path,
+        adapter=adapter,
+        runtime=runtime,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        role="reviewer",
+        base_ref=f"agentrunway/{run_id}/main",
+        attempt=attempt,
+        timeout_seconds=timeout_seconds,
+    )
+    if envelope.result_json is None:
+        db.set_worker_state(worker_id, "malformed_result")
+        raise RuntimeError("missing_review_result")
+    result = validate_review_result(envelope.result_json)
+    db.set_worker_state(worker_id, "validated")
+    return result
+```
+
+Verifier wrapper follows the same shape with `role="verifier"`, output file `verification_result.json`, `validate_verification_result`, and context containing commits, changed files, acceptance commands, and review status.
+
+- [ ] **Step 6: Rewire runner production path**
+
+In `runner.run`, after `run_implementer_attempt` returns a candidate id, do not set task status to `merge_ready`. Instead:
+
+1. Set task status `reviewing`.
+2. Run reviewer attempt.
+3. If reviewer status is `changes_requested`, set task status `blocked` for this slice unless retry implementation is completed in Task 7.
+4. If reviewer status is `rejected`, set task status `blocked`.
+5. Set task status `verifying`.
+6. Run verifier attempt.
+7. If verifier status is `passed`, set merge candidate status `merge_ready` and task status `merge_ready`.
+8. If verifier status is `failed` or `blocked`, set task status `blocked`.
+
+Emit local events for `review_dispatched`, `review_result`, `verification_dispatched`, `verification_result`, and `merge_ready`.
+
+- [ ] **Step 7: Run production e2e gate tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && PATH="$PWD/evals/fixtures/fake-bin:$PATH" python -m pytest evals/test_runner_production_e2e.py evals/test_review_verify_gates.py -v
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 8: Commit**
+
+Run:
+
+```bash
+git add skills/agent-runway/scripts/agentrunway/runner.py \
+  skills/agent-runway/scripts/agentrunway/supervisor.py \
+  skills/agent-runway/scripts/agentrunway/models.py \
+  skills/agent-runway/scripts/agentrunway/adapters/codex.py \
+  skills/agent-runway/scripts/agentrunway/adapters/claude.py \
+  skills/agent-runway/evals/fixtures/fake-bin/codex \
+  skills/agent-runway/evals/fixtures/fake-bin/claude \
+  skills/agent-runway/evals/test_runner_production_e2e.py \
+  skills/agent-runway/evals/test_review_verify_gates.py
+git commit -m "feat: require AgentRunway review and verify gates"
+```
+
+## Task 7: Gate Retry Policy and Blocked Coverage
+
+```yaml agentrunway-task
+task_id: task_007
+title: Gate retry policy and blocked coverage
+risk: high
+phase: implementation
+dependencies: [task_006]
+spec_refs: [S10, S11, S12, S13, S14]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/runner.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/db.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/artifact_graph.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_review_verify_gates.py, mode: owned}
+acceptance_commands:
+  - cd skills/agent-runway && PATH="$PWD/evals/fixtures/fake-bin:$PATH" python -m pytest evals/test_review_verify_gates.py evals/test_artifact_graph_status.py -v
+required_skills: [test-driven-development]
+resource_keys: []
+serial: true
+```
+
+**Files:**
+- Modify: `skills/agent-runway/scripts/agentrunway/runner.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/db.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/artifact_graph.py`
+- Modify: `skills/agent-runway/evals/test_review_verify_gates.py`
+
+- [ ] **Step 1: Add tests for changes_requested and verifier failed**
+
+Append to `test_review_verify_gates.py`:
+
+```python
+def test_review_changes_requested_blocks_after_budget(tmp_path: Path) -> None:
+    db = AgentRunwayDb.open(tmp_path / "state.sqlite")
+    db.upsert_task(_task())
+    db.create_worker_attempt(
+        worker_id="task_001-reviewer-001",
+        task_id="task_001",
+        role="reviewer",
+        runtime="codex",
+        model="gpt-5.5",
+        reasoning_effort="high",
+        attempt=1,
+        worktree_path=str(tmp_path / "reviewer"),
+        branch="reviewer",
+        state="validated",
+        handle_json={},
+    )
+    assert db.count_worker_attempts(task_id="task_001", role="reviewer") == 1
+
+
+def test_coverage_marks_blocked_task_spec_refs(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    db.upsert_task(_task())
+    db.set_task_status("task_001", "blocked")
+    (run_dir / "contract.json").write_text(
+        json.dumps({"coverage": {"covered": ["S1"], "partial": [], "blocked": [], "unreferenced": []}}),
+        encoding="utf-8",
+    )
+
+    graph = build_artifact_graph(run_dir=run_dir, db=db)
+
+    assert graph["coverage"]["blocked"] == ["S1"]
+```
+
+Import `build_artifact_graph` at the top of the file.
+
+- [ ] **Step 2: Run the failing retry/coverage tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && python -m pytest evals/test_review_verify_gates.py -v
+```
+
+Expected: FAIL with missing `count_worker_attempts` or blocked coverage not updated.
+
+- [ ] **Step 3: Add retry count helper**
+
+In `db.py`, add:
+
+```python
+    def count_worker_attempts(self, *, task_id: str, role: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS count FROM workers WHERE task_id=? AND role=?",
+            (task_id, role),
+        ).fetchone()
+        return int(row["count"])
+```
+
+- [ ] **Step 4: Update coverage derivation for blocked tasks**
+
+In `artifact_graph.py`, after loading contract coverage, derive blocked refs from DB tasks:
+
+```python
+def _derive_coverage(run_dir: Path, db: AgentRunwayDb) -> dict[str, list[str]]:
+    coverage = _load_coverage(run_dir)
+    blocked_refs: set[str] = set(coverage.get("blocked", []))
+    covered_refs: set[str] = set(coverage.get("covered", []))
+    for task in db.list_tasks():
+        refs = json.loads(task["spec_refs_json"]) if isinstance(task.get("spec_refs_json"), str) else []
+        if task["status"] == "blocked":
+            blocked_refs.update(refs)
+            covered_refs.difference_update(refs)
+    coverage["covered"] = sorted(covered_refs)
+    coverage["blocked"] = sorted(blocked_refs)
+    return coverage
+```
+
+Call `_derive_coverage` from `build_artifact_graph`.
+
+- [ ] **Step 5: Apply bounded gate retry policy**
+
+In `runner.py`, implement these policy checks during production gate sequencing:
+
+```python
+review_status = str(review_result["status"])
+if review_status == "changes_requested":
+    if db.count_worker_attempts(task_id=task.task_id, role="implementer") <= 1:
+        db.set_task_status(task.task_id, "blocked")
+    else:
+        db.set_task_status(task.task_id, "blocked")
+    continue
+if review_status == "rejected":
+    db.set_task_status(task.task_id, "blocked")
+    continue
+```
+
+For this slice, the first implementation of changes-requested records the correct blocked state and evidence. A future improvement can redispatch implementers with reviewer findings, but this task must not pretend to retry if the retry prompt threading is not implemented.
+
+For verifier:
+
+```python
+verify_status = str(verification_result["status"])
+if verify_status != "passed":
+    db.set_task_status(task.task_id, "blocked")
+    continue
+```
+
+This satisfies the design's safe default: failed gates do not merge.
+
+- [ ] **Step 6: Run gate retry and coverage tests**
+
+Run:
+
+```bash
+cd skills/agent-runway && PATH="$PWD/evals/fixtures/fake-bin:$PATH" python -m pytest evals/test_review_verify_gates.py evals/test_artifact_graph_status.py -v
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 7: Commit**
+
+Run:
+
+```bash
+git add skills/agent-runway/scripts/agentrunway/runner.py \
+  skills/agent-runway/scripts/agentrunway/db.py \
+  skills/agent-runway/scripts/agentrunway/artifact_graph.py \
+  skills/agent-runway/evals/test_review_verify_gates.py
+git commit -m "feat: block failed AgentRunway gates safely"
+```
+
+## Task 8: Documentation, References, and Full Verification
+
+```yaml agentrunway-task
+task_id: task_008
+title: Documentation, references, and full verification
+risk: medium
+phase: documentation
+dependencies: [task_007]
+spec_refs: [S9, S10, S11, S12, S13, S14, S15]
+file_claims:
+  - {path: skills/agent-runway/README.md, mode: owned}
+  - {path: skills/agent-runway/references/agentlens-events.md, mode: owned}
+  - {path: skills/agent-runway/references/watchdog.md, mode: owned}
+  - {path: skills/agent-runway/references/protocol.md, mode: owned}
+  - {path: skills/agent-runway/evals/check_skill_contract.py, mode: owned}
+acceptance_commands:
+  - cd skills/agent-runway && ./evals/run.sh
+  - cd skills/agent-runway && python3 -m py_compile scripts/agentrunway.py scripts/agentrunway/*.py scripts/agentrunway/adapters/*.py evals/*.py
+  - cd skills/agent-runway && bash -n evals/run.sh
+  - cd skills/agent-runway && python3 evals/check_skill_contract.py
+  - git diff --check HEAD
+required_skills: [verification-before-completion]
+resource_keys: []
+serial: true
+```
+
+**Files:**
+- Modify: `skills/agent-runway/README.md`
+- Modify: `skills/agent-runway/references/agentlens-events.md`
+- Modify: `skills/agent-runway/references/watchdog.md`
+- Modify: `skills/agent-runway/references/protocol.md`
+- Modify: `skills/agent-runway/evals/check_skill_contract.py` only if command or event docs need a contract assertion update
+
+- [ ] **Step 1: Update README operations section**
+
+In `skills/agent-runway/README.md`, add:
+
+```markdown
+## Operations Evidence
+
+Every non-planning run writes a frozen `contract.json`, `artifact_graph.json`,
+`coverage.json`, and `events.jsonl` under `~/.agentrunway/runs/<workspace>/<run_id>/`.
+The contract records the exact Superpowers spec and plan paths, hashes, parsed
+tasks, file claims, acceptance commands, adapter, model profile, and `spec_refs`
+coverage.
+
+Use:
+
+```bash
+python3 skills/agent-runway/scripts/agentrunway.py status --run <run_id>
+python3 skills/agent-runway/scripts/agentrunway.py inspect --run <run_id> --json
+python3 skills/agent-runway/scripts/agentrunway.py events --run <run_id> --json
+python3 skills/agent-runway/scripts/agentrunway.py resume --run <run_id> --dry-run --json
+```
+
+AgentLens emission is best-effort. Local evidence remains authoritative when
+AgentLens is disabled or unavailable.
+```
+
+- [ ] **Step 2: Update AgentLens reference**
+
+Replace `skills/agent-runway/references/agentlens-events.md` with:
+
+```markdown
+Source-of-truth: the design document wins when this reference and code disagree.
+
+# AgentLens Events
+
+AgentRunway records runner-validated facts locally before attempting AgentLens
+emission. The local journal is `events.jsonl` in the run directory. SQLite table
+`agentlens_events` is the outbox and stores one of:
+
+- `local_recorded`
+- `agentlens_emitted`
+- `agentlens_failed`
+- `agentlens_disabled`
+
+Core event types:
+
+- `agentrunway.run_started`
+- `agentrunway.contract_created`
+- `agentrunway.worker_dispatched`
+- `agentrunway.worker_result`
+- `agentrunway.worker_rejected`
+- `agentrunway.review_dispatched`
+- `agentrunway.review_result`
+- `agentrunway.verification_dispatched`
+- `agentrunway.verification_result`
+- `agentrunway.merge_ready`
+- `agentrunway.merge_applied`
+- `agentrunway.merge_conflict`
+- `agentrunway.resume_planned`
+- `agentrunway.resume_action`
+- `agentrunway.apply_started`
+- `agentrunway.apply_finished`
+- `agentrunway.run_finished`
+- `agentrunway.run_blocked`
+
+Payloads are redacted before local write and before AgentLens emission. Home
+paths become `~`; secret-like keys such as `token`, `api_key`, `secret`, and
+`password` become `[REDACTED]`.
+```
+
+- [ ] **Step 3: Update watchdog reference**
+
+Replace `skills/agent-runway/references/watchdog.md` with:
+
+```markdown
+Source-of-truth: the design document wins when this reference and code disagree.
+
+# Watchdog and Resume Reconciliation
+
+Resume starts by producing a reconciliation plan. `resume --dry-run --json`
+returns that plan without writes. Non-dry-run resume applies the plan
+idempotently.
+
+Evidence sources:
+
+- SQLite run, worker, task, merge, artifact, event, and applied commit rows
+- `run.json`, `contract.json`, `artifact_graph.json`, `coverage.json`, `events.jsonl`
+- worker result artifacts and stdout/stderr logs
+- process liveness when a PID exists
+- git branch heads, worktree paths, and cherry-pick state
+
+Supported actions:
+
+- `reconcile_forward`: valid artifact exists but DB state is behind
+- `retry`: worker is dead or stalled and retry budget allows a new attempt
+- `abort_cherry_pick`: run main has an interrupted cherry-pick
+- `retain_orphan`: unmatched worktree is kept for diagnostics
+- `block`: budget is exhausted or operator action is required
+
+Resume must not duplicate terminal tasks, merge candidates, worker attempts, or
+applied commits.
+```
+
+- [ ] **Step 4: Update protocol reference**
+
+Append to `skills/agent-runway/references/protocol.md`:
+
+```markdown
+## Superpowers Contract Preflight
+
+AgentRunway consumes Superpowers design and implementation plan documents. It
+does not generate them. Before dispatch, the runner writes immutable
+`contract.json` with:
+
+- spec path and canonical hash
+- plan path and canonical hash
+- base commit and workspace id
+- parsed task packets
+- task `spec_refs`, file claims, dependencies, required skills, and acceptance commands
+- adapter and model profile
+- initial coverage summary
+
+Preflight rejects missing `spec_refs`, empty acceptance commands, missing file
+claims for implementation tasks, dirty source checkouts without explicit
+allowance, and plans that cannot produce deterministic task packets.
+```
+
+- [ ] **Step 5: Run full eval suite**
+
+Run:
+
+```bash
+cd skills/agent-runway && ./evals/run.sh
+```
+
+Expected: all tests pass.
+
+- [ ] **Step 6: Run syntax and contract checks**
+
+Run:
+
+```bash
+cd skills/agent-runway && python3 -m py_compile scripts/agentrunway.py scripts/agentrunway/*.py scripts/agentrunway/adapters/*.py evals/*.py
+cd skills/agent-runway && bash -n evals/run.sh
+cd skills/agent-runway && python3 evals/check_skill_contract.py
+git diff --check HEAD
+```
+
+Expected: every command exits 0.
+
+- [ ] **Step 7: Update graphify after code changes**
+
+Run from repo root:
+
+```bash
+graphify update .
+```
+
+Expected: `GRAPH_REPORT.md` is rebuilt from the current commit or working tree. If graphify reports the graph is too large for HTML visualization, that is acceptable as long as `graph.json` and `GRAPH_REPORT.md` update successfully.
+
+- [ ] **Step 8: Commit**
+
+Run:
+
+```bash
+git add skills/agent-runway/README.md \
+  skills/agent-runway/references/agentlens-events.md \
+  skills/agent-runway/references/watchdog.md \
+  skills/agent-runway/references/protocol.md \
+  skills/agent-runway/evals/check_skill_contract.py \
+  graphify-out/GRAPH_REPORT.md graphify-out/graph.json
+git commit -m "docs: document AgentRunway operations hardening"
+```
+
+If `graphify-out/graph.json` is ignored or unchanged, omit it from `git add`.
+
+## Final Verification
+
+After all tasks are complete, run:
+
+```bash
+cd skills/agent-runway && ./evals/run.sh
+cd skills/agent-runway && python3 -m py_compile scripts/agentrunway.py scripts/agentrunway/*.py scripts/agentrunway/adapters/*.py evals/*.py
+cd skills/agent-runway && bash -n evals/run.sh
+cd skills/agent-runway && python3 evals/check_skill_contract.py
+git diff --check HEAD
+graphify update .
+git status --short --branch --untracked-files=all
+```
+
+Expected:
+
+- the eval suite passes,
+- Python files compile,
+- shell script syntax check passes,
+- skill contract check passes,
+- diff check reports no whitespace errors,
+- graphify updates successfully,
+- git status shows only intentional tracked changes before the final commit, then clean after commit.
