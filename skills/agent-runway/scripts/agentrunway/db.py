@@ -231,6 +231,17 @@ class AgentRunwayDb:
         self.conn.commit()
         return int(cursor.lastrowid)
 
+    def update_event(self, event_id: int, *, payload: dict[str, Any], status: str, error: str | None = None) -> None:
+        self.conn.execute(
+            """
+            UPDATE agentlens_events
+            SET payload_json=?, status=?, error=?
+            WHERE id=?
+            """,
+            (json.dumps(payload, ensure_ascii=False, sort_keys=True), status, error, event_id),
+        )
+        self.conn.commit()
+
     def list_events(self) -> list[dict[str, Any]]:
         rows = self.conn.execute("SELECT * FROM agentlens_events ORDER BY id").fetchall()
         events: list[dict[str, Any]] = []

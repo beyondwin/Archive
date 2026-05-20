@@ -953,7 +953,9 @@ def test_agentlens_fake_cli_receives_runner_events(git_repo: Path, isolated_home
     assert "agentrunway.worker_result" in emitted_types
     assert "agentrunway.run_finished" in emitted_types
     assert all(status == "agentlens_emitted" for status in db_statuses)
+    assert event_rows[-1]["payload"]["schema"] == "agentlens.event.v2"
     assert event_rows[-1]["payload"]["outcome"] == "success"
+    assert event_rows[-1]["payload"]["payload"]["agentlens_status"] == "agentlens_emitted"
 
 
 def test_finished_run_records_initial_and_task_checkpoints(git_repo: Path, isolated_home: Path) -> None:

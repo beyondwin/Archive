@@ -170,11 +170,21 @@ class EventJournal:
         payload_with_name = dict(payload)
         payload_with_name.setdefault("event_name", event_type)
         redacted = redact_payload(payload_with_name)
+        event_id = self.db.insert_event(event_type=event_type, payload=redacted, status="agentlens_pending", error=None)
         status = "agentlens_disabled"
         error: str | None = None
         if self.agentlens_emitter is not None:
             try:
-                self.agentlens_emitter.emit(event_type, redacted)
+                outbound_payload = dict(redacted)
+                outbound_payload["agentlens_status"] = "agentlens_emitted"
+                self.agentlens_emitter.emit(
+                    event_type,
+                    build_agentlens_event_envelope(
+                        event_id=event_id,
+                        event_type=event_type,
+                        payload=outbound_payload,
+                    ),
+                )
             except Exception as exc:
                 status = "agentlens_failed"
                 error = str(exc)
@@ -185,7 +195,7 @@ class EventJournal:
         if error is not None:
             journal_payload["agentlens_error"] = str(redact_payload(error))
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        event_id = self.db.insert_event(event_type=event_type, payload=journal_payload, status=status, error=error)
+        self.db.update_event(event_id, payload=journal_payload, status=status, error=error)
         event_line = build_agentlens_event_envelope(
             event_id=event_id,
             event_type=event_type,

@@ -12,6 +12,14 @@ class FailingEmitter:
         raise RuntimeError(f"agentlens down for {event_type}")
 
 
+class RecordingEmitter:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def emit(self, event_type: str, payload: dict[str, object]) -> None:
+        self.calls.append((event_type, payload))
+
+
 def test_event_journal_writes_events_jsonl_and_db_outbox(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     run_dir = tmp_path / "run"
@@ -57,6 +65,26 @@ def test_event_journal_records_agentlens_failure_without_raising(tmp_path: Path)
     rows = db.list_events()
     assert rows[0]["status"] == "agentlens_failed"
     assert "agentlens down" in str(rows[0]["error"])
+
+
+def test_event_journal_emits_v2_envelope_to_agentlens_sink(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    emitter = RecordingEmitter()
+    journal = EventJournal(db=db, run_dir=run_dir, agentlens_emitter=emitter)
+
+    journal.record(
+        "agentrunway.run_started",
+        build_event_payload("run-1", "run", "success", "started"),
+    )
+
+    assert len(emitter.calls) == 1
+    event_type, emitted = emitter.calls[0]
+    assert event_type == "agentrunway.run_started"
+    assert emitted["schema"] == "agentlens.event.v2"
+    assert emitted["event_id"] == "evt_000001"
+    assert emitted["event_type"] == "agentrunway.run_started"
+    assert emitted["payload"]["event_name"] == "agentrunway.run_started"
 
 
 def test_event_journal_query_returns_redacted_payloads(tmp_path: Path, monkeypatch) -> None:
