@@ -8,6 +8,7 @@
 |------|------|
 | [`kws-claude-multi-agent-executor`](./kws-claude-multi-agent-executor/) | 구현 계획 + 디자인 스펙을 자율 실행. Opus가 오케스트레이션, Sonnet 서브에이전트가 구현/리뷰/검증/문서화. |
 | [`kws-codex-plan-executor`](./kws-codex-plan-executor/) | Codex에서 구현 계획을 실행하거나 fresh-session/handoff 프롬프트 내보내기. |
+| [`kws-agent-orchestrator`](./kws-agent-orchestrator/) | 승인된 plan/spec을 KAO Python runner로 실행. SQLite 상태, isolated worktree, runtime adapter, review/verify gate, AgentLens `kws.kao.*` 이벤트를 관리. |
 
 각 스킬 디렉터리의 `SKILL.md` 가 정식 진입점이며, 자세한 사용법은 해당 폴더의 `README.md` / `docs/` / `references/` 를 참고하세요.
 
@@ -22,6 +23,8 @@ ln -sfn /Users/kws/source/private/Archive/skills/kws-claude-multi-agent-executor
         ~/.claude/skills/kws-claude-multi-agent-executor
 ln -sfn /Users/kws/source/private/Archive/skills/kws-codex-plan-executor \
         ~/.claude/skills/kws-codex-plan-executor
+ln -sfn /Users/kws/source/private/Archive/skills/kws-agent-orchestrator \
+        ~/.claude/skills/kws-agent-orchestrator
 ```
 
 ### Codex (`~/.codex/skills/`)
@@ -31,6 +34,8 @@ ln -sfn /Users/kws/source/private/Archive/skills/kws-claude-multi-agent-executor
         ~/.codex/skills/kws-claude-multi-agent-executor
 ln -sfn /Users/kws/source/private/Archive/skills/kws-codex-plan-executor \
         ~/.codex/skills/kws-codex-plan-executor
+ln -sfn /Users/kws/source/private/Archive/skills/kws-agent-orchestrator \
+        ~/.codex/skills/kws-agent-orchestrator
 ```
 
 > `ln -sfn` 은 기존 심링크를 안전하게 갱신합니다(`-f` 강제, `-n` 디렉터리 타깃 보호). 실제 디렉터리를 덮어쓰지 않으려면 대상 경로가 심링크인지 먼저 확인하세요.

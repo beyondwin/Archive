@@ -1,0 +1,16 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "kws.kao.review_result.v1",
+  "type": "object",
+  "required": ["schema", "worker_id", "task_id", "reviewed_worker_id", "status", "checks", "findings", "method_audit"],
+  "properties": {
+    "schema": {"const": "kws.kao.review_result.v1"},
+    "worker_id": {"type": "string"},
+    "task_id": {"type": "string"},
+    "reviewed_worker_id": {"type": "string"},
+    "status": {"enum": ["approved", "rejected", "blocked"]},
+    "checks": {"type": "array", "minItems": 1},
+    "findings": {"type": "array"},
+    "method_audit": {"type": "object"}
+  }
+}
