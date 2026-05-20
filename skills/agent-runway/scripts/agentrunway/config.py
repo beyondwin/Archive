@@ -77,10 +77,20 @@ def resolve_reasoning(runtime: str, requested: str) -> tuple[str, str]:
     return portable, runtime_map[portable]
 
 
+def _default_profile_for_adapter(adapter: str | None) -> str:
+    if adapter == "claude":
+        return "claude-default"
+    return "codex-default"
+
+
 def load_effective_config(repo_root: Path, invocation: dict[str, Any]) -> EffectiveConfig:
     local = _parse_simple_yaml(repo_root / "agentrunway.yaml")
     global_cfg = _parse_simple_yaml(Path.home() / ".agentrunway" / "global.yaml")
-    default_profile = str(invocation.get("model_profile") or local.get("default_profile") or "codex-default")
+    default_profile = str(
+        invocation.get("model_profile")
+        or local.get("default_profile")
+        or _default_profile_for_adapter(str(invocation.get("adapter")) if invocation.get("adapter") else None)
+    )
     caps_raw = global_cfg.get("runtime_caps") if isinstance(global_cfg.get("runtime_caps"), dict) else {}
     runtime_caps = {
         "claude": int(caps_raw.get("claude", {}).get("max_concurrent_workers", 6)) if isinstance(caps_raw.get("claude"), dict) else 6,

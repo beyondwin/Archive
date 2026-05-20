@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="start a AgentRunway run")
     run.add_argument("--plan", type=Path, required=True)
     run.add_argument("--spec", type=Path)
-    run.add_argument("--model-profile", default="codex-default")
+    run.add_argument("--model-profile")
     run.add_argument("--base-ref", default="HEAD")
     run.add_argument("--allow-dirty-source", action="store_true")
     run.add_argument("--detach", action="store_true")
