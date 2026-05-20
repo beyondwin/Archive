@@ -27,9 +27,15 @@ def test_event_journal_writes_events_jsonl_and_db_outbox(tmp_path: Path, monkeyp
     assert record.status == "agentlens_disabled"
     lines = (run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 1
-    payload = json.loads(lines[0])
-    assert payload["event_type"] == "agentrunway.run_started"
-    assert payload["payload"]["token"] == "[REDACTED]"
+    event = json.loads(lines[0])
+    assert event["schema"] == "agentlens.event.v2"
+    assert event["event_type"] == "agentrunway.run_started"
+    assert event["type"] == "agentrunway.run_started"
+    assert event["run_id"] == "run-1"
+    assert event["sequence"] == 1
+    assert event["producer"]["name"] == "agentrunway"
+    assert event["payload"]["agentlens_status"] == "agentlens_disabled"
+    assert event["payload"]["token"] == "[REDACTED]"
 
     rows = db.list_events()
     assert rows[0]["event_type"] == "agentrunway.run_started"
