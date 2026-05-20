@@ -510,6 +510,19 @@ class AgentRunwayDb:
         data["output_refs"] = json.loads(data.pop("output_refs_json"))
         return data
 
+    def list_activities(self, run_id: str) -> list[dict[str, Any]]:
+        rows = self.conn.execute(
+            "SELECT * FROM activities WHERE run_id=? ORDER BY created_at, activity_id",
+            (run_id,),
+        ).fetchall()
+        activities: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data["input_refs"] = json.loads(data.pop("input_refs_json"))
+            data["output_refs"] = json.loads(data.pop("output_refs_json"))
+            activities.append(data)
+        return activities
+
     def insert_activity(
         self,
         *,

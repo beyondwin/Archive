@@ -80,3 +80,17 @@ def test_first_merge_conflict_rebase_then_repeated_human_decision() -> None:
     assert first.next_action == "rerun_implementer_from_latest_checkpoint"
     assert repeated.failure_class == FailureClass.NEEDS_HUMAN_DECISION.value
     assert repeated.next_action == "write_decision_packet"
+
+
+def test_plan_lint_failure_classifies_plan_fix() -> None:
+    from agentrunway.failure_classifier import classify_plan_failure
+
+    result = classify_plan_failure(
+        lint_result={
+            "ok": False,
+            "errors": [{"code": "forbidden_owned_path", "detail": "graphify-out is generated"}],
+        }
+    )
+
+    assert result.failure_class == FailureClass.NEEDS_PLAN_FIX.value
+    assert result.next_action == "fix_plan"

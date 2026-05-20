@@ -123,6 +123,8 @@ def test_runner_rejects_plan_lint_errors_before_preflight(tmp_path: Path, monkey
     )
 
     assert payload["status"] == "plan_lint_failed"
+    assert payload["failure_class"] == "needs_plan_fix"
+    assert payload["decision_packet"]["failure_class"] == "needs_plan_fix"
     assert any(issue["code"] == "forbidden_owned_path" for issue in payload["plan_lint"]["errors"])
 
 

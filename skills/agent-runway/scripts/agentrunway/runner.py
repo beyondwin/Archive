@@ -22,7 +22,9 @@ from .config import BuiltinProfiles, ModelProfile, load_effective_config
 from .contract import build_run_contract, write_contract
 from .db import AgentRunwayDb
 from .decision_events import record_candidate_ranked, record_quality_decision
+from .durable_resume import plan_activity_resume
 from .events import EventJournal, build_event_payload
+from .failure_classifier import classify_gate_failure, classify_plan_failure
 from .git_ops import Git, assert_clean_source
 from .integration_manager import IntegrationManager
 from .merge_queue import MergeCandidate, MergeConflictError
@@ -30,12 +32,12 @@ from .packetizer import build_task_packet, materialize_prompt, materialize_worke
 from .plan_parser import canonical_hash, parse_plan, parse_spec_manifest
 from .plan_lint import lint_plan
 from .preflight import run_preflight
-from .quality_policy import candidate_count_for_task, gate_retry_decision
+from .quality_policy import PolicyDecision, candidate_count_for_task, gate_retry_decision
 from .reconciliation import apply_reconciliation_plan, plan_reconciliation
 from .retention import clean_retention
 from .scheduler import schedule_waves
 from .supervisor import next_worker_id, run_implementer_attempt, run_reviewer_attempt, run_verifier_attempt
-from .workflow_store import WorkflowStore
+from .workflow_store import ActivityStatus, WorkflowStore
 from .worktrees import create_main_worktree, next_available_run_id, workspace_id
 from .worktree_lifecycle import archive_candidate_evidence, lifecycle_for_worker, reviewer_mode_for_task
 
@@ -217,6 +219,66 @@ def _record_run_blocked(journal: EventJournal, *, run_id: str, task_id: str, rea
     )
 
 
+_HUMAN_DECISION_FAILURE_CLASSES = {
+    "needs_plan_fix",
+    "needs_split",
+    "needs_human_decision",
+    "needs_infra_fix",
+    "terminal_rejected",
+}
+
+
+def _artifact_ref(run_dir: Path, path: Path) -> str:
+    try:
+        return str(path.relative_to(run_dir))
+    except ValueError:
+        return str(path)
+
+
+def _gate_activity_status(*, failure_class: str, decision: PolicyDecision) -> ActivityStatus:
+    if decision.action == "block" and failure_class in _HUMAN_DECISION_FAILURE_CLASSES:
+        return ActivityStatus.BLOCKED
+    return ActivityStatus.FAILED
+
+
+def _gate_decision_packet(
+    *,
+    store: WorkflowStore,
+    run_id: str,
+    task_id: str,
+    gate: str,
+    attempt: int,
+    failure_class: str,
+    summary: str,
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    if failure_class not in _HUMAN_DECISION_FAILURE_CLASSES:
+        return None
+    return store.create_decision_packet(
+        run_id=run_id,
+        decision_id=f"{task_id}.{gate}.{attempt:03d}.decision",
+        task_id=task_id,
+        failure_class=failure_class,
+        summary=summary,
+        payload=payload,
+    )
+
+
+def _decision_for_classification(
+    *,
+    gate: str,
+    classification_failure_class: str,
+    policy_decision: PolicyDecision,
+) -> PolicyDecision:
+    if classification_failure_class in _HUMAN_DECISION_FAILURE_CLASSES and policy_decision.action != "block":
+        return PolicyDecision(
+            action="block",
+            reason=f"{gate}_{classification_failure_class}",
+            outcome="failed",
+        )
+    return policy_decision
+
+
 def run(args: Any) -> dict[str, Any]:
     repo = Path.cwd().resolve()
     plan = args.plan.resolve()
@@ -232,6 +294,7 @@ def run(args: Any) -> dict[str, Any]:
     run_dir, worktree_root = _state_paths(run_id, wsid)
     lint = lint_plan(plan_path=plan, spec_path=spec)
     if not lint.ok:
+        classification = classify_plan_failure(lint_result=lint.to_dict())
         payload = {
             "run_id": run_id,
             "workspace_id": wsid,
@@ -239,6 +302,16 @@ def run(args: Any) -> dict[str, Any]:
             "run_dir": str(run_dir),
             "state_db": None,
             "plan_lint": lint.to_dict(),
+            "failure_class": classification.failure_class,
+            "decision_packet": {
+                "decision_id": f"{run_id}.plan_lint.decision",
+                "failure_class": classification.failure_class,
+                "summary": classification.summary,
+                "payload": {
+                    "next_action": classification.next_action,
+                    "plan_lint": lint.to_dict(),
+                },
+            },
         }
         payload["state_persisted"] = _write_early_run_json(run_dir, payload)
         return payload
@@ -393,6 +466,19 @@ def run(args: Any) -> dict[str, Any]:
                     run_dir / "prompts",
                     context=implementer_context,
                 )
+                implement_activity_id = f"{task.task_id}.implement.{implementer_attempt:03d}"
+                workflow_store.start_activity(
+                    run_id=run_id,
+                    activity_id=implement_activity_id,
+                    idempotency_key=f"{run_id}:{task.task_id}:implement:{implementer_attempt:03d}",
+                    task_id=task.task_id,
+                    activity_type="implement",
+                    input_refs={
+                        "packet": _artifact_ref(run_dir, packet_path),
+                        "prompt": _artifact_ref(run_dir, prompt_path),
+                        "checkpoint_id": (workflow_store.latest_checkpoint(run_id) or {}).get("checkpoint_id"),
+                    },
+                )
                 journal.record(
                     "agentrunway.worker_dispatched",
                     build_event_payload(
@@ -441,6 +527,12 @@ def run(args: Any) -> dict[str, Any]:
                             error=str(exc),
                         ),
                     )
+                    workflow_store.complete_activity(
+                        activity_id=implement_activity_id,
+                        status=ActivityStatus.FAILED,
+                        output_refs={"error": str(exc), "worker_id": worker_id},
+                        failure_class="needs_infra_fix",
+                    )
                     db.set_run_status(run_id, "failed")
                     run_json.update(
                         {
@@ -453,6 +545,16 @@ def run(args: Any) -> dict[str, Any]:
                     _write_run_json(run_dir, run_json)
                     raise
                 candidate = _merge_candidate(db, candidate_id)
+                workflow_store.complete_activity(
+                    activity_id=implement_activity_id,
+                    status=ActivityStatus.COMPLETED,
+                    output_refs={
+                        "worker_id": worker_id,
+                        "candidate_id": candidate_id,
+                        "worker_result": _artifact_ref(run_dir, output_path),
+                    },
+                    failure_class=None,
+                )
                 journal.record(
                     "agentrunway.worker_result",
                     build_event_payload(
@@ -486,6 +588,21 @@ def run(args: Any) -> dict[str, Any]:
                         ),
                     )
                     _, review_attempt = next_worker_id(db=db, task_id=task.task_id, role="reviewer")
+                    review_worker_id = f"{task.task_id}-reviewer-{review_attempt:03d}"
+                    review_activity_id = f"{task.task_id}.review.{review_attempt:03d}"
+                    review_result_path = run_dir / "artifacts" / task.task_id / review_worker_id / "review_result.json"
+                    workflow_store.start_activity(
+                        run_id=run_id,
+                        activity_id=review_activity_id,
+                        idempotency_key=f"{run_id}:{task.task_id}:review:{review_attempt:03d}",
+                        task_id=task.task_id,
+                        activity_type="review",
+                        input_refs={
+                            "candidate_id": candidate_id,
+                            "worker_id": candidate["worker_id"],
+                            "review_mode": review_mode,
+                        },
+                    )
                     review = run_reviewer_attempt(
                         db=db,
                         run_id=run_id,
@@ -505,6 +622,7 @@ def run(args: Any) -> dict[str, Any]:
                         review_mode=review_mode,
                     )
                     review_status = str(review["status"])
+                    review_classification = None
                     journal.record(
                         "agentrunway.review_result",
                         build_event_payload(
@@ -518,6 +636,25 @@ def run(args: Any) -> dict[str, Any]:
                         ),
                     )
                     if review_status == "needs_context" and review_mode == "diff" and not needs_context_escalated:
+                        review_classification = classify_gate_failure(
+                            gate="review",
+                            status=review_status,
+                            result=review,
+                            candidate=_merge_candidate(db, candidate_id),
+                            task_acceptance_commands=list(task.acceptance_commands),
+                        )
+                        workflow_store.complete_activity(
+                            activity_id=review_activity_id,
+                            status=ActivityStatus.FAILED,
+                            output_refs={
+                                "candidate_id": candidate_id,
+                                "review_status": review_status,
+                                "review_mode": review_mode,
+                                "review_result": _artifact_ref(run_dir, review_result_path),
+                                "classification": review_classification.to_dict(),
+                            },
+                            failure_class=review_classification.failure_class,
+                        )
                         needs_context_escalated = True
                         review_mode = "full_tree"
                         journal.record(
@@ -534,15 +671,77 @@ def run(args: Any) -> dict[str, Any]:
                             ),
                         )
                         continue
+                    if review_status == "approved":
+                        workflow_store.complete_activity(
+                            activity_id=review_activity_id,
+                            status=ActivityStatus.COMPLETED,
+                            output_refs={
+                                "candidate_id": candidate_id,
+                                "review_status": review_status,
+                                "review_mode": review_mode,
+                                "review_result": _artifact_ref(run_dir, review_result_path),
+                            },
+                            failure_class=None,
+                        )
                     break
                 if review_status != "approved":
+                    candidate_snapshot = _merge_candidate(db, candidate_id)
+                    review_classification = review_classification or classify_gate_failure(
+                        gate="review",
+                        status=review_status,
+                        result=review,
+                        candidate=candidate_snapshot,
+                        task_acceptance_commands=list(task.acceptance_commands),
+                    )
                     decision = gate_retry_decision(
                         task=task,
                         gate="review",
                         status=review_status,
                         result=review,
-                        candidate=_merge_candidate(db, candidate_id),
+                        candidate=candidate_snapshot,
                         previous_retries=review_retries,
+                    )
+                    decision = _decision_for_classification(
+                        gate="review",
+                        classification_failure_class=review_classification.failure_class,
+                        policy_decision=decision,
+                    )
+                    workflow_store.complete_activity(
+                        activity_id=review_activity_id,
+                        status=_gate_activity_status(
+                            failure_class=review_classification.failure_class,
+                            decision=decision,
+                        ),
+                        output_refs={
+                            "candidate_id": candidate_id,
+                            "review_status": review_status,
+                            "review_mode": review_mode,
+                            "review_result": _artifact_ref(run_dir, review_result_path),
+                            "classification": review_classification.to_dict(),
+                        },
+                        failure_class=review_classification.failure_class,
+                    )
+                    _gate_decision_packet(
+                        store=workflow_store,
+                        run_id=run_id,
+                        task_id=task.task_id,
+                        gate="review",
+                        attempt=review_attempt,
+                        failure_class=review_classification.failure_class,
+                        summary=review_classification.summary,
+                        payload={
+                            "gate": "review",
+                            "status": review_status,
+                            "result": review,
+                            "candidate": {
+                                "id": candidate_snapshot["id"],
+                                "worker_id": candidate_snapshot["worker_id"],
+                                "changed_files": candidate_snapshot["changed_files"],
+                                "commits": candidate_snapshot["commits"],
+                            },
+                            "next_action": review_classification.next_action,
+                            "policy_reason": decision.reason,
+                        },
                     )
                     record_quality_decision(
                         journal,
@@ -577,6 +776,23 @@ def run(args: Any) -> dict[str, Any]:
                     build_event_payload(run_id, "verification", "success", "verification dispatched", task_id=task.task_id),
                 )
                 _, verification_attempt = next_worker_id(db=db, task_id=task.task_id, role="verifier")
+                verification_worker_id = f"{task.task_id}-verifier-{verification_attempt:03d}"
+                verification_activity_id = f"{task.task_id}.verification.{verification_attempt:03d}"
+                verification_result_path = (
+                    run_dir / "artifacts" / task.task_id / verification_worker_id / "verification_result.json"
+                )
+                workflow_store.start_activity(
+                    run_id=run_id,
+                    activity_id=verification_activity_id,
+                    idempotency_key=f"{run_id}:{task.task_id}:verification:{verification_attempt:03d}",
+                    task_id=task.task_id,
+                    activity_type="verification",
+                    input_refs={
+                        "candidate_id": candidate_id,
+                        "worker_id": candidate["worker_id"],
+                        "review_status": review_status,
+                    },
+                )
                 verification = run_verifier_attempt(
                     db=db,
                     run_id=run_id,
@@ -607,6 +823,16 @@ def run(args: Any) -> dict[str, Any]:
                     ),
                 )
                 if verification_status == "passed":
+                    workflow_store.complete_activity(
+                        activity_id=verification_activity_id,
+                        status=ActivityStatus.COMPLETED,
+                        output_refs={
+                            "candidate_id": candidate_id,
+                            "verification_status": verification_status,
+                            "verification_result": _artifact_ref(run_dir, verification_result_path),
+                        },
+                        failure_class=None,
+                    )
                     db.set_merge_candidate_status(candidate_id, "merge_ready")
                     db.set_task_status(task.task_id, "merge_ready")
                     journal.record(
@@ -620,13 +846,62 @@ def run(args: Any) -> dict[str, Any]:
                     verification_retries = 0
                     implementer_context = None
                     continue
+                candidate_snapshot = _merge_candidate(db, candidate_id)
+                verification_classification = classify_gate_failure(
+                    gate="verification",
+                    status=verification_status,
+                    result=verification,
+                    candidate=candidate_snapshot,
+                    task_acceptance_commands=list(task.acceptance_commands),
+                )
                 decision = gate_retry_decision(
                     task=task,
                     gate="verification",
                     status=verification_status,
                     result=verification,
-                    candidate=_merge_candidate(db, candidate_id),
+                    candidate=candidate_snapshot,
                     previous_retries=verification_retries,
+                )
+                decision = _decision_for_classification(
+                    gate="verification",
+                    classification_failure_class=verification_classification.failure_class,
+                    policy_decision=decision,
+                )
+                workflow_store.complete_activity(
+                    activity_id=verification_activity_id,
+                    status=_gate_activity_status(
+                        failure_class=verification_classification.failure_class,
+                        decision=decision,
+                    ),
+                    output_refs={
+                        "candidate_id": candidate_id,
+                        "verification_status": verification_status,
+                        "verification_result": _artifact_ref(run_dir, verification_result_path),
+                        "classification": verification_classification.to_dict(),
+                    },
+                    failure_class=verification_classification.failure_class,
+                )
+                _gate_decision_packet(
+                    store=workflow_store,
+                    run_id=run_id,
+                    task_id=task.task_id,
+                    gate="verification",
+                    attempt=verification_attempt,
+                    failure_class=verification_classification.failure_class,
+                    summary=verification_classification.summary,
+                    payload={
+                        "gate": "verification",
+                        "status": verification_status,
+                        "result": verification,
+                        "candidate": {
+                            "id": candidate_snapshot["id"],
+                            "worker_id": candidate_snapshot["worker_id"],
+                            "changed_files": candidate_snapshot["changed_files"],
+                            "commits": candidate_snapshot["commits"],
+                        },
+                        "next_action": verification_classification.next_action,
+                        "policy_reason": decision.reason,
+                    },
                 )
                 record_quality_decision(
                     journal,
@@ -871,16 +1146,29 @@ def resume(run_id: str, *, dry_run: bool = False) -> dict[str, Any]:
     data = _load_run_json(run_id)
     if data is None:
         return _missing(run_id)
+    state_db = data.get("state_db")
+    if not state_db or not Path(str(state_db)).exists():
+        early = _early_failure_payload(data, run_id)
+        if early is not None:
+            return early
+        return {
+            "run_id": data.get("run_id") or run_id,
+            "status": "missing",
+            "run_dir": data.get("run_dir"),
+            "recovery": data.get("recovery", "no_state_sqlite"),
+        }
     db = AgentRunwayDb.open(Path(data["state_db"]))
     plan = plan_reconciliation(run_id=run_id, run_dir=Path(data["run_dir"]), db=db)
+    activity_resume = plan_activity_resume(run_id=run_id, db=db)
     if dry_run:
-        return plan
+        return {**plan, "activity_resume": activity_resume}
     apply_reconciliation_plan(db=db, plan=plan)
     return {
         "run_id": run_id,
         "status": data.get("status"),
         "run_dir": data.get("run_dir"),
         "reconciliation": plan,
+        "activity_resume": activity_resume,
     }
 
 

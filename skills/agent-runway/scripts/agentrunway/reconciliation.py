@@ -264,3 +264,33 @@ def apply_reconciliation_plan(*, db: AgentRunwayDb, plan: dict[str, Any]) -> Non
                 "failed",
                 "manual action required",
             )
+            from .failure_classifier import classify_merge_failure
+            from .workflow_store import WorkflowStore
+
+            candidate = next(
+                (
+                    item
+                    for item in db.list_merge_candidates()
+                    if str(item["task_id"]) == target and item["status"] == "merge_conflict"
+                ),
+                None,
+            )
+            if candidate is not None:
+                classification = classify_merge_failure(
+                    previous_conflicts=1,
+                    error=str(candidate.get("error") or action.get("reason") or "merge conflict"),
+                )
+                WorkflowStore(db).create_decision_packet(
+                    run_id=str(plan["run_id"]),
+                    decision_id=f"{target}.merge_conflict.decision",
+                    task_id=target,
+                    failure_class=classification.failure_class,
+                    summary=classification.summary,
+                    payload={
+                        "candidate_id": candidate["id"],
+                        "worker_id": candidate["worker_id"],
+                        "changed_files": candidate["changed_files"],
+                        "commits": candidate["commits"],
+                        "next_action": classification.next_action,
+                    },
+                )

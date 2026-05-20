@@ -252,3 +252,33 @@ def test_plan_reconciliation_repeated_conflict_requires_manual_action(tmp_path: 
         "reason": "repeated_merge_conflict",
         "writes": False,
     } in plan["actions"]
+
+
+def test_apply_reconciliation_plan_writes_decision_packet_for_repeated_conflict(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    db.enqueue_merge_candidate(
+        task_id="task_001",
+        worker_id="task_001-implementer-001",
+        commits=("abc123",),
+        changed_files=("src/example.py",),
+        status="merge_conflict",
+    )
+    plan = {
+        "run_id": "run_001",
+        "run_dir": str(run_dir),
+        "actions": [
+            {
+                "target": "task_001",
+                "action": "manual_action",
+                "reason": "repeated_merge_conflict",
+                "writes": False,
+            }
+        ],
+    }
+
+    apply_reconciliation_plan(db=db, plan=plan)
+
+    packet = db.list_decision_packets("run_001")[0]
+    assert packet["decision_id"] == "task_001.merge_conflict.decision"
+    assert packet["failure_class"] == "needs_human_decision"
