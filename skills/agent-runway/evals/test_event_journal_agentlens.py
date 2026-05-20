@@ -210,3 +210,14 @@ def test_agentlens_event_envelope_is_strict_v2_shape() -> None:
     assert set(event) <= V2_EVENT_KEYS
     assert event["phase"] == "run"
     assert event["candidate_id"] == "3"
+
+
+def test_agentlens_event_envelope_falls_back_to_event_type_summary() -> None:
+    event = build_agentlens_event_envelope(
+        event_id=8,
+        event_type="agentrunway.run_started",
+        payload=build_event_payload("run-1", "run", "success", ""),
+        occurred_at="2026-05-21T00:00:00Z",
+    )
+
+    assert event["summary"] == "agentrunway.run_started"

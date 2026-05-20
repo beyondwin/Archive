@@ -157,6 +157,7 @@ def build_agentlens_event_envelope(
     run_id = str(payload.get("run_id") or payload.get("agentrunway_run_id") or "")
     outcome = str(payload.get("outcome") or "unknown")
     timestamp = occurred_at or _utc_now_iso()
+    summary = str(payload.get("summary") or event_type)[:1200]
     event = {
         "schema": AGENTLENS_EVENT_SCHEMA,
         "event_id": f"evt_{event_id:06d}",
@@ -171,7 +172,7 @@ def build_agentlens_event_envelope(
         "evidence_refs": _list_or_empty(payload.get("evidence_refs")),
         "artifact_refs": _list_or_empty(payload.get("artifact_refs")),
         "trust_impact": str(payload.get("trust_impact") or _trust_impact(outcome, payload)),
-        "summary": str(payload.get("summary") or "")[:1200],
+        "summary": summary,
         "payload": payload,
     }
     for key in ("task_id", "attempt_id", "candidate_id", "gate_id"):
