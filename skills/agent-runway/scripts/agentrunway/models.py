@@ -29,6 +29,90 @@ class TaskStatus(str, Enum):
     BLOCKED = "blocked"
 
 
+class WorkerRole(str, Enum):
+    IMPLEMENTER = "implementer"
+    REVIEWER = "reviewer"
+    VERIFIER = "verifier"
+    RECOVERY = "recovery"
+
+
+class WorkerState(str, Enum):
+    QUEUED = "queued"
+    WORKTREE_CREATED = "worktree_created"
+    DISPATCHED = "dispatched"
+    RUNNING = "running"
+    RESULT_COLLECTED = "result_collected"
+    VALIDATED = "validated"
+    QUEUED_FOR_REVIEW = "queued_for_review"
+    REVIEWING = "reviewing"
+    VERIFYING = "verifying"
+    MERGE_READY = "merge_ready"
+    MERGED = "merged"
+    ADAPTER_CRASHED = "adapter_crashed"
+    TIMEOUT = "timeout"
+    STALLED = "stalled"
+    MALFORMED_RESULT = "malformed_result"
+    METHOD_AUDIT_FAILED = "method_audit_failed"
+    DIFF_SCOPE_FAILED = "diff_scope_failed"
+    MERGE_CONFLICT = "merge_conflict"
+    VERIFICATION_FAILED = "verification_failed"
+    BLOCKED = "blocked"
+    CANCELLED = "cancelled"
+
+
+class ProcessState(str, Enum):
+    NOT_STARTED = "not_started"
+    RUNNING = "running"
+    EXITED = "exited"
+    TIMED_OUT = "timed_out"
+    CANCELLED = "cancelled"
+    MISSING = "missing"
+
+
+@dataclass(frozen=True)
+class WorkerSpec:
+    run_id: str
+    task_id: str
+    worker_id: str
+    role: str
+    runtime: str
+    model: str
+    reasoning_effort: str
+    prompt_path: str
+    packet_path: str
+    output_path: str
+    worktree_path: str
+    artifact_dir: str
+    timeout_seconds: int
+    attempt: int = 1
+
+
+@dataclass(frozen=True)
+class ProcessSnapshot:
+    state: str
+    pid: int | None
+    returncode: int | None = None
+    started_at: float | None = None
+    ended_at: float | None = None
+    stdout_path: str | None = None
+    stderr_path: str | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
+class WorkerResultEnvelope:
+    worker_id: str
+    task_id: str
+    role: str
+    runtime: str
+    process: ProcessSnapshot
+    result_path: str
+    result_json: dict[str, Any] | None
+    stdout_path: str
+    stderr_path: str
+    error: str | None = None
+
+
 @dataclass(frozen=True)
 class FileClaim:
     path: str
