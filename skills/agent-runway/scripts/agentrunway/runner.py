@@ -17,6 +17,7 @@ from .artifacts import ArtifactStore
 from .config import BuiltinProfiles, ModelProfile, load_effective_config
 from .db import AgentRunwayDb
 from .git_ops import Git, assert_clean_source
+from .merge_queue import MergeCandidate, MergeConflictError, apply_candidate
 from .packetizer import build_task_packet, materialize_prompt, materialize_worker_prompt, packet_to_json
 from .plan_parser import canonical_hash, parse_plan, parse_spec_manifest
 from .scheduler import schedule_waves
@@ -190,6 +191,25 @@ def run(args: Any) -> dict[str, Any]:
                 timeout_seconds=600,
             )
             db.set_task_status(task.task_id, "merge_ready")
+    for candidate in db.list_merge_candidates():
+        if candidate["status"] != "merge_ready":
+            continue
+        main_git = Git(main_worktree)
+        merge_candidate = MergeCandidate(
+            task_id=candidate["task_id"],
+            worker_id=candidate["worker_id"],
+            commits=tuple(candidate["commits"]),
+            changed_files=tuple(candidate["changed_files"]),
+        )
+        try:
+            apply_candidate(main_git, merge_candidate)
+        except MergeConflictError as exc:
+            db.set_merge_candidate_status(int(candidate["id"]), "merge_conflict", str(exc))
+            db.set_task_status(candidate["task_id"], "blocked")
+        else:
+            db.set_merge_candidate_status(int(candidate["id"]), "merged")
+            db.set_worker_state(candidate["worker_id"], "merged")
+            db.set_task_status(candidate["task_id"], "merged")
     db.set_run_status(run_id, "finished")
     run_json.update({"status": "finished", "main_worktree": str(main_worktree)})
     _write_run_json(run_dir, run_json)

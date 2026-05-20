@@ -63,12 +63,13 @@ def test_codex_fake_implementer_reaches_validated_candidate(git_repo: Path, isol
     )
     payload = json.loads(result.stdout)
     assert payload["status"] == "finished"
-    assert Path(payload["main_worktree"]).exists()
+    main = Path(payload["main_worktree"])
+    assert (main / "src" / "codex_worker.py").read_text(encoding="utf-8") == "VALUE = 'codex'\n"
 
     conn = sqlite3.connect(payload["state_db"])
     conn.row_factory = sqlite3.Row
     candidate = dict(conn.execute("SELECT * FROM merge_queue").fetchone())
     worker = dict(conn.execute("SELECT * FROM workers").fetchone())
-    assert candidate["status"] == "merge_ready"
+    assert candidate["status"] == "merged"
     assert json.loads(candidate["changed_files_json"]) == ["src/codex_worker.py"]
-    assert worker["state"] == "validated"
+    assert worker["state"] == "merged"
