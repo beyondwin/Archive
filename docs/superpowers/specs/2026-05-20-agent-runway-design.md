@@ -1,15 +1,15 @@
-# Design: KWS Agent Orchestrator
+# Design: AgentRunway
 
 Date: 2026-05-20
 Status: Approved for implementation planning (A/B/C/D-tier critique patches applied; E-tier defect patches applied; re-approval pending)
 Owner: KWS
-Revision: 2026-05-20d — E-tier defect patches applied. Fixes pre/post-commit tree extraction primitive (§9.1 now uses `git worktree add --detach` instead of incorrect `git stash`); multi-commit worker output (`commits[]`) with merge/apply cascade (§§6.9, 9.1, 11, 13.4); `shared_append` base reference (wave base commit, not moving `main` HEAD); operational semantics of merge-conflict re-dispatch (§§6.9, 12); semaphore primitive and stale-slot reclamation (§5.2.2); reattach handle reconstruction (§7.1); reviewer status enum, findings rule, and review-round budget separate from failure-retry budget (§11.1); main exec worktree provenance via `git worktree add` (§5.2); cross-workspace collision detection via global registry at `~/.kao/registry.sqlite` (§5.2); orphan verify-worktree reclamation on runner crash (§12). Adds: per-task wall-clock timeout, sandbox tier and LFS in packet (§6.2); `network_egress` allowlist (§7.0); reconcile-step network note (§6.3.1); candidate selection rule for high-risk dual-implementer tasks (§6.5); watchdog wording aligned with polling model (§6.8); `fs_scope` enforcement realism (§15); `serial: false` semantics and `schemas/` subdir (§§5.1, 6.1.5); §14.2 integration tests for the new behaviors. New §16 entries 26–31.
-Revision history: 2026-05-20c — A/B/C/D-tier critique patches (workspace-hash canonicalization, branch base policy, dirty-source refusal, submodule/LFS defaults, concurrent-run quota semaphore, `shared_append` grammar, context-ratio denominator, full `WorkerStatus`, reasoning-effort abstraction, configurable AgentLens namespace prefix, review/verification schemas with required checks, cost-extract fallback, deterministic merge-conflict policy, skill→runner control flow, `kao apply` strategies, retention/secrets policy, schema versioning).
-Implementation Plan: `docs/superpowers/plans/2026-05-20-kws-agent-orchestrator.md`
+Revision: 2026-05-20d — E-tier defect patches applied. Fixes pre/post-commit tree extraction primitive (§9.1 now uses `git worktree add --detach` instead of incorrect `git stash`); multi-commit worker output (`commits[]`) with merge/apply cascade (§§6.9, 9.1, 11, 13.4); `shared_append` base reference (wave base commit, not moving `main` HEAD); operational semantics of merge-conflict re-dispatch (§§6.9, 12); semaphore primitive and stale-slot reclamation (§5.2.2); reattach handle reconstruction (§7.1); reviewer status enum, findings rule, and review-round budget separate from failure-retry budget (§11.1); main exec worktree provenance via `git worktree add` (§5.2); cross-workspace collision detection via global registry at `~/.agentrunway/registry.sqlite` (§5.2); orphan verify-worktree reclamation on runner crash (§12). Adds: per-task wall-clock timeout, sandbox tier and LFS in packet (§6.2); `network_egress` allowlist (§7.0); reconcile-step network note (§6.3.1); candidate selection rule for high-risk dual-implementer tasks (§6.5); watchdog wording aligned with polling model (§6.8); `fs_scope` enforcement realism (§15); `serial: false` semantics and `schemas/` subdir (§§5.1, 6.1.5); §14.2 integration tests for the new behaviors. New §16 entries 26–31.
+Revision history: 2026-05-20c — A/B/C/D-tier critique patches (workspace-hash canonicalization, branch base policy, dirty-source refusal, submodule/LFS defaults, concurrent-run quota semaphore, `shared_append` grammar, context-ratio denominator, full `WorkerStatus`, reasoning-effort abstraction, configurable AgentLens namespace prefix, review/verification schemas with required checks, cost-extract fallback, deterministic merge-conflict policy, skill→runner control flow, `agentrunway apply` strategies, retention/secrets policy, schema versioning).
+Implementation Plan: `docs/superpowers/plans/2026-05-20-agent-runway.md`
 
 ## 1. Summary
 
-Build a new greenfield skill and runner, named `kws-agent-orchestrator` (`KAO`),
+Build a new greenfield skill and runner, named `agent-runway` (`AgentRunway`),
 that executes plan/spec documents using multiple coding-agent runtimes through
 one protocol.
 
@@ -22,14 +22,14 @@ Core idea:
 
 ```text
 plan/spec
-  -> KAO skill entrypoint
+  -> AgentRunway skill entrypoint
   -> deterministic Python runner
   -> SQLite control plane
   -> task graph + file claims + parallel waves
   -> runtime adapters
   -> isolated worktrees
   -> review / verify / merge queue
-  -> AgentLens kws.kao.* observability
+  -> AgentLens agentrunway.* observability
 ```
 
 The LLM does task work. The runner decides scheduling, isolation, file
@@ -53,22 +53,22 @@ ownership, retries, merge order, and AgentLens emission.
 ## 3. Non-Goals
 
 - No reuse of `kws-cpe.*` or `kws-cme.*` AgentLens namespaces.
-- No migration layer from old CPE/CME state into KAO state for MVP.
+- No migration layer from old CPE/CME state into AgentRunway state for MVP.
 - No web UI in MVP. CLI status and AgentLens visibility come first.
 - No direct dependency on Overstory, Bernstein, AWS CLI Agent Orchestrator,
   Codex Orchestrator, Composio Agent Orchestrator, Vibe Kanban, or OpenHands.
-  KAO borrows patterns, not code or runtime architecture wholesale.
+  AgentRunway borrows patterns, not code or runtime architecture wholesale.
 - No assumption that Codex App `spawn_agent` is always available. It is an
   adapter capability, not the base execution contract.
 - No worker direct-write access to AgentLens in MVP. Workers return artifacts to
   the runner; the runner validates, redacts, and emits events.
-- No automatic write-back into the source checkout by default. KAO integrates
+- No automatic write-back into the source checkout by default. AgentRunway integrates
   changes in an execution worktree first; source checkout application is
   explicit.
 
 ## 4. Reference Inputs
 
-KAO should selectively borrow these patterns:
+AgentRunway should selectively borrow these patterns:
 
 | Reference | Pattern to Adopt | Avoid |
 | --- | --- | --- |
@@ -85,13 +85,13 @@ KAO should selectively borrow these patterns:
 
 ### 5.0 Roles & Surfaces
 
-KAO has three execution surfaces. Each has a different lifecycle, state model,
+AgentRunway has three execution surfaces. Each has a different lifecycle, state model,
 and context budget. Confusing them is the most common source of design drift.
 
 | Surface | Process | LLM | State | Lifetime |
 | --- | --- | --- | --- | --- |
 | Host session | Claude Code or Codex CLI/App where the user invoked the skill | Yes (host model) | Conversation only | User session |
-| Runner | `scripts/kao.py` Python process | No | SQLite + filesystem | Per `kao run` |
+| Runner | `scripts/agentrunway.py` Python process | No | SQLite + filesystem | Per `agentrunway run` |
 | Worker | Adapter-launched CLI/headless session in a worktree | Yes (worker model) | Task packet + worktree | Per task attempt |
 
 Responsibilities:
@@ -114,7 +114,7 @@ reacts.
 ### 5.1 Components
 
 ```text
-kws-agent-orchestrator/
+agent-runway/
   SKILL.md
   references/
     protocol.md
@@ -136,8 +136,8 @@ kws-agent-orchestrator/
       verification_result.v1.json
       event.v1.json
   scripts/
-    kao.py
-    kao/
+    agentrunway.py
+    agentrunway/
       db.py
       scheduler.py
       plan_parser.py
@@ -164,7 +164,7 @@ The skill is thin. It validates invocation shape, points the host agent at the
 runner, and explains the protocol. The runner is thick. It owns execution
 state, scheduling, worker dispatch, and final validation.
 
-Source-of-truth policy: this design document is the source of truth for KAO
+Source-of-truth policy: this design document is the source of truth for AgentRunway
 behavior. Files under `references/` are normative *expansions* of specific
 sections (e.g. `runtime-adapters.md` expands §7) but must not contradict the
 design. When the runner code, the design doc, and a reference file disagree,
@@ -175,7 +175,7 @@ the design doc wins; reference files are updated to match.
 Persistent runtime state lives outside project source:
 
 ```text
-~/.kao/
+~/.agentrunway/
   runs/<workspace_id>/<run_id>/
     state.sqlite
     run.json
@@ -202,25 +202,25 @@ Persistent runtime state lives outside project source:
       task_001-verifier-001/
 ```
 
-The target repo worktree remains clean of KAO runtime artifacts. Worker
+The target repo worktree remains clean of AgentRunway runtime artifacts. Worker
 worktrees contain only normal repo files and git metadata. By default, accepted
-changes are integrated into `~/.kao/worktrees/<workspace_id>/<run_id>/main` and
+changes are integrated into `~/.agentrunway/worktrees/<workspace_id>/<run_id>/main` and
 are not applied back to the source checkout unless the user runs
-`kao apply --run <run_id>` or sets `apply_to_source=on`.
+`agentrunway apply --run <run_id>` or sets `apply_to_source=on`.
 
-`~/.kao/worktrees/<workspace_id>/<run_id>/main` is created via `git worktree add
-<path> -b kao/<run_id>/main <base_commit_sha>` against the source repo's git
+`~/.agentrunway/worktrees/<workspace_id>/<run_id>/main` is created via `git worktree add
+<path> -b agentrunway/<run_id>/main <base_commit_sha>` against the source repo's git
 directory (`git rev-parse --git-common-dir`). It shares git objects with the
-source checkout, which is load-bearing for `kao apply` (§13.4) — cherry-picking
+source checkout, which is load-bearing for `agentrunway apply` (§13.4) — cherry-picking
 from this worktree into the source checkout does not require `git fetch` because
 the commits are reachable in the same object store. Worker worktrees fork from
-`kao/<run_id>/main` the same way. If the source repo is a bare clone or has no
-shared git dir reachable from `~/.kao/worktrees/...`, `kao run` halts with
+`agentrunway/<run_id>/main` the same way. If the source repo is a bare clone or has no
+shared git dir reachable from `~/.agentrunway/worktrees/...`, `agentrunway run` halts with
 `unreachable_source_git_dir` rather than silently degrading to a clone.
 
 **Global workspace registry.** Per-workspace SQLite (§5.3 `worktree_registry`)
 cannot detect collisions *across* workspaces — by definition it lives inside a
-workspace. A global registry at `~/.kao/registry.sqlite` maps
+workspace. A global registry at `~/.agentrunway/registry.sqlite` maps
 `workspace_id → (canonical_inputs_hash, source_git_dir, created_at, last_seen_at)`
 and is the authority for "does the computed hash collide with a different repo
 identity?" before extending the hash or appending the monotonic suffix. The
@@ -248,8 +248,8 @@ not omitted, so local-only repos hash deterministically. `main_branch_ref` is
 the symbolic ref of the repo's primary branch (e.g. `refs/heads/main`); it
 stabilizes the hash across reclones.
 
-If the computed directory already exists for a different repo identity, KAO
-extends the hash to 16 characters. If it still collides, KAO appends a monotonic
+If the computed directory already exists for a different repo identity, AgentRunway
+extends the hash to 16 characters. If it still collides, AgentRunway appends a monotonic
 numeric suffix recorded in SQLite. It must never reuse an existing worktree path
 unless the stored `run_id`, `workspace_id`, git root, and branch metadata match.
 
@@ -262,18 +262,18 @@ Run IDs use a human-readable slug plus a timestamp and short nonce:
 Worktree branches use a reserved prefix:
 
 ```text
-kao/<run_id>/main
-kao/<run_id>/task_001-implementer-001
-kao/<run_id>/task_001-reviewer-001
-kao/<run_id>/task_001-verifier-001
+agentrunway/<run_id>/main
+agentrunway/<run_id>/task_001-implementer-001
+agentrunway/<run_id>/task_001-reviewer-001
+agentrunway/<run_id>/task_001-verifier-001
 ```
 
-Before creating a branch or worktree, KAO checks `git show-ref`, `git worktree
+Before creating a branch or worktree, AgentRunway checks `git show-ref`, `git worktree
 list --porcelain`, the filesystem path, and its SQLite registry. Any conflict
-causes a new nonce to be generated; KAO does not overwrite existing paths.
+causes a new nonce to be generated; AgentRunway does not overwrite existing paths.
 
 Gitignored files are not copied into worktrees by default. Repos may opt in with
-`.kao-worktreeinclude`, using `.gitignore`-style patterns. Only ignored files
+`.agentrunway-worktreeinclude`, using `.gitignore`-style patterns. Only ignored files
 matching that allowlist may be copied, and tracked files are never duplicated
 through this mechanism. Files whose path or content matches a configured
 secret pattern are excluded from copy even if the allowlist would otherwise
@@ -281,20 +281,20 @@ include them.
 
 ### 5.2.1 Branch Base, Working-Tree State, Submodules, LFS
 
-**Branch base.** The `kao/<run_id>/main` branch is created from
-`runs.base_commit_sha`, recorded at `kao run` start. The default base is the
+**Branch base.** The `agentrunway/<run_id>/main` branch is created from
+`runs.base_commit_sha`, recorded at `agentrunway run` start. The default base is the
 current `HEAD` of the source checkout. `--base-ref <ref>` overrides. Worker
-branches fork from `kao/<run_id>/main` at the start of their wave, so they
+branches fork from `agentrunway/<run_id>/main` at the start of their wave, so they
 see all merges from prior waves.
 
 **Dirty source policy.** If the source checkout has uncommitted or staged
-changes, `kao run` refuses by default with a clear error pointing at
+changes, `agentrunway run` refuses by default with a clear error pointing at
 `git status`. `--allow-dirty-source` skips the check and records
 `runs.allowed_dirty=true`; the dirty changes are *not* carried into the main
-KAO worktree.
+AgentRunway worktree.
 
 **Submodules.** Not initialized in worker worktrees by default. Set
-`worktree.submodules: init` in `kao.yaml` to opt in. Submodule pointer changes
+`worktree.submodules: init` in `agentrunway.yaml` to opt in. Submodule pointer changes
 in worker diffs are treated as `forbidden` unless the task packet declares the
 submodule path as `owned`.
 
@@ -304,13 +304,13 @@ declare it in the packet so the runner pre-pulls before dispatch.
 
 ### 5.2.2 Concurrent Runs and Adapter Quotas
 
-Multiple `kao run` invocations against the same host share runtime API
+Multiple `agentrunway run` invocations against the same host share runtime API
 quotas (Claude/Codex tokens, rate limits). Each run has its own SQLite DB and
 worktree, so SQLite is contention-free, but runtime dispatch must coordinate
 globally.
 
-A per-runtime semaphore at `~/.kao/locks/<runtime>.sem` caps concurrent worker
-dispatches across all runs. Caps are configured in `~/.kao/global.yaml`:
+A per-runtime semaphore at `~/.agentrunway/locks/<runtime>.sem` caps concurrent worker
+dispatches across all runs. Caps are configured in `~/.agentrunway/global.yaml`:
 
 ```yaml
 runtime_caps:
@@ -321,14 +321,14 @@ runtime_caps:
 ```
 
 **Implementation.** The semaphore is a slot-array file: one fixed-width record
-per slot, each holding `(slot_index, holder_pid, kao_run_id, worker_id,
+per slot, each holding `(slot_index, holder_pid, agentrunway_run_id, worker_id,
 acquired_at)`. Acquire is `fcntl(LOCK_EX)` on a sentinel byte, scan for a free
 slot or a slot whose `holder_pid` is no longer alive (POSIX `kill(pid, 0)`
 returns `ESRCH`), write the new holder, release the file lock. Release is the
 same dance to clear the slot. Stale slots from crashed runners are reclaimed
 opportunistically by any subsequent acquirer; an explicit
-`kao clean --reclaim-locks` performs the same scan without acquiring. The slot
-count equals `max_concurrent_workers`; raising the cap requires `kao clean
+`agentrunway clean --reclaim-locks` performs the same scan without acquiring. The slot
+count equals `max_concurrent_workers`; raising the cap requires `agentrunway clean
 --reclaim-locks` because the file is resized on next acquire.
 
 Adapter rate-limit errors are surfaced as retryable transient failures with
@@ -337,7 +337,7 @@ exponential backoff up to the watchdog's `retry` budget. Rate-limit retries do
 
 ### 5.3 SQLite Control Plane
 
-SQLite is the source of truth for KAO execution. Suggested tables:
+SQLite is the source of truth for AgentRunway execution. Suggested tables:
 
 | Table | Purpose |
 | --- | --- |
@@ -364,7 +364,7 @@ what happened instead of keeping all worker details in conversation.
 Column-level schemas (including `waves.base_commit_sha`,
 `workers.timeout_seconds`, `workers.reasoning_effort_resolved`,
 `merge_queue.applied_commit_shas`, `runs.allowed_dirty`, `runs.base_commit_sha`,
-`runs.agentlens_status`) live in `scripts/kao/db.py`. The table above names
+`runs.agentlens_status`) live in `scripts/agentrunway/db.py`. The table above names
 purpose, not columns — `db.py` is the source of truth for the SQL schema.
 
 ## 6. Execution Flow
@@ -373,7 +373,7 @@ purpose, not columns — `db.py` is the source of truth for the SQL schema.
 
 ```text
 1. Parse invocation and model profile.
-2. Open KAO run and SQLite DB.
+2. Open AgentRunway run and SQLite DB.
 3. Open AgentLens container run.
 4. Parse plan/spec into task graph.
 5. Build file claims and task packets.
@@ -395,12 +395,12 @@ purpose, not columns — `db.py` is the source of truth for the SQL schema.
 ### 6.1.5 Plan/Spec Format
 
 The runner parses a plan markdown file and an optional spec markdown file.
-Both are deterministic inputs: KAO computes SHA-256 over canonicalized bytes
+Both are deterministic inputs: AgentRunway computes SHA-256 over canonicalized bytes
 (LF line endings, trailing whitespace stripped) and stores them as
 `plan_hash` / `spec_hash` in `runs`.
 
 **Plan file** — markdown with one H2 per task. Each task contains a fenced
-```yaml kao-task``` block with required fields:
+```yaml agentrunway-task``` block with required fields:
 
 ```yaml
 task_id: task_003
@@ -430,7 +430,7 @@ restarts, machine-wide caches). The flag is honored by the scheduler in §6.4.
 
 **`wall_clock_timeout_seconds`** is the per-task budget enforced by the
 watchdog (§6.8). If unset, the runner applies `worker.default_timeout_seconds`
-from `kao.yaml` (default `1800`). High-risk tasks may set a higher budget; the
+from `agentrunway.yaml` (default `1800`). High-risk tasks may set a higher budget; the
 runner records the resolved value on `workers.timeout_seconds`.
 
 Markdown narrative under the H2 (outside the fenced block) is captured into
@@ -444,7 +444,7 @@ slug is `s2-1` or whose first inline token is `S2.1`. The runner stores
 referenced spec content changes between plan parse and worker dispatch.
 
 **Determinism guarantee:** given identical `(plan_bytes, spec_bytes,
-kao_version, profile)`, the runner produces the same task graph, wave
+agentrunway_version, profile)`, the runner produces the same task graph, wave
 assignment, and packet hashes. Wave-internal tie-breaking is
 `(risk_desc, dependency_count_desc, task_id_asc)`.
 
@@ -458,7 +458,7 @@ conversation by default.
 
 ```json
 {
-  "schema": "kws.kao.task_packet.v1",
+  "schema": "agentrunway.task_packet.v1",
   "run_id": "auth-refactor-20260520-151000",
   "task_id": "task_003",
   "role": "implementer",
@@ -476,7 +476,7 @@ conversation by default.
   ],
   "required_skills": ["using-superpowers", "test-driven-development"],
   "acceptance_commands": ["npm test -- tests/auth/session.test.ts"],
-  "output_schema": "kws.kao.worker_result.v1",
+  "output_schema": "agentrunway.worker_result.v1",
   "model_assignment": {
     "runtime": "codex",
     "model": "gpt-5.5",
@@ -490,7 +490,7 @@ conversation by default.
 }
 ```
 
-`wave_base_commit_sha` is the commit `kao/<run_id>/main` pointed at when the
+`wave_base_commit_sha` is the commit `agentrunway/<run_id>/main` pointed at when the
 wave started; workers must branch from it and `shared_append` validation
 (§6.3) measures against it. `candidate_index` distinguishes implementer
 candidates when a high-risk task dispatches more than one (§6.5).
@@ -509,7 +509,7 @@ Forbidden wins over every other claim. Any out-of-scope diff rejects the worker
 result before merge.
 
 **`shared_append` validation grammar.** The default check is structural and is
-performed against the **wave base** — the commit `kao/<run_id>/main` pointed at
+performed against the **wave base** — the commit `agentrunway/<run_id>/main` pointed at
 when the wave started (recorded in `waves.base_commit_sha` and replicated in
 each packet as `wave_base_commit_sha`). Validating against a moving `main` HEAD
 would be wrong: as wave merges land, the file changes underneath later workers
@@ -529,9 +529,9 @@ The runner enforces these by materializing all candidate appends against the
 wave base, applying them in deterministic worker-id order, and rejecting the
 wave if any of (1)–(3) fail. Rejection is per-worker when the offending append
 is attributable; otherwise the whole `shared_append` file is held out of merge
-and the runner emits `kws.kao.blocker` with `severity=warn`.
+and the runner emits `agentrunway.blocker` with `severity=warn`.
 
-Repos may register file-specific validators in `kao.yaml`:
+Repos may register file-specific validators in `agentrunway.yaml`:
 
 ```yaml
 shared_append:
@@ -553,7 +553,7 @@ files (`*.generated.ts`, codegen output) are nearly always touched by any task
 that adds or upgrades a dependency. Treating them as `owned` forces every such
 task to serialize, defeating wave parallelism.
 
-KAO handles them with two mechanisms:
+AgentRunway handles them with two mechanisms:
 
 1. **Reconcile step.** After each wave's accepted merges land in main, the
    runner runs a configured reconcile command (e.g. `npm install
@@ -565,7 +565,7 @@ KAO handles them with two mechanisms:
    tasks that touch dependencies must declare `resource_keys: [lockfile:<id>]`
    so the scheduler serializes them within a wave.
 
-Defaults are configured in `kao.yaml`:
+Defaults are configured in `agentrunway.yaml`:
 
 ```yaml
 lockfiles:
@@ -585,9 +585,9 @@ the main execution worktree, not in a worker sandbox. They therefore use the
 host's normal network egress; `net_blocked` (§7.0) applies only to workers.
 If a reconcile command itself needs network (e.g. `npm install
 --package-lock-only` contacting the registry) and the host has no outbound
-connectivity, reconcile fails and the runner emits `kws.kao.blocker` with
+connectivity, reconcile fails and the runner emits `agentrunway.blocker` with
 `severity=error` and the affected lockfile path. Configure offline reconcile
-(e.g. `--offline`) in `kao.yaml` if the project supports it.
+(e.g. `--offline`) in `agentrunway.yaml` if the project supports it.
 
 ### 6.4 Wave Scheduling
 
@@ -605,7 +605,7 @@ and dependency edges do not conflict.
 
 ### 6.5 Parallel Roles
 
-KAO supports the existing multi-agent pattern of separate implementation,
+AgentRunway supports the existing multi-agent pattern of separate implementation,
 review, verification, and recovery agents. The difference is that the runner,
 not a parent prompt, creates these roles from explicit task state.
 
@@ -658,7 +658,7 @@ can inspect them; their commits are not cherry-picked.
 
 ### 6.6 Context Policy
 
-KAO treats context pressure as a control-plane problem. The orchestrator should
+AgentRunway treats context pressure as a control-plane problem. The orchestrator should
 not accumulate full worker transcripts, full prompts, command output, or raw
 diffs. Those live in artifacts and SQLite. The orchestrator sees bounded
 digests and artifact references.
@@ -697,7 +697,7 @@ The runner maintains a compact orchestration snapshot containing only:
 
 If the active host supports native context compaction, the adapter may trigger
 it when the compact threshold is crossed. If compaction is not available or the
-session remains too large, KAO rotates orchestration into a fresh session using
+session remains too large, AgentRunway rotates orchestration into a fresh session using
 the latest snapshot. Rotation must not require replaying worker transcripts.
 
 ### 6.7 Worker Communication
@@ -743,7 +743,7 @@ observe -> nudge -> compact or rotate -> retry -> reject/block
 ```
 
 Watchdog actions are recorded in SQLite and emitted to AgentLens as compact
-`kws.kao.watchdog_event` events where useful.
+`agentrunway.watchdog_event` events where useful.
 
 ### 6.9 Merge Queue
 
@@ -763,7 +763,7 @@ worker worktree commit(s)
 
 Default merge strategy: worker produces one or more commits (e.g. TDD red/green
 commits); the runner cherry-picks them in order from the worker branch onto
-`~/.kao/worktrees/<workspace_id>/<run_id>/main`, preserving authorship and
+`~/.agentrunway/worktrees/<workspace_id>/<run_id>/main`, preserving authorship and
 commit messages. The full sequence is recorded in
 `worker_result.commits[]` (§11) and `merge_queue.applied_commit_shas[]`. If
 any commit in the sequence conflicts, the entire sequence is aborted (no
@@ -777,14 +777,14 @@ attributed to the worker.
 
 Diff-scope validation catches what a worker *committed*, not what a worker
 *did*. A worker can exfiltrate via `curl`, write absolute paths under `~`, or
-mutate state outside the worktree without leaving any tracked diff. KAO
+mutate state outside the worktree without leaving any tracked diff. AgentRunway
 mitigates this via a declared sandbox tier per adapter, negotiated at dispatch.
 
 | Tier | Process isolation | Filesystem | Network | Notes |
 | --- | --- | --- | --- | --- |
-| `unsandboxed` | Inherits host | Full | Full | Dev/dry-run only; emits `kws.kao.blocker` with `severity=warn` per run. |
+| `unsandboxed` | Inherits host | Full | Full | Dev/dry-run only; emits `agentrunway.blocker` with `severity=warn` per run. |
 | `fs_scope` | Same UID, chdir + path allowlist | Restricted to worktree + repo-declared allowlist | Full | Default for hosts without OS sandbox. Enforced by adapter wrapper that rejects absolute paths outside the allowlist before exec. |
-| `net_blocked` | Same UID | `fs_scope` | Blocked except declared egress (see `network_egress` below) | Default when `worktree.network: blocked` is set in `kao.yaml`. |
+| `net_blocked` | Same UID | `fs_scope` | Blocked except declared egress (see `network_egress` below) | Default when `worktree.network: blocked` is set in `agentrunway.yaml`. |
 | `full_sandbox` | OS sandbox (`bwrap`, `sandbox-exec`, container) | Mounted worktree only | Per-policy | Required for `risk: high` tasks unless explicitly waived. |
 
 Each adapter reports its **maximum** supported tier in
@@ -793,7 +793,7 @@ Each adapter reports its **maximum** supported tier in
 `unsupported_sandbox_tier` before dispatch — never silently downgrades.
 
 Secrets passthrough: environment variables are not forwarded to workers by
-default. `kao.yaml` declares an allowlist:
+default. `agentrunway.yaml` declares an allowlist:
 
 ```yaml
 secrets_passthrough:
@@ -806,7 +806,7 @@ process only; they are never written into prompts, packets, or artifacts.
 The runner redacts any literal match of a passthrough value from worker
 stdout/stderr before persisting to artifacts.
 
-Network egress allowlist for `net_blocked` is declared in `kao.yaml`:
+Network egress allowlist for `net_blocked` is declared in `agentrunway.yaml`:
 
 ```yaml
 worktree:
@@ -870,7 +870,7 @@ runner has no live `WorkerHandle` in memory after a crash; it constructs a
 worker_id, worktree_path, started_at, packet_hash)` — and hands that to the
 adapter. The adapter validates that the process is still alive (`kill(pid, 0)`
 plus optional session ping), that `worktree_path` exists and is owned by the
-expected `kao_run_id`, and that the session's `packet_hash` (if reported)
+expected `agentrunway_run_id`, and that the session's `packet_hash` (if reported)
 matches the persisted one. On success it returns a live `WorkerHandle` and
 resumes polling; on failure it raises `ReattachFailed` and the runner falls
 back to cancel-and-retry, charging the attempt against the retry budget.
@@ -925,8 +925,8 @@ for the watchdog — `token_count`, `message_count`, or `none`.
 ## 8. Model Profiles
 
 Model assignment is first-class state. Defaults must be explicit, printed at run
-start, persisted in SQLite, and emitted to AgentLens in `kws.kao.run_started`
-and `kws.kao.worker_dispatched`.
+start, persisted in SQLite, and emitted to AgentLens in `agentrunway.run_started`
+and `agentrunway.worker_dispatched`.
 
 ### 8.1 Default Profiles
 
@@ -951,7 +951,7 @@ Interpretation:
 The skill invocation should accept concise overrides:
 
 ```text
-[$kws-agent-orchestrator] plan=plans/auth.md spec=specs/auth.md
+[$agent-runway] plan=plans/auth.md spec=specs/auth.md
   runtime=codex
   model_profile=codex-default
 ```
@@ -994,10 +994,10 @@ verifier_reasoning=high
 
 ### 8.3 Config File
 
-For repeatability, KAO also reads a repo-local optional config:
+For repeatability, AgentRunway also reads a repo-local optional config:
 
 ```yaml
-# kao.yaml
+# agentrunway.yaml
 default_profile: codex-default
 profiles:
   codex-default:
@@ -1025,7 +1025,7 @@ profiles:
 Precedence:
 
 ```text
-invocation args > kao.yaml > built-in profile defaults
+invocation args > agentrunway.yaml > built-in profile defaults
 ```
 
 If a runtime cannot honor a requested model or reasoning level, the adapter must
@@ -1055,7 +1055,7 @@ during the Codex GPT-5.5 rollout window. Adapter mapping table:
 If the runtime cannot honor `highest` (e.g. Claude lacks an `xhigh` tier),
 the adapter selects the closest supported level and records the mapping in
 `workers.reasoning_effort_resolved`. Mapping is **not** silent downgrade: the
-runner emits `kws.kao.worker_dispatched` with both requested and resolved
+runner emits `agentrunway.worker_dispatched` with both requested and resolved
 levels. Refusal (halt with `unsupported_model_assignment`) is reserved for
 values the adapter cannot map at all.
 
@@ -1114,12 +1114,12 @@ trust them at face value. After a worker returns:
    ```bash
    # post-commit tree: last commit in the sequence
    git worktree add --detach \
-     ~/.kao/runs/.../verify/<task_id>/post \
+     ~/.agentrunway/runs/.../verify/<task_id>/post \
      <commits[-1]>
 
    # pre-commit tree: parent of the first commit in the sequence
    git worktree add --detach \
-     ~/.kao/runs/.../verify/<task_id>/pre \
+     ~/.agentrunway/runs/.../verify/<task_id>/pre \
      <commits[0]>^
    ```
 
@@ -1144,30 +1144,30 @@ audit into trusted evidence. Re-execution uses the same `sandbox_tier` and
 
 ## 10. AgentLens Integration
 
-AgentLens is the observability and evaluation layer, not KAO's execution source
+AgentLens is the observability and evaluation layer, not AgentRunway's execution source
 of truth.
 
 ```text
-KAO SQLite DB = execution state
+AgentRunway SQLite DB = execution state
 AgentLens = append-only timeline, evidence, failures, evaluation surface
 ```
 
 ### 10.1 Run Lifecycle
 
-At KAO run start:
+At AgentRunway run start:
 
 ```bash
 agentlens run-open \
-  --agent kws-kao-orchestrator \
+  --agent kws-agentrunway-orchestrator \
   --workspace "$WORKTREE_ABS" \
-  --meta kao_run_id="$KAO_RUN_ID" \
+  --meta agentrunway_run_id="$AGENTRUNWAY_RUN_ID" \
   --meta plan_hash="$PLAN_HASH" \
   --meta spec_hash="$SPEC_HASH"
 ```
 
 The returned AgentLens run id is stored in `runs.agentlens_run_id`.
 
-At KAO run close:
+At AgentRunway run close:
 
 ```bash
 agentlens run-close \
@@ -1178,7 +1178,7 @@ agentlens run-close \
 
 AgentLens outcome mapping:
 
-| KAO Outcome | AgentLens Outcome |
+| AgentRunway Outcome | AgentLens Outcome |
 | --- | --- |
 | `finished` | `success` |
 | `failed` | `failed` |
@@ -1188,42 +1188,42 @@ AgentLens outcome mapping:
 
 ### 10.2 Event Namespace
 
-The namespace prefix is configurable. Default is `kws.kao`; override via
-`agentlens.namespace_prefix` in `kao.yaml` for users with a different
-identity. The suffix after the prefix is fixed by KAO and listed below.
+The namespace prefix is configurable. Default is `agentrunway`; override via
+`agentlens.namespace_prefix` in `agentrunway.yaml` for users with a different
+identity. The suffix after the prefix is fixed by AgentRunway and listed below.
 
-KAO uses only the new namespace:
+AgentRunway uses only the new namespace:
 
 ```text
-kws.kao.run_started
-kws.kao.task_planned
-kws.kao.file_claimed
-kws.kao.wave_started
-kws.kao.worker_dispatched
-kws.kao.superpowers_bootstrapped
-kws.kao.worker_result
-kws.kao.review_result
-kws.kao.verification_result
-kws.kao.merge_queued
-kws.kao.merge_applied
-kws.kao.worker_rejected
-kws.kao.method_audit_violation
-kws.kao.context_snapshot
-kws.kao.watchdog_event
-kws.kao.blocker
-kws.kao.run_finished
+agentrunway.run_started
+agentrunway.task_planned
+agentrunway.file_claimed
+agentrunway.wave_started
+agentrunway.worker_dispatched
+agentrunway.superpowers_bootstrapped
+agentrunway.worker_result
+agentrunway.review_result
+agentrunway.verification_result
+agentrunway.merge_queued
+agentrunway.merge_applied
+agentrunway.worker_rejected
+agentrunway.method_audit_violation
+agentrunway.context_snapshot
+agentrunway.watchdog_event
+agentrunway.blocker
+agentrunway.run_finished
 ```
 
-No `kws-cpe.*`, `kws-cme.*`, or `kws.orchestrator.*` events are emitted by KAO.
+No `kws-cpe.*`, `kws-cme.*`, or `kws.orchestrator.*` events are emitted by AgentRunway.
 
 ### 10.3 Payload Envelope
 
-All KAO events use a compact payload:
+All AgentRunway events use a compact payload:
 
 ```json
 {
-  "schema": "kws.kao.event.v1",
-  "kao_run_id": "auth-refactor-20260520-151000",
+  "schema": "agentrunway.event.v1",
+  "agentrunway_run_id": "auth-refactor-20260520-151000",
   "phase": "implementation",
   "task_id": "task_003",
   "worker_id": "worker_007",
@@ -1238,7 +1238,7 @@ All KAO events use a compact payload:
     "kind": "test",
     "status": "passed",
     "command_hash": "sha256:5e2c8b3d1a7f4e90c6b2d8e1f0a9c3b7d4e6f2a8c1b5d9e0a7f3c2b6d8e1f4a0",
-    "artifact_ref": "kao://runs/archive-a13f9c2b/auth-refactor-20260520-151000/artifacts/task_003/test_excerpt.txt"
+    "artifact_ref": "agentrunway://runs/archive-a13f9c2b/auth-refactor-20260520-151000/artifacts/task_003/test_excerpt.txt"
   },
   "privacy": {
     "absolute_paths": "redacted",
@@ -1270,14 +1270,14 @@ This keeps:
 - failed workers from polluting AgentLens with untrusted payloads.
 
 Worker child runs are configurable. The MVP default is parent-only: one
-AgentLens run per KAO execution, with `task_id` and `worker_id` distinguishing
-worker events. If `agentlens_child_runs=on`, KAO may open child runs for workers
+AgentLens run per AgentRunway execution, with `task_id` and `worker_id` distinguishing
+worker events. If `agentlens_child_runs=on`, AgentRunway may open child runs for workers
 after parent-only emission is stable. Child run failures follow the same
 best-effort policy and must never block execution.
 
 ### 10.5 AgentLens Failure Policy
 
-AgentLens failure must never stop KAO execution.
+AgentLens failure must never stop AgentRunway execution.
 
 The runner records emit attempts in SQLite:
 
@@ -1301,14 +1301,14 @@ Worker results are machine-readable first:
 
 ```json
 {
-  "schema": "kws.kao.worker_result.v1",
+  "schema": "agentrunway.worker_result.v1",
   "worker_id": "worker_007",
   "task_id": "task_003",
   "role": "implementer",
   "status": "success",
   "changed_files": ["src/auth/session.ts", "tests/auth/session.test.ts"],
   "commits": ["abc1234", "def5678"],
-  "branch": "kao/auth-refactor-20260520-151000/task_003-implementer-001",
+  "branch": "agentrunway/auth-refactor-20260520-151000/task_003-implementer-001",
   "summary": "Implemented retry handling.",
   "commands_run": [
     {
@@ -1331,7 +1331,7 @@ since the wave base. A worker that follows TDD typically produces two:
 red-test commit then green-implementation commit. Single-commit workers
 still use the array (length 1). The merge queue (§6.9) cherry-picks the
 sequence as a unit; method-audit re-execution (§9.1) extracts pre-commit
-state from `commits[0]^` and post-commit state from `commits[-1]`; `kao
+state from `commits[0]^` and post-commit state from `commits[-1]`; `agentrunway
 apply --strategy cherry-pick` (§13.4) iterates over each entry.
 
 Malformed output is a worker failure, not a runner failure. The runner may retry
@@ -1345,7 +1345,7 @@ checks with per-check evidence. "All good" with no checks is rejected.
 
 ```json
 {
-  "schema": "kws.kao.review_result.v1",
+  "schema": "agentrunway.review_result.v1",
   "worker_id": "worker_009",
   "task_id": "task_003",
   "reviewed_worker_id": "worker_007",
@@ -1369,7 +1369,7 @@ checks with per-check evidence. "All good" with no checks is rejected.
 - `changes_requested` — at least one finding with `severity ∈ {block,
   warn}`; `findings` MUST be non-empty. The worker is sent back for retry
   within a **separate review-round budget** of `1` round by default
-  (`review.max_rounds` in `kao.yaml`), independent of the implementer
+  (`review.max_rounds` in `agentrunway.yaml`), independent of the implementer
   retry budget in §12. A review round does *not* consume one of the
   implementer's 2 failure retries — those are reserved for malformed
   output, timeouts, and infra failures. The two budgets compose: an
@@ -1395,10 +1395,10 @@ tamper-evident within the local trust boundary.
 
 ### 11.2 Verification Result Schema
 
-`kws.kao.verification_result.v1` follows the same shape as review but with
+`agentrunway.verification_result.v1` follows the same shape as review but with
 verification-specific check ids (`acceptance_commands_passed`,
 `no_new_lints`, `no_new_typescript_errors`, etc.) defined per language stack
-in `kao.yaml`.
+in `agentrunway.yaml`.
 
 ## 12. Failure Handling
 
@@ -1408,23 +1408,23 @@ in `kao.yaml`.
 | Unsupported model assignment | Halt before dispatch |
 | Worker timeout | Cancel worker, record failure, retry within budget |
 | Runner crash mid-wave | On resume, reattach surviving workers if `supports_reattach=true`; else cancel orphans and retry within budget |
-| Host session crash, runner alive | Runner continues to completion; on next host invocation, `kao status --run <id>` resumes visibility |
+| Host session crash, runner alive | Runner continues to completion; on next host invocation, `agentrunway status --run <id>` resumes visibility |
 | Unsupported sandbox tier | Halt before dispatch with `unsupported_sandbox_tier`; never silently downgrade |
 | Worker malformed JSON | Retry once with schema reminder; then reject |
 | Missing superpowers audit | Reject worker; emit method audit violation |
 | Out-of-scope diff | Reject worker; do not merge |
-| Merge conflict | Auto-resolve is never attempted. The runner aborts the cherry-pick sequence (no partial merges), discards the worker branch's commits from this wave, and schedules a *re-implementation* of the same task in a new follow-up wave whose base is the current `kao/<run_id>/main` HEAD (i.e. post-conflict). The re-implementation gets a fresh packet, fresh worker, and `attempt += 1`. It is a re-dispatch, not a re-cherry-pick. If the same task hits a merge conflict on its retry, the runner halts with `recurring_merge_conflict` and surfaces the conflicting paths plus both attempts' diffs as artifacts. |
+| Merge conflict | Auto-resolve is never attempted. The runner aborts the cherry-pick sequence (no partial merges), discards the worker branch's commits from this wave, and schedules a *re-implementation* of the same task in a new follow-up wave whose base is the current `agentrunway/<run_id>/main` HEAD (i.e. post-conflict). The re-implementation gets a fresh packet, fresh worker, and `attempt += 1`. It is a re-dispatch, not a re-cherry-pick. If the same task hits a merge conflict on its retry, the runner halts with `recurring_merge_conflict` and surfaces the conflicting paths plus both attempts' diffs as artifacts. |
 | Verification failure | Return to implementer retry if root cause clear; else halt with evidence |
 | AgentLens unavailable | Continue with `agentlens_status=degraded` |
 | SQLite write failure | Halt; execution state is unsafe |
 | Worktree creation failure | Halt; do not run in source checkout |
-| Orphan verify worktree (§9.1) | On runner crash between `git worktree add --detach` and `git worktree remove`, the verify worktree is left behind. The global registry (§5.2) records each verify-worktree path on creation; `kao clean` and `kao resume` both scan the registry, prune entries whose owner run is no longer live, and `git worktree remove --force` the orphans. |
+| Orphan verify worktree (§9.1) | On runner crash between `git worktree add --detach` and `git worktree remove`, the verify worktree is left behind. The global registry (§5.2) records each verify-worktree path on creation; `agentrunway clean` and `agentrunway resume` both scan the registry, prune entries whose owner run is no longer live, and `git worktree remove --force` the orphans. |
 | Worktree or branch name collision | Generate a new nonce; halt if registry metadata is inconsistent |
-| Dirty source checkout at `kao run` | Halt with `dirty_source_checkout` unless `--allow-dirty-source` set |
+| Dirty source checkout at `agentrunway run` | Halt with `dirty_source_checkout` unless `--allow-dirty-source` set |
 | Context threshold crossed | Snapshot, compact if supported, rotate if needed |
 | Stuck permission prompt | Nudge or cancel according to adapter policy; never auto-approve destructive operations |
 | Budget exceeded | Emit warning by default; pause only when `budget_action=pause` |
-| Cost extract unavailable | Record `cost_extract=missing` per worker; if `budget_action != off` and >50% of workers in a run lack cost data, emit `kws.kao.blocker` with `severity=warn` once and continue (budget enforcement falls back to token-count estimates if reported, else disabled for the run) |
+| Cost extract unavailable | Record `cost_extract=missing` per worker; if `budget_action != off` and >50% of workers in a run lack cost data, emit `agentrunway.blocker` with `severity=warn` once and continue (budget enforcement falls back to token-count estimates if reported, else disabled for the run) |
 | Adapter rate limit / transient API error | Exponential backoff, count against retry budget |
 | Runtime API quota exhausted | Pause new dispatches for the affected runtime; surface `runtime_quota_exhausted`; resume on operator action |
 
@@ -1445,24 +1445,24 @@ The host does **not** stream worker transcripts. It reads only:
 
 1. The runner's stdout summary (one line per wave start/finish, plus the
    final report).
-2. `kao status --run <run_id>` on demand.
+2. `agentrunway status --run <run_id>` on demand.
 
 This keeps the host's context usage proportional to the report size, not to
 worker output size. For very long runs the user may detach (`Ctrl+Z`/`bg`
-or invoke with `--detach`) and reattach later via `kao status`.
+or invoke with `--detach`) and reattach later via `agentrunway status`.
 
 ### 13.2 Invocation
 
 Skill invocation:
 
 ```text
-[$kws-agent-orchestrator] plan=plans/auth.md spec=specs/auth.md
+[$agent-runway] plan=plans/auth.md spec=specs/auth.md
 ```
 
 Runner equivalent:
 
 ```bash
-python3 scripts/kao.py run \
+python3 scripts/agentrunway.py run \
   --plan plans/auth.md \
   --spec specs/auth.md \
   --model-profile codex-default \
@@ -1474,24 +1474,24 @@ python3 scripts/kao.py run \
 ### 13.3 Status and Lifecycle
 
 ```bash
-python3 scripts/kao.py status --run <run_id>
-python3 scripts/kao.py inspect --run <run_id> --task task_003
-python3 scripts/kao.py events --run <run_id>
-python3 scripts/kao.py resume --run <run_id>
-python3 scripts/kao.py cancel --run <run_id>
-python3 scripts/kao.py apply --run <run_id> [--strategy cherry-pick|merge|patch]
-python3 scripts/kao.py clean --older-than 7d --successful
+python3 scripts/agentrunway.py status --run <run_id>
+python3 scripts/agentrunway.py inspect --run <run_id> --task task_003
+python3 scripts/agentrunway.py events --run <run_id>
+python3 scripts/agentrunway.py resume --run <run_id>
+python3 scripts/agentrunway.py cancel --run <run_id>
+python3 scripts/agentrunway.py apply --run <run_id> [--strategy cherry-pick|merge|patch]
+python3 scripts/agentrunway.py clean --older-than 7d --successful
 ```
 
-`kao status` prints: run id, plan slug, current wave, per-task state
+`agentrunway status` prints: run id, plan slug, current wave, per-task state
 (pending/dispatched/reviewing/verifying/merged/failed/blocked), open blockers,
 merge queue depth, AgentLens link. It must fit in ~30 lines for a typical
 multi-wave run.
 
-### 13.4 `kao apply` Semantics
+### 13.4 `agentrunway apply` Semantics
 
 `apply` copies the accepted run from
-`~/.kao/worktrees/<workspace_id>/<run_id>/main` into the user's source
+`~/.agentrunway/worktrees/<workspace_id>/<run_id>/main` into the user's source
 checkout. Defaults:
 
 - `--strategy cherry-pick` (default): cherry-picks each accepted worker's
@@ -1501,12 +1501,12 @@ checkout. Defaults:
   any commit in a worker's sequence conflicts, `apply` aborts the entire
   sequence before modifying the working tree (per the conflict-handling
   rule below), not just the offending commit.
-- `--strategy merge`: produces a merge commit from `kao/<run_id>/main`.
+- `--strategy merge`: produces a merge commit from `agentrunway/<run_id>/main`.
 - `--strategy patch`: writes a single combined patch to stdout for review.
 
 Conflict handling: on conflict, `apply` stops *before* modifying the working
 tree (uses `--no-commit` + abort), prints the conflicting paths, and exits
-non-zero. The source checkout is never left in a half-merged state by KAO.
+non-zero. The source checkout is never left in a half-merged state by AgentRunway.
 
 `apply` refuses if the source checkout is dirty unless `--allow-dirty-target`
 is set.
@@ -1549,14 +1549,14 @@ is set.
 - Resource lock conflict serializes otherwise independent tasks.
 - Watchdog rejects a stalled worker after the configured action ladder.
 - Host session crashes mid-run: runner continues to completion; reattaching
-  via `kao status` shows accurate final state.
-- Dirty source checkout: `kao run` halts unless `--allow-dirty-source` set.
+  via `agentrunway status` shows accurate final state.
+- Dirty source checkout: `agentrunway run` halts unless `--allow-dirty-source` set.
 - Lockfile reconcile: two tasks add dependencies in the same wave; runner
   strips per-worker lockfile writes and applies a single reconcile commit.
 - `shared_append` validator rejects an overlapping append from two workers.
 - Method-audit deterministic re-execution catches a fabricated green
   evidence file (post-commit tree actually fails the test).
-- SQLite concurrency: two `kao run` invocations against unrelated repos
+- SQLite concurrency: two `agentrunway run` invocations against unrelated repos
   proceed without contention; same-runtime quota semaphore caps total
   concurrent workers.
 - Reasoning-effort mapping: requesting `highest` on a runtime that maxes at
@@ -1587,7 +1587,7 @@ is set.
 - Stale semaphore slot: a runner crashes while holding a runtime slot; a
   subsequent acquirer detects the dead `holder_pid` and reclaims the
   slot without operator intervention.
-- `kao clean --reclaim-locks` reclaims slots for dead holders without
+- `agentrunway clean --reclaim-locks` reclaims slots for dead holders without
   acquiring a fresh slot.
 
 ### 14.3 End-to-End Fixtures
@@ -1613,13 +1613,13 @@ Minimum fixtures:
 
 MVP includes:
 
-- `kws-agent-orchestrator` skill.
+- `agent-runway` skill.
 - Python runner.
 - SQLite control plane.
 - Claude adapter.
 - Codex adapter.
 - Local fake adapter for tests.
-- Plan/spec markdown parser with `kao-task` block schema and content hashing.
+- Plan/spec markdown parser with `agentrunway-task` block schema and content hashing.
 - Task packet builder.
 - File claim validator with `owned` / `shared_append` / `consumes` /
   `read_only` / `forbidden` modes.
@@ -1638,33 +1638,33 @@ MVP includes:
   services). True isolation requires `full_sandbox` (OS sandbox via
   `bwrap`/`sandbox-exec`/container) which remains opt-in. This limitation
   is documented in `references/runtime-adapters.md` and surfaced in
-  `kws.kao.run_started` payloads as `sandbox_enforcement=best_effort` when
+  `agentrunway.run_started` payloads as `sandbox_enforcement=best_effort` when
   `fs_scope` is used.
 - Secrets passthrough allowlist with stdout/stderr redaction.
 - Merge queue.
-- Lockfile reconcile step per wave with `kao.yaml` configuration.
+- Lockfile reconcile step per wave with `agentrunway.yaml` configuration.
 - Reviewer/verifier janitor gates.
 - Superpowers method audit enforcement with runner-side deterministic
   re-execution of red/green evidence.
-- AgentLens `kws.kao.*` emission.
+- AgentLens `agentrunway.*` emission.
 - CLI status/inspect/resume.
 - Adapter `supports_reattach` negotiation on resume after runner crash.
-- Explicit `apply_to_source=off` default with `kao apply --run <run_id>`.
+- Explicit `apply_to_source=off` default with `agentrunway apply --run <run_id>`.
 - Worktree naming collision avoidance and registry checks.
-- `.kao-worktreeinclude` for opt-in ignored-file copying.
+- `.agentrunway-worktreeinclude` for opt-in ignored-file copying.
 - Context snapshot, compaction, and rotation policy (host session only).
 - Watchdog for stalled workers and context overflow.
 - SQLite-mediated worker communication.
 - Resource locks for non-file shared resources.
 - Cleanup and retention commands with secret-aware redaction on disk.
-- Review/verification result schemas (`kws.kao.review_result.v1`,
-  `kws.kao.verification_result.v1`) with required per-check evidence.
+- Review/verification result schemas (`agentrunway.review_result.v1`,
+  `agentrunway.verification_result.v1`) with required per-check evidence.
 - Reasoning-effort abstraction and per-runtime mapping table.
-- Per-runtime concurrency semaphore at `~/.kao/locks/<runtime>.sem`.
+- Per-runtime concurrency semaphore at `~/.agentrunway/locks/<runtime>.sem`.
 - `--allow-dirty-source` / `--base-ref` / `--detach` invocation flags.
-- `kao apply` with `cherry-pick` / `merge` / `patch` strategies and
+- `agentrunway apply` with `cherry-pick` / `merge` / `patch` strategies and
   conflict-safe abort.
-- Schema versioning policy (§19) with `kao_version` and `schema_version`
+- Schema versioning policy (§19) with `agentrunway_version` and `schema_version`
   recorded per SQLite row.
 
 MVP excludes:
@@ -1683,7 +1683,8 @@ MVP excludes:
 
 These decisions are accepted for implementation planning:
 
-1. **Canonical name:** `kws-agent-orchestrator`, alias `kao`.
+1. **Canonical name:** `AgentRunway`; filesystem skill name `agent-runway`;
+   CLI and Python package identifier `agentrunway`.
 2. **MVP host targets:** Claude Code and Codex CLI/App hosts, with CLI/headless
    adapters as the stable execution path.
 3. **Codex App `spawn_agent`:** optional optimization only; correctness must not
@@ -1691,7 +1692,7 @@ These decisions are accepted for implementation planning:
 4. **Default runtime behavior:** same runtime as orchestrator unless the user
    explicitly sets `worker_runtime=mixed` or a role-specific override.
 5. **Worker AgentLens child runs:** configurable; default parent-only.
-6. **UI timing:** no KAO web UI in MVP.
+6. **UI timing:** no AgentRunway web UI in MVP.
 7. **Merge strategy:** worker commit plus cherry-pick; patch apply fallback.
 8. **High-risk approval:** autonomous by default; halt for destructive
    operations, missing acceptance criteria, and out-of-repo file claims.
@@ -1699,13 +1700,13 @@ These decisions are accepted for implementation planning:
    `budget_action=warn|pause|off`; default `warn`.
 10. **Superpowers failure policy:** hard reject for all roles, including
     read-only reviewer and verifier roles.
-11. **Config file name:** `kao.yaml`.
+11. **Config file name:** `agentrunway.yaml`.
 12. **Legacy observability:** no CPE/CME event emission or state import in MVP.
 13. **Source checkout policy:** default `apply_to_source=off`; explicit apply
     required.
 14. **Worktree naming:** use workspace identity hashing, run nonce, branch/path
     registry, and collision checks before creation.
-15. **Worktree env copying:** `.kao-worktreeinclude` opt-in only.
+15. **Worktree env copying:** `.agentrunway-worktreeinclude` opt-in only.
 16. **Watchdog:** included in MVP for context overflow, stalled workers, dead
     sessions, permission prompts, and repeated malformed output.
 17. **Context management:** bounded summaries, artifact refs, snapshots,
@@ -1714,7 +1715,7 @@ These decisions are accepted for implementation planning:
 19. **Audit integrity:** SHA-256 artifact hashes recorded in SQLite provide
     *tamper-evidence within the local trust boundary* (corruption or
     accidental modification is detectable). They are not a cryptographic
-    integrity guarantee: any actor with write access to `~/.kao` can rewrite
+    integrity guarantee: any actor with write access to `~/.agentrunway` can rewrite
     both the artifact and its hash. External integrity (HMAC chain, append-
     only remote store) is post-MVP.
 20. **Cleanup/retention:** successful worktrees retained 7 days by default;
@@ -1731,7 +1732,7 @@ These decisions are accepted for implementation planning:
     run on dirty source unless `--allow-dirty-source`.
 25. **Reviewer/verifier:** must return concrete per-check evidence;
     empty-check approvals are rejected.
-26. **Global workspace registry:** `~/.kao/registry.sqlite` is the
+26. **Global workspace registry:** `~/.agentrunway/registry.sqlite` is the
     cross-workspace authority for collision detection and orphan-worktree
     discovery. Per-workspace SQLite is not sufficient on its own.
 27. **Reviewer status enum:** `approved | changes_requested | rejected`.
@@ -1746,7 +1747,7 @@ These decisions are accepted for implementation planning:
     `worker.default_timeout_seconds` (1800s). The watchdog enforces it.
 30. **Merge-conflict resolution policy:** on cherry-pick conflict, the
     runner discards the worker's commits and re-dispatches the *task* with
-    a fresh worker against the post-conflict `kao/<run_id>/main`. This is
+    a fresh worker against the post-conflict `agentrunway/<run_id>/main`. This is
     a deliberate trade — re-running the implementation costs tokens but
     preserves determinism (no LLM-driven conflict resolution, no manual
     intervention loop). A second conflict halts the run with
@@ -1767,7 +1768,7 @@ system stable state, replayability, and low context use.
 
 The second key choice is to treat runtime adapters as replaceable. Claude,
 Codex, Gemini, and Aider differ in model controls, session management, JSON
-output reliability, cost extraction, and mid-task messaging. KAO should not hide
+output reliability, cost extraction, and mid-task messaging. AgentRunway should not hide
 those differences; it should negotiate capabilities and halt when a requested
 profile cannot be honored.
 
@@ -1788,7 +1789,7 @@ conversation.
 
 This design is ready for implementation planning when:
 
-- The user approves the greenfield KAO direction.
+- The user approves the greenfield AgentRunway direction.
 - The default model profiles are accepted.
 - The approved policy decisions in section 16 are accepted.
 - The implementation plan scopes MVP only, leaving UI and additional adapters
@@ -1796,15 +1797,15 @@ This design is ready for implementation planning when:
 
 ## 19. Schema Versioning Policy
 
-KAO declares versioned schemas for every cross-component data shape:
+AgentRunway declares versioned schemas for every cross-component data shape:
 
 | Schema | Version |
 | --- | --- |
-| `kws.kao.task_packet` | `v1` |
-| `kws.kao.worker_result` | `v1` |
-| `kws.kao.review_result` | `v1` |
-| `kws.kao.verification_result` | `v1` |
-| `kws.kao.event` | `v1` |
+| `agentrunway.task_packet` | `v1` |
+| `agentrunway.worker_result` | `v1` |
+| `agentrunway.review_result` | `v1` |
+| `agentrunway.verification_result` | `v1` |
+| `agentrunway.event` | `v1` |
 
 Evolution rules:
 
@@ -1813,11 +1814,11 @@ Evolution rules:
    must default unspecified fields. Consumers must tolerate unknown fields.
 2. **Required-field changes**, **removed fields**, or **semantic shifts**
    (e.g. changing `status` value meaning) require a new major version
-   (`v2`). Old and new are accepted in parallel for at least one minor KAO
+   (`v2`). Old and new are accepted in parallel for at least one minor AgentRunway
    release.
-3. **Deprecation** is announced via a `kws.kao.blocker` event with
+3. **Deprecation** is announced via a `agentrunway.blocker` event with
    `severity=warn` on first encounter per run.
-4. The runner records `kao_version` and per-schema `schema_version` on every
+4. The runner records `agentrunway_version` and per-schema `schema_version` on every
    SQLite row so historical runs remain replayable against their original
    semantics.
 

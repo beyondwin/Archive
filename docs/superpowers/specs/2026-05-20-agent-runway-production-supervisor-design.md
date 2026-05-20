@@ -1,14 +1,14 @@
-# Design: KWS Agent Orchestrator Production Supervisor
+# Design: AgentRunway Production Supervisor
 
 Date: 2026-05-20
 Status: Draft for user review
 Owner: KWS
-Parent Design: `docs/superpowers/specs/2026-05-20-kws-agent-orchestrator-design.md`
-Parent Plan: `docs/superpowers/plans/2026-05-20-kws-agent-orchestrator.md`
+Parent Design: `docs/superpowers/specs/2026-05-20-agent-runway-design.md`
+Parent Plan: `docs/superpowers/plans/2026-05-20-agent-runway.md`
 
 ## 1. Summary
 
-Upgrade `kws-agent-orchestrator` (`KAO`) from an MVP runner with local/fake
+Upgrade `agent-runway` (`AgentRunway`) from an MVP runner with local/fake
 execution and Codex/Claude command wrappers into a production supervisor for
 Codex and Claude workers.
 
@@ -24,7 +24,7 @@ Core target flow:
 
 ```text
 plan/spec
-  -> KAO runner
+  -> AgentRunway runner
   -> SQLite run state
   -> deterministic task waves
   -> worker worktrees
@@ -32,17 +32,17 @@ plan/spec
   -> worker_result / review_result / verification_result artifacts
   -> diff and method audit validation
   -> review and verification gates
-  -> merge queue cherry-pick into kao/<run_id>/main
-  -> optional kao apply into source checkout
+  -> merge queue cherry-pick into agentrunway/<run_id>/main
+  -> optional agentrunway apply into source checkout
 ```
 
-The host session remains thin. It shells out to `scripts/kao.py`, surfaces
+The host session remains thin. It shells out to `scripts/agentrunway.py`, surfaces
 status, and does not coordinate workers from conversation context.
 
 ## 2. Goals
 
-- `kao run --adapter codex` launches real Codex CLI workers.
-- `kao run --adapter claude` launches real Claude CLI/headless workers.
+- `agentrunway run --adapter codex` launches real Codex CLI workers.
+- `agentrunway run --adapter claude` launches real Claude CLI/headless workers.
 - Runtime adapters supervise process lifecycle, not just build command arrays.
 - Every implementation attempt runs in an isolated worker worktree.
 - Worker output is accepted only through validated JSON artifacts and git
@@ -53,9 +53,9 @@ status, and does not coordinate workers from conversation context.
   validation, review, and verification pass.
 - Runner crash or host interruption can be resumed from SQLite and filesystem
   state.
-- `kao apply --run <run_id>` applies accepted run-main commits into the source
+- `agentrunway apply --run <run_id>` applies accepted run-main commits into the source
   checkout with conflict-safe rollback behavior.
-- AgentLens `kws.kao.*` events reflect runner-validated facts, not untrusted
+- AgentLens `agentrunway.*` events reflect runner-validated facts, not untrusted
   worker claims.
 
 ## 3. Non-Goals
@@ -69,6 +69,9 @@ status, and does not coordinate workers from conversation context.
   best-effort: workers run from the worktree and post-run diff checks reject
   committed writes outside allowed claims.
 - No automatic source checkout modification. Source apply is explicit.
+- No legacy naming compatibility. Pre-AgentRunway skill, CLI, package, state,
+  branch, schema, and event surfaces are removed rather than retained as
+  aliases.
 
 ## 4. Scope Decision
 
@@ -171,15 +174,15 @@ Each task attempt receives its own branch and worktree:
 
 ```text
 source checkout
-  -> kao/<run_id>/main
-    -> kao/<run_id>/<task_id>-implementer-001
-    -> kao/<run_id>/<task_id>-reviewer-001
-    -> kao/<run_id>/<task_id>-verifier-001
+  -> agentrunway/<run_id>/main
+    -> agentrunway/<run_id>/<task_id>-implementer-001
+    -> agentrunway/<run_id>/<task_id>-reviewer-001
+    -> agentrunway/<run_id>/<task_id>-verifier-001
 ```
 
 Implementation attempt flow:
 
-1. Runner creates `kao/<run_id>/main` from the selected base commit.
+1. Runner creates `agentrunway/<run_id>/main` from the selected base commit.
 2. Runner computes the current wave base commit.
 3. Runner creates a worker branch/worktree from that wave base.
 4. Runner writes task packet and prompt artifacts.
@@ -210,7 +213,7 @@ Merge candidates contain:
 Only candidates with valid result schema, passing method audit, in-scope diffs,
 approved review, and passed verification can enter `merge_ready`.
 
-Merge application uses cherry-pick into `kao/<run_id>/main` in deterministic
+Merge application uses cherry-pick into `agentrunway/<run_id>/main` in deterministic
 task/wave order. If cherry-pick conflicts:
 
 1. Abort the cherry-pick.
@@ -237,7 +240,7 @@ Reviewer output schema:
 
 ```json
 {
-  "schema": "kws.kao.review_result.v1",
+  "schema": "agentrunway.review_result.v1",
   "worker_id": "task_001-reviewer-001",
   "task_id": "task_001",
   "reviewed_worker_id": "task_001-implementer-001",
@@ -270,7 +273,7 @@ Verifier output schema:
 
 ```json
 {
-  "schema": "kws.kao.verification_result.v1",
+  "schema": "agentrunway.verification_result.v1",
   "worker_id": "task_001-verifier-001",
   "task_id": "task_001",
   "status": "passed",
@@ -321,7 +324,7 @@ dirty worker worktrees for retried attempts.
 
 ## 12. Resume
 
-`kao resume --run <run_id>` restores from SQLite, `run.json`, git refs, and
+`agentrunway resume --run <run_id>` restores from SQLite, `run.json`, git refs, and
 filesystem artifacts.
 
 Resume rules:
@@ -342,7 +345,7 @@ merge commits, or review attempts.
 
 ## 13. Apply to Source Checkout
 
-`kao apply --run <run_id>` applies accepted run-main commits to the source
+`agentrunway apply --run <run_id>` applies accepted run-main commits to the source
 checkout.
 
 Strategies:
@@ -357,27 +360,27 @@ Safety rules:
 - Dirty source checkout is refused by default.
 - Conflict aborts and restores the checkout to the pre-apply state.
 - Applied commit ids and strategy are written to SQLite.
-- A second `kao apply` is idempotent and reports already-applied commits.
+- A second `agentrunway apply` is idempotent and reports already-applied commits.
 
 ## 14. Observability and Artifacts
 
 Runner-owned event types:
 
 ```text
-kws.kao.run_started
-kws.kao.worker_dispatched
-kws.kao.worker_result
-kws.kao.worker_rejected
-kws.kao.review_result
-kws.kao.verification_result
-kws.kao.merge_applied
-kws.kao.run_finished
+agentrunway.run_started
+agentrunway.worker_dispatched
+agentrunway.worker_result
+agentrunway.worker_rejected
+agentrunway.review_result
+agentrunway.verification_result
+agentrunway.merge_applied
+agentrunway.run_finished
 ```
 
 Local artifact layout:
 
 ```text
-~/.kao/runs/<workspace_id>/<run_id>/
+~/.agentrunway/runs/<workspace_id>/<run_id>/
   state.sqlite
   run.json
   packets/
@@ -421,7 +424,7 @@ Required eval scenarios:
 - reviewer `changes_requested` triggers an implementer retry.
 - verifier `failed` triggers retry or blocked status according to policy.
 - resume from `running` state does not duplicate workers.
-- `kao apply` refuses dirty source checkout.
+- `agentrunway apply` refuses dirty source checkout.
 - AgentLens unavailable records local event evidence and does not stop the run.
 
 Real Codex/Claude smoke tests should be opt-in because they spend model
@@ -429,9 +432,9 @@ capacity and depend on local CLI authentication.
 
 ## 16. Acceptance Criteria
 
-- `kao run --adapter codex` uses the Codex process adapter path, not
+- `agentrunway run --adapter codex` uses the Codex process adapter path, not
   `LocalAdapter`.
-- `kao run --adapter claude` uses the Claude process adapter path, not
+- `agentrunway run --adapter claude` uses the Claude process adapter path, not
   `LocalAdapter`.
 - Worker stdout/stderr are saved in runner logs.
 - Worker result JSON is parsed from a runner-specified output path.
@@ -455,8 +458,8 @@ largest expected changes are:
 - extend `db.py` for attempts, handles, logs, retries, review, verification,
   and applied commits,
 - extend `merge_queue.py` for candidate status and conflict retry,
-- implement real `kao apply`,
+- implement real `agentrunway apply`,
 - add fake CLI fixtures for deterministic adapter tests.
 
-Backward compatibility for `--adapter local --fake-success` should remain so
-the MVP smoke path stays fast and deterministic.
+The deterministic `--adapter local --fake-success` smoke path should remain so
+tests stay fast and repeatable.
