@@ -9,6 +9,34 @@ from .models import RESULT_SCHEMA, TASK_PACKET_SCHEMA, TaskPacket, TaskSpec
 
 
 DEFAULT_FORBIDDEN_GLOBS = (".git/**", "graphify-out/**", ".agentrunway/**")
+DEFAULT_CONTEXT_BUDGET_CHARS = 60000
+
+
+def _context_budget_status(estimated_chars: int, max_chars: int) -> str:
+    if estimated_chars > max_chars:
+        return "red"
+    if estimated_chars > int(max_chars * 0.8):
+        return "yellow"
+    return "green"
+
+
+def _estimate_context_chars(task: TaskSpec, spec_refs: list[dict[str, str]]) -> int:
+    total = len(task.objective or task.title)
+    total += sum(len(str(ref.get("id", ""))) + len(str(ref.get("title", ""))) + len(str(ref.get("text", ""))) for ref in spec_refs)
+    total += sum(len(value) for value in task.dependencies)
+    total += sum(len(claim.path) + len(claim.mode) for claim in task.file_claims)
+    total += sum(len(value) for value in task.required_skills)
+    total += sum(len(value) for value in task.acceptance_commands)
+    return total
+
+
+def _context_budget(task: TaskSpec, spec_refs: list[dict[str, str]], max_chars: int = DEFAULT_CONTEXT_BUDGET_CHARS) -> dict[str, int | str]:
+    estimated_chars = _estimate_context_chars(task, spec_refs)
+    return {
+        "estimated_chars": estimated_chars,
+        "max_chars": max_chars,
+        "status": _context_budget_status(estimated_chars, max_chars),
+    }
 
 
 def build_task_packet(run_id: str, task: TaskSpec, spec_refs: list[dict[str, str]], profile: ModelProfile) -> TaskPacket:
@@ -29,6 +57,7 @@ def build_task_packet(run_id: str, task: TaskSpec, spec_refs: list[dict[str, str
         acceptance_commands=task.acceptance_commands,
         output_schema=RESULT_SCHEMA,
         model_assignment=model,
+        context_budget=_context_budget(task, spec_refs),
     )
 
 
