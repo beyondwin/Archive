@@ -125,3 +125,44 @@ def test_inspect_payload_and_format_include_next_action(tmp_path: Path) -> None:
 
     assert payload["next_action"] == "apply or inspect artifacts"
     assert "next_action=apply or inspect artifacts" in text
+
+
+def test_inspect_payload_includes_diagnosis(tmp_path: Path) -> None:
+    from agentrunway.db import AgentRunwayDb
+    from agentrunway.status import build_inspect_payload
+
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    run_json = {
+        "run_id": "run_001",
+        "status": "finished",
+        "run_dir": str(run_dir),
+        "state_db": str(run_dir / "state.sqlite"),
+        "tasks": [],
+    }
+
+    payload = build_inspect_payload(run_json=run_json, db=db)
+
+    assert payload["diagnosis"]["status"] == "finished"
+    assert payload["diagnosis"]["next_action"] == "apply or inspect artifacts"
+
+
+def test_format_run_status_prefers_diagnosis_next_action() -> None:
+    from agentrunway.status import format_run_status
+
+    text = format_run_status(
+        {
+            "run_id": "run_001",
+            "status": "blocked",
+            "diagnosis": {
+                "status": "blocked_by_gate",
+                "reason": "gate_budget_exhausted",
+                "next_action": "agentrunway inspect --run run_001",
+            },
+            "agentlens": {"last_status": "agentlens_emitted"},
+        }
+    )
+
+    assert "diagnosis=blocked_by_gate" in text
+    assert "reason=gate_budget_exhausted" in text
+    assert "next_action=agentrunway inspect --run run_001" in text
