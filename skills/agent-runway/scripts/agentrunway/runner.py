@@ -854,7 +854,6 @@ def run(args: Any) -> dict[str, Any]:
         "agentrunway.contract_created",
         build_event_payload(run_id, "contract", "success", "contract created", contract_path=str(contract_path)),
     )
-    write_artifact_graph(run_dir=run_dir, db=db)
     profile = cfg.profiles[cfg.default_profile]
     packet_paths: list[Path] = []
     packet_summary: list[dict[str, Any]] = []
@@ -881,6 +880,7 @@ def run(args: Any) -> dict[str, Any]:
             }
         )
         db.insert_packet(task.task_id, hashlib.sha256(packet_json.encode()).hexdigest(), str(prompt_path), packet_json)
+    write_artifact_graph(run_dir=run_dir, db=db)
     waves = schedule_waves(tasks)
     run_json = {
         "run_id": run_id,
