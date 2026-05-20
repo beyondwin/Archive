@@ -14,6 +14,26 @@ from .models import AGENTLENS_EVENT_SCHEMA, AGENTRUNWAY_VERSION, EVENT_SCHEMA
 
 SECRET_KEYS = {"token", "api_key", "secret", "password"}
 MAX_EVENT_PAYLOAD_BYTES = 3500
+AGENTLENS_EVENT_PHASES = {
+    "run",
+    "contract",
+    "worker",
+    "review",
+    "verification",
+    "retry",
+    "quality",
+    "merge",
+    "resume",
+    "apply",
+    "finish",
+}
+AGENTLENS_PHASE_ALIASES = {
+    "agentlens": "run",
+    "artifacts": "contract",
+    "gate": "retry",
+    "planning": "run",
+    "simulation": "worker",
+}
 
 
 def redact_payload(payload: Any) -> Any:
@@ -55,6 +75,12 @@ def _trust_impact(outcome: str, payload: dict[str, Any]) -> str:
 
 def _list_or_empty(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _agentlens_phase(value: Any) -> str:
+    phase = str(value or "run")
+    phase = AGENTLENS_PHASE_ALIASES.get(phase, phase)
+    return phase if phase in AGENTLENS_EVENT_PHASES else "run"
 
 
 def _bound_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -124,12 +150,10 @@ def build_agentlens_event_envelope(
         "event_id": f"evt_{event_id:06d}",
         "run_id": run_id,
         "event_type": event_type,
-        "type": event_type,
         "producer": {"name": "agentrunway", "version": AGENTRUNWAY_VERSION},
         "occurred_at": timestamp,
-        "ts": timestamp,
         "sequence": event_id,
-        "phase": str(payload.get("phase") or "unknown"),
+        "phase": _agentlens_phase(payload.get("phase")),
         "outcome": outcome,
         "severity": str(payload.get("severity") or "info"),
         "evidence_refs": _list_or_empty(payload.get("evidence_refs")),
@@ -141,7 +165,7 @@ def build_agentlens_event_envelope(
     for key in ("task_id", "attempt_id", "candidate_id", "gate_id"):
         value = payload.get(key)
         if value is not None:
-            event[key] = value
+            event[key] = str(value)
     return event
 
 
