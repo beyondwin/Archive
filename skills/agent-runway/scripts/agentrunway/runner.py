@@ -24,6 +24,7 @@ from .git_ops import Git, assert_clean_source
 from .merge_queue import MergeCandidate, MergeConflictError, apply_candidate
 from .packetizer import build_task_packet, materialize_prompt, materialize_worker_prompt, packet_to_json
 from .plan_parser import canonical_hash, parse_plan, parse_spec_manifest
+from .reconciliation import apply_reconciliation_plan, plan_reconciliation
 from .scheduler import schedule_waves
 from .supervisor import run_implementer_attempt
 from .worktrees import create_main_worktree, next_available_run_id, workspace_id
@@ -273,16 +274,20 @@ def events(run_id: str) -> dict[str, Any]:
     return {"run_id": run_id, "events": db.list_events(), "agentlens": db.agentlens_summary()}
 
 
-def resume(run_id: str) -> dict[str, Any]:
+def resume(run_id: str, *, dry_run: bool = False) -> dict[str, Any]:
     data = _load_run_json(run_id)
     if data is None:
         return _missing(run_id)
-    terminal = data.get("status") in {"finished", "cancelled"}
+    db = AgentRunwayDb.open(Path(data["state_db"]))
+    plan = plan_reconciliation(run_id=run_id, run_dir=Path(data["run_dir"]), db=db)
+    if dry_run:
+        return plan
+    apply_reconciliation_plan(db=db, plan=plan)
     return {
         "run_id": run_id,
         "status": data.get("status"),
         "run_dir": data.get("run_dir"),
-        "resumed": not terminal,
+        "reconciliation": plan,
     }
 
 
