@@ -809,13 +809,17 @@ def reconstruct_run_json(*, run_id: str, run_dir: Path) -> dict[str, Any]:
     state_db = run_dir / "state.sqlite"
     reconstructed_from = ["run.json"]
     if not state_db.exists():
+        # Do NOT return a state_db path that does not exist; callers will
+        # AgentRunwayDb.open(path) and inadvertently create an empty SQLite
+        # file as a side effect. Summarize must treat this as terminal.
         return {
             "run_id": run_id,
             "status": "missing",
             "run_dir": str(run_dir),
-            "state_db": str(state_db),
+            "state_db": None,
             "tasks": [],
             "reconstructed_from": reconstructed_from,
+            "recovery": "no_state_sqlite",
         }
     db = AgentRunwayDb.open(state_db)
     run = db.get_run(run_id)
@@ -842,6 +846,16 @@ def build_run_summary(*, run_json: dict[str, Any], db: AgentRunwayDb, event_tail
         for task in tasks
         if str(task.get("status")) == "blocked"
     ]
+    ranked_events = [
+        event.get("payload", {})
+        for event in db.list_events()
+        if event.get("event_type") == "agentrunway.candidate_ranked"
+    ]
+    selected_ids = {
+        int(payload.get("selected_candidate_id"))
+        for payload in ranked_events
+        if payload.get("selected_candidate_id") is not None
+    }
     summary = {
         "run_id": run_json.get("run_id"),
         "status": run_json.get("status"),
@@ -852,7 +866,7 @@ def build_run_summary(*, run_json: dict[str, Any], db: AgentRunwayDb, event_tail
         "selected_candidates": [
             candidate
             for candidate in db.list_merge_candidates()
-            if candidate.get("status") in {"merge_ready", "merged"}
+            if int(candidate.get("id", -1)) in selected_ids or candidate.get("status") == "merged"
         ],
         "blocked_tasks": blocked_tasks,
         "quality_decisions": [
@@ -921,9 +935,22 @@ def summarize(run_id: str) -> dict[str, Any]:
     data = _load_run_json_or_reconstruct(run_id)
     if data is None:
         return _missing(run_id)
+    state_db = data.get("state_db")
+    if not state_db or not Path(str(state_db)).exists():
+        # Short-circuit: do not open a non-existent sqlite path, which would
+        # create an empty database as a side effect. Return a labeled
+        # no-recoverable-state payload instead.
+        return {
+            "run_id": data.get("run_id") or run_id,
+            "status": "missing",
+            "run_dir": data.get("run_dir"),
+            "reconstructed_from": data.get("reconstructed_from", []),
+            "recovery": data.get("recovery", "no_state_sqlite"),
+            "next_action": "no recoverable state; inspect run_dir manually",
+        }
     from .run_summary import build_run_summary
 
-    db = AgentRunwayDb.open(Path(str(data["state_db"])))
+    db = AgentRunwayDb.open(Path(str(state_db)))
     return build_run_summary(run_json=data, db=db)
 ```
 
@@ -1284,6 +1311,34 @@ Modify `skills/agent-runway/scripts/agentrunway/db.py`:
         self.conn.commit()
 ```
 
+- [ ] **Step 4b: Wire `register_worktree` into supervisor**
+
+The `worktree_registry` table already exists in `db.py` but no caller populates
+it. Without registration, every lifecycle setter call no-ops and the
+lifecycle-aware retention branch added below is dead code. Add registration at
+the single creation site so all roles get a row with `lifecycle="active"`.
+
+Modify `skills/agent-runway/scripts/agentrunway/supervisor.py` in
+`run_worker_attempt`, immediately after `create_worker_worktree(...)`:
+
+```python
+    worker_tree = create_worker_worktree(git, worktree_root / "workers" / worker_id, branch, base_commit)
+    db.register_worktree(
+        path=str(worker_tree),
+        workspace_id=str(run_id.split("/")[0]) if "/" in str(run_id) else "default",
+        run_id=run_id,
+        branch=branch,
+        lifecycle="active",
+    )
+```
+
+Pass the supervisor a real `workspace_id` if it already plumbs one; if not,
+fall back to the value the runner uses for the run main worktree. The exact
+value matters less than having a row keyed by `path`. Add a regression
+assertion in `test_worker_worktrees.py` (or extend an existing
+`test_supervisor_state.py` case) that, after `run_worker_attempt`, the
+registry contains a row for the new path with `lifecycle="active"`.
+
 - [ ] **Step 5: Make retention lifecycle-aware**
 
 Modify `skills/agent-runway/scripts/agentrunway/retention.py` so worktrees with
@@ -1507,6 +1562,80 @@ For v1, keep using `run_worker_attempt` for reviewers even in diff mode. The
 next implementation can replace diff-mode reviewer execution with a no-worktree
 adapter path. This task must establish the review mode contract and escalation
 signals first.
+
+The reviewer prompt must explicitly list `needs_context` as a valid status
+alongside `approved`, `changes_requested`, and `rejected`, otherwise reviewers
+will never emit it and the escalation in Step 5b is unreachable. Add the
+reviewer-only sentence in the prompt body listing all four statuses.
+
+- [ ] **Step 5b: Add `needs_context` escalation in the runner**
+
+Schema acceptance is not enough. `runner.py` currently routes every
+non-`approved` review status through `gate_retry_decision`, which would
+treat `needs_context` as a normal retry or block. The design requires a
+one-shot full-tree re-dispatch when a reviewer returns `needs_context` for a
+candidate. Repeated `needs_context` collapses to the normal block path.
+
+Modify `skills/agent-runway/scripts/agentrunway/runner.py` in the review
+branch, before the `gate_retry_decision` call:
+
+```python
+                if review_status == "needs_context":
+                    already_escalated = any(
+                        worker.get("task_id") == task.task_id
+                        and worker.get("role") == "reviewer"
+                        and (worker.get("handle_json") or {}).get("review_mode") == "full_tree"
+                        for worker in db.list_workers()
+                    )
+                    if not already_escalated:
+                        journal.record(
+                            "agentrunway.review_escalated",
+                            build_event_payload(
+                                run_id,
+                                "review",
+                                "partial",
+                                "reviewer requested full-tree escalation",
+                                task_id=task.task_id,
+                                worker_id=str(candidate["worker_id"]),
+                            ),
+                        )
+                        _, escalation_attempt = next_worker_id(db=db, task_id=task.task_id, role="reviewer")
+                        review = run_reviewer_attempt(
+                            db=db,
+                            run_id=run_id,
+                            git=git,
+                            worktree_root=worktree_root,
+                            run_dir=run_dir,
+                            task=task,
+                            adapter=adapter,
+                            runtime=runtime,
+                            model=model,
+                            reasoning_effort=reasoning_effort,
+                            reviewed_worker_id=str(candidate["worker_id"]),
+                            candidate_diff=diff,
+                            candidate_commits=tuple(candidate["commits"]),
+                            attempt=escalation_attempt,
+                            timeout_seconds=600,
+                            force_full_tree=True,
+                        )
+                        review_status = str(review["status"])
+                        if review_status == "approved":
+                            # fall through to verifier dispatch as if first review approved
+                            pass
+```
+
+This requires a `force_full_tree: bool = False` parameter on
+`run_reviewer_attempt` that, when true, bypasses
+`should_create_reviewer_worktree` and emits the prompt with
+`review_mode="full_tree"`. The track-via-`handle_json` heuristic above is a
+v1 mechanism; a follow-up should persist `review_mode` as a column on
+`workers` so the escalation-already-used check is not a JSON probe.
+
+Cover this in `evals/test_reviewer_lifecycle.py` with one new test that
+constructs a fake reviewer returning `needs_context` first and `approved` on
+the escalated full-tree pass, then asserts a single
+`agentrunway.review_escalated` event is recorded and that the candidate
+proceeds to the verifier dispatch.
 
 - [ ] **Step 6: Keep verifier candidate-head visibility**
 
@@ -1794,6 +1923,34 @@ git commit -m "docs: document AgentRunway hybrid worktrees"
 ```
 
 ---
+
+## Audit Notes (2026-05-20)
+
+A code audit of `skills/agent-runway/scripts/agentrunway/` against this plan
+surfaced the items below. Tasks above already absorb the high-signal items
+(registry wiring in Task 5, `needs_context` escalation in Task 6, summary
+short-circuit and ranked-event-based `selected_candidates` in Task 3). The
+remaining items are pre-existing defects that should not be quietly absorbed
+into this slice's PR. Track them separately:
+
+- `runner.cancel()` rewrites `run.json` with `status="cancelled"` but never
+  calls `db.set_run_status(run_id, "cancelled")`. DB drifts from disk.
+- The `status` payload exposes the AgentLens disabled notice only inside the
+  human-readable string from `format_run_status`. JSON consumers cannot
+  detect "AgentLens disabled" without substring matching. Add a structured
+  `agentlens_notice` field at the status payload level.
+- `worktree_registry` schema is in `db.py` but no production code populates
+  it. Without the Task 5 wiring step, lifecycle setters and the
+  lifecycle-aware retention branch are dead code.
+- Preflight v1 covers adapter-binary presence, git identity, git common-dir
+  access, and write probes for run_dir and worktree_parent. The design's
+  full bullet list (sandbox write to `.git/worktrees`, actual trial commit
+  inside a scratch worktree, adapter-specific env var presence) is post-v1.
+  Make `PreflightResult` declare the surface it actually checked so summary
+  output can warn when preflight is partial.
+- This slice does not actually skip reviewer worktree creation in diff mode;
+  it routes through `run_worker_attempt` unchanged. The disk/process savings
+  for reviewers land in a follow-up no-worktree adapter slice.
 
 ## Final Completion Checklist
 

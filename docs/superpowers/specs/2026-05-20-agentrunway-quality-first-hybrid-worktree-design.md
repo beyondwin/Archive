@@ -193,10 +193,20 @@ previous gate feedback when retrying
 Default reviewer mode:
 
 ```text
-diff-review, no git worktree
+diff-review
 ```
 
-Escalate to an ephemeral reviewer worktree when any condition is true:
+v1 scope note: the supervisor still creates a worker worktree for the reviewer
+process in diff mode so the existing `run_worker_attempt` path remains the
+single execution primitive. The diff-mode reviewer reads the candidate diff
+from its packet context and must not claim full-tree review. A follow-up
+slice replaces diff-mode reviewer execution with a no-worktree adapter path;
+that is the only way the "no git worktree" target from earlier drafts is
+actually achieved. Until that lands, the resource win in this slice comes
+from lifecycle-aware retention plus ephemeral verifier cleanup, not from
+skipping reviewer worktree creation.
+
+Escalate to a full-tree reviewer worktree when any condition is true:
 
 - task risk is `high`;
 - candidate diff is above the configured line threshold;
@@ -209,11 +219,13 @@ Escalate to an ephemeral reviewer worktree when any condition is true:
 
 Rules:
 
-- Reviewer without a worktree cannot claim full-tree review in
-  `review_result.json`.
+- Reviewer in diff mode cannot claim full-tree review in `review_result.json`.
 - Reviewer result must include `review_mode`: `diff` or `full_tree`.
-- If reviewer returns `needs_context`, runner performs one escalation to
-  full-tree review instead of treating it as a terminal failure.
+- `needs_context` is a first-class review status. The runner must treat it as
+  an explicit escalation request, not a gate failure: on the first occurrence
+  for a candidate, the runner re-dispatches a reviewer with `review_mode`
+  forced to `full_tree` instead of routing through the standard retry gate.
+  Repeated `needs_context` collapses to a normal blocked outcome.
 - Full-tree reviewer worktrees are ephemeral unless they uncover a failure
   requiring postmortem retention.
 
@@ -433,6 +445,14 @@ Before dispatch, each runtime adapter should verify:
 - required environment variables are present.
 
 Preflight failure blocks before model calls.
+
+v1 scope note: the first slice covers adapter-binary presence, git identity,
+git common-dir access, and write probes for the run directory and worktree
+parent. The remaining bullets (sandbox write to `.git/worktrees`, actual
+trial commit inside a scratch worktree, env var presence per adapter) are
+followups. Track which preflight surface is implemented in the
+`PreflightResult` so summaries can note when partial preflight is in
+effect.
 
 ### 10.3 Plan Lint
 
@@ -659,7 +679,83 @@ deep_inspect_required_for_raw_logs = true
 These defaults favor quality before efficiency: risky work still gets richer
 review, and verification always runs against real files.
 
-## 16. Final Recommendation
+## 16. Implementation Audit Notes (2026-05-20)
+
+A code audit against `skills/agent-runway/scripts/agentrunway/` produced the
+following invariants and known gaps. These should be preserved across future
+slices; ignoring them silently re-introduces the issues this design exists
+to prevent.
+
+### 16.1 Worktree Registry Wiring
+
+`db.py` already declares the `worktree_registry` table, but no production code
+populates it. Adding lifecycle setters without a `register_worktree` call site
+inside `supervisor.run_worker_attempt` leaves both the lifecycle policy and
+the lifecycle-aware retention path as dead code. The lifecycle slice must
+include the registration wiring, not only the setter helpers, or the
+hybrid-worktree behavior is unobservable in the database.
+
+### 16.2 Reviewer Diff-Mode Worktree Still Created in v1
+
+This slice does not actually remove reviewer worktrees. The reviewer process
+still runs through `run_worker_attempt`, which always creates a worker
+worktree. The diff-mode contribution in v1 is the `review_mode` field, the
+escalation policy, and the prompt restriction against claiming full-tree
+findings. The disk and process savings expected from "no git worktree" land
+only when a no-worktree reviewer adapter path is implemented in a follow-up
+slice. The design body §6.3 has been updated to say this explicitly.
+
+### 16.3 Runner-Side `needs_context` Escalation
+
+Accepting `needs_context` in `validate_review_result` is necessary but not
+sufficient. The runner's review branch in `runner.py` currently routes any
+non-`approved` status through `gate_retry_decision`, so a literal compliance
+with the schema change would still treat `needs_context` as a normal retry
+or terminal block. The reviewer lifecycle slice must add a one-shot
+re-dispatch path that forces `review_mode="full_tree"` and bypasses the
+implementer retry gate. Repeated `needs_context` then collapses to a block.
+
+### 16.4 Summary `selected_candidates` Semantics
+
+The summary builder draft enumerates all candidates with status in
+`{merge_ready, merged}`. That is the merge-queue projection, not the
+ranking-selected candidate. For multi-candidate (high-risk) tasks this would
+report both implementer candidates as "selected." The summary must either
+read the `agentrunway.candidate_ranked` event payload and project the
+`selected_candidate_id`, or filter to `status == "merged"` once merging is
+the only source of truth for selection. Either choice is fine; doing
+neither is wrong.
+
+### 16.5 Missing `state.sqlite` Side Effect in Summarize
+
+When `run.json` is missing and `state.sqlite` is also missing, the
+reconstruction fallback returns a `state_db` string that points at a
+non-existent file. Callers (`summarize`, `status`, `inspect`) then call
+`AgentRunwayDb.open`, which creates an empty SQLite file as a side effect.
+This conflicts with the goal that summary commands are read-only diagnostic
+tools. Summarize must short-circuit when the SQLite file does not exist and
+return a clearly-labeled "no recoverable state" payload instead of
+materializing an empty database.
+
+### 16.6 Pre-existing Defects Out of Scope
+
+These defects are visible from the audit but are not in this slice's path.
+They should be tracked separately rather than absorbed by a hybrid-worktree
+PR that already has a wide blast radius:
+
+- `runner.cancel()` rewrites `run.json` with `status="cancelled"` but never
+  calls `db.set_run_status(run_id, "cancelled")`. The DB drifts from the
+  on-disk run document.
+- `format_run_status` does not yet expose the AgentLens disabled notice as a
+  structured field on the status payload, only inside the rendered string.
+  Downstream tools that consume the JSON cannot detect "AgentLens disabled"
+  without parsing the human-readable suffix.
+- Adapter handle JSON is passed to `db.update_worker_handle` as a dict in
+  some adapters and as a JSON string in others; this is not a regression
+  introduced by this slice but should be normalized when the timing slice
+  touches `mark_worker_started`.
+
+## 17. Final Recommendation
 
 Use AgentRunway's current worktree-per-implementer model as the foundation.
 Do not replace it with a shared task worktree. Shared task worktrees would make
