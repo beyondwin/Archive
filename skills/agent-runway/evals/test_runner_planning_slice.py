@@ -40,6 +40,7 @@ def test_agentrunway_run_planning_only_creates_state(git_repo: Path, isolated_ho
         check=True,
     )
     assert "planning_only" in result.stdout
+    payload = json.loads(result.stdout)
     db_path = next(isolated_home.glob("runs/*/*/state.sqlite"))
     run_dir = db_path.parent
     packet_path = run_dir / "packets" / "task_001.json"
@@ -50,3 +51,14 @@ def test_agentrunway_run_planning_only_creates_state(git_repo: Path, isolated_ho
     packet = json.loads(packet_path.read_text(encoding="utf-8"))
     assert packet["task_id"] == "task_001"
     assert packet["spec_refs"][0]["id"] == "S1.1"
+    assert payload["artifacts"]["contract"] == str(run_dir / "contract.json")
+    assert payload["artifacts"]["packets"] == [str(packet_path)]
+    assert payload["packet_summary"] == [
+        {
+            "task_id": "task_001",
+            "path": str(packet_path),
+            "context_budget": packet["context_budget"],
+            "spec_ref_count": 1,
+            "allowed_write_glob_count": 1,
+        }
+    ]

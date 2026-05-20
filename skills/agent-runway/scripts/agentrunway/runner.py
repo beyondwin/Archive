@@ -856,6 +856,8 @@ def run(args: Any) -> dict[str, Any]:
     )
     write_artifact_graph(run_dir=run_dir, db=db)
     profile = cfg.profiles[cfg.default_profile]
+    packet_paths: list[Path] = []
+    packet_summary: list[dict[str, Any]] = []
     for task in tasks:
         db.upsert_task(task)
         packet = build_task_packet(
@@ -868,6 +870,16 @@ def run(args: Any) -> dict[str, Any]:
         packet_json = packet_to_json(packet)
         packet_path = run_dir / "packets" / f"{task.task_id}.json"
         packet_path.write_text(packet_json, encoding="utf-8")
+        packet_paths.append(packet_path)
+        packet_summary.append(
+            {
+                "task_id": task.task_id,
+                "path": str(packet_path),
+                "context_budget": dict(packet.context_budget),
+                "spec_ref_count": len(packet.spec_refs),
+                "allowed_write_glob_count": len(packet.allowed_write_globs),
+            }
+        )
         db.insert_packet(task.task_id, hashlib.sha256(packet_json.encode()).hexdigest(), str(prompt_path), packet_json)
     waves = schedule_waves(tasks)
     run_json = {
@@ -879,6 +891,11 @@ def run(args: Any) -> dict[str, Any]:
         "repo_root": str(repo),
         "tasks": [asdict(task) for task in tasks],
         "waves": waves,
+        "artifacts": {
+            "contract": str(contract_path),
+            "packets": [str(path) for path in packet_paths],
+        },
+        "packet_summary": packet_summary,
     }
     _write_run_json(run_dir, run_json)
     if args.planning_only:
