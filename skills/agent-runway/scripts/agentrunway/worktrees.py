@@ -55,3 +55,11 @@ def create_main_worktree(git: Git, target: Path, run_id: str, base_commit: str) 
         raise RuntimeError(f"branch already exists: {branch}")
     git.run("worktree", "add", "-b", branch, str(target), base_commit)
     return target
+
+
+def create_worker_worktree(git: Git, target: Path, branch: str, base_ref: str) -> Path:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if branch_exists(git.root, branch):
+        raise RuntimeError(f"branch already exists: {branch}")
+    git.run("worktree", "add", "-b", branch, str(target), base_ref)
+    return target

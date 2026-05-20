@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import fnmatch
 from collections import defaultdict
 
 from .models import FileClaim, TaskSpec
 
 
 class ClaimConflictError(ValueError):
+    pass
+
+
+class DiffScopeError(ValueError):
     pass
 
 
@@ -38,3 +43,9 @@ def claims_by_path(tasks: list[TaskSpec]) -> dict[str, list[tuple[str, str]]]:
         for claim in task.file_claims:
             grouped[claim.path].append((task.task_id, claim.mode))
     return dict(grouped)
+
+
+def validate_changed_files(changed_files: tuple[str, ...], allowed_globs: tuple[str, ...]) -> None:
+    for path in changed_files:
+        if not any(fnmatch.fnmatch(path, pattern) for pattern in allowed_globs):
+            raise DiffScopeError(f"{path} is outside allowed write scope")
