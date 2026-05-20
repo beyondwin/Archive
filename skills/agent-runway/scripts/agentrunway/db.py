@@ -291,6 +291,13 @@ class AgentRunwayDb:
             workers.append(data)
         return workers
 
+    def count_worker_attempts(self, *, task_id: str, role: str) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) AS count FROM workers WHERE task_id=? AND role=?",
+            (task_id, role),
+        ).fetchone()
+        return int(row["count"])
+
     def enqueue_merge_candidate(
         self,
         *,
