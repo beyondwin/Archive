@@ -79,6 +79,8 @@ def build_inspect_payload(*, run_json: dict[str, Any], db: AgentRunwayDb) -> dic
     graph = build_artifact_graph(run_dir=run_dir, db=db)
     coverage_path = run_dir / "coverage.json"
     coverage = json.loads(coverage_path.read_text(encoding="utf-8")) if coverage_path.exists() else graph["coverage"]
+    if "implementation_evidence_coverage" not in coverage:
+        coverage["implementation_evidence_coverage"] = graph["coverage"].get("implementation_evidence_coverage", {})
     agentlens = db.agentlens_summary()
     diagnosis = diagnose_run(run_json=run_json, db=db).to_dict()
     durable = read_durable_projection(run_id=str(run_json.get("run_id")), db=db).to_dict()
@@ -142,8 +144,13 @@ def build_inspect_payload(*, run_json: dict[str, Any], db: AgentRunwayDb) -> dic
 def format_inspect_payload(payload: dict[str, Any]) -> str:
     agentlens = payload.get("agentlens", {})
     coverage = payload.get("coverage", {})
+    implementation_coverage = (
+        coverage.get("implementation_evidence_coverage", {}) if isinstance(coverage, dict) else {}
+    )
     diagnosis = payload.get("diagnosis", {})
     durable = payload.get("durable") if isinstance(payload.get("durable"), dict) else {}
+    planned = implementation_coverage.get("planned") or coverage.get("covered", [])
+    implemented = implementation_coverage.get("implemented", [])
     return (
         f"{payload.get('run_id')} status={payload.get('status')} "
         f"diagnosis={diagnosis.get('status')} "
@@ -151,6 +158,8 @@ def format_inspect_payload(payload: dict[str, Any]) -> str:
         f"tasks={len(payload.get('tasks', []))} "
         f"workers={len(payload.get('workers', []))} "
         f"covered={len(coverage.get('covered', []))} "
+        f"planned={len(planned)} "
+        f"implemented={len(implemented)} "
         f"blocked={len(coverage.get('blocked', []))} "
         f"projection={durable.get('projection_status')} "
         f"safe_wave={len(durable.get('safe_wave') or [])} "
