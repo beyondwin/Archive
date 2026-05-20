@@ -163,6 +163,7 @@ class TaskPacket:
     acceptance_commands: tuple[str, ...]
     output_schema: str
     model_assignment: ModelAssignment
+    context_budget: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

@@ -37,6 +37,33 @@ def test_packet_builder_records_write_policy_and_model_assignment() -> None:
     assert packet.allowed_write_globs == ("docs/usage.md",)
     assert ".git/**" in packet.forbidden_write_globs
     assert packet.model_assignment.runtime == "codex"
+    assert packet.context_budget["max_chars"] == 60000
+    assert packet.context_budget["status"] == "green"
+    assert packet.context_budget["estimated_chars"] > 0
+
+
+def test_packet_context_budget_marks_oversized_packets_red() -> None:
+    task = TaskSpec(
+        task_id="task_001",
+        title="Large",
+        risk="high",
+        phase="implementation",
+        dependencies=(),
+        spec_refs=("S1",),
+        file_claims=(FileClaim("src/large.py", "owned"),),
+        acceptance_commands=("pytest",),
+        objective="x" * 70000,
+    )
+
+    packet = build_task_packet(
+        "run-1",
+        task,
+        [{"id": "S1", "title": "Large Spec", "text": "body"}],
+        BuiltinProfiles.default()["codex-default"],
+    )
+
+    assert packet.context_budget["estimated_chars"] > packet.context_budget["max_chars"]
+    assert packet.context_budget["status"] == "red"
 
 
 def test_materialize_prompt_is_bounded_json(tmp_path: Path) -> None:
