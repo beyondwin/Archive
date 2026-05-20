@@ -168,6 +168,15 @@ Runtime-specific behavior:
 - Both runtimes are required to write the expected JSON artifact to the output
   path supplied by the runner.
 
+The exact `codex exec` and `claude -p` argv shapes are not part of this design.
+Codex and Claude CLI flags drift between releases (for example, `codex exec` exposes
+`-C, --cd` not `--cwd`, has no `--reasoning-effort` flag, and treats the trailing
+positional as prompt TEXT rather than a prompt path; `claude -p` similarly has no
+`--cwd` and takes the prompt as positional text). Each adapter is responsible for
+deriving the argv from the locally installed CLI's `--help` at construction time,
+for passing the prompt content (not the prompt file path), and for relying on the
+process supervisor's `cwd=` to pin the worker worktree rather than a CLI flag.
+
 ## 7. Worker Worktree Flow
 
 Each task attempt receives its own branch and worktree:
@@ -360,7 +369,12 @@ Safety rules:
 - Dirty source checkout is refused by default.
 - Conflict aborts and restores the checkout to the pre-apply state.
 - Applied commit ids and strategy are written to SQLite.
-- A second `agentrunway apply` is idempotent and reports already-applied commits.
+- A second `agentrunway apply` is idempotent: before each cherry-pick the runner
+  must filter the candidate commit list against `applied_commits` for the run
+  and skip anything already recorded, so a re-run is a true no-op and never
+  produces an empty cherry-pick or a duplicate commit on the source branch.
+  The CLI response includes both the freshly applied commits and the
+  already-applied set so callers can distinguish the two.
 
 ## 14. Observability and Artifacts
 
