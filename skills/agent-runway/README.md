@@ -18,6 +18,24 @@ python3 skills/agent-runway/scripts/agentrunway.py status --run <run_id>
 
 Use `--adapter local --fake-success` for deterministic end-to-end smoke runs without model calls.
 
+## Invocation Shortcuts
+
+The internal Python script remains supported, but normal use should go through
+the short resolver forms:
+
+```bash
+agentrunway run --topic <topic> --adapter codex
+agentrunway run --latest --adapter claude
+agentrunway status --last
+agentrunway inspect --last --json
+agentrunway apply --last
+```
+
+`--topic` resolves a complete Superpowers design/plan pair under
+`docs/superpowers/specs/` and `docs/superpowers/plans/`. Ambiguous topics fail
+before dispatch and print candidates. `--last` is scoped to the current
+workspace id, not the whole machine.
+
 ## Production Supervisor
 
 `agentrunway run --adapter codex` and `agentrunway run --adapter claude` launch worker
