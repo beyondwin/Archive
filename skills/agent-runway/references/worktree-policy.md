@@ -36,3 +36,11 @@ Before a non-selected implementer worktree becomes cleanup eligible,
 AgentRunway writes `commits.json`, `changed_files.json`, and `worker.json`
 under the candidate artifact directory. This preserves auditability after disk
 cleanup.
+
+## Checkpointed Run Main
+
+Run main is checkpointed after creation and after every selected candidate merge.
+Worker worktrees are created from the latest applicable run-main checkpoint.
+Dependent tasks must not start until every declared dependency has a successful
+checkpoint. This preserves isolation while ensuring later tasks see accepted
+earlier work.

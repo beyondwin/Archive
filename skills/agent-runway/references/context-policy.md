@@ -25,3 +25,12 @@ Use `agentrunway inspect --run <run_id> --json` for targeted diagnosis after
 summary mode identifies a blocked task, merge conflict, missing result, or
 quality gate failure. Deep inspect may include full worker rows, merge queue
 state, artifact graph coverage, quality decisions, and recovery actions.
+
+## Durable Summaries
+
+Normal host context uses `summarize`, which reports the latest checkpoint,
+activity graph counts, blocked node, failure class, next automatic action, and
+required human decision. The activity counts are scoped to the current
+`run_id`, so summaries remain meaningful when a SQLite state file is reused
+across resumed runs. Raw worker logs remain deep-inspection artifacts and
+should not be loaded into host context unless the summary points to them.
