@@ -10,6 +10,69 @@
 
 ---
 
+## Changes from Initial Draft (2026-05-20 review)
+
+A source audit against `skills/agent-runway/scripts/agentrunway/` and
+`skills/agent-runway/evals/` produced the following corrections. Each is
+folded into the task it belongs to; this list exists so a top-down reader
+sees the deltas without diffing the previous revision.
+
+1. **Spec manifest parsing — pick one (Task 1).** The first draft introduced
+   a parallel bullet-list parser (`parse_spec_manifest_sections`) that did
+   not match any existing fixture. All current specs (`evals/fixtures/*/spec.md`,
+   the four embedded specs in eval tests, and the design's own header layout)
+   use the heading-derived IDs (`S1.1`, `S2.1`) produced by the existing
+   `plan_parser.parse_spec_manifest`. Task 1 now reuses that parser
+   verbatim. No fixture or test changes are needed for the manifest format.
+2. **Implementer candidate state race (Task 6).** `run_implementer_attempt`
+   currently enqueues merge candidates with status `merge_ready`, and the
+   merge loop applies anything in that state. Inserting gates between the
+   implementer loop and the merge loop without changing the initial status
+   means the merge loop applies implementer commits before the reviewer ever
+   runs. The implementer attempt now enqueues with status `pending_review`,
+   and only a `passed` verifier promotes the candidate to `merge_ready`.
+3. **Reviewer/verifier env wiring (Task 6).** Adding `metadata` to
+   `WorkerSpec` is necessary but not sufficient; the fake CLIs read
+   `AGENTRUNWAY_REVIEWED_WORKER_ID`, `AGENTRUNWAY_FAKE_REVIEW_STATUS`, and
+   `AGENTRUNWAY_FAKE_VERIFY_STATUS` from env, and nothing populates them. The
+   plan now shows `run_reviewer_attempt`/`run_verifier_attempt` constructing
+   `WorkerSpec.metadata` with those keys before the adapter starts.
+4. **Production adapter `--spec` enforcement (Task 1).** The runner currently
+   accepts `--adapter codex` without `--spec`, which would crash inside the
+   new contract preflight. Task 1 adds an explicit guard in `runner.run`:
+   non-local adapters and non-planning-only runs require `--spec`.
+5. **`contract_path` column migration (Task 1).** `CREATE TABLE IF NOT EXISTS`
+   does not add new columns to pre-existing SQLite files, so adding
+   `contract_path` to the `runs` schema only helps fresh databases. Task 1
+   now adds a guarded `ALTER TABLE` step keyed off `PRAGMA table_info(runs)`.
+6. **Artifact graph test setup (Task 3).** The first draft's test wrote a
+   `worker_result.json` artifact but never created a `workers` row, so
+   `build_artifact_graph` could not produce the asserted
+   `task_001:task_001-implementer-001:worker_result` node. The test now
+   inserts the matching worker attempt before building the graph.
+7. **Reconciliation scope narrowed (Task 4).** The first draft promised
+   `abort_cherry_pick`, `retain_orphan`, and `block` actions in the resume
+   action plan example but only implemented `reconcile_forward` and `retry`.
+   Task 4 now explicitly scopes to those two actions and references the
+   design's updated S10 implementation-scope note. The remaining action
+   kinds are deferred and intentionally not invented by the planner.
+8. **`agentlens_events.local_recorded` removed.** The outbox writer only
+   produces `agentlens_disabled`, `agentlens_emitted`, and `agentlens_failed`.
+   Task 8 reference doc and the design now drop the unused fourth state.
+9. **Dead CLI flags removed (Task 6).** `--skip-review` and `--skip-verify`
+   in `invocation.py` lose their meaning the moment gates are mandatory.
+   Task 6 deletes them so they cannot mask future regressions.
+10. **Gate retry policy: block-on-fail only (Task 7).** Real implementer
+    redispatch with reviewer findings is deferred to a later slice (see the
+    design's updated S12). Task 7 collapses the dead `if/else` in the
+    changes_requested branch into a single block-with-evidence path and
+    notes the deferral.
+
+The order of tasks is unchanged. Tests, file claims, and acceptance commands
+are updated in place inside the task definitions below.
+
+---
+
 ## Source Documents
 
 - Design: `docs/superpowers/specs/2026-05-20-agent-runway-operations-hardening-design.md`
@@ -90,6 +153,12 @@ serial: true
 
 - [ ] **Step 1: Write failing contract preflight tests**
 
+The spec helper below mirrors the existing fixture format used across the
+repo (`evals/fixtures/*/spec.md`). Section IDs are derived by the existing
+`plan_parser.parse_spec_manifest` from heading depth, not from a bullet
+list. `## Summary` and `## Acceptance` produce IDs `S1.1` and `S1.2` under
+the `# Design: Example` root; the contract preflight reuses that parser.
+
 Create `skills/agent-runway/evals/test_contract_preflight.py`:
 
 ```python
@@ -107,18 +176,15 @@ from agentrunway.plan_parser import parse_plan
 def _write_spec(path: Path) -> None:
     path.write_text(
         "# Design: Example\n\n"
-        "## Spec Manifest\n\n"
-        "- S1: Summary\n"
-        "- S2: Acceptance\n\n"
-        "## S1. Summary\n\n"
+        "## Summary\n\n"
         "Build the feature.\n\n"
-        "## S2. Acceptance\n\n"
+        "## Acceptance\n\n"
         "The run SHALL verify the feature.\n",
         encoding="utf-8",
     )
 
 
-def _write_plan(path: Path, *, spec_ref: str = "S1", acceptance: str = "python -m pytest") -> None:
+def _write_plan(path: Path, *, spec_ref: str = "S1.1", acceptance: str = "python -m pytest") -> None:
     path.write_text(
         "## Task 1: Example\n\n"
         "```yaml agentrunway-task\n"
@@ -162,10 +228,11 @@ def test_build_run_contract_records_hashes_tasks_and_manifest(tmp_path: Path, gi
     assert contract.run_id == "run-1"
     assert contract.spec["path"] == str(spec)
     assert contract.plan["path"] == str(plan)
-    assert contract.spec["manifest_sections"] == {"S1": "Summary", "S2": "Acceptance"}
+    assert contract.spec["manifest_sections"]["S1.1"] == "Summary"
+    assert contract.spec["manifest_sections"]["S1.2"] == "Acceptance"
     assert contract.tasks[0]["task_id"] == "task_001"
-    assert contract.tasks[0]["spec_refs"] == ["S1"]
-    assert contract.coverage["unreferenced"] == ["S2"]
+    assert contract.tasks[0]["spec_refs"] == ["S1.1"]
+    assert contract.coverage["unreferenced"] == ["S1", "S1.2"]
 
 
 def test_contract_rejects_missing_spec_refs(tmp_path: Path, git_repo: Path) -> None:
@@ -237,7 +304,28 @@ def test_write_contract_creates_immutable_contract_json(tmp_path: Path, git_repo
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert path == run_dir / "contract.json"
     assert payload["run_id"] == "run-1"
-    assert payload["coverage"]["covered"] == ["S1"]
+    assert payload["coverage"]["covered"] == ["S1.1"]
+
+
+def test_build_run_contract_requires_spec_for_non_local_adapter(tmp_path: Path, git_repo: Path) -> None:
+    plan = git_repo / "plan.md"
+    _write_plan(plan)
+    tasks = parse_plan(plan)
+
+    with pytest.raises(ContractError, match="non-local adapter requires --spec"):
+        build_run_contract(
+            run_id="run-1",
+            workspace_id="workspace-1",
+            repo_root=git_repo,
+            spec_path=None,
+            plan_path=plan,
+            base_commit_sha="abc123",
+            tasks=tasks,
+            adapter="codex",
+            model_profile="default",
+            allow_dirty_source=False,
+            apply_to_source=False,
+        )
 ```
 
 - [ ] **Step 2: Run the failing contract tests**
@@ -292,40 +380,32 @@ class ReconciliationAction:
 
 - [ ] **Step 4: Implement `contract.py`**
 
+The implementation reuses the heading-based parser from `plan_parser.py` so
+section IDs match every existing fixture and worker prompt slice.
+
 Create `skills/agent-runway/scripts/agentrunway/contract.py`:
 
 ```python
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import asdict
 from pathlib import Path
 
 from .models import RunContract, TaskSpec
-from .plan_parser import canonical_hash
+from .plan_parser import canonical_hash, parse_spec_manifest
 
 
 class ContractError(ValueError):
     pass
 
 
-MANIFEST_ITEM_RE = re.compile(r"^-\s+(S[0-9]+(?:\.[0-9]+)?):\s+(.+?)\s*$")
-
-
 def parse_spec_manifest_sections(spec_path: Path) -> dict[str, str]:
-    sections: dict[str, str] = {}
-    in_manifest = False
-    for line in spec_path.read_text(encoding="utf-8").splitlines():
-        if line.strip() == "## Spec Manifest":
-            in_manifest = True
-            continue
-        if in_manifest and line.startswith("## ") and line.strip() != "## Spec Manifest":
-            break
-        if in_manifest:
-            match = MANIFEST_ITEM_RE.match(line.strip())
-            if match:
-                sections[match.group(1)] = match.group(2)
+    manifest = parse_spec_manifest(spec_path)
+    sections = {
+        section_id: data["title"]
+        for section_id, data in manifest["sections"].items()
+    }
     if not sections:
         raise ContractError(f"spec manifest is missing or empty: {spec_path}")
     return sections
@@ -368,12 +448,15 @@ def _validate_tasks(tasks: list[TaskSpec], manifest_sections: dict[str, str]) ->
     return {"covered": sorted(covered), "partial": [], "blocked": [], "unreferenced": unreferenced}, tuple(warnings)
 
 
+NON_LOCAL_ADAPTERS = {"codex", "claude"}
+
+
 def build_run_contract(
     *,
     run_id: str,
     workspace_id: str,
     repo_root: Path,
-    spec_path: Path,
+    spec_path: Path | None,
     plan_path: Path,
     base_commit_sha: str,
     tasks: list[TaskSpec],
@@ -382,18 +465,29 @@ def build_run_contract(
     allow_dirty_source: bool,
     apply_to_source: bool,
 ) -> RunContract:
-    manifest_sections = parse_spec_manifest_sections(spec_path)
-    coverage, warnings = _validate_tasks(tasks, manifest_sections)
+    if spec_path is None:
+        if adapter in NON_LOCAL_ADAPTERS:
+            raise ContractError(
+                f"non-local adapter requires --spec: adapter={adapter}"
+            )
+        manifest_sections: dict[str, str] = {}
+        coverage = {"covered": [], "partial": [], "blocked": [], "unreferenced": []}
+        warnings: tuple[str, ...] = ()
+        spec_entry: dict[str, object] = {"path": None, "hash": None, "manifest_sections": {}}
+    else:
+        manifest_sections = parse_spec_manifest_sections(spec_path)
+        coverage, warnings = _validate_tasks(tasks, manifest_sections)
+        spec_entry = {
+            "path": str(spec_path),
+            "hash": canonical_hash(spec_path),
+            "manifest_sections": manifest_sections,
+        }
     return RunContract(
         run_id=run_id,
         workspace_id=workspace_id,
         repo_root=str(repo_root),
         base_commit_sha=base_commit_sha,
-        spec={
-            "path": str(spec_path),
-            "hash": canonical_hash(spec_path),
-            "manifest_sections": manifest_sections,
-        },
+        spec=spec_entry,
         plan={
             "path": str(plan_path),
             "hash": canonical_hash(plan_path),
@@ -428,7 +522,23 @@ In `skills/agent-runway/scripts/agentrunway/db.py`, add a `contract_path` column
 contract_path TEXT,
 ```
 
-Place it after `spec_path TEXT`. Then add:
+Place it after `spec_path TEXT`. `CREATE TABLE IF NOT EXISTS` will not add
+columns to pre-existing SQLite files, so also extend `AgentRunwayDb.open` to
+run a guarded `ALTER TABLE` for older runs:
+
+```python
+    def _ensure_runs_contract_path_column(self) -> None:
+        columns = {
+            str(item["name"])
+            for item in self.conn.execute("PRAGMA table_info(runs)").fetchall()
+        }
+        if "contract_path" not in columns:
+            self.conn.execute("ALTER TABLE runs ADD COLUMN contract_path TEXT")
+            self.conn.commit()
+```
+
+Call `_ensure_runs_contract_path_column` from `open` right after
+`executescript(SCHEMA_SQL)`. Then add:
 
 ```python
     def set_run_contract_path(self, run_id: str, contract_path: str) -> None:
@@ -439,14 +549,12 @@ Place it after `spec_path TEXT`. Then add:
         self.conn.commit()
 ```
 
-Because tests create fresh SQLite databases, no migration alias is needed for old test DBs.
-
 - [ ] **Step 6: Wire contract creation into `runner.run`**
 
 In `skills/agent-runway/scripts/agentrunway/runner.py`, import:
 
 ```python
-from .contract import build_run_contract, write_contract
+from .contract import ContractError, build_run_contract, write_contract
 ```
 
 After `tasks = parse_plan(plan)` and before packet creation, add:
@@ -469,7 +577,12 @@ After `tasks = parse_plan(plan)` and before packet creation, add:
     db.set_run_contract_path(run_id, str(contract_path))
 ```
 
-If `spec` is optional for planning-only legacy paths, require `--spec` for production adapter runs and keep local planning-only tests by passing a generated minimal spec in their fixtures.
+The `--spec` requirement for production adapters is enforced inside
+`build_run_contract` (Step 4 of this task). Planning-only runs and the
+`local` adapter are still allowed to omit `--spec` because the contract
+falls back to an empty manifest in that case, and `_spec_slices` already
+returns `[]` for a missing spec. No existing fixture needs to grow a spec
+just for the contract step.
 
 - [ ] **Step 7: Run contract tests**
 
@@ -489,7 +602,10 @@ Run:
 cd skills/agent-runway && python -m pytest evals/test_runner_planning_slice.py evals/test_plan_parser.py -v
 ```
 
-Expected: all tests pass. If a planning fixture has no `## Spec Manifest`, update that fixture spec with `S1` matching its task `spec_refs`.
+Expected: all tests pass. Because the contract reuses the existing
+heading-based `parse_spec_manifest`, no fixture spec needs to gain a new
+`## Spec Manifest` section; existing `## Heading`-derived IDs (e.g. `S1.1`)
+remain valid.
 
 - [ ] **Step 9: Commit**
 
@@ -831,6 +947,19 @@ def test_artifact_graph_marks_contract_packet_result_and_merge_nodes(tmp_path: P
     (run_dir / "artifacts" / "task_001" / "task_001-implementer-001" / "worker_result.json").write_text("{}", encoding="utf-8")
     db = AgentRunwayDb.open(run_dir / "state.sqlite")
     db.upsert_task(_task())
+    db.create_worker_attempt(
+        worker_id="task_001-implementer-001",
+        task_id="task_001",
+        role="implementer",
+        runtime="codex",
+        model="gpt-5.5",
+        reasoning_effort="high",
+        attempt=1,
+        worktree_path=str(run_dir / "worker"),
+        branch="agentrunway/run-1/task_001-implementer-001",
+        state="merged",
+        handle_json={},
+    )
     db.enqueue_merge_candidate(
         task_id="task_001",
         worker_id="task_001-implementer-001",
@@ -1244,6 +1373,12 @@ Expected: FAIL with missing `agentrunway.reconciliation`.
 
 - [ ] **Step 3: Implement `reconciliation.py`**
 
+Scope for this slice is exactly two actions: `reconcile_forward` and
+`retry`. `abort_cherry_pick`, `retain_orphan`, and `block` are reserved
+names (see design S10's implementation-scope note) and must not be emitted
+by the planner until their corresponding evidence detection lands in a
+later slice.
+
 Create `skills/agent-runway/scripts/agentrunway/reconciliation.py`:
 
 ```python
@@ -1623,6 +1758,7 @@ def run_worker_attempt(
     base_ref: str,
     attempt: int,
     timeout_seconds: int,
+    metadata: dict[str, str] | None = None,
 ) -> WorkerResultEnvelope:
     worker_id = f"{task.task_id}-{role}-{attempt:03d}"
     branch = f"agentrunway/{run_id}/{worker_id}"
@@ -1642,6 +1778,7 @@ def run_worker_attempt(
         artifact_dir=str(output_path.parent),
         timeout_seconds=timeout_seconds,
         attempt=attempt,
+        metadata=dict(metadata or {}),
     )
     db.create_worker_attempt(
         worker_id=worker_id,
@@ -1664,7 +1801,27 @@ def run_worker_attempt(
     return envelope
 ```
 
-Keep `run_implementer_attempt` as a wrapper for compatibility until Task 7 rewires runner gate sequencing.
+Keep `run_implementer_attempt` as a wrapper for compatibility until Task 7
+rewires runner gate sequencing. While editing the wrapper, change its
+`enqueue_merge_candidate(status="merge_ready")` call to
+`status="pending_review"`. This is the critical state-race fix from the
+review notes: without it, the existing merge loop in `runner.run` applies
+implementer commits before reviewer/verifier ever run.
+
+Also update `apply_candidate`/the runner merge loop filter so that only
+candidates with status `merge_ready` are processed:
+
+```python
+for candidate in db.list_merge_candidates():
+    if candidate["status"] != "merge_ready":
+        continue
+    ...
+```
+
+(This filter already exists in `runner.run`, so this change is just
+verifying it remains in place after gate code lands.) Candidates promoted
+by a passing verifier transition `pending_review -> merge_ready` via
+`db.set_merge_candidate_status`.
 
 - [ ] **Step 5: Tighten result validation statuses**
 
@@ -1725,7 +1882,11 @@ serial: true
 
 - [ ] **Step 1: Update production e2e tests for real gates**
 
-In `skills/agent-runway/evals/test_runner_production_e2e.py`, remove `--skip-review` and `--skip-verify` from the Codex and Claude production runs. Add assertions:
+In `skills/agent-runway/evals/test_runner_production_e2e.py`, remove
+`--skip-review` and `--skip-verify` from the Codex and Claude production
+runs. (The flags themselves are deleted from `invocation.py` in Step 6
+below; once removed the parser will reject them, so the test command must
+drop them at the same time as the CLI change.) Add assertions:
 
 ```python
     rows = conn.execute("SELECT role, state FROM workers ORDER BY worker_id").fetchall()
@@ -1819,6 +1980,14 @@ Then in both adapters' `env={...}` dictionaries, append:
 
 If adding `metadata` to a frozen dataclass with a mutable default, use `field(default_factory=dict)` and import `field` from `dataclasses`.
 
+`metadata` is opaque to the adapter and merged after the fixed AgentRunway
+keys, so a reviewer attempt that wants the fake CLIs to read
+`AGENTRUNWAY_REVIEWED_WORKER_ID` must put that key in the dict it passes to
+`WorkerSpec(... metadata={"AGENTRUNWAY_REVIEWED_WORKER_ID": ...,
+"AGENTRUNWAY_FAKE_REVIEW_STATUS": ...})`. This wiring happens in Step 5;
+without it, the fake CLI sees an empty `reviewed_worker_id` field and the
+review JSON fails validation.
+
 - [ ] **Step 5: Add gate runner helper**
 
 In `supervisor.py`, add `run_reviewer_attempt` and `run_verifier_attempt` wrappers around `run_worker_attempt`. Use `materialize_role_prompt`, validate the role-specific JSON, and set worker state to `validated` when the result passes.
@@ -1871,6 +2040,9 @@ def run_reviewer_attempt(
         base_ref=f"agentrunway/{run_id}/main",
         attempt=attempt,
         timeout_seconds=timeout_seconds,
+        metadata={
+            "AGENTRUNWAY_REVIEWED_WORKER_ID": reviewed_worker_id,
+        },
     )
     if envelope.result_json is None:
         db.set_worker_state(worker_id, "malformed_result")
@@ -1880,22 +2052,48 @@ def run_reviewer_attempt(
     return result
 ```
 
-Verifier wrapper follows the same shape with `role="verifier"`, output file `verification_result.json`, `validate_verification_result`, and context containing commits, changed files, acceptance commands, and review status.
+Verifier wrapper follows the same shape with `role="verifier"`, output file
+`verification_result.json`, `validate_verification_result`, and context
+containing commits, changed files, acceptance commands, and review status.
+The verifier wrapper also forwards
+`metadata={"AGENTRUNWAY_FAKE_VERIFY_STATUS": fake_verify_status}` when a
+test injects an override; production runs leave `metadata` empty so the
+verifier reads only the standard AgentRunway env keys.
 
 - [ ] **Step 6: Rewire runner production path**
 
-In `runner.run`, after `run_implementer_attempt` returns a candidate id, do not set task status to `merge_ready`. Instead:
+First, delete the dead `--skip-review` and `--skip-verify` arguments from
+`invocation.py` (`run.add_argument("--skip-review", ...)` and its sibling).
+Neither flag is read by `runner.run`, and once gates are mandatory they
+have no meaningful semantics.
+
+In `runner.run`, after `run_implementer_attempt` returns a candidate id, do
+not set task status to `merge_ready`. The implementer's
+`enqueue_merge_candidate` now produces status `pending_review` (Task 5
+Step 4), so the existing merge loop will skip the candidate until a gate
+promotes it. Then:
 
 1. Set task status `reviewing`.
 2. Run reviewer attempt.
-3. If reviewer status is `changes_requested`, set task status `blocked` for this slice unless retry implementation is completed in Task 7.
-4. If reviewer status is `rejected`, set task status `blocked`.
-5. Set task status `verifying`.
-6. Run verifier attempt.
-7. If verifier status is `passed`, set merge candidate status `merge_ready` and task status `merge_ready`.
-8. If verifier status is `failed` or `blocked`, set task status `blocked`.
+3. If reviewer status is `changes_requested` or `rejected`, set task status
+   `blocked`, leave the candidate at `pending_review`, and continue to the
+   next task. (No silent retry in this slice — see review notes item 10.)
+4. Set task status `verifying`.
+5. Run verifier attempt.
+6. If verifier status is `passed`, call
+   `db.set_merge_candidate_status(candidate_id, "merge_ready")` and set
+   task status `merge_ready`. The downstream merge loop will then apply
+   the candidate as before.
+7. If verifier status is `failed` or `blocked`, set task status `blocked`
+   and leave the candidate at `pending_review`.
 
-Emit local events for `review_dispatched`, `review_result`, `verification_dispatched`, `verification_result`, and `merge_ready`.
+Emit local events for `review_dispatched`, `review_result`,
+`verification_dispatched`, `verification_result`, and `merge_ready`.
+
+Add a runner test that asserts the merge loop does not apply a candidate
+while it is still at `pending_review`, even if the gate sequencing is
+short-circuited (e.g. when a reviewer attempt raises an exception). This
+prevents the state-race regression from quietly re-appearing.
 
 - [ ] **Step 7: Run production e2e gate tests**
 
@@ -2038,33 +2236,30 @@ Call `_derive_coverage` from `build_artifact_graph`.
 
 - [ ] **Step 5: Apply bounded gate retry policy**
 
-In `runner.py`, implement these policy checks during production gate sequencing:
+In `runner.py`, the production gate sequencing should treat any
+non-`approved` review and any non-`passed` verification as a block, with
+no silent retry. The earlier draft had a dead `if/else` that took the
+same branch on both `changes_requested` and `rejected`; collapse it:
 
 ```python
 review_status = str(review_result["status"])
-if review_status == "changes_requested":
-    if db.count_worker_attempts(task_id=task.task_id, role="implementer") <= 1:
-        db.set_task_status(task.task_id, "blocked")
-    else:
-        db.set_task_status(task.task_id, "blocked")
-    continue
-if review_status == "rejected":
+if review_status != "approved":
     db.set_task_status(task.task_id, "blocked")
     continue
-```
 
-For this slice, the first implementation of changes-requested records the correct blocked state and evidence. A future improvement can redispatch implementers with reviewer findings, but this task must not pretend to retry if the retry prompt threading is not implemented.
-
-For verifier:
-
-```python
 verify_status = str(verification_result["status"])
 if verify_status != "passed":
     db.set_task_status(task.task_id, "blocked")
     continue
 ```
 
-This satisfies the design's safe default: failed gates do not merge.
+`count_worker_attempts` is still added in Step 3 because the design
+records it for future retry-budget enforcement, but it is not consulted
+here. The `test_review_changes_requested_blocks_after_budget` test in
+Step 1 above only asserts that the helper reports the attempt count
+correctly; the runner policy itself is "block on any non-pass" for this
+slice. Real implementer redispatch with reviewer findings is tracked in
+the deferred-tests list in design S13 and lands in a later slice.
 
 - [ ] **Step 6: Run gate retry and coverage tests**
 
@@ -2160,10 +2355,13 @@ AgentRunway records runner-validated facts locally before attempting AgentLens
 emission. The local journal is `events.jsonl` in the run directory. SQLite table
 `agentlens_events` is the outbox and stores one of:
 
-- `local_recorded`
-- `agentlens_emitted`
-- `agentlens_failed`
-- `agentlens_disabled`
+- `agentlens_disabled` (no emitter configured; event is local-only)
+- `agentlens_emitted` (emit attempt returned without raising)
+- `agentlens_failed` (emit attempt raised; `error` column records the reason)
+
+The local journal write always succeeds before the emit attempt, so every
+status implies a durable `events.jsonl` row and a matching
+`agentlens_events` row.
 
 Core event types:
 
@@ -2212,16 +2410,20 @@ Evidence sources:
 - process liveness when a PID exists
 - git branch heads, worktree paths, and cherry-pick state
 
-Supported actions:
+Supported actions in this slice:
 
 - `reconcile_forward`: valid artifact exists but DB state is behind
-- `retry`: worker is dead or stalled and retry budget allows a new attempt
+- `retry`: worker is dead and no valid result artifact is present
+
+Reserved (not yet emitted by the planner — see design S10
+implementation-scope note):
+
 - `abort_cherry_pick`: run main has an interrupted cherry-pick
 - `retain_orphan`: unmatched worktree is kept for diagnostics
 - `block`: budget is exhausted or operator action is required
 
-Resume must not duplicate terminal tasks, merge candidates, worker attempts, or
-applied commits.
+Resume must not duplicate terminal tasks, merge candidates, worker
+attempts, or applied commits.
 ```
 
 - [ ] **Step 4: Update protocol reference**

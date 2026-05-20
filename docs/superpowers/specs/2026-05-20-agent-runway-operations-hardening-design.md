@@ -127,6 +127,12 @@ creates `contract.json` with:
 - `spec_refs` coverage from each task to stable spec sections,
 - runtime adapter, model profile, and policy settings.
 
+Spec sections use the canonical heading-derived IDs produced by the existing
+`plan_parser.parse_spec_manifest` (e.g. `S1.1`, `S2.1.3`). Preflight reuses
+that parser as the single source of truth for spec section IDs; it does not
+introduce a parallel bullet-list manifest format. A spec without any headings
+(`#`/`##`/...) is rejected as malformed.
+
 Preflight should fail before dispatch when:
 
 - a task references a missing spec section,
@@ -134,7 +140,10 @@ Preflight should fail before dispatch when:
 - file claims conflict in the same wave,
 - a task has no file claims for a code-changing phase,
 - the source checkout is dirty without explicit allowance,
-- the plan cannot be parsed into deterministic task packets.
+- the plan cannot be parsed into deterministic task packets,
+- the runner is asked to use a non-local adapter without `--spec` (production
+  adapters require a frozen spec; planning-only and `--adapter local` may omit
+  it).
 
 Warnings should not block dispatch when they are useful but not fatal:
 
@@ -291,11 +300,16 @@ agentrunway.run_blocked
 The `agentlens_events` table acts as an outbox with statuses:
 
 ```text
-local_recorded
+agentlens_disabled
 agentlens_emitted
 agentlens_failed
-agentlens_disabled
 ```
+
+`agentlens_disabled` is the recorded-locally-only state for runs without an
+AgentLens emitter; `agentlens_emitted` and `agentlens_failed` cover the two
+outcomes of an emit attempt. Local journal write happens unconditionally
+before the emit attempt, so every status implies the event is durably
+recorded in `events.jsonl` and `agentlens_events`.
 
 `inspect` should show AgentLens status, last successful emission, failed event
 count, and the local event file path. AgentLens failure does not fail the run
@@ -360,6 +374,22 @@ Idempotency rules:
 - Dead non-reattachable workers with no valid result are retried within budget.
 - Orphan worktrees are either reclaimed into DB state or retained as diagnostic
   artifacts; they are not silently deleted.
+
+### Implementation scope for this slice
+
+The vertical-slice reconciliation planner ships with exactly two action kinds:
+
+- `reconcile_forward`: a valid worker/review/verification result artifact
+  exists on disk while the DB row is in a non-terminal state.
+- `retry`: a worker is dead or the launching process is no longer alive and no
+  valid result artifact is present, within the role's retry budget.
+
+The remaining actions in the example plan above (`abort_cherry_pick`,
+`retain_orphan`, `block`) are reserved names and are documented for forward
+compatibility, but their detection and execution are out of scope for this
+slice. Resume must not invent these actions yet; the planner emits them only
+when the corresponding evidence-classification helpers exist. They land in a
+later operations slice once the simpler two-action core has stabilized.
 
 ## S11. Review and Verification Gates
 
@@ -426,31 +456,65 @@ Default classifications:
 Retries always create a new worker id and a new worktree. Resume must never
 reset retry counters.
 
+### Implementation scope for this slice
+
+Production gate retry threading is the long-term target. The first
+implementation lands a strictly safer default: any non-`approved`/`passed`
+gate outcome blocks the task with full evidence (review/verification
+artifacts, candidate diff, candidate commit list). The runner persists the
+gate result, records the corresponding event, and stops the task. Future
+slices add:
+
+1. reviewer `changes_requested` -> bounded implementer redispatch with
+   findings threaded through the next implementer prompt,
+2. verifier `failed` -> bounded implementer redispatch when the verifier
+   evidence is actionable (e.g. failing acceptance command and changed lines
+   exist),
+3. merge conflict -> bounded redispatch from updated run main.
+
+`adapter_crashed`, `timeout`, and `malformed_result` retries are watchdog
+concerns and are partially covered by the `retry` reconciliation action;
+their full retry-budget enforcement is also future work. Until those land,
+plans must not assume any gate or worker failure recovers automatically;
+they recover by re-running `agentrunway resume` after operator action, not
+by transparent re-dispatch.
+
 ## S13. Testing Strategy
 
 Tests must remain deterministic by default and must not require real model
 calls. Fake Codex and Claude CLI fixtures should continue to exercise the real
 process adapter path.
 
-Required eval additions:
+Required eval additions for this slice:
 
 - preflight writes `contract.json` and rejects missing `spec_refs`,
 - preflight rejects tasks without acceptance commands,
+- preflight rejects non-local adapter runs invoked without `--spec`,
 - `events --run --json` returns local event rows and AgentLens outbox status,
 - AgentLens failure records `agentlens_failed` and does not fail the run,
 - `inspect --run --json` returns artifact graph and coverage summaries,
-- dead worker with missing result produces a retry reconciliation plan,
+- dead worker with missing result produces a `retry` reconciliation plan,
 - valid result artifact with missing DB transition reconciles forward,
+- `resume --dry-run` performs no writes,
+- running `resume` twice does not duplicate workers, resume_action events,
+  merge candidates, or applied commits (idempotency must be asserted in all
+  four tables),
+- implementer success transitions the candidate to `pending_review`, not
+  `merge_ready`, so the merge loop cannot bypass gates,
+- implementer success dispatches reviewer,
+- reviewer approved dispatches verifier,
+- reviewer non-approved blocks the task with full evidence (no silent retry),
+- verifier passed promotes the candidate from `pending_review` to
+  `merge_ready`,
+- verifier non-passed blocks the task with full evidence.
+
+Tests deferred until the matching feature lands (must not be required by
+this slice):
+
 - cherry-pick in progress produces an abort/requeue action,
 - orphan worktree is retained or reclaimed with diagnostic evidence,
-- `resume --dry-run` performs no writes,
-- running `resume` twice does not duplicate workers, candidates, merges, or
-  applied commits,
-- implementer success dispatches reviewer instead of entering `merge_ready`,
-- reviewer approved dispatches verifier,
-- reviewer changes_requested creates a bounded implementer retry,
-- verifier passed moves candidate to `merge_ready`,
-- verifier failed follows retry/block policy.
+- reviewer `changes_requested` creates a bounded implementer retry,
+- verifier `failed` creates a bounded implementer retry.
 
 ## S14. Acceptance Criteria
 
@@ -465,7 +529,10 @@ Required eval additions:
 - `resume --dry-run --json` shows the planned recovery actions.
 - `resume` is idempotent for terminal tasks, valid artifacts, merge candidates,
   and applied commits.
-- Implementer candidates cannot merge until reviewer and verifier gates pass.
+- Implementer candidates are enqueued into the merge queue with status
+  `pending_review`; the merge loop ignores anything other than `merge_ready`.
+  Only a `passed` verifier outcome promotes a candidate to `merge_ready`.
+  Candidates can never merge before review and verification gates run.
 - Review and verification failures carry enough evidence for an operator to
   decide whether to retry, revise the plan, or block.
 - Existing local and fake production adapter evals continue to pass.
