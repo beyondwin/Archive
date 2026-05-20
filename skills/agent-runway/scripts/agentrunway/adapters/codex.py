@@ -24,6 +24,7 @@ class CodexAdapter:
             self.model,
             "--sandbox",
             "danger-full-access",
+            "--skip-git-repo-check",
         ]
         if artifact_dir is not None:
             command.extend(["--add-dir", str(artifact_dir)])

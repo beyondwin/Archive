@@ -28,6 +28,7 @@ def test_codex_adapter_builds_exec_command_with_reasoning(tmp_path: Path) -> Non
     assert "danger-full-access" in cmd
     assert "--add-dir" in cmd
     assert str(artifact_dir) in cmd
+    assert "--skip-git-repo-check" in cmd
     assert 'model_reasoning_effort="xhigh"' in cmd
     assert "--cwd" not in cmd
     assert "--reasoning-effort" not in cmd
