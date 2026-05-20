@@ -623,3 +623,62 @@ def test_high_risk_task_ranks_two_candidates(git_repo: Path, isolated_home: Path
     assert json.loads((evidence_dir / "changed_files.json").read_text(encoding="utf-8")) == ["src/high_risk.py"]
     worker = json.loads((evidence_dir / "worker.json").read_text(encoding="utf-8"))
     assert worker["worker_id"] == non_selected["worker_id"]
+
+
+def test_blocked_upstream_prevents_downstream_worker_dispatch(git_repo: Path, isolated_home: Path) -> None:
+    spec = git_repo / "spec.md"
+    plan = git_repo / "plan.md"
+    spec.write_text("# Spec\n\n## A\n\nA.\n\n## B\n\nB.\n", encoding="utf-8")
+    plan.write_text(
+        "## Task 1: A\n\n"
+        "```yaml agentrunway-task\n"
+        "task_id: task_001\n"
+        "title: A\n"
+        "risk: low\n"
+        "phase: implementation\n"
+        "dependencies: []\n"
+        "spec_refs: [S1.1]\n"
+        "file_claims:\n"
+        "  - {path: src/a.py, mode: owned}\n"
+        "acceptance_commands: [python -m pytest]\n"
+        "required_skills: [test-driven-development]\n"
+        "```\n"
+        "Create A.\n\n"
+        "## Task 2: B\n\n"
+        "```yaml agentrunway-task\n"
+        "task_id: task_002\n"
+        "title: B\n"
+        "risk: low\n"
+        "phase: implementation\n"
+        "dependencies: [task_001]\n"
+        "spec_refs: [S1.2]\n"
+        "file_claims:\n"
+        "  - {path: src/b.py, mode: owned}\n"
+        "acceptance_commands: [python -m pytest]\n"
+        "required_skills: [test-driven-development]\n"
+        "```\n"
+        "Create B.\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET"] = "src/a.py"
+    env["AGENTRUNWAY_FAKE_REVIEW_STATUS"] = "changes_requested"
+    env["AGENTRUNWAY_FAKE_REVIEW_FINDING"] = "needs infrastructure repair before continuing"
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "run", "--plan", str(plan), "--spec", str(spec), "--adapter", "codex"],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    payload = json.loads(result.stdout)
+    conn = sqlite3.connect(payload["state_db"])
+    workers = conn.execute("SELECT task_id, role FROM workers ORDER BY worker_id").fetchall()
+    tasks = conn.execute("SELECT task_id, status FROM tasks ORDER BY task_id").fetchall()
+    assert payload["status"] == "blocked"
+    assert ("task_002", "implementer") not in [(row[0], row[1]) for row in workers]
+    assert dict(tasks)["task_002"] == "pending"

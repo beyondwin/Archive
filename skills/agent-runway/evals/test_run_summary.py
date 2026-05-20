@@ -92,6 +92,44 @@ def _blocked_human_decision_run(tmp_path: Path) -> tuple[AgentRunwayDb, dict[str
     return db, run_json
 
 
+def _repeated_rebase_decision_run(tmp_path: Path) -> tuple[AgentRunwayDb, dict[str, object]]:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    db = _db(run_dir / "state.sqlite")
+    store = WorkflowStore(db)
+    db.upsert_task(_task("task_001"))
+    store.start_activity(
+        run_id="run-1",
+        activity_id="task_001.review.002",
+        idempotency_key="run-1:task_001:review:002",
+        task_id="task_001",
+        activity_type="review",
+        input_refs={"candidate_id": 8},
+    )
+    store.complete_activity(
+        activity_id="task_001.review.002",
+        status=ActivityStatus.BLOCKED,
+        output_refs={"candidate_id": 8, "review_status": "needs_rebase"},
+        failure_class="needs_rebase",
+    )
+    store.create_decision_packet(
+        run_id="run-1",
+        decision_id="task_001.review.002.decision",
+        task_id="task_001",
+        failure_class="needs_rebase",
+        summary="review requires repeated rebase decision",
+        payload={"candidate_id": 8},
+    )
+    run_json = {
+        "run_id": "run-1",
+        "status": "blocked",
+        "run_dir": str(run_dir),
+        "state_db": str(run_dir / "state.sqlite"),
+        "base_commit_sha": "base",
+    }
+    return db, run_json
+
+
 def test_summary_is_bounded_and_contains_next_action(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -254,3 +292,48 @@ def test_summarize_and_inspect_use_durable_human_decision_next_action(tmp_path: 
     assert inspect["durable"]["required_human_decision"] == "fix plan"
     assert summary["next_action"] == "await_human_decision"
     assert inspect["next_action"] == "await_human_decision"
+
+
+def test_summarize_and_inspect_surface_repeated_rebase_decision_packet(tmp_path: Path) -> None:
+    db, run_json = _repeated_rebase_decision_run(tmp_path)
+
+    summary = build_run_summary(run_json=run_json, db=db)
+    inspect = build_inspect_payload(run_json=run_json, db=db)
+
+    assert summary["durable"]["required_human_decision"] == "inspect decision packet"
+    assert inspect["durable"]["required_human_decision"] == "inspect decision packet"
+    assert summary["next_action"] == "await_human_decision"
+    assert inspect["next_action"] == "await_human_decision"
+
+
+def test_run_summary_includes_hybrid_scheduler_diagnostics(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    db.upsert_task(
+        TaskSpec(
+            task_id="task_001",
+            title="Task 1",
+            risk="low",
+            phase="implementation",
+            dependencies=(),
+            spec_refs=("S1",),
+            file_claims=(FileClaim("skills/agent-runway/scripts/agentrunway/runner.py", "owned"),),
+            acceptance_commands=("python -m pytest",),
+        )
+    )
+    run_json = {
+        "run_id": "run-1",
+        "status": "running",
+        "run_dir": str(run_dir),
+        "state_db": str(run_dir / "state.sqlite"),
+        "events": str(run_dir / "events.jsonl"),
+    }
+    (run_dir / "run.json").write_text(json.dumps(run_json), encoding="utf-8")
+    (run_dir / "events.jsonl").write_text("", encoding="utf-8")
+
+    summary = build_run_summary(run_json=run_json, db=db)
+
+    assert summary["scheduler"]["projection_status"] == "running"
+    assert summary["scheduler"]["safe_wave"] == ["task_001"]
+    assert summary["scheduler"]["task_classes"][0]["execution_class"] == "shared_core"

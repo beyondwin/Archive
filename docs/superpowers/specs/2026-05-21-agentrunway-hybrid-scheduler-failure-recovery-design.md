@@ -1,7 +1,7 @@
 # Design: AgentRunway Hybrid Scheduler And Failure Recovery
 
 Date: 2026-05-21
-Status: Draft for user review
+Status: Implemented
 Owner: KWS
 Related Work:
 - `docs/superpowers/specs/2026-05-20-agentrunway-durable-orchestrator-hardening-design.md`
@@ -226,3 +226,10 @@ of earlier KWS skill workflows.
   blocked node, next action, and human decision.
 - Full evals pass after implementation.
 
+## 12. Implementation Note
+
+Implemented through the hybrid scheduler failure recovery plan. The durable
+projection is the authoritative dispatch source, task classification drives
+parallel versus serial execution, resume failures block durably, and
+inspect/summarize expose the same scheduler diagnostics used by runtime
+dispatch.

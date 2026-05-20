@@ -427,7 +427,7 @@ def run(args: Any) -> dict[str, Any]:
     )
     store = ArtifactStore(run_dir / "artifacts")
     from .checkpoint_scheduler import CheckpointScheduler
-    from .durable_projection import read_durable_projection
+    from .durable_projection import durable_operator_next_action, read_durable_projection
 
     scheduler = CheckpointScheduler()
     tasks_by_id = {task.task_id: task for task in tasks}
@@ -1033,8 +1033,8 @@ def run(args: Any) -> dict[str, Any]:
         for task in tasks_snapshot
         if str(task.get("status")) not in {"merged", "blocked", "failed"}
     ]
-    final_status = "blocked" if blocked or unfinished or final_projection.checkpoint_repair_tasks else "finished"
-    if unfinished and not blocked and not final_projection.safe_wave:
+    final_status = final_projection.projection_status
+    if final_status == "running" and not final_projection.safe_wave and unfinished:
         final_status = "blocked"
     db.set_run_status(run_id, final_status)
     journal.record(
@@ -1194,14 +1194,26 @@ def resume(run_id: str, *, dry_run: bool = False) -> dict[str, Any]:
             "recovery": data.get("recovery", "no_state_sqlite"),
         }
     db = AgentRunwayDb.open(Path(data["state_db"]))
-    from .durable_projection import read_durable_projection
+    from .durable_projection import durable_operator_next_action, read_durable_projection
     from .resume_executor import ResumeExecutor
-    from .resume_planner import plan_resume_actions
+    from .resume_planner import ResumeAction, plan_resume_actions
 
     plan = plan_reconciliation(run_id=run_id, run_dir=Path(data["run_dir"]), db=db)
     activity_resume = plan_activity_resume(run_id=run_id, db=db)
     durable_projection = read_durable_projection(run_id=run_id, db=db).to_dict()
     resume_actions = plan_resume_actions(run_id=run_id, db=db)
+    if durable_projection.get("next_automatic_action") == "classify_stale_activity":
+        first_stale = (durable_projection.get("stale_activities") or [{}])[0]
+        resume_actions = [
+            *resume_actions,
+            ResumeAction(
+                action="classify_stale_activity",
+                task_id=first_stale.get("task_id"),
+                candidate_id=None,
+                writes=True,
+                reason="started_activity_exceeded_timeout",
+            ),
+        ]
 
     def resume_merge_handler(action: Any) -> dict[str, Any]:
         if action.task_id is None or action.candidate_id is None:
@@ -1240,7 +1252,7 @@ def resume(run_id: str, *, dry_run: bool = False) -> dict[str, Any]:
             "activity_resume": activity_resume,
             "durable": durable_projection,
             "resume_actions": [action.__dict__ for action in resume_actions],
-            "next_action": durable_projection.get("next_automatic_action") or activity_resume.get("next_action"),
+            "next_action": durable_operator_next_action(durable_projection, activity_resume.get("next_action")),
         }
     apply_reconciliation_plan(db=db, plan=plan)
     execution = ResumeExecutor(
@@ -1248,6 +1260,7 @@ def resume(run_id: str, *, dry_run: bool = False) -> dict[str, Any]:
         run_id=run_id,
         handlers={"schedule_merge": resume_merge_handler},
     ).execute(actions=resume_actions)
+    write_artifact_graph(run_dir=Path(str(data["run_dir"])), db=db)
     tasks_snapshot = db.list_tasks()
     final_projection = read_durable_projection(run_id=run_id, db=db)
     if execution.get("blocked") is not None or any(str(task.get("status")) in {"blocked", "failed"} for task in tasks_snapshot):

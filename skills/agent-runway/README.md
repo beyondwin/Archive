@@ -160,3 +160,15 @@ operator review.
 Graphify navigation remains a generated project layer. Completion evidence
 should record the `graphify update .` command result rather than checking
 `graphify-out/` into this skill package.
+
+### Hybrid Scheduler And Failure Barriers
+
+AgentRunway dispatches work from the durable projection. A task enters a worker
+worktree only when dependency checkpoints exist and the task is in the current
+safe wave. Independent low/medium-risk tasks can share a safe wave. Shared core
+control-flow work, broad claims, high-risk tasks, blocked dependencies, stale
+activities, and missing checkpoint repairs serialize or stop dispatch.
+
+Failure classes are scheduling barriers. Human-decision classes stop with a
+decision packet, repeated `needs_rebase` stops after one checkpoint redispatch,
+and missing resume handlers block instead of recording fake progress.

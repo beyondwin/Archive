@@ -3,6 +3,7 @@ from __future__ import annotations
 import fnmatch
 
 from .models import TaskSpec
+from .task_classifier import classify_task
 
 
 RISK_ORDER = {"high": 0, "medium": 1, "low": 2}
@@ -76,6 +77,8 @@ def _claim_overlaps(left: str, right: str) -> bool:
 
 
 def _tasks_conflict(left: TaskSpec, right: TaskSpec) -> bool:
+    if classify_task(left).serial_required or classify_task(right).serial_required:
+        return True
     if left.serial or right.serial:
         return True
     if left.risk == "high" or right.risk == "high":

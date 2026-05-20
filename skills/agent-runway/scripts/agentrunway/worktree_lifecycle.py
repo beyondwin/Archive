@@ -6,6 +6,7 @@ from typing import Any
 
 from .db import AgentRunwayDb
 from .models import TaskSpec
+from .task_classifier import classify_task
 
 
 DIAGNOSIS_STATES = {
@@ -19,15 +20,6 @@ DIAGNOSIS_STATES = {
     "timeout",
     "verification_failed",
 }
-FULL_TREE_PATH_MARKERS = (
-    "migration",
-    "migrations/",
-    "schema",
-    "generated/",
-    ".generated",
-)
-
-
 def lifecycle_for_worker(*, role: str, state: str) -> str:
     if state in DIAGNOSIS_STATES:
         return "retained_for_diagnosis"
@@ -45,13 +37,9 @@ def lifecycle_for_worker(*, role: str, state: str) -> str:
 
 
 def reviewer_mode_for_task(task: TaskSpec, *, force_full_tree: bool = False) -> str:
-    if force_full_tree or task.risk == "high":
+    if force_full_tree:
         return "full_tree"
-    for claim in task.file_claims:
-        normalized = claim.path.replace("\\", "/").lower()
-        if any(marker in normalized for marker in FULL_TREE_PATH_MARKERS):
-            return "full_tree"
-    return "diff"
+    return classify_task(task).review_mode
 
 
 def archive_candidate_evidence(*, run_dir: Path, db: AgentRunwayDb, candidate: dict[str, Any]) -> Path:

@@ -51,3 +51,11 @@ Runtime dispatch starts workers from run main after the latest successful
 checkpoint. Dependent tasks wait until their dependencies have checkpoint rows.
 Conflicting file claims, high-risk tasks, serial tasks, broad claims, and
 shared resource keys are serialized by the checkpoint scheduler.
+
+## Lazy Worker Worktrees
+
+Worker worktrees are created only after the durable projection places a task in
+`safe_wave`. Tasks withheld by blocked dependencies, missing checkpoints, stale
+activities, or missing resume handlers must not create mutable worker
+worktrees. Successful tasks merge into run-main immediately and create a
+`merged:<task_id>` checkpoint before dependent work is released.
