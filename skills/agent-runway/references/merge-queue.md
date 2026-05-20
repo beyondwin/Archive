@@ -5,6 +5,12 @@ Source-of-truth: the design document wins when this reference and code disagree.
 The merge queue accepts candidates only after worker result validation,
 diff-scope checks, review approval, and verification pass.
 
+Ungated candidates stay `pending_review`. Reviewer `changes_requested` marks
+the previous candidate `changes_requested`; verifier `failed` marks it
+`verification_failed`. Those statuses are retained as evidence and are never
+eligible for cherry-pick. The retry path creates a new implementer worker,
+new worktree, and new candidate.
+
 Apply semantics use git cherry-pick from worker commits into
 `agentrunway/<run_id>/main` and validate changed files against claims. A merge conflict
 aborts the cherry-pick and records `merge_conflict`; production policy

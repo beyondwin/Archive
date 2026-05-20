@@ -2800,6 +2800,51 @@ git commit -m "docs: document AgentRunway operations hardening"
 
 If `graphify-out/graph.json` is ignored or unchanged, omit it from `git add`.
 
+## Task 9: Residual Risk Closure
+
+```yaml agentrunway-task
+task_id: task_009
+title: Residual gate retry and graphify evidence closure
+risk: medium
+phase: implementation
+dependencies: [task_008]
+spec_refs: [S11, S12, S13, S14, S15]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/runner.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/packetizer.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_runner_production_e2e.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_models_and_schemas.py, mode: owned}
+  - {path: skills/agent-runway/evals/fixtures/fake-bin/codex, mode: owned}
+  - {path: skills/agent-runway/evals/fixtures/fake-bin/claude, mode: owned}
+  - {path: skills/agent-runway/references/schemas/review_result.v1.json, mode: owned}
+  - {path: skills/agent-runway/README.md, mode: owned}
+  - {path: skills/agent-runway/references/failure-policy.md, mode: owned}
+  - {path: skills/agent-runway/references/merge-queue.md, mode: owned}
+  - {path: skills/agent-runway/references/protocol.md, mode: owned}
+  - {path: docs/superpowers/specs/2026-05-20-agent-runway-operations-hardening-design.md, mode: owned}
+  - {path: docs/superpowers/plans/2026-05-20-agent-runway-operations-hardening.md, mode: owned}
+acceptance_commands:
+  - cd skills/agent-runway && PATH="$PWD/evals/fixtures/fake-bin:$PATH" python -m pytest evals/test_runner_production_e2e.py evals/test_models_and_schemas.py -v
+  - cd skills/agent-runway && ./evals/run.sh
+  - git diff --check HEAD
+required_skills: [test-driven-development, verification-before-completion]
+resource_keys: []
+serial: true
+```
+
+Close the two known residual risks from the first implementation pass:
+
+1. Implement bounded redispatch for reviewer `changes_requested` and verifier
+   `failed` outcomes. Each retry must use a fresh implementer worker id,
+   worktree, prompt, and merge candidate. The previous candidate remains
+   non-mergeable evidence, and the retry prompt contains the gate result.
+2. Treat graphify output as generated navigation. Do not force ignored
+   `graphify-out/` files into git; instead, record `graphify update .` as
+   verification evidence after code changes.
+
+Add deterministic fake CLI sequences for review and verification gate outcomes
+so production e2e tests can assert both retry paths without model calls.
+
 ## Final Verification
 
 After all tasks are complete, run:

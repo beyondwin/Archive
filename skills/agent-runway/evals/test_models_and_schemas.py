@@ -42,3 +42,8 @@ def test_reference_schema_files_are_valid_json() -> None:
         data = json.loads(path.read_text(encoding="utf-8"))
         assert data["$schema"] == "https://json-schema.org/draft/2020-12/schema"
         assert data["type"] == "object"
+
+
+def test_review_schema_matches_runtime_statuses() -> None:
+    data = json.loads((ROOT / "references" / "schemas" / "review_result.v1.json").read_text(encoding="utf-8"))
+    assert data["properties"]["status"]["enum"] == ["approved", "changes_requested", "rejected"]

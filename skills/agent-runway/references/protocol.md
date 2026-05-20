@@ -8,6 +8,11 @@ Runner owns SQLite, packets, worktrees, scheduling, AgentLens emission, merge de
 
 Worker receives one task packet, edits only claimed files, and returns a bounded result artifact.
 
+Gate-triggered implementer retries are runner-owned. The host does not manually
+thread review or verification findings through conversation context; the runner
+writes those findings into the next implementer prompt and records
+`agentrunway.gate_retry`.
+
 ## Superpowers Contract Preflight
 
 AgentRunway consumes Superpowers design and implementation plan documents. It

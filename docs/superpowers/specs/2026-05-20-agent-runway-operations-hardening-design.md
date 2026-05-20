@@ -527,26 +527,26 @@ reset retry counters.
 
 ### Implementation scope for this slice
 
-Production gate retry threading is the long-term target. The first
-implementation lands a strictly safer default: any non-`approved`/`passed`
-gate outcome blocks the task with full evidence (review/verification
-artifacts, candidate diff, candidate commit list). The runner persists the
-gate result, records the corresponding event, and stops the task. Future
-slices add:
+Production gate retry threading is included for the two gate outcomes that can
+produce actionable implementer work:
 
-1. reviewer `changes_requested` -> bounded implementer redispatch with
+1. reviewer `changes_requested` creates one bounded implementer redispatch with
    findings threaded through the next implementer prompt,
-2. verifier `failed` -> bounded implementer redispatch when the verifier
-   evidence is actionable (e.g. failing acceptance command and changed lines
-   exist),
-3. merge conflict -> bounded redispatch from updated run main.
+2. verifier `failed` creates one bounded implementer redispatch when the
+   verifier evidence is actionable (for example failing checks and changed
+   files exist),
+3. reviewer `rejected`, verifier `blocked`, exhausted budgets, and
+   non-actionable verifier failures block with evidence.
+
+Each retry creates a new worker id, worktree, prompt, and merge candidate. The
+previous candidate remains non-mergeable (`changes_requested` or
+`verification_failed`) as evidence. Merge conflict redispatch from updated run
+main remains future work.
 
 `adapter_crashed`, `timeout`, and `malformed_result` retries are watchdog
-concerns and are partially covered by the `retry` reconciliation action;
-their full retry-budget enforcement is also future work. Until those land,
-plans must not assume any gate or worker failure recovers automatically;
-they recover by re-running `agentrunway resume` after operator action, not
-by transparent re-dispatch.
+concerns and are partially covered by the `retry` reconciliation action; their
+full retry-budget enforcement is still future work. Plans may assume only the
+gate redispatch behavior described above recovers automatically.
 
 ## S13. Testing Strategy
 
@@ -577,18 +577,22 @@ Required eval additions for this slice:
   `merge_ready`, so the merge loop cannot bypass gates,
 - implementer success dispatches reviewer,
 - reviewer approved dispatches verifier,
-- reviewer non-approved blocks the task with full evidence (no silent retry),
+- reviewer `changes_requested` creates one bounded implementer retry with
+  findings in the retry prompt,
+- reviewer `rejected` blocks the task with full evidence,
 - verifier passed promotes the candidate from `pending_review` to
   `merge_ready`,
-- verifier non-passed blocks the task with full evidence.
+- verifier `failed` creates one bounded implementer retry when evidence is
+  actionable,
+- verifier `blocked` and exhausted verifier retry budget block with full
+  evidence.
 
 Tests deferred until the matching feature lands (must not be required by
 this slice):
 
 - cherry-pick in progress produces an abort/requeue action,
 - orphan worktree is retained or reclaimed with diagnostic evidence,
-- reviewer `changes_requested` creates a bounded implementer retry,
-- verifier `failed` creates a bounded implementer retry.
+- merge conflict creates a bounded redispatch from updated run main.
 
 ## S14. Acceptance Criteria
 

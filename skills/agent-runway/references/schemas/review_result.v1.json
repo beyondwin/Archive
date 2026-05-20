@@ -8,7 +8,7 @@
     "worker_id": {"type": "string"},
     "task_id": {"type": "string"},
     "reviewed_worker_id": {"type": "string"},
-    "status": {"enum": ["approved", "rejected", "blocked"]},
+    "status": {"enum": ["approved", "changes_requested", "rejected"]},
     "checks": {"type": "array", "minItems": 1},
     "findings": {"type": "array"},
     "method_audit": {"type": "object"}
