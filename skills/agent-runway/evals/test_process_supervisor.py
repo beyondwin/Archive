@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -86,3 +87,28 @@ def test_process_supervisor_merges_environment(tmp_path: Path) -> None:
     assert snapshot.state == "exited"
     assert out.read_text(encoding="utf-8") == "present"
     assert os.environ.get("AGENTRUNWAY_TEST_VALUE") is None
+
+
+def test_process_supervisor_detaches_worker_stdin(tmp_path: Path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class FakePopen:
+        pid = 12345
+
+        def __init__(self, *args, **kwargs) -> None:
+            captured.update(kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", FakePopen)
+    spec = ProcessLaunchSpec(
+        worker_id="worker-stdin",
+        command=[sys.executable, "-c", "print('ok')"],
+        cwd=tmp_path,
+        stdout_path=tmp_path / "stdout.log",
+        stderr_path=tmp_path / "stderr.log",
+        timeout_seconds=10,
+        env={},
+    )
+
+    ProcessSupervisor().start(spec)
+
+    assert captured["stdin"] is subprocess.DEVNULL

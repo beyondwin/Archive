@@ -47,6 +47,7 @@ class ProcessSupervisor:
         proc = subprocess.Popen(
             spec.command,
             cwd=spec.cwd,
+            stdin=subprocess.DEVNULL,
             stdout=stdout,
             stderr=stderr,
             text=True,

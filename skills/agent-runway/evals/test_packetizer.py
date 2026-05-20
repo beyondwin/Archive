@@ -6,7 +6,7 @@ from pathlib import Path
 from agentrunway.artifacts import ArtifactStore
 from agentrunway.config import BuiltinProfiles
 from agentrunway.models import FileClaim, TaskSpec
-from agentrunway.packetizer import build_task_packet, materialize_prompt
+from agentrunway.packetizer import build_task_packet, materialize_prompt, materialize_worker_prompt
 
 
 def test_artifact_store_writes_hash_and_home_relative_ref(tmp_path: Path, monkeypatch) -> None:
@@ -53,3 +53,25 @@ def test_materialize_prompt_is_bounded_json(tmp_path: Path) -> None:
     path = materialize_prompt(packet, tmp_path)
     data = json.loads(path.read_text(encoding="utf-8").split("```json", 1)[1].rsplit("```", 1)[0])
     assert data["task_id"] == "task_001"
+
+
+def test_materialize_worker_prompt_inlines_packet_and_result_contract(tmp_path: Path) -> None:
+    task = TaskSpec(
+        task_id="task_001",
+        title="Docs",
+        risk="low",
+        phase="docs",
+        dependencies=(),
+        spec_refs=(),
+        file_claims=(FileClaim("docs/usage.md", "owned"),),
+        acceptance_commands=("pytest",),
+    )
+    packet = build_task_packet("run-1", task, [], BuiltinProfiles.default()["codex-default"])
+    path = materialize_worker_prompt(packet, tmp_path / "packet.json", tmp_path / "worker_result.json", tmp_path)
+    text = path.read_text(encoding="utf-8")
+
+    data = json.loads(text.split("```json", 1)[1].rsplit("```", 1)[0])
+    assert data["task_id"] == "task_001"
+    assert '"output_schema": "agentrunway.worker_result.v1"' in text
+    for field in ("schema", "worker_id", "task_id", "role", "status", "changed_files", "summary", "method_audit"):
+        assert field in text

@@ -16,16 +16,25 @@ class CodexAdapter:
         self.reasoning_effort = reasoning_effort
         self.supervisor = ProcessSupervisor()
 
-    def build_command(self, prompt_text: str, workdir: Path) -> list[str]:
-        return [
+    def build_command(self, prompt_text: str, workdir: Path, artifact_dir: Path | None = None) -> list[str]:
+        command = [
             "codex",
             "exec",
             "--model",
             self.model,
-            "-c",
-            f'model_reasoning_effort="{self.reasoning_effort}"',
-            prompt_text,
+            "--sandbox",
+            "workspace-write",
         ]
+        if artifact_dir is not None:
+            command.extend(["--add-dir", str(artifact_dir)])
+        command.extend(
+            [
+                "-c",
+                f'model_reasoning_effort="{self.reasoning_effort}"',
+                prompt_text,
+            ]
+        )
+        return command
 
     def prepare(self, spec: WorkerSpec) -> WorkerHandle:
         artifact_dir = Path(spec.artifact_dir)
@@ -34,7 +43,7 @@ class CodexAdapter:
         prompt_text = Path(spec.prompt_path).read_text(encoding="utf-8")
         launch = ProcessLaunchSpec(
             worker_id=spec.worker_id,
-            command=self.build_command(prompt_text, Path(spec.worktree_path)),
+            command=self.build_command(prompt_text, Path(spec.worktree_path), artifact_dir),
             cwd=Path(spec.worktree_path),
             stdout_path=stdout_path,
             stderr_path=stderr_path,

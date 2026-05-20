@@ -73,3 +73,40 @@ def test_codex_fake_implementer_reaches_validated_candidate(git_repo: Path, isol
     assert candidate["status"] == "merged"
     assert json.loads(candidate["changed_files_json"]) == ["src/codex_worker.py"]
     assert worker["state"] == "merged"
+
+
+def test_claude_fake_implementer_uses_claude_default_profile(git_repo: Path, isolated_home: Path) -> None:
+    plan, spec = _write_plan(git_repo, path="src/claude_worker.py")
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "claude",
+            "--skip-review",
+            "--skip-verify",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "finished"
+    main = Path(payload["main_worktree"])
+    assert (main / "src" / "claude_worker.py").read_text(encoding="utf-8") == "VALUE = 'claude'\n"
+
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    worker = dict(conn.execute("SELECT * FROM workers").fetchone())
+    assert worker["runtime"] == "claude"
+    assert worker["model"] == "opus"
+    assert worker["state"] == "merged"
