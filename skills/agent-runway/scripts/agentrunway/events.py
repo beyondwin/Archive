@@ -4,11 +4,12 @@ import json
 import os
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
 from .db import AgentRunwayDb
-from .models import EVENT_SCHEMA
+from .models import AGENTLENS_EVENT_SCHEMA, AGENTRUNWAY_VERSION, EVENT_SCHEMA
 
 
 SECRET_KEYS = {"token", "api_key", "secret", "password"}
@@ -34,6 +35,24 @@ def redact_payload(payload: Any) -> Any:
 
 def _payload_size(payload: dict[str, Any]) -> int:
     return len(json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8"))
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _trust_impact(outcome: str) -> str:
+    if outcome == "success":
+        return "supports_success"
+    if outcome == "failed":
+        return "contradicts_success"
+    if outcome == "blocked":
+        return "blocks_success"
+    return "weakens_trust"
+
+
+def _list_or_empty(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
 
 
 def _bound_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -88,6 +107,42 @@ def build_event_payload(run_id: str, phase: str, outcome: str, summary: str, **e
     return _bound_payload(redact_payload(payload))
 
 
+def build_agentlens_event_envelope(
+    *,
+    event_id: int,
+    event_type: str,
+    payload: dict[str, Any],
+    occurred_at: str | None = None,
+) -> dict[str, Any]:
+    run_id = str(payload.get("run_id") or payload.get("agentrunway_run_id") or "")
+    outcome = str(payload.get("outcome") or "unknown")
+    timestamp = occurred_at or _utc_now_iso()
+    event = {
+        "schema": AGENTLENS_EVENT_SCHEMA,
+        "event_id": f"evt_{event_id:06d}",
+        "run_id": run_id,
+        "event_type": event_type,
+        "type": event_type,
+        "producer": {"name": "agentrunway", "version": AGENTRUNWAY_VERSION},
+        "occurred_at": timestamp,
+        "ts": timestamp,
+        "sequence": event_id,
+        "phase": str(payload.get("phase") or "unknown"),
+        "outcome": outcome,
+        "severity": str(payload.get("severity") or "info"),
+        "evidence_refs": _list_or_empty(payload.get("evidence_refs")),
+        "artifact_refs": _list_or_empty(payload.get("artifact_refs")),
+        "trust_impact": str(payload.get("trust_impact") or _trust_impact(outcome)),
+        "summary": str(payload.get("summary") or "")[:1200],
+        "payload": payload,
+    }
+    for key in ("task_id", "attempt_id", "candidate_id", "gate_id"):
+        value = payload.get(key)
+        if value is not None:
+            event[key] = value
+    return event
+
+
 class AgentLensEmitter(Protocol):
     def emit(self, event_type: str, payload: dict[str, object]) -> None:
         ...
@@ -123,12 +178,20 @@ class EventJournal:
                 error = str(exc)
             else:
                 status = "agentlens_emitted"
+        journal_payload = dict(redacted)
+        journal_payload["agentlens_status"] = status
+        if error is not None:
+            journal_payload["agentlens_error"] = str(redact_payload(error))
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        event_line = {"event_type": event_type, "payload": redacted, "status": status, "error": error}
+        event_id = self.db.insert_event(event_type=event_type, payload=journal_payload, status=status, error=error)
+        event_line = build_agentlens_event_envelope(
+            event_id=event_id,
+            event_type=event_type,
+            payload=journal_payload,
+        )
         with self.events_path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(event_line, ensure_ascii=False, sort_keys=True) + "\n")
-        event_id = self.db.insert_event(event_type=event_type, payload=redacted, status=status, error=error)
-        return EventRecord(id=event_id, event_type=event_type, status=status, payload=redacted, error=error)
+        return EventRecord(id=event_id, event_type=event_type, status=status, payload=journal_payload, error=error)
 
     def list(self) -> list[dict[str, Any]]:
         return self.db.list_events()

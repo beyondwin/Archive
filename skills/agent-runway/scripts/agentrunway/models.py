@@ -11,6 +11,7 @@ RESULT_SCHEMA = "agentrunway.worker_result.v1"
 REVIEW_SCHEMA = "agentrunway.review_result.v1"
 VERIFICATION_SCHEMA = "agentrunway.verification_result.v1"
 EVENT_SCHEMA = "agentrunway.event.v1"
+AGENTLENS_EVENT_SCHEMA = "agentlens.event.v2"
 
 CLAIM_MODES = {"owned", "shared_append", "consumes", "read_only", "forbidden"}
 OUTCOMES = {"finished", "simulated_finished", "failed", "blocked", "cancelled", "unknown"}
