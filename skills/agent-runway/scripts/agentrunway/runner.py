@@ -126,6 +126,106 @@ def _write_early_run_json(run_dir: Path, payload: dict[str, Any]) -> bool:
     return True
 
 
+def _safe_base_commit(repo: Path, base_ref: str) -> str:
+    try:
+        return Git(repo).rev_parse(base_ref)
+    except Exception:
+        return "unknown"
+
+
+def _persist_early_failure(
+    *,
+    run_id: str,
+    workspace_id: str,
+    repo: Path,
+    plan: Path,
+    spec: Path | None,
+    args: Any,
+    cfg: Any,
+    run_dir: Path,
+    status: str,
+    event_type: str,
+    failure_class: str,
+    summary: str,
+    decision_payload: dict[str, Any],
+    details: dict[str, Any],
+) -> dict[str, Any]:
+    state_db = run_dir / "state.sqlite"
+    events_jsonl = run_dir / "events.jsonl"
+    decision_packet_path = run_dir / "artifacts" / "decision_packet.json"
+    decision_kind = "plan_lint" if status == "plan_lint_failed" else "preflight"
+    decision_packet = {
+        "decision_id": f"{run_id}.{decision_kind}.decision",
+        "failure_class": failure_class,
+        "summary": summary,
+        "payload": decision_payload,
+    }
+    payload: dict[str, Any] = {
+        "run_id": run_id,
+        "workspace_id": workspace_id,
+        "status": status,
+        "run_dir": str(run_dir),
+        "state_db": str(state_db),
+        "events_jsonl": str(events_jsonl),
+        "artifacts": {"decision_packet": str(decision_packet_path)},
+        "failure_class": failure_class,
+        "decision_packet": decision_packet,
+        **details,
+    }
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        decision_packet_path.parent.mkdir(parents=True, exist_ok=True)
+        db = AgentRunwayDb.open(state_db)
+        db.create_run(
+            run_id=run_id,
+            workspace_id=workspace_id,
+            repo_root=str(repo),
+            plan_path=str(plan),
+            spec_path=str(spec) if spec else None,
+            plan_hash=canonical_hash(plan),
+            spec_hash=canonical_hash(spec) if spec else None,
+            base_commit_sha=_safe_base_commit(repo, str(args.base_ref)),
+            model_profile=cfg.default_profile,
+            allowed_dirty=args.allow_dirty_source,
+            apply_to_source=args.apply_to_source,
+        )
+        db.set_run_status(run_id, status)
+        db.insert_decision_packet(
+            run_id=run_id,
+            decision_id=str(decision_packet["decision_id"]),
+            task_id=None,
+            failure_class=failure_class,
+            summary=summary,
+            payload=decision_payload,
+        )
+        decision_packet_path.write_text(
+            json.dumps(decision_packet, ensure_ascii=False, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        journal = EventJournal(db=db, run_dir=run_dir, agentlens_emitter=None)
+        journal.record("agentrunway.run_started", build_event_payload(run_id, "run", "success", "run started"))
+        journal.record(event_type, build_event_payload(run_id, decision_kind, "failed", summary, failure_class=failure_class))
+        journal.record(
+            "agentrunway.run_blocked",
+            build_event_payload(run_id, "run", "blocked", summary, failure_class=failure_class),
+        )
+        _write_run_json(run_dir, payload)
+        payload["state_persisted"] = True
+    except Exception as exc:
+        payload.update(
+            {
+                "state_db": None,
+                "events_jsonl": None,
+                "artifacts": {"decision_packet": None},
+                "state_persisted": False,
+                "recovery": "early_failure_state_unavailable",
+                "state_error": str(exc),
+            }
+        )
+        payload["state_persisted"] = _write_early_run_json(run_dir, payload)
+    return payload
+
+
 def _load_run_json(run_id: str) -> dict[str, Any] | None:
     run_dir = _find_run_dir(run_id)
     if run_dir is None or not (run_dir / "run.json").exists():
@@ -612,26 +712,26 @@ def run(args: Any) -> dict[str, Any]:
     lint = lint_plan(plan_path=plan, spec_path=spec)
     if not lint.ok:
         classification = classify_plan_failure(lint_result=lint.to_dict())
-        payload = {
-            "run_id": run_id,
-            "workspace_id": wsid,
-            "status": "plan_lint_failed",
-            "run_dir": str(run_dir),
-            "state_db": None,
-            "plan_lint": lint.to_dict(),
-            "failure_class": classification.failure_class,
-            "decision_packet": {
-                "decision_id": f"{run_id}.plan_lint.decision",
-                "failure_class": classification.failure_class,
-                "summary": classification.summary,
-                "payload": {
-                    "next_action": classification.next_action,
-                    "plan_lint": lint.to_dict(),
-                },
+        return _persist_early_failure(
+            run_id=run_id,
+            workspace_id=wsid,
+            repo=repo,
+            plan=plan,
+            spec=spec,
+            args=args,
+            cfg=cfg,
+            run_dir=run_dir,
+            status="plan_lint_failed",
+            event_type="agentrunway.plan_lint_failed",
+            failure_class=classification.failure_class,
+            summary=classification.summary,
+            decision_payload={
+                "next_action": classification.next_action,
+                "issues": lint.to_dict().get("errors", []),
+                "plan_lint": lint.to_dict(),
             },
-        }
-        payload["state_persisted"] = _write_early_run_json(run_dir, payload)
-        return payload
+            details={"plan_lint": lint.to_dict()},
+        )
     preflight = run_preflight(
         adapter_name=str(args.adapter),
         repo=repo,
@@ -639,16 +739,26 @@ def run(args: Any) -> dict[str, Any]:
         worktree_root=worktree_root,
     )
     if not preflight.ok:
-        payload = {
-            "run_id": run_id,
-            "workspace_id": wsid,
-            "status": "preflight_failed",
-            "run_dir": str(run_dir),
-            "state_db": None,
-            "preflight": preflight.to_dict(),
-        }
-        payload["state_persisted"] = _write_early_run_json(run_dir, payload)
-        return payload
+        return _persist_early_failure(
+            run_id=run_id,
+            workspace_id=wsid,
+            repo=repo,
+            plan=plan,
+            spec=spec,
+            args=args,
+            cfg=cfg,
+            run_dir=run_dir,
+            status="preflight_failed",
+            event_type="agentrunway.preflight_failed",
+            failure_class="preflight_failed",
+            summary="preflight failed",
+            decision_payload={
+                "next_action": "fix preflight issues",
+                "issues": preflight.to_dict().get("issues", []),
+                "preflight": preflight.to_dict(),
+            },
+            details={"preflight": preflight.to_dict()},
+        )
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "packets").mkdir(exist_ok=True)
     (run_dir / "prompts").mkdir(exist_ok=True)
@@ -1468,17 +1578,35 @@ def _early_failure_payload(data: dict[str, Any], run_id: str) -> dict[str, Any] 
     status_value = str(data.get("status") or "")
     if status_value not in {"plan_lint_failed", "preflight_failed"}:
         return None
+    failure_class = data.get("failure_class")
+    if not failure_class and isinstance(data.get("decision_packet"), dict):
+        failure_class = data["decision_packet"].get("failure_class")
     payload = {
         "run_id": data.get("run_id") or run_id,
         "status": status_value,
         "run_dir": data.get("run_dir"),
         "state_db": data.get("state_db"),
+        "events_jsonl": data.get("events_jsonl"),
+        "artifacts": data.get("artifacts", {}),
+        "failure_class": failure_class,
+        "decision_packet": data.get("decision_packet"),
         "next_action": "fix plan lint errors" if status_value == "plan_lint_failed" else "fix preflight issues",
     }
     if "plan_lint" in data:
         payload["plan_lint"] = data["plan_lint"]
     if "preflight" in data:
         payload["preflight"] = data["preflight"]
+    payload["diagnosis"] = {
+        "run_id": payload["run_id"],
+        "status": status_value,
+        "reason": failure_class or status_value,
+        "next_action": payload["next_action"],
+        "safe_actions": ["inspect", "events"],
+        "manual_actions": [payload["next_action"]],
+        "blocked_tasks": [],
+        "conflict": None,
+        "agentlens_health": {},
+    }
     return payload
 
 
@@ -1489,11 +1617,11 @@ def status(run_id: str) -> dict[str, Any]:
     from .diagnostics import diagnose_run
     from .status import next_operator_action
 
+    early_data = _early_failure_payload(data, run_id)
     state_db = data.get("state_db")
     if not state_db or not Path(str(state_db)).exists():
-        early = _early_failure_payload(data, run_id)
-        if early is not None:
-            return early
+        if early_data is not None:
+            return early_data
         return {
             "run_id": data.get("run_id") or run_id,
             "status": "missing",
@@ -1503,6 +1631,10 @@ def status(run_id: str) -> dict[str, Any]:
             "next_action": "no recoverable state; inspect run_dir manually",
         }
     db = AgentRunwayDb.open(Path(str(state_db)))
+    if early_data is not None:
+        early_data["agentlens"] = db.agentlens_summary()
+        early_data["diagnosis"]["agentlens_health"] = early_data["agentlens"]
+        return early_data
     agentlens = db.agentlens_summary()
     diagnosis = diagnose_run(run_json=data, db=db).to_dict()
     payload = {
@@ -1528,11 +1660,11 @@ def inspect(run_id: str) -> dict[str, Any]:
         return _missing(run_id)
     from .status import build_inspect_payload
 
+    early_data = _early_failure_payload(data, run_id)
     state_db = data.get("state_db")
     if not state_db or not Path(str(state_db)).exists():
-        early = _early_failure_payload(data, run_id)
-        if early is not None:
-            return early
+        if early_data is not None:
+            return early_data
         return {
             "run_id": data.get("run_id") or run_id,
             "status": "missing",
@@ -1542,6 +1674,11 @@ def inspect(run_id: str) -> dict[str, Any]:
             "next_action": "no recoverable state; inspect run_dir manually",
         }
     db = AgentRunwayDb.open(Path(str(state_db)))
+    if early_data is not None:
+        early_data["agentlens"] = db.agentlens_summary()
+        early_data["events"] = db.list_events()
+        early_data["diagnosis"]["agentlens_health"] = early_data["agentlens"]
+        return early_data
     payload = build_inspect_payload(run_json=data, db=db)
     if "reconstructed_from" in data:
         payload["reconstructed_from"] = data["reconstructed_from"]
@@ -1554,11 +1691,11 @@ def summarize(run_id: str) -> dict[str, Any]:
     data = _load_run_json_or_reconstruct(run_id)
     if data is None:
         return _missing(run_id)
+    early_data = _early_failure_payload(data, run_id)
     state_db = data.get("state_db")
     if not state_db or not Path(str(state_db)).exists():
-        early = _early_failure_payload(data, run_id)
-        if early is not None:
-            return early
+        if early_data is not None:
+            return early_data
         return {
             "run_id": data.get("run_id") or run_id,
             "status": "missing",
@@ -1570,6 +1707,11 @@ def summarize(run_id: str) -> dict[str, Any]:
     from .run_summary import build_run_summary
 
     db = AgentRunwayDb.open(Path(str(state_db)))
+    if early_data is not None:
+        early_data["agentlens"] = db.agentlens_summary()
+        early_data["events"] = db.list_events()
+        early_data["diagnosis"]["agentlens_health"] = early_data["agentlens"]
+        return early_data
     return build_run_summary(run_json=data, db=db)
 
 
@@ -1577,7 +1719,13 @@ def events(run_id: str, event_type: str | None = None) -> dict[str, Any]:
     data = _load_run_json(run_id)
     if data is None:
         return _missing(run_id)
-    db = AgentRunwayDb.open(Path(data["state_db"]))
+    state_db = data.get("state_db")
+    if not state_db or not Path(str(state_db)).exists():
+        early = _early_failure_payload(data, run_id)
+        if early is not None:
+            return {"run_id": run_id, "events": [], "agentlens": {}, "failure": early}
+        return _missing(run_id)
+    db = AgentRunwayDb.open(Path(str(state_db)))
     rows = db.list_events()
     if event_type:
         rows = [row for row in rows if row["event_type"] == event_type]
