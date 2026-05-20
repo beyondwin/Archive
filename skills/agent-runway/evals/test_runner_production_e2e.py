@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from agentrunway.worktrees import workspace_id
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "agentrunway.py"
@@ -279,6 +281,78 @@ def test_verifier_blocked_does_not_redispatch(git_repo: Path, isolated_home: Pat
     assert [row["role"] for row in workers] == ["implementer", "reviewer", "verifier"]
     assert quality_payloads[-1]["decision"] == "block"
     assert quality_payloads[-1]["reason"] == "verification_blocked"
+
+
+def test_failed_implementer_run_persists_run_json(git_repo: Path, isolated_home: Path) -> None:
+    plan, spec = _write_plan(git_repo, path="src/allowed.py")
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET"] = "README.md"
+    run_id = "scope-failure-run"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--run-id",
+            run_id,
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    run_json_path = isolated_home / "runs" / workspace_id(git_repo) / run_id / "run.json"
+    payload = json.loads(run_json_path.read_text(encoding="utf-8"))
+
+    assert result.returncode != 0
+    assert payload["status"] == "failed"
+    assert payload["run_id"] == run_id
+    assert payload["main_worktree"]
+
+
+def test_reviewer_and_verifier_worktrees_include_candidate_files(git_repo: Path, isolated_home: Path) -> None:
+    plan, spec = _write_plan(git_repo, path="src/review_visible.py")
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET"] = "src/review_visible.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT role, worktree_path FROM workers WHERE role IN ('reviewer', 'verifier') ORDER BY role"
+    ).fetchall()
+
+    assert {row["role"] for row in rows} == {"reviewer", "verifier"}
+    for row in rows:
+        reviewed_file = Path(row["worktree_path"]) / "src" / "review_visible.py"
+        assert reviewed_file.read_text(encoding="utf-8") == "VALUE = 'codex'\n"
 
 
 def test_agentlens_fake_cli_receives_runner_events(git_repo: Path, isolated_home: Path, tmp_path: Path) -> None:

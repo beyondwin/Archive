@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .adapters.base import RuntimeAdapter
 from .db import AgentRunwayDb
 from .file_claims import validate_changed_files
 from .git_ops import Git, changed_files_between, commits_between
-from .models import TaskSpec, WorkerSpec
+from .models import TaskSpec, WorkerResultEnvelope, WorkerSpec
 from .packetizer import materialize_role_prompt
 from .result_validation import validate_review_result, validate_verification_result, validate_worker_result
 from .worktrees import create_worker_worktree
+
+
+@dataclass(frozen=True)
+class WorkerAttemptResult:
+    envelope: WorkerResultEnvelope
+    base_commit: str
 
 
 def _allowed_globs(task: TaskSpec) -> tuple[str, ...]:
@@ -63,10 +69,11 @@ def run_worker_attempt(
     attempt: int,
     timeout_seconds: int,
     metadata: dict[str, str] | None = None,
-):
+) -> WorkerAttemptResult:
     worker_id = f"{task.task_id}-{role}-{attempt:03d}"
     branch = f"agentrunway/{run_id}/{worker_id}"
-    worker_tree = create_worker_worktree(git, worktree_root / "workers" / worker_id, branch, base_ref)
+    base_commit = git.rev_parse(base_ref)
+    worker_tree = create_worker_worktree(git, worktree_root / "workers" / worker_id, branch, base_commit)
     spec = WorkerSpec(
         run_id=run_id,
         task_id=task.task_id,
@@ -102,7 +109,7 @@ def run_worker_attempt(
     db.update_worker_handle(worker_id, handle.to_json())
     envelope = adapter.collect(handle)
     db.set_worker_state(worker_id, "result_collected")
-    return envelope
+    return WorkerAttemptResult(envelope=envelope, base_commit=base_commit)
 
 
 def run_implementer_attempt(
@@ -127,7 +134,7 @@ def run_implementer_attempt(
     base_ref = f"agentrunway/{run_id}/main"
     artifact_dir = run_dir / "artifacts" / task.task_id / worker_id
     output_path = artifact_dir / "worker_result.json"
-    envelope = run_worker_attempt(
+    attempt_result = run_worker_attempt(
         db=db,
         run_id=run_id,
         git=git,
@@ -146,13 +153,14 @@ def run_implementer_attempt(
         attempt=attempt,
         timeout_seconds=timeout_seconds,
     )
+    envelope = attempt_result.envelope
     if envelope.result_json is None:
         db.set_worker_state(worker_id, "malformed_result")
         raise RuntimeError(envelope.error or "missing_worker_result")
     validate_worker_result(envelope.result_json)
     worker_tree = Path(str(db.get_worker(worker_id)["worktree_path"]))
-    commits = commits_between(Git(worker_tree), base_ref, "HEAD")
-    changed_files = changed_files_between(Git(worker_tree), base_ref, "HEAD")
+    commits = commits_between(Git(worker_tree), attempt_result.base_commit, "HEAD")
+    changed_files = changed_files_between(Git(worker_tree), attempt_result.base_commit, "HEAD")
     validate_changed_files(changed_files, _allowed_globs(task))
     db.set_worker_state(worker_id, "validated")
     candidate_id = db.enqueue_merge_candidate(
@@ -182,6 +190,7 @@ def run_reviewer_attempt(
     reasoning_effort: str,
     reviewed_worker_id: str,
     candidate_diff: str,
+    candidate_commits: tuple[str, ...],
     attempt: int,
     timeout_seconds: int,
     fake_review_status: str | None = None,
@@ -200,7 +209,8 @@ def run_reviewer_attempt(
     metadata = {"AGENTRUNWAY_REVIEWED_WORKER_ID": reviewed_worker_id}
     if fake_review_status:
         metadata["AGENTRUNWAY_FAKE_REVIEW_STATUS"] = fake_review_status
-    envelope = run_worker_attempt(
+    candidate_head = candidate_commits[-1] if candidate_commits else f"agentrunway/{run_id}/main"
+    attempt_result = run_worker_attempt(
         db=db,
         run_id=run_id,
         git=git,
@@ -215,11 +225,12 @@ def run_reviewer_attempt(
         model=model,
         reasoning_effort=reasoning_effort,
         role="reviewer",
-        base_ref=f"agentrunway/{run_id}/main",
+        base_ref=candidate_head,
         attempt=attempt,
         timeout_seconds=timeout_seconds,
         metadata=metadata,
     )
+    envelope = attempt_result.envelope
     if envelope.result_json is None:
         db.set_worker_state(worker_id, "malformed_result")
         raise RuntimeError("missing_review_result")
@@ -266,7 +277,8 @@ def run_verifier_attempt(
     metadata: dict[str, str] = {}
     if fake_verify_status:
         metadata["AGENTRUNWAY_FAKE_VERIFY_STATUS"] = fake_verify_status
-    envelope = run_worker_attempt(
+    candidate_head = commits[-1] if commits else f"agentrunway/{run_id}/main"
+    attempt_result = run_worker_attempt(
         db=db,
         run_id=run_id,
         git=git,
@@ -281,11 +293,12 @@ def run_verifier_attempt(
         model=model,
         reasoning_effort=reasoning_effort,
         role="verifier",
-        base_ref=f"agentrunway/{run_id}/main",
+        base_ref=candidate_head,
         attempt=attempt,
         timeout_seconds=timeout_seconds,
         metadata=metadata,
     )
+    envelope = attempt_result.envelope
     if envelope.result_json is None:
         db.set_worker_state(worker_id, "malformed_result")
         raise RuntimeError("missing_verification_result")
