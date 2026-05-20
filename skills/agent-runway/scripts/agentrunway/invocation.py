@@ -43,9 +43,12 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--skip-review", action="store_true")
     run.add_argument("--skip-verify", action="store_true")
 
-    for command in ("status", "inspect", "events", "resume", "cancel", "apply"):
+    for command in ("status", "inspect", "events", "resume", "cancel"):
         cmd = sub.add_parser(command, help=f"{command} a AgentRunway run")
         cmd.add_argument("--run", required=True)
+    apply_parser = sub.add_parser("apply", help="apply a AgentRunway run")
+    apply_parser.add_argument("--run", required=True)
+    apply_parser.add_argument("--strategy", default="cherry-pick", choices=("cherry-pick",))
     clean = sub.add_parser("clean", help="clean retained AgentRunway artifacts")
     clean.add_argument("--older-than", default="7d")
     clean.add_argument("--successful", action="store_true")
@@ -78,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "cancel":
             payload = runner.cancel(args.run)
         elif args.command == "apply":
-            payload = runner.apply(args.run)
+            payload = runner.apply(args.run, strategy=args.strategy)
         elif args.command == "clean":
             payload = runner.clean(args.older_than, successful=args.successful)
         else:
