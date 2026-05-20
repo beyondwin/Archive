@@ -9,12 +9,22 @@ from .db import AgentRunwayDb
 from .file_claims import validate_changed_files
 from .git_ops import Git, changed_files_between, commits_between
 from .models import TaskSpec, WorkerSpec
-from .result_validation import validate_worker_result
+from .result_validation import validate_review_result, validate_verification_result, validate_worker_result
 from .worktrees import create_worker_worktree
 
 
 def _allowed_globs(task: TaskSpec) -> tuple[str, ...]:
     return tuple(claim.path for claim in task.file_claims if claim.mode in {"owned", "shared_append"})
+
+
+def gate_review_result(review_json: dict[str, object]) -> str:
+    result = validate_review_result(review_json)
+    return str(result["status"])
+
+
+def gate_verification_result(verification_json: dict[str, object]) -> str:
+    result = validate_verification_result(verification_json)
+    return str(result["status"])
 
 
 def run_implementer_attempt(
