@@ -47,3 +47,17 @@ def materialize_prompt(packet: TaskPacket, prompt_dir: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def materialize_worker_prompt(packet: TaskPacket, packet_path: Path, output_path: Path, prompt_dir: Path) -> Path:
+    prompt_dir.mkdir(parents=True, exist_ok=True)
+    path = prompt_dir / f"{packet.task_id}.{packet.role}.prompt.txt"
+    path.write_text(
+        "You are an AgentRunway worker. Read the task packet and produce exactly the requested JSON artifact.\n"
+        f"Packet path: {packet_path}\n"
+        f"Output path: {output_path}\n"
+        "Use using-superpowers. Code-changing implementers must use test-driven-development.\n"
+        "Commit your changes before writing the result artifact.\n",
+        encoding="utf-8",
+    )
+    return path
