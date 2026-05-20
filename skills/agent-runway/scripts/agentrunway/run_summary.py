@@ -38,6 +38,23 @@ def _safe_events_tail(run_dir: Path, limit: int) -> list[dict[str, Any]]:
     return rows
 
 
+def _safe_coverage(run_dir: Path, db: AgentRunwayDb) -> dict[str, Any]:
+    from .artifact_graph import build_artifact_graph
+
+    graph = build_artifact_graph(run_dir=run_dir, db=db)
+    coverage_path = run_dir / "coverage.json"
+    if coverage_path.exists():
+        try:
+            coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            coverage = {}
+    else:
+        coverage = graph["coverage"]
+    if "implementation_evidence_coverage" not in coverage:
+        coverage["implementation_evidence_coverage"] = graph["coverage"].get("implementation_evidence_coverage", {})
+    return coverage
+
+
 def _workflow_summary(db: AgentRunwayDb, run_id: str) -> dict[str, Any]:
     if not run_id:
         return {}
@@ -127,6 +144,8 @@ def build_run_summary(*, run_json: dict[str, Any], db: AgentRunwayDb, event_tail
         if payload.get("selected_candidate_id") is not None
     }
     workers = db.list_workers()
+    coverage = _safe_coverage(run_dir, db)
+    implementation_coverage = coverage.get("implementation_evidence_coverage", {})
     summary = {
         "run_id": run_json.get("run_id"),
         "status": run_json.get("status"),
@@ -161,6 +180,11 @@ def build_run_summary(*, run_json: dict[str, Any], db: AgentRunwayDb, event_tail
         "residual_risks": [],
         "agentlens": agentlens,
         "agentlens_notice": AGENTLENS_DISABLED_NOTICE if agentlens.get("run_status") == "disabled" else "",
+        "coverage": coverage,
+        "coverage_summary": {
+            "spec_refs_planned": len(implementation_coverage.get("planned") or coverage.get("covered", [])),
+            "spec_refs_implemented_with_evidence": len(implementation_coverage.get("implemented", [])),
+        },
         "event_tail": _safe_events_tail(run_dir, event_tail),
         "artifact_refs": {
             "events": str(run_dir / "events.jsonl"),
