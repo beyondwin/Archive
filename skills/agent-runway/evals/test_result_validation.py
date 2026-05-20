@@ -32,6 +32,22 @@ def test_valid_worker_result_round_trips() -> None:
     assert result["task_id"] == "task_001"
 
 
+def test_simulated_worker_result_round_trips() -> None:
+    result = validate_worker_result(
+        {
+            "schema": "agentrunway.worker_result.v1",
+            "worker_id": "w1",
+            "task_id": "task_001",
+            "role": "implementer",
+            "status": "simulated_success",
+            "changed_files": [],
+            "summary": "simulated",
+            "method_audit": {"superpowers_used": True, "simulation": True},
+        }
+    )
+    assert result["status"] == "simulated_success"
+
+
 def test_method_audit_requires_superpowers_and_tdd_for_code_changes() -> None:
     with pytest.raises(MethodAuditError):
         verify_method_audit({"superpowers_used": True}, code_change=True)

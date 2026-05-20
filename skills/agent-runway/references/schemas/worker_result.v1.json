@@ -8,7 +8,7 @@
     "worker_id": {"type": "string"},
     "task_id": {"type": "string"},
     "role": {"enum": ["implementer", "reviewer", "verifier", "recovery"]},
-    "status": {"enum": ["success", "failed", "blocked", "malformed"]},
+    "status": {"enum": ["success", "simulated_success", "failed", "blocked", "malformed"]},
     "changed_files": {"type": "array", "items": {"type": "string"}},
     "commit": {"type": ["string", "null"]},
     "summary": {"type": "string", "maxLength": 1200},

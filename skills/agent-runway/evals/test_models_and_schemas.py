@@ -24,7 +24,7 @@ def test_schema_constants_match_design() -> None:
 
 def test_core_enums_cover_mvp_policy() -> None:
     assert CLAIM_MODES == {"owned", "shared_append", "consumes", "read_only", "forbidden"}
-    assert OUTCOMES == {"finished", "failed", "blocked", "cancelled", "unknown"}
+    assert OUTCOMES == {"finished", "simulated_finished", "failed", "blocked", "cancelled", "unknown"}
     assert REASONING_LEVELS == {"lowest", "low", "medium", "high", "highest"}
 
 
@@ -47,3 +47,8 @@ def test_reference_schema_files_are_valid_json() -> None:
 def test_review_schema_matches_runtime_statuses() -> None:
     data = json.loads((ROOT / "references" / "schemas" / "review_result.v1.json").read_text(encoding="utf-8"))
     assert data["properties"]["status"]["enum"] == ["approved", "changes_requested", "rejected"]
+
+
+def test_worker_result_schema_includes_simulated_success() -> None:
+    data = json.loads((ROOT / "references" / "schemas" / "worker_result.v1.json").read_text(encoding="utf-8"))
+    assert data["properties"]["status"]["enum"] == ["success", "simulated_success", "failed", "blocked", "malformed"]

@@ -120,7 +120,7 @@ def test_dependent_task_starts_from_checkpoint_with_dependency_commit(
     ]
 
 
-def test_local_fake_success_records_merge_checkpoints_before_releasing_dependencies(
+def test_local_fake_success_releases_dependencies_without_merge_checkpoints(
     git_repo: Path, isolated_home: Path
 ) -> None:
     plan, spec = _write_dependent_plan(git_repo)
@@ -148,9 +148,15 @@ def test_local_fake_success_records_merge_checkpoints_before_releasing_dependenc
     conn = sqlite3.connect(payload["state_db"])
     conn.row_factory = sqlite3.Row
     checkpoints = conn.execute("SELECT reason FROM checkpoints ORDER BY checkpoint_id").fetchall()
+    tasks = conn.execute("SELECT task_id, status FROM tasks ORDER BY task_id").fetchall()
 
-    assert payload["status"] == "finished"
-    assert [row["reason"] for row in checkpoints] == ["initial", "merged:task_001", "merged:task_002"]
+    assert payload["status"] == "simulated_finished"
+    assert payload["simulation"] is True
+    assert [row["reason"] for row in checkpoints] == ["initial"]
+    assert [(row["task_id"], row["status"]) for row in tasks] == [
+        ("task_001", "simulated_completed"),
+        ("task_002", "simulated_completed"),
+    ]
 
 
 def test_safe_independent_tasks_share_checkpoint_scheduler_wave(git_repo: Path, isolated_home: Path) -> None:
