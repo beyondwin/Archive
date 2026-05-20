@@ -52,6 +52,8 @@ def test_agentrunway_run_planning_only_creates_state(git_repo: Path, isolated_ho
     assert packet["task_id"] == "task_001"
     assert packet["spec_refs"][0]["id"] == "S1.1"
     assert payload["artifacts"]["contract"] == str(run_dir / "contract.json")
+    assert payload["artifacts"]["artifact_graph"] == str(run_dir / "artifact_graph.json")
+    assert payload["artifacts"]["coverage"] == str(run_dir / "coverage.json")
     assert payload["artifacts"]["packets"] == [str(packet_path)]
     assert payload["packet_summary"] == [
         {

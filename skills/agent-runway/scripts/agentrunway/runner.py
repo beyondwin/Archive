@@ -893,6 +893,8 @@ def run(args: Any) -> dict[str, Any]:
         "waves": waves,
         "artifacts": {
             "contract": str(contract_path),
+            "artifact_graph": str(run_dir / "artifact_graph.json"),
+            "coverage": str(run_dir / "coverage.json"),
             "packets": [str(path) for path in packet_paths],
         },
         "packet_summary": packet_summary,
