@@ -47,3 +47,23 @@ def materialize_prompt(packet: TaskPacket, prompt_dir: Path) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+def materialize_worker_prompt(packet: TaskPacket, packet_path: Path, output_path: Path, prompt_dir: Path) -> Path:
+    prompt_dir.mkdir(parents=True, exist_ok=True)
+    path = prompt_dir / f"{packet.task_id}.{packet.role}.prompt.txt"
+    path.write_text(
+        "You are an AgentRunway worker. Complete the task described by the task packet below.\n"
+        f"Packet path: {packet_path}\n"
+        f"Output path: {output_path}\n"
+        "Use using-superpowers. Code-changing implementers must use test-driven-development.\n"
+        "Commit your changes before writing the result artifact.\n"
+        "Write worker_result JSON to the output path with required fields: "
+        "schema, worker_id, task_id, role, status, changed_files, summary, method_audit.\n"
+        f"Use schema value {packet.output_schema!r}; status must be success, failed, blocked, or malformed.\n\n"
+        "```json\n"
+        + packet_to_json(packet)
+        + "\n```\n",
+        encoding="utf-8",
+    )
+    return path

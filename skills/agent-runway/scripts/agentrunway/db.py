@@ -27,10 +27,43 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS task_packets (task_id TEXT PRIMARY KEY, packet_hash TEXT NOT NULL, prompt_path TEXT NOT NULL, packet_json TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS file_claims (task_id TEXT NOT NULL, path TEXT NOT NULL, mode TEXT NOT NULL, PRIMARY KEY(task_id, path, mode));
 CREATE TABLE IF NOT EXISTS waves (wave_index INTEGER NOT NULL, task_id TEXT NOT NULL, PRIMARY KEY(wave_index, task_id));
-CREATE TABLE IF NOT EXISTS workers (worker_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, role TEXT NOT NULL, runtime TEXT NOT NULL, model TEXT NOT NULL, reasoning_effort TEXT NOT NULL, state TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS workers (
+  worker_id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  runtime TEXT NOT NULL,
+  model TEXT NOT NULL,
+  reasoning_effort TEXT NOT NULL,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  state TEXT NOT NULL,
+  worktree_path TEXT,
+  branch TEXT,
+  handle_json TEXT NOT NULL DEFAULT '{}',
+  started_at TEXT,
+  ended_at TEXT,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
 CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, worker_id TEXT, direction TEXT NOT NULL, message_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS artifacts (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT, worker_id TEXT, kind TEXT NOT NULL, path TEXT NOT NULL, sha256 TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
-CREATE TABLE IF NOT EXISTS merge_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL, worker_id TEXT NOT NULL, commit_sha TEXT, patch_path TEXT, status TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS merge_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id TEXT NOT NULL,
+  worker_id TEXT NOT NULL,
+  commits_json TEXT NOT NULL,
+  changed_files_json TEXT NOT NULL,
+  status TEXT NOT NULL,
+  merge_attempts INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS applied_commits (
+  run_id TEXT NOT NULL,
+  commit_sha TEXT NOT NULL,
+  strategy TEXT NOT NULL,
+  applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY(run_id, commit_sha)
+);
 CREATE TABLE IF NOT EXISTS agentlens_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL, payload_json TEXT NOT NULL, status TEXT NOT NULL, error TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
 CREATE TABLE IF NOT EXISTS cost_ledger (id INTEGER PRIMARY KEY AUTOINCREMENT, worker_id TEXT, runtime TEXT, model TEXT, tokens_input INTEGER, tokens_output INTEGER, cost_usd REAL, status TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS method_audits (id INTEGER PRIMARY KEY AUTOINCREMENT, worker_id TEXT NOT NULL, task_id TEXT NOT NULL, status TEXT NOT NULL, evidence_json TEXT NOT NULL);
@@ -51,9 +84,21 @@ class AgentRunwayDb:
         path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(path)
         db = cls(conn)
+        db._drop_legacy_merge_queue()
         db.conn.executescript(SCHEMA_SQL)
         db.conn.commit()
         return db
+
+    def _drop_legacy_merge_queue(self) -> None:
+        row = self.conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='merge_queue'"
+        ).fetchone()
+        if row is None:
+            return
+        columns = {str(item["name"]) for item in self.conn.execute("PRAGMA table_info(merge_queue)").fetchall()}
+        expected = {"commits_json", "changed_files_json", "merge_attempts"}
+        if not expected.issubset(columns):
+            self.conn.execute("DROP TABLE merge_queue")
 
     def table_names(self) -> set[str]:
         rows = self.conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
@@ -141,3 +186,104 @@ class AgentRunwayDb:
 
     def list_tasks(self) -> list[dict[str, Any]]:
         return [dict(row) for row in self.conn.execute("SELECT * FROM tasks ORDER BY task_id")]
+
+    def create_worker_attempt(self, **fields: Any) -> None:
+        payload = {
+            "worker_id": fields["worker_id"],
+            "task_id": fields["task_id"],
+            "role": fields["role"],
+            "runtime": fields["runtime"],
+            "model": fields["model"],
+            "reasoning_effort": fields["reasoning_effort"],
+            "attempt": int(fields.get("attempt", 1)),
+            "worktree_path": fields.get("worktree_path"),
+            "branch": fields.get("branch"),
+            "state": fields["state"],
+            "handle_json": json.dumps(fields.get("handle_json", {}), sort_keys=True),
+        }
+        self.conn.execute(
+            """
+            INSERT INTO workers
+              (worker_id, task_id, role, runtime, model, reasoning_effort, attempt, worktree_path, branch, state, handle_json)
+            VALUES
+              (:worker_id, :task_id, :role, :runtime, :model, :reasoning_effort, :attempt, :worktree_path, :branch, :state, :handle_json)
+            """,
+            payload,
+        )
+        self.conn.commit()
+
+    def set_worker_state(self, worker_id: str, state: str) -> None:
+        self.conn.execute(
+            "UPDATE workers SET state=?, updated_at=CURRENT_TIMESTAMP WHERE worker_id=?",
+            (state, worker_id),
+        )
+        self.conn.commit()
+
+    def update_worker_handle(self, worker_id: str, handle_json: dict[str, Any]) -> None:
+        self.conn.execute(
+            "UPDATE workers SET handle_json=?, updated_at=CURRENT_TIMESTAMP WHERE worker_id=?",
+            (json.dumps(handle_json, sort_keys=True), worker_id),
+        )
+        self.conn.commit()
+
+    def get_worker(self, worker_id: str) -> dict[str, Any]:
+        row = self.conn.execute("SELECT * FROM workers WHERE worker_id=?", (worker_id,)).fetchone()
+        if row is None:
+            raise KeyError(worker_id)
+        data = dict(row)
+        data["handle_json"] = json.loads(data["handle_json"])
+        return data
+
+    def enqueue_merge_candidate(
+        self,
+        *,
+        task_id: str,
+        worker_id: str,
+        commits: tuple[str, ...],
+        changed_files: tuple[str, ...],
+        status: str,
+    ) -> int:
+        cursor = self.conn.execute(
+            """
+            INSERT INTO merge_queue (task_id, worker_id, commits_json, changed_files_json, status)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (task_id, worker_id, json.dumps(list(commits)), json.dumps(list(changed_files)), status),
+        )
+        self.conn.commit()
+        return int(cursor.lastrowid)
+
+    def set_merge_candidate_status(self, candidate_id: int, status: str, error: str | None = None) -> None:
+        self.conn.execute(
+            """
+            UPDATE merge_queue
+            SET status=?, error=?, updated_at=CURRENT_TIMESTAMP
+            WHERE id=?
+            """,
+            (status, error, candidate_id),
+        )
+        self.conn.commit()
+
+    def list_merge_candidates(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT * FROM merge_queue ORDER BY id").fetchall()
+        candidates: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data["commits"] = json.loads(data.pop("commits_json"))
+            data["changed_files"] = json.loads(data.pop("changed_files_json"))
+            candidates.append(data)
+        return candidates
+
+    def record_applied_commit(self, *, run_id: str, commit_sha: str, strategy: str) -> None:
+        self.conn.execute(
+            "INSERT OR IGNORE INTO applied_commits (run_id, commit_sha, strategy) VALUES (?, ?, ?)",
+            (run_id, commit_sha, strategy),
+        )
+        self.conn.commit()
+
+    def list_applied_commits(self, run_id: str) -> list[dict[str, str]]:
+        rows = self.conn.execute(
+            "SELECT commit_sha, strategy FROM applied_commits WHERE run_id=? ORDER BY applied_at, commit_sha",
+            (run_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]

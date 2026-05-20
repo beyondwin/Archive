@@ -21,3 +21,30 @@ def validate_worker_result(payload: dict[str, object]) -> dict[str, object]:
     if not isinstance(payload.get("method_audit"), dict):
         raise ResultValidationError("method_audit must be an object")
     return payload
+
+
+def validate_review_result(payload: dict[str, object]) -> dict[str, object]:
+    required = {"schema", "worker_id", "task_id", "reviewed_worker_id", "status", "checks", "findings", "method_audit"}
+    missing = sorted(required - set(payload))
+    if missing:
+        raise ResultValidationError("missing review result fields: " + ", ".join(missing))
+    if payload["schema"] != "agentrunway.review_result.v1":
+        raise ResultValidationError("invalid review result schema")
+    if payload["status"] not in {"approved", "changes_requested", "rejected"}:
+        raise ResultValidationError("invalid review status")
+    findings = payload.get("findings")
+    if payload["status"] == "approved" and isinstance(findings, list) and findings:
+        raise ResultValidationError("approved review cannot include findings")
+    return payload
+
+
+def validate_verification_result(payload: dict[str, object]) -> dict[str, object]:
+    required = {"schema", "worker_id", "task_id", "status", "checks", "method_audit"}
+    missing = sorted(required - set(payload))
+    if missing:
+        raise ResultValidationError("missing verification result fields: " + ", ".join(missing))
+    if payload["schema"] != "agentrunway.verification_result.v1":
+        raise ResultValidationError("invalid verification result schema")
+    if payload["status"] not in {"passed", "failed", "blocked"}:
+        raise ResultValidationError("invalid verification status")
+    return payload

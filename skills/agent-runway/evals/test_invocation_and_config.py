@@ -16,12 +16,17 @@ def test_parse_skill_key_value_invocation() -> None:
     assert parsed["worker_reasoning"] == "high"
 
 
-def test_parse_run_args_defaults_to_codex_profile() -> None:
+def test_parse_run_args_leaves_model_profile_unset_for_runtime_default() -> None:
     args = parse_run_args(["run", "--plan", "p.md", "--spec", "s.md"])
     assert args.plan == Path("p.md")
     assert args.spec == Path("s.md")
-    assert args.model_profile == "codex-default"
+    assert args.model_profile is None
     assert args.apply_to_source is False
+
+
+def test_config_defaults_to_adapter_matching_profile(tmp_path: Path) -> None:
+    cfg = load_effective_config(tmp_path, {"model_profile": None, "adapter": "claude"})
+    assert cfg.default_profile == "claude-default"
 
 
 def test_config_precedence_invocation_over_agentrunway_yaml(tmp_path: Path) -> None:

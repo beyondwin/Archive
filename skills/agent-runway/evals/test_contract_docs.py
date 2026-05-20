@@ -30,6 +30,29 @@ def test_reference_docs_exist_and_cover_required_terms() -> None:
             assert term in text
 
 
+def test_production_supervisor_docs_cover_runtime_contract() -> None:
+    required_terms = {
+        "production supervisor",
+        "process lifecycle",
+        "worker_result.json",
+        "review_result",
+        "verification_result",
+        "merge conflict",
+        "agentrunway apply",
+        "best-effort",
+    }
+    text = "\n".join(
+        [
+            (ROOT / "README.md").read_text(encoding="utf-8"),
+            (ROOT / "references" / "runtime-adapters.md").read_text(encoding="utf-8"),
+            (ROOT / "references" / "merge-queue.md").read_text(encoding="utf-8"),
+            (ROOT / "references" / "watchdog.md").read_text(encoding="utf-8"),
+        ]
+    )
+    for term in required_terms:
+        assert term in text
+
+
 def test_skill_contract_names_runner_and_agentlens_namespace() -> None:
     text = (ROOT / "SKILL.md").read_text(encoding="utf-8")
     assert "scripts/agentrunway.py" in text
