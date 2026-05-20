@@ -47,6 +47,14 @@ def test_agentrunway_run_planning_only_creates_state(git_repo: Path, isolated_ho
     conn = sqlite3.connect(db_path)
     assert conn.execute("select count(*) from tasks").fetchone()[0] == 1
     assert conn.execute("select count(*) from task_packets").fetchone()[0] == 1
+    artifact_event = conn.execute(
+        "select payload_json from agentlens_events where event_type='agentrunway.artifacts_ready'"
+    ).fetchone()
+    assert artifact_event is not None
+    artifact_payload = json.loads(artifact_event[0])
+    assert artifact_payload["artifact_graph_path"] == str(run_dir / "artifact_graph.json")
+    assert artifact_payload["coverage_path"] == str(run_dir / "coverage.json")
+    assert artifact_payload["artifact_refs"] == ["contract.json", "artifact_graph.json", "coverage.json"]
     assert packet_path.exists()
     packet = json.loads(packet_path.read_text(encoding="utf-8"))
     assert packet["task_id"] == "task_001"
