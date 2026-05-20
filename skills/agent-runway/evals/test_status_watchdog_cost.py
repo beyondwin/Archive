@@ -21,6 +21,23 @@ def test_status_formatter_summarizes_counts() -> None:
     assert "merged=1" in text
 
 
+def test_status_formatter_marks_simulated_runs() -> None:
+    text = format_run_status(
+        {
+            "run_id": "run-1",
+            "status": "simulated_finished",
+            "simulation": True,
+            "diagnosis": {"next_action": "inspect run state"},
+            "next_operator_action": "run without --fake-success before applying artifacts",
+            "tasks": [{"status": "simulated_completed"}],
+        }
+    )
+    assert "status=simulated_finished" in text
+    assert "simulation=true" in text
+    assert "simulated_completed=1" in text
+    assert "run without --fake-success before applying artifacts" in text
+
+
 def test_watchdog_classifies_wall_clock_timeout() -> None:
     started = datetime.now(timezone.utc) - timedelta(minutes=20)
     assert classify_stall(started, timeout_seconds=60) == "wall_clock_timeout"

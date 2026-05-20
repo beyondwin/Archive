@@ -17,8 +17,10 @@ def test_local_adapter_writes_fake_success_result(tmp_path: Path) -> None:
     packet = tmp_path / "packet.json"
     packet.write_text(json.dumps({"task_id": "task_001", "role": "implementer"}), encoding="utf-8")
     result = adapter.run(packet, tmp_path)
-    assert result.status == "success"
-    assert result.method_audit["superpowers_used"] is True
+    assert result.status == "simulated_success"
+    assert result.method_audit["simulation"] is True
+    assert result.changed_files == []
+    assert result.commit is None
     assert (tmp_path / "worker_result.json").exists()
 
 

@@ -960,7 +960,31 @@ def run(args: Any) -> dict[str, Any]:
                 )
                 result = adapter.run(packet_path, task_artifact_dir)
                 store.write_text(task.task_id, "worker_result.json", json.dumps(asdict(result), indent=2, sort_keys=True))
-                if result.status == "success":
+                if result.status == "simulated_success":
+                    activity_runner.complete(
+                        activity_id=local_activity_id,
+                        status=ActivityStatus.COMPLETED,
+                        output_refs={
+                            "worker_result": _artifact_ref(run_dir, task_artifact_dir / "worker_result.json"),
+                            "simulation": True,
+                        },
+                        failure_class=None,
+                    )
+                    db.set_task_status(task.task_id, "simulated_completed")
+                    journal.record(
+                        "agentrunway.simulation",
+                        build_event_payload(
+                            run_id,
+                            "simulation",
+                            "success",
+                            "local fake-success simulated task completion",
+                            task_id=task.task_id,
+                            worker_id=result.worker_id,
+                            simulation=True,
+                            worker_status=result.status,
+                        ),
+                    )
+                elif result.status == "success":
                     latest = workflow_store.latest_checkpoint(run_id)
                     checkpoint_id = f"cp-{len(workflow_store.list_checkpoints(run_id)):03d}"
                     checkpoint = workflow_store.create_checkpoint(
@@ -1553,6 +1577,7 @@ def run(args: Any) -> dict[str, Any]:
     if final_status == "running" and not final_projection.safe_wave and unfinished:
         final_status = "blocked"
     db.set_run_status(run_id, final_status)
+    simulation = final_status == "simulated_finished"
     journal.record(
         "agentrunway.run_finished",
         build_event_payload(
@@ -1560,12 +1585,22 @@ def run(args: Any) -> dict[str, Any]:
             "run",
             "failed" if final_status == "blocked" else "success",
             "run finished",
+            status=final_status,
+            simulation=simulation,
             blocked_tasks=[task["task_id"] for task in tasks_snapshot if str(task.get("status")) == "blocked"],
         ),
     )
     if agentlens_emitter is not None:
         agentlens_emitter.close(outcome="failed" if final_status == "blocked" else "success", summary="run finished")
     run_json.update({"status": final_status, "main_worktree": str(main_worktree), "tasks": tasks_snapshot})
+    if simulation:
+        run_json.update(
+            {
+                "simulation": True,
+                "next_operator_action": "run without --fake-success before applying artifacts",
+                "next_action": "run without --fake-success before applying artifacts",
+            }
+        )
     _write_run_json(run_dir, run_json)
     return run_json
 
@@ -1615,7 +1650,7 @@ def status(run_id: str) -> dict[str, Any]:
     if data is None:
         return _missing(run_id)
     from .diagnostics import diagnose_run
-    from .status import next_operator_action
+    from .status import SIMULATION_NEXT_OPERATOR_ACTION, next_operator_action
 
     early_data = _early_failure_payload(data, run_id)
     state_db = data.get("state_db")
@@ -1640,6 +1675,7 @@ def status(run_id: str) -> dict[str, Any]:
     payload = {
         "run_id": run_id,
         "status": data.get("status"),
+        "simulation": data.get("simulation") is True or data.get("status") == "simulated_finished",
         "run_dir": data.get("run_dir"),
         "agentlens": agentlens,
         "diagnosis": diagnosis,
@@ -1647,6 +1683,9 @@ def status(run_id: str) -> dict[str, Any]:
             {**data, "diagnosis": diagnosis}, agentlens
         ),
     }
+    if payload["simulation"]:
+        payload["next_action"] = SIMULATION_NEXT_OPERATOR_ACTION
+    payload["next_operator_action"] = payload["next_action"]
     if "reconstructed_from" in data:
         payload["reconstructed_from"] = data["reconstructed_from"]
     if "recovery" in data:
@@ -1853,6 +1892,17 @@ def apply(run_id: str, strategy: str = "cherry-pick") -> dict[str, Any]:
     data = _load_run_json(run_id)
     if data is None:
         return _missing(run_id)
+    if data.get("simulation") is True or data.get("status") == "simulated_finished":
+        return {
+            "run_id": run_id,
+            "status": data.get("status"),
+            "simulation": True,
+            "applied": False,
+            "commits": [],
+            "already_applied": [],
+            "error": "simulated_run_refused",
+            "next_operator_action": "run without --fake-success before applying artifacts",
+        }
     db = AgentRunwayDb.open(Path(data["state_db"]))
     commits: list[str] = []
     for candidate in db.list_merge_candidates():

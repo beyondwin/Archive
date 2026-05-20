@@ -19,7 +19,7 @@ _HUMAN_DECISION_BY_FAILURE_CLASS = {
     "terminal_rejected": "inspect terminal rejection",
 }
 
-_TERMINAL_TASK_STATUSES = {"blocked", "failed", "merged"}
+_TERMINAL_TASK_STATUSES = {"blocked", "failed", "merged", "simulated_completed"}
 
 
 @dataclass(frozen=True)
@@ -248,6 +248,11 @@ def read_durable_projection(*, run_id: str, db: AgentRunwayDb, stale_after_secon
     latest = db.latest_checkpoint(run_id)
     completed_checkpoint_tasks = _completed_checkpoint_tasks(checkpoints)
     task_rows = _task_rows(db)
+    simulated_completed_tasks = {
+        str(row["task_id"])
+        for row in task_rows
+        if str(row.get("status") or "") == "simulated_completed"
+    }
     checkpoint_repair_tasks = _checkpoint_repair_tasks(task_rows, completed_checkpoint_tasks)
     tasks = _task_specs(db)
     blocked_dependencies = _blocked_dependency_map(task_rows, tasks)
@@ -260,7 +265,7 @@ def read_durable_projection(*, run_id: str, db: AgentRunwayDb, stale_after_secon
         task
         for task in ready_tasks_after_checkpoints(
             tasks,
-            completed_checkpoints=set(completed_checkpoint_tasks),
+            completed_checkpoints=set(completed_checkpoint_tasks) | simulated_completed_tasks,
             completed_tasks=completed_tasks,
         )
         if task.task_id not in blocked_dependencies
@@ -303,6 +308,8 @@ def read_durable_projection(*, run_id: str, db: AgentRunwayDb, stale_after_secon
         projection_status = "blocked"
     elif running:
         projection_status = "running"
+    elif task_rows and all(str(row.get("status") or "") == "simulated_completed" for row in task_rows):
+        projection_status = "simulated_finished"
     elif task_rows and all(str(row.get("status") or "") == "merged" for row in task_rows) and not checkpoint_repair_tasks:
         projection_status = "finished"
     elif ready:

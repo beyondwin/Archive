@@ -8,6 +8,7 @@ from typing import Any
 
 from .db import AgentRunwayDb
 from .diagnostics import diagnose_run
+from .status import SIMULATION_NEXT_OPERATOR_ACTION
 
 
 AGENTLENS_DISABLED_NOTICE = "AgentLens disabled; local SQLite and artifacts are authoritative."
@@ -129,6 +130,7 @@ def build_run_summary(*, run_json: dict[str, Any], db: AgentRunwayDb, event_tail
     summary = {
         "run_id": run_json.get("run_id"),
         "status": run_json.get("status"),
+        "simulation": run_json.get("simulation") is True or run_json.get("status") == "simulated_finished",
         "base_commit": run_json.get("base_commit_sha") or run_json.get("base_commit"),
         "task_counts": dict(sorted(task_counts.items())),
         "current_task": blocked_tasks[0]["task_id"] if blocked_tasks else None,
@@ -186,4 +188,7 @@ def build_run_summary(*, run_json: dict[str, Any], db: AgentRunwayDb, event_tail
         from .durable_projection import durable_operator_next_action
 
         summary["next_action"] = durable_operator_next_action(workflow["durable"], fallback_next_action)
+    if summary["simulation"]:
+        summary["next_action"] = SIMULATION_NEXT_OPERATOR_ACTION
+    summary["next_operator_action"] = summary["next_action"]
     return summary
