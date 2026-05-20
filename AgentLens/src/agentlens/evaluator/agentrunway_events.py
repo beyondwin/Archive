@@ -80,6 +80,9 @@ def _empty_projection() -> dict[str, Any]:
         "gate_retries": [],
         "blocked_tasks": [],
         "merge": {"ready": False, "conflicts": []},
+        "quality_decisions": [],
+        "candidate_rankings": [],
+        "conflict_redispatch_plans": [],
         "artifacts": {
             "contract": "missing",
             "artifact_graph": "missing",
@@ -227,6 +230,31 @@ def project_agentrunway_events(events: Iterable[Mapping[str, Any]]) -> dict[str,
                 {
                     "task_id": payload.get("task_id"),
                     "reason": str(payload.get("reason") or "merge conflict"),
+                }
+            )
+        elif event_name == "quality_decision":
+            projection["quality_decisions"].append(
+                {
+                    "task_id": payload.get("task_id"),
+                    "decision": payload.get("decision"),
+                    "reason": payload.get("reason"),
+                    "diagnosis_status": payload.get("diagnosis_status"),
+                }
+            )
+        elif event_name == "candidate_ranked":
+            projection["candidate_rankings"].append(
+                {
+                    "task_id": payload.get("task_id"),
+                    "selected_candidate_id": payload.get("selected_candidate_id"),
+                    "scores": payload.get("scores") if isinstance(payload.get("scores"), list) else [],
+                }
+            )
+        elif event_name == "conflict_redispatch_planned":
+            projection["conflict_redispatch_plans"].append(
+                {
+                    "task_id": payload.get("task_id"),
+                    "candidate_id": payload.get("candidate_id"),
+                    "reason": str(payload.get("reason") or "merge_conflict"),
                 }
             )
 

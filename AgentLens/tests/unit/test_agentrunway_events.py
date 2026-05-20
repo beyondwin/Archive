@@ -143,6 +143,56 @@ def test_evidence_coverage_is_not_applicable_for_non_agentrunway_runs() -> None:
     assert coverage["strength"] == "none"
 
 
+def test_projection_tracks_quality_decisions_and_candidate_ranking() -> None:
+    projection = project_agentrunway_events(
+        [
+            _event(
+                "agentrunway.quality_decision",
+                {
+                    "run_id": "ar-001",
+                    "task_id": "task_001",
+                    "decision": "retry",
+                    "reason": "verification_failed",
+                    "diagnosis_status": "needs_resume",
+                },
+            ),
+            _event(
+                "agentrunway.candidate_ranked",
+                {
+                    "run_id": "ar-001",
+                    "task_id": "task_001",
+                    "selected_candidate_id": 7,
+                    "scores": [{"candidate_id": 7, "rank": 1, "score": 96, "reasons": ["verifier_passed"]}],
+                },
+                ts="2026-05-20T00:00:01Z",
+            ),
+            _event(
+                "agentrunway.conflict_redispatch_planned",
+                {
+                    "run_id": "ar-001",
+                    "task_id": "task_001",
+                    "candidate_id": 7,
+                    "reason": "merge_conflict",
+                },
+                ts="2026-05-20T00:00:02Z",
+            ),
+        ]
+    )
+
+    assert projection["quality_decisions"] == [
+        {
+            "task_id": "task_001",
+            "decision": "retry",
+            "reason": "verification_failed",
+            "diagnosis_status": "needs_resume",
+        }
+    ]
+    assert projection["candidate_rankings"][0]["selected_candidate_id"] == 7
+    assert projection["conflict_redispatch_plans"] == [
+        {"task_id": "task_001", "candidate_id": 7, "reason": "merge_conflict"}
+    ]
+
+
 def test_evaluator_adds_agentrunway_evidence_coverage_and_keeps_schema_valid(
     tmp_path: Path,
 ) -> None:

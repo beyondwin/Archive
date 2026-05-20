@@ -29,7 +29,12 @@ def _has_actionable_review(task: TaskSpec, result: dict[str, Any], candidate: di
 def _has_actionable_verification(task: TaskSpec, result: dict[str, Any], candidate: dict[str, Any]) -> bool:
     checks = result.get("checks")
     changed_files = candidate.get("changed_files")
-    return bool(checks) or bool(changed_files) or bool(task.acceptance_commands)
+    named_checks = [
+        check
+        for check in checks
+        if isinstance(check, dict) and (check.get("command") or check.get("artifact") or check.get("artifacts"))
+    ] if isinstance(checks, list) else []
+    return bool(named_checks) or bool(changed_files) or bool(task.acceptance_commands)
 
 
 def gate_retry_decision(

@@ -56,6 +56,19 @@ python3 skills/agent-runway/scripts/agentrunway.py resume --run <run_id> --dry-r
 AgentLens emission is best-effort. Local evidence remains authoritative when
 AgentLens is disabled or unavailable.
 
+## Operations Quality Engine
+
+AgentRunway computes a shared diagnosis for `status`, `inspect`, and `resume`.
+The diagnosis reports the run state, reason, safe actions, manual actions, and
+next operator action. High-risk tasks can produce two implementer candidates;
+AgentRunway ranks validated candidates deterministically and emits
+`agentrunway.candidate_ranked` evidence explaining the selection.
+
+Gate retries are policy-owned. Reviewer `changes_requested` and verifier
+`failed` can retry once when the failure is actionable. Verifier `blocked`,
+repeated merge conflicts, file-claim violations, and unsafe recovery states stop
+with a manual action instead of guessing.
+
 AgentRunway is the only supported AgentLens executor integration. New
 observability events use the `agentrunway.*` namespace. CPE/CME workflows, if
 present on disk, are independent legacy skills and are not bridged into

@@ -7,6 +7,7 @@ from typing import Any
 
 from .db import AgentRunwayDb
 from .events import build_event_payload
+from .quality_policy import conflict_decision
 from .result_validation import ResultValidationError, validate_worker_result
 
 
@@ -71,6 +72,21 @@ def _has_interrupted_cherry_pick(worktree: Path) -> bool:
     return (_git_metadata_dir(worktree) / "CHERRY_PICK_HEAD").exists()
 
 
+def _conflict_redispatch_count(db: AgentRunwayDb, task_id: str) -> int:
+    count = 0
+    for event in db.list_events():
+        if event["event_type"] != "agentrunway.conflict_redispatch_planned":
+            continue
+        payload = event.get("payload", {})
+        if payload.get("task_id") == task_id:
+            count += 1
+    return count
+
+
+def _action_exists(actions: list[dict[str, Any]], target: str, action: str) -> bool:
+    return any(item.get("target") == target and item.get("action") == action for item in actions)
+
+
 def plan_reconciliation(*, run_id: str, run_dir: Path, db: AgentRunwayDb) -> dict[str, Any]:
     actions: list[dict[str, Any]] = []
     run_json = _load_run_json(run_dir)
@@ -84,6 +100,24 @@ def plan_reconciliation(*, run_id: str, run_dir: Path, db: AgentRunwayDb) -> dic
                     "action": "abort_cherry_pick",
                     "reason": "interrupted_cherry_pick",
                     "writes": True,
+                }
+            )
+    for candidate in db.list_merge_candidates():
+        if candidate["status"] != "merge_conflict":
+            continue
+        task_id = str(candidate["task_id"])
+        decision = conflict_decision(
+            task_id=task_id,
+            previous_conflicts=_conflict_redispatch_count(db, task_id),
+        )
+        action = "conflict_redispatch" if decision.action == "redispatch" else "manual_action"
+        if not _action_exists(actions, task_id, action):
+            actions.append(
+                {
+                    "target": task_id,
+                    "action": action,
+                    "reason": decision.reason,
+                    "writes": action == "conflict_redispatch",
                 }
             )
     for worker in db.list_workers():
@@ -122,7 +156,7 @@ def plan_reconciliation(*, run_id: str, run_dir: Path, db: AgentRunwayDb) -> dic
                     "writes": True,
                 }
             )
-    return {"run_id": run_id, "actions": actions}
+    return {"run_id": run_id, "run_dir": str(run_dir), "actions": actions}
 
 
 def _resume_action_exists(db: AgentRunwayDb, target: str, action: str) -> bool:
@@ -193,3 +227,40 @@ def apply_reconciliation_plan(*, db: AgentRunwayDb, plan: dict[str, Any]) -> Non
                     "failed",
                     "retry budget exhausted",
                 )
+        elif action["action"] == "conflict_redispatch":
+            if not _resume_action_exists(db, target, "conflict_redispatch"):
+                _record_resume_action(
+                    db,
+                    str(plan["run_id"]),
+                    target,
+                    "conflict_redispatch",
+                    "partial",
+                    "conflict redispatch required",
+                )
+                candidate_id = next(
+                    (
+                        int(candidate["id"])
+                        for candidate in db.list_merge_candidates()
+                        if str(candidate["task_id"]) == target and candidate["status"] == "merge_conflict"
+                    ),
+                    0,
+                )
+                from .decision_events import record_conflict_redispatch_planned
+                from .events import EventJournal
+
+                record_conflict_redispatch_planned(
+                    EventJournal(db=db, run_dir=Path(str(plan.get("run_dir") or "."))),
+                    run_id=str(plan["run_id"]),
+                    task_id=target,
+                    candidate_id=candidate_id,
+                    reason=str(action.get("reason") or "merge_conflict"),
+                )
+        elif action["action"] == "manual_action":
+            _record_resume_action(
+                db,
+                str(plan["run_id"]),
+                target,
+                "manual_action",
+                "failed",
+                "manual action required",
+            )

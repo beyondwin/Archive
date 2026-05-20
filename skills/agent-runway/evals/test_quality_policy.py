@@ -101,6 +101,20 @@ def test_verifier_failed_without_actionable_signal_blocks() -> None:
     assert decision.reason == "verification_failed_not_actionable"
 
 
+def test_verifier_failed_with_empty_check_payload_blocks() -> None:
+    decision = gate_retry_decision(
+        task=_task(acceptance=()),
+        gate="verification",
+        status="failed",
+        result={"checks": [{}]},
+        candidate={"changed_files": []},
+        previous_retries=0,
+    )
+
+    assert decision.action == "block"
+    assert decision.reason == "verification_failed_not_actionable"
+
+
 def test_verifier_blocked_never_retries() -> None:
     decision = gate_retry_decision(
         task=_task(),

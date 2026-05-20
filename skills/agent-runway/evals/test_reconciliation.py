@@ -196,3 +196,59 @@ def test_plan_reconciliation_blocks_after_retry_budget(tmp_path: Path) -> None:
             "writes": True,
         }
     ]
+
+
+def test_plan_reconciliation_plans_first_conflict_redispatch(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    db.enqueue_merge_candidate(
+        task_id="task_001",
+        worker_id="task_001-implementer-001",
+        commits=("abc123",),
+        changed_files=("src/example.py",),
+        status="merge_conflict",
+    )
+
+    plan = plan_reconciliation(run_id="run_001", run_dir=run_dir, db=db)
+
+    assert {
+        "target": "task_001",
+        "action": "conflict_redispatch",
+        "reason": "merge_conflict",
+        "writes": True,
+    } in plan["actions"]
+
+
+def test_plan_reconciliation_repeated_conflict_requires_manual_action(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    db.enqueue_merge_candidate(
+        task_id="task_001",
+        worker_id="task_001-implementer-001",
+        commits=("abc123",),
+        changed_files=("src/example.py",),
+        status="merge_conflict",
+    )
+    db.insert_event(
+        event_type="agentrunway.conflict_redispatch_planned",
+        payload={
+            "schema": "agentrunway.event.v1",
+            "run_id": "run_001",
+            "agentrunway_run_id": "run_001",
+            "phase": "resume",
+            "outcome": "partial",
+            "summary": "conflict redispatch planned",
+            "task_id": "task_001",
+            "reason": "merge_conflict",
+        },
+        status="agentlens_disabled",
+    )
+
+    plan = plan_reconciliation(run_id="run_001", run_dir=run_dir, db=db)
+
+    assert {
+        "target": "task_001",
+        "action": "manual_action",
+        "reason": "repeated_merge_conflict",
+        "writes": False,
+    } in plan["actions"]
