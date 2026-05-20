@@ -53,6 +53,12 @@ launching nested model sessions.
 Prompt and handoff modes are export-only and must not create worktrees or
 orchestrator artifacts.
 
+When execution needs to read local skill files, resolve paths from the active
+skill registry/root mapping and do not hard-code root directories. In repos that
+declare graphify instructions, compare `graphify-out/GRAPH_REPORT.md` against
+`git rev-parse HEAD`, run `graphify update .` after code changes, and preserve
+that evidence in the completion audit.
+
 ## Design Notes
 
 - `docs/experiments/v2.20-context-intelligence/PLAN.md`

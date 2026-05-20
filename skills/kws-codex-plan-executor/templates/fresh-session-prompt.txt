@@ -18,6 +18,8 @@
 - headless 실행이면 `headless_sandbox` 값을 `HEADLESS_SANDBOX`로 매핑한다. `HEADLESS_SANDBOX=read-only`에서는 preflight와 prompt verification만 수행하고 편집하지 마.
 - 편집 전 항상 `TASK EXECUTION CONTRACT` 5줄(`scope`, `files_to_inspect`, `allowed_edits`, `forbidden_edits`, `acceptance_command_or_honest_substitute`)을 말하고 state에 기록해.
 - `using-superpowers`와 `test-driven-development`를 implementation work 전에 적용해. 이 규칙은 interactive and headless 모두에 적용되며 not a headless-only rule이다. RED evidence를 먼저 기록하고 GREEN evidence로 닫아.
+- local `SKILL.md`를 직접 읽어야 하면 active skill registry/root mapping에서 경로를 해석해. Do not hard-code `.system`; 읽기 실패 시 registry entry와 root table을 먼저 다시 확인하고, registry 자체가 stale임이 입증되지 않으면 classify it as an operator path-resolution error.
+- repo instructions가 graphify를 언급하면 `graphify-out/GRAPH_REPORT.md`의 Built from commit 값을 `git rev-parse HEAD`와 비교하고, 코드 변경 후 `graphify update .`를 실행해. 결과는 `completion_audit.verification_evidence`에 남겨.
 - `context.json`, `context_snapshot_path`, `context_basis_hash`, `context_health`, `handoff_ready`, `next_action`, `completion_audit`, `prompt_to_artifact_checklist`, `verification_evidence`, `lifecycle_outcome`, `handoff_reason`을 state에 유지해.
 - high-risk verification matrix를 사용해 misleading success, stale state, hung command/process 리스크를 확인해.
 - `main` 또는 호출자의 원래 checkout에서 구현하지 마. `git worktree list --porcelain`로 확인하고 branch name already exists면 append the run_id.

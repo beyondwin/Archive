@@ -19,18 +19,26 @@
    `context_basis_hash` in state. When `spec_manifest.json` or task packets are
    present, pass `--spec-manifest` and `--task-packet-dir` so the snapshot
    records summaries and packet indexes instead of raw packet text.
-9. For each task, state the `TASK EXECUTION CONTRACT`, record `unit_manifest`,
+9. Resolve skill paths from the active skill registry/root mapping before
+   reading local skill files. Do not hard-code `.system` or any other root. If a
+   read fails, re-check the registry entry and root table first; classify it as
+   an operator path-resolution error unless the registry itself is proven stale.
+10. If repo instructions mention graphify, read `graphify-out/GRAPH_REPORT.md`,
+   compare `Built from commit` with `git rev-parse HEAD`, run
+   `graphify update .` after code changes, and write the result into
+   `completion_audit.verification_evidence`.
+11. For each task, state the `TASK EXECUTION CONTRACT`, record `unit_manifest`,
    invoke `using-superpowers`, invoke `test-driven-development` for code
    changes, capture RED evidence, implement, capture GREEN evidence, then run
    the post-diff policy check.
-10. Dispatch subagents when the resolved invocation has `subagents=on`, or when
+12. Dispatch subagents when the resolved invocation has `subagents=on`, or when
    `subagents=auto` and the user explicitly requested subagents, delegation, or
    parallel agent work. Give each worker a disjoint write scope and review
    results before marking the task complete. Keep the run local for
    `subagents=auto` without an explicit request, and always keep it local for
    `subagents=off`.
-11. Maintain `context_health` at every semantic boundary.
-12. Before `lifecycle_outcome=finished`, run `scripts/reconcile_state.py` and
+13. Maintain `context_health` at every semantic boundary.
+14. Before `lifecycle_outcome=finished`, run `scripts/reconcile_state.py` and
     `scripts/validate_state.py`.
 
 AgentLens replay and learning events are best-effort. A failure to emit those

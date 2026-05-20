@@ -1,5 +1,13 @@
 # History
 
+## Unreleased
+
+- Added execution guardrails for resolving local skill paths from the active
+  registry/root mapping instead of hard-coded roots.
+- Added graphify freshness guidance: compare `GRAPH_REPORT.md` built commit
+  with `git rev-parse HEAD`, run `graphify update .` after code changes, and
+  record the evidence in completion audit.
+
 ## 2.20.0 - 2026-05-19
 
 - Changed the CPE default back to `subagents=on`; `subagents=off` remains

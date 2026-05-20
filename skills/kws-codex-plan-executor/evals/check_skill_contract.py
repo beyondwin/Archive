@@ -96,6 +96,24 @@ def main() -> int:
         and "do not launch another nested codex exec" in eval_run,
         "superpowers_tdd_contract": all(token in runtime for token in ("using-superpowers", "test-driven-development", "RED evidence", "GREEN evidence")),
         "tdd_scope_not_headless_only": "not a headless-only rule" in normalized and "interactive and headless" in normalized,
+        "skill_path_resolution_guard": all(
+            token in normalized
+            for token in (
+                "Resolve skill paths from the active skill registry/root mapping",
+                "Do not hard-code `.system`",
+                "classify it as an operator path-resolution error",
+            )
+        ),
+        "graphify_freshness_guard": all(
+            token in normalized
+            for token in (
+                "graphify-out/GRAPH_REPORT.md",
+                "Built from commit",
+                "git rev-parse HEAD",
+                "graphify update .",
+                "completion_audit.verification_evidence",
+            )
+        ),
         "context_snapshot_contract": all(token in runtime + checklist for token in ("context.json", "context_snapshot_path", "context_basis_hash")),
         "context_health_contract": all(token in runtime + checklist for token in ("context_health", "handoff_ready", "next_action")),
         "completion_audit_contract": all(token in runtime + checklist for token in ("completion_audit", "prompt_to_artifact_checklist", "verification_evidence")),
