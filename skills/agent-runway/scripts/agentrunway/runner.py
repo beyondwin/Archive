@@ -205,6 +205,7 @@ def _persist_early_failure(
         )
         journal = EventJournal(db=db, run_dir=run_dir, agentlens_emitter=None)
         journal.record("agentrunway.run_started", build_event_payload(run_id, "run", "success", "run started"))
+        _record_agentlens_sink_unavailable(journal, run_id=run_id)
         journal.record(event_type, build_event_payload(run_id, decision_kind, "failed", summary, failure_class=failure_class))
         journal.record(
             "agentrunway.run_blocked",
@@ -511,6 +512,7 @@ def _start_implementer_batch(
                 attempt=implementer_attempt,
                 runtime=runtime,
                 model=model,
+                spec_refs=list(task.spec_refs),
             ),
         )
         try:
@@ -651,6 +653,19 @@ def _record_run_blocked(journal: EventJournal, *, run_id: str, task_id: str, rea
     )
 
 
+def _record_agentlens_sink_unavailable(journal: EventJournal, *, run_id: str) -> None:
+    journal.record(
+        "agentrunway.agentlens_sink_unavailable",
+        build_event_payload(
+            run_id,
+            "agentlens",
+            "partial",
+            "AgentLens sink unavailable; local journal is authoritative",
+            evidence={"sink": "disabled", "local_journal": str(journal.events_path)},
+        ),
+    )
+
+
 def _record_merge_blocked(
     journal: EventJournal,
     *,
@@ -658,6 +673,7 @@ def _record_merge_blocked(
     task_id: str,
     candidate: dict[str, Any],
     decision: EvidenceDecision,
+    spec_refs: list[str] | None = None,
 ) -> None:
     journal.record(
         "agentrunway.merge_blocked",
@@ -669,6 +685,7 @@ def _record_merge_blocked(
             task_id=task_id,
             worker_id=candidate.get("worker_id"),
             candidate_id=candidate.get("id"),
+            spec_refs=spec_refs or [],
             evidence={"status": "blocked", "reasons": list(decision.reasons)},
             reasons=list(decision.reasons),
         ),
@@ -831,6 +848,8 @@ def run(args: Any) -> dict[str, Any]:
     )
     journal = EventJournal(db=db, run_dir=run_dir, agentlens_emitter=agentlens_emitter)
     journal.record("agentrunway.run_started", build_event_payload(run_id, "run", "success", "run started"))
+    if agentlens_emitter is None:
+        _record_agentlens_sink_unavailable(journal, run_id=run_id)
     journal.record(
         "agentrunway.contract_created",
         build_event_payload(run_id, "contract", "success", "contract created", contract_path=str(contract_path)),
@@ -996,19 +1015,19 @@ def run(args: Any) -> dict[str, Any]:
                         failure_class=None,
                     )
                     db.set_task_status(task.task_id, "simulated_completed")
-                    journal.record(
-                        "agentrunway.simulation",
-                        build_event_payload(
+                    simulation_payload = build_event_payload(
                             run_id,
                             "simulation",
                             "success",
                             "local fake-success simulated task completion",
                             task_id=task.task_id,
                             worker_id=result.worker_id,
+                            spec_refs=list(task.spec_refs),
                             simulation=True,
                             worker_status=result.status,
-                        ),
                     )
+                    journal.record("agentrunway.simulation", simulation_payload)
+                    journal.record("agentrunway.simulation_completed", simulation_payload)
                 elif result.status == "success":
                     latest = workflow_store.latest_checkpoint(run_id)
                     checkpoint_id = f"cp-{len(workflow_store.list_checkpoints(run_id)):03d}"
@@ -1123,6 +1142,7 @@ def run(args: Any) -> dict[str, Any]:
                                     worker_id=worker_id,
                                     role="implementer",
                                     attempt=implementer_attempt,
+                                    spec_refs=list(task.spec_refs),
                                     error=str(exc),
                                 ),
                             )
@@ -1164,6 +1184,7 @@ def run(args: Any) -> dict[str, Any]:
                                 task_id=task.task_id,
                                 worker_id=candidate["worker_id"],
                                 candidate_id=candidate_id,
+                                spec_refs=list(task.spec_refs),
                                 changed_files=candidate["changed_files"],
                                 commits=candidate["commits"],
                             ),
@@ -1183,6 +1204,7 @@ def run(args: Any) -> dict[str, Any]:
                                     "review dispatched",
                                     task_id=task.task_id,
                                     worker_id=candidate["worker_id"],
+                                    spec_refs=list(task.spec_refs),
                                     review_mode=review_mode,
                                 ),
                             )
@@ -1230,6 +1252,7 @@ def run(args: Any) -> dict[str, Any]:
                                     "review result",
                                     task_id=task.task_id,
                                     status=review_status,
+                                    spec_refs=list(task.spec_refs),
                                     review_mode=review_mode,
                                 ),
                             )
@@ -1421,6 +1444,7 @@ def run(args: Any) -> dict[str, Any]:
                                 "verification result",
                                 task_id=task.task_id,
                                 status=verification_status,
+                                spec_refs=list(task.spec_refs),
                             ),
                         )
                         if verification_status == "passed":
@@ -1443,7 +1467,15 @@ def run(args: Any) -> dict[str, Any]:
                             db.set_task_status(task.task_id, "merge_ready")
                             journal.record(
                                 "agentrunway.merge_ready",
-                                build_event_payload(run_id, "merge", "success", "merge ready", task_id=task.task_id, candidate_id=candidate_id),
+                                build_event_payload(
+                                    run_id,
+                                    "merge",
+                                    "success",
+                                    "merge ready",
+                                    task_id=task.task_id,
+                                    candidate_id=candidate_id,
+                                    spec_refs=list(task.spec_refs),
+                                ),
                             )
                             merge_ready_candidate_ids.append(candidate_id)
                             if len(merge_ready_candidate_ids) >= target_candidate_count:
@@ -1577,6 +1609,7 @@ def run(args: Any) -> dict[str, Any]:
                             task_id=str(selected_candidate["task_id"]),
                             candidate=selected_candidate,
                             decision=evidence_decision,
+                            spec_refs=list(task.spec_refs),
                         )
                         _record_run_blocked(
                             journal,
@@ -1624,6 +1657,24 @@ def run(args: Any) -> dict[str, Any]:
                             lifecycle_for_worker(role="implementer", state="merged"),
                         )
                         db.set_task_status(selected_candidate["task_id"], "merged")
+                        journal.record(
+                            "agentrunway.merge_applied",
+                            build_event_payload(
+                                run_id,
+                                "merge",
+                                "success",
+                                "merge applied",
+                                task_id=selected_candidate["task_id"],
+                                worker_id=selected_candidate["worker_id"],
+                                candidate_id=selection.selected_candidate_id,
+                                spec_refs=list(task.spec_refs),
+                                evidence={
+                                    "status": "merged",
+                                    "commits": list(selected_candidate["commits"]),
+                                    "changed_files": list(selected_candidate["changed_files"]),
+                                },
+                            ),
+                        )
     write_artifact_graph(run_dir=run_dir, db=db)
     final_projection = read_durable_projection(run_id=run_id, db=db)
     tasks_snapshot = db.list_tasks()
@@ -1892,6 +1943,7 @@ def resume(run_id: str, *, dry_run: bool = False) -> dict[str, Any]:
                 task_id=action.task_id,
                 candidate=candidate,
                 decision=evidence_decision,
+                spec_refs=json.loads(task_row["spec_refs_json"]) if isinstance(task_row.get("spec_refs_json"), str) else [],
             )
             raise RuntimeError("merge_evidence_missing:" + ",".join(evidence_decision.reasons))
         manager = IntegrationManager(
@@ -1910,6 +1962,24 @@ def resume(run_id: str, *, dry_run: bool = False) -> dict[str, Any]:
             ),
         )
         db.set_task_status(action.task_id, "merged")
+        EventJournal(db=db, run_dir=Path(str(data["run_dir"])), agentlens_emitter=None).record(
+            "agentrunway.merge_applied",
+            build_event_payload(
+                run_id,
+                "merge",
+                "success",
+                "merge applied",
+                task_id=action.task_id,
+                worker_id=candidate["worker_id"],
+                candidate_id=int(action.candidate_id),
+                spec_refs=json.loads(task_row["spec_refs_json"]) if isinstance(task_row.get("spec_refs_json"), str) else [],
+                evidence={
+                    "status": "merged",
+                    "commits": list(candidate["commits"]),
+                    "changed_files": list(candidate["changed_files"]),
+                },
+            ),
+        )
         return {
             "candidate_id": int(action.candidate_id),
             "checkpoint_id": checkpoint["checkpoint_id"],

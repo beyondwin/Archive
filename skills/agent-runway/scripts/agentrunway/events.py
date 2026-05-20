@@ -110,7 +110,9 @@ class EventJournal:
         self.events_path = run_dir / "events.jsonl"
 
     def record(self, event_type: str, payload: dict[str, Any]) -> EventRecord:
-        redacted = redact_payload(payload)
+        payload_with_name = dict(payload)
+        payload_with_name.setdefault("event_name", event_type)
+        redacted = redact_payload(payload_with_name)
         status = "agentlens_disabled"
         error: str | None = None
         if self.agentlens_emitter is not None:
