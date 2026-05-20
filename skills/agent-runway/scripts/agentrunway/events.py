@@ -41,14 +41,16 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
-def _trust_impact(outcome: str) -> str:
+def _trust_impact(outcome: str, payload: dict[str, Any]) -> str:
+    if payload.get("payload_truncated") or payload.get("simulation") is True:
+        return "downgrades_trust"
     if outcome == "success":
         return "supports_success"
-    if outcome == "failed":
-        return "contradicts_success"
-    if outcome == "blocked":
-        return "blocks_success"
-    return "weakens_trust"
+    if outcome in {"failed", "blocked"}:
+        return "supports_failure"
+    if outcome == "partial":
+        return "requires_attention"
+    return "neutral"
 
 
 def _list_or_empty(value: Any) -> list[Any]:
@@ -132,7 +134,7 @@ def build_agentlens_event_envelope(
         "severity": str(payload.get("severity") or "info"),
         "evidence_refs": _list_or_empty(payload.get("evidence_refs")),
         "artifact_refs": _list_or_empty(payload.get("artifact_refs")),
-        "trust_impact": str(payload.get("trust_impact") or _trust_impact(outcome)),
+        "trust_impact": str(payload.get("trust_impact") or _trust_impact(outcome, payload)),
         "summary": str(payload.get("summary") or "")[:1200],
         "payload": payload,
     }
