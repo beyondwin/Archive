@@ -106,6 +106,23 @@ The supervisor uses quality-first hybrid worktrees:
   eligible after evidence capture;
 - failed or malformed worker worktrees are retained for diagnosis.
 
+## Durable Integration Orchestrator
+
+AgentRunway advances run main as soon as a selected candidate passes review and
+verification. Dependent tasks start from the latest run-main checkpoint instead
+of the original base commit, so accepted earlier work is visible to later tasks.
+
+The runner records workflow events, activity rows, checkpoint rows, and (when
+written by gate failures in later slices) decision packets in SQLite with JSON
+artifacts for audit. These records are the durable evidence later slices will
+use to make `resume` advance from the last completed activity instead of
+replaying worker state.
+
+Merge-activity failures are classified through `FailureClassifier` into
+recovery classes such as `needs_rebase`, `needs_full_context`, `needs_plan_fix`,
+and `needs_infra_fix`. Routing review and verification failures through the
+classifier is a follow-up slice.
+
 Reviewer `changes_requested` and verifier `failed` outcomes create one bounded
 implementer redispatch with the gate evidence threaded into the next prompt.
 The previous candidate remains in the merge queue with a non-mergeable status;
