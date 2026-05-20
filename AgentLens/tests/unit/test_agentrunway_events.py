@@ -143,6 +143,32 @@ def test_evidence_coverage_is_not_applicable_for_non_agentrunway_runs() -> None:
     assert coverage["strength"] == "none"
 
 
+def test_projection_accepts_agentlens_v2_event_envelope() -> None:
+    projection = project_agentrunway_events(
+        [
+            {
+                "schema": "agentlens.event.v2",
+                "event_id": "evt_000001",
+                "run_id": "agentlens-run",
+                "event_type": "agentrunway.run_finished",
+                "producer": {"name": "agentrunway", "version": "0.1.0"},
+                "occurred_at": "2026-05-21T00:00:00Z",
+                "sequence": 1,
+                "phase": "finish",
+                "outcome": "success",
+                "severity": "info",
+                "trust_impact": "supports_success",
+                "summary": "done",
+                "payload": {"run_id": "ar-001", "status": "planning_only"},
+            }
+        ]
+    )
+
+    assert projection["event_count"] == 1
+    assert projection["status"] == "planning_only"
+    assert projection["timeline"][0]["ts"] == "2026-05-21T00:00:00Z"
+
+
 def test_projection_tracks_quality_decisions_and_candidate_ranking() -> None:
     projection = project_agentrunway_events(
         [

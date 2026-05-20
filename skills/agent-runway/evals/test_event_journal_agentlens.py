@@ -7,6 +7,30 @@ from agentrunway.db import AgentRunwayDb
 from agentrunway.events import EventJournal, build_agentlens_event_envelope, build_event_payload
 
 
+V2_EVENT_KEYS = {
+    "schema",
+    "event_id",
+    "run_id",
+    "event_type",
+    "producer",
+    "occurred_at",
+    "sequence",
+    "phase",
+    "outcome",
+    "severity",
+    "task_id",
+    "attempt_id",
+    "candidate_id",
+    "gate_id",
+    "evidence_refs",
+    "artifact_refs",
+    "projection_hints",
+    "trust_impact",
+    "summary",
+    "payload",
+}
+
+
 class FailingEmitter:
     def emit(self, event_type: str, payload: dict[str, object]) -> None:
         raise RuntimeError(f"agentlens down for {event_type}")
@@ -38,7 +62,8 @@ def test_event_journal_writes_events_jsonl_and_db_outbox(tmp_path: Path, monkeyp
     event = json.loads(lines[0])
     assert event["schema"] == "agentlens.event.v2"
     assert event["event_type"] == "agentrunway.run_started"
-    assert event["type"] == "agentrunway.run_started"
+    assert "type" not in event
+    assert "ts" not in event
     assert event["run_id"] == "run-1"
     assert event["sequence"] == 1
     assert event["producer"]["name"] == "agentrunway"
@@ -146,3 +171,23 @@ def test_agentlens_event_envelope_uses_v2_trust_impact_enum() -> None:
     assert partial["trust_impact"] == "requires_attention"
     assert failed["trust_impact"] == "supports_failure"
     assert simulated["trust_impact"] == "downgrades_trust"
+
+
+def test_agentlens_event_envelope_is_strict_v2_shape() -> None:
+    event = build_agentlens_event_envelope(
+        event_id=7,
+        event_type="agentrunway.merge_applied",
+        payload=build_event_payload(
+            "run-1",
+            "agentlens",
+            "partial",
+            "merge applied",
+            task_id="task_001",
+            candidate_id=3,
+        ),
+        occurred_at="2026-05-21T00:00:00Z",
+    )
+
+    assert set(event) <= V2_EVENT_KEYS
+    assert event["phase"] == "run"
+    assert event["candidate_id"] == "3"

@@ -18,7 +18,7 @@ def _payload(event: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _event_type(event: Mapping[str, Any]) -> str:
-    type_ = event.get("type")
+    type_ = event.get("event_type") or event.get("type")
     return type_ if isinstance(type_, str) else ""
 
 
@@ -59,7 +59,7 @@ def _timeline_entry(
     event: Mapping[str, Any], payload: Mapping[str, Any]
 ) -> dict[str, Any]:
     entry: dict[str, Any] = {
-        "ts": event.get("ts"),
+        "ts": event.get("occurred_at") or event.get("ts"),
         "type": _event_type(event),
     }
     for key in ("task_id", "status", "outcome", "reason", "summary"):
