@@ -149,6 +149,37 @@ class AgentRunwayDb:
         )
         self.conn.commit()
 
+    def insert_event(self, *, event_type: str, payload: dict[str, Any], status: str, error: str | None = None) -> int:
+        cursor = self.conn.execute(
+            """
+            INSERT INTO agentlens_events (event_type, payload_json, status, error)
+            VALUES (?, ?, ?, ?)
+            """,
+            (event_type, json.dumps(payload, ensure_ascii=False, sort_keys=True), status, error),
+        )
+        self.conn.commit()
+        return int(cursor.lastrowid)
+
+    def list_events(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT * FROM agentlens_events ORDER BY id").fetchall()
+        events: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data["payload"] = json.loads(data.pop("payload_json"))
+            events.append(data)
+        return events
+
+    def agentlens_summary(self) -> dict[str, Any]:
+        rows = self.list_events()
+        failed = [row for row in rows if row["status"] == "agentlens_failed"]
+        emitted = [row for row in rows if row["status"] == "agentlens_emitted"]
+        return {
+            "events": len(rows),
+            "emitted": len(emitted),
+            "failed": len(failed),
+            "last_status": rows[-1]["status"] if rows else "none",
+        }
+
     def get_run(self, run_id: str) -> dict[str, Any]:
         row = self.conn.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
         if row is None:
