@@ -666,6 +666,35 @@ def _record_agentlens_sink_unavailable(journal: EventJournal, *, run_id: str) ->
     )
 
 
+def _record_artifacts_ready(journal: EventJournal, *, run_id: str, run_dir: Path) -> None:
+    coverage_path = run_dir / "coverage.json"
+    coverage: dict[str, Any] = {}
+    if coverage_path.exists():
+        try:
+            coverage = json.loads(coverage_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            coverage = {}
+    artifact_paths = [
+        run_dir / "contract.json",
+        run_dir / "artifact_graph.json",
+        coverage_path,
+    ]
+    journal.record(
+        "agentrunway.artifacts_ready",
+        build_event_payload(
+            run_id,
+            "artifacts",
+            "success",
+            "artifact graph and coverage ready",
+            contract_path=str(run_dir / "contract.json"),
+            artifact_graph_path=str(run_dir / "artifact_graph.json"),
+            coverage_path=str(coverage_path),
+            coverage=coverage,
+            artifact_refs=[_artifact_ref(run_dir, path) for path in artifact_paths],
+        ),
+    )
+
+
 def _record_merge_blocked(
     journal: EventJournal,
     *,
@@ -881,6 +910,7 @@ def run(args: Any) -> dict[str, Any]:
         )
         db.insert_packet(task.task_id, hashlib.sha256(packet_json.encode()).hexdigest(), str(prompt_path), packet_json)
     write_artifact_graph(run_dir=run_dir, db=db)
+    _record_artifacts_ready(journal, run_id=run_id, run_dir=run_dir)
     waves = schedule_waves(tasks)
     run_json = {
         "run_id": run_id,
@@ -1698,6 +1728,7 @@ def run(args: Any) -> dict[str, Any]:
                             ),
                         )
     write_artifact_graph(run_dir=run_dir, db=db)
+    _record_artifacts_ready(journal, run_id=run_id, run_dir=run_dir)
     final_projection = read_durable_projection(run_id=run_id, db=db)
     tasks_snapshot = db.list_tasks()
     blocked = any(str(task.get("status")) == "blocked" for task in tasks_snapshot)
