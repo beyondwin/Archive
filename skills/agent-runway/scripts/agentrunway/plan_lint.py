@@ -32,14 +32,18 @@ class LintResult:
     errors: list[LintIssue]
     warnings: list[LintIssue]
     task_count: int
+    metadata_report: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "ok": self.ok,
             "errors": [issue.to_dict() for issue in self.errors],
             "warnings": [issue.to_dict() for issue in self.warnings],
             "task_count": self.task_count,
         }
+        if self.metadata_report is not None:
+            payload["metadata_report"] = self.metadata_report
+        return payload
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, sort_keys=True)
@@ -242,6 +246,71 @@ def _spec_ref_errors(tasks: list[TaskSpec], spec_path: Path | None) -> list[Lint
     return errors
 
 
+def _spec_ref_resolution_rows(task: TaskSpec, resolver: SpecRefResolver | None) -> list[dict[str, str | None]]:
+    rows: list[dict[str, str | None]] = []
+    for ref in task.spec_refs:
+        if resolver is None:
+            rows.append({"input_ref": ref, "canonical_ref": ref, "status": "unresolved", "suggestion": None})
+            continue
+        resolution = resolver.resolve_one(ref)
+        rows.append(
+            {
+                "input_ref": resolution.input_ref,
+                "canonical_ref": resolution.canonical_ref,
+                "status": resolution.status,
+                "suggestion": _canonical_suggestion(resolver, resolution.suggestion),
+            }
+        )
+    return rows
+
+
+def _metadata_report(tasks: list[TaskSpec], spec_path: Path | None = None) -> dict[str, Any]:
+    resolver = SpecRefResolver.from_spec(spec_path) if spec_path is not None else None
+    task_rows: list[dict[str, Any]] = []
+    for task in tasks:
+        spec_ref_resolutions = _spec_ref_resolution_rows(task, resolver)
+        task_rows.append(
+            {
+                "task_id": task.task_id,
+                "title": task.title,
+                "phase": task.phase,
+                "risk": task.risk,
+                "line": task.line,
+                "serial": task.serial,
+                "dependencies": list(task.dependencies),
+                "dependency_count": len(task.dependencies),
+                "spec_refs": list(task.spec_refs),
+                "canonical_spec_refs": [
+                    str(row["canonical_ref"])
+                    for row in spec_ref_resolutions
+                    if row.get("status") == "resolved" and row.get("canonical_ref")
+                ],
+                "spec_ref_resolutions": spec_ref_resolutions,
+                "spec_ref_count": len(task.spec_refs),
+                "file_claim_count": len(task.file_claims),
+                "file_claims": [asdict(claim) for claim in task.file_claims],
+                "acceptance_command_count": len(task.acceptance_commands),
+                "acceptance_commands": list(task.acceptance_commands),
+                "required_skills": list(task.required_skills),
+                "required_skill_count": len(task.required_skills),
+                "resource_keys": list(task.resource_keys),
+                "resource_key_count": len(task.resource_keys),
+            }
+        )
+    return {
+        "summary": {
+            "task_count": len(tasks),
+            "tasks_with_spec_refs": sum(1 for task in tasks if task.spec_refs),
+            "tasks_with_file_claims": sum(1 for task in tasks if task.file_claims),
+            "tasks_with_acceptance_commands": sum(1 for task in tasks if task.acceptance_commands),
+            "dependency_edges": sum(len(task.dependencies) for task in tasks),
+            "serial_tasks": sum(1 for task in tasks if task.serial),
+            "high_risk_tasks": sum(1 for task in tasks if task.risk == "high"),
+        },
+        "tasks": task_rows,
+    }
+
+
 def lint_plan(*, plan_path: Path, spec_path: Path | None = None) -> LintResult:
     try:
         tasks = parse_plan(plan_path)
@@ -251,6 +320,7 @@ def lint_plan(*, plan_path: Path, spec_path: Path | None = None) -> LintResult:
             errors=[LintIssue(code="missing_task_block", message=str(exc))],
             warnings=[],
             task_count=0,
+            metadata_report=_metadata_report([], spec_path),
         )
 
     errors: list[LintIssue] = []
@@ -282,4 +352,10 @@ def lint_plan(*, plan_path: Path, spec_path: Path | None = None) -> LintResult:
     errors.extend(_cycle_errors(tasks))
     errors.extend(_claim_errors(tasks))
     errors.extend(_spec_ref_errors(tasks, spec_path))
-    return LintResult(ok=not errors, errors=errors, warnings=warnings, task_count=len(tasks))
+    return LintResult(
+        ok=not errors,
+        errors=errors,
+        warnings=warnings,
+        task_count=len(tasks),
+        metadata_report=_metadata_report(tasks, spec_path),
+    )
