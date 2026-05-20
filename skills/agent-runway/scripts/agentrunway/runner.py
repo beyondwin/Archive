@@ -249,7 +249,13 @@ def resume(run_id: str) -> dict[str, Any]:
     data = _load_run_json(run_id)
     if data is None:
         return _missing(run_id)
-    return {"run_id": run_id, "status": data.get("status"), "resumed": data.get("status") not in {"finished", "cancelled"}}
+    terminal = data.get("status") in {"finished", "cancelled"}
+    return {
+        "run_id": run_id,
+        "status": data.get("status"),
+        "run_dir": data.get("run_dir"),
+        "resumed": not terminal,
+    }
 
 
 def cancel(run_id: str) -> dict[str, Any]:
