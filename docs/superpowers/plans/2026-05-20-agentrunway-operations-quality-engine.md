@@ -122,6 +122,21 @@ in `docs/superpowers/specs/2026-05-20-agentrunway-operations-quality-engine-desi
 
 ## Task 1: Add Pure Quality Policy
 
+```yaml agentrunway-task
+task_id: task_001
+title: Add Pure Quality Policy
+risk: medium
+phase: implementation
+dependencies: []
+spec_refs: [S1.6.2, S1.10.1, S1.14.1, S1.14.2]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/quality_policy.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_quality_policy.py, mode: owned}
+acceptance_commands: [python3 -m pytest evals/test_quality_policy.py -v]
+required_skills: [using-superpowers, test-driven-development]
+serial: true
+```
+
 **Files:**
 - Create: `skills/agent-runway/scripts/agentrunway/quality_policy.py`
 - Create: `skills/agent-runway/evals/test_quality_policy.py`
@@ -347,6 +362,21 @@ Expected: commit succeeds.
 
 ## Task 2: Add Deterministic Candidate Selection
 
+```yaml agentrunway-task
+task_id: task_002
+title: Add Deterministic Candidate Selection
+risk: medium
+phase: implementation
+dependencies: []
+spec_refs: [S1.6.3, S1.10.1, S1.14.2]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/candidate_selection.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_candidate_selection.py, mode: owned}
+acceptance_commands: [python3 -m pytest evals/test_candidate_selection.py -v]
+required_skills: [using-superpowers, test-driven-development]
+serial: true
+```
+
 **Files:**
 - Create: `skills/agent-runway/scripts/agentrunway/candidate_selection.py`
 - Create: `skills/agent-runway/evals/test_candidate_selection.py`
@@ -546,6 +576,21 @@ git commit -m "feat: rank AgentRunway candidates deterministically"
 Expected: commit succeeds.
 
 ## Task 3: Add Read-Only Run Diagnostics
+
+```yaml agentrunway-task
+task_id: task_003
+title: Add Read-Only Run Diagnostics
+risk: medium
+phase: implementation
+dependencies: []
+spec_refs: [S1.6.1, S1.7.2, S1.10.1, S1.14.1, S1.14.2]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/diagnostics.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_diagnostics.py, mode: owned}
+acceptance_commands: [python3 -m pytest evals/test_diagnostics.py -v]
+required_skills: [using-superpowers, test-driven-development]
+serial: true
+```
 
 **Files:**
 - Create: `skills/agent-runway/scripts/agentrunway/diagnostics.py`
@@ -843,6 +888,22 @@ Expected: commit succeeds.
 
 ## Task 4: Route Status and Inspect Through Diagnosis
 
+```yaml agentrunway-task
+task_id: task_004
+title: Route Status and Inspect Through Diagnosis
+risk: medium
+phase: implementation
+dependencies: [task_003]
+spec_refs: [S1.7.2, S1.9, S1.10.1, S1.14.2]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/status.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/runner.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_artifact_graph_status.py, mode: owned}
+acceptance_commands: [python3 -m pytest evals/test_artifact_graph_status.py -v]
+required_skills: [using-superpowers, test-driven-development]
+serial: true
+```
+
 **Files:**
 - Modify: `skills/agent-runway/scripts/agentrunway/status.py`
 - Modify: `skills/agent-runway/evals/test_artifact_graph_status.py`
@@ -1048,6 +1109,24 @@ git commit -m "feat: surface AgentRunway diagnosis in status"
 Expected: commit succeeds.
 
 ## Task 5: Record and Project Decision Events
+
+```yaml agentrunway-task
+task_id: task_005
+title: Record and Project Decision Events
+risk: medium
+phase: implementation
+dependencies: []
+spec_refs: [S1.6.4, S1.7.4, S1.10.1, S1.14.2]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/decision_events.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_decision_events.py, mode: owned}
+  - {path: AgentLens/src/agentlens/evaluator/agentrunway_events.py, mode: owned}
+  - {path: AgentLens/tests/unit/test_agentrunway_events.py, mode: owned}
+  - {path: skills/agent-runway/references/agentlens-events.md, mode: shared_append}
+acceptance_commands: [python3 -m pytest evals/test_decision_events.py -v]
+required_skills: [using-superpowers, test-driven-development]
+serial: true
+```
 
 **Files:**
 - Create: `skills/agent-runway/scripts/agentrunway/decision_events.py`
@@ -1354,6 +1433,21 @@ Expected: commit succeeds.
 
 ## Task 6: Use Quality Policy for Gate Retries
 
+```yaml agentrunway-task
+task_id: task_006
+title: Use Quality Policy for Gate Retries
+risk: medium
+phase: implementation
+dependencies: [task_001, task_005]
+spec_refs: [S1.6.2, S1.7.1, S1.10.2, S1.14.2]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/runner.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_runner_production_e2e.py, mode: owned}
+acceptance_commands: [python3 -m pytest evals/test_runner_production_e2e.py::test_review_changes_requested_redispatches_implementer_once evals/test_runner_production_e2e.py::test_verifier_failed_redispatches_implementer_once evals/test_runner_production_e2e.py::test_verifier_blocked_does_not_redispatch -v]
+required_skills: [using-superpowers, test-driven-development]
+serial: true
+```
+
 **Files:**
 - Modify: `skills/agent-runway/scripts/agentrunway/runner.py`
 - Modify: `skills/agent-runway/evals/test_runner_production_e2e.py`
@@ -1530,6 +1624,23 @@ git commit -m "feat: apply AgentRunway gate retry policy"
 Expected: commit succeeds.
 
 ## Task 7: Add High-Risk Multi-Candidate Selection
+
+```yaml agentrunway-task
+task_id: task_007
+title: Add High-Risk Multi-Candidate Selection
+risk: high
+phase: implementation
+dependencies: [task_002, task_005, task_006]
+spec_refs: [S1.6.3, S1.7.1, S1.10.2, S1.14.2, S1.14.3]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/runner.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/models.py, mode: owned}
+  - {path: skills/agent-runway/evals/fixtures/fake-bin/codex, mode: owned}
+  - {path: skills/agent-runway/evals/test_runner_production_e2e.py, mode: owned}
+acceptance_commands: [python3 -m pytest evals/test_runner_production_e2e.py::test_codex_fake_implementer_reaches_validated_candidate evals/test_runner_production_e2e.py::test_high_risk_task_ranks_two_candidates -v]
+required_skills: [using-superpowers, test-driven-development]
+serial: true
+```
 
 **Files:**
 - Modify: `skills/agent-runway/scripts/agentrunway/runner.py`
@@ -1757,6 +1868,21 @@ Expected: commit succeeds.
 
 ## Task 8: Extend Resume Planning for Conflict Redispatch
 
+```yaml agentrunway-task
+task_id: task_008
+title: Extend Resume Planning for Conflict Redispatch
+risk: medium
+phase: implementation
+dependencies: [task_001, task_003, task_005]
+spec_refs: [S1.7.3, S1.8, S1.10.1, S1.14.2]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/reconciliation.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_reconciliation.py, mode: owned}
+acceptance_commands: [python3 -m pytest evals/test_reconciliation.py -v]
+required_skills: [using-superpowers, test-driven-development]
+serial: true
+```
+
 **Files:**
 - Modify: `skills/agent-runway/scripts/agentrunway/reconciliation.py`
 - Modify: `skills/agent-runway/evals/test_reconciliation.py`
@@ -1933,6 +2059,21 @@ git commit -m "feat: plan AgentRunway conflict redispatch"
 Expected: commit succeeds.
 
 ## Task 9: Documentation and Final Verification
+
+```yaml agentrunway-task
+task_id: task_009
+title: Documentation and Final Verification
+risk: low
+phase: documentation
+dependencies: [task_001, task_002, task_003, task_004, task_005, task_006, task_007, task_008]
+spec_refs: [S1.9, S1.10, S1.12, S1.14.3]
+file_claims:
+  - {path: skills/agent-runway/README.md, mode: owned}
+  - {path: skills/agent-runway/references/agentlens-events.md, mode: shared_append}
+acceptance_commands: [./evals/run.sh]
+required_skills: [using-superpowers, verification-before-completion]
+serial: true
+```
 
 **Files:**
 - Modify: `skills/agent-runway/README.md`
