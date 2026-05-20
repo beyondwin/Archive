@@ -43,6 +43,14 @@ def test_reviewer_mode_escalates_for_high_risk_schema_and_generated_surface() ->
     assert reviewer_mode_for_task(_task(path="src/generated/client.py")) == "full_tree"
 
 
+def test_reviewer_mode_uses_diff_for_independent_task() -> None:
+    assert reviewer_mode_for_task(_task(path="src/a.py")) == "diff"
+
+
+def test_reviewer_mode_uses_full_tree_for_shared_core_task() -> None:
+    assert reviewer_mode_for_task(_task(path="skills/agent-runway/scripts/agentrunway/runner.py")) == "full_tree"
+
+
 def test_archive_candidate_evidence_persists_non_selected_metadata(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     run_dir.mkdir()

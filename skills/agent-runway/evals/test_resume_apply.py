@@ -50,6 +50,75 @@ def test_resume_dry_run_includes_activity_boundary(isolated_home: Path) -> None:
     assert plan["activity_resume"]["candidate_id"] == 9
 
 
+def test_resume_dry_run_uses_rebase_decision_packet_next_action(isolated_home: Path) -> None:
+    run_dir = isolated_home / "runs" / "workspace" / "run-rebase"
+    run_dir.mkdir(parents=True)
+    state_db = run_dir / "state.sqlite"
+    db = AgentRunwayDb.open(state_db)
+    db.create_run(
+        run_id="run-rebase",
+        workspace_id="workspace",
+        repo_root=str(run_dir),
+        plan_path=str(run_dir / "plan.md"),
+        spec_path=None,
+        plan_hash="plan-hash",
+        spec_hash=None,
+        base_commit_sha="base",
+        model_profile="default",
+    )
+    db.upsert_task(
+        TaskSpec(
+            task_id="task_001",
+            title="Task",
+            risk="low",
+            phase="implementation",
+            dependencies=(),
+            spec_refs=(),
+            file_claims=(FileClaim("src/rebase.py", "owned"),),
+            acceptance_commands=("pytest",),
+        )
+    )
+    store = WorkflowStore(db)
+    store.start_activity(
+        run_id="run-rebase",
+        activity_id="task_001.review.002",
+        idempotency_key="run-rebase:task_001:review:002",
+        task_id="task_001",
+        activity_type="review",
+        input_refs={"candidate_id": 8},
+    )
+    store.complete_activity(
+        activity_id="task_001.review.002",
+        status=ActivityStatus.BLOCKED,
+        output_refs={"candidate_id": 8},
+        failure_class="needs_rebase",
+    )
+    store.create_decision_packet(
+        run_id="run-rebase",
+        decision_id="task_001.review.002.decision",
+        task_id="task_001",
+        failure_class="needs_rebase",
+        summary="review requires repeated rebase decision",
+        payload={"candidate_id": 8},
+    )
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run-rebase",
+                "status": "blocked",
+                "run_dir": str(run_dir),
+                "state_db": str(state_db),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    plan = resume("run-rebase", dry_run=True)
+
+    assert plan["durable"]["required_human_decision"] == "inspect decision packet"
+    assert plan["next_action"] == "await_human_decision"
+
+
 def test_resume_executes_merge_boundary_from_verified_candidate(git_repo: Path, isolated_home: Path) -> None:
     subprocess.run(["git", "checkout", "-b", "worker"], cwd=git_repo, check=True, capture_output=True)
     target = git_repo / "src" / "resume_merge.py"

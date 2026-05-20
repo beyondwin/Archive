@@ -14,6 +14,7 @@ ResumeActionName = Literal[
     "verify_checkpoint",
     "schedule_implementer_retry",
     "await_human_decision",
+    "classify_stale_activity",
 ]
 
 

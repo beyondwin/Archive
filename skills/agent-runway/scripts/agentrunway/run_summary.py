@@ -173,6 +173,15 @@ def build_run_summary(*, run_json: dict[str, Any], db: AgentRunwayDb, event_tail
     workflow = _workflow_summary(db, str(run_json.get("run_id")))
     fallback_next_action = summary["next_action"]
     summary.update(workflow)
+    durable = workflow.get("durable") if isinstance(workflow, dict) else {}
+    if isinstance(durable, dict):
+        summary["scheduler"] = {
+            "projection_status": durable.get("projection_status"),
+            "safe_wave": durable.get("safe_wave") or [],
+            "withheld_tasks": durable.get("withheld_tasks") or [],
+            "stale_activities": durable.get("stale_activities") or [],
+            "task_classes": durable.get("task_classes") or [],
+        }
     if workflow:
         from .durable_projection import durable_operator_next_action
 

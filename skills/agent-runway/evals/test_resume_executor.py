@@ -170,3 +170,48 @@ def test_resume_executor_reconstructs_missing_checkpoint_from_merge_activity(tmp
     assert checkpoint["parent_checkpoint_id"] == "cp-000"
     assert result["executed"][0]["result"]["checkpoint_id"] == "cp-001"
     assert result["executed"][0]["result"]["reconstructed"] is True
+
+
+def test_resume_executor_blocks_non_runtime_handler_errors(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    action = ResumeAction(
+        action="schedule_merge",
+        task_id="task_001",
+        candidate_id=7,
+        writes=True,
+        reason="verification_passed_merge_not_started",
+    )
+
+    def fail(_: ResumeAction) -> dict[str, object]:
+        raise ValueError("bad handler")
+
+    result = ResumeExecutor(
+        db=store.db,
+        run_id="run-1",
+        handlers={"schedule_merge": fail},
+    ).execute(actions=[action])
+
+    assert result["executed"] == []
+    assert result["blocked"] == {
+        "action": "schedule_merge",
+        "task_id": "task_001",
+        "candidate_id": 7,
+        "reason": "resume_action_failed:ValueError:bad handler",
+    }
+
+
+def test_resume_executor_blocks_classify_stale_activity_without_dispatch(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    action = ResumeAction(
+        action="classify_stale_activity",
+        task_id="task_001",
+        candidate_id=None,
+        writes=True,
+        reason="started_activity_exceeded_timeout",
+    )
+
+    result = ResumeExecutor(db=store.db, run_id="run-1").execute(actions=[action])
+
+    assert result["executed"] == []
+    assert result["blocked"]["reason"] == "missing_resume_handler"
+    assert store.db.list_workflow_events("run-1") == []

@@ -80,3 +80,35 @@ def test_scheduler_waits_for_checkpoint_before_dependency_release(tmp_path: Path
     assert projection_before.checkpoint_repair_tasks == ["task_001"]
     assert projection_before.next_automatic_action == "verify_checkpoint"
     assert [task["task_id"] for task in CheckpointScheduler().next_wave(projection=projection_after)] == ["task_002"]
+
+
+def test_scheduler_serializes_shared_core_ready_tasks(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    db.upsert_task(
+        _task("task_001", claims=(FileClaim("skills/agent-runway/scripts/agentrunway/runner.py", "owned"),))
+    )
+    db.upsert_task(
+        _task("task_002", claims=(FileClaim("skills/agent-runway/scripts/agentrunway/resume_executor.py", "owned"),))
+    )
+    projection = read_durable_projection(run_id="run-1", db=db)
+
+    wave = CheckpointScheduler().next_wave(projection=projection)
+    diagnostics = CheckpointScheduler().diagnostics(projection=projection)
+
+    assert [task["task_id"] for task in wave] == ["task_001"]
+    assert diagnostics["task_classes"]["task_001"]["execution_class"] == "shared_core"
+    assert diagnostics["task_classes"]["task_002"]["serial_required"] is True
+
+
+def test_scheduler_reports_withheld_tasks(tmp_path: Path) -> None:
+    db = _db(tmp_path)
+    db.upsert_task(_task("task_001"))
+    db.upsert_task(_task("task_002", deps=("task_001",)))
+    db.set_task_status("task_001", "blocked")
+    projection = read_durable_projection(run_id="run-1", db=db)
+
+    diagnostics = CheckpointScheduler().diagnostics(projection=projection)
+
+    assert diagnostics["safe_wave"] == []
+    assert diagnostics["withheld_tasks"][0]["task_id"] == "task_002"
+    assert diagnostics["projection_status"] == "blocked"

@@ -123,6 +123,7 @@ def format_inspect_payload(payload: dict[str, Any]) -> str:
     agentlens = payload.get("agentlens", {})
     coverage = payload.get("coverage", {})
     diagnosis = payload.get("diagnosis", {})
+    durable = payload.get("durable") if isinstance(payload.get("durable"), dict) else {}
     return (
         f"{payload.get('run_id')} status={payload.get('status')} "
         f"diagnosis={diagnosis.get('status')} "
@@ -131,6 +132,10 @@ def format_inspect_payload(payload: dict[str, Any]) -> str:
         f"workers={len(payload.get('workers', []))} "
         f"covered={len(coverage.get('covered', []))} "
         f"blocked={len(coverage.get('blocked', []))} "
+        f"projection={durable.get('projection_status')} "
+        f"safe_wave={len(durable.get('safe_wave') or [])} "
+        f"withheld={len(durable.get('withheld_tasks') or [])} "
+        f"stale={len(durable.get('stale_activities') or [])} "
         f"agentlens_failed={agentlens.get('failed', 0)} "
         f"next_action={payload.get('next_action')}"
     )

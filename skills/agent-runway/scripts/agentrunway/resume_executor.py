@@ -98,6 +98,9 @@ class ResumeExecutor:
                 result = self._run_action(action)
             except RuntimeError as exc:
                 return self._block(executed=executed, action=action, reason=str(exc))
+            except Exception as exc:
+                reason = f"resume_action_failed:{exc.__class__.__name__}:{exc}"
+                return self._block(executed=executed, action=action, reason=reason)
             payload = asdict(action)
             payload["result"] = result
             self.db.insert_workflow_event(
