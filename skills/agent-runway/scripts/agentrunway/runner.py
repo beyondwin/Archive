@@ -26,6 +26,7 @@ from .contract import build_run_contract, canonicalize_task_spec_refs, write_con
 from .db import AgentRunwayDb
 from .decision_events import record_candidate_ranked, record_quality_decision
 from .durable_resume import plan_activity_resume
+from .evidence import EvidenceDecision, validate_merge_evidence
 from .events import EventJournal, build_event_payload
 from .failure_classifier import classify_gate_failure, classify_plan_failure
 from .gate_cache import GateCacheKey, gate_cache_digest, stable_hash
@@ -650,6 +651,30 @@ def _record_run_blocked(journal: EventJournal, *, run_id: str, task_id: str, rea
     )
 
 
+def _record_merge_blocked(
+    journal: EventJournal,
+    *,
+    run_id: str,
+    task_id: str,
+    candidate: dict[str, Any],
+    decision: EvidenceDecision,
+) -> None:
+    journal.record(
+        "agentrunway.merge_blocked",
+        build_event_payload(
+            run_id,
+            "merge",
+            "partial",
+            "merge blocked by missing evidence",
+            task_id=task_id,
+            worker_id=candidate.get("worker_id"),
+            candidate_id=candidate.get("id"),
+            evidence={"status": "blocked", "reasons": list(decision.reasons)},
+            reasons=list(decision.reasons),
+        ),
+    )
+
+
 _HUMAN_DECISION_FAILURE_CLASSES = {
     "needs_plan_fix",
     "needs_split",
@@ -1024,6 +1049,7 @@ def run(args: Any) -> dict[str, Any]:
                 )
                 target_candidate_count = candidate_count_for_task(task)
                 merge_ready_candidate_ids: list[int] = []
+                candidate_evidence_by_id: dict[int, dict[str, Any]] = {}
                 review_retries = 0
                 verification_retries = 0
                 implementer_context: dict[str, object] | None = None
@@ -1408,6 +1434,11 @@ def run(args: Any) -> dict[str, Any]:
                                 },
                                 failure_class=None,
                             )
+                            candidate_evidence_by_id[candidate_id] = {
+                                "review_status": review_status,
+                                "verification_status": verification_status,
+                                "verification_result": verification,
+                            }
                             db.set_merge_candidate_status(candidate_id, "merge_ready")
                             db.set_task_status(task.task_id, "merge_ready")
                             journal.record(
@@ -1525,6 +1556,35 @@ def run(args: Any) -> dict[str, Any]:
                         for candidate in ready_candidates
                         if int(candidate["id"]) == selection.selected_candidate_id
                     )
+                    candidate_evidence = candidate_evidence_by_id.get(selection.selected_candidate_id, {})
+                    evidence_decision = validate_merge_evidence(
+                        task=task,
+                        candidate=selected_candidate,
+                        review_status=candidate_evidence.get("review_status"),
+                        verification_status=candidate_evidence.get("verification_status"),
+                        verification_result=candidate_evidence.get("verification_result"),
+                    )
+                    if not evidence_decision.allowed:
+                        db.set_merge_candidate_status(
+                            selection.selected_candidate_id,
+                            "merge_blocked",
+                            ",".join(evidence_decision.reasons),
+                        )
+                        db.set_task_status(selected_candidate["task_id"], "blocked")
+                        _record_merge_blocked(
+                            journal,
+                            run_id=run_id,
+                            task_id=str(selected_candidate["task_id"]),
+                            candidate=selected_candidate,
+                            decision=evidence_decision,
+                        )
+                        _record_run_blocked(
+                            journal,
+                            run_id=run_id,
+                            task_id=str(selected_candidate["task_id"]),
+                            reason="merge_evidence_missing",
+                        )
+                        break
                     merge_candidate = MergeCandidate(
                         task_id=selected_candidate["task_id"],
                         worker_id=selected_candidate["worker_id"],
@@ -1817,6 +1877,23 @@ def resume(run_id: str, *, dry_run: bool = False) -> dict[str, Any]:
         candidate = _merge_candidate(db, int(action.candidate_id))
         if str(candidate["task_id"]) != action.task_id:
             raise RuntimeError("candidate_task_mismatch")
+        task_row = db.get_task(action.task_id)
+        evidence_decision = validate_merge_evidence(
+            task_phase=str(task_row["phase"]),
+            candidate=candidate,
+        )
+        if not evidence_decision.allowed:
+            db.set_merge_candidate_status(int(action.candidate_id), "merge_blocked", ",".join(evidence_decision.reasons))
+            db.set_task_status(action.task_id, "blocked")
+            journal = EventJournal(db=db, run_dir=Path(str(data["run_dir"])), agentlens_emitter=None)
+            _record_merge_blocked(
+                journal,
+                run_id=run_id,
+                task_id=action.task_id,
+                candidate=candidate,
+                decision=evidence_decision,
+            )
+            raise RuntimeError("merge_evidence_missing:" + ",".join(evidence_decision.reasons))
         manager = IntegrationManager(
             db=db,
             store=WorkflowStore(db),
