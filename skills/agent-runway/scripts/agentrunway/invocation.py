@@ -50,6 +50,8 @@ def build_parser() -> argparse.ArgumentParser:
         cmd = sub.add_parser(command, help=f"{command} a AgentRunway run")
         cmd.add_argument("--run")
         cmd.add_argument("--last", action="store_true")
+        if command in {"status", "inspect", "events", "resume"}:
+            cmd.add_argument("--json", action="store_true")
     apply_parser = sub.add_parser("apply", help="apply a AgentRunway run")
     apply_parser.add_argument("--run")
     apply_parser.add_argument("--last", action="store_true")

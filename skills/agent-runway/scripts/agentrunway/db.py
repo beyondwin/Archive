@@ -282,6 +282,15 @@ class AgentRunwayDb:
         data["handle_json"] = json.loads(data["handle_json"])
         return data
 
+    def list_workers(self) -> list[dict[str, Any]]:
+        rows = self.conn.execute("SELECT * FROM workers ORDER BY worker_id").fetchall()
+        workers: list[dict[str, Any]] = []
+        for row in rows:
+            data = dict(row)
+            data["handle_json"] = json.loads(data["handle_json"])
+            workers.append(data)
+        return workers
+
     def enqueue_merge_candidate(
         self,
         *,
