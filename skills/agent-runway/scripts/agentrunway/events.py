@@ -77,7 +77,9 @@ def _list_or_empty(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
 
 
-def _agentlens_phase(value: Any) -> str:
+def _agentlens_phase(value: Any, *, event_type: str) -> str:
+    if event_type == "agentrunway.run_finished":
+        return "finish"
     phase = str(value or "run")
     phase = AGENTLENS_PHASE_ALIASES.get(phase, phase)
     return phase if phase in AGENTLENS_EVENT_PHASES else "run"
@@ -153,7 +155,7 @@ def build_agentlens_event_envelope(
         "producer": {"name": "agentrunway", "version": AGENTRUNWAY_VERSION},
         "occurred_at": timestamp,
         "sequence": event_id,
-        "phase": _agentlens_phase(payload.get("phase")),
+        "phase": _agentlens_phase(payload.get("phase"), event_type=event_type),
         "outcome": outcome,
         "severity": str(payload.get("severity") or "info"),
         "evidence_refs": _list_or_empty(payload.get("evidence_refs")),
