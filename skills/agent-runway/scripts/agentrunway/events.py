@@ -106,6 +106,16 @@ def _bound_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "summary",
         "privacy",
         "payload_truncated",
+        "task_id",
+        "attempt_id",
+        "candidate_id",
+        "gate_id",
+        "evidence_refs",
+        "artifact_refs",
+        "trust_impact",
+        "spec_refs",
+        "status",
+        "simulation",
     }
     truncated_keys = [key for key in bounded if key not in protected]
     bounded["truncated_keys"] = truncated_keys

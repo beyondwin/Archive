@@ -148,6 +148,24 @@ def test_event_payload_includes_run_id_alias_and_bounds_large_extras() -> None:
     assert payload["changed_files"] == {"omitted": True, "reason": "size"}
 
 
+def test_event_payload_preserves_trust_routing_fields_when_bounded() -> None:
+    payload = build_event_payload(
+        "run-1",
+        "verification",
+        "success",
+        "verified",
+        task_id="task_001",
+        artifact_refs=["artifacts/task_001/verification_result.json"],
+        evidence_refs=["verification:task_001"],
+        opaque="z" * 10000,
+    )
+
+    assert payload["payload_truncated"] is True
+    assert payload["task_id"] == "task_001"
+    assert payload["artifact_refs"] == ["artifacts/task_001/verification_result.json"]
+    assert payload["evidence_refs"] == ["verification:task_001"]
+
+
 def test_agentlens_event_envelope_uses_v2_trust_impact_enum() -> None:
     partial = build_agentlens_event_envelope(
         event_id=1,
