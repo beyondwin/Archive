@@ -59,7 +59,6 @@ docs/_graph/*
 .codex-orchestrator/
 .orchestrator/
 .parallel/
-docs/superpowers/
 
 # AgentLens runtime state (recorder home, default `<repo>/.agentlens`)
 .agentlens/
