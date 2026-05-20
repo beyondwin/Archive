@@ -24,6 +24,19 @@ def test_parse_run_args_leaves_model_profile_unset_for_runtime_default() -> None
     assert args.apply_to_source is False
 
 
+def test_parse_run_args_accepts_topic_shortcut() -> None:
+    args = parse_run_args(["run", "--topic", "checkout-flow", "--adapter", "codex"])
+    assert args.plan is None
+    assert args.topic == "checkout-flow"
+    assert args.adapter == "codex"
+
+
+def test_parse_status_args_accepts_last_alias() -> None:
+    args = parse_run_args(["status", "--last"])
+    assert args.run is None
+    assert args.last is True
+
+
 def test_config_defaults_to_adapter_matching_profile(tmp_path: Path) -> None:
     cfg = load_effective_config(tmp_path, {"model_profile": None, "adapter": "claude"})
     assert cfg.default_profile == "claude-default"
