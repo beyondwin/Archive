@@ -43,8 +43,6 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--planning-only", action="store_true")
     run.add_argument("--adapter", default="local")
     run.add_argument("--fake-success", action="store_true")
-    run.add_argument("--skip-review", action="store_true")
-    run.add_argument("--skip-verify", action="store_true")
 
     for command in ("status", "inspect", "events", "resume", "cancel"):
         cmd = sub.add_parser(command, help=f"{command} a AgentRunway run")

@@ -52,8 +52,6 @@ def test_codex_fake_implementer_reaches_validated_candidate(git_repo: Path, isol
             str(spec),
             "--adapter",
             "codex",
-            "--skip-review",
-            "--skip-verify",
         ],
         cwd=git_repo,
         env=env,
@@ -69,10 +67,15 @@ def test_codex_fake_implementer_reaches_validated_candidate(git_repo: Path, isol
     conn = sqlite3.connect(payload["state_db"])
     conn.row_factory = sqlite3.Row
     candidate = dict(conn.execute("SELECT * FROM merge_queue").fetchone())
-    worker = dict(conn.execute("SELECT * FROM workers").fetchone())
+    rows = conn.execute("SELECT role, state FROM workers ORDER BY worker_id").fetchall()
+    states = [(row["role"], row["state"]) for row in rows]
+    assert states == [
+        ("implementer", "merged"),
+        ("reviewer", "validated"),
+        ("verifier", "validated"),
+    ]
     assert candidate["status"] == "merged"
     assert json.loads(candidate["changed_files_json"]) == ["src/codex_worker.py"]
-    assert worker["state"] == "merged"
 
 
 def test_claude_fake_implementer_uses_claude_default_profile(git_repo: Path, isolated_home: Path) -> None:
@@ -90,8 +93,6 @@ def test_claude_fake_implementer_uses_claude_default_profile(git_repo: Path, iso
             str(spec),
             "--adapter",
             "claude",
-            "--skip-review",
-            "--skip-verify",
         ],
         cwd=git_repo,
         env=env,
@@ -106,7 +107,14 @@ def test_claude_fake_implementer_uses_claude_default_profile(git_repo: Path, iso
 
     conn = sqlite3.connect(payload["state_db"])
     conn.row_factory = sqlite3.Row
-    worker = dict(conn.execute("SELECT * FROM workers").fetchone())
-    assert worker["runtime"] == "claude"
-    assert worker["model"] == "opus"
-    assert worker["state"] == "merged"
+    candidate = dict(conn.execute("SELECT * FROM merge_queue").fetchone())
+    rows = conn.execute("SELECT role, runtime, model, state FROM workers ORDER BY worker_id").fetchall()
+    states = [(row["role"], row["state"]) for row in rows]
+    assert states == [
+        ("implementer", "merged"),
+        ("reviewer", "validated"),
+        ("verifier", "validated"),
+    ]
+    assert candidate["status"] == "merged"
+    assert rows[0]["runtime"] == "claude"
+    assert rows[0]["model"] == "opus"

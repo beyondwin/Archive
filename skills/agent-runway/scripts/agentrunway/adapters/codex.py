@@ -55,6 +55,7 @@ class CodexAdapter:
                 "AGENTRUNWAY_WORKER_ROLE": spec.role,
                 "AGENTRUNWAY_PACKET_PATH": spec.packet_path,
                 "AGENTRUNWAY_WORKER_OUTPUT": spec.output_path,
+                **spec.metadata,
             },
         )
         return WorkerHandle(

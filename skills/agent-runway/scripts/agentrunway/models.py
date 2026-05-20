@@ -85,6 +85,7 @@ class WorkerSpec:
     artifact_dir: str
     timeout_seconds: int
     attempt: int = 1
+    metadata: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
