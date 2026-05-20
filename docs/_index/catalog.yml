@@ -162,3 +162,13 @@
   summary: Approved design for making AgentLens a no-legacy AgentRunway trust console with v2 schemas, deterministic projection, and trust reports.
   source: brainstorming session
   updated: 2026-05-21
+
+- title: AgentLens AgentRunway Trust Console Implementation Plan
+  path: docs/superpowers/plans/2026-05-21-agentlens-agentrunway-trust-console.md
+  topic: superpowers/plans
+  type: plan
+  language: en
+  status: organized
+  summary: Implementation plan for AgentLens v2 schemas, AgentRunway event emission, projection, trust reports, CLI/API, dashboard, and legacy namespace guards.
+  source: docs/superpowers/specs/2026-05-21-agentlens-agentrunway-trust-console-design.md
+  updated: 2026-05-21
