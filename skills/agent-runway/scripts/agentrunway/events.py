@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import os
 from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
+from .db import AgentRunwayDb
 from .models import EVENT_SCHEMA
 
 
@@ -41,6 +43,50 @@ def build_event_payload(run_id: str, phase: str, outcome: str, summary: str, **e
     }
     payload.update(extra)
     return redact_payload(payload)
+
+
+class AgentLensEmitter(Protocol):
+    def emit(self, event_type: str, payload: dict[str, object]) -> None:
+        ...
+
+
+@dataclass(frozen=True)
+class EventRecord:
+    id: int
+    event_type: str
+    status: str
+    payload: dict[str, Any]
+    error: str | None = None
+
+
+class EventJournal:
+    def __init__(self, *, db: AgentRunwayDb, run_dir: Path, agentlens_emitter: AgentLensEmitter | None = None):
+        self.db = db
+        self.run_dir = run_dir
+        self.agentlens_emitter = agentlens_emitter
+        self.events_path = run_dir / "events.jsonl"
+
+    def record(self, event_type: str, payload: dict[str, Any]) -> EventRecord:
+        redacted = redact_payload(payload)
+        status = "agentlens_disabled"
+        error: str | None = None
+        if self.agentlens_emitter is not None:
+            try:
+                self.agentlens_emitter.emit(event_type, redacted)
+            except Exception as exc:
+                status = "agentlens_failed"
+                error = str(exc)
+            else:
+                status = "agentlens_emitted"
+        self.run_dir.mkdir(parents=True, exist_ok=True)
+        event_line = {"event_type": event_type, "payload": redacted, "status": status, "error": error}
+        with self.events_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event_line, ensure_ascii=False, sort_keys=True) + "\n")
+        event_id = self.db.insert_event(event_type=event_type, payload=redacted, status=status, error=error)
+        return EventRecord(id=event_id, event_type=event_type, status=status, payload=redacted, error=error)
+
+    def list(self) -> list[dict[str, Any]]:
+        return self.db.list_events()
 
 
 def write_event_artifact(run_dir: Path, event_type: str, payload: dict[str, Any]) -> Path:

@@ -18,6 +18,7 @@ from .artifacts import ArtifactStore
 from .config import BuiltinProfiles, ModelProfile, load_effective_config
 from .contract import build_run_contract, write_contract
 from .db import AgentRunwayDb
+from .events import EventJournal, build_event_payload
 from .git_ops import Git, assert_clean_source
 from .merge_queue import MergeCandidate, MergeConflictError, apply_candidate
 from .packetizer import build_task_packet, materialize_prompt, materialize_worker_prompt, packet_to_json
@@ -146,6 +147,12 @@ def run(args: Any) -> dict[str, Any]:
     )
     contract_path = write_contract(run_dir, contract)
     db.set_run_contract_path(run_id, str(contract_path))
+    journal = EventJournal(db=db, run_dir=run_dir)
+    journal.record("agentrunway.run_started", build_event_payload(run_id, "run", "success", "run started"))
+    journal.record(
+        "agentrunway.contract_created",
+        build_event_payload(run_id, "contract", "success", "contract created", contract_path=str(contract_path)),
+    )
     profile = cfg.profiles[cfg.default_profile]
     for task in tasks:
         db.upsert_task(task)
@@ -228,6 +235,7 @@ def run(args: Any) -> dict[str, Any]:
             db.set_worker_state(candidate["worker_id"], "merged")
             db.set_task_status(candidate["task_id"], "merged")
     db.set_run_status(run_id, "finished")
+    journal.record("agentrunway.run_finished", build_event_payload(run_id, "run", "success", "run finished"))
     run_json.update({"status": "finished", "main_worktree": str(main_worktree)})
     _write_run_json(run_dir, run_json)
     return run_json
