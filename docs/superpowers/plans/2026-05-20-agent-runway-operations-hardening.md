@@ -67,9 +67,16 @@ sees the deltas without diffing the previous revision.
     design's updated S12). Task 7 collapses the dead `if/else` in the
     changes_requested branch into a single block-with-evidence path and
     notes the deferral.
+11. **Host-friendly invocation added (Task 0).** The plan now includes a
+    resolver before contract preflight so Codex, Claude, and CLI users can
+    call AgentRunway with `topic=...`, `--topic`, `--latest`, and `--last`
+    instead of the internal Python script path. The resolver only selects
+    explicit spec/plan/run ids; contract preflight and the runner still own
+    execution.
 
-The order of tasks is unchanged. Tests, file claims, and acceptance commands
-are updated in place inside the task definitions below.
+Task 0 is new and runs before the original contract preflight. All other tests,
+file claims, and acceptance commands are updated in place inside the task
+definitions below.
 
 ---
 
@@ -90,9 +97,11 @@ The design covers three linked capabilities: observability, resume/watchdog, and
 
 | Path | Responsibility |
 | --- | --- |
+| `skills/agent-runway/scripts/agentrunway/resolver.py` | Resolve host-friendly `topic`, `latest`, explicit path, and `last` run aliases into exact spec/plan/run inputs before runner mutation. |
 | `skills/agent-runway/scripts/agentrunway/contract.py` | Preflight Superpowers spec/plan into immutable `contract.json`, validate `spec_refs`, acceptance commands, and parsed task metadata. |
 | `skills/agent-runway/scripts/agentrunway/artifact_graph.py` | Build derived artifact graph and coverage summaries from DB, run files, tasks, workers, merge candidates, and applied commits. |
 | `skills/agent-runway/scripts/agentrunway/reconciliation.py` | Produce and apply idempotent resume/watchdog action plans from DB, filesystem, process, and git evidence. |
+| `skills/agent-runway/evals/test_invocation_resolver.py` | Topic/spec/plan/latest/last resolution tests and ambiguous-match rejection tests. |
 | `skills/agent-runway/evals/test_contract_preflight.py` | Contract creation and preflight rejection tests. |
 | `skills/agent-runway/evals/test_artifact_graph_status.py` | Artifact graph, coverage, status, inspect, and JSON diagnostics tests. |
 | `skills/agent-runway/evals/test_event_journal_agentlens.py` | Local event journal, SQLite outbox, redaction, and best-effort AgentLens failure tests. |
@@ -108,18 +117,310 @@ The design covers three linked capabilities: observability, resume/watchdog, and
 | `skills/agent-runway/scripts/agentrunway/events.py` | Replace one-file-per-event artifact writing with canonical `events.jsonl` plus SQLite outbox and optional AgentLens emitter hook. |
 | `skills/agent-runway/scripts/agentrunway/status.py` | Return human and JSON diagnostics for status, inspect, events, artifact graph, coverage, and AgentLens state. |
 | `skills/agent-runway/scripts/agentrunway/watchdog.py` | Keep low-level classification helpers and call reconciliation planning for resume/watchdog decisions. |
+| `skills/agent-runway/scripts/agentrunway/invocation.py` | Parse host-friendly `--topic`, `--latest`, `--last`, and explicit path forms, call the resolver, and preserve long-form CLI compatibility. |
 | `skills/agent-runway/scripts/agentrunway/packetizer.py` | Materialize role-specific reviewer and verifier packets/prompts/output paths. |
 | `skills/agent-runway/scripts/agentrunway/supervisor.py` | Generalize implementer-only attempt execution into role-generic worker attempts and gate helpers. |
 | `skills/agent-runway/scripts/agentrunway/runner.py` | Wire preflight, contract persistence, event emission, artifact graph refresh, resume planning, and review/verify gate sequencing. |
-| `skills/agent-runway/scripts/agentrunway/invocation.py` | Add `--json` and `--dry-run` flags where needed and expose stable diagnostics command behavior. |
 | `skills/agent-runway/evals/fixtures/fake-bin/codex` | Make the fake runtime produce worker, review, or verification result JSON based on `AGENTRUNWAY_WORKER_ROLE`. |
 | `skills/agent-runway/evals/fixtures/fake-bin/claude` | Same role-aware fake runtime behavior for Claude. |
+| `skills/agent-runway/SKILL.md` | Document natural-language key-value invocation, topic resolution, and required disambiguation behavior for host sessions. |
 | `skills/agent-runway/README.md` | Document operations hardening commands, event evidence, AgentLens behavior, resume dry-run, and gate behavior. |
 | `skills/agent-runway/references/agentlens-events.md` | Document canonical event types, local journal first, and outbox statuses. |
 | `skills/agent-runway/references/watchdog.md` | Document reconciliation actions and resume idempotency. |
 | `skills/agent-runway/references/protocol.md` | Document Superpowers spec/plan contract preflight and run evidence bundle. |
 
 ---
+
+## Task 0: Host-Friendly Invocation Resolver
+
+```yaml agentrunway-task
+task_id: task_000
+title: Host-friendly invocation resolver
+risk: medium
+phase: implementation
+dependencies: []
+spec_refs: [S5, S6, S13, S14]
+file_claims:
+  - {path: skills/agent-runway/scripts/agentrunway/resolver.py, mode: owned}
+  - {path: skills/agent-runway/scripts/agentrunway/invocation.py, mode: owned}
+  - {path: skills/agent-runway/SKILL.md, mode: owned}
+  - {path: skills/agent-runway/README.md, mode: shared_append}
+  - {path: skills/agent-runway/evals/test_invocation_resolver.py, mode: owned}
+  - {path: skills/agent-runway/evals/test_invocation_and_config.py, mode: owned}
+acceptance_commands:
+  - cd skills/agent-runway && python -m pytest evals/test_invocation_resolver.py evals/test_invocation_and_config.py -v
+  - cd skills/agent-runway && python3 evals/check_skill_contract.py
+required_skills: [test-driven-development]
+resource_keys: []
+serial: true
+```
+
+**Files:**
+- Create: `skills/agent-runway/scripts/agentrunway/resolver.py`
+- Modify: `skills/agent-runway/scripts/agentrunway/invocation.py`
+- Modify: `skills/agent-runway/SKILL.md`
+- Modify: `skills/agent-runway/README.md`
+- Create: `skills/agent-runway/evals/test_invocation_resolver.py`
+- Modify: `skills/agent-runway/evals/test_invocation_and_config.py`
+
+- [ ] **Step 1: Write failing resolver tests**
+
+Create `skills/agent-runway/evals/test_invocation_resolver.py`:
+
+```python
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from agentrunway.resolver import (
+    ResolutionError,
+    read_last_run,
+    resolve_run_alias,
+    resolve_run_inputs,
+    write_last_run,
+)
+
+
+def _write_pair(repo: Path, slug: str, *, date: str = "2026-05-20") -> tuple[Path, Path]:
+    specs = repo / "docs" / "superpowers" / "specs"
+    plans = repo / "docs" / "superpowers" / "plans"
+    specs.mkdir(parents=True, exist_ok=True)
+    plans.mkdir(parents=True, exist_ok=True)
+    spec = specs / f"{date}-{slug}-design.md"
+    plan = plans / f"{date}-{slug}.md"
+    spec.write_text(f"# Design: {slug}\n\n## Summary\n\nSpec.\n", encoding="utf-8")
+    plan.write_text(
+        f"# Plan: {slug}\n\n"
+        f"- Design: `{spec.relative_to(repo)}`\n\n"
+        "## Task 1\n\n"
+        "```yaml agentrunway-task\n"
+        "task_id: task_001\n"
+        "title: Example\n"
+        "risk: low\n"
+        "phase: implementation\n"
+        "dependencies: []\n"
+        "spec_refs: [S1]\n"
+        "file_claims:\n"
+        "  - {path: example.txt, mode: owned}\n"
+        "acceptance_commands: [python -m pytest]\n"
+        "required_skills: [test-driven-development]\n"
+        "```\n",
+        encoding="utf-8",
+    )
+    return spec, plan
+
+
+def test_resolve_topic_to_exact_superpowers_pair(git_repo: Path) -> None:
+    spec, plan = _write_pair(git_repo, "checkout-flow")
+
+    resolved = resolve_run_inputs(
+        repo_root=git_repo,
+        plan=None,
+        spec=None,
+        topic="checkout-flow",
+        latest=False,
+        adapter="codex",
+    )
+
+    assert resolved.plan_path == plan
+    assert resolved.spec_path == spec
+    assert resolved.adapter == "codex"
+    assert resolved.source == "topic"
+
+
+def test_explicit_plan_can_infer_design_reference(git_repo: Path) -> None:
+    spec, plan = _write_pair(git_repo, "billing-ledger")
+
+    resolved = resolve_run_inputs(
+        repo_root=git_repo,
+        plan=plan,
+        spec=None,
+        topic=None,
+        latest=False,
+        adapter="claude",
+    )
+
+    assert resolved.plan_path == plan
+    assert resolved.spec_path == spec
+    assert resolved.source == "explicit_plan"
+
+
+def test_ambiguous_topic_fails_with_candidates(git_repo: Path) -> None:
+    _write_pair(git_repo, "runner-hardening")
+    _write_pair(git_repo, "runner-hardening-followup")
+
+    with pytest.raises(ResolutionError) as exc:
+        resolve_run_inputs(
+            repo_root=git_repo,
+            plan=None,
+            spec=None,
+            topic="runner-hardening",
+            latest=False,
+            adapter="codex",
+        )
+
+    assert "ambiguous topic" in str(exc.value)
+    assert len(exc.value.payload["candidates"]) == 2
+
+
+def test_latest_uses_newest_complete_pair(git_repo: Path) -> None:
+    _write_pair(git_repo, "older-topic", date="2026-05-19")
+    spec, plan = _write_pair(git_repo, "newer-topic", date="2026-05-20")
+
+    resolved = resolve_run_inputs(
+        repo_root=git_repo,
+        plan=None,
+        spec=None,
+        topic=None,
+        latest=True,
+        adapter="codex",
+    )
+
+    assert resolved.plan_path == plan
+    assert resolved.spec_path == spec
+    assert resolved.source == "latest"
+
+
+def test_last_run_pointer_is_workspace_scoped(git_repo: Path, isolated_home: Path) -> None:
+    write_last_run(git_repo, "run-123")
+
+    assert read_last_run(git_repo) == "run-123"
+    workspace_dir = next((isolated_home / "workspaces").glob("*"))
+    payload = json.loads((workspace_dir / "last_run.json").read_text(encoding="utf-8"))
+    assert payload["run_id"] == "run-123"
+    assert resolve_run_alias(git_repo, run_id=None, last=True) == "run-123"
+```
+
+Update `skills/agent-runway/evals/test_invocation_and_config.py` so
+`parse_run_args(["run", "--topic", "checkout-flow", "--adapter", "codex"])`
+is valid and `parse_run_args(["status", "--last"])` is valid.
+
+- [ ] **Step 2: Implement the resolver boundary**
+
+Create `skills/agent-runway/scripts/agentrunway/resolver.py` with:
+
+- `ResolutionError(message: str, payload: dict[str, object])`
+- frozen dataclass `RunInputResolution(plan_path, spec_path, adapter, source)`
+- `normalize_topic(value: str) -> str`
+- `resolve_run_inputs(repo_root, plan, spec, topic, latest, adapter)`
+- `resolve_run_alias(repo_root, run_id, last)`
+- `write_last_run(repo_root, run_id)` and `read_last_run(repo_root)`
+
+Rules:
+
+- explicit `plan` and `spec` are returned without search, after existence
+  checks,
+- explicit `plan` without `spec` first reads `Design:` / `Design` source
+  references inside the plan, then falls back to normalized slug pairing,
+- `topic` searches only `docs/superpowers/specs/` and
+  `docs/superpowers/plans/`,
+- matching is conservative: exact normalized slug match wins; broad substring
+  matches with more than one pair raise `ResolutionError`,
+- `latest` considers complete pairs only and ranks by
+  `git log -1 --format=%ct -- <path>` for tracked docs, falling back to
+  `Path.stat().st_mtime`,
+- `last` uses `~/.agentrunway/workspaces/<workspace_id>/last_run.json`, where
+  `workspace_id` is the existing `worktrees.workspace_id(repo_root)`.
+
+The resolver must not import `runner.py` or mutate run state except the
+last-run pointer helper.
+
+- [ ] **Step 3: Wire host-friendly flags into invocation.py**
+
+In `skills/agent-runway/scripts/agentrunway/invocation.py`:
+
+- make `run --plan` optional,
+- add `run --topic <topic>`,
+- add `run --latest`,
+- preserve `run --spec <path>`,
+- add `--last` to `status`, `inspect`, `events`, `resume`, `cancel`, and
+  `apply`,
+- keep `--run <run_id>` for explicit run ids,
+- before `runner.run(args)`, call `resolve_run_inputs(...)` and mutate the
+  namespace to exact `args.plan`, `args.spec`, and `args.adapter`,
+- after a successful `run`, call `write_last_run(repo_root, payload["run_id"])`,
+- before status-like commands, call `resolve_run_alias(...)` when `--last` was
+  passed,
+- convert `ResolutionError` into a JSON stderr payload with
+  `{"error": "...", "candidates": [...]}` and exit code 1.
+
+No worker dispatch behavior belongs in `invocation.py`.
+
+- [ ] **Step 4: Update the AgentRunway skill contract**
+
+Replace the required bootstrap in `skills/agent-runway/SKILL.md` with:
+
+````markdown
+## Required Bootstrap
+
+1. Invoke/read `using-superpowers` before doing anything else.
+2. Accept either:
+   - `plan=<path>` with optional `spec=<path>`, or
+   - `topic=<topic>`, or
+   - `run_id=<run_id>` / `last` for status, inspect, resume, cancel, or apply.
+3. If the user gives only natural language and no clear `plan`, `topic`,
+   `run_id`, or `last`, ask for one concise clarification.
+4. Shell out to `scripts/agentrunway.py`; do not orchestrate workers from
+   conversation context.
+````
+
+Add Korean-friendly examples:
+
+````markdown
+```text
+agent-runway topic=agent-runway-operations-hardening adapter=codex 로 실행해줘
+agent-runway plan=docs/superpowers/plans/example.md spec=docs/superpowers/specs/example-design.md adapter=claude 로 실행해줘
+agent-runway last 상태 확인해줘
+```
+````
+
+- [ ] **Step 5: Document short CLI usage**
+
+Append to `skills/agent-runway/README.md`:
+
+````markdown
+## Invocation Shortcuts
+
+The internal Python script remains supported, but normal use should go through
+the short resolver forms:
+
+```bash
+agentrunway run --topic <topic> --adapter codex
+agentrunway run --latest --adapter claude
+agentrunway status --last
+agentrunway inspect --last --json
+agentrunway apply --last
+```
+
+`--topic` resolves a complete Superpowers design/plan pair under
+`docs/superpowers/specs/` and `docs/superpowers/plans/`. Ambiguous topics fail
+before dispatch and print candidates. `--last` is scoped to the current
+workspace id, not the whole machine.
+````
+
+- [ ] **Step 6: Verify and commit Task 0**
+
+Run:
+
+```bash
+cd skills/agent-runway && python -m pytest evals/test_invocation_resolver.py evals/test_invocation_and_config.py -v
+cd skills/agent-runway && python3 evals/check_skill_contract.py
+```
+
+Then commit:
+
+```bash
+git add skills/agent-runway/scripts/agentrunway/resolver.py \
+  skills/agent-runway/scripts/agentrunway/invocation.py \
+  skills/agent-runway/SKILL.md \
+  skills/agent-runway/README.md \
+  skills/agent-runway/evals/test_invocation_resolver.py \
+  skills/agent-runway/evals/test_invocation_and_config.py
+git commit -m "Add AgentRunway invocation resolver"
+```
 
 ## Task 1: Contract Preflight and Run Evidence Manifest
 
@@ -128,7 +429,7 @@ task_id: task_001
 title: Contract preflight and run evidence manifest
 risk: medium
 phase: implementation
-dependencies: []
+dependencies: [task_000]
 spec_refs: [S5, S8, S13, S14]
 file_claims:
   - {path: skills/agent-runway/scripts/agentrunway/contract.py, mode: owned}
