@@ -14,6 +14,7 @@ from .adapters.claude import ClaudeAdapter
 from .adapters.codex import CodexAdapter
 from .adapters.local import LocalAdapter
 from .apply import apply_commits_to_source
+from .artifact_graph import write_artifact_graph
 from .artifacts import ArtifactStore
 from .config import BuiltinProfiles, ModelProfile, load_effective_config
 from .contract import build_run_contract, write_contract
@@ -153,6 +154,7 @@ def run(args: Any) -> dict[str, Any]:
         "agentrunway.contract_created",
         build_event_payload(run_id, "contract", "success", "contract created", contract_path=str(contract_path)),
     )
+    write_artifact_graph(run_dir=run_dir, db=db)
     profile = cfg.profiles[cfg.default_profile]
     for task in tasks:
         db.upsert_task(task)
@@ -234,6 +236,7 @@ def run(args: Any) -> dict[str, Any]:
             db.set_merge_candidate_status(int(candidate["id"]), "merged")
             db.set_worker_state(candidate["worker_id"], "merged")
             db.set_task_status(candidate["task_id"], "merged")
+    write_artifact_graph(run_dir=run_dir, db=db)
     db.set_run_status(run_id, "finished")
     journal.record("agentrunway.run_finished", build_event_payload(run_id, "run", "success", "run finished"))
     run_json.update({"status": "finished", "main_worktree": str(main_worktree)})
@@ -256,18 +259,18 @@ def inspect(run_id: str) -> dict[str, Any]:
     data = _load_run_json(run_id)
     if data is None:
         return _missing(run_id)
-    db_path = Path(data["state_db"])
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    tasks = [dict(row) for row in conn.execute("SELECT task_id, title, status FROM tasks ORDER BY task_id")]
-    return {"run_id": run_id, "status": data.get("status"), "tasks": tasks}
+    from .status import build_inspect_payload
+
+    db = AgentRunwayDb.open(Path(data["state_db"]))
+    return build_inspect_payload(run_json=data, db=db)
 
 
 def events(run_id: str) -> dict[str, Any]:
     data = _load_run_json(run_id)
     if data is None:
         return _missing(run_id)
-    return {"run_id": run_id, "events": []}
+    db = AgentRunwayDb.open(Path(data["state_db"]))
+    return {"run_id": run_id, "events": db.list_events(), "agentlens": db.agentlens_summary()}
 
 
 def resume(run_id: str) -> dict[str, Any]:
