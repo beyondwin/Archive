@@ -2,9 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make AgentRunway advance run main immediately after verified candidate selection, persist durable workflow/checkpoint evidence, and resume/summarize from explicit activity boundaries.
+**Goal:** Make AgentRunway advance run main immediately after verified candidate selection, persist durable workflow/checkpoint/activity evidence for every merge, and surface checkpoints, failure classes, and decision hooks in `summarize` so future slices can resume from explicit activity boundaries.
 
 **Architecture:** Add a small durable workflow layer beside the existing SQLite state, then wire it into the current runner incrementally. The first implementation keeps the existing worker/reviewer/verifier supervisor path, but changes integration timing so dependent tasks start from the latest verified run-main checkpoint.
+
+**Slice boundary:** This plan delivers slice 1 of the design (see design §13.1). It persists activity records and classifies the merge-activity failure, but it does not yet route review/verification/plan failures through `FailureClassifier`, switch the runner from `schedule_waves` to checkpoint-aware scheduling, or change the `resume` command to dispatch the next node from activity artifacts. Those are explicitly deferred to follow-up plans.
 
 **Tech Stack:** Python 3, SQLite, pytest, git worktrees, existing AgentRunway fake Codex/Claude CLI fixtures.
 
@@ -180,7 +182,7 @@ Expected: fails with `ModuleNotFoundError: No module named 'agentrunway.workflow
 
 - [ ] **Step 3: Extend SQLite schema and DB helpers**
 
-Modify `skills/agent-runway/scripts/agentrunway/db.py` by adding these tables to `SCHEMA_SQL` after `watchdog_events`:
+Modify `skills/agent-runway/scripts/agentrunway/db.py` by appending these tables to the `SCHEMA_SQL` triple-quoted string (after the existing `watchdog_events` definition and before the closing `"""`):
 
 ```python
 CREATE TABLE IF NOT EXISTS workflow_events (
@@ -1593,7 +1595,8 @@ with:
 
 ```python
     task_id = os.environ["AGENTRUNWAY_TASK_ID"]
-    target = Path(map_value("AGENTRUNWAY_FAKE_TARGET_MAP", task_id, os.environ.get("AGENTRUNWAY_FAKE_TARGET", "src/codex_worker.py")) or "src/codex_worker.py")
+    default_target = os.environ.get("AGENTRUNWAY_FAKE_TARGET", "src/codex_worker.py")
+    target = Path(map_value("AGENTRUNWAY_FAKE_TARGET_MAP", task_id, default_target) or default_target)
     required = map_value("AGENTRUNWAY_FAKE_REQUIRED_FILE_MAP", task_id)
     if required and not Path(required).exists():
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -1614,6 +1617,8 @@ with:
         print(f"fake codex missing required file {required}")
         return 1
 ```
+
+The `required` check runs relative to the worker worktree cwd. Because `IntegrationManager` cherry-picks `task_001`'s commit into run main before the runner dispatches `task_002`, the new worker worktree is created from run-main HEAD and the required file is visible — that is what the test is asserting.
 
 - [ ] **Step 4: Run dependent integration test**
 
@@ -1741,21 +1746,28 @@ Expected: fails because summary lacks `latest_checkpoint`, `graph`, `blocked_nod
 Modify `skills/agent-runway/scripts/agentrunway/run_summary.py`. Add this helper before `build_run_summary`:
 
 ```python
+_HUMAN_DECISION_BY_FAILURE_CLASS = {
+    "needs_plan_fix": "fix plan",
+    "needs_split": "approve task split",
+    "needs_human_decision": "inspect decision packet",
+}
+
+
 def _workflow_summary(db: AgentRunwayDb, run_id: str) -> dict[str, Any]:
+    if not run_id:
+        return {}
     latest = db.latest_checkpoint(run_id)
     activities = [
         dict(row)
         for row in db.conn.execute(
-            "SELECT activity_id, activity_type, task_id, status, failure_class FROM activities ORDER BY created_at, activity_id"
+            "SELECT activity_id, activity_type, task_id, status, failure_class "
+            "FROM activities WHERE run_id=? ORDER BY created_at, activity_id",
+            (run_id,),
         ).fetchall()
     ]
     blocked = next((activity for activity in activities if activity.get("status") in {"failed", "blocked"}), None)
     failure_class = blocked.get("failure_class") if blocked else None
-    human_decision = None
-    if failure_class == "needs_plan_fix":
-        human_decision = "fix plan"
-    elif failure_class == "needs_human_decision":
-        human_decision = "inspect decision packet"
+    human_decision = _HUMAN_DECISION_BY_FAILURE_CLASS.get(failure_class) if failure_class else None
     return {
         "latest_checkpoint": {
             "id": latest.get("checkpoint_id"),
@@ -1770,10 +1782,12 @@ def _workflow_summary(db: AgentRunwayDb, run_id: str) -> dict[str, Any]:
         },
         "blocked_node": blocked.get("activity_id") if blocked else None,
         "failure_class": failure_class,
-        "next_automatic_action": None if failure_class in {"needs_plan_fix", "needs_human_decision"} else "resume",
+        "next_automatic_action": None if human_decision else ("resume" if blocked else None),
         "required_human_decision": human_decision,
     }
 ```
+
+The `WHERE run_id=?` filter prevents activity rows from other runs leaking into a summary when a single SQLite file is shared (e.g., resumed runs).
 
 At the end of `build_run_summary`, before `return summary`, add:
 
@@ -1838,14 +1852,16 @@ AgentRunway advances run main as soon as a selected candidate passes review and
 verification. Dependent tasks start from the latest run-main checkpoint instead
 of the original base commit, so accepted earlier work is visible to later tasks.
 
-The runner records workflow events, activity records, checkpoints, and decision
-packets in SQLite with JSON artifacts for audit. Resume should continue from the
-last durable activity boundary: review after implement, verification after
-review, merge after verification, or checkpoint creation after merge.
+The runner records workflow events, activity rows, checkpoint rows, and (when
+written by gate failures in later slices) decision packets in SQLite with JSON
+artifacts for audit. These records are the durable evidence later slices will
+use to make `resume` advance from the last completed activity instead of
+replaying worker state.
 
-Generic retries are avoided. Review, verification, merge, plan, and
-infrastructure failures are classified into recovery classes such as
-`needs_rebase`, `needs_full_context`, `needs_plan_fix`, and `needs_infra_fix`.
+Merge-activity failures are classified through `FailureClassifier` into
+recovery classes such as `needs_rebase`, `needs_full_context`, `needs_plan_fix`,
+and `needs_infra_fix`. Routing review and verification failures through the
+classifier is a follow-up slice.
 ```
 
 - [ ] **Step 2: Update worktree policy**
@@ -1871,7 +1887,9 @@ Append this paragraph to `skills/agent-runway/references/context-policy.md`:
 
 Normal host context uses `summarize`, which reports the latest checkpoint,
 activity graph counts, blocked node, failure class, next automatic action, and
-required human decision. Raw worker logs remain deep-inspection artifacts and
+required human decision. The activity counts are scoped to the current
+`run_id`, so summaries remain meaningful when a SQLite state file is reused
+across resumed runs. Raw worker logs remain deep-inspection artifacts and
 should not be loaded into host context unless the summary points to them.
 ```
 
@@ -1936,10 +1954,16 @@ cd /Users/kws/source/private/Archive && graphify update .
 cd /Users/kws/source/private/Archive && git status --short
 ```
 
-Expected final state:
+Expected final state (slice 1):
 
-- AgentRunway writes workflow events, activities, checkpoints, and decision packets.
-- Verified selected candidates merge into run main before dependent tasks start.
-- Dependent fake-adapter regression passes and proves task 2 sees task 1's checkpoint.
-- `summarize` reports latest checkpoint, graph counts, blocked node, failure class, and human decision fields.
-- full AgentRunway eval suite passes.
+- AgentRunway writes workflow events, activity rows, checkpoint rows, and is wired to write decision packets via `WorkflowStore.create_decision_packet` (gate-failure paths that emit them remain a follow-up slice).
+- Verified selected candidates cherry-pick into run main before dependent tasks start, with `cp-000` initial and `cp-NNN` per-merge checkpoint rows.
+- Dependent fake-adapter regression passes and proves task 2 sees task 1's cherry-pick on run main.
+- `summarize` reports latest checkpoint, graph counts, blocked node, failure class, next automatic action, and human decision fields.
+- Full AgentRunway eval suite passes.
+
+Out of scope for this slice (tracked in design §13.1 and §15.2):
+
+- Runner-side resume that picks the next node from durable activity artifacts.
+- Routing review/verification/plan failures through `FailureClassifier` and writing decision packets from gate failures.
+- Replacing `schedule_waves` with `ready_tasks_after_checkpoints` / `schedule_safe_wave` in `runner.run()`.
