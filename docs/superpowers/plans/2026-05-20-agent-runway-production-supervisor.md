@@ -128,15 +128,19 @@ Expected: the old repo path no longer exists, and `skills/agent-runway/scripts/a
 
 - [ ] **Step 2: Rename Python imports and CLI strings**
 
-Run a mechanical replacement and then inspect the diff:
+Run a mechanical replacement and then inspect the diff. The substitutions below are
+order-sensitive: SCREAMING_SNAKE_CASE constants (`KAO_HOME`, `KAO_VERSION`, generic `KAO_*`)
+and CamelCase identifiers (`KaoDb`, generic `Kao[A-Z]…`) are rewritten BEFORE the generic
+`KAO`→`AgentRunway` rule, otherwise `KAO_HOME` becomes the broken `AgentRunway_HOME`
+(Step 6 expects `AGENTRUNWAY_HOME`) and `KaoDb` is left untouched (case-sensitive miss):
 
 ```bash
-perl -0pi -e 's/from kao\\./from agentrunway./g; s/import kao\\./import agentrunway./g; s/\\bkao\\b/agentrunway/g; s/KAO/AgentRunway/g; s/kws\\.kao/agentrunway/g; s/kws-agent-orchestrator/agent-runway/g; s/KWS Agent Orchestrator/AgentRunway/g' \
-  $(rg -l 'kao|KAO|kws\\.kao|kws-agent-orchestrator|KWS Agent Orchestrator' skills/agent-runway skills/README.md)
+perl -0pi -e 's/from kao\\./from agentrunway./g; s/import kao\\./import agentrunway./g; s/\\bkao\\b/agentrunway/g; s/KAO_HOME/AGENTRUNWAY_HOME/g; s/KAO_VERSION/AGENTRUNWAY_VERSION/g; s/\\bKAO_/AGENTRUNWAY_/g; s/KaoDb/AgentRunwayDb/g; s/\\bKao(?=[A-Z])/AgentRunway/g; s/KAO/AgentRunway/g; s/kws\\.kao/agentrunway/g; s/kws-agent-orchestrator/agent-runway/g; s/KWS Agent Orchestrator/AgentRunway/g' \
+  $(rg -l 'kao|KAO|Kao|kws\\.kao|kws-agent-orchestrator|KWS Agent Orchestrator' skills/agent-runway skills/README.md)
 git diff -- skills/agent-runway skills/README.md
 ```
 
-Expected: imports use `agentrunway`, CLI help says `agentrunway`, schema constants use `agentrunway.*`, state defaults use `~/.agentrunway`, and README/SKILL docs refer to AgentRunway.
+Expected: imports use `agentrunway`, CLI help says `agentrunway`, schema constants use `agentrunway.*`, state defaults use `~/.agentrunway`, environment variable is `AGENTRUNWAY_HOME` (all caps), the database class is `AgentRunwayDb`, and README/SKILL docs refer to AgentRunway.
 
 - [ ] **Step 3: Fix package entrypoints**
 
@@ -232,10 +236,10 @@ Expected: all pass using only AgentRunway names.
 Run:
 
 ```bash
-! rg -n 'kws-agent-orchestrator|KWS Agent Orchestrator|kws\\.kao|\\bkao\\b|KAO|kao-task|~/.kao' skills/agent-runway skills/README.md
+! rg -n 'kws-agent-orchestrator|KWS Agent Orchestrator|kws\\.kao|\\bkao\\b|\\bKao[A-Z]|KAO|kao-task|~/.kao' skills/agent-runway skills/README.md
 ```
 
-Expected: command exits 0 because `rg` finds no legacy names in active skill files.
+Expected: command exits 0 because `rg` finds no legacy names (including the CamelCase `Kao*` and SCREAMING_SNAKE `KAO_*` forms) in active skill files.
 
 - [ ] **Step 10: Commit**
 
@@ -492,6 +496,14 @@ CREATE TABLE IF NOT EXISTS merge_queue (
 );
 ```
 
+This replaces the pre-AgentRunway `merge_queue(commit_sha, patch_path)` shape and is an
+intentional breaking change consistent with the no-alias policy in design §3. There is no
+migration: any pre-existing `~/.kao/.../state.sqlite` is abandoned, and tests must open
+fresh DB files. If an integration accidentally re-uses an old DB, `CREATE TABLE IF NOT
+EXISTS` will skip the new shape — `db.py` must therefore `DROP TABLE IF EXISTS merge_queue`
+once at module bootstrap when the surviving columns do not match (or, more simply,
+require that callers always open a path that does not yet contain a `merge_queue` row).
+
 3. Add applied commit storage to `SCHEMA_SQL`:
 
 ```sql
@@ -521,9 +533,12 @@ CREATE TABLE IF NOT EXISTS applied_commits (
             "state": fields["state"],
             "handle_json": json.dumps(fields.get("handle_json", {}), sort_keys=True),
         }
+        # Plain INSERT, not INSERT OR REPLACE: design §11 requires each retry to
+        # mint a new worker_id, so a primary-key collision here is a programming
+        # bug we want to surface, not silently overwrite.
         self.conn.execute(
             """
-            INSERT OR REPLACE INTO workers
+            INSERT INTO workers
               (worker_id, task_id, role, runtime, model, reasoning_effort, attempt, worktree_path, branch, state, handle_json)
             VALUES
               (:worker_id, :task_id, :role, :runtime, :model, :reasoning_effort, :attempt, :worktree_path, :branch, :state, :handle_json)
@@ -1186,26 +1201,38 @@ class CodexAdapter:
         self.reasoning_effort = reasoning_effort
         self.supervisor = ProcessSupervisor()
 
-    def build_command(self, prompt_path: Path, workdir: Path) -> list[str]:
+    def build_command(self, prompt_text: str, workdir: Path) -> list[str]:
+        # Flags verified against `codex exec --help` (Codex CLI, 2026-05):
+        #   -m, --model <MODEL>                       -> --model
+        #   -C, --cd <DIR>                            -> we do NOT pass this; the
+        #                                                ProcessSupervisor already runs
+        #                                                the child with cwd=worktree.
+        #   reasoning effort: NO --reasoning-effort flag exists; use the generic
+        #   `-c key=value` config override that codex documents in --help.
+        #   [PROMPT]: positional TEXT, not a path. Passing the prompt file path
+        #   here would make codex treat the literal string `/.../prompt.txt` as
+        #   the user instructions.
         return [
             "codex",
             "exec",
             "--model",
             self.model,
-            "--reasoning-effort",
-            self.reasoning_effort,
-            "--cwd",
-            str(workdir),
-            str(prompt_path),
+            "-c",
+            f'model_reasoning_effort="{self.reasoning_effort}"',
+            prompt_text,
         ]
 
     def prepare(self, spec: WorkerSpec) -> WorkerHandle:
         artifact_dir = Path(spec.artifact_dir)
         stdout_path = artifact_dir / f"{spec.worker_id}.stdout.log"
         stderr_path = artifact_dir / f"{spec.worker_id}.stderr.log"
+        # `build_command` consumes the prompt TEXT, not the path. Read the
+        # materialized prompt file once at prepare time; ProcessSupervisor's
+        # cwd= already pins the child to the worker worktree.
+        prompt_text = Path(spec.prompt_path).read_text(encoding="utf-8")
         launch = ProcessLaunchSpec(
             worker_id=spec.worker_id,
-            command=self.build_command(Path(spec.prompt_path), Path(spec.worktree_path)),
+            command=self.build_command(prompt_text, Path(spec.worktree_path)),
             cwd=Path(spec.worktree_path),
             stdout_path=stdout_path,
             stderr_path=stderr_path,
@@ -1266,14 +1293,34 @@ class CodexAdapter:
 
 - [ ] **Step 5: Implement Claude lifecycle adapter**
 
-Modify `skills/agent-runway/scripts/agentrunway/adapters/claude.py` with the same lifecycle structure, runtime `"claude"`, and this command builder:
+Modify `skills/agent-runway/scripts/agentrunway/adapters/claude.py` with the same lifecycle structure (read the prompt file in `prepare` and pass the text to `build_command`), runtime `"claude"`, and this command builder:
 
 ```python
-    def build_command(self, prompt_path: Path, workdir: Path) -> list[str]:
-        return ["claude", "-p", str(prompt_path), "--model", self.model, "--cwd", str(workdir)]
+    def build_command(self, prompt_text: str, workdir: Path) -> list[str]:
+        # Flags verified against `claude --help` (Claude Code CLI, 2026-05):
+        #   -p, --print            -> headless mode (required).
+        #   --model <model>        -> long form is the documented one.
+        #   --effort <level>       -> reasoning effort knob (low/medium/high/xhigh/max).
+        #   No --cwd flag exists; the ProcessSupervisor's cwd= already pins the
+        #   child to the worker worktree. `--add-dir` could be added here later
+        #   if the adapter needs to expose extra read scope.
+        #   The positional `prompt` argument is TEXT, not a path.
+        return [
+            "claude",
+            "-p",
+            prompt_text,
+            "--model",
+            self.model,
+            "--effort",
+            self.reasoning_effort,
+        ]
 ```
 
 Set `capabilities = AdapterCapabilities(runtime="claude", supports_reattach=True)`.
+
+Both adapters MUST be re-verified against the locally installed CLI's `--help` at
+implementation time. Codex/Claude flag surfaces drift between releases; the snapshots
+above were captured on 2026-05-20 and are correct as of that date but are not a contract.
 
 - [ ] **Step 6: Run adapter tests**
 
@@ -2318,7 +2365,17 @@ class ApplyError(RuntimeError):
     pass
 
 
-def apply_commits_to_source(repo: Path, commits: tuple[str, ...], *, strategy: str = "cherry-pick") -> list[str]:
+def apply_commits_to_source(
+    repo: Path,
+    commits: tuple[str, ...],
+    *,
+    strategy: str = "cherry-pick",
+    already_applied: tuple[str, ...] = (),
+) -> list[str]:
+    # Design §13 requires a second `agentrunway apply` to be idempotent.
+    # Filter out commits already recorded in `applied_commits` BEFORE we
+    # touch the repo so a re-run is a clean no-op (rather than an empty
+    # cherry-pick that aborts mid-stream).
     try:
         assert_clean_source(repo)
     except Exception as exc:
@@ -2327,7 +2384,10 @@ def apply_commits_to_source(repo: Path, commits: tuple[str, ...], *, strategy: s
     applied: list[str] = []
     if strategy != "cherry-pick":
         raise ApplyError(f"unsupported apply strategy: {strategy}")
+    skip = set(already_applied)
     for commit in commits:
+        if commit in skip:
+            continue
         result = git.run("cherry-pick", commit, check=False)
         if result.returncode != 0:
             git.run("cherry-pick", "--abort", check=False)
@@ -2360,10 +2420,22 @@ def apply(run_id: str, strategy: str = "cherry-pick") -> dict[str, Any]:
     for candidate in db.list_merge_candidates():
         if candidate["status"] == "merged":
             commits.extend(candidate["commits"])
-    applied = apply_commits_to_source(Path(data["repo_root"]), tuple(commits), strategy=strategy)
+    already_applied = tuple(row["commit_sha"] for row in db.list_applied_commits(run_id))
+    applied = apply_commits_to_source(
+        Path(data["repo_root"]),
+        tuple(commits),
+        strategy=strategy,
+        already_applied=already_applied,
+    )
     for commit in applied:
         db.record_applied_commit(run_id=run_id, commit_sha=commit, strategy=strategy)
-    return {"run_id": run_id, "status": data.get("status"), "applied": True, "commits": applied}
+    return {
+        "run_id": run_id,
+        "status": data.get("status"),
+        "applied": True,
+        "commits": applied,
+        "already_applied": list(already_applied),
+    }
 ```
 
 Import `apply_commits_to_source` and `AgentRunwayDb`.
