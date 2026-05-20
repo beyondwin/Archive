@@ -31,3 +31,8 @@
   name: GStack Superpowers
   description: Notes about using GStack and Superpowers workflows for Claude Code planning, review, worktree, and subagent-driven development.
   folder: docs/notes/skills/gstack-superpowers
+
+- id: superpowers/specs
+  name: Superpowers Specs
+  description: Approved Superpowers design specs for Archive execution, AgentRunway, and AgentLens planning.
+  folder: docs/superpowers/specs
