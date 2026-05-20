@@ -62,3 +62,14 @@ def test_agentrunway_run_planning_only_creates_state(git_repo: Path, isolated_ho
             "allowed_write_glob_count": 1,
         }
     ]
+    graph = json.loads((run_dir / "artifact_graph.json").read_text(encoding="utf-8"))
+    packet_nodes = [node for node in graph["nodes"] if node["kind"] == "task_packet"]
+    assert packet_nodes == [
+        {
+            "id": "task_001:packet",
+            "kind": "task_packet",
+            "path": str(packet_path),
+            "status": "done",
+            "task_id": "task_001",
+        }
+    ]
