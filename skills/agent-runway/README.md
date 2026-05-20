@@ -36,6 +36,26 @@ agentrunway apply --last
 before dispatch and print candidates. `--last` is scoped to the current
 workspace id, not the whole machine.
 
+## Operations Evidence
+
+Every non-planning run writes a frozen `contract.json`, `artifact_graph.json`,
+`coverage.json`, and `events.jsonl` under `~/.agentrunway/runs/<workspace>/<run_id>/`.
+The contract records the exact Superpowers spec and plan paths, hashes, parsed
+tasks, file claims, acceptance commands, adapter, model profile, and `spec_refs`
+coverage.
+
+Use:
+
+```bash
+python3 skills/agent-runway/scripts/agentrunway.py status --run <run_id>
+python3 skills/agent-runway/scripts/agentrunway.py inspect --run <run_id> --json
+python3 skills/agent-runway/scripts/agentrunway.py events --run <run_id> --json
+python3 skills/agent-runway/scripts/agentrunway.py resume --run <run_id> --dry-run --json
+```
+
+AgentLens emission is best-effort. Local evidence remains authoritative when
+AgentLens is disabled or unavailable.
+
 ## Production Supervisor
 
 `agentrunway run --adapter codex` and `agentrunway run --adapter claude` launch worker
