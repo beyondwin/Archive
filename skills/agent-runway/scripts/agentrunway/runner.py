@@ -24,7 +24,8 @@ from .db import AgentRunwayDb
 from .decision_events import record_candidate_ranked, record_quality_decision
 from .events import EventJournal, build_event_payload
 from .git_ops import Git, assert_clean_source
-from .merge_queue import MergeCandidate, MergeConflictError, apply_candidate
+from .integration_manager import IntegrationManager
+from .merge_queue import MergeCandidate, MergeConflictError
 from .packetizer import build_task_packet, materialize_prompt, materialize_worker_prompt, packet_to_json
 from .plan_parser import canonical_hash, parse_plan, parse_spec_manifest
 from .plan_lint import lint_plan
@@ -34,6 +35,7 @@ from .reconciliation import apply_reconciliation_plan, plan_reconciliation
 from .retention import clean_retention
 from .scheduler import schedule_waves
 from .supervisor import next_worker_id, run_implementer_attempt, run_reviewer_attempt, run_verifier_attempt
+from .workflow_store import WorkflowStore
 from .worktrees import create_main_worktree, next_available_run_id, workspace_id
 from .worktree_lifecycle import archive_candidate_evidence, lifecycle_for_worker, reviewer_mode_for_task
 
@@ -336,6 +338,21 @@ def run(args: Any) -> dict[str, Any]:
         run_id=run_id,
         branch=f"agentrunway/{run_id}/main",
         lifecycle="run_main_persistent",
+    )
+    workflow_store = WorkflowStore(db)
+    workflow_store.create_checkpoint(
+        run_id=run_id,
+        checkpoint_id="cp-000",
+        commit_sha=Git(main_worktree).rev_parse("HEAD"),
+        parent_checkpoint_id=None,
+        merged_candidate_id=None,
+        reason="initial",
+    )
+    integration_manager = IntegrationManager(
+        db=db,
+        store=workflow_store,
+        run_id=run_id,
+        main_worktree=main_worktree,
     )
     db.set_run_status(run_id, "running")
     run_json.update({"status": "running", "main_worktree": str(main_worktree)})
@@ -660,41 +677,50 @@ def run(args: Any) -> dict[str, Any]:
                         db.set_worker_state(str(candidate["worker_id"]), "not_selected")
                         worker = db.get_worker(str(candidate["worker_id"]))
                         db.set_worktree_lifecycle(str(worker["worktree_path"]), "evidence_archived")
-    for candidate in db.list_merge_candidates():
-        if candidate["status"] != "merge_ready":
-            continue
-        main_git = Git(main_worktree)
-        merge_candidate = MergeCandidate(
-            task_id=candidate["task_id"],
-            worker_id=candidate["worker_id"],
-            commits=tuple(candidate["commits"]),
-            changed_files=tuple(candidate["changed_files"]),
-        )
-        try:
-            apply_candidate(main_git, merge_candidate)
-        except MergeConflictError as exc:
-            db.set_merge_candidate_status(int(candidate["id"]), "merge_conflict", str(exc))
-            db.set_task_status(candidate["task_id"], "blocked")
-            journal.record(
-                "agentrunway.merge_conflict",
-                build_event_payload(
-                    run_id,
-                    "merge",
-                    "partial",
-                    "merge conflict",
-                    task_id=candidate["task_id"],
-                    worker_id=candidate["worker_id"],
-                    candidate_id=candidate["id"],
-                    error=str(exc),
-                ),
-            )
-            _record_run_blocked(journal, run_id=run_id, task_id=str(candidate["task_id"]), reason="merge_conflict")
-        else:
-            db.set_merge_candidate_status(int(candidate["id"]), "merged")
-            db.set_worker_state(candidate["worker_id"], "merged")
-            worker = db.get_worker(str(candidate["worker_id"]))
-            db.set_worktree_lifecycle(str(worker["worktree_path"]), lifecycle_for_worker(role="implementer", state="merged"))
-            db.set_task_status(candidate["task_id"], "merged")
+                selected_candidate = next(
+                    candidate
+                    for candidate in ready_candidates
+                    if int(candidate["id"]) == selection.selected_candidate_id
+                )
+                merge_candidate = MergeCandidate(
+                    task_id=selected_candidate["task_id"],
+                    worker_id=selected_candidate["worker_id"],
+                    commits=tuple(selected_candidate["commits"]),
+                    changed_files=tuple(selected_candidate["changed_files"]),
+                )
+                try:
+                    integration_manager.merge_selected_candidate(
+                        candidate_id=selection.selected_candidate_id,
+                        candidate=merge_candidate,
+                    )
+                except MergeConflictError as exc:
+                    db.set_task_status(selected_candidate["task_id"], "blocked")
+                    journal.record(
+                        "agentrunway.merge_conflict",
+                        build_event_payload(
+                            run_id,
+                            "merge",
+                            "partial",
+                            "merge conflict",
+                            task_id=selected_candidate["task_id"],
+                            worker_id=selected_candidate["worker_id"],
+                            candidate_id=selection.selected_candidate_id,
+                            error=str(exc),
+                        ),
+                    )
+                    _record_run_blocked(
+                        journal,
+                        run_id=run_id,
+                        task_id=str(selected_candidate["task_id"]),
+                        reason="merge_conflict",
+                    )
+                else:
+                    worker = db.get_worker(str(selected_candidate["worker_id"]))
+                    db.set_worktree_lifecycle(
+                        str(worker["worktree_path"]),
+                        lifecycle_for_worker(role="implementer", state="merged"),
+                    )
+                    db.set_task_status(selected_candidate["task_id"], "merged")
     write_artifact_graph(run_dir=run_dir, db=db)
     tasks_snapshot = db.list_tasks()
     blocked = any(str(task.get("status")) == "blocked" for task in tasks_snapshot)
