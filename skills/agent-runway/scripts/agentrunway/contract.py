@@ -43,11 +43,20 @@ def _task_to_contract(task: TaskSpec) -> dict[str, object]:
     }
 
 
+def _spec_ref_aliases(manifest_sections: dict[str, str]) -> dict[str, str]:
+    aliases = {ref: ref for ref in manifest_sections}
+    for ref in manifest_sections:
+        if ref.startswith("S1."):
+            aliases.setdefault("S" + ref.removeprefix("S1."), ref)
+    return aliases
+
+
 def _validate_tasks(tasks: list[TaskSpec], manifest_sections: dict[str, str]) -> tuple[dict[str, list[str]], tuple[str, ...]]:
     covered: set[str] = set()
     warnings: list[str] = []
+    aliases = _spec_ref_aliases(manifest_sections)
     for task in tasks:
-        missing_refs = [ref for ref in task.spec_refs if ref not in manifest_sections]
+        missing_refs = [ref for ref in task.spec_refs if ref not in aliases]
         if missing_refs:
             raise ContractError(f"missing spec_refs: {task.task_id} -> {', '.join(missing_refs)}")
         if not task.acceptance_commands or any(not command.strip() for command in task.acceptance_commands):
@@ -57,7 +66,7 @@ def _validate_tasks(tasks: list[TaskSpec], manifest_sections: dict[str, str]) ->
         for claim in task.file_claims:
             if claim.path in {"*", "**", "**/*"}:
                 warnings.append(f"{task.task_id} has broad file claim {claim.path}")
-        covered.update(task.spec_refs)
+        covered.update(aliases[ref] for ref in task.spec_refs)
     unreferenced = sorted(set(manifest_sections) - covered)
     warnings.extend(f"unreferenced spec section {ref}" for ref in unreferenced)
     return {"covered": sorted(covered), "partial": [], "blocked": [], "unreferenced": unreferenced}, tuple(warnings)

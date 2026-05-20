@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -39,6 +40,25 @@ def _candidate(kind: str, path: Path, reason: str) -> dict[str, str]:
     return {"kind": kind, "path": str(path), "reason": reason}
 
 
+def _list_worktree_registry(state_db: Path) -> list[dict[str, str]]:
+    try:
+        conn = sqlite3.connect(f"file:{state_db}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return []
+    conn.row_factory = sqlite3.Row
+    try:
+        table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='worktree_registry'"
+        ).fetchone()
+        if table is None:
+            return []
+        return [dict(row) for row in conn.execute("SELECT * FROM worktree_registry ORDER BY path").fetchall()]
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+
+
 def plan_retention_clean(home: Path, *, older_than: str, successful: bool) -> dict[str, Any]:
     cutoff = datetime.now(timezone.utc) - parse_retention_window(older_than)
     candidates: list[dict[str, str]] = []
@@ -63,6 +83,17 @@ def plan_retention_clean(home: Path, *, older_than: str, successful: bool) -> di
                 candidates.append(_candidate("run", run_dir, reason))
             else:
                 retained.append(_candidate("run", run_dir, f"status_{status}"))
+            state_db = run_dir / "state.sqlite"
+            if state_db.exists() and status not in {"running"} and not _has_detach_pidfile(run_dir):
+                for row in _list_worktree_registry(state_db):
+                    path = Path(str(row["path"]))
+                    lifecycle = str(row["lifecycle"])
+                    if not path.exists():
+                        continue
+                    if lifecycle in {"cleanup_eligible", "evidence_archived"} and _is_old(path, cutoff):
+                        candidates.append(_candidate("worktree", path, f"lifecycle_{lifecycle}"))
+                    elif lifecycle == "retained_for_diagnosis":
+                        retained.append(_candidate("worktree", path, "lifecycle_retained_for_diagnosis"))
 
     if worktrees_root.exists():
         for worktree_dir in sorted(path for path in worktrees_root.glob("*/*") if path.is_dir()):

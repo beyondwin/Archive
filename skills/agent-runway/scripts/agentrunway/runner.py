@@ -27,12 +27,15 @@ from .git_ops import Git, assert_clean_source
 from .merge_queue import MergeCandidate, MergeConflictError, apply_candidate
 from .packetizer import build_task_packet, materialize_prompt, materialize_worker_prompt, packet_to_json
 from .plan_parser import canonical_hash, parse_plan, parse_spec_manifest
+from .plan_lint import lint_plan
+from .preflight import run_preflight
 from .quality_policy import candidate_count_for_task, gate_retry_decision
 from .reconciliation import apply_reconciliation_plan, plan_reconciliation
 from .retention import clean_retention
 from .scheduler import schedule_waves
 from .supervisor import next_worker_id, run_implementer_attempt, run_reviewer_attempt, run_verifier_attempt
 from .worktrees import create_main_worktree, next_available_run_id, workspace_id
+from .worktree_lifecycle import archive_candidate_evidence, lifecycle_for_worker, reviewer_mode_for_task
 
 
 def agentrunway_home() -> Path:
@@ -91,11 +94,32 @@ def _write_run_json(run_dir: Path, payload: dict[str, Any]) -> None:
     (run_dir / "run.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
 
 
+def _write_early_run_json(run_dir: Path, payload: dict[str, Any]) -> bool:
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        _write_run_json(run_dir, payload)
+    except OSError:
+        return False
+    return True
+
+
 def _load_run_json(run_id: str) -> dict[str, Any] | None:
     run_dir = _find_run_dir(run_id)
     if run_dir is None or not (run_dir / "run.json").exists():
         return None
     return json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+
+
+def _load_run_json_or_reconstruct(run_id: str) -> dict[str, Any] | None:
+    data = _load_run_json(run_id)
+    if data is not None:
+        return data
+    run_dir = _find_run_dir(run_id)
+    if run_dir is None:
+        return None
+    from .run_summary import reconstruct_run_json
+
+    return reconstruct_run_json(run_id=run_id, run_dir=run_dir)
 
 
 def _select_adapter(name: str, profile: ModelProfile, *, fake_success: bool = False) -> tuple[Any, str, str, str]:
@@ -204,6 +228,35 @@ def run(args: Any) -> dict[str, Any]:
     wsid = workspace_id(repo)
     run_id = allocate_run_id(repo, plan, getattr(args, "run_id", None))
     run_dir, worktree_root = _state_paths(run_id, wsid)
+    lint = lint_plan(plan_path=plan, spec_path=spec)
+    if not lint.ok:
+        payload = {
+            "run_id": run_id,
+            "workspace_id": wsid,
+            "status": "plan_lint_failed",
+            "run_dir": str(run_dir),
+            "state_db": None,
+            "plan_lint": lint.to_dict(),
+        }
+        payload["state_persisted"] = _write_early_run_json(run_dir, payload)
+        return payload
+    preflight = run_preflight(
+        adapter_name=str(args.adapter),
+        repo=repo,
+        run_dir=run_dir,
+        worktree_root=worktree_root,
+    )
+    if not preflight.ok:
+        payload = {
+            "run_id": run_id,
+            "workspace_id": wsid,
+            "status": "preflight_failed",
+            "run_dir": str(run_dir),
+            "state_db": None,
+            "preflight": preflight.to_dict(),
+        }
+        payload["state_persisted"] = _write_early_run_json(run_dir, payload)
+        return payload
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "packets").mkdir(exist_ok=True)
     (run_dir / "prompts").mkdir(exist_ok=True)
@@ -278,6 +331,12 @@ def run(args: Any) -> dict[str, Any]:
         return run_json
 
     main_worktree = create_main_worktree(git, worktree_root / "main", run_id, base_commit)
+    db.register_worktree(
+        path=str(main_worktree),
+        run_id=run_id,
+        branch=f"agentrunway/{run_id}/main",
+        lifecycle="run_main_persistent",
+    )
     db.set_run_status(run_id, "running")
     run_json.update({"status": "running", "main_worktree": str(main_worktree)})
     _write_run_json(run_dir, run_json)
@@ -394,47 +453,71 @@ def run(args: Any) -> dict[str, Any]:
                 base_ref = f"agentrunway/{run_id}/main"
                 diff = _candidate_diff(db, candidate, base_ref)
                 db.set_task_status(task.task_id, "reviewing")
-                journal.record(
-                    "agentrunway.review_dispatched",
-                    build_event_payload(
-                        run_id,
-                        "review",
-                        "success",
-                        "review dispatched",
-                        task_id=task.task_id,
-                        worker_id=candidate["worker_id"],
-                    ),
-                )
-                _, review_attempt = next_worker_id(db=db, task_id=task.task_id, role="reviewer")
-                review = run_reviewer_attempt(
-                    db=db,
-                    run_id=run_id,
-                    git=git,
-                    worktree_root=worktree_root,
-                    run_dir=run_dir,
-                    task=task,
-                    adapter=adapter,
-                    runtime=runtime,
-                    model=model,
-                    reasoning_effort=reasoning_effort,
-                    reviewed_worker_id=str(candidate["worker_id"]),
-                    candidate_diff=diff,
-                    candidate_commits=tuple(candidate["commits"]),
-                    attempt=review_attempt,
-                    timeout_seconds=600,
-                )
-                review_status = str(review["status"])
-                journal.record(
-                    "agentrunway.review_result",
-                    build_event_payload(
-                        run_id,
-                        "review",
-                        "success" if review_status == "approved" else "partial",
-                        "review result",
-                        task_id=task.task_id,
-                        status=review_status,
-                    ),
-                )
+                review_mode = reviewer_mode_for_task(task)
+                needs_context_escalated = False
+                while True:
+                    journal.record(
+                        "agentrunway.review_dispatched",
+                        build_event_payload(
+                            run_id,
+                            "review",
+                            "success",
+                            "review dispatched",
+                            task_id=task.task_id,
+                            worker_id=candidate["worker_id"],
+                            review_mode=review_mode,
+                        ),
+                    )
+                    _, review_attempt = next_worker_id(db=db, task_id=task.task_id, role="reviewer")
+                    review = run_reviewer_attempt(
+                        db=db,
+                        run_id=run_id,
+                        git=git,
+                        worktree_root=worktree_root,
+                        run_dir=run_dir,
+                        task=task,
+                        adapter=adapter,
+                        runtime=runtime,
+                        model=model,
+                        reasoning_effort=reasoning_effort,
+                        reviewed_worker_id=str(candidate["worker_id"]),
+                        candidate_diff=diff,
+                        candidate_commits=tuple(candidate["commits"]),
+                        attempt=review_attempt,
+                        timeout_seconds=600,
+                        review_mode=review_mode,
+                    )
+                    review_status = str(review["status"])
+                    journal.record(
+                        "agentrunway.review_result",
+                        build_event_payload(
+                            run_id,
+                            "review",
+                            "success" if review_status == "approved" else "partial",
+                            "review result",
+                            task_id=task.task_id,
+                            status=review_status,
+                            review_mode=review_mode,
+                        ),
+                    )
+                    if review_status == "needs_context" and review_mode == "diff" and not needs_context_escalated:
+                        needs_context_escalated = True
+                        review_mode = "full_tree"
+                        journal.record(
+                            "agentrunway.review_escalated",
+                            build_event_payload(
+                                run_id,
+                                "review",
+                                "partial",
+                                "review escalated to full tree",
+                                task_id=task.task_id,
+                                worker_id=candidate["worker_id"],
+                                reason="needs_context",
+                                review_mode=review_mode,
+                            ),
+                        )
+                        continue
+                    break
                 if review_status != "approved":
                     decision = gate_retry_decision(
                         task=task,
@@ -572,8 +655,11 @@ def run(args: Any) -> dict[str, Any]:
                 db.set_task_status(task.task_id, "merge_ready")
                 for candidate in ready_candidates:
                     if int(candidate["id"]) != selection.selected_candidate_id:
+                        archive_candidate_evidence(run_dir=run_dir, db=db, candidate=candidate)
                         db.set_merge_candidate_status(int(candidate["id"]), "not_selected")
                         db.set_worker_state(str(candidate["worker_id"]), "not_selected")
+                        worker = db.get_worker(str(candidate["worker_id"]))
+                        db.set_worktree_lifecycle(str(worker["worktree_path"]), "evidence_archived")
     for candidate in db.list_merge_candidates():
         if candidate["status"] != "merge_ready":
             continue
@@ -606,6 +692,8 @@ def run(args: Any) -> dict[str, Any]:
         else:
             db.set_merge_candidate_status(int(candidate["id"]), "merged")
             db.set_worker_state(candidate["worker_id"], "merged")
+            worker = db.get_worker(str(candidate["worker_id"]))
+            db.set_worktree_lifecycle(str(worker["worktree_path"]), lifecycle_for_worker(role="implementer", state="merged"))
             db.set_task_status(candidate["task_id"], "merged")
     write_artifact_graph(run_dir=run_dir, db=db)
     tasks_snapshot = db.list_tasks()
@@ -633,17 +721,48 @@ def _missing(run_id: str) -> dict[str, Any]:
     return {"run_id": run_id, "status": "missing"}
 
 
+def _early_failure_payload(data: dict[str, Any], run_id: str) -> dict[str, Any] | None:
+    status_value = str(data.get("status") or "")
+    if status_value not in {"plan_lint_failed", "preflight_failed"}:
+        return None
+    payload = {
+        "run_id": data.get("run_id") or run_id,
+        "status": status_value,
+        "run_dir": data.get("run_dir"),
+        "state_db": data.get("state_db"),
+        "next_action": "fix plan lint errors" if status_value == "plan_lint_failed" else "fix preflight issues",
+    }
+    if "plan_lint" in data:
+        payload["plan_lint"] = data["plan_lint"]
+    if "preflight" in data:
+        payload["preflight"] = data["preflight"]
+    return payload
+
+
 def status(run_id: str) -> dict[str, Any]:
-    data = _load_run_json(run_id)
+    data = _load_run_json_or_reconstruct(run_id)
     if data is None:
         return _missing(run_id)
     from .diagnostics import diagnose_run
     from .status import next_operator_action
 
-    db = AgentRunwayDb.open(Path(data["state_db"]))
+    state_db = data.get("state_db")
+    if not state_db or not Path(str(state_db)).exists():
+        early = _early_failure_payload(data, run_id)
+        if early is not None:
+            return early
+        return {
+            "run_id": data.get("run_id") or run_id,
+            "status": "missing",
+            "run_dir": data.get("run_dir"),
+            "reconstructed_from": data.get("reconstructed_from", []),
+            "recovery": data.get("recovery", "no_state_sqlite"),
+            "next_action": "no recoverable state; inspect run_dir manually",
+        }
+    db = AgentRunwayDb.open(Path(str(state_db)))
     agentlens = db.agentlens_summary()
     diagnosis = diagnose_run(run_json=data, db=db).to_dict()
-    return {
+    payload = {
         "run_id": run_id,
         "status": data.get("status"),
         "run_dir": data.get("run_dir"),
@@ -653,16 +772,62 @@ def status(run_id: str) -> dict[str, Any]:
             {**data, "diagnosis": diagnosis}, agentlens
         ),
     }
+    if "reconstructed_from" in data:
+        payload["reconstructed_from"] = data["reconstructed_from"]
+    if "recovery" in data:
+        payload["recovery"] = data["recovery"]
+    return payload
 
 
 def inspect(run_id: str) -> dict[str, Any]:
-    data = _load_run_json(run_id)
+    data = _load_run_json_or_reconstruct(run_id)
     if data is None:
         return _missing(run_id)
     from .status import build_inspect_payload
 
-    db = AgentRunwayDb.open(Path(data["state_db"]))
-    return build_inspect_payload(run_json=data, db=db)
+    state_db = data.get("state_db")
+    if not state_db or not Path(str(state_db)).exists():
+        early = _early_failure_payload(data, run_id)
+        if early is not None:
+            return early
+        return {
+            "run_id": data.get("run_id") or run_id,
+            "status": "missing",
+            "run_dir": data.get("run_dir"),
+            "reconstructed_from": data.get("reconstructed_from", []),
+            "recovery": data.get("recovery", "no_state_sqlite"),
+            "next_action": "no recoverable state; inspect run_dir manually",
+        }
+    db = AgentRunwayDb.open(Path(str(state_db)))
+    payload = build_inspect_payload(run_json=data, db=db)
+    if "reconstructed_from" in data:
+        payload["reconstructed_from"] = data["reconstructed_from"]
+    if "recovery" in data:
+        payload["recovery"] = data["recovery"]
+    return payload
+
+
+def summarize(run_id: str) -> dict[str, Any]:
+    data = _load_run_json_or_reconstruct(run_id)
+    if data is None:
+        return _missing(run_id)
+    state_db = data.get("state_db")
+    if not state_db or not Path(str(state_db)).exists():
+        early = _early_failure_payload(data, run_id)
+        if early is not None:
+            return early
+        return {
+            "run_id": data.get("run_id") or run_id,
+            "status": "missing",
+            "run_dir": data.get("run_dir"),
+            "reconstructed_from": data.get("reconstructed_from", []),
+            "recovery": data.get("recovery", "no_state_sqlite"),
+            "next_action": "no recoverable state; inspect run_dir manually",
+        }
+    from .run_summary import build_run_summary
+
+    db = AgentRunwayDb.open(Path(str(state_db)))
+    return build_run_summary(run_json=data, db=db)
 
 
 def events(run_id: str, event_type: str | None = None) -> dict[str, Any]:

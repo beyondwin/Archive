@@ -6,6 +6,8 @@ Source of truth:
 
 - Design: `docs/superpowers/specs/2026-05-20-agent-runway-design.md`
 - Implementation plan: `docs/superpowers/plans/2026-05-20-agent-runway.md`
+- Hybrid quality design: `docs/superpowers/specs/2026-05-20-agentrunway-quality-first-hybrid-worktree-design.md`
+- Hybrid quality plan: `docs/superpowers/plans/2026-05-20-agentrunway-quality-first-hybrid-worktree.md`
 
 The runner stores state in SQLite under `~/.agentrunway/runs`, does implementation work in isolated git worktrees under `~/.agentrunway/worktrees`, and emits bounded AgentLens events under the `agentrunway.*` namespace. The MVP includes a deterministic local adapter for tests and dry runs plus Claude/Codex process adapter wrappers.
 
@@ -13,7 +15,9 @@ The runner stores state in SQLite under `~/.agentrunway/runs`, does implementati
 
 ```bash
 python3 skills/agent-runway/scripts/agentrunway.py run --plan plan.md --spec spec.md --planning-only
+python3 skills/agent-runway/scripts/agentrunway.py lint-plan --plan plan.md --spec spec.md --json
 python3 skills/agent-runway/scripts/agentrunway.py status --run <run_id>
+python3 skills/agent-runway/scripts/agentrunway.py summarize --run <run_id> --json
 ```
 
 Use `--adapter local --fake-success` for deterministic end-to-end smoke runs without model calls.
@@ -27,6 +31,7 @@ the short resolver forms:
 agentrunway run --topic <topic> --adapter codex
 agentrunway run --latest --adapter claude
 agentrunway status --last
+agentrunway summarize --last --json
 agentrunway inspect --last --json
 agentrunway apply --last
 ```
@@ -47,6 +52,7 @@ coverage.
 Use:
 
 ```bash
+python3 skills/agent-runway/scripts/agentrunway.py summarize --run <run_id> --json
 python3 skills/agent-runway/scripts/agentrunway.py status --run <run_id>
 python3 skills/agent-runway/scripts/agentrunway.py inspect --run <run_id> --json
 python3 skills/agent-runway/scripts/agentrunway.py events --run <run_id> --json
@@ -55,6 +61,12 @@ python3 skills/agent-runway/scripts/agentrunway.py resume --run <run_id> --dry-r
 
 AgentLens emission is best-effort. Local evidence remains authoritative when
 AgentLens is disabled or unavailable.
+
+Normal host operation should start with `summarize`. The summary is bounded and
+contains task counts, blocked tasks, selected candidates, worker durations,
+recent events, artifact references, and the next operator action. Use
+`inspect --json` only when the summary points to a task or artifact that needs
+deep diagnosis.
 
 ## Operations Quality Engine
 
@@ -82,6 +94,17 @@ writes task packets and prompts, supervises process lifecycle, collects
 `worker_result.json`, validates committed changed files against file claims,
 runs `review_result` and `verification_result` gates, and cherry-picks accepted
 commits into the run main worktree.
+
+The supervisor uses quality-first hybrid worktrees:
+
+- run main is persistent for the run and is the only merge target;
+- implementer candidates stay isolated and retained until apply or evidence
+  archival;
+- reviewer attempts default to diff mode, escalating once to full-tree review
+  when the reviewer returns `needs_context` or policy requires full-tree review;
+- verifier attempts run from the selected candidate head and become cleanup
+  eligible after evidence capture;
+- failed or malformed worker worktrees are retained for diagnosis.
 
 Reviewer `changes_requested` and verifier `failed` outcomes create one bounded
 implementer redispatch with the gate evidence threaded into the next prompt.

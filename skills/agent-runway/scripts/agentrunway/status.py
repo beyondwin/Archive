@@ -51,9 +51,12 @@ def format_run_status(run: dict[str, object]) -> str:
     diagnosis_bits = ""
     if diagnosis:
         diagnosis_bits = f" diagnosis={diagnosis.get('status')} reason={diagnosis.get('reason')}"
+    notice = ""
+    if isinstance(agentlens, dict) and agentlens.get("run_status") == "disabled":
+        notice = " AgentLens disabled; local SQLite and artifacts are authoritative."
     return (
         f"{run.get('run_id')} status={run.get('status')} {suffix}{diagnosis_bits} "
-        f"agentlens={agentlens.get('last_status', 'unknown')} next_action={next_action}"
+        f"agentlens={agentlens.get('last_status', 'unknown')} next_action={next_action}{notice}"
     ).strip()
 
 

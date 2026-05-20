@@ -76,7 +76,7 @@ title: Add Plan Lint CLI
 risk: medium
 phase: implementation
 dependencies: []
-spec_refs: [S10.3, S12]
+spec_refs: [S1.10.3, S1.12]
 file_claims:
   - {path: skills/agent-runway/scripts/agentrunway/plan_lint.py, mode: owned}
   - {path: skills/agent-runway/scripts/agentrunway/invocation.py, mode: owned}
@@ -186,6 +186,112 @@ def test_forbidden_owned_path_is_error(tmp_path: Path) -> None:
     result = lint_plan(plan_path=plan, spec_path=_spec(tmp_path))
 
     assert any(item.code == "forbidden_owned_path" for item in result.errors)
+
+
+def test_empty_plan_is_error(tmp_path: Path) -> None:
+    plan = _write(tmp_path / "plan.md", "# Empty plan\n")
+    result = lint_plan(plan_path=plan, spec_path=_spec(tmp_path))
+
+    assert result.ok is False
+    assert any(item.code == "missing_task_block" for item in result.errors)
+
+
+def test_implementation_task_without_file_claims_is_error(tmp_path: Path) -> None:
+    plan = _write(
+        tmp_path / "plan.md",
+        _valid_plan().replace(
+            "file_claims:\n"
+            "  - {path: src/example.py, mode: owned}\n",
+            "file_claims: []\n",
+        ),
+    )
+    result = lint_plan(plan_path=plan, spec_path=_spec(tmp_path))
+
+    assert any(item.code == "missing_file_claims" for item in result.errors)
+
+
+def test_glob_owned_claim_overlap_is_error_when_unordered(tmp_path: Path) -> None:
+    plan = _write(
+        tmp_path / "plan.md",
+        _valid_plan().replace("src/example.py", "src/**")
+        + (
+            "\n### Task 2: Second\n\n"
+            "```yaml agentrunway-task\n"
+            "task_id: task_002\n"
+            "title: Second\n"
+            "risk: high\n"
+            "phase: implementation\n"
+            "dependencies: []\n"
+            "spec_refs: [S1]\n"
+            "file_claims:\n"
+            "  - {path: src/foo.py, mode: owned}\n"
+            "acceptance_commands: [python -m pytest tests/test_example.py -v]\n"
+            "required_skills: [using-superpowers, test-driven-development]\n"
+            "serial: true\n"
+            "```\n\n"
+            "Implement the second task.\n"
+        ),
+    )
+    result = lint_plan(plan_path=plan, spec_path=_spec(tmp_path))
+
+    assert any(item.code == "owned_claim_conflict" for item in result.errors)
+
+
+def test_dependency_ordered_owned_claim_overlap_is_allowed(tmp_path: Path) -> None:
+    plan = _write(
+        tmp_path / "plan.md",
+        _valid_plan().replace("src/example.py", "src/**").replace("risk: medium", "risk: high")
+        + (
+            "\n### Task 2: Second\n\n"
+            "```yaml agentrunway-task\n"
+            "task_id: task_002\n"
+            "title: Second\n"
+            "risk: medium\n"
+            "phase: implementation\n"
+            "dependencies: [task_001]\n"
+            "spec_refs: [S1]\n"
+            "file_claims:\n"
+            "  - {path: src/foo.py, mode: owned}\n"
+            "acceptance_commands: [python -m pytest tests/test_example.py -v]\n"
+            "required_skills: [using-superpowers, test-driven-development]\n"
+            "serial: true\n"
+            "```\n\n"
+            "Implement the second task.\n"
+        ),
+    )
+    result = lint_plan(plan_path=plan, spec_path=_spec(tmp_path))
+
+    assert result.ok is True
+
+
+def test_broad_owned_glob_requires_high_risk(tmp_path: Path) -> None:
+    plan = _write(tmp_path / "plan.md", _valid_plan().replace("src/example.py", "src/**"))
+    result = lint_plan(plan_path=plan, spec_path=_spec(tmp_path))
+
+    assert any(item.code == "broad_glob_requires_high_risk" for item in result.errors)
+
+
+def test_invalid_risk_is_error(tmp_path: Path) -> None:
+    plan = _write(tmp_path / "plan.md", _valid_plan().replace("risk: medium", "risk: banana"))
+    result = lint_plan(plan_path=plan, spec_path=_spec(tmp_path))
+
+    assert any(item.code == "invalid_risk" for item in result.errors)
+
+
+def test_rootless_numbered_spec_refs_resolve(tmp_path: Path) -> None:
+    spec = _write(
+        tmp_path / "numbered.md",
+        "# Design\n\n"
+        + "".join(
+            f"## {index}. Section\n\nDetails.\n\n"
+            + ("### 10.3 Plan Lint\n\nDetails.\n\n" if index == 10 else "")
+            for index in range(1, 13)
+        ),
+    )
+    plan = _write(tmp_path / "plan.md", _valid_plan().replace("spec_refs: [S1]", "spec_refs: [S10.3, S12]"))
+    result = lint_plan(plan_path=plan, spec_path=spec)
+
+    assert result.ok is True
 ```
 
 - [ ] **Step 2: Run the tests and verify failure**
@@ -201,6 +307,16 @@ Expected: `ModuleNotFoundError: No module named 'agentrunway.plan_lint'`.
 - [ ] **Step 3: Implement `plan_lint.py`**
 
 Create `skills/agent-runway/scripts/agentrunway/plan_lint.py`:
+
+Implementation requirements:
+
+- return `missing_task_block` when `parse_plan()` returns no tasks;
+- return `missing_file_claims` for implementation-phase tasks without file claims;
+- reject invalid `risk` values with `invalid_risk`;
+- reject owned broad globs below high risk with `broad_glob_requires_high_risk`;
+- detect unsafe owned path overlaps, including glob-to-file overlaps such as `src/**` and `src/foo.py`;
+- allow repeated/overlapping ownership only when the tasks are dependency-ordered;
+- resolve spec refs both as parser ids such as `S1.10.3` and rootless document ids such as `S10.3`.
 
 ```python
 from __future__ import annotations
@@ -452,7 +568,7 @@ title: Add Adapter and Workspace Preflight
 risk: medium
 phase: implementation
 dependencies: [task_001]
-spec_refs: [S10.2, S12]
+spec_refs: [S1.10.2, S1.12]
 file_claims:
   - {path: skills/agent-runway/scripts/agentrunway/preflight.py, mode: owned}
   - {path: skills/agent-runway/scripts/agentrunway/runner.py, mode: owned}
@@ -670,7 +786,7 @@ title: Add Summary-First Status and Missing Run JSON Fallback
 risk: high
 phase: implementation
 dependencies: [task_001, task_002]
-spec_refs: [S9, S10.1, S10.6, S12]
+spec_refs: [S1.9, S1.10.1, S1.10.6, S1.12]
 file_claims:
   - {path: skills/agent-runway/scripts/agentrunway/run_summary.py, mode: owned}
   - {path: skills/agent-runway/scripts/agentrunway/runner.py, mode: owned}
@@ -997,7 +1113,7 @@ title: Persist Worker Timing and Lease Evidence
 risk: medium
 phase: implementation
 dependencies: [task_003]
-spec_refs: [S8.1, S10.4, S12]
+spec_refs: [S1.8.1, S1.10.4, S1.12]
 file_claims:
   - {path: skills/agent-runway/scripts/agentrunway/db.py, mode: owned}
   - {path: skills/agent-runway/scripts/agentrunway/supervisor.py, mode: owned}
@@ -1163,7 +1279,7 @@ title: Add Worktree Lifecycle Policy and Evidence Archival
 risk: high
 phase: implementation
 dependencies: [task_004]
-spec_refs: [S6, S14, S15]
+spec_refs: [S1.6, S1.14, S1.15]
 file_claims:
   - {path: skills/agent-runway/scripts/agentrunway/worktree_lifecycle.py, mode: owned}
   - {path: skills/agent-runway/scripts/agentrunway/db.py, mode: shared_append}
@@ -1402,7 +1518,7 @@ title: Add Hybrid Reviewer and Ephemeral Verifier Flow
 risk: high
 phase: implementation
 dependencies: [task_005]
-spec_refs: [S6.3, S6.4, S10.5, S12, S13]
+spec_refs: [S1.6.3, S1.6.4, S1.10.5, S1.12, S1.13]
 file_claims:
   - {path: skills/agent-runway/scripts/agentrunway/supervisor.py, mode: owned}
   - {path: skills/agent-runway/scripts/agentrunway/packetizer.py, mode: owned}
@@ -1678,7 +1794,7 @@ title: Archive Non-Selected Candidate Evidence Before Cleanup
 risk: medium
 phase: implementation
 dependencies: [task_005, task_006]
-spec_refs: [S6.2, S6.5, S14]
+spec_refs: [S1.6.2, S1.6.5, S1.14]
 file_claims:
   - {path: skills/agent-runway/scripts/agentrunway/worktree_lifecycle.py, mode: shared_append}
   - {path: skills/agent-runway/scripts/agentrunway/runner.py, mode: owned}
@@ -1787,7 +1903,7 @@ title: Update Documentation and Final Verification
 risk: low
 phase: documentation
 dependencies: [task_001, task_002, task_003, task_004, task_005, task_006, task_007]
-spec_refs: [S16]
+spec_refs: [S1.16]
 file_claims:
   - {path: skills/agent-runway/README.md, mode: owned}
   - {path: skills/agent-runway/references/context-policy.md, mode: owned}

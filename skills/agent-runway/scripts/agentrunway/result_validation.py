@@ -30,8 +30,11 @@ def validate_review_result(payload: dict[str, object]) -> dict[str, object]:
         raise ResultValidationError("missing review result fields: " + ", ".join(missing))
     if payload["schema"] != "agentrunway.review_result.v1":
         raise ResultValidationError("invalid review result schema")
-    if payload["status"] not in {"approved", "changes_requested", "rejected"}:
+    if payload["status"] not in {"approved", "changes_requested", "rejected", "needs_context"}:
         raise ResultValidationError("invalid review status")
+    review_mode = payload.get("review_mode")
+    if review_mode is not None and review_mode not in {"diff", "full_tree"}:
+        raise ResultValidationError("invalid review mode")
     findings = payload.get("findings")
     if payload["status"] == "approved" and isinstance(findings, list) and findings:
         raise ResultValidationError("approved review cannot include findings")

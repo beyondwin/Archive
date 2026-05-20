@@ -93,6 +93,29 @@ def test_contract_rejects_missing_spec_refs(tmp_path: Path, git_repo: Path) -> N
         )
 
 
+def test_contract_accepts_rootless_numbered_spec_refs(tmp_path: Path, git_repo: Path) -> None:
+    spec = git_repo / "spec.md"
+    plan = git_repo / "plan.md"
+    _write_spec(spec)
+    _write_plan(plan, spec_ref="S2")
+
+    contract = build_run_contract(
+        run_id="run-1",
+        workspace_id="workspace-1",
+        repo_root=git_repo,
+        spec_path=spec,
+        plan_path=plan,
+        base_commit_sha="abc123",
+        tasks=parse_plan(plan),
+        adapter="codex",
+        model_profile="default",
+        allow_dirty_source=False,
+        apply_to_source=False,
+    )
+
+    assert contract.coverage["covered"] == ["S1.2"]
+
+
 def test_contract_rejects_empty_acceptance_commands(git_repo: Path) -> None:
     spec = git_repo / "spec.md"
     plan = git_repo / "plan.md"

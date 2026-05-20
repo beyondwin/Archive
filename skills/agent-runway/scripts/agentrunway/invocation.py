@@ -10,7 +10,7 @@ from . import __version__
 from .resolver import ResolutionError, resolve_run_alias, resolve_run_inputs, write_last_run
 
 
-COMMANDS = ("run", "status", "inspect", "events", "resume", "cancel", "apply", "clean")
+COMMANDS = ("run", "status", "inspect", "events", "resume", "cancel", "apply", "clean", "lint-plan", "summarize")
 
 
 def parse_key_value_invocation(text: str) -> dict[str, str]:
@@ -59,6 +59,14 @@ def build_parser() -> argparse.ArgumentParser:
     apply_parser.add_argument("--run")
     apply_parser.add_argument("--last", action="store_true")
     apply_parser.add_argument("--strategy", default="cherry-pick", choices=("cherry-pick",))
+    lint_plan = sub.add_parser("lint-plan", help="lint a AgentRunway plan before dispatch")
+    lint_plan.add_argument("--plan", type=Path, required=True)
+    lint_plan.add_argument("--spec", type=Path)
+    lint_plan.add_argument("--json", action="store_true")
+    summarize = sub.add_parser("summarize", help="summarize a AgentRunway run")
+    summarize.add_argument("--run")
+    summarize.add_argument("--last", action="store_true")
+    summarize.add_argument("--json", action="store_true")
     clean = sub.add_parser("clean", help="clean retained AgentRunway artifacts")
     clean.add_argument("--older-than", default="7d")
     clean.add_argument("--successful", action="store_true")
@@ -141,7 +149,9 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
                 return 0
             payload = runner.run(args)
-            if isinstance(payload, dict) and payload.get("run_id"):
+            early_failed = isinstance(payload, dict) and payload.get("status") in {"plan_lint_failed", "preflight_failed"}
+            persisted = isinstance(payload, dict) and bool(payload.get("state_persisted", True))
+            if isinstance(payload, dict) and payload.get("run_id") and (not early_failed or persisted):
                 write_last_run(repo_root, str(payload["run_id"]))
         elif args.command == "status":
             payload = runner.status(resolve_run_alias(repo_root, args.run, bool(args.last)))
@@ -155,6 +165,12 @@ def main(argv: list[str] | None = None) -> int:
             payload = runner.cancel(resolve_run_alias(repo_root, args.run, bool(args.last)))
         elif args.command == "apply":
             payload = runner.apply(resolve_run_alias(repo_root, args.run, bool(args.last)), strategy=args.strategy)
+        elif args.command == "lint-plan":
+            from .plan_lint import lint_plan
+
+            payload = lint_plan(plan_path=args.plan.resolve(), spec_path=args.spec.resolve() if args.spec else None).to_dict()
+        elif args.command == "summarize":
+            payload = runner.summarize(resolve_run_alias(repo_root, args.run, bool(args.last)))
         elif args.command == "clean":
             payload = runner.clean(args.older_than, successful=args.successful, dry_run=not bool(args.apply))
         else:

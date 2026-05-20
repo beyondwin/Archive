@@ -36,8 +36,9 @@ def main() -> int:
             "task_id": os.environ["AGENTRUNWAY_TASK_ID"],
             "reviewed_worker_id": os.environ.get("AGENTRUNWAY_REVIEWED_WORKER_ID", ""),
             "status": status,
+            "review_mode": os.environ.get("AGENTRUNWAY_REVIEW_MODE", "diff"),
             "checks": [{"name": "fake review", "status": "passed"}],
-            "findings": [] if status == "approved" else [{"severity": "major", "body": "fake requested change"}],
+            "findings": [] if status == "approved" else [{"severity": "major", "body": "fake requested context"}],
             "method_audit": {"superpowers_used": True},
         }
         output.parent.mkdir(parents=True, exist_ok=True)
