@@ -193,6 +193,48 @@ def test_review_changes_requested_redispatches_implementer_once(git_repo: Path, 
     assert any("changes_requested" in path.read_text(encoding="utf-8") for path in prompts)
 
 
+def test_repeated_review_rebase_blocks_after_one_redispatch(git_repo: Path, isolated_home: Path) -> None:
+    plan, spec = _write_plan(git_repo, path="src/review_rebase.py")
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET"] = "src/review_rebase.py"
+    env["AGENTRUNWAY_FAKE_REVIEW_SEQUENCE"] = "changes_requested,changes_requested"
+    env["AGENTRUNWAY_FAKE_REVIEW_FINDING_BODY"] = "prior accepted work changed this base"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    workers = conn.execute("SELECT worker_id, role, state FROM workers ORDER BY worker_id").fetchall()
+    decisions = conn.execute("SELECT failure_class FROM decision_packets ORDER BY created_at").fetchall()
+
+    assert payload["status"] == "blocked"
+    assert [(row["worker_id"], row["role"], row["state"]) for row in workers] == [
+        ("task_001-implementer-001", "implementer", "validated"),
+        ("task_001-implementer-002", "implementer", "validated"),
+        ("task_001-reviewer-001", "reviewer", "validated"),
+        ("task_001-reviewer-002", "reviewer", "validated"),
+    ]
+    assert [row["failure_class"] for row in decisions][-1] == "needs_rebase"
+
+
 def test_review_plan_fix_writes_decision_packet(git_repo: Path, isolated_home: Path) -> None:
     plan, spec = _write_plan(git_repo, path="src/review_plan_fix.py")
     env = os.environ.copy()

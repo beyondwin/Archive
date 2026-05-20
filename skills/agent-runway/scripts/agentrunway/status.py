@@ -61,12 +61,15 @@ def format_run_status(run: dict[str, object]) -> str:
 
 
 def build_inspect_payload(*, run_json: dict[str, Any], db: AgentRunwayDb) -> dict[str, Any]:
+    from .durable_projection import durable_operator_next_action, read_durable_projection
+
     run_dir = Path(str(run_json["run_dir"]))
     graph = build_artifact_graph(run_dir=run_dir, db=db)
     coverage_path = run_dir / "coverage.json"
     coverage = json.loads(coverage_path.read_text(encoding="utf-8")) if coverage_path.exists() else graph["coverage"]
     agentlens = db.agentlens_summary()
     diagnosis = diagnose_run(run_json=run_json, db=db).to_dict()
+    durable = read_durable_projection(run_id=str(run_json.get("run_id")), db=db).to_dict()
     events = db.list_events()
     event_payloads = {
         event_type: [
@@ -107,7 +110,12 @@ def build_inspect_payload(*, run_json: dict[str, Any], db: AgentRunwayDb) -> dic
         "candidate_rankings": event_payloads["agentrunway.candidate_ranked"],
         "quality_decisions": event_payloads["agentrunway.quality_decision"],
         "conflict_redispatch_plans": event_payloads["agentrunway.conflict_redispatch_planned"],
-        "next_action": diagnosis["next_action"],
+        "durable": durable,
+        "ready_queue": durable["ready_queue"],
+        "safe_wave": durable["safe_wave"],
+        "blocked_node": durable["blocked_node"],
+        "failure_class": durable["failure_class"],
+        "next_action": durable_operator_next_action(durable, diagnosis["next_action"]),
     }
 
 

@@ -118,3 +118,92 @@ def test_dependent_task_starts_from_checkpoint_with_dependency_commit(
         ("task_001", "implementer", "merged"),
         ("task_002", "implementer", "merged"),
     ]
+
+
+def test_local_fake_success_records_merge_checkpoints_before_releasing_dependencies(
+    git_repo: Path, isolated_home: Path
+) -> None:
+    plan, spec = _write_dependent_plan(git_repo)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "local",
+            "--fake-success",
+        ],
+        cwd=git_repo,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    payload = json.loads(result.stdout)
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    checkpoints = conn.execute("SELECT reason FROM checkpoints ORDER BY checkpoint_id").fetchall()
+
+    assert payload["status"] == "finished"
+    assert [row["reason"] for row in checkpoints] == ["initial", "merged:task_001", "merged:task_002"]
+
+
+def test_safe_independent_tasks_share_checkpoint_scheduler_wave(git_repo: Path, isolated_home: Path) -> None:
+    spec = git_repo / "spec.md"
+    plan = git_repo / "plan.md"
+    spec.write_text("# Spec\n\n## A\n\nA.\n\n## B\n\nB.\n", encoding="utf-8")
+    plan.write_text(
+        "## Task 1: A\n\n"
+        "```yaml agentrunway-task\n"
+        "task_id: task_001\n"
+        "title: A\n"
+        "risk: low\n"
+        "phase: implementation\n"
+        "dependencies: []\n"
+        "spec_refs: [S1.1]\n"
+        "file_claims:\n"
+        "  - {path: src/a.py, mode: owned}\n"
+        "acceptance_commands: [python -m pytest]\n"
+        "required_skills: [test-driven-development]\n"
+        "```\n"
+        "Create A.\n\n"
+        "## Task 2: B\n\n"
+        "```yaml agentrunway-task\n"
+        "task_id: task_002\n"
+        "title: B\n"
+        "risk: low\n"
+        "phase: implementation\n"
+        "dependencies: []\n"
+        "spec_refs: [S1.2]\n"
+        "file_claims:\n"
+        "  - {path: src/b.py, mode: owned}\n"
+        "acceptance_commands: [python -m pytest]\n"
+        "required_skills: [test-driven-development]\n"
+        "```\n"
+        "Create B.\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET_MAP"] = "task_001=src/a.py;task_002=src/b.py"
+
+    result = subprocess.run(
+        [sys.executable, str(SCRIPT), "run", "--plan", str(plan), "--spec", str(spec), "--adapter", "codex"],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    payload = json.loads(result.stdout)
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    checkpoints = conn.execute("SELECT reason FROM checkpoints ORDER BY checkpoint_id").fetchall()
+    assert payload["status"] == "finished"
+    assert [row["reason"] for row in checkpoints] == ["initial", "merged:task_001", "merged:task_002"]

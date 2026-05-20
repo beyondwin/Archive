@@ -34,3 +34,14 @@ required human decision. The activity counts are scoped to the current
 `run_id`, so summaries remain meaningful when a SQLite state file is reused
 across resumed runs. Raw worker logs remain deep-inspection artifacts and
 should not be loaded into host context unless the summary points to them.
+
+## Durable Resume Context
+
+Resume context comes from completed activity output refs and the durable
+projection. Workers must not infer dependency readiness from task status alone;
+dependency release requires a checkpoint whose reason maps to the dependency
+task id.
+
+Automatic resume execution must use an explicit handler for each mutating
+boundary. If a handler is absent, resume blocks with the action name and reason
+instead of recording the action as executed.
