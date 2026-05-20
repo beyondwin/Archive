@@ -549,16 +549,21 @@ def status(run_id: str) -> dict[str, Any]:
     data = _load_run_json(run_id)
     if data is None:
         return _missing(run_id)
+    from .diagnostics import diagnose_run
     from .status import next_operator_action
 
     db = AgentRunwayDb.open(Path(data["state_db"]))
     agentlens = db.agentlens_summary()
+    diagnosis = diagnose_run(run_json=data, db=db).to_dict()
     return {
         "run_id": run_id,
         "status": data.get("status"),
         "run_dir": data.get("run_dir"),
         "agentlens": agentlens,
-        "next_action": next_operator_action(data, agentlens),
+        "diagnosis": diagnosis,
+        "next_action": diagnosis.get("next_action") or next_operator_action(
+            {**data, "diagnosis": diagnosis}, agentlens
+        ),
     }
 
 
