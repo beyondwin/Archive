@@ -64,17 +64,46 @@ def build_inspect_payload(*, run_json: dict[str, Any], db: AgentRunwayDb) -> dic
     coverage = json.loads(coverage_path.read_text(encoding="utf-8")) if coverage_path.exists() else graph["coverage"]
     agentlens = db.agentlens_summary()
     diagnosis = diagnose_run(run_json=run_json, db=db).to_dict()
+    events = db.list_events()
+    event_payloads = {
+        event_type: [
+            event.get("payload", {})
+            for event in events
+            if event.get("event_type") == event_type and isinstance(event.get("payload"), dict)
+        ]
+        for event_type in (
+            "agentrunway.candidate_ranked",
+            "agentrunway.quality_decision",
+            "agentrunway.conflict_redispatch_planned",
+        )
+    }
+    tasks = db.list_tasks()
+    quality_policy = [
+        {
+            "task_id": task.get("task_id"),
+            "candidate_count": 2 if task.get("risk") == "high" else 1,
+            "review_retry_budget": 1,
+            "verification_retry_budget": 1,
+        }
+        for task in tasks
+    ]
     return {
         "run_id": run_json.get("run_id"),
         "status": run_json.get("status"),
         "run_dir": str(run_dir),
-        "tasks": db.list_tasks(),
+        "tasks": tasks,
         "workers": db.list_workers(),
         "merge_candidates": db.list_merge_candidates(),
         "artifact_graph": graph,
         "coverage": coverage,
         "agentlens": agentlens,
         "diagnosis": diagnosis,
+        "safe_actions": diagnosis.get("safe_actions", []),
+        "manual_actions": diagnosis.get("manual_actions", []),
+        "quality_policy": quality_policy,
+        "candidate_rankings": event_payloads["agentrunway.candidate_ranked"],
+        "quality_decisions": event_payloads["agentrunway.quality_decision"],
+        "conflict_redispatch_plans": event_payloads["agentrunway.conflict_redispatch_planned"],
         "next_action": diagnosis["next_action"],
     }
 

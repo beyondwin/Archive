@@ -17,14 +17,17 @@ from .agentlens import create_agentlens_emitter
 from .apply import ApplyError, apply_commits_to_source
 from .artifact_graph import write_artifact_graph
 from .artifacts import ArtifactStore
+from .candidate_selection import select_candidate
 from .config import BuiltinProfiles, ModelProfile, load_effective_config
 from .contract import build_run_contract, write_contract
 from .db import AgentRunwayDb
+from .decision_events import record_candidate_ranked, record_quality_decision
 from .events import EventJournal, build_event_payload
 from .git_ops import Git, assert_clean_source
 from .merge_queue import MergeCandidate, MergeConflictError, apply_candidate
 from .packetizer import build_task_packet, materialize_prompt, materialize_worker_prompt, packet_to_json
 from .plan_parser import canonical_hash, parse_plan, parse_spec_manifest
+from .quality_policy import candidate_count_for_task, gate_retry_decision
 from .reconciliation import apply_reconciliation_plan, plan_reconciliation
 from .retention import clean_retention
 from .scheduler import schedule_waves
@@ -114,15 +117,28 @@ def _merge_candidate(db: AgentRunwayDb, candidate_id: int) -> dict[str, Any]:
     raise KeyError(candidate_id)
 
 
+def _candidate_for_ranking(candidate: dict[str, Any]) -> dict[str, Any]:
+    status = str(candidate.get("status") or "")
+    return {
+        "id": int(candidate["id"]),
+        "task_id": candidate["task_id"],
+        "worker_id": candidate["worker_id"],
+        "status": status,
+        "verification_status": "passed" if status in {"merge_ready", "merged"} else status,
+        "review_status": "approved" if status in {"merge_ready", "merged"} else status,
+        # v1 stub: signals 3-7 are placeholders pending follow-up.
+        "file_claim_violation": False,
+        "required_artifacts_present": True,
+        "acceptance_evidence_present": bool(candidate.get("commits")),
+        "scope_match": True,
+        "unexpected_changed_files": 0,
+    }
+
+
 def _candidate_diff(db: AgentRunwayDb, candidate: dict[str, Any], base_ref: str) -> str:
     worker = db.get_worker(str(candidate["worker_id"]))
     worker_tree = Path(str(worker["worktree_path"]))
     return Git(worker_tree).run("diff", base_ref, "HEAD", check=False).stdout
-
-
-def _verification_failure_actionable(task: Any, verification: dict[str, object], candidate: dict[str, Any]) -> bool:
-    checks = verification.get("checks")
-    return bool(candidate.get("changed_files")) and (bool(checks) or bool(task.acceptance_commands))
 
 
 def _retry_context(reason: str, result: dict[str, object], candidate: dict[str, Any]) -> dict[str, object]:
@@ -281,10 +297,12 @@ def run(args: Any) -> dict[str, Any]:
                 _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason="local_worker_failed")
         else:
             packet = build_task_packet(run_id, task, _spec_slices(spec, task.spec_refs) if spec else [], profile)
+            target_candidate_count = candidate_count_for_task(task)
+            merge_ready_candidate_ids: list[int] = []
             review_retries = 0
             verification_retries = 0
             implementer_context: dict[str, object] | None = None
-            while True:
+            while len(merge_ready_candidate_ids) < target_candidate_count:
                 _, implementer_attempt = next_worker_id(db=db, task_id=task.task_id, role="implementer")
                 worker_id = f"{task.task_id}-implementer-{implementer_attempt:03d}"
                 output_path = run_dir / "artifacts" / task.task_id / worker_id / "worker_result.json"
@@ -402,26 +420,41 @@ def run(args: Any) -> dict[str, Any]:
                         status=review_status,
                     ),
                 )
-                if review_status == "changes_requested":
-                    db.set_merge_candidate_status(candidate_id, "changes_requested")
-                    if review_retries < 1:
+                if review_status != "approved":
+                    decision = gate_retry_decision(
+                        task=task,
+                        gate="review",
+                        status=review_status,
+                        result=review,
+                        candidate=_merge_candidate(db, candidate_id),
+                        previous_retries=review_retries,
+                    )
+                    record_quality_decision(
+                        journal,
+                        run_id=run_id,
+                        task_id=task.task_id,
+                        decision=decision.action,
+                        reason=decision.reason,
+                        outcome=decision.outcome,
+                        diagnosis_status=None,
+                    )
+                    db.set_merge_candidate_status(
+                        candidate_id,
+                        "changes_requested" if review_status == "changes_requested" else "review_rejected",
+                    )
+                    if decision.action == "retry":
                         review_retries += 1
-                        implementer_context = _retry_context("review_changes_requested", review, _merge_candidate(db, candidate_id))
+                        implementer_context = _retry_context(decision.reason, review, _merge_candidate(db, candidate_id))
                         _record_gate_retry(
                             journal,
                             run_id=run_id,
                             task_id=task.task_id,
-                            reason="review_changes_requested",
+                            reason=decision.reason,
                             next_attempt=implementer_attempt + 1,
                         )
                         continue
                     db.set_task_status(task.task_id, "blocked")
-                    _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason="review_changes_requested")
-                    break
-                if review_status != "approved":
-                    db.set_merge_candidate_status(candidate_id, "review_rejected")
-                    db.set_task_status(task.task_id, "blocked")
-                    _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason="review_rejected")
+                    _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason=decision.reason)
                     break
                 db.set_task_status(task.task_id, "verifying")
                 journal.record(
@@ -465,27 +498,67 @@ def run(args: Any) -> dict[str, Any]:
                         "agentrunway.merge_ready",
                         build_event_payload(run_id, "merge", "success", "merge ready", task_id=task.task_id, candidate_id=candidate_id),
                     )
-                    break
+                    merge_ready_candidate_ids.append(candidate_id)
+                    if len(merge_ready_candidate_ids) >= target_candidate_count:
+                        break
+                    review_retries = 0
+                    verification_retries = 0
+                    implementer_context = None
+                    continue
+                decision = gate_retry_decision(
+                    task=task,
+                    gate="verification",
+                    status=verification_status,
+                    result=verification,
+                    candidate=_merge_candidate(db, candidate_id),
+                    previous_retries=verification_retries,
+                )
+                record_quality_decision(
+                    journal,
+                    run_id=run_id,
+                    task_id=task.task_id,
+                    decision=decision.action,
+                    reason=decision.reason,
+                    outcome=decision.outcome,
+                    diagnosis_status=None,
+                )
                 if verification_status == "failed":
                     db.set_merge_candidate_status(candidate_id, "verification_failed")
-                    if verification_retries < 1 and _verification_failure_actionable(task, verification, candidate):
-                        verification_retries += 1
-                        implementer_context = _retry_context("verification_failed", verification, _merge_candidate(db, candidate_id))
-                        _record_gate_retry(
-                            journal,
-                            run_id=run_id,
-                            task_id=task.task_id,
-                            reason="verification_failed",
-                            next_attempt=implementer_attempt + 1,
-                        )
-                        continue
-                    db.set_task_status(task.task_id, "blocked")
-                    _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason="verification_failed")
-                    break
-                db.set_merge_candidate_status(candidate_id, "verification_blocked")
+                else:
+                    db.set_merge_candidate_status(candidate_id, "verification_blocked")
+                if decision.action == "retry":
+                    verification_retries += 1
+                    implementer_context = _retry_context(decision.reason, verification, _merge_candidate(db, candidate_id))
+                    _record_gate_retry(
+                        journal,
+                        run_id=run_id,
+                        task_id=task.task_id,
+                        reason=decision.reason,
+                        next_attempt=implementer_attempt + 1,
+                    )
+                    continue
                 db.set_task_status(task.task_id, "blocked")
-                _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason="verification_blocked")
+                _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason=decision.reason)
                 break
+            ready_candidates = [
+                candidate
+                for candidate in db.list_merge_candidates()
+                if candidate["task_id"] == task.task_id and candidate["status"] == "merge_ready"
+            ]
+            if ready_candidates:
+                selection = select_candidate([_candidate_for_ranking(candidate) for candidate in ready_candidates])
+                record_candidate_ranked(
+                    journal,
+                    run_id=run_id,
+                    task_id=task.task_id,
+                    selected_candidate_id=selection.selected_candidate_id,
+                    scores=[score.to_dict() for score in selection.scores],
+                )
+                db.set_task_status(task.task_id, "merge_ready")
+                for candidate in ready_candidates:
+                    if int(candidate["id"]) != selection.selected_candidate_id:
+                        db.set_merge_candidate_status(int(candidate["id"]), "not_selected")
+                        db.set_worker_state(str(candidate["worker_id"]), "not_selected")
     for candidate in db.list_merge_candidates():
         if candidate["status"] != "merge_ready":
             continue

@@ -37,6 +37,30 @@ def _write_plan(repo: Path, path: str = "src/codex_worker.py") -> tuple[Path, Pa
     return plan, spec
 
 
+def _write_high_risk_plan(repo: Path) -> tuple[Path, Path]:
+    spec = repo / "spec.md"
+    plan = repo / "plan.md"
+    spec.write_text("# Spec\n\n## A\n\nAdd high-risk worker file.\n", encoding="utf-8")
+    plan.write_text(
+        "## Task 1: A\n\n"
+        "```yaml agentrunway-task\n"
+        "task_id: task_001\n"
+        "title: A\n"
+        "risk: high\n"
+        "phase: implementation\n"
+        "dependencies: []\n"
+        "spec_refs: [S1.1]\n"
+        "file_claims:\n"
+        "  - {path: src/high_risk.py, mode: owned}\n"
+        "acceptance_commands: [python -m pytest]\n"
+        "required_skills: [test-driven-development]\n"
+        "```\n"
+        "Add high-risk worker file.\n",
+        encoding="utf-8",
+    )
+    return plan, spec
+
+
 def test_codex_fake_implementer_reaches_validated_candidate(git_repo: Path, isolated_home: Path) -> None:
     plan, spec = _write_plan(git_repo)
     env = os.environ.copy()
@@ -215,6 +239,48 @@ def test_verifier_failed_redispatches_implementer_once(git_repo: Path, isolated_
     assert any("verification" in path.read_text(encoding="utf-8") and "failed" in path.read_text(encoding="utf-8") for path in prompts)
 
 
+def test_verifier_blocked_does_not_redispatch(git_repo: Path, isolated_home: Path) -> None:
+    plan, spec = _write_plan(git_repo, path="src/verify_blocked.py")
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET"] = "src/verify_blocked.py"
+    env["AGENTRUNWAY_FAKE_VERIFY_STATUS"] = "blocked"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    workers = conn.execute("SELECT role FROM workers ORDER BY worker_id").fetchall()
+    events = conn.execute("SELECT event_type, payload_json FROM agentlens_events ORDER BY id").fetchall()
+    quality_payloads = [
+        json.loads(row["payload_json"])
+        for row in events
+        if row["event_type"] == "agentrunway.quality_decision"
+    ]
+
+    assert payload["status"] == "blocked"
+    assert [row["role"] for row in workers] == ["implementer", "reviewer", "verifier"]
+    assert quality_payloads[-1]["decision"] == "block"
+    assert quality_payloads[-1]["reason"] == "verification_blocked"
+
+
 def test_agentlens_fake_cli_receives_runner_events(git_repo: Path, isolated_home: Path, tmp_path: Path) -> None:
     plan, spec = _write_plan(git_repo, path="src/agentlens_worker.py")
     log = tmp_path / "agentlens.jsonl"
@@ -254,3 +320,43 @@ def test_agentlens_fake_cli_receives_runner_events(git_repo: Path, isolated_home
     assert "agentrunway.run_finished" in emitted_types
     assert all(status == "agentlens_emitted" for status in db_statuses)
     assert event_rows[-1]["payload"]["outcome"] == "success"
+
+
+def test_high_risk_task_ranks_two_candidates(git_repo: Path, isolated_home: Path) -> None:
+    plan, spec = _write_high_risk_plan(git_repo)
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET"] = "src/high_risk.py"
+    env["AGENTRUNWAY_FAKE_CANDIDATE_VARIANT"] = "1"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    implementers = conn.execute("SELECT worker_id FROM workers WHERE role='implementer' ORDER BY worker_id").fetchall()
+    ranking = conn.execute(
+        "SELECT payload_json FROM agentlens_events WHERE event_type='agentrunway.candidate_ranked' ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+
+    assert payload["status"] == "finished"
+    assert [row["worker_id"] for row in implementers] == [
+        "task_001-implementer-001",
+        "task_001-implementer-002",
+    ]
+    assert json.loads(ranking["payload_json"])["selected_candidate_id"] is not None

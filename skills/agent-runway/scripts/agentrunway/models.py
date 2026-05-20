@@ -48,6 +48,7 @@ class WorkerState(str, Enum):
     VERIFYING = "verifying"
     MERGE_READY = "merge_ready"
     MERGED = "merged"
+    NOT_SELECTED = "not_selected"
     ADAPTER_CRASHED = "adapter_crashed"
     TIMEOUT = "timeout"
     STALLED = "stalled"

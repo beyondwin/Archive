@@ -47,3 +47,15 @@ Payloads use `schema="agentrunway.event.v1"` and include
 `agentrunway_run_id`, `phase`, `outcome`, `severity`, `summary`, and bounded
 event-specific fields. AgentLens emission is best effort; failed emission must
 not stop plan execution.
+
+## Quality Decision Events
+
+AgentRunway emits decision events when policy or candidate ranking changes the
+execution path:
+
+- `agentrunway.quality_decision`: retry, block, continue, or manual-action decisions.
+- `agentrunway.candidate_ranked`: deterministic candidate score table and selected candidate.
+- `agentrunway.conflict_redispatch_planned`: first merge conflict converted into a safe redispatch plan.
+
+These events are explanatory evidence. AgentRunway SQLite state remains the
+source of truth for task, worker, and merge status.

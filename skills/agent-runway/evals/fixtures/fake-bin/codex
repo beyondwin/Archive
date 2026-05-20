@@ -64,7 +64,13 @@ def main() -> int:
         return 0
     target = Path(os.environ.get("AGENTRUNWAY_FAKE_TARGET", "src/codex_worker.py"))
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text("VALUE = 'codex'\n", encoding="utf-8")
+    variant_enabled = os.environ.get("AGENTRUNWAY_FAKE_CANDIDATE_VARIANT") == "1"
+    try:
+        attempt = int(os.environ["AGENTRUNWAY_WORKER_ID"].rsplit("-", 1)[1])
+    except (KeyError, IndexError, ValueError):
+        attempt = 1
+    value = "codex" if not variant_enabled else f"codex-{attempt}"
+    target.write_text(f"VALUE = '{value}'\n", encoding="utf-8")
     subprocess.run(["git", "add", str(target)], check=True)
     subprocess.run(["git", "commit", "-m", "fake codex worker"], check=True)
     commit = subprocess.run(["git", "rev-parse", "HEAD"], text=True, capture_output=True, check=True).stdout.strip()
