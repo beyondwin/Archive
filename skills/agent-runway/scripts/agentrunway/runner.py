@@ -932,6 +932,17 @@ def run(args: Any) -> dict[str, Any]:
     _write_run_json(run_dir, run_json)
     if args.planning_only:
         db.set_run_status(run_id, "planning_only")
+        journal.record(
+            "agentrunway.run_finished",
+            build_event_payload(
+                run_id,
+                "run",
+                "success",
+                "planning-only run finished",
+                status="planning_only",
+                simulation=False,
+            ),
+        )
         _write_run_json(run_dir, run_json)
         return run_json
 

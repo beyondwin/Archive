@@ -55,6 +55,12 @@ def test_agentrunway_run_planning_only_creates_state(git_repo: Path, isolated_ho
     assert artifact_payload["artifact_graph_path"] == str(run_dir / "artifact_graph.json")
     assert artifact_payload["coverage_path"] == str(run_dir / "coverage.json")
     assert artifact_payload["artifact_refs"] == ["contract.json", "artifact_graph.json", "coverage.json"]
+    terminal_event = conn.execute(
+        "select payload_json from agentlens_events where event_type='agentrunway.run_finished'"
+    ).fetchone()
+    assert terminal_event is not None
+    terminal_payload = json.loads(terminal_event[0])
+    assert terminal_payload["status"] == "planning_only"
     assert packet_path.exists()
     packet = json.loads(packet_path.read_text(encoding="utf-8"))
     assert packet["task_id"] == "task_001"
