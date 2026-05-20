@@ -47,3 +47,21 @@ def assert_clean_source(repo: Path, allow_dirty: bool = False, ignored: set[str]
     if dirty and not allow_dirty:
         raise DirtySourceError("dirty source checkout: " + ", ".join(dirty))
     return dirty
+
+
+def commits_between(git: Git, base_ref: str, head_ref: str) -> tuple[str, ...]:
+    result = git.run("rev-list", "--reverse", f"{base_ref}..{head_ref}")
+    return tuple(line for line in result.stdout.splitlines() if line)
+
+
+def changed_files_between(git: Git, base_ref: str, head_ref: str) -> tuple[str, ...]:
+    result = git.run("diff", "--name-only", f"{base_ref}..{head_ref}")
+    return tuple(line for line in result.stdout.splitlines() if line)
+
+
+def branch_head(git: Git, branch: str) -> str:
+    return git.rev_parse(branch)
+
+
+def abort_cherry_pick(git: Git) -> None:
+    git.run("cherry-pick", "--abort", check=False)

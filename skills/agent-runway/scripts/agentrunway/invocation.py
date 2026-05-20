@@ -32,7 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
     run = sub.add_parser("run", help="start a AgentRunway run")
     run.add_argument("--plan", type=Path, required=True)
     run.add_argument("--spec", type=Path)
-    run.add_argument("--model-profile", default="codex-default")
+    run.add_argument("--model-profile")
     run.add_argument("--base-ref", default="HEAD")
     run.add_argument("--allow-dirty-source", action="store_true")
     run.add_argument("--detach", action="store_true")
@@ -40,10 +40,15 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--planning-only", action="store_true")
     run.add_argument("--adapter", default="local")
     run.add_argument("--fake-success", action="store_true")
+    run.add_argument("--skip-review", action="store_true")
+    run.add_argument("--skip-verify", action="store_true")
 
-    for command in ("status", "inspect", "events", "resume", "cancel", "apply"):
+    for command in ("status", "inspect", "events", "resume", "cancel"):
         cmd = sub.add_parser(command, help=f"{command} a AgentRunway run")
         cmd.add_argument("--run", required=True)
+    apply_parser = sub.add_parser("apply", help="apply a AgentRunway run")
+    apply_parser.add_argument("--run", required=True)
+    apply_parser.add_argument("--strategy", default="cherry-pick", choices=("cherry-pick",))
     clean = sub.add_parser("clean", help="clean retained AgentRunway artifacts")
     clean.add_argument("--older-than", default="7d")
     clean.add_argument("--successful", action="store_true")
@@ -76,7 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "cancel":
             payload = runner.cancel(args.run)
         elif args.command == "apply":
-            payload = runner.apply(args.run)
+            payload = runner.apply(args.run, strategy=args.strategy)
         elif args.command == "clean":
             payload = runner.clean(args.older_than, successful=args.successful)
         else:

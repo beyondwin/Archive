@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import os
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
 from .models import EVENT_SCHEMA
@@ -39,3 +41,13 @@ def build_event_payload(run_id: str, phase: str, outcome: str, summary: str, **e
     }
     payload.update(extra)
     return redact_payload(payload)
+
+
+def write_event_artifact(run_dir: Path, event_type: str, payload: dict[str, Any]) -> Path:
+    event_dir = run_dir / "events"
+    event_dir.mkdir(parents=True, exist_ok=True)
+    safe_type = event_type.replace("/", "_").replace(" ", "_")
+    path = event_dir / f"{safe_type}.jsonl"
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(redact_payload(payload), ensure_ascii=False, sort_keys=True) + "\n")
+    return path
