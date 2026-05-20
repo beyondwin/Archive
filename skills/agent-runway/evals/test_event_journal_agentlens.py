@@ -67,3 +67,23 @@ def test_event_journal_query_returns_redacted_payloads(tmp_path: Path, monkeypat
     events = journal.list()
 
     assert events[0]["payload"]["path"] == "~/repo"
+
+
+def test_event_payload_includes_run_id_alias_and_bounds_large_extras() -> None:
+    payload = build_event_payload(
+        "run-1",
+        "gate",
+        "partial",
+        "x" * 5000,
+        gate_result={"details": "y" * 10000},
+        changed_files=[f"src/file_{index}.py" for index in range(1000)],
+    )
+
+    encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
+    assert payload["run_id"] == "run-1"
+    assert payload["agentrunway_run_id"] == "run-1"
+    assert payload["payload_truncated"] is True
+    assert len(payload["summary"]) <= 1200
+    assert len(encoded) <= 3500
+    assert payload["gate_result"] == {"omitted": True, "reason": "size"}
+    assert payload["changed_files"] == {"omitted": True, "reason": "size"}

@@ -15,7 +15,7 @@ from agentlens.store.event_query import (
 )
 
 
-def _evt(ts: str, run_id: str = "run_a", type_: str = "kws-cme.task_started") -> dict:
+def _evt(ts: str, run_id: str = "run_a", type_: str = "agentrunway.task_started") -> dict:
     return {
         "schema": "agentlens.event.v1",
         "event_id": "evt_" + ("0" * 12),
@@ -31,11 +31,11 @@ def _evt(ts: str, run_id: str = "run_a", type_: str = "kws-cme.task_started") ->
 # ---------------------------------------------------------------------------
 
 def test_glob_type_match_namespace_wildcard() -> None:
-    assert glob_type_match("kws-cme.*", "kws-cme.task_started") is True
+    assert glob_type_match("agentrunway.*", "agentrunway.task_started") is True
 
 
 def test_glob_type_match_namespace_wildcard_negative() -> None:
-    assert glob_type_match("kws-cme.*", "other.evt") is False
+    assert glob_type_match("agentrunway.*", "other.evt") is False
 
 
 def test_glob_type_match_exact() -> None:
@@ -49,12 +49,12 @@ def test_glob_type_match_star() -> None:
 
 def test_glob_type_match_suffix() -> None:
     assert glob_type_match("*.started", "run.started") is True
-    assert glob_type_match("*.started", "kws-cme.task_started") is False
+    assert glob_type_match("*.started", "agentrunway.task_started") is False
 
 
 def test_glob_type_match_none_pattern_passes_all() -> None:
     # No pattern means no filtering — every type passes.
-    assert glob_type_match(None, "kws-cme.task_started") is True
+    assert glob_type_match(None, "agentrunway.task_started") is True
 
 
 # ---------------------------------------------------------------------------

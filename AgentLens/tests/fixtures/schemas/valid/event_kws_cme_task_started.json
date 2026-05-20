@@ -1,8 +1,0 @@
-{
-  "schema": "agentlens.event.v1",
-  "event_id": "evt_kwscme000001",
-  "run_id": "run_20260519_000000_cont01",
-  "ts": "2026-05-19T00:00:01Z",
-  "type": "kws-cme.task_started",
-  "payload": {"task_id": "task_1"}
-}

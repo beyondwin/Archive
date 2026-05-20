@@ -56,3 +56,40 @@ def test_create_run_and_task_round_trip(tmp_path: Path) -> None:
     db.upsert_task(task)
     assert db.get_run("run-1")["status"] == "created"
     assert db.get_task("task_001")["title"] == "Add parser"
+
+
+def test_agentlens_run_state_round_trip_and_summary(tmp_path: Path) -> None:
+    db = AgentRunwayDb.open(tmp_path / "state.sqlite")
+    db.create_run(
+        run_id="run-1",
+        workspace_id="repo-abc123",
+        repo_root="/repo",
+        plan_path="plan.md",
+        spec_path=None,
+        plan_hash="sha256:1",
+        spec_hash=None,
+        base_commit_sha="abc",
+        model_profile="codex-default",
+    )
+    db.set_run_agentlens("run-1", agentlens_run_id="lens-1", status="active")
+    db.insert_event(
+        event_type="agentrunway.run_started",
+        payload={"agentrunway_run_id": "run-1"},
+        status="agentlens_emitted",
+    )
+    db.insert_event(
+        event_type="agentrunway.run_finished",
+        payload={"agentrunway_run_id": "run-1"},
+        status="agentlens_failed",
+        error="offline",
+    )
+
+    run = db.get_run("run-1")
+    summary = db.agentlens_summary()
+
+    assert run["agentlens_run_id"] == "lens-1"
+    assert run["agentlens_status"] == "active"
+    assert summary["run_status"] == "active"
+    assert summary["run_id"] == "lens-1"
+    assert summary["last_error"] == "offline"
+    assert summary["disabled"] == 0

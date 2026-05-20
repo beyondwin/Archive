@@ -1,7 +1,7 @@
 # Design: AgentRunway AgentLens Control Plane
 
 Date: 2026-05-20
-Status: Draft for user review
+Status: Implemented
 Owner: KWS
 
 ## 1. Summary

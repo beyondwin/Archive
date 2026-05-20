@@ -373,7 +373,7 @@ def test_container_run_fixture_validates() -> None:
     assert doc["run_kind"] == "container"
     assert doc["agent"]["name"] == "generic"
     assert doc["agent"]["mode"] == "unknown"
-    assert doc["agent"]["label"] == "kws-cme-orchestrator"
+    assert doc["agent"]["label"] == "agentrunway"
     assert doc["recording"]["has_transcript"] is False
     assert doc["recording"]["transcript_source"] == "none"
     validate_doc(doc)
@@ -416,8 +416,11 @@ def test_transcript_source_accepts_codex_rollout_jsonl() -> None:
 @pytest.mark.parametrize(
     "fixture_name,expected_type",
     [
-        ("event_kws_cme_task_started", "kws-cme.task_started"),
-        ("event_kws_cpe_verification_failed", "kws-cpe.verification_failed"),
+        ("event_agentrunway_run_started", "agentrunway.run_started"),
+        (
+            "event_agentrunway_verification_result",
+            "agentrunway.verification_result",
+        ),
         ("event_claude_tool_use", "claude.tool_use"),
         ("event_codex_tool_use", "codex.tool_use"),
     ],
@@ -451,7 +454,7 @@ def test_event_type_rejects_reserved_but_unknown_core_name() -> None:
 
 def test_event_type_rejects_trailing_dot() -> None:
     doc = _load_fixture(VALID_DIR, "event")
-    doc["type"] = "kws-cme."
+    doc["type"] = "agentrunway."
     with pytest.raises(SchemaError):
         validate_doc(doc)
 
@@ -480,3 +483,18 @@ def test_core_event_names_still_accepted() -> None:
     ):
         doc["type"] = core_type
         validate_doc(doc)
+
+
+def test_valid_schema_fixture_names_do_not_use_legacy_kws_executor_names() -> None:
+    legacy_tokens = (
+        "".join(("kws", "-", "cme")),
+        "".join(("kws", "_", "cme")),
+        "".join(("kws", "-", "cpe")),
+        "".join(("kws", "_", "cpe")),
+    )
+    legacy_names = [
+        path.name
+        for path in sorted(VALID_DIR.glob("*.json"))
+        if any(token in path.name for token in legacy_tokens)
+    ]
+    assert legacy_names == []

@@ -1,0 +1,12 @@
+{
+  "schema": "agentlens.event.v1",
+  "event_id": "evt_arunway00001",
+  "run_id": "run_20260519_000000_cont01",
+  "ts": "2026-05-19T00:00:01Z",
+  "type": "agentrunway.run_started",
+  "payload": {
+    "run_id": "ar-001",
+    "adapter": "codex",
+    "status": "running"
+  }
+}

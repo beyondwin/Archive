@@ -51,7 +51,7 @@ The v1 lock is preserved by adding **only** additive optional fields. Three grou
 | Field                                | Type / values                                                                                                | Default          | Purpose                                                                                                                                                  |
 |--------------------------------------|--------------------------------------------------------------------------------------------------------------|------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `run_kind`                           | `"capture"` \| `"container"`                                                                                 | `"capture"`      | `"capture"` is a normal recorded run. `"container"` is an orchestrator-scope run opened by `agentlens run-open` that does not own a child process.       |
-| `agent.label`                        | string                                                                                                       | `agent.name`     | Human-facing label distinct from the canonical `agent.name` enum. Lets container runs carry a skill-specific identity (e.g. `kws-cme-orchestrator`).     |
+| `agent.label`                        | string                                                                                                       | `agent.name`     | Human-facing label distinct from the canonical `agent.name` enum. Lets container runs carry a skill-specific identity (e.g. `agentrunway`).     |
 | `recording.has_transcript`           | boolean                                                                                                      | `false`          | True when this run has a full prompt-level transcript attached. Process-wrapper runs are always `false`.                                                 |
 | `recording.transcript_source`        | `"none"` \| `"claude-session-jsonl"` \| `"codex-rollout-jsonl"` \| `"wrapper-stream-json"` \| `"external"`    | `"none"`         | Provenance for the transcript when `has_transcript=true`. The wrapper itself never produces transcripts — see §3a.3.                                     |
 | `input.import_key`                   | string                                                                                                       | absent           | Idempotency key for importers. Convention: `"claude-session:<id>"`, `"codex-rollout:<id>"`. A re-import with the same key is a no-op.                    |
@@ -72,7 +72,13 @@ The `type` field is no longer a fixed enum; it is a lower-case dotted namespace:
 ^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$
 ```
 
-Reserved core namespaces — `run.*`, `command.*`, `checkpoint.*`, `artifact.*`, `task.*`, `failure.*`, `recording.*`, `agentlens.*` — remain pinned to their locked event-name enum (see `event.schema.json`). Skill namespaces (`kws-cme.*`, `kws-cpe.*`, …) and importer namespaces (`claude.*`, `codex.*`) are unconstrained beyond the general pattern, so external producers can append structured events under their own prefix without coordinating an enum change.
+Reserved core namespaces — `run.*`, `command.*`, `checkpoint.*`, `artifact.*`, `task.*`, `failure.*`, `recording.*`, `agentlens.*` — remain pinned to their locked event-name enum (see `event.schema.json`). AgentRunway (`agentrunway.*`), neutral external namespaces (`example.*`, …), and importer namespaces (`claude.*`, `codex.*`) are unconstrained beyond the general pattern, so external producers can append structured events under their own prefix without coordinating an enum change.
+
+```bash
+agentlens run-open --agent agentrunway --workspace "$PWD"
+agentlens event append --run "$RUN_ID" --type agentrunway.run_started --payload-json '{"schema":"agentrunway.event.v1","summary":"started"}'
+agentlens events --run "$RUN_ID" --type 'agentrunway.*'
+```
 
 ### 3a.3 Transcript source policy
 

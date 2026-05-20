@@ -13,7 +13,8 @@ from typing import Any
 from .adapters.claude import ClaudeAdapter
 from .adapters.codex import CodexAdapter
 from .adapters.local import LocalAdapter
-from .apply import apply_commits_to_source
+from .agentlens import create_agentlens_emitter
+from .apply import ApplyError, apply_commits_to_source
 from .artifact_graph import write_artifact_graph
 from .artifacts import ArtifactStore
 from .config import BuiltinProfiles, ModelProfile, load_effective_config
@@ -25,6 +26,7 @@ from .merge_queue import MergeCandidate, MergeConflictError, apply_candidate
 from .packetizer import build_task_packet, materialize_prompt, materialize_worker_prompt, packet_to_json
 from .plan_parser import canonical_hash, parse_plan, parse_spec_manifest
 from .reconciliation import apply_reconciliation_plan, plan_reconciliation
+from .retention import clean_retention
 from .scheduler import schedule_waves
 from .supervisor import next_worker_id, run_implementer_attempt, run_reviewer_attempt, run_verifier_attempt
 from .worktrees import create_main_worktree, next_available_run_id, workspace_id
@@ -51,6 +53,13 @@ def _state_paths(run_id: str, wsid: str) -> tuple[Path, Path]:
     run_dir = home / "runs" / wsid / run_id
     worktree_root = home / "worktrees" / wsid / run_id
     return run_dir, worktree_root
+
+
+def allocate_run_id(repo: Path, plan: Path, requested: str | None = None) -> str:
+    if requested:
+        return requested
+    base_run_id = f"{_slug(plan.stem)}-{_now_stamp()}-{_nonce()}"
+    return next_available_run_id(repo, base_run_id)
 
 
 def _find_run_dir(run_id: str) -> Path | None:
@@ -152,6 +161,20 @@ def _record_gate_retry(
     )
 
 
+def _record_run_blocked(journal: EventJournal, *, run_id: str, task_id: str, reason: str) -> None:
+    journal.record(
+        "agentrunway.run_blocked",
+        build_event_payload(
+            run_id,
+            "run",
+            "failed",
+            "run blocked",
+            task_id=task_id,
+            reason=reason,
+        ),
+    )
+
+
 def run(args: Any) -> dict[str, Any]:
     repo = Path.cwd().resolve()
     plan = args.plan.resolve()
@@ -163,8 +186,7 @@ def run(args: Any) -> dict[str, Any]:
 
     cfg = load_effective_config(repo, vars(args))
     wsid = workspace_id(repo)
-    base_run_id = f"{_slug(plan.stem)}-{_now_stamp()}-{_nonce()}"
-    run_id = next_available_run_id(repo, base_run_id)
+    run_id = allocate_run_id(repo, plan, getattr(args, "run_id", None))
     run_dir, worktree_root = _state_paths(run_id, wsid)
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "packets").mkdir(exist_ok=True)
@@ -203,7 +225,13 @@ def run(args: Any) -> dict[str, Any]:
     )
     contract_path = write_contract(run_dir, contract)
     db.set_run_contract_path(run_id, str(contract_path))
-    journal = EventJournal(db=db, run_dir=run_dir)
+    agentlens_emitter = create_agentlens_emitter(agentrunway_run_id=run_id, workspace=repo)
+    db.set_run_agentlens(
+        run_id,
+        agentlens_run_id=agentlens_emitter.agentlens_run_id if agentlens_emitter is not None else None,
+        status="active" if agentlens_emitter is not None else "disabled",
+    )
+    journal = EventJournal(db=db, run_dir=run_dir, agentlens_emitter=agentlens_emitter)
     journal.record("agentrunway.run_started", build_event_payload(run_id, "run", "success", "run started"))
     journal.record(
         "agentrunway.contract_created",
@@ -249,6 +277,8 @@ def run(args: Any) -> dict[str, Any]:
             result = adapter.run(packet_path, task_artifact_dir)
             store.write_text(task.task_id, "worker_result.json", json.dumps(asdict(result), indent=2, sort_keys=True))
             db.set_task_status(task.task_id, "merged" if result.status == "success" else "blocked")
+            if result.status != "success":
+                _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason="local_worker_failed")
         else:
             packet = build_task_packet(run_id, task, _spec_slices(spec, task.spec_refs) if spec else [], profile)
             review_retries = 0
@@ -265,24 +295,70 @@ def run(args: Any) -> dict[str, Any]:
                     run_dir / "prompts",
                     context=implementer_context,
                 )
-                candidate_id = run_implementer_attempt(
-                    db=db,
-                    run_id=run_id,
-                    git=git,
-                    main_worktree=main_worktree,
-                    worktree_root=worktree_root,
-                    run_dir=run_dir,
-                    task=task,
-                    packet_path=packet_path,
-                    prompt_path=prompt_path,
-                    adapter=adapter,
-                    runtime=runtime,
-                    model=model,
-                    reasoning_effort=reasoning_effort,
-                    attempt=implementer_attempt,
-                    timeout_seconds=600,
+                journal.record(
+                    "agentrunway.worker_dispatched",
+                    build_event_payload(
+                        run_id,
+                        "worker",
+                        "success",
+                        "worker dispatched",
+                        task_id=task.task_id,
+                        worker_id=worker_id,
+                        role="implementer",
+                        attempt=implementer_attempt,
+                        runtime=runtime,
+                        model=model,
+                    ),
                 )
+                try:
+                    candidate_id = run_implementer_attempt(
+                        db=db,
+                        run_id=run_id,
+                        git=git,
+                        main_worktree=main_worktree,
+                        worktree_root=worktree_root,
+                        run_dir=run_dir,
+                        task=task,
+                        packet_path=packet_path,
+                        prompt_path=prompt_path,
+                        adapter=adapter,
+                        runtime=runtime,
+                        model=model,
+                        reasoning_effort=reasoning_effort,
+                        attempt=implementer_attempt,
+                        timeout_seconds=600,
+                    )
+                except Exception as exc:
+                    journal.record(
+                        "agentrunway.worker_result",
+                        build_event_payload(
+                            run_id,
+                            "worker",
+                            "failed",
+                            "worker failed",
+                            task_id=task.task_id,
+                            worker_id=worker_id,
+                            role="implementer",
+                            attempt=implementer_attempt,
+                            error=str(exc),
+                        ),
+                    )
+                    raise
                 candidate = _merge_candidate(db, candidate_id)
+                journal.record(
+                    "agentrunway.worker_result",
+                    build_event_payload(
+                        run_id,
+                        "worker",
+                        "success",
+                        "worker result",
+                        task_id=task.task_id,
+                        worker_id=candidate["worker_id"],
+                        candidate_id=candidate_id,
+                        changed_files=candidate["changed_files"],
+                        commits=candidate["commits"],
+                    ),
+                )
                 base_ref = f"agentrunway/{run_id}/main"
                 diff = _candidate_diff(db, candidate, base_ref)
                 db.set_task_status(task.task_id, "reviewing")
@@ -317,7 +393,14 @@ def run(args: Any) -> dict[str, Any]:
                 review_status = str(review["status"])
                 journal.record(
                     "agentrunway.review_result",
-                    build_event_payload(run_id, "review", "success", "review result", task_id=task.task_id, status=review_status),
+                    build_event_payload(
+                        run_id,
+                        "review",
+                        "success" if review_status == "approved" else "partial",
+                        "review result",
+                        task_id=task.task_id,
+                        status=review_status,
+                    ),
                 )
                 if review_status == "changes_requested":
                     db.set_merge_candidate_status(candidate_id, "changes_requested")
@@ -333,10 +416,12 @@ def run(args: Any) -> dict[str, Any]:
                         )
                         continue
                     db.set_task_status(task.task_id, "blocked")
+                    _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason="review_changes_requested")
                     break
                 if review_status != "approved":
                     db.set_merge_candidate_status(candidate_id, "review_rejected")
                     db.set_task_status(task.task_id, "blocked")
+                    _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason="review_rejected")
                     break
                 db.set_task_status(task.task_id, "verifying")
                 journal.record(
@@ -367,7 +452,7 @@ def run(args: Any) -> dict[str, Any]:
                     build_event_payload(
                         run_id,
                         "verification",
-                        "success",
+                        "success" if verification_status == "passed" else "partial",
                         "verification result",
                         task_id=task.task_id,
                         status=verification_status,
@@ -395,9 +480,11 @@ def run(args: Any) -> dict[str, Any]:
                         )
                         continue
                     db.set_task_status(task.task_id, "blocked")
+                    _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason="verification_failed")
                     break
                 db.set_merge_candidate_status(candidate_id, "verification_blocked")
                 db.set_task_status(task.task_id, "blocked")
+                _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason="verification_blocked")
                 break
     for candidate in db.list_merge_candidates():
         if candidate["status"] != "merge_ready":
@@ -414,14 +501,42 @@ def run(args: Any) -> dict[str, Any]:
         except MergeConflictError as exc:
             db.set_merge_candidate_status(int(candidate["id"]), "merge_conflict", str(exc))
             db.set_task_status(candidate["task_id"], "blocked")
+            journal.record(
+                "agentrunway.merge_conflict",
+                build_event_payload(
+                    run_id,
+                    "merge",
+                    "partial",
+                    "merge conflict",
+                    task_id=candidate["task_id"],
+                    worker_id=candidate["worker_id"],
+                    candidate_id=candidate["id"],
+                    error=str(exc),
+                ),
+            )
+            _record_run_blocked(journal, run_id=run_id, task_id=str(candidate["task_id"]), reason="merge_conflict")
         else:
             db.set_merge_candidate_status(int(candidate["id"]), "merged")
             db.set_worker_state(candidate["worker_id"], "merged")
             db.set_task_status(candidate["task_id"], "merged")
     write_artifact_graph(run_dir=run_dir, db=db)
-    db.set_run_status(run_id, "finished")
-    journal.record("agentrunway.run_finished", build_event_payload(run_id, "run", "success", "run finished"))
-    run_json.update({"status": "finished", "main_worktree": str(main_worktree)})
+    tasks_snapshot = db.list_tasks()
+    blocked = any(str(task.get("status")) == "blocked" for task in tasks_snapshot)
+    final_status = "blocked" if blocked else "finished"
+    db.set_run_status(run_id, final_status)
+    journal.record(
+        "agentrunway.run_finished",
+        build_event_payload(
+            run_id,
+            "run",
+            "failed" if blocked else "success",
+            "run finished",
+            blocked_tasks=[task["task_id"] for task in tasks_snapshot if str(task.get("status")) == "blocked"],
+        ),
+    )
+    if agentlens_emitter is not None:
+        agentlens_emitter.close(outcome="failed" if blocked else "success", summary="run finished")
+    run_json.update({"status": final_status, "main_worktree": str(main_worktree), "tasks": tasks_snapshot})
     _write_run_json(run_dir, run_json)
     return run_json
 
@@ -434,7 +549,17 @@ def status(run_id: str) -> dict[str, Any]:
     data = _load_run_json(run_id)
     if data is None:
         return _missing(run_id)
-    return {"run_id": run_id, "status": data.get("status"), "run_dir": data.get("run_dir")}
+    from .status import next_operator_action
+
+    db = AgentRunwayDb.open(Path(data["state_db"]))
+    agentlens = db.agentlens_summary()
+    return {
+        "run_id": run_id,
+        "status": data.get("status"),
+        "run_dir": data.get("run_dir"),
+        "agentlens": agentlens,
+        "next_action": next_operator_action(data, agentlens),
+    }
 
 
 def inspect(run_id: str) -> dict[str, Any]:
@@ -447,12 +572,15 @@ def inspect(run_id: str) -> dict[str, Any]:
     return build_inspect_payload(run_json=data, db=db)
 
 
-def events(run_id: str) -> dict[str, Any]:
+def events(run_id: str, event_type: str | None = None) -> dict[str, Any]:
     data = _load_run_json(run_id)
     if data is None:
         return _missing(run_id)
     db = AgentRunwayDb.open(Path(data["state_db"]))
-    return {"run_id": run_id, "events": db.list_events(), "agentlens": db.agentlens_summary()}
+    rows = db.list_events()
+    if event_type:
+        rows = [row for row in rows if row["event_type"] == event_type]
+    return {"run_id": run_id, "events": rows, "agentlens": db.agentlens_summary()}
 
 
 def resume(run_id: str, *, dry_run: bool = False) -> dict[str, Any]:
@@ -491,12 +619,23 @@ def apply(run_id: str, strategy: str = "cherry-pick") -> dict[str, Any]:
         if candidate["status"] == "merged":
             commits.extend(candidate["commits"])
     already_applied = tuple(row["commit_sha"] for row in db.list_applied_commits(run_id))
-    applied = apply_commits_to_source(
-        Path(data["repo_root"]),
-        tuple(commits),
-        strategy=strategy,
-        already_applied=already_applied,
-    )
+    try:
+        applied = apply_commits_to_source(
+            Path(data["repo_root"]),
+            tuple(commits),
+            strategy=strategy,
+            already_applied=already_applied,
+        )
+    except ApplyError as exc:
+        return {
+            "run_id": run_id,
+            "status": data.get("status"),
+            "applied": False,
+            "commits": [],
+            "already_applied": list(already_applied),
+            "error": str(exc),
+            "conflict_commit": exc.commit,
+        }
     for commit in applied:
         db.record_applied_commit(run_id=run_id, commit_sha=commit, strategy=strategy)
     return {
@@ -508,5 +647,5 @@ def apply(run_id: str, strategy: str = "cherry-pick") -> dict[str, Any]:
     }
 
 
-def clean(older_than: str, *, successful: bool) -> dict[str, Any]:
-    return {"removed": 0, "older_than": older_than, "successful": successful}
+def clean(older_than: str, *, successful: bool, dry_run: bool = True) -> dict[str, Any]:
+    return clean_retention(agentrunway_home(), older_than=older_than, successful=successful, dry_run=dry_run)

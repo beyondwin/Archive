@@ -1,7 +1,7 @@
 """``agentlens run-open`` — create a container run (spec §4.2.1, S1.5.1).
 
-A *container* run records orchestrator-level activity (e.g. a CME spawn,
-a wrapper supervisor) that does not own a transcript itself. The container
+A *container* run records orchestrator-level activity (e.g. an AgentRunway
+run, a wrapper supervisor) that does not own a transcript itself. The container
 ``run.json`` is schema-valid v1 with ``run_kind="container"`` and
 ``recording.has_transcript=false``; ``final.json`` is written only when the
 matching :mod:`agentlens.commands.run_close` is invoked.
@@ -42,7 +42,7 @@ def run_open(
     agent: str = typer.Option(
         ...,
         "--agent",
-        help="container agent label (e.g. kws-cme-orchestrator)",
+        help="container agent label (e.g. agentrunway)",
     ),
     workspace: Optional[Path] = typer.Option(
         None,

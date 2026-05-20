@@ -25,6 +25,7 @@ from agentlens.constants import SCHEMA_EVAL_V1
 from agentlens.store.writer import atomic_write_json
 from agentlens.time import utc_now_iso
 
+from .agentrunway_events import build_evidence_coverage
 from .checks import (
     REQUIRED_CHECKS,
     CheckFn,
@@ -273,5 +274,6 @@ def evaluate(run_dir: Path) -> dict[str, Any]:
         "checks": [r.to_dict() for r in sorted_results],
         "failures": [f.to_dict() for f in sorted_failures],
     }
+    doc["evidence_coverage"] = build_evidence_coverage(ctx.events, run=ctx.run)
     atomic_write_json(run_dir / "eval.json", doc, redact=False)
     return doc

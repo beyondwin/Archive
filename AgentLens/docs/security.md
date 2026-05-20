@@ -67,8 +67,8 @@ Session JSONL imported by `agentlens import claude-session` and `agentlens impor
 
 ## 6.2 Host-isolation invariant (failure containment)
 
-AgentLens calls embedded in host orchestrators (kws-cme, kws-cpe, and any
-future skill) are wired so that AgentLens **never blocks the host
+AgentLens calls embedded in AgentRunway or any future host integration are
+wired so that AgentLens **never blocks the host
 workflow**. The contract has two enforcement points:
 
 - **Host snippet shape.** Orchestrators invoke AgentLens with

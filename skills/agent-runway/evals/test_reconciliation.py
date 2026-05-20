@@ -127,3 +127,72 @@ def test_apply_reconciliation_plan_is_idempotent_for_reconcile_forward(tmp_path:
     assert db.get_worker("task_001-implementer-001")["state"] == "result_collected"
     events = [row for row in db.list_events() if row["event_type"] == "agentrunway.resume_action"]
     assert len(events) == 1
+
+
+def test_plan_reconciliation_detects_interrupted_cherry_pick(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    main_worktree = tmp_path / "main"
+    git_dir = main_worktree / ".git"
+    git_dir.mkdir(parents=True)
+    (git_dir / "CHERRY_PICK_HEAD").write_text("abc123\n", encoding="utf-8")
+    (run_dir / "run.json").parent.mkdir(parents=True)
+    (run_dir / "run.json").write_text(
+        json.dumps({"run_id": "run-1", "main_worktree": str(main_worktree)}),
+        encoding="utf-8",
+    )
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+
+    plan = plan_reconciliation(run_id="run-1", run_dir=run_dir, db=db)
+
+    assert plan["actions"][0] == {
+        "target": str(main_worktree),
+        "action": "abort_cherry_pick",
+        "reason": "interrupted_cherry_pick",
+        "writes": True,
+    }
+
+
+def test_plan_reconciliation_ignores_empty_main_worktree_string(tmp_path: Path, monkeypatch) -> None:
+    cwd = tmp_path / "cwd"
+    (cwd / ".git").mkdir(parents=True)
+    (cwd / ".git" / "CHERRY_PICK_HEAD").write_text("abc123\n", encoding="utf-8")
+    monkeypatch.chdir(cwd)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "run.json").write_text(json.dumps({"run_id": "run-1", "main_worktree": ""}), encoding="utf-8")
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+
+    plan = plan_reconciliation(run_id="run-1", run_dir=run_dir, db=db)
+
+    assert plan["actions"] == []
+
+
+def test_plan_reconciliation_blocks_after_retry_budget(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    db.upsert_task(_task())
+    for attempt, state in ((1, "stalled"), (2, "running")):
+        db.create_worker_attempt(
+            worker_id=f"task_001-implementer-{attempt:03d}",
+            task_id="task_001",
+            role="implementer",
+            runtime="codex",
+            model="gpt-5.5",
+            reasoning_effort="high",
+            attempt=attempt,
+            worktree_path=str(tmp_path / f"worker-{attempt}"),
+            branch=f"agentrunway/run/task_001-implementer-{attempt:03d}",
+            state=state,
+            handle_json={"pid": 999999},
+        )
+
+    plan = plan_reconciliation(run_id="run-1", run_dir=run_dir, db=db)
+
+    assert plan["actions"] == [
+        {
+            "target": "task_001",
+            "action": "block",
+            "reason": "retry_budget_exhausted",
+            "writes": True,
+        }
+    ]

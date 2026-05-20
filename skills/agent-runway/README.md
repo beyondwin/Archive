@@ -56,6 +56,11 @@ python3 skills/agent-runway/scripts/agentrunway.py resume --run <run_id> --dry-r
 AgentLens emission is best-effort. Local evidence remains authoritative when
 AgentLens is disabled or unavailable.
 
+AgentRunway is the only supported AgentLens executor integration. New
+observability events use the `agentrunway.*` namespace. CPE/CME workflows, if
+present on disk, are independent legacy skills and are not bridged into
+AgentRunway or AgentLens by this package.
+
 ## Production Supervisor
 
 `agentrunway run --adapter codex` and `agentrunway run --adapter claude` launch worker

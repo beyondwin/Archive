@@ -3,6 +3,6 @@
   "event_id": "evt_upper00000a1",
   "run_id": "run_20260518_211328_abc123",
   "ts": "2026-05-18T21:13:29Z",
-  "type": "KWS-CME.task_started",
+  "type": "AgentRunway.task_started",
   "payload": {}
 }

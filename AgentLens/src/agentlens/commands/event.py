@@ -109,7 +109,7 @@ def _resolve_payload(
 def append(
     run: str = typer.Option(..., "--run", help="run_id receiving the event"),
     type_: str = typer.Option(
-        ..., "--type", help="event type (e.g. kws-cme.task_started)"
+        ..., "--type", help="event type (e.g. agentrunway.worker_result)"
     ),
     payload_json: Optional[str] = typer.Option(
         None, "--payload-json", help="inline JSON object payload"

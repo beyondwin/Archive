@@ -52,6 +52,62 @@
     }
   ],
   "evaluated_at": "1970-01-01T00:00:00Z",
+  "evidence_coverage": {
+    "artifacts": {
+      "artifact_graph": "missing",
+      "contract": "missing",
+      "coverage": "missing"
+    },
+    "coverage": {
+      "blocked": [],
+      "covered": [],
+      "partial": [],
+      "unreferenced": []
+    },
+    "event_count": 0,
+    "gates": {
+      "retry_count": 0,
+      "review_results": 0,
+      "verification_results": 0
+    },
+    "internal_actions": 0,
+    "observability": "not_applicable",
+    "payload_safety": "ok",
+    "producer": "agentrunway",
+    "projection": {
+      "agentlens_emit_health": {
+        "last_status": "unknown",
+        "statuses": {}
+      },
+      "artifacts": {
+        "artifact_graph": "missing",
+        "contract": "missing",
+        "coverage": "missing"
+      },
+      "blocked_tasks": [],
+      "coverage": {
+        "blocked": [],
+        "covered": [],
+        "partial": [],
+        "unreferenced": []
+      },
+      "event_count": 0,
+      "gate_retries": [],
+      "internal_actions": 0,
+      "merge": {
+        "conflicts": [],
+        "ready": false
+      },
+      "payload_safety": "ok",
+      "producer": "agentrunway",
+      "run_id": null,
+      "status": "not_started",
+      "tasks": {},
+      "timeline": []
+    },
+    "strength": "none",
+    "timeline_event_count": 0
+  },
   "failures": [
     {
       "blame_scope": "environment",

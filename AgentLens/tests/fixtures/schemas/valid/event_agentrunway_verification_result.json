@@ -1,0 +1,13 @@
+{
+  "schema": "agentlens.event.v1",
+  "event_id": "evt_arunway00002",
+  "run_id": "run_20260519_000000_cont01",
+  "ts": "2026-05-19T00:00:02Z",
+  "type": "agentrunway.verification_result",
+  "payload": {
+    "task_id": "task_1",
+    "attempt": 1,
+    "status": "failed",
+    "reason": "tests failed"
+  }
+}

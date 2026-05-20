@@ -2,7 +2,7 @@
 
 Writes ``final.json`` for the run pointed to by ``--run`` and updates the
 SQLite index best-effort. Unknown run ids are non-blocking: the command
-emits a warning to stderr and exits 0 so orchestrators (CME, wrappers) can
+emits a warning to stderr and exits 0 so orchestrators and wrappers can
 call ``run-close`` defensively without aborting their own teardown.
 """
 from __future__ import annotations

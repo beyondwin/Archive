@@ -27,6 +27,21 @@ def main() -> int:
     if "do not orchestrate workers from conversation context" not in skill:
         print("skill must keep host thin", file=sys.stderr)
         return 1
+    docs_text = "\n".join(
+        [
+            (ROOT / "README.md").read_text(encoding="utf-8"),
+            (ROOT / "references" / "agentlens-events.md").read_text(encoding="utf-8"),
+        ]
+    )
+    required_terms = {
+        "agentrunway.*",
+        "agentrunway.event.v1",
+        "AgentRunway is the only supported AgentLens executor integration",
+    }
+    missing_terms = sorted(term for term in required_terms if term not in docs_text)
+    if missing_terms:
+        print("missing AgentLens contract terms: " + ", ".join(missing_terms), file=sys.stderr)
+        return 1
     return 0
 
 

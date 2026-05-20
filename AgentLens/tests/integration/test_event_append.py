@@ -34,7 +34,7 @@ def _resolve_run_dir(workspace: Path, run_id: str) -> Path:
     )
 
 
-def _open_run(runner: CliRunner, agent: str = "kws-cme-orchestrator", parent: str | None = None) -> str:
+def _open_run(runner: CliRunner, agent: str = "agentrunway", parent: str | None = None) -> str:
     args = ["run-open", "--agent", agent]
     if parent:
         args += ["--parent", parent]
@@ -66,7 +66,7 @@ def test_event_append_payload_json(runner: CliRunner, workspace: Path) -> None:
             "--run",
             run_id,
             "--type",
-            "kws-cme.task_started",
+            "agentrunway.task_started",
             "--payload-json",
             '{"task_id":"task_1"}',
         ],
@@ -76,7 +76,7 @@ def test_event_append_payload_json(runner: CliRunner, workspace: Path) -> None:
     events = _read_events(run_dir)
     # First event is the run.started from run-open. The new one is appended.
     assert events[-1]["schema"] == "agentlens.event.v1"
-    assert events[-1]["type"] == "kws-cme.task_started"
+    assert events[-1]["type"] == "agentrunway.task_started"
     assert events[-1]["run_id"] == run_id
     assert events[-1]["payload"] == {"task_id": "task_1"}
     assert events[-1]["event_id"].startswith("evt_")
@@ -98,14 +98,14 @@ def test_event_append_payload_file(runner: CliRunner, workspace: Path, tmp_path:
             "--run",
             run_id,
             "--type",
-            "kws-cme.task_finished",
+            "agentrunway.task_finished",
             "--payload-file",
             str(payload_file),
         ],
     )
     assert result.exit_code == 0, result.stderr
     events = _read_events(run_dir)
-    assert events[-1]["type"] == "kws-cme.task_finished"
+    assert events[-1]["type"] == "agentrunway.task_finished"
     assert events[-1]["payload"] == {"task_id": "task_2"}
 
 
@@ -121,14 +121,14 @@ def test_event_append_payload_stdin(runner: CliRunner, workspace: Path) -> None:
             "--run",
             run_id,
             "--type",
-            "kws-cme.note",
+            "agentrunway.note",
             "--payload-stdin",
         ],
         input='{"note":"hello"}',
     )
     assert result.exit_code == 0, result.stderr
     events = _read_events(run_dir)
-    assert events[-1]["type"] == "kws-cme.note"
+    assert events[-1]["type"] == "agentrunway.note"
     assert events[-1]["payload"] == {"note": "hello"}
 
 
@@ -139,7 +139,7 @@ def test_event_append_requires_exactly_one_payload_source(
     # No source.
     result = runner.invoke(
         app,
-        ["event", "append", "--run", run_id, "--type", "kws-cme.task_started"],
+        ["event", "append", "--run", run_id, "--type", "agentrunway.task_started"],
     )
     assert result.exit_code != 0
 
@@ -152,7 +152,7 @@ def test_event_append_requires_exactly_one_payload_source(
             "--run",
             run_id,
             "--type",
-            "kws-cme.task_started",
+            "agentrunway.task_started",
             "--payload-json",
             "{}",
             "--payload-stdin",
@@ -183,14 +183,14 @@ def test_event_append_filesystem_resolution_when_sqlite_missing(
             "--run",
             run_id,
             "--type",
-            "kws-cme.task_started",
+            "agentrunway.task_started",
             "--payload-json",
             '{"task_id":"task_x"}',
         ],
     )
     assert result.exit_code == 0, result.stderr
     events = _read_events(run_dir)
-    assert events[-1]["type"] == "kws-cme.task_started"
+    assert events[-1]["type"] == "agentrunway.task_started"
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +207,7 @@ def test_events_query_by_type_glob(runner: CliRunner, workspace: Path) -> None:
             "--run",
             run_id,
             "--type",
-            "kws-cme.task_started",
+            "agentrunway.task_started",
             "--payload-json",
             '{"task_id":"task_1"}',
         ],
@@ -220,21 +220,21 @@ def test_events_query_by_type_glob(runner: CliRunner, workspace: Path) -> None:
             "--run",
             run_id,
             "--type",
-            "kws-cme.task_finished",
+            "agentrunway.task_finished",
             "--payload-json",
             '{"task_id":"task_1"}',
         ],
     )
 
     result = runner.invoke(
-        app, ["events", "--run", run_id, "--type", "kws-cme.*"]
+        app, ["events", "--run", run_id, "--type", "agentrunway.*"]
     )
     assert result.exit_code == 0, result.stderr
     lines = [ln for ln in result.stdout.strip().splitlines() if ln.strip()]
     assert len(lines) == 2
     for line in lines:
         evt = json.loads(line)
-        assert evt["type"].startswith("kws-cme.")
+        assert evt["type"].startswith("agentrunway.")
         assert evt["run_id"] == run_id
 
 
@@ -252,7 +252,7 @@ def test_events_query_tree_includes_descendants_ordered(
             "--run",
             child_id,
             "--type",
-            "kws-cme.task_started",
+            "agentrunway.task_started",
             "--payload-json",
             '{"task_id":"task_c"}',
         ],
@@ -265,7 +265,7 @@ def test_events_query_tree_includes_descendants_ordered(
             "--run",
             parent_id,
             "--type",
-            "kws-cme.note",
+            "agentrunway.note",
             "--payload-json",
             '{"note":"hi"}',
         ],
