@@ -5,6 +5,8 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
+import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +28,7 @@ from .decision_events import record_candidate_ranked, record_quality_decision
 from .durable_resume import plan_activity_resume
 from .events import EventJournal, build_event_payload
 from .failure_classifier import classify_gate_failure, classify_plan_failure
+from .gate_cache import GateCacheKey, gate_cache_digest, stable_hash
 from .gate_runner import GateRunner
 from .git_ops import Git, assert_clean_source
 from .integration_manager import IntegrationManager
@@ -38,10 +41,13 @@ from .quality_policy import PolicyDecision, candidate_count_for_task
 from .reconciliation import apply_reconciliation_plan, plan_reconciliation
 from .retention import clean_retention
 from .scheduler import schedule_waves
-from .supervisor import next_worker_id, run_implementer_attempt, run_reviewer_attempt, run_verifier_attempt
+from .supervisor import collect_implementer_attempt, next_worker_id, run_reviewer_attempt, run_verifier_attempt, start_worker_attempt
 from .workflow_store import ActivityStatus, WorkflowStore
 from .worktrees import create_main_worktree, next_available_run_id, workspace_id
 from .worktree_lifecycle import archive_candidate_evidence, lifecycle_for_worker, reviewer_mode_for_task
+
+
+DEFAULT_MAX_PARALLEL_IMPLEMENTERS = 4
 
 
 def agentrunway_home() -> Path:
@@ -169,6 +175,318 @@ def _candidate_diff(db: AgentRunwayDb, candidate: dict[str, Any], base_ref: str)
     worker = db.get_worker(str(candidate["worker_id"]))
     worker_tree = Path(str(worker["worktree_path"]))
     return Git(worker_tree).run("diff", base_ref, "HEAD", check=False).stdout
+
+
+def _candidate_worktree(db: AgentRunwayDb, candidate: dict[str, Any]) -> Path:
+    worker = db.get_worker(str(candidate["worker_id"]))
+    return Path(str(worker["worktree_path"]))
+
+
+def _task_packet_hash(db: AgentRunwayDb, task_id: str) -> str:
+    row = db.conn.execute("SELECT packet_hash FROM task_packets WHERE task_id=?", (task_id,)).fetchone()
+    return str(row["packet_hash"]) if row is not None else ""
+
+
+def _tracked_git_status(worktree: Path) -> str:
+    return Git(worktree).run("status", "--porcelain", "--untracked-files=no", check=False).stdout
+
+
+def _register_local_gate_worker(
+    *,
+    db: AgentRunwayDb,
+    task: Any,
+    worker_id: str,
+    attempt: int,
+    output_path: Path,
+    result: dict[str, Any],
+    handle_json: dict[str, Any],
+) -> dict[str, Any]:
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    db.create_worker_attempt(
+        worker_id=worker_id,
+        task_id=task.task_id,
+        role="verifier",
+        runtime="local",
+        model="local",
+        reasoning_effort="n/a",
+        attempt=attempt,
+        worktree_path=None,
+        branch=None,
+        state="running",
+        handle_json=handle_json,
+    )
+    db.mark_worker_started(worker_id)
+    db.mark_worker_ended(worker_id, "result_collected")
+    db.set_worker_state(worker_id, "validated")
+    return result
+
+
+def _local_first_verification(
+    *,
+    db: AgentRunwayDb,
+    task: Any,
+    candidate: dict[str, Any],
+    diff: str,
+    run_dir: Path,
+    worker_id: str,
+    attempt: int,
+    output_path: Path,
+) -> dict[str, Any] | None:
+    if task.risk == "high" or not task.acceptance_commands:
+        return None
+    candidate_tree = _candidate_worktree(db, candidate)
+    candidate_commit = str(candidate["commits"][-1]) if candidate.get("commits") else ""
+    if not candidate_commit:
+        return None
+    cache_key = gate_cache_digest(
+        GateCacheKey(
+            gate="verification",
+            base_commit=candidate_commit,
+            task_packet_hash=_task_packet_hash(db, task.task_id),
+            diff_hash=stable_hash(diff),
+            command_hash=stable_hash(list(task.acceptance_commands)),
+            tool_version=f"python:{sys.version_info.major}.{sys.version_info.minor}",
+        )
+    )
+    cached = db.get_gate_cache(gate="verification", cache_key=cache_key)
+    if cached is not None:
+        result = dict(cached["result"])
+        result["worker_id"] = worker_id
+        result["task_id"] = task.task_id
+        method_audit = dict(result.get("method_audit") or {})
+        method_audit["gate_cache_hit"] = True
+        result["method_audit"] = method_audit
+        return _register_local_gate_worker(
+            db=db,
+            task=task,
+            worker_id=worker_id,
+            attempt=attempt,
+            output_path=output_path,
+            result=result,
+            handle_json={"local_gate": {"source": "cache", "cache_key": cache_key, "candidate_worker_id": candidate["worker_id"]}},
+        )
+
+    checks: list[dict[str, Any]] = []
+    verify_tree = run_dir / "verify" / task.task_id / worker_id
+    verify_tree.parent.mkdir(parents=True, exist_ok=True)
+    source_git = Git(candidate_tree)
+    add_result = source_git.run("worktree", "add", "--detach", str(verify_tree), candidate_commit, check=False)
+    if add_result.returncode != 0:
+        return None
+    try:
+        if _tracked_git_status(verify_tree):
+            return None
+        for command in task.acceptance_commands:
+            try:
+                completed = subprocess.run(
+                    command,
+                    cwd=verify_tree,
+                    shell=True,
+                    text=True,
+                    capture_output=True,
+                    timeout=600,
+                    check=False,
+                )
+            except subprocess.TimeoutExpired as exc:
+                checks.append(
+                    {
+                        "command": command,
+                        "status": "failed",
+                        "returncode": None,
+                        "stdout": (exc.stdout or "")[:4000],
+                        "stderr": (exc.stderr or "timeout")[:4000],
+                        "source": "local",
+                    }
+                )
+                return None
+            tracked_status = _tracked_git_status(verify_tree)
+            check = {
+                "command": command,
+                "status": "passed" if completed.returncode == 0 and not tracked_status else "failed",
+                "returncode": completed.returncode,
+                "stdout": completed.stdout[:4000],
+                "stderr": completed.stderr[:4000],
+                "source": "local",
+                "tracked_status": tracked_status[:4000],
+            }
+            checks.append(check)
+            if completed.returncode != 0 or tracked_status:
+                return None
+    finally:
+        source_git.run("worktree", "remove", "--force", str(verify_tree), check=False)
+
+    result = {
+        "schema": "agentrunway.verification_result.v1",
+        "worker_id": worker_id,
+        "task_id": task.task_id,
+        "status": "passed",
+        "checks": checks,
+        "method_audit": {"superpowers_used": True, "local_first": True, "gate_cache_hit": False},
+    }
+    db.put_gate_cache(
+        gate="verification",
+        cache_key=cache_key,
+        result=result,
+        metadata={"source": "local", "candidate_worker_id": str(candidate["worker_id"])},
+    )
+    return _register_local_gate_worker(
+        db=db,
+        task=task,
+        worker_id=worker_id,
+        attempt=attempt,
+        output_path=output_path,
+        result=result,
+        handle_json={"local_gate": {"source": "local", "cache_key": cache_key, "candidate_worker_id": candidate["worker_id"]}},
+    )
+
+
+def _start_implementer_batch(
+    *,
+    db: AgentRunwayDb,
+    journal: EventJournal,
+    activity_runner: ActivityRunner,
+    run_id: str,
+    git: Git,
+    worktree_root: Path,
+    run_dir: Path,
+    task: Any,
+    packet: Any,
+    packet_path: Path,
+    adapter: Any,
+    runtime: str,
+    model: str,
+    reasoning_effort: str,
+    implementer_context: dict[str, object] | None,
+    batch_size: int,
+    checkpoint_id: str | None,
+    run_json: dict[str, Any],
+) -> list[dict[str, Any]]:
+    started_implementers: list[dict[str, Any]] = []
+    for _ in range(batch_size):
+        _, implementer_attempt = next_worker_id(db=db, task_id=task.task_id, role="implementer")
+        worker_id = f"{task.task_id}-implementer-{implementer_attempt:03d}"
+        output_path = run_dir / "artifacts" / task.task_id / worker_id / "worker_result.json"
+        prompt_path = materialize_worker_prompt(
+            packet,
+            packet_path,
+            output_path,
+            run_dir / "prompts",
+            context=implementer_context,
+        )
+        implement_activity_id = f"{task.task_id}.implement.{implementer_attempt:03d}"
+        activity_runner.start(
+            activity_id=implement_activity_id,
+            idempotency_key=f"{run_id}:{task.task_id}:implement:{implementer_attempt:03d}",
+            task_id=task.task_id,
+            activity_type="implement",
+            input_refs={
+                "packet": _artifact_ref(run_dir, packet_path),
+                "prompt": _artifact_ref(run_dir, prompt_path),
+                "checkpoint_id": checkpoint_id,
+            },
+        )
+        journal.record(
+            "agentrunway.worker_dispatched",
+            build_event_payload(
+                run_id,
+                "worker",
+                "success",
+                "worker dispatched",
+                task_id=task.task_id,
+                worker_id=worker_id,
+                role="implementer",
+                attempt=implementer_attempt,
+                runtime=runtime,
+                model=model,
+            ),
+        )
+        try:
+            started = start_worker_attempt(
+                db=db,
+                run_id=run_id,
+                git=git,
+                worktree_root=worktree_root,
+                run_dir=run_dir,
+                task=task,
+                packet_path=packet_path,
+                prompt_path=prompt_path,
+                output_path=output_path,
+                adapter=adapter,
+                runtime=runtime,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                role="implementer",
+                base_ref=f"agentrunway/{run_id}/main",
+                attempt=implementer_attempt,
+                timeout_seconds=600,
+            )
+        except Exception as exc:
+            journal.record(
+                "agentrunway.worker_result",
+                build_event_payload(
+                    run_id,
+                    "worker",
+                    "failed",
+                    "worker failed",
+                    task_id=task.task_id,
+                    worker_id=worker_id,
+                    role="implementer",
+                    attempt=implementer_attempt,
+                    error=str(exc),
+                ),
+            )
+            activity_runner.complete(
+                activity_id=implement_activity_id,
+                status=ActivityStatus.FAILED,
+                output_refs={"error": str(exc), "worker_id": worker_id},
+                failure_class="needs_infra_fix",
+            )
+            db.set_run_status(run_id, "failed")
+            run_json.update(
+                {
+                    "status": "failed",
+                    "tasks": db.list_tasks(),
+                    "error": str(exc),
+                }
+            )
+            _write_run_json(run_dir, run_json)
+            _cancel_started_implementers(db=db, adapter=adapter, started_implementers=started_implementers)
+            raise
+        started_implementers.append(
+            {
+                "started": started,
+                "worker_id": worker_id,
+                "attempt": implementer_attempt,
+                "output_path": output_path,
+                "activity_id": implement_activity_id,
+            }
+        )
+    return started_implementers
+
+
+def _cancel_started_implementers(
+    *,
+    db: AgentRunwayDb,
+    adapter: Any,
+    started_implementers: list[dict[str, Any]],
+    skip_worker_id: str | None = None,
+) -> None:
+    for started_info in started_implementers:
+        worker_id = str(started_info["worker_id"])
+        if skip_worker_id is not None and worker_id == skip_worker_id:
+            continue
+        started = started_info["started"]
+        try:
+            adapter.cancel(started.handle)
+        except Exception:
+            pass
+        db.mark_worker_ended(worker_id, "cancelled")
+        if started.worker_tree is not None:
+            db.set_worktree_lifecycle(
+                str(started.worker_tree),
+                lifecycle_for_worker(role="implementer", state="cancelled"),
+            )
 
 
 def _retry_context(reason: str, result: dict[str, object], candidate: dict[str, Any]) -> dict[str, object]:
@@ -425,6 +743,10 @@ def run(args: Any) -> dict[str, Any]:
         profile,
         fake_success=bool(args.fake_success),
     )
+    max_parallel_implementers = max(
+        1,
+        min(DEFAULT_MAX_PARALLEL_IMPLEMENTERS, int(cfg.runtime_caps.get(runtime, DEFAULT_MAX_PARALLEL_IMPLEMENTERS))),
+    )
     store = ArtifactStore(run_dir / "artifacts")
     from .checkpoint_scheduler import CheckpointScheduler
     from .durable_projection import durable_operator_next_action, read_durable_projection
@@ -438,6 +760,49 @@ def run(args: Any) -> dict[str, Any]:
         wave = scheduler.next_wave(projection=projection)
         if not wave:
             break
+        prestarted_wave: dict[str, list[dict[str, Any]]] = {}
+        if runtime != "local" and len(wave) > 1:
+            prestarted_slots = 0
+            for task_ref in wave:
+                task = tasks_by_id[str(task_ref["task_id"])]
+                if str(db.get_task(task.task_id).get("status")) in {"blocked", "failed", "merged"}:
+                    continue
+                batch_size = candidate_count_for_task(task)
+                if prestarted_slots + batch_size > max_parallel_implementers:
+                    break
+                packet_path = run_dir / "packets" / f"{task.task_id}.json"
+                packet_json = db.conn.execute("SELECT packet_json FROM task_packets WHERE task_id=?", (task.task_id,)).fetchone()[
+                    "packet_json"
+                ]
+                packet_path.write_text(packet_json, encoding="utf-8")
+                (run_dir / "artifacts" / task.task_id).mkdir(parents=True, exist_ok=True)
+                packet = build_task_packet(run_id, task, _spec_slices(spec, task.spec_refs) if spec else [], profile)
+                try:
+                    prestarted_wave[task.task_id] = _start_implementer_batch(
+                        db=db,
+                        journal=journal,
+                        activity_runner=activity_runner,
+                        run_id=run_id,
+                        git=git,
+                        worktree_root=worktree_root,
+                        run_dir=run_dir,
+                        task=task,
+                        packet=packet,
+                        packet_path=packet_path,
+                        adapter=adapter,
+                        runtime=runtime,
+                        model=model,
+                        reasoning_effort=reasoning_effort,
+                        implementer_context=None,
+                        batch_size=batch_size,
+                        checkpoint_id=(workflow_store.latest_checkpoint(run_id) or {}).get("checkpoint_id"),
+                        run_json=run_json,
+                    )
+                except Exception:
+                    for started_implementers in prestarted_wave.values():
+                        _cancel_started_implementers(db=db, adapter=adapter, started_implementers=started_implementers)
+                    raise
+                prestarted_slots += batch_size
         for task_ref in wave:
             task = tasks_by_id[str(task_ref["task_id"])]
             if str(db.get_task(task.task_id).get("status")) in {"blocked", "failed", "merged"}:
@@ -500,195 +865,260 @@ def run(args: Any) -> dict[str, Any]:
                 review_retries = 0
                 verification_retries = 0
                 implementer_context: dict[str, object] | None = None
+                prestarted_for_task = prestarted_wave.pop(task.task_id, [])
                 while len(merge_ready_candidate_ids) < target_candidate_count:
-                    _, implementer_attempt = next_worker_id(db=db, task_id=task.task_id, role="implementer")
-                    worker_id = f"{task.task_id}-implementer-{implementer_attempt:03d}"
-                    output_path = run_dir / "artifacts" / task.task_id / worker_id / "worker_result.json"
-                    prompt_path = materialize_worker_prompt(
-                        packet,
-                        packet_path,
-                        output_path,
-                        run_dir / "prompts",
-                        context=implementer_context,
+                    if str(db.get_task(task.task_id).get("status")) in {"blocked", "failed"}:
+                        break
+                    batch_size = (
+                        1
+                        if implementer_context is not None
+                        else min(max_parallel_implementers, max(1, target_candidate_count - len(merge_ready_candidate_ids)))
                     )
-                    implement_activity_id = f"{task.task_id}.implement.{implementer_attempt:03d}"
-                    activity_runner.start(
-                        activity_id=implement_activity_id,
-                        idempotency_key=f"{run_id}:{task.task_id}:implement:{implementer_attempt:03d}",
-                        task_id=task.task_id,
-                        activity_type="implement",
-                        input_refs={
-                            "packet": _artifact_ref(run_dir, packet_path),
-                            "prompt": _artifact_ref(run_dir, prompt_path),
-                            "checkpoint_id": (workflow_store.latest_checkpoint(run_id) or {}).get("checkpoint_id"),
-                        },
-                    )
-                    journal.record(
-                        "agentrunway.worker_dispatched",
-                        build_event_payload(
-                            run_id,
-                            "worker",
-                            "success",
-                            "worker dispatched",
-                            task_id=task.task_id,
-                            worker_id=worker_id,
-                            role="implementer",
-                            attempt=implementer_attempt,
-                            runtime=runtime,
-                            model=model,
-                        ),
-                    )
-                    try:
-                        candidate_id = run_implementer_attempt(
+                    if implementer_context is None and prestarted_for_task:
+                        started_implementers = prestarted_for_task
+                        prestarted_for_task = []
+                    else:
+                        started_implementers = _start_implementer_batch(
                             db=db,
+                            journal=journal,
+                            activity_runner=activity_runner,
                             run_id=run_id,
                             git=git,
-                            main_worktree=main_worktree,
                             worktree_root=worktree_root,
                             run_dir=run_dir,
                             task=task,
+                            packet=packet,
                             packet_path=packet_path,
-                            prompt_path=prompt_path,
                             adapter=adapter,
                             runtime=runtime,
                             model=model,
                             reasoning_effort=reasoning_effort,
-                            attempt=implementer_attempt,
-                            timeout_seconds=600,
+                            implementer_context=implementer_context,
+                            batch_size=batch_size,
+                            checkpoint_id=(workflow_store.latest_checkpoint(run_id) or {}).get("checkpoint_id"),
+                            run_json=run_json,
                         )
-                    except Exception as exc:
+                    for started_info in started_implementers:
+                        worker_id = str(started_info["worker_id"])
+                        implementer_attempt = int(started_info["attempt"])
+                        output_path = Path(started_info["output_path"])
+                        implement_activity_id = str(started_info["activity_id"])
+                        try:
+                            candidate_id = collect_implementer_attempt(
+                                db=db,
+                                adapter=adapter,
+                                task=task,
+                                started=started_info["started"],
+                                output_path=output_path,
+                            )
+                        except Exception as exc:
+                            _cancel_started_implementers(
+                                db=db,
+                                adapter=adapter,
+                                started_implementers=started_implementers,
+                                skip_worker_id=worker_id,
+                            )
+                            for pending_started_implementers in prestarted_wave.values():
+                                _cancel_started_implementers(
+                                    db=db,
+                                    adapter=adapter,
+                                    started_implementers=pending_started_implementers,
+                                )
+                            journal.record(
+                                "agentrunway.worker_result",
+                                build_event_payload(
+                                    run_id,
+                                    "worker",
+                                    "failed",
+                                    "worker failed",
+                                    task_id=task.task_id,
+                                    worker_id=worker_id,
+                                    role="implementer",
+                                    attempt=implementer_attempt,
+                                    error=str(exc),
+                                ),
+                            )
+                            activity_runner.complete(
+                                activity_id=implement_activity_id,
+                                status=ActivityStatus.FAILED,
+                                output_refs={"error": str(exc), "worker_id": worker_id},
+                                failure_class="needs_infra_fix",
+                            )
+                            db.set_run_status(run_id, "failed")
+                            run_json.update(
+                                {
+                                    "status": "failed",
+                                    "main_worktree": str(main_worktree),
+                                    "tasks": db.list_tasks(),
+                                    "error": str(exc),
+                                }
+                            )
+                            _write_run_json(run_dir, run_json)
+                            raise
+                        candidate = _merge_candidate(db, candidate_id)
+                        activity_runner.complete(
+                            activity_id=implement_activity_id,
+                            status=ActivityStatus.COMPLETED,
+                            output_refs={
+                                "worker_id": worker_id,
+                                "candidate_id": candidate_id,
+                                "worker_result": _artifact_ref(run_dir, output_path),
+                            },
+                            failure_class=None,
+                        )
                         journal.record(
                             "agentrunway.worker_result",
                             build_event_payload(
                                 run_id,
                                 "worker",
-                                "failed",
-                                "worker failed",
-                                task_id=task.task_id,
-                                worker_id=worker_id,
-                                role="implementer",
-                                attempt=implementer_attempt,
-                                error=str(exc),
-                            ),
-                        )
-                        activity_runner.complete(
-                            activity_id=implement_activity_id,
-                            status=ActivityStatus.FAILED,
-                            output_refs={"error": str(exc), "worker_id": worker_id},
-                            failure_class="needs_infra_fix",
-                        )
-                        db.set_run_status(run_id, "failed")
-                        run_json.update(
-                            {
-                                "status": "failed",
-                                "main_worktree": str(main_worktree),
-                                "tasks": db.list_tasks(),
-                                "error": str(exc),
-                            }
-                        )
-                        _write_run_json(run_dir, run_json)
-                        raise
-                    candidate = _merge_candidate(db, candidate_id)
-                    activity_runner.complete(
-                        activity_id=implement_activity_id,
-                        status=ActivityStatus.COMPLETED,
-                        output_refs={
-                            "worker_id": worker_id,
-                            "candidate_id": candidate_id,
-                            "worker_result": _artifact_ref(run_dir, output_path),
-                        },
-                        failure_class=None,
-                    )
-                    journal.record(
-                        "agentrunway.worker_result",
-                        build_event_payload(
-                            run_id,
-                            "worker",
-                            "success",
-                            "worker result",
-                            task_id=task.task_id,
-                            worker_id=candidate["worker_id"],
-                            candidate_id=candidate_id,
-                            changed_files=candidate["changed_files"],
-                            commits=candidate["commits"],
-                        ),
-                    )
-                    base_ref = f"agentrunway/{run_id}/main"
-                    diff = _candidate_diff(db, candidate, base_ref)
-                    db.set_task_status(task.task_id, "reviewing")
-                    review_mode = reviewer_mode_for_task(task)
-                    needs_context_escalated = False
-                    while True:
-                        journal.record(
-                            "agentrunway.review_dispatched",
-                            build_event_payload(
-                                run_id,
-                                "review",
                                 "success",
-                                "review dispatched",
+                                "worker result",
                                 task_id=task.task_id,
                                 worker_id=candidate["worker_id"],
-                                review_mode=review_mode,
+                                candidate_id=candidate_id,
+                                changed_files=candidate["changed_files"],
+                                commits=candidate["commits"],
                             ),
                         )
-                        _, review_attempt = next_worker_id(db=db, task_id=task.task_id, role="reviewer")
-                        review_worker_id = f"{task.task_id}-reviewer-{review_attempt:03d}"
-                        review_activity_id = f"{task.task_id}.review.{review_attempt:03d}"
-                        review_result_path = run_dir / "artifacts" / task.task_id / review_worker_id / "review_result.json"
-                        activity_runner.start(
-                            activity_id=review_activity_id,
-                            idempotency_key=f"{run_id}:{task.task_id}:review:{review_attempt:03d}",
-                            task_id=task.task_id,
-                            activity_type="review",
-                            input_refs={
-                                "candidate_id": candidate_id,
-                                "worker_id": candidate["worker_id"],
-                                "review_mode": review_mode,
-                            },
-                        )
-                        review = run_reviewer_attempt(
-                            db=db,
-                            run_id=run_id,
-                            git=git,
-                            worktree_root=worktree_root,
-                            run_dir=run_dir,
-                            task=task,
-                            adapter=adapter,
-                            runtime=runtime,
-                            model=model,
-                            reasoning_effort=reasoning_effort,
-                            reviewed_worker_id=str(candidate["worker_id"]),
-                            candidate_diff=diff,
-                            candidate_commits=tuple(candidate["commits"]),
-                            attempt=review_attempt,
-                            timeout_seconds=600,
-                            review_mode=review_mode,
-                        )
-                        review_status = str(review["status"])
-                        review_classification = None
-                        journal.record(
-                            "agentrunway.review_result",
-                            build_event_payload(
-                                run_id,
-                                "review",
-                                "success" if review_status == "approved" else "partial",
-                                "review result",
+                        base_ref = f"agentrunway/{run_id}/main"
+                        diff = _candidate_diff(db, candidate, base_ref)
+                        db.set_task_status(task.task_id, "reviewing")
+                        review_mode = reviewer_mode_for_task(task)
+                        needs_context_escalated = False
+                        while True:
+                            journal.record(
+                                "agentrunway.review_dispatched",
+                                build_event_payload(
+                                    run_id,
+                                    "review",
+                                    "success",
+                                    "review dispatched",
+                                    task_id=task.task_id,
+                                    worker_id=candidate["worker_id"],
+                                    review_mode=review_mode,
+                                ),
+                            )
+                            _, review_attempt = next_worker_id(db=db, task_id=task.task_id, role="reviewer")
+                            review_worker_id = f"{task.task_id}-reviewer-{review_attempt:03d}"
+                            review_activity_id = f"{task.task_id}.review.{review_attempt:03d}"
+                            review_result_path = run_dir / "artifacts" / task.task_id / review_worker_id / "review_result.json"
+                            activity_runner.start(
+                                activity_id=review_activity_id,
+                                idempotency_key=f"{run_id}:{task.task_id}:review:{review_attempt:03d}",
                                 task_id=task.task_id,
-                                status=review_status,
+                                activity_type="review",
+                                input_refs={
+                                    "candidate_id": candidate_id,
+                                    "worker_id": candidate["worker_id"],
+                                    "review_mode": review_mode,
+                                },
+                            )
+                            review = run_reviewer_attempt(
+                                db=db,
+                                run_id=run_id,
+                                git=git,
+                                worktree_root=worktree_root,
+                                run_dir=run_dir,
+                                task=task,
+                                adapter=adapter,
+                                runtime=runtime,
+                                model=model,
+                                reasoning_effort=reasoning_effort,
+                                reviewed_worker_id=str(candidate["worker_id"]),
+                                candidate_diff=diff,
+                                candidate_commits=tuple(candidate["commits"]),
+                                attempt=review_attempt,
+                                timeout_seconds=600,
                                 review_mode=review_mode,
-                            ),
-                        )
-                        if review_status == "needs_context" and review_mode == "diff" and not needs_context_escalated:
-                            review_classification = classify_gate_failure(
+                            )
+                            review_status = str(review["status"])
+                            review_classification = None
+                            journal.record(
+                                "agentrunway.review_result",
+                                build_event_payload(
+                                    run_id,
+                                    "review",
+                                    "success" if review_status == "approved" else "partial",
+                                    "review result",
+                                    task_id=task.task_id,
+                                    status=review_status,
+                                    review_mode=review_mode,
+                                ),
+                            )
+                            if review_status == "needs_context" and review_mode == "diff" and not needs_context_escalated:
+                                review_classification = classify_gate_failure(
+                                    gate="review",
+                                    status=review_status,
+                                    result=review,
+                                    candidate=_merge_candidate(db, candidate_id),
+                                    task_acceptance_commands=list(task.acceptance_commands),
+                                )
+                                activity_runner.complete(
+                                    activity_id=review_activity_id,
+                                    status=ActivityStatus.FAILED,
+                                    output_refs={
+                                        "candidate_id": candidate_id,
+                                        "review_status": review_status,
+                                        "review_mode": review_mode,
+                                        "review_result": _artifact_ref(run_dir, review_result_path),
+                                        "classification": review_classification.to_dict(),
+                                    },
+                                    failure_class=review_classification.failure_class,
+                                )
+                                needs_context_escalated = True
+                                review_mode = "full_tree"
+                                journal.record(
+                                    "agentrunway.review_escalated",
+                                    build_event_payload(
+                                        run_id,
+                                        "review",
+                                        "partial",
+                                        "review escalated to full tree",
+                                        task_id=task.task_id,
+                                        worker_id=candidate["worker_id"],
+                                        reason="needs_context",
+                                        review_mode=review_mode,
+                                    ),
+                                )
+                                continue
+                            if review_status == "approved":
+                                activity_runner.complete(
+                                    activity_id=review_activity_id,
+                                    status=ActivityStatus.COMPLETED,
+                                    output_refs={
+                                        "candidate_id": candidate_id,
+                                        "review_status": review_status,
+                                        "review_mode": review_mode,
+                                        "review_result": _artifact_ref(run_dir, review_result_path),
+                                    },
+                                    failure_class=None,
+                                )
+                            break
+                        if review_status != "approved":
+                            candidate_snapshot = _merge_candidate(db, candidate_id)
+                            review_classification = review_classification or classify_gate_failure(
                                 gate="review",
                                 status=review_status,
                                 result=review,
-                                candidate=_merge_candidate(db, candidate_id),
+                                candidate=candidate_snapshot,
                                 task_acceptance_commands=list(task.acceptance_commands),
                             )
+                            gate_outcome = gate_runner.decide(
+                                task=task,
+                                gate="review",
+                                status=review_status,
+                                result=review,
+                                candidate=candidate_snapshot,
+                                previous_retries=review_retries,
+                            )
+                            decision = gate_outcome.policy
                             activity_runner.complete(
                                 activity_id=review_activity_id,
-                                status=ActivityStatus.FAILED,
+                                status=_gate_activity_status(
+                                    failure_class=review_classification.failure_class,
+                                    decision=decision,
+                                    decision_packet_required=gate_outcome.decision_packet_required,
+                                ),
                                 output_refs={
                                     "candidate_id": candidate_id,
                                     "review_status": review_status,
@@ -698,84 +1128,184 @@ def run(args: Any) -> dict[str, Any]:
                                 },
                                 failure_class=review_classification.failure_class,
                             )
-                            needs_context_escalated = True
-                            review_mode = "full_tree"
-                            journal.record(
-                                "agentrunway.review_escalated",
-                                build_event_payload(
-                                    run_id,
-                                    "review",
-                                    "partial",
-                                    "review escalated to full tree",
-                                    task_id=task.task_id,
-                                    worker_id=candidate["worker_id"],
-                                    reason="needs_context",
-                                    review_mode=review_mode,
+                            _gate_decision_packet(
+                                store=workflow_store,
+                                run_id=run_id,
+                                task_id=task.task_id,
+                                gate="review",
+                                attempt=review_attempt,
+                                failure_class=review_classification.failure_class,
+                                summary=review_classification.summary,
+                                required=gate_outcome.decision_packet_required,
+                                payload=gate_runner.decision_packet_payload(
+                                    gate="review",
+                                    status=review_status,
+                                    result=review,
+                                    candidate=candidate_snapshot,
+                                    next_action=review_classification.next_action,
+                                    policy_reason=decision.reason,
                                 ),
                             )
-                            continue
-                        if review_status == "approved":
+                            record_quality_decision(
+                                journal,
+                                run_id=run_id,
+                                task_id=task.task_id,
+                                decision=decision.action,
+                                reason=decision.reason,
+                                outcome=decision.outcome,
+                                diagnosis_status=None,
+                            )
+                            db.set_merge_candidate_status(
+                                candidate_id,
+                                "changes_requested" if review_status == "changes_requested" else "review_rejected",
+                            )
+                            if gate_outcome.action in {"retry_implementer", "redispatch_from_latest_checkpoint"}:
+                                review_retries += 1
+                                implementer_context = _retry_context(decision.reason, review, _merge_candidate(db, candidate_id))
+                                _record_gate_retry(
+                                    journal,
+                                    run_id=run_id,
+                                    task_id=task.task_id,
+                                    reason=decision.reason,
+                                    next_attempt=implementer_attempt + 1,
+                                )
+                                continue
+                            db.set_task_status(task.task_id, "blocked")
+                            _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason=decision.reason)
+                            break
+                        db.set_task_status(task.task_id, "verifying")
+                        journal.record(
+                            "agentrunway.verification_dispatched",
+                            build_event_payload(run_id, "verification", "success", "verification dispatched", task_id=task.task_id),
+                        )
+                        _, verification_attempt = next_worker_id(db=db, task_id=task.task_id, role="verifier")
+                        verification_worker_id = f"{task.task_id}-verifier-{verification_attempt:03d}"
+                        verification_activity_id = f"{task.task_id}.verification.{verification_attempt:03d}"
+                        verification_result_path = (
+                            run_dir / "artifacts" / task.task_id / verification_worker_id / "verification_result.json"
+                        )
+                        activity_runner.start(
+                            activity_id=verification_activity_id,
+                            idempotency_key=f"{run_id}:{task.task_id}:verification:{verification_attempt:03d}",
+                            task_id=task.task_id,
+                            activity_type="verification",
+                            input_refs={
+                                "candidate_id": candidate_id,
+                                "worker_id": candidate["worker_id"],
+                                "review_status": review_status,
+                            },
+                        )
+                        verification = _local_first_verification(
+                            db=db,
+                            task=task,
+                            candidate=candidate,
+                            diff=diff,
+                            run_dir=run_dir,
+                            worker_id=verification_worker_id,
+                            attempt=verification_attempt,
+                            output_path=verification_result_path,
+                        )
+                        if verification is None:
+                            verification = run_verifier_attempt(
+                                db=db,
+                                run_id=run_id,
+                                git=git,
+                                worktree_root=worktree_root,
+                                run_dir=run_dir,
+                                task=task,
+                                adapter=adapter,
+                                runtime=runtime,
+                                model=model,
+                                reasoning_effort=reasoning_effort,
+                                commits=tuple(candidate["commits"]),
+                                changed_files=tuple(candidate["changed_files"]),
+                                review_status=review_status,
+                                attempt=verification_attempt,
+                                timeout_seconds=600,
+                            )
+                        verification_status = str(verification["status"])
+                        journal.record(
+                            "agentrunway.verification_result",
+                            build_event_payload(
+                                run_id,
+                                "verification",
+                                "success" if verification_status == "passed" else "partial",
+                                "verification result",
+                                task_id=task.task_id,
+                                status=verification_status,
+                            ),
+                        )
+                        if verification_status == "passed":
                             activity_runner.complete(
-                                activity_id=review_activity_id,
+                                activity_id=verification_activity_id,
                                 status=ActivityStatus.COMPLETED,
                                 output_refs={
                                     "candidate_id": candidate_id,
-                                    "review_status": review_status,
-                                    "review_mode": review_mode,
-                                    "review_result": _artifact_ref(run_dir, review_result_path),
+                                    "verification_status": verification_status,
+                                    "verification_result": _artifact_ref(run_dir, verification_result_path),
                                 },
                                 failure_class=None,
                             )
-                        break
-                    if review_status != "approved":
+                            db.set_merge_candidate_status(candidate_id, "merge_ready")
+                            db.set_task_status(task.task_id, "merge_ready")
+                            journal.record(
+                                "agentrunway.merge_ready",
+                                build_event_payload(run_id, "merge", "success", "merge ready", task_id=task.task_id, candidate_id=candidate_id),
+                            )
+                            merge_ready_candidate_ids.append(candidate_id)
+                            if len(merge_ready_candidate_ids) >= target_candidate_count:
+                                break
+                            review_retries = 0
+                            verification_retries = 0
+                            implementer_context = None
+                            continue
                         candidate_snapshot = _merge_candidate(db, candidate_id)
-                        review_classification = review_classification or classify_gate_failure(
-                            gate="review",
-                            status=review_status,
-                            result=review,
+                        verification_classification = classify_gate_failure(
+                            gate="verification",
+                            status=verification_status,
+                            result=verification,
                             candidate=candidate_snapshot,
                             task_acceptance_commands=list(task.acceptance_commands),
                         )
                         gate_outcome = gate_runner.decide(
                             task=task,
-                            gate="review",
-                            status=review_status,
-                            result=review,
+                            gate="verification",
+                            status=verification_status,
+                            result=verification,
                             candidate=candidate_snapshot,
-                            previous_retries=review_retries,
+                            previous_retries=verification_retries,
                         )
                         decision = gate_outcome.policy
                         activity_runner.complete(
-                            activity_id=review_activity_id,
+                            activity_id=verification_activity_id,
                             status=_gate_activity_status(
-                                failure_class=review_classification.failure_class,
+                                failure_class=verification_classification.failure_class,
                                 decision=decision,
                                 decision_packet_required=gate_outcome.decision_packet_required,
                             ),
                             output_refs={
                                 "candidate_id": candidate_id,
-                                "review_status": review_status,
-                                "review_mode": review_mode,
-                                "review_result": _artifact_ref(run_dir, review_result_path),
-                                "classification": review_classification.to_dict(),
+                                "verification_status": verification_status,
+                                "verification_result": _artifact_ref(run_dir, verification_result_path),
+                                "classification": verification_classification.to_dict(),
                             },
-                            failure_class=review_classification.failure_class,
+                            failure_class=verification_classification.failure_class,
                         )
                         _gate_decision_packet(
                             store=workflow_store,
                             run_id=run_id,
                             task_id=task.task_id,
-                            gate="review",
-                            attempt=review_attempt,
-                            failure_class=review_classification.failure_class,
-                            summary=review_classification.summary,
+                            gate="verification",
+                            attempt=verification_attempt,
+                            failure_class=verification_classification.failure_class,
+                            summary=verification_classification.summary,
                             required=gate_outcome.decision_packet_required,
                             payload=gate_runner.decision_packet_payload(
-                                gate="review",
-                                status=review_status,
-                                result=review,
+                                gate="verification",
+                                status=verification_status,
+                                result=verification,
                                 candidate=candidate_snapshot,
-                                next_action=review_classification.next_action,
+                                next_action=verification_classification.next_action,
                                 policy_reason=decision.reason,
                             ),
                         )
@@ -788,13 +1318,13 @@ def run(args: Any) -> dict[str, Any]:
                             outcome=decision.outcome,
                             diagnosis_status=None,
                         )
-                        db.set_merge_candidate_status(
-                            candidate_id,
-                            "changes_requested" if review_status == "changes_requested" else "review_rejected",
-                        )
+                        if verification_status == "failed":
+                            db.set_merge_candidate_status(candidate_id, "verification_failed")
+                        else:
+                            db.set_merge_candidate_status(candidate_id, "verification_blocked")
                         if gate_outcome.action in {"retry_implementer", "redispatch_from_latest_checkpoint"}:
-                            review_retries += 1
-                            implementer_context = _retry_context(decision.reason, review, _merge_candidate(db, candidate_id))
+                            verification_retries += 1
+                            implementer_context = _retry_context(decision.reason, verification, _merge_candidate(db, candidate_id))
                             _record_gate_retry(
                                 journal,
                                 run_id=run_id,
@@ -806,158 +1336,6 @@ def run(args: Any) -> dict[str, Any]:
                         db.set_task_status(task.task_id, "blocked")
                         _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason=decision.reason)
                         break
-                    db.set_task_status(task.task_id, "verifying")
-                    journal.record(
-                        "agentrunway.verification_dispatched",
-                        build_event_payload(run_id, "verification", "success", "verification dispatched", task_id=task.task_id),
-                    )
-                    _, verification_attempt = next_worker_id(db=db, task_id=task.task_id, role="verifier")
-                    verification_worker_id = f"{task.task_id}-verifier-{verification_attempt:03d}"
-                    verification_activity_id = f"{task.task_id}.verification.{verification_attempt:03d}"
-                    verification_result_path = (
-                        run_dir / "artifacts" / task.task_id / verification_worker_id / "verification_result.json"
-                    )
-                    activity_runner.start(
-                        activity_id=verification_activity_id,
-                        idempotency_key=f"{run_id}:{task.task_id}:verification:{verification_attempt:03d}",
-                        task_id=task.task_id,
-                        activity_type="verification",
-                        input_refs={
-                            "candidate_id": candidate_id,
-                            "worker_id": candidate["worker_id"],
-                            "review_status": review_status,
-                        },
-                    )
-                    verification = run_verifier_attempt(
-                        db=db,
-                        run_id=run_id,
-                        git=git,
-                        worktree_root=worktree_root,
-                        run_dir=run_dir,
-                        task=task,
-                        adapter=adapter,
-                        runtime=runtime,
-                        model=model,
-                        reasoning_effort=reasoning_effort,
-                        commits=tuple(candidate["commits"]),
-                        changed_files=tuple(candidate["changed_files"]),
-                        review_status=review_status,
-                        attempt=verification_attempt,
-                        timeout_seconds=600,
-                    )
-                    verification_status = str(verification["status"])
-                    journal.record(
-                        "agentrunway.verification_result",
-                        build_event_payload(
-                            run_id,
-                            "verification",
-                            "success" if verification_status == "passed" else "partial",
-                            "verification result",
-                            task_id=task.task_id,
-                            status=verification_status,
-                        ),
-                    )
-                    if verification_status == "passed":
-                        activity_runner.complete(
-                            activity_id=verification_activity_id,
-                            status=ActivityStatus.COMPLETED,
-                            output_refs={
-                                "candidate_id": candidate_id,
-                                "verification_status": verification_status,
-                                "verification_result": _artifact_ref(run_dir, verification_result_path),
-                            },
-                            failure_class=None,
-                        )
-                        db.set_merge_candidate_status(candidate_id, "merge_ready")
-                        db.set_task_status(task.task_id, "merge_ready")
-                        journal.record(
-                            "agentrunway.merge_ready",
-                            build_event_payload(run_id, "merge", "success", "merge ready", task_id=task.task_id, candidate_id=candidate_id),
-                        )
-                        merge_ready_candidate_ids.append(candidate_id)
-                        if len(merge_ready_candidate_ids) >= target_candidate_count:
-                            break
-                        review_retries = 0
-                        verification_retries = 0
-                        implementer_context = None
-                        continue
-                    candidate_snapshot = _merge_candidate(db, candidate_id)
-                    verification_classification = classify_gate_failure(
-                        gate="verification",
-                        status=verification_status,
-                        result=verification,
-                        candidate=candidate_snapshot,
-                        task_acceptance_commands=list(task.acceptance_commands),
-                    )
-                    gate_outcome = gate_runner.decide(
-                        task=task,
-                        gate="verification",
-                        status=verification_status,
-                        result=verification,
-                        candidate=candidate_snapshot,
-                        previous_retries=verification_retries,
-                    )
-                    decision = gate_outcome.policy
-                    activity_runner.complete(
-                        activity_id=verification_activity_id,
-                        status=_gate_activity_status(
-                            failure_class=verification_classification.failure_class,
-                            decision=decision,
-                            decision_packet_required=gate_outcome.decision_packet_required,
-                        ),
-                        output_refs={
-                            "candidate_id": candidate_id,
-                            "verification_status": verification_status,
-                            "verification_result": _artifact_ref(run_dir, verification_result_path),
-                            "classification": verification_classification.to_dict(),
-                        },
-                        failure_class=verification_classification.failure_class,
-                    )
-                    _gate_decision_packet(
-                        store=workflow_store,
-                        run_id=run_id,
-                        task_id=task.task_id,
-                        gate="verification",
-                        attempt=verification_attempt,
-                        failure_class=verification_classification.failure_class,
-                        summary=verification_classification.summary,
-                        required=gate_outcome.decision_packet_required,
-                        payload=gate_runner.decision_packet_payload(
-                            gate="verification",
-                            status=verification_status,
-                            result=verification,
-                            candidate=candidate_snapshot,
-                            next_action=verification_classification.next_action,
-                            policy_reason=decision.reason,
-                        ),
-                    )
-                    record_quality_decision(
-                        journal,
-                        run_id=run_id,
-                        task_id=task.task_id,
-                        decision=decision.action,
-                        reason=decision.reason,
-                        outcome=decision.outcome,
-                        diagnosis_status=None,
-                    )
-                    if verification_status == "failed":
-                        db.set_merge_candidate_status(candidate_id, "verification_failed")
-                    else:
-                        db.set_merge_candidate_status(candidate_id, "verification_blocked")
-                    if gate_outcome.action in {"retry_implementer", "redispatch_from_latest_checkpoint"}:
-                        verification_retries += 1
-                        implementer_context = _retry_context(decision.reason, verification, _merge_candidate(db, candidate_id))
-                        _record_gate_retry(
-                            journal,
-                            run_id=run_id,
-                            task_id=task.task_id,
-                            reason=decision.reason,
-                            next_attempt=implementer_attempt + 1,
-                        )
-                        continue
-                    db.set_task_status(task.task_id, "blocked")
-                    _record_run_blocked(journal, run_id=run_id, task_id=task.task_id, reason=decision.reason)
-                    break
                 ready_candidates = [
                     candidate
                     for candidate in db.list_merge_candidates()

@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -42,6 +43,11 @@ def map_value(name: str, task_id: str, default: str | None = None) -> str | None
     if value is None:
         return default
     return str(value)
+
+
+def set_value(name: str) -> set[str]:
+    raw = os.environ.get(name, "")
+    return {item.strip() for item in raw.split(",") if item.strip()}
 
 
 def main() -> int:
@@ -89,6 +95,24 @@ def main() -> int:
         print("fake codex wrote verification")
         return 0
     task_id = os.environ["AGENTRUNWAY_TASK_ID"]
+    sleep_seconds = float(
+        map_value(
+            "AGENTRUNWAY_FAKE_IMPLEMENT_SLEEP_SECONDS_MAP",
+            task_id,
+            os.environ.get("AGENTRUNWAY_FAKE_IMPLEMENT_SLEEP_SECONDS", "0"),
+        )
+        or "0"
+    )
+    timing_log = os.environ.get("AGENTRUNWAY_FAKE_TIMING_LOG")
+    if timing_log:
+        Path(timing_log).parent.mkdir(parents=True, exist_ok=True)
+        with Path(timing_log).open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"worker_id": os.environ["AGENTRUNWAY_WORKER_ID"], "event": "start", "time": time.monotonic()}) + "\n")
+    if task_id in set_value("AGENTRUNWAY_FAKE_FAIL_TASKS"):
+        print(f"fake codex forced failure for {task_id}", file=sys.stderr)
+        return 2
+    if sleep_seconds > 0:
+        time.sleep(sleep_seconds)
     target = Path(
         map_value(
             "AGENTRUNWAY_FAKE_TARGET_MAP",
@@ -128,6 +152,9 @@ def main() -> int:
     }
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    if timing_log:
+        with Path(timing_log).open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps({"worker_id": os.environ["AGENTRUNWAY_WORKER_ID"], "event": "end", "time": time.monotonic()}) + "\n")
     print("fake codex wrote result")
     return 0
 

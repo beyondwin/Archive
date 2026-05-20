@@ -52,13 +52,36 @@ def _parse_simple_yaml(path: Path) -> dict[str, Any]:
         if text.strip().startswith("{"):
             return json.loads(text)
         data: dict[str, Any] = {}
+        stack: list[tuple[int, dict[str, Any]]] = [(-1, data)]
         for line in text.splitlines():
-            if ":" in line and not line.startswith(" "):
-                key, value = line.split(":", 1)
-                data[key.strip()] = value.strip() or {}
+            if not line.strip() or line.lstrip().startswith("#") or ":" not in line:
+                continue
+            indent = len(line) - len(line.lstrip(" "))
+            key, value = line.strip().split(":", 1)
+            while stack and indent <= stack[-1][0]:
+                stack.pop()
+            parent = stack[-1][1] if stack else data
+            raw_value = value.strip()
+            if raw_value:
+                parent[key.strip()] = _coerce_simple_yaml_scalar(raw_value)
+            else:
+                child: dict[str, Any] = {}
+                parent[key.strip()] = child
+                stack.append((indent, child))
         return data
     loaded = yaml.safe_load(text)
     return loaded if isinstance(loaded, dict) else {}
+
+
+def _coerce_simple_yaml_scalar(value: str) -> Any:
+    if value in {"true", "True"}:
+        return True
+    if value in {"false", "False"}:
+        return False
+    try:
+        return int(value)
+    except ValueError:
+        return value.strip('"').strip("'")
 
 
 def resolve_reasoning(runtime: str, requested: str) -> tuple[str, str]:
