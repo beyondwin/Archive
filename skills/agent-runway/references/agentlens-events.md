@@ -2,6 +2,39 @@ Source-of-truth: the design document wins when this reference and code disagree.
 
 # AgentLens Events
 
-AgentRunway emits `agentrunway.*` events from the runner only. Emission is best-effort and must not block execution.
+AgentRunway records runner-validated facts locally before attempting best-effort
+AgentLens emission. The local journal is `events.jsonl` in the run directory.
+SQLite table `agentlens_events` is the outbox and stores one of:
 
-Payloads use redaction for home paths and secret-like values before writing AgentLens evidence.
+- `agentlens_disabled` (no emitter configured; event is local-only)
+- `agentlens_emitted` (emit attempt returned without raising)
+- `agentlens_failed` (emit attempt raised; `error` column records the reason)
+
+The local journal write always succeeds before the emit attempt, so every
+status implies a durable `events.jsonl` row and a matching
+`agentlens_events` row.
+
+Core event types:
+
+- `agentrunway.run_started`
+- `agentrunway.contract_created`
+- `agentrunway.worker_dispatched`
+- `agentrunway.worker_result`
+- `agentrunway.worker_rejected`
+- `agentrunway.review_dispatched`
+- `agentrunway.review_result`
+- `agentrunway.verification_dispatched`
+- `agentrunway.verification_result`
+- `agentrunway.merge_ready`
+- `agentrunway.merge_applied`
+- `agentrunway.merge_conflict`
+- `agentrunway.resume_planned`
+- `agentrunway.resume_action`
+- `agentrunway.apply_started`
+- `agentrunway.apply_finished`
+- `agentrunway.run_finished`
+- `agentrunway.run_blocked`
+
+Payload redaction happens before local write and before AgentLens emission. Home
+paths become `~`; secret-like keys such as `token`, `api_key`, `secret`, and
+`password` become `[REDACTED]`.
