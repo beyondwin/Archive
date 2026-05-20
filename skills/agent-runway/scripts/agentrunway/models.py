@@ -175,3 +175,38 @@ class WorkerResult:
     commands_run: list[dict[str, Any]] = field(default_factory=list)
     method_audit: dict[str, Any] = field(default_factory=dict)
     residual_risks: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RunContract:
+    run_id: str
+    workspace_id: str
+    repo_root: str
+    base_commit_sha: str
+    spec: dict[str, Any]
+    plan: dict[str, Any]
+    tasks: tuple[dict[str, Any], ...]
+    adapter: str
+    model_profile: str
+    policy: dict[str, Any]
+    coverage: dict[str, list[str]]
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class ArtifactGraphNode:
+    id: str
+    kind: str
+    status: str
+    path: str | None = None
+    task_id: str | None = None
+    worker_id: str | None = None
+    detail: str | None = None
+
+
+@dataclass(frozen=True)
+class ReconciliationAction:
+    target: str
+    action: str
+    reason: str
+    writes: bool = False
