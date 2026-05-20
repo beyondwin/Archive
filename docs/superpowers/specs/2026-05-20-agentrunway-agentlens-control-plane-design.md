@@ -30,6 +30,117 @@ agentrunway.*
 This design does not introduce `kws.orchestrator.*`, `kws-cpe.*`, or
 `kws-cme.*` as supported AgentLens/AgentRunway surfaces.
 
+## 1.5 Code Audit Findings (2026-05-20)
+
+A read of `skills/agent-runway/scripts/agentrunway/*.py` and
+`AgentLens/src/agentlens/**/*.py` against this design surfaced the following
+gaps. They are recorded here so the implementation plan and downstream tasks
+can address them explicitly.
+
+### 1.5.1 Event coverage gap
+
+`skills/agent-runway/scripts/agentrunway/runner.py` emits
+`agentrunway.run_started`, `agentrunway.contract_created`,
+`agentrunway.review_dispatched`, `agentrunway.review_result`,
+`agentrunway.verification_dispatched`, `agentrunway.verification_result`,
+`agentrunway.gate_retry`, `agentrunway.merge_ready`, and
+`agentrunway.run_finished`. Section 5.1 of this design also lists
+`agentrunway.worker_dispatched`, `agentrunway.worker_result`,
+`agentrunway.merge_conflict`, and `agentrunway.run_blocked` as core events,
+but the runner does not emit them. The implementation plan must either emit
+those events (preferred) or narrow §5.1 to the events the runner actually
+produces.
+
+The merge-loop path that already detects `MergeConflictError` and the path
+that calls `db.set_task_status(task.task_id, "blocked")` after exhausted
+retries are the natural emit sites for `agentrunway.merge_conflict` and
+`agentrunway.run_blocked`. `agentrunway.worker_dispatched` and
+`agentrunway.worker_result` should bracket each `run_implementer_attempt`
+call so AgentLens can observe attempt-level evidence, not only gate-level
+evidence.
+
+### 1.5.2 Outcome semantics
+
+`build_event_payload()` in `events.py` derives `severity` from `outcome` and
+defaults `outcome="success"` for every routine emit, including gate
+dispatches and gate results. The actual pass/fail of a gate is carried in
+the event-specific `status` field (`approved`, `changes_requested`,
+`passed`, `failed`). AgentLens projections that branch on `outcome` will
+therefore see every event as `success` even when the underlying gate
+failed.
+
+The design adopts the following convention so projections can be written
+without re-interpreting per-event fields:
+
+- `outcome="success"` only when the event represents a successful outcome
+  of the action it names (e.g. `verification_result` with `status="passed"`,
+  `merge_ready`, `run_finished` for a non-blocked run).
+- `outcome="partial"` for retries, blocked review/verification, and merge
+  conflicts.
+- `outcome="failed"` for terminal failures, e.g. `run_blocked` and
+  `run_finished` for a run that ended with any blocked tasks.
+- Dispatch events (`*_dispatched`) keep `outcome="success"` because the
+  dispatch itself succeeded; the gate's verdict is reported on the matching
+  `*_result` event.
+
+### 1.5.3 AgentLens emit health is split across two stores
+
+`db.agentlens_summary()` only reads `agentlens_events`. The
+`runs.agentlens_status` column (set by `set_run_agentlens` in the plan) is
+not surfaced. A run with `agentlens_status="disabled"` and a run with
+`agentlens_status="active"` whose emits all succeeded are indistinguishable
+from a single-row event view. Plan Task 5 and Task 6 must extend
+`agentlens_summary()` to also return `run_status` from the `runs` table so
+`status`/`inspect` can answer "is AgentLens active, disabled, or failing"
+correctly.
+
+### 1.5.4 Worktree cleanup is in scope but unimplemented in the plan
+
+Section 5.4 lists "orphan worker worktrees" as a cleanup target. The
+implementation plan only classifies `runs/<workspace>/<run_id>` directories.
+`worktrees/<workspace>/<run_id>` is allocated by `_state_paths()` and is
+not deleted when a run directory is removed. The plan must also classify
+and clean orphan worktree roots when their matching run directory is gone
+or older than the retention window.
+
+### 1.5.5 Payload size is unbounded above `summary`
+
+`build_event_payload()` caps the `summary` string at 1200 characters but
+does not cap the total payload byte size. Gate-retry events embed
+`previous_candidate`, `gate_result`, and `changed_files` via
+`_retry_context()`; large diffs or long gate reports can produce payloads
+well above the 4096-byte threshold that
+`AgentLens/src/agentlens/evaluator/agentrunway_events.py` flags as
+`oversized`. The emitter should either truncate large extras at write time
+or accept that AgentLens may downgrade `payload_safety` for legitimate
+runs.
+
+### 1.5.6 Cleanup safety vs. concurrent access
+
+`agentrunway clean` removes `runs/<workspace>/<run_id>` directories that
+contain `state.sqlite`. A detached run that is still alive holds that
+SQLite file open. The retention planner must refuse to remove a run
+directory whose `run.json` reports `status="running"` regardless of age,
+and should additionally treat the presence of a lock file (or `pidfile`
+under `.agentrunway-detached`) as a hard block.
+
+### 1.5.7 Detach re-entry must not re-resolve plan/spec across cwds
+
+The detached subprocess re-executes `agentrunway run --plan ... --spec ...`
+with the original (possibly relative) argv. If the parent and the
+subprocess have the same cwd this is fine, but the launcher sets
+`cwd=repo_root`, which may differ from the operator's invocation cwd. The
+plan must require the launcher to absolute-ize `--plan` and `--spec` in
+the rebuilt argv before launching the detached process.
+
+### 1.5.8 Reconciliation cherry-pick guard
+
+`plan_reconciliation()` will be extended to detect interrupted cherry-pick
+state on `run.json.main_worktree`. `Path("")` evaluates to `Path(".")`,
+which is truthy, so a missing or empty `main_worktree` would silently
+check the current process cwd. The implementation must guard explicitly on
+the *string* value before constructing a `Path`.
+
 ## 2. Goals
 
 - Make AgentRunway the only supported plan-executor integration target for
