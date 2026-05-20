@@ -9,6 +9,7 @@ from .db import AgentRunwayDb
 from .file_claims import validate_changed_files
 from .git_ops import Git, changed_files_between, commits_between
 from .models import TaskSpec, WorkerSpec
+from .packetizer import materialize_role_prompt
 from .result_validation import validate_review_result, validate_verification_result, validate_worker_result
 from .worktrees import create_worker_worktree
 
@@ -81,6 +82,7 @@ def run_worker_attempt(
         artifact_dir=str(output_path.parent),
         timeout_seconds=timeout_seconds,
         attempt=attempt,
+        metadata=dict(metadata or {}),
     )
     db.create_worker_attempt(
         worker_id=worker_id,
@@ -164,3 +166,129 @@ def run_implementer_attempt(
     output_path.write_text(json.dumps(envelope.result_json, indent=2, sort_keys=True), encoding="utf-8")
     (artifact_dir / "envelope.json").write_text(json.dumps(asdict(envelope), indent=2, sort_keys=True), encoding="utf-8")
     return candidate_id
+
+
+def run_reviewer_attempt(
+    *,
+    db: AgentRunwayDb,
+    run_id: str,
+    git: Git,
+    worktree_root: Path,
+    run_dir: Path,
+    task: TaskSpec,
+    adapter: RuntimeAdapter,
+    runtime: str,
+    model: str,
+    reasoning_effort: str,
+    reviewed_worker_id: str,
+    candidate_diff: str,
+    attempt: int,
+    timeout_seconds: int,
+    fake_review_status: str | None = None,
+) -> dict[str, object]:
+    worker_id = f"{task.task_id}-reviewer-{attempt:03d}"
+    output_path = run_dir / "artifacts" / task.task_id / worker_id / "review_result.json"
+    prompt_path = materialize_role_prompt(
+        role="reviewer",
+        task=task,
+        worker_id=worker_id,
+        packet_path=run_dir / "packets" / f"{task.task_id}.json",
+        output_path=output_path,
+        prompt_dir=run_dir / "prompts",
+        context={"reviewed_worker_id": reviewed_worker_id, "diff": candidate_diff},
+    )
+    metadata = {"AGENTRUNWAY_REVIEWED_WORKER_ID": reviewed_worker_id}
+    if fake_review_status:
+        metadata["AGENTRUNWAY_FAKE_REVIEW_STATUS"] = fake_review_status
+    envelope = run_worker_attempt(
+        db=db,
+        run_id=run_id,
+        git=git,
+        worktree_root=worktree_root,
+        run_dir=run_dir,
+        task=task,
+        packet_path=run_dir / "packets" / f"{task.task_id}.json",
+        prompt_path=prompt_path,
+        output_path=output_path,
+        adapter=adapter,
+        runtime=runtime,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        role="reviewer",
+        base_ref=f"agentrunway/{run_id}/main",
+        attempt=attempt,
+        timeout_seconds=timeout_seconds,
+        metadata=metadata,
+    )
+    if envelope.result_json is None:
+        db.set_worker_state(worker_id, "malformed_result")
+        raise RuntimeError("missing_review_result")
+    result = validate_review_result(envelope.result_json)
+    db.set_worker_state(worker_id, "validated")
+    return result
+
+
+def run_verifier_attempt(
+    *,
+    db: AgentRunwayDb,
+    run_id: str,
+    git: Git,
+    worktree_root: Path,
+    run_dir: Path,
+    task: TaskSpec,
+    adapter: RuntimeAdapter,
+    runtime: str,
+    model: str,
+    reasoning_effort: str,
+    commits: tuple[str, ...],
+    changed_files: tuple[str, ...],
+    review_status: str,
+    attempt: int,
+    timeout_seconds: int,
+    fake_verify_status: str | None = None,
+) -> dict[str, object]:
+    worker_id = f"{task.task_id}-verifier-{attempt:03d}"
+    output_path = run_dir / "artifacts" / task.task_id / worker_id / "verification_result.json"
+    prompt_path = materialize_role_prompt(
+        role="verifier",
+        task=task,
+        worker_id=worker_id,
+        packet_path=run_dir / "packets" / f"{task.task_id}.json",
+        output_path=output_path,
+        prompt_dir=run_dir / "prompts",
+        context={
+            "commits": list(commits),
+            "changed_files": list(changed_files),
+            "acceptance_commands": list(task.acceptance_commands),
+            "review_status": review_status,
+        },
+    )
+    metadata: dict[str, str] = {}
+    if fake_verify_status:
+        metadata["AGENTRUNWAY_FAKE_VERIFY_STATUS"] = fake_verify_status
+    envelope = run_worker_attempt(
+        db=db,
+        run_id=run_id,
+        git=git,
+        worktree_root=worktree_root,
+        run_dir=run_dir,
+        task=task,
+        packet_path=run_dir / "packets" / f"{task.task_id}.json",
+        prompt_path=prompt_path,
+        output_path=output_path,
+        adapter=adapter,
+        runtime=runtime,
+        model=model,
+        reasoning_effort=reasoning_effort,
+        role="verifier",
+        base_ref=f"agentrunway/{run_id}/main",
+        attempt=attempt,
+        timeout_seconds=timeout_seconds,
+        metadata=metadata,
+    )
+    if envelope.result_json is None:
+        db.set_worker_state(worker_id, "malformed_result")
+        raise RuntimeError("missing_verification_result")
+    result = validate_verification_result(envelope.result_json)
+    db.set_worker_state(worker_id, "validated")
+    return result

@@ -9,6 +9,35 @@ from pathlib import Path
 
 def main() -> int:
     output = Path(os.environ["AGENTRUNWAY_WORKER_OUTPUT"])
+    role = os.environ.get("AGENTRUNWAY_WORKER_ROLE", "implementer")
+    if role == "reviewer":
+        payload = {
+            "schema": "agentrunway.review_result.v1",
+            "worker_id": os.environ["AGENTRUNWAY_WORKER_ID"],
+            "task_id": os.environ["AGENTRUNWAY_TASK_ID"],
+            "reviewed_worker_id": os.environ.get("AGENTRUNWAY_REVIEWED_WORKER_ID", ""),
+            "status": os.environ.get("AGENTRUNWAY_FAKE_REVIEW_STATUS", "approved"),
+            "checks": [{"name": "fake review", "status": "passed"}],
+            "findings": [],
+            "method_audit": {"superpowers_used": True},
+        }
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        print("fake claude wrote review")
+        return 0
+    if role == "verifier":
+        payload = {
+            "schema": "agentrunway.verification_result.v1",
+            "worker_id": os.environ["AGENTRUNWAY_WORKER_ID"],
+            "task_id": os.environ["AGENTRUNWAY_TASK_ID"],
+            "status": os.environ.get("AGENTRUNWAY_FAKE_VERIFY_STATUS", "passed"),
+            "checks": [{"command": "fake acceptance", "status": "passed"}],
+            "method_audit": {"superpowers_used": True},
+        }
+        output.parent.mkdir(parents=True, exist_ok=True)
+        output.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+        print("fake claude wrote verification")
+        return 0
     target = Path(os.environ.get("AGENTRUNWAY_FAKE_TARGET", "src/claude_worker.py"))
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("VALUE = 'claude'\n", encoding="utf-8")
@@ -19,7 +48,7 @@ def main() -> int:
         "schema": "agentrunway.worker_result.v1",
         "worker_id": os.environ["AGENTRUNWAY_WORKER_ID"],
         "task_id": os.environ["AGENTRUNWAY_TASK_ID"],
-        "role": os.environ.get("AGENTRUNWAY_WORKER_ROLE", "implementer"),
+        "role": role,
         "status": "success",
         "changed_files": [str(target)],
         "commit": commit,

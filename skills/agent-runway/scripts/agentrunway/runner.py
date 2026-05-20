@@ -26,7 +26,7 @@ from .packetizer import build_task_packet, materialize_prompt, materialize_worke
 from .plan_parser import canonical_hash, parse_plan, parse_spec_manifest
 from .reconciliation import apply_reconciliation_plan, plan_reconciliation
 from .scheduler import schedule_waves
-from .supervisor import run_implementer_attempt
+from .supervisor import run_implementer_attempt, run_reviewer_attempt, run_verifier_attempt
 from .worktrees import create_main_worktree, next_available_run_id, workspace_id
 
 
@@ -96,6 +96,19 @@ def _select_adapter(name: str, profile: ModelProfile, *, fake_success: bool = Fa
     if name == "claude":
         return ClaudeAdapter(model=model.model, reasoning_effort=effort), "claude", model.model, effort
     raise ValueError(f"unsupported adapter: {name}")
+
+
+def _merge_candidate(db: AgentRunwayDb, candidate_id: int) -> dict[str, Any]:
+    for candidate in db.list_merge_candidates():
+        if int(candidate["id"]) == candidate_id:
+            return candidate
+    raise KeyError(candidate_id)
+
+
+def _candidate_diff(db: AgentRunwayDb, candidate: dict[str, Any], base_ref: str) -> str:
+    worker = db.get_worker(str(candidate["worker_id"]))
+    worker_tree = Path(str(worker["worktree_path"]))
+    return Git(worker_tree).run("diff", base_ref, "HEAD", check=False).stdout
 
 
 def run(args: Any) -> dict[str, Any]:
@@ -200,7 +213,7 @@ def run(args: Any) -> dict[str, Any]:
             worker_id = f"{task.task_id}-implementer-001"
             output_path = run_dir / "artifacts" / task.task_id / worker_id / "worker_result.json"
             prompt_path = materialize_worker_prompt(packet, packet_path, output_path, run_dir / "prompts")
-            run_implementer_attempt(
+            candidate_id = run_implementer_attempt(
                 db=db,
                 run_id=run_id,
                 git=git,
@@ -217,7 +230,74 @@ def run(args: Any) -> dict[str, Any]:
                 attempt=1,
                 timeout_seconds=600,
             )
-            db.set_task_status(task.task_id, "merge_ready")
+            candidate = _merge_candidate(db, candidate_id)
+            base_ref = f"agentrunway/{run_id}/main"
+            diff = _candidate_diff(db, candidate, base_ref)
+            db.set_task_status(task.task_id, "reviewing")
+            journal.record(
+                "agentrunway.review_dispatched",
+                build_event_payload(run_id, "review", "success", "review dispatched", task_id=task.task_id, worker_id=candidate["worker_id"]),
+            )
+            review = run_reviewer_attempt(
+                db=db,
+                run_id=run_id,
+                git=git,
+                worktree_root=worktree_root,
+                run_dir=run_dir,
+                task=task,
+                adapter=adapter,
+                runtime=runtime,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                reviewed_worker_id=str(candidate["worker_id"]),
+                candidate_diff=diff,
+                attempt=1,
+                timeout_seconds=600,
+            )
+            review_status = str(review["status"])
+            journal.record(
+                "agentrunway.review_result",
+                build_event_payload(run_id, "review", "success", "review result", task_id=task.task_id, status=review_status),
+            )
+            if review_status != "approved":
+                db.set_task_status(task.task_id, "blocked")
+                continue
+            db.set_task_status(task.task_id, "verifying")
+            journal.record(
+                "agentrunway.verification_dispatched",
+                build_event_payload(run_id, "verification", "success", "verification dispatched", task_id=task.task_id),
+            )
+            verification = run_verifier_attempt(
+                db=db,
+                run_id=run_id,
+                git=git,
+                worktree_root=worktree_root,
+                run_dir=run_dir,
+                task=task,
+                adapter=adapter,
+                runtime=runtime,
+                model=model,
+                reasoning_effort=reasoning_effort,
+                commits=tuple(candidate["commits"]),
+                changed_files=tuple(candidate["changed_files"]),
+                review_status=review_status,
+                attempt=1,
+                timeout_seconds=600,
+            )
+            verification_status = str(verification["status"])
+            journal.record(
+                "agentrunway.verification_result",
+                build_event_payload(run_id, "verification", "success", "verification result", task_id=task.task_id, status=verification_status),
+            )
+            if verification_status == "passed":
+                db.set_merge_candidate_status(candidate_id, "merge_ready")
+                db.set_task_status(task.task_id, "merge_ready")
+                journal.record(
+                    "agentrunway.merge_ready",
+                    build_event_payload(run_id, "merge", "success", "merge ready", task_id=task.task_id, candidate_id=candidate_id),
+                )
+            else:
+                db.set_task_status(task.task_id, "blocked")
     for candidate in db.list_merge_candidates():
         if candidate["status"] != "merge_ready":
             continue
