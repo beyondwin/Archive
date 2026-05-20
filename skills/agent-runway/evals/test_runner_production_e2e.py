@@ -441,6 +441,51 @@ def test_agentlens_fake_cli_receives_runner_events(git_repo: Path, isolated_home
     assert event_rows[-1]["payload"]["outcome"] == "success"
 
 
+def test_finished_run_records_initial_and_task_checkpoints(git_repo: Path, isolated_home: Path) -> None:
+    plan, spec = _write_plan(git_repo, path="src/checkpointed.py")
+    env = os.environ.copy()
+    env["PATH"] = f"{FAKE_BIN}{os.pathsep}{env['PATH']}"
+    env["AGENTRUNWAY_FAKE_TARGET"] = "src/checkpointed.py"
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "run",
+            "--plan",
+            str(plan),
+            "--spec",
+            str(spec),
+            "--adapter",
+            "codex",
+        ],
+        cwd=git_repo,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    payload = json.loads(result.stdout)
+    conn = sqlite3.connect(payload["state_db"])
+    conn.row_factory = sqlite3.Row
+    checkpoints = conn.execute(
+        "SELECT checkpoint_id, parent_checkpoint_id, merged_candidate_id, reason FROM checkpoints ORDER BY checkpoint_id"
+    ).fetchall()
+    activities = conn.execute(
+        "SELECT task_id, activity_type, status, failure_class FROM activities ORDER BY activity_id"
+    ).fetchall()
+    selected = conn.execute("SELECT id FROM merge_queue WHERE status='merged'").fetchone()
+
+    assert payload["status"] == "finished"
+    assert [(row["checkpoint_id"], row["parent_checkpoint_id"], row["reason"]) for row in checkpoints] == [
+        ("cp-000", None, "initial"),
+        ("cp-001", "cp-000", "merged:task_001"),
+    ]
+    assert checkpoints[1]["merged_candidate_id"] == selected["id"]
+    assert [(row["task_id"], row["activity_type"], row["status"], row["failure_class"]) for row in activities] == [
+        ("task_001", "merge", "completed", None),
+    ]
+
+
 def test_high_risk_task_ranks_two_candidates(git_repo: Path, isolated_home: Path) -> None:
     plan, spec = _write_high_risk_plan(git_repo)
     env = os.environ.copy()
