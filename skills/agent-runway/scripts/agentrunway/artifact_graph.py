@@ -25,6 +25,20 @@ def _load_coverage(run_dir: Path) -> dict[str, list[str]]:
     return {"covered": [], "partial": [], "blocked": [], "unreferenced": []}
 
 
+def _derive_coverage(run_dir: Path, db: AgentRunwayDb) -> dict[str, list[str]]:
+    coverage = _load_coverage(run_dir)
+    blocked_refs: set[str] = set(coverage.get("blocked", []))
+    covered_refs: set[str] = set(coverage.get("covered", []))
+    for task in db.list_tasks():
+        refs = json.loads(task["spec_refs_json"]) if isinstance(task.get("spec_refs_json"), str) else []
+        if task["status"] == "blocked":
+            blocked_refs.update(refs)
+            covered_refs.difference_update(refs)
+    coverage["covered"] = sorted(covered_refs)
+    coverage["blocked"] = sorted(blocked_refs)
+    return coverage
+
+
 def build_artifact_graph(*, run_dir: Path, db: AgentRunwayDb) -> dict[str, Any]:
     nodes: list[dict[str, Any]] = [
         {
@@ -82,7 +96,7 @@ def build_artifact_graph(*, run_dir: Path, db: AgentRunwayDb) -> dict[str, Any]:
                 "detail": candidate["status"],
             }
         )
-    return {"nodes": nodes, "coverage": _load_coverage(run_dir)}
+    return {"nodes": nodes, "coverage": _derive_coverage(run_dir, db)}
 
 
 def write_artifact_graph(*, run_dir: Path, db: AgentRunwayDb) -> dict[str, Any]:

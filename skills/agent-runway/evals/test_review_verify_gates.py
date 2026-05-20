@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
 
+from agentrunway.artifact_graph import build_artifact_graph
 from agentrunway.db import AgentRunwayDb
 from agentrunway.models import FileClaim, TaskSpec
 from agentrunway.packetizer import materialize_role_prompt
@@ -92,3 +94,37 @@ def test_materialize_role_prompt_names_output_schema(tmp_path: Path) -> None:
     assert "agentrunway.review_result.v1" in text
     assert str(output_path) in text
     assert "task_001-implementer-001" in text
+
+
+def test_review_changes_requested_blocks_after_budget(tmp_path: Path) -> None:
+    db = AgentRunwayDb.open(tmp_path / "state.sqlite")
+    db.upsert_task(_task())
+    db.create_worker_attempt(
+        worker_id="task_001-reviewer-001",
+        task_id="task_001",
+        role="reviewer",
+        runtime="codex",
+        model="gpt-5.5",
+        reasoning_effort="high",
+        attempt=1,
+        worktree_path=str(tmp_path / "reviewer"),
+        branch="reviewer",
+        state="validated",
+        handle_json={},
+    )
+    assert db.count_worker_attempts(task_id="task_001", role="reviewer") == 1
+
+
+def test_coverage_marks_blocked_task_spec_refs(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    db = AgentRunwayDb.open(run_dir / "state.sqlite")
+    db.upsert_task(_task())
+    db.set_task_status("task_001", "blocked")
+    (run_dir / "contract.json").write_text(
+        json.dumps({"coverage": {"covered": ["S1"], "partial": [], "blocked": [], "unreferenced": []}}),
+        encoding="utf-8",
+    )
+
+    graph = build_artifact_graph(run_dir=run_dir, db=db)
+
+    assert graph["coverage"]["blocked"] == ["S1"]
