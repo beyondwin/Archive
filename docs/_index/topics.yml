@@ -36,3 +36,8 @@
   name: Superpowers Specs
   description: Approved Superpowers design specs for Archive execution, AgentRunway, and AgentLens planning.
   folder: docs/superpowers/specs
+
+- id: superpowers/plans
+  name: Superpowers Plans
+  description: Approved Superpowers implementation plans for Archive execution, AgentRunway, and AgentLens work.
+  folder: docs/superpowers/plans
