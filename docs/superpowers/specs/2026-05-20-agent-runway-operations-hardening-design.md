@@ -14,6 +14,7 @@ Previous Slice: `docs/superpowers/specs/2026-05-20-agent-runway-production-super
 - S3: Non-Goals
 - S4: OpenSpec-Derived Design Inputs
 - S5: Superpowers-to-AgentRunway Contract
+  - S5.1: Host-Friendly Invocation Resolver
 - S6: Architecture
 - S7: Component Boundaries
 - S8: Run Evidence Bundle
@@ -54,6 +55,8 @@ recovery and gate failures.
 ## S2. Goals
 
 - Freeze the submitted Superpowers spec and plan into a canonical run contract.
+- Let operators invoke approved Superpowers work through short, host-friendly
+  commands instead of the internal Python script path.
 - Preserve self-contained run evidence under `~/.agentrunway/runs/...`.
 - Provide stable human and JSON diagnostics for `status`, `inspect`, `events`,
   `resume`, and coverage-style reporting.
@@ -72,6 +75,10 @@ recovery and gate failures.
 - No adoption of OpenSpec's `openspec/` directory as a source of truth.
 - No automatic generation of Superpowers specs or plans.
 - No web UI in this slice.
+- No native Codex App or Claude Code UI integration beyond skill-readable
+  invocation text and CLI commands.
+- No silent fuzzy execution when a topic, latest run, or last run resolves to
+  multiple candidates.
 - No new runtime adapter such as Gemini or Aider.
 - No GitHub PR, CI, or deployment automation.
 - No mandatory AgentLens dependency; local runner evidence remains
@@ -152,12 +159,60 @@ Warnings should not block dispatch when they are useful but not fatal:
 - AgentLens is unavailable in best-effort mode,
 - optional reviewer/verifier model overrides are absent.
 
+### S5.1. Host-Friendly Invocation Resolver
+
+AgentRunway should keep the Python runner as the execution engine while hiding
+the internal script path from normal operators. Public open-source agent
+harnesses point to the same pattern: a stable short command or project command
+front door resolves user intent, and the runner receives an explicit contract.
+
+Supported invocation forms:
+
+```bash
+agentrunway run --topic agent-runway-operations-hardening --adapter codex
+agentrunway run --latest --adapter claude
+agentrunway status --last
+agentrunway inspect --last --json
+```
+
+Skill-hosted Codex/Claude/App conversations should accept compact key-value
+text in natural language:
+
+```text
+agent-runway topic=agent-runway-operations-hardening adapter=codex 로 실행해줘
+agent-runway plan=docs/superpowers/plans/<topic>.md spec=docs/superpowers/specs/<topic>-design.md adapter=claude
+agent-runway last 상태 확인해줘
+```
+
+Resolution rules:
+
+- explicit `plan=` and `spec=` paths win over every inferred value,
+- explicit `plan=` with no `spec=` may infer the design from plan source
+  document references or the normalized file slug,
+- `topic=` searches `docs/superpowers/plans/` and
+  `docs/superpowers/specs/` for exactly one matching plan/design pair,
+- `--latest` selects the newest complete spec/plan pair for the current
+  repository using git commit time when available and filesystem mtime only as
+  a fallback,
+- `--last` resolves to the last run for the current workspace id, never a
+  global last run from another checkout,
+- `adapter=auto` resolves from the host when the skill knows it, otherwise from
+  `agentrunway.yaml`, then the existing CLI default,
+- ambiguous or missing matches fail before preflight and print candidate paths.
+
+The resolver never dispatches workers. Its output is just the same explicit
+`plan`, `spec`, `adapter`, `model_profile`, and `run_id` fields that the
+existing command path expects. Contract preflight remains the authority after
+resolution.
+
 ## S6. Architecture
 
 The runner remains the only owner of execution state.
 
 ```text
-Superpowers spec + plan
+host text / short CLI
+  -> invocation resolver
+  -> Superpowers spec + plan
   -> preflight contract
   -> SQLite run state
   -> artifact graph
@@ -187,6 +242,20 @@ AgentLens is an observability sink, not the authority for recovery.
 `runner.py` remains the high-level command flow for `run`, `resume`, `cancel`,
 `apply`, `status`, `inspect`, and `events`. It delegates operational details to
 focused modules.
+
+`resolver.py` becomes the host-friendly invocation boundary:
+
+- resolve `topic`, `latest`, explicit paths, and `last` run aliases,
+- pair Superpowers plan and design documents conservatively,
+- reject ambiguous matches before the runner mutates state,
+- persist and read the per-workspace last-run pointer.
+
+`invocation.py` remains the CLI parser and command dispatcher:
+
+- expose short flags such as `--topic`, `--latest`, and `--last`,
+- preserve the explicit long-form `--plan` and `--spec` path,
+- call the resolver before `runner.py` receives command arguments,
+- keep machine-readable error payloads for ambiguous resolution failures.
 
 `events.py` becomes the event journal and AgentLens outbox boundary:
 
@@ -487,6 +556,11 @@ process adapter path.
 
 Required eval additions for this slice:
 
+- `run --topic` resolves exactly one Superpowers spec/plan pair,
+- `run --topic` rejects ambiguous topic matches and prints candidates,
+- explicit `--plan` with no `--spec` infers the matching design when safe,
+- `--latest` resolves only complete spec/plan pairs,
+- `status --last` resolves the current workspace's last run id,
 - preflight writes `contract.json` and rejects missing `spec_refs`,
 - preflight rejects tasks without acceptance commands,
 - preflight rejects non-local adapter runs invoked without `--spec`,
@@ -520,6 +594,10 @@ this slice):
 
 - A run can be understood from `status`, `inspect`, and `events` without reading
   the host conversation.
+- Operators can start a run with `agentrunway run --topic <topic>` or
+  skill-hosted `topic=<topic>` text without typing the Python script path.
+- Ambiguous `topic`, `latest`, and `last` invocations fail before dispatch with
+  actionable candidate paths.
 - Every production run has a frozen `contract.json` linking exact spec and plan
   hashes to parsed tasks.
 - Every production run has local event evidence even when AgentLens is
