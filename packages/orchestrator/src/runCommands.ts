@@ -6,6 +6,8 @@ import { projectFailureSummary, projectTrustReport } from "@waygent/lens-project
 import { hasRunState, readRunState, writeRunState, type WaygentRunState } from "./runState";
 export { buildRunEvent, nextRunEvent } from "./runEvents";
 import { nextRunEvent } from "./runEvents";
+import { selectResumeAction } from "./recoveryExecutor";
+import { readRunStateV2 } from "./runState";
 
 export interface RunCommandOptions {
   root: string;
@@ -79,6 +81,32 @@ export function explainRun(options: RunCommandOptions): { run_id: string; blocke
 export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): { run_id: string; allowed_actions: string[]; dry_run: boolean } {
   const explanation = explainRun(options);
   if (hasRunState(options.root, explanation.run_id)) {
+    const v2State = tryReadRunStateV2(options.root, explanation.run_id);
+    if (v2State) {
+      if (v2State.status === "completed") {
+        return {
+          run_id: explanation.run_id,
+          allowed_actions: ["inspect_run", "apply_verified_checkpoint"],
+          dry_run: options.dry_run ?? false
+        };
+      }
+      const blockedTask = Object.values(v2State.tasks).find((task) => task.status === "blocked" || task.status === "failed");
+      if (blockedTask?.latest_failure_class) {
+        const retryCount = Number(v2State.recovery.at(-1)?.retry_count ?? 0);
+        const maxRetries = Number(v2State.recovery.at(-1)?.max_retries ?? 1);
+        const selection = selectResumeAction({
+          failure_class: blockedTask.latest_failure_class,
+          retry_count: Number.isFinite(retryCount) ? retryCount : 0,
+          max_retries: Number.isFinite(maxRetries) ? maxRetries : 1,
+          checkpoint_ref: blockedTask.checkpoint_refs[0] ?? null
+        });
+        return {
+          run_id: explanation.run_id,
+          allowed_actions: [selection.action],
+          dry_run: options.dry_run ?? false
+        };
+      }
+    }
     const state = readRunState(options.root, explanation.run_id);
     if (state.status === "completed") {
       return {
@@ -93,6 +121,14 @@ export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): {
     allowed_actions: explanation.blocked_by === "verification_failed" ? ["retry_with_evidence", "update_plan"] : ["inspect_run"],
     dry_run: options.dry_run ?? false
   };
+}
+
+function tryReadRunStateV2(root: string, runId: string) {
+  try {
+    return readRunStateV2(root, runId);
+  } catch {
+    return null;
+  }
 }
 
 export function applyRun(options: RunCommandOptions & { workspace: string }): {
