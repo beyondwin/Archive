@@ -644,6 +644,18 @@ export const waygentRunStateV2Schema = {
         properties: {
           wave_id: { type: "string", minLength: 1 },
           ready: { type: "array", items: { type: "string", pattern: idPattern } },
+          concurrency: { type: "integer", minimum: 1, nullable: true },
+          timing: {
+            type: "object",
+            additionalProperties: false,
+            nullable: true,
+            required: ["started", "completed", "duration_ms"],
+            properties: {
+              started: { type: "string", pattern: isoTimestamp },
+              completed: { type: "string", pattern: isoTimestamp },
+              duration_ms: { type: "number", minimum: 0 }
+            }
+          },
           withheld: {
             type: "array",
             items: {

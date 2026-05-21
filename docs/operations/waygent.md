@@ -42,6 +42,16 @@ means the verified patch has already been applied.
 checks for a clean source checkout before applying and revalidates the same
 readiness contract used by `resume`, API, and console.
 
+## Safe-Wave Parallel Execution
+
+Waygent may run tasks in the same scheduler-approved safe wave concurrently.
+Parallelism never bypasses file-claim, dependency, risk, verification,
+checkpoint, completion-audit, reconciliation, or apply-readiness gates.
+
+Live providers default to conservative bounded concurrency. Set
+`WAYGENT_WAVE_CONCURRENCY=<n>` only when the local machine and provider
+account can sustain the requested parallel work.
+
 ### Recovery Actions
 
 Use `waygent explain --last` or `waygent inspect --run <run_id>` before

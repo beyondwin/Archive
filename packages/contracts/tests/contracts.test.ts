@@ -176,7 +176,17 @@ describe("Waygent contracts", () => {
           timing: {}
         }
       },
-      safe_waves: [],
+      safe_waves: [{
+        wave_id: "wave_1",
+        ready: ["task_demo"],
+        withheld: [],
+        concurrency: 1,
+        timing: {
+          started: "2026-05-21T00:00:00Z",
+          completed: "2026-05-21T00:00:01Z",
+          duration_ms: 1000
+        }
+      }],
       provider_attempts: [
         {
           schema: "runway.provider_attempt.v1",

@@ -329,3 +329,16 @@ Phase 3 tests:
 - Parallel execution never writes a fixed scratch file in the source checkout.
 - Documentation describes all six high-level improvements while the
   implementation plan executes Phase 1 first.
+
+## Implementation Status
+
+Phase 1 is implemented when the following changes are present:
+
+- unique checkpoint dry-run scratch paths;
+- single run event/state writer;
+- task execution result extraction;
+- bounded safe-wave parallel executor;
+- provider contract replay fixtures.
+
+Phase 2 and Phase 3 remain planned follow-up work until their tasks are
+explicitly started.
