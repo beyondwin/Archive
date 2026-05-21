@@ -1,4 +1,13 @@
-import { defaultRunRoot, intentToCommand, parseNaturalLanguageIntent, runWaygentDemo } from "@waygent/orchestrator";
+import {
+  defaultRunRoot,
+  explainRun,
+  intentToCommand,
+  parseNaturalLanguageIntent,
+  resumeRun,
+  runWaygent,
+  runWaygentDemo,
+  statusRun
+} from "@waygent/orchestrator";
 
 export interface ParsedCli {
   command: string;
@@ -39,13 +48,44 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     if (typeof parsed.flags.run === "string") options.run_id = parsed.flags.run;
     if (typeof parsed.flags.plan === "string") options.plan = parsed.flags.plan;
     if (typeof parsed.flags.spec === "string") options.spec = parsed.flags.spec;
+    if (parsed.command === "run") {
+      return runWaygent(options);
+    }
     return runWaygentDemo(options);
   }
-  if (["status", "events", "inspect", "explain", "resume", "apply"].includes(parsed.command)) {
+  if (parsed.command === "status" || parsed.command === "inspect") {
+    return statusRun({
+      root: String(parsed.flags.root ?? defaultRunRoot()),
+      run: typeof parsed.flags.run === "string" ? parsed.flags.run : undefined,
+      last: Boolean(parsed.flags.last)
+    });
+  }
+  if (parsed.command === "explain") {
+    return explainRun({
+      root: String(parsed.flags.root ?? defaultRunRoot()),
+      run: typeof parsed.flags.run === "string" ? parsed.flags.run : undefined,
+      last: Boolean(parsed.flags.last)
+    });
+  }
+  if (parsed.command === "resume") {
+    return resumeRun({
+      root: String(parsed.flags.root ?? defaultRunRoot()),
+      run: typeof parsed.flags.run === "string" ? parsed.flags.run : undefined,
+      last: Boolean(parsed.flags.last),
+      dry_run: true
+    });
+  }
+  if (parsed.command === "apply") {
     return {
-      command: parsed.command,
+      command: "apply",
+      status: "requires_clean_source_checkout"
+    };
+  }
+  if (parsed.command === "events") {
+    return {
+      command: "events",
       run: parsed.flags.run ?? (parsed.flags.last ? "last" : "latest"),
-      status: parsed.command === "apply" ? "requires_clean_source_checkout" : "not_started"
+      status: "not_started"
     };
   }
   return { usage: "waygent run|status|events|inspect|explain|resume|apply" };
