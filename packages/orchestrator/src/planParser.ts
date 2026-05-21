@@ -36,8 +36,9 @@ function parseTaskBlock(block: string): ParsedWaygentTask {
     const line = lines[index]?.trim();
     if (!line) continue;
     const scalarMatch = line.match(/^([a-z_]+):\s*(.*)$/);
-    if (scalarMatch && scalarMatch[1] !== "file_claims" && scalarMatch[1] !== "verify") {
-      scalar.set(scalarMatch[1], scalarMatch[2]);
+    const key = scalarMatch?.[1];
+    if (key && key !== "file_claims" && key !== "verify") {
+      scalar.set(key, scalarMatch[2] ?? "");
       continue;
     }
     if (line === "file_claims:") {

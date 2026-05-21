@@ -57,6 +57,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   if (!taskId) throw new Error("run requires at least one task");
   const task = graph.tasks.get(taskId);
   if (!task) throw new Error(`task ${taskId} missing from graph`);
+  const parsedTask = parsed.tasks.find((candidate) => candidate.id === task.id);
 
   const started = buildRunEvent({
     run_id: runId,
@@ -87,7 +88,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     payload: { safe_wave: projection.safe_wave }
   }));
 
-  const worker = await provider.run({ task_id: task.id, candidate_id: `candidate_${task.id}`, prompt: task.title, changed_files: [] });
+  const worker = await provider.run({ task_id: task.id, candidate_id: `candidate_${task.id}`, prompt: parsedTask?.title ?? task.id, changed_files: [] });
   writeArtifact(paths.root, "worker/result.json", JSON.stringify(worker, null, 2));
   appendEvent(paths.events, buildRunEvent({
     run_id: runId,

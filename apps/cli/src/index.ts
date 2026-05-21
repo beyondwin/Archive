@@ -8,6 +8,7 @@ import {
   runWaygentDemo,
   statusRun
 } from "@waygent/orchestrator";
+import type { RunCommandOptions } from "@waygent/orchestrator";
 
 export interface ParsedCli {
   command: string;
@@ -54,26 +55,13 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     return runWaygentDemo(options);
   }
   if (parsed.command === "status" || parsed.command === "inspect") {
-    return statusRun({
-      root: String(parsed.flags.root ?? defaultRunRoot()),
-      run: typeof parsed.flags.run === "string" ? parsed.flags.run : undefined,
-      last: Boolean(parsed.flags.last)
-    });
+    return statusRun(runCommandOptions(parsed));
   }
   if (parsed.command === "explain") {
-    return explainRun({
-      root: String(parsed.flags.root ?? defaultRunRoot()),
-      run: typeof parsed.flags.run === "string" ? parsed.flags.run : undefined,
-      last: Boolean(parsed.flags.last)
-    });
+    return explainRun(runCommandOptions(parsed));
   }
   if (parsed.command === "resume") {
-    return resumeRun({
-      root: String(parsed.flags.root ?? defaultRunRoot()),
-      run: typeof parsed.flags.run === "string" ? parsed.flags.run : undefined,
-      last: Boolean(parsed.flags.last),
-      dry_run: true
-    });
+    return resumeRun({ ...runCommandOptions(parsed), dry_run: true });
   }
   if (parsed.command === "apply") {
     return {
@@ -89,6 +77,15 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     };
   }
   return { usage: "waygent run|status|events|inspect|explain|resume|apply" };
+}
+
+function runCommandOptions(parsed: ParsedCli): RunCommandOptions {
+  const options: RunCommandOptions = {
+    root: String(parsed.flags.root ?? defaultRunRoot()),
+    last: Boolean(parsed.flags.last)
+  };
+  if (typeof parsed.flags.run === "string") options.run = parsed.flags.run;
+  return options;
 }
 
 if (import.meta.main) {
