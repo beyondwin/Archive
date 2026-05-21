@@ -11,6 +11,11 @@ required_skill_phrases = [
     "waygent explain --last",
     "waygent resume --last",
     "waygent apply --run",
+    "waygent:scenarios",
+    "WAYGENT_LIVE_PROVIDER",
+    "dirty_source_checkout",
+    "verified checkpoint",
+    "resume --last",
     "must not call `skills/kws-codex-plan-executor`",
     "must not call `skills/kws-claude-multi-agent-executor`",
 ]

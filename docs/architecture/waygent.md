@@ -39,3 +39,23 @@ Waygent now owns the local product execution path end to end:
 
 The active event families remain `platform.*`, `runway.*`, `kernel.*`, and
 `lens.*`.
+
+## V1 Operational Maturity
+
+The v1 maturity runtime uses `waygent.run_state.v2` as the authoritative state
+for task status, provider attempts, verification evidence, review records,
+recovery decisions, drift, completion audit, and apply readiness. AgentLens
+events remain append-only replay evidence for API and console inspection.
+
+Operational completion requires these properties:
+
+- Providers run behind role-aware task packets and never write AgentLens events
+  directly.
+- Provider output can create evidence, but kernel verification and review gates
+  decide whether a task has a verified checkpoint.
+- `waygent resume --last` is constrained by v2 recovery policy and must stop on
+  ambiguous actions.
+- `waygent apply --run <run_id>` is explicit, requires a clean source checkout,
+  and blocks when no verified checkpoint exists.
+- The offline maturity gate includes `bun run waygent:scenarios`; live Codex
+  and Claude checks stay opt-in through `WAYGENT_LIVE_PROVIDER`.
