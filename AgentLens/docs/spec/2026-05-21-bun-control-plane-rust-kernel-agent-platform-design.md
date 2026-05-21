@@ -1,16 +1,16 @@
-# Bun Control Plane + Rust Kernel Agent Platform Design
+# Waygent Bun Control Plane + Rust Kernel Design
 
 | | |
 |---|---|
 | Date | 2026-05-21 |
-| Status | Draft -> User review |
-| Scope | Clean rewrite architecture for AgentLens, AgentRunway, and KWS Agent Orchestrator |
+| Status | Approved direction |
+| Scope | Clean rewrite architecture for AgentLens, AgentRunway, and Waygent |
 | Decision | Python-free, Graphify-free platform with Bun/TypeScript control plane and Rust execution kernel |
 | Relationship To Existing Docs | This is a new alternative design. It does not edit or replace the Full Rust spec/plan files in-place. |
 
 ## 0. Decision
 
-Build the next AgentLens/AgentRunway platform as:
+Build Waygent as the next AgentLens/AgentRunway platform:
 
 ```text
 Bun/TypeScript control plane
@@ -27,7 +27,7 @@ KWS CPE/CME split are not retained in the final product.
 
 The core product roles are:
 
-- **KWS Agent Orchestrator**: user-facing orchestration entrypoint and profile
+- **Waygent**: user-facing orchestration entrypoint and profile
   layer.
 - **AgentRunway**: deterministic multi-agent execution control plane.
 - **AgentLens**: evidence, evaluation, trust projection, and operator
@@ -64,6 +64,31 @@ projects:
 | Python coding agents | OpenHands `9a7e3ed`, SWE-agent `0f4f3bb`, SWE-ReX `5c995c3`, Aider `6435cb8` | Keep sandbox service, runtime protocol, trajectory, retry taxonomy, and edit diagnostics as patterns. Do not keep Python as final runtime. |
 | Orchestration frameworks | LangGraph `aa322c1`, CrewAI `418afd2`, smolagents `3cd5c84`, AutoGPT `aa1d12b`, AutoGen `027ecf0`, OpenAI Agents Python `45effb4` | Adopt checkpoint snapshot, task write log, durable interrupt, explicit status machine, and schema-bound tool execution. Avoid full graph framework/platform complexity. |
 | Multi-harness/ADE systems | OpenADE `522ffb4`, Codemux `ac2716d`, Coleo `92c540e`, harness-cli `d361f85`, OpenHarness `f727de1`, Open-Harness `4645c5d` | Treat AgentRunway as an execution control plane, not a single-agent runner. Use capability-aware adapters and canonical provider events. |
+| Desktop/local orchestrators | RunMaestro/Maestro `1006e3b`, Reina Maestro `e32b857`, Overstory `00f6673`, Agent of Empires `df50ed9`, Orca `e9a79b8`, Claude Squad `4a02a30` | Borrow provider adapters, process supervision, output parsers, evidence/verdict contracts, worker replay, and worktree UX. Do not borrow UI-store or markdown-checkbox state as scheduler truth. |
+
+## 2.1 Full Rust Phase 1 Carry-Forward
+
+The blocked Full Rust Phase 1 plan should not be executed as the next path, but
+it has several strong strategies that should carry into Waygent:
+
+- **Contract skeleton before runtime behavior**: first prove ids, outcomes,
+  timestamps, event envelopes, artifacts, schema validation, and package/crate
+  boundaries before adding scheduler or adapter complexity.
+- **Locked schemas as product contracts**: keep JSON Schema fixtures in the
+  repository and validate real examples against them, instead of treating
+  TypeScript interfaces or Rust structs as enough.
+- **Typed domain primitives**: normalize run ids, task ids, candidate ids,
+  checkpoint ids, timestamps, outcomes, risk levels, run statuses, and task
+  statuses once in `packages/contracts` and mirror only the kernel subset in
+  Rust.
+- **Toolchain and lockfile discipline**: pin Rust formatting/toolchain settings,
+  commit lockfiles for binary/demo workspaces, and make formatting, linting, and
+  tests part of the first handoff criteria.
+- **Boundary markers that compile early**: create small package/crate boundaries
+  with explicit responsibility notes before wiring higher-level behavior through
+  them.
+- **Legacy exclusion checks**: verify the new product tree does not grow Python
+  runtime files, Graphify assumptions, or old `kws-cpe` / `kws-cme` namespaces.
 
 ## 3. Non-Goals
 
@@ -81,7 +106,7 @@ projects:
 ## 4. Target Repository Structure
 
 ```text
-agent-platform/
+waygent/
   package.json
   bun.lock
   tsconfig.base.json
@@ -120,6 +145,9 @@ agent-platform/
   native/
     kernel/
       Cargo.toml
+      Cargo.lock
+      rust-toolchain.toml
+      rustfmt.toml
       crates/
         kernel-protocol/
         process-supervisor/
@@ -151,11 +179,14 @@ runtime package locations.
 Owns the cross-language contracts:
 
 - run ids, task ids, candidate ids, checkpoint ids, event ids;
+- typed domain primitives for ids, timestamps, outcomes, run status, task
+  status, risk level, and trust impact;
 - event envelope schemas;
 - worker, reviewer, verifier, and apply result schemas;
 - trust report and failure projection schemas;
 - kernel request/response schemas;
 - provider adapter capability manifests;
+- checked-in JSON Schema fixtures and valid/invalid golden examples;
 - schema versioning and compatibility checks.
 
 This package emits JSON Schema for both Bun and Rust tests. No other package or
@@ -272,7 +303,7 @@ request actions; Bun cannot bypass kernel validation for irreversible effects.
 
 ```text
 User / CLI / API
-  -> KWS Agent Orchestrator
+  -> Waygent
   -> runway-control parses plan/spec and builds durable task graph
   -> lens-store records run_started and contract snapshot
   -> runway-control computes safe_wave
@@ -452,7 +483,11 @@ primary read model and do not drive scheduling.
 
 The first implementation plan should be contract-first and deterministic:
 
+- pinned Bun and Rust workspace settings;
+- domain primitive tests for ids, timestamps, statuses, outcomes, and risk
+  levels;
 - schema round-trip tests for Bun and Rust;
+- checked-in valid and invalid JSON fixtures for every cross-language schema;
 - kernel protocol golden fixtures;
 - fake provider adapter e2e runs;
 - safe-wave scheduler tests;
@@ -463,6 +498,9 @@ The first implementation plan should be contract-first and deterministic:
 - patch dry-run/apply tests;
 - process timeout/cancel/output-cap tests;
 - AgentLens trust projection tests;
+- Rust `cargo fmt`, `cargo clippy`, and `cargo test` gates for `native/kernel`;
+- new-tree scans proving no Python runtime files, Graphify dependencies, or
+  legacy KWS namespaces were introduced;
 - one opt-in live Codex/Claude smoke suite kept outside the default run.
 
 Default validation should not require real model calls.
@@ -489,13 +527,15 @@ The first implementation plan should not start with the web UI. It should
 create the platform spine:
 
 1. Bun workspace and package boundaries.
-2. Rust kernel workspace with protocol crate.
-3. Shared JSON Schema contract fixtures.
+2. Shared domain primitives, event envelopes, and JSON Schema fixtures.
+3. Rust kernel workspace with pinned toolchain, protocol crate, and lockfile.
 4. Append-only event journal and projection rebuild.
 5. Fake provider adapter.
 6. Minimal safe-wave scheduler.
 7. Kernel process execution with timeout/cancel/output caps.
 8. One deterministic end-to-end run that emits AgentLens trust projection.
+9. Handoff checks for formatting, linting, test coverage, no Python runtime
+   additions, no Graphify dependency, and no legacy KWS namespaces.
 
 This proves the architecture before Codex/Claude adapters and before dashboard
 polish.
@@ -505,7 +545,7 @@ polish.
 Adopt this as the new architecture direction:
 
 ```text
-KWS Agent Orchestrator
+Waygent
   -> AgentRunway Execution Control Plane (Bun/TS)
   -> Rust Execution Kernel
   -> AgentLens Event Store + Trust Projectors
