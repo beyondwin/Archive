@@ -38,6 +38,7 @@ describe("runWaygent", () => {
     expect(result.projection.safe_wave).toEqual(["task_demo"]);
     expect(readRunState(root, "run_demo")).toMatchObject({
       status: "completed",
+      worktree: join(root, "worktrees", "run_demo", "task_demo"),
       tasks: [{ id: "task_demo", status: "verified" }],
       completion_audit: { status: "passed", commands: ["printf hello"] },
       apply: { status: "not_applied" }

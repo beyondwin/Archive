@@ -75,4 +75,10 @@ mod tests {
         assert!(validate_owned_branch("../outside").is_err());
         assert!(validate_owned_branch("-bad").is_err());
     }
+
+    #[test]
+    fn refuses_non_waygent_owned_branch_names() {
+        assert!(validate_owned_branch("codex/run/task").is_err());
+        assert!(validate_owned_branch("kws-cpe/run/task").is_err());
+    }
 }
