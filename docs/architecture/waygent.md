@@ -17,6 +17,8 @@ The follow-up operational maturity target is documented in
 [`2026-05-21-waygent-runtime-v1-operational-maturity-design.md`](./2026-05-21-waygent-runtime-v1-operational-maturity-design.md).
 The next source-audited trust-loop slice is documented in
 [`2026-05-21-waygent-operational-trust-loop-design.md`](./2026-05-21-waygent-operational-trust-loop-design.md).
+Its implementation plan is tracked in
+[`../migration/2026-05-21-waygent-operational-trust-loop-implementation-plan.md`](../migration/2026-05-21-waygent-operational-trust-loop-implementation-plan.md).
 Waygent owns the product runtime directly; KWS executor skills are not product
 dependencies.
 
@@ -55,9 +57,15 @@ Operational completion requires these properties:
   directly.
 - Provider output can create evidence, but kernel verification and review gates
   decide whether a task has a verified checkpoint.
+- Run preflight blocks related dirty source changes and records unrelated dirty
+  source warnings before provider dispatch.
+- Duplicate run ids cannot erase existing durable run evidence.
 - `waygent resume --last` is constrained by v2 recovery policy and must stop on
   ambiguous actions.
 - `waygent apply --run <run_id>` is explicit, requires a clean source checkout,
-  and blocks when no verified checkpoint exists.
+  and blocks unless the v2 readiness projection is `ready`.
+- API list/detail, console affordances, `resume`, and `apply` use the same
+  readiness projection from completion audit, combined patch evidence,
+  checkpoint manifests, and reconciliation drift.
 - The offline maturity gate includes `bun run waygent:scenarios`; live Codex
   and Claude checks stay opt-in through `WAYGENT_LIVE_PROVIDER`.

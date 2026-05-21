@@ -19,6 +19,23 @@
 - Current planning commit: `1d08ffd`
 - Source audit basis in the design: `5887d84`
 
+## Implementation Status
+
+Completed on branch `codex/waygent-operational-trust-loop`:
+
+- Task 1: `dd70d21` adds contracts and the v2 apply-readiness projection.
+- Task 2: `815cfdb` connects run preflight and duplicate-run protection.
+- Task 3: `1993f66` preserves provider process evidence and failure classes.
+- Task 4: `dc7138e` and `3145556` add worktree manifests and diff-scope
+  enforcement coverage.
+- Task 5: `47490f0` expands reconciliation over provider, verification,
+  checkpoint, dry-run, combined patch, and event/state evidence.
+- Task 6: `fca489e` unifies resume/apply readiness gates.
+- Task 7: `57877dd` aligns API and console with v2 readiness.
+- Task 8: `c30ee2b` upgrades scenario and live-provider replay assertions.
+- Task 9: operations and architecture docs are updated in this plan's closing
+  docs commit.
+
 ## Non-Negotiable Boundaries
 
 - Do not route Waygent through `skills/kws-codex-plan-executor` or `skills/kws-claude-multi-agent-executor`.
