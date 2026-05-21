@@ -14,7 +14,20 @@ pub fn validate_owned_run_id(run_id: &str) -> io::Result<()> {
     Ok(())
 }
 
+pub fn validate_owned_branch(branch: &str) -> io::Result<()> {
+    if !branch.starts_with("waygent/")
+        || branch.contains("..")
+        || branch.contains('\\')
+        || branch.starts_with('-')
+        || branch.ends_with('/')
+    {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "unsafe branch"));
+    }
+    Ok(())
+}
+
 pub fn create_run_main(source: &Path, target: &Path, branch: &str) -> io::Result<()> {
+    validate_owned_branch(branch)?;
     run_git(source, ["worktree", "add", "-b", branch], Some(target))
 }
 
@@ -54,5 +67,12 @@ mod tests {
     fn refuses_unowned_cleanup_ids() {
         assert!(validate_owned_run_id("../other").is_err());
         assert!(validate_owned_run_id("run_ok").is_ok());
+    }
+
+    #[test]
+    fn accepts_waygent_owned_branch_names() {
+        assert!(validate_owned_branch("waygent/run_demo/task_demo").is_ok());
+        assert!(validate_owned_branch("../outside").is_err());
+        assert!(validate_owned_branch("-bad").is_err());
     }
 }
