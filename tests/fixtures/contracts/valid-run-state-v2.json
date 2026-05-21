@@ -1,0 +1,59 @@
+{
+  "schema": "waygent.run_state.v2",
+  "run_id": "run_fixture",
+  "workspace": "/tmp/source",
+  "source_branch": "main",
+  "worktree_root": "/tmp/waygent/worktrees",
+  "run_root": "/tmp/waygent/runs/run_fixture",
+  "artifact_root": "/tmp/waygent/runs/run_fixture/artifacts",
+  "state_path": "/tmp/waygent/runs/run_fixture/state.json",
+  "event_journal_path": "/tmp/waygent/runs/run_fixture/events.jsonl",
+  "plan_path": "plan.md",
+  "spec_path": "spec.md",
+  "provider_profile": { "provider": "fake", "execution_mode": "multi-agent" },
+  "status": "completed",
+  "lifecycle_outcome": "finished",
+  "current_phase": "complete",
+  "tasks": {
+    "task_fixture": {
+      "id": "task_fixture",
+      "status": "verified",
+      "risk": "low",
+      "dependencies": [],
+      "file_claims": [{ "path": "README.md", "mode": "owned" }],
+      "attempts": ["attempt_fixture"],
+      "task_packet_path": "artifacts/task_packets/task_fixture.json",
+      "task_packet_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "unit_manifest": { "allowed_write_globs": ["README.md"], "forbidden_write_globs": [".git/**"] },
+      "checkpoint_refs": ["checkpoint_task_fixture"],
+      "latest_failure_class": null,
+      "decision_packet_ref": null,
+      "timing": {}
+    }
+  },
+  "safe_waves": [{ "wave_id": "wave_1", "ready": ["task_fixture"], "withheld": [] }],
+  "provider_attempts": [],
+  "reviews": [],
+  "verification": [],
+  "recovery": [],
+  "apply": { "status": "not_applied" },
+  "context": {
+    "snapshot_path": "artifacts/context.json",
+    "basis_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "drift": { "last_checked_at": null, "records": [], "unrepaired_blockers": [] },
+  "completion_audit": {
+    "status": "passed",
+    "required_checks": ["test -f README.md"],
+    "verification_evidence": [],
+    "review_evidence": [],
+    "state_reconciliation": { "passed": true },
+    "prompt_to_artifact_checklist": ["task_packet_written", "provider_attempt_recorded"],
+    "residual_risk": []
+  },
+  "timestamps": {
+    "started_at": "2026-05-21T00:00:00Z",
+    "updated_at": "2026-05-21T00:00:01Z",
+    "completed_at": "2026-05-21T00:00:01Z"
+  }
+}

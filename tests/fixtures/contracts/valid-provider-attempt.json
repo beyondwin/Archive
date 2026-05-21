@@ -1,0 +1,20 @@
+{
+  "schema": "runway.provider_attempt.v1",
+  "attempt_id": "attempt_fixture",
+  "run_id": "run_fixture",
+  "task_id": "task_fixture",
+  "role": "implement",
+  "provider": "fake",
+  "command": ["fake-provider"],
+  "cwd": ".",
+  "stdin_ref": "artifacts/provider/attempt_fixture.stdin.txt",
+  "stdout_ref": "artifacts/provider/attempt_fixture.stdout.txt",
+  "stderr_ref": "artifacts/provider/attempt_fixture.stderr.txt",
+  "event_stream_ref": null,
+  "exit_code": 0,
+  "timed_out": false,
+  "started_at": "2026-05-21T00:00:00Z",
+  "completed_at": "2026-05-21T00:00:01Z",
+  "worker_result_ref": "artifacts/provider/attempt_fixture.worker.json",
+  "failure_class": null
+}

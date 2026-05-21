@@ -1,0 +1,21 @@
+{
+  "schema": "waygent.task_packet.v1",
+  "run_id": "run_fixture",
+  "task_id": "task_fixture",
+  "role": "implement",
+  "task_title": "Fixture task",
+  "plan_excerpt": "Implement fixture task.",
+  "spec_excerpt": "Fixture task changes README only.",
+  "file_claims": [{ "path": "README.md", "mode": "owned" }],
+  "allowed_write_globs": ["README.md"],
+  "forbidden_write_globs": [".git/**", "node_modules/**"],
+  "dependencies": [],
+  "checkpoint_inputs": [],
+  "acceptance_commands": ["test -f README.md"],
+  "verification_commands": ["test -f README.md"],
+  "risk": "low",
+  "previous_failures": [],
+  "decisions": [],
+  "context_budget": { "estimated_chars": 120, "max_chars": 60000, "status": "green" },
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+}

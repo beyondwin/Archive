@@ -29,4 +29,16 @@ describe("contract fixtures", () => {
   test("accepts lens runway projection fixture", () => {
     expect(validateContract("lens.runway_projection.v1", fixture("valid-lens-runway-projection.json"))).toBeTruthy();
   });
+
+  test("accepts valid Waygent v2 runtime fixtures", () => {
+    for (const fixtureName of [
+      "valid-run-state-v2.json",
+      "valid-task-packet.json",
+      "valid-review-result.json",
+      "valid-provider-attempt.json"
+    ]) {
+      const payload = fixture(fixtureName) as { schema: string };
+      expect(() => validateContract(payload.schema, payload)).not.toThrow();
+    }
+  });
 });
