@@ -33,4 +33,30 @@ describe("legacy check", () => {
 
     expect(runLegacyCheck(root)).toEqual({ passed: true, violations: [] });
   });
+
+  test("rejects active legacy Waygent compatibility tokens", () => {
+    const root = fixtureRoot();
+    const legacyRuntimeSchema = [["waygent", "run_state"].join("."), "v1"].join(".");
+    const legacyFence = [["agent", "runway"].join(""), "task"].join("-");
+    const legacyProjectionKey = ["legacy", "source"].join("_");
+    const historicalRuntime = ["agent", "runway"].join("");
+    mkdirSync(join(root, "packages", "orchestrator", "src"), { recursive: true });
+    writeFileSync(join(root, "packages", "orchestrator", "src", "bad.ts"), [
+      `const schema = '${legacyRuntimeSchema}';`,
+      `const marker = '\`\`\`yaml ${legacyFence}';`,
+      `const projection = { ${legacyProjectionKey}: '${historicalRuntime}' };`
+    ].join("\n"));
+
+    const result = runLegacyCheck(root);
+
+    expect(result.violations).toContain("packages/orchestrator/src/bad.ts: legacy Waygent v1 state schema in product tree");
+    expect(result.violations).toContain("packages/orchestrator/src/bad.ts: legacy AgentRunway task fence in product tree");
+    expect(result.violations).toContain("packages/orchestrator/src/bad.ts: legacy projection source in product tree");
+  });
+
+  test("allows legacy guard implementation to contain banned tokens", () => {
+    const result = runLegacyCheck(process.cwd());
+
+    expect(result.violations.filter((item) => item.startsWith("packages/testkit/"))).toEqual([]);
+  });
 });

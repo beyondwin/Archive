@@ -1,6 +1,12 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentLensEvent, ApplyReadinessProjection, RunStatus, WaygentRunStateV2 } from "@waygent/contracts";
+import {
+  validateContract,
+  type AgentLensEvent,
+  type ApplyReadinessProjection,
+  type RunStatus,
+  type WaygentRunStateV2
+} from "@waygent/contracts";
 import {
   projectApplyReadinessFromState,
   projectApplyState,
@@ -189,14 +195,13 @@ function summarizeRealRun(runRoot: string, runId: string): RealRunSummary {
   const events = readEvents(runPaths(runRoot, runId).events);
   const summary = rebuildRunSummary(events);
   const trust = projectTrustReport(events);
-  const apply = projectApplyState(events);
   const stateV2 = tryReadRunStateV2(runRoot, runId);
   const applyReadiness = stateV2 ? projectApplyReadinessFromState(stateV2) : null;
   return {
     run_id: runId,
     status: statusFromEvents(events, trust.trust_status),
     trust_status: trust.trust_status,
-    apply_status: applyReadiness?.status ?? apply.status,
+    apply_status: applyReadiness?.status ?? "not_ready",
     total_events: summary.total_events,
     last_event_type: summary.last_event_type
   };
@@ -253,10 +258,12 @@ function tryReadRunStateV2(runRoot: string, runId: string): WaygentRunStateV2 | 
     const parsed = JSON.parse(readFileSync(join(runPaths(runRoot, runId).root, "state.json"), "utf8")) as {
       schema?: string;
     };
-    return parsed.schema === "waygent.run_state.v2" ? (parsed as WaygentRunStateV2) : null;
+    if (parsed.schema !== "waygent.run_state.v2") return null;
+    return validateContract<WaygentRunStateV2>("waygent.run_state.v2", parsed);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    throw error;
+    if (error instanceof SyntaxError) return null;
+    return null;
   }
 }
 

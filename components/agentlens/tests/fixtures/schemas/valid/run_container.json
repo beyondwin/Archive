@@ -7,7 +7,7 @@
   "agent": {
     "name": "generic",
     "mode": "unknown",
-    "label": "agentrunway"
+    "label": "waygent"
   },
   "workspace": {
     "root_label": "<workspace>",

@@ -1,0 +1,34 @@
+{
+  "schema": "agentlens.waygent_projection.v1",
+  "run_id": "run_20260521_000000_agent",
+  "waygent_run_id": "run_waygent",
+  "producer": "waygent",
+  "status": "finished",
+  "event_count": 3,
+  "timeline": [
+    {
+      "sequence": 1,
+      "type": "platform.run_started",
+      "summary": "Run started."
+    },
+    {
+      "sequence": 2,
+      "type": "runway.verification_result",
+      "task_id": "task_001",
+      "status": "passed",
+      "summary": "Verification passed."
+    },
+    {
+      "sequence": 3,
+      "type": "runway.run_finished",
+      "status": "finished",
+      "summary": "Run finished."
+    }
+  ],
+  "tasks": [
+    {
+      "task_id": "task_001",
+      "events": ["runway.verification_result"]
+    }
+  ]
+}

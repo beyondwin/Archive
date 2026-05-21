@@ -35,6 +35,8 @@ export function runLegacyCheck(root = process.cwd()): LegacyCheckResult {
 
 function walk(path: string, root: string, violations: string[]): void {
   try {
+    const rel = relative(root, path);
+    if (isTestkitPath(rel)) return;
     const stat = statSync(path);
     if (stat.isDirectory()) {
       for (const child of readdirSync(path)) {
@@ -43,11 +45,19 @@ function walk(path: string, root: string, violations: string[]): void {
       }
       return;
     }
-    const rel = relative(root, path);
     if (rel.endsWith(".py")) violations.push(`${rel}: Python runtime file in product tree`);
     const text = readFileSync(path, "utf8");
     if (/(graphify\s+(update|query|build)|from\s+["'].*graphify|import\s+.*graphify)/i.test(text)) {
       violations.push(`${rel}: Graphify runtime dependency in product tree`);
+    }
+    if (/waygent\.run_state\.v1/.test(text)) {
+      violations.push(`${rel}: legacy Waygent v1 state schema in product tree`);
+    }
+    if (/agentrunway-task/.test(text)) {
+      violations.push(`${rel}: legacy AgentRunway task fence in product tree`);
+    }
+    if (/legacy_source/.test(text)) {
+      violations.push(`${rel}: legacy projection source in product tree`);
     }
     if (
       /"event_type"\s*:\s*"(kws-cpe|kws-cme)\./.test(text)
@@ -63,7 +73,7 @@ function walk(path: string, root: string, violations: string[]): void {
 function walkActiveRouting(path: string, root: string, violations: string[]): void {
   try {
     const rel = relative(root, path);
-    if (rel === "packages/testkit" || rel.startsWith("packages/testkit/")) return;
+    if (isTestkitPath(rel)) return;
     const stat = statSync(path);
     if (stat.isDirectory()) {
       for (const child of readdirSync(path)) {
@@ -83,6 +93,10 @@ function walkActiveRouting(path: string, root: string, violations: string[]): vo
   } catch {
     return;
   }
+}
+
+function isTestkitPath(rel: string): boolean {
+  return rel === "packages/testkit" || rel.startsWith("packages/testkit/");
 }
 
 if (import.meta.main) {

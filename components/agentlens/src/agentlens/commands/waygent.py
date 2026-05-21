@@ -1,4 +1,4 @@
-"""Legacy ``agentlens agentrunway`` trust report command."""
+"""Waygent trust report command."""
 from __future__ import annotations
 
 import json
@@ -34,11 +34,11 @@ def _load_trust_report(run_id: str) -> dict | None:
     return payload
 
 
-def agentrunway(
+def waygent(
     run_id: str = typer.Argument(..., help="run_id to inspect"),
     format: str = typer.Option("text", "--format", help="output format: 'text' or 'json'"),
 ) -> None:
-    """Print the legacy AgentRunway trust report for a run."""
+    """Print the Waygent trust report for a run."""
     if format not in {"text", "json"}:
         raise typer.BadParameter(f"unknown --format {format!r}; expected 'text' or 'json'")
     try:
@@ -58,8 +58,8 @@ def agentrunway(
     if format == "json":
         typer.echo(json.dumps(report, sort_keys=True))
         return
-    for key in ("run_id", "agentrunway_run_id", "claimed_outcome", "trust_verdict", "evidence_strength"):
+    for key in ("run_id", "waygent_run_id", "claimed_outcome", "trust_verdict", "evidence_strength"):
         typer.echo(f"{key}: {report.get(key)}")
 
 
-__all__ = ["agentrunway"]
+__all__ = ["waygent"]

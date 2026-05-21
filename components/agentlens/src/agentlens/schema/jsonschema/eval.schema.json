@@ -48,12 +48,12 @@
         "artifacts",
         "coverage",
         "gates",
-        "projection"
+        "run_agent"
       ],
       "properties": {
         "producer": {
           "type": "string",
-          "const": "agentrunway"
+          "const": "waygent"
         },
         "observability": {
           "type": "string",
@@ -101,24 +101,12 @@
         "coverage": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["covered", "partial", "blocked", "unreferenced"],
+          "required": ["platform", "runway", "kernel", "lens"],
           "properties": {
-            "covered": {
-              "type": "array",
-              "items": {"type": "string"}
-            },
-            "partial": {
-              "type": "array",
-              "items": {"type": "string"}
-            },
-            "blocked": {
-              "type": "array",
-              "items": {"type": "string"}
-            },
-            "unreferenced": {
-              "type": "array",
-              "items": {"type": "string"}
-            }
+            "platform": {"type": "integer", "minimum": 0},
+            "runway": {"type": "integer", "minimum": 0},
+            "kernel": {"type": "integer", "minimum": 0},
+            "lens": {"type": "integer", "minimum": 0}
           }
         },
         "gates": {
@@ -140,7 +128,7 @@
             }
           }
         },
-        "projection": {
+        "run_agent": {
           "type": "object"
         }
       }

@@ -4,7 +4,7 @@
   "agentlens_run_id": "run_lens",
   "orchestrator_run_id": "run_orchestrator",
   "producer": {
-    "name": "agentrunway",
+    "name": "waygent",
     "kind": "orchestrator",
     "version": "0.1.0"
   },

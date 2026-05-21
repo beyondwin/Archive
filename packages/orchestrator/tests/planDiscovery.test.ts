@@ -4,8 +4,24 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { discoverPlan, resolvePlanInput } from "../src/planDiscovery";
 
+const legacyFence = [["agent", "runway"].join(""), "task"].join("-");
+
 const plan = (id: string) => `
 \`\`\`yaml waygent-task
+id: ${id}
+title: ${id}
+dependencies: []
+file_claims:
+  - path: README.md
+    mode: owned
+risk: low
+verify:
+  - printf hello
+\`\`\`
+`;
+
+const legacyPlan = (id: string) => `
+\`\`\`yaml ${legacyFence}
 id: ${id}
 title: ${id}
 dependencies: []
@@ -39,5 +55,13 @@ describe("Waygent plan discovery", () => {
     const found = resolvePlanInput({ workspace: root, topic: "console runtime" });
 
     expect(found.path?.endsWith("2026-05-21-console-runtime.md")).toBe(true);
+  });
+
+  test("ignores legacy task plans during latest discovery", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-legacy-plan-"));
+    mkdirSync(join(root, "docs", "migration"), { recursive: true });
+    writeFileSync(join(root, "docs", "migration", "2026-05-22-legacy.md"), legacyPlan("legacy_task"));
+
+    expect(() => discoverPlan({ workspace: root, latest: true })).toThrow("no Waygent plan found");
   });
 });

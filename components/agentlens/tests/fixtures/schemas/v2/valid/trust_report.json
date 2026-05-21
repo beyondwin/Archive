@@ -1,7 +1,7 @@
 {
   "schema": "agentlens.trust_report.v1",
   "run_id": "run_20260521_000000_agent",
-  "agentrunway_run_id": "ar-001",
+  "waygent_run_id": "run_waygent",
   "claimed_outcome": "success",
   "trust_verdict": "trusted",
   "evidence_strength": "strong",

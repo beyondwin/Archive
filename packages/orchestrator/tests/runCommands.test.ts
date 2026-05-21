@@ -45,7 +45,7 @@ describe("Waygent run commands", () => {
     });
   });
 
-  test("explain and resume expose blocked decision state", () => {
+  test("explain uses events but resume blocks without v2 state", () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-explain-"));
     const paths = runPaths(root, "run_blocked");
     writeLatestRunId(root, "run_blocked");
@@ -63,7 +63,12 @@ describe("Waygent run commands", () => {
     );
 
     expect(explainRun({ root, last: true }).blocked_by).toBe("verification_failed");
-    expect(resumeRun({ root, last: true, dry_run: true }).allowed_actions).toContain("retry_with_evidence");
+    expect(resumeRun({ root, last: true, dry_run: true })).toEqual({
+      run_id: "run_blocked",
+      allowed_actions: ["inspect_run", "human_decision"],
+      dry_run: true,
+      blocked_by: "missing_run_state_v2"
+    });
   });
 
   test("next run event increments from the event journal", () => {

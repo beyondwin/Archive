@@ -4,7 +4,7 @@
   "workspace_id": "ws_0123456789abcdef",
   "started_at": "2026-05-21T00:00:00Z",
   "agent": {
-    "name": "agentrunway",
+    "name": "waygent",
     "mode": "runner",
     "version": "0.1.0"
   },
@@ -15,11 +15,11 @@
   },
   "recording": {
     "mode": "minimal",
-    "adapter": "agentrunway"
+    "adapter": "waygent"
   },
   "trust_contract": {
-    "source": "agentrunway",
-    "agentrunway_run_id": "ar-001",
+    "source": "waygent",
+    "waygent_run_id": "run_waygent",
     "legacy_namespaces_supported": false
   }
 }

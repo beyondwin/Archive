@@ -2,9 +2,9 @@
   "schema": "agentlens.event.v2",
   "event_id": "evt_000001",
   "run_id": "run_20260521_000000_agent",
-  "event_type": "agentrunway.verification_result",
+  "event_type": "runway.verification_result",
   "producer": {
-    "name": "agentrunway",
+    "name": "waygent",
     "version": "0.1.0"
   },
   "occurred_at": "2026-05-21T00:00:01Z",
@@ -19,7 +19,7 @@
   "trust_impact": "supports_success",
   "summary": "Verification passed.",
   "payload": {
-    "run_id": "ar-001",
+    "run_id": "run_waygent",
     "status": "passed"
   }
 }

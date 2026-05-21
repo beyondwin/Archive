@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agentlens.dev/schemas/agentlens.run.v2.json",
-  "$comment": "AgentRunway Trust Console run header.",
+  "$comment": "Waygent trust console run header.",
   "title": "agentlens.run.v2",
   "type": "object",
   "additionalProperties": false,
@@ -17,7 +17,7 @@
       "additionalProperties": false,
       "required": ["name", "mode"],
       "properties": {
-        "name": {"type": "string", "const": "agentrunway"},
+        "name": {"type": "string", "const": "waygent"},
         "mode": {"type": "string", "enum": ["runner"]},
         "version": {"type": "string"}
       }
@@ -41,16 +41,16 @@
       "required": ["mode", "adapter"],
       "properties": {
         "mode": {"type": "string", "enum": ["minimal", "full"]},
-        "adapter": {"type": "string", "const": "agentrunway"}
+        "adapter": {"type": "string", "const": "waygent"}
       }
     },
     "trust_contract": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["source", "agentrunway_run_id", "legacy_namespaces_supported"],
+      "required": ["source", "waygent_run_id", "legacy_namespaces_supported"],
       "properties": {
-        "source": {"type": "string", "const": "agentrunway"},
-        "agentrunway_run_id": {"type": "string"},
+        "source": {"type": "string", "const": "waygent"},
+        "waygent_run_id": {"type": "string"},
         "legacy_namespaces_supported": {"type": "boolean", "const": false}
       }
     },

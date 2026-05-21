@@ -115,15 +115,14 @@ export const agentLensEventSchema = {
 export const lensRunwayProjectionSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["schema", "run_id", "status", "safe_wave", "trust_status", "event_count", "legacy_source"],
+  required: ["schema", "run_id", "status", "safe_wave", "trust_status", "event_count"],
   properties: {
     schema: { const: "lens.runway_projection.v1" },
     run_id: { type: "string", pattern: idPattern },
     status: { enum: ["pending", "running", "blocked", "failed", "completed", "applied"] },
     safe_wave: { type: "array", items: { type: "string", pattern: idPattern } },
     trust_status: { enum: ["trusted", "failed", "insufficient_evidence"] },
-    event_count: { type: "integer", minimum: 0 },
-    legacy_source: { anyOf: [{ const: "agentrunway" }, { type: "null" }] }
+    event_count: { type: "integer", minimum: 0 }
   }
 } as const;
 

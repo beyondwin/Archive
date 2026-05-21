@@ -15,7 +15,7 @@ V2_SCHEMA_NAMES = [
     "final_v2",
     "eval_v2",
     "manifest_v2",
-    "agentrunway_projection",
+    "waygent_projection",
     "trust_report",
 ]
 
@@ -43,7 +43,7 @@ def test_v2_schema_loads_and_is_draft_2020_12(name: str) -> None:
         ("final.json", "final_v2"),
         ("eval.json", "eval_v2"),
         ("manifest.json", "manifest_v2"),
-        ("agentrunway_projection.json", "agentrunway_projection"),
+        ("waygent_projection.json", "waygent_projection"),
         ("trust_report.json", "trust_report"),
     ],
 )

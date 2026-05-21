@@ -8,8 +8,8 @@ Hardens the contract that AgentLens **never blocks the host orchestrator**:
 * **B. ``AGENTLENS_HOME`` unwritable.** ``agentlens event append`` against
   a chmod-stripped ``$AGENTLENS_HOME/runs`` must exit 0 with a stderr
   warning rather than raise.
-* **C. Glob namespace filtering.** ``agentlens events --type 'agentrunway.*'``
-  must surface only AgentRunway events from a mixed stream that also contains
+* **C. Glob namespace filtering.** ``agentlens events --type 'runway.*'``
+  must surface only Waygent events from a mixed stream that also contains
   ``example.*``, ``claude.*``, and ``codex.*`` namespaces.
 * **D. ``--tree`` smoke recap.** A parent + 2 children built via
   ``run-open`` and ``AGENTLENS_PARENT_RUN_ID`` must all surface when
@@ -86,7 +86,7 @@ def test_orchestrator_snippet_exits_zero_when_cli_missing_from_path(
     snippet.write_text(
         "#!/usr/bin/env bash\n"
         "set -e\n"
-        "agentlens event append --run X --type agentrunway.test --payload-json '{}' "
+        "agentlens event append --run X --type runway.test --payload-json '{}' "
         "2>/dev/null || true\n"
         "echo done\n",
         encoding="utf-8",
@@ -146,7 +146,7 @@ def test_event_append_nonblocking_when_home_unreadable(
     if os.geteuid() == 0:
         pytest.skip("root bypasses chmod permission checks")
 
-    run_id = _open_run(runner, agent="agentrunway")
+    run_id = _open_run(runner, agent="waygent")
     home = isolated["home"]
     runs = home / "runs"
     assert runs.is_dir()
@@ -162,7 +162,7 @@ def test_event_append_nonblocking_when_home_unreadable(
                 "--run",
                 run_id,
                 "--type",
-                "agentrunway.failure_isolation_probe",
+                "runway.failure_isolation_probe",
                 "--payload-json",
                 "{}",
             ],
@@ -192,7 +192,7 @@ def test_event_append_nonblocking_for_unknown_run(
             "--run",
             "run_does_not_exist_12345",
             "--type",
-            "agentrunway.failure_isolation_probe",
+            "runway.failure_isolation_probe",
             "--payload-json",
             "{}",
         ],
@@ -208,18 +208,18 @@ def test_event_append_nonblocking_for_unknown_run(
 # ---------------------------------------------------------------------------
 
 
-def test_events_query_filters_agentrunway_without_leaking_other_namespaces(
+def test_events_query_filters_waygent_without_leaking_other_namespaces(
     runner: CliRunner,
     isolated: dict[str, Path],
 ) -> None:
-    """``events --type 'agentrunway.*'`` returns only AgentRunway events from
+    """``events --type 'runway.*'`` returns only Waygent events from
     a stream that also contains ``example.*``, ``claude.*``, and ``codex.*``.
     """
-    run_id = _open_run(runner, agent="agentrunway")
+    run_id = _open_run(runner, agent="waygent")
 
     types = [
-        "agentrunway.task_started",
-        "agentrunway.task_finished",
+        "runway.task_started",
+        "runway.task_finished",
         "example.phase_started",
         "example.phase_finished",
         "claude.session_started",
@@ -241,19 +241,19 @@ def test_events_query_filters_agentrunway_without_leaking_other_namespaces(
         )
         assert r.exit_code == 0, r.stderr
 
-    # agentrunway.* — exactly the two AgentRunway events.
-    r = runner.invoke(app, ["events", "--run", run_id, "--type", "agentrunway.*"])
+    # runway.* — exactly the two Waygent events.
+    r = runner.invoke(app, ["events", "--run", run_id, "--type", "runway.*"])
     assert r.exit_code == 0, r.stderr
-    agentrunway_types = [
+    waygent_types = [
         json.loads(ln)["type"]
         for ln in r.stdout.strip().splitlines()
         if ln.strip()
     ]
-    assert sorted(agentrunway_types) == [
-        "agentrunway.task_finished",
-        "agentrunway.task_started",
+    assert sorted(waygent_types) == [
+        "runway.task_finished",
+        "runway.task_started",
     ]
-    assert all(t.startswith("agentrunway.") for t in agentrunway_types)
+    assert all(t.startswith("runway.") for t in waygent_types)
 
     for namespace, expected in {
         "example.*": ["example.phase_finished", "example.phase_started"],
@@ -268,7 +268,7 @@ def test_events_query_filters_agentrunway_without_leaking_other_namespaces(
             if ln.strip()
         ]
         assert sorted(other_types) == expected
-        assert not any(t.startswith("agentrunway.") for t in other_types)
+        assert not any(t.startswith("runway.") for t in other_types)
 
 
 # ---------------------------------------------------------------------------
@@ -285,7 +285,7 @@ def test_events_tree_includes_two_children_via_parent_env(
     all surface in ``events --run <parent> --tree``, in ``(ts, run_id)``
     ascending order.
     """
-    parent_id = _open_run(runner, agent="agentrunway")
+    parent_id = _open_run(runner, agent="waygent")
 
     monkeypatch.setenv("AGENTLENS_PARENT_RUN_ID", parent_id)
     monkeypatch.delenv("AGENTLENS_RUN_ID", raising=False)
@@ -314,7 +314,7 @@ def test_events_tree_includes_two_children_via_parent_env(
             "--run",
             parent_id,
             "--type",
-            "agentrunway.parent_note",
+            "lens.parent_note",
             "--payload-json",
             "{}",
         ],

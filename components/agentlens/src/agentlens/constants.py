@@ -19,7 +19,7 @@ SCHEMA_EVENT_V2 = "agentlens.event.v2"
 SCHEMA_FINAL_V2 = "agentlens.final.v2"
 SCHEMA_EVAL_V2 = "agentlens.eval.v2"
 SCHEMA_MANIFEST_V2 = "agentlens.manifest.v2"
-SCHEMA_AGENTRUNWAY_PROJECTION_V1 = "agentlens.agentrunway_projection.v1"
+SCHEMA_WAYGENT_PROJECTION_V1 = "agentlens.waygent_projection.v1"
 SCHEMA_TRUST_REPORT_V1 = "agentlens.trust_report.v1"
 
 # --- Recording defaults -----------------------------------------------------
@@ -72,7 +72,7 @@ __all__ = [
     "SCHEMA_EVENT_V2",
     "SCHEMA_FINAL_V1",
     "SCHEMA_FINAL_V2",
-    "SCHEMA_AGENTRUNWAY_PROJECTION_V1",
+    "SCHEMA_WAYGENT_PROJECTION_V1",
     "SCHEMA_MANIFEST_V1",
     "SCHEMA_MANIFEST_V2",
     "SCHEMA_RUN_V1",

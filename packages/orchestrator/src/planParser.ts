@@ -14,7 +14,7 @@ export interface ParsedWaygentPlan {
   tasks: ParsedWaygentTask[];
 }
 
-const TASK_BLOCK = /```yaml (?:waygent-task|agentrunway-task)\n([\s\S]*?)\n```/g;
+const TASK_BLOCK = /```yaml waygent-task\n([\s\S]*?)\n```/g;
 const VALID_RISK = new Set<RiskLevel>(["low", "medium", "high"]);
 const VALID_CLAIM_MODE = new Set<FileClaimMode>(["owned", "shared_append", "read_only"]);
 

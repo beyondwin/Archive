@@ -46,7 +46,6 @@ export function projectRunwayProjection(events: AgentLensEvent[], safe_wave: str
   const trust = projectTrustReport(events);
   const blocked = events.some((event) => event.outcome === "blocked");
   const failed = events.some((event) => event.outcome === "failed");
-  const legacy = events.some((event) => event.event_type.startsWith("agentrunway."));
   const status: RunStatus = blocked
     ? "blocked"
     : failed
@@ -61,8 +60,7 @@ export function projectRunwayProjection(events: AgentLensEvent[], safe_wave: str
     status,
     safe_wave,
     trust_status: trust.trust_status,
-    event_count: events.length,
-    legacy_source: legacy ? "agentrunway" : null
+    event_count: events.length
   };
 }
 

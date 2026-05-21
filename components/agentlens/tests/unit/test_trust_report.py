@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agentlens.evaluator.agentrunway_v2 import project_events
+from agentlens.evaluator.waygent_projection import project_events
 from agentlens.evaluator.trust import build_trust_report
 
 
@@ -10,7 +10,7 @@ def _event(event_type: str, payload: dict, **overrides: object) -> dict:
         "event_id": "evt_000001",
         "run_id": "run_20260521_000000_agent",
         "event_type": event_type,
-        "producer": {"name": "agentrunway", "version": "0.1.0"},
+        "producer": {"name": "waygent", "version": "0.1.0"},
         "occurred_at": "2026-05-21T00:00:00Z",
         "sequence": 1,
         "phase": "run",
@@ -27,24 +27,24 @@ def _event(event_type: str, payload: dict, **overrides: object) -> dict:
 def test_trust_report_trusts_success_with_verification_and_artifacts() -> None:
     projection = project_events(
         [
-            _event("agentrunway.run_started", {"run_id": "ar-001"}),
+            _event("platform.run_started", {"run_id": "run_waygent"}),
             _event(
-                "agentrunway.artifacts_ready",
+                "lens.artifacts_ready",
                 {
-                    "run_id": "ar-001",
+                    "run_id": "run_waygent",
                     "contract_path": "contract.json",
                     "artifact_graph_path": "artifact_graph.json",
                     "coverage_path": "coverage.json",
                 },
             ),
             _event(
-                "agentrunway.verification_result",
-                {"run_id": "ar-001", "task_id": "task_001", "status": "passed"},
+                "runway.verification_result",
+                {"run_id": "run_waygent", "task_id": "task_001", "status": "passed"},
                 phase="verification",
             ),
             _event(
-                "agentrunway.run_finished",
-                {"run_id": "ar-001", "status": "finished"},
+                "runway.run_finished",
+                {"run_id": "run_waygent", "status": "finished"},
                 phase="finish",
             ),
         ]
@@ -60,10 +60,10 @@ def test_trust_report_trusts_success_with_verification_and_artifacts() -> None:
 def test_trust_report_flags_false_success_without_verification() -> None:
     projection = project_events(
         [
-            _event("agentrunway.run_started", {"run_id": "ar-002"}),
+            _event("platform.run_started", {"run_id": "run_waygent"}),
             _event(
-                "agentrunway.run_finished",
-                {"run_id": "ar-002", "status": "finished"},
+                "runway.run_finished",
+                {"run_id": "run_waygent", "status": "finished"},
                 phase="finish",
             ),
         ]

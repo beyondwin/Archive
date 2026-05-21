@@ -14,7 +14,7 @@ export interface ResolvedPlanInput {
   path: string | null;
 }
 
-const PLAN_MARKER = /```yaml (?:waygent-task|agentrunway-task)\n/;
+const PLAN_MARKER = /```yaml waygent-task\n/;
 const SKIP_DIRS = new Set([".git", ".venv", "node_modules", "target", "tmp", "dist", "build"]);
 
 export function resolvePlanInput(options: PlanDiscoveryOptions): ResolvedPlanInput {

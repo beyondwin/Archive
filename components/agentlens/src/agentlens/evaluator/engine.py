@@ -26,8 +26,8 @@ from agentlens.store.trust_artifacts import write_projection, write_trust_report
 from agentlens.store.writer import atomic_write_json
 from agentlens.time import utc_now_iso
 
-from .agentrunway_v2 import project_events
-from .agentrunway_events import build_evidence_coverage
+from .waygent_projection import project_events
+from .waygent_events import build_evidence_coverage
 from .checks import (
     REQUIRED_CHECKS,
     CheckFn,
@@ -199,20 +199,20 @@ def _minimal_error_eval(run_dir: Path, message: str) -> dict[str, Any]:
     }
 
 
-def _is_agentrunway_context(ctx: EvalContext, coverage: dict[str, Any]) -> bool:
+def _is_waygent_context(ctx: EvalContext, coverage: dict[str, Any]) -> bool:
     if int(coverage.get("event_count") or 0) > 0:
         return True
     run = ctx.run
     agent = run.get("agent") if isinstance(run, dict) else {}
     if isinstance(agent, dict):
         values = [agent.get("name"), agent.get("label"), agent.get("mode")]
-        if any(isinstance(value, str) and "agentrunway" in value.lower() for value in values):
+        if any(isinstance(value, str) and "waygent" in value.lower() for value in values):
             return True
-    return str(run.get("run_kind") or "").lower() == "agentrunway"
+    return str(run.get("run_kind") or "").lower() == "waygent"
 
 
 def _write_trust_artifacts(ctx: EvalContext, doc: dict[str, Any], coverage: dict[str, Any]) -> None:
-    if not _is_agentrunway_context(ctx, coverage):
+    if not _is_waygent_context(ctx, coverage):
         return
     from .trust import build_trust_report
 
@@ -228,7 +228,7 @@ def _write_trust_artifacts(ctx: EvalContext, doc: dict[str, Any], coverage: dict
     )
     write_projection(ctx.run_dir, projection)
     write_trust_report(ctx.run_dir, trust_report)
-    doc["projection_ref"] = "artifacts/agentrunway_projection.json"
+    doc["projection_ref"] = "artifacts/waygent_projection.json"
     doc["trust_report_ref"] = "artifacts/trust_report.json"
     doc["trust_report"] = trust_report
 

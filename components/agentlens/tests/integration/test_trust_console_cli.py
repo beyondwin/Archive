@@ -35,15 +35,15 @@ def _run_dir(workspace: Path, run_id: str) -> Path:
 def test_event_append_accepts_raw_agentlens_v2_envelope(
     runner: CliRunner, workspace: Path
 ) -> None:
-    opened = runner.invoke(app, ["run-open", "--agent", "agentrunway"])
+    opened = runner.invoke(app, ["run-open", "--agent", "waygent"])
     assert opened.exit_code == 0, opened.output
     run_id = opened.stdout.strip()
     event = {
         "schema": "agentlens.event.v2",
         "event_id": "evt_000001",
         "run_id": run_id,
-        "event_type": "agentrunway.run_finished",
-        "producer": {"name": "agentrunway", "version": "0.1.0"},
+        "event_type": "runway.run_finished",
+        "producer": {"name": "waygent", "version": "0.1.0"},
         "occurred_at": "2026-05-21T00:00:00Z",
         "sequence": 1,
         "phase": "finish",
@@ -51,12 +51,12 @@ def test_event_append_accepts_raw_agentlens_v2_envelope(
         "severity": "info",
         "trust_impact": "supports_success",
         "summary": "finished",
-        "payload": {"run_id": "ar-001", "status": "finished"},
+        "payload": {"run_id": "run_waygent", "status": "finished"},
     }
 
     result = runner.invoke(
         app,
-        ["event", "append", "--run", run_id, "--type", "agentrunway.run_finished", "--payload-stdin"],
+        ["event", "append", "--run", run_id, "--type", "runway.run_finished", "--payload-stdin"],
         input=json.dumps(event),
     )
 
@@ -65,10 +65,10 @@ def test_event_append_accepts_raw_agentlens_v2_envelope(
     assert json.loads(lines[-1])["schema"] == "agentlens.event.v2"
 
 
-def test_agentrunway_cli_reports_trust_report_json(
+def test_waygent_cli_reports_trust_report_json(
     runner: CliRunner, workspace: Path
 ) -> None:
-    opened = runner.invoke(app, ["run-open", "--agent", "agentrunway"])
+    opened = runner.invoke(app, ["run-open", "--agent", "waygent"])
     assert opened.exit_code == 0, opened.output
     run_id = opened.stdout.strip()
     run_dir = _run_dir(workspace, run_id)
@@ -79,7 +79,7 @@ def test_agentrunway_cli_reports_trust_report_json(
             {
                 "schema": "agentlens.trust_report.v1",
                 "run_id": run_id,
-                "agentrunway_run_id": "ar-001",
+                "waygent_run_id": "run_waygent",
                 "claimed_outcome": "success",
                 "trust_verdict": "trusted",
                 "evidence_strength": "strong",
@@ -93,7 +93,7 @@ def test_agentrunway_cli_reports_trust_report_json(
         encoding="utf-8",
     )
 
-    result = runner.invoke(app, ["agentrunway", run_id, "--format", "json"])
+    result = runner.invoke(app, ["waygent", run_id, "--format", "json"])
 
     assert result.exit_code == 0, result.output
     payload = json.loads(result.stdout)
