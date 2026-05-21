@@ -200,6 +200,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       role: "implement",
       prompt,
       task_packet_path: packetPath,
+      cwd: taskWorktree.path,
       changed_files: parsedTask.file_claims.filter((claim) => claim.mode !== "read_only").map((claim) => claim.path)
     });
     const workerArtifact = writeArtifact(paths.root, `worker/${task.id}.json`, JSON.stringify(worker, null, 2));

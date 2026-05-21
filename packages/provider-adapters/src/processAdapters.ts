@@ -20,7 +20,7 @@ export function normalizeProcessOutput(
       schema: "runway.worker_result.v1",
       task_id,
       candidate_id,
-      status: parsed.status ?? "completed",
+      status: normalizeWorkerStatus(parsed.status),
       changed_files: parsed.changed_files ?? [],
       summary: parsed.summary ?? `${provider} completed`,
       evidence: { provider, native: parsed.evidence ?? parsed }
@@ -28,6 +28,12 @@ export function normalizeProcessOutput(
   } catch {
     return failed(task_id, candidate_id, "malformed_result", `${provider} produced malformed output`);
   }
+}
+
+function normalizeWorkerStatus(status: unknown): WorkerResult["status"] {
+  if (status === "success") return "completed";
+  if (status === "completed" || status === "failed" || status === "blocked") return status;
+  return "completed";
 }
 
 export function failed(task_id: string, candidate_id: string, failure_class: FailureClass, summary: string): WorkerResult {
@@ -49,9 +55,10 @@ export async function runProviderProcess(
   options: ProviderProcessOptions
 ): Promise<WorkerResult> {
   return new Promise<WorkerResult>((resolve) => {
-    const child = spawn(options.executable, options.args ?? [], {
-      cwd: options.cwd,
-      env: { ...process.env, ...options.env },
+    const cwd = options.cwd ?? request.cwd;
+    const child = spawn(options.executable, providerProcessArgs(provider, options, cwd), {
+      cwd,
+      env: { ...process.env, ...options.env, ...(cwd ? { PWD: cwd } : {}) },
       stdio: ["pipe", "pipe", "pipe"]
     });
     let settled = false;
@@ -88,6 +95,18 @@ export async function runProviderProcess(
     });
     child.stdin.end(buildProviderPrompt(provider, request));
   });
+}
+
+function providerProcessArgs(provider: "codex" | "claude", options: ProviderProcessOptions, cwd: string | undefined): string[] {
+  const args = options.args ?? [];
+  if (provider !== "codex" || !cwd || options.executable !== "codex" || args.includes("--cd") || args.includes("-C")) {
+    return args;
+  }
+  const promptStdinIndex = args.lastIndexOf("-");
+  if (promptStdinIndex >= 0) {
+    return [...args.slice(0, promptStdinIndex), "--cd", cwd, "--skip-git-repo-check", ...args.slice(promptStdinIndex)];
+  }
+  return [...args, "--cd", cwd, "--skip-git-repo-check"];
 }
 
 export function buildProviderPrompt(provider: "codex" | "claude", request: AdapterRequest): string {

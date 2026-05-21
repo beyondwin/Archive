@@ -14,6 +14,7 @@ export interface AdapterRequest {
   role?: ProviderRole;
   prompt: string;
   task_packet_path?: string;
+  cwd?: string;
   changed_files?: string[];
 }
 

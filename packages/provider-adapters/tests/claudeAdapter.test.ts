@@ -35,11 +35,12 @@ describe("Claude adapter normalization", () => {
       exitCode: 0,
       stdout: JSON.stringify({
         type: "result",
-        result: '```json\n{"summary":"claude envelope done","changed_files":["d.ts"],"evidence":{"command":"claude"}}\n```'
+        result: '```json\n{"status":"success","summary":"claude envelope done","changed_files":["d.ts"],"evidence":{"command":"claude"}}\n```'
       }),
       stderr: ""
     });
 
+    expect(result.status).toBe("completed");
     expect(result.summary).toBe("claude envelope done");
     expect(result.changed_files).toEqual(["d.ts"]);
   });
