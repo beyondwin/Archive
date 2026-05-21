@@ -1,8 +1,10 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { listActualChangedFiles, validateDiffScope } from "../src/diffScope";
+import { runWaygent } from "../src/orchestrator";
+import { readRunStateV2 } from "../src/runState";
 
 describe("diff scope validation", () => {
   test("accepts exact changed files inside allowed globs", () => {
@@ -95,3 +97,101 @@ describe("actual changed file discovery", () => {
     expect(listActualChangedFiles(worktree)).toEqual(["README.md", "src/new.ts"]);
   });
 });
+
+describe("orchestrator diff scope checkpoint gate", () => {
+  test("passes dependency checkpoint refs into dependent task packets", async () => {
+    const workspace = initSourceCheckout("waygent-diff-scope-dependent-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-diff-scope-dependent-"));
+    const dependentPlan = `
+\`\`\`yaml waygent-task
+id: task_base
+title: Create base file
+dependencies: []
+file_claims:
+  - path: base.txt
+    mode: owned
+risk: low
+verify:
+  - test -f base.txt
+\`\`\`
+\`\`\`yaml waygent-task
+id: task_dependent
+title: Create dependent file
+dependencies: [task_base]
+file_claims:
+  - path: dependent.txt
+    mode: owned
+risk: low
+verify:
+  - test -f dependent.txt
+\`\`\`
+`;
+
+    await runWaygent({
+      root,
+      workspace,
+      run_id: "run_dependent",
+      plan: dependentPlan,
+      profile: { provider: "fake", execution_mode: "multi-agent" }
+    });
+
+    const state = readRunStateV2(root, "run_dependent");
+    const packetPath = state.tasks.task_dependent?.task_packet_path;
+    expect(packetPath).toBeTruthy();
+    const packet = JSON.parse(readFileSync(packetPath!, "utf8")) as { checkpoint_inputs?: string[] };
+    expect(packet.checkpoint_inputs).toEqual(["artifacts/checkpoints/task_base/candidate_task_base.json"]);
+  });
+
+  test("blocks checkpoint sealing when actual worktree changes escape allowed scope", async () => {
+    const workspace = initSourceCheckout("waygent-diff-scope-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-diff-scope-run-"));
+    const leakingPlan = `
+\`\`\`yaml waygent-task
+id: task_scope
+title: Create file and leak another
+dependencies: []
+file_claims:
+  - path: a.txt
+    mode: owned
+risk: low
+verify:
+  - test -f a.txt && printf leak > secrets.txt
+\`\`\`
+`;
+
+    const result = await runWaygent({
+      root,
+      workspace,
+      run_id: "run_diff_scope",
+      plan: leakingPlan,
+      profile: { provider: "fake", execution_mode: "multi-agent" }
+    });
+
+    const state = readRunStateV2(root, "run_diff_scope");
+    expect(state.tasks.task_scope).toMatchObject({
+      status: "blocked",
+      latest_failure_class: "diff_scope_failed",
+      checkpoint_refs: []
+    });
+    expect(result.events.find((event) => event.event_type === "runway.diff_scope_result")).toMatchObject({
+      outcome: "blocked",
+      payload: {
+        task_id: "task_scope",
+        failure_class: "diff_scope_failed",
+        reason: "changed_file_outside_allowed_globs",
+        changed_files: ["a.txt", "secrets.txt"]
+      }
+    });
+  });
+});
+
+function initSourceCheckout(prefix: string): string {
+  const workspace = mkdtempSync(join(tmpdir(), prefix));
+  Bun.spawnSync(["git", "init", "-q"], { cwd: workspace });
+  Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: workspace });
+  Bun.spawnSync(["git", "config", "user.name", "Test"], { cwd: workspace });
+  writeFileSync(join(workspace, "README.md"), "fixture\n");
+  Bun.spawnSync(["git", "add", "-A"], { cwd: workspace });
+  Bun.spawnSync(["git", "commit", "-q", "-m", "init"], { cwd: workspace });
+  return workspace;
+}
