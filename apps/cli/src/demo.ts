@@ -1,6 +1,12 @@
-import { defaultRunRoot, runWaygentDemo } from "@waygent/orchestrator";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { runWaygentDemo } from "@waygent/orchestrator";
 
-const result = await runWaygentDemo({ root: defaultRunRoot(), run_id: "run_demo" });
+const result = await runWaygentDemo({
+  root: mkdtempSync(join(tmpdir(), "waygent-platform-demo-")),
+  run_id: "run_demo"
+});
 
 console.log(
   JSON.stringify(

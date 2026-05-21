@@ -59,8 +59,10 @@ describe("Waygent CLI", () => {
 
     const result = await runCli(["events", "--root", root, "--run", "run_events"]);
 
-    expect(result).toMatchObject({ run_id: "run_events", total_events: 8 });
+    expect(result).toMatchObject({ run_id: "run_events", total_events: 9 });
     expect((result as { events: Array<{ event_type: string }> }).events[0]?.event_type).toBe("platform.run_started");
+    expect((result as { events: Array<{ event_type: string }> }).events.map((event) => event.event_type))
+      .toContain("runway.preflight_result");
   });
 
   test("apply refuses a dirty source checkout with an explicit blocker", async () => {
