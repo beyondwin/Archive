@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import type { AgentLensEvent, FailureClass, RunStatus } from "@waygent/contracts";
 import { appendEvent, readEvents, readLatestRunId, rebuildRunSummary, runPaths, sha256 } from "@waygent/lens-store";
-import { projectFailureSummary, projectTrustReport } from "@waygent/lens-projectors";
+import { projectApplyReadinessFromState, projectFailureSummary, projectTrustReport } from "@waygent/lens-projectors";
 import { hasRunState, readRunState, writeRunState, type WaygentRunState } from "./runState";
 export { buildRunEvent, nextRunEvent } from "./runEvents";
 import { nextRunEvent } from "./runEvents";
@@ -87,9 +87,10 @@ export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): {
     const v2State = tryReadRunStateV2(options.root, explanation.run_id);
     if (v2State) {
       if (v2State.status === "completed") {
+        const readiness = projectApplyReadinessFromState(v2State);
         return {
           run_id: explanation.run_id,
-          allowed_actions: hasApplyReadyCheckpoint(v2State)
+          allowed_actions: readiness.status === "ready" && hasApplyReadyCheckpoint(v2State)
             ? ["inspect_run", "apply_verified_checkpoint"]
             : ["inspect_run", "retry_checkpoint_generation", "human_decision"],
           dry_run: options.dry_run ?? false
@@ -167,20 +168,22 @@ export async function applyRun(options: RunCommandOptions & { workspace: string 
   }
 
   if (v2State) {
-    if ((v2State.completion_audit as { status?: string } | null)?.status !== "passed") {
+    const readiness = projectApplyReadinessFromState(v2State);
+    if (readiness.status !== "ready") {
+      const reason = readiness.reason ?? (readiness.status === "applied" ? "already_applied" : "missing_apply_ready_evidence");
       appendEvent(paths.events, nextRunEvent(paths.events, {
         run_id: runId,
         event_type: "runway.apply_blocked",
         phase: "apply",
         outcome: "blocked",
-        summary: "Apply blocked because completion audit has not passed.",
-        payload: { reason: "completion_audit_not_passed" },
+        summary: "Apply blocked because readiness evidence is incomplete.",
+        payload: { reason, apply_readiness: readiness },
         trust_impact: "requires_review"
       }));
-      writeRunStateV2(options.root, { ...v2State, apply: { status: "blocked", reason: "completion_audit_not_passed" } });
-      return { command: "apply", run_id: runId, status: "blocked", reason: "completion_audit_not_passed" };
+      writeRunStateV2(options.root, { ...v2State, apply: { status: "blocked", reason } });
+      return { command: "apply", run_id: runId, status: "blocked", reason };
     }
-    const checkpointRefs = combinedApplyCheckpointRefs(v2State) ?? (v2State.apply.checkpoint_ref
+    const checkpointRefs = readiness.checkpoint_refs.length > 0 ? readiness.checkpoint_refs : combinedApplyCheckpointRefs(v2State) ?? (v2State.apply.checkpoint_ref
       ? [v2State.apply.checkpoint_ref]
       : Object.values(v2State.tasks)
         .filter((task) => task.status === "verified")
