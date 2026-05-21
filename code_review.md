@@ -13,7 +13,7 @@ Lead with concrete findings and file references.
   runtime artifacts excluded?
 - Security and privacy: Are secrets, transcripts, credentials, screenshots, or
   sensitive local paths avoided?
-- Observability: For AgentLens/AgentRunway changes, are durable artifacts,
+- Observability: For AgentLens/Waygent changes, are durable artifacts,
   event schemas, and non-blocking behavior preserved?
 
 ## AgentLens Checks
@@ -24,14 +24,14 @@ Lead with concrete findings and file references.
   designed.
 - Dashboard/API type drift is checked with `npm run gen-types` when relevant.
 
-## AgentRunway Checks
+## Waygent Runtime Checks
 
-- Workers do not write SQLite or AgentLens directly.
+- Providers do not write SQLite or AgentLens directly.
 - Scheduler changes respect safe waves, dependency checkpoints, and failure
   barriers.
 - Recovery paths stop on missing handlers or human-decision classes instead of
   recording fake progress.
-- Runner behavior changes include targeted tests or deterministic evals.
+- Runtime behavior changes include targeted tests or scenario harness coverage.
 
 ## Output Format
 

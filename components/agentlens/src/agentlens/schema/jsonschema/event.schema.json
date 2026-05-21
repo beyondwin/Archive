@@ -30,7 +30,7 @@
           "pattern": "^[a-z][a-z0-9_-]*(\\.[a-z][a-z0-9_-]*)+$"
         },
         {
-          "$comment": "Reserved AgentLens core namespaces must use the locked event-name enum. AgentRunway (agentrunway.*), neutral example namespaces (example.*), and importer namespaces (claude.*, codex.*) are intentionally not constrained beyond the general pattern.",
+          "$comment": "Reserved AgentLens core namespaces must use the locked event-name enum. Waygent (waygent.*), neutral example namespaces (example.*), and importer namespaces (claude.*, codex.*) are intentionally not constrained beyond the general pattern.",
           "if": {
             "pattern": "^(run|command|checkpoint|artifact|task|failure|recording|agentlens)\\."
           },

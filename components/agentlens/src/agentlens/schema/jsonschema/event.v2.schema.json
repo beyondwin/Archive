@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agentlens.dev/schemas/agentlens.event.v2.json",
-  "$comment": "AgentRunway Trust Console event envelope. Legacy KWS namespaces are intentionally unsupported.",
+  "$comment": "Waygent trust console event envelope. Legacy KWS namespaces are intentionally unsupported.",
   "title": "agentlens.event.v2",
   "type": "object",
   "additionalProperties": false,
@@ -24,13 +24,13 @@
     "schema": {"type": "string", "const": "agentlens.event.v2"},
     "event_id": {"type": "string", "pattern": "^evt_[A-Za-z0-9_-]{6,64}$"},
     "run_id": {"type": "string", "minLength": 1},
-    "event_type": {"type": "string", "pattern": "^agentrunway\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)?$"},
+    "event_type": {"type": "string", "pattern": "^(platform|runway|kernel|lens)\\.[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)?$"},
     "producer": {
       "type": "object",
       "additionalProperties": false,
       "required": ["name", "version"],
       "properties": {
-        "name": {"type": "string", "const": "agentrunway"},
+        "name": {"type": "string", "const": "waygent"},
         "version": {"type": "string"}
       }
     },

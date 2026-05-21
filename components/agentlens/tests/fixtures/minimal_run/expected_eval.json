@@ -50,7 +50,7 @@
       "status": "passed"
     }
   ],
-  "evaluated_at": "1970-01-01T00:00:00Z",
+  "evaluated_at": "2026-05-21T16:26:09.540087Z",
   "evidence_coverage": {
     "artifacts": {
       "artifact_graph": "missing",
@@ -58,10 +58,10 @@
       "coverage": "missing"
     },
     "coverage": {
-      "blocked": [],
-      "covered": [],
-      "partial": [],
-      "unreferenced": []
+      "kernel": 0,
+      "lens": 0,
+      "platform": 0,
+      "runway": 0
     },
     "event_count": 0,
     "gates": {
@@ -72,37 +72,10 @@
     "internal_actions": 0,
     "observability": "not_applicable",
     "payload_safety": "ok",
-    "producer": "agentrunway",
-    "projection": {
-      "agentlens_emit_health": {
-        "last_status": "unknown",
-        "statuses": {}
-      },
-      "artifacts": {
-        "artifact_graph": "missing",
-        "contract": "missing",
-        "coverage": "missing"
-      },
-      "blocked_tasks": [],
-      "coverage": {
-        "blocked": [],
-        "covered": [],
-        "partial": [],
-        "unreferenced": []
-      },
-      "event_count": 0,
-      "gate_retries": [],
-      "internal_actions": 0,
-      "merge": {
-        "conflicts": [],
-        "ready": false
-      },
-      "payload_safety": "ok",
-      "producer": "agentrunway",
-      "run_id": null,
-      "status": "not_started",
-      "tasks": {},
-      "timeline": []
+    "producer": "waygent",
+    "run_agent": {
+      "mode": "cli",
+      "name": "generic"
     },
     "strength": "none",
     "timeline_event_count": 0

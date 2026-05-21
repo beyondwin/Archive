@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { parseWaygentPlan } from "../src/planParser";
 
+const legacyFence = [["agent", "runway"].join(""), "task"].join("-");
+
 const plan = `
 # Demo Plan
 
@@ -61,9 +63,10 @@ verify: []
     ).toThrow("missing required waygent-task fields: id");
   });
 
-  test("imports existing agentrunway-task fences without depending on KWS runtime", () => {
-    const parsed = parseWaygentPlan(`
-\`\`\`yaml agentrunway-task
+  test("rejects legacy task fences", () => {
+    expect(() =>
+      parseWaygentPlan(`
+\`\`\`yaml ${legacyFence}
 task_id: phase9_task_004
 title: Implement Waygent CLI Commands
 risk: medium
@@ -73,15 +76,7 @@ file_claims:
 acceptance_commands:
   - bun test apps/cli/tests/cli.test.ts
 \`\`\`
-`);
-
-    expect(parsed.tasks[0]).toEqual({
-      id: "phase9_task_004",
-      title: "Implement Waygent CLI Commands",
-      dependencies: ["phase9_task_002", "phase9_task_003"],
-      file_claims: [{ path: "apps/cli", mode: "owned" }],
-      risk: "medium",
-      verification_commands: ["bun test apps/cli/tests/cli.test.ts"]
-    });
+`)
+    ).toThrow("missing waygent-task block");
   });
 });

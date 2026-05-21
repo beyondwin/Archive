@@ -246,7 +246,6 @@ export interface LensRunwayProjection {
   safe_wave: string[];
   trust_status: "trusted" | "failed" | "insufficient_evidence";
   event_count: number;
-  legacy_source: "agentrunway" | null;
 }
 
 export interface ArtifactReference {

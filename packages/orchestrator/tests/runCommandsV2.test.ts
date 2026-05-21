@@ -1,12 +1,59 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
+import { appendEvent, runPaths } from "@waygent/lens-store";
 import { createCheckpointArtifact, createCombinedCheckpointPatchArtifact, dryRunCheckpointPatch } from "../src/checkpointArtifacts";
-import { applyRun, resumeRun } from "../src/runCommands";
+import { applyRun, buildRunEvent, resumeRun } from "../src/runCommands";
 import { readRunStateV2, runStatePath, writeRunStateV2 } from "../src/runState";
 
 describe("Waygent run commands v2", () => {
+  const unsupportedSchema = ["waygent.run_state", "v1"].join(".");
+
+  test("resume blocks runs without v2 state", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-run-commands-v2-"));
+    const runId = "run_missing_state";
+    const paths = runPaths(root, runId);
+    appendEvent(paths.events, buildRunEvent({
+      run_id: runId,
+      sequence: 1,
+      event_type: "platform.run_started",
+      phase: "platform",
+      outcome: "running",
+      summary: "Run opened.",
+      payload: {}
+    }));
+
+    expect(resumeRun({ root, run: runId, dry_run: true })).toEqual({
+      run_id: runId,
+      allowed_actions: ["inspect_run", "human_decision"],
+      dry_run: true,
+      blocked_by: "missing_run_state_v2"
+    });
+  });
+
+  test("apply blocks unsupported state schema", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "waygent-workspace-"));
+    Bun.spawnSync(["git", "init", "-q"], { cwd: workspace });
+    Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: workspace });
+    Bun.spawnSync(["git", "config", "user.name", "Test User"], { cwd: workspace });
+    writeFileSync(join(workspace, "README.md"), "hello\n");
+    Bun.spawnSync(["git", "add", "README.md"], { cwd: workspace });
+    Bun.spawnSync(["git", "commit", "-q", "-m", "init"], { cwd: workspace });
+
+    const root = mkdtempSync(join(tmpdir(), "waygent-run-commands-v2-"));
+    const runId = "run_unsupported_state";
+    mkdirSync(join(root, runId), { recursive: true });
+    writeFileSync(join(root, runId, "state.json"), JSON.stringify({ schema: unsupportedSchema, run_id: runId }));
+
+    await expect(applyRun({ root, run: runId, workspace })).resolves.toEqual({
+      command: "apply",
+      run_id: runId,
+      status: "blocked",
+      reason: "unsupported_run_state"
+    });
+  });
+
   test("resume exposes blocked v2 decision state without guessing", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-run-commands-v2-"));
     writeRunStateV2(root, {

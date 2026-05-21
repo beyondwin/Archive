@@ -1,4 +1,4 @@
-"""Atomic helpers for AgentRunway Trust Console artifacts."""
+"""Atomic helpers for Waygent trust artifacts."""
 from __future__ import annotations
 
 import json
@@ -19,7 +19,7 @@ def _artifacts_dir(run_dir: Path) -> Path:
 
 
 def write_projection(run_dir: Path, projection: dict[str, Any]) -> Path:
-    path = _artifacts_dir(run_dir) / "agentrunway_projection.json"
+    path = _artifacts_dir(run_dir) / "waygent_projection.json"
     atomic_write_json(path, projection, redact=False)
     return path
 

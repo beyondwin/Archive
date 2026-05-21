@@ -34,7 +34,7 @@ def _resolve_run_dir(workspace: Path, run_id: str) -> Path:
     )
 
 
-def _open_run(runner: CliRunner, agent: str = "agentrunway", parent: str | None = None) -> str:
+def _open_run(runner: CliRunner, agent: str = "waygent", parent: str | None = None) -> str:
     args = ["run-open", "--agent", agent]
     if parent:
         args += ["--parent", parent]
@@ -66,7 +66,7 @@ def test_event_append_payload_json(runner: CliRunner, workspace: Path) -> None:
             "--run",
             run_id,
             "--type",
-            "agentrunway.task_started",
+            "runway.task_started",
             "--payload-json",
             '{"task_id":"task_1"}',
         ],
@@ -76,7 +76,7 @@ def test_event_append_payload_json(runner: CliRunner, workspace: Path) -> None:
     events = _read_events(run_dir)
     # First event is the run.started from run-open. The new one is appended.
     assert events[-1]["schema"] == "agentlens.event.v1"
-    assert events[-1]["type"] == "agentrunway.task_started"
+    assert events[-1]["type"] == "runway.task_started"
     assert events[-1]["run_id"] == run_id
     assert events[-1]["payload"] == {"task_id": "task_1"}
     assert events[-1]["event_id"].startswith("evt_")
@@ -98,14 +98,14 @@ def test_event_append_payload_file(runner: CliRunner, workspace: Path, tmp_path:
             "--run",
             run_id,
             "--type",
-            "agentrunway.task_finished",
+            "runway.task_finished",
             "--payload-file",
             str(payload_file),
         ],
     )
     assert result.exit_code == 0, result.stderr
     events = _read_events(run_dir)
-    assert events[-1]["type"] == "agentrunway.task_finished"
+    assert events[-1]["type"] == "runway.task_finished"
     assert events[-1]["payload"] == {"task_id": "task_2"}
 
 
@@ -121,14 +121,14 @@ def test_event_append_payload_stdin(runner: CliRunner, workspace: Path) -> None:
             "--run",
             run_id,
             "--type",
-            "agentrunway.note",
+            "lens.note",
             "--payload-stdin",
         ],
         input='{"note":"hello"}',
     )
     assert result.exit_code == 0, result.stderr
     events = _read_events(run_dir)
-    assert events[-1]["type"] == "agentrunway.note"
+    assert events[-1]["type"] == "lens.note"
     assert events[-1]["payload"] == {"note": "hello"}
 
 
@@ -139,7 +139,7 @@ def test_event_append_requires_exactly_one_payload_source(
     # No source.
     result = runner.invoke(
         app,
-        ["event", "append", "--run", run_id, "--type", "agentrunway.task_started"],
+        ["event", "append", "--run", run_id, "--type", "runway.task_started"],
     )
     assert result.exit_code != 0
 
@@ -152,7 +152,7 @@ def test_event_append_requires_exactly_one_payload_source(
             "--run",
             run_id,
             "--type",
-            "agentrunway.task_started",
+            "runway.task_started",
             "--payload-json",
             "{}",
             "--payload-stdin",
@@ -183,14 +183,14 @@ def test_event_append_filesystem_resolution_when_sqlite_missing(
             "--run",
             run_id,
             "--type",
-            "agentrunway.task_started",
+            "runway.task_started",
             "--payload-json",
             '{"task_id":"task_x"}',
         ],
     )
     assert result.exit_code == 0, result.stderr
     events = _read_events(run_dir)
-    assert events[-1]["type"] == "agentrunway.task_started"
+    assert events[-1]["type"] == "runway.task_started"
 
 
 # ---------------------------------------------------------------------------
@@ -207,7 +207,7 @@ def test_events_query_by_type_glob(runner: CliRunner, workspace: Path) -> None:
             "--run",
             run_id,
             "--type",
-            "agentrunway.task_started",
+            "runway.task_started",
             "--payload-json",
             '{"task_id":"task_1"}',
         ],
@@ -220,22 +220,63 @@ def test_events_query_by_type_glob(runner: CliRunner, workspace: Path) -> None:
             "--run",
             run_id,
             "--type",
-            "agentrunway.task_finished",
+            "runway.task_finished",
             "--payload-json",
             '{"task_id":"task_1"}',
         ],
     )
 
     result = runner.invoke(
-        app, ["events", "--run", run_id, "--type", "agentrunway.*"]
+        app, ["events", "--run", run_id, "--type", "runway.*"]
     )
     assert result.exit_code == 0, result.stderr
     lines = [ln for ln in result.stdout.strip().splitlines() if ln.strip()]
     assert len(lines) == 2
     for line in lines:
         evt = json.loads(line)
-        assert evt["type"].startswith("agentrunway.")
+        assert evt["type"].startswith("runway.")
         assert evt["run_id"] == run_id
+
+
+def test_events_query_by_type_glob_supports_raw_v2_events(
+    runner: CliRunner, workspace: Path
+) -> None:
+    run_id = _open_run(runner)
+    raw_event = {
+        "schema": "agentlens.event.v2",
+        "event_id": "evt_rawv2a",
+        "run_id": run_id,
+        "event_type": "runway.worker_result",
+        "producer": {"name": "waygent", "version": "0.1.0"},
+        "occurred_at": "2026-05-22T00:00:00Z",
+        "sequence": 1,
+        "phase": "worker",
+        "outcome": "success",
+        "severity": "info",
+        "trust_impact": "supports_success",
+        "summary": "Worker produced bounded evidence.",
+        "payload": {"task_id": "task_1"},
+    }
+    append_result = runner.invoke(
+        app,
+        [
+            "event",
+            "append",
+            "--run",
+            run_id,
+            "--type",
+            "runway.worker_result",
+            "--payload-json",
+            json.dumps(raw_event),
+        ],
+    )
+    assert append_result.exit_code == 0, append_result.stderr
+
+    result = runner.invoke(app, ["events", "--run", run_id, "--type", "runway.*"])
+    assert result.exit_code == 0, result.stderr
+    events = [json.loads(ln) for ln in result.stdout.strip().splitlines() if ln.strip()]
+    assert [event["event_type"] for event in events] == ["runway.worker_result"]
+    assert events[0]["run_id"] == run_id
 
 
 def test_events_query_tree_includes_descendants_ordered(
@@ -252,7 +293,7 @@ def test_events_query_tree_includes_descendants_ordered(
             "--run",
             child_id,
             "--type",
-            "agentrunway.task_started",
+            "runway.task_started",
             "--payload-json",
             '{"task_id":"task_c"}',
         ],
@@ -265,7 +306,7 @@ def test_events_query_tree_includes_descendants_ordered(
             "--run",
             parent_id,
             "--type",
-            "agentrunway.note",
+            "lens.note",
             "--payload-json",
             '{"note":"hi"}',
         ],

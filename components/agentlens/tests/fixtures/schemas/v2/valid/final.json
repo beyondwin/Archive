@@ -3,7 +3,7 @@
   "run_id": "run_20260521_000000_agent",
   "ended_at": "2026-05-21T00:02:00Z",
   "claimed_outcome": "success",
-  "summary": "AgentRunway run completed.",
+  "summary": "Waygent run completed.",
   "changed_files": [
     {
       "path_label": "AgentLens/src/agentlens/evaluator/trust.py",

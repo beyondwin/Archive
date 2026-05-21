@@ -4,7 +4,7 @@
   "run_id": "run_20260521_000000_agent",
   "event_type": "kws-cpe.worker_result",
   "producer": {
-    "name": "agentrunway",
+    "name": "waygent",
     "version": "0.1.0"
   },
   "occurred_at": "2026-05-21T00:00:01Z",

@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -88,6 +88,33 @@ describe("Waygent local API routes", () => {
       combined_patch_ref: null,
       source: "run_state_v2"
     });
+    expect(detail.apply).toEqual({
+      status: "ready",
+      reason: null
+    });
+  });
+
+  test("GET /runs and /runs/:runId do not infer apply readiness without v2 state", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-api-missing-v2-"));
+    const runId = "run_missing_v2";
+    await runWaygentDemo({ root, run_id: runId });
+    rmSync(join(root, runId, "state.json"));
+    const realHandler = createApiHandler({ runRoot: root });
+
+    const listResponse = await realHandler(new Request("http://waygent.local/runs"));
+    expect(await listResponse.json()).toMatchObject({
+      runs: [
+        {
+          run_id: runId,
+          apply_status: "not_ready"
+        }
+      ]
+    });
+
+    const detailResponse = await realHandler(new Request(`http://waygent.local/runs/${runId}`));
+    const detail = await detailResponse.json();
+    expect(detail.apply_status).toBe("not_ready");
+    expect(detail.apply_readiness).toBeNull();
     expect(detail.apply).toEqual({
       status: "ready",
       reason: null

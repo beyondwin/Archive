@@ -10,8 +10,8 @@ Public API:
     validate_event_line(line)
 
 The v1 runtime schemas keep their historical short names: "run", "event",
-"final", "eval", and "manifest". The AgentRunway Trust Console adds explicit
-v2 names plus derived artifacts.
+"final", "eval", and "manifest". The Waygent trust surface adds explicit v2
+names plus derived artifacts.
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ SchemaName = Literal[
     "final_v2",
     "eval_v2",
     "manifest_v2",
-    "agentrunway_projection",
+    "waygent_projection",
     "trust_report",
 ]
 
@@ -49,7 +49,7 @@ _SCHEMA_FILES: dict[str, str] = {
     "final_v2": "final.v2.schema.json",
     "eval_v2": "eval.v2.schema.json",
     "manifest_v2": "manifest.v2.schema.json",
-    "agentrunway_projection": "agentrunway_projection.v1.schema.json",
+    "waygent_projection": "waygent_projection.v1.schema.json",
     "trust_report": "trust_report.v1.schema.json",
 }
 _SCHEMA_NAMES: tuple[str, ...] = tuple(_SCHEMA_FILES)
@@ -64,7 +64,7 @@ _NAMESPACE_TO_NAME: dict[str, str] = {
     "agentlens.final.v2": "final_v2",
     "agentlens.eval.v2": "eval_v2",
     "agentlens.manifest.v2": "manifest_v2",
-    "agentlens.agentrunway_projection.v1": "agentrunway_projection",
+    "agentlens.waygent_projection.v1": "waygent_projection",
     "agentlens.trust_report.v1": "trust_report",
 }
 _SCHEMA_DIR = Path(__file__).resolve().parent / "jsonschema"

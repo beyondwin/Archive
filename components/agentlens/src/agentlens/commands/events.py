@@ -18,6 +18,7 @@ from typing import Iterable, Optional
 import typer
 
 from agentlens.store.event_query import (
+    event_type,
     filter_since,
     glob_type_match,
     merge_events_by_ts_run,
@@ -119,7 +120,7 @@ def events(
         None, "--run", help="run_id to query (omit to query all runs)"
     ),
     type_: Optional[str] = typer.Option(
-        None, "--type", help="fnmatch glob over event types (e.g. agentrunway.*)"
+        None, "--type", help="fnmatch glob over event types (e.g. runway.*)"
     ),
     since: Optional[str] = typer.Option(
         None, "--since", help="inclusive UTC ISO8601 lower bound on ts"
@@ -150,7 +151,7 @@ def events(
     streams = [_read_events(rd) for rd in run_dirs]
     merged = merge_events_by_ts_run(streams)
     merged = filter_since(merged, since)
-    merged = [e for e in merged if glob_type_match(type_, e.get("type", ""))]
+    merged = [e for e in merged if glob_type_match(type_, event_type(e))]
     _emit(merged)
 
     if not follow:
@@ -186,7 +187,7 @@ def events(
                     if since is not None:
                         if not filter_since([evt], since):
                             continue
-                    if not glob_type_match(type_, evt.get("type", "")):
+                    if not glob_type_match(type_, event_type(evt)):
                         continue
                     new_events.append(evt)
                 _emit(new_events)

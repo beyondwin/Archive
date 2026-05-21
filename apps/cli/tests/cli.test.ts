@@ -28,7 +28,8 @@ describe("Waygent CLI", () => {
     const workspace = mkdtempSync(join(tmpdir(), "waygent-clean-"));
     expect(await runCli(["apply", "--root", root, "--workspace", workspace, "--run", "run_demo"])).toMatchObject({
       command: "apply",
-      status: "applied"
+      status: "blocked",
+      reason: "missing_run_state_v2"
     });
     expect((await runCli(["intent", "--text", "최근 승인된 플랜 실행해줘"])) as { command: string }).toEqual({ command: "waygent run --latest" });
   });

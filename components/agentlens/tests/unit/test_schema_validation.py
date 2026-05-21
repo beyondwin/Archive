@@ -373,7 +373,7 @@ def test_container_run_fixture_validates() -> None:
     assert doc["run_kind"] == "container"
     assert doc["agent"]["name"] == "generic"
     assert doc["agent"]["mode"] == "unknown"
-    assert doc["agent"]["label"] == "agentrunway"
+    assert doc["agent"]["label"] == "waygent"
     assert doc["recording"]["has_transcript"] is False
     assert doc["recording"]["transcript_source"] == "none"
     validate_doc(doc)
@@ -416,10 +416,10 @@ def test_transcript_source_accepts_codex_rollout_jsonl() -> None:
 @pytest.mark.parametrize(
     "fixture_name,expected_type",
     [
-        ("event_agentrunway_run_started", "agentrunway.run_started"),
+        ("event_waygent_run_started", "waygent.run_started"),
         (
-            "event_agentrunway_verification_result",
-            "agentrunway.verification_result",
+            "event_waygent_verification_result",
+            "waygent.verification_result",
         ),
         ("event_claude_tool_use", "claude.tool_use"),
         ("event_codex_tool_use", "codex.tool_use"),
@@ -454,7 +454,7 @@ def test_event_type_rejects_reserved_but_unknown_core_name() -> None:
 
 def test_event_type_rejects_trailing_dot() -> None:
     doc = _load_fixture(VALID_DIR, "event")
-    doc["type"] = "agentrunway."
+    doc["type"] = "waygent."
     with pytest.raises(SchemaError):
         validate_doc(doc)
 

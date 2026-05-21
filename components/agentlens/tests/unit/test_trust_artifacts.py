@@ -15,13 +15,14 @@ from agentlens.store.trust_artifacts import (
 
 def _projection(run_id: str) -> dict:
     return {
-        "schema": "agentlens.agentrunway_projection.v1",
+        "schema": "agentlens.waygent_projection.v1",
         "run_id": run_id,
-        "agentrunway_run_id": "ar-001",
+        "waygent_run_id": "run_waygent",
+        "producer": "waygent",
         "status": "finished",
         "event_count": 1,
         "timeline": [],
-        "tasks": {},
+        "tasks": [],
         "artifacts": {"contract": "present", "artifact_graph": "present", "coverage": "present"},
         "coverage": {"covered": [], "partial": [], "blocked": [], "unreferenced": []},
         "projection_issues": [],
@@ -34,7 +35,7 @@ def _report(run_id: str) -> dict:
     return {
         "schema": "agentlens.trust_report.v1",
         "run_id": run_id,
-        "agentrunway_run_id": "ar-001",
+        "waygent_run_id": "run_waygent",
         "claimed_outcome": "success",
         "trust_verdict": "trusted",
         "evidence_strength": "strong",
@@ -52,7 +53,7 @@ def test_write_and_read_trust_artifacts(tmp_path: Path) -> None:
     projection_path = write_projection(tmp_path, _projection(run_id))
     report_path = write_trust_report(tmp_path, _report(run_id))
 
-    assert projection_path == tmp_path / "artifacts" / "agentrunway_projection.json"
+    assert projection_path == tmp_path / "artifacts" / "waygent_projection.json"
     assert report_path == tmp_path / "artifacts" / "trust_report.json"
     assert read_trust_report(tmp_path)["trust_verdict"] == "trusted"
 

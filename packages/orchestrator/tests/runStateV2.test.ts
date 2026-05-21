@@ -2,10 +2,12 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { readRunStateV2, runStatePath, writeRunStateV2 } from "../src/runState";
+import { readRunStateV2, readRunStateV2Result, runStatePath, writeRunStateV2 } from "../src/runState";
 
 describe("Waygent run state v2", () => {
-  test("writes and reads v2 state without breaking v1 helpers", () => {
+  const unsupportedSchema = ["waygent.run_state", "v1"].join(".");
+
+  test("writes and reads v2 state", () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-state-v2-"));
     writeRunStateV2(root, baseState(root, "run_v2"));
 
@@ -35,6 +37,40 @@ describe("Waygent run state v2", () => {
     }, null, 2)}\n`);
 
     expect(() => readRunStateV2(root, runId)).toThrow();
+  });
+
+  test("classifies missing v2 state without throwing", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-state-v2-"));
+
+    expect(readRunStateV2Result(root, "missing_run")).toEqual({
+      status: "missing",
+      reason: "missing_run_state_v2"
+    });
+  });
+
+  test("classifies unsupported state schemas", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-state-v2-"));
+    const runId = "run_unsupported_state";
+    mkdirSync(join(root, runId), { recursive: true });
+    writeFileSync(join(root, runId, "state.json"), JSON.stringify({ schema: unsupportedSchema, run_id: runId }));
+
+    expect(readRunStateV2Result(root, runId)).toMatchObject({
+      status: "unsupported",
+      reason: "unsupported_run_state",
+      schema: unsupportedSchema
+    });
+  });
+
+  test("classifies invalid v2 state", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-state-v2-"));
+    const runId = "run_invalid_state";
+    mkdirSync(join(root, runId), { recursive: true });
+    writeFileSync(join(root, runId, "state.json"), JSON.stringify({ schema: "waygent.run_state.v2", run_id: runId }));
+
+    expect(readRunStateV2Result(root, runId)).toMatchObject({
+      status: "invalid",
+      reason: "invalid_run_state_v2"
+    });
   });
 });
 

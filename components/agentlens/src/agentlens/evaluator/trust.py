@@ -1,4 +1,4 @@
-"""Trust report builder for AgentRunway projections."""
+"""Trust report builder for Waygent projections."""
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -39,7 +39,7 @@ def build_trust_report(
     blocking_evidence: list[dict[str, str]] = []
     status = str(projection.get("status") or "not_started")
     verification_passed = _timeline_has(
-        projection, "agentrunway.verification_result", status="passed"
+        projection, "runway.verification_result", status="passed"
     )
 
     if claimed_outcome == "success" and not verification_passed:
@@ -52,7 +52,7 @@ def build_trust_report(
         operator_actions.append(
             {
                 "code": "rerun_verification",
-                "summary": "Rerun AgentRunway verification before trusting the success claim.",
+                "summary": "Rerun Waygent verification before trusting the success claim.",
             }
         )
 
@@ -71,7 +71,7 @@ def build_trust_report(
     if status == "blocked":
         verdict = "blocked"
         strength = "weak"
-        blocking_evidence.append({"code": "run_blocked", "summary": "AgentRunway reported a blocked run."})
+        blocking_evidence.append({"code": "run_blocked", "summary": "Waygent reported a blocked run."})
     elif claimed_outcome == "success" and not verification_passed:
         verdict = "untrusted"
         strength = "insufficient"
@@ -88,7 +88,7 @@ def build_trust_report(
     return {
         "schema": SCHEMA_TRUST_REPORT_V1,
         "run_id": str(projection.get("run_id") or ""),
-        "agentrunway_run_id": projection.get("agentrunway_run_id"),
+        "waygent_run_id": projection.get("waygent_run_id"),
         "claimed_outcome": claimed_outcome,
         "trust_verdict": verdict,
         "evidence_strength": strength,

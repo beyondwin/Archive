@@ -5,7 +5,7 @@
   "status": "passed",
   "claimed_outcome": "success",
   "trust_report_ref": "artifacts/trust_report.json",
-  "projection_ref": "artifacts/agentrunway_projection.json",
+  "projection_ref": "artifacts/waygent_projection.json",
   "checks": [
     {
       "name": "trust_report_present",

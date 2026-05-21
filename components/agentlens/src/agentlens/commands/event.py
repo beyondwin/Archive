@@ -125,7 +125,7 @@ def _raw_v2_event(payload: dict, *, run: str, type_: str) -> dict | None:
 def append(
     run: str = typer.Option(..., "--run", help="run_id receiving the event"),
     type_: str = typer.Option(
-        ..., "--type", help="event type (e.g. agentrunway.worker_result)"
+        ..., "--type", help="event type (e.g. runway.worker_result)"
     ),
     payload_json: Optional[str] = typer.Option(
         None, "--payload-json", help="inline JSON object payload"
