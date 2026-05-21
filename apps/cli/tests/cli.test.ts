@@ -24,8 +24,9 @@ describe("Waygent CLI", () => {
   });
 
   test("supports stable command surface", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-clean-root-"));
     const workspace = mkdtempSync(join(tmpdir(), "waygent-clean-"));
-    expect(await runCli(["apply", "--workspace", workspace, "--run", "run_demo"])).toMatchObject({
+    expect(await runCli(["apply", "--root", root, "--workspace", workspace, "--run", "run_demo"])).toMatchObject({
       command: "apply",
       status: "applied"
     });
