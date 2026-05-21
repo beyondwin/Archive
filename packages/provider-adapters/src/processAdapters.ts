@@ -1,39 +1,80 @@
 import { spawn } from "node:child_process";
 import type { FailureClass, WorkerResult } from "@waygent/contracts";
 import { validateContract } from "@waygent/contracts";
-import type { AdapterRequest, ProcessAdapterOutput, ProviderProcessOptions } from "./types";
+import type { AdapterRequest, ProcessAdapterOutput, ProviderAdapterRunResult, ProviderProcessOptions } from "./types";
 
 const defaultTimeoutMs = 30 * 60 * 1000;
+const failureClasses = new Set<FailureClass>([
+  "adapter_crashed",
+  "timeout",
+  "cancelled",
+  "malformed_result",
+  "diff_scope_failed",
+  "review_changes_requested",
+  "review_rejected",
+  "verification_failed",
+  "merge_conflict",
+  "needs_rebase",
+  "needs_plan_fix",
+  "needs_split",
+  "needs_infra_fix",
+  "missing_checkpoint",
+  "missing_resume_handler",
+  "permission_denied",
+  "service_unreachable",
+  "dependency_missing",
+  "environment_blocker",
+  "flaky_unconfirmed",
+  "command_not_found",
+  "dependency_blocked",
+  "file_claim_conflict",
+  "dirty_source_checkout",
+  "unsafe_apply",
+  "state_drift",
+  "artifact_missing",
+  "stale_activity",
+  "terminal_rejected"
+]);
 
 export function normalizeProcessOutput(
   provider: "codex" | "claude" | "acp",
   task_id: string,
   candidate_id: string,
   output: ProcessAdapterOutput
-): WorkerResult {
+): ProviderAdapterRunResult {
   if (output.exitCode !== 0) {
-    return failed(task_id, candidate_id, "adapter_crashed", `${provider} exited ${output.exitCode}`);
+    return withProcessEvidence(failed(task_id, candidate_id, "adapter_crashed", `${provider} exited ${output.exitCode}`), output);
   }
   try {
     const parsed = parseWorkerOutput(output.stdout) as Partial<WorkerResult>;
-    return validateContract<WorkerResult>("runway.worker_result.v1", {
+    const failure_class = normalizeFailureClass(parsed.failure_class);
+    const worker = validateContract<WorkerResult>("runway.worker_result.v1", {
       schema: "runway.worker_result.v1",
       task_id,
       candidate_id,
       status: normalizeWorkerStatus(parsed.status),
       changed_files: parsed.changed_files ?? [],
       summary: parsed.summary ?? `${provider} completed`,
-      evidence: { provider, native: parsed.evidence ?? parsed }
+      evidence: { provider, native: parsed.evidence ?? parsed },
+      ...(failure_class ? { failure_class } : {})
     });
+    return withProcessEvidence(worker, output);
   } catch {
-    return failed(task_id, candidate_id, "malformed_result", `${provider} produced malformed output`);
+    return withProcessEvidence(failed(task_id, candidate_id, "malformed_result", `${provider} produced malformed output`), output);
   }
 }
 
 function normalizeWorkerStatus(status: unknown): WorkerResult["status"] {
+  if (status === undefined) return "completed";
   if (status === "success") return "completed";
   if (status === "completed" || status === "failed" || status === "blocked") return status;
-  return "completed";
+  throw new Error(`unknown worker status: ${String(status)}`);
+}
+
+function normalizeFailureClass(value: unknown): FailureClass | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === "string" && failureClasses.has(value as FailureClass)) return value as FailureClass;
+  throw new Error(`unknown failure_class: ${String(value)}`);
 }
 
 export function failed(task_id: string, candidate_id: string, failure_class: FailureClass, summary: string): WorkerResult {
@@ -53,9 +94,10 @@ export async function runProviderProcess(
   provider: "codex" | "claude",
   request: AdapterRequest,
   options: ProviderProcessOptions
-): Promise<WorkerResult> {
-  return new Promise<WorkerResult>((resolve) => {
+): Promise<ProviderAdapterRunResult> {
+  return new Promise<ProviderAdapterRunResult>((resolve) => {
     const cwd = options.cwd ?? request.cwd;
+    const startedAt = new Date().toISOString();
     const child = spawn(options.executable, providerProcessArgs(provider, options, cwd), {
       cwd,
       env: { ...process.env, ...options.env, ...(cwd ? { PWD: cwd } : {}) },
@@ -65,7 +107,7 @@ export async function runProviderProcess(
     let timedOut = false;
     let stdout = "";
     let stderr = "";
-    const finish = (result: WorkerResult): void => {
+    const finish = (result: ProviderAdapterRunResult): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
@@ -84,15 +126,46 @@ export async function runProviderProcess(
       stderr += chunk;
     });
     child.on("error", (error) => {
-      finish(failed(request.task_id, request.candidate_id, "adapter_crashed", `${provider} failed to start: ${error.message}`));
+      const summary = `${provider} failed to start: ${error.message}`;
+      stderr = stderr ? `${stderr}\n${summary}` : summary;
+      finish(
+        withProcessEvidence(failed(request.task_id, request.candidate_id, "adapter_crashed", summary), {
+          exitCode: null,
+          stdout,
+          stderr,
+          timedOut: false,
+          startedAt,
+          completedAt: new Date().toISOString()
+        })
+      );
     });
     child.on("close", (code) => {
+      const completedAt = new Date().toISOString();
       if (timedOut) {
-        finish(failed(request.task_id, request.candidate_id, "timeout", `${provider} timed out after ${options.timeout_ms ?? defaultTimeoutMs}ms`));
+        finish(
+          withProcessEvidence(failed(request.task_id, request.candidate_id, "timeout", `${provider} timed out after ${options.timeout_ms ?? defaultTimeoutMs}ms`), {
+            exitCode: code,
+            stdout,
+            stderr,
+            timedOut: true,
+            startedAt,
+            completedAt
+          })
+        );
         return;
       }
-      finish(normalizeProcessOutput(provider, request.task_id, request.candidate_id, { exitCode: code ?? 1, stdout, stderr }));
+      finish(
+        normalizeProcessOutput(provider, request.task_id, request.candidate_id, {
+          exitCode: code ?? 1,
+          stdout,
+          stderr,
+          timedOut: false,
+          startedAt,
+          completedAt
+        })
+      );
     });
+    child.stdin.on("error", () => {});
     child.stdin.end(buildProviderPrompt(provider, request));
   });
 }
@@ -181,4 +254,21 @@ function tryParseJson(value: string): unknown | null {
   } catch {
     return null;
   }
+}
+
+function withProcessEvidence(worker: WorkerResult, output: ProcessAdapterOutput): ProviderAdapterRunResult {
+  const fallbackCompletedAt = new Date().toISOString();
+  const completedAt = output.completedAt === undefined ? fallbackCompletedAt : output.completedAt;
+  return {
+    worker,
+    process: {
+      stdout: output.stdout,
+      stderr: output.stderr,
+      exit_code: output.exitCode,
+      timed_out: output.timedOut ?? false,
+      started_at: output.startedAt ?? completedAt ?? fallbackCompletedAt,
+      completed_at: completedAt,
+      event_stream: output.eventStream ?? null
+    }
+  };
 }

@@ -8,7 +8,7 @@ describe("ACP adapter boundary", () => {
       stdout: JSON.stringify({ summary: "acp done", evidence: { transcript_artifact: "artifacts/transcript.json" } }),
       stderr: ""
     });
-    expect(result.schema).toBe("runway.worker_result.v1");
+    expect(result.worker.schema).toBe("runway.worker_result.v1");
     expect(acpCapabilityManifest.file_edits).toBe(false);
   });
 });
