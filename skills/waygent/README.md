@@ -40,5 +40,10 @@ authenticated.
 - If apply reports `dirty_source_checkout`, report the blocker and stop.
 - If verification fails, run `waygent explain --last` before `waygent resume --last`.
 - If apply reports no verified checkpoint, do not apply or retry from chat.
+- Completed runs must have manifest-backed checkpoint artifacts before apply.
+- `waygent resume --last` is the source of truth for whether apply is
+  currently allowed.
+- Missing or corrupted checkpoint artifacts require inspection or checkpoint
+  regeneration; chat should not invent a patch or bypass the run state.
 - If `WAYGENT_LIVE_PROVIDER` is set but the provider CLI is unavailable, fall
   back to the offline scenario gate.

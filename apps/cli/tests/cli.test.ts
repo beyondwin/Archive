@@ -59,7 +59,7 @@ describe("Waygent CLI", () => {
 
     const result = await runCli(["events", "--root", root, "--run", "run_events"]);
 
-    expect(result).toMatchObject({ run_id: "run_events", total_events: 6 });
+    expect(result).toMatchObject({ run_id: "run_events", total_events: 8 });
     expect((result as { events: Array<{ event_type: string }> }).events[0]?.event_type).toBe("platform.run_started");
   });
 

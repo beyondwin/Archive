@@ -1,4 +1,5 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { join } from "node:path";
 import type { AgentLensEvent, ProviderAttempt, WaygentRunStateV2 } from "@waygent/contracts";
@@ -8,6 +9,8 @@ import { projectFailureSummary, projectTimeline, projectTrustReport } from "@way
 import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeArtifact, writeLatestRunId } from "@waygent/lens-store";
 import { ClaudeProviderAdapter, CodexProviderAdapter, FakeProviderAdapter, type ProviderAdapter, type ProviderProcessOptions } from "@waygent/provider-adapters";
 import { buildDurableProjection, mergeCandidate } from "@waygent/runway-control";
+import { createCheckpointArtifact, dryRunCheckpointPatch } from "./checkpointArtifacts";
+import { buildCompletionAudit } from "./completionAudit";
 import { resolveExecutionProfile, type ProfileOverride, type ProviderName } from "./executionProfile";
 import { resolvePlanInput } from "./planDiscovery";
 import { parseWaygentPlan, type ParsedWaygentTask } from "./planParser";
@@ -157,18 +160,18 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     payload: { safe_wave: projection.safe_wave }
   }));
 
-  const checkpointRefs = new Map<string, string>();
   const verificationCommands = new Map<string, string[]>();
   const providerAttempts: ProviderAttempt[] = [];
   const verificationRecords: Array<Record<string, unknown>> = [];
   let sequence = 4;
-  for (const taskId of safeWave) {
+
+  async function runOneTask(taskId: string): Promise<void> {
     const task = graph.tasks.get(taskId);
     if (!task) throw new Error(`task ${taskId} missing from graph`);
     const parsedTask = parsed.tasks.find((candidate) => candidate.id === task.id);
     if (!parsedTask) throw new Error(`task ${task.id} missing from parsed plan`);
     const taskWorktree = planWorktree({ run_id: runId, task_id: task.id, workspace, worktree_root: worktreeRoot });
-    mkdirSync(taskWorktree.path, { recursive: true });
+    prepareTaskWorktree(workspace, taskWorktree.path);
     verificationCommands.set(task.id, parsedTask.verification_commands.length > 0 ? parsedTask.verification_commands : ["printf hello"]);
     const packet = buildTaskPacket({
       run_id: runId,
@@ -265,22 +268,6 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     });
     verificationRecords.push(...taskVerificationRecords);
     const verificationPassed = verification.status === "passed" && worker.status === "completed";
-    if (verificationPassed) {
-      const verified = mergeCandidate({ task_id: task.id, candidate_id: worker.candidate_id, reviewed: true, verified: true });
-      task.checkpoint_ref = verified.checkpoint_ref ?? `checkpoint_${task.id}_${worker.candidate_id}`;
-      checkpointRefs.set(task.id, task.checkpoint_ref);
-    }
-    updateRunStateV2(options.root, runId, (state) => {
-      state.current_phase = "verify";
-      state.verification = [...verificationRecords];
-      const stateTask = state.tasks[task.id];
-      if (stateTask) {
-        stateTask.status = verificationPassed ? "verified" : "blocked";
-        stateTask.latest_failure_class = verificationPassed ? null : worker.failure_class ?? "verification_failed";
-        stateTask.checkpoint_refs = task.checkpoint_ref ? [task.checkpoint_ref] : [];
-        stateTask.timing.completed = new Date().toISOString();
-      }
-    });
     appendEvent(paths.events, buildRunEvent({
       run_id: runId,
       sequence: sequence++,
@@ -288,23 +275,123 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       phase: "verify",
       outcome: verificationPassed ? "success" : "failed",
       summary: verificationPassed ? "Verification passed with kernel evidence." : "Verification failed with kernel evidence.",
-      payload: { worker, verification: taskVerificationRecords, checkpoint_ref: task.checkpoint_ref ?? null }
+      payload: { worker, verification: taskVerificationRecords, checkpoint_ref: null }
     }));
+    if (verificationPassed) {
+      const verified = mergeCandidate({ task_id: task.id, candidate_id: worker.candidate_id, reviewed: true, verified: true });
+      const hasWritableClaims = parsedTask.file_claims.some((claim) => claim.mode !== "read_only");
+      if (verified.merged && hasWritableClaims) {
+        const checkpoint = createCheckpointArtifact({
+          run_root: paths.root,
+          run_id: runId,
+          task_id: task.id,
+          candidate_id: worker.candidate_id,
+          worktree_path: taskWorktree.path,
+          changed_files: worker.changed_files,
+          verification_refs: taskVerificationRecords.map((record) => String(record.kernel_result_ref))
+        });
+        const dryRun = dryRunCheckpointPatch({
+          run_root: paths.root,
+          checkpoint_ref: checkpoint.manifest_ref,
+          source: workspace
+        });
+        appendEvent(paths.events, buildRunEvent({
+          run_id: runId,
+          sequence: sequence++,
+          event_type: "runway.checkpoint_created",
+          phase: "checkpoint",
+          outcome: "success",
+          summary: "Verified checkpoint artifact created.",
+          payload: {
+            task_id: task.id,
+            candidate_id: worker.candidate_id,
+            checkpoint_ref: checkpoint.manifest_ref,
+            patch_ref: checkpoint.patch_ref
+          }
+        }));
+        appendEvent(paths.events, buildRunEvent({
+          run_id: runId,
+          sequence: sequence++,
+          event_type: "runway.apply_dry_run_result",
+          phase: "checkpoint",
+          outcome: dryRun.status === "passed" ? "success" : "blocked",
+          summary: dryRun.status === "passed" ? "Checkpoint patch dry-run passed." : "Checkpoint patch dry-run failed.",
+          payload: { task_id: task.id, checkpoint_ref: checkpoint.manifest_ref, dry_run: dryRun }
+        }));
+        if (dryRun.status === "passed") {
+          task.checkpoint_ref = checkpoint.manifest_ref;
+        } else {
+          task.latest_failure_class = "missing_checkpoint";
+        }
+      } else {
+        task.latest_failure_class = "missing_checkpoint";
+      }
+    }
+    updateRunStateV2(options.root, runId, (state) => {
+      state.current_phase = "verify";
+      state.verification = [...verificationRecords];
+      const stateTask = state.tasks[task.id];
+      if (stateTask) {
+        stateTask.status = verificationPassed ? "verified" : "blocked";
+        stateTask.latest_failure_class = verificationPassed ? task.latest_failure_class ?? null : worker.failure_class ?? "verification_failed";
+        stateTask.checkpoint_refs = task.checkpoint_ref ? [task.checkpoint_ref] : [];
+        stateTask.timing.completed = new Date().toISOString();
+      }
+    });
+    if (verificationPassed && task.checkpoint_ref) {
+      task.status = "APPLIED";
+    } else {
+      task.status = "FAILED_TERMINAL";
+      task.latest_failure_class = task.latest_failure_class ?? worker.failure_class ?? "verification_failed";
+    }
   }
-  const allSafeWaveVerified = safeWave.every((taskId) => checkpointRefs.has(taskId));
+
+  let activeSafeWave = safeWave;
+  let waveIndex = 1;
+  while (activeSafeWave.length > 0) {
+    for (const taskId of activeSafeWave) {
+      await runOneTask(taskId);
+    }
+    waveIndex += 1;
+    const nextProjection = buildDurableProjection(graph);
+    activeSafeWave = nextProjection.safe_wave;
+    if (activeSafeWave.length === 0) break;
+    appendEvent(paths.events, buildRunEvent({
+      run_id: runId,
+      sequence: sequence++,
+      event_type: "runway.safe_wave_selected",
+      phase: "schedule",
+      outcome: "success",
+      summary: "Safe wave selected.",
+      payload: { safe_wave: activeSafeWave, wave_id: `wave_${waveIndex}` }
+    }));
+    updateRunStateV2(options.root, runId, (state) => {
+      state.safe_waves.push({ wave_id: `wave_${waveIndex}`, ready: activeSafeWave, withheld: nextProjection.withheld_tasks });
+      for (const taskId of activeSafeWave) {
+        const stateTask = state.tasks[taskId];
+        if (stateTask) stateTask.status = "ready";
+      }
+    });
+  }
+
+  let completionAuditStatus = "failed";
   updateRunStateV2(options.root, runId, (state) => {
-    state.status = allSafeWaveVerified ? "completed" : "blocked";
-    state.lifecycle_outcome = allSafeWaveVerified ? "finished" : "blocked";
     state.current_phase = "complete";
-    state.completion_audit = {
-      status: allSafeWaveVerified ? "passed" : "failed",
-      required_checks: safeWave.flatMap((taskId) => verificationCommands.get(taskId) ?? []),
+    state.completion_audit = buildCompletionAudit({
+      state,
+      required_checks: parsed.tasks.flatMap((task) => verificationCommands.get(task.id) ?? task.verification_commands),
       verification_evidence: verificationRecords,
       review_evidence: [],
-      state_reconciliation: { passed: false },
-      prompt_to_artifact_checklist: ["task_packet_written", "provider_attempt_recorded", "kernel_verification_recorded"],
-      residual_risk: []
-    };
+      prompt_to_artifact_checklist: [
+        "task_packet_written",
+        "provider_attempt_recorded",
+        "kernel_verification_recorded",
+        "checkpoint_artifact_recorded"
+      ]
+    });
+    completionAuditStatus = String((state.completion_audit as { status?: string }).status ?? "failed");
+    state.status = completionAuditStatus === "passed" ? "completed" : "blocked";
+    state.lifecycle_outcome = completionAuditStatus === "passed" ? "finished" : "blocked";
     state.timestamps.updated_at = new Date().toISOString();
     state.timestamps.completed_at = state.timestamps.updated_at;
   });
@@ -313,7 +400,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     state.completion_audit = {
       ...(state.completion_audit ?? {}),
       state_reconciliation: reconciliation,
-      status: allSafeWaveVerified && reconciliation.passed ? "passed" : "failed"
+      status: completionAuditStatus === "passed" && reconciliation.passed ? "passed" : "failed"
     };
     if (!reconciliation.passed) {
       state.status = "blocked";
@@ -341,7 +428,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     failures: projectFailureSummary(events),
     timeline: projectTimeline(events),
     summary: rebuildRunSummary(events),
-    projection: buildDurableProjection(graph),
+    projection,
     apply_state: "not_applied"
   };
 }
@@ -403,6 +490,55 @@ function materializeFakeProviderResult(worktree: string, task: ParsedWaygentTask
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, `Waygent fake provider output for ${task.id}\n`);
   }
+}
+
+function prepareTaskWorktree(source: string, target: string): void {
+  rmSync(target, { recursive: true, force: true });
+  mkdirSync(dirname(target), { recursive: true });
+  if (!isGitWorktree(source)) {
+    mkdirSync(target, { recursive: true });
+    cpSync(source, target, { recursive: true, force: true });
+    initGitSnapshot(target);
+    return;
+  }
+  const clone = spawnSync("git", ["clone", "--quiet", "--shared", source, target], {
+    cwd: source,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (clone.status !== 0) {
+    throw new Error(`failed to create task worktree at ${target}: ${clone.stderr}`);
+  }
+  spawnSync("git", ["checkout", "--detach", "HEAD"], {
+    cwd: target,
+    encoding: "utf8",
+    stdio: ["ignore", "ignore", "ignore"]
+  });
+  const reset = spawnSync("git", ["reset", "--hard", "HEAD"], {
+    cwd: target,
+    encoding: "utf8",
+    stdio: ["ignore", "ignore", "pipe"]
+  });
+  if (reset.status !== 0) {
+    throw new Error(`failed to prepare task worktree at ${target}: ${reset.stderr}`);
+  }
+}
+
+function isGitWorktree(source: string): boolean {
+  const result = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], {
+    cwd: source,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"]
+  });
+  return result.status === 0 && result.stdout.trim() === "true";
+}
+
+function initGitSnapshot(target: string): void {
+  spawnSync("git", ["init", "-q"], { cwd: target });
+  spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: target });
+  spawnSync("git", ["config", "user.name", "Waygent"], { cwd: target });
+  spawnSync("git", ["add", "-A"], { cwd: target });
+  spawnSync("git", ["commit", "--allow-empty", "-q", "-m", "waygent base"], { cwd: target });
 }
 
 function updateRunStateV2(root: string, runId: string, mutate: (state: WaygentRunStateV2) => void): void {

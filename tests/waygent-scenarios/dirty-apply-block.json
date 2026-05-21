@@ -8,7 +8,7 @@
   "expected": {
     "run_status": "trusted",
     "apply_status": "blocked",
-    "total_events": 6,
+    "total_events": 8,
     "safe_wave": ["task_dirty_apply"],
     "event_types": [
       "platform.run_started",
@@ -16,9 +16,14 @@
       "runway.safe_wave_selected",
       "runway.worker_result",
       "runway.verification_result",
+      "runway.checkpoint_created",
+      "runway.apply_dry_run_result",
       "lens.trust_report_updated"
     ],
-    "checkpoints": ["checkpoint_task_dirty_apply_candidate_task_dirty_apply"],
+    "checkpoints": [
+      "artifacts/checkpoints/task_dirty_apply/candidate_task_dirty_apply.json",
+      "artifacts/checkpoints/task_dirty_apply/candidate_task_dirty_apply.patch"
+    ],
     "blockers": ["source_dirty_before_apply"]
   }
 }

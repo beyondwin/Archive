@@ -8,7 +8,7 @@
   "expected": {
     "run_status": "trusted",
     "apply_status": "not_applied",
-    "total_events": 6,
+    "total_events": 13,
     "safe_wave": ["task_overlap_a"],
     "event_types": [
       "platform.run_started",
@@ -16,8 +16,20 @@
       "runway.safe_wave_selected",
       "runway.worker_result",
       "runway.verification_result",
+      "runway.checkpoint_created",
+      "runway.apply_dry_run_result",
+      "runway.safe_wave_selected",
+      "runway.worker_result",
+      "runway.verification_result",
+      "runway.checkpoint_created",
+      "runway.apply_dry_run_result",
       "lens.trust_report_updated"
     ],
-    "checkpoints": ["checkpoint_task_overlap_a_candidate_task_overlap_a"]
+    "checkpoints": [
+      "artifacts/checkpoints/task_overlap_a/candidate_task_overlap_a.json",
+      "artifacts/checkpoints/task_overlap_a/candidate_task_overlap_a.patch",
+      "artifacts/checkpoints/task_overlap_b/candidate_task_overlap_b.json",
+      "artifacts/checkpoints/task_overlap_b/candidate_task_overlap_b.patch"
+    ]
   }
 }

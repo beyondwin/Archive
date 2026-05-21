@@ -115,7 +115,9 @@ export function normalizeWaygentReplay(
   } = {}
 ): NormalizedWaygentReplay {
   const events = replay.events ?? [];
-  const runStatus = replay.trust_report?.trust_status === "trusted" && !hasFailedWorker(events) ? "trusted" : "failed";
+  const runStatus = !options.force_missing_checkpoint && replay.trust_report?.trust_status === "trusted" && !hasFailedWorker(events)
+    ? "trusted"
+    : "failed";
   const checkpoints = options.force_missing_checkpoint ? [] : uniqueStrings(events.flatMap((event) => checkpointRefs(event.payload)));
   const normalized: NormalizedWaygentReplay = {
     run_status: runStatus,
@@ -226,9 +228,10 @@ function scenarioBlockers(scenario: WaygentScenario): string[] {
 function checkpointRefs(payload: Record<string, unknown> | undefined): string[] {
   if (!payload) return [];
   const direct = typeof payload.checkpoint_ref === "string" ? [payload.checkpoint_ref] : [];
+  const patch = typeof payload.patch_ref === "string" ? [payload.patch_ref] : [];
   const worker = payload.worker && typeof payload.worker === "object" ? payload.worker as Record<string, unknown> : undefined;
   const workerCheckpoint = worker && typeof worker.checkpoint_ref === "string" ? [worker.checkpoint_ref] : [];
-  return [...direct, ...workerCheckpoint];
+  return [...direct, ...patch, ...workerCheckpoint];
 }
 
 function hasFailedWorker(events: ReplayLike["events"]): boolean {

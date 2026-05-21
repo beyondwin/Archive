@@ -19,6 +19,11 @@ export async function applyVerifiedCheckpoint(input: ApplyVerifiedCheckpointInpu
   if (status.status !== 0 || status.stdout.trim()) return { status: "blocked", reason: "dirty_source_checkout" };
   const patchPath = join(input.source, ".waygent-apply.patch");
   writeFileSync(patchPath, input.patch);
+  const dryRun = spawnSync("git", ["apply", "--check", patchPath], { cwd: input.source, encoding: "utf8" });
+  if (dryRun.status !== 0) {
+    rmSync(patchPath, { force: true });
+    return { status: "blocked", reason: "patch_dry_run_failed" };
+  }
   const apply = spawnSync("git", ["apply", patchPath], { cwd: input.source, encoding: "utf8" });
   rmSync(patchPath, { force: true });
   if (apply.status !== 0) return { status: "failed", reason: "patch_apply_failed" };

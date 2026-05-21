@@ -36,3 +36,8 @@ Stop rules:
 - If the plan is missing or `--latest` is ambiguous, ask for the plan path.
 - If apply reports `dirty_source_checkout`, report the blocker and do not retry.
 - If verification fails, use `waygent explain --last` before resume.
+- If `resume` does not report `apply_verified_checkpoint`, do not run `apply`;
+  inspect or explain the run first.
+- If apply reports `checkpoint_manifest_missing`, `checkpoint_patch_missing`,
+  or `checkpoint_digest_mismatch`, report the blocker and do not retry from
+  chat.
