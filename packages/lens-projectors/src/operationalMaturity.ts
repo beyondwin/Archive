@@ -74,7 +74,7 @@ function hardBlockerFromState(
   const driftFailure = drift && typeof drift.failure_class === "string" ? drift.failure_class : null;
   const applyBlocker = state.apply.status === "blocked" ? state.apply.reason ?? applyReadinessReason : applyReadinessReason;
   const failureClass = driftFailure ?? applyBlocker;
-  if (failureClass && state.status !== "completed") {
+  if (failureClass) {
     return {
       task_id: null,
       failure_class: failureClass,
