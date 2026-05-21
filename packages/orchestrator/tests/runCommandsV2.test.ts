@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { createCheckpointArtifact, createCombinedCheckpointPatchArtifact, dryRunCheckpointPatch } from "../src/checkpointArtifacts";
 import { applyRun, resumeRun } from "../src/runCommands";
-import { runStatePath, writeRunStateV2 } from "../src/runState";
+import { readRunStateV2, runStatePath, writeRunStateV2 } from "../src/runState";
 
 describe("Waygent run commands v2", () => {
   test("resume exposes blocked v2 decision state without guessing", async () => {
@@ -202,7 +202,17 @@ describe("Waygent run commands v2", () => {
       apply: { status: "not_applied", checkpoint_ref: "checkpoint_task_apply_candidate" },
       context: { snapshot_path: null, basis_hash: null },
       drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
-      completion_audit: { status: "passed" },
+      completion_audit: {
+        status: "passed",
+        combined_apply_evidence: {
+          status: "passed",
+          checkpoint_refs: ["checkpoint_task_apply_candidate"],
+          patch_ref: "artifacts/checkpoints/apply/run_missing.patch",
+          patch_sha256: "a".repeat(64),
+          patch_byte_length: 12,
+          evidence_ref: "artifacts/checkpoints/apply-dry-run.json"
+        }
+      },
       timestamps: {
         started_at: "2026-05-21T00:00:00Z",
         updated_at: "2026-05-21T00:00:00Z",
@@ -250,7 +260,8 @@ describe("Waygent run commands v2", () => {
   });
 
   test("apply blocks completed v2 runs without a materialized final patch", async () => {
-    const { root, workspace } = writeCompletedApplyRun("run_missing_combined_patch", { combined: false });
+    const { root, workspace, combined } = writeCompletedApplyRun("run_missing_combined_patch");
+    rmSync(join(root, "run_missing_combined_patch", combined!.patch_ref!), { force: true });
 
     expect(resumeRun({ root, run: "run_missing_combined_patch", dry_run: true }).allowed_actions).not.toContain(
       "apply_verified_checkpoint"
@@ -260,6 +271,32 @@ describe("Waygent run commands v2", () => {
       run_id: "run_missing_combined_patch",
       status: "blocked",
       reason: "checkpoint_patch_missing"
+    });
+  });
+
+  test("resume does not allow apply when reconciliation drift blocks readiness", () => {
+    const { root } = writeCompletedApplyRun("run_drifted");
+    const state = readRunStateV2(root, "run_drifted");
+    writeRunStateV2(root, {
+      ...state,
+      drift: {
+        last_checked_at: "2026-05-21T00:00:00Z",
+        records: [{ failure_class: "state_drift", severity: "blocking" }],
+        unrepaired_blockers: [{ failure_class: "state_drift", severity: "blocking" }]
+      }
+    });
+
+    expect(resumeRun({ root, run: "run_drifted", dry_run: true }).allowed_actions).not.toContain("apply_verified_checkpoint");
+  });
+
+  test("apply blocks when the readiness projection is not ready", async () => {
+    const { root, workspace } = writeCompletedApplyRun("run_not_ready", { combined: false });
+
+    expect(await applyRun({ root, run: "run_not_ready", workspace })).toEqual({
+      command: "apply",
+      run_id: "run_not_ready",
+      status: "blocked",
+      reason: "missing_apply_ready_evidence"
     });
   });
 
