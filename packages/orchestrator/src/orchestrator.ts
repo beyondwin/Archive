@@ -7,6 +7,7 @@ import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeArtifact, wr
 import { FakeProviderAdapter } from "@waygent/provider-adapters";
 import { buildDurableProjection, mergeCandidate } from "@waygent/runway-control";
 import { resolveExecutionProfile, type ProfileOverride } from "./executionProfile";
+import { resolvePlanInput } from "./planDiscovery";
 import { parseWaygentPlan } from "./planParser";
 import { buildRunEvent } from "./runEvents";
 import { buildTaskGraphFromPlan } from "./taskGraph";
@@ -16,6 +17,10 @@ export interface RunWaygentOptions {
   run_id?: string;
   profile?: ProfileOverride;
   plan?: string;
+  plan_path?: string;
+  latest?: boolean;
+  topic?: string;
+  workspace?: string;
   spec?: string;
 }
 
@@ -50,7 +55,8 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   rmSync(paths.root, { recursive: true, force: true });
   const profile = resolveExecutionProfile(options.profile, { provider: "fake" });
   const provider = new FakeProviderAdapter();
-  const parsed = parseWaygentPlan(options.plan ?? DEMO_PLAN);
+  const planInput = resolveRunPlanInput(options);
+  const parsed = parseWaygentPlan(planInput.markdown);
   const graph = buildTaskGraphFromPlan(parsed);
   const projection = buildDurableProjection(graph);
   const taskId = projection.safe_wave[0] ?? parsed.tasks[0]?.id;
@@ -66,7 +72,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     phase: "platform",
     outcome: "running",
     summary: "Run opened.",
-    payload: { plan: options.plan, spec: options.spec, profile }
+    payload: { plan: planInput.path ?? options.plan, spec: options.spec, profile }
   });
   appendEvent(paths.events, started);
   appendEvent(paths.events, buildRunEvent({
@@ -151,4 +157,17 @@ export async function runWaygentDemo(options: RunWaygentOptions): Promise<Waygen
 
 export function defaultRunRoot(): string {
   return join(process.cwd(), "tmp", "waygent-runs");
+}
+
+function resolveRunPlanInput(options: RunWaygentOptions): { markdown: string; path: string | null } {
+  if (options.plan_path || options.latest || options.topic) {
+    return resolvePlanInput({
+      workspace: options.workspace ?? process.cwd(),
+      plan_path: options.plan_path,
+      latest: options.latest,
+      topic: options.topic,
+      inline_plan: options.plan
+    });
+  }
+  return { markdown: options.plan ?? DEMO_PLAN, path: null };
 }

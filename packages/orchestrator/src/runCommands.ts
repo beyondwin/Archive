@@ -1,4 +1,4 @@
-import type { FailureClass, RunStatus } from "@waygent/contracts";
+import type { AgentLensEvent, FailureClass, RunStatus } from "@waygent/contracts";
 import { readEvents, readLatestRunId, rebuildRunSummary, runPaths } from "@waygent/lens-store";
 import { projectFailureSummary, projectTrustReport } from "@waygent/lens-projectors";
 export { buildRunEvent, nextRunEvent } from "./runEvents";
@@ -40,6 +40,22 @@ export function statusRun(options: RunCommandOptions): RunStatusView {
     total_events: summary.total_events,
     last_event_type: summary.last_event_type,
     trust_status: trust.trust_status
+  };
+}
+
+export function eventsRun(options: RunCommandOptions): { run_id: string; total_events: number; events: AgentLensEvent[] } {
+  const runId = resolveRunId(options);
+  const events = readEvents(runPaths(options.root, runId).events);
+  return { run_id: runId, total_events: events.length, events };
+}
+
+export function inspectRun(options: RunCommandOptions): RunStatusView & {
+  failures: ReturnType<typeof projectFailureSummary>;
+} {
+  const status = statusRun(options);
+  return {
+    ...status,
+    failures: projectFailureSummary(readEvents(runPaths(options.root, status.run_id).events))
   };
 }
 
