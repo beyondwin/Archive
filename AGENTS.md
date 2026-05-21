@@ -4,17 +4,23 @@ Repository instructions for AI coding agents working in this checkout.
 
 ## Project Shape
 
-Archive is now focused on two active surfaces:
+Archive is now focused on these active Waygent surfaces:
 
-- `components/agentlens/` - a Python tool for recording, querying,
-  evaluating, and visualizing agent runs.
+- `apps/cli/` - the Waygent CLI.
+- `apps/api/` - the local Waygent read API.
 - `apps/console/` - the Waygent console app.
-- `skills/` - source of truth for local executor skills shared by Codex and
-  Claude Code.
+- `packages/lens-store/` and `packages/lens-projectors/` - the active Lens
+  filesystem storage and projection path.
+- `packages/orchestrator/`, `packages/runway-control/`,
+  `packages/provider-adapters/`, and `native/kernel/` - the Waygent runtime.
+- `skills/` - source of truth for local skills shared by Codex and Claude Code.
 
 Waygent is the approved brand for the unified agent platform and user-facing
-orchestrator. AgentLens remains the observability component; historical
-AgentRunway names are read-compatibility context, not active routing.
+orchestrator. Lens is the TypeScript projection and inspection layer inside
+Waygent. The legacy Python `components/agentlens/` tree is unsupported for new
+Waygent work and is scheduled for deletion after explicit blocker resolution.
+Historical AgentRunway names are read-compatibility context, not active
+routing.
 
 The old root `docs/` library was pruned. Do not assume root-level
 `docs/superpowers/` or `docs/_index/` exists unless the current worktree
@@ -25,7 +31,7 @@ Graphify is approved as a repository map and documentation-audit tool. Use
 `graphify-out/` when it exists, and refresh it with `graphify update .` after
 meaningful code or documentation structure changes. Treat Graphify output as
 navigation and audit evidence, not as the product runtime source of truth.
-Canonical contracts remain in code, tests, `docs/`, `components/agentlens/`,
+Canonical contracts remain in code, tests, `docs/`, active Waygent packages,
 and `skills/`.
 
 ## Read Order
@@ -44,23 +50,22 @@ review and planning workflow details in `code_review.md` and `PLANS.md`.
 
 ## Active Components
 
-### AgentLens
+### Lens
 
-- AgentLens Python package: `components/agentlens/src/agentlens/`
-- AgentLens Python tests: `components/agentlens/tests/`
+- Lens storage helpers: `packages/lens-store/`
+- Lens projections: `packages/lens-projectors/`
+- Waygent read API: `apps/api/`
 - Waygent console app: `apps/console/`
-- Current docs: `components/agentlens/docs/` and root `docs/`
-- CLI entry point: `agentlens`
+- Current docs: root `docs/`
 
-AgentLens durable run state belongs under `~/.agentlens/` or
-`$AGENTLENS_HOME`. Workspace-local `.agentlens/` directories are pointers and
-runtime state; they are ignored and must not be committed.
-
-The filesystem JSON artifacts are the source of truth. SQLite is a rebuildable
-cache. Active Waygent events use `platform.*`, `runway.*`, `kernel.*`, and
-`lens.*`. Historical `agentrunway.*`, `kws-cpe.*`, and `kws-cme.*` namespaces
-may exist in migration docs or read-compatibility code, but must not be treated
-as the active integration model.
+Filesystem JSON and JSONL artifacts are the source of truth. SQLite indexes are
+rebuildable caches when present. Active Waygent events use `platform.*`,
+`runway.*`, `kernel.*`, and `lens.*` inside `agentlens.event.v3` event records.
+That schema name is a durable event contract label, not a dependency on the
+legacy Python AgentLens implementation. Historical `agentrunway.*`,
+`kws-cpe.*`, and `kws-cme.*` namespaces may exist in migration docs,
+read-compatibility code, or KWS executor skill docs, but must not be treated as
+the active Waygent integration model.
 
 ### Waygent Runtime
 
@@ -86,29 +91,27 @@ the skill-local protocol before editing. In particular,
 `skills/kws-claude-multi-agent-executor/AGENTS.md` has required experiment and
 history rules.
 
-If planning new AgentLens/Waygent orchestration architecture, do not revive the
-old KWS CPE/CME split as a new direction. The current target is Waygent: a
-single user-facing orchestrator and platform that uses AgentLens as the
-observability substrate, unless the user explicitly changes direction.
+If planning new Lens/Waygent orchestration architecture, do not revive the old
+KWS CPE/CME split as a new direction. The current target is Waygent: a single
+user-facing orchestrator and platform that uses the TypeScript Lens path for
+observability and inspection, unless the user explicitly changes direction.
 
 ## Verification Commands
 
 Run the smallest command that proves the change. Useful defaults:
 
 ```bash
-# AgentLens backend
-cd components/agentlens
-python -m pip install -e .[test]
-python -m pytest -q
+# Waygent runtime and Lens projections
+bun run check
+bun run platform:demo
+bun run waygent:scenarios
 
 # Waygent console
 cd apps/console
 bun test src
 bun run build
 
-# Waygent runtime
-bun run check
-bun run platform:demo
+# Native kernel
 cd native/kernel && cargo test --workspace
 
 # KWS executor skill evals
@@ -120,8 +123,7 @@ git diff --check
 ```
 
 For docs-only changes, at minimum run `git diff --check` and manually inspect
-links/paths touched by the change. For changed Python files, run targeted
-pytest or `python -m py_compile` when a full suite is too expensive.
+links/paths touched by the change.
 
 ## Prompt Shape
 

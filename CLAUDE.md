@@ -14,8 +14,10 @@ file. This file adds Claude-specific routing and reminders.
 - For `skills/kws-claude-multi-agent-executor/`, follow its local
   `AGENTS.md` before substantive work. Non-trivial changes may require an
   experiment record under `docs/experiments/`.
-- Do not let subagents write AgentLens directly. Waygent owns candidate-drain
-  and AgentLens emission.
+- Do not let subagents write Lens events directly. Waygent owns candidate-drain
+  and event emission.
+- Do not route active Lens work into `components/agentlens`; that Python tree is
+  legacy and scheduled for deletion after explicit blocker resolution.
 - Keep Claude runtime files under `.claude/` out of git.
 - If a task asks for execution through Waygent, invoke `waygent` through
   `apps/cli/src/index.ts` or the installed `waygent` command rather than
@@ -26,10 +28,11 @@ file. This file adds Claude-specific routing and reminders.
 ## Useful Checks
 
 ```bash
-cd components/agentlens && python -m pytest -q
-cd apps/console && bun test src && bun run build
 bun run check
 bun run platform:demo
+bun run waygent:scenarios
+bun run check:legacy
+cd apps/console && bun test src && bun run build
 cd native/kernel && cargo test --workspace
 cd skills/kws-claude-multi-agent-executor && ./evals/run.sh
 git diff --check

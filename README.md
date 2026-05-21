@@ -2,12 +2,14 @@
 
 Waygent is a local agent runtime for running, inspecting, recovering, and
 applying multi-agent implementation work. It owns scheduling, worktrees,
-provider adapters, verification, recovery, apply readiness, and AgentLens event
+provider adapters, verification, recovery, apply readiness, and durable event
 emission.
 
-AgentLens is the observability and evaluation component. KWS executor skills
-remain in this repository as local executor contracts, but they are not the
-Waygent product runtime.
+Lens is the TypeScript observability and inspection path inside Waygent.
+`agentlens.event.v3` remains the event contract label, but the legacy Python
+`components/agentlens/` tree is not the active product runtime. KWS executor
+skills remain in this repository as local executor contracts, but they are not
+the Waygent product runtime.
 
 ## Project Map
 
@@ -15,7 +17,6 @@ Waygent product runtime.
 apps/                  CLI, API, and console surfaces
 packages/              TypeScript runtime packages
 native/kernel/         Rust execution kernel boundary
-components/agentlens/  AgentLens recorder, projections, docs, and tests
 skills/                Waygent and KWS executor skill definitions
 docs/                  Architecture, operations, contracts, and migration notes
 ```
@@ -52,8 +53,8 @@ WAYGENT_LIVE_PROVIDER=claude bun run waygent:live-smoke
 ## Architecture
 
 Waygent uses a Bun/TypeScript control plane, a Rust execution kernel, and
-AgentLens filesystem events as replayable evidence. Runtime decisions come from
-durable state and projections, not from chat context.
+filesystem event journals as replayable evidence. Runtime decisions come from
+durable state and TypeScript projections, not from chat context.
 
 - Runtime overview: [docs/architecture/waygent.md](docs/architecture/waygent.md)
 - Documentation index: [docs/README.md](docs/README.md)
@@ -61,14 +62,13 @@ durable state and projections, not from chat context.
 - Event contracts: [docs/contracts/events.md](docs/contracts/events.md)
 - Operations: [docs/operations/waygent.md](docs/operations/waygent.md)
 - Waygent skill: [skills/waygent/README.md](skills/waygent/README.md)
-- AgentLens docs: [components/agentlens/docs/](components/agentlens/docs/)
 
 ## Graphify Repository Map
 
 [Graphify](https://github.com/safishamsi/graphify) is an approved development
 and documentation-audit tool for this repository. Use it to build a queryable
 repo map, find cross-file relationships, and check whether documentation still
-matches the current Waygent and AgentLens structure.
+matches the current Waygent and Lens structure.
 
 Refresh the local graph after meaningful code or documentation structure
 changes:
@@ -81,7 +81,7 @@ Query the graph when exploring cross-cutting architecture:
 
 ```bash
 graphify query "how does Waygent decide apply readiness?"
-graphify path "ProviderResult" "AgentLens"
+graphify path "ProviderResult" "Lens"
 graphify explain "safe wave"
 ```
 
@@ -92,7 +92,7 @@ use `GRAPH_REPORT.md`, `graph.json`, and `graphify query`. Local-only Graphify
 files such as `manifest.json`, `cost.json`, `cache/`, and machine-path metadata
 stay ignored. Graphify is not a product runtime dependency and must not replace
 the canonical contracts under `docs/`, `packages/`, `native/`, and
-`components/agentlens/`.
+`skills/`.
 
 ## Working Rules
 

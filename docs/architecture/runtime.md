@@ -3,8 +3,9 @@
 ## Runtime Boundary
 
 Waygent owns scheduling, state, worktrees, provider adapters, verification,
-recovery, apply, and AgentLens event emission. Operators interact with the CLI,
-API, and console, but runtime decisions come from durable state and projections.
+recovery, apply, and durable event emission. Operators interact with the CLI,
+API, and console, but runtime decisions come from durable state and TypeScript
+Lens projections.
 
 Active event families are `platform.*`, `runway.*`, `kernel.*`, and `lens.*`.
 
@@ -32,7 +33,7 @@ allow it. Chat context does not override safe-wave barriers.
 
 `packages/provider-adapters` keeps fake, Codex, and Claude behind the same
 provider boundary. Providers return normalized worker results; they do not write
-AgentLens events directly. Waygent records provider attempts, stdout, stderr,
+Lens events directly. Waygent records provider attempts, stdout, stderr,
 worker-result artifacts, and accepted runtime evidence.
 
 ## Verification And Recovery

@@ -8,9 +8,9 @@ Related operations docs:
 ## Operational Trust Loop
 
 Waygent treats `waygent.run_state.v2` as the runtime source of truth for
-apply readiness. AgentLens events, API responses, and console views can replay
-or present that evidence, but they do not decide whether a run is safe to
-resume or apply.
+apply readiness. Event journals, API responses, and console views can replay or
+present that evidence, but they do not decide whether a run is safe to resume
+or apply.
 
 ### Run Preflight
 
@@ -120,9 +120,9 @@ bun install
 bun run check
 bun run platform:demo
 bun run check:legacy
+bun run waygent:scenarios
 bun run --cwd apps/console build
 cd native/kernel && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
-cd components/agentlens && .venv/bin/python -m pytest -q
 ```
 
 ## V1 Maturity Verification
@@ -137,7 +137,6 @@ bun run check:legacy
 bun run waygent:scenarios
 bun run --cwd apps/console build
 cd native/kernel && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
-cd components/agentlens && .venv/bin/python -m pytest -q
 ```
 
 Opt-in live provider gate:
@@ -151,20 +150,9 @@ The live gate is skipped by default and should run only when the matching local
 CLI is installed, authenticated, and acceptable for the current cost and time
 budget.
 
-Bootstrap AgentLens tests if the virtualenv is missing:
-
-```bash
-cd components/agentlens
-if [ ! -x .venv/bin/python ]; then
-  python3 -m venv .venv
-  .venv/bin/python -m pip install -e '.[test]'
-fi
-.venv/bin/python -m pytest -q
-```
-
 Generated local artifacts such as `node_modules/`, `apps/*/dist/`,
-`native/kernel/target/`, `components/agentlens/.venv/`, and pytest caches are
-ignored and should not be committed.
+`native/kernel/target/`, and test caches are ignored and should not be
+committed.
 
 Live provider smoke checks are intentionally separate from default local
 verification because they require authenticated local CLIs. Use

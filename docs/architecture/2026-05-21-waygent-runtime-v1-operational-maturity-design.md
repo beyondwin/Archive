@@ -1,5 +1,11 @@
 # Waygent Runtime V1 Operational Maturity Design
 
+> Status: historical v1 maturity baseline. Current Lens implementation work
+> routes through `packages/lens-store`, `packages/lens-projectors`, `apps/api`,
+> and `apps/console`. Any references in this document to the Python
+> `components/agentlens` tree are superseded by
+> `../superpowers/specs/2026-05-22-waygent-lens-no-python-observability-design.md`.
+
 ## Goal
 
 Waygent v1 must become a practical local agent execution runtime that can be
