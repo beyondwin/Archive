@@ -8,37 +8,31 @@ description: Translate natural-language Waygent run, status, explain, resume, an
 Use this skill when the user asks to run, inspect, resume, explain, or apply a
 Waygent execution from natural language.
 
-Waygent is the user-facing orchestrator. The skill is intentionally thin: it
-resolves intent and calls the CLI. It must not implement scheduling, worktree
-mutation, recovery policy, trust scoring, provider runtime behavior, or direct
+Waygent is the product runtime. This skill translates operator intent into the
+`waygent` CLI and then reports the command outcome. It must not implement
+scheduling, provider execution, worktree mutation, trust scoring, or direct
 AgentLens writes.
 
-## Mapping
+Hard boundaries:
 
-- Latest approved plan: `waygent run --latest`
-- Topic run: `waygent run --topic "<topic>"`
-- Provider selection: add `--provider codex|claude|fake`
-- Multi-agent mode: add `--execution-mode multi-agent`
-- Status: `waygent status --last`
-- Explain blocked run: `waygent explain --last`
-- Resume: `waygent resume --last`
-- Apply accepted checkpoint: `waygent apply --last`
+- Waygent must not call `skills/kws-codex-plan-executor`.
+- Waygent must not call `skills/kws-claude-multi-agent-executor`.
+- KWS executor skills are not Waygent product dependencies.
+- New Waygent runs use `platform.*`, `runway.*`, `kernel.*`, and `lens.*`
+  event families.
 
-## Examples
+Default mappings:
 
-```text
-"최근 승인된 플랜 실행해줘"
--> waygent run --latest
+- "최근 승인된 플랜 실행해줘" -> `waygent run --latest`
+- "상태 보여줘" -> `waygent status --last`
+- "이벤트 보여줘" -> `waygent events --run <run_id> --json`
+- "자세히 검사해줘" -> `waygent inspect --run <run_id> --json`
+- "왜 막혔어?" -> `waygent explain --last`
+- "재개해줘" -> `waygent resume --last`
+- "검증 통과한 것만 적용해줘" -> `waygent apply --run <run_id>`
 
-"bun rust 플랫폼 계획 Codex로 멀티에이전트 실행해줘"
--> waygent run --topic "bun rust platform" --provider codex --execution-mode multi-agent
+Stop rules:
 
-"이번엔 Claude Opus high로 돌려줘"
--> waygent run --latest --provider claude --main-model opus --main-reasoning high --subagent-model opus --subagent-reasoning high
-
-"마지막 실행 왜 막혔는지 설명해줘"
--> waygent explain --last
-
-"검증 통과한 것만 적용해줘"
--> waygent apply --last
-```
+- If the plan is missing or `--latest` is ambiguous, ask for the plan path.
+- If apply reports `dirty_source_checkout`, report the blocker and do not retry.
+- If verification fails, use `waygent explain --last` before resume.
