@@ -1,7 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { AgentLensEvent, RunStatus, WaygentRunStateV2 } from "@waygent/contracts";
-import { projectApplyState, projectFailureSummary, projectTimeline, projectTrustReport } from "@waygent/lens-projectors";
+import type { AgentLensEvent, ApplyReadinessProjection, RunStatus, WaygentRunStateV2 } from "@waygent/contracts";
+import {
+  projectApplyReadinessFromState,
+  projectApplyState,
+  projectFailureSummary,
+  projectTimeline,
+  projectTrustReport
+} from "@waygent/lens-projectors";
 import { listRunIds, readEvents, rebuildRunSummary, runPaths } from "@waygent/lens-store";
 import { demoRunDetails, findRun, listRuns } from "./demoData";
 
@@ -184,11 +190,13 @@ function summarizeRealRun(runRoot: string, runId: string): RealRunSummary {
   const summary = rebuildRunSummary(events);
   const trust = projectTrustReport(events);
   const apply = projectApplyState(events);
+  const stateV2 = tryReadRunStateV2(runRoot, runId);
+  const applyReadiness = stateV2 ? projectApplyReadinessFromState(stateV2) : null;
   return {
     run_id: runId,
     status: statusFromEvents(events, trust.trust_status),
     trust_status: trust.trust_status,
-    apply_status: apply.status,
+    apply_status: applyReadiness?.status ?? apply.status,
     total_events: summary.total_events,
     last_event_type: summary.last_event_type
   };
@@ -205,7 +213,7 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
   recovery: WaygentRunStateV2["recovery"];
   decision_packets: DecisionPacketMetadata[];
   drift: WaygentRunStateV2["drift"] | null;
-  apply_readiness: WaygentRunStateV2["apply"] | null;
+  apply_readiness: ApplyReadinessProjection | null;
   failures: ReturnType<typeof projectFailureSummary>;
   timeline: ReturnType<typeof projectTimeline>;
   trust: ReturnType<typeof projectTrustReport>;
@@ -215,11 +223,12 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
   if (!listRunIds(runRoot).includes(runId)) return null;
   const events = readEvents(runPaths(runRoot, runId).events);
   const stateV2 = tryReadRunStateV2(runRoot, runId);
+  const applyReadiness = stateV2 ? projectApplyReadinessFromState(stateV2) : null;
   const summary = summarizeRealRun(runRoot, runId);
   return {
     ...summary,
     status: stateV2 ? runStatusFromV2(stateV2.status) : summary.status,
-    apply_status: stateV2?.apply.status ?? summary.apply_status,
+    apply_status: applyReadiness?.status ?? summary.apply_status,
     safe_wave: safeWaveFromEvents(events),
     safe_waves: stateV2?.safe_waves ?? [],
     run_state_v2: stateV2,
@@ -230,7 +239,7 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
     recovery: stateV2?.recovery ?? [],
     decision_packets: stateV2 ? decisionPacketMetadata(stateV2) : [],
     drift: stateV2?.drift ?? null,
-    apply_readiness: stateV2?.apply ?? null,
+    apply_readiness: applyReadiness,
     failures: projectFailureSummary(events),
     timeline: projectTimeline(events),
     trust: projectTrustReport(events),

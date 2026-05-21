@@ -3,6 +3,7 @@ import {
   buildRunDetailModel,
   buildConsoleUiModel,
   demoConsoleSnapshot,
+  realRunDetailToConsoleRun,
   renderConsoleSnapshot
 } from "./uiModel";
 
@@ -157,6 +158,38 @@ describe("Lens web console UI model", () => {
     });
     expect((model as any).drift.unrepaired_blockers[0]).toMatchObject({
       failure_class: "state_drift"
+    });
+  });
+
+  test("maps v2 apply readiness evidence into console apply status", () => {
+    expect(realRunDetailToConsoleRun({
+      run_id: "run_blocked",
+      status: "blocked",
+      trust_status: "insufficient_evidence",
+      apply_status: "blocked",
+      total_events: 1,
+      last_event_type: "runway.apply_blocked",
+      safe_wave: [],
+      failures: [],
+      timeline: [],
+      apply_readiness: {
+        status: "blocked",
+        reason: "state_drift",
+        checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"],
+        combined_patch_ref: null,
+        source: "run_state_v2"
+      },
+      drift: {
+        last_checked_at: "2026-05-21T00:00:00Z",
+        records: [],
+        unrepaired_blockers: [{ failure_class: "state_drift" }]
+      }
+    }).applyStatus).toMatchObject({
+      state: "blocked",
+      canApply: false,
+      reason: "state_drift",
+      checkpointRef: "artifacts/checkpoints/task_a/candidate_task_a.json",
+      combinedPatchRef: null
     });
   });
 });

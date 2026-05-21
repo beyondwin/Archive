@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { runWaygentDemo, writeRunStateV2 } from "@waygent/orchestrator";
+import { readRunStateV2, runWaygentDemo, writeRunStateV2 } from "@waygent/orchestrator";
 import { createApiHandler } from "../src/server";
 
 const handler = createApiHandler();
@@ -50,6 +50,47 @@ describe("Waygent local API routes", () => {
           apply_status: "ready"
         }
       ]
+    });
+  });
+
+  test("GET /runs and /runs/:runId prefer v2 apply readiness over successful verification events", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-api-v2-readiness-"));
+    const runId = "run_not_ready";
+    await runWaygentDemo({ root, run_id: runId });
+    const state = readRunStateV2(root, runId);
+    writeRunStateV2(root, {
+      ...state,
+      tasks: Object.fromEntries(
+        Object.entries(state.tasks).map(([taskId, task]) => [taskId, { ...task, checkpoint_refs: [] }])
+      ),
+      apply: { status: "not_applied" },
+      completion_audit: { status: "passed" }
+    });
+    const realHandler = createApiHandler({ runRoot: root });
+
+    const listResponse = await realHandler(new Request("http://waygent.local/runs"));
+    expect(await listResponse.json()).toMatchObject({
+      runs: [
+        {
+          run_id: runId,
+          apply_status: "not_ready"
+        }
+      ]
+    });
+
+    const detailResponse = await realHandler(new Request(`http://waygent.local/runs/${runId}`));
+    const detail = await detailResponse.json();
+    expect(detail.apply_status).toBe("not_ready");
+    expect(detail.apply_readiness).toEqual({
+      status: "not_ready",
+      reason: "missing_apply_ready_evidence",
+      checkpoint_refs: [],
+      combined_patch_ref: null,
+      source: "run_state_v2"
+    });
+    expect(detail.apply).toEqual({
+      status: "ready",
+      reason: null
     });
   });
 
@@ -213,7 +254,10 @@ describe("Waygent local API routes", () => {
     });
     expect(body.apply_readiness).toMatchObject({
       status: "blocked",
-      reason: "verification_failed"
+      reason: "state_drift",
+      checkpoint_refs: ["checkpoint_task_demo"],
+      combined_patch_ref: null,
+      source: "run_state_v2"
     });
     expect(body.drift.unrepaired_blockers[0]).toMatchObject({
       failure_class: "state_drift"

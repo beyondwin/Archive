@@ -40,6 +40,8 @@ export interface ConsoleApplyStatus {
   dirtySourceCheckout: boolean;
   reason: string;
   checkpointRef: string;
+  checkpointRefs: string[];
+  combinedPatchRef: string | null;
 }
 
 export type RunDetailSectionId =
@@ -71,7 +73,13 @@ export interface RealRunDetailResponse {
   recovery?: Array<Record<string, unknown>>;
   decision_packets?: Array<Record<string, unknown>>;
   drift?: { last_checked_at: string | null; records: Array<Record<string, unknown>>; unrepaired_blockers: Array<Record<string, unknown>> } | null;
-  apply_readiness?: { status?: string; reason?: string; checkpoint_ref?: string } | null;
+  apply_readiness?: {
+    status: ApplyState;
+    reason: string | null;
+    checkpoint_refs: string[];
+    combined_patch_ref: string | null;
+    source: "run_state_v2" | "events";
+  } | null;
   events?: Array<{
     event_id?: string;
     eventId?: string;
@@ -204,7 +212,9 @@ export const demoConsoleSnapshot: ConsoleSnapshot = {
         canApply: true,
         dirtySourceCheckout: false,
         reason: "accepted checkpoint is ready",
-        checkpointRef: "ckpt_worker"
+        checkpointRef: "ckpt_worker",
+        checkpointRefs: ["ckpt_worker"],
+        combinedPatchRef: null
       }
     },
     {
@@ -251,7 +261,9 @@ export const demoConsoleSnapshot: ConsoleSnapshot = {
         canApply: false,
         dirtySourceCheckout: false,
         reason: "no accepted checkpoint exists",
-        checkpointRef: "ckpt_profile"
+        checkpointRef: "ckpt_profile",
+        checkpointRefs: ["ckpt_profile"],
+        combinedPatchRef: null
       }
     },
     {
@@ -313,7 +325,9 @@ export const demoConsoleSnapshot: ConsoleSnapshot = {
         canApply: false,
         dirtySourceCheckout: true,
         reason: "dirty_source_checkout",
-        checkpointRef: "ckpt_worker"
+        checkpointRef: "ckpt_worker",
+        checkpointRefs: ["ckpt_worker"],
+        combinedPatchRef: null
       }
     }
   ]
@@ -429,13 +443,18 @@ export function realRunSummaryToConsoleRun(summary: RealRunSummaryResponse): Con
       canApply: summary.apply_status === "ready",
       dirtySourceCheckout: false,
       reason: summary.apply_status,
-      checkpointRef: ""
+      checkpointRef: "",
+      checkpointRefs: [],
+      combinedPatchRef: null
     }
   };
 }
 
 export function realRunDetailToConsoleRun(response: RealRunDetailResponse): ConsoleRun {
   const detail = buildRunDetailModel(response);
+  const applyReadiness = detail.apply_readiness;
+  const readinessStatus = applyState(applyReadiness?.status ?? response.apply_status);
+  const readinessCheckpointRefs = applyReadiness?.checkpoint_refs ?? [];
   const taskIds = Array.from(new Set([
     ...detail.safe_wave,
     ...detail.task_packets.map((packet) => stringValue(packet.task_id)).filter(Boolean),
@@ -483,11 +502,13 @@ export function realRunDetailToConsoleRun(response: RealRunDetailResponse): Cons
       }))
     ],
     applyStatus: {
-      state: applyState(detail.apply_readiness?.status ?? response.apply_status),
-      canApply: (detail.apply_readiness?.status ?? response.apply_status) === "ready",
+      state: readinessStatus,
+      canApply: readinessStatus === "ready",
       dirtySourceCheckout: hasDirtySourceBlock(detail),
-      reason: detail.apply_readiness?.reason ?? response.apply_status,
-      checkpointRef: detail.apply_readiness?.checkpoint_ref ?? ""
+      reason: applyReadiness?.reason ?? response.apply_status,
+      checkpointRef: readinessCheckpointRefs.join(", "),
+      checkpointRefs: readinessCheckpointRefs,
+      combinedPatchRef: applyReadiness?.combined_patch_ref ?? null
     }
   };
 }
@@ -514,7 +535,14 @@ export function consoleRunToRealDetail(run: ConsoleRun): RealRunDetailResponse {
       event_type: event.eventType,
       outcome: event.outcome,
       summary: event.summary
-    }))
+    })),
+    apply_readiness: {
+      status: run.applyStatus.state,
+      reason: run.applyStatus.reason,
+      checkpoint_refs: run.applyStatus.checkpointRefs,
+      combined_patch_ref: run.applyStatus.combinedPatchRef,
+      source: "events"
+    }
   };
 }
 

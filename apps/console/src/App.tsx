@@ -160,16 +160,25 @@ function DecisionPackets({ run }: { run: ConsoleRun }) {
 }
 
 function ApplyStatus({ run }: { run: ConsoleRun }) {
+  const checkpointRefs = run.applyStatus.checkpointRefs.length > 0
+    ? run.applyStatus.checkpointRefs.join(", ")
+    : run.applyStatus.checkpointRef || "none";
+  const commandText = run.applyStatus.canApply
+    ? "Apply checkpoint"
+    : `Apply disabled: ${run.applyStatus.reason}`;
+
   return (
     <section className="section-band compact" aria-labelledby="apply-heading">
       <h2 id="apply-heading">Apply Status</h2>
       <div className={`apply-box ${run.applyStatus.state}`}>
         <strong>{run.applyStatus.state}</strong>
-        <span>{run.applyStatus.checkpointRef}</span>
-        <p>{run.applyStatus.reason}</p>
+        <span>reason: {run.applyStatus.reason}</span>
+        <span>checkpoint refs: {checkpointRefs}</span>
+        <span>combined patch: {run.applyStatus.combinedPatchRef ?? "none"}</span>
+        <p>{run.applyStatus.canApply ? "Apply command enabled" : "Apply command disabled"}</p>
       </div>
       <button disabled={!run.applyStatus.canApply} type="button">
-        Apply checkpoint
+        {commandText}
       </button>
     </section>
   );
