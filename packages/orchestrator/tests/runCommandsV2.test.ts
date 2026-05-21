@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { createCheckpointArtifact, dryRunCheckpointPatch } from "../src/checkpointArtifacts";
+import { createCheckpointArtifact, createCombinedCheckpointPatchArtifact, dryRunCheckpointPatch } from "../src/checkpointArtifacts";
 import { applyRun, resumeRun } from "../src/runCommands";
 import { runStatePath, writeRunStateV2 } from "../src/runState";
 
@@ -88,6 +88,12 @@ describe("Waygent run commands v2", () => {
       verification_refs: []
     });
     dryRunCheckpointPatch({ run_root: runRoot, checkpoint_ref: checkpoint.manifest_ref, source: workspace });
+    const combined = createCombinedCheckpointPatchArtifact({
+      run_root: runRoot,
+      run_id: "run_apply",
+      checkpoint_refs: [checkpoint.manifest_ref],
+      source: workspace
+    });
     writeRunStateV2(root, {
       schema: "waygent.run_state.v2",
       run_id: "run_apply",
@@ -129,7 +135,7 @@ describe("Waygent run commands v2", () => {
       apply: { status: "not_applied", checkpoint_ref: checkpoint.manifest_ref },
       context: { snapshot_path: null, basis_hash: null },
       drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
-      completion_audit: { status: "passed" },
+      completion_audit: { status: "passed", combined_apply_evidence: combined },
       timestamps: {
         started_at: "2026-05-21T00:00:00Z",
         updated_at: "2026-05-21T00:00:00Z",
@@ -242,12 +248,152 @@ describe("Waygent run commands v2", () => {
       reason: "checkpoint_digest_mismatch"
     });
   });
+
+  test("apply blocks completed v2 runs without a materialized final patch", async () => {
+    const { root, workspace } = writeCompletedApplyRun("run_missing_combined_patch", { combined: false });
+
+    expect(resumeRun({ root, run: "run_missing_combined_patch", dry_run: true }).allowed_actions).not.toContain(
+      "apply_verified_checkpoint"
+    );
+    expect(await applyRun({ root, run: "run_missing_combined_patch", workspace })).toEqual({
+      command: "apply",
+      run_id: "run_missing_combined_patch",
+      status: "blocked",
+      reason: "checkpoint_patch_missing"
+    });
+  });
+
+  test("apply verifies every final checkpoint even when the legacy apply ref is stale", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-apply-v2-root-"));
+    const workspace = mkdtempSync(join(tmpdir(), "waygent-apply-v2-source-"));
+    Bun.spawnSync(["git", "init", "-q"], { cwd: workspace });
+    Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: workspace });
+    Bun.spawnSync(["git", "config", "user.name", "Test"], { cwd: workspace });
+    writeFileSync(join(workspace, "README.md"), "before\n");
+    Bun.spawnSync(["git", "add", "-A"], { cwd: workspace });
+    Bun.spawnSync(["git", "commit", "-q", "-m", "init"], { cwd: workspace });
+
+    const runId = "run_stale_apply_ref";
+    const runRoot = join(root, runId);
+    const firstWorktree = mkdtempSync(join(tmpdir(), "waygent-apply-first-"));
+    Bun.spawnSync(["git", "clone", "--quiet", workspace, firstWorktree]);
+    writeFileSync(join(firstWorktree, "first.txt"), "first\n");
+    const first = createCheckpointArtifact({
+      run_root: runRoot,
+      run_id: runId,
+      task_id: "task_first",
+      candidate_id: "candidate_task_first",
+      worktree_path: firstWorktree,
+      changed_files: ["first.txt"],
+      verification_refs: []
+    });
+    dryRunCheckpointPatch({ run_root: runRoot, checkpoint_ref: first.manifest_ref, source: workspace });
+
+    const secondWorktree = mkdtempSync(join(tmpdir(), "waygent-apply-second-"));
+    Bun.spawnSync(["git", "clone", "--quiet", workspace, secondWorktree]);
+    writeFileSync(join(secondWorktree, "second.txt"), "second\n");
+    const second = createCheckpointArtifact({
+      run_root: runRoot,
+      run_id: runId,
+      task_id: "task_second",
+      candidate_id: "candidate_task_second",
+      worktree_path: secondWorktree,
+      changed_files: ["second.txt"],
+      verification_refs: []
+    });
+    dryRunCheckpointPatch({ run_root: runRoot, checkpoint_ref: second.manifest_ref, source: workspace });
+    const combined = createCombinedCheckpointPatchArtifact({
+      run_root: runRoot,
+      run_id: runId,
+      checkpoint_refs: [first.manifest_ref, second.manifest_ref],
+      source: workspace
+    });
+    writeRunStateV2(root, {
+      schema: "waygent.run_state.v2",
+      run_id: runId,
+      workspace,
+      source_branch: "main",
+      worktree_root: join(root, "worktrees"),
+      run_root: runRoot,
+      artifact_root: join(runRoot, "artifacts"),
+      state_path: runStatePath(root, runId),
+      event_journal_path: join(runRoot, "events.jsonl"),
+      plan_path: null,
+      spec_path: null,
+      provider_profile: { provider: "fake" },
+      status: "completed",
+      lifecycle_outcome: "finished",
+      current_phase: "complete",
+      tasks: {
+        task_first: {
+          id: "task_first",
+          status: "verified",
+          risk: "low",
+          dependencies: [],
+          file_claims: [{ path: "first.txt", mode: "owned" }],
+          attempts: [],
+          task_packet_path: null,
+          task_packet_sha256: null,
+          unit_manifest: { allowed_write_globs: ["first.txt"] },
+          checkpoint_refs: [first.manifest_ref],
+          latest_failure_class: null,
+          decision_packet_ref: null,
+          timing: {}
+        },
+        task_second: {
+          id: "task_second",
+          status: "verified",
+          risk: "low",
+          dependencies: [],
+          file_claims: [{ path: "second.txt", mode: "owned" }],
+          attempts: [],
+          task_packet_path: null,
+          task_packet_sha256: null,
+          unit_manifest: { allowed_write_globs: ["second.txt"] },
+          checkpoint_refs: [second.manifest_ref],
+          latest_failure_class: null,
+          decision_packet_ref: null,
+          timing: {}
+        }
+      },
+      safe_waves: [],
+      provider_attempts: [],
+      reviews: [],
+      verification: [
+        { task_id: "task_first", command: "test -f first.txt", status: "passed" },
+        { task_id: "task_second", command: "test -f second.txt", status: "passed" }
+      ],
+      recovery: [],
+      apply: { status: "not_applied", checkpoint_ref: first.manifest_ref },
+      context: { snapshot_path: null, basis_hash: null },
+      drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
+      completion_audit: { status: "passed", combined_apply_evidence: combined },
+      timestamps: {
+        started_at: "2026-05-21T00:00:00Z",
+        updated_at: "2026-05-21T00:00:00Z",
+        completed_at: "2026-05-21T00:00:00Z"
+      }
+    });
+
+    expect(await applyRun({ root, run: runId, workspace })).toMatchObject({
+      command: "apply",
+      run_id: runId,
+      status: "applied"
+    });
+  });
 });
 
 function writeCompletedApplyRun(runId: string): {
   root: string;
   workspace: string;
   checkpoint: ReturnType<typeof createCheckpointArtifact>;
+  combined: ReturnType<typeof createCombinedCheckpointPatchArtifact> | null;
+}
+function writeCompletedApplyRun(runId: string, options: { combined?: boolean } = {}): {
+  root: string;
+  workspace: string;
+  checkpoint: ReturnType<typeof createCheckpointArtifact>;
+  combined: ReturnType<typeof createCombinedCheckpointPatchArtifact> | null;
 } {
   const root = mkdtempSync(join(tmpdir(), "waygent-apply-v2-root-"));
   const workspace = mkdtempSync(join(tmpdir(), "waygent-apply-v2-source-"));
@@ -271,6 +417,14 @@ function writeCompletedApplyRun(runId: string): {
     verification_refs: []
   });
   dryRunCheckpointPatch({ run_root: runRoot, checkpoint_ref: checkpoint.manifest_ref, source: workspace });
+  const combined = options.combined === false
+    ? null
+    : createCombinedCheckpointPatchArtifact({
+      run_root: runRoot,
+      run_id: runId,
+      checkpoint_refs: [checkpoint.manifest_ref],
+      source: workspace
+    });
   writeRunStateV2(root, {
     schema: "waygent.run_state.v2",
     run_id: runId,
@@ -312,7 +466,7 @@ function writeCompletedApplyRun(runId: string): {
     apply: { status: "not_applied", checkpoint_ref: checkpoint.manifest_ref },
     context: { snapshot_path: null, basis_hash: null },
     drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
-    completion_audit: { status: "passed" },
+    completion_audit: combined ? { status: "passed", combined_apply_evidence: combined } : { status: "passed" },
     timestamps: {
       started_at: "2026-05-21T00:00:00Z",
       updated_at: "2026-05-21T00:00:00Z",
@@ -320,5 +474,5 @@ function writeCompletedApplyRun(runId: string): {
     }
   });
 
-  return { root, workspace, checkpoint };
+  return { root, workspace, checkpoint, combined };
 }

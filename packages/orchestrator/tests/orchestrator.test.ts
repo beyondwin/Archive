@@ -2,9 +2,13 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
-import { runWaygentDemo } from "../src";
+import { defaultRunRoot, runWaygentDemo } from "../src";
 
 describe("Waygent orchestrator", () => {
+  test("keeps the default run root outside the source checkout", () => {
+    expect(defaultRunRoot().startsWith(process.cwd())).toBe(false);
+  });
+
   test("runs deterministic fake provider lifecycle", async () => {
     const result = await runWaygentDemo({ root: mkdtempSync(join(tmpdir(), "waygent-run-")) });
     expect(result.events).toHaveLength(8);

@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, isAbsolute, join } from "node:path";
 import { sha256, writeArtifact } from "@waygent/lens-store";
 
 export interface CheckpointManifest {
@@ -47,6 +48,21 @@ export interface CheckpointValidationResult {
 export interface CheckpointDryRunResult {
   status: "passed" | "failed";
   reason?: "checkpoint_unresolvable" | "patch_dry_run_failed";
+  evidence_ref: string;
+}
+
+export interface CombinedCheckpointPatchResult {
+  status: "passed" | "failed";
+  checkpoint_refs: string[];
+  patch_ref?: string;
+  patch_sha256?: string;
+  patch_byte_length?: number;
+  reason?:
+    | CheckpointValidationResult["reason"]
+    | "missing_verified_checkpoint"
+    | "checkpoint_worktree_missing"
+    | "patch_materialization_failed"
+    | "patch_dry_run_failed";
   evidence_ref: string;
 }
 
@@ -164,6 +180,103 @@ export function dryRunCheckpointPatch(input: { run_root: string; checkpoint_ref:
   };
 }
 
+export function createCombinedCheckpointPatchArtifact(input: {
+  run_root: string;
+  run_id: string;
+  checkpoint_refs: string[];
+  source: string;
+}): CombinedCheckpointPatchResult {
+  const checkpointRefs = [...new Set(input.checkpoint_refs)];
+  if (checkpointRefs.length === 0) {
+    return failedCombinedPatch(input.run_root, checkpointRefs, "missing_verified_checkpoint");
+  }
+
+  const manifests: CheckpointManifest[] = [];
+  for (const checkpointRef of checkpointRefs) {
+    const validation = validateCheckpointManifest(input.run_root, checkpointRef);
+    if (!validation.ok) return failedCombinedPatch(input.run_root, checkpointRefs, validation.reason ?? "checkpoint_manifest_missing");
+    manifests.push(readCheckpointManifest(input.run_root, checkpointRef));
+  }
+
+  const temp = mkdtempSync(join(tmpdir(), "waygent-combined-patch-"));
+  try {
+    const clone = spawnSync("git", ["clone", "--quiet", "--shared", input.source, temp], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    if (clone.status !== 0) {
+      return failedCombinedPatch(input.run_root, checkpointRefs, "patch_materialization_failed", {
+        stdout: clone.stdout,
+        stderr: clone.stderr
+      });
+    }
+
+    for (const manifest of manifests) {
+      if (!existsSync(manifest.worktree_path)) {
+        return failedCombinedPatch(input.run_root, checkpointRefs, "checkpoint_worktree_missing", {
+          checkpoint_ref: `${manifest.task_id}:${manifest.candidate_id}`,
+          worktree_path: manifest.worktree_path
+        });
+      }
+      for (const file of manifest.changed_files) {
+        const from = join(manifest.worktree_path, file);
+        const to = join(temp, file);
+        if (existsSync(from)) {
+          mkdirSync(dirname(to), { recursive: true });
+          cpSync(from, to, { recursive: true, force: true });
+        } else {
+          rmSync(to, { recursive: true, force: true });
+        }
+      }
+    }
+    markUntrackedFilesForDiff(temp, manifests.flatMap((manifest) => manifest.changed_files));
+
+    const diff = spawnSync("git", ["diff", "--binary"], {
+      cwd: temp,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    if (diff.status !== 0) {
+      return failedCombinedPatch(input.run_root, checkpointRefs, "patch_materialization_failed", {
+        stdout: diff.stdout,
+        stderr: diff.stderr
+      });
+    }
+
+    const patchArtifact = writeArtifact(
+      input.run_root,
+      `checkpoints/apply/${input.run_id}.patch`,
+      diff.stdout,
+      "text/x-diff"
+    );
+    const patchPath = join(temp, ".waygent-combined-apply.patch");
+    writeFileSync(patchPath, diff.stdout);
+    const dryRun = spawnSync("git", ["apply", "--check", patchPath], {
+      cwd: input.source,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    const status = dryRun.status === 0 ? "passed" : "failed";
+    const evidenceRef = writeCombinedPatchEvidence(input.run_root, checkpointRefs, {
+      status,
+      patch_ref: patchArtifact.path,
+      stdout: dryRun.stdout,
+      stderr: dryRun.stderr
+    });
+    return {
+      status,
+      checkpoint_refs: checkpointRefs,
+      patch_ref: patchArtifact.path,
+      patch_sha256: patchArtifact.sha256,
+      patch_byte_length: patchArtifact.byte_length,
+      ...(status === "failed" ? { reason: "patch_dry_run_failed" as const } : {}),
+      evidence_ref: evidenceRef
+    };
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
+
 export function resolveRunArtifactPath(runRoot: string, ref: string): string {
   return isAbsolute(ref) ? ref : join(runRoot, ref);
 }
@@ -173,6 +286,29 @@ function writeCheckpointDryRunEvidence(runRoot: string, checkpointRef: string, p
     runRoot,
     `checkpoints/dry-run-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
     `${JSON.stringify({ checkpoint_ref: checkpointRef, ...payload }, null, 2)}\n`
+  );
+  return evidence.path;
+}
+
+function failedCombinedPatch(
+  runRoot: string,
+  checkpointRefs: string[],
+  reason: NonNullable<CombinedCheckpointPatchResult["reason"]>,
+  payload: Record<string, unknown> = {}
+): CombinedCheckpointPatchResult {
+  const evidenceRef = writeCombinedPatchEvidence(runRoot, checkpointRefs, {
+    status: "failed",
+    reason,
+    ...payload
+  });
+  return { status: "failed", checkpoint_refs: checkpointRefs, reason, evidence_ref: evidenceRef };
+}
+
+function writeCombinedPatchEvidence(runRoot: string, checkpointRefs: string[], payload: Record<string, unknown>): string {
+  const evidence = writeArtifact(
+    runRoot,
+    `checkpoints/apply-dry-run-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
+    `${JSON.stringify({ checkpoint_refs: checkpointRefs, ...payload }, null, 2)}\n`
   );
   return evidence.path;
 }
