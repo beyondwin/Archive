@@ -19,6 +19,8 @@ The next source-audited trust-loop slice is documented in
 [`2026-05-21-waygent-operational-trust-loop-design.md`](./2026-05-21-waygent-operational-trust-loop-design.md).
 Its implementation plan is tracked in
 [`../migration/2026-05-21-waygent-operational-trust-loop-implementation-plan.md`](../migration/2026-05-21-waygent-operational-trust-loop-implementation-plan.md).
+The follow-up speed and quality target is documented in
+[`2026-05-21-waygent-safe-wave-parallel-runtime-design.md`](./2026-05-21-waygent-safe-wave-parallel-runtime-design.md).
 Waygent owns the product runtime directly; KWS executor skills are not product
 dependencies.
 
