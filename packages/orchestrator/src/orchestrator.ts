@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname } from "node:path";
 import { join } from "node:path";
 import type { AgentLensEvent, ProviderAttempt, WaygentRunStateV2 } from "@waygent/contracts";
@@ -9,7 +10,7 @@ import { projectFailureSummary, projectTimeline, projectTrustReport } from "@way
 import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeArtifact, writeLatestRunId } from "@waygent/lens-store";
 import { ClaudeProviderAdapter, CodexProviderAdapter, FakeProviderAdapter, type ProviderAdapter, type ProviderProcessOptions } from "@waygent/provider-adapters";
 import { buildDurableProjection, mergeCandidate } from "@waygent/runway-control";
-import { createCheckpointArtifact, dryRunCheckpointPatch } from "./checkpointArtifacts";
+import { createCheckpointArtifact, createCombinedCheckpointPatchArtifact, dryRunCheckpointPatch } from "./checkpointArtifacts";
 import { buildCompletionAudit } from "./completionAudit";
 import { resolveExecutionProfile, type ProfileOverride, type ProviderName } from "./executionProfile";
 import { resolvePlanInput } from "./planDiscovery";
@@ -377,11 +378,26 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   let completionAuditStatus = "failed";
   updateRunStateV2(options.root, runId, (state) => {
     state.current_phase = "complete";
+    const verifiedCheckpointRefs = Object.values(state.tasks)
+      .filter((task) => task.status === "verified")
+      .flatMap((task) => task.checkpoint_refs);
+    const allVerifiedTasksHaveCheckpoints = Object.values(state.tasks)
+      .filter((task) => task.status === "verified")
+      .every((task) => task.checkpoint_refs.length > 0);
+    const combinedApplyEvidence = verifiedCheckpointRefs.length > 0 && allVerifiedTasksHaveCheckpoints
+      ? createCombinedCheckpointPatchArtifact({
+        run_root: state.run_root,
+        run_id: state.run_id,
+        checkpoint_refs: verifiedCheckpointRefs,
+        source: state.workspace
+      })
+      : undefined;
     state.completion_audit = buildCompletionAudit({
       state,
       required_checks: parsed.tasks.flatMap((task) => verificationCommands.get(task.id) ?? task.verification_commands),
       verification_evidence: verificationRecords,
       review_evidence: [],
+      ...(combinedApplyEvidence ? { combined_apply_evidence: combinedApplyEvidence } : {}),
       prompt_to_artifact_checklist: [
         "task_packet_written",
         "provider_attempt_recorded",
@@ -467,7 +483,7 @@ export async function runWaygentDemo(options: RunWaygentOptions): Promise<Waygen
 }
 
 export function defaultRunRoot(): string {
-  return join(process.cwd(), "tmp", "waygent-runs");
+  return join(tmpdir(), "waygent-runs");
 }
 
 function resolveRunPlanInput(options: RunWaygentOptions): { markdown: string; path: string | null } {

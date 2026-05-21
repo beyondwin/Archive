@@ -85,9 +85,9 @@ verify:
     expect(state.status).toBe("blocked");
     expect(state.lifecycle_outcome).toBe("blocked");
     expect(state.completion_audit).toMatchObject({ status: "failed" });
-    expect(resumeRun({ root, run: "run_no_checkpoint", dry_run: true }).allowed_actions).not.toContain(
-      "apply_verified_checkpoint"
-    );
+    expect(resumeRun({ root, run: "run_no_checkpoint", dry_run: true }).allowed_actions).toEqual([
+      "retry_checkpoint_generation"
+    ]);
   });
 
   test("apply materializes every verified checkpoint in a completed run", async () => {
@@ -133,5 +133,54 @@ verify:
     });
     expect(readFileSync(join(workspace, "base.txt"), "utf8")).toContain("task_base");
     expect(readFileSync(join(workspace, "followup.txt"), "utf8")).toContain("task_followup");
+  });
+
+  test("apply uses a materialized final patch for sequential checkpoints touching the same file", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-apply-overlap-root-"));
+    const workspace = initSourceCheckout();
+    const overlappingPlan = `
+\`\`\`yaml waygent-task
+id: task_first
+title: First shared file update
+dependencies: []
+file_claims:
+  - path: README.md
+    mode: owned
+risk: low
+verify:
+  - grep task_first README.md
+\`\`\`
+\`\`\`yaml waygent-task
+id: task_second
+title: Second shared file update
+dependencies: [task_first]
+file_claims:
+  - path: README.md
+    mode: owned
+risk: low
+verify:
+  - grep task_second README.md
+\`\`\`
+`;
+
+    await runWaygent({
+      root,
+      workspace,
+      run_id: "run_apply_overlap",
+      plan: overlappingPlan,
+      profile: { provider: "fake", execution_mode: "multi-agent" }
+    });
+
+    const state = readRunStateV2(root, "run_apply_overlap");
+    expect(state.status).toBe("completed");
+    expect(resumeRun({ root, run: "run_apply_overlap", dry_run: true }).allowed_actions).toContain(
+      "apply_verified_checkpoint"
+    );
+    expect(await applyRun({ root, run: "run_apply_overlap", workspace })).toMatchObject({
+      command: "apply",
+      run_id: "run_apply_overlap",
+      status: "applied"
+    });
+    expect(readFileSync(join(workspace, "README.md"), "utf8")).toContain("task_second");
   });
 });

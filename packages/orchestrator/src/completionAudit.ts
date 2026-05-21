@@ -1,11 +1,19 @@
 import type { WaygentRunStateV2 } from "@waygent/contracts";
-import { readCheckpointManifest, validateCheckpointManifest } from "./checkpointArtifacts";
+import { existsSync, readFileSync } from "node:fs";
+import { sha256 } from "@waygent/lens-store";
+import {
+  type CombinedCheckpointPatchResult,
+  readCheckpointManifest,
+  resolveRunArtifactPath,
+  validateCheckpointManifest
+} from "./checkpointArtifacts";
 
 export interface CompletionAuditInput {
   state: WaygentRunStateV2;
   required_checks: string[];
   verification_evidence: Array<Record<string, unknown>>;
   review_evidence: Array<Record<string, unknown>>;
+  combined_apply_evidence?: CombinedCheckpointPatchResult;
   prompt_to_artifact_checklist: string[];
 }
 
@@ -39,21 +47,44 @@ export function buildCompletionAudit(input: CompletionAuditInput): Record<string
     "checkpoint_results" in result ? result.checkpoint_results : [result]
   );
   const failed = taskResults.filter((result) => !result.ok);
+  const combinedApplyOk = input.combined_apply_evidence?.status === "passed";
+  const residualRisk = failed.map((result) => `${result.task_id}:${"reason" in result ? result.reason : "checkpoint_not_ready"}`);
+  if (!combinedApplyOk) {
+    residualRisk.push(`combined_apply:${input.combined_apply_evidence?.reason ?? "missing_verified_checkpoint"}`);
+  }
 
   return {
-    status: failed.length === 0 && taskResults.length > 0 ? "passed" : "failed",
+    status: failed.length === 0 && taskResults.length > 0 && combinedApplyOk ? "passed" : "failed",
     required_checks: input.required_checks,
     verification_evidence: input.verification_evidence,
     review_evidence: input.review_evidence,
     checkpoint_evidence: checkpointEvidence,
+    ...(input.combined_apply_evidence ? { combined_apply_evidence: input.combined_apply_evidence } : {}),
     state_reconciliation: { passed: false },
     prompt_to_artifact_checklist: input.prompt_to_artifact_checklist,
-    residual_risk: failed.map((result) => `${result.task_id}:${"reason" in result ? result.reason : "checkpoint_not_ready"}`)
+    residual_risk: residualRisk
   };
 }
 
 export function hasApplyReadyCheckpoint(state: WaygentRunStateV2): boolean {
-  if ((state.completion_audit as { status?: string } | null)?.status !== "passed") return false;
+  const audit = state.completion_audit as {
+    status?: string;
+    combined_apply_evidence?: { status?: string; patch_ref?: string };
+  } | null;
+  if (audit?.status !== "passed") return false;
+  if (!audit.combined_apply_evidence) return false;
+  const evidence = audit.combined_apply_evidence as {
+    status?: string;
+    patch_ref?: string;
+    patch_sha256?: string;
+    patch_byte_length?: number;
+  };
+  if (evidence.status !== "passed" || !evidence.patch_ref) return false;
+  const patchPath = resolveRunArtifactPath(state.run_root, evidence.patch_ref);
+  if (!existsSync(patchPath)) return false;
+  const patch = readFileSync(patchPath);
+  if (evidence.patch_sha256 && sha256(patch) !== evidence.patch_sha256) return false;
+  if (typeof evidence.patch_byte_length === "number" && patch.byteLength !== evidence.patch_byte_length) return false;
   return Object.values(state.tasks)
     .filter((task) => task.status === "verified")
     .every((task) =>
