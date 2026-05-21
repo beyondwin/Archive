@@ -1,0 +1,17 @@
+{
+  "name": "@waygent/orchestrator",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@waygent/contracts": "workspace:*",
+    "@waygent/kernel-client": "workspace:*",
+    "@waygent/lens-projectors": "workspace:*",
+    "@waygent/lens-store": "workspace:*",
+    "@waygent/provider-adapters": "workspace:*",
+    "@waygent/runway-control": "workspace:*"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "name": "@waygent/lens-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "test": "bun test src",
+    "test:e2e": "bun test ../../tests/e2e"
+  }
+}

@@ -24,6 +24,7 @@ logs/
 tmp/
 temp/
 .cache/
+.playwright-cli/
 
 # In-progress eval baseline scratch (committed baselines use .json only)
 *.json.partial
@@ -45,6 +46,11 @@ yarn-error.log*
 pnpm-debug.log*
 dist/
 build/
+*.tsbuildinfo
+
+# Rust tooling
+/target/
+native/kernel/target/
 
 # Generated navigation/search layers
 graphify-out/

@@ -1,0 +1,5 @@
+[package]
+name = "git-worktree"
+edition.workspace = true
+version.workspace = true
+license.workspace = true

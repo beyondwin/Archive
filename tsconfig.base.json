@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
+    "baseUrl": ".",
+    "types": ["bun-types"],
+    "paths": {
+      "@waygent/contracts": ["packages/contracts/src/index.ts"],
+      "@waygent/runway-control": ["packages/runway-control/src/index.ts"],
+      "@waygent/lens-store": ["packages/lens-store/src/index.ts"],
+      "@waygent/lens-projectors": ["packages/lens-projectors/src/index.ts"],
+      "@waygent/provider-adapters": ["packages/provider-adapters/src/index.ts"],
+      "@waygent/kernel-client": ["packages/kernel-client/src/index.ts"],
+      "@waygent/policy": ["packages/policy/src/index.ts"],
+      "@waygent/orchestrator": ["packages/orchestrator/src/index.ts"],
+      "@waygent/context-packer": ["packages/context-packer/src/index.ts"],
+      "@waygent/testkit": ["packages/testkit/src/index.ts"]
+    }
+  }
+}

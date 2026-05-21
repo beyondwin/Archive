@@ -1,0 +1,16 @@
+{
+  "schema": "kernel.execution_request.v1",
+  "request_id": "exec_demo",
+  "run_id": "run_demo",
+  "task_id": "task_demo",
+  "cwd": ".",
+  "argv": ["printf", "hello"],
+  "env": {},
+  "timeout_ms": 1000,
+  "stdin": "closed",
+  "tty": false,
+  "capture": {
+    "stdout_limit_bytes": 100,
+    "stderr_limit_bytes": 100
+  }
+}
