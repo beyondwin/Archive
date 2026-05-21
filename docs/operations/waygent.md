@@ -1,5 +1,10 @@
 # Waygent Operations
 
+Related operations docs:
+
+- [Recovery](./recovery.md)
+- [Verification](./verification.md)
+
 ## Operational Trust Loop
 
 Waygent treats `waygent.run_state.v2` as the runtime source of truth for

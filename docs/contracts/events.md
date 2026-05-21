@@ -1,5 +1,10 @@
 # Waygent Event Contracts
 
+Related contracts:
+
+- [Run state](./run-state.md)
+- [Provider result](./provider-result.md)
+
 Canonical events use `agentlens.event.v3`. Product event families are:
 
 - `platform.*`

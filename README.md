@@ -56,6 +56,8 @@ AgentLens filesystem events as replayable evidence. Runtime decisions come from
 durable state and projections, not from chat context.
 
 - Runtime overview: [docs/architecture/waygent.md](docs/architecture/waygent.md)
+- Documentation index: [docs/README.md](docs/README.md)
+- Getting started: [docs/getting-started.md](docs/getting-started.md)
 - Event contracts: [docs/contracts/events.md](docs/contracts/events.md)
 - Operations: [docs/operations/waygent.md](docs/operations/waygent.md)
 - Waygent skill: [skills/waygent/README.md](skills/waygent/README.md)
