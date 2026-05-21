@@ -2,6 +2,7 @@ import {
   defaultRunRoot,
   eventsRun,
   explainRun,
+  applyRun,
   inspectRun,
   intentToCommand,
   parseNaturalLanguageIntent,
@@ -73,10 +74,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     return resumeRun({ ...runCommandOptions(parsed), dry_run: true });
   }
   if (parsed.command === "apply") {
-    return {
-      command: "apply",
-      status: "requires_clean_source_checkout"
-    };
+    return applyRun({ ...runCommandOptions(parsed), workspace: String(parsed.flags.workspace ?? process.cwd()) });
   }
   if (parsed.command === "events") {
     return eventsRun(runCommandOptions(parsed));

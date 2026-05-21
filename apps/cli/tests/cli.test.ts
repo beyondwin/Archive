@@ -24,7 +24,11 @@ describe("Waygent CLI", () => {
   });
 
   test("supports stable command surface", async () => {
-    expect(await runCli(["apply", "--run", "run_demo"])).toEqual({ command: "apply", status: "requires_clean_source_checkout" });
+    const workspace = mkdtempSync(join(tmpdir(), "waygent-clean-"));
+    expect(await runCli(["apply", "--workspace", workspace, "--run", "run_demo"])).toMatchObject({
+      command: "apply",
+      status: "applied"
+    });
     expect((await runCli(["intent", "--text", "최근 승인된 플랜 실행해줘"])) as { command: string }).toEqual({ command: "waygent run --latest" });
   });
 
@@ -56,5 +60,17 @@ describe("Waygent CLI", () => {
 
     expect(result).toMatchObject({ run_id: "run_events", total_events: 6 });
     expect((result as { events: Array<{ event_type: string }> }).events[0]?.event_type).toBe("platform.run_started");
+  });
+
+  test("apply refuses a dirty source checkout with an explicit blocker", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "waygent-dirty-"));
+    writeFileSync(join(workspace, "dirty.txt"), "dirty");
+
+    await expect(runCli(["apply", "--workspace", workspace, "--run", "run_dirty"])).resolves.toEqual({
+      command: "apply",
+      run_id: "run_dirty",
+      status: "blocked",
+      reason: "dirty_source_checkout"
+    });
   });
 });
