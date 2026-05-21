@@ -6,8 +6,9 @@ Repository instructions for AI coding agents working in this checkout.
 
 Archive is now focused on two active surfaces:
 
-- `AgentLens/` - a Python + React tool for recording, querying, evaluating,
-  and visualizing agent runs.
+- `components/agentlens/` - a Python tool for recording, querying,
+  evaluating, and visualizing agent runs.
+- `apps/console/` - the Waygent console app.
 - `skills/` - source of truth for local executor skills shared by Codex and
   Claude Code.
 
@@ -38,10 +39,10 @@ review and planning workflow details in `code_review.md` and `PLANS.md`.
 
 ### AgentLens
 
-- Python package: `AgentLens/src/agentlens/`
-- Python tests: `AgentLens/tests/`
-- Web app: `AgentLens/web/`
-- Current docs: `AgentLens/docs/`
+- AgentLens Python package: `components/agentlens/src/agentlens/`
+- AgentLens Python tests: `components/agentlens/tests/`
+- Waygent console app: `apps/console/`
+- Current docs: `components/agentlens/docs/` and root `docs/`
 - CLI entry point: `agentlens`
 
 AgentLens durable run state belongs under `~/.agentlens/` or
@@ -92,21 +93,14 @@ Run the smallest command that proves the change. Useful defaults:
 
 ```bash
 # AgentLens backend
-cd AgentLens
+cd components/agentlens
 python -m pip install -e .[test]
 python -m pytest -q
 
-# AgentLens frontend
-cd AgentLens/web
-npm ci
-npm run gen-types
-npx vitest run
-npm run build
-npx playwright test
-
-# AgentLens full local check
-cd AgentLens
-make test
+# Waygent console
+cd apps/console
+bun test src
+bun run build
 
 # AgentRunway deterministic evals
 cd skills/agent-runway

@@ -8,7 +8,7 @@
   ],
   "scripts": {
     "typecheck": "tsc -b apps/* packages/*",
-    "test": "bun test ./packages/contracts/tests ./packages/runway-control/tests ./packages/lens-projectors/tests ./packages/lens-store/tests ./packages/provider-adapters/tests ./packages/policy/tests ./packages/kernel-client/tests ./packages/orchestrator/tests ./packages/context-packer/tests ./apps/cli/tests ./apps/api/tests ./apps/lens-web/src ./tests/e2e ./tests/integration",
+    "test": "bun test ./packages/contracts/tests ./packages/runway-control/tests ./packages/lens-projectors/tests ./packages/lens-store/tests ./packages/provider-adapters/tests ./packages/policy/tests ./packages/kernel-client/tests ./packages/orchestrator/tests ./packages/context-packer/tests ./apps/cli/tests ./apps/api/tests ./apps/console/src ./tests/e2e ./tests/integration",
     "check": "bun run typecheck && bun run test",
     "platform:demo": "bun run apps/cli/src/demo.ts",
     "check:legacy": "bun run packages/testkit/src/legacyCheck.ts"
