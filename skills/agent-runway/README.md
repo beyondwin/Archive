@@ -2,13 +2,17 @@
 
 `agent-runway` (`agentrunway`) executes approved Superpowers plans through a deterministic Python runner.
 
-Source of truth:
+Current source of truth:
 
-- Design: `docs/superpowers/specs/2026-05-20-agent-runway-design.md`
-- Implementation plan: `docs/superpowers/plans/2026-05-20-agent-runway.md`
-- Hybrid quality design: `docs/superpowers/specs/2026-05-20-agentrunway-quality-first-hybrid-worktree-design.md`
-- Hybrid quality plan: `docs/superpowers/plans/2026-05-20-agentrunway-quality-first-hybrid-worktree.md`
+- Skill contract: `SKILL.md`
+- Operator overview: this `README.md`
+- Runtime protocol references: `references/`
+- Runtime implementation: `scripts/agentrunway/`
 - Three-skill comparison notes: `references/execution-comparison.md`
+
+Historical root `docs/superpowers/...` design and plan files may appear in old
+commits or experiment notes, but they are not present in the pruned Archive
+checkout and should not be treated as current source.
 
 The runner stores state in SQLite under `~/.agentrunway/runs`, does implementation work in isolated git worktrees under `~/.agentrunway/worktrees`, and emits bounded AgentLens v2 trust events under the `agentrunway.*` namespace. The MVP includes a deterministic local adapter for tests and dry runs plus Claude/Codex process adapter wrappers.
 
@@ -38,9 +42,10 @@ agentrunway apply --last
 ```
 
 `--topic` resolves a complete Superpowers design/plan pair under
-`docs/superpowers/specs/` and `docs/superpowers/plans/`. Ambiguous topics fail
-before dispatch and print candidates. `--last` is scoped to the current
-workspace id, not the whole machine.
+`docs/superpowers/specs/` and `docs/superpowers/plans/` when the target
+workspace contains those directories. Ambiguous topics fail before dispatch and
+print candidates. `--last` is scoped to the current workspace id, not the whole
+machine.
 
 ## Operations Evidence
 

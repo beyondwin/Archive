@@ -160,8 +160,12 @@ skills/kws-claude-multi-agent-executor/
 
 이 스킬은 Archive의 `skills/` 트리에 독립 디렉터리로 존재합니다. 디렉터리 밖의 관련 산출물:
 
-- **디자인 스펙**: `docs/superpowers/specs/2026-05-13-kws-claude-multi-agent-executor-*.md`
-- **구현 계획**: `docs/superpowers/plans/2026-05-13-kws-claude-multi-agent-executor-*.md`
+- **현재 source of truth**: 이 디렉터리의 `SKILL.md`, `AGENTS.md`,
+  `ARCHITECTURE.md`, `HISTORY.md`, `docs/`, `references/`, `evals/`
+- **역사적 디자인/구현 계획**: 과거 `docs/superpowers/...` 경로에 있던
+  문서는 git history나 실험 기록에서만 참조될 수 있습니다. 현재 체크아웃에
+  해당 경로가 실제로 존재하는지 확인하기 전에는 live source로 취급하지
+  마세요.
 - **자매 스킬** (Codex executor 병렬 설계): `skills/kws-codex-plan-executor/`
 - **Archive 스킬 인덱스**: `skills/README.md`
 
