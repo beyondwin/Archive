@@ -1,4 +1,4 @@
-"""AgentRunway v2 projection artifacts."""
+"""Legacy AgentRunway v2 projection artifacts."""
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
@@ -33,6 +33,9 @@ def project_events(events: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
     for event in event_list:
         if isinstance(event.get("run_id"), str):
             run_id = str(event["run_id"])
+            break
+        if isinstance(event.get("orchestrator_run_id"), str):
+            run_id = str(event["orchestrator_run_id"])
             break
     return {
         "schema": SCHEMA_AGENTRUNWAY_PROJECTION_V1,

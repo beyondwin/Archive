@@ -1,4 +1,4 @@
-"""Projection helpers for AgentRunway ``agentrunway.*`` events."""
+"""Read-compatibility projection helpers for legacy ``agentrunway.*`` events."""
 from __future__ import annotations
 
 import json
@@ -157,7 +157,7 @@ def _mark_task_event(
 
 
 def project_agentrunway_events(events: Iterable[Mapping[str, Any]]) -> dict[str, Any]:
-    """Project AgentRunway events into a user-facing timeline summary.
+    """Project legacy AgentRunway events into a user-facing timeline summary.
 
     ``agentrunway.resume_action`` is internal recovery bookkeeping: it is
     counted under ``internal_actions`` but intentionally omitted from the
