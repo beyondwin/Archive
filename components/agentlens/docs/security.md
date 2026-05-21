@@ -67,9 +67,9 @@ Session JSONL imported by `agentlens import claude-session` and `agentlens impor
 
 ## 6.2 Host-isolation invariant (failure containment)
 
-AgentLens calls embedded in AgentRunway or any future host integration are
-wired so that AgentLens **never blocks the host
-workflow**. The contract has two enforcement points:
+AgentLens calls embedded in Waygent or legacy host integrations are wired so
+that AgentLens **never blocks the host workflow**. The contract has two
+enforcement points:
 
 - **Host snippet shape.** Orchestrators invoke AgentLens with
   `agentlens <subcommand> ... 2>/dev/null || true`, which guarantees a
@@ -85,7 +85,7 @@ workflow**. The contract has two enforcement points:
   non-error response regardless of AgentLens's internal state.
 
 Automated coverage lives in
-`AgentLens/tests/integration/test_failure_isolation.py` (PATH-missing,
+`components/agentlens/tests/integration/test_failure_isolation.py` (PATH-missing,
 unreadable-home, unknown-run-id, namespace-glob, tree-traversal).
 
 ## 7. v1 잠금 정책 (v1 lock policy)

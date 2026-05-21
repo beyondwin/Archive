@@ -1,6 +1,6 @@
 # AgentLens Storage & Lifecycle Contract
 
-This document re-narrates spec section S1.4 (디렉터리 / 파일 트리) and the relevant lifecycle invariants from S1.2. Historical `agentlens.*.v1` artifacts remain readable. The AgentRunway Trust Console adds a new `agentlens.*.v2` runtime contract plus derived `agentlens.agentrunway_projection.v1` and `agentlens.trust_report.v1` artifacts.
+This document re-narrates spec section S1.4 (디렉터리 / 파일 트리) and the relevant lifecycle invariants from S1.2. Historical `agentlens.*.v1` artifacts remain readable. Waygent is the active orchestrator integration; legacy AgentRunway Trust Console artifacts remain readable through the `agentlens.*.v2`, `agentlens.agentrunway_projection.v1`, and `agentlens.trust_report.v1` compatibility path.
 
 ## 1. Run directory layout
 
@@ -72,19 +72,21 @@ The `type` field is no longer a fixed enum; it is a lower-case dotted namespace:
 
 ```
 
-## 3b. AgentRunway Trust Console v2
+## 3b. Waygent and legacy AgentRunway trust artifacts
 
-AgentRunway is the only first-class executor integration in the Trust Console
-path. Raw AgentRunway events use `agentlens.event.v2` and the
-`agentrunway.*` event family. Legacy `kws-cpe.*`, `kws-cme.*`, and
-`kws.orchestrator.*` event families are not accepted by the v2 schema.
+Waygent is the active executor integration for new Trust Console data. New
+orchestrator events use the `platform.*`, `runway.*`, `kernel.*`, and `lens.*`
+event families. Historical AgentRunway runs remain readable through the
+legacy `agentlens.event.v2` and `agentrunway.*` compatibility schema. Older
+`kws-cpe.*`, `kws-cme.*`, and `kws.orchestrator.*` event families are not
+accepted by the v2 schema.
 
 The v2 event envelope uses `event_type` and `occurred_at`, not the v1
 `type`/`ts` pair. It also requires `phase`, `outcome`, `severity`,
 `trust_impact`, `summary`, and a bounded `payload`.
 
-`agentlens eval` materializes two deterministic derived artifacts when a run
-contains AgentRunway evidence:
+`agentlens eval` still materializes two deterministic derived artifacts when a
+run contains legacy AgentRunway evidence:
 
 - `artifacts/agentrunway_projection.json`: lifecycle, task, artifact,
   coverage, retry, and projection-issue summary.
@@ -93,14 +95,15 @@ contains AgentRunway evidence:
   operator actions, and projection issues.
 
 `trust_report.json` is the shared source for CLI, API, and dashboard trust
-views. AgentLens remains downstream; it never mutates AgentRunway execution
-state.
+views. AgentLens remains downstream; it never mutates Waygent execution state
+or legacy AgentRunway artifacts.
 ^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$
 ```
 
-Reserved core namespaces — `run.*`, `command.*`, `checkpoint.*`, `artifact.*`, `task.*`, `failure.*`, `recording.*`, `agentlens.*` — remain pinned to their locked event-name enum (see `event.schema.json`). AgentRunway (`agentrunway.*`), neutral external namespaces (`example.*`, …), and importer namespaces (`claude.*`, `codex.*`) are unconstrained beyond the general pattern, so external producers can append structured events under their own prefix without coordinating an enum change.
+Reserved core namespaces — `run.*`, `command.*`, `checkpoint.*`, `artifact.*`, `task.*`, `failure.*`, `recording.*`, `agentlens.*` — remain pinned to their locked event-name enum (see `event.schema.json`). Waygent namespaces (`platform.*`, `runway.*`, `kernel.*`, `lens.*`), legacy AgentRunway (`agentrunway.*`), neutral external namespaces (`example.*`, …), and importer namespaces (`claude.*`, `codex.*`) are constrained by their respective schemas and the general namespace pattern.
 
 ```bash
+# Legacy read-compatibility example:
 agentlens run-open --agent agentrunway --workspace "$PWD"
 agentlens event append --run "$RUN_ID" --type agentrunway.run_started --payload-json '{"schema":"agentrunway.event.v1","summary":"started"}'
 agentlens events --run "$RUN_ID" --type 'agentrunway.*'
