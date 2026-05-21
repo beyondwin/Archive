@@ -85,6 +85,36 @@ describe("Codex adapter normalization", () => {
     expect(result.process.stdout).toContain('"type":"started"');
   });
 
+  test("prefers Codex agent_message worker result over telemetry envelopes", () => {
+    const result = normalizeProcessOutput("codex", "task_demo", "candidate_demo", {
+      exitCode: 0,
+      stdout: [
+        JSON.stringify({ type: "thread.started", thread_id: "thread_demo" }),
+        JSON.stringify({
+          type: "item.completed",
+          item: {
+            type: "agent_message",
+            text: JSON.stringify({
+              schema: "runway.worker_result.v1",
+              task_id: "task_demo",
+              candidate_id: "candidate_demo",
+              status: "success",
+              summary: "codex made the claimed edit",
+              changed_files: ["live-provider.txt"],
+              evidence: { command: "codex" }
+            })
+          }
+        }),
+        JSON.stringify({ type: "turn.completed", usage: { input_tokens: 1 } })
+      ].join("\n"),
+      stderr: ""
+    });
+
+    expect(result.worker.summary).toBe("codex made the claimed edit");
+    expect(result.worker.changed_files).toEqual(["live-provider.txt"]);
+    expect(result.worker.evidence.native).toMatchObject({ command: "codex" });
+  });
+
   test("preserves provider supplied failure_class", () => {
     const result = normalizeProcessOutput("codex", "task_demo", "candidate_demo", {
       exitCode: 0,

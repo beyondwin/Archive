@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { dirname } from "node:path";
 import type { FailureClass, WorkerResult } from "@waygent/contracts";
 import { validateContract } from "@waygent/contracts";
 import type { AdapterRequest, ProcessAdapterOutput, ProviderAdapterRunResult, ProviderProcessOptions } from "./types";
@@ -98,7 +99,7 @@ export async function runProviderProcess(
   return new Promise<ProviderAdapterRunResult>((resolve) => {
     const cwd = options.cwd ?? request.cwd;
     const startedAt = new Date().toISOString();
-    const child = spawn(options.executable, providerProcessArgs(provider, options, cwd), {
+    const child = spawn(options.executable, providerProcessArgs(provider, options, cwd, request), {
       cwd,
       env: { ...process.env, ...options.env, ...(cwd ? { PWD: cwd } : {}) },
       stdio: ["pipe", "pipe", "pipe"]
@@ -170,8 +171,20 @@ export async function runProviderProcess(
   });
 }
 
-function providerProcessArgs(provider: "codex" | "claude", options: ProviderProcessOptions, cwd: string | undefined): string[] {
+function providerProcessArgs(provider: "codex" | "claude", options: ProviderProcessOptions, cwd: string | undefined, request: AdapterRequest): string[] {
   const args = options.args ?? [];
+  if (provider === "claude" && options.executable === "claude") {
+    const nextArgs = [...args];
+    if (cwd && !nextArgs.includes("--add-dir")) {
+      const allowedDirs = [cwd];
+      if (request.task_packet_path) allowedDirs.push(dirname(request.task_packet_path));
+      nextArgs.unshift("--add-dir", ...allowedDirs);
+    }
+    if (!nextArgs.includes("--permission-mode")) {
+      nextArgs.unshift("--permission-mode", "acceptEdits");
+    }
+    return nextArgs;
+  }
   if (provider !== "codex" || !cwd || options.executable !== "codex" || args.includes("--cd") || args.includes("-C")) {
     return args;
   }
@@ -212,7 +225,9 @@ function parseWorkerOutput(stdout: string): unknown {
   ];
   for (const candidate of candidates) {
     const parsed = parseJsonText(candidate);
-    if (parsed) return unwrapProviderEnvelope(parsed);
+    if (!parsed) continue;
+    const unwrapped = unwrapProviderEnvelope(parsed);
+    if (isWorkerResultCandidate(unwrapped)) return unwrapped;
   }
   throw new Error("missing worker result JSON");
 }
@@ -228,7 +243,25 @@ function unwrapProviderEnvelope(parsed: unknown): unknown {
     const nested = parseJsonText(value.message);
     if (nested) return nested;
   }
+  if (typeof value.text === "string") {
+    const nested = parseJsonText(value.text);
+    if (nested) return nested;
+  }
+  const item = value.item;
+  if (item && typeof item === "object") {
+    const itemValue = item as Record<string, unknown>;
+    if (typeof itemValue.text === "string") {
+      const nested = parseJsonText(itemValue.text);
+      if (nested) return nested;
+    }
+  }
   return parsed;
+}
+
+function isWorkerResultCandidate(value: unknown): value is Partial<WorkerResult> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return "status" in record || "changed_files" in record || "summary" in record || "failure_class" in record;
 }
 
 function parseJsonText(value: string): unknown | null {

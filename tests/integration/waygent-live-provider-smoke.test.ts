@@ -20,7 +20,7 @@ describe("waygent live provider smoke", () => {
       provider_fixture: "live-provider",
       source_dirty_before_apply: false,
       force_missing_checkpoint: false,
-      plan: "```yaml waygent-task\nid: task_live_provider\ntitle: Live provider task\ndependencies: []\nfile_claims:\n  - path: live-provider.txt\n    mode: owned\nrisk: low\nverify:\n  - printf live\n```",
+      plan: "```yaml waygent-task\nid: task_live_provider\ntitle: Create live provider smoke file\ndependencies: []\nfile_claims:\n  - path: live-provider.txt\n    mode: owned\nrisk: low\nverify:\n  - grep -qx live live-provider.txt\n```",
       expected: {
         run_status: "trusted",
         apply_status: "not_applied",
