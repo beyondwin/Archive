@@ -1,6 +1,8 @@
 import {
   defaultRunRoot,
+  eventsRun,
   explainRun,
+  inspectRun,
   intentToCommand,
   parseNaturalLanguageIntent,
   resumeRun,
@@ -41,6 +43,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
   if (parsed.command === "run" || parsed.command === "demo") {
     const options: Parameters<typeof runWaygentDemo>[0] = {
       root: String(parsed.flags.root ?? defaultRunRoot()),
+      workspace: String(parsed.flags.workspace ?? process.cwd()),
       profile: {
         provider: parsed.flags.provider === "claude" ? "claude" : parsed.flags.provider === "codex" ? "codex" : "fake",
         execution_mode: parsed.flags["execution-mode"] === "single-agent" ? "single-agent" : "multi-agent"
@@ -48,14 +51,20 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     };
     if (typeof parsed.flags.run === "string") options.run_id = parsed.flags.run;
     if (typeof parsed.flags.plan === "string") options.plan = parsed.flags.plan;
+    if (typeof parsed.flags.plan === "string") options.plan_path = parsed.flags.plan;
     if (typeof parsed.flags.spec === "string") options.spec = parsed.flags.spec;
+    if (parsed.flags.latest) options.latest = true;
+    if (typeof parsed.flags.topic === "string") options.topic = parsed.flags.topic;
     if (parsed.command === "run") {
       return runWaygent(options);
     }
     return runWaygentDemo(options);
   }
-  if (parsed.command === "status" || parsed.command === "inspect") {
+  if (parsed.command === "status") {
     return statusRun(runCommandOptions(parsed));
+  }
+  if (parsed.command === "inspect") {
+    return inspectRun(runCommandOptions(parsed));
   }
   if (parsed.command === "explain") {
     return explainRun(runCommandOptions(parsed));
@@ -70,11 +79,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     };
   }
   if (parsed.command === "events") {
-    return {
-      command: "events",
-      run: parsed.flags.run ?? (parsed.flags.last ? "last" : "latest"),
-      status: "not_started"
-    };
+    return eventsRun(runCommandOptions(parsed));
   }
   return { usage: "waygent run|status|events|inspect|explain|resume|apply" };
 }
