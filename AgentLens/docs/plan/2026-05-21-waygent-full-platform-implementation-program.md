@@ -59,6 +59,11 @@ packages/
   context-packer/
   eval/
   testkit/
+skills/
+  waygent/
+    SKILL.md
+    references/
+      commands.md
 native/
   kernel/
     Cargo.toml
@@ -95,7 +100,7 @@ docs/
 | 6 | Worktree And Patch Apply | Run-main worktree, candidate worktrees, diff validation, patch dry-run/apply, merge/checkpoint, explicit source apply. |
 | 7 | Provider Adapters | Codex, Claude, local fake, and optional OpenCode/Gemini/Goose/ACP adapters behind capability-aware contracts. |
 | 8 | Policy And Permissions | Mode hierarchy, filesystem/network/command rules, approval requests, kernel-enforced permission evidence. |
-| 9 | Orchestrator, CLI, And API | Waygent run lifecycle, profile selection, CLI commands, local HTTP API, SSE event stream. |
+| 9 | Natural Language Launcher, Orchestrator, CLI, And API | Skill-style natural-language launch UX, multi-agent execution profile defaults, Waygent run lifecycle, CLI commands, local HTTP API, SSE event stream. |
 | 10 | Context Packer | Graphify-free repo map, symbol scan, task-scoped context, evidence-aware context selection. |
 | 11 | Lens Web Console | Operator UI for runs, safe waves, tasks, events, trust reports, failures, decision packets, and apply state. |
 | 12 | Migration And Legacy Removal | Remove Python runtime references from the product tree, remove Graphify assumptions, preserve old code only as archived reference. |
@@ -1109,14 +1114,145 @@ git commit -m "feat: enforce permissions through kernel boundary"
 
 ## Phase 9: Orchestrator, CLI, And API
 
-### Task 9.1: Implement Waygent Orchestrator
+### Task 9.1: Add Execution Profile Resolver
 
 ```yaml agentrunway-task
 task_id: phase9_task_001
+title: Add Execution Profile Resolver
+risk: medium
+phase: implementation
+dependencies: [phase7_task_001, phase8_task_001]
+file_claims:
+  - {path: packages/orchestrator, mode: owned}
+  - {path: packages/contracts, mode: shared_append}
+  - {path: packages/provider-adapters, mode: shared_append}
+acceptance_commands:
+  - bun test packages/orchestrator/tests/executionProfile.test.ts
+  - bun test packages/orchestrator/tests/modelOverride.test.ts
+required_skills: [test-driven-development]
+serial: true
+```
+
+Required behavior:
+
+- default execution mode is `multi-agent`;
+- Codex default main agent is `gpt-5.5` with `xhigh` reasoning;
+- Codex default subagents are `gpt-5.5` with `high` reasoning;
+- Claude default main agent is `opus` with `high` reasoning;
+- Claude default subagents are `opus` with `high` reasoning;
+- single-agent execution is accepted only as an explicit override;
+- override precedence is natural-language explicit override, CLI flags, plan
+  metadata, project config, then Waygent defaults;
+- resolved profile is recorded as `runway.execution_profile_selected` evidence.
+
+Default profile fixture:
+
+```yaml
+execution_mode: multi-agent
+providers:
+  codex:
+    main:
+      model: gpt-5.5
+      reasoning: xhigh
+    subagent:
+      model: gpt-5.5
+      reasoning: high
+  claude:
+    main:
+      model: opus
+      reasoning: high
+    subagent:
+      model: opus
+      reasoning: high
+```
+
+Verification:
+
+```bash
+bun test packages/orchestrator/tests/executionProfile.test.ts
+bun test packages/orchestrator/tests/modelOverride.test.ts
+```
+
+Commit:
+
+```bash
+git add packages/orchestrator packages/contracts packages/provider-adapters
+git commit -m "feat: add Waygent execution profile resolver"
+```
+
+### Task 9.2: Add Natural Language Skill Launcher
+
+```yaml agentrunway-task
+task_id: phase9_task_002
+title: Add Natural Language Skill Launcher
+risk: medium
+phase: implementation
+dependencies: [phase9_task_001]
+file_claims:
+  - {path: skills/waygent, mode: owned}
+  - {path: packages/orchestrator, mode: shared_append}
+  - {path: apps/cli, mode: shared_append}
+acceptance_commands:
+  - test -f skills/waygent/SKILL.md
+  - test -f skills/waygent/references/commands.md
+  - bun test packages/orchestrator/tests/naturalLanguageIntent.test.ts
+required_skills: [test-driven-development]
+serial: true
+```
+
+Required behavior:
+
+- `skills/waygent/SKILL.md` documents natural-language intent handling for
+  Codex, Claude, and similar agent hosts;
+- the skill converts natural language into stable `waygent` CLI commands;
+- the skill does not implement scheduler, worktree, recovery, trust scoring, or
+  provider runtime logic;
+- Korean and English intents map to the same command intents;
+- examples include latest plan execution, topic execution, last status, blocked
+  reason explanation, resume, apply, provider selection, and model override.
+
+Natural-language examples:
+
+```text
+"최근 승인된 플랜 실행해줘"
+-> waygent run --latest
+
+"bun rust 플랫폼 계획 Codex로 멀티에이전트 실행해줘"
+-> waygent run --topic "bun rust platform" --provider codex --execution-mode multi-agent
+
+"이번엔 Claude Opus high로 돌려줘"
+-> waygent run --latest --provider claude --main-model opus --main-reasoning high --subagent-model opus --subagent-reasoning high
+
+"마지막 실행 왜 막혔는지 설명해줘"
+-> waygent explain --last
+
+"검증 통과한 것만 적용해줘"
+-> waygent apply --last
+```
+
+Verification:
+
+```bash
+test -f skills/waygent/SKILL.md
+test -f skills/waygent/references/commands.md
+bun test packages/orchestrator/tests/naturalLanguageIntent.test.ts
+```
+
+Commit:
+
+```bash
+git add skills/waygent packages/orchestrator apps/cli
+git commit -m "feat: add Waygent natural language launcher skill"
+```
+
+### Task 9.3: Implement Waygent Orchestrator
+
+```yaml agentrunway-task
+task_id: phase9_task_003
 title: Implement Waygent Orchestrator
 risk: high
 phase: implementation
-dependencies: [phase4_task_003, phase5_task_003, phase7_task_002, phase8_task_002]
+dependencies: [phase4_task_003, phase5_task_003, phase7_task_002, phase8_task_002, phase9_task_001]
 file_claims:
   - {path: packages/orchestrator, mode: owned}
   - {path: apps/cli, mode: shared_append}
@@ -1130,8 +1266,10 @@ serial: true
 Required behavior:
 
 - orchestrator opens a run, writes contract snapshot, selects provider profile,
-  computes safe wave, launches adapter through kernel client, records evidence,
-  runs gates, updates projectors, and stops before explicit apply;
+  resolves default multi-agent mode, computes safe wave, launches adapter
+  through kernel client, records evidence, runs gates, updates projectors, and
+  stops before explicit apply;
+- subagent waves are released only by `runway-control` safe-wave decisions;
 - fake provider path remains deterministic and offline;
 - failed provider path creates a decision packet.
 
@@ -1149,14 +1287,14 @@ git add packages/orchestrator apps/cli
 git commit -m "feat: add Waygent orchestrator run lifecycle"
 ```
 
-### Task 9.2: Implement CLI Commands
+### Task 9.4: Implement CLI Commands
 
 ```yaml agentrunway-task
-task_id: phase9_task_002
+task_id: phase9_task_004
 title: Implement Waygent CLI Commands
 risk: medium
 phase: implementation
-dependencies: [phase9_task_001]
+dependencies: [phase9_task_002, phase9_task_003]
 file_claims:
   - {path: apps/cli, mode: owned}
 acceptance_commands:
@@ -1169,9 +1307,13 @@ serial: true
 Required commands:
 
 - `waygent run --plan <path> --spec <path> --adapter fake`;
+- `waygent run --latest --provider codex --execution-mode multi-agent`;
+- `waygent run --topic <topic> --provider claude --main-model opus --main-reasoning high`;
 - `waygent status --run <run_id>`;
 - `waygent events --run <run_id> --json`;
 - `waygent inspect --run <run_id> --json`;
+- `waygent explain --last`;
+- `waygent resume --last`;
 - `waygent apply --run <run_id>`.
 
 Verification:
@@ -1188,14 +1330,14 @@ git add apps/cli
 git commit -m "feat: add Waygent CLI commands"
 ```
 
-### Task 9.3: Implement Local API And Event Stream
+### Task 9.5: Implement Local API And Event Stream
 
 ```yaml agentrunway-task
-task_id: phase9_task_003
+task_id: phase9_task_005
 title: Implement Local API And Event Stream
 risk: medium
 phase: implementation
-dependencies: [phase9_task_002, phase5_task_003]
+dependencies: [phase9_task_004, phase5_task_003]
 file_claims:
   - {path: apps/api, mode: owned}
   - {path: packages/lens-store, mode: shared_append}
@@ -1513,7 +1655,9 @@ This program covers the source spec as follows:
 - `packages/lens-projectors`: Phase 5.
 - `packages/provider-adapters`: Phase 7.
 - `packages/policy`: Phase 8.
+- `packages/orchestrator`: Phase 9.
 - `packages/context-packer`: Phase 10.
+- `skills/waygent`: Phase 9.
 - `native/kernel`: Phases 3, 6, and 8.
 - Data flow: Phases 4 through 9.
 - Durable state model: Phases 4 and 5.
