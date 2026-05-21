@@ -21,6 +21,11 @@ required_skill_phrases = [
     "extra-high reasoning",
     "GPT-5.5 with high reasoning",
     "host-agent execution preference",
+    "design.md plan.md 멀티에이전트로 구현해줘",
+    "waygent run --plan plan.md --spec design.md --execution-mode multi-agent",
+    "Do not use host `spawn_agent`",
+    "The Waygent runtime owns worktree creation",
+    "If no `waygent run` occurs, no Waygent worktree will be created",
 ]
 
 required_files = [
