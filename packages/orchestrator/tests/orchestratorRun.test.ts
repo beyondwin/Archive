@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { readLatestRunId } from "@waygent/lens-store";
 import { runWaygent } from "../src/orchestrator";
+import { readRunState } from "../src/runState";
 
 const plan = `
 \`\`\`yaml waygent-task
@@ -35,5 +36,11 @@ describe("runWaygent", () => {
     ]);
     expect(result.trust_report.trust_status).toBe("trusted");
     expect(result.projection.safe_wave).toEqual(["task_demo"]);
+    expect(readRunState(root, "run_demo")).toMatchObject({
+      status: "completed",
+      tasks: [{ id: "task_demo", status: "verified" }],
+      completion_audit: { status: "passed", commands: ["printf hello"] },
+      apply: { status: "not_applied" }
+    });
   });
 });

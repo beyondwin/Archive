@@ -10,6 +10,7 @@ import { resolveExecutionProfile, type ProfileOverride } from "./executionProfil
 import { resolvePlanInput } from "./planDiscovery";
 import { parseWaygentPlan } from "./planParser";
 import { buildRunEvent } from "./runEvents";
+import { writeRunState, type WaygentRunState } from "./runState";
 import { buildTaskGraphFromPlan } from "./taskGraph";
 
 export interface RunWaygentOptions {
@@ -64,6 +65,25 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   const task = graph.tasks.get(taskId);
   if (!task) throw new Error(`task ${taskId} missing from graph`);
   const parsedTask = parsed.tasks.find((candidate) => candidate.id === task.id);
+  const workspace = options.workspace ?? process.cwd();
+  const worktree = paths.root;
+
+  const initialState: WaygentRunState = {
+    schema: "waygent.run_state.v1",
+    run_id: runId,
+    workspace,
+    worktree,
+    status: "running",
+    provider: profile.provider,
+    execution_mode: profile.execution_mode,
+    tasks: parsed.tasks.map((candidate) => ({
+      id: candidate.id,
+      status: candidate.id === taskId ? "running" : "pending"
+    })),
+    completion_audit: null,
+    apply: { status: "not_applied" }
+  };
+  writeRunState(options.root, initialState);
 
   const started = buildRunEvent({
     run_id: runId,
@@ -117,6 +137,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   writeArtifact(paths.root, `kernel/exec_${task.id}.json`, JSON.stringify(kernel, null, 2));
   const verified = mergeCandidate({ task_id: task.id, candidate_id: worker.candidate_id, reviewed: true, verified: true });
   task.checkpoint_ref = verified.checkpoint_ref ?? `checkpoint_${task.id}_${worker.candidate_id}`;
+  const verificationEventId = `event_${runId}_5`;
   appendEvent(paths.events, buildRunEvent({
     run_id: runId,
     sequence: 5,
@@ -126,6 +147,20 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     summary: "Verification passed with kernel evidence.",
     payload: { worker, kernel, checkpoint_ref: task.checkpoint_ref }
   }));
+  writeRunState(options.root, {
+    ...initialState,
+    status: "completed",
+    tasks: parsed.tasks.map((candidate) => ({
+      id: candidate.id,
+      status: candidate.id === taskId ? "verified" : "pending",
+      checkpoint_ref: candidate.id === taskId ? task.checkpoint_ref : undefined
+    })),
+    completion_audit: {
+      status: "passed",
+      commands: parsedTask?.verification_commands ?? ["printf hello"],
+      evidence_events: [verificationEventId]
+    }
+  });
   const trust = projectTrustReport(readEvents(paths.events));
   appendEvent(paths.events, buildRunEvent({
     run_id: runId,
