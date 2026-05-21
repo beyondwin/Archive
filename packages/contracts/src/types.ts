@@ -59,6 +59,13 @@ export type FailureClass =
   | "terminal_rejected";
 
 export type ProviderRole = "implement" | "review" | "fix" | "verify_assist";
+export type ProviderLogCategory =
+  | "error"
+  | "warning"
+  | "mcp"
+  | "plugin_manifest"
+  | "skill_loader"
+  | "other";
 export type WaygentRunStatusV2 = "initializing" | "running" | "blocked" | "failed" | "completed" | "applying" | "applied";
 export type WaygentLifecycleOutcome = "finished" | "blocked" | "failed" | "aborted" | null;
 export type WaygentCurrentPhase = "preflight" | "dispatch" | "review" | "verify" | "recover" | "apply" | "complete";
@@ -105,6 +112,12 @@ export interface ReviewResult {
   summary: string;
 }
 
+export interface ProviderLogSummary {
+  total_lines: number;
+  counts: Record<ProviderLogCategory, number>;
+  samples: Array<{ category: ProviderLogCategory; line: string }>;
+}
+
 export interface ProviderProcessEvidence {
   stdout: string;
   stderr: string;
@@ -113,6 +126,7 @@ export interface ProviderProcessEvidence {
   started_at: string;
   completed_at: string | null;
   event_stream?: string | null;
+  stderr_summary?: ProviderLogSummary;
 }
 
 export interface ProviderAttempt {

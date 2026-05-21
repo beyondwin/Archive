@@ -432,3 +432,36 @@ button {
   display: block;
   margin-top: 4px;
 }
+
+.next-action {
+  background: #edf4f7;
+  border-left: 3px solid #587f90;
+  margin: 0;
+  padding: 8px 10px;
+}
+
+.provider-signal-panel {
+  border-top: 1px solid #e1e7ea;
+  display: grid;
+  gap: 8px;
+  padding-top: 10px;
+}
+
+.provider-signal-panel h3 {
+  font-size: 14px;
+  margin: 0;
+}
+
+.signal-grid {
+  display: grid;
+  font-size: 12px;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.signal-grid span {
+  background: #f7f9fa;
+  border: 1px solid #e1e7ea;
+  border-radius: 6px;
+  padding: 7px 8px;
+}

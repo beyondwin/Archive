@@ -193,6 +193,66 @@ describe("Waygent run commands v2", () => {
     });
   });
 
+  test("explain and resume prefer v2 task failure class over missing failure events", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-run-commands-v2-"));
+    writeRunStateV2(root, {
+      schema: "waygent.run_state.v2",
+      run_id: "run_dependency_missing",
+      workspace: root,
+      source_branch: "main",
+      worktree_root: join(root, "worktrees"),
+      run_root: join(root, "run_dependency_missing"),
+      artifact_root: join(root, "run_dependency_missing", "artifacts"),
+      state_path: runStatePath(root, "run_dependency_missing"),
+      event_journal_path: join(root, "run_dependency_missing", "events.jsonl"),
+      plan_path: null,
+      spec_path: null,
+      provider_profile: { provider: "fake" },
+      status: "blocked",
+      lifecycle_outcome: "blocked",
+      current_phase: "recover",
+      tasks: {
+        task_dependency_missing: {
+          id: "task_dependency_missing",
+          status: "blocked",
+          risk: "low",
+          dependencies: [],
+          file_claims: [{ path: "README.md", mode: "owned" }],
+          attempts: [],
+          task_packet_path: null,
+          task_packet_sha256: null,
+          unit_manifest: { allowed_write_globs: ["README.md"] },
+          checkpoint_refs: [],
+          latest_failure_class: "dependency_missing",
+          decision_packet_ref: null,
+          timing: {}
+        }
+      },
+      safe_waves: [],
+      provider_attempts: [],
+      reviews: [],
+      verification: [],
+      recovery: [],
+      apply: { status: "not_applied" },
+      context: { snapshot_path: null, basis_hash: null },
+      drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
+      completion_audit: null,
+      timestamps: {
+        started_at: "2026-05-21T00:00:00Z",
+        updated_at: "2026-05-21T00:00:00Z",
+        completed_at: null
+      }
+    });
+
+    const explanation = explainRun({ root, run: "run_dependency_missing" });
+    expect(explanation).toMatchObject({
+      run_id: "run_dependency_missing",
+      blocked_by: "dependency_missing"
+    });
+    expect(explanation.summary).toContain("dependency_missing");
+    expect(resumeRun({ root, run: "run_dependency_missing", dry_run: true }).allowed_actions).toEqual(["rerun_verification"]);
+  });
+
   test("apply materializes v2 verified checkpoint patches", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-apply-v2-root-"));
     const workspace = mkdtempSync(join(tmpdir(), "waygent-apply-v2-source-"));

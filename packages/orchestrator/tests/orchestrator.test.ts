@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
 import { defaultRunRoot, runWaygentDemo } from "../src";
+import { initSourceCheckout } from "./support/orchestratorFixtures";
 
 describe("Waygent orchestrator", () => {
   test("keeps the default run root outside the source checkout", () => {
@@ -10,7 +11,10 @@ describe("Waygent orchestrator", () => {
   });
 
   test("runs deterministic fake provider lifecycle", async () => {
-    const result = await runWaygentDemo({ root: mkdtempSync(join(tmpdir(), "waygent-run-")) });
+    const result = await runWaygentDemo({
+      root: mkdtempSync(join(tmpdir(), "waygent-run-")),
+      workspace: initSourceCheckout("waygent-demo-source-")
+    });
     expect(result.events).toHaveLength(9);
     expect(result.events.map((event) => event.event_type)).toContain("runway.preflight_result");
     expect(result.events.map((event) => event.event_type)).toContain("runway.checkpoint_created");

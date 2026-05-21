@@ -25,7 +25,8 @@ import { listActualChangedFiles, validateDiffScope } from "./diffScope";
 import type { ProviderName } from "./executionProfile";
 import type { ParsedWaygentTask } from "./planParser";
 import type { RunEventInput } from "./runEvents";
-import { runVerificationCommands } from "./verification";
+import { prepareVerificationEnvironment, type VerificationEnvironmentEvidence } from "./verificationEnvironment";
+import { runVerificationCommands, type VerificationRunOutput } from "./verification";
 import { prepareManagedTaskWorktree } from "./worktreeManager";
 
 export type TaskExecutionEventIntent = Omit<RunEventInput, "sequence">;
@@ -146,17 +147,40 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
 
   if (input.provider === "fake") materializeFakeProviderResult(taskWorktree.path, input.task);
 
-  const { value: verification, timing: verificationTiming } = await measurePhase("verification", () => runVerificationCommands({
-    run_id: input.run_id,
-    task_id: input.task.id,
-    cwd: taskWorktree.path,
-    commands
-  }));
+  let verificationEnvironmentEvidence: VerificationEnvironmentEvidence = {
+    status: "skipped",
+    strategy: "none",
+    created_paths: [],
+    cleanup_status: "not_needed",
+    reason: "not_prepared"
+  };
+  const { value: verification, timing: verificationTiming } = await measurePhase("verification", async () => {
+    const verificationEnvironment = prepareVerificationEnvironment({
+      workspace: input.workspace,
+      worktree: taskWorktree.path,
+      disabled: process.env.WAYGENT_DISABLE_VERIFICATION_ENV === "1"
+    });
+    verificationEnvironmentEvidence = verificationEnvironment.evidence;
+    try {
+      if (verificationEnvironment.evidence.status === "failed") {
+        return environmentBlockedVerification(input.task.id, verificationEnvironment.evidence.reason);
+      }
+      return await runVerificationCommands({
+        run_id: input.run_id,
+        task_id: input.task.id,
+        cwd: taskWorktree.path,
+        commands
+      });
+    } finally {
+      verificationEnvironment.cleanup();
+    }
+  });
   phaseTimings.push(verificationTiming);
-  const verificationRecords = verification.results.map((kernel, index) => {
+  const verificationRecords: Array<Record<string, unknown>> = verification.results.map((kernel, index) => {
     const command = commands[index] ?? "";
     const kernelArtifact = writeArtifact(inputRunRoot(input), `kernel/${kernel.request_id}.json`, JSON.stringify(kernel, null, 2));
     artifactIndexEntries.push(artifactIndexEntry({ artifact: kernelArtifact, producer_phase: "verification", task_id: input.task.id }));
+    const passed = kernel.exit_code === 0 && !kernel.timed_out;
     return {
       verification_id: kernel.request_id,
       task_id: input.task.id,
@@ -167,20 +191,49 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
       timed_out: kernel.timed_out,
       stdout_sha256: kernel.stdout_sha256,
       stderr_sha256: kernel.stderr_sha256,
-      status: kernel.exit_code === 0 && !kernel.timed_out ? "passed" : "failed"
+      status: passed ? "passed" : "failed",
+      verification_environment: verificationEnvironmentEvidence,
+      failure_class: passed ? null : verification.failure_class,
+      failure_summary: passed ? null : verification.failure_summary
     };
   });
+  if (verification.results.length === 0 && verification.failure_class) {
+    verificationRecords.push({
+      verification_id: verification.failed_verification_id,
+      task_id: input.task.id,
+      command: null,
+      cwd: taskWorktree.path,
+      kernel_result_ref: null,
+      exit_code: null,
+      timed_out: false,
+      status: "failed",
+      verification_environment: verificationEnvironmentEvidence,
+      failure_class: verification.failure_class,
+      failure_summary: verification.failure_summary
+    });
+  }
   const verificationPassed = verification.status === "passed" && worker.status === "completed";
+  const verificationFailureClass = verification.failure_class ?? (verificationPassed ? null : worker.failure_class ?? "verification_failed");
   events.push({
     run_id: input.run_id,
     event_type: "runway.verification_result",
     phase: "verify",
     outcome: verificationPassed ? "success" : "failed",
-    summary: verificationPassed ? "Verification passed with kernel evidence." : "Verification failed with kernel evidence.",
-    payload: { task_id: input.task.id, failure_class: worker.failure_class ?? null, worker, verification: verificationRecords, checkpoint_ref: null }
+    summary: verificationPassed
+      ? "Verification passed with kernel evidence."
+      : verification.failure_summary ?? "Verification failed with kernel evidence.",
+    payload: {
+      task_id: input.task.id,
+      failure_class: verificationFailureClass,
+      failure_summary: verification.failure_summary,
+      worker,
+      verification: verificationRecords,
+      checkpoint_ref: null
+    },
+    trust_impact: verificationPassed ? "supports_success" : "supports_failure"
   });
 
-  let latestFailureClass: FailureClass | null = verificationPassed ? null : worker.failure_class ?? "verification_failed";
+  let latestFailureClass: FailureClass | null = verificationPassed ? null : verificationFailureClass ?? "verification_failed";
   const checkpointRefs: string[] = [];
   if (verificationPassed) {
     const scopeValidation = validateDiffScope({
@@ -298,6 +351,16 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     events,
     timing: { started, completed, duration_ms: totalTiming.duration_ms ?? 0 },
     phase_timings: [...phaseTimings, totalTiming]
+  };
+}
+
+function environmentBlockedVerification(taskId: string, reason: string | null): VerificationRunOutput {
+  return {
+    status: "failed",
+    results: [],
+    failure_class: "environment_blocker",
+    failure_summary: reason ? `verification environment setup failed: ${reason}` : "verification environment setup failed",
+    failed_verification_id: `verify_${taskId}_environment`
   };
 }
 

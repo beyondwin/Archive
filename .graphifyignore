@@ -1,0 +1,40 @@
+# Runtime and local machine state
+.git/
+.agentlens/
+.claude/
+.codex/
+.codex-orchestrator/
+.orchestrator/
+.superpowers/
+.waygent/
+.parallel/
+.cursor/
+.local/
+
+# Dependency and build output
+node_modules/
+apps/*/node_modules/
+packages/*/node_modules/
+components/agentlens/.venv/
+components/agentlens/.pytest_cache/
+components/agentlens/.agentlens/
+components/agentlens/src/*.egg-info/
+native/kernel/target/
+target/
+dist/
+build/
+coverage/
+htmlcov/
+.cache/
+tmp/
+temp/
+
+# Generated graph output should not feed back into extraction.
+graphify-out/
+docs/wiki/
+docs/_graph/
+
+# Local artifacts
+.DS_Store
+*.log
+*.json.partial
