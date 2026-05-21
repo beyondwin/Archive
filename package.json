@@ -13,7 +13,9 @@
     "platform:demo": "bun run apps/cli/src/demo.ts",
     "check:legacy": "bun run packages/testkit/src/legacyCheck.ts",
     "waygent:scenarios": "bun test tests/integration/waygent-scenarios.test.ts",
-    "waygent:live-provider-smoke": "bun test tests/integration/waygent-live-provider-smoke.test.ts"
+    "waygent:live-smoke": "bun test tests/integration/waygent-live-provider-smoke.test.ts",
+    "waygent:live-provider-smoke": "bun run waygent:live-smoke",
+    "waygent:dogfood": "bun run waygent:scenarios"
   },
   "dependencies": {
     "@waygent/orchestrator": "workspace:*",
