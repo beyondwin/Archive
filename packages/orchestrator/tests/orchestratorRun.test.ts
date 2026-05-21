@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -20,10 +20,22 @@ verify:
 \`\`\`
 `;
 
+function initSourceCheckout(prefix: string): string {
+  const workspace = mkdtempSync(join(tmpdir(), prefix));
+  Bun.spawnSync(["git", "init", "-q"], { cwd: workspace });
+  Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: workspace });
+  Bun.spawnSync(["git", "config", "user.name", "Test"], { cwd: workspace });
+  writeFileSync(join(workspace, "README.md"), "before\n");
+  Bun.spawnSync(["git", "add", "-A"], { cwd: workspace });
+  Bun.spawnSync(["git", "commit", "-q", "-m", "init"], { cwd: workspace });
+  return workspace;
+}
+
 describe("runWaygent", () => {
   test("runs a parsed plan through fake provider and durable events", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-run-"));
-    const result = await runWaygent({ root, run_id: "run_demo", plan, profile: { provider: "fake", execution_mode: "multi-agent" } });
+    const workspace = initSourceCheckout("waygent-run-source-");
+    const result = await runWaygent({ root, workspace, run_id: "run_demo", plan, profile: { provider: "fake", execution_mode: "multi-agent" } });
 
     expect(readLatestRunId(root)).toBe("run_demo");
     expect(result.events.map((event) => event.event_type)).toEqual([
@@ -32,6 +44,8 @@ describe("runWaygent", () => {
       "runway.safe_wave_selected",
       "runway.worker_result",
       "runway.verification_result",
+      "runway.checkpoint_created",
+      "runway.apply_dry_run_result",
       "lens.trust_report_updated"
     ]);
     expect(result.trust_report.trust_status).toBe("trusted");
@@ -48,8 +62,10 @@ describe("runWaygent", () => {
 
   test("dispatches every task in the scheduler-approved safe wave", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-safe-wave-"));
+    const workspace = initSourceCheckout("waygent-safe-wave-source-");
     const result = await runWaygent({
       root,
+      workspace,
       run_id: "run_wave",
       profile: { provider: "fake", execution_mode: "multi-agent" },
       plan: `
@@ -82,6 +98,44 @@ verify:
     expect(result.events.filter((event) => event.event_type === "runway.worker_result")).toHaveLength(2);
   });
 
+  test("continues to dependent tasks after dependency checkpoint exists", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-dependent-wave-"));
+    const workspace = initSourceCheckout("waygent-dependent-wave-source-");
+    const result = await runWaygent({
+      root,
+      workspace,
+      run_id: "run_dependent_wave",
+      profile: { provider: "fake", execution_mode: "multi-agent" },
+      plan: `
+\`\`\`yaml waygent-task
+id: task_base
+title: Base task
+dependencies: []
+file_claims:
+  - path: base.txt
+    mode: owned
+risk: low
+verify:
+  - test -f base.txt
+\`\`\`
+\`\`\`yaml waygent-task
+id: task_followup
+title: Followup task
+dependencies: [task_base]
+file_claims:
+  - path: followup.txt
+    mode: owned
+risk: low
+verify:
+  - test -f followup.txt
+\`\`\`
+`
+    });
+
+    expect(result.events.filter((event) => event.event_type === "runway.worker_result")).toHaveLength(2);
+    expect(readRunStateV2(root, "run_dependent_wave").tasks.task_followup?.status).toBe("verified");
+  });
+
   test("uses the selected process provider instead of the fake provider", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-codex-provider-"));
     const script = `
@@ -94,6 +148,7 @@ verify:
 
     const result = await runWaygent({
       root,
+      workspace: initSourceCheckout("waygent-codex-provider-source-"),
       run_id: "run_codex",
       plan,
       profile: { provider: "codex", execution_mode: "multi-agent" },

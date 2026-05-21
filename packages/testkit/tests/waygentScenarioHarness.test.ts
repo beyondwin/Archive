@@ -57,7 +57,10 @@ describe("waygent scenario harness", () => {
           phase: "verify",
           outcome: "success",
           summary: "Verification passed.",
-          payload: { checkpoint_ref: "checkpoint_task_demo_candidate_task_demo" }
+          payload: {
+            checkpoint_ref: "artifacts/checkpoints/task_demo/candidate_task_demo.json",
+            patch_ref: "artifacts/checkpoints/task_demo/candidate_task_demo.patch"
+          }
         }
       ],
       trust_report: { trust_status: "trusted" },
@@ -72,7 +75,10 @@ describe("waygent scenario harness", () => {
       total_events: 2,
       safe_wave: ["task_demo"],
       event_types: ["platform.run_started", "runway.verification_result"],
-      checkpoints: ["checkpoint_task_demo_candidate_task_demo"]
+      checkpoints: [
+        "artifacts/checkpoints/task_demo/candidate_task_demo.json",
+        "artifacts/checkpoints/task_demo/candidate_task_demo.patch"
+      ]
     });
   });
 

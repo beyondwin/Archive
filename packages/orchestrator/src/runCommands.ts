@@ -1,7 +1,5 @@
 import { readdirSync } from "node:fs";
-import { existsSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { isAbsolute, join } from "node:path";
 import type { AgentLensEvent, FailureClass, RunStatus } from "@waygent/contracts";
 import { appendEvent, readEvents, readLatestRunId, rebuildRunSummary, runPaths } from "@waygent/lens-store";
 import { projectFailureSummary, projectTrustReport } from "@waygent/lens-projectors";
@@ -9,6 +7,8 @@ import { hasRunState, readRunState, writeRunState, type WaygentRunState } from "
 export { buildRunEvent, nextRunEvent } from "./runEvents";
 import { nextRunEvent } from "./runEvents";
 import { applyVerifiedCheckpoint } from "./applyEngine";
+import { resolveCheckpointPatch, validateCheckpointManifest } from "./checkpointArtifacts";
+import { hasApplyReadyCheckpoint } from "./completionAudit";
 import { selectResumeAction } from "./recoveryExecutor";
 import { readRunStateV2, writeRunStateV2 } from "./runState";
 
@@ -89,7 +89,9 @@ export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): {
       if (v2State.status === "completed") {
         return {
           run_id: explanation.run_id,
-          allowed_actions: ["inspect_run", "apply_verified_checkpoint"],
+          allowed_actions: hasApplyReadyCheckpoint(v2State)
+            ? ["inspect_run", "apply_verified_checkpoint"]
+            : ["inspect_run", "retry_checkpoint_generation", "human_decision"],
           dry_run: options.dry_run ?? false
         };
       }
@@ -142,6 +144,7 @@ export async function applyRun(options: RunCommandOptions & { workspace: string 
 }> {
   const runId = resolveRunId(options);
   const paths = runPaths(options.root, runId);
+  const v2State = hasRunState(options.root, runId) ? tryReadRunStateV2(options.root, runId) : null;
   if (isDirtySourceCheckout(options.workspace)) {
     appendEvent(paths.events, nextRunEvent(paths.events, {
       run_id: runId,
@@ -152,14 +155,15 @@ export async function applyRun(options: RunCommandOptions & { workspace: string 
       payload: { reason: "dirty_source_checkout" },
       trust_impact: "requires_review"
     }));
-    if (hasRunState(options.root, runId)) {
+    if (v2State) {
+      writeRunStateV2(options.root, { ...v2State, apply: { status: "blocked", reason: "dirty_source_checkout" } });
+    } else if (hasRunState(options.root, runId)) {
       const state = readRunState(options.root, runId);
       writeRunState(options.root, { ...state, apply: { status: "blocked", reason: "dirty_source_checkout" } });
     }
     return { command: "apply", run_id: runId, status: "blocked", reason: "dirty_source_checkout" };
   }
 
-  const v2State = hasRunState(options.root, runId) ? tryReadRunStateV2(options.root, runId) : null;
   if (v2State) {
     if ((v2State.completion_audit as { status?: string } | null)?.status !== "passed") {
       appendEvent(paths.events, nextRunEvent(paths.events, {
@@ -174,9 +178,12 @@ export async function applyRun(options: RunCommandOptions & { workspace: string 
       writeRunStateV2(options.root, { ...v2State, apply: { status: "blocked", reason: "completion_audit_not_passed" } });
       return { command: "apply", run_id: runId, status: "blocked", reason: "completion_audit_not_passed" };
     }
-    const checkpointRef = v2State.apply.checkpoint_ref ?? Object.values(v2State.tasks).flatMap((task) => task.checkpoint_refs)[0];
-    const checkpointPath = checkpointRef ? resolveCheckpointPatchPath(v2State.run_root, checkpointRef) : null;
-    if (!checkpointRef || !checkpointPath) {
+    const checkpointRefs = v2State.apply.checkpoint_ref
+      ? [v2State.apply.checkpoint_ref]
+      : Object.values(v2State.tasks)
+        .filter((task) => task.status === "verified")
+        .flatMap((task) => task.checkpoint_refs);
+    if (checkpointRefs.length === 0) {
       appendEvent(paths.events, nextRunEvent(paths.events, {
         run_id: runId,
         event_type: "runway.apply_blocked",
@@ -189,13 +196,37 @@ export async function applyRun(options: RunCommandOptions & { workspace: string 
       writeRunStateV2(options.root, { ...v2State, apply: { status: "blocked", reason: "missing_verified_checkpoint" } });
       return { command: "apply", run_id: runId, status: "blocked", reason: "missing_verified_checkpoint" };
     }
-    const patch = readFileSync(checkpointPath, "utf8");
+    const failedValidation = checkpointRefs
+      .map((checkpointRef) => ({ checkpointRef, validation: validateCheckpointManifest(v2State.run_root, checkpointRef) }))
+      .find((item) => !item.validation.ok);
+    if (failedValidation) {
+      const reason = failedValidation.validation.reason ?? "missing_verified_checkpoint";
+      appendEvent(paths.events, nextRunEvent(paths.events, {
+        run_id: runId,
+        event_type: "runway.apply_blocked",
+        phase: "apply",
+        outcome: "blocked",
+        summary: "Apply blocked because no verified checkpoint is available.",
+        payload: { checkpoint_ref: failedValidation.checkpointRef, reason },
+        trust_impact: "requires_review"
+      }));
+      writeRunStateV2(options.root, { ...v2State, apply: { status: "blocked", reason } });
+      return { command: "apply", run_id: runId, status: "blocked", reason };
+    }
+    const resolved = checkpointRefs.map((checkpointRef) => ({
+      checkpointRef,
+      resolved: resolveCheckpointPatch(v2State.run_root, checkpointRef)
+    }));
+    if (resolved.some((item) => !item.resolved)) {
+      writeRunStateV2(options.root, { ...v2State, apply: { status: "blocked", reason: "missing_verified_checkpoint" } });
+      return { command: "apply", run_id: runId, status: "blocked", reason: "missing_verified_checkpoint" };
+    }
     const postApplyCommands = v2State.verification
       .map((record) => record.command)
       .filter((command): command is string => typeof command === "string" && command.trim().length > 0);
     const applied = await applyVerifiedCheckpoint({
       source: options.workspace,
-      patch,
+      patch: resolved.map((item) => item.resolved?.patch ?? "").join("\n"),
       post_apply_commands: postApplyCommands.length > 0 ? postApplyCommands : ["git diff --check"]
     });
     appendEvent(paths.events, nextRunEvent(paths.events, {
@@ -204,14 +235,14 @@ export async function applyRun(options: RunCommandOptions & { workspace: string 
       phase: "apply",
       outcome: applied.status === "applied" ? "success" : applied.status === "blocked" ? "blocked" : "failed",
       summary: applied.status === "applied" ? "Verified checkpoint applied." : "Verified checkpoint apply did not complete.",
-      payload: { checkpoint_ref: checkpointRef, reason: applied.reason ?? null },
+      payload: { checkpoint_refs: checkpointRefs, reason: applied.reason ?? null },
       trust_impact: applied.status === "applied" ? "supports_success" : "requires_review"
     }));
     writeRunStateV2(options.root, {
       ...v2State,
       status: applied.status === "applied" ? "applied" : v2State.status,
       current_phase: "apply",
-      apply: { status: applied.status, checkpoint_ref: checkpointPath, ...(applied.reason ? { reason: applied.reason } : {}) }
+      apply: { status: applied.status, checkpoint_ref: checkpointRefs[0]!, ...(applied.reason ? { reason: applied.reason } : {}) }
     });
     return { command: "apply", run_id: runId, status: applied.status, ...(applied.reason ? { reason: applied.reason } : {}) };
   }
@@ -244,9 +275,4 @@ function isDirtySourceCheckout(workspace: string): boolean {
     return gitStatus.stdout.trim().length > 0;
   }
   return readdirSync(workspace).some((entry) => !entry.startsWith(".git"));
-}
-
-function resolveCheckpointPatchPath(runRoot: string, checkpointRef: string): string | null {
-  const candidates = isAbsolute(checkpointRef) ? [checkpointRef] : [join(runRoot, checkpointRef), checkpointRef];
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }

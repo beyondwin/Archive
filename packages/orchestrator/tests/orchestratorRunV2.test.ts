@@ -41,8 +41,12 @@ describe("runWaygent v2 lifecycle", () => {
     const state = readRunStateV2(root, "run_v2");
     expect(state.schema).toBe("waygent.run_state.v2");
     expect(state.tasks.task_a?.task_packet_path).toBeTruthy();
+    expect(state.tasks.task_a?.checkpoint_refs[0]).toContain("artifacts/checkpoints/task_a/candidate_task_a.json");
     expect(state.provider_attempts).toHaveLength(1);
     expect(state.verification.length).toBeGreaterThan(0);
-    expect(state.completion_audit).toMatchObject({ status: "passed" });
+    expect(state.completion_audit).toMatchObject({
+      status: "passed",
+      checkpoint_evidence: [expect.objectContaining({ ok: true })]
+    });
   });
 });

@@ -12,6 +12,14 @@ describe("Waygent recovery executor", () => {
       automatic: false
     });
     expect(selectResumeAction({ failure_class: "dirty_source_checkout", retry_count: 0, max_retries: 1, checkpoint_ref: "ckpt" })).toEqual({
+      action: "clean_source_checkout",
+      automatic: false
+    });
+    expect(selectResumeAction({ failure_class: "missing_checkpoint", retry_count: 0, max_retries: 1, checkpoint_ref: null })).toEqual({
+      action: "retry_checkpoint_generation",
+      automatic: true
+    });
+    expect(selectResumeAction({ failure_class: "artifact_missing", retry_count: 1, max_retries: 1, checkpoint_ref: null })).toEqual({
       action: "human_decision",
       automatic: false
     });
