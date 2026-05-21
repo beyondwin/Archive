@@ -1,10 +1,10 @@
-# Bun Control Plane Rust Kernel Platform Phase 1 Spine Implementation Plan
+# Waygent Bun Control Plane Rust Kernel Phase 1 Spine Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the first executable spine of the Python-free, Graphify-free agent platform: Bun workspace, shared contracts, minimal durable projection, append-only Lens store, Rust kernel protocol/process execution, fake provider adapter, and one deterministic end-to-end run.
+**Goal:** Build the first executable spine of Waygent: a Python-free, Graphify-free agent platform with a Bun workspace, shared contracts, minimal durable projection, append-only Lens store, Rust kernel protocol/process execution, fake provider adapter, and one deterministic end-to-end run.
 
-**Architecture:** This plan creates a new clean platform tree beside the existing Python references. Bun/TypeScript owns contracts, scheduler policy, store projection, fake adapter, and CLI orchestration. Rust owns the first native kernel boundary: typed protocol plus bounded process execution evidence.
+**Architecture:** This plan creates a new clean Waygent platform tree beside the existing Python references. Bun/TypeScript owns contracts, scheduler policy, store projection, fake adapter, and CLI orchestration. Rust owns the first native kernel boundary: typed protocol plus bounded process execution evidence.
 
 **Tech Stack:** Bun 1.3+, TypeScript 5.9+, `bun:test`, JSON Schema, Ajv, Rust stable, Cargo resolver v2, `serde`, `serde_json`, `thiserror`, `wait-timeout`, filesystem JSONL artifacts.
 
@@ -13,13 +13,15 @@
 ## Source Spec
 
 - Design spec: `AgentLens/docs/spec/2026-05-21-bun-control-plane-rust-kernel-agent-platform-design.md`
+- Full implementation program: `AgentLens/docs/plan/2026-05-21-waygent-full-platform-implementation-program.md`
 - Do not edit as part of this plan:
   - `AgentLens/docs/spec/2026-05-21-full-rust-agent-platform-rewrite-design.md`
   - `AgentLens/docs/plan/2026-05-21-full-rust-agent-platform-phase-1-skeleton-contracts.md`
 
 ## Scope Boundary
 
-This plan creates the first working platform spine only. It does not delete the
+This plan is Phase 1 of the full Waygent implementation program. It creates the
+first working platform spine only. It does not delete the
 existing Python `AgentLens/` package or `skills/agent-runway/` runner. It does
 not migrate the React dashboard. It does not add live Codex or Claude adapters.
 It does not introduce Graphify.
@@ -189,7 +191,7 @@ Create `package.json`:
 
 ```json
 {
-  "name": "agent-platform",
+  "name": "waygent",
   "private": true,
   "type": "module",
   "workspaces": [
@@ -308,7 +310,7 @@ Create `packages/contracts/package.json`:
 
 ```json
 {
-  "name": "@agent-platform/contracts",
+  "name": "@waygent/contracts",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -765,7 +767,7 @@ Create `packages/runway-control/package.json`:
 
 ```json
 {
-  "name": "@agent-platform/runway-control",
+  "name": "@waygent/runway-control",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -775,7 +777,7 @@ Create `packages/runway-control/package.json`:
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@agent-platform/contracts": "workspace:*"
+    "@waygent/contracts": "workspace:*"
   }
 }
 ```
@@ -800,7 +802,7 @@ Create `packages/runway-control/tsconfig.json`:
 Create `packages/runway-control/src/types.ts`:
 
 ```ts
-import type { PlatformId } from "@agent-platform/contracts";
+import type { PlatformId } from "@waygent/contracts";
 
 export type Risk = "low" | "medium" | "high";
 export type FileClaimMode = "owned" | "shared_append" | "read_only";
@@ -1080,7 +1082,7 @@ Create `packages/lens-store/package.json`:
 
 ```json
 {
-  "name": "@agent-platform/lens-store",
+  "name": "@waygent/lens-store",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -1090,7 +1092,7 @@ Create `packages/lens-store/package.json`:
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@agent-platform/contracts": "workspace:*"
+    "@waygent/contracts": "workspace:*"
   }
 }
 ```
@@ -1140,8 +1142,8 @@ Create `packages/lens-store/src/eventJournal.ts`:
 ```ts
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { PlatformEvent } from "@agent-platform/contracts";
-import { validateContract } from "@agent-platform/contracts";
+import type { PlatformEvent } from "@waygent/contracts";
+import { validateContract } from "@waygent/contracts";
 
 export async function appendEvent(eventsPath: string, event: PlatformEvent): Promise<void> {
   validateContract<PlatformEvent>("agentlens.event.v3", event);
@@ -1168,7 +1170,7 @@ export async function readEvents(eventsPath: string): Promise<PlatformEvent[]> {
 Create `packages/lens-store/src/projection.ts`:
 
 ```ts
-import type { PlatformEvent } from "@agent-platform/contracts";
+import type { PlatformEvent } from "@waygent/contracts";
 
 export interface RunEventSummary {
   total_events: number;
@@ -1204,7 +1206,7 @@ import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
-import type { PlatformEvent } from "@agent-platform/contracts";
+import type { PlatformEvent } from "@waygent/contracts";
 import { appendEvent, readEvents, summarizeEvents } from "../src";
 
 function event(sequence: number, outcome: PlatformEvent["outcome"]): PlatformEvent {
@@ -1673,7 +1675,7 @@ Create `packages/kernel-client/package.json`:
 
 ```json
 {
-  "name": "@agent-platform/kernel-client",
+  "name": "@waygent/kernel-client",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -1683,7 +1685,7 @@ Create `packages/kernel-client/package.json`:
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@agent-platform/contracts": "workspace:*"
+    "@waygent/contracts": "workspace:*"
   }
 }
 ```
@@ -1711,8 +1713,8 @@ Create `packages/kernel-client/src/kernelClient.ts`:
 import { mkdtemp, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
-import type { KernelExecutionRequest, KernelExecutionResult } from "@agent-platform/contracts";
-import { validateContract } from "@agent-platform/contracts";
+import type { KernelExecutionRequest, KernelExecutionResult } from "@waygent/contracts";
+import { validateContract } from "@waygent/contracts";
 
 export interface KernelClientOptions {
   kernelRoot?: string;
@@ -1894,7 +1896,7 @@ Create `packages/provider-adapters/package.json`:
 
 ```json
 {
-  "name": "@agent-platform/provider-adapters",
+  "name": "@waygent/provider-adapters",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -1904,8 +1906,8 @@ Create `packages/provider-adapters/package.json`:
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@agent-platform/contracts": "workspace:*",
-    "@agent-platform/runway-control": "workspace:*"
+    "@waygent/contracts": "workspace:*",
+    "@waygent/runway-control": "workspace:*"
   }
 }
 ```
@@ -1933,8 +1935,8 @@ Create `packages/provider-adapters/tsconfig.json`:
 Create `packages/provider-adapters/src/types.ts`:
 
 ```ts
-import type { TaskSpec } from "@agent-platform/runway-control";
-import type { WorkerResult } from "@agent-platform/contracts";
+import type { TaskSpec } from "@waygent/runway-control";
+import type { WorkerResult } from "@waygent/contracts";
 
 export interface ProviderAdapter {
   readonly name: string;
@@ -1945,8 +1947,8 @@ export interface ProviderAdapter {
 Create `packages/provider-adapters/src/fakeProvider.ts`:
 
 ```ts
-import type { WorkerResult } from "@agent-platform/contracts";
-import type { TaskSpec } from "@agent-platform/runway-control";
+import type { WorkerResult } from "@waygent/contracts";
+import type { TaskSpec } from "@waygent/runway-control";
 import type { ProviderAdapter } from "./types";
 
 export class FakeProviderAdapter implements ProviderAdapter {
@@ -2011,7 +2013,7 @@ Create `packages/lens-projectors/package.json`:
 
 ```json
 {
-  "name": "@agent-platform/lens-projectors",
+  "name": "@waygent/lens-projectors",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -2021,7 +2023,7 @@ Create `packages/lens-projectors/package.json`:
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@agent-platform/contracts": "workspace:*"
+    "@waygent/contracts": "workspace:*"
   }
 }
 ```
@@ -2046,7 +2048,7 @@ Create `packages/lens-projectors/tsconfig.json`:
 Create `packages/lens-projectors/src/trust.ts`:
 
 ```ts
-import type { PlatformEvent } from "@agent-platform/contracts";
+import type { PlatformEvent } from "@waygent/contracts";
 
 export interface TrustProjection {
   status: "trusted" | "failed" | "insufficient_evidence";
@@ -2090,7 +2092,7 @@ Create `packages/lens-projectors/tests/trust.test.ts`:
 
 ```ts
 import { describe, expect, test } from "bun:test";
-import type { PlatformEvent } from "@agent-platform/contracts";
+import type { PlatformEvent } from "@waygent/contracts";
 import { projectTrust } from "../src";
 
 function event(trust_impact: PlatformEvent["trust_impact"], outcome: PlatformEvent["outcome"]): PlatformEvent {
@@ -2174,7 +2176,7 @@ Create `apps/cli/package.json`:
 
 ```json
 {
-  "name": "@agent-platform/cli",
+  "name": "@waygent/cli",
   "private": true,
   "type": "module",
   "main": "src/index.ts",
@@ -2184,12 +2186,12 @@ Create `apps/cli/package.json`:
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
-    "@agent-platform/contracts": "workspace:*",
-    "@agent-platform/kernel-client": "workspace:*",
-    "@agent-platform/lens-projectors": "workspace:*",
-    "@agent-platform/lens-store": "workspace:*",
-    "@agent-platform/provider-adapters": "workspace:*",
-    "@agent-platform/runway-control": "workspace:*"
+    "@waygent/contracts": "workspace:*",
+    "@waygent/kernel-client": "workspace:*",
+    "@waygent/lens-projectors": "workspace:*",
+    "@waygent/lens-store": "workspace:*",
+    "@waygent/provider-adapters": "workspace:*",
+    "@waygent/runway-control": "workspace:*"
   }
 }
 ```
@@ -2230,12 +2232,12 @@ Create `apps/cli/src/demo.ts`:
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import type { PlatformEvent } from "@agent-platform/contracts";
-import { executeWithKernel } from "@agent-platform/kernel-client";
-import { appendEvent, readEvents, runPaths, summarizeEvents } from "@agent-platform/lens-store";
-import { projectTrust } from "@agent-platform/lens-projectors";
-import { FakeProviderAdapter } from "@agent-platform/provider-adapters";
-import { computeDurableProjection, type TaskSpec } from "@agent-platform/runway-control";
+import type { PlatformEvent } from "@waygent/contracts";
+import { executeWithKernel } from "@waygent/kernel-client";
+import { appendEvent, readEvents, runPaths, summarizeEvents } from "@waygent/lens-store";
+import { projectTrust } from "@waygent/lens-projectors";
+import { FakeProviderAdapter } from "@waygent/provider-adapters";
+import { computeDurableProjection, type TaskSpec } from "@waygent/runway-control";
 
 function event(sequence: number, event_type: string, summary: string, payload: Record<string, unknown>): PlatformEvent {
   return {
@@ -2262,7 +2264,7 @@ export async function runDemo(rootOverride?: string): Promise<{
   trust_status: string;
   total_events: number;
 }> {
-  const root = rootOverride ?? (await mkdtemp(join(tmpdir(), "agent-platform-demo-")));
+  const root = rootOverride ?? (await mkdtemp(join(tmpdir(), "waygent-demo-")));
   const paths = runPaths(root, "workspace-demo", "run_lens-demo");
   const task: TaskSpec = {
     task_id: "task_demo",
@@ -2414,7 +2416,7 @@ This Phase 1 plan covers the source spec's first executable slice:
 - Fake provider adapter and trust projection: Task 7.
 - Deterministic end-to-end run: Task 8.
 
-Deferred to later plans:
+Covered by the full implementation program after Phase 1:
 
 - Python/legacy deletion.
 - Codex and Claude live provider adapters.
