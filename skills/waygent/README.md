@@ -70,6 +70,14 @@ The scenario gate is offline and deterministic. Live provider smoke is opt-in
 and should remain skipped unless the selected provider CLI is installed and
 authenticated.
 
+## Repository Map
+
+When `graphify-out/` exists, use it as navigation and audit evidence for
+cross-file questions. Refresh it with `graphify update .` after meaningful code
+or documentation structure changes. Graphify output is not Waygent runtime
+state and does not replace `waygent.run_state.v2`, AgentLens events, or
+contract tests.
+
 ## Stop Rules
 
 - If a run selection is ambiguous, ask for a plan path or run id.

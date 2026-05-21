@@ -8,9 +8,15 @@
 |------|------|
 | [`kws-claude-multi-agent-executor`](./kws-claude-multi-agent-executor/) | 구현 계획 + 디자인 스펙을 자율 실행. Opus가 오케스트레이션, Sonnet 서브에이전트가 구현/리뷰/검증/문서화. |
 | [`kws-codex-plan-executor`](./kws-codex-plan-executor/) | Codex에서 구현 계획을 실행하거나 fresh-session/handoff 프롬프트 내보내기. |
-| [`waygent`](./waygent/) | 활성 제품 런타임 스킬. 자연어 실행, 상태, 이벤트, 검사, 설명, 재개, 적용 요청을 Waygent CLI로 변환하며, KWS 스킬은 별도 비제품 executor 스킬로 유지됩니다. |
+| [`waygent`](./waygent/) | 활성 제품 런타임 스킬. 자연어 실행, 상태, 이벤트, 검사, 설명, 재개, 적용 요청을 Waygent CLI로 변환합니다. KWS executor 스킬은 별도 비제품 executor 계약으로 유지됩니다. |
 
 각 스킬 디렉터리의 `SKILL.md` 가 정식 진입점이며, 자세한 사용법은 해당 폴더의 `README.md` / `docs/` / `references/` 를 참고하세요.
+
+## Waygent Boundary
+
+Waygent 요청은 `skills/waygent/`에서 CLI로 라우팅하고, 런타임 상태와
+스케줄링은 Waygent가 소유합니다. `kws-*` 스킬은 로컬 executor 계약이며
+Waygent 제품 런타임 의존성이 아닙니다.
 
 ## 심볼릭 링크 셋업
 
