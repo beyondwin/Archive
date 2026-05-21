@@ -6,7 +6,7 @@
     "rootDir": "src",
     "outDir": "dist"
   },
-  "references": [{ "path": "../runway-control" }],
+  "references": [{ "path": "../contracts" }, { "path": "../runway-control" }],
   "include": ["src/**/*.ts"],
   "exclude": ["tests"]
 }

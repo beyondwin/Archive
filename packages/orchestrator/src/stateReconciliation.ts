@@ -43,12 +43,14 @@ export function reconcileRunState(root: string, runId: string): ReconciliationRe
   }
 
   const unrepaired_blockers = records.filter((record) => record.severity === "blocking");
+  const driftRecords: Array<Record<string, unknown>> = records.map((record) => ({ ...record }));
+  const driftBlockers: Array<Record<string, unknown>> = unrepaired_blockers.map((record) => ({ ...record }));
   writeRunStateV2(root, {
     ...state,
     drift: {
       last_checked_at: new Date().toISOString(),
-      records,
-      unrepaired_blockers
+      records: driftRecords,
+      unrepaired_blockers: driftBlockers
     }
   });
   return { passed: unrepaired_blockers.length === 0, records, unrepaired_blockers };
