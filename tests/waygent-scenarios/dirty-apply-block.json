@@ -1,0 +1,24 @@
+{
+  "id": "dirty-apply-block",
+  "title": "Dirty source checkout blocks apply",
+  "provider_fixture": "fake-success",
+  "source_dirty_before_apply": true,
+  "force_missing_checkpoint": false,
+  "plan": "```yaml waygent-task\nid: task_dirty_apply\ntitle: Dirty apply task\ndependencies: []\nfile_claims:\n  - path: apply.txt\n    mode: owned\nrisk: low\nverify:\n  - printf apply\n```",
+  "expected": {
+    "run_status": "trusted",
+    "apply_status": "blocked",
+    "total_events": 6,
+    "safe_wave": ["task_dirty_apply"],
+    "event_types": [
+      "platform.run_started",
+      "runway.plan_loaded",
+      "runway.safe_wave_selected",
+      "runway.worker_result",
+      "runway.verification_result",
+      "lens.trust_report_updated"
+    ],
+    "checkpoints": ["checkpoint_task_dirty_apply_candidate_task_dirty_apply"],
+    "blockers": ["source_dirty_before_apply"]
+  }
+}

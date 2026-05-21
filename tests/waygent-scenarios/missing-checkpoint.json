@@ -1,0 +1,24 @@
+{
+  "id": "missing-checkpoint",
+  "title": "Missing checkpoint blocks apply",
+  "provider_fixture": "fake-success",
+  "source_dirty_before_apply": false,
+  "force_missing_checkpoint": true,
+  "plan": "```yaml waygent-task\nid: task_missing_checkpoint\ntitle: Missing checkpoint task\ndependencies: []\nfile_claims:\n  - path: checkpoint.txt\n    mode: owned\nrisk: low\nverify:\n  - printf checkpoint\n```",
+  "expected": {
+    "run_status": "trusted",
+    "apply_status": "blocked",
+    "total_events": 6,
+    "safe_wave": ["task_missing_checkpoint"],
+    "event_types": [
+      "platform.run_started",
+      "runway.plan_loaded",
+      "runway.safe_wave_selected",
+      "runway.worker_result",
+      "runway.verification_result",
+      "lens.trust_report_updated"
+    ],
+    "checkpoints": [],
+    "blockers": ["force_missing_checkpoint"]
+  }
+}
