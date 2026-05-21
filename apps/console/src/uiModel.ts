@@ -42,6 +42,18 @@ export interface ConsoleApplyStatus {
   checkpointRef: string;
 }
 
+export type RunDetailSectionId =
+  | "overview"
+  | "safe-wave"
+  | "timeline"
+  | "trust-failure"
+  | "apply-state"
+  | "provider-attempts"
+  | "verification-evidence"
+  | "review-findings"
+  | "recovery-decisions"
+  | "drift";
+
 export interface RealRunDetailResponse {
   run_id: string;
   status: string;
@@ -52,6 +64,26 @@ export interface RealRunDetailResponse {
   safe_wave: string[];
   failures: Array<{ task_id: string; failure_class: string; count: number; recovery_action?: string }>;
   timeline: Array<{ sequence: number; phase: string; event_type: string; outcome: string; summary: string }>;
+  task_packets?: Array<Record<string, unknown>>;
+  provider_attempts?: Array<Record<string, unknown>>;
+  verification?: Array<Record<string, unknown>>;
+  reviews?: Array<Record<string, unknown>>;
+  recovery?: Array<Record<string, unknown>>;
+  decision_packets?: Array<Record<string, unknown>>;
+  drift?: { last_checked_at: string | null; records: Array<Record<string, unknown>>; unrepaired_blockers: Array<Record<string, unknown>> } | null;
+  apply_readiness?: { status?: string; reason?: string; checkpoint_ref?: string } | null;
+  events?: Array<{
+    event_id?: string;
+    eventId?: string;
+    agentlens_run_id?: string;
+    runId?: string;
+    event_type?: string;
+    eventType?: string;
+    sequence?: number;
+    outcome?: ConsoleEvent["outcome"];
+    severity?: ConsoleEvent["severity"];
+    summary?: string;
+  }>;
 }
 
 export interface RunDetailModel {
@@ -66,10 +98,27 @@ export interface RunDetailModel {
   safe_wave: string[];
   failures: RealRunDetailResponse["failures"];
   timeline: RealRunDetailResponse["timeline"];
+  task_packets: NonNullable<RealRunDetailResponse["task_packets"]>;
+  provider_attempts: NonNullable<RealRunDetailResponse["provider_attempts"]>;
+  verification: NonNullable<RealRunDetailResponse["verification"]>;
+  reviews: NonNullable<RealRunDetailResponse["reviews"]>;
+  recovery: NonNullable<RealRunDetailResponse["recovery"]>;
+  decision_packets: NonNullable<RealRunDetailResponse["decision_packets"]>;
+  drift: RealRunDetailResponse["drift"];
+  apply_readiness: RealRunDetailResponse["apply_readiness"];
   sections: Array<{
-    id: "overview" | "safe-wave" | "timeline" | "trust-failure" | "apply-state";
+    id: RunDetailSectionId;
     label: string;
   }>;
+}
+
+export interface RealRunSummaryResponse {
+  run_id: string;
+  status: string;
+  trust_status: string;
+  apply_status: string;
+  total_events: number;
+  last_event_type: string | null;
 }
 
 export interface ConsoleRun {
@@ -336,13 +385,110 @@ export function buildRunDetailModel(response: RealRunDetailResponse): RunDetailM
     safe_wave: response.safe_wave,
     failures: response.failures,
     timeline: response.timeline,
+    task_packets: response.task_packets ?? [],
+    provider_attempts: response.provider_attempts ?? [],
+    verification: response.verification ?? [],
+    reviews: response.reviews ?? [],
+    recovery: response.recovery ?? [],
+    decision_packets: response.decision_packets ?? [],
+    drift: response.drift ?? null,
+    apply_readiness: response.apply_readiness ?? null,
     sections: [
       { id: "overview", label: "Overview" },
       { id: "safe-wave", label: "Safe wave" },
       { id: "timeline", label: "Timeline" },
       { id: "trust-failure", label: "Trust and failure" },
-      { id: "apply-state", label: "Apply state" }
+      { id: "apply-state", label: "Apply state" },
+      { id: "provider-attempts", label: "Provider attempts" },
+      { id: "verification-evidence", label: "Verification evidence" },
+      { id: "review-findings", label: "Review findings" },
+      { id: "recovery-decisions", label: "Recovery decisions" },
+      { id: "drift", label: "Drift" }
     ]
+  };
+}
+
+export function realRunSummaryToConsoleRun(summary: RealRunSummaryResponse): ConsoleRun {
+  return {
+    runId: summary.run_id,
+    title: summary.run_id,
+    status: consoleStatus(summary.status),
+    trust: {
+      verdict: trustVerdict(summary.trust_status),
+      score: trustScore(summary.trust_status),
+      reasons: [`trust status: ${summary.trust_status}`]
+    },
+    tasks: [],
+    events: summary.last_event_type
+      ? [event(summary.run_id, 1, summary.last_event_type, "Latest API event.")]
+      : [],
+    failures: [],
+    decisionPackets: [],
+    applyStatus: {
+      state: applyState(summary.apply_status),
+      canApply: summary.apply_status === "ready",
+      dirtySourceCheckout: false,
+      reason: summary.apply_status,
+      checkpointRef: ""
+    }
+  };
+}
+
+export function realRunDetailToConsoleRun(response: RealRunDetailResponse): ConsoleRun {
+  const detail = buildRunDetailModel(response);
+  const taskIds = Array.from(new Set([
+    ...detail.safe_wave,
+    ...detail.task_packets.map((packet) => stringValue(packet.task_id)).filter(Boolean),
+    ...detail.provider_attempts.map((attempt) => stringValue(attempt.task_id)).filter(Boolean),
+    ...detail.verification.map((verification) => stringValue(verification.task_id)).filter(Boolean)
+  ]));
+
+  return {
+    runId: response.run_id,
+    title: response.run_id,
+    status: consoleStatus(response.status),
+    trust: {
+      verdict: trustVerdict(response.trust_status),
+      score: trustScore(response.trust_status),
+      reasons: [`trust status: ${response.trust_status}`]
+    },
+    tasks: taskIds.map((taskId) => ({
+      taskId,
+      title: taskTitle(detail.task_packets, taskId),
+      status: taskStatus(detail.task_packets, taskId, response.status),
+      owner: providerOwner(detail.provider_attempts, taskId),
+      checkpoint: checkpointRef(detail.task_packets, taskId)
+    })),
+    events: eventsFromRealDetail(response),
+    failures: response.failures.map((failure) => ({
+      taskId: failure.task_id,
+      failureClass: failure.failure_class,
+      recoveryAction: failure.recovery_action ?? "inspect_run",
+      summary: `${failure.failure_class} occurred ${failure.count} time${failure.count === 1 ? "" : "s"}.`
+    })),
+    decisionPackets: [
+      ...detail.recovery.map((record) => ({
+        taskId: stringValue(record.task_id) || "run",
+        failureClass: stringValue(record.failure_class) || "recovery_required",
+        allowedActions: stringArray(record.allowed_actions),
+        blockedActions: stringArray(record.blocked_actions),
+        summary: stringValue(record.recommended_next_action) || "Recovery decision is required."
+      })),
+      ...detail.decision_packets.map((packet) => ({
+        taskId: stringValue(packet.task_id) || "run",
+        failureClass: stringValue(packet.failure_class) || "decision_required",
+        allowedActions: [],
+        blockedActions: [],
+        summary: stringValue(packet.decision_packet_ref) || "Decision packet is available."
+      }))
+    ],
+    applyStatus: {
+      state: applyState(detail.apply_readiness?.status ?? response.apply_status),
+      canApply: (detail.apply_readiness?.status ?? response.apply_status) === "ready",
+      dirtySourceCheckout: hasDirtySourceBlock(detail),
+      reason: detail.apply_readiness?.reason ?? response.apply_status,
+      checkpointRef: detail.apply_readiness?.checkpoint_ref ?? ""
+    }
   };
 }
 
@@ -370,6 +516,97 @@ export function consoleRunToRealDetail(run: ConsoleRun): RealRunDetailResponse {
       summary: event.summary
     }))
   };
+}
+
+function eventsFromRealDetail(response: RealRunDetailResponse): ConsoleEvent[] {
+  if (response.events && response.events.length > 0) {
+    return response.events.map((item, index) => ({
+      eventId: item.event_id ?? item.eventId ?? `event_${response.run_id}_${index + 1}`,
+      runId: item.agentlens_run_id ?? item.runId ?? response.run_id,
+      eventType: item.event_type ?? item.eventType ?? "unknown.event",
+      sequence: item.sequence ?? index + 1,
+      outcome: item.outcome ?? "success",
+      severity: item.severity ?? "info",
+      summary: item.summary ?? ""
+    }));
+  }
+
+  return response.timeline.map((item) => ({
+    eventId: `event_${response.run_id}_${item.sequence}`,
+    runId: response.run_id,
+    eventType: item.event_type,
+    sequence: item.sequence,
+    outcome: consoleOutcome(item.outcome),
+    severity: item.outcome === "failed" ? "error" : item.outcome === "blocked" ? "warning" : "info",
+    summary: item.summary
+  }));
+}
+
+function consoleStatus(status: string): ConsoleRun["status"] {
+  if (status === "failed") return "failed";
+  if (status === "blocked") return "blocked";
+  return "completed";
+}
+
+function trustVerdict(value: string): TrustVerdict {
+  if (value === "trusted" || value === "failed" || value === "insufficient_evidence") return value;
+  return "insufficient_evidence";
+}
+
+function trustScore(value: string): number {
+  if (value === "trusted") return 0.9;
+  if (value === "failed") return 0.1;
+  return 0.45;
+}
+
+function applyState(value: string | undefined): ApplyState {
+  if (value === "ready" || value === "blocked" || value === "not_ready" || value === "applied") return value;
+  if (value === "not_applied") return "not_ready";
+  return "not_ready";
+}
+
+function consoleOutcome(value: string): ConsoleEvent["outcome"] {
+  if (value === "success" || value === "failed" || value === "blocked" || value === "running") return value;
+  return "success";
+}
+
+function stringValue(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.map(String) : [];
+}
+
+function taskTitle(taskPackets: Array<Record<string, unknown>>, taskId: string): string {
+  const packet = taskPackets.find((item) => item.task_id === taskId);
+  const manifest = packet?.unit_manifest;
+  if (manifest && typeof manifest === "object") {
+    const title = (manifest as Record<string, unknown>).title;
+    if (typeof title === "string") return title;
+  }
+  return taskId;
+}
+
+function taskStatus(taskPackets: Array<Record<string, unknown>>, taskId: string, fallback: string): string {
+  const packet = taskPackets.find((item) => item.task_id === taskId);
+  return stringValue(packet?.status) || fallback;
+}
+
+function providerOwner(providerAttempts: Array<Record<string, unknown>>, taskId: string): string {
+  const attempt = providerAttempts.find((item) => item.task_id === taskId);
+  return stringValue(attempt?.provider) || "waygent";
+}
+
+function checkpointRef(taskPackets: Array<Record<string, unknown>>, taskId: string): string {
+  const packet = taskPackets.find((item) => item.task_id === taskId);
+  const checkpointRefs = packet?.checkpoint_refs;
+  return Array.isArray(checkpointRefs) ? checkpointRefs.map(String).join(", ") : "";
+}
+
+function hasDirtySourceBlock(detail: RunDetailModel): boolean {
+  return detail.recovery.some((record) => record.failure_class === "dirty_source_checkout")
+    || detail.drift?.unrepaired_blockers.some((record) => record.failure_class === "dirty_source_checkout") === true;
 }
 
 export function renderConsoleSnapshot(model: ConsoleUiModel): string {

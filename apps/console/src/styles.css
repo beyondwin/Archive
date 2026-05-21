@@ -69,6 +69,14 @@ button {
   padding: 6px 8px;
 }
 
+.api-error {
+  background: #fff0cf;
+  border-bottom: 1px solid #e1be69;
+  color: #6c4309;
+  font-weight: 650;
+  padding: 10px 28px;
+}
+
 .console-grid {
   display: grid;
   gap: 20px;
@@ -268,6 +276,10 @@ button {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.v2-grid {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 .compact {
   min-height: 210px;
 }
@@ -305,6 +317,38 @@ button {
   margin: 0;
 }
 
+.evidence-list {
+  overflow: hidden;
+}
+
+.evidence-row {
+  border: 1px solid #e2e7e2;
+  border-radius: 6px;
+  display: grid;
+  gap: 8px;
+  margin-bottom: 8px;
+  padding: 10px;
+}
+
+.evidence-row div {
+  min-width: 0;
+}
+
+.evidence-row span,
+.evidence-row strong {
+  display: block;
+}
+
+.evidence-row span {
+  color: #63737b;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.evidence-row strong {
+  overflow-wrap: anywhere;
+}
+
 .apply-box.ready {
   background: #dff3e8;
 }
@@ -339,7 +383,8 @@ button {
   }
 
   .console-grid,
-  .projection-grid {
+  .projection-grid,
+  .v2-grid {
     grid-template-columns: 1fr;
   }
 
