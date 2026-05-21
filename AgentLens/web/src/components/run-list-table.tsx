@@ -25,6 +25,15 @@ function evalTone(status: string): "success" | "danger" | "warning" | "muted" {
   return "muted";
 }
 
+function trustTone(
+  verdict?: string,
+): "success" | "danger" | "warning" | "info" | "muted" {
+  if (verdict === "trusted") return "success";
+  if (verdict === "untrusted" || verdict === "blocked") return "danger";
+  if (verdict === "partially_trusted" || verdict === "degraded") return "warning";
+  return "muted";
+}
+
 function titleLabel(run: RunRow): string {
   if (run.display_title && run.display_title.trim().length > 0) {
     return run.display_title;
@@ -70,6 +79,7 @@ export function RunListTable({ runs }: { runs: RunRow[] }) {
             <TH>Title</TH>
             <TH>Outcome</TH>
             <TH>Eval</TH>
+            <TH>Trust</TH>
             <TH>Failures</TH>
             <TH>Usage</TH>
             <TH>Cost</TH>
@@ -97,6 +107,15 @@ export function RunListTable({ runs }: { runs: RunRow[] }) {
                 <Badge tone={evalTone(run.eval_status)}>
                   {run.eval_status || "-"}
                 </Badge>
+              </TD>
+              <TD>
+                {run.trust_report ? (
+                  <Badge tone={trustTone(run.trust_report.trust_verdict)}>
+                    {run.trust_report.trust_verdict}
+                  </Badge>
+                ) : (
+                  <span className="text-xs text-zinc-400">{EM_DASH}</span>
+                )}
               </TD>
               <TD className="font-mono text-xs text-zinc-700">{failuresLabel(run)}</TD>
               <TD className="font-mono text-xs text-zinc-700">

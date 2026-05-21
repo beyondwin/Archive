@@ -9,6 +9,7 @@ from __future__ import annotations
 import typer
 
 from .commands import attach as attach_cmd
+from .commands import agentrunway as agentrunway_cmd
 from .commands import doctor as doctor_cmd
 from .commands import eval as eval_cmd
 from .commands import event as event_cmd
@@ -48,6 +49,7 @@ app.command(name="seal")(seal_cmd.seal)
 app.command(name="eval")(eval_cmd.eval_cmd)
 app.command(name="serve")(serve_cmd.serve)
 app.command(name="show")(show_cmd.show)
+app.command(name="agentrunway")(agentrunway_cmd.agentrunway)
 app.command(name="latest")(latest_cmd.latest)
 app.command(name="status")(status_cmd.status)
 app.command(name="failures")(failures_cmd.failures)

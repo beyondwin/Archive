@@ -202,6 +202,10 @@ def _enrich_row_with_artifacts(
     return row
 
 
+def _read_trust_report_artifact(run_dir: Path) -> dict[str, Any] | None:
+    return _read_json(run_dir / "artifacts" / "trust_report.json")
+
+
 def _row_from_run_dir(run_dir: Path) -> dict[str, Any] | None:
     """Build a canonical run-row dict from a run directory.
 
@@ -227,6 +231,7 @@ def _row_from_run_dir(run_dir: Path) -> dict[str, Any] | None:
     # (with ``None`` when absent) so downstream projectors get a stable shape.
     import_report = _read_json(run_dir / "artifacts" / "import_report.json")
     usage_doc = _read_json(run_dir / "artifacts" / "usage.json")
+    trust_report = _read_trust_report_artifact(run_dir)
     derived = (import_report or {}).get("derived") or {}
 
     row: dict[str, Any] = {
@@ -244,6 +249,7 @@ def _row_from_run_dir(run_dir: Path) -> dict[str, Any] | None:
         "display_title": derived.get("display_title"),
         "usage": _project_usage(usage_doc),
         "import_state": (import_report or {}).get("analysis_state"),
+        "trust_report": trust_report,
     }
     # Merge eval-doc top-level "status" for callers that look at the raw key.
     if eval_doc.get("status") is not None:
@@ -340,6 +346,15 @@ def _enrich_sqlite_row(row: dict[str, Any], home: Path) -> dict[str, Any]:
     row["display_title"] = derived.get("display_title")
     row["usage"] = _project_usage(usage_doc)
     row["import_state"] = (report or {}).get("analysis_state")
+    run_dir = None
+    runs_root = _runs_root(Path(home))
+    workspace_id = row.get("workspace_id")
+    run_id = row.get("run_id")
+    if isinstance(workspace_id, str) and isinstance(run_id, str):
+        candidate = runs_root / workspace_id / run_id
+        if candidate.is_dir():
+            run_dir = candidate
+    row["trust_report"] = _read_trust_report_artifact(run_dir) if run_dir is not None else None
     return row
 
 
@@ -616,6 +631,7 @@ def get_run(home: Path, run_id: str) -> dict[str, Any] | None:
     merged["display_title"] = derived.get("display_title")
     merged["usage"] = _project_usage(usage_doc)
     merged["import_state"] = (import_report or {}).get("analysis_state")
+    merged["trust_report"] = _read_trust_report_artifact(target)
     return merged
 
 

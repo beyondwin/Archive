@@ -1,0 +1,52 @@
+{
+  "schema": "agentlens.agentrunway_projection.v1",
+  "run_id": "run_20260521_000000_agent",
+  "agentrunway_run_id": "ar-001",
+  "status": "finished",
+  "event_count": 3,
+  "timeline": [
+    {
+      "ts": "2026-05-21T00:00:00Z",
+      "type": "agentrunway.run_started"
+    },
+    {
+      "ts": "2026-05-21T00:00:01Z",
+      "type": "agentrunway.verification_result",
+      "task_id": "task_001",
+      "status": "passed"
+    },
+    {
+      "ts": "2026-05-21T00:00:02Z",
+      "type": "agentrunway.run_finished",
+      "status": "finished"
+    }
+  ],
+  "tasks": {
+    "task_001": {
+      "status": "passed",
+      "implementer_attempts": 1,
+      "review_attempts": 1,
+      "verification_attempts": 1,
+      "last_reason": null
+    }
+  },
+  "artifacts": {
+    "contract": "present",
+    "artifact_graph": "present",
+    "coverage": "present"
+  },
+  "coverage": {
+    "covered": ["S1.6"],
+    "partial": [],
+    "blocked": [],
+    "unreferenced": []
+  },
+  "projection_issues": [],
+  "agentlens_emit_health": {
+    "last_status": "agentlens_emitted",
+    "statuses": {
+      "agentlens_emitted": 3
+    }
+  },
+  "payload_safety": "ok"
+}

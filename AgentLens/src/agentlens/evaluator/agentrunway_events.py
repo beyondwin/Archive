@@ -302,6 +302,19 @@ def _coverage_strength(projection: Mapping[str, Any]) -> str:
     return "weak"
 
 
+def _coverage_projection(projection: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the coverage-embedded projection without empty v2-only extras."""
+    compact = dict(projection)
+    if projection.get("event_count") == 0:
+        for key in (
+            "quality_decisions",
+            "candidate_rankings",
+            "conflict_redispatch_plans",
+        ):
+            compact.pop(key, None)
+    return compact
+
+
 def build_evidence_coverage(
     events: Iterable[Mapping[str, Any]],
     *,
@@ -340,7 +353,7 @@ def build_evidence_coverage(
                 if item.get("type") == "agentrunway.verification_result"
             ),
         },
-        "projection": projection,
+        "projection": _coverage_projection(projection),
     }
 
 

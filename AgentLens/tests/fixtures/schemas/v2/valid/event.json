@@ -1,0 +1,25 @@
+{
+  "schema": "agentlens.event.v2",
+  "event_id": "evt_000001",
+  "run_id": "run_20260521_000000_agent",
+  "event_type": "agentrunway.verification_result",
+  "producer": {
+    "name": "agentrunway",
+    "version": "0.1.0"
+  },
+  "occurred_at": "2026-05-21T00:00:01Z",
+  "sequence": 1,
+  "phase": "verification",
+  "outcome": "success",
+  "severity": "info",
+  "task_id": "task_001",
+  "attempt_id": "attempt_001",
+  "evidence_refs": ["verification:task_001"],
+  "artifact_refs": ["artifacts/task_001/verification_result.json"],
+  "trust_impact": "supports_success",
+  "summary": "Verification passed.",
+  "payload": {
+    "run_id": "ar-001",
+    "status": "passed"
+  }
+}

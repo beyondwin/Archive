@@ -14,6 +14,13 @@ SCHEMA_EVENT_V1 = "agentlens.event.v1"
 SCHEMA_FINAL_V1 = "agentlens.final.v1"
 SCHEMA_EVAL_V1 = "agentlens.eval.v1"
 SCHEMA_MANIFEST_V1 = "agentlens.manifest.v1"
+SCHEMA_RUN_V2 = "agentlens.run.v2"
+SCHEMA_EVENT_V2 = "agentlens.event.v2"
+SCHEMA_FINAL_V2 = "agentlens.final.v2"
+SCHEMA_EVAL_V2 = "agentlens.eval.v2"
+SCHEMA_MANIFEST_V2 = "agentlens.manifest.v2"
+SCHEMA_AGENTRUNWAY_PROJECTION_V1 = "agentlens.agentrunway_projection.v1"
+SCHEMA_TRUST_REPORT_V1 = "agentlens.trust_report.v1"
 
 # --- Recording defaults -----------------------------------------------------
 MAX_EXCERPT_CHARS = 4096
@@ -60,9 +67,16 @@ __all__ = [
     "MAX_SUMMARY_CHARS",
     "RUN_TS_FORMAT",
     "SCHEMA_EVAL_V1",
+    "SCHEMA_EVAL_V2",
     "SCHEMA_EVENT_V1",
+    "SCHEMA_EVENT_V2",
     "SCHEMA_FINAL_V1",
+    "SCHEMA_FINAL_V2",
+    "SCHEMA_AGENTRUNWAY_PROJECTION_V1",
     "SCHEMA_MANIFEST_V1",
+    "SCHEMA_MANIFEST_V2",
     "SCHEMA_RUN_V1",
+    "SCHEMA_RUN_V2",
+    "SCHEMA_TRUST_REPORT_V1",
     "SEAL_PHASES",
 ]

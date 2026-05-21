@@ -1,0 +1,22 @@
+{
+  "schema": "agentlens.final.v2",
+  "run_id": "run_20260521_000000_agent",
+  "ended_at": "2026-05-21T00:02:00Z",
+  "claimed_outcome": "success",
+  "summary": "AgentRunway run completed.",
+  "changed_files": [
+    {
+      "path_label": "AgentLens/src/agentlens/evaluator/trust.py",
+      "path_hash": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  ],
+  "verification": [
+    {
+      "kind": "command",
+      "command_hash": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "status": "passed",
+      "excerpt": "pytest passed"
+    }
+  ],
+  "residual_risks": []
+}

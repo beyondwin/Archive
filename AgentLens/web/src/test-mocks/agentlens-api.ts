@@ -26,6 +26,19 @@ export const falseSuccessRun: RunRow = {
   display_title: null,
   usage: null,
   import_state: null,
+  trust_report: {
+    schema: "agentlens.trust_report.v1",
+    run_id: "run_false_success",
+    agentrunway_run_id: "ar-001",
+    claimed_outcome: "success",
+    trust_verdict: "untrusted",
+    evidence_strength: "insufficient",
+    blocking_evidence: [],
+    missing_evidence: [{ code: "missing_verification_pass" }],
+    residual_risks: [],
+    operator_actions: [{ code: "rerun_verification" }],
+    projection_issues: [],
+  },
 };
 
 export const defaultMeta: Meta = {

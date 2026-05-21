@@ -22,9 +22,11 @@ from pathlib import Path
 from typing import Any
 
 from agentlens.constants import SCHEMA_EVAL_V1
+from agentlens.store.trust_artifacts import write_projection, write_trust_report
 from agentlens.store.writer import atomic_write_json
 from agentlens.time import utc_now_iso
 
+from .agentrunway_v2 import project_events
 from .agentrunway_events import build_evidence_coverage
 from .checks import (
     REQUIRED_CHECKS,
@@ -197,6 +199,40 @@ def _minimal_error_eval(run_dir: Path, message: str) -> dict[str, Any]:
     }
 
 
+def _is_agentrunway_context(ctx: EvalContext, coverage: dict[str, Any]) -> bool:
+    if int(coverage.get("event_count") or 0) > 0:
+        return True
+    run = ctx.run
+    agent = run.get("agent") if isinstance(run, dict) else {}
+    if isinstance(agent, dict):
+        values = [agent.get("name"), agent.get("label"), agent.get("mode")]
+        if any(isinstance(value, str) and "agentrunway" in value.lower() for value in values):
+            return True
+    return str(run.get("run_kind") or "").lower() == "agentrunway"
+
+
+def _write_trust_artifacts(ctx: EvalContext, doc: dict[str, Any], coverage: dict[str, Any]) -> None:
+    if not _is_agentrunway_context(ctx, coverage):
+        return
+    from .trust import build_trust_report
+
+    projection = project_events(ctx.events)
+    if not projection.get("run_id"):
+        projection["run_id"] = str(ctx.run.get("run_id") or ctx.run_dir.name)
+    final = ctx.final or {}
+    claimed_outcome = str(final.get("agent_outcome") or final.get("claimed_outcome") or "unknown")
+    trust_report = build_trust_report(
+        projection,
+        claimed_outcome=claimed_outcome,
+        residual_risks=final.get("residual_risks") if isinstance(final.get("residual_risks"), list) else [],
+    )
+    write_projection(ctx.run_dir, projection)
+    write_trust_report(ctx.run_dir, trust_report)
+    doc["projection_ref"] = "artifacts/agentrunway_projection.json"
+    doc["trust_report_ref"] = "artifacts/trust_report.json"
+    doc["trust_report"] = trust_report
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -275,5 +311,6 @@ def evaluate(run_dir: Path) -> dict[str, Any]:
         "failures": [f.to_dict() for f in sorted_failures],
     }
     doc["evidence_coverage"] = build_evidence_coverage(ctx.events, run=ctx.run)
+    _write_trust_artifacts(ctx, doc, doc["evidence_coverage"])
     atomic_write_json(run_dir / "eval.json", doc, redact=False)
     return doc

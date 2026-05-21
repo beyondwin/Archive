@@ -302,3 +302,81 @@ def test_evaluator_adds_agentrunway_evidence_coverage_and_keeps_schema_valid(
     assert doc["evidence_coverage"]["projection"]["run_id"] == "ar-001"
     assert doc["evidence_coverage"]["projection"]["status"] == "finished"
     validate_doc(doc, schema_name="eval")
+
+
+def test_evaluator_writes_projection_and_trust_report_artifacts(tmp_path: Path) -> None:
+    run_id = "run_20260520_000000_agent"
+    run = {
+        "schema": "agentlens.run.v1",
+        "run_id": run_id,
+        "workspace_id": "ws_0123456789abcdef",
+        "started_at": "2026-05-20T00:00:00Z",
+        "agent": {"name": "generic", "mode": "unknown", "label": "agentrunway"},
+        "workspace": {
+            "root_label": "<workspace>",
+            "root_hash": "sha256:" + "1" * 64,
+            "id_basis": "git",
+        },
+        "recording": {
+            "mode": "minimal",
+            "adapter": "agentlens_container",
+            "has_transcript": False,
+            "transcript_source": "none",
+        },
+    }
+    final = {
+        "schema": "agentlens.final.v1",
+        "run_id": run_id,
+        "ended_at": "2026-05-20T00:01:00Z",
+        "agent_outcome": "success",
+        "summary": "AgentRunway run completed.",
+        "changed_files": [],
+        "verification": [
+            {
+                "kind": "command",
+                "command_hash": "sha256:" + "3" * 64,
+                "status": "passed",
+                "excerpt": "pytest passed",
+            }
+        ],
+        "residual_risks": [],
+    }
+    events = [
+        _event("run.started", ts="2026-05-20T00:00:00Z"),
+        _event(
+            "agentrunway.artifacts_ready",
+            {
+                "run_id": "ar-001",
+                "contract_path": "contract.json",
+                "artifact_graph_path": "artifact_graph.json",
+                "coverage_path": "coverage.json",
+            },
+            ts="2026-05-20T00:00:01Z",
+        ),
+        _event(
+            "agentrunway.verification_result",
+            {"run_id": "ar-001", "task_id": "task_1", "status": "passed"},
+            ts="2026-05-20T00:00:02Z",
+        ),
+        _event(
+            "agentrunway.run_finished",
+            {"run_id": "ar-001", "status": "finished"},
+            ts="2026-05-20T00:00:03Z",
+        ),
+    ]
+
+    (tmp_path / "run.json").write_text(json.dumps(run), encoding="utf-8")
+    (tmp_path / "final.json").write_text(json.dumps(final), encoding="utf-8")
+    (tmp_path / "events.jsonl").write_text(
+        "\n".join(json.dumps(event) for event in events) + "\n",
+        encoding="utf-8",
+    )
+
+    doc = evaluate(tmp_path)
+    projection = json.loads((tmp_path / "artifacts" / "agentrunway_projection.json").read_text(encoding="utf-8"))
+    report = json.loads((tmp_path / "artifacts" / "trust_report.json").read_text(encoding="utf-8"))
+
+    assert doc["trust_report"]["trust_verdict"] == "trusted"
+    assert projection["schema"] == "agentlens.agentrunway_projection.v1"
+    assert report["schema"] == "agentlens.trust_report.v1"
+    assert report["trust_verdict"] == "trusted"

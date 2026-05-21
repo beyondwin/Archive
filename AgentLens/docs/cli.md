@@ -28,6 +28,7 @@ agentlens cancel --run-id <id> [--reason ...] [--signal SIGINT]
 agentlens latest [--format json]
 agentlens status [--format json]
 agentlens show <--latest | run_id> [--format json]
+agentlens agentrunway <run_id> [--format json]
 agentlens failures [--since-days 30] [--format json]
 agentlens risks [--since-days 30] [--format json]
 agentlens serve [--host HOST] [--port PORT] [--demo] [--debug] [--auto-port]
@@ -87,6 +88,10 @@ Each command supports `--help`. Subcommand names are part of the v1 contract and
   agentlens event append --run "$RUN_ID" --type agentrunway.run_started --payload-json '{"schema":"agentrunway.event.v1","summary":"started"}'
   ```
 
+  If the supplied payload is a complete `agentlens.event.v2` envelope, AgentLens
+  appends that raw envelope instead of wrapping it in v1. The envelope
+  `event_type` must match `--type` and the envelope `run_id` must match `--run`.
+
 - **`agentlens events`** — reads `events.jsonl` directly and streams JSONL on stdout. The reader never goes through SQLite.
 
   | Flag              | Meaning                                                                                                       |
@@ -113,6 +118,7 @@ Each command supports `--help`. Subcommand names are part of the v1 contract and
 - **`agentlens latest [--format json]`** — most recent run for the current workspace. Text emits a single one-line row; `--format json` emits a locked `run_row` object (or `null` when no runs exist).
 - **`agentlens status [--format json]`** — currently-active runs (one row per non-sealed run). Text emits one row per active run; `--format json` emits an array of `run_row` objects.
 - **`agentlens show <--latest | run_id> [--format json]`** — detailed view of a single run. Resolves the run by `--latest` (current workspace) or by positional `run_id`. Text output is a multi-line summary with `failures` and `risks` sections; `--format json` emits the `show` object (see §3.2).
+- **`agentlens agentrunway <run_id> [--format json]`** — focused AgentRunway trust report. Reads `artifacts/trust_report.json`, validates it as `agentlens.trust_report.v1`, and prints the trust verdict. Missing reports print `null` in JSON mode.
 - **`agentlens failures [--since-days 30] [--format json]`** — rollup of failure-outcome runs over the trailing window (default 30 days). Text emits one line per failure; `--format json` emits an array of `failure` objects.
 - **`agentlens risks [--since-days 30] [--format json]`** — rollup of residual-risk signals surfaced by `eval` over the trailing window. Text emits one line per risk; `--format json` emits an array of `risk` objects.
 
@@ -142,8 +148,8 @@ The `--format json` output of every query command is **locked at v1** (`JSON_SCH
 
 Locked object shapes (each object always emits **all** the listed keys, in this order, with the documented defaults for missing values):
 
-- **`run_row`** (11 canonical keys, plus optional `status` / `residual_risks` / `schema_invalid` when present): `run_id`, `workspace_id`, `parent_run_id`, `started_at`, `ended_at`, `agent_name`, `agent_mode`, `recording_mode`, `agent_outcome`, `eval_status` (default `"needs_eval"`), `sealed_phase`. String defaults: `""`; `parent_run_id` defaults to `null`.
-- **`show`** (10 keys): `run_id`, `agent` (default `"unknown"`), `started_at`, `agent_outcome` (default `"unknown"`), `eval_status` (default `"needs_eval"`), `sealed_phase`, `workspace_id`, `workspace_short` (default `"-"`), `failures` (array of `failure`), `risks` (array of `risk`).
+- **`run_row`** (11 canonical keys plus additive projections): `run_id`, `workspace_id`, `parent_run_id`, `started_at`, `ended_at`, `agent_name`, `agent_mode`, `recording_mode`, `agent_outcome`, `eval_status` (default `"needs_eval"`), `sealed_phase`, plus optional/additive `display_title`, `usage`, `import_state`, and `trust_report`. String defaults: `""`; `parent_run_id` defaults to `null`.
+- **`show`**: `run_id`, `agent` (default `"unknown"`), `started_at`, `agent_outcome` (default `"unknown"`), `eval_status` (default `"needs_eval"`), `sealed_phase`, `workspace_id`, `workspace_short` (default `"-"`), additive import projections, additive `trust_report`, `failures` (array of `failure`), `risks` (array of `risk`).
 - **`failure`** (10 keys): `run_id`, `workspace_id`, `category`, `severity`, `source`, `blame_scope`, `summary`, `confidence` (number or `null`), `recoverability`, `evidence` (array; default `[]`).
 - **`risk`** (6 keys): `run_id`, `workspace_id`, `category`, `source`, `severity`, `summary`.
 

@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentlens.dev/schemas/agentlens.trust_report.v1.json",
+  "$comment": "Derived AgentRunway trust report artifact.",
+  "title": "agentlens.trust_report.v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "run_id", "agentrunway_run_id", "claimed_outcome", "trust_verdict", "evidence_strength", "blocking_evidence", "missing_evidence", "residual_risks", "operator_actions", "projection_issues"],
+  "properties": {
+    "schema": {"type": "string", "const": "agentlens.trust_report.v1"},
+    "run_id": {"type": "string"},
+    "agentrunway_run_id": {"type": ["string", "null"]},
+    "claimed_outcome": {"type": "string", "enum": ["success", "failed", "partial", "cancelled", "unknown"]},
+    "trust_verdict": {"type": "string", "enum": ["trusted", "partially_trusted", "untrusted", "blocked", "degraded"]},
+    "evidence_strength": {"type": "string", "enum": ["strong", "adequate", "weak", "insufficient"]},
+    "blocking_evidence": {"type": "array", "items": {"type": "object"}},
+    "missing_evidence": {"type": "array", "items": {"type": "object"}},
+    "residual_risks": {"type": "array", "items": {"type": "object"}},
+    "operator_actions": {"type": "array", "items": {"type": "object"}},
+    "projection_issues": {"type": "array", "items": {"type": "object"}}
+  }
+}

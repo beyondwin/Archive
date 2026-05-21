@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentlens.dev/schemas/agentlens.eval.v2.json",
+  "$comment": "AgentRunway Trust Console eval record.",
+  "title": "agentlens.eval.v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "run_id", "evaluated_at", "status", "claimed_outcome", "trust_report_ref", "projection_ref", "checks", "failures"],
+  "properties": {
+    "schema": {"type": "string", "const": "agentlens.eval.v2"},
+    "run_id": {"type": "string"},
+    "evaluated_at": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"},
+    "status": {"type": "string", "enum": ["passed", "failed", "incomplete", "needs_eval", "error"]},
+    "claimed_outcome": {"type": "string", "enum": ["success", "failed", "partial", "cancelled", "unknown"]},
+    "trust_report_ref": {"type": "string"},
+    "projection_ref": {"type": "string"},
+    "checks": {"type": "array", "items": {"type": "object"}},
+    "failures": {"type": "array", "items": {"type": "object"}}
+  }
+}

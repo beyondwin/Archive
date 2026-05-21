@@ -18,6 +18,7 @@ from agentlens.commands._format import (
     project_show,
 )
 from agentlens.commands._query_format import workspace_short
+from agentlens.schema.validate import SchemaError, validate_doc
 from agentlens.store import manifest as manifest_store
 from agentlens.store import query as store_query
 from agentlens.web.deps import resolve_home
@@ -82,11 +83,22 @@ def _detect_schema(run_dir: Path) -> str:
 
 def _ensure_supported_schema(run_dir: Path) -> None:
     schema = _detect_schema(run_dir)
-    if not schema.startswith("agentlens.") or not schema.endswith(".v1"):
-        raise HTTPException(
-            status_code=412,
-            detail=f"unsupported run schema {schema!r}; viewer supports agentlens.*.v1",
-        )
+    if schema == "agentlens.run.v1":
+        return
+    if schema == "agentlens.run.v2":
+        run_doc = _read_json(run_dir / "run.json") or {}
+        try:
+            validate_doc(run_doc, schema_name="run_v2")
+        except SchemaError as exc:
+            raise HTTPException(
+                status_code=412,
+                detail=f"unsupported or invalid run schema {schema!r}: {exc}",
+            ) from None
+        return
+    raise HTTPException(
+        status_code=412,
+        detail=f"unsupported run schema {schema!r}; viewer supports agentlens.run.v1/v2",
+    )
 
 
 def _detect_partial(run_dir: Path) -> bool:
@@ -166,6 +178,7 @@ def _detail_payload(home: Path, run_id: str, run_dir: Path) -> dict[str, Any]:
         "display_title": row.get("display_title"),
         "usage": row.get("usage"),
         "import_state": row.get("import_state"),
+        "trust_report": row.get("trust_report"),
     }
     failures = [
         f for f in store_query.failures(home, since_days=36500) if f.get("run_id") == run_id

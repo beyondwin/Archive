@@ -8,8 +8,9 @@ Source of truth:
 - Implementation plan: `docs/superpowers/plans/2026-05-20-agent-runway.md`
 - Hybrid quality design: `docs/superpowers/specs/2026-05-20-agentrunway-quality-first-hybrid-worktree-design.md`
 - Hybrid quality plan: `docs/superpowers/plans/2026-05-20-agentrunway-quality-first-hybrid-worktree.md`
+- Three-skill comparison notes: `references/execution-comparison.md`
 
-The runner stores state in SQLite under `~/.agentrunway/runs`, does implementation work in isolated git worktrees under `~/.agentrunway/worktrees`, and emits bounded AgentLens events under the `agentrunway.*` namespace. The MVP includes a deterministic local adapter for tests and dry runs plus Claude/Codex process adapter wrappers.
+The runner stores state in SQLite under `~/.agentrunway/runs`, does implementation work in isolated git worktrees under `~/.agentrunway/worktrees`, and emits bounded AgentLens v2 trust events under the `agentrunway.*` namespace. The MVP includes a deterministic local adapter for tests and dry runs plus Claude/Codex process adapter wrappers.
 
 ## Quick Start
 
@@ -60,7 +61,10 @@ python3 skills/agent-runway/scripts/agentrunway.py resume --run <run_id> --dry-r
 ```
 
 AgentLens emission is best-effort. Local evidence remains authoritative when
-AgentLens is disabled or unavailable.
+AgentLens is disabled or unavailable. When AgentLens is available, AgentRunway
+posts raw `agentlens.event.v2` envelopes rather than burying them inside a v1
+payload wrapper; the nested payload keeps the AgentRunway run id and the
+envelope targets the AgentLens container run id.
 
 Normal host operation should start with `summarize`. The summary is bounded and
 contains task counts, blocked tasks, selected candidates, worker durations,

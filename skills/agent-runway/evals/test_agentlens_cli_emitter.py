@@ -42,6 +42,40 @@ def test_agentlens_cli_emitter_sends_event_type_and_payload(tmp_path: Path, monk
     ]
 
 
+def test_agentlens_cli_emitter_targets_v2_envelope_to_agentlens_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    log = tmp_path / "agentlens.jsonl"
+    monkeypatch.setenv("PATH", f"{FAKE_BIN}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setenv("AGENTLENS_FAKE_LOG", str(log))
+
+    emitter = AgentLensCliEmitter(timeout_seconds=5, agentlens_run_id="agentlens-run-1")
+    emitter.emit(
+        "agentrunway.run_finished",
+        {
+            "schema": "agentlens.event.v2",
+            "event_id": "evt_000001",
+            "run_id": "agentrunway-run-1",
+            "event_type": "agentrunway.run_finished",
+            "producer": {"name": "agentrunway", "version": "0.1.0"},
+            "occurred_at": "2026-05-21T00:00:00Z",
+            "sequence": 1,
+            "phase": "finish",
+            "outcome": "success",
+            "severity": "info",
+            "trust_impact": "supports_success",
+            "summary": "finished",
+            "payload": {"run_id": "agentrunway-run-1"},
+        },
+    )
+
+    rows = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    emitted = rows[0]["payload"]
+    assert emitted["schema"] == "agentlens.event.v2"
+    assert emitted["run_id"] == "agentlens-run-1"
+    assert emitted["payload"]["run_id"] == "agentrunway-run-1"
+
+
 def test_create_agentlens_emitter_returns_none_when_cli_missing() -> None:
     assert create_agentlens_emitter(cli="definitely-missing-agentlens-cli") is None
 
