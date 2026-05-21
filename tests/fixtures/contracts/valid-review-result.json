@@ -1,0 +1,13 @@
+{
+  "schema": "runway.review_result.v1",
+  "run_id": "run_fixture",
+  "task_id": "task_fixture",
+  "attempt_id": "attempt_fixture",
+  "provider": "fake",
+  "verdict": "pass",
+  "spec_score": 1,
+  "quality_score": 1,
+  "findings": [],
+  "residual_risk": ["fixture review has no residual risk"],
+  "summary": "Review passed."
+}

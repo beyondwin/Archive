@@ -43,8 +43,133 @@ export type FailureClass =
   | "needs_infra_fix"
   | "missing_checkpoint"
   | "missing_resume_handler"
+  | "permission_denied"
+  | "service_unreachable"
+  | "dependency_missing"
+  | "environment_blocker"
+  | "flaky_unconfirmed"
+  | "command_not_found"
+  | "dependency_blocked"
+  | "file_claim_conflict"
+  | "dirty_source_checkout"
+  | "unsafe_apply"
+  | "state_drift"
+  | "artifact_missing"
   | "stale_activity"
   | "terminal_rejected";
+
+export type ProviderRole = "implement" | "review" | "fix" | "verify_assist";
+export type WaygentRunStatusV2 = "initializing" | "running" | "blocked" | "failed" | "completed" | "applying" | "applied";
+export type WaygentLifecycleOutcome = "finished" | "blocked" | "failed" | "aborted" | null;
+export type WaygentCurrentPhase = "preflight" | "dispatch" | "review" | "verify" | "recover" | "apply" | "complete";
+export type WaygentTaskStatusV2 = "pending" | "ready" | "running" | "needs_fix" | "verified" | "blocked" | "failed" | "applied";
+
+export interface WaygentFileClaim {
+  path: string;
+  mode: "owned" | "shared_append" | "read_only";
+}
+
+export interface WaygentTaskPacket {
+  schema: "waygent.task_packet.v1";
+  run_id: string;
+  task_id: string;
+  role: ProviderRole;
+  task_title: string;
+  plan_excerpt: string;
+  spec_excerpt: string;
+  file_claims: WaygentFileClaim[];
+  allowed_write_globs: string[];
+  forbidden_write_globs: string[];
+  dependencies: string[];
+  checkpoint_inputs: string[];
+  acceptance_commands: string[];
+  verification_commands: string[];
+  risk: RiskLevel;
+  previous_failures: Array<{ failure_class: FailureClass; evidence_refs: string[]; summary: string }>;
+  decisions: Array<{ decision_id: string; summary: string }>;
+  context_budget: { estimated_chars: number; max_chars: number; status: "green" | "yellow" | "red" };
+  sha256: string;
+}
+
+export interface ReviewResult {
+  schema: "runway.review_result.v1";
+  run_id: string;
+  task_id: string;
+  attempt_id: string;
+  provider: string;
+  verdict: "pass" | "needs_fix" | "reject";
+  spec_score: number;
+  quality_score: number;
+  findings: Array<{ severity: "critical" | "important" | "minor"; file?: string; line?: number; summary: string }>;
+  residual_risk: string[];
+  summary: string;
+}
+
+export interface ProviderAttempt {
+  schema: "runway.provider_attempt.v1";
+  attempt_id: string;
+  run_id: string;
+  task_id: string;
+  role: ProviderRole;
+  provider: string;
+  command: string[];
+  cwd: string;
+  stdin_ref: string;
+  stdout_ref: string;
+  stderr_ref: string;
+  event_stream_ref: string | null;
+  exit_code: number | null;
+  timed_out: boolean;
+  started_at: string;
+  completed_at: string | null;
+  worker_result_ref: string | null;
+  failure_class: FailureClass | null;
+}
+
+export interface WaygentRunStateTaskV2 {
+  id: string;
+  status: WaygentTaskStatusV2;
+  risk: RiskLevel;
+  dependencies: string[];
+  file_claims: WaygentFileClaim[];
+  attempts: string[];
+  task_packet_path: string | null;
+  task_packet_sha256: string | null;
+  unit_manifest: Record<string, unknown> | null;
+  checkpoint_refs: string[];
+  latest_failure_class: FailureClass | string | null;
+  decision_packet_ref: string | null;
+  timing: Record<string, string>;
+}
+
+export interface WaygentRunStateV2 {
+  schema: "waygent.run_state.v2";
+  run_id: string;
+  workspace: string;
+  source_branch: string | null;
+  worktree_root: string;
+  run_root: string;
+  artifact_root: string;
+  state_path: string;
+  event_journal_path: string;
+  plan_path: string | null;
+  spec_path: string | null;
+  provider_profile: Record<string, unknown>;
+  status: WaygentRunStatusV2;
+  lifecycle_outcome: WaygentLifecycleOutcome;
+  current_phase: WaygentCurrentPhase;
+  tasks: Record<string, WaygentRunStateTaskV2>;
+  safe_waves: Array<{ wave_id: string; ready: string[]; withheld: Array<{ task_id: string; reason: string; detail?: string }> }>;
+  provider_attempts: ProviderAttempt[];
+  reviews: ReviewResult[];
+  verification: Array<Record<string, unknown>>;
+  recovery: Array<Record<string, unknown>>;
+  apply: { status: "not_applied" | "not_ready" | "blocked" | "applying" | "applied" | "failed"; reason?: string; checkpoint_ref?: string };
+  context: { snapshot_path: string | null; basis_hash: string | null };
+  drift: { last_checked_at: string | null; records: Array<Record<string, unknown>>; unrepaired_blockers: Array<Record<string, unknown>> };
+  completion_audit: null | Record<string, unknown>;
+  timestamps: { started_at: string; updated_at: string; completed_at: string | null };
+}
 
 export interface AgentLensEvent {
   schema: "agentlens.event.v3";

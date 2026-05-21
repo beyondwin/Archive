@@ -1,6 +1,48 @@
 const idPattern = "^[a-z][a-z0-9_:-]{2,127}$";
 const isoTimestamp = "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?Z$";
 const noLegacyNamespace = "^(?!kws-cpe\\.)(?!kws-cme\\.)(?!kws\\.orchestrator\\.).+";
+const failureClassValues = [
+  "adapter_crashed",
+  "timeout",
+  "cancelled",
+  "malformed_result",
+  "diff_scope_failed",
+  "review_changes_requested",
+  "review_rejected",
+  "verification_failed",
+  "merge_conflict",
+  "needs_rebase",
+  "needs_plan_fix",
+  "needs_split",
+  "needs_infra_fix",
+  "missing_checkpoint",
+  "missing_resume_handler",
+  "permission_denied",
+  "service_unreachable",
+  "dependency_missing",
+  "environment_blocker",
+  "flaky_unconfirmed",
+  "command_not_found",
+  "dependency_blocked",
+  "file_claim_conflict",
+  "dirty_source_checkout",
+  "unsafe_apply",
+  "state_drift",
+  "artifact_missing",
+  "stale_activity",
+  "terminal_rejected"
+] as const;
+const riskValues = ["low", "medium", "high"] as const;
+const providerRoleValues = ["implement", "review", "fix", "verify_assist"] as const;
+const fileClaimSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["path", "mode"],
+  properties: {
+    path: { type: "string", minLength: 1 },
+    mode: { enum: ["owned", "shared_append", "read_only"] }
+  }
+} as const;
 
 export const artifactReferenceSchema = {
   type: "object",
@@ -221,25 +263,7 @@ export const workerResultSchema = {
     evidence: { type: "object", additionalProperties: true },
     failure_class: {
       type: "string",
-      enum: [
-        "adapter_crashed",
-        "timeout",
-        "cancelled",
-        "malformed_result",
-        "diff_scope_failed",
-        "review_changes_requested",
-        "review_rejected",
-        "verification_failed",
-        "merge_conflict",
-        "needs_rebase",
-        "needs_plan_fix",
-        "needs_split",
-        "needs_infra_fix",
-        "missing_checkpoint",
-        "missing_resume_handler",
-        "stale_activity",
-        "terminal_rejected"
-      ],
+      enum: failureClassValues,
       nullable: true
     }
   }
@@ -313,6 +337,329 @@ export const decisionPacketSchema = {
   }
 } as const;
 
+export const waygentTaskPacketSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schema",
+    "run_id",
+    "task_id",
+    "role",
+    "task_title",
+    "plan_excerpt",
+    "spec_excerpt",
+    "file_claims",
+    "allowed_write_globs",
+    "forbidden_write_globs",
+    "dependencies",
+    "checkpoint_inputs",
+    "acceptance_commands",
+    "verification_commands",
+    "risk",
+    "previous_failures",
+    "decisions",
+    "context_budget",
+    "sha256"
+  ],
+  properties: {
+    schema: { const: "waygent.task_packet.v1" },
+    run_id: { type: "string", pattern: idPattern },
+    task_id: { type: "string", pattern: idPattern },
+    role: { enum: providerRoleValues },
+    task_title: { type: "string", minLength: 1 },
+    plan_excerpt: { type: "string", minLength: 1 },
+    spec_excerpt: { type: "string" },
+    file_claims: { type: "array", items: fileClaimSchema },
+    allowed_write_globs: { type: "array", items: { type: "string", minLength: 1 } },
+    forbidden_write_globs: { type: "array", items: { type: "string", minLength: 1 } },
+    dependencies: { type: "array", items: { type: "string", pattern: idPattern } },
+    checkpoint_inputs: { type: "array", items: { type: "string" } },
+    acceptance_commands: { type: "array", items: { type: "string", minLength: 1 } },
+    verification_commands: { type: "array", items: { type: "string", minLength: 1 } },
+    risk: { enum: riskValues },
+    previous_failures: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["failure_class", "evidence_refs", "summary"],
+        properties: {
+          failure_class: { enum: failureClassValues },
+          evidence_refs: { type: "array", items: { type: "string" } },
+          summary: { type: "string", minLength: 1 }
+        }
+      }
+    },
+    decisions: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["decision_id", "summary"],
+        properties: {
+          decision_id: { type: "string", minLength: 1 },
+          summary: { type: "string", minLength: 1 }
+        }
+      }
+    },
+    context_budget: {
+      type: "object",
+      additionalProperties: false,
+      required: ["estimated_chars", "max_chars", "status"],
+      properties: {
+        estimated_chars: { type: "integer", minimum: 0 },
+        max_chars: { type: "integer", minimum: 1 },
+        status: { enum: ["green", "yellow", "red"] }
+      }
+    },
+    sha256: { type: "string", pattern: "^[a-f0-9]{64}$" }
+  }
+} as const;
+
+export const reviewResultSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schema",
+    "run_id",
+    "task_id",
+    "attempt_id",
+    "provider",
+    "verdict",
+    "spec_score",
+    "quality_score",
+    "findings",
+    "residual_risk",
+    "summary"
+  ],
+  properties: {
+    schema: { const: "runway.review_result.v1" },
+    run_id: { type: "string", pattern: idPattern },
+    task_id: { type: "string", pattern: idPattern },
+    attempt_id: { type: "string", pattern: idPattern },
+    provider: { type: "string", minLength: 1 },
+    verdict: { enum: ["pass", "needs_fix", "reject"] },
+    spec_score: { type: "number", minimum: 0, maximum: 1 },
+    quality_score: { type: "number", minimum: 0, maximum: 1 },
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["severity", "summary"],
+        properties: {
+          severity: { enum: ["critical", "important", "minor"] },
+          file: { type: "string", nullable: true },
+          line: { type: "integer", minimum: 1, nullable: true },
+          summary: { type: "string", minLength: 1 }
+        }
+      }
+    },
+    residual_risk: { type: "array", items: { type: "string" } },
+    summary: { type: "string", minLength: 1 }
+  }
+} as const;
+
+export const providerAttemptSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schema",
+    "attempt_id",
+    "run_id",
+    "task_id",
+    "role",
+    "provider",
+    "command",
+    "cwd",
+    "stdin_ref",
+    "stdout_ref",
+    "stderr_ref",
+    "event_stream_ref",
+    "exit_code",
+    "timed_out",
+    "started_at",
+    "completed_at",
+    "worker_result_ref",
+    "failure_class"
+  ],
+  properties: {
+    schema: { const: "runway.provider_attempt.v1" },
+    attempt_id: { type: "string", pattern: idPattern },
+    run_id: { type: "string", pattern: idPattern },
+    task_id: { type: "string", pattern: idPattern },
+    role: { enum: providerRoleValues },
+    provider: { type: "string", minLength: 1 },
+    command: { type: "array", minItems: 1, items: { type: "string" } },
+    cwd: { type: "string", minLength: 1 },
+    stdin_ref: { type: "string", minLength: 1 },
+    stdout_ref: { type: "string", minLength: 1 },
+    stderr_ref: { type: "string", minLength: 1 },
+    event_stream_ref: { type: "string", nullable: true },
+    exit_code: { type: "integer", nullable: true },
+    timed_out: { type: "boolean" },
+    started_at: { type: "string", pattern: isoTimestamp },
+    completed_at: { type: "string", pattern: isoTimestamp, nullable: true },
+    worker_result_ref: { type: "string", nullable: true },
+    failure_class: { enum: [...failureClassValues, null] }
+  }
+} as const;
+
+const waygentRunStateTaskV2Schema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "id",
+    "status",
+    "risk",
+    "dependencies",
+    "file_claims",
+    "attempts",
+    "task_packet_path",
+    "task_packet_sha256",
+    "unit_manifest",
+    "checkpoint_refs",
+    "latest_failure_class",
+    "decision_packet_ref",
+    "timing"
+  ],
+  properties: {
+    id: { type: "string", pattern: idPattern },
+    status: { enum: ["pending", "ready", "running", "needs_fix", "verified", "blocked", "failed", "applied"] },
+    risk: { enum: riskValues },
+    dependencies: { type: "array", items: { type: "string", pattern: idPattern } },
+    file_claims: { type: "array", items: fileClaimSchema },
+    attempts: { type: "array", items: { type: "string", pattern: idPattern } },
+    task_packet_path: { type: "string", nullable: true },
+    task_packet_sha256: { type: "string", pattern: "^[a-f0-9]{64}$", nullable: true },
+    unit_manifest: { type: "object", additionalProperties: true, nullable: true },
+    checkpoint_refs: { type: "array", items: { type: "string" } },
+    latest_failure_class: { type: "string", nullable: true },
+    decision_packet_ref: { type: "string", nullable: true },
+    timing: { type: "object", additionalProperties: { type: "string" } }
+  }
+} as const;
+
+export const waygentRunStateV2Schema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schema",
+    "run_id",
+    "workspace",
+    "source_branch",
+    "worktree_root",
+    "run_root",
+    "artifact_root",
+    "state_path",
+    "event_journal_path",
+    "plan_path",
+    "spec_path",
+    "provider_profile",
+    "status",
+    "lifecycle_outcome",
+    "current_phase",
+    "tasks",
+    "safe_waves",
+    "provider_attempts",
+    "reviews",
+    "verification",
+    "recovery",
+    "apply",
+    "context",
+    "drift",
+    "completion_audit",
+    "timestamps"
+  ],
+  properties: {
+    schema: { const: "waygent.run_state.v2" },
+    run_id: { type: "string", pattern: idPattern },
+    workspace: { type: "string", minLength: 1 },
+    source_branch: { type: "string", nullable: true },
+    worktree_root: { type: "string", minLength: 1 },
+    run_root: { type: "string", minLength: 1 },
+    artifact_root: { type: "string", minLength: 1 },
+    state_path: { type: "string", minLength: 1 },
+    event_journal_path: { type: "string", minLength: 1 },
+    plan_path: { type: "string", nullable: true },
+    spec_path: { type: "string", nullable: true },
+    provider_profile: { type: "object", additionalProperties: true },
+    status: { enum: ["initializing", "running", "blocked", "failed", "completed", "applying", "applied"] },
+    lifecycle_outcome: { enum: ["finished", "blocked", "failed", "aborted", null] },
+    current_phase: { enum: ["preflight", "dispatch", "review", "verify", "recover", "apply", "complete"] },
+    tasks: { type: "object", additionalProperties: waygentRunStateTaskV2Schema },
+    safe_waves: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["wave_id", "ready", "withheld"],
+        properties: {
+          wave_id: { type: "string", minLength: 1 },
+          ready: { type: "array", items: { type: "string", pattern: idPattern } },
+          withheld: {
+            type: "array",
+            items: {
+              type: "object",
+              additionalProperties: false,
+              required: ["task_id", "reason"],
+              properties: {
+                task_id: { type: "string", pattern: idPattern },
+                reason: { type: "string", minLength: 1 },
+                detail: { type: "string", nullable: true }
+              }
+            }
+          }
+        }
+      }
+    },
+    provider_attempts: { type: "array", items: providerAttemptSchema },
+    reviews: { type: "array", items: reviewResultSchema },
+    verification: { type: "array", items: { type: "object", additionalProperties: true } },
+    recovery: { type: "array", items: { type: "object", additionalProperties: true } },
+    apply: {
+      type: "object",
+      additionalProperties: false,
+      required: ["status"],
+      properties: {
+        status: { enum: ["not_applied", "not_ready", "blocked", "applying", "applied", "failed"] },
+        reason: { type: "string", nullable: true },
+        checkpoint_ref: { type: "string", nullable: true }
+      }
+    },
+    context: {
+      type: "object",
+      additionalProperties: false,
+      required: ["snapshot_path", "basis_hash"],
+      properties: {
+        snapshot_path: { type: "string", nullable: true },
+        basis_hash: { type: "string", pattern: "^[a-f0-9]{64}$", nullable: true }
+      }
+    },
+    drift: {
+      type: "object",
+      additionalProperties: false,
+      required: ["last_checked_at", "records", "unrepaired_blockers"],
+      properties: {
+        last_checked_at: { type: "string", pattern: isoTimestamp, nullable: true },
+        records: { type: "array", items: { type: "object", additionalProperties: true } },
+        unrepaired_blockers: { type: "array", items: { type: "object", additionalProperties: true } }
+      }
+    },
+    completion_audit: { type: "object", additionalProperties: true, nullable: true },
+    timestamps: {
+      type: "object",
+      additionalProperties: false,
+      required: ["started_at", "updated_at", "completed_at"],
+      properties: {
+        started_at: { type: "string", pattern: isoTimestamp },
+        updated_at: { type: "string", pattern: isoTimestamp },
+        completed_at: { type: "string", pattern: isoTimestamp, nullable: true }
+      }
+    }
+  }
+} as const;
+
 export const schemas = {
   "agentlens.event.v3": agentLensEventSchema,
   "lens.runway_projection.v1": lensRunwayProjectionSchema,
@@ -321,7 +668,11 @@ export const schemas = {
   "runway.worker_result.v1": workerResultSchema,
   "provider.capability_manifest.v1": providerCapabilityManifestSchema,
   "policy.permission_decision.v1": permissionDecisionSchema,
-  "runway.decision_packet.v1": decisionPacketSchema
+  "runway.decision_packet.v1": decisionPacketSchema,
+  "waygent.task_packet.v1": waygentTaskPacketSchema,
+  "runway.review_result.v1": reviewResultSchema,
+  "runway.provider_attempt.v1": providerAttemptSchema,
+  "waygent.run_state.v2": waygentRunStateV2Schema
 } as const;
 
 export type ContractSchemaName = keyof typeof schemas;
