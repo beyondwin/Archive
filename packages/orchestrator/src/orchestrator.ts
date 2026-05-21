@@ -1,9 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
 import { join } from "node:path";
-import type { AgentLensEvent, ProviderAttempt, WaygentRunStateV2 } from "@waygent/contracts";
+import type { AgentLensEvent, ProviderAttempt, ProviderProcessEvidence, WaygentRunStateV2, WorkerResult } from "@waygent/contracts";
 import { buildTaskPacket } from "@waygent/context-packer";
 import { planWorktree } from "@waygent/kernel-client";
 import { projectFailureSummary, projectTimeline, projectTrustReport } from "@waygent/lens-projectors";
@@ -17,6 +17,7 @@ import { resolvePlanInput } from "./planDiscovery";
 import { parseWaygentPlan, type ParsedWaygentTask } from "./planParser";
 import { buildRunEvent } from "./runEvents";
 import { readRunStateV2, writeRunStateV2 } from "./runState";
+import { classifySourceCheckout } from "./sourceCheckout";
 import { reconcileRunState } from "./stateReconciliation";
 import { buildTaskGraphFromPlan } from "./taskGraph";
 import { runVerificationCommands } from "./verification";
@@ -63,9 +64,10 @@ verify:
 export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRunResult> {
   const runId = options.run_id ?? "run_demo";
   const paths = runPaths(options.root, runId);
-  rmSync(paths.root, { recursive: true, force: true });
+  if (hasExistingRunEvidence(paths)) {
+    throw new Error("run_id_already_exists");
+  }
   const profile = resolveExecutionProfile(options.profile, { provider: "fake" });
-  const provider = createProviderAdapter(profile.provider, options.provider_processes);
   const providerProfile = providerProfileRecord(profile);
   const planInput = resolveRunPlanInput(options);
   const parsed = parseWaygentPlan(planInput.markdown);
@@ -77,6 +79,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   const firstTask = graph.tasks.get(firstTaskId);
   if (!firstTask) throw new Error(`task ${firstTaskId} missing from graph`);
   const workspace = options.workspace ?? process.cwd();
+  const preflight = classifySourceCheckout(workspace, parsed.tasks.flatMap((task) => task.file_claims));
   const worktreeRoot = options.worktree_root ?? join(options.root, "worktrees");
   const plannedWorktree = planWorktree({
     run_id: runId,
@@ -100,7 +103,8 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     provider_profile: providerProfile,
     status: "running",
     lifecycle_outcome: null,
-    current_phase: "dispatch",
+    current_phase: "preflight",
+    preflight,
     tasks: Object.fromEntries(parsed.tasks.map((candidate) => [candidate.id, {
       id: candidate.id,
       status: safeWave.includes(candidate.id) ? "ready" : "pending",
@@ -151,9 +155,43 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     summary: "Plan parsed into task graph.",
     payload: { task_count: parsed.tasks.length, profile: providerProfile, worktree: plannedWorktree }
   }));
-  appendEvent(paths.events, buildRunEvent({
+  const preflightEvent = buildRunEvent({
     run_id: runId,
     sequence: 3,
+    event_type: "runway.preflight_result",
+    phase: "preflight",
+    outcome: preflight.status === "dirty_related" ? "blocked" : "success",
+    summary: preflight.status === "clean"
+      ? "Source checkout preflight passed."
+      : preflight.status === "dirty_unrelated"
+        ? "Source checkout preflight found unrelated dirty files and continued."
+        : "Source checkout preflight blocked dispatch.",
+    payload: preflight,
+    trust_impact: preflight.status === "clean" ? "supports_success" : "neutral"
+  });
+  appendEvent(paths.events, preflight.status === "dirty_unrelated" ? { ...preflightEvent, severity: "warning" } : preflightEvent);
+
+  if (preflight.status === "dirty_related") {
+    updateRunStateV2(options.root, runId, (state) => {
+      state.status = "blocked";
+      state.lifecycle_outcome = "blocked";
+      state.current_phase = "preflight";
+      state.apply = { status: "blocked", reason: "dirty_source_checkout" };
+      for (const taskId of safeWave) {
+        const task = state.tasks[taskId];
+        if (task) {
+          task.status = "blocked";
+          task.latest_failure_class = "dirty_source_checkout";
+        }
+      }
+      state.timestamps.completed_at = new Date().toISOString();
+    });
+    return finalizeRun(options.root, paths, runId, projection, 4);
+  }
+
+  appendEvent(paths.events, buildRunEvent({
+    run_id: runId,
+    sequence: 4,
     event_type: "runway.safe_wave_selected",
     phase: "schedule",
     outcome: "success",
@@ -164,7 +202,8 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   const verificationCommands = new Map<string, string[]>();
   const providerAttempts: ProviderAttempt[] = [];
   const verificationRecords: Array<Record<string, unknown>> = [];
-  let sequence = 4;
+  const provider = createProviderAdapter(profile.provider, options.provider_processes);
+  let sequence = 5;
 
   async function runOneTask(taskId: string): Promise<void> {
     const task = graph.tasks.get(taskId);
@@ -198,7 +237,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     const attemptId = `attempt_${task.id}_1`;
     const attemptStarted = new Date().toISOString();
     const stdinArtifact = writeArtifact(paths.root, `provider/${attemptId}.stdin.txt`, prompt, "text/plain");
-    const worker = await provider.run({
+    const adapterResult = await provider.run({
       task_id: task.id,
       candidate_id: `candidate_${task.id}`,
       role: "implement",
@@ -207,9 +246,10 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       cwd: taskWorktree.path,
       changed_files: parsedTask.file_claims.filter((claim) => claim.mode !== "read_only").map((claim) => claim.path)
     });
+    const { worker, processEvidence } = normalizeProviderRunResult(adapterResult);
     const workerArtifact = writeArtifact(paths.root, `worker/${task.id}.json`, JSON.stringify(worker, null, 2));
-    const stdoutArtifact = writeArtifact(paths.root, `provider/${attemptId}.stdout.txt`, JSON.stringify(worker), "text/plain");
-    const stderrArtifact = writeArtifact(paths.root, `provider/${attemptId}.stderr.txt`, "", "text/plain");
+    const stdoutArtifact = writeArtifact(paths.root, `provider/${attemptId}.stdout.txt`, processEvidence?.stdout ?? JSON.stringify(worker), "text/plain");
+    const stderrArtifact = writeArtifact(paths.root, `provider/${attemptId}.stderr.txt`, processEvidence?.stderr ?? "", "text/plain");
     const attempt: ProviderAttempt = {
       schema: "runway.provider_attempt.v1",
       attempt_id: attemptId,
@@ -223,12 +263,13 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       stdout_ref: stdoutArtifact.path,
       stderr_ref: stderrArtifact.path,
       event_stream_ref: null,
-      exit_code: worker.status === "completed" ? 0 : 1,
-      timed_out: false,
-      started_at: attemptStarted,
-      completed_at: new Date().toISOString(),
+      exit_code: processEvidence?.exit_code ?? (worker.status === "completed" ? 0 : 1),
+      timed_out: processEvidence?.timed_out ?? false,
+      started_at: processEvidence?.started_at ?? attemptStarted,
+      completed_at: processEvidence?.completed_at ?? new Date().toISOString(),
       worker_result_ref: workerArtifact.path,
-      failure_class: worker.failure_class ?? null
+      failure_class: worker.failure_class ?? null,
+      ...(processEvidence ? { process: processEvidence } : {})
     };
     providerAttempts.push(attempt);
     updateRunStateV2(options.root, runId, (state) => {
@@ -424,6 +465,20 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     }
     state.timestamps.updated_at = new Date().toISOString();
   });
+  return finalizeRun(options.root, paths, runId, projection, sequence);
+}
+
+function hasExistingRunEvidence(paths: ReturnType<typeof runPaths>): boolean {
+  return existsSync(paths.root) || existsSync(join(paths.root, "state.json")) || existsSync(paths.events);
+}
+
+function finalizeRun(
+  root: string,
+  paths: ReturnType<typeof runPaths>,
+  runId: string,
+  projection: ReturnType<typeof buildDurableProjection>,
+  sequence: number
+): WaygentRunResult {
   const trust = projectTrustReport(readEvents(paths.events));
   appendEvent(paths.events, buildRunEvent({
     run_id: runId,
@@ -434,7 +489,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     summary: "Trust report updated.",
     payload: { trust_status: trust.trust_status }
   }));
-  writeLatestRunId(options.root, runId);
+  writeLatestRunId(root, runId);
 
   const events = readEvents(paths.events);
   return {
@@ -447,6 +502,18 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     projection,
     apply_state: "not_applied"
   };
+}
+
+function normalizeProviderRunResult(
+  result: WorkerResult | { worker: WorkerResult; process?: ProviderProcessEvidence }
+): { worker: WorkerResult; processEvidence?: ProviderProcessEvidence } {
+  if (typeof result === "object" && result !== null && "worker" in result) {
+    return {
+      worker: result.worker,
+      ...(result.process ? { processEvidence: result.process } : {})
+    };
+  }
+  return { worker: result };
 }
 
 function createProviderAdapter(
