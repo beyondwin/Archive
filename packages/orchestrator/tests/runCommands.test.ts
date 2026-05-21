@@ -1,0 +1,95 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { describe, expect, test } from "bun:test";
+import { appendEvent, runPaths, writeLatestRunId } from "@waygent/lens-store";
+import { buildRunEvent, explainRun, nextRunEvent, resumeRun, statusRun } from "../src/runCommands";
+
+describe("Waygent run commands", () => {
+  test("status reads the latest run projection", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-status-"));
+    const paths = runPaths(root, "run_demo");
+    writeLatestRunId(root, "run_demo");
+    appendEvent(
+      paths.events,
+      buildRunEvent({
+        run_id: "run_demo",
+        sequence: 1,
+        event_type: "platform.run_started",
+        phase: "platform",
+        outcome: "running",
+        summary: "Run opened.",
+        payload: {}
+      })
+    );
+    appendEvent(
+      paths.events,
+      buildRunEvent({
+        run_id: "run_demo",
+        sequence: 2,
+        event_type: "runway.verification_result",
+        phase: "verify",
+        outcome: "success",
+        summary: "Verified.",
+        payload: { task_id: "task_demo" }
+      })
+    );
+
+    expect(statusRun({ root, last: true })).toMatchObject({
+      run_id: "run_demo",
+      status: "completed",
+      total_events: 2,
+      last_event_type: "runway.verification_result"
+    });
+  });
+
+  test("explain and resume expose blocked decision state", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-explain-"));
+    const paths = runPaths(root, "run_blocked");
+    writeLatestRunId(root, "run_blocked");
+    appendEvent(
+      paths.events,
+      buildRunEvent({
+        run_id: "run_blocked",
+        sequence: 1,
+        event_type: "runway.decision_packet_created",
+        phase: "runway",
+        outcome: "blocked",
+        summary: "Verification failed.",
+        payload: { task_id: "task_verify", failure_class: "verification_failed" }
+      })
+    );
+
+    expect(explainRun({ root, last: true }).blocked_by).toBe("verification_failed");
+    expect(resumeRun({ root, last: true, dry_run: true }).allowed_actions).toContain("retry_with_evidence");
+  });
+
+  test("next run event increments from the event journal", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-next-event-"));
+    const paths = runPaths(root, "run_next");
+    appendEvent(
+      paths.events,
+      buildRunEvent({
+        run_id: "run_next",
+        sequence: 1,
+        event_type: "platform.run_started",
+        phase: "platform",
+        outcome: "running",
+        summary: "Run opened.",
+        payload: {}
+      })
+    );
+
+    const event = nextRunEvent(paths.events, {
+      run_id: "run_next",
+      event_type: "runway.verification_result",
+      phase: "verify",
+      outcome: "success",
+      summary: "Verified.",
+      payload: { task_id: "task_demo" }
+    });
+
+    expect(event.sequence).toBe(2);
+    expect(event.occurred_at).toBe("2026-05-21T00:00:00Z");
+  });
+});

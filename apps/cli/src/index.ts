@@ -1,4 +1,14 @@
-import { defaultRunRoot, intentToCommand, parseNaturalLanguageIntent, runWaygentDemo } from "@waygent/orchestrator";
+import {
+  defaultRunRoot,
+  explainRun,
+  intentToCommand,
+  parseNaturalLanguageIntent,
+  resumeRun,
+  runWaygent,
+  runWaygentDemo,
+  statusRun
+} from "@waygent/orchestrator";
+import type { RunCommandOptions } from "@waygent/orchestrator";
 
 export interface ParsedCli {
   command: string;
@@ -39,16 +49,43 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     if (typeof parsed.flags.run === "string") options.run_id = parsed.flags.run;
     if (typeof parsed.flags.plan === "string") options.plan = parsed.flags.plan;
     if (typeof parsed.flags.spec === "string") options.spec = parsed.flags.spec;
+    if (parsed.command === "run") {
+      return runWaygent(options);
+    }
     return runWaygentDemo(options);
   }
-  if (["status", "events", "inspect", "explain", "resume", "apply"].includes(parsed.command)) {
+  if (parsed.command === "status" || parsed.command === "inspect") {
+    return statusRun(runCommandOptions(parsed));
+  }
+  if (parsed.command === "explain") {
+    return explainRun(runCommandOptions(parsed));
+  }
+  if (parsed.command === "resume") {
+    return resumeRun({ ...runCommandOptions(parsed), dry_run: true });
+  }
+  if (parsed.command === "apply") {
     return {
-      command: parsed.command,
+      command: "apply",
+      status: "requires_clean_source_checkout"
+    };
+  }
+  if (parsed.command === "events") {
+    return {
+      command: "events",
       run: parsed.flags.run ?? (parsed.flags.last ? "last" : "latest"),
-      status: parsed.command === "apply" ? "requires_clean_source_checkout" : "not_started"
+      status: "not_started"
     };
   }
   return { usage: "waygent run|status|events|inspect|explain|resume|apply" };
+}
+
+function runCommandOptions(parsed: ParsedCli): RunCommandOptions {
+  const options: RunCommandOptions = {
+    root: String(parsed.flags.root ?? defaultRunRoot()),
+    last: Boolean(parsed.flags.last)
+  };
+  if (typeof parsed.flags.run === "string") options.run = parsed.flags.run;
+  return options;
 }
 
 if (import.meta.main) {

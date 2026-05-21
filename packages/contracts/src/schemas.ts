@@ -70,6 +70,21 @@ export const agentLensEventSchema = {
   }
 } as const;
 
+export const lensRunwayProjectionSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["schema", "run_id", "status", "safe_wave", "trust_status", "event_count", "legacy_source"],
+  properties: {
+    schema: { const: "lens.runway_projection.v1" },
+    run_id: { type: "string", pattern: idPattern },
+    status: { enum: ["pending", "running", "blocked", "failed", "completed", "applied"] },
+    safe_wave: { type: "array", items: { type: "string", pattern: idPattern } },
+    trust_status: { enum: ["trusted", "failed", "insufficient_evidence"] },
+    event_count: { type: "integer", minimum: 0 },
+    legacy_source: { anyOf: [{ const: "agentrunway" }, { type: "null" }] }
+  }
+} as const;
+
 export const kernelExecutionRequestSchema = {
   type: "object",
   additionalProperties: false,
@@ -300,6 +315,7 @@ export const decisionPacketSchema = {
 
 export const schemas = {
   "agentlens.event.v3": agentLensEventSchema,
+  "lens.runway_projection.v1": lensRunwayProjectionSchema,
   "kernel.execution_request.v1": kernelExecutionRequestSchema,
   "kernel.execution_result.v1": kernelExecutionResultSchema,
   "runway.worker_result.v1": workerResultSchema,

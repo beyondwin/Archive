@@ -1,4 +1,4 @@
-import type { AgentLensEvent, FailureClass } from "@waygent/contracts";
+import type { AgentLensEvent, FailureClass, LensRunwayProjection, RunStatus } from "@waygent/contracts";
 
 export type TrustStatus = "trusted" | "failed" | "insufficient_evidence";
 
@@ -39,6 +39,30 @@ export function projectTrustReport(events: AgentLensEvent[]): TrustReport {
     total_events: events.length,
     evidence_score: verification.length * 2 + kernel.length,
     reasons: ["verification/kernel evidence outranks final agent claims"]
+  };
+}
+
+export function projectRunwayProjection(events: AgentLensEvent[], safe_wave: string[] = []): LensRunwayProjection {
+  const trust = projectTrustReport(events);
+  const blocked = events.some((event) => event.outcome === "blocked");
+  const failed = events.some((event) => event.outcome === "failed");
+  const legacy = events.some((event) => event.event_type.startsWith("agentrunway."));
+  const status: RunStatus = blocked
+    ? "blocked"
+    : failed
+      ? "failed"
+      : trust.trust_status === "trusted"
+        ? "completed"
+        : "running";
+
+  return {
+    schema: "lens.runway_projection.v1",
+    run_id: events[0]?.orchestrator_run_id ?? "run_empty",
+    status,
+    safe_wave,
+    trust_status: trust.trust_status,
+    event_count: events.length,
+    legacy_source: legacy ? "agentrunway" : null
   };
 }
 

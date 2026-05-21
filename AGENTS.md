@@ -6,14 +6,15 @@ Repository instructions for AI coding agents working in this checkout.
 
 Archive is now focused on two active surfaces:
 
-- `AgentLens/` - a Python + React tool for recording, querying, evaluating,
-  and visualizing agent runs.
+- `components/agentlens/` - a Python tool for recording, querying,
+  evaluating, and visualizing agent runs.
+- `apps/console/` - the Waygent console app.
 - `skills/` - source of truth for local executor skills shared by Codex and
   Claude Code.
 
-Waygent is the approved brand for the planned unified agent platform and
-user-facing orchestrator. AgentLens and AgentRunway remain component names
-inside that platform.
+Waygent is the approved brand for the unified agent platform and user-facing
+orchestrator. AgentLens remains the observability component; historical
+AgentRunway names are read-compatibility context, not active routing.
 
 The old root `docs/` library was pruned. Do not assume root-level
 `docs/superpowers/`, `docs/_index/`, or `graphify-out/` exists unless the
@@ -38,10 +39,10 @@ review and planning workflow details in `code_review.md` and `PLANS.md`.
 
 ### AgentLens
 
-- Python package: `AgentLens/src/agentlens/`
-- Python tests: `AgentLens/tests/`
-- Web app: `AgentLens/web/`
-- Current docs: `AgentLens/docs/`
+- AgentLens Python package: `components/agentlens/src/agentlens/`
+- AgentLens Python tests: `components/agentlens/tests/`
+- Waygent console app: `apps/console/`
+- Current docs: `components/agentlens/docs/` and root `docs/`
 - CLI entry point: `agentlens`
 
 AgentLens durable run state belongs under `~/.agentlens/` or
@@ -49,27 +50,24 @@ AgentLens durable run state belongs under `~/.agentlens/` or
 runtime state; they are ignored and must not be committed.
 
 The filesystem JSON artifacts are the source of truth. SQLite is a rebuildable
-cache. AgentRunway is the first-class Trust Console executor integration and
-uses `agentrunway.*` events. Older `kws-cpe.*` and `kws-cme.*` namespaces may
-exist in historical executor docs and should not be treated as the new
-AgentRunway integration model.
+cache. Active Waygent events use `platform.*`, `runway.*`, `kernel.*`, and
+`lens.*`. Historical `agentrunway.*`, `kws-cpe.*`, and `kws-cme.*` namespaces
+may exist in migration docs or read-compatibility code, but must not be treated
+as the active integration model.
 
-### AgentRunway
+### Waygent Runtime
 
-- Skill entry point: `skills/agent-runway/SKILL.md`
-- Operator overview: `skills/agent-runway/README.md`
-- Runtime implementation: `skills/agent-runway/scripts/agentrunway/`
-- References: `skills/agent-runway/references/`
-- Evals: `skills/agent-runway/evals/`
+- Skill entry point: `skills/waygent/SKILL.md`
+- CLI app: `apps/cli/`
+- Runtime orchestration: `packages/orchestrator/`
+- Scheduling and recovery: `packages/runway-control/`
+- Provider adapters: `packages/provider-adapters/`
+- Kernel boundary: `native/kernel/`
+- Lens storage and projections: `packages/lens-store/`, `packages/lens-projectors/`
 
-The runner owns scheduling, state, worktrees, runtime adapters, review,
-verification, merge queue, and AgentLens emission. Do not manually orchestrate
-workers from chat context. Do not let workers write SQLite or AgentLens
-directly. Add or update pytest/eval coverage for every runner behavior change.
-
-For scheduling work, prefer the current hybrid rule: parallelize only
-checkpoint-ready independent work in a safe wave; serialize shared-core,
-overlapping, high-risk, stale, or recovery-blocked work.
+Waygent owns scheduling, state, worktrees, runtime adapters, verification,
+recovery, apply, and Lens emission. Do not manually orchestrate workers from
+chat context when a Waygent run is requested.
 
 ### KWS Executor Skills
 
@@ -92,25 +90,19 @@ Run the smallest command that proves the change. Useful defaults:
 
 ```bash
 # AgentLens backend
-cd AgentLens
+cd components/agentlens
 python -m pip install -e .[test]
 python -m pytest -q
 
-# AgentLens frontend
-cd AgentLens/web
-npm ci
-npm run gen-types
-npx vitest run
-npm run build
-npx playwright test
+# Waygent console
+cd apps/console
+bun test src
+bun run build
 
-# AgentLens full local check
-cd AgentLens
-make test
-
-# AgentRunway deterministic evals
-cd skills/agent-runway
-PATH="$PWD/evals/fixtures/fake-bin:$PATH" ./evals/run.sh
+# Waygent runtime
+bun run check
+bun run platform:demo
+cd native/kernel && cargo test --workspace
 
 # KWS executor skill evals
 cd skills/kws-codex-plan-executor && ./evals/run.sh

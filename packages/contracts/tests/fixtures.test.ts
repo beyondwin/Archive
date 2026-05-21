@@ -25,4 +25,8 @@ describe("contract fixtures", () => {
   test("accepts worker result fixture", () => {
     expect(validateContract("runway.worker_result.v1", fixture("valid-worker-result.json"))).toBeTruthy();
   });
+
+  test("accepts lens runway projection fixture", () => {
+    expect(validateContract("lens.runway_projection.v1", fixture("valid-lens-runway-projection.json"))).toBeTruthy();
+  });
 });

@@ -3,7 +3,7 @@ import {
   buildConsoleUiModel,
   demoConsoleSnapshot,
   renderConsoleSnapshot
-} from "../../apps/lens-web/src/uiModel";
+} from "../../apps/console/src/uiModel";
 
 describe("Lens console browserless e2e model", () => {
   test("run list loads the demo run set", () => {

@@ -34,8 +34,8 @@
         "@waygent/orchestrator": "workspace:*",
       },
     },
-    "apps/lens-web": {
-      "name": "@waygent/lens-web",
+    "apps/console": {
+      "name": "@waygent/console",
     },
     "packages/context-packer": {
       "name": "@waygent/context-packer",
@@ -295,7 +295,7 @@
 
     "@waygent/lens-store": ["@waygent/lens-store@workspace:packages/lens-store"],
 
-    "@waygent/lens-web": ["@waygent/lens-web@workspace:apps/lens-web"],
+    "@waygent/console": ["@waygent/console@workspace:apps/console"],
 
     "@waygent/orchestrator": ["@waygent/orchestrator@workspace:packages/orchestrator"],
 
