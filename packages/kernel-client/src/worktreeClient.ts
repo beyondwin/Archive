@@ -16,6 +16,12 @@ export interface PlannedWorktree {
   source: string;
 }
 
+export interface WorktreeManifest extends PlannedWorktree {
+  task_id: string;
+  source_commit: string | null;
+  cleanup_status: "active" | "removed" | "unknown";
+}
+
 export function planWorktree(options: {
   run_id: string;
   task_id: string;
@@ -27,6 +33,10 @@ export function planWorktree(options: {
     path: join(options.worktree_root, options.run_id, options.task_id),
     source: options.workspace
   };
+}
+
+export function buildWorktreeManifest(input: PlannedWorktree & { task_id: string; source_commit: string | null }): WorktreeManifest {
+  return { ...input, cleanup_status: "active" };
 }
 
 export interface ApplyGuardInput {

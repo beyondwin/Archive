@@ -5,13 +5,14 @@ import { dirname } from "node:path";
 import { join } from "node:path";
 import type { AgentLensEvent, ProviderAttempt, ProviderProcessEvidence, WaygentRunStateV2, WorkerResult } from "@waygent/contracts";
 import { buildTaskPacket } from "@waygent/context-packer";
-import { planWorktree } from "@waygent/kernel-client";
+import { buildWorktreeManifest, planWorktree } from "@waygent/kernel-client";
 import { projectFailureSummary, projectTimeline, projectTrustReport } from "@waygent/lens-projectors";
 import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeArtifact, writeLatestRunId } from "@waygent/lens-store";
 import { ClaudeProviderAdapter, CodexProviderAdapter, FakeProviderAdapter, type ProviderAdapter, type ProviderProcessOptions } from "@waygent/provider-adapters";
 import { buildDurableProjection, mergeCandidate } from "@waygent/runway-control";
 import { createCheckpointArtifact, createCombinedCheckpointPatchArtifact, dryRunCheckpointPatch } from "./checkpointArtifacts";
 import { buildCompletionAudit } from "./completionAudit";
+import { listActualChangedFiles, validateDiffScope, type DiffScopeResult } from "./diffScope";
 import { resolveExecutionProfile, type ProfileOverride, type ProviderName } from "./executionProfile";
 import { resolvePlanInput } from "./planDiscovery";
 import { parseWaygentPlan, type ParsedWaygentTask } from "./planParser";
@@ -105,6 +106,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     lifecycle_outcome: null,
     current_phase: "preflight",
     preflight,
+    worktrees: [],
     tasks: Object.fromEntries(parsed.tasks.map((candidate) => [candidate.id, {
       id: candidate.id,
       status: safeWave.includes(candidate.id) ? "ready" : "pending",
@@ -211,20 +213,31 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     const parsedTask = parsed.tasks.find((candidate) => candidate.id === task.id);
     if (!parsedTask) throw new Error(`task ${task.id} missing from parsed plan`);
     const taskWorktree = planWorktree({ run_id: runId, task_id: task.id, workspace, worktree_root: worktreeRoot });
+    const worktreeManifest = buildWorktreeManifest({
+      ...taskWorktree,
+      task_id: task.id,
+      source_commit: currentGitHead(workspace)
+    });
     prepareTaskWorktree(workspace, taskWorktree.path);
     verificationCommands.set(task.id, parsedTask.verification_commands.length > 0 ? parsedTask.verification_commands : ["printf hello"]);
+    const checkpointInputs = dependencyCheckpointInputs(readRunStateV2(options.root, runId), task.dependencies);
     const packet = buildTaskPacket({
       run_id: runId,
       task: parsedTask,
       role: "implement",
       plan_excerpt: parsedTask.title,
       spec_excerpt: options.spec ?? "",
+      checkpoint_inputs: checkpointInputs,
       previous_failures: []
     });
     const packetArtifact = writeArtifact(paths.root, `task_packets/${task.id}.json`, `${JSON.stringify(packet, null, 2)}\n`);
     const packetPath = join(paths.root, packetArtifact.path);
     updateRunStateV2(options.root, runId, (state) => {
       const stateTask = state.tasks[task.id];
+      state.worktrees = [
+        ...(state.worktrees ?? []).filter((item) => item.task_id !== task.id),
+        worktreeManifest
+      ];
       if (stateTask) {
         stateTask.status = "running";
         stateTask.task_packet_path = packetPath;
@@ -320,16 +333,37 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       payload: { worker, verification: taskVerificationRecords, checkpoint_ref: null }
     }));
     if (verificationPassed) {
-      const verified = mergeCandidate({ task_id: task.id, candidate_id: worker.candidate_id, reviewed: true, verified: true });
+      const scopeValidation = validateTaskDiffScope(options.root, runId, task.id, taskWorktree.path, worker.changed_files);
+      if (!scopeValidation.ok) {
+        task.latest_failure_class = "diff_scope_failed";
+        appendEvent(paths.events, buildRunEvent({
+          run_id: runId,
+          sequence: sequence++,
+          event_type: "runway.diff_scope_result",
+          phase: "verify",
+          outcome: "blocked",
+          summary: "Diff scope validation blocked checkpoint creation.",
+          payload: {
+            task_id: task.id,
+            failure_class: scopeValidation.failure_class,
+            reason: scopeValidation.reason,
+            changed_files: scopeValidation.changed_files
+          },
+          trust_impact: "supports_failure"
+        }));
+      }
+      const verified = !scopeValidation.ok
+        ? { merged: false }
+        : mergeCandidate({ task_id: task.id, candidate_id: worker.candidate_id, reviewed: true, verified: true });
       const hasWritableClaims = parsedTask.file_claims.some((claim) => claim.mode !== "read_only");
-      if (verified.merged && hasWritableClaims) {
+      if (verified.merged && hasWritableClaims && scopeValidation.ok) {
         const checkpoint = createCheckpointArtifact({
           run_root: paths.root,
           run_id: runId,
           task_id: task.id,
           candidate_id: worker.candidate_id,
           worktree_path: taskWorktree.path,
-          changed_files: worker.changed_files,
+          changed_files: scopeValidation.changed_files,
           verification_refs: taskVerificationRecords.map((record) => String(record.kernel_result_ref))
         });
         const dryRun = dryRunCheckpointPatch({
@@ -365,7 +399,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
         } else {
           task.latest_failure_class = "missing_checkpoint";
         }
-      } else {
+      } else if (scopeValidation.ok) {
         task.latest_failure_class = "missing_checkpoint";
       }
     }
@@ -374,7 +408,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       state.verification = [...verificationRecords];
       const stateTask = state.tasks[task.id];
       if (stateTask) {
-        stateTask.status = verificationPassed ? "verified" : "blocked";
+        stateTask.status = verificationPassed && task.latest_failure_class !== "diff_scope_failed" ? "verified" : "blocked";
         stateTask.latest_failure_class = verificationPassed ? task.latest_failure_class ?? null : worker.failure_class ?? "verification_failed";
         stateTask.checkpoint_refs = task.checkpoint_ref ? [task.checkpoint_ref] : [];
         stateTask.timing.completed = new Date().toISOString();
@@ -452,6 +486,16 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     state.timestamps.updated_at = new Date().toISOString();
     state.timestamps.completed_at = state.timestamps.updated_at;
   });
+  const trust = projectTrustReport(readEvents(paths.events));
+  appendEvent(paths.events, buildRunEvent({
+    run_id: runId,
+    sequence: sequence++,
+    event_type: "lens.trust_report_updated",
+    phase: "lens",
+    outcome: "success",
+    summary: "Trust report updated.",
+    payload: { trust_status: trust.trust_status }
+  }));
   const reconciliation = reconcileRunState(options.root, runId);
   updateRunStateV2(options.root, runId, (state) => {
     state.completion_audit = {
@@ -479,16 +523,19 @@ function finalizeRun(
   projection: ReturnType<typeof buildDurableProjection>,
   sequence: number
 ): WaygentRunResult {
-  const trust = projectTrustReport(readEvents(paths.events));
-  appendEvent(paths.events, buildRunEvent({
-    run_id: runId,
-    sequence,
-    event_type: "lens.trust_report_updated",
-    phase: "lens",
-    outcome: "success",
-    summary: "Trust report updated.",
-    payload: { trust_status: trust.trust_status }
-  }));
+  const existingEvents = readEvents(paths.events);
+  if (!existingEvents.some((event) => event.event_type === "lens.trust_report_updated")) {
+    const trust = projectTrustReport(existingEvents);
+    appendEvent(paths.events, buildRunEvent({
+      run_id: runId,
+      sequence,
+      event_type: "lens.trust_report_updated",
+      phase: "lens",
+      outcome: "success",
+      summary: "Trust report updated.",
+      payload: { trust_status: trust.trust_status }
+    }));
+  }
   writeLatestRunId(root, runId);
 
   const events = readEvents(paths.events);
@@ -622,6 +669,43 @@ function initGitSnapshot(target: string): void {
   spawnSync("git", ["config", "user.name", "Waygent"], { cwd: target });
   spawnSync("git", ["add", "-A"], { cwd: target });
   spawnSync("git", ["commit", "--allow-empty", "-q", "-m", "waygent base"], { cwd: target });
+}
+
+function dependencyCheckpointInputs(state: WaygentRunStateV2, dependencies: string[]): string[] {
+  return dependencies.flatMap((dependency) => state.tasks[dependency]?.checkpoint_refs ?? []);
+}
+
+function validateTaskDiffScope(
+  root: string,
+  runId: string,
+  taskId: string,
+  worktree: string,
+  claimedChangedFiles: string[]
+): DiffScopeResult {
+  const stateTask = readRunStateV2(root, runId).tasks[taskId];
+  const unitManifest = stateTask?.unit_manifest as {
+    allowed_write_globs?: unknown;
+    forbidden_write_globs?: unknown;
+  } | null | undefined;
+  return validateDiffScope({
+    actual_changed_files: listActualChangedFiles(worktree),
+    claimed_changed_files: claimedChangedFiles,
+    allowed_write_globs: stringList(unitManifest?.allowed_write_globs),
+    forbidden_write_globs: stringList(unitManifest?.forbidden_write_globs)
+  });
+}
+
+function stringList(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function currentGitHead(worktree: string): string | null {
+  const head = spawnSync("git", ["rev-parse", "HEAD"], {
+    cwd: worktree,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"]
+  });
+  return head.status === 0 ? head.stdout.trim() : null;
 }
 
 function updateRunStateV2(root: string, runId: string, mutate: (state: WaygentRunStateV2) => void): void {

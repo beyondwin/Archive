@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { validateExplicitApply } from "../src";
-import { buildApplyGuard, buildWorktreeBranch, planWorktree } from "../src/worktreeClient";
+import { buildApplyGuard, buildWorktreeBranch, buildWorktreeManifest, planWorktree } from "../src/worktreeClient";
 
 describe("worktree client", () => {
   test("refuses dirty source apply", () => {
@@ -30,6 +30,26 @@ describe("worktree apply guard", () => {
       branch: "waygent/run_demo/task_demo",
       path: "/tmp/waygent-worktrees/run_demo/task_demo",
       source: "/repo"
+    });
+  });
+
+  test("builds an active manifest around a planned worktree", () => {
+    expect(buildWorktreeManifest({
+      ...planWorktree({
+        run_id: "run_demo",
+        task_id: "task_demo",
+        workspace: "/repo",
+        worktree_root: "/tmp/waygent-worktrees"
+      }),
+      task_id: "task_demo",
+      source_commit: "abc123"
+    })).toEqual({
+      task_id: "task_demo",
+      branch: "waygent/run_demo/task_demo",
+      path: "/tmp/waygent-worktrees/run_demo/task_demo",
+      source: "/repo",
+      source_commit: "abc123",
+      cleanup_status: "active"
     });
   });
 });
