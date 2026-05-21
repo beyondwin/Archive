@@ -19,24 +19,36 @@ describe("Codex adapter normalization", () => {
       prompt: "demo"
     });
 
-    expect(result.status).toBe("completed");
-    expect(result.summary).toBe("codex ran true");
-    expect(result.changed_files).toEqual(["a.ts"]);
-    expect(result.evidence).toMatchObject({ provider: "codex" });
+    expect(result.worker.status).toBe("completed");
+    expect(result.worker.summary).toBe("codex ran true");
+    expect(result.worker.changed_files).toEqual(["a.ts"]);
+    expect(result.worker.evidence).toMatchObject({ provider: "codex" });
+    expect(result.process).toMatchObject({
+      stderr: "",
+      exit_code: 0,
+      timed_out: false,
+      event_stream: null
+    });
+    expect(result.process.stdout).toContain("codex ran true");
+    expect(result.process.started_at).toMatch(/\d{4}-\d{2}-\d{2}T/);
+    expect(result.process.completed_at).toMatch(/\d{4}-\d{2}-\d{2}T/);
   });
 
   test("normalizes fake CLI output", () => {
     const result = normalizeProcessOutput("codex", "task_demo", "candidate_demo", {
       exitCode: 0,
-      stdout: JSON.stringify({ summary: "done", changed_files: ["a.ts"], evidence: { command: "codex" } }),
+      stdout: JSON.stringify({ status: "completed", summary: "done", changed_files: ["a.ts"], evidence: { command: "codex" } }),
       stderr: ""
     });
-    expect(result.changed_files).toEqual(["a.ts"]);
+    expect(result.worker.changed_files).toEqual(["a.ts"]);
+    expect(result.process.stdout).toContain("done");
+    expect(result.process.exit_code).toBe(0);
   });
 
   test("sets provider cwd and PWD from the adapter request", async () => {
     const script = `
       console.log(JSON.stringify({
+        status: "completed",
         summary: "cwd checked",
         changed_files: [],
         evidence: { pwd: process.env.PWD, cwd: process.cwd() }
@@ -51,7 +63,8 @@ describe("Codex adapter normalization", () => {
       cwd
     });
 
-    expect(result.evidence.native).toMatchObject({ pwd: cwd, cwd });
+    expect(result.worker.evidence.native).toMatchObject({ pwd: cwd, cwd });
+    expect(result.process.exit_code).toBe(0);
   });
 
   test("normalizes Codex JSONL result envelopes", () => {
@@ -61,20 +74,58 @@ describe("Codex adapter normalization", () => {
         JSON.stringify({ type: "started" }),
         JSON.stringify({
           type: "result",
-          result: JSON.stringify({ summary: "codex envelope done", changed_files: ["c.ts"], evidence: { command: "codex" } })
+          result: JSON.stringify({ status: "completed", summary: "codex envelope done", changed_files: ["c.ts"], evidence: { command: "codex" } })
         })
       ].join("\n"),
       stderr: ""
     });
 
-    expect(result.summary).toBe("codex envelope done");
-    expect(result.changed_files).toEqual(["c.ts"]);
+    expect(result.worker.summary).toBe("codex envelope done");
+    expect(result.worker.changed_files).toEqual(["c.ts"]);
+    expect(result.process.stdout).toContain('"type":"started"');
+  });
+
+  test("preserves provider supplied failure_class", () => {
+    const result = normalizeProcessOutput("codex", "task_demo", "candidate_demo", {
+      exitCode: 0,
+      stdout: JSON.stringify({
+        status: "failed",
+        failure_class: "verification_failed",
+        summary: "provider saw verification fail",
+        changed_files: ["README.md"],
+        evidence: { command: "codex" }
+      }),
+      stderr: "stderr evidence"
+    });
+
+    expect(result.worker.status).toBe("failed");
+    expect(result.worker.failure_class).toBe("verification_failed");
+    expect(result.worker.summary).toBe("provider saw verification fail");
+    expect(result.process.stderr).toBe("stderr evidence");
+  });
+
+  test("rejects unknown worker status as malformed_result", () => {
+    const result = normalizeProcessOutput("codex", "task_demo", "candidate_demo", {
+      exitCode: 0,
+      stdout: JSON.stringify({ status: "done", summary: "ambiguous", changed_files: [], evidence: {} }),
+      stderr: ""
+    });
+
+    expect(result.worker.status).toBe("failed");
+    expect(result.worker.failure_class).toBe("malformed_result");
+    expect(result.process.exit_code).toBe(0);
   });
 
   test("classifies crashes", () => {
-    expect(normalizeProcessOutput("codex", "task_demo", "candidate_demo", { exitCode: 2, stdout: "", stderr: "boom" }).failure_class).toBe(
-      "adapter_crashed"
-    );
+    const result = normalizeProcessOutput("codex", "task_demo", "candidate_demo", { exitCode: 2, stdout: "raw out", stderr: "boom" });
+
+    expect(result.worker.failure_class).toBe("adapter_crashed");
+    expect(result.process).toMatchObject({
+      stdout: "raw out",
+      stderr: "boom",
+      exit_code: 2,
+      timed_out: false
+    });
   });
 
   test("describes the process boundary without direct AgentLens writes", () => {
@@ -91,7 +142,32 @@ describe("Codex adapter normalization", () => {
       candidate_id: "candidate_demo",
       prompt: "demo"
     });
-    expect(result.status).toBe("failed");
-    expect(result.failure_class).toBe("adapter_crashed");
+    expect(result.worker.status).toBe("failed");
+    expect(result.worker.failure_class).toBe("adapter_crashed");
+    expect(result.process).toMatchObject({
+      stdout: "",
+      exit_code: null,
+      timed_out: false
+    });
+    expect(result.process.stderr).toContain("failed to start");
+  });
+
+  test("preserves timeout process evidence", async () => {
+    const script = `
+      process.stdout.write("before timeout");
+      setTimeout(() => process.stdout.write("after timeout"), 1000);
+    `;
+
+    const result = await new CodexProviderAdapter({ executable: process.execPath, args: ["-e", script], timeout_ms: 200 }).run({
+      task_id: "task_demo",
+      candidate_id: "candidate_demo",
+      prompt: "demo"
+    });
+
+    expect(result.worker.status).toBe("failed");
+    expect(result.worker.failure_class).toBe("timeout");
+    expect(result.process.stdout).toContain("before timeout");
+    expect(result.process.timed_out).toBe(true);
+    expect(result.process.completed_at).toMatch(/\d{4}-\d{2}-\d{2}T/);
   });
 });

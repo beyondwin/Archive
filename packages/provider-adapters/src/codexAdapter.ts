@@ -1,7 +1,6 @@
-import type { WorkerResult } from "@waygent/contracts";
 import { codexCapabilityManifest } from "./capabilities";
 import { runProviderProcess } from "./processAdapters";
-import type { AdapterRequest, ProviderAdapter, ProviderAdapterDescription, ProviderProcessOptions } from "./types";
+import type { AdapterRequest, ProviderAdapter, ProviderAdapterDescription, ProviderAdapterRunResult, ProviderProcessOptions } from "./types";
 
 export class CodexProviderAdapter implements ProviderAdapter {
   readonly manifest = codexCapabilityManifest;
@@ -16,7 +15,7 @@ export class CodexProviderAdapter implements ProviderAdapter {
     };
   }
 
-  async run(request: AdapterRequest): Promise<WorkerResult> {
+  async run(request: AdapterRequest): Promise<ProviderAdapterRunResult> {
     return runProviderProcess("codex", request, this.options);
   }
 }

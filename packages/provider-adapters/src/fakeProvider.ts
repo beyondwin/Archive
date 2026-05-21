@@ -1,7 +1,7 @@
 import type { WorkerResult } from "@waygent/contracts";
 import { validateContract } from "@waygent/contracts";
 import { fakeCapabilityManifest } from "./capabilities";
-import type { AdapterRequest, ProviderAdapter, ProviderAdapterDescription } from "./types";
+import type { AdapterRequest, ProviderAdapter, ProviderAdapterDescription, ProviderAdapterRunResult } from "./types";
 
 export class FakeProviderAdapter implements ProviderAdapter {
   readonly manifest = fakeCapabilityManifest;
@@ -14,8 +14,9 @@ export class FakeProviderAdapter implements ProviderAdapter {
     };
   }
 
-  async run(request: AdapterRequest): Promise<WorkerResult> {
-    return validateContract<WorkerResult>("runway.worker_result.v1", {
+  async run(request: AdapterRequest): Promise<ProviderAdapterRunResult> {
+    const startedAt = new Date().toISOString();
+    const worker = validateContract<WorkerResult>("runway.worker_result.v1", {
       schema: "runway.worker_result.v1",
       task_id: request.task_id,
       candidate_id: request.candidate_id,
@@ -24,5 +25,17 @@ export class FakeProviderAdapter implements ProviderAdapter {
       summary: `Fake provider completed: ${request.prompt}`,
       evidence: { provider: "fake-provider", deterministic: true }
     });
+    return {
+      worker,
+      process: {
+        stdout: "",
+        stderr: "",
+        exit_code: 0,
+        timed_out: false,
+        started_at: startedAt,
+        completed_at: new Date().toISOString(),
+        event_stream: null
+      }
+    };
   }
 }

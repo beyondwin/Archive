@@ -4,8 +4,15 @@ import { FakeProviderAdapter } from "../src";
 describe("fake provider", () => {
   test("returns deterministic worker result", async () => {
     const result = await new FakeProviderAdapter().run({ task_id: "task_demo", candidate_id: "candidate_demo", prompt: "demo" });
-    expect(result.status).toBe("completed");
-    expect(result.evidence.provider).toBe("fake-provider");
+    expect(result.worker.status).toBe("completed");
+    expect(result.worker.evidence.provider).toBe("fake-provider");
+    expect(result.process).toMatchObject({
+      stdout: "",
+      stderr: "",
+      exit_code: 0,
+      timed_out: false,
+      event_stream: null
+    });
   });
 
   test("describes the offline boundary without direct AgentLens writes", () => {

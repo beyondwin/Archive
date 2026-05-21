@@ -1,7 +1,6 @@
-import type { WorkerResult } from "@waygent/contracts";
 import { claudeCapabilityManifest } from "./capabilities";
 import { runProviderProcess } from "./processAdapters";
-import type { AdapterRequest, ProviderAdapter, ProviderAdapterDescription, ProviderProcessOptions } from "./types";
+import type { AdapterRequest, ProviderAdapter, ProviderAdapterDescription, ProviderAdapterRunResult, ProviderProcessOptions } from "./types";
 
 export class ClaudeProviderAdapter implements ProviderAdapter {
   readonly manifest = claudeCapabilityManifest;
@@ -16,7 +15,7 @@ export class ClaudeProviderAdapter implements ProviderAdapter {
     };
   }
 
-  async run(request: AdapterRequest): Promise<WorkerResult> {
+  async run(request: AdapterRequest): Promise<ProviderAdapterRunResult> {
     return runProviderProcess("claude", request, this.options);
   }
 }

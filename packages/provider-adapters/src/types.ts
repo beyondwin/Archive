@@ -26,14 +26,31 @@ export interface ProviderProcessOptions {
   timeout_ms?: number;
 }
 
+export interface ProviderAdapterRunResult {
+  worker: WorkerResult;
+  process: {
+    stdout: string;
+    stderr: string;
+    exit_code: number | null;
+    timed_out: boolean;
+    started_at: string;
+    completed_at: string | null;
+    event_stream: string | null;
+  };
+}
+
 export interface ProviderAdapter {
   manifest: ProviderCapabilityManifest;
   describe(): ProviderAdapterDescription;
-  run(request: AdapterRequest): Promise<WorkerResult>;
+  run(request: AdapterRequest): Promise<ProviderAdapterRunResult>;
 }
 
 export interface ProcessAdapterOutput {
-  exitCode: number;
+  exitCode: number | null;
   stdout: string;
   stderr: string;
+  timedOut?: boolean;
+  startedAt?: string;
+  completedAt?: string | null;
+  eventStream?: string | null;
 }

@@ -18,16 +18,24 @@ describe("Claude adapter normalization", () => {
       prompt: "demo"
     });
 
-    expect(result.status).toBe("completed");
-    expect(result.summary).toBe("claude ran true");
-    expect(result.changed_files).toEqual(["b.ts"]);
-    expect(result.evidence).toMatchObject({ provider: "claude" });
+    expect(result.worker.status).toBe("completed");
+    expect(result.worker.summary).toBe("claude ran true");
+    expect(result.worker.changed_files).toEqual(["b.ts"]);
+    expect(result.worker.evidence).toMatchObject({ provider: "claude" });
+    expect(result.process.exit_code).toBe(0);
+    expect(result.process.stdout).toContain("claude ran true");
   });
 
   test("classifies malformed output", () => {
-    expect(normalizeProcessOutput("claude", "task_demo", "candidate_demo", { exitCode: 0, stdout: "not-json", stderr: "" }).failure_class).toBe(
-      "malformed_result"
-    );
+    const result = normalizeProcessOutput("claude", "task_demo", "candidate_demo", { exitCode: 0, stdout: "not-json", stderr: "raw err" });
+
+    expect(result.worker.failure_class).toBe("malformed_result");
+    expect(result.process).toMatchObject({
+      stdout: "not-json",
+      stderr: "raw err",
+      exit_code: 0,
+      timed_out: false
+    });
   });
 
   test("normalizes Claude JSON result envelopes with fenced worker JSON", () => {
@@ -40,9 +48,25 @@ describe("Claude adapter normalization", () => {
       stderr: ""
     });
 
-    expect(result.status).toBe("completed");
-    expect(result.summary).toBe("claude envelope done");
-    expect(result.changed_files).toEqual(["d.ts"]);
+    expect(result.worker.status).toBe("completed");
+    expect(result.worker.summary).toBe("claude envelope done");
+    expect(result.worker.changed_files).toEqual(["d.ts"]);
+    expect(result.process.stdout).toContain("```json");
+  });
+
+  test("preserves provider supplied failure_class from fenced Claude JSON", () => {
+    const result = normalizeProcessOutput("claude", "task_demo", "candidate_demo", {
+      exitCode: 0,
+      stdout: [
+        "Claude summary:",
+        '```json\n{"status":"failed","failure_class":"review_changes_requested","summary":"review found issues","changed_files":[],"evidence":{"command":"claude"}}\n```'
+      ].join("\n"),
+      stderr: "review stderr"
+    });
+
+    expect(result.worker.status).toBe("failed");
+    expect(result.worker.failure_class).toBe("review_changes_requested");
+    expect(result.process.stderr).toBe("review stderr");
   });
 
   test("describes the process boundary without direct AgentLens writes", () => {
@@ -59,7 +83,9 @@ describe("Claude adapter normalization", () => {
       candidate_id: "candidate_demo",
       prompt: "demo"
     });
-    expect(result.status).toBe("failed");
-    expect(result.failure_class).toBe("adapter_crashed");
+    expect(result.worker.status).toBe("failed");
+    expect(result.worker.failure_class).toBe("adapter_crashed");
+    expect(result.process.exit_code).toBeNull();
+    expect(result.process.stderr).toContain("failed to start");
   });
 });
