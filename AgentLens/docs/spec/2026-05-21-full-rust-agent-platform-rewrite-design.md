@@ -8,6 +8,13 @@
 | Scope | Full rewrite of AgentRunway runtime, AgentLens backend, CLI, store, evaluator, API server, and repository structure |
 | Decision | Full Rust product, with TypeScript/React retained only for the web dashboard |
 
+> **Implementation note (2026-05-21):** This target architecture remains the
+> selected direction, but implementation must start with the contract-first
+> reconciliation in
+> `2026-05-21-contract-first-unified-agent-platform-design.md`. Do not execute
+> the Phase 1 skeleton plan as written if it introduces competing `agent.*`
+> runtime schema names or bypasses AgentLens/AgentRunway compatibility.
+
 ## 0. Summary
 
 This design replaces the current Python-based AgentRunway and AgentLens backend with a single Rust product. The new system treats AgentRunway and AgentLens as product roles inside one evidence-driven agent platform:
