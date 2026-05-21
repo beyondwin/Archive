@@ -5,6 +5,7 @@ Default local verification:
 ```bash
 bun install
 bun run check
+bun run --cwd apps/console build
 bun run platform:demo
 bun run check:legacy
 ```

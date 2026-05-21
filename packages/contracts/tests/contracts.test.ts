@@ -104,4 +104,21 @@ describe("Waygent contracts", () => {
       })
     ).toBeTruthy();
   });
+
+  test("validates lens runway projection contract", () => {
+    expect(
+      validateContract("lens.runway_projection.v1", {
+        schema: "lens.runway_projection.v1",
+        run_id: "run_demo",
+        status: "completed",
+        safe_wave: ["task_demo"],
+        trust_status: "trusted",
+        event_count: 6,
+        legacy_source: null
+      })
+    ).toMatchObject({
+      schema: "lens.runway_projection.v1",
+      run_id: "run_demo"
+    });
+  });
 });

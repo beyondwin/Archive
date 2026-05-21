@@ -7,7 +7,7 @@ import { runWaygentDemo } from "../src";
 describe("Waygent orchestrator", () => {
   test("runs deterministic fake provider lifecycle", async () => {
     const result = await runWaygentDemo({ root: mkdtempSync(join(tmpdir(), "waygent-run-")) });
-    expect(result.events).toHaveLength(3);
+    expect(result.events).toHaveLength(6);
     expect(result.trust_report.trust_status).toBe("trusted");
     expect(result.projection.safe_wave).toEqual(["task_demo"]);
   });

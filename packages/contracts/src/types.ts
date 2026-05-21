@@ -68,6 +68,16 @@ export interface AgentLensEvent {
   artifacts?: ArtifactReference[];
 }
 
+export interface LensRunwayProjection {
+  schema: "lens.runway_projection.v1";
+  run_id: string;
+  status: RunStatus;
+  safe_wave: string[];
+  trust_status: "trusted" | "failed" | "insufficient_evidence";
+  event_count: number;
+  legacy_source: "agentrunway" | null;
+}
+
 export interface ArtifactReference {
   artifact_id?: string;
   path: string;
