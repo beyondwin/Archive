@@ -54,7 +54,12 @@ docs/_graph/*
 !docs/_graph/README.md
 
 # Local AI agent state
-.codex/
+.codex/*
+!.codex/
+!.codex/config.toml
+!.codex/rules/
+!.codex/rules/*.rules
+!.codex/README.md
 .claude/
 .codex-orchestrator/
 .orchestrator/
@@ -67,3 +72,7 @@ docs/_graph/*
 # Superpowers brainstorming scratchpad (top-level dir; persisted
 # spec/plan files live under AgentLens/docs/spec/ and AgentLens/docs/plan/)
 .superpowers/
+.cursor/*
+!.cursor/
+!.cursor/rules/
+!.cursor/rules/*.mdc

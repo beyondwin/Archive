@@ -1,0 +1,18 @@
+---
+description: Archive repository instructions for Cursor agents
+alwaysApply: true
+---
+
+# Archive Agent Instructions
+
+Read `AGENTS.md` first. It is the canonical instruction file for this
+repository.
+
+Important defaults:
+
+- Active code lives in `AgentLens/` and `skills/`.
+- Follow subtree `AGENTS.md` files before editing skill internals.
+- Keep `.agentlens/`, `.claude/`, `.codex-orchestrator/`, `.orchestrator/`,
+  `.superpowers/`, caches, build outputs, and secrets out of git.
+- Verify changes with the smallest relevant command and report the command
+  result.

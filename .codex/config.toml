@@ -1,0 +1,11 @@
+# Project-scoped Codex defaults for Archive.
+# User, profile, CLI, and managed configuration can override these values.
+
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+web_search = "cached"
+model_reasoning_effort = "high"
+
+# Keep alternate agent files discoverable without crowding out AGENTS.md.
+project_doc_fallback_filenames = ["CLAUDE.md", "GEMINI.md"]
+project_doc_max_bytes = 65536
