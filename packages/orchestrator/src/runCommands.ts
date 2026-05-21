@@ -1,8 +1,11 @@
+import { readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import type { AgentLensEvent, FailureClass, RunStatus } from "@waygent/contracts";
-import { readEvents, readLatestRunId, rebuildRunSummary, runPaths } from "@waygent/lens-store";
+import { appendEvent, readEvents, readLatestRunId, rebuildRunSummary, runPaths } from "@waygent/lens-store";
 import { projectFailureSummary, projectTrustReport } from "@waygent/lens-projectors";
-import { hasRunState, readRunState, type WaygentRunState } from "./runState";
+import { hasRunState, readRunState, writeRunState, type WaygentRunState } from "./runState";
 export { buildRunEvent, nextRunEvent } from "./runEvents";
+import { nextRunEvent } from "./runEvents";
 
 export interface RunCommandOptions {
   root: string;
@@ -90,4 +93,59 @@ export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): {
     allowed_actions: explanation.blocked_by === "verification_failed" ? ["retry_with_evidence", "update_plan"] : ["inspect_run"],
     dry_run: options.dry_run ?? false
   };
+}
+
+export function applyRun(options: RunCommandOptions & { workspace: string }): {
+  command: "apply";
+  run_id: string;
+  status: "blocked" | "applied";
+  reason?: string;
+} {
+  const runId = resolveRunId(options);
+  const paths = runPaths(options.root, runId);
+  if (isDirtySourceCheckout(options.workspace)) {
+    appendEvent(paths.events, nextRunEvent(paths.events, {
+      run_id: runId,
+      event_type: "runway.apply_blocked",
+      phase: "apply",
+      outcome: "blocked",
+      summary: "Apply blocked by dirty source checkout.",
+      payload: { reason: "dirty_source_checkout" },
+      trust_impact: "requires_review"
+    }));
+    if (hasRunState(options.root, runId)) {
+      const state = readRunState(options.root, runId);
+      writeRunState(options.root, { ...state, apply: { status: "blocked", reason: "dirty_source_checkout" } });
+    }
+    return { command: "apply", run_id: runId, status: "blocked", reason: "dirty_source_checkout" };
+  }
+
+  const checkpointRef = hasRunState(options.root, runId)
+    ? readRunState(options.root, runId).tasks.find((task) => task.checkpoint_ref)?.checkpoint_ref
+    : undefined;
+  appendEvent(paths.events, nextRunEvent(paths.events, {
+    run_id: runId,
+    event_type: "runway.apply_completed",
+    phase: "apply",
+    outcome: "success",
+    summary: "Verified checkpoint applied.",
+    payload: { checkpoint_ref: checkpointRef ?? null }
+  }));
+  if (hasRunState(options.root, runId)) {
+    const state = readRunState(options.root, runId);
+    writeRunState(options.root, { ...state, status: "completed", apply: { status: "applied" } });
+  }
+  return { command: "apply", run_id: runId, status: "applied" };
+}
+
+function isDirtySourceCheckout(workspace: string): boolean {
+  const gitStatus = spawnSync("git", ["status", "--porcelain"], {
+    cwd: workspace,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (gitStatus.status === 0) {
+    return gitStatus.stdout.trim().length > 0;
+  }
+  return readdirSync(workspace).some((entry) => !entry.startsWith(".git"));
 }
