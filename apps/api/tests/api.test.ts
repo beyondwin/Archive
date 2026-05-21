@@ -53,6 +53,22 @@ describe("Waygent local API routes", () => {
     });
   });
 
+  test("GET /runs/:runId exposes execution explanation for real v2 runs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-api-explanation-"));
+    await runWaygentDemo({ root, run_id: "run_api_explanation" });
+    const realHandler = createApiHandler({ runRoot: root });
+
+    const response = await realHandler(new Request("http://waygent.local/runs/run_api_explanation"));
+    const detail = await response.json();
+
+    expect(detail.execution_explanation).toMatchObject({
+      schema: "waygent.execution_explanation.v1",
+      run_id: "run_api_explanation"
+    });
+    expect(Array.isArray(detail.execution_explanation.waves)).toBe(true);
+    expect(Array.isArray(detail.execution_explanation.recommended_next_actions)).toBe(true);
+  });
+
   test("GET /runs and /runs/:runId prefer v2 apply readiness over successful verification events", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-api-v2-readiness-"));
     const runId = "run_not_ready";

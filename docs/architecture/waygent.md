@@ -21,6 +21,8 @@ Its implementation plan is tracked in
 [`../migration/2026-05-21-waygent-operational-trust-loop-implementation-plan.md`](../migration/2026-05-21-waygent-operational-trust-loop-implementation-plan.md).
 The follow-up speed and quality target is documented in
 [`2026-05-21-waygent-safe-wave-parallel-runtime-design.md`](./2026-05-21-waygent-safe-wave-parallel-runtime-design.md).
+Execution intelligence is documented in
+[`../superpowers/specs/2026-05-22-waygent-execution-intelligence-design.md`](../superpowers/specs/2026-05-22-waygent-execution-intelligence-design.md).
 Waygent owns the product runtime directly; KWS executor skills are not product
 dependencies.
 

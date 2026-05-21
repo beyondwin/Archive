@@ -34,6 +34,16 @@ const failureClassValues = [
 ] as const;
 const riskValues = ["low", "medium", "high"] as const;
 const providerRoleValues = ["implement", "review", "fix", "verify_assist"] as const;
+const executionPhaseNameValues = [
+  "worktree_setup",
+  "provider",
+  "verification",
+  "checkpoint",
+  "checkpoint_dry_run",
+  "reconciliation",
+  "wave",
+  "total"
+] as const;
 const fileClaimSchema = {
   type: "object",
   additionalProperties: false,
@@ -41,6 +51,33 @@ const fileClaimSchema = {
   properties: {
     path: { type: "string", minLength: 1 },
     mode: { enum: ["owned", "shared_append", "read_only"] }
+  }
+} as const;
+
+const executionPhaseTimingSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["phase", "started", "completed", "duration_ms"],
+  properties: {
+    phase: { enum: executionPhaseNameValues },
+    started: { type: "string", pattern: isoTimestamp, nullable: true },
+    completed: { type: "string", pattern: isoTimestamp, nullable: true },
+    duration_ms: { type: "number", minimum: 0, nullable: true }
+  }
+} as const;
+
+const artifactIndexEntrySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["ref", "media_type", "sha256", "byte_length", "producer_phase", "task_id", "created_at"],
+  properties: {
+    ref: { type: "string", minLength: 1 },
+    media_type: { type: "string", minLength: 1 },
+    sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    byte_length: { type: "number", minimum: 0 },
+    producer_phase: { enum: [...executionPhaseNameValues, "task_packet", "combined_apply", "decision"] },
+    task_id: { type: "string", pattern: idPattern, nullable: true },
+    created_at: { type: "string", pattern: isoTimestamp }
   }
 } as const;
 
@@ -545,7 +582,7 @@ export const waygentWorktreeManifestSchema = {
     path: { type: "string", minLength: 1 },
     source: { type: "string", minLength: 1 },
     source_commit: { type: "string", nullable: true },
-    cleanup_status: { enum: ["active", "removed", "unknown"] }
+    cleanup_status: { enum: ["active", "removed", "failed", "unknown"] }
   }
 } as const;
 
@@ -580,7 +617,8 @@ const waygentRunStateTaskV2Schema = {
     checkpoint_refs: { type: "array", items: { type: "string" } },
     latest_failure_class: { type: "string", nullable: true },
     decision_packet_ref: { type: "string", nullable: true },
-    timing: { type: "object", additionalProperties: { type: "string" } }
+    timing: { type: "object", additionalProperties: { type: "string" } },
+    phase_timings: { type: "array", items: executionPhaseTimingSchema }
   }
 } as const;
 
@@ -633,6 +671,7 @@ export const waygentRunStateV2Schema = {
     current_phase: { enum: ["preflight", "dispatch", "review", "verify", "recover", "apply", "complete"] },
     preflight: waygentSourcePreflightSchema,
     worktrees: { type: "array", items: waygentWorktreeManifestSchema },
+    artifact_index: { type: "array", items: artifactIndexEntrySchema },
     tasks: { type: "object", additionalProperties: waygentRunStateTaskV2Schema },
     safe_waves: {
       type: "array",

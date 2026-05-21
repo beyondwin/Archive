@@ -1,13 +1,14 @@
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentLensEvent, WaygentRunStateV2 } from "@waygent/contracts";
+import type { AgentLensEvent, ArtifactIndexEntry, WaygentRunStateV2 } from "@waygent/contracts";
 import { planWorktree } from "@waygent/kernel-client";
 import { projectFailureSummary, projectTimeline, projectTrustReport } from "@waygent/lens-projectors";
 import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeLatestRunId } from "@waygent/lens-store";
 import type { ProviderProcessOptions } from "@waygent/provider-adapters";
 import { buildDurableProjection } from "@waygent/runway-control";
-import { createCombinedCheckpointPatchArtifact } from "./checkpointArtifacts";
+import { artifactIndexEntry, mergeArtifactIndex } from "./artifactIndex";
+import { createCombinedCheckpointPatchArtifact, type CombinedCheckpointPatchResult } from "./checkpointArtifacts";
 import { buildCompletionAudit } from "./completionAudit";
 import { resolveExecutionProfile, type ExecutionProfile, type ProfileOverride, type ProviderName } from "./executionProfile";
 import { resolvePlanInput } from "./planDiscovery";
@@ -104,6 +105,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     current_phase: "preflight",
     preflight,
     worktrees: [],
+    artifact_index: [],
     tasks: Object.fromEntries(parsed.tasks.map((candidate) => [candidate.id, {
       id: candidate.id,
       status: safeWave.includes(candidate.id) ? "ready" : "pending",
@@ -312,6 +314,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
         source: state.workspace
       })
       : undefined;
+    state.artifact_index = mergeArtifactIndex(state.artifact_index, combinedApplyArtifactEntries(combinedApplyEvidence));
     state.completion_audit = buildCompletionAudit({
       state,
       required_checks: parsed.tasks.flatMap((task) => task.verification_commands.length > 0 ? task.verification_commands : ["printf hello"]),
@@ -403,6 +406,7 @@ function replayTaskExecutionResult(context: RunExecutionContext, result: Waygent
     state.current_phase = "verify";
     state.provider_attempts = [...state.provider_attempts, result.provider_attempt];
     state.verification = [...state.verification, ...result.verification_records];
+    state.artifact_index = mergeArtifactIndex(state.artifact_index, result.artifact_index_entries);
     state.worktrees = [
       ...(state.worktrees ?? []).filter((item) => item.task_id !== result.task_id),
       result.worktree_manifest
@@ -418,6 +422,7 @@ function replayTaskExecutionResult(context: RunExecutionContext, result: Waygent
       task.timing.started = result.timing.started;
       task.timing.completed = result.timing.completed;
       task.timing.duration_ms = String(result.timing.duration_ms);
+      task.phase_timings = result.phase_timings;
     }
   });
   for (const event of result.events) {
@@ -471,6 +476,16 @@ function recordWaveTiming(
       duration_ms: timing.duration_ms
     };
   });
+}
+
+function combinedApplyArtifactEntries(combined: CombinedCheckpointPatchResult | undefined): ArtifactIndexEntry[] {
+  if (!combined) return [];
+  return [
+    combined.patch_artifact
+      ? artifactIndexEntry({ artifact: combined.patch_artifact, producer_phase: "combined_apply", task_id: null })
+      : null,
+    artifactIndexEntry({ artifact: combined.evidence_artifact, producer_phase: "combined_apply", task_id: null })
+  ].filter((entry): entry is ArtifactIndexEntry => entry !== null);
 }
 
 function providerProfileRecord(profile: ReturnType<typeof resolveExecutionProfile>): Record<string, unknown> {

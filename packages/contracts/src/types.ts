@@ -147,13 +147,80 @@ export interface WaygentSourcePreflight {
   decision_packet_ref: string | null;
 }
 
+export type ExecutionPhaseName =
+  | "worktree_setup"
+  | "provider"
+  | "verification"
+  | "checkpoint"
+  | "checkpoint_dry_run"
+  | "reconciliation"
+  | "wave"
+  | "total";
+
+export interface ExecutionPhaseTiming {
+  phase: ExecutionPhaseName;
+  started: string | null;
+  completed: string | null;
+  duration_ms: number | null;
+}
+
+export interface ArtifactIndexEntry {
+  ref: string;
+  media_type: string;
+  sha256: string;
+  byte_length: number;
+  producer_phase: ExecutionPhaseName | "task_packet" | "combined_apply" | "decision";
+  task_id: string | null;
+  created_at: string;
+}
+
+export interface ExecutionBarrier {
+  task_id: string;
+  reason: string;
+  detail: string;
+  wave_id: string | null;
+  category: "dependency" | "checkpoint" | "file_claim" | "risk" | "failure" | "source" | "unknown";
+}
+
+export interface ExecutionCostHotspot {
+  scope: "run" | "wave" | "task";
+  phase: ExecutionPhaseName;
+  duration_ms: number;
+  task_id: string | null;
+  wave_id: string | null;
+}
+
+export interface ArtifactHealthSummary {
+  indexed_count: number;
+  missing_count: number;
+  drift_count: number;
+  readiness_artifact_refs: string[];
+}
+
+export interface ExecutionExplanationProjection {
+  schema: "waygent.execution_explanation.v1";
+  run_id: string;
+  status_summary: string;
+  waves: Array<{
+    wave_id: string;
+    ready: string[];
+    concurrency: number | null;
+    duration_ms: number | null;
+    withheld: Array<{ task_id: string; reason: string; detail: string | null }>;
+  }>;
+  barriers: ExecutionBarrier[];
+  cost_hotspots: ExecutionCostHotspot[];
+  artifact_health: ArtifactHealthSummary;
+  recommended_next_actions: string[];
+}
+
 export interface WaygentWorktreeManifest {
   task_id: string;
   branch: string;
   path: string;
   source: string;
   source_commit: string | null;
-  cleanup_status: "active" | "removed" | "unknown";
+  cleanup_status: "active" | "removed" | "failed" | "unknown";
 }
 
 export interface WaygentRunStateTaskV2 {
@@ -170,6 +237,7 @@ export interface WaygentRunStateTaskV2 {
   latest_failure_class: FailureClass | string | null;
   decision_packet_ref: string | null;
   timing: Record<string, string>;
+  phase_timings?: ExecutionPhaseTiming[];
 }
 
 export interface WaygentRunStateV2 {
@@ -190,6 +258,7 @@ export interface WaygentRunStateV2 {
   current_phase: WaygentCurrentPhase;
   preflight?: WaygentSourcePreflight;
   worktrees?: WaygentWorktreeManifest[];
+  artifact_index?: ArtifactIndexEntry[];
   tasks: Record<string, WaygentRunStateTaskV2>;
   safe_waves: Array<{
     wave_id: string;

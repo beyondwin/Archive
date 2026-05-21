@@ -1,8 +1,8 @@
-import { spawnSync } from "node:child_process";
-import { cpSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import type {
-  AgentLensEvent,
+  ArtifactIndexEntry,
+  ExecutionPhaseTiming,
   FailureClass,
   ProviderAttempt,
   ProviderProcessEvidence,
@@ -10,8 +10,7 @@ import type {
   WorkerResult
 } from "@waygent/contracts";
 import { buildTaskPacket } from "@waygent/context-packer";
-import { buildWorktreeManifest, planWorktree } from "@waygent/kernel-client";
-import { writeArtifact } from "@waygent/lens-store";
+import { sha256, writeArtifact } from "@waygent/lens-store";
 import {
   ClaudeProviderAdapter,
   CodexProviderAdapter,
@@ -20,12 +19,14 @@ import {
   type ProviderProcessOptions
 } from "@waygent/provider-adapters";
 import { mergeCandidate } from "@waygent/runway-control";
+import { artifactIndexEntry } from "./artifactIndex";
 import { createCheckpointArtifact, dryRunCheckpointPatch } from "./checkpointArtifacts";
 import { listActualChangedFiles, validateDiffScope } from "./diffScope";
 import type { ProviderName } from "./executionProfile";
 import type { ParsedWaygentTask } from "./planParser";
 import type { RunEventInput } from "./runEvents";
 import { runVerificationCommands } from "./verification";
+import { prepareManagedTaskWorktree } from "./worktreeManager";
 
 export type TaskExecutionEventIntent = Omit<RunEventInput, "sequence">;
 
@@ -39,8 +40,10 @@ export interface WaygentTaskExecutionResult {
   provider_attempt: ProviderAttempt;
   verification_records: Array<Record<string, unknown>>;
   checkpoint_refs: string[];
+  artifact_index_entries: ArtifactIndexEntry[];
   events: TaskExecutionEventIntent[];
   timing: { started: string; completed: string; duration_ms: number };
+  phase_timings: ExecutionPhaseTiming[];
 }
 
 export interface ExecuteWaygentTaskInput {
@@ -58,18 +61,20 @@ export interface ExecuteWaygentTaskInput {
 export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promise<WaygentTaskExecutionResult> {
   const startedAtMs = performance.now();
   const started = new Date().toISOString();
-  const taskWorktree = planWorktree({
+  const managedWorktree = prepareManagedTaskWorktree({
     run_id: input.run_id,
     task_id: input.task.id,
     workspace: input.workspace,
     worktree_root: input.worktree_root
   });
-  const worktreeManifest = buildWorktreeManifest({
-    ...taskWorktree,
-    task_id: input.task.id,
-    source_commit: currentGitHead(input.workspace)
-  });
-  prepareTaskWorktree(input.workspace, taskWorktree.path);
+  const worktreeManifest = managedWorktree.manifest;
+  const taskWorktree = {
+    path: worktreeManifest.path,
+    branch: worktreeManifest.branch,
+    source: worktreeManifest.source
+  };
+  const phaseTimings: ExecutionPhaseTiming[] = [managedWorktree.timing];
+  const artifactIndexEntries: ArtifactIndexEntry[] = [];
 
   const commands = input.task.verification_commands.length > 0 ? input.task.verification_commands : ["printf hello"];
   const packet = buildTaskPacket({
@@ -82,13 +87,15 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     previous_failures: []
   });
   const packetArtifact = writeArtifact(inputRunRoot(input), `task_packets/${input.task.id}.json`, `${JSON.stringify(packet, null, 2)}\n`);
+  artifactIndexEntries.push(artifactIndexEntry({ artifact: packetArtifact, producer_phase: "task_packet", task_id: input.task.id }));
   const packetPath = join(inputRunRoot(input), packetArtifact.path);
   const prompt = buildTaskPrompt(input.task, packetPath);
   const attemptId = `attempt_${input.task.id}_1`;
   const attemptStarted = new Date().toISOString();
   const stdinArtifact = writeArtifact(inputRunRoot(input), `provider/${attemptId}.stdin.txt`, prompt, "text/plain");
+  artifactIndexEntries.push(artifactIndexEntry({ artifact: stdinArtifact, producer_phase: "provider", task_id: input.task.id }));
   const provider = createProviderAdapter(input.provider, input.provider_processes);
-  const adapterResult = await provider.run({
+  const { value: adapterResult, timing: providerTiming } = await measurePhase("provider", () => provider.run({
     task_id: input.task.id,
     candidate_id: `candidate_${input.task.id}`,
     role: "implement",
@@ -96,11 +103,17 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     task_packet_path: packetPath,
     cwd: taskWorktree.path,
     changed_files: writableClaimPaths(input.task)
-  });
+  }));
+  phaseTimings.push(providerTiming);
   const { worker, processEvidence } = normalizeProviderRunResult(adapterResult);
   const workerArtifact = writeArtifact(inputRunRoot(input), `worker/${input.task.id}.json`, JSON.stringify(worker, null, 2));
   const stdoutArtifact = writeArtifact(inputRunRoot(input), `provider/${attemptId}.stdout.txt`, processEvidence?.stdout ?? JSON.stringify(worker), "text/plain");
   const stderrArtifact = writeArtifact(inputRunRoot(input), `provider/${attemptId}.stderr.txt`, processEvidence?.stderr ?? "", "text/plain");
+  artifactIndexEntries.push(
+    artifactIndexEntry({ artifact: workerArtifact, producer_phase: "provider", task_id: input.task.id }),
+    artifactIndexEntry({ artifact: stdoutArtifact, producer_phase: "provider", task_id: input.task.id }),
+    artifactIndexEntry({ artifact: stderrArtifact, producer_phase: "provider", task_id: input.task.id })
+  );
   const attempt: ProviderAttempt = {
     schema: "runway.provider_attempt.v1",
     attempt_id: attemptId,
@@ -133,15 +146,17 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
 
   if (input.provider === "fake") materializeFakeProviderResult(taskWorktree.path, input.task);
 
-  const verification = await runVerificationCommands({
+  const { value: verification, timing: verificationTiming } = await measurePhase("verification", () => runVerificationCommands({
     run_id: input.run_id,
     task_id: input.task.id,
     cwd: taskWorktree.path,
     commands
-  });
+  }));
+  phaseTimings.push(verificationTiming);
   const verificationRecords = verification.results.map((kernel, index) => {
     const command = commands[index] ?? "";
     const kernelArtifact = writeArtifact(inputRunRoot(input), `kernel/${kernel.request_id}.json`, JSON.stringify(kernel, null, 2));
+    artifactIndexEntries.push(artifactIndexEntry({ artifact: kernelArtifact, producer_phase: "verification", task_id: input.task.id }));
     return {
       verification_id: kernel.request_id,
       task_id: input.task.id,
@@ -195,7 +210,7 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
       ? { merged: false }
       : mergeCandidate({ task_id: input.task.id, candidate_id: worker.candidate_id, reviewed: true, verified: true });
     if (verified.merged && writableClaimPaths(input.task).length > 0 && scopeValidation.ok) {
-      const checkpoint = createCheckpointArtifact({
+      const { value: checkpoint, timing: checkpointTiming } = await measurePhase("checkpoint", () => createCheckpointArtifact({
         run_root: inputRunRoot(input),
         run_id: input.run_id,
         task_id: input.task.id,
@@ -203,12 +218,34 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
         worktree_path: taskWorktree.path,
         changed_files: scopeValidation.changed_files,
         verification_refs: verificationRecords.map((record) => String(record.kernel_result_ref))
-      });
-      const dryRun = dryRunCheckpointPatch({
+      }));
+      phaseTimings.push(checkpointTiming);
+      artifactIndexEntries.push(
+        artifactIndexEntry({
+          artifact: {
+            path: checkpoint.patch_ref,
+            sha256: checkpoint.patch_sha256,
+            byte_length: checkpoint.patch_byte_length,
+            media_type: "text/x-diff"
+          },
+          producer_phase: "checkpoint",
+          task_id: input.task.id
+        })
+      );
+      const { value: dryRun, timing: dryRunTiming } = await measurePhase("checkpoint_dry_run", () => dryRunCheckpointPatch({
         run_root: inputRunRoot(input),
         checkpoint_ref: checkpoint.manifest_ref,
         source: input.workspace
-      });
+      }));
+      phaseTimings.push(dryRunTiming);
+      artifactIndexEntries.push(
+        artifactIndexEntry({
+          artifact: artifactReferenceFromRunRef(inputRunRoot(input), checkpoint.manifest_ref, "application/json"),
+          producer_phase: "checkpoint",
+          task_id: input.task.id
+        }),
+        artifactIndexEntry({ artifact: dryRun.evidence_artifact, producer_phase: "checkpoint_dry_run", task_id: input.task.id })
+      );
       events.push({
         run_id: input.run_id,
         event_type: "runway.checkpoint_created",
@@ -241,6 +278,12 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
   }
 
   const completed = new Date().toISOString();
+  const totalTiming: ExecutionPhaseTiming = {
+    phase: "total",
+    started,
+    completed,
+    duration_ms: Math.round(performance.now() - startedAtMs)
+  };
   return {
     task_id: input.task.id,
     status: verificationPassed && latestFailureClass !== "diff_scope_failed" ? "verified" : "blocked",
@@ -251,8 +294,34 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     provider_attempt: attempt,
     verification_records: verificationRecords,
     checkpoint_refs: checkpointRefs,
+    artifact_index_entries: artifactIndexEntries,
     events,
-    timing: { started, completed, duration_ms: Math.round(performance.now() - startedAtMs) }
+    timing: { started, completed, duration_ms: totalTiming.duration_ms ?? 0 },
+    phase_timings: [...phaseTimings, totalTiming]
+  };
+}
+
+async function measurePhase<T>(
+  phase: ExecutionPhaseTiming["phase"],
+  run: () => Promise<T> | T
+): Promise<{ value: T; timing: ExecutionPhaseTiming }> {
+  const startedAtMs = performance.now();
+  const started = new Date().toISOString();
+  const value = await run();
+  const completed = new Date().toISOString();
+  return {
+    value,
+    timing: { phase, started, completed, duration_ms: Math.round(performance.now() - startedAtMs) }
+  };
+}
+
+function artifactReferenceFromRunRef(runRoot: string, ref: string, mediaType: string) {
+  const bytes = readFileSync(join(runRoot, ref));
+  return {
+    path: ref,
+    sha256: sha256(bytes),
+    byte_length: bytes.byteLength,
+    media_type: mediaType
   };
 }
 
@@ -297,64 +366,6 @@ function materializeFakeProviderResult(worktree: string, task: ParsedWaygentTask
     mkdirSync(dirname(target), { recursive: true });
     writeFileSync(target, `Waygent fake provider output for ${task.id}\n`);
   }
-}
-
-function prepareTaskWorktree(source: string, target: string): void {
-  rmSync(target, { recursive: true, force: true });
-  mkdirSync(dirname(target), { recursive: true });
-  if (!isGitWorktree(source)) {
-    mkdirSync(target, { recursive: true });
-    cpSync(source, target, { recursive: true, force: true });
-    initGitSnapshot(target);
-    return;
-  }
-  const clone = spawnSync("git", ["clone", "--quiet", "--shared", source, target], {
-    cwd: source,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  if (clone.status !== 0) {
-    throw new Error(`failed to create task worktree at ${target}: ${clone.stderr}`);
-  }
-  spawnSync("git", ["checkout", "--detach", "HEAD"], {
-    cwd: target,
-    encoding: "utf8",
-    stdio: ["ignore", "ignore", "ignore"]
-  });
-  const reset = spawnSync("git", ["reset", "--hard", "HEAD"], {
-    cwd: target,
-    encoding: "utf8",
-    stdio: ["ignore", "ignore", "pipe"]
-  });
-  if (reset.status !== 0) {
-    throw new Error(`failed to prepare task worktree at ${target}: ${reset.stderr}`);
-  }
-}
-
-function isGitWorktree(source: string): boolean {
-  const result = spawnSync("git", ["rev-parse", "--is-inside-work-tree"], {
-    cwd: source,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"]
-  });
-  return result.status === 0 && result.stdout.trim() === "true";
-}
-
-function initGitSnapshot(target: string): void {
-  spawnSync("git", ["init", "-q"], { cwd: target });
-  spawnSync("git", ["config", "user.email", "test@example.com"], { cwd: target });
-  spawnSync("git", ["config", "user.name", "Waygent"], { cwd: target });
-  spawnSync("git", ["add", "-A"], { cwd: target });
-  spawnSync("git", ["commit", "--allow-empty", "-q", "-m", "waygent base"], { cwd: target });
-}
-
-function currentGitHead(worktree: string): string | null {
-  const head = spawnSync("git", ["rev-parse", "HEAD"], {
-    cwd: worktree,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"]
-  });
-  return head.status === 0 ? head.stdout.trim() : null;
 }
 
 function writableClaimPaths(task: ParsedWaygentTask): string[] {

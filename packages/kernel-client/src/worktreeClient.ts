@@ -19,7 +19,7 @@ export interface PlannedWorktree {
 export interface WorktreeManifest extends PlannedWorktree {
   task_id: string;
   source_commit: string | null;
-  cleanup_status: "active" | "removed" | "unknown";
+  cleanup_status: "active" | "removed" | "failed" | "unknown";
 }
 
 export function planWorktree(options: {

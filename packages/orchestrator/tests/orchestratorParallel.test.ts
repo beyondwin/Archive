@@ -30,6 +30,9 @@ describe("Waygent safe-wave parallel execution", () => {
     expect(new Set(events.map((event) => event.sequence)).size).toBe(events.length);
     expect(firstWave.concurrency).toBe(4);
     expect(firstWave.timing).toMatchObject({ duration_ms: expect.any(Number) });
+    expect(state.artifact_index?.map((entry) => entry.producer_phase)).toEqual(
+      expect.arrayContaining(["task_packet", "provider", "verification", "checkpoint", "checkpoint_dry_run", "combined_apply"])
+    );
     expect(state.completion_audit).toMatchObject({ status: "passed" });
   });
 

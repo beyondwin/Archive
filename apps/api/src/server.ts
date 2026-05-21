@@ -10,6 +10,7 @@ import {
 import {
   projectApplyReadinessFromState,
   projectApplyState,
+  projectExecutionExplanationFromState,
   projectFailureSummary,
   projectTimeline,
   projectTrustReport
@@ -219,6 +220,7 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
   decision_packets: DecisionPacketMetadata[];
   drift: WaygentRunStateV2["drift"] | null;
   apply_readiness: ApplyReadinessProjection | null;
+  execution_explanation: ReturnType<typeof projectExecutionExplanationFromState> | null;
   failures: ReturnType<typeof projectFailureSummary>;
   timeline: ReturnType<typeof projectTimeline>;
   trust: ReturnType<typeof projectTrustReport>;
@@ -245,6 +247,7 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
     decision_packets: stateV2 ? decisionPacketMetadata(stateV2) : [],
     drift: stateV2?.drift ?? null,
     apply_readiness: applyReadiness,
+    execution_explanation: stateV2 ? projectExecutionExplanationFromState(stateV2) : null,
     failures: projectFailureSummary(events),
     timeline: projectTimeline(events),
     trust: projectTrustReport(events),

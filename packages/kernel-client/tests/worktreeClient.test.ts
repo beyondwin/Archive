@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { validateExplicitApply } from "../src";
-import { buildApplyGuard, buildWorktreeBranch, buildWorktreeManifest, planWorktree } from "../src/worktreeClient";
+import { buildApplyGuard, buildWorktreeBranch, buildWorktreeManifest, planWorktree, type WorktreeManifest } from "../src/worktreeClient";
 
 describe("worktree client", () => {
   test("refuses dirty source apply", () => {
@@ -51,5 +51,18 @@ describe("worktree apply guard", () => {
       source_commit: "abc123",
       cleanup_status: "active"
     });
+  });
+
+  test("allows failed cleanup manifests for reconciliation evidence", () => {
+    const manifest: WorktreeManifest = {
+      task_id: "task_demo",
+      branch: "waygent/run_demo/task_demo",
+      path: "/tmp/waygent-worktrees/run_demo/task_demo",
+      source: "/repo",
+      source_commit: "abc123",
+      cleanup_status: "failed"
+    };
+
+    expect(manifest.cleanup_status).toBe("failed");
   });
 });

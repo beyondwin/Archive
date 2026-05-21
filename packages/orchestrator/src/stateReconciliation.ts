@@ -23,6 +23,18 @@ export function reconcileRunState(root: string, runId: string): ReconciliationRe
   const state = readRunStateV2(root, runId);
   const records: ReconciliationRecord[] = [];
 
+  for (const entry of state.artifact_index ?? []) {
+    const absolute = resolveRunArtifactPath(state.run_root, entry.ref);
+    if (!existsSync(absolute)) {
+      records.push(missing(`indexed artifact is missing: ${entry.ref}`, entry.ref, entry.task_id ?? undefined));
+      continue;
+    }
+    const bytes = readFileSync(absolute);
+    if (sha256(bytes) !== entry.sha256 || bytes.byteLength !== entry.byte_length) {
+      records.push(drift(`indexed artifact digest does not match bytes: ${entry.ref}`, entry.ref, entry.task_id ?? undefined));
+    }
+  }
+
   for (const task of Object.values(state.tasks)) {
     if (task.task_packet_path) {
       if (!existsSync(task.task_packet_path)) {
