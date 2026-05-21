@@ -27,4 +27,24 @@ describe("Waygent task packets", () => {
     expect(packet.previous_failures[0]?.failure_class).toBe("verification_failed");
     expect(packet.sha256).toMatch(/^[a-f0-9]{64}$/);
   });
+
+  test("includes dependency checkpoint refs in task packets", () => {
+    const packet = buildTaskPacket({
+      run_id: "run_packet",
+      task: {
+        id: "task_dependent",
+        title: "Use base checkpoint",
+        dependencies: ["task_base"],
+        file_claims: [{ path: "dependent.txt", mode: "owned" }],
+        risk: "low",
+        verification_commands: ["test -f dependent.txt"]
+      },
+      role: "implement",
+      plan_excerpt: "Use base checkpoint",
+      spec_excerpt: "",
+      checkpoint_inputs: ["artifacts/checkpoints/task_base/candidate_task_base.json"]
+    });
+
+    expect(packet.checkpoint_inputs).toEqual(["artifacts/checkpoints/task_base/candidate_task_base.json"]);
+  });
 });
