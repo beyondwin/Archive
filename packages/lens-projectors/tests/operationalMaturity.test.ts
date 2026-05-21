@@ -46,6 +46,29 @@ describe("operational maturity projectors", () => {
     expect(projection.next_action).toContain("Run a dogfood check");
   });
 
+  test("surfaces apply blockers even when runtime execution completed", () => {
+    const state = makeState({
+      drift: {
+        last_checked_at: "2026-05-22T10:00:07.000Z",
+        records: [],
+        unrepaired_blockers: [{ failure_class: "state_drift", ref: "artifacts/reconciliation/drift.json" }]
+      }
+    });
+
+    const projection = projectOperationalMaturityFromState({ state, events: eventsFor(state.run_id) });
+
+    expect(projection.apply_readiness).toMatchObject({
+      status: "blocked",
+      reason: "state_drift"
+    });
+    expect(projection.hard_blocker).toMatchObject({
+      task_id: null,
+      failure_class: "state_drift",
+      summary: "run blocked by state_drift"
+    });
+    expect(projection.next_action).toBe("Resolve state_drift before resume or apply.");
+  });
+
   test("explains runtime cost with serial barriers and verification hotspots", () => {
     const state = makeState({
       safe_waves: [

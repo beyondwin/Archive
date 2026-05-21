@@ -63,6 +63,9 @@ function dogfoodFailedChecks(
   explain: { summary: string }
 ): string[] {
   const failures: string[] = [];
+  if (maturity.projection_errors.length > 0) {
+    failures.push(`projection_errors:${maturity.projection_errors.map((error) => error.projection).join(",")}`);
+  }
   if (maturity.dogfood_evidence.status !== "complete") {
     failures.push(`dogfood_evidence:${maturity.dogfood_evidence.status}`);
   }
