@@ -21,6 +21,18 @@ If a target run id already has durable evidence, `waygent run` stops with
 `run_id_already_exists` instead of deleting the prior run root. Use a fresh run
 id or a resume path; do not overwrite the only evidence for a failed run.
 
+From the Codex app or Codex CLI, `waygent run` defaults to Codex provider and
+`multi-agent` execution. `waygent demo` is offline-only and rejects live
+providers; explicit `--provider fake` remains the deterministic path for tests.
+When PATH does not expose a `waygent` binary, use the repo-local command
+`bun run waygent -- run ...`.
+
+`--plan` and `--spec` accept full paths or basenames from approved docs
+locations such as `docs/superpowers/plans/` and `docs/superpowers/specs/`.
+Ambiguous basenames fail with candidate paths instead of silently selecting
+one. Directory-bearing paths and markdown-looking spec filenames must exist;
+typos fail instead of being treated as inline spec text.
+
 ### Apply Readiness
 
 `ready` means all of the following are true:

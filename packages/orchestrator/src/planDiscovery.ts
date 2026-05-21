@@ -9,6 +9,11 @@ export interface PlanDiscoveryOptions {
   inline_plan?: string;
 }
 
+export interface SpecDiscoveryOptions {
+  workspace: string;
+  spec?: string;
+}
+
 export interface ResolvedPlanInput {
   markdown: string;
   path: string | null;
@@ -22,11 +27,19 @@ export function resolvePlanInput(options: PlanDiscoveryOptions): ResolvedPlanInp
     if (PLAN_MARKER.test(options.inline_plan)) return { markdown: options.inline_plan, path: null };
     const candidate = resolve(options.workspace, options.inline_plan);
     if (existsSync(candidate)) return readPlanFile(candidate);
-    return { markdown: options.inline_plan, path: null };
+    if (!options.plan_path && !options.latest && !options.topic) return { markdown: options.inline_plan, path: null };
   }
-  if (options.plan_path) return readPlanFile(resolve(options.workspace, options.plan_path));
+  if (options.plan_path) return readPlanFile(resolveMarkdownInput(options.workspace, options.plan_path, collectMarkdownPlans(options.workspace), "plan"));
   if (options.latest || options.topic) return discoverPlan(options);
   throw new Error("plan input required; pass --plan, --latest, or --topic");
+}
+
+export function resolveSpecInput(options: SpecDiscoveryOptions): ResolvedPlanInput {
+  if (!options.spec?.trim()) return { markdown: "", path: null };
+  const resolved = resolveMarkdownInput(options.workspace, options.spec, collectMarkdownSpecs(options.workspace), "spec");
+  if (existsSync(resolved)) return { markdown: readFileSync(resolved, "utf8"), path: resolved };
+  if (isPathLikeMarkdownInput(options.spec)) throw new Error(`spec not found: ${resolved}`);
+  return { markdown: options.spec, path: null };
 }
 
 export function discoverPlan(options: PlanDiscoveryOptions): ResolvedPlanInput {
@@ -54,6 +67,8 @@ function collectMarkdownPlans(workspace: string): string[] {
     workspace,
     join(workspace, "docs"),
     join(workspace, "docs", "plan"),
+    join(workspace, "docs", "plans"),
+    join(workspace, "docs", "superpowers", "plans"),
     join(workspace, "docs", "migration"),
     join(workspace, "components", "agentlens", "docs", "plan")
   ];
@@ -62,6 +77,47 @@ function collectMarkdownPlans(workspace: string): string[] {
     if (existsSync(root)) walk(root, out, 0);
   }
   return [...out];
+}
+
+function collectMarkdownSpecs(workspace: string): string[] {
+  const root = resolve(workspace);
+  const roots = [
+    root,
+    join(root, "docs"),
+    join(root, "docs", "specs"),
+    join(root, "docs", "superpowers", "specs"),
+    join(root, "docs", "architecture"),
+    join(root, "docs", "migration"),
+    join(root, "components", "agentlens", "docs"),
+    join(root, "components", "agentlens", "docs", "specs")
+  ];
+  const out = new Set<string>();
+  for (const candidateRoot of roots) {
+    if (existsSync(candidateRoot)) walk(candidateRoot, out, 0);
+  }
+  return [...out];
+}
+
+function resolveMarkdownInput(workspace: string, input: string, candidates: string[], label: "plan" | "spec"): string {
+  const direct = resolve(workspace, input);
+  if (existsSync(direct)) return direct;
+  if (!isBareFilename(input)) return direct;
+  const matches = candidates.filter((candidate) => basename(candidate) === basename(input));
+  if (matches.length === 1) return matches[0]!;
+  if (matches.length > 1) {
+    throw new Error(`ambiguous ${label} path ${input}; candidates: ${matches.join(", ")}`);
+  }
+  return direct;
+}
+
+function isBareFilename(input: string): boolean {
+  const trimmed = input.trim();
+  return trimmed === basename(trimmed) && !trimmed.includes("/") && !trimmed.includes("\\");
+}
+
+function isPathLikeMarkdownInput(input: string): boolean {
+  const trimmed = input.trim();
+  return trimmed.endsWith(".md") || trimmed.endsWith(".markdown") || trimmed.includes("/") || trimmed.includes("\\");
 }
 
 function walk(dir: string, out: Set<string>, depth: number): void {

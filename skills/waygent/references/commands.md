@@ -1,6 +1,8 @@
 # Waygent Commands
 
 ```bash
+waygent run --plan <path> --spec <path>
+bun run waygent -- run --plan <path> --spec <path>
 waygent run --plan <path> --spec <path> --provider fake
 waygent run --plan <path> --provider codex --execution-mode multi-agent
 waygent run --plan <path> --provider claude --execution-mode multi-agent
@@ -15,6 +17,10 @@ waygent explain --last
 waygent resume --last
 waygent apply --run <run_id>
 ```
+
+Codex app and Codex CLI invocation default `waygent run` to Codex provider and
+`multi-agent` execution. Use `--provider fake` explicitly for deterministic
+test runs. `waygent demo` is offline-only and rejects live providers.
 
 Runtime verification helpers:
 

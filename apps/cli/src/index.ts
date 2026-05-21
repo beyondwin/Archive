@@ -38,6 +38,22 @@ export function parseCli(argv: string[]): ParsedCli {
   return { command, flags };
 }
 
+export function resolveCliProfile(parsed: ParsedCli): NonNullable<Parameters<typeof runWaygentDemo>[0]["profile"]> {
+  const defaultProvider = parsed.command === "demo" ? "fake" : "codex";
+  if (parsed.command === "demo" && parsed.flags.provider && parsed.flags.provider !== "fake") {
+    throw new Error("waygent demo only supports the offline fake provider; use waygent run for live providers");
+  }
+  const profile: NonNullable<Parameters<typeof runWaygentDemo>[0]["profile"]> = {
+    provider: parsed.flags.provider === "claude" ? "claude" : parsed.flags.provider === "fake" ? "fake" : parsed.flags.provider === "codex" ? "codex" : defaultProvider,
+    execution_mode: parsed.flags["execution-mode"] === "single-agent" ? "single-agent" : "multi-agent"
+  };
+  if (typeof parsed.flags["main-model"] === "string") profile.main_model = parsed.flags["main-model"];
+  if (isReasoning(parsed.flags["main-reasoning"])) profile.main_reasoning = parsed.flags["main-reasoning"];
+  if (typeof parsed.flags["subagent-model"] === "string") profile.subagent_model = parsed.flags["subagent-model"];
+  if (isReasoning(parsed.flags["subagent-reasoning"])) profile.subagent_reasoning = parsed.flags["subagent-reasoning"];
+  return profile;
+}
+
 export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
   const parsed = parseCli(argv);
   if (parsed.command === "intent") {
@@ -56,18 +72,10 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     };
   }
   if (parsed.command === "run" || parsed.command === "demo") {
-    const profile: NonNullable<Parameters<typeof runWaygentDemo>[0]["profile"]> = {
-      provider: parsed.flags.provider === "claude" ? "claude" : parsed.flags.provider === "codex" ? "codex" : "fake",
-      execution_mode: parsed.flags["execution-mode"] === "single-agent" ? "single-agent" : "multi-agent"
-    };
-    if (typeof parsed.flags["main-model"] === "string") profile.main_model = parsed.flags["main-model"];
-    if (isReasoning(parsed.flags["main-reasoning"])) profile.main_reasoning = parsed.flags["main-reasoning"];
-    if (typeof parsed.flags["subagent-model"] === "string") profile.subagent_model = parsed.flags["subagent-model"];
-    if (isReasoning(parsed.flags["subagent-reasoning"])) profile.subagent_reasoning = parsed.flags["subagent-reasoning"];
     const options: Parameters<typeof runWaygentDemo>[0] = {
       root: String(parsed.flags.root ?? defaultRunRoot()),
       workspace: String(parsed.flags.workspace ?? process.cwd()),
-      profile
+      profile: resolveCliProfile(parsed)
     };
     if (typeof parsed.flags.run === "string") options.run_id = parsed.flags.run;
     if (typeof parsed.flags.plan === "string") options.plan = parsed.flags.plan;

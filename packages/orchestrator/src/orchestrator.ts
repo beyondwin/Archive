@@ -11,7 +11,7 @@ import { artifactIndexEntry, mergeArtifactIndex } from "./artifactIndex";
 import { createCombinedCheckpointPatchArtifact, type CombinedCheckpointPatchResult } from "./checkpointArtifacts";
 import { buildCompletionAudit } from "./completionAudit";
 import { resolveExecutionProfile, type ExecutionProfile, type ProfileOverride, type ProviderName } from "./executionProfile";
-import { resolvePlanInput } from "./planDiscovery";
+import { resolvePlanInput, resolveSpecInput } from "./planDiscovery";
 import { parseWaygentPlan } from "./planParser";
 import { buildRunEvent } from "./runEvents";
 import { createRunExecutionContext, type RunExecutionContext } from "./runExecutionContext";
@@ -66,9 +66,14 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   if (hasExistingRunEvidence(paths)) {
     throw new Error("run_id_already_exists");
   }
+  const workspace = options.workspace ?? process.cwd();
   const profile = resolveExecutionProfile(options.profile, { provider: "fake" });
   const providerProfile = providerProfileRecord(profile);
-  const planInput = resolveRunPlanInput(options);
+  const planInput = resolveRunPlanInput({ ...options, workspace });
+  const specInput = resolveSpecInput({
+    workspace,
+    ...(options.spec !== undefined ? { spec: options.spec } : {})
+  });
   const parsed = parseWaygentPlan(planInput.markdown);
   const graph = buildTaskGraphFromPlan(parsed);
   const projection = buildDurableProjection(graph);
@@ -77,7 +82,6 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   const firstTaskId = safeWave[0]!;
   const firstTask = graph.tasks.get(firstTaskId);
   if (!firstTask) throw new Error(`task ${firstTaskId} missing from graph`);
-  const workspace = options.workspace ?? process.cwd();
   const preflight = classifySourceCheckout(workspace, parsed.tasks.flatMap((task) => task.file_claims));
   const worktreeRoot = options.worktree_root ?? join(options.root, "worktrees");
   const plannedWorktree = planWorktree({
@@ -98,7 +102,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     state_path: join(paths.root, "state.json"),
     event_journal_path: paths.events,
     plan_path: planInput.path,
-    spec_path: options.spec ?? null,
+    spec_path: specInput.path,
     provider_profile: providerProfile,
     status: "running",
     lifecycle_outcome: null,
@@ -145,7 +149,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     phase: "platform",
     outcome: "running",
     summary: "Run opened.",
-    payload: { plan: planInput.path ?? options.plan, spec: options.spec, profile: providerProfile }
+    payload: { plan: planInput.path ?? options.plan, spec: specInput.path ?? options.spec, profile: providerProfile }
   }));
   context.appendEvent((sequence) => buildRunEvent({
     run_id: runId,
@@ -241,7 +245,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
           worktree_root: worktreeRoot,
           task: parsedTask,
           checkpoint_inputs: dependencyCheckpointInputs(context.state, task.dependencies),
-          spec: options.spec ?? null,
+          spec: specInput.markdown,
           provider: profile.provider,
           ...(Object.keys(resolvedProviderProcesses).length > 0 ? { provider_processes: resolvedProviderProcesses } : {})
         });

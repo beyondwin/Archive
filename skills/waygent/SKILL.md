@@ -34,9 +34,12 @@ Invocation boundary:
   plan with `--plan` and the design/spec with `--spec`.
 - If the user says "멀티에이전트", "multi-agent", or similar, include
   `--execution-mode multi-agent`.
-- If no provider is specified for an implementation run, use the runtime
-  default or `--provider codex` only when the user or local policy clearly
-  selects Codex. Do not silently replace the runtime with Codex host subagents.
+- In the Codex app or Codex CLI, `waygent run` defaults to Codex provider and
+  `multi-agent` execution when no provider or execution mode is specified.
+- `waygent demo` is the deterministic offline path and only supports the fake
+  provider. Use `waygent run` for Codex or Claude provider execution.
+- The repo-local fallback command is `bun run waygent -- run ...`; it maps to
+  the same CLI as `waygent run ...`.
 
 Host-agent model policy:
 
