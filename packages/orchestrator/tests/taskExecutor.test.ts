@@ -31,5 +31,9 @@ describe("executeWaygentTask", () => {
     expect(result.events.map((event) => event.event_type)).toContain("runway.worker_result");
     expect(result.worktree_manifest.task_id).toBe("task_a");
     expect(result.timing.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(result.phase_timings.map((timing) => timing.phase)).toEqual(
+      expect.arrayContaining(["worktree_setup", "provider", "verification", "checkpoint", "checkpoint_dry_run", "total"])
+    );
+    expect(result.phase_timings.every((timing) => typeof timing.duration_ms === "number")).toBe(true);
   });
 });

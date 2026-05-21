@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
+import type { ArtifactReference } from "@waygent/contracts";
 import { sha256, writeArtifact } from "@waygent/lens-store";
 
 export interface CheckpointManifest {
@@ -34,6 +35,8 @@ export interface CreateCheckpointArtifactInput {
 export interface CreatedCheckpointArtifact {
   status: "created";
   manifest_ref: string;
+  manifest_sha256: string;
+  manifest_byte_length: number;
   patch_ref: string;
   patch_sha256: string;
   patch_byte_length: number;
@@ -49,6 +52,7 @@ export interface CheckpointDryRunResult {
   status: "passed" | "failed";
   reason?: "checkpoint_unresolvable" | "patch_dry_run_failed";
   evidence_ref: string;
+  evidence_artifact: ArtifactReference;
 }
 
 export interface CombinedCheckpointPatchResult {
@@ -57,6 +61,7 @@ export interface CombinedCheckpointPatchResult {
   patch_ref?: string;
   patch_sha256?: string;
   patch_byte_length?: number;
+  patch_artifact?: ArtifactReference;
   reason?:
     | CheckpointValidationResult["reason"]
     | "missing_verified_checkpoint"
@@ -64,6 +69,7 @@ export interface CombinedCheckpointPatchResult {
     | "patch_materialization_failed"
     | "patch_dry_run_failed";
   evidence_ref: string;
+  evidence_artifact: ArtifactReference;
 }
 
 export function createCheckpointArtifact(input: CreateCheckpointArtifactInput): CreatedCheckpointArtifact {
@@ -108,6 +114,8 @@ export function createCheckpointArtifact(input: CreateCheckpointArtifactInput): 
   return {
     status: "created",
     manifest_ref: manifestArtifact.path,
+    manifest_sha256: manifestArtifact.sha256,
+    manifest_byte_length: manifestArtifact.byte_length,
     patch_ref: patchArtifact.path,
     patch_sha256: patchArtifact.sha256,
     patch_byte_length: patchArtifact.byte_length
@@ -153,7 +161,7 @@ export function dryRunCheckpointPatch(input: { run_root: string; checkpoint_ref:
       status: "failed",
       reason: "checkpoint_unresolvable"
     });
-    return { status: "failed", reason: "checkpoint_unresolvable", evidence_ref: evidence };
+    return { status: "failed", reason: "checkpoint_unresolvable", evidence_ref: evidence.path, evidence_artifact: evidence };
   }
 
   const scratchDir = mkdtempSync(join(tmpdir(), "waygent-checkpoint-dry-run-"));
@@ -172,12 +180,13 @@ export function dryRunCheckpointPatch(input: { run_root: string; checkpoint_ref:
       stdout: dryRun.stdout,
       stderr: dryRun.stderr
     });
-    updateCheckpointManifestDryRun(input.run_root, input.checkpoint_ref, status, evidence);
+    updateCheckpointManifestDryRun(input.run_root, input.checkpoint_ref, status, evidence.path);
 
     return {
       status,
       ...(status === "failed" ? { reason: "patch_dry_run_failed" as const } : {}),
-      evidence_ref: evidence
+      evidence_ref: evidence.path,
+      evidence_artifact: evidence
     };
   } finally {
     rmSync(scratchDir, { recursive: true, force: true });
@@ -261,7 +270,7 @@ export function createCombinedCheckpointPatchArtifact(input: {
       stdio: ["ignore", "pipe", "pipe"]
     });
     const status = dryRun.status === 0 ? "passed" : "failed";
-    const evidenceRef = writeCombinedPatchEvidence(input.run_root, checkpointRefs, {
+    const evidenceArtifact = writeCombinedPatchEvidence(input.run_root, checkpointRefs, {
       status,
       patch_ref: patchArtifact.path,
       stdout: dryRun.stdout,
@@ -273,8 +282,10 @@ export function createCombinedCheckpointPatchArtifact(input: {
       patch_ref: patchArtifact.path,
       patch_sha256: patchArtifact.sha256,
       patch_byte_length: patchArtifact.byte_length,
+      patch_artifact: patchArtifact,
       ...(status === "failed" ? { reason: "patch_dry_run_failed" as const } : {}),
-      evidence_ref: evidenceRef
+      evidence_ref: evidenceArtifact.path,
+      evidence_artifact: evidenceArtifact
     };
   } finally {
     rmSync(temp, { recursive: true, force: true });
@@ -285,13 +296,13 @@ export function resolveRunArtifactPath(runRoot: string, ref: string): string {
   return isAbsolute(ref) ? ref : join(runRoot, ref);
 }
 
-function writeCheckpointDryRunEvidence(runRoot: string, checkpointRef: string, payload: Record<string, unknown>): string {
+function writeCheckpointDryRunEvidence(runRoot: string, checkpointRef: string, payload: Record<string, unknown>): ArtifactReference {
   const evidence = writeArtifact(
     runRoot,
     `checkpoints/dry-run-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
     `${JSON.stringify({ checkpoint_ref: checkpointRef, ...payload }, null, 2)}\n`
   );
-  return evidence.path;
+  return evidence;
 }
 
 function failedCombinedPatch(
@@ -300,21 +311,27 @@ function failedCombinedPatch(
   reason: NonNullable<CombinedCheckpointPatchResult["reason"]>,
   payload: Record<string, unknown> = {}
 ): CombinedCheckpointPatchResult {
-  const evidenceRef = writeCombinedPatchEvidence(runRoot, checkpointRefs, {
+  const evidenceArtifact = writeCombinedPatchEvidence(runRoot, checkpointRefs, {
     status: "failed",
     reason,
     ...payload
   });
-  return { status: "failed", checkpoint_refs: checkpointRefs, reason, evidence_ref: evidenceRef };
+  return {
+    status: "failed",
+    checkpoint_refs: checkpointRefs,
+    reason,
+    evidence_ref: evidenceArtifact.path,
+    evidence_artifact: evidenceArtifact
+  };
 }
 
-function writeCombinedPatchEvidence(runRoot: string, checkpointRefs: string[], payload: Record<string, unknown>): string {
+function writeCombinedPatchEvidence(runRoot: string, checkpointRefs: string[], payload: Record<string, unknown>): ArtifactReference {
   const evidence = writeArtifact(
     runRoot,
     `checkpoints/apply-dry-run-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
     `${JSON.stringify({ checkpoint_refs: checkpointRefs, ...payload }, null, 2)}\n`
   );
-  return evidence.path;
+  return evidence;
 }
 
 function updateCheckpointManifestDryRun(

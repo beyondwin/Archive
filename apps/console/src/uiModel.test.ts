@@ -133,6 +133,7 @@ describe("Lens web console UI model", () => {
     expect(model.sections.map((section) => section.id)).toEqual([
       "overview",
       "safe-wave",
+      "execution-intelligence",
       "timeline",
       "trust-failure",
       "apply-state",
@@ -159,6 +160,65 @@ describe("Lens web console UI model", () => {
     expect((model as any).drift.unrepaired_blockers[0]).toMatchObject({
       failure_class: "state_drift"
     });
+  });
+
+  test("builds execution intelligence detail from API response", () => {
+    const model = buildRunDetailModel({
+      run_id: "run_intel",
+      status: "blocked",
+      trust_status: "failed",
+      apply_status: "blocked",
+      total_events: 4,
+      last_event_type: "runway.safe_wave_selected",
+      safe_wave: ["task_a"],
+      failures: [],
+      timeline: [],
+      execution_explanation: {
+        schema: "waygent.execution_explanation.v1",
+        run_id: "run_intel",
+        status_summary: "run_intel has 1 scheduling barrier.",
+        waves: [
+          {
+            wave_id: "wave_1",
+            ready: ["task_a"],
+            concurrency: 1,
+            duration_ms: 1200,
+            withheld: [{ task_id: "task_b", reason: "file_claim_conflict", detail: "README.md" }]
+          }
+        ],
+        barriers: [
+          {
+            task_id: "task_b",
+            reason: "file_claim_conflict",
+            detail: "README.md",
+            wave_id: "wave_1",
+            category: "file_claim"
+          }
+        ],
+        cost_hotspots: [
+          {
+            scope: "wave",
+            phase: "wave",
+            duration_ms: 1200,
+            task_id: null,
+            wave_id: "wave_1"
+          }
+        ],
+        artifact_health: {
+          indexed_count: 2,
+          missing_count: 0,
+          drift_count: 0,
+          readiness_artifact_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"]
+        },
+        recommended_next_actions: ["Split overlapping file claims or add dependencies so safe waves can stay parallel."]
+      }
+    });
+
+    expect(model.execution_explanation?.barriers[0]).toMatchObject({
+      task_id: "task_b",
+      category: "file_claim"
+    });
+    expect(model.sections.map((section) => section.id)).toContain("execution-intelligence");
   });
 
   test("maps v2 apply readiness evidence into console apply status", () => {

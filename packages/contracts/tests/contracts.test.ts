@@ -167,7 +167,18 @@ describe("Waygent contracts", () => {
           path: "/tmp/worktrees/task_demo",
           source: "/tmp/workspace",
           source_commit: "abc123",
-          cleanup_status: "active"
+          cleanup_status: "failed"
+        }
+      ],
+      artifact_index: [
+        {
+          ref: "artifacts/worker/task_demo.json",
+          media_type: "application/json",
+          sha256: "a".repeat(64),
+          byte_length: 42,
+          producer_phase: "provider",
+          task_id: "task_demo",
+          created_at: "2026-05-22T00:00:00.000Z"
         }
       ],
       tasks: {
@@ -184,7 +195,15 @@ describe("Waygent contracts", () => {
           checkpoint_refs: ["artifacts/checkpoints/task_demo/candidate_task_demo.json"],
           latest_failure_class: null,
           decision_packet_ref: null,
-          timing: {}
+          timing: {},
+          phase_timings: [
+            {
+              phase: "provider",
+              started: "2026-05-22T00:00:00.000Z",
+              completed: "2026-05-22T00:00:01.000Z",
+              duration_ms: 1000
+            }
+          ]
         }
       },
       safe_waves: [{

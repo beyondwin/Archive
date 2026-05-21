@@ -190,7 +190,7 @@ function EvidenceList({
   empty
 }: {
   title: string;
-  items: Array<Record<string, unknown>>;
+  items: object[];
   empty: string;
 }) {
   return (
@@ -209,6 +209,42 @@ function EvidenceList({
             ))}
           </article>
         ))
+      )}
+    </section>
+  );
+}
+
+function ExecutionIntelligence({ detail }: { detail: RunDetailModel }) {
+  const explanation = detail.execution_explanation;
+  return (
+    <section className="section-band execution-intelligence" aria-label="Execution intelligence">
+      <h2>Execution Intelligence</h2>
+      {explanation ? (
+        <>
+          <p className="summary-line">{explanation.status_summary}</p>
+          <div className="intel-grid">
+            <div>
+              <span>Waves</span>
+              <strong>{explanation.waves.length}</strong>
+            </div>
+            <div>
+              <span>Barriers</span>
+              <strong>{explanation.barriers.length}</strong>
+            </div>
+            <div>
+              <span>Indexed artifacts</span>
+              <strong>{explanation.artifact_health.indexed_count}</strong>
+            </div>
+            <div>
+              <span>Artifact blockers</span>
+              <strong>{explanation.artifact_health.missing_count + explanation.artifact_health.drift_count}</strong>
+            </div>
+          </div>
+          <EvidenceList title="Cost Hotspots" items={explanation.cost_hotspots} empty="No cost hotspots" />
+          <EvidenceList title="Scheduling Barriers" items={explanation.barriers} empty="No scheduling barriers" />
+        </>
+      ) : (
+        <p className="empty-state">No execution explanation</p>
       )}
     </section>
   );
@@ -349,6 +385,7 @@ export function App({ apiRoot = defaultApiRoot() }: AppProps = {}) {
             <DecisionPackets run={run} />
             <ApplyStatus run={run} />
           </div>
+          <ExecutionIntelligence detail={detail} />
           <OperationalEvidence detail={detail} />
         </div>
       </div>

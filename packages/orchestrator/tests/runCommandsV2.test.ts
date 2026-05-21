@@ -4,11 +4,92 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { appendEvent, runPaths } from "@waygent/lens-store";
 import { createCheckpointArtifact, createCombinedCheckpointPatchArtifact, dryRunCheckpointPatch } from "../src/checkpointArtifacts";
-import { applyRun, buildRunEvent, resumeRun } from "../src/runCommands";
+import { applyRun, buildRunEvent, explainRun, inspectRun, resumeRun } from "../src/runCommands";
 import { readRunStateV2, runStatePath, writeRunStateV2 } from "../src/runState";
 
 describe("Waygent run commands v2", () => {
   const unsupportedSchema = ["waygent.run_state", "v1"].join(".");
+
+  test("inspect and explain include execution explanation for v2 runs", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-inspect-explanation-"));
+    const runId = "run_explain_v2";
+    writeRunStateV2(root, {
+      schema: "waygent.run_state.v2",
+      run_id: runId,
+      workspace: root,
+      source_branch: "main",
+      worktree_root: join(root, "worktrees"),
+      run_root: join(root, runId),
+      artifact_root: join(root, runId, "artifacts"),
+      state_path: runStatePath(root, runId),
+      event_journal_path: join(root, runId, "events.jsonl"),
+      plan_path: null,
+      spec_path: null,
+      provider_profile: { provider: "fake" },
+      status: "completed",
+      lifecycle_outcome: "finished",
+      current_phase: "complete",
+      safe_waves: [
+        {
+          wave_id: "wave_1",
+          ready: ["task_a"],
+          concurrency: 1,
+          timing: {
+            started: "2026-05-22T00:00:00.000Z",
+            completed: "2026-05-22T00:00:01.000Z",
+            duration_ms: 1000
+          },
+          withheld: [{ task_id: "task_b", reason: "file_claim_conflict", detail: "same file" }]
+        }
+      ],
+      tasks: {
+        task_a: {
+          id: "task_a",
+          status: "verified",
+          risk: "low",
+          dependencies: [],
+          file_claims: [{ path: "a.txt", mode: "owned" }],
+          attempts: [],
+          task_packet_path: null,
+          task_packet_sha256: null,
+          unit_manifest: null,
+          checkpoint_refs: [],
+          latest_failure_class: null,
+          decision_packet_ref: null,
+          timing: {}
+        }
+      },
+      provider_attempts: [],
+      reviews: [],
+      verification: [],
+      recovery: [],
+      apply: { status: "not_applied" },
+      context: { snapshot_path: null, basis_hash: null },
+      drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
+      completion_audit: null,
+      timestamps: {
+        started_at: "2026-05-22T00:00:00.000Z",
+        updated_at: "2026-05-22T00:00:01.000Z",
+        completed_at: "2026-05-22T00:00:01.000Z"
+      }
+    });
+    appendEvent(join(root, runId, "events.jsonl"), buildRunEvent({
+      run_id: runId,
+      sequence: 1,
+      event_type: "platform.run_started",
+      phase: "platform",
+      outcome: "running",
+      summary: "Run opened.",
+      payload: {}
+    }));
+
+    const inspected = inspectRun({ root, run: runId });
+    expect(inspected.execution_explanation).toMatchObject({
+      schema: "waygent.execution_explanation.v1",
+      barriers: [{ task_id: "task_b", reason: "file_claim_conflict" }]
+    });
+    expect(explainRun({ root, run: runId }).summary).toContain("file_claim_conflict");
+  });
 
   test("resume blocks runs without v2 state", () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-run-commands-v2-"));

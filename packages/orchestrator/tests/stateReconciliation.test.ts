@@ -53,6 +53,34 @@ describe("Waygent state reconciliation", () => {
     });
     expect(state.drift.unrepaired_blockers.length).toBeGreaterThan(0);
   });
+
+  test("blocks when indexed artifact digest drifts from bytes", () => {
+    const fixture = writeReconciliationFixture("run_index_drift");
+    const state = readRunStateV2(fixture.root, fixture.runId);
+    const indexedRef = state.provider_attempts[0]!.stdout_ref;
+    writeRunStateV2(fixture.root, {
+      ...state,
+      artifact_index: [
+        {
+          ref: indexedRef,
+          media_type: "text/plain",
+          sha256: "a".repeat(64),
+          byte_length: 12,
+          producer_phase: "provider",
+          task_id: "task_a",
+          created_at: "2026-05-22T00:00:00.000Z"
+        }
+      ]
+    });
+
+    const report = reconcileRunState(fixture.root, fixture.runId);
+
+    expect(report.passed).toBe(false);
+    expect(report.records).toContainEqual(expect.objectContaining({
+      failure_class: "state_drift",
+      artifact_ref: indexedRef
+    }));
+  });
 });
 
 type ReconciliationMutation =

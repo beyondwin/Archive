@@ -52,6 +52,16 @@ Live providers default to conservative bounded concurrency. Set
 `WAYGENT_WAVE_CONCURRENCY=<n>` only when the local machine and provider
 account can sustain the requested parallel work.
 
+## Execution Intelligence
+
+`waygent inspect --json` and the console expose execution intelligence from
+durable run evidence. The projection explains safe waves, withheld tasks,
+barriers, phase timing, artifact health, and next plan-shaping actions.
+
+Execution intelligence is read-only. Apply readiness still comes from
+checkpoint manifests, patch digest checks, dry-run evidence, completion audit,
+reconciliation, and clean source checkout validation.
+
 ### Recovery Actions
 
 Use `waygent explain --last` or `waygent inspect --run <run_id>` before

@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import type { AgentLensEvent, FailureClass, RunStatus } from "@waygent/contracts";
 import { appendEvent, readEvents, readLatestRunId, rebuildRunSummary, runPaths, sha256 } from "@waygent/lens-store";
-import { projectApplyReadinessFromState, projectFailureSummary, projectTrustReport } from "@waygent/lens-projectors";
+import { projectApplyReadinessFromState, projectExecutionExplanationFromState, projectFailureSummary, projectTrustReport } from "@waygent/lens-projectors";
 import { readRunStateV2Result, writeRunStateV2, type RunStateV2ReadResult, type WaygentRunStateV2 } from "./runState";
 export { buildRunEvent, nextRunEvent } from "./runEvents";
 import { nextRunEvent } from "./runEvents";
@@ -60,6 +60,7 @@ export function eventsRun(options: RunCommandOptions): { run_id: string; total_e
 export function inspectRun(options: RunCommandOptions): RunStatusView & {
   failures: ReturnType<typeof projectFailureSummary>;
   state?: WaygentRunStateV2;
+  execution_explanation?: ReturnType<typeof projectExecutionExplanationFromState>;
   state_error?: Exclude<RunStateV2ReadResult, { status: "ok" }>;
 } {
   const status = statusRun(options);
@@ -67,7 +68,12 @@ export function inspectRun(options: RunCommandOptions): RunStatusView & {
   return {
     ...status,
     failures: projectFailureSummary(readEvents(runPaths(options.root, status.run_id).events)),
-    ...(stateResult.status === "ok" ? { state: stateResult.state } : { state_error: stateResult })
+    ...(stateResult.status === "ok"
+      ? {
+        state: stateResult.state,
+        execution_explanation: projectExecutionExplanationFromState(stateResult.state)
+      }
+      : { state_error: stateResult })
   };
 }
 
@@ -75,6 +81,22 @@ export function explainRun(options: RunCommandOptions): { run_id: string; blocke
   const runId = resolveRunId(options);
   const events = readEvents(runPaths(options.root, runId).events);
   const failure = projectFailureSummary(events)[0] ?? null;
+  const stateResult = readRunStateV2Result(options.root, runId);
+  if (stateResult.status === "ok") {
+    const explanation = projectExecutionExplanationFromState(stateResult.state);
+    const barrier = explanation.barriers[0];
+    const hotspot = explanation.cost_hotspots[0];
+    const summaryParts = [
+      failure ? `${failure.task_id} blocked by ${failure.failure_class}` : "no active failure barrier",
+      barrier ? `scheduling barrier: ${barrier.task_id} ${barrier.reason}` : null,
+      hotspot ? `cost hotspot: ${hotspot.phase} ${hotspot.duration_ms}ms` : null
+    ].filter(Boolean);
+    return {
+      run_id: runId,
+      blocked_by: failure?.failure_class ?? null,
+      summary: summaryParts.join("; ")
+    };
+  }
   return {
     run_id: runId,
     blocked_by: failure?.failure_class ?? null,

@@ -1,3 +1,5 @@
+import type { ExecutionExplanationProjection } from "@waygent/contracts";
+
 export type TrustVerdict = "trusted" | "failed" | "insufficient_evidence";
 export type ApplyState = "ready" | "blocked" | "not_ready" | "applied";
 
@@ -47,6 +49,7 @@ export interface ConsoleApplyStatus {
 export type RunDetailSectionId =
   | "overview"
   | "safe-wave"
+  | "execution-intelligence"
   | "timeline"
   | "trust-failure"
   | "apply-state"
@@ -73,6 +76,7 @@ export interface RealRunDetailResponse {
   recovery?: Array<Record<string, unknown>>;
   decision_packets?: Array<Record<string, unknown>>;
   drift?: { last_checked_at: string | null; records: Array<Record<string, unknown>>; unrepaired_blockers: Array<Record<string, unknown>> } | null;
+  execution_explanation?: ExecutionExplanationProjection | null;
   apply_readiness?: {
     status: ApplyState;
     reason: string | null;
@@ -113,6 +117,7 @@ export interface RunDetailModel {
   recovery: NonNullable<RealRunDetailResponse["recovery"]>;
   decision_packets: NonNullable<RealRunDetailResponse["decision_packets"]>;
   drift: RealRunDetailResponse["drift"];
+  execution_explanation: ExecutionExplanationProjection | null;
   apply_readiness: RealRunDetailResponse["apply_readiness"];
   sections: Array<{
     id: RunDetailSectionId;
@@ -406,10 +411,12 @@ export function buildRunDetailModel(response: RealRunDetailResponse): RunDetailM
     recovery: response.recovery ?? [],
     decision_packets: response.decision_packets ?? [],
     drift: response.drift ?? null,
+    execution_explanation: response.execution_explanation ?? null,
     apply_readiness: response.apply_readiness ?? null,
     sections: [
       { id: "overview", label: "Overview" },
       { id: "safe-wave", label: "Safe wave" },
+      { id: "execution-intelligence", label: "Execution intelligence" },
       { id: "timeline", label: "Timeline" },
       { id: "trust-failure", label: "Trust and failure" },
       { id: "apply-state", label: "Apply state" },
