@@ -5,8 +5,8 @@ repository instruction file for this checkout.
 
 Key reminders:
 
-- Active work is centered on `AgentLens/` and the executor skills under
-  `skills/`.
+- Active work is centered on `components/agentlens/`, `apps/console/`, and the
+  executor skills under `skills/`.
 - Runtime state such as `.waygent/`, `.agentlens/`, `.claude/`,
   `.codex-orchestrator/`, and `.orchestrator/` must not be committed.
 - Use the smallest verification command that proves the change, then report

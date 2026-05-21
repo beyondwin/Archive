@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[2]
-REPO_ROOT = ROOT.parent
+REPO_ROOT = ROOT.parent.parent if ROOT.parent.name == "components" else ROOT.parent
 
 
 def test_makefile_wheel_path_uses_python_pip_instead_of_uv():

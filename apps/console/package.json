@@ -1,5 +1,5 @@
 {
-  "name": "@waygent/lens-web",
+  "name": "@waygent/console",
   "private": true,
   "type": "module",
   "scripts": {

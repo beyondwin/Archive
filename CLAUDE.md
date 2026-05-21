@@ -26,8 +26,8 @@ file. This file adds Claude-specific routing and reminders.
 ## Useful Checks
 
 ```bash
-cd AgentLens && python -m pytest -q
-cd AgentLens/web && npx vitest run && npm run build
+cd components/agentlens && python -m pytest -q
+cd apps/console && bun test src && bun run build
 cd skills/agent-runway && PATH="$PWD/evals/fixtures/fake-bin:$PATH" ./evals/run.sh
 cd skills/kws-claude-multi-agent-executor && ./evals/run.sh
 git diff --check
