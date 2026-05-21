@@ -1,5 +1,6 @@
 export * from "./executionProfile";
 export * from "./naturalLanguageIntent";
+export * from "./applyEngine";
 export * from "./orchestrator";
 export * from "./planDiscovery";
 export * from "./planParser";
