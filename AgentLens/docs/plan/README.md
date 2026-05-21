@@ -5,6 +5,7 @@ assume the v0 task file is the active plan for new work.
 
 | File | Status | Role |
 |------|--------|------|
+| [`2026-05-21-contract-first-unified-agent-platform.md`](2026-05-21-contract-first-unified-agent-platform.md) | Current executable plan | Contract reconciliation plan that must land before Rust skeleton work. |
 | [`2026-05-21-full-rust-agent-platform-phase-1-skeleton-contracts.md`](2026-05-21-full-rust-agent-platform-phase-1-skeleton-contracts.md) | Blocked | Rust skeleton plan. It must be revised after contract reconciliation before execution. |
 | [`2026-05-19-agentlens-v1-and-kws-unification.md`](2026-05-19-agentlens-v1-and-kws-unification.md) | Historical context | Older AgentLens/KWS migration plan. Do not treat `kws-cpe` / `kws-cme` as the new architecture. |
 | [`agentlens_v0_tasks.md`](agentlens_v0_tasks.md) | Historical v0 | Machine-friendly v0 task breakdown retained for reference. |
@@ -17,5 +18,5 @@ Current design authority:
 - Required pre-implementation reconciliation:
   [`../spec/2026-05-21-contract-first-unified-agent-platform-design.md`](../spec/2026-05-21-contract-first-unified-agent-platform-design.md)
 
-Next planning work should create a new contract reconciliation implementation
-plan before any Rust workspace skeleton is executed.
+Execution work should follow the contract reconciliation implementation plan
+before any Rust workspace skeleton is executed.
