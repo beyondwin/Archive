@@ -1,5 +1,62 @@
 # Waygent Operations
 
+## Operational Trust Loop
+
+Waygent treats `waygent.run_state.v2` as the runtime source of truth for
+apply readiness. AgentLens events, API responses, and console views can replay
+or present that evidence, but they do not decide whether a run is safe to
+resume or apply.
+
+### Run Preflight
+
+`waygent run` classifies the source checkout before provider dispatch:
+
+- `clean`: dispatch can continue.
+- `dirty_unrelated`: dispatch can continue, but the preflight warning is
+  recorded in state and events.
+- `dirty_related`: dispatch is blocked with `dirty_source_checkout`; clean or
+  commit the related files before retrying.
+
+If a target run id already has durable evidence, `waygent run` stops with
+`run_id_already_exists` instead of deleting the prior run root. Use a fresh run
+id or a resume path; do not overwrite the only evidence for a failed run.
+
+### Apply Readiness
+
+`ready` means all of the following are true:
+
+- completion audit passed;
+- each verified task has a valid checkpoint manifest;
+- checkpoint patch bytes exist and match recorded digest and byte length;
+- checkpoint dry-run evidence exists and passed;
+- combined apply evidence exists, points to a materialized patch, and matches
+  recorded digest and byte length;
+- reconciliation has no unrepaired drift or artifact blockers.
+
+`not_ready` means the run lacks enough verified apply evidence. `blocked`
+means evidence exists that prevents apply, such as drift, missing artifacts, a
+provider failure, verification failure, or dirty source checkout. `applied`
+means the verified patch has already been applied.
+
+`waygent apply --run <run_id>` is the only source-checkout mutation path. It
+checks for a clean source checkout before applying and revalidates the same
+readiness contract used by `resume`, API, and console.
+
+### Recovery Actions
+
+Use `waygent explain --last` or `waygent inspect --run <run_id>` before
+choosing a recovery action.
+
+- Drift or missing artifact: inspect the run, retry checkpoint generation only
+  when the required artifacts and worktree still exist, otherwise choose human
+  decision.
+- Provider crash, timeout, or malformed output: retry with the bounded provider
+  policy, switch provider, or route to human decision.
+- Verification failure: rerun verification after fixing the task worktree or
+  choose human decision.
+- Dirty source checkout: clean or commit the checkout before resume or apply.
+- Duplicate run id: select a new run id or resume the existing run.
+
 Default local verification:
 
 ```bash
@@ -60,6 +117,12 @@ verification because they require authenticated local CLIs. Use
 installed and authenticated; the adapter will execute `codex exec --json -` or
 `claude -p --output-format json`, then normalize the provider output into
 `runway.worker_result.v1`.
+
+Scenario and live-smoke gates assert the same readiness shape as runtime state:
+manifest-backed checkpoint refs, combined patch evidence, provider attempt
+artifacts, and explicit blockers. Fake-provider scenarios are the default
+offline gate; live Codex and Claude checks remain opt-in through
+`WAYGENT_LIVE_PROVIDER`.
 
 ## Operator Stop Rules
 
