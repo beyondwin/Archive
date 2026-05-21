@@ -1,0 +1,5 @@
+Claude result:
+
+```json
+{"schema":"runway.worker_result.v1","task_id":"task_fixture","candidate_id":"candidate_fixture","status":"completed","summary":"fixture edit complete","changed_files":["fixture.txt"],"evidence":{"command":"claude"}}
+```

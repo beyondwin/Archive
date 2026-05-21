@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
+import { validateContract } from "@waygent/contracts";
 import { readLatestRunId } from "@waygent/lens-store";
 import { runWaygent } from "../src/orchestrator";
 import { readRunStateV2 } from "../src/runState";
@@ -40,6 +41,7 @@ describe("runWaygent v2 lifecycle", () => {
     });
 
     const state = readRunStateV2(root, "run_v2");
+    expect(validateContract("waygent.run_state.v2", state)).toEqual(state);
     expect(state.schema).toBe("waygent.run_state.v2");
     expect(state.tasks.task_a?.task_packet_path).toBeTruthy();
     expect(state.tasks.task_a?.checkpoint_refs[0]).toContain("artifacts/checkpoints/task_a/candidate_task_a.json");

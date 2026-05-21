@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "bun:test";
 import {
   createCheckpointArtifact,
@@ -25,6 +26,45 @@ function cloneWorktree(source: string, prefix: string): string {
   const worktree = mkdtempSync(join(tmpdir(), prefix));
   Bun.spawnSync(["git", "clone", "--quiet", source, worktree]);
   return worktree;
+}
+
+function createCheckpointFixture(prefix: string) {
+  const source = initRepo(`${prefix}source-`);
+  const runRoot = mkdtempSync(join(tmpdir(), `${prefix}run-`));
+  const worktreeA = cloneWorktree(source, `${prefix}a-`);
+  const worktreeB = cloneWorktree(source, `${prefix}b-`);
+  writeFileSync(join(worktreeA, "a.txt"), `${"a\n".repeat(100_000)}`);
+  writeFileSync(join(worktreeB, "b.txt"), `${"b\n".repeat(100_000)}`);
+  return { source, runRoot, worktreeA, worktreeB };
+}
+
+async function dryRunCheckpointPatchInChild(input: { run_root: string; checkpoint_ref: string; source: string }) {
+  const checkpointArtifactsUrl = pathToFileURL(join(import.meta.dir, "../src/checkpointArtifacts.ts")).href;
+  const child = Bun.spawn(
+    [
+      process.execPath,
+      "--eval",
+      `
+        const { dryRunCheckpointPatch } = await import(${JSON.stringify(checkpointArtifactsUrl)});
+        const result = dryRunCheckpointPatch(${JSON.stringify(input)});
+        console.log(JSON.stringify(result));
+        if (result.status !== "passed") process.exit(1);
+      `
+    ],
+    {
+      stdout: "pipe",
+      stderr: "pipe"
+    }
+  );
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text()
+  ]);
+  if (exitCode !== 0) {
+    throw new Error(`checkpoint dry-run child failed: ${stderr || stdout}`);
+  }
+  return JSON.parse(stdout) as ReturnType<typeof dryRunCheckpointPatch>;
 }
 
 describe("checkpoint artifacts", () => {
@@ -128,5 +168,67 @@ describe("checkpoint artifacts", () => {
       checkpoint_ref: checkpoint.manifest_ref,
       source
     })).toMatchObject({ status: "passed" });
+  });
+
+  test("checkpoint dry-runs use unique scratch files and can run concurrently", async () => {
+    const fixture = createCheckpointFixture("waygent-parallel-dry-run-");
+    const first = createCheckpointArtifact({
+      run_root: fixture.runRoot,
+      run_id: "run_parallel_dry_run",
+      task_id: "task_a",
+      candidate_id: "candidate_a",
+      worktree_path: fixture.worktreeA,
+      changed_files: ["a.txt"],
+      verification_refs: []
+    });
+    const second = createCheckpointArtifact({
+      run_root: fixture.runRoot,
+      run_id: "run_parallel_dry_run",
+      task_id: "task_b",
+      candidate_id: "candidate_b",
+      worktree_path: fixture.worktreeB,
+      changed_files: ["b.txt"],
+      verification_refs: []
+    });
+
+    const sourceScratchPath = join(fixture.source, ".waygent-dry-run.patch");
+    let sourceScratchObserved = false;
+    let watching = true;
+    const sourceScratchWatcher = (async () => {
+      while (watching && !sourceScratchObserved) {
+        sourceScratchObserved = existsSync(sourceScratchPath);
+        await Bun.sleep(1);
+      }
+    })();
+
+    const [firstDryRun, secondDryRun] = await Promise.all([
+      dryRunCheckpointPatchInChild({
+        run_root: fixture.runRoot,
+        checkpoint_ref: first.manifest_ref,
+        source: fixture.source
+      }),
+      dryRunCheckpointPatchInChild({
+        run_root: fixture.runRoot,
+        checkpoint_ref: second.manifest_ref,
+        source: fixture.source
+      })
+    ]).finally(async () => {
+      watching = false;
+      await sourceScratchWatcher;
+    });
+
+    expect(firstDryRun.status).toBe("passed");
+    expect(secondDryRun.status).toBe("passed");
+    expect(firstDryRun.evidence_ref).not.toBe(secondDryRun.evidence_ref);
+    expect(readCheckpointManifest(fixture.runRoot, first.manifest_ref)).toMatchObject({
+      dry_run_status: "passed",
+      dry_run_evidence_ref: firstDryRun.evidence_ref
+    });
+    expect(readCheckpointManifest(fixture.runRoot, second.manifest_ref)).toMatchObject({
+      dry_run_status: "passed",
+      dry_run_evidence_ref: secondDryRun.evidence_ref
+    });
+    expect(sourceScratchObserved).toBe(false);
+    expect(existsSync(sourceScratchPath)).toBe(false);
   });
 });

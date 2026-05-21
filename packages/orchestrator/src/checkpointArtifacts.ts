@@ -156,28 +156,32 @@ export function dryRunCheckpointPatch(input: { run_root: string; checkpoint_ref:
     return { status: "failed", reason: "checkpoint_unresolvable", evidence_ref: evidence };
   }
 
-  const patchPath = join(input.source, ".waygent-dry-run.patch");
-  writeFileSync(patchPath, resolved.patch);
-  const dryRun = spawnSync("git", ["apply", "--check", patchPath], {
-    cwd: input.source,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  rmSync(patchPath, { force: true });
+  const scratchDir = mkdtempSync(join(tmpdir(), "waygent-checkpoint-dry-run-"));
+  const patchPath = join(scratchDir, "candidate.patch");
+  try {
+    writeFileSync(patchPath, resolved.patch);
+    const dryRun = spawnSync("git", ["apply", "--check", patchPath], {
+      cwd: input.source,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    });
 
-  const status = dryRun.status === 0 ? "passed" : "failed";
-  const evidence = writeCheckpointDryRunEvidence(input.run_root, input.checkpoint_ref, {
-    status,
-    stdout: dryRun.stdout,
-    stderr: dryRun.stderr
-  });
-  updateCheckpointManifestDryRun(input.run_root, input.checkpoint_ref, status, evidence);
+    const status = dryRun.status === 0 ? "passed" : "failed";
+    const evidence = writeCheckpointDryRunEvidence(input.run_root, input.checkpoint_ref, {
+      status,
+      stdout: dryRun.stdout,
+      stderr: dryRun.stderr
+    });
+    updateCheckpointManifestDryRun(input.run_root, input.checkpoint_ref, status, evidence);
 
-  return {
-    status,
-    ...(status === "failed" ? { reason: "patch_dry_run_failed" as const } : {}),
-    evidence_ref: evidence
-  };
+    return {
+      status,
+      ...(status === "failed" ? { reason: "patch_dry_run_failed" as const } : {}),
+      evidence_ref: evidence
+    };
+  } finally {
+    rmSync(scratchDir, { recursive: true, force: true });
+  }
 }
 
 export function createCombinedCheckpointPatchArtifact(input: {

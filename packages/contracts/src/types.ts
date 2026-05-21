@@ -191,7 +191,13 @@ export interface WaygentRunStateV2 {
   preflight?: WaygentSourcePreflight;
   worktrees?: WaygentWorktreeManifest[];
   tasks: Record<string, WaygentRunStateTaskV2>;
-  safe_waves: Array<{ wave_id: string; ready: string[]; withheld: Array<{ task_id: string; reason: string; detail?: string }> }>;
+  safe_waves: Array<{
+    wave_id: string;
+    ready: string[];
+    withheld: Array<{ task_id: string; reason: string; detail?: string }>;
+    concurrency?: number;
+    timing?: { started: string; completed: string; duration_ms: number };
+  }>;
   provider_attempts: ProviderAttempt[];
   reviews: ReviewResult[];
   verification: Array<Record<string, unknown>>;

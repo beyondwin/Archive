@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { WaygentRunStateV2 } from "@waygent/contracts";
+import { validateContract, type WaygentRunStateV2 } from "@waygent/contracts";
 import type { ExecutionMode, ProviderName } from "./executionProfile";
 
 export type { WaygentRunStateV2 } from "@waygent/contracts";
@@ -40,14 +40,15 @@ export function hasRunState(root: string, runId: string): boolean {
 }
 
 export function writeRunStateV2(root: string, state: WaygentRunStateV2): void {
+  const validated = validateContract<WaygentRunStateV2>("waygent.run_state.v2", state);
   mkdirSync(join(root, state.run_id), { recursive: true });
-  writeFileSync(runStatePath(root, state.run_id), `${JSON.stringify(state, null, 2)}\n`);
+  writeFileSync(runStatePath(root, state.run_id), `${JSON.stringify(validated, null, 2)}\n`);
 }
 
 export function readRunStateV2(root: string, runId: string): WaygentRunStateV2 {
-  const parsed = JSON.parse(readFileSync(runStatePath(root, runId), "utf8")) as WaygentRunStateV2;
-  if (parsed.schema !== "waygent.run_state.v2") {
+  const parsed = JSON.parse(readFileSync(runStatePath(root, runId), "utf8")) as unknown;
+  if (!parsed || typeof parsed !== "object" || (parsed as { schema?: unknown }).schema !== "waygent.run_state.v2") {
     throw new Error(`run ${runId} is not waygent.run_state.v2`);
   }
-  return parsed;
+  return validateContract<WaygentRunStateV2>("waygent.run_state.v2", parsed);
 }
