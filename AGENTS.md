@@ -12,9 +12,9 @@ Archive is now focused on two active surfaces:
 - `skills/` - source of truth for local executor skills shared by Codex and
   Claude Code.
 
-Waygent is the approved brand for the planned unified agent platform and
-user-facing orchestrator. AgentLens and AgentRunway remain component names
-inside that platform.
+Waygent is the approved brand for the unified agent platform and user-facing
+orchestrator. AgentLens remains the observability component; historical
+AgentRunway names are read-compatibility context, not active routing.
 
 The old root `docs/` library was pruned. Do not assume root-level
 `docs/superpowers/`, `docs/_index/`, or `graphify-out/` exists unless the
@@ -50,27 +50,24 @@ AgentLens durable run state belongs under `~/.agentlens/` or
 runtime state; they are ignored and must not be committed.
 
 The filesystem JSON artifacts are the source of truth. SQLite is a rebuildable
-cache. AgentRunway is the first-class Trust Console executor integration and
-uses `agentrunway.*` events. Older `kws-cpe.*` and `kws-cme.*` namespaces may
-exist in historical executor docs and should not be treated as the new
-AgentRunway integration model.
+cache. Active Waygent events use `platform.*`, `runway.*`, `kernel.*`, and
+`lens.*`. Historical `agentrunway.*`, `kws-cpe.*`, and `kws-cme.*` namespaces
+may exist in migration docs or read-compatibility code, but must not be treated
+as the active integration model.
 
-### AgentRunway
+### Waygent Runtime
 
-- Skill entry point: `skills/agent-runway/SKILL.md`
-- Operator overview: `skills/agent-runway/README.md`
-- Runtime implementation: `skills/agent-runway/scripts/agentrunway/`
-- References: `skills/agent-runway/references/`
-- Evals: `skills/agent-runway/evals/`
+- Skill entry point: `skills/waygent/SKILL.md`
+- CLI app: `apps/cli/`
+- Runtime orchestration: `packages/orchestrator/`
+- Scheduling and recovery: `packages/runway-control/`
+- Provider adapters: `packages/provider-adapters/`
+- Kernel boundary: `native/kernel/`
+- Lens storage and projections: `packages/lens-store/`, `packages/lens-projectors/`
 
-The runner owns scheduling, state, worktrees, runtime adapters, review,
-verification, merge queue, and AgentLens emission. Do not manually orchestrate
-workers from chat context. Do not let workers write SQLite or AgentLens
-directly. Add or update pytest/eval coverage for every runner behavior change.
-
-For scheduling work, prefer the current hybrid rule: parallelize only
-checkpoint-ready independent work in a safe wave; serialize shared-core,
-overlapping, high-risk, stale, or recovery-blocked work.
+Waygent owns scheduling, state, worktrees, runtime adapters, verification,
+recovery, apply, and Lens emission. Do not manually orchestrate workers from
+chat context when a Waygent run is requested.
 
 ### KWS Executor Skills
 
@@ -102,9 +99,10 @@ cd apps/console
 bun test src
 bun run build
 
-# AgentRunway deterministic evals
-cd skills/agent-runway
-PATH="$PWD/evals/fixtures/fake-bin:$PATH" ./evals/run.sh
+# Waygent runtime
+bun run check
+bun run platform:demo
+cd native/kernel && cargo test --workspace
 
 # KWS executor skill evals
 cd skills/kws-codex-plan-executor && ./evals/run.sh
