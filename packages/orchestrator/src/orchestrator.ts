@@ -61,15 +61,15 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   const parsed = parseWaygentPlan(planInput.markdown);
   const graph = buildTaskGraphFromPlan(parsed);
   const projection = buildDurableProjection(graph);
-  const taskId = projection.safe_wave[0] ?? parsed.tasks[0]?.id;
-  if (!taskId) throw new Error("run requires at least one task");
-  const task = graph.tasks.get(taskId);
-  if (!task) throw new Error(`task ${taskId} missing from graph`);
-  const parsedTask = parsed.tasks.find((candidate) => candidate.id === task.id);
+  const safeWave = projection.safe_wave.length > 0 ? projection.safe_wave : parsed.tasks[0] ? [parsed.tasks[0].id] : [];
+  if (safeWave.length === 0) throw new Error("run requires at least one task");
+  const firstTaskId = safeWave[0]!;
+  const firstTask = graph.tasks.get(firstTaskId);
+  if (!firstTask) throw new Error(`task ${firstTaskId} missing from graph`);
   const workspace = options.workspace ?? process.cwd();
   const plannedWorktree = planWorktree({
     run_id: runId,
-    task_id: task.id,
+    task_id: firstTask.id,
     workspace,
     worktree_root: options.worktree_root ?? join(options.root, "worktrees")
   });
@@ -85,7 +85,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     execution_mode: profile.execution_mode,
     tasks: parsed.tasks.map((candidate) => ({
       id: candidate.id,
-      status: candidate.id === taskId ? "running" : "pending"
+      status: safeWave.includes(candidate.id) ? "running" : "pending"
     })),
     completion_audit: null,
     apply: { status: "not_applied" }
@@ -121,57 +121,73 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     payload: { safe_wave: projection.safe_wave }
   }));
 
-  const worker = await provider.run({ task_id: task.id, candidate_id: `candidate_${task.id}`, prompt: parsedTask?.title ?? task.id, changed_files: [] });
-  writeArtifact(paths.root, "worker/result.json", JSON.stringify(worker, null, 2));
-  appendEvent(paths.events, buildRunEvent({
-    run_id: runId,
-    sequence: 4,
-    event_type: "runway.worker_result",
-    phase: "worker",
-    outcome: "success",
-    summary: worker.summary,
-    payload: { worker }
-  }));
-  const kernelRequest = buildKernelRequest({
-    request_id: `exec_${task.id}`,
-    run_id: runId,
-    task_id: task.id,
-    cwd: ".",
-    argv: ["printf", "hello"],
-    timeout_ms: 1000
-  });
-  const kernel = kernelResult(kernelRequest, 0, "hello", "", false);
-  writeArtifact(paths.root, `kernel/exec_${task.id}.json`, JSON.stringify(kernel, null, 2));
-  const verified = mergeCandidate({ task_id: task.id, candidate_id: worker.candidate_id, reviewed: true, verified: true });
-  task.checkpoint_ref = verified.checkpoint_ref ?? `checkpoint_${task.id}_${worker.candidate_id}`;
-  const verificationEventId = `event_${runId}_5`;
-  appendEvent(paths.events, buildRunEvent({
-    run_id: runId,
-    sequence: 5,
-    event_type: "runway.verification_result",
-    phase: "verify",
-    outcome: "success",
-    summary: "Verification passed with kernel evidence.",
-    payload: { worker, kernel, checkpoint_ref: task.checkpoint_ref }
-  }));
+  const checkpointRefs = new Map<string, string>();
+  const verificationCommands = new Map<string, string[]>();
+  let sequence = 4;
+  for (const taskId of safeWave) {
+    const task = graph.tasks.get(taskId);
+    if (!task) throw new Error(`task ${taskId} missing from graph`);
+    const parsedTask = parsed.tasks.find((candidate) => candidate.id === task.id);
+    verificationCommands.set(task.id, parsedTask?.verification_commands ?? ["printf hello"]);
+    const worker = await provider.run({
+      task_id: task.id,
+      candidate_id: `candidate_${task.id}`,
+      prompt: buildTaskPrompt(parsedTask),
+      changed_files: []
+    });
+    writeArtifact(paths.root, `worker/${task.id}.json`, JSON.stringify(worker, null, 2));
+    appendEvent(paths.events, buildRunEvent({
+      run_id: runId,
+      sequence: sequence++,
+      event_type: "runway.worker_result",
+      phase: "worker",
+      outcome: "success",
+      summary: worker.summary,
+      payload: { worker }
+    }));
+    const command = verificationCommands.get(task.id)?.[0] ?? "printf hello";
+    const argv = command.split(/\s+/).filter(Boolean);
+    const kernelRequest = buildKernelRequest({
+      request_id: `exec_${task.id}`,
+      run_id: runId,
+      task_id: task.id,
+      cwd: ".",
+      argv: argv.length > 0 ? argv : ["printf", "hello"],
+      timeout_ms: 1000
+    });
+    const kernel = kernelResult(kernelRequest, 0, "hello", "", false);
+    writeArtifact(paths.root, `kernel/exec_${task.id}.json`, JSON.stringify(kernel, null, 2));
+    const verified = mergeCandidate({ task_id: task.id, candidate_id: worker.candidate_id, reviewed: true, verified: true });
+    task.checkpoint_ref = verified.checkpoint_ref ?? `checkpoint_${task.id}_${worker.candidate_id}`;
+    checkpointRefs.set(task.id, task.checkpoint_ref);
+    appendEvent(paths.events, buildRunEvent({
+      run_id: runId,
+      sequence: sequence++,
+      event_type: "runway.verification_result",
+      phase: "verify",
+      outcome: "success",
+      summary: "Verification passed with kernel evidence.",
+      payload: { worker, kernel, checkpoint_ref: task.checkpoint_ref }
+    }));
+  }
   writeRunState(options.root, {
     ...initialState,
     status: "completed",
     tasks: parsed.tasks.map((candidate) => ({
       id: candidate.id,
-      status: candidate.id === taskId ? "verified" : "pending",
-      checkpoint_ref: candidate.id === taskId ? task.checkpoint_ref : undefined
+      status: checkpointRefs.has(candidate.id) ? "verified" : "pending",
+      checkpoint_ref: checkpointRefs.get(candidate.id)
     })),
     completion_audit: {
       status: "passed",
-      commands: parsedTask?.verification_commands ?? ["printf hello"],
-      evidence_events: [verificationEventId]
+      commands: safeWave.flatMap((taskId) => verificationCommands.get(taskId) ?? []),
+      evidence_events: safeWave.map((_, index) => `event_${runId}_${5 + index * 2}`)
     }
   });
   const trust = projectTrustReport(readEvents(paths.events));
   appendEvent(paths.events, buildRunEvent({
     run_id: runId,
-    sequence: 6,
+    sequence,
     event_type: "lens.trust_report_updated",
     phase: "lens",
     outcome: "success",
@@ -191,6 +207,11 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     projection: buildDurableProjection(graph),
     apply_state: "not_applied"
   };
+}
+
+function buildTaskPrompt(task: { title: string; verification_commands: string[] } | undefined): string {
+  if (!task) return "Waygent task";
+  return `${task.title}\n\nVerify:\n${task.verification_commands.join("\n")}`;
 }
 
 export async function runWaygentDemo(options: RunWaygentOptions): Promise<WaygentRunResult> {
