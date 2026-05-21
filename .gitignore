@@ -20,6 +20,8 @@
 
 # Logs and temporary files
 *.log
+*.pid
+*.sock
 bun-error.log*
 bun-debug.log*
 logs/
@@ -70,6 +72,15 @@ native/kernel/target/
 *.profraw
 *.profdata
 
+# Rebuildable local runtime caches
+index.db
+index.db-*
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+*.db-journal
+
 # Generated navigation/search layers
 graphify-out/manifest.json
 graphify-out/cost.json
@@ -93,6 +104,8 @@ docs/_graph/*
 .codex-orchestrator/
 .orchestrator/
 .parallel/
+.waygent-*.patch
+*.agentlens.bak
 
 # AgentLens runtime state (recorder home, default `<repo>/.agentlens`)
 .agentlens/
