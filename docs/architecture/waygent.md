@@ -13,6 +13,8 @@ The product tree is `apps/`, `packages/`, `native/`, `components/`, `tests/`,
 
 The runtime parity target is documented in
 [`2026-05-21-waygent-runtime-agentlens-product-parity-design.md`](./2026-05-21-waygent-runtime-agentlens-product-parity-design.md).
+The follow-up operational maturity target is documented in
+[`2026-05-21-waygent-runtime-v1-operational-maturity-design.md`](./2026-05-21-waygent-runtime-v1-operational-maturity-design.md).
 Waygent owns the product runtime directly; KWS executor skills are not product
 dependencies.
 
