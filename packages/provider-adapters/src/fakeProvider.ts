@@ -1,10 +1,18 @@
 import type { WorkerResult } from "@waygent/contracts";
 import { validateContract } from "@waygent/contracts";
 import { fakeCapabilityManifest } from "./capabilities";
-import type { AdapterRequest, ProviderAdapter } from "./types";
+import type { AdapterRequest, ProviderAdapter, ProviderAdapterDescription } from "./types";
 
 export class FakeProviderAdapter implements ProviderAdapter {
   readonly manifest = fakeCapabilityManifest;
+
+  describe(): ProviderAdapterDescription {
+    return {
+      provider: "fake",
+      execution: "deterministic",
+      direct_agentlens_writes: false
+    };
+  }
 
   async run(request: AdapterRequest): Promise<WorkerResult> {
     return validateContract<WorkerResult>("runway.worker_result.v1", {

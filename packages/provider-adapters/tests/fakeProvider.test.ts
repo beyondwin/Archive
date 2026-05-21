@@ -7,4 +7,12 @@ describe("fake provider", () => {
     expect(result.status).toBe("completed");
     expect(result.evidence.provider).toBe("fake-provider");
   });
+
+  test("describes the offline boundary without direct AgentLens writes", () => {
+    expect(new FakeProviderAdapter().describe()).toEqual({
+      provider: "fake",
+      execution: "deterministic",
+      direct_agentlens_writes: false
+    });
+  });
 });
