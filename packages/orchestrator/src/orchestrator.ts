@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentLensEvent } from "@waygent/contracts";
-import { buildKernelRequest, result as kernelResult } from "@waygent/kernel-client";
+import { buildKernelRequest, planWorktree, result as kernelResult } from "@waygent/kernel-client";
 import { projectFailureSummary, projectTimeline, projectTrustReport } from "@waygent/lens-projectors";
 import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeArtifact, writeLatestRunId } from "@waygent/lens-store";
 import { FakeProviderAdapter } from "@waygent/provider-adapters";
@@ -22,6 +22,7 @@ export interface RunWaygentOptions {
   latest?: boolean;
   topic?: string;
   workspace?: string;
+  worktree_root?: string;
   spec?: string;
 }
 
@@ -66,7 +67,13 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   if (!task) throw new Error(`task ${taskId} missing from graph`);
   const parsedTask = parsed.tasks.find((candidate) => candidate.id === task.id);
   const workspace = options.workspace ?? process.cwd();
-  const worktree = paths.root;
+  const plannedWorktree = planWorktree({
+    run_id: runId,
+    task_id: task.id,
+    workspace,
+    worktree_root: options.worktree_root ?? join(options.root, "worktrees")
+  });
+  const worktree = plannedWorktree.path;
 
   const initialState: WaygentRunState = {
     schema: "waygent.run_state.v1",
@@ -102,7 +109,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     phase: "plan",
     outcome: "success",
     summary: "Plan parsed into task graph.",
-    payload: { task_count: parsed.tasks.length, profile }
+    payload: { task_count: parsed.tasks.length, profile, worktree: plannedWorktree }
   }));
   appendEvent(paths.events, buildRunEvent({
     run_id: runId,

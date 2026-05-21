@@ -1,3 +1,5 @@
+import { join } from "node:path";
+
 export interface WorktreeApplyRequest {
   run_id: string;
   source_dirty: boolean;
@@ -6,6 +8,25 @@ export interface WorktreeApplyRequest {
 
 export function buildWorktreeBranch(runId: string, taskId: string): string {
   return `waygent/${runId}/${taskId}`;
+}
+
+export interface PlannedWorktree {
+  branch: string;
+  path: string;
+  source: string;
+}
+
+export function planWorktree(options: {
+  run_id: string;
+  task_id: string;
+  workspace: string;
+  worktree_root: string;
+}): PlannedWorktree {
+  return {
+    branch: buildWorktreeBranch(options.run_id, options.task_id),
+    path: join(options.worktree_root, options.run_id, options.task_id),
+    source: options.workspace
+  };
 }
 
 export interface ApplyGuardInput {
