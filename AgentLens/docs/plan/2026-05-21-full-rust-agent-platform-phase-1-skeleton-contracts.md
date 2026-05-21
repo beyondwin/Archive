@@ -1,5 +1,11 @@
 # Full Rust Agent Platform Phase 1 Skeleton Contracts Implementation Plan
 
+> **Status:** Blocked pending contract reconciliation. Do not execute this plan
+> as written. The approved pre-implementation design is
+> `AgentLens/docs/spec/2026-05-21-contract-first-unified-agent-platform-design.md`.
+> That design preserves the Full Rust Platform direction, but requires Phase 0
+> contract alignment before creating Rust schema files or crate boundaries.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build the first executable slice of the Full Rust Agent Platform rewrite: a compiling Rust workspace with core domain types, contract schemas, schema validation, crate boundaries, and a minimal CLI binary.
