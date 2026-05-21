@@ -5,9 +5,18 @@ export interface ContextPacket {
   included_paths: string[];
   excluded_paths: Array<{ path: string; reason: string }>;
   byte_limit: number;
+  file_claims: TaskNode["file_claims"];
+  verification_commands: string[];
+  failure_evidence: string[];
 }
 
-export function selectTaskContext(task: TaskNode, repoMap: RepoMapEntry[], byteLimit: number, failureEvidence: string[] = []): ContextPacket {
+export function selectTaskContext(
+  task: TaskNode,
+  repoMap: RepoMapEntry[],
+  byteLimit: number,
+  failureEvidence: string[] = [],
+  verificationCommands: string[] = []
+): ContextPacket {
   const seeds = new Set([...task.file_claims.map((claim) => claim.path), ...failureEvidence]);
   const included: string[] = [];
   const excluded: ContextPacket["excluded_paths"] = [];
@@ -25,5 +34,12 @@ export function selectTaskContext(task: TaskNode, repoMap: RepoMapEntry[], byteL
     used += entry.byte_size;
     included.push(entry.path);
   }
-  return { included_paths: included, excluded_paths: excluded, byte_limit: byteLimit };
+  return {
+    included_paths: included,
+    excluded_paths: excluded,
+    byte_limit: byteLimit,
+    file_claims: task.file_claims,
+    verification_commands: verificationCommands,
+    failure_evidence: failureEvidence
+  };
 }

@@ -44,4 +44,40 @@ describe("runWaygent", () => {
       apply: { status: "not_applied" }
     });
   });
+
+  test("dispatches every task in the scheduler-approved safe wave", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-safe-wave-"));
+    const result = await runWaygent({
+      root,
+      run_id: "run_wave",
+      profile: { provider: "fake", execution_mode: "multi-agent" },
+      plan: `
+\`\`\`yaml waygent-task
+id: task_a
+title: Task A
+dependencies: []
+file_claims:
+  - path: a.txt
+    mode: owned
+risk: low
+verify:
+  - printf a
+\`\`\`
+\`\`\`yaml waygent-task
+id: task_b
+title: Task B
+dependencies: []
+file_claims:
+  - path: b.txt
+    mode: owned
+risk: low
+verify:
+  - printf b
+\`\`\`
+`
+    });
+
+    expect(result.projection.safe_wave).toEqual(["task_a", "task_b"]);
+    expect(result.events.filter((event) => event.event_type === "runway.worker_result")).toHaveLength(2);
+  });
 });
