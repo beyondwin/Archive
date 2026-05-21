@@ -1,4 +1,6 @@
-import type { AgentLensEvent, RunStatus } from "@waygent/contracts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import type { AgentLensEvent, RunStatus, WaygentRunStateV2 } from "@waygent/contracts";
 import { projectApplyState, projectFailureSummary, projectTimeline, projectTrustReport } from "@waygent/lens-projectors";
 import { listRunIds, readEvents, rebuildRunSummary, runPaths } from "@waygent/lens-store";
 import { demoRunDetails, findRun, listRuns } from "./demoData";
@@ -23,11 +25,12 @@ function sseFrame(eventName: string, data: unknown): string {
   return `event: ${eventName}\ndata: ${JSON.stringify(data)}\n\n`;
 }
 
-function streamEvents(events: unknown[], runs: unknown[], scopedRunId?: string): Response {
+function streamEvents(events: unknown[], runs: unknown[], scopedRunId?: string, scopedTaskId?: string): Response {
   const frames = [
     sseFrame("lens.snapshot", {
       service: "waygent-local-api",
       runId: scopedRunId ?? null,
+      taskId: scopedTaskId ?? null,
       runs
     }),
     ...events.map((event) => sseFrame("agentlens.event.v3", event))
@@ -65,6 +68,7 @@ export function createApiHandler(context: ApiContext = {}): ApiHandler {
 
     if (url.pathname === "/events/stream") {
       const scopedRunId = url.searchParams.get("runId") ?? undefined;
+      const scopedTaskId = url.searchParams.get("taskId") ?? undefined;
       if (runRoot) {
         const runs = scopedRunId
           ? listRealRuns(runRoot).filter((run) => run.run_id === scopedRunId)
@@ -72,20 +76,20 @@ export function createApiHandler(context: ApiContext = {}): ApiHandler {
         if (scopedRunId && runs.length === 0) {
           return notFound({ error: "run_not_found", runId: scopedRunId });
         }
-        const events = scopedRunId
+        const events = filterEventsByTask(scopedRunId
           ? readEvents(runPaths(runRoot, scopedRunId).events)
-          : listRunIds(runRoot).flatMap((runId) => readEvents(runPaths(runRoot, runId).events));
-        return streamEvents(events, runs, scopedRunId);
+          : listRunIds(runRoot).flatMap((runId) => readEvents(runPaths(runRoot, runId).events)), scopedTaskId);
+        return streamEvents(events, runs, scopedRunId, scopedTaskId);
       }
       const scopedDetail = scopedRunId ? findRun(scopedRunId) : undefined;
       if (scopedRunId && !scopedDetail) {
         return notFound({ error: "run_not_found", runId: scopedRunId });
       }
-      const events = scopedDetail
+      const events = filterEventsByTask(scopedDetail
         ? scopedDetail.events
-        : demoRunDetails.flatMap((detail) => detail.events);
+        : demoRunDetails.flatMap((detail) => detail.events), scopedTaskId);
       const runs = scopedRunId ? listRuns().filter((run) => run.runId === scopedRunId) : listRuns();
-      return streamEvents(events, runs, scopedRunId);
+      return streamEvents(events, runs, scopedRunId, scopedTaskId);
     }
 
     if (segments[0] === "runs" && segments[1]) {
@@ -101,7 +105,8 @@ export function createApiHandler(context: ApiContext = {}): ApiHandler {
         }
 
         if (segments.length === 3 && segments[2] === "events") {
-          return json({ runId, run_id: runId, events: detail.events });
+          const taskId = url.searchParams.get("taskId") ?? undefined;
+          return json({ runId, run_id: runId, task_id: taskId ?? null, events: filterEventsByTask(detail.events, taskId) });
         }
 
         if (segments.length === 3 && segments[2] === "trust") {
@@ -122,7 +127,8 @@ export function createApiHandler(context: ApiContext = {}): ApiHandler {
       }
 
       if (segments.length === 3 && segments[2] === "events") {
-        return json({ runId, events: detail.events });
+        const taskId = url.searchParams.get("taskId") ?? undefined;
+        return json({ runId, task_id: taskId ?? null, events: filterEventsByTask(detail.events, taskId) });
       }
 
       if (segments.length === 3 && segments[2] === "trust") {
@@ -151,6 +157,24 @@ interface RealRunSummary {
   last_event_type: string | null;
 }
 
+interface TaskPacketMetadata {
+  task_id: string;
+  status: string;
+  risk: string;
+  task_packet_path: string | null;
+  task_packet_sha256: string | null;
+  unit_manifest: Record<string, unknown> | null;
+  checkpoint_refs: string[];
+  file_claims: unknown[];
+  decision_packet_ref: string | null;
+}
+
+interface DecisionPacketMetadata {
+  task_id: string;
+  failure_class: string | null;
+  decision_packet_ref: string;
+}
+
 function listRealRuns(runRoot: string): RealRunSummary[] {
   return listRunIds(runRoot).map((runId) => summarizeRealRun(runRoot, runId));
 }
@@ -172,6 +196,16 @@ function summarizeRealRun(runRoot: string, runId: string): RealRunSummary {
 
 function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
   safe_wave: string[];
+  safe_waves: WaygentRunStateV2["safe_waves"];
+  run_state_v2: WaygentRunStateV2 | null;
+  task_packets: TaskPacketMetadata[];
+  provider_attempts: WaygentRunStateV2["provider_attempts"];
+  verification: WaygentRunStateV2["verification"];
+  reviews: WaygentRunStateV2["reviews"];
+  recovery: WaygentRunStateV2["recovery"];
+  decision_packets: DecisionPacketMetadata[];
+  drift: WaygentRunStateV2["drift"] | null;
+  apply_readiness: WaygentRunStateV2["apply"] | null;
   failures: ReturnType<typeof projectFailureSummary>;
   timeline: ReturnType<typeof projectTimeline>;
   trust: ReturnType<typeof projectTrustReport>;
@@ -180,15 +214,71 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
 }) | null {
   if (!listRunIds(runRoot).includes(runId)) return null;
   const events = readEvents(runPaths(runRoot, runId).events);
+  const stateV2 = tryReadRunStateV2(runRoot, runId);
+  const summary = summarizeRealRun(runRoot, runId);
   return {
-    ...summarizeRealRun(runRoot, runId),
+    ...summary,
+    status: stateV2 ? runStatusFromV2(stateV2.status) : summary.status,
+    apply_status: stateV2?.apply.status ?? summary.apply_status,
     safe_wave: safeWaveFromEvents(events),
+    safe_waves: stateV2?.safe_waves ?? [],
+    run_state_v2: stateV2,
+    task_packets: stateV2 ? taskPacketMetadata(stateV2) : [],
+    provider_attempts: stateV2?.provider_attempts ?? [],
+    verification: stateV2?.verification ?? [],
+    reviews: stateV2?.reviews ?? [],
+    recovery: stateV2?.recovery ?? [],
+    decision_packets: stateV2 ? decisionPacketMetadata(stateV2) : [],
+    drift: stateV2?.drift ?? null,
+    apply_readiness: stateV2?.apply ?? null,
     failures: projectFailureSummary(events),
     timeline: projectTimeline(events),
     trust: projectTrustReport(events),
     apply: projectApplyState(events),
     events
   };
+}
+
+function tryReadRunStateV2(runRoot: string, runId: string): WaygentRunStateV2 | null {
+  try {
+    const parsed = JSON.parse(readFileSync(join(runPaths(runRoot, runId).root, "state.json"), "utf8")) as {
+      schema?: string;
+    };
+    return parsed.schema === "waygent.run_state.v2" ? (parsed as WaygentRunStateV2) : null;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function taskPacketMetadata(state: WaygentRunStateV2): TaskPacketMetadata[] {
+  return Object.values(state.tasks).map((task) => ({
+    task_id: task.id,
+    status: task.status,
+    risk: task.risk,
+    task_packet_path: task.task_packet_path,
+    task_packet_sha256: task.task_packet_sha256,
+    unit_manifest: task.unit_manifest,
+    checkpoint_refs: task.checkpoint_refs,
+    file_claims: task.file_claims,
+    decision_packet_ref: task.decision_packet_ref
+  }));
+}
+
+function decisionPacketMetadata(state: WaygentRunStateV2): DecisionPacketMetadata[] {
+  return Object.values(state.tasks)
+    .filter((task) => task.decision_packet_ref)
+    .map((task) => ({
+      task_id: task.id,
+      failure_class: task.latest_failure_class,
+      decision_packet_ref: task.decision_packet_ref as string
+    }));
+}
+
+function runStatusFromV2(status: WaygentRunStateV2["status"]): RunStatus {
+  if (status === "initializing") return "pending";
+  if (status === "applying") return "running";
+  return status;
 }
 
 function statusFromEvents(events: AgentLensEvent[], trustStatus: string): RunStatus {
@@ -202,6 +292,32 @@ function safeWaveFromEvents(events: AgentLensEvent[]): string[] {
   const selected = [...events].reverse().find((event) => event.event_type === "runway.safe_wave_selected");
   const safeWave = selected?.payload.safe_wave;
   return Array.isArray(safeWave) ? safeWave.map(String) : [];
+}
+
+function filterEventsByTask<T extends { payload?: Record<string, unknown> }>(events: T[], taskId?: string): T[] {
+  if (!taskId) return events;
+  return events.filter((event) => eventMatchesTask(event, taskId));
+}
+
+function eventMatchesTask(event: { payload?: Record<string, unknown> }, taskId: string): boolean {
+  const payload = event.payload ?? {};
+  const candidates = [
+    payload.task_id,
+    payload.taskId,
+    objectValue(payload.worker, "task_id"),
+    objectValue(payload.worker, "taskId"),
+    objectValue(payload.kernel, "task_id"),
+    objectValue(payload.kernel, "taskId")
+  ].filter((value): value is string | number => typeof value === "string" || typeof value === "number");
+
+  if (candidates.some((value) => String(value) === taskId)) return true;
+
+  const taskIds = payload.task_ids ?? payload.taskIds ?? payload.safe_wave;
+  return Array.isArray(taskIds) && taskIds.map(String).includes(taskId);
+}
+
+function objectValue(value: unknown, key: string): unknown {
+  return value && typeof value === "object" ? (value as Record<string, unknown>)[key] : undefined;
 }
 
 if (import.meta.main) {
