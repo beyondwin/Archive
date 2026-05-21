@@ -7,6 +7,7 @@
     "outDir": "dist"
   },
   "references": [
+    { "path": "../context-packer" },
     { "path": "../contracts" },
     { "path": "../kernel-client" },
     { "path": "../lens-projectors" },

@@ -41,6 +41,7 @@
       "name": "@waygent/context-packer",
       "version": "0.1.0",
       "dependencies": {
+        "@waygent/contracts": "workspace:*",
         "@waygent/runway-control": "workspace:*",
       },
     },
@@ -74,6 +75,7 @@
       "name": "@waygent/orchestrator",
       "version": "0.1.0",
       "dependencies": {
+        "@waygent/context-packer": "workspace:*",
         "@waygent/contracts": "workspace:*",
         "@waygent/kernel-client": "workspace:*",
         "@waygent/lens-projectors": "workspace:*",
@@ -285,6 +287,8 @@
 
     "@waygent/cli": ["@waygent/cli@workspace:apps/cli"],
 
+    "@waygent/console": ["@waygent/console@workspace:apps/console"],
+
     "@waygent/context-packer": ["@waygent/context-packer@workspace:packages/context-packer"],
 
     "@waygent/contracts": ["@waygent/contracts@workspace:packages/contracts"],
@@ -294,8 +298,6 @@
     "@waygent/lens-projectors": ["@waygent/lens-projectors@workspace:packages/lens-projectors"],
 
     "@waygent/lens-store": ["@waygent/lens-store@workspace:packages/lens-store"],
-
-    "@waygent/console": ["@waygent/console@workspace:apps/console"],
 
     "@waygent/orchestrator": ["@waygent/orchestrator@workspace:packages/orchestrator"],
 

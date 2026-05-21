@@ -62,6 +62,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   rmSync(paths.root, { recursive: true, force: true });
   const profile = resolveExecutionProfile(options.profile, { provider: "fake" });
   const provider = createProviderAdapter(profile.provider, options.provider_processes);
+  const providerProfile = providerProfileRecord(profile);
   const planInput = resolveRunPlanInput(options);
   const parsed = parseWaygentPlan(planInput.markdown);
   const graph = buildTaskGraphFromPlan(parsed);
@@ -92,7 +93,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     event_journal_path: paths.events,
     plan_path: planInput.path,
     spec_path: options.spec ?? null,
-    provider_profile: profile,
+    provider_profile: providerProfile,
     status: "running",
     lifecycle_outcome: null,
     current_phase: "dispatch",
@@ -134,7 +135,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     phase: "platform",
     outcome: "running",
     summary: "Run opened.",
-    payload: { plan: planInput.path ?? options.plan, spec: options.spec, profile }
+    payload: { plan: planInput.path ?? options.plan, spec: options.spec, profile: providerProfile }
   });
   appendEvent(paths.events, started);
   appendEvent(paths.events, buildRunEvent({
@@ -144,7 +145,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     phase: "plan",
     outcome: "success",
     summary: "Plan parsed into task graph.",
-    payload: { task_count: parsed.tasks.length, profile, worktree: plannedWorktree }
+    payload: { task_count: parsed.tasks.length, profile: providerProfile, worktree: plannedWorktree }
   }));
   appendEvent(paths.events, buildRunEvent({
     run_id: runId,
@@ -351,6 +352,16 @@ function createProviderAdapter(
   if (provider === "codex") return new CodexProviderAdapter(processes.codex);
   if (provider === "claude") return new ClaudeProviderAdapter(processes.claude);
   return new FakeProviderAdapter();
+}
+
+function providerProfileRecord(profile: ReturnType<typeof resolveExecutionProfile>): Record<string, unknown> {
+  return {
+    provider: profile.provider,
+    execution_mode: profile.execution_mode,
+    main: { ...profile.main },
+    subagent: { ...profile.subagent },
+    evidence_event_type: profile.evidence_event_type
+  };
 }
 
 function buildTaskPrompt(task: { title: string; verification_commands: string[] } | undefined, taskPacketPath?: string): string {
