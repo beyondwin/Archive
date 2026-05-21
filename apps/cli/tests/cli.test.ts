@@ -36,7 +36,7 @@ describe("Waygent CLI", () => {
 
   test("status reads a run created by run", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-cli-"));
-    await runCli(["run", "--root", root, "--run", "run_cli"]);
+    await runCli(["run", "--workspace", initSourceCheckout("waygent-cli-source-"), "--root", root, "--run", "run_cli"]);
     expect(await runCli(["status", "--root", root, "--last"])).toMatchObject({
       run_id: "run_cli",
       status: "completed"
@@ -54,9 +54,22 @@ describe("Waygent CLI", () => {
     expect(result).toMatchObject({ run_id: "run_latest", projection: { safe_wave: ["task_real"] } });
   });
 
+  test("scaffold-plan emits executable waygent-task markdown", async () => {
+    const result = await runCli([
+      "scaffold-plan",
+      "--id", "task_cli_scaffold",
+      "--title", "CLI scaffold",
+      "--claim", "README.md:owned",
+      "--risk", "low",
+      "--verify", "printf hello"
+    ]);
+
+    expect(String((result as { markdown: string }).markdown)).toContain("```yaml waygent-task");
+  });
+
   test("events reads persisted run events", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-cli-events-"));
-    await runCli(["run", "--root", root, "--run", "run_events"]);
+    await runCli(["run", "--workspace", initSourceCheckout("waygent-cli-events-source-"), "--root", root, "--run", "run_events"]);
 
     const result = await runCli(["events", "--root", root, "--run", "run_events"]);
 
@@ -78,3 +91,19 @@ describe("Waygent CLI", () => {
     });
   });
 });
+
+function initSourceCheckout(prefix: string): string {
+  const workspace = mkdtempSync(join(tmpdir(), prefix));
+  writeFileSync(join(workspace, "README.md"), "fixture\n");
+  for (const args of [
+    ["init", "-q"],
+    ["config", "user.email", "test@example.com"],
+    ["config", "user.name", "Waygent"],
+    ["add", "-A"],
+    ["commit", "-q", "-m", "init"]
+  ]) {
+    const result = Bun.spawnSync(["git", ...args], { cwd: workspace });
+    if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`);
+  }
+  return workspace;
+}

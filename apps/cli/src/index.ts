@@ -5,10 +5,12 @@ import {
   applyRun,
   inspectRun,
   intentToCommand,
+  parseClaimFlag,
   parseNaturalLanguageIntent,
   resumeRun,
   runWaygent,
   runWaygentDemo,
+  scaffoldWaygentTask,
   statusRun
 } from "@waygent/orchestrator";
 import type { RunCommandOptions } from "@waygent/orchestrator";
@@ -40,6 +42,18 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
   const parsed = parseCli(argv);
   if (parsed.command === "intent") {
     return { command: intentToCommand(parseNaturalLanguageIntent(String(parsed.flags.text ?? ""))) };
+  }
+  if (parsed.command === "scaffold-plan") {
+    return {
+      markdown: scaffoldWaygentTask({
+        id: String(parsed.flags.id ?? ""),
+        title: String(parsed.flags.title ?? ""),
+        dependencies: typeof parsed.flags.dependencies === "string" ? String(parsed.flags.dependencies).split(",").filter(Boolean) : [],
+        file_claims: valuesForFlag(argv, "--claim").map(parseClaimFlag),
+        risk: parsed.flags.risk === "medium" || parsed.flags.risk === "high" ? parsed.flags.risk : "low",
+        verify: valuesForFlag(argv, "--verify")
+      })
+    };
   }
   if (parsed.command === "run" || parsed.command === "demo") {
     const profile: NonNullable<Parameters<typeof runWaygentDemo>[0]["profile"]> = {
@@ -84,7 +98,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
   if (parsed.command === "events") {
     return eventsRun(runCommandOptions(parsed));
   }
-  return { usage: "waygent run|status|events|inspect|explain|resume|apply" };
+  return { usage: "waygent run|status|events|inspect|explain|resume|apply|scaffold-plan" };
 }
 
 function isReasoning(value: unknown): value is "medium" | "high" | "xhigh" {
@@ -98,6 +112,16 @@ function runCommandOptions(parsed: ParsedCli): RunCommandOptions {
   };
   if (typeof parsed.flags.run === "string") options.run = parsed.flags.run;
   return options;
+}
+
+function valuesForFlag(argv: string[], flag: string): string[] {
+  const values: string[] = [];
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] === flag && argv[index + 1] && !argv[index + 1]!.startsWith("--")) {
+      values.push(argv[index + 1]!);
+    }
+  }
+  return values;
 }
 
 if (import.meta.main) {

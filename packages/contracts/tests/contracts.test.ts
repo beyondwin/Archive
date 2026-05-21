@@ -244,7 +244,22 @@ describe("Waygent contracts", () => {
             timed_out: false,
             started_at: "2026-05-21T00:00:00Z",
             completed_at: "2026-05-21T00:00:01Z",
-            event_stream: null
+            event_stream: null,
+            stderr_summary: {
+              total_lines: 5,
+              counts: {
+                error: 1,
+                warning: 1,
+                mcp: 1,
+                plugin_manifest: 1,
+                skill_loader: 1,
+                other: 0
+              },
+              samples: [
+                { category: "error", line: "ERROR failed to load skill" },
+                { category: "plugin_manifest", line: "ignoring interface.defaultPrompt" }
+              ]
+            }
           }
         }
       ],

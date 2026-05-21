@@ -63,10 +63,15 @@ Default mappings:
 - "왜 막혔어?" -> `waygent explain --last`
 - "재개해줘" -> `waygent resume --last`
 - "검증 통과한 것만 적용해줘" -> `waygent apply --run <run_id>`
+- "실행 가능한 waygent-task 만들어줘" ->
+  `waygent scaffold-plan --id <task_id> --title <title> --claim <path:mode> --risk <low|medium|high> --verify <command>`
 
 Stop rules:
 
 - If the plan is missing or `--latest` is ambiguous, ask for the plan path.
+- If scaffold inputs do not include explicit file claims, risk, and
+  verification commands, ask for those fields instead of inferring
+  apply-capable write scope from prose.
 - If apply reports `dirty_source_checkout`, report the blocker and do not retry.
 - If verification fails, use `waygent explain --last` before resume.
 - If `resume` does not report `apply_verified_checkpoint`, do not run `apply`;

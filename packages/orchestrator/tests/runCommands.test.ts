@@ -6,6 +6,7 @@ import { appendEvent, runPaths, writeLatestRunId } from "@waygent/lens-store";
 import { runWaygent } from "../src/orchestrator";
 import { buildRunEvent, explainRun, nextRunEvent, resumeRun, statusRun } from "../src/runCommands";
 import { inspectRun } from "../src/runCommands";
+import { initSourceCheckout } from "./support/orchestratorFixtures";
 
 describe("Waygent run commands", () => {
   test("status reads the latest run projection", () => {
@@ -97,12 +98,35 @@ describe("Waygent run commands", () => {
     });
 
     expect(event.sequence).toBe(2);
+    expect(event.occurred_at).not.toBe("2026-05-21T00:00:00Z");
+  });
+
+  test("build run event supports deterministic timestamps only when explicit", () => {
+    const event = buildRunEvent({
+      run_id: "run_next_event",
+      sequence: 1,
+      event_type: "platform.run_started",
+      phase: "platform",
+      outcome: "running",
+      summary: "Run opened.",
+      payload: {},
+      occurred_at: "2026-05-21T00:00:00Z"
+    });
     expect(event.occurred_at).toBe("2026-05-21T00:00:00Z");
+    expect(buildRunEvent({
+      run_id: "run_runtime_time",
+      sequence: 1,
+      event_type: "platform.run_started",
+      phase: "platform",
+      outcome: "running",
+      summary: "Run opened.",
+      payload: {}
+    }).occurred_at).not.toBe("2026-05-21T00:00:00Z");
   });
 
   test("inspect includes durable state and completed runs can apply verified checkpoint", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-inspect-state-"));
-    await runWaygent({ root, run_id: "run_stateful" });
+    await runWaygent({ root, workspace: initSourceCheckout("waygent-inspect-source-"), run_id: "run_stateful" });
 
     expect(inspectRun({ root, run: "run_stateful" }).state).toMatchObject({
       status: "completed",

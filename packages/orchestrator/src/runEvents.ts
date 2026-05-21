@@ -10,6 +10,7 @@ export interface RunEventInput {
   summary: string;
   payload: Record<string, unknown>;
   trust_impact?: TrustImpact;
+  occurred_at?: string;
 }
 
 export function buildRunEvent(input: RunEventInput): AgentLensEvent {
@@ -21,7 +22,7 @@ export function buildRunEvent(input: RunEventInput): AgentLensEvent {
     orchestrator_run_id: input.run_id,
     producer: { name: "waygent", kind: "orchestrator", version: "0.1.0" },
     event_type: input.event_type,
-    occurred_at: "2026-05-21T00:00:00Z",
+    occurred_at: input.occurred_at ?? new Date().toISOString(),
     sequence,
     phase: input.phase,
     outcome: input.outcome,

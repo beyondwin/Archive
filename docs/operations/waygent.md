@@ -62,6 +62,19 @@ Execution intelligence is read-only. Apply readiness still comes from
 checkpoint manifests, patch digest checks, dry-run evidence, completion audit,
 reconciliation, and clean source checkout validation.
 
+## Verification Environment
+
+Waygent prepares verification-only dependency access for isolated local
+worktrees. For Bun workspaces, a source `node_modules` directory may be
+temporarily linked into the task worktree during kernel verification and
+removed before checkpointing. If dependency access is unavailable, verification
+is blocked as `dependency_missing` or `environment_blocker` instead of
+`unknown`.
+
+Before treating execution intelligence as complete, run a real Waygent dogfood
+execution and confirm `inspect` shows non-empty `artifact_index`, task
+`phase_timings`, real event timestamps, and precise `explain` blockers.
+
 ### Recovery Actions
 
 Use `waygent explain --last` or `waygent inspect --run <run_id>` before

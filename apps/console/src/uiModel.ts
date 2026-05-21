@@ -1,4 +1,4 @@
-import type { ExecutionExplanationProjection } from "@waygent/contracts";
+import type { ExecutionExplanationProjection, ProviderLogSummary } from "@waygent/contracts";
 
 export type TrustVerdict = "trusted" | "failed" | "insufficient_evidence";
 export type ApplyState = "ready" | "blocked" | "not_ready" | "applied";
@@ -118,6 +118,8 @@ export interface RunDetailModel {
   decision_packets: NonNullable<RealRunDetailResponse["decision_packets"]>;
   drift: RealRunDetailResponse["drift"];
   execution_explanation: ExecutionExplanationProjection | null;
+  provider_log_summary: ProviderLogSummary | null;
+  next_action: string | null;
   apply_readiness: RealRunDetailResponse["apply_readiness"];
   sections: Array<{
     id: RunDetailSectionId;
@@ -412,6 +414,8 @@ export function buildRunDetailModel(response: RealRunDetailResponse): RunDetailM
     decision_packets: response.decision_packets ?? [],
     drift: response.drift ?? null,
     execution_explanation: response.execution_explanation ?? null,
+    provider_log_summary: providerLogSummaryFromAttempts(response.provider_attempts ?? []),
+    next_action: response.execution_explanation?.recommended_next_actions[0] ?? null,
     apply_readiness: response.apply_readiness ?? null,
     sections: [
       { id: "overview", label: "Overview" },
@@ -642,6 +646,31 @@ function checkpointRef(taskPackets: Array<Record<string, unknown>>, taskId: stri
 function hasDirtySourceBlock(detail: RunDetailModel): boolean {
   return detail.recovery.some((record) => record.failure_class === "dirty_source_checkout")
     || detail.drift?.unrepaired_blockers.some((record) => record.failure_class === "dirty_source_checkout") === true;
+}
+
+function providerLogSummaryFromAttempts(attempts: Array<Record<string, unknown>>): ProviderLogSummary | null {
+  for (const attempt of attempts) {
+    const process = attempt.process;
+    if (!process || typeof process !== "object") continue;
+    const summary = (process as Record<string, unknown>).stderr_summary;
+    if (isProviderLogSummary(summary)) return summary;
+  }
+  return null;
+}
+
+function isProviderLogSummary(value: unknown): value is ProviderLogSummary {
+  if (!value || typeof value !== "object") return false;
+  const summary = value as Partial<ProviderLogSummary>;
+  const counts = summary.counts;
+  return typeof summary.total_lines === "number"
+    && counts !== undefined
+    && typeof counts.error === "number"
+    && typeof counts.warning === "number"
+    && typeof counts.mcp === "number"
+    && typeof counts.plugin_manifest === "number"
+    && typeof counts.skill_loader === "number"
+    && typeof counts.other === "number"
+    && Array.isArray(summary.samples);
 }
 
 export function renderConsoleSnapshot(model: ConsoleUiModel): string {

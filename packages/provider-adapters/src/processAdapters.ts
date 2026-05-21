@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { dirname } from "node:path";
 import type { FailureClass, WorkerResult } from "@waygent/contracts";
 import { validateContract } from "@waygent/contracts";
+import { summarizeProviderStderr } from "./logSummary";
 import type { AdapterRequest, ProcessAdapterOutput, ProviderAdapterRunResult, ProviderProcessOptions } from "./types";
 
 const defaultTimeoutMs = 30 * 60 * 1000;
@@ -305,11 +306,12 @@ function withProcessEvidence(worker: WorkerResult, output: ProcessAdapterOutput)
     process: {
       stdout: output.stdout,
       stderr: output.stderr,
+      stderr_summary: summarizeProviderStderr(output.stderr),
       exit_code: output.exitCode,
       timed_out: output.timedOut ?? false,
       started_at: output.startedAt ?? completedAt ?? fallbackCompletedAt,
       completed_at: completedAt,
       event_stream: output.eventStream ?? null
-    }
+    } as ProviderAdapterRunResult["process"] & { stderr_summary: ReturnType<typeof summarizeProviderStderr> }
   };
 }

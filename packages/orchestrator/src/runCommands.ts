@@ -84,16 +84,18 @@ export function explainRun(options: RunCommandOptions): { run_id: string; blocke
   const stateResult = readRunStateV2Result(options.root, runId);
   if (stateResult.status === "ok") {
     const explanation = projectExecutionExplanationFromState(stateResult.state);
+    const stateFailure = blockedTaskFailure(stateResult.state);
+    const activeFailure = stateFailure ?? failure;
     const barrier = explanation.barriers[0];
     const hotspot = explanation.cost_hotspots[0];
     const summaryParts = [
-      failure ? `${failure.task_id} blocked by ${failure.failure_class}` : "no active failure barrier",
+      activeFailure ? `${activeFailure.task_id} blocked by ${activeFailure.failure_class}` : "no active failure barrier",
       barrier ? `scheduling barrier: ${barrier.task_id} ${barrier.reason}` : null,
       hotspot ? `cost hotspot: ${hotspot.phase} ${hotspot.duration_ms}ms` : null
     ].filter(Boolean);
     return {
       run_id: runId,
-      blocked_by: failure?.failure_class ?? null,
+      blocked_by: activeFailure?.failure_class ?? null,
       summary: summaryParts.join("; ")
     };
   }
@@ -141,6 +143,13 @@ export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): {
     task.status === "blocked" || task.status === "failed" || (v2State.status === "blocked" && Boolean(task.latest_failure_class))
   );
   if (blockedTask?.latest_failure_class) {
+    if (blockedTask.latest_failure_class === "dependency_missing" || blockedTask.latest_failure_class === "environment_blocker") {
+      return {
+        run_id: explanation.run_id,
+        allowed_actions: ["rerun_verification"],
+        dry_run: options.dry_run ?? false
+      };
+    }
     const retryCount = Number(v2State.recovery.at(-1)?.retry_count ?? 0);
     const maxRetries = Number(v2State.recovery.at(-1)?.max_retries ?? 1);
     const selection = selectResumeAction({
@@ -160,6 +169,16 @@ export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): {
     allowed_actions: explanation.blocked_by === "verification_failed" ? ["retry_with_evidence", "update_plan"] : ["inspect_run"],
     dry_run: options.dry_run ?? false
   };
+}
+
+function blockedTaskFailure(state: WaygentRunStateV2): { task_id: string; failure_class: FailureClass | "unknown" } | null {
+  const task = Object.values(state.tasks).find((candidate) =>
+    (candidate.status === "blocked" || candidate.status === "failed" || state.status === "blocked") &&
+    typeof candidate.latest_failure_class === "string" &&
+    candidate.latest_failure_class.length > 0
+  );
+  if (!task?.latest_failure_class) return null;
+  return { task_id: task.id, failure_class: task.latest_failure_class as FailureClass | "unknown" };
 }
 
 export async function applyRun(options: RunCommandOptions & { workspace: string }): Promise<{

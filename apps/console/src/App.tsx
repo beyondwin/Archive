@@ -240,6 +240,22 @@ function ExecutionIntelligence({ detail }: { detail: RunDetailModel }) {
               <strong>{explanation.artifact_health.missing_count + explanation.artifact_health.drift_count}</strong>
             </div>
           </div>
+          {detail.next_action ? (
+            <p className="next-action">Next action: {detail.next_action}</p>
+          ) : null}
+          {detail.provider_log_summary ? (
+            <div className="provider-signal-panel">
+              <h3>Provider Signals</h3>
+              <div className="signal-grid">
+                <span>Errors {detail.provider_log_summary.counts.error}</span>
+                <span>Warnings {detail.provider_log_summary.counts.warning}</span>
+                <span>Plugin {detail.provider_log_summary.counts.plugin_manifest}</span>
+                <span>MCP {detail.provider_log_summary.counts.mcp}</span>
+                <span>Skills {detail.provider_log_summary.counts.skill_loader}</span>
+                <span>Other {detail.provider_log_summary.counts.other}</span>
+              </div>
+            </div>
+          ) : null}
           <EvidenceList title="Cost Hotspots" items={explanation.cost_hotspots} empty="No cost hotspots" />
           <EvidenceList title="Scheduling Barriers" items={explanation.barriers} empty="No scheduling barriers" />
         </>

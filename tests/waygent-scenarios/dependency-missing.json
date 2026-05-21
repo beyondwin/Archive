@@ -1,0 +1,35 @@
+{
+  "id": "dependency-missing",
+  "title": "Dependency missing verification is classified",
+  "provider_fixture": "fake-success",
+  "source_dirty_before_apply": false,
+  "force_missing_checkpoint": false,
+  "plan": "```yaml waygent-task\nid: task_dependency_missing\ntitle: Dependency missing verification task\ndependencies: []\nfile_claims:\n  - path: dependency.txt\n    mode: owned\nrisk: low\nverify:\n  - node -e \"throw new Error('Cannot find package ajv from validate.ts')\"\n```",
+  "expected": {
+    "run_status": "failed",
+    "apply_status": "not_ready",
+    "total_events": 7,
+    "safe_wave": ["task_dependency_missing"],
+    "event_types": [
+      "platform.run_started",
+      "runway.plan_loaded",
+      "runway.preflight_result",
+      "runway.safe_wave_selected",
+      "runway.worker_result",
+      "runway.verification_result",
+      "lens.trust_report_updated"
+    ],
+    "checkpoints": [],
+    "combined_patch_ref": null,
+    "failure_classes": ["dependency_missing"],
+    "provider_attempts": [
+      {
+        "task_id": "task_dependency_missing",
+        "provider": "fake",
+        "stdout_ref": "artifacts/provider/attempt_task_dependency_missing_1.stdout.txt",
+        "stderr_ref": "artifacts/provider/attempt_task_dependency_missing_1.stderr.txt",
+        "worker_result_ref": "artifacts/worker/task_dependency_missing.json"
+      }
+    ]
+  }
+}

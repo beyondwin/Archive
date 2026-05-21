@@ -6,6 +6,7 @@ export * from "./completionAudit";
 export * from "./orchestrator";
 export * from "./planDiscovery";
 export * from "./planParser";
+export * from "./planScaffold";
 export * from "./recoveryExecutor";
 export * from "./reviewGate";
 export * from "./runCommands";

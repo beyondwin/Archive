@@ -97,7 +97,14 @@ describe("Lens web console UI model", () => {
           role: "implement",
           provider: "codex",
           exit_code: 0,
-          timed_out: false
+          timed_out: false,
+          process: {
+            stderr_summary: {
+              total_lines: 2,
+              counts: { error: 0, warning: 1, mcp: 0, plugin_manifest: 1, skill_loader: 0, other: 0 },
+              samples: [{ category: "plugin_manifest", line: "ignoring interface.defaultPrompt" }]
+            }
+          }
         }
       ],
       verification: [
@@ -147,6 +154,8 @@ describe("Lens web console UI model", () => {
       attempt_id: "attempt_task_demo_1",
       provider: "codex"
     });
+    expect(model.provider_log_summary?.total_lines).toBe(2);
+    expect(model.provider_log_summary?.counts.plugin_manifest).toBe(1);
     expect((model as any).verification[0]).toMatchObject({
       verification_id: "verify_task_demo_1",
       status: "failed"

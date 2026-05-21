@@ -34,6 +34,7 @@ const failureClassValues = [
 ] as const;
 const riskValues = ["low", "medium", "high"] as const;
 const providerRoleValues = ["implement", "review", "fix", "verify_assist"] as const;
+const providerLogCategoryValues = ["error", "warning", "mcp", "plugin_manifest", "skill_loader", "other"] as const;
 const executionPhaseNameValues = [
   "worktree_setup",
   "provider",
@@ -496,6 +497,33 @@ export const reviewResultSchema = {
   }
 } as const;
 
+const providerLogSummarySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["total_lines", "counts", "samples"],
+  properties: {
+    total_lines: { type: "integer", minimum: 0 },
+    counts: {
+      type: "object",
+      additionalProperties: false,
+      required: providerLogCategoryValues,
+      properties: Object.fromEntries(providerLogCategoryValues.map((category) => [category, { type: "integer", minimum: 0 }]))
+    },
+    samples: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["category", "line"],
+        properties: {
+          category: { enum: providerLogCategoryValues },
+          line: { type: "string" }
+        }
+      }
+    }
+  }
+} as const;
+
 export const providerProcessEvidenceSchema = {
   type: "object",
   additionalProperties: false,
@@ -507,7 +535,8 @@ export const providerProcessEvidenceSchema = {
     timed_out: { type: "boolean" },
     started_at: { type: "string", pattern: isoTimestamp },
     completed_at: { type: "string", pattern: isoTimestamp, nullable: true },
-    event_stream: { type: "string", nullable: true }
+    event_stream: { type: "string", nullable: true },
+    stderr_summary: providerLogSummarySchema
   }
 } as const;
 

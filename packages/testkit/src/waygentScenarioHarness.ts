@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ApplyReadinessProjection, ProviderAttempt, WaygentRunStateV2 } from "@waygent/contracts";
@@ -28,6 +28,7 @@ export interface WaygentScenarioExpectedReplay {
   safe_wave?: string[];
   checkpoints?: string[];
   blockers?: string[];
+  failure_classes?: string[];
   combined_patch_ref?: string | null;
   provider_attempts?: Array<Partial<NormalizedWaygentProviderAttempt>>;
 }
@@ -50,6 +51,7 @@ export interface NormalizedWaygentReplay {
   event_types: string[];
   checkpoints: string[];
   blockers?: string[];
+  failure_classes?: string[];
   combined_patch_ref?: string | null;
   provider_attempts?: NormalizedWaygentProviderAttempt[];
   error?: string;
@@ -156,6 +158,8 @@ export function normalizeWaygentReplay(
   if (state) {
     normalized.combined_patch_ref = applyReadiness?.combined_patch_ref ?? null;
     normalized.provider_attempts = providerAttemptsFromState(state);
+    const failureClasses = failureClassesFromState(state);
+    if (failureClasses.length > 0) normalized.failure_classes = failureClasses;
   } else {
     const providerAttempts = providerAttemptsFromEvents(events);
     if (providerAttempts.length > 0) normalized.provider_attempts = providerAttempts;
@@ -171,15 +175,16 @@ export async function runWaygentScenario(
 ): Promise<WaygentScenarioRun> {
   const blockers = scenarioBlockers(scenario);
   const root = options.root ?? mkdtempSync(join(tmpdir(), "waygent-scenario-run-"));
+  const workspace = options.workspace ?? initScenarioSourceCheckout(`waygent-scenario-source-${scenario.id}-`);
   try {
     const runWaygent = await loadRunWaygent();
     const runOptions: RunWaygentOptionsLike = {
       root,
       run_id: options.run_id ?? `scenario_${scenario.id}`,
       plan: scenario.plan,
+      workspace,
       ...providerOptions(scenario, options)
     };
-    if (options.workspace) runOptions.workspace = options.workspace;
     const result = await runWaygent(runOptions);
     const state = readScenarioRunState(root, runOptions.run_id);
     return {
@@ -206,6 +211,22 @@ export async function runWaygentScenario(
       }
     };
   }
+}
+
+function initScenarioSourceCheckout(prefix: string): string {
+  const workspace = mkdtempSync(join(tmpdir(), prefix));
+  writeFileSync(join(workspace, "README.md"), "fixture\n");
+  for (const args of [
+    ["init", "-q"],
+    ["config", "user.email", "test@example.com"],
+    ["config", "user.name", "Waygent"],
+    ["add", "-A"],
+    ["commit", "-q", "-m", "init"]
+  ]) {
+    const result = Bun.spawnSync(["git", ...args], { cwd: workspace });
+    if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`);
+  }
+  return workspace;
 }
 
 function isProviderFixture(value: unknown): value is WaygentScenarioProviderFixture {
@@ -292,6 +313,14 @@ function checkpointRefsFromState(state: WaygentRunStateV2): string[] {
 
 function providerAttemptsFromState(state: WaygentRunStateV2): NormalizedWaygentProviderAttempt[] {
   return (state.provider_attempts ?? []).map(normalizeProviderAttempt);
+}
+
+function failureClassesFromState(state: WaygentRunStateV2): string[] {
+  return uniqueStrings(
+    Object.values(state.tasks ?? {})
+      .map((task) => task.latest_failure_class)
+      .filter((value): value is string => typeof value === "string" && value.length > 0)
+  );
 }
 
 function providerAttemptsFromEvents(events: ReplayLike["events"]): NormalizedWaygentProviderAttempt[] {

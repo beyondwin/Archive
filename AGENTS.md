@@ -17,9 +17,16 @@ orchestrator. AgentLens remains the observability component; historical
 AgentRunway names are read-compatibility context, not active routing.
 
 The old root `docs/` library was pruned. Do not assume root-level
-`docs/superpowers/`, `docs/_index/`, or `graphify-out/` exists unless the
-current worktree actually contains it. Historical references to those paths
-may appear in older skill docs or git history.
+`docs/superpowers/` or `docs/_index/` exists unless the current worktree
+actually contains it. Historical references to those paths may appear in older
+skill docs or git history.
+
+Graphify is approved as a repository map and documentation-audit tool. Use
+`graphify-out/` when it exists, and refresh it with `graphify update .` after
+meaningful code or documentation structure changes. Treat Graphify output as
+navigation and audit evidence, not as the product runtime source of truth.
+Canonical contracts remain in code, tests, `docs/`, `components/agentlens/`,
+and `skills/`.
 
 ## Read Order
 

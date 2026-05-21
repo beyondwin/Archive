@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -37,7 +37,7 @@ describe("Waygent local API routes", () => {
 
   test("GET /runs reads real Waygent run roots when runRoot is set", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-api-runs-"));
-    await runWaygentDemo({ root, run_id: "run_api_real" });
+    await runWaygentDemo({ root, run_id: "run_api_real", workspace: initSourceCheckout("waygent-api-source-") });
     const realHandler = createApiHandler({ runRoot: root });
 
     const response = await realHandler(new Request("http://waygent.local/runs"));
@@ -55,7 +55,7 @@ describe("Waygent local API routes", () => {
 
   test("GET /runs/:runId exposes execution explanation for real v2 runs", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-api-explanation-"));
-    await runWaygentDemo({ root, run_id: "run_api_explanation" });
+    await runWaygentDemo({ root, run_id: "run_api_explanation", workspace: initSourceCheckout("waygent-api-source-") });
     const realHandler = createApiHandler({ runRoot: root });
 
     const response = await realHandler(new Request("http://waygent.local/runs/run_api_explanation"));
@@ -72,7 +72,7 @@ describe("Waygent local API routes", () => {
   test("GET /runs and /runs/:runId prefer v2 apply readiness over successful verification events", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-api-v2-readiness-"));
     const runId = "run_not_ready";
-    await runWaygentDemo({ root, run_id: runId });
+    await runWaygentDemo({ root, run_id: runId, workspace: initSourceCheckout("waygent-api-source-") });
     const state = readRunStateV2(root, runId);
     writeRunStateV2(root, {
       ...state,
@@ -113,7 +113,7 @@ describe("Waygent local API routes", () => {
   test("GET /runs and /runs/:runId do not infer apply readiness without v2 state", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-api-missing-v2-"));
     const runId = "run_missing_v2";
-    await runWaygentDemo({ root, run_id: runId });
+    await runWaygentDemo({ root, run_id: runId, workspace: initSourceCheckout("waygent-api-source-") });
     rmSync(join(root, runId, "state.json"));
     const realHandler = createApiHandler({ runRoot: root });
 
@@ -159,7 +159,7 @@ describe("Waygent local API routes", () => {
   test("GET /runs/:runId includes v2 state evidence when present", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-api-v2-runs-"));
     const runId = "run_api_v2";
-    await runWaygentDemo({ root, run_id: runId });
+    await runWaygentDemo({ root, run_id: runId, workspace: initSourceCheckout("waygent-api-source-") });
     writeRunStateV2(root, {
       schema: "waygent.run_state.v2",
       run_id: runId,
@@ -219,7 +219,21 @@ describe("Waygent local API routes", () => {
           started_at: "2026-05-21T00:00:00.000Z",
           completed_at: "2026-05-21T00:01:00.000Z",
           worker_result_ref: "artifacts/provider/worker.json",
-          failure_class: null
+          failure_class: null,
+          process: {
+            stdout: "{}",
+            stderr: "WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt",
+            exit_code: 0,
+            timed_out: false,
+            started_at: "2026-05-21T00:00:00.000Z",
+            completed_at: "2026-05-21T00:01:00.000Z",
+            event_stream: null,
+            stderr_summary: {
+              total_lines: 1,
+              counts: { error: 0, warning: 0, mcp: 0, plugin_manifest: 1, skill_loader: 0, other: 0 },
+              samples: [{ category: "plugin_manifest", line: "ignoring interface.defaultPrompt" }]
+            }
+          }
         }
       ],
       reviews: [
@@ -280,6 +294,8 @@ describe("Waygent local API routes", () => {
       task_id: "task_demo",
       provider: "codex"
     });
+    expect(body.provider_attempts[0].process.stderr_summary.counts.plugin_manifest).toBeGreaterThanOrEqual(1);
+    expect(body.execution_explanation.recommended_next_actions).toBeArray();
     expect(body.verification[0]).toMatchObject({
       verification_id: "verify_task_demo_1",
       status: "failed"
@@ -348,3 +364,19 @@ describe("Waygent local API routes", () => {
     });
   });
 });
+
+function initSourceCheckout(prefix: string): string {
+  const workspace = mkdtempSync(join(tmpdir(), prefix));
+  writeFileSync(join(workspace, "README.md"), "fixture\n");
+  for (const args of [
+    ["init", "-q"],
+    ["config", "user.email", "test@example.com"],
+    ["config", "user.name", "Waygent"],
+    ["add", "-A"],
+    ["commit", "-q", "-m", "init"]
+  ]) {
+    const result = Bun.spawnSync(["git", ...args], { cwd: workspace });
+    if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`);
+  }
+  return workspace;
+}
