@@ -6,5 +6,6 @@ export * from "./planParser";
 export * from "./runCommands";
 export * from "./runEvents";
 export * from "./runState";
+export * from "./sourceCheckout";
 export * from "./stateReconciliation";
 export * from "./taskGraph";
