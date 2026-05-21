@@ -15,6 +15,8 @@ The runtime parity target is documented in
 [`2026-05-21-waygent-runtime-agentlens-product-parity-design.md`](./2026-05-21-waygent-runtime-agentlens-product-parity-design.md).
 The follow-up operational maturity target is documented in
 [`2026-05-21-waygent-runtime-v1-operational-maturity-design.md`](./2026-05-21-waygent-runtime-v1-operational-maturity-design.md).
+The next source-audited trust-loop slice is documented in
+[`2026-05-21-waygent-operational-trust-loop-design.md`](./2026-05-21-waygent-operational-trust-loop-design.md).
 Waygent owns the product runtime directly; KWS executor skills are not product
 dependencies.
 
