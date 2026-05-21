@@ -1,10 +1,10 @@
-# Contract-First Unified Agent Platform Implementation Plan
+# Waygent Contract-First Unified Agent Platform Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement the contract reconciliation slice that must land before the Rust workspace skeleton.
+**Goal:** Implement the Waygent contract reconciliation slice that must land before the Rust workspace skeleton.
 
-**Architecture:** This plan keeps the current Python AgentLens and AgentRunway runtime in place and proves the unified contract there first. It adds a canonical orchestrator event contract, schema-version normalization, local-first event ordering, AgentRunway journal backfill, and deterministic tests so the later Rust `agent-contracts` and `agent-store` crates have a stable source contract to port.
+**Architecture:** This plan keeps the current Python AgentLens and AgentRunway runtime in place and proves the Waygent unified contract there first. It adds a canonical orchestrator event contract, schema-version normalization, local-first event ordering, AgentRunway journal backfill, and deterministic tests so the later Rust `agent-contracts` and `agent-store` crates have a stable source contract to port.
 
 **Tech Stack:** Python 3.12, Typer, JSON Schema Draft 2020-12, pytest, JSONL artifacts, SQLite read index, existing AgentLens and AgentRunway test fixtures.
 
@@ -219,7 +219,7 @@ Create `AgentLens/tests/fixtures/schemas/v3/valid/run.json`:
     "adapter": "agentrunway"
   },
   "trust_contract": {
-    "source": "unified-agent-platform",
+    "source": "waygent",
     "legacy_namespaces_supported": false,
     "event_schema": "agentlens.event.v3"
   },
@@ -281,7 +281,7 @@ Create `AgentLens/tests/fixtures/schemas/v3/invalid/event_unbounded_summary.json
 
 Create the three schema files with these required properties:
 
-- `event.v3.schema.json`: require `schema`, `event_id`, `agentlens_run_id`, `orchestrator_run_id`, `producer`, `event_type`, `occurred_at`, `sequence`, `phase`, `outcome`, `severity`, `trust_impact`, `summary`, and `payload`; reject `kws-cpe.*`, `kws-cme.*`, and `kws.orchestrator.*` event families; allow `agentrunway.*` and `kws-agent-orchestrator.*`.
+- `event.v3.schema.json`: require `schema`, `event_id`, `agentlens_run_id`, `orchestrator_run_id`, `producer`, `event_type`, `occurred_at`, `sequence`, `phase`, `outcome`, `severity`, `trust_impact`, `summary`, and `payload`; reject `kws-cpe.*`, `kws-cme.*`, and `kws.orchestrator.*` event families; allow `agentrunway.*` and `waygent.*`.
 - `run.v3.schema.json`: require `run_kind`, `producer`, `orchestrator_run_id`, `recording`, and `trust_contract`.
 - `final.v3.schema.json`: use `claimed_outcome` and `orchestrator_run_id`.
 
@@ -625,7 +625,7 @@ In `agentrunway_v2.py`, treat these as legacy:
 ("kws-cpe.", "kws-cme.", "kws.orchestrator.")
 ```
 
-Do not mark `kws-agent-orchestrator.*` as legacy. It is reserved for the future single orchestrator path.
+Do not mark `waygent.*` as legacy. It is reserved for the future single orchestrator path.
 
 - [ ] **Step 6: Run evaluator tests**
 
