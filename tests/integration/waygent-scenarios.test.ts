@@ -40,4 +40,11 @@ function expectReplay(actual: NormalizedWaygentReplay, expected: WaygentScenario
   if (expected.safe_wave !== undefined) expect(actual.safe_wave).toEqual(expected.safe_wave);
   if (expected.checkpoints !== undefined) expect(actual.checkpoints).toEqual(expected.checkpoints);
   if (expected.blockers !== undefined) expect(actual.blockers).toEqual(expected.blockers);
+  if (expected.combined_patch_ref !== undefined) expect(actual.combined_patch_ref).toBe(expected.combined_patch_ref);
+  if (expected.provider_attempts !== undefined) {
+    expect(actual.provider_attempts?.length).toBe(expected.provider_attempts.length);
+    expected.provider_attempts.forEach((attempt, index) => {
+      expect(actual.provider_attempts?.[index]).toMatchObject(attempt);
+    });
+  }
 }

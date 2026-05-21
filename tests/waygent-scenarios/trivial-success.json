@@ -7,12 +7,13 @@
   "plan": "```yaml waygent-task\nid: task_trivial\ntitle: Trivial task\ndependencies: []\nfile_claims:\n  - path: README.md\n    mode: owned\nrisk: low\nverify:\n  - printf hello\n```",
   "expected": {
     "run_status": "trusted",
-    "apply_status": "not_applied",
-    "total_events": 8,
+    "apply_status": "ready",
+    "total_events": 9,
     "safe_wave": ["task_trivial"],
     "event_types": [
       "platform.run_started",
       "runway.plan_loaded",
+      "runway.preflight_result",
       "runway.safe_wave_selected",
       "runway.worker_result",
       "runway.verification_result",
@@ -21,8 +22,17 @@
       "lens.trust_report_updated"
     ],
     "checkpoints": [
-      "artifacts/checkpoints/task_trivial/candidate_task_trivial.json",
-      "artifacts/checkpoints/task_trivial/candidate_task_trivial.patch"
+      "artifacts/checkpoints/task_trivial/candidate_task_trivial.json"
+    ],
+    "combined_patch_ref": "artifacts/checkpoints/apply/scenario_trivial-success.patch",
+    "provider_attempts": [
+      {
+        "task_id": "task_trivial",
+        "provider": "fake",
+        "stdout_ref": "artifacts/provider/attempt_task_trivial_1.stdout.txt",
+        "stderr_ref": "artifacts/provider/attempt_task_trivial_1.stderr.txt",
+        "worker_result_ref": "artifacts/worker/task_trivial.json"
+      }
     ]
   }
 }

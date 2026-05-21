@@ -103,4 +103,107 @@ describe("waygent scenario harness", () => {
 
     expect(normalized.run_status).toBe("failed");
   });
+
+  test("prefers v2 state over successful-looking events for run and apply status", () => {
+    const normalized = normalizeWaygentReplay({
+      events: [
+        {
+          event_type: "runway.verification_result",
+          outcome: "success",
+          payload: {
+            checkpoint_ref: "legacy_checkpoint_task_a",
+            patch_ref: "artifacts/checkpoints/task_a/candidate_task_a.patch"
+          }
+        }
+      ],
+      trust_report: { trust_status: "trusted" },
+      summary: { total_events: 1 },
+      projection: { safe_wave: ["task_a"] },
+      apply_state: "not_applied",
+      run_state_v2: {
+        status: "completed",
+        completion_audit: { status: "failed" },
+        apply: { status: "not_applied" },
+        drift: { unrepaired_blockers: [] },
+        tasks: {
+          task_a: {
+            checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"]
+          }
+        },
+        provider_attempts: []
+      } as any
+    });
+
+    expect(normalized.run_status).toBe("failed");
+    expect(normalized.apply_status).toBe("not_ready");
+    expect(normalized.checkpoints).toEqual(["artifacts/checkpoints/task_a/candidate_task_a.json"]);
+    expect(normalized.combined_patch_ref).toBeNull();
+  });
+
+  test("normalizes v2 state checkpoint refs, combined patch evidence, and provider attempts", () => {
+    const normalized = normalizeWaygentReplay({
+      events: [
+        {
+          event_type: "runway.worker_result",
+          payload: {
+            worker: { status: "success" }
+          }
+        }
+      ],
+      trust_report: { trust_status: "trusted" },
+      summary: { total_events: 1 },
+      projection: { safe_wave: ["task_a"] },
+      run_state_v2: {
+        status: "completed",
+        completion_audit: {
+          status: "passed",
+          combined_apply_evidence: {
+            status: "passed",
+            checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"],
+            patch_ref: "artifacts/checkpoints/apply/run_ready.patch",
+            patch_sha256: "a".repeat(64),
+            patch_byte_length: 12,
+            evidence_ref: "artifacts/checkpoints/apply-dry-run.json"
+          }
+        },
+        apply: { status: "not_applied" },
+        drift: { unrepaired_blockers: [] },
+        tasks: {
+          task_a: {
+            checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"]
+          }
+        },
+        provider_attempts: [
+          {
+            attempt_id: "attempt_task_a_1",
+            task_id: "task_a",
+            provider: "fake",
+            stdout_ref: "artifacts/provider/attempt_task_a_1.stdout.txt",
+            stderr_ref: "artifacts/provider/attempt_task_a_1.stderr.txt",
+            worker_result_ref: "artifacts/provider/attempt_task_a_1.worker.json",
+            exit_code: 0,
+            timed_out: false
+          }
+        ]
+      } as any
+    });
+
+    expect(normalized.run_status).toBe("trusted");
+    expect(normalized.apply_status).toBe("ready");
+    expect(normalized.checkpoints).toEqual(["artifacts/checkpoints/task_a/candidate_task_a.json"]);
+    expect(normalized.combined_patch_ref).toBe("artifacts/checkpoints/apply/run_ready.patch");
+    expect(normalized.provider_attempts).toEqual([
+      {
+        attempt_id: "attempt_task_a_1",
+        task_id: "task_a",
+        provider: "fake",
+        stdout_ref: "artifacts/provider/attempt_task_a_1.stdout.txt",
+        stderr_ref: "artifacts/provider/attempt_task_a_1.stderr.txt",
+        worker_result_ref: "artifacts/provider/attempt_task_a_1.worker.json",
+        exit_code: 0,
+        timed_out: false,
+        failure_class: null
+      }
+    ]);
+  });
 });
