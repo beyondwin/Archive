@@ -41,6 +41,7 @@ describe("runWaygent", () => {
     expect(result.events.map((event) => event.event_type)).toEqual([
       "platform.run_started",
       "runway.plan_loaded",
+      "runway.preflight_result",
       "runway.safe_wave_selected",
       "runway.worker_result",
       "runway.verification_result",
