@@ -5,6 +5,7 @@ import {
   validateContract,
   type AgentLensEvent,
   type KernelExecutionRequest,
+  type WaygentRunStateV2,
   type WorkerResult
 } from "../src";
 
@@ -120,5 +121,114 @@ describe("Waygent contracts", () => {
       schema: "lens.runway_projection.v1",
       run_id: "run_demo"
     });
+  });
+
+  test("accepts additive Waygent v2 state preflight, worktree, and provider process evidence", () => {
+    const state: WaygentRunStateV2 = {
+      schema: "waygent.run_state.v2",
+      run_id: "run_demo",
+      workspace: "/tmp/workspace",
+      source_branch: "main",
+      worktree_root: "/tmp/worktrees",
+      run_root: "/tmp/run",
+      artifact_root: "/tmp/run/artifacts",
+      state_path: "/tmp/run/state.json",
+      event_journal_path: "/tmp/run/events.jsonl",
+      plan_path: null,
+      spec_path: null,
+      provider_profile: { provider: "fake" },
+      status: "completed",
+      lifecycle_outcome: "finished",
+      current_phase: "complete",
+      preflight: {
+        status: "dirty_unrelated",
+        dirty_files: ["notes/scratch.md"],
+        related: [],
+        unrelated: ["notes/scratch.md"],
+        checked_at: "2026-05-21T00:00:00Z",
+        reason: "dirty_unrelated_source_checkout",
+        decision_packet_ref: null
+      },
+      worktrees: [
+        {
+          task_id: "task_demo",
+          branch: "waygent/run_demo/task_demo",
+          path: "/tmp/worktrees/task_demo",
+          source: "/tmp/workspace",
+          source_commit: "abc123",
+          cleanup_status: "active"
+        }
+      ],
+      tasks: {
+        task_demo: {
+          id: "task_demo",
+          status: "verified",
+          risk: "low",
+          dependencies: [],
+          file_claims: [{ path: "README.md", mode: "owned" }],
+          attempts: ["attempt_demo"],
+          task_packet_path: null,
+          task_packet_sha256: null,
+          unit_manifest: null,
+          checkpoint_refs: ["artifacts/checkpoints/task_demo/candidate_task_demo.json"],
+          latest_failure_class: null,
+          decision_packet_ref: null,
+          timing: {}
+        }
+      },
+      safe_waves: [],
+      provider_attempts: [
+        {
+          schema: "runway.provider_attempt.v1",
+          attempt_id: "attempt_demo",
+          run_id: "run_demo",
+          task_id: "task_demo",
+          role: "implement",
+          provider: "fake",
+          command: ["fake-provider"],
+          cwd: "/tmp/worktrees/task_demo",
+          stdin_ref: "artifacts/provider/stdin.json",
+          stdout_ref: "artifacts/provider/stdout.txt",
+          stderr_ref: "artifacts/provider/stderr.txt",
+          event_stream_ref: null,
+          exit_code: 0,
+          timed_out: false,
+          started_at: "2026-05-21T00:00:00Z",
+          completed_at: "2026-05-21T00:00:01Z",
+          worker_result_ref: "artifacts/provider/worker-result.json",
+          failure_class: null,
+          process: {
+            stdout: "completed\n",
+            stderr: "",
+            exit_code: 0,
+            timed_out: false,
+            started_at: "2026-05-21T00:00:00Z",
+            completed_at: "2026-05-21T00:00:01Z",
+            event_stream: null
+          }
+        }
+      ],
+      reviews: [],
+      verification: [],
+      recovery: [],
+      apply: { status: "not_applied" },
+      context: { snapshot_path: null, basis_hash: null },
+      drift: { last_checked_at: "2026-05-21T00:00:02Z", records: [], unrepaired_blockers: [] },
+      completion_audit: {
+        status: "passed",
+        combined_apply_evidence: {
+          status: "passed",
+          checkpoint_refs: ["artifacts/checkpoints/task_demo/candidate_task_demo.json"],
+          patch_ref: "artifacts/checkpoints/apply/run_demo.patch"
+        }
+      },
+      timestamps: {
+        started_at: "2026-05-21T00:00:00Z",
+        updated_at: "2026-05-21T00:00:02Z",
+        completed_at: "2026-05-21T00:00:02Z"
+      }
+    };
+
+    expect(validateContract("waygent.run_state.v2", state)).toEqual(state);
   });
 });

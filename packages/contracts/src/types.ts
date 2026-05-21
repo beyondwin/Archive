@@ -105,6 +105,16 @@ export interface ReviewResult {
   summary: string;
 }
 
+export interface ProviderProcessEvidence {
+  stdout: string;
+  stderr: string;
+  exit_code: number | null;
+  timed_out: boolean;
+  started_at: string;
+  completed_at: string | null;
+  event_stream?: string | null;
+}
+
 export interface ProviderAttempt {
   schema: "runway.provider_attempt.v1";
   attempt_id: string;
@@ -124,6 +134,26 @@ export interface ProviderAttempt {
   completed_at: string | null;
   worker_result_ref: string | null;
   failure_class: FailureClass | null;
+  process?: ProviderProcessEvidence;
+}
+
+export interface WaygentSourcePreflight {
+  status: "clean" | "dirty_unrelated" | "dirty_related";
+  dirty_files: string[];
+  related: string[];
+  unrelated: string[];
+  checked_at: string;
+  reason: string | null;
+  decision_packet_ref: string | null;
+}
+
+export interface WaygentWorktreeManifest {
+  task_id: string;
+  branch: string;
+  path: string;
+  source: string;
+  source_commit: string | null;
+  cleanup_status: "active" | "removed" | "unknown";
 }
 
 export interface WaygentRunStateTaskV2 {
@@ -158,6 +188,8 @@ export interface WaygentRunStateV2 {
   status: WaygentRunStatusV2;
   lifecycle_outcome: WaygentLifecycleOutcome;
   current_phase: WaygentCurrentPhase;
+  preflight?: WaygentSourcePreflight;
+  worktrees?: WaygentWorktreeManifest[];
   tasks: Record<string, WaygentRunStateTaskV2>;
   safe_waves: Array<{ wave_id: string; ready: string[]; withheld: Array<{ task_id: string; reason: string; detail?: string }> }>;
   provider_attempts: ProviderAttempt[];
@@ -169,6 +201,14 @@ export interface WaygentRunStateV2 {
   drift: { last_checked_at: string | null; records: Array<Record<string, unknown>>; unrepaired_blockers: Array<Record<string, unknown>> };
   completion_audit: null | Record<string, unknown>;
   timestamps: { started_at: string; updated_at: string; completed_at: string | null };
+}
+
+export interface ApplyReadinessProjection {
+  status: "ready" | "not_ready" | "blocked" | "applied";
+  reason: string | null;
+  checkpoint_refs: string[];
+  combined_patch_ref: string | null;
+  source: "run_state_v2" | "events";
 }
 
 export interface AgentLensEvent {
