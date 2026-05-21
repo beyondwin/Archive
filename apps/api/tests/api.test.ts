@@ -1,4 +1,8 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
+import { runWaygentDemo } from "@waygent/orchestrator";
 import { createApiHandler } from "../src/server";
 
 const handler = createApiHandler();
@@ -28,6 +32,24 @@ describe("Waygent local API routes", () => {
       status: "completed",
       trustVerdict: "trusted",
       applyStatus: "ready"
+    });
+  });
+
+  test("GET /runs reads real Waygent run roots when runRoot is set", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-api-runs-"));
+    await runWaygentDemo({ root, run_id: "run_api_real" });
+    const realHandler = createApiHandler({ runRoot: root });
+
+    const response = await realHandler(new Request("http://waygent.local/runs"));
+
+    expect(await response.json()).toMatchObject({
+      runs: [
+        {
+          run_id: "run_api_real",
+          trust_status: "trusted",
+          apply_status: "ready"
+        }
+      ]
     });
   });
 

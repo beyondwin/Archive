@@ -6,6 +6,11 @@
     "rootDir": "src",
     "outDir": "dist"
   },
+  "references": [
+    { "path": "../../packages/contracts" },
+    { "path": "../../packages/lens-projectors" },
+    { "path": "../../packages/lens-store" }
+  ],
   "include": ["src/**/*.ts"],
   "exclude": ["tests"]
 }
