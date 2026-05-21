@@ -18,6 +18,9 @@ required_skill_phrases = [
     "resume --last",
     "must not call `skills/kws-codex-plan-executor`",
     "must not call `skills/kws-claude-multi-agent-executor`",
+    "extra-high reasoning",
+    "GPT-5.5 with high reasoning",
+    "host-agent execution preference",
 ]
 
 required_files = [

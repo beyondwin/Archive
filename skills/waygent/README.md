@@ -8,6 +8,19 @@ events, resume, and apply.
 KWS executor skills may remain in this repository, but they are outside the
 Waygent product boundary.
 
+## Host-Agent Model Policy
+
+When Codex is asked to implement, review, or coordinate Waygent runtime work
+from a plan or design, use extra-high reasoning for the main coordinating agent
+when the host supports it. Spawn Waygent runtime implementation, review, and
+verification subagents as GPT-5.5 with high reasoning when explicit subagent
+model settings are available.
+
+If the host cannot change those settings, say so and use the strongest
+available configuration. This is a host-agent execution preference only; it
+does not make Waygent depend on KWS executor skills or allow bypassing the
+Waygent CLI/runtime boundary.
+
 ## Common Commands
 
 ```bash

@@ -21,6 +21,20 @@ Hard boundaries:
 - New Waygent runs use `platform.*`, `runway.*`, `kernel.*`, and `lens.*`
   event families.
 
+Host-agent model policy:
+
+- When the host agent is asked to implement, review, or coordinate Waygent
+  runtime work from a plan or design, the main coordinating agent should run
+  with extra-high reasoning when the host supports it.
+- Implementation, review, and verification subagents for Waygent runtime work
+  should be spawned as GPT-5.5 with high reasoning when the host supports
+  explicit subagent model settings.
+- If the host cannot change the main agent or subagent model settings, state
+  that limitation and use the strongest available configuration instead.
+- This policy is a host-agent execution preference. It must not turn Waygent
+  into a dependency on KWS executor skills or bypass the Waygent CLI/runtime
+  boundaries above.
+
 Default mappings:
 
 - "최근 승인된 플랜 실행해줘" -> `waygent run --latest`
