@@ -67,6 +67,7 @@ export function buildCompletionAudit(input: CompletionAuditInput): Record<string
 }
 
 export function hasApplyReadyCheckpoint(state: WaygentRunStateV2): boolean {
+  if (state.drift.unrepaired_blockers.length > 0) return false;
   const audit = state.completion_audit as {
     status?: string;
     combined_apply_evidence?: { status?: string; patch_ref?: string };
