@@ -9,3 +9,4 @@ export * from "./runState";
 export * from "./sourceCheckout";
 export * from "./stateReconciliation";
 export * from "./taskGraph";
+export * from "./verification";
