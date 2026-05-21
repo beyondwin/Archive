@@ -67,6 +67,7 @@ docs/_graph/*
 !.codex/rules/*.rules
 !.codex/README.md
 .claude/
+.waygent/
 .codex-orchestrator/
 .orchestrator/
 .parallel/

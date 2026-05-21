@@ -11,6 +11,10 @@ Archive is now focused on two active surfaces:
 - `skills/` - source of truth for local executor skills shared by Codex and
   Claude Code.
 
+Waygent is the approved brand for the planned unified agent platform and
+user-facing orchestrator. AgentLens and AgentRunway remain component names
+inside that platform.
+
 The old root `docs/` library was pruned. Do not assume root-level
 `docs/superpowers/`, `docs/_index/`, or `graphify-out/` exists unless the
 current worktree actually contains it. Historical references to those paths
@@ -77,10 +81,10 @@ the skill-local protocol before editing. In particular,
 `skills/kws-claude-multi-agent-executor/AGENTS.md` has required experiment and
 history rules.
 
-If planning new AgentLens/KWS orchestration architecture, do not revive the old
-split as a new direction. The current target is a single KWS Agent Orchestrator
-using AgentLens as the observability substrate, unless the user explicitly
-changes direction.
+If planning new AgentLens/Waygent orchestration architecture, do not revive the
+old KWS CPE/CME split as a new direction. The current target is Waygent: a
+single user-facing orchestrator and platform that uses AgentLens as the
+observability substrate, unless the user explicitly changes direction.
 
 ## Verification Commands
 

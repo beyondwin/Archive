@@ -2,7 +2,8 @@
 
 This directory contains project-scoped Codex configuration that is safe to
 commit. Local runtime state still belongs in ignored directories such as
-`.codex-orchestrator/`, `.orchestrator/`, `.agentlens/`, and `.claude/`.
+`.waygent/`, `.codex-orchestrator/`, `.orchestrator/`, `.agentlens/`, and
+`.claude/`.
 
 Useful files:
 

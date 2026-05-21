@@ -14,8 +14,8 @@ file. This file adds Claude-specific routing and reminders.
 - For `skills/kws-claude-multi-agent-executor/`, follow its local
   `AGENTS.md` before substantive work. Non-trivial changes may require an
   experiment record under `docs/experiments/`.
-- Do not let subagents write AgentLens directly. The orchestrator owns
-  candidate-drain and AgentLens emission.
+- Do not let subagents write AgentLens directly. The Waygent/AgentRunway
+  orchestrator owns candidate-drain and AgentLens emission.
 - Keep Claude runtime files under `.claude/` out of git.
 - If a task asks for execution through AgentRunway, invoke the runner through
   `skills/agent-runway/scripts/agentrunway.py` or the installed `agentrunway`

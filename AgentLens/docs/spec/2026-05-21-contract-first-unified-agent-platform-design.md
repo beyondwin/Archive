@@ -1,4 +1,4 @@
-# Contract-First Unified Agent Platform Design
+# Waygent Contract-First Unified Agent Platform Design
 
 | | |
 |---|---|
@@ -15,14 +15,15 @@ plan as currently written. The next implementation slice must be a contract
 reconciliation slice that makes the run, event, store, evaluator, API, and
 harness contracts authoritative before any new crate layout is fossilized.
 
-The target product is a single agent platform with these roles:
+The target product is Waygent, a single agent platform with these roles:
 
+- Waygent: the user-facing product and orchestration entrypoint.
 - Agent Orchestrator: durable state machine, scheduling, recovery, and operator
   decisions.
 - AgentRunway: the implementation-execution role and policy set.
 - AgentLens: evidence, evaluation, trust reports, read models, and dashboard.
-- KWS Agent Orchestrator: a future orchestrator profile or adapter on the same
-  substrate, not a revival of the old `kws-cpe` / `kws-cme` split.
+
+Waygent is not a revival of the old `kws-cpe` / `kws-cme` split.
 
 ## 1. Findings From Current Source And Harness Review
 
@@ -80,7 +81,7 @@ with live model smoke tests kept opt-in.
 ## 2. Target Architecture
 
 ```text
-agent-platform/
+waygent/
   crates/
     agent-core/
     agent-contracts/
@@ -243,12 +244,12 @@ Required properties:
 
 - `occurred_at` and `sequence` are the canonical ordering pair.
 - `agentlens_run_id` and `orchestrator_run_id` are separate.
-- `producer.name` identifies `agentrunway`, `kws-agent-orchestrator`, `codex`,
+- `producer.name` identifies `agentrunway`, `waygent`, `codex`,
   `claude`, or `local`.
 - `producer.kind` distinguishes `orchestrator`, `worker`, `reviewer`,
   `verifier`, `adapter`, and `importer`.
 - `event_type` allows `agentrunway.*` and future
-  `kws-agent-orchestrator.*`.
+  `waygent.*`.
 - old `kws-cpe.*` and `kws-cme.*` are legacy import labels, not accepted new
   runtime namespaces.
 - payloads are bounded and redacted before persistence or external emission.
