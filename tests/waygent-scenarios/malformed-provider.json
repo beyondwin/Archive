@@ -7,17 +7,29 @@
   "plan": "```yaml waygent-task\nid: task_provider\ntitle: Provider fixture task\ndependencies: []\nfile_claims:\n  - path: provider.txt\n    mode: owned\nrisk: low\nverify:\n  - printf provider\n```",
   "expected": {
     "run_status": "failed",
-    "apply_status": "not_applied",
-    "total_events": 6,
+    "apply_status": "not_ready",
+    "total_events": 7,
     "safe_wave": ["task_provider"],
     "event_types": [
       "platform.run_started",
       "runway.plan_loaded",
+      "runway.preflight_result",
       "runway.safe_wave_selected",
       "runway.worker_result",
       "runway.verification_result",
       "lens.trust_report_updated"
     ],
-    "checkpoints": []
+    "checkpoints": [],
+    "combined_patch_ref": null,
+    "provider_attempts": [
+      {
+        "task_id": "task_provider",
+        "provider": "codex",
+        "stdout_ref": "artifacts/provider/attempt_task_provider_1.stdout.txt",
+        "stderr_ref": "artifacts/provider/attempt_task_provider_1.stderr.txt",
+        "worker_result_ref": "artifacts/worker/task_provider.json",
+        "failure_class": "malformed_result"
+      }
+    ]
   }
 }

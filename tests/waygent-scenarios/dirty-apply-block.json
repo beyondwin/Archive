@@ -6,13 +6,14 @@
   "force_missing_checkpoint": false,
   "plan": "```yaml waygent-task\nid: task_dirty_apply\ntitle: Dirty apply task\ndependencies: []\nfile_claims:\n  - path: apply.txt\n    mode: owned\nrisk: low\nverify:\n  - printf apply\n```",
   "expected": {
-    "run_status": "trusted",
+    "run_status": "failed",
     "apply_status": "blocked",
-    "total_events": 8,
+    "total_events": 9,
     "safe_wave": ["task_dirty_apply"],
     "event_types": [
       "platform.run_started",
       "runway.plan_loaded",
+      "runway.preflight_result",
       "runway.safe_wave_selected",
       "runway.worker_result",
       "runway.verification_result",
@@ -21,9 +22,18 @@
       "lens.trust_report_updated"
     ],
     "checkpoints": [
-      "artifacts/checkpoints/task_dirty_apply/candidate_task_dirty_apply.json",
-      "artifacts/checkpoints/task_dirty_apply/candidate_task_dirty_apply.patch"
+      "artifacts/checkpoints/task_dirty_apply/candidate_task_dirty_apply.json"
     ],
-    "blockers": ["source_dirty_before_apply"]
+    "blockers": ["source_dirty_before_apply"],
+    "combined_patch_ref": "artifacts/checkpoints/apply/scenario_dirty-apply-block.patch",
+    "provider_attempts": [
+      {
+        "task_id": "task_dirty_apply",
+        "provider": "fake",
+        "stdout_ref": "artifacts/provider/attempt_task_dirty_apply_1.stdout.txt",
+        "stderr_ref": "artifacts/provider/attempt_task_dirty_apply_1.stderr.txt",
+        "worker_result_ref": "artifacts/worker/task_dirty_apply.json"
+      }
+    ]
   }
 }

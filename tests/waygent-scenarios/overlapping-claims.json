@@ -7,12 +7,13 @@
   "plan": "```yaml waygent-task\nid: task_overlap_a\ntitle: Overlap A\ndependencies: []\nfile_claims:\n  - path: shared.txt\n    mode: owned\nrisk: low\nverify:\n  - printf a\n```\n```yaml waygent-task\nid: task_overlap_b\ntitle: Overlap B\ndependencies: []\nfile_claims:\n  - path: shared.txt\n    mode: owned\nrisk: low\nverify:\n  - printf b\n```",
   "expected": {
     "run_status": "trusted",
-    "apply_status": "not_applied",
-    "total_events": 13,
+    "apply_status": "ready",
+    "total_events": 14,
     "safe_wave": ["task_overlap_a"],
     "event_types": [
       "platform.run_started",
       "runway.plan_loaded",
+      "runway.preflight_result",
       "runway.safe_wave_selected",
       "runway.worker_result",
       "runway.verification_result",
@@ -27,9 +28,24 @@
     ],
     "checkpoints": [
       "artifacts/checkpoints/task_overlap_a/candidate_task_overlap_a.json",
-      "artifacts/checkpoints/task_overlap_a/candidate_task_overlap_a.patch",
-      "artifacts/checkpoints/task_overlap_b/candidate_task_overlap_b.json",
-      "artifacts/checkpoints/task_overlap_b/candidate_task_overlap_b.patch"
+      "artifacts/checkpoints/task_overlap_b/candidate_task_overlap_b.json"
+    ],
+    "combined_patch_ref": "artifacts/checkpoints/apply/scenario_overlapping-claims.patch",
+    "provider_attempts": [
+      {
+        "task_id": "task_overlap_a",
+        "provider": "fake",
+        "stdout_ref": "artifacts/provider/attempt_task_overlap_a_1.stdout.txt",
+        "stderr_ref": "artifacts/provider/attempt_task_overlap_a_1.stderr.txt",
+        "worker_result_ref": "artifacts/worker/task_overlap_a.json"
+      },
+      {
+        "task_id": "task_overlap_b",
+        "provider": "fake",
+        "stdout_ref": "artifacts/provider/attempt_task_overlap_b_1.stdout.txt",
+        "stderr_ref": "artifacts/provider/attempt_task_overlap_b_1.stderr.txt",
+        "worker_result_ref": "artifacts/worker/task_overlap_b.json"
+      }
     ]
   }
 }
