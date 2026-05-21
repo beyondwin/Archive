@@ -1,0 +1,23 @@
+{
+  "id": "trivial-success",
+  "title": "Trivial fake-provider run succeeds",
+  "provider_fixture": "fake-success",
+  "source_dirty_before_apply": false,
+  "force_missing_checkpoint": false,
+  "plan": "```yaml waygent-task\nid: task_trivial\ntitle: Trivial task\ndependencies: []\nfile_claims:\n  - path: README.md\n    mode: owned\nrisk: low\nverify:\n  - printf hello\n```",
+  "expected": {
+    "run_status": "trusted",
+    "apply_status": "not_applied",
+    "total_events": 6,
+    "safe_wave": ["task_trivial"],
+    "event_types": [
+      "platform.run_started",
+      "runway.plan_loaded",
+      "runway.safe_wave_selected",
+      "runway.worker_result",
+      "runway.verification_result",
+      "lens.trust_report_updated"
+    ],
+    "checkpoints": ["checkpoint_task_trivial_candidate_task_trivial"]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": "malformed-provider",
+  "title": "Malformed provider output is normalized as failed",
+  "provider_fixture": "malformed-provider",
+  "source_dirty_before_apply": false,
+  "force_missing_checkpoint": false,
+  "plan": "```yaml waygent-task\nid: task_provider\ntitle: Provider fixture task\ndependencies: []\nfile_claims:\n  - path: provider.txt\n    mode: owned\nrisk: low\nverify:\n  - printf provider\n```",
+  "expected": {
+    "run_status": "failed",
+    "apply_status": "not_applied",
+    "total_events": 6,
+    "safe_wave": ["task_provider"],
+    "event_types": [
+      "platform.run_started",
+      "runway.plan_loaded",
+      "runway.safe_wave_selected",
+      "runway.worker_result",
+      "runway.verification_result",
+      "lens.trust_report_updated"
+    ],
+    "checkpoints": []
+  }
+}
