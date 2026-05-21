@@ -460,6 +460,21 @@ export const reviewResultSchema = {
   }
 } as const;
 
+export const providerProcessEvidenceSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["stdout", "stderr", "exit_code", "timed_out", "started_at", "completed_at"],
+  properties: {
+    stdout: { type: "string" },
+    stderr: { type: "string" },
+    exit_code: { type: "integer", nullable: true },
+    timed_out: { type: "boolean" },
+    started_at: { type: "string", pattern: isoTimestamp },
+    completed_at: { type: "string", pattern: isoTimestamp, nullable: true },
+    event_stream: { type: "string", nullable: true }
+  }
+} as const;
+
 export const providerAttemptSchema = {
   type: "object",
   additionalProperties: false,
@@ -501,7 +516,37 @@ export const providerAttemptSchema = {
     started_at: { type: "string", pattern: isoTimestamp },
     completed_at: { type: "string", pattern: isoTimestamp, nullable: true },
     worker_result_ref: { type: "string", nullable: true },
-    failure_class: { enum: [...failureClassValues, null] }
+    failure_class: { enum: [...failureClassValues, null] },
+    process: providerProcessEvidenceSchema
+  }
+} as const;
+
+export const waygentSourcePreflightSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["status", "dirty_files", "related", "unrelated", "checked_at", "reason", "decision_packet_ref"],
+  properties: {
+    status: { enum: ["clean", "dirty_unrelated", "dirty_related"] },
+    dirty_files: { type: "array", items: { type: "string" } },
+    related: { type: "array", items: { type: "string" } },
+    unrelated: { type: "array", items: { type: "string" } },
+    checked_at: { type: "string", pattern: isoTimestamp },
+    reason: { type: "string", nullable: true },
+    decision_packet_ref: { type: "string", nullable: true }
+  }
+} as const;
+
+export const waygentWorktreeManifestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["task_id", "branch", "path", "source", "source_commit", "cleanup_status"],
+  properties: {
+    task_id: { type: "string", pattern: idPattern },
+    branch: { type: "string", minLength: 1 },
+    path: { type: "string", minLength: 1 },
+    source: { type: "string", minLength: 1 },
+    source_commit: { type: "string", nullable: true },
+    cleanup_status: { enum: ["active", "removed", "unknown"] }
   }
 } as const;
 
@@ -587,6 +632,8 @@ export const waygentRunStateV2Schema = {
     status: { enum: ["initializing", "running", "blocked", "failed", "completed", "applying", "applied"] },
     lifecycle_outcome: { enum: ["finished", "blocked", "failed", "aborted", null] },
     current_phase: { enum: ["preflight", "dispatch", "review", "verify", "recover", "apply", "complete"] },
+    preflight: waygentSourcePreflightSchema,
+    worktrees: { type: "array", items: waygentWorktreeManifestSchema },
     tasks: { type: "object", additionalProperties: waygentRunStateTaskV2Schema },
     safe_waves: {
       type: "array",
