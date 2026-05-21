@@ -1,4 +1,4 @@
-import type { ProviderCapabilityManifest, WorkerResult } from "@waygent/contracts";
+import type { ProviderCapabilityManifest, ProviderRole, WorkerResult } from "@waygent/contracts";
 
 export type ProviderExecutionBoundary = "deterministic" | "process";
 
@@ -11,7 +11,9 @@ export interface ProviderAdapterDescription {
 export interface AdapterRequest {
   task_id: string;
   candidate_id: string;
+  role?: ProviderRole;
   prompt: string;
+  task_packet_path?: string;
   changed_files?: string[];
 }
 

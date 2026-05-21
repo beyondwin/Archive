@@ -90,14 +90,19 @@ export async function runProviderProcess(
   });
 }
 
-function buildProviderPrompt(provider: "codex" | "claude", request: AdapterRequest): string {
+export function buildProviderPrompt(provider: "codex" | "claude", request: AdapterRequest): string {
   return [
     `You are the ${provider} worker for a Waygent task.`,
-    "Return only one JSON object matching runway.worker_result.v1.",
-    "Do not write AgentLens events directly.",
-    "Required JSON fields: schema, task_id, candidate_id, status, changed_files, summary, evidence.",
+    `role: ${request.role ?? "implement"}`,
     `task_id: ${request.task_id}`,
     `candidate_id: ${request.candidate_id}`,
+    request.task_packet_path ? `task_packet_path: ${request.task_packet_path}` : "task_packet_path: none",
+    "Return only one JSON object matching runway.worker_result.v1 unless the provider wrapper emits JSONL envelopes.",
+    "Do not write AgentLens events directly.",
+    "Do not apply changes to the source checkout.",
+    "Edit only the isolated Waygent worktree.",
+    "Obey the task packet write policy.",
+    "Required JSON fields: schema, task_id, candidate_id, status, changed_files, summary, evidence.",
     "Task prompt:",
     request.prompt
   ].join("\n");
