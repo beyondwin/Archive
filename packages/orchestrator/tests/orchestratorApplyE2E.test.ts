@@ -90,6 +90,58 @@ verify:
     ]);
   });
 
+  test("a verified no-op run remains apply-ready and applies without a patch mutation", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-noop-apply-root-"));
+    const workspace = initSourceCheckout();
+    const noOpPlan = `
+\`\`\`yaml waygent-task
+id: task_noop_apply
+title: Verify already-present README content
+dependencies: []
+file_claims:
+  - path: README.md
+    mode: owned
+risk: low
+verify:
+  - grep before README.md
+\`\`\`
+`;
+    const script = `
+      await new Response(Bun.stdin.stream()).text();
+      console.log(JSON.stringify({
+        status: "completed",
+        summary: "nothing to change",
+        changed_files: [],
+        evidence: { no_op: true }
+      }));
+    `;
+
+    await runWaygent({
+      root,
+      workspace,
+      run_id: "run_noop_apply",
+      plan: noOpPlan,
+      profile: { provider: "codex", execution_mode: "multi-agent" },
+      provider_processes: { codex: { executable: process.execPath, args: ["-e", script] } }
+    });
+
+    const state = readRunStateV2(root, "run_noop_apply");
+    expect(state.status).toBe("completed");
+    expect(state.completion_audit).toMatchObject({
+      status: "passed",
+      combined_apply_evidence: { status: "passed", patch_byte_length: 0, no_op: true }
+    });
+    expect(resumeRun({ root, run: "run_noop_apply", dry_run: true }).allowed_actions).toContain(
+      "apply_verified_checkpoint"
+    );
+    expect(await applyRun({ root, run: "run_noop_apply", workspace })).toMatchObject({
+      command: "apply",
+      run_id: "run_noop_apply",
+      status: "applied"
+    });
+    expect(readFileSync(join(workspace, "README.md"), "utf8")).toBe("before\n");
+  });
+
   test("apply materializes every verified checkpoint in a completed run", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-apply-multi-root-"));
     const workspace = initSourceCheckout();

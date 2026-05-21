@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "bun:test";
 import {
+  createCombinedCheckpointPatchArtifact,
   createCheckpointArtifact,
   dryRunCheckpointPatch,
   readCheckpointManifest,
@@ -168,6 +169,61 @@ describe("checkpoint artifacts", () => {
       checkpoint_ref: checkpoint.manifest_ref,
       source
     })).toMatchObject({ status: "passed" });
+  });
+
+  test("treats empty checkpoint patches as verified no-op evidence", () => {
+    const runRoot = mkdtempSync(join(tmpdir(), "waygent-checkpoint-noop-run-"));
+    const source = initRepo("waygent-checkpoint-noop-source-");
+    const worktree = cloneWorktree(source, "waygent-checkpoint-noop-worktree-");
+
+    const checkpoint = createCheckpointArtifact({
+      run_root: runRoot,
+      run_id: "run_noop",
+      task_id: "task_noop",
+      candidate_id: "candidate_noop",
+      worktree_path: worktree,
+      changed_files: [],
+      verification_refs: []
+    });
+
+    expect(readFileSync(join(runRoot, checkpoint.patch_ref), "utf8")).toBe("");
+    const dryRun = dryRunCheckpointPatch({
+      run_root: runRoot,
+      checkpoint_ref: checkpoint.manifest_ref,
+      source
+    });
+    expect(dryRun).toMatchObject({ status: "passed", no_op: true });
+    expect(readFileSync(join(runRoot, dryRun.evidence_ref), "utf8")).toContain('"no_op": true');
+    expect(readCheckpointManifest(runRoot, checkpoint.manifest_ref)).toMatchObject({
+      dry_run_status: "passed",
+      dry_run_evidence_ref: dryRun.evidence_ref
+    });
+  });
+
+  test("treats empty combined apply patches as passed no-op evidence", () => {
+    const runRoot = mkdtempSync(join(tmpdir(), "waygent-combined-noop-run-"));
+    const source = initRepo("waygent-combined-noop-source-");
+    const worktree = cloneWorktree(source, "waygent-combined-noop-worktree-");
+    const checkpoint = createCheckpointArtifact({
+      run_root: runRoot,
+      run_id: "run_combined_noop",
+      task_id: "task_combined_noop",
+      candidate_id: "candidate_combined_noop",
+      worktree_path: worktree,
+      changed_files: [],
+      verification_refs: []
+    });
+    dryRunCheckpointPatch({ run_root: runRoot, checkpoint_ref: checkpoint.manifest_ref, source });
+
+    const combined = createCombinedCheckpointPatchArtifact({
+      run_root: runRoot,
+      run_id: "run_combined_noop",
+      checkpoint_refs: [checkpoint.manifest_ref],
+      source
+    });
+
+    expect(combined).toMatchObject({ status: "passed", patch_byte_length: 0, no_op: true });
+    expect(readFileSync(join(runRoot, combined.evidence_ref), "utf8")).toContain('"no_op": true');
   });
 
   test("checkpoint dry-runs use unique scratch files and can run concurrently", async () => {

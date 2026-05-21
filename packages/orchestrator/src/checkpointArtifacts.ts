@@ -51,6 +51,7 @@ export interface CheckpointValidationResult {
 export interface CheckpointDryRunResult {
   status: "passed" | "failed";
   reason?: "checkpoint_unresolvable" | "patch_dry_run_failed";
+  no_op?: boolean;
   evidence_ref: string;
   evidence_artifact: ArtifactReference;
 }
@@ -68,6 +69,7 @@ export interface CombinedCheckpointPatchResult {
     | "checkpoint_worktree_missing"
     | "patch_materialization_failed"
     | "patch_dry_run_failed";
+  no_op?: boolean;
   evidence_ref: string;
   evidence_artifact: ArtifactReference;
 }
@@ -162,6 +164,17 @@ export function dryRunCheckpointPatch(input: { run_root: string; checkpoint_ref:
       reason: "checkpoint_unresolvable"
     });
     return { status: "failed", reason: "checkpoint_unresolvable", evidence_ref: evidence.path, evidence_artifact: evidence };
+  }
+
+  if (isEmptyPatch(resolved.patch)) {
+    const evidence = writeCheckpointDryRunEvidence(input.run_root, input.checkpoint_ref, {
+      status: "passed",
+      stdout: "",
+      stderr: "",
+      no_op: true
+    });
+    updateCheckpointManifestDryRun(input.run_root, input.checkpoint_ref, "passed", evidence.path);
+    return { status: "passed", no_op: true, evidence_ref: evidence.path, evidence_artifact: evidence };
   }
 
   const scratchDir = mkdtempSync(join(tmpdir(), "waygent-checkpoint-dry-run-"));
@@ -262,6 +275,26 @@ export function createCombinedCheckpointPatchArtifact(input: {
       diff.stdout,
       "text/x-diff"
     );
+    if (isEmptyPatch(diff.stdout)) {
+      const evidenceArtifact = writeCombinedPatchEvidence(input.run_root, checkpointRefs, {
+        status: "passed",
+        patch_ref: patchArtifact.path,
+        stdout: "",
+        stderr: "",
+        no_op: true
+      });
+      return {
+        status: "passed",
+        checkpoint_refs: checkpointRefs,
+        patch_ref: patchArtifact.path,
+        patch_sha256: patchArtifact.sha256,
+        patch_byte_length: patchArtifact.byte_length,
+        patch_artifact: patchArtifact,
+        no_op: true,
+        evidence_ref: evidenceArtifact.path,
+        evidence_artifact: evidenceArtifact
+      };
+    }
     const patchPath = join(temp, ".waygent-combined-apply.patch");
     writeFileSync(patchPath, diff.stdout);
     const dryRun = spawnSync("git", ["apply", "--check", patchPath], {
@@ -377,4 +410,8 @@ function listUntrackedFiles(worktree: string): string[] {
   });
   if (result.status !== 0) return [];
   return result.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+}
+
+function isEmptyPatch(patch: string): boolean {
+  return patch.trim().length === 0;
 }

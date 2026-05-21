@@ -36,6 +36,22 @@ describe("Waygent apply engine", () => {
     });
   });
 
+  test("treats an empty patch as an applied no-op after verification", async () => {
+    const source = mkdtempSync(join(tmpdir(), "waygent-apply-noop-source-"));
+    Bun.spawnSync(["git", "init", "-q"], { cwd: source });
+    Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: source });
+    Bun.spawnSync(["git", "config", "user.name", "Test"], { cwd: source });
+    writeFileSync(join(source, "README.md"), "already applied\n");
+    Bun.spawnSync(["git", "add", "-A"], { cwd: source });
+    Bun.spawnSync(["git", "commit", "-q", "-m", "init"], { cwd: source });
+
+    expect(await applyVerifiedCheckpoint({
+      source,
+      patch: "",
+      post_apply_commands: ["grep 'already applied' README.md"]
+    })).toMatchObject({ status: "applied" });
+  });
+
   test("reports post-apply verification failure", async () => {
     const source = mkdtempSync(join(tmpdir(), "waygent-post-apply-source-"));
     Bun.spawnSync(["git", "init", "-q"], { cwd: source });
