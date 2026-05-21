@@ -1,8 +1,0 @@
-{
-  "schema": "agentlens.event.v1",
-  "event_id": "evt_nodot00000a1",
-  "run_id": "run_20260518_211328_abc123",
-  "ts": "2026-05-18T21:13:29Z",
-  "type": "kwscmetaskstarted",
-  "payload": {}
-}

@@ -13,9 +13,9 @@ The active Lens implementation is TypeScript-first:
 - `apps/api`, `apps/console`, and `waygent inspect/explain` expose those
   projections.
 
-The legacy Python `components/agentlens` tree is not an active Waygent product
-surface. It remains only until the no-Python observability deletion blockers
-are resolved.
+The legacy Python `components/agentlens` tree has been removed from this
+checkout. Current Lens work belongs in the TypeScript packages and product
+surfaces listed above.
 
 ## Durable Artifacts
 

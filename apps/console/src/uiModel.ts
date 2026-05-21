@@ -1,4 +1,11 @@
-import type { ExecutionExplanationProjection, ProviderLogSummary } from "@waygent/contracts";
+import type {
+  DogfoodEvidenceProjection,
+  ExecutionExplanationProjection,
+  OperationalMaturityProjection,
+  ProviderLogSummary,
+  ProviderReadinessProjection,
+  RuntimeCostProjection
+} from "@waygent/contracts";
 
 export type TrustVerdict = "trusted" | "failed" | "insufficient_evidence";
 export type ApplyState = "ready" | "blocked" | "not_ready" | "applied";
@@ -48,6 +55,7 @@ export interface ConsoleApplyStatus {
 
 export type RunDetailSectionId =
   | "overview"
+  | "operational-maturity"
   | "safe-wave"
   | "execution-intelligence"
   | "timeline"
@@ -77,6 +85,10 @@ export interface RealRunDetailResponse {
   decision_packets?: Array<Record<string, unknown>>;
   drift?: { last_checked_at: string | null; records: Array<Record<string, unknown>>; unrepaired_blockers: Array<Record<string, unknown>> } | null;
   execution_explanation?: ExecutionExplanationProjection | null;
+  operational_maturity?: OperationalMaturityProjection | null;
+  dogfood_evidence?: DogfoodEvidenceProjection | null;
+  runtime_cost?: RuntimeCostProjection | null;
+  provider_readiness?: ProviderReadinessProjection | null;
   apply_readiness?: {
     status: ApplyState;
     reason: string | null;
@@ -118,6 +130,10 @@ export interface RunDetailModel {
   decision_packets: NonNullable<RealRunDetailResponse["decision_packets"]>;
   drift: RealRunDetailResponse["drift"];
   execution_explanation: ExecutionExplanationProjection | null;
+  operational_maturity: OperationalMaturityProjection | null;
+  dogfood_evidence: DogfoodEvidenceProjection | null;
+  runtime_cost: RuntimeCostProjection | null;
+  provider_readiness: ProviderReadinessProjection | null;
   provider_log_summary: ProviderLogSummary | null;
   next_action: string | null;
   apply_readiness: RealRunDetailResponse["apply_readiness"];
@@ -414,11 +430,16 @@ export function buildRunDetailModel(response: RealRunDetailResponse): RunDetailM
     decision_packets: response.decision_packets ?? [],
     drift: response.drift ?? null,
     execution_explanation: response.execution_explanation ?? null,
+    operational_maturity: response.operational_maturity ?? null,
+    dogfood_evidence: response.dogfood_evidence ?? response.operational_maturity?.dogfood_evidence ?? null,
+    runtime_cost: response.runtime_cost ?? response.operational_maturity?.runtime_cost ?? null,
+    provider_readiness: response.provider_readiness ?? response.operational_maturity?.provider_readiness ?? null,
     provider_log_summary: providerLogSummaryFromAttempts(response.provider_attempts ?? []),
-    next_action: response.execution_explanation?.recommended_next_actions[0] ?? null,
+    next_action: response.operational_maturity?.next_action ?? response.execution_explanation?.recommended_next_actions[0] ?? null,
     apply_readiness: response.apply_readiness ?? null,
     sections: [
       { id: "overview", label: "Overview" },
+      { id: "operational-maturity", label: "Operational maturity" },
       { id: "safe-wave", label: "Safe wave" },
       { id: "execution-intelligence", label: "Execution intelligence" },
       { id: "timeline", label: "Timeline" },

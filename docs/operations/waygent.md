@@ -84,6 +84,32 @@ Execution intelligence is read-only. Apply readiness still comes from
 checkpoint manifests, patch digest checks, dry-run evidence, completion audit,
 reconciliation, and clean source checkout validation.
 
+## Operational Maturity Loop
+
+`waygent inspect --json`, API run detail, and the console share one
+operational maturity projection:
+
+- `dogfood_evidence` checks event journal, provider attempts, verification
+  records, artifact index, task phase timings, wave timing, real runtime
+  timestamps, explain summary, and readiness artifact refs.
+- `runtime_cost` summarizes measured waves, parallelism score, serial
+  barriers, phase totals, hotspots, fixed costs, and read-only plan-shaping
+  recommendations.
+- `provider_readiness` classifies fake, Codex, and Claude process evidence as
+  `ready`, `not_configured`, `unavailable`, `auth_required`, `failed`, or
+  `unknown` without running live providers by default.
+
+The operator loop is:
+
+1. run or demo a Waygent task;
+2. inspect the run and read operational maturity;
+3. explain the run for the shortest next diagnosis;
+4. repair provider setup, environment, missing evidence, drift, or plan shape;
+5. rerun, resume, or apply only through the existing readiness gates.
+
+Operational maturity is diagnostic. It never marks a run apply-ready and never
+mutates the source checkout.
+
 ## Verification Environment
 
 Waygent prepares verification-only dependency access for isolated local
@@ -93,9 +119,14 @@ removed before checkpointing. If dependency access is unavailable, verification
 is blocked as `dependency_missing` or `environment_blocker` instead of
 `unknown`.
 
-Before treating execution intelligence as complete, run a real Waygent dogfood
-execution and confirm `inspect` shows non-empty `artifact_index`, task
-`phase_timings`, real event timestamps, and precise `explain` blockers.
+Before treating execution intelligence as complete, run the offline dogfood
+gate and confirm `inspect` shows non-empty `artifact_index`, task
+`phase_timings`, real event timestamps, provider attempts, verification
+records, runtime cost, and precise `explain` output:
+
+```bash
+bun run waygent:dogfood
+```
 
 ### Recovery Actions
 
@@ -121,6 +152,7 @@ bun run check
 bun run platform:demo
 bun run check:legacy
 bun run waygent:scenarios
+bun run waygent:dogfood
 bun run --cwd apps/console build
 cd native/kernel && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 ```
@@ -135,6 +167,7 @@ bun run check
 bun run platform:demo
 bun run check:legacy
 bun run waygent:scenarios
+bun run waygent:dogfood
 bun run --cwd apps/console build
 cd native/kernel && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 ```

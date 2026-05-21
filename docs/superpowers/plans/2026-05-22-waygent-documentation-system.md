@@ -1,12 +1,16 @@
 # Waygent Documentation System Implementation Plan
 
+> Status: historical. This plan predates deletion of
+> `components/agentlens`. Do not execute its AgentLens component-doc tasks as
+> active work.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build a reviewer-friendly and operator-usable Waygent documentation system from the root README down through architecture, operations, contracts, AgentLens, skills, and Graphify repo-map outputs.
 
 **Architecture:** Root `README.md` becomes the product front door, `docs/README.md` becomes the reader router, focused docs own current architecture/operations/contracts, and historical migration plans move behind a roadmap index. Graphify is enabled as a development and documentation-audit layer while canonical runtime truth remains in code, tests, contracts, and owned docs.
 
-**Tech Stack:** Markdown documentation, Bun workspace commands, Graphify 0.8.x, `git diff --check`, existing Waygent docs under `docs/`, AgentLens docs under `components/agentlens/docs/`, and skill docs under `skills/`.
+**Tech Stack:** Markdown documentation, Bun workspace commands, Graphify 0.8.x, `git diff --check`, existing Waygent docs under `docs/`, TypeScript Lens docs under `docs/architecture` and `docs/contracts`, and skill docs under `skills/`.
 
 ---
 

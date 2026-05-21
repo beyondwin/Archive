@@ -1,5 +1,9 @@
 # Waygent No-Legacy Runtime Implementation Plan
 
+> Status: historical. This plan predates deletion of the legacy Python
+> `components/agentlens` tree. Do not execute its Python AgentLens tasks as
+> active work.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Remove active legacy runtime compatibility from Waygent, then clean up the remaining AgentLens Python AgentRunway compatibility surface without regressing runtime quality.

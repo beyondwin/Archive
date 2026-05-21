@@ -139,6 +139,7 @@ describe("Lens web console UI model", () => {
 
     expect(model.sections.map((section) => section.id)).toEqual([
       "overview",
+      "operational-maturity",
       "safe-wave",
       "execution-intelligence",
       "timeline",
@@ -228,6 +229,73 @@ describe("Lens web console UI model", () => {
       category: "file_claim"
     });
     expect(model.sections.map((section) => section.id)).toContain("execution-intelligence");
+  });
+
+  test("builds operational maturity detail from shared API projections", () => {
+    const model = buildRunDetailModel({
+      run_id: "run_maturity",
+      status: "completed",
+      trust_status: "trusted",
+      apply_status: "ready",
+      total_events: 9,
+      last_event_type: "lens.trust_report_updated",
+      safe_wave: ["task_a"],
+      failures: [],
+      timeline: [],
+      operational_maturity: {
+        schema: "waygent.operational_maturity.v1",
+        run_id: "run_maturity",
+        hard_blocker: null,
+        dogfood_evidence: {
+          schema: "waygent.dogfood_evidence.v1",
+          run_id: "run_maturity",
+          status: "complete",
+          dogfood_run_ref: null,
+          checklist: [{ item: "artifact_index", status: "present", refs: ["artifacts/worker/task_a.json"], reason: null }],
+          missing_reasons: [],
+          real_runtime_timestamps: true,
+          explain_summary: "no active failure barrier"
+        },
+        runtime_cost: {
+          schema: "waygent.runtime_cost.v1",
+          run_id: "run_maturity",
+          estimated_wave_count: 1,
+          measured_wave_count: 1,
+          parallelism_score: 1,
+          serial_barriers: [],
+          phase_totals: [{ phase: "provider", duration_ms: 1200, task_ids: ["task_a"], wave_ids: [] }],
+          top_hotspots: [{ scope: "task", phase: "provider", duration_ms: 1200, task_id: "task_a", wave_id: null }],
+          fixed_costs: { provider: 1200 },
+          recommended_next_actions: ["No trust-preserving optimization is recommended from the recorded evidence."]
+        },
+        provider_readiness: {
+          schema: "waygent.provider_readiness.v1",
+          run_id: "run_maturity",
+          provider: "fake",
+          status: "ready",
+          command_summary: ["fake-provider"],
+          stderr_summary: null,
+          failure_class: null,
+          attempt_refs: [],
+          recommended_next_action: "Offline fake provider is ready for deterministic local checks."
+        },
+        apply_readiness: {
+          status: "ready",
+          reason: null,
+          checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"],
+          combined_patch_ref: "artifacts/checkpoints/apply/run_maturity.patch",
+          source: "run_state_v2"
+        },
+        next_action: "No trust-preserving optimization is recommended from the recorded evidence.",
+        projection_errors: []
+      }
+    });
+
+    expect(model.sections.map((section) => section.id)).toContain("operational-maturity");
+    expect(model.operational_maturity?.dogfood_evidence.status).toBe("complete");
+    expect(model.dogfood_evidence?.checklist[0]).toMatchObject({ item: "artifact_index", status: "present" });
+    expect(model.provider_readiness?.status).toBe("ready");
+    expect(model.next_action).toBe("No trust-preserving optimization is recommended from the recorded evidence.");
   });
 
   test("maps v2 apply readiness evidence into console apply status", () => {

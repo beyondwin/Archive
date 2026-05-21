@@ -1,8 +1,0 @@
-{
-  "schema": "agentlens.event.v1",
-  "event_id": "evt_claude000001",
-  "run_id": "run_20260519_000000_cdx001",
-  "ts": "2026-05-19T00:00:03Z",
-  "type": "claude.tool_use",
-  "payload": {"tool_name": "Bash", "input": {"command": "ls"}}
-}

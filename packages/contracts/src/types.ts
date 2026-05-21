@@ -228,6 +228,86 @@ export interface ExecutionExplanationProjection {
   recommended_next_actions: string[];
 }
 
+export type DogfoodEvidenceStatus = "complete" | "partial" | "missing" | "projection_error";
+export type DogfoodChecklistStatus = "present" | "missing" | "stale" | "not_applicable" | "error";
+
+export interface DogfoodEvidenceChecklistItem {
+  item: string;
+  status: DogfoodChecklistStatus;
+  refs: string[];
+  reason: string | null;
+}
+
+export interface DogfoodEvidenceProjection {
+  schema: "waygent.dogfood_evidence.v1";
+  run_id: string;
+  status: DogfoodEvidenceStatus;
+  dogfood_run_ref: string | null;
+  checklist: DogfoodEvidenceChecklistItem[];
+  missing_reasons: string[];
+  real_runtime_timestamps: boolean;
+  explain_summary: string | null;
+}
+
+export interface RuntimeCostProjection {
+  schema: "waygent.runtime_cost.v1";
+  run_id: string;
+  estimated_wave_count: number;
+  measured_wave_count: number;
+  parallelism_score: number;
+  serial_barriers: Array<{
+    category: ExecutionBarrier["category"];
+    count: number;
+    task_ids: string[];
+    reasons: string[];
+  }>;
+  phase_totals: Array<{
+    phase: ExecutionPhaseName;
+    duration_ms: number;
+    task_ids: string[];
+    wave_ids: string[];
+  }>;
+  top_hotspots: ExecutionCostHotspot[];
+  fixed_costs: Partial<Record<ExecutionPhaseName, number>>;
+  recommended_next_actions: string[];
+}
+
+export type ProviderReadinessStatus =
+  | "ready"
+  | "not_configured"
+  | "unavailable"
+  | "auth_required"
+  | "failed"
+  | "unknown";
+
+export interface ProviderReadinessProjection {
+  schema: "waygent.provider_readiness.v1";
+  run_id: string;
+  provider: string | null;
+  status: ProviderReadinessStatus;
+  command_summary: string[];
+  stderr_summary: ProviderLogSummary | null;
+  failure_class: FailureClass | string | null;
+  attempt_refs: string[];
+  recommended_next_action: string;
+}
+
+export interface OperationalMaturityProjection {
+  schema: "waygent.operational_maturity.v1";
+  run_id: string;
+  hard_blocker: {
+    task_id: string | null;
+    failure_class: FailureClass | string;
+    summary: string;
+  } | null;
+  dogfood_evidence: DogfoodEvidenceProjection;
+  runtime_cost: RuntimeCostProjection;
+  provider_readiness: ProviderReadinessProjection;
+  apply_readiness: ApplyReadinessProjection;
+  next_action: string;
+  projection_errors: Array<{ projection: string; message: string }>;
+}
+
 export interface WaygentWorktreeManifest {
   task_id: string;
   branch: string;

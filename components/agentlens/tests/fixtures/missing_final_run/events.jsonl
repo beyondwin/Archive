@@ -1,2 +1,0 @@
-{"schema":"agentlens.event.v1","event_id":"evt_cccccccccc01","run_id":"run_20260101_000002_cccccc","ts":"2026-01-01T00:00:00Z","type":"run.started","payload":{}}
-{"schema":"agentlens.event.v1","event_id":"evt_cccccccccc02","run_id":"run_20260101_000002_cccccc","ts":"2026-01-01T00:00:01Z","type":"task.started","payload":{}}

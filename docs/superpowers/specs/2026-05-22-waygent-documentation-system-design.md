@@ -1,7 +1,11 @@
 # Waygent Documentation System And Graphify Adoption Design
 
 Date: 2026-05-22
-Status: Draft for user review
+Status: Historical; superseded by current Waygent docs and no-Python Lens cutoff
+
+> Status: historical. This design predates deletion of
+> `components/agentlens`. Use current root docs and TypeScript Lens docs for
+> active documentation routing.
 
 ## Goal
 

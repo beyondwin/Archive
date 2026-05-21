@@ -12,7 +12,7 @@ resolution.
 artifacts are the durable source of truth. Active readers are
 `packages/lens-store`, `packages/lens-projectors`,
 `packages/orchestrator/src/runCommands.ts`, `apps/api`, and `apps/console`.
-Python `components/agentlens` is legacy pending deletion, not a supported active
+Python `components/agentlens` has been deleted and is not a supported active
 product surface.
 
 **Tech Stack:** Bun, TypeScript project references, React/Vite, Rust kernel,
@@ -64,12 +64,13 @@ Corrected by this document update:
 - The stale `.github/workflows/dashboard-ci.yml` workflow that targeted the old
   `AgentLens/**` root is removed.
 
-Still unresolved:
+Resolved by the final cutoff:
 
-- `components/agentlens/` still exists.
+- `components/agentlens/` has been deleted from tracked source and ignored
+  local residue.
 - KWS executor skill telemetry still references an `agentlens` CLI contract,
-  but Task 4 now treats it as skill-local/external best-effort observability,
-  not an active Waygent product blocker.
+  but Task 4 treats it as skill-local/external best-effort observability, not
+  an active Waygent product blocker.
 
 ## Execution Order
 
@@ -84,7 +85,7 @@ Still unresolved:
 Human approval gates:
 
 - before changing KWS executor telemetry behavior;
-- before deleting `components/agentlens`;
+- before deleting `components/agentlens` (approved and completed);
 - before removing historical migration docs.
 
 ---
@@ -111,8 +112,7 @@ Human approval gates:
   `packages/lens-projectors`, `packages/orchestrator`,
   `packages/runway-control`, `packages/provider-adapters`, `native/kernel`,
   and `skills/waygent`.
-- [x] Mark `components/agentlens` as legacy pending deletion, not as an active
-  component.
+- [x] Mark `components/agentlens` as deleted, not as an active component.
 - [x] Remove Python AgentLens from default useful checks.
 - [x] Replace README AgentLens links with TypeScript Lens architecture and
   event-contract links.
@@ -274,17 +274,17 @@ Preconditions:
 
 Steps:
 
-- [ ] Run a final active-reference search:
+- [x] Run a final active-reference search:
 
 ```bash
 rg -n "components/agentlens|AgentLens backend|python -m pytest|agentlens.event.v2|agentlens.waygent_projection" \
   AGENTS.md CLAUDE.md README.md docs apps packages native tests .github package.json
 ```
 
-- [ ] Delete `components/agentlens/`.
-- [ ] Remove generated Python cache and virtualenv references that only applied
+- [x] Delete `components/agentlens/`.
+- [x] Remove generated Python cache and virtualenv references that only applied
   to the deleted tree.
-- [ ] Keep historical migration references only when clearly historical.
+- [x] Keep historical migration references only when clearly historical.
 
 Verify:
 
@@ -312,9 +312,10 @@ Use native kernel checks if native files changed.
 - Modify: `docs/operations/verification.md`
 - Modify: this plan if any task ordering changed during execution.
 
-- [ ] Run `graphify update .` after meaningful structure deletion or movement.
-- [ ] Confirm `GRAPH_REPORT.md` built commit matches current `HEAD`.
-- [ ] Update architecture and operations docs with the final no-Python state.
+- [x] Run `graphify update .` after meaningful structure deletion or movement.
+- [x] Confirm `GRAPH_REPORT.md` built commit matches current `HEAD` at
+  generation time.
+- [x] Update architecture and operations docs with the final no-Python state.
 - [ ] Record verification results in the final commit or PR description.
 
 Verify:

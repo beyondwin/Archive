@@ -7,9 +7,9 @@ emission.
 
 Lens is the TypeScript observability and inspection path inside Waygent.
 `agentlens.event.v3` remains the event contract label, but the legacy Python
-`components/agentlens/` tree is not the active product runtime. KWS executor
-skills remain in this repository as local executor contracts, but they are not
-the Waygent product runtime.
+`components/agentlens/` tree has been removed from the product runtime. KWS
+executor skills remain in this repository as local executor contracts, but
+they are not the Waygent product runtime.
 
 ## Project Map
 

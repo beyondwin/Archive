@@ -2,7 +2,13 @@ import { readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import type { AgentLensEvent, FailureClass, RunStatus } from "@waygent/contracts";
 import { appendEvent, readEvents, readLatestRunId, rebuildRunSummary, runPaths, sha256 } from "@waygent/lens-store";
-import { projectApplyReadinessFromState, projectExecutionExplanationFromState, projectFailureSummary, projectTrustReport } from "@waygent/lens-projectors";
+import {
+  projectApplyReadinessFromState,
+  projectExecutionExplanationFromState,
+  projectFailureSummary,
+  projectOperationalMaturityFromState,
+  projectTrustReport
+} from "@waygent/lens-projectors";
 import { readRunStateV2Result, writeRunStateV2, type RunStateV2ReadResult, type WaygentRunStateV2 } from "./runState";
 export { buildRunEvent, nextRunEvent } from "./runEvents";
 import { nextRunEvent } from "./runEvents";
@@ -61,19 +67,34 @@ export function inspectRun(options: RunCommandOptions): RunStatusView & {
   failures: ReturnType<typeof projectFailureSummary>;
   state?: WaygentRunStateV2;
   execution_explanation?: ReturnType<typeof projectExecutionExplanationFromState>;
+  operational_maturity?: ReturnType<typeof projectOperationalMaturityFromState>;
+  dogfood_evidence?: ReturnType<typeof projectOperationalMaturityFromState>["dogfood_evidence"];
+  runtime_cost?: ReturnType<typeof projectOperationalMaturityFromState>["runtime_cost"];
+  provider_readiness?: ReturnType<typeof projectOperationalMaturityFromState>["provider_readiness"];
   state_error?: Exclude<RunStateV2ReadResult, { status: "ok" }>;
 } {
   const status = statusRun(options);
   const stateResult = readRunStateV2Result(options.root, status.run_id);
+  const events = readEvents(runPaths(options.root, status.run_id).events);
+  const failures = projectFailureSummary(events);
+  if (stateResult.status === "ok") {
+    const executionExplanation = projectExecutionExplanationFromState(stateResult.state);
+    const operationalMaturity = projectOperationalMaturityFromState({ state: stateResult.state, events });
+    return {
+      ...status,
+      failures,
+      state: stateResult.state,
+      execution_explanation: executionExplanation,
+      operational_maturity: operationalMaturity,
+      dogfood_evidence: operationalMaturity.dogfood_evidence,
+      runtime_cost: operationalMaturity.runtime_cost,
+      provider_readiness: operationalMaturity.provider_readiness
+    };
+  }
   return {
     ...status,
-    failures: projectFailureSummary(readEvents(runPaths(options.root, status.run_id).events)),
-    ...(stateResult.status === "ok"
-      ? {
-        state: stateResult.state,
-        execution_explanation: projectExecutionExplanationFromState(stateResult.state)
-      }
-      : { state_error: stateResult })
+    failures,
+    state_error: stateResult
   };
 }
 
@@ -84,14 +105,19 @@ export function explainRun(options: RunCommandOptions): { run_id: string; blocke
   const stateResult = readRunStateV2Result(options.root, runId);
   if (stateResult.status === "ok") {
     const explanation = projectExecutionExplanationFromState(stateResult.state);
+    const maturity = projectOperationalMaturityFromState({ state: stateResult.state, events });
     const stateFailure = blockedTaskFailure(stateResult.state);
     const activeFailure = stateFailure ?? failure;
     const barrier = explanation.barriers[0];
     const hotspot = explanation.cost_hotspots[0];
+    const dogfoodGap = maturity.dogfood_evidence.status !== "complete"
+      ? `dogfood evidence ${maturity.dogfood_evidence.status}: ${maturity.dogfood_evidence.missing_reasons[0] ?? "evidence incomplete"}`
+      : null;
     const summaryParts = [
       activeFailure ? `${activeFailure.task_id} blocked by ${activeFailure.failure_class}` : "no active failure barrier",
       barrier ? `scheduling barrier: ${barrier.task_id} ${barrier.reason}` : null,
-      hotspot ? `cost hotspot: ${hotspot.phase} ${hotspot.duration_ms}ms` : null
+      hotspot ? `cost hotspot: ${hotspot.phase} ${hotspot.duration_ms}ms` : null,
+      !activeFailure && !barrier && !hotspot ? dogfoodGap : null
     ].filter(Boolean);
     return {
       run_id: runId,

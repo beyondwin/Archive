@@ -266,6 +266,53 @@ function ExecutionIntelligence({ detail }: { detail: RunDetailModel }) {
   );
 }
 
+function OperationalMaturity({ detail }: { detail: RunDetailModel }) {
+  const dogfood = detail.dogfood_evidence;
+  const runtimeCost = detail.runtime_cost;
+  const provider = detail.provider_readiness;
+  const hardBlocker = detail.operational_maturity?.hard_blocker;
+  const topHotspot = runtimeCost?.top_hotspots[0] ?? detail.execution_explanation?.cost_hotspots[0] ?? null;
+
+  return (
+    <section className="section-band operational-maturity" aria-label="Operational maturity">
+      <div className="section-title-row">
+        <h2>Operational Maturity</h2>
+        <strong>{detail.operational_maturity?.apply_readiness.status ?? detail.header.apply_status}</strong>
+      </div>
+      <div className="maturity-grid">
+        <div>
+          <span>Hard blocker</span>
+          <strong>{hardBlocker?.failure_class ?? "none"}</strong>
+          <small>{hardBlocker?.summary ?? "No active failure barrier"}</small>
+        </div>
+        <div>
+          <span>Runtime hotspot</span>
+          <strong>{topHotspot ? `${topHotspot.phase} ${topHotspot.duration_ms}ms` : "none"}</strong>
+          <small>{runtimeCost ? `${runtimeCost.measured_wave_count} waves, score ${runtimeCost.parallelism_score}` : "No runtime-cost projection"}</small>
+        </div>
+        <div>
+          <span>Dogfood evidence</span>
+          <strong>{dogfood?.status ?? "missing"}</strong>
+          <small>{dogfood?.missing_reasons[0] ?? "Evidence checklist is complete"}</small>
+        </div>
+        <div>
+          <span>Provider readiness</span>
+          <strong>{provider?.status ?? "unknown"}</strong>
+          <small>{provider?.provider ?? "not configured"}</small>
+        </div>
+      </div>
+      {detail.next_action ? (
+        <p className="next-action">Next action: {detail.next_action}</p>
+      ) : null}
+      <div className="maturity-lists">
+        <EvidenceList title="Dogfood Checklist" items={dogfood?.checklist ?? []} empty="No dogfood checklist" />
+        <EvidenceList title="Runtime Phase Cost" items={runtimeCost?.phase_totals ?? []} empty="No runtime-cost totals" />
+        <EvidenceList title="Provider Readiness" items={provider ? [provider] : []} empty="No provider readiness" />
+      </div>
+    </section>
+  );
+}
+
 function OperationalEvidence({ detail }: { detail: RunDetailModel }) {
   return (
     <div className="projection-grid v2-grid">
@@ -401,6 +448,7 @@ export function App({ apiRoot = defaultApiRoot() }: AppProps = {}) {
             <DecisionPackets run={run} />
             <ApplyStatus run={run} />
           </div>
+          <OperationalMaturity detail={detail} />
           <ExecutionIntelligence detail={detail} />
           <OperationalEvidence detail={detail} />
         </div>

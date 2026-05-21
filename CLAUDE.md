@@ -16,8 +16,8 @@ file. This file adds Claude-specific routing and reminders.
   experiment record under `docs/experiments/`.
 - Do not let subagents write Lens events directly. Waygent owns candidate-drain
   and event emission.
-- Do not route active Lens work into `components/agentlens`; that Python tree is
-  legacy and scheduled for deletion after explicit blocker resolution.
+- Do not route active Lens work into `components/agentlens`; that legacy Python
+  tree has been removed from this checkout.
 - Keep Claude runtime files under `.claude/` out of git.
 - If a task asks for execution through Waygent, invoke `waygent` through
   `apps/cli/src/index.ts` or the installed `waygent` command rather than
