@@ -59,7 +59,12 @@ export function prepareVerificationEnvironment(input: {
     cleanup() {
       if (evidence.cleanup_status !== "pending") return;
       try {
-        if (existsSync(worktreeNodeModules) && lstatSync(worktreeNodeModules).isSymbolicLink()) {
+        if (existsSync(worktreeNodeModules)) {
+          if (!lstatSync(worktreeNodeModules).isSymbolicLink()) {
+            evidence.cleanup_status = "failed";
+            evidence.reason = "node_modules cleanup skipped: created path is not a symbolic link";
+            return;
+          }
           rmSync(worktreeNodeModules, { force: true, recursive: true });
         }
         evidence.cleanup_status = "removed";

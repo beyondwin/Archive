@@ -59,4 +59,21 @@ describe("verification environment", () => {
 
     expect(prepared.evidence.cleanup_status).toBe("removed");
   });
+
+  test("does not report cleanup removed when the inherited dependency link was replaced", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "waygent-verify-env-source-"));
+    const worktree = mkdtempSync(join(tmpdir(), "waygent-verify-env-worktree-"));
+    mkdirSync(join(workspace, "node_modules"));
+    const prepared = prepareVerificationEnvironment({ workspace, worktree });
+    const inheritedPath = join(worktree, "node_modules");
+
+    rmSync(inheritedPath, { force: true, recursive: true });
+    mkdirSync(inheritedPath);
+
+    prepared.cleanup();
+
+    expect(existsSync(inheritedPath)).toBe(true);
+    expect(prepared.evidence.cleanup_status).toBe("failed");
+    expect(prepared.evidence.reason).toContain("not a symbolic link");
+  });
 });
