@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { readLatestRunId } from "@waygent/lens-store";
 import { runWaygent } from "../src/orchestrator";
-import { readRunState } from "../src/runState";
+import { readRunStateV2 } from "../src/runState";
 
 const plan = `
 \`\`\`yaml waygent-task
@@ -36,11 +36,12 @@ describe("runWaygent", () => {
     ]);
     expect(result.trust_report.trust_status).toBe("trusted");
     expect(result.projection.safe_wave).toEqual(["task_demo"]);
-    expect(readRunState(root, "run_demo")).toMatchObject({
+    expect(readRunStateV2(root, "run_demo")).toMatchObject({
+      schema: "waygent.run_state.v2",
       status: "completed",
-      worktree: join(root, "worktrees", "run_demo", "task_demo"),
-      tasks: [{ id: "task_demo", status: "verified" }],
-      completion_audit: { status: "passed", commands: ["printf hello"] },
+      worktree_root: join(root, "worktrees"),
+      tasks: { task_demo: { id: "task_demo", status: "verified" } },
+      completion_audit: { status: "passed", required_checks: ["printf hello"] },
       apply: { status: "not_applied" }
     });
   });
@@ -103,6 +104,6 @@ verify:
     const worker = (workerEvent?.payload.worker ?? {}) as { summary?: string; evidence?: Record<string, unknown> };
     expect(worker.summary).toBe("selected codex true");
     expect(worker.evidence).toMatchObject({ provider: "codex" });
-    expect(readRunState(root, "run_codex").provider).toBe("codex");
+    expect(readRunStateV2(root, "run_codex").provider_profile.provider).toBe("codex");
   });
 });

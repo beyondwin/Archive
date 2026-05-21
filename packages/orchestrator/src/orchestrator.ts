@@ -1,17 +1,21 @@
-import { rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { join } from "node:path";
-import type { AgentLensEvent } from "@waygent/contracts";
-import { buildKernelRequest, planWorktree, result as kernelResult } from "@waygent/kernel-client";
+import type { AgentLensEvent, ProviderAttempt, WaygentRunStateV2 } from "@waygent/contracts";
+import { buildTaskPacket } from "@waygent/context-packer";
+import { planWorktree } from "@waygent/kernel-client";
 import { projectFailureSummary, projectTimeline, projectTrustReport } from "@waygent/lens-projectors";
 import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeArtifact, writeLatestRunId } from "@waygent/lens-store";
 import { ClaudeProviderAdapter, CodexProviderAdapter, FakeProviderAdapter, type ProviderAdapter, type ProviderProcessOptions } from "@waygent/provider-adapters";
 import { buildDurableProjection, mergeCandidate } from "@waygent/runway-control";
 import { resolveExecutionProfile, type ProfileOverride, type ProviderName } from "./executionProfile";
 import { resolvePlanInput } from "./planDiscovery";
-import { parseWaygentPlan } from "./planParser";
+import { parseWaygentPlan, type ParsedWaygentTask } from "./planParser";
 import { buildRunEvent } from "./runEvents";
-import { writeRunState, type WaygentRunState } from "./runState";
+import { readRunStateV2, writeRunStateV2 } from "./runState";
+import { reconcileRunState } from "./stateReconciliation";
 import { buildTaskGraphFromPlan } from "./taskGraph";
+import { runVerificationCommands } from "./verification";
 
 export interface RunWaygentOptions {
   root: string;
@@ -68,30 +72,60 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   const firstTask = graph.tasks.get(firstTaskId);
   if (!firstTask) throw new Error(`task ${firstTaskId} missing from graph`);
   const workspace = options.workspace ?? process.cwd();
+  const worktreeRoot = options.worktree_root ?? join(options.root, "worktrees");
   const plannedWorktree = planWorktree({
     run_id: runId,
     task_id: firstTask.id,
     workspace,
-    worktree_root: options.worktree_root ?? join(options.root, "worktrees")
+    worktree_root: worktreeRoot
   });
-  const worktree = plannedWorktree.path;
-
-  const initialState: WaygentRunState = {
-    schema: "waygent.run_state.v1",
+  const startedAt = new Date().toISOString();
+  const initialState: WaygentRunStateV2 = {
+    schema: "waygent.run_state.v2",
     run_id: runId,
     workspace,
-    worktree,
+    source_branch: null,
+    worktree_root: worktreeRoot,
+    run_root: paths.root,
+    artifact_root: paths.artifacts,
+    state_path: join(paths.root, "state.json"),
+    event_journal_path: paths.events,
+    plan_path: planInput.path,
+    spec_path: options.spec ?? null,
+    provider_profile: profile,
     status: "running",
-    provider: profile.provider,
-    execution_mode: profile.execution_mode,
-    tasks: parsed.tasks.map((candidate) => ({
+    lifecycle_outcome: null,
+    current_phase: "dispatch",
+    tasks: Object.fromEntries(parsed.tasks.map((candidate) => [candidate.id, {
       id: candidate.id,
-      status: safeWave.includes(candidate.id) ? "running" : "pending"
-    })),
+      status: safeWave.includes(candidate.id) ? "ready" : "pending",
+      risk: candidate.risk,
+      dependencies: candidate.dependencies,
+      file_claims: candidate.file_claims,
+      attempts: [],
+      task_packet_path: null,
+      task_packet_sha256: null,
+      unit_manifest: {
+        allowed_write_globs: candidate.file_claims.filter((claim) => claim.mode !== "read_only").map((claim) => claim.path),
+        forbidden_write_globs: [".git/**", "node_modules/**"]
+      },
+      checkpoint_refs: [],
+      latest_failure_class: null,
+      decision_packet_ref: null,
+      timing: {}
+    }])),
+    safe_waves: [{ wave_id: "wave_1", ready: safeWave, withheld: projection.withheld_tasks }],
+    provider_attempts: [],
+    reviews: [],
+    verification: [],
+    recovery: [],
+    apply: { status: "not_applied" },
+    context: { snapshot_path: null, basis_hash: null },
+    drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
     completion_audit: null,
-    apply: { status: "not_applied" }
+    timestamps: { started_at: startedAt, updated_at: startedAt, completed_at: null }
   };
-  writeRunState(options.root, initialState);
+  writeRunStateV2(options.root, initialState);
 
   const started = buildRunEvent({
     run_id: runId,
@@ -124,67 +158,166 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
 
   const checkpointRefs = new Map<string, string>();
   const verificationCommands = new Map<string, string[]>();
+  const providerAttempts: ProviderAttempt[] = [];
+  const verificationRecords: Array<Record<string, unknown>> = [];
   let sequence = 4;
   for (const taskId of safeWave) {
     const task = graph.tasks.get(taskId);
     if (!task) throw new Error(`task ${taskId} missing from graph`);
     const parsedTask = parsed.tasks.find((candidate) => candidate.id === task.id);
-    verificationCommands.set(task.id, parsedTask?.verification_commands ?? ["printf hello"]);
+    if (!parsedTask) throw new Error(`task ${task.id} missing from parsed plan`);
+    const taskWorktree = planWorktree({ run_id: runId, task_id: task.id, workspace, worktree_root: worktreeRoot });
+    mkdirSync(taskWorktree.path, { recursive: true });
+    verificationCommands.set(task.id, parsedTask.verification_commands.length > 0 ? parsedTask.verification_commands : ["printf hello"]);
+    const packet = buildTaskPacket({
+      run_id: runId,
+      task: parsedTask,
+      role: "implement",
+      plan_excerpt: parsedTask.title,
+      spec_excerpt: options.spec ?? "",
+      previous_failures: []
+    });
+    const packetArtifact = writeArtifact(paths.root, `task_packets/${task.id}.json`, `${JSON.stringify(packet, null, 2)}\n`);
+    const packetPath = join(paths.root, packetArtifact.path);
+    updateRunStateV2(options.root, runId, (state) => {
+      const stateTask = state.tasks[task.id];
+      if (stateTask) {
+        stateTask.status = "running";
+        stateTask.task_packet_path = packetPath;
+        stateTask.task_packet_sha256 = packetArtifact.sha256;
+        stateTask.timing.started = new Date().toISOString();
+      }
+      state.current_phase = "dispatch";
+    });
+    const prompt = buildTaskPrompt(parsedTask, packetPath);
+    const attemptId = `attempt_${task.id}_1`;
+    const attemptStarted = new Date().toISOString();
+    const stdinArtifact = writeArtifact(paths.root, `provider/${attemptId}.stdin.txt`, prompt, "text/plain");
     const worker = await provider.run({
       task_id: task.id,
       candidate_id: `candidate_${task.id}`,
-      prompt: buildTaskPrompt(parsedTask),
-      changed_files: []
+      role: "implement",
+      prompt,
+      task_packet_path: packetPath,
+      changed_files: parsedTask.file_claims.filter((claim) => claim.mode !== "read_only").map((claim) => claim.path)
     });
-    writeArtifact(paths.root, `worker/${task.id}.json`, JSON.stringify(worker, null, 2));
+    const workerArtifact = writeArtifact(paths.root, `worker/${task.id}.json`, JSON.stringify(worker, null, 2));
+    const stdoutArtifact = writeArtifact(paths.root, `provider/${attemptId}.stdout.txt`, JSON.stringify(worker), "text/plain");
+    const stderrArtifact = writeArtifact(paths.root, `provider/${attemptId}.stderr.txt`, "", "text/plain");
+    const attempt: ProviderAttempt = {
+      schema: "runway.provider_attempt.v1",
+      attempt_id: attemptId,
+      run_id: runId,
+      task_id: task.id,
+      role: "implement",
+      provider: profile.provider,
+      command: profile.provider === "fake" ? ["fake-provider"] : [profile.provider],
+      cwd: taskWorktree.path,
+      stdin_ref: stdinArtifact.path,
+      stdout_ref: stdoutArtifact.path,
+      stderr_ref: stderrArtifact.path,
+      event_stream_ref: null,
+      exit_code: worker.status === "completed" ? 0 : 1,
+      timed_out: false,
+      started_at: attemptStarted,
+      completed_at: new Date().toISOString(),
+      worker_result_ref: workerArtifact.path,
+      failure_class: worker.failure_class ?? null
+    };
+    providerAttempts.push(attempt);
+    updateRunStateV2(options.root, runId, (state) => {
+      state.provider_attempts = [...providerAttempts];
+      state.tasks[task.id]?.attempts.push(attemptId);
+    });
     appendEvent(paths.events, buildRunEvent({
       run_id: runId,
       sequence: sequence++,
       event_type: "runway.worker_result",
       phase: "worker",
-      outcome: "success",
+      outcome: worker.status === "completed" ? "success" : "failed",
       summary: worker.summary,
-      payload: { worker }
+      payload: { worker, attempt }
     }));
-    const command = verificationCommands.get(task.id)?.[0] ?? "printf hello";
-    const argv = command.split(/\s+/).filter(Boolean);
-    const kernelRequest = buildKernelRequest({
-      request_id: `exec_${task.id}`,
+    if (profile.provider === "fake") materializeFakeProviderResult(taskWorktree.path, parsedTask);
+    const verification = await runVerificationCommands({
       run_id: runId,
       task_id: task.id,
-      cwd: ".",
-      argv: argv.length > 0 ? argv : ["printf", "hello"],
-      timeout_ms: 1000
+      cwd: taskWorktree.path,
+      commands: verificationCommands.get(task.id) ?? ["printf hello"]
     });
-    const kernel = kernelResult(kernelRequest, 0, "hello", "", false);
-    writeArtifact(paths.root, `kernel/exec_${task.id}.json`, JSON.stringify(kernel, null, 2));
-    const verified = mergeCandidate({ task_id: task.id, candidate_id: worker.candidate_id, reviewed: true, verified: true });
-    task.checkpoint_ref = verified.checkpoint_ref ?? `checkpoint_${task.id}_${worker.candidate_id}`;
-    checkpointRefs.set(task.id, task.checkpoint_ref);
+    const taskVerificationRecords = verification.results.map((kernel, index) => {
+      const command = verificationCommands.get(task.id)?.[index] ?? "";
+      const kernelArtifact = writeArtifact(paths.root, `kernel/${kernel.request_id}.json`, JSON.stringify(kernel, null, 2));
+      return {
+        verification_id: kernel.request_id,
+        task_id: task.id,
+        command,
+        cwd: taskWorktree.path,
+        kernel_result_ref: kernelArtifact.path,
+        exit_code: kernel.exit_code,
+        timed_out: kernel.timed_out,
+        stdout_sha256: kernel.stdout_sha256,
+        stderr_sha256: kernel.stderr_sha256,
+        status: kernel.exit_code === 0 && !kernel.timed_out ? "passed" : "failed"
+      };
+    });
+    verificationRecords.push(...taskVerificationRecords);
+    const verificationPassed = verification.status === "passed" && worker.status === "completed";
+    if (verificationPassed) {
+      const verified = mergeCandidate({ task_id: task.id, candidate_id: worker.candidate_id, reviewed: true, verified: true });
+      task.checkpoint_ref = verified.checkpoint_ref ?? `checkpoint_${task.id}_${worker.candidate_id}`;
+      checkpointRefs.set(task.id, task.checkpoint_ref);
+    }
+    updateRunStateV2(options.root, runId, (state) => {
+      state.current_phase = "verify";
+      state.verification = [...verificationRecords];
+      const stateTask = state.tasks[task.id];
+      if (stateTask) {
+        stateTask.status = verificationPassed ? "verified" : "blocked";
+        stateTask.latest_failure_class = verificationPassed ? null : worker.failure_class ?? "verification_failed";
+        stateTask.checkpoint_refs = task.checkpoint_ref ? [task.checkpoint_ref] : [];
+        stateTask.timing.completed = new Date().toISOString();
+      }
+    });
     appendEvent(paths.events, buildRunEvent({
       run_id: runId,
       sequence: sequence++,
       event_type: "runway.verification_result",
       phase: "verify",
-      outcome: "success",
-      summary: "Verification passed with kernel evidence.",
-      payload: { worker, kernel, checkpoint_ref: task.checkpoint_ref }
+      outcome: verificationPassed ? "success" : "failed",
+      summary: verificationPassed ? "Verification passed with kernel evidence." : "Verification failed with kernel evidence.",
+      payload: { worker, verification: taskVerificationRecords, checkpoint_ref: task.checkpoint_ref ?? null }
     }));
   }
-  writeRunState(options.root, {
-    ...initialState,
-    status: "completed",
-    tasks: parsed.tasks.map((candidate) => {
-      const checkpointRef = checkpointRefs.get(candidate.id);
-      return checkpointRef
-        ? { id: candidate.id, status: "verified", checkpoint_ref: checkpointRef }
-        : { id: candidate.id, status: "pending" };
-    }),
-    completion_audit: {
-      status: "passed",
-      commands: safeWave.flatMap((taskId) => verificationCommands.get(taskId) ?? []),
-      evidence_events: safeWave.map((_, index) => `event_${runId}_${5 + index * 2}`)
+  const allSafeWaveVerified = safeWave.every((taskId) => checkpointRefs.has(taskId));
+  updateRunStateV2(options.root, runId, (state) => {
+    state.status = allSafeWaveVerified ? "completed" : "blocked";
+    state.lifecycle_outcome = allSafeWaveVerified ? "finished" : "blocked";
+    state.current_phase = "complete";
+    state.completion_audit = {
+      status: allSafeWaveVerified ? "passed" : "failed",
+      required_checks: safeWave.flatMap((taskId) => verificationCommands.get(taskId) ?? []),
+      verification_evidence: verificationRecords,
+      review_evidence: [],
+      state_reconciliation: { passed: false },
+      prompt_to_artifact_checklist: ["task_packet_written", "provider_attempt_recorded", "kernel_verification_recorded"],
+      residual_risk: []
+    };
+    state.timestamps.updated_at = new Date().toISOString();
+    state.timestamps.completed_at = state.timestamps.updated_at;
+  });
+  const reconciliation = reconcileRunState(options.root, runId);
+  updateRunStateV2(options.root, runId, (state) => {
+    state.completion_audit = {
+      ...(state.completion_audit ?? {}),
+      state_reconciliation: reconciliation,
+      status: allSafeWaveVerified && reconciliation.passed ? "passed" : "failed"
+    };
+    if (!reconciliation.passed) {
+      state.status = "blocked";
+      state.lifecycle_outcome = "blocked";
     }
+    state.timestamps.updated_at = new Date().toISOString();
   });
   const trust = projectTrustReport(readEvents(paths.events));
   appendEvent(paths.events, buildRunEvent({
@@ -220,9 +353,14 @@ function createProviderAdapter(
   return new FakeProviderAdapter();
 }
 
-function buildTaskPrompt(task: { title: string; verification_commands: string[] } | undefined): string {
+function buildTaskPrompt(task: { title: string; verification_commands: string[] } | undefined, taskPacketPath?: string): string {
   if (!task) return "Waygent task";
-  return `${task.title}\n\nVerify:\n${task.verification_commands.join("\n")}`;
+  return [
+    task.title,
+    taskPacketPath ? `task_packet_path: ${taskPacketPath}` : null,
+    "Verify:",
+    task.verification_commands.join("\n")
+  ].filter(Boolean).join("\n\n");
 }
 
 export async function runWaygentDemo(options: RunWaygentOptions): Promise<WaygentRunResult> {
@@ -245,4 +383,19 @@ function resolveRunPlanInput(options: RunWaygentOptions): { markdown: string; pa
     return resolvePlanInput(discoveryOptions);
   }
   return { markdown: options.plan ?? DEMO_PLAN, path: null };
+}
+
+function materializeFakeProviderResult(worktree: string, task: ParsedWaygentTask): void {
+  for (const claim of task.file_claims.filter((item) => item.mode !== "read_only")) {
+    const target = join(worktree, claim.path);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, `Waygent fake provider output for ${task.id}\n`);
+  }
+}
+
+function updateRunStateV2(root: string, runId: string, mutate: (state: WaygentRunStateV2) => void): void {
+  const state = readRunStateV2(root, runId);
+  mutate(state);
+  state.timestamps.updated_at = new Date().toISOString();
+  writeRunStateV2(root, state);
 }
