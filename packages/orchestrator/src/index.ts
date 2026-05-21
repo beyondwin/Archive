@@ -3,6 +3,8 @@ export * from "./naturalLanguageIntent";
 export * from "./orchestrator";
 export * from "./planDiscovery";
 export * from "./planParser";
+export * from "./recoveryExecutor";
+export * from "./reviewGate";
 export * from "./runCommands";
 export * from "./runEvents";
 export * from "./runState";
