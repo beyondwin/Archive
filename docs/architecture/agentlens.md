@@ -1,20 +1,28 @@
-# AgentLens Architecture
+# Lens Architecture
 
 ## Role In Waygent
 
-AgentLens observes and evaluates Waygent evidence. Waygent owns active
-scheduling, provider execution, verification, recovery, and apply readiness.
+Lens observes and evaluates Waygent evidence. Waygent owns active scheduling,
+provider execution, verification, recovery, and apply readiness.
 
-AgentLens is the component for recording, querying, evaluating, and visualizing
-agent-run evidence. It gives operators replayable context without becoming the
-runtime scheduler.
+The active Lens implementation is TypeScript-first:
+
+- filesystem evidence helpers live in `packages/lens-store`;
+- trust, failure, apply, timeline, and execution explanation projections live
+  in `packages/lens-projectors`;
+- `apps/api`, `apps/console`, and `waygent inspect/explain` expose those
+  projections.
+
+The legacy Python `components/agentlens` tree is not an active Waygent product
+surface. It remains only until the no-Python observability deletion blockers
+are resolved.
 
 ## Durable Artifacts
 
 Filesystem JSON artifacts remain the durable source for run evidence. SQLite
-indexes are rebuildable caches. AgentLens keeps local state under
-`~/.agentlens/` or `$AGENTLENS_HOME`; workspace-local `.agentlens/` directories
-are runtime pointers and must not be committed.
+indexes are rebuildable caches when present. `agentlens.event.v3` remains the
+durable event schema name, but active readers do not depend on the Python
+AgentLens package.
 
 ## Projections
 
@@ -24,12 +32,12 @@ rebuildable from events, run state, and artifact files.
 
 ## Evaluation And Trust
 
-AgentLens evaluates evidence quality, missing finalization, residual risk,
-schema drift, failure patterns, and trust reports. It can report blockers and
+Lens evaluates evidence quality, missing finalization, residual risk, schema
+drift, failure patterns, and trust reports. It can report blockers and
 confidence, but Waygent runtime state decides whether a run can resume or
 apply.
 
 ## Boundaries
 
-AgentLens must not be framed as the active scheduler, provider runner, or apply
+Lens must not be framed as the active scheduler, provider runner, or apply
 readiness owner. It stores and evaluates evidence emitted or owned by Waygent.

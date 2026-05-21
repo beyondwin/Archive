@@ -28,14 +28,6 @@ cd native/kernel && cargo fmt --all -- --check && cargo clippy --workspace --all
 Use this when native kernel crates, worktree handling, process supervision,
 artifact sealing, policy, or diff application changes.
 
-## AgentLens Gate
-
-```bash
-cd components/agentlens && .venv/bin/python -m pytest -q
-```
-
-Bootstrap the AgentLens virtualenv first if `.venv/bin/python` is missing.
-
 ## Live Provider Gate
 
 Live provider gates require an installed and authenticated provider CLI and an
@@ -66,8 +58,8 @@ changes:
 bun run check
 bun run platform:demo
 bun run waygent:scenarios
+bun run check:legacy
 bun run --cwd apps/console build
 cd native/kernel && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
-cd components/agentlens && .venv/bin/python -m pytest -q
 git diff --check
 ```

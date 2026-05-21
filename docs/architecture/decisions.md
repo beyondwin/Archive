@@ -3,7 +3,7 @@
 | Decision | Current Position |
 | --- | --- |
 | Product brand | Waygent is the user-facing platform and orchestrator. |
-| Observability | AgentLens is the observability and evaluation component. |
+| Observability | Lens is the TypeScript storage and projection path in `packages/lens-store` and `packages/lens-projectors`; Python AgentLens is legacy pending deletion. |
 | Event families | Active events use `platform.*`, `runway.*`, `kernel.*`, and `lens.*`. |
 | Legacy namespaces | New Waygent runs must not emit `agentrunway.*`, `kws-cpe.*`, or `kws-cme.*`. |
 | Graphify | Graphify is an approved development and documentation-audit tool, not a runtime dependency. |

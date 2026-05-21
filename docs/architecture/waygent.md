@@ -1,21 +1,23 @@
 # Waygent Architecture
 
 Waygent is the user-facing agent platform. The control plane is Bun and
-TypeScript; the execution kernel is Rust; AgentLens stores replayable events,
-artifacts, and trust projections; API and console surfaces expose that evidence
-to operators.
+TypeScript; the execution kernel is Rust; Lens storage and projections live in
+`packages/lens-store` and `packages/lens-projectors`; API and console surfaces
+expose that evidence to operators.
 
 The default execution profile is multi-agent. Scheduler release still comes
 from durable safe-wave projection, not from chat context.
 
-The product tree is `apps/`, `packages/`, `native/`, `components/`, `tests/`,
-`docs/`, and `skills/waygent/`. AgentLens lives under
-`components/agentlens/` as the observability and evaluation component.
+The active product tree is `apps/`, `packages/`, `native/`, `tests/`, `docs/`,
+and `skills/waygent/`. The legacy Python `components/agentlens/`
+implementation is not an active Waygent product surface. New run inspection
+work uses the TypeScript Lens path and the Python tree is removed in the
+no-Python observability migration.
 
 ## Current Architecture Pages
 
 - [Runtime](./runtime.md)
-- [AgentLens](./agentlens.md)
+- [Lens](./agentlens.md)
 - [Decisions](./decisions.md)
 
 The runtime parity target is documented in
@@ -48,7 +50,8 @@ Waygent now owns the local product execution path end to end:
   normalize direct JSON, JSONL result envelopes, and fenced JSON responses into
   `runway.worker_result.v1`.
 - `packages/lens-store` and `packages/lens-projectors` rebuild timeline, trust,
-  failure, and apply views from filesystem JSONL events.
+  failure, execution explanation, and apply views from filesystem JSONL events
+  and `waygent.run_state.v2`.
 - `apps/api` and `apps/console` can inspect a run created by `waygent run`, not
   only static demo fixtures.
 
@@ -59,8 +62,10 @@ The active event families remain `platform.*`, `runway.*`, `kernel.*`, and
 
 The v1 maturity runtime uses `waygent.run_state.v2` as the authoritative state
 for task status, provider attempts, verification evidence, review records,
-recovery decisions, drift, completion audit, and apply readiness. AgentLens
-events remain append-only replay evidence for API and console inspection.
+recovery decisions, drift, completion audit, and apply readiness.
+`agentlens.event.v3` events remain append-only replay evidence for API and
+console inspection; the schema name is a durable contract label, not a Python
+runtime dependency.
 
 Operational completion requires these properties:
 

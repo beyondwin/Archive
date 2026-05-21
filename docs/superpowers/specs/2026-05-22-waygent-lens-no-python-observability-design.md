@@ -1,414 +1,258 @@
 # Waygent Lens No-Python Observability Design
 
 Date: 2026-05-22
-Status: Draft for written-spec review
+Status: Source-aligned update for review
 
 ## Goal
 
-Waygent should let an operator inspect a real `waygent run` end to end without
-depending on the legacy Python AgentLens implementation.
+Waygent should be inspectable end to end without the legacy Python
+`components/agentlens` tree.
 
-The target is a TypeScript-first Lens path:
+The product direction is now:
 
-1. Waygent runtime records durable events, state, and artifacts.
-2. Lens packages project that evidence into timeline, trust, failure,
-   readiness, and artifact-health views.
-3. API and console show the same projection for real runs.
-4. CLI `inspect` and `explain` read the same projection.
-5. The remaining Python AgentLens tree is removed as legacy code.
+1. Waygent runtime records durable state, events, and artifacts.
+2. `packages/lens-store` reads filesystem evidence.
+3. `packages/lens-projectors` builds read-only trust, failure, readiness, and
+   execution explanations.
+4. `apps/api`, `apps/console`, and `waygent inspect/explain` expose those same
+   facts.
+5. Python AgentLens is removed after active routing, docs, CI, and KWS executor
+   telemetry dependencies are dealt with explicitly.
 
-This replaces the old split where Python `components/agentlens` still carried
-schemas, evaluator code, and web APIs while the active Waygent runtime had
-already moved to Bun, TypeScript, and Rust.
+This is not a new observability rewrite from scratch. Recent commits already
+implemented much of the TypeScript/Rust Waygent path. The remaining work is to
+finish the cutoff cleanly and avoid extending the Python tree by accident.
 
-## Current Source Context
+## Source-Audited Baseline
 
-The current active Waygent path is already TypeScript/Rust:
+Current active source surfaces:
 
-- `apps/cli` starts runs and exposes status, events, inspect, explain, resume,
-  and apply commands.
-- `packages/orchestrator` owns run lifecycle, task execution, v2 run state,
-  event emission, provider attempts, verification, completion audit, and apply.
-- `packages/lens-store` owns filesystem event and artifact helpers.
-- `packages/lens-projectors` owns trust, failure, timeline, and apply
-  projections.
-- `apps/api` can read real Waygent run roots and expose run detail.
-- `apps/console` can render real run detail, but still has demo-model residue
-  and shallow explanation surfaces.
-- `native/kernel` is the future kernel boundary for process/worktree behavior.
+- `apps/cli/src/index.ts` dispatches `run`, `status`, `events`, `inspect`,
+  `explain`, `resume`, `apply`, and `scaffold-plan` through
+  `@waygent/orchestrator`.
+- `packages/orchestrator/src/runCommands.ts` already reads v2 state, returns
+  `execution_explanation` from `inspectRun`, makes `explainRun` prefer v2
+  failure evidence, gates `resumeRun`, and revalidates apply readiness.
+- `packages/orchestrator/src/orchestrator.ts` writes `waygent.run_state.v2`,
+  `agentlens.event.v3`, provider attempts, verification records, checkpoint
+  artifacts, combined apply evidence, completion audit, and artifact index.
+- `packages/lens-store/src/eventJournal.ts`, `artifactStore.ts`, `runIndex.ts`,
+  and `projection.ts` own current filesystem evidence helpers.
+- `packages/lens-projectors/src/apply.ts`, `trust.ts`, and
+  `executionExplanation.ts` already project apply readiness, trust/failures,
+  timeline, safe-wave barriers, cost hotspots, and artifact-health summaries.
+- `apps/api/src/server.ts` already exposes real run roots when
+  `WAYGENT_RUN_ROOT` or an explicit API context is provided. It returns v2 state
+  evidence, provider attempts, verification, recovery, drift, readiness, trust,
+  timeline, and execution explanation.
+- `apps/console/src/uiModel.ts` and `apps/console/src/App.tsx` already render a
+  real-run detail model with execution intelligence, provider signals,
+  verification, recovery, drift, and apply status.
+- `packages/testkit/src/legacyCheck.ts` already guards active product trees
+  against Python runtime files, legacy Waygent v1 state, AgentRunway routing,
+  Graphify runtime dependencies, and active KWS event namespaces.
+- `tests/waygent-scenarios/*.json` and
+  `tests/integration/waygent-scenarios.test.ts` provide deterministic
+  fake-provider replay coverage for readiness, blockers, provider attempts,
+  and combined patch refs.
 
-The legacy Python implementation remains under `components/agentlens`, but it
-is no longer the active product path. It still has v1/v2 schemas, evaluator
-logic, commands, tests, and a web app. New Waygent Lens work must not extend
-that tree.
+Cutoff surfaces addressed by this update:
+
+- `AGENTS.md`, `CLAUDE.md`, `README.md`, active architecture docs,
+  `docs/contracts/events.md`, `docs/operations/waygent.md`, and
+  `docs/operations/verification.md` now route active work to the TypeScript
+  Waygent Lens path.
+- The stale `.github/workflows/dashboard-ci.yml` workflow, which targeted the
+  old root `AgentLens/**` path, is removed.
+
+Remaining blockers:
+
+- `components/agentlens/` still contains the Python package, FastAPI app,
+  dashboard assets, schemas, evaluator, tests, and docs.
+- KWS executor skills still document best-effort calls to `agentlens run-open`,
+  `agentlens event append`, `agentlens run-close`, and `agentlens events` under
+  `kws-cpe.*` and `kws-cme.*`. Those skills are not the Waygent product
+  runtime, but they are load-bearing local executor contracts.
 
 ## Non-Goals
 
 - Do not add new Python AgentLens features.
-- Do not preserve Python AgentLens CLI, FastAPI routes, schemas, tests, or web
-  assets as active supported surfaces.
-- Do not introduce a Python compatibility shim for Waygent event v3.
-- Do not emit active `kws-cpe.*`, `kws-cme.*`, `kws.orchestrator.*`, or
-  `agentrunway.*` runtime events.
-- Do not let API or console mutate Waygent execution state.
-- Do not relax checkpoint, dry-run, completion-audit, reconciliation, or clean
-  checkout apply gates.
-- Do not make demo fixtures count as proof that real Waygent runs are visible.
+- Do not add a Python compatibility shim for active Waygent events.
+- Do not route active Lens work into `components/agentlens`.
+- Do not reintroduce AgentRunway, KWS CPE, or KWS CME as Waygent runtime
+  routing.
+- Do not weaken completion audit, checkpoint manifest validation, dry-run
+  evidence, combined patch evidence, reconciliation, or clean-checkout apply
+  checks.
+- Do not make demo data count as proof that real Waygent runs are inspectable.
+- Do not rewrite KWS executor skill telemetry casually; treat it as a separate
+  compatibility decision before deleting Python AgentLens.
 
 ## Target Architecture
 
-### Runtime Evidence
+### Active Runtime Evidence
 
-`waygent run` remains the only runtime writer. It writes:
+`waygent run` remains the only active runtime writer. It writes:
 
-- `agentlens.event.v3` event journal entries under `platform.*`, `runway.*`,
-  `kernel.*`, and `lens.*`;
-- `waygent.run_state.v2` as the authoritative execution state;
-- provider, verification, task packet, checkpoint, dry-run, combined patch,
+- `agentlens.event.v3` events under `platform.*`, `runway.*`, `kernel.*`, and
+  `lens.*`;
+- `waygent.run_state.v2` as the authoritative runtime state;
+- provider, worker, verification, checkpoint, dry-run, combined apply,
   recovery, and apply artifacts under the run root;
-- latest-run metadata through `packages/lens-store`.
+- latest-run metadata through `packages/lens-store`;
+- artifact index entries for inspection and reconciliation.
 
-Provider adapters and subagents never write Lens state directly. They return
-bounded evidence to Waygent, and Waygent decides what becomes durable.
+The event schema name remains `agentlens.event.v3` for now. That name is a
+durable contract label, not a dependency on the Python AgentLens implementation.
 
-### Lens Projection
+### Active Lens Read Path
 
-`packages/lens-projectors` becomes the single projection layer for active
-Waygent inspection.
+The active Lens read path is TypeScript:
 
-It should expose a stable `WaygentRunInspection` model with:
+```text
+run root
+  -> packages/lens-store
+  -> packages/lens-projectors
+  -> packages/orchestrator inspect/explain
+  -> apps/api
+  -> apps/console
+```
 
-- run header: run id, workspace, status, lifecycle outcome, current phase,
-  source branch, started/updated/completed timestamps;
-- safe-wave explanation: ready tasks, withheld tasks, concurrency, timing, and
-  barrier reasons;
-- task timeline: task status, risk, dependencies, file claims, attempts,
-  checkpoints, timing, latest failure, and decision packet refs;
-- provider evidence: provider attempts, process evidence refs, exit status,
-  timeout/crash/malformed result signals, and worker result refs;
-- verification evidence: commands, kernel result refs, status, digests, and
-  changed-file evidence where available;
-- trust and failure summary: trusted/failed/insufficient evidence, failure
-  classes, recovery actions, and operator next action;
-- apply readiness: readiness status, reason, checkpoint refs, combined patch
-  ref, and source of the decision;
-- artifact health: expected critical artifacts, missing artifacts, digest or
-  byte-length drift, and reconciliation blockers;
-- event timeline: ordered event summaries from `agentlens.event.v3`.
+The shared model does not need to invent a second scheduler or trust engine. It
+should compose the current projections:
 
-This model is a projection. It does not authorize apply by itself. Apply
-authorization remains in runtime readiness checks and `waygent apply`.
+- trust and failures from `projectTrustReport` and `projectFailureSummary`;
+- apply readiness from `projectApplyReadinessFromState`;
+- safe-wave and cost explanation from `projectExecutionExplanationFromState`;
+- event timeline from `projectTimeline`;
+- durable state and artifact refs from `waygent.run_state.v2`.
 
-### API
+If a future `WaygentRunInspection` envelope is added, it should wrap these
+existing projections instead of duplicating readiness, trust, or task-status
+logic.
 
-`apps/api` is the product read API for Lens views.
+### API And Console
 
-Required active endpoints:
+`apps/api` is the product read API. Real run roots should be preferred when a
+run root is configured. Demo data remains only a local fallback.
 
-- `GET /healthz`;
-- `GET /runs`;
-- `GET /runs/:runId`;
-- `GET /runs/:runId/events`;
-- `GET /runs/:runId/trust`;
-- `GET /runs/:runId/failures`;
-- `GET /events/stream`.
-
-The API should read real run roots by default when `WAYGENT_RUN_ROOT` or an
-explicit context run root is present. Demo data may remain only as a local dev
-fallback, clearly separated from real-run behavior.
-
-Run detail should be backed by `WaygentRunInspection`, not by console-specific
-ad hoc mapping.
-
-### Console
-
-`apps/console` becomes the primary visual surface for real Waygent runs.
-
-The console should answer:
-
-1. What ran, what is running, or why did it stop?
-2. Which tasks were parallelized, serialized, or withheld?
-3. What evidence exists for provider output and verification?
-4. Why is trust marked trusted, failed, or insufficient?
-5. Is apply ready, blocked, already applied, or not ready?
-6. Which artifacts prove or block the readiness decision?
-
-Expected sections:
-
-- Runs;
-- Overview;
-- Safe Waves;
-- Tasks;
-- Events;
-- Evidence;
-- Trust;
-- Apply;
-- Artifacts;
-- Recovery.
-
-The console should avoid deriving readiness from successful verification events
-alone. It should show the projector result produced from v2 state, events,
-completion audit, and reconciliation evidence.
+`apps/console` should map API detail into UI state without recomputing apply
+readiness. It may reshape data for presentation, but the source status,
+readiness, trust, failure, and artifact evidence must come from the shared
+TypeScript projections or v2 state.
 
 ### CLI
 
-`waygent inspect` and `waygent explain` should use the same projector as the
-API.
+`waygent inspect` returns structured JSON for debugging, tests, and operator
+inspection. `waygent explain` returns a concise operator summary grounded in
+v2 state and the same projectors. The same run should not produce conflicting
+readiness, trust, or blocker facts between CLI, API, and console.
 
-- `inspect` returns structured JSON suitable for debugging and tests.
-- `explain` returns a concise operator summary: current status, blocking
-  reason, next allowed action, trust status, readiness status, and the most
-  important evidence refs.
+### Python Legacy Boundary
 
-The same run should not produce contradictory answers across CLI, API, and
-console.
+`components/agentlens` is legacy. It may remain in the repository only while
+deletion blockers are unresolved.
 
-### Python Legacy Removal
+Deletion includes:
 
-`components/agentlens` is removed as an active supported component.
-
-Removal includes:
-
-- Python package metadata and commands;
+- Python package metadata and CLI commands;
 - Python schemas and validators;
 - Python evaluator and trust artifact code;
-- Python FastAPI app and web assets;
-- Python tests and fixtures;
-- docs that describe Python AgentLens as active;
-- root instructions that list `components/agentlens` as an active target.
+- Python FastAPI app and dashboard assets;
+- Python tests, fixtures, caches, and local virtualenv guidance;
+- active docs, CI, or agent instructions that point to Python AgentLens.
 
-Historical references may remain in migration docs only when clearly marked as
-old context. Active docs must say Lens is now the TypeScript projection and
-inspection layer inside Waygent.
+Historical migration docs may mention Python AgentLens when clearly framed as
+past context. Active docs and agent instructions must not send new work there.
 
-## Sequential Implementation Phases
+## Deletion Blockers
 
-### Phase 0: Direction Lock And Inventory
+Before deleting `components/agentlens`, resolve these explicitly:
 
-Update repository guidance so agents do not continue adding Python AgentLens
-work.
-
-Files likely touched:
-
-- `AGENTS.md`;
-- `CLAUDE.md`;
-- `docs/architecture/waygent.md`;
-- `docs/contracts/events.md`;
-- `skills/waygent/SKILL.md` if command descriptions mention Python AgentLens.
-
-Done when:
-
-- active docs describe Lens as `packages/lens-store`,
-  `packages/lens-projectors`, `apps/api`, and `apps/console`;
-- Python AgentLens is described as legacy pending deletion, not a supported
-  active surface;
-- `git diff --check` passes.
-
-### Phase 1: Projection Contract
-
-Add the shared inspection model to `packages/lens-projectors`.
-
-Files likely touched:
-
-- `packages/contracts/src/types.ts`;
-- `packages/contracts/src/schemas.ts` if the inspection model is schema-backed;
-- `packages/lens-projectors/src/inspection.ts`;
-- `packages/lens-projectors/src/index.ts`;
-- `packages/lens-projectors/tests/inspection.test.ts`.
-
-Done when:
-
-- a real `runWaygentDemo` run can be projected into `WaygentRunInspection`;
-- blocked, failed, completed, and apply-ready cases have tests;
-- missing v2 state returns an explicit unsupported or partial inspection
-  result instead of guessing readiness.
-
-### Phase 2: API Uses The Shared Projection
-
-Move `apps/api` run detail to the shared inspection projection.
-
-Files likely touched:
-
-- `apps/api/src/server.ts`;
-- `apps/api/tests/api.test.ts`;
-- `apps/api/tests/events.test.ts`.
-
-Done when:
-
-- `GET /runs/:runId` returns projection-backed run detail;
-- `GET /runs` derives status, trust, and apply state from the same projection;
-- API tests create real Waygent run roots and assert real detail fields;
-- demo fallback is clearly separated from real-run behavior.
-
-### Phase 3: Console Model Becomes API-First
-
-Simplify `apps/console/src/uiModel.ts` so it maps API inspection responses
-rather than reconstructing readiness and task status from scattered fields.
-
-Files likely touched:
-
-- `apps/console/src/uiModel.ts`;
-- `apps/console/src/uiModel.test.ts`;
-- `apps/console/src/App.tsx`.
-
-Done when:
-
-- console model tests use projection-shaped API fixtures;
-- console no longer treats demo model as the authoritative shape;
-- missing or partial inspection data renders visibly but does not imply apply
-  readiness.
-
-### Phase 4: Console Product Surface
-
-Upgrade the visible console to inspect actual Waygent work.
-
-Files likely touched:
-
-- `apps/console/src/App.tsx`;
-- `apps/console/src/styles.css`;
-- `apps/console/src/uiModel.test.ts`;
-- optional small presentational components under `apps/console/src`.
-
-Done when:
-
-- Overview shows run status, trust, apply readiness, current phase, workspace,
-  and timestamps;
-- Safe Waves show ready/withheld tasks, barrier reasons, and concurrency;
-- Tasks show status, file claims, attempts, checkpoints, and latest failure;
-- Evidence shows provider attempts and verification/kernel refs;
-- Artifacts show critical artifact health and reconciliation blockers;
-- Apply section shows why apply is ready or blocked.
-
-### Phase 5: CLI Inspect/Explain Alignment
-
-Route CLI inspection through the shared projection.
-
-Files likely touched:
-
-- `packages/orchestrator/src/runCommands.ts`;
-- `packages/orchestrator/tests/runCommands.test.ts`;
-- `packages/orchestrator/tests/runCommandsV2.test.ts`;
-- `apps/cli/tests/cli.test.ts`.
-
-Done when:
-
-- `waygent inspect --last` returns the same inspection facts as API detail;
-- `waygent explain --last` summarizes status, blocker, trust, readiness, and
-  next action from the projection;
-- CLI, API, and console fixtures no longer drift in meaning.
-
-### Phase 6: Python Legacy Deletion
-
-Delete Python AgentLens after the TypeScript Lens path covers real run
-inspection.
-
-Files likely removed or updated:
-
-- remove `components/agentlens/`;
-- update root docs and AGENTS references;
-- update package/test scripts that still mention Python AgentLens;
-- update migration docs only when they incorrectly describe Python as active;
-- remove stale Python verification commands from active default checks.
-
-Done when:
-
-- `rg "components/agentlens|python -m pytest|agentlens.event.v2|agentlens.waygent_projection"` returns only historical migration references or no active references;
-- `bun run check` passes;
-- `bun run platform:demo` passes;
-- `bun run waygent:scenarios` passes;
-- `bun run --cwd apps/console build` passes;
-- `git diff --check` passes.
-
-## Data Flow
-
-```text
-waygent run
-  -> packages/orchestrator
-  -> waygent.run_state.v2 + agentlens.event.v3 + artifacts
-  -> packages/lens-store
-  -> packages/lens-projectors WaygentRunInspection
-  -> apps/api
-  -> apps/console
-
-waygent inspect/explain
-  -> packages/orchestrator runCommands
-  -> packages/lens-projectors WaygentRunInspection
-```
-
-No Python component participates in the active flow.
+1. Active Waygent docs and default verification must stop listing Python
+   AgentLens as a supported product surface.
+2. Stale dashboard CI must be removed or replaced with Waygent API/console
+   checks.
+3. `bun run check:legacy` should scan active routing docs for
+   `components/agentlens` and Python AgentLens verification references.
+4. KWS executor skills must either:
+   - be declared historical/external to the Waygent product deletion, with no
+     expectation that their telemetry is supported by this checkout, or
+   - be migrated to a TypeScript Lens-compatible command or no-op telemetry
+     adapter before Python removal.
+5. `rg` over active docs, apps, packages, tests, and CI must show no active
+   Python AgentLens instructions.
 
 ## Error Handling
 
-- Missing event journal: inspection returns a run-not-found or missing-evidence
-  error, not a trusted result.
-- Missing v2 state: inspection is partial and apply readiness is not ready.
-- Invalid v2 state: inspection reports state validation failure and does not
-  infer readiness.
-- Missing critical artifact: artifact health marks the artifact missing and
-  apply readiness remains blocked or not ready.
-- Digest or byte-length mismatch: artifact health reports drift and the run is
-  unsafe to apply.
-- Projection failure: API/CLI return explicit projection error fields; console
-  renders a blocked/partial state instead of crashing.
-- Console API unavailable: demo fallback is allowed only as local dev fallback
-  and must be labeled as demo data.
+- Missing event journal: return an explicit missing-evidence or run-not-found
+  result; do not mark the run trusted.
+- Missing v2 state: `inspect` and API may show events, but apply readiness is
+  not ready and resume/apply remain blocked by missing state.
+- Invalid v2 state: report the state validation failure and avoid inferring
+  readiness.
+- Missing checkpoint or combined patch artifact: apply readiness stays blocked
+  or not ready through the existing runtime gates.
+- Digest or byte-length drift: reconciliation blocks readiness.
+- API unavailable: console may use demo fallback only when visibly labeled as
+  demo/unavailable.
+- Python AgentLens absent: active Waygent runtime must still run, inspect,
+  explain, resume, and apply through TypeScript packages.
 
 ## Testing Strategy
 
-### Unit Tests
-
-- `packages/lens-projectors/tests/inspection.test.ts` covers completed,
-  blocked, failed, missing-state, invalid-state, and missing-artifact runs.
-- Console UI model tests cover projection-shaped API responses.
-- API tests cover real run roots, event stream filtering, trust, failures, and
-  partial inspection results.
-
-### Integration Tests
-
-- Create a real fake-provider Waygent run and assert CLI/API/console model
-  agree on status, trust, tasks, readiness, and checkpoint refs.
-- Create a blocked run and assert withheld/barrier reasons are visible.
-- Corrupt or remove a critical artifact and assert artifact health blocks
-  readiness.
-- Remove `state.json` and assert inspection is partial and not ready.
-
-### Deletion Verification
-
-After Python removal:
+Default active verification:
 
 ```bash
-rg "components/agentlens|agentlens.event.v2|agentlens.waygent_projection|python -m pytest"
 bun run check
-bun run waygent:scenarios
 bun run platform:demo
+bun run waygent:scenarios
+bun run check:legacy
 bun run --cwd apps/console build
 git diff --check
 ```
 
-Expected result: only historical migration references may remain from the `rg`
-check. Active instructions and commands should not point to Python AgentLens.
+Use native kernel checks when native files change:
+
+```bash
+cd native/kernel && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
+```
+
+Use live provider checks only when explicitly requested and locally
+authenticated:
+
+```bash
+WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke
+WAYGENT_LIVE_PROVIDER=claude bun run waygent:live-smoke
+```
+
+Python AgentLens pytest is not part of active Waygent verification after this
+cutoff. If it is run during the deletion audit, it is historical confidence
+only, not an active product gate.
 
 ## Acceptance Criteria
 
-- A real `waygent run` can be inspected through CLI, API, and console from the
-  same TypeScript projection.
-- API and console show actual task, event, provider, verification, checkpoint,
-  trust, apply, recovery, and artifact-health evidence.
-- Apply readiness is never inferred from provider success or verification
-  success alone.
-- Python AgentLens is not part of the active flow and is deleted in the final
-  cleanup phase.
-- Active docs and agent instructions no longer tell agents to work in
-  `components/agentlens`.
-- No legacy KWS or AgentRunway runtime namespace is reintroduced.
-- Default Bun/console verification passes after the migration.
+- Active docs describe Lens as the TypeScript read path in `packages/lens-store`
+  and `packages/lens-projectors`.
+- Active docs and CI no longer route new work into `components/agentlens`.
+- A real `waygent run` can be inspected through CLI, API, and console using
+  current TypeScript projections.
+- Apply readiness remains based on v2 state, completion audit, checkpoint
+  manifests, combined patch evidence, reconciliation, and clean checkout state.
+- `bun run check:legacy` flags active Python AgentLens routing references.
+- Deletion of `components/agentlens` has an explicit blocker decision for KWS
+  executor telemetry.
+- Historical references are either under migration/spec history or clearly
+  marked as historical.
 
 ## Review Checklist
 
-- Does every active read path use `WaygentRunInspection` or the underlying
-  shared projector?
-- Does any API or console code still guess apply readiness independently?
-- Are Python files absent from the active implementation scope?
-- Are historical references clearly marked as historical?
-- Can deletion of `components/agentlens` be done after the TS path proves
-  parity, without blocking earlier projection/API/console work?
+- Does any active doc still call Python AgentLens an active Waygent component?
+- Does any default verification command still run `python -m pytest` under
+  `components/agentlens`?
+- Does API, console, or CLI derive apply readiness independently of
+  `projectApplyReadinessFromState` or v2 state?
+- Does the design treat KWS executor telemetry as a deliberate blocker instead
+  of ignoring it?
+- Can `components/agentlens` be deleted in a later patch without changing
+  active Waygent runtime behavior?
