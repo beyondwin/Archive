@@ -33,6 +33,11 @@ id or a resume path; do not overwrite the only evidence for a failed run.
   recorded digest and byte length;
 - reconciliation has no unrepaired drift or artifact blockers.
 
+An empty checkpoint patch is valid no-op evidence when provider work and
+Waygent-owned verification both pass. Waygent records `no_op: true`, skips
+`git apply --check` for the empty patch, and still runs post-apply
+verification before marking apply complete.
+
 `not_ready` means the run lacks enough verified apply evidence. `blocked`
 means evidence exists that prevents apply, such as drift, missing artifacts, a
 provider failure, verification failure, or dirty source checkout. `applied`

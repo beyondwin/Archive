@@ -17,6 +17,16 @@ export interface ApplyVerifiedCheckpointOutput {
 export async function applyVerifiedCheckpoint(input: ApplyVerifiedCheckpointInput): Promise<ApplyVerifiedCheckpointOutput> {
   const status = spawnSync("git", ["status", "--porcelain"], { cwd: input.source, encoding: "utf8" });
   if (status.status !== 0 || status.stdout.trim()) return { status: "blocked", reason: "dirty_source_checkout" };
+  if (input.patch.trim().length === 0) {
+    const verification = await runVerificationCommands({
+      run_id: "apply",
+      task_id: "post_apply",
+      cwd: input.source,
+      commands: input.post_apply_commands
+    });
+    if (verification.status !== "passed") return { status: "failed", reason: "post_apply_verification_failed" };
+    return { status: "applied" };
+  }
   const patchPath = join(input.source, ".waygent-apply.patch");
   writeFileSync(patchPath, input.patch);
   const dryRun = spawnSync("git", ["apply", "--check", patchPath], { cwd: input.source, encoding: "utf8" });
