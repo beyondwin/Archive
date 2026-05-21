@@ -12,6 +12,7 @@ import {
   projectApplyState,
   projectExecutionExplanationFromState,
   projectFailureSummary,
+  projectOperationalMaturityFromState,
   projectTimeline,
   projectTrustReport
 } from "@waygent/lens-projectors";
@@ -221,6 +222,10 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
   drift: WaygentRunStateV2["drift"] | null;
   apply_readiness: ApplyReadinessProjection | null;
   execution_explanation: ReturnType<typeof projectExecutionExplanationFromState> | null;
+  operational_maturity: ReturnType<typeof projectOperationalMaturityFromState> | null;
+  dogfood_evidence: ReturnType<typeof projectOperationalMaturityFromState>["dogfood_evidence"] | null;
+  runtime_cost: ReturnType<typeof projectOperationalMaturityFromState>["runtime_cost"] | null;
+  provider_readiness: ReturnType<typeof projectOperationalMaturityFromState>["provider_readiness"] | null;
   failures: ReturnType<typeof projectFailureSummary>;
   timeline: ReturnType<typeof projectTimeline>;
   trust: ReturnType<typeof projectTrustReport>;
@@ -232,6 +237,7 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
   const stateV2 = tryReadRunStateV2(runRoot, runId);
   const applyReadiness = stateV2 ? projectApplyReadinessFromState(stateV2) : null;
   const executionExplanation = stateV2 ? projectExecutionExplanationFromState(stateV2) : null;
+  const operationalMaturity = stateV2 ? projectOperationalMaturityFromState({ state: stateV2, events }) : null;
   const summary = summarizeRealRun(runRoot, runId);
   return {
     ...summary,
@@ -249,6 +255,10 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
     drift: stateV2?.drift ?? null,
     apply_readiness: applyReadiness,
     execution_explanation: executionExplanation,
+    operational_maturity: operationalMaturity,
+    dogfood_evidence: operationalMaturity?.dogfood_evidence ?? null,
+    runtime_cost: operationalMaturity?.runtime_cost ?? null,
+    provider_readiness: operationalMaturity?.provider_readiness ?? null,
     failures: projectFailureSummary(events),
     timeline: projectTimeline(events),
     trust: projectTrustReport(events),

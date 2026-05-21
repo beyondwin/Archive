@@ -1,1 +1,0 @@
-See https://example.com/very/long/path/that/exceeds/sixty-four/char… for details.

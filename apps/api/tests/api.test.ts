@@ -67,6 +67,15 @@ describe("Waygent local API routes", () => {
       schema: "waygent.execution_explanation.v1",
       run_id: "run_api_explanation"
     });
+    expect(detail.operational_maturity).toMatchObject({
+      schema: "waygent.operational_maturity.v1",
+      dogfood_evidence: { schema: "waygent.dogfood_evidence.v1" },
+      runtime_cost: { schema: "waygent.runtime_cost.v1" },
+      provider_readiness: { schema: "waygent.provider_readiness.v1" }
+    });
+    expect(detail.dogfood_evidence).toEqual(detail.operational_maturity.dogfood_evidence);
+    expect(detail.runtime_cost).toEqual(detail.operational_maturity.runtime_cost);
+    expect(detail.provider_readiness).toEqual(detail.operational_maturity.provider_readiness);
     expect(Array.isArray(detail.execution_explanation.waves)).toBe(true);
     expect(Array.isArray(detail.execution_explanation.recommended_next_actions)).toBe(true);
   });

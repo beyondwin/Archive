@@ -6,10 +6,16 @@
 bun run check
 bun run platform:demo
 bun run waygent:scenarios
+bun run waygent:dogfood
 ```
 
 This is the default gate for docs-adjacent runtime checks and fake-provider
 coverage.
+
+`waygent:dogfood` runs an offline fake-provider Waygent run and asserts the
+shared maturity projection has complete dogfood evidence, runtime cost,
+provider readiness, real timestamps, provider attempts, verification evidence,
+and a precise explain result.
 
 ## Console Gate
 
@@ -58,6 +64,7 @@ changes:
 bun run check
 bun run platform:demo
 bun run waygent:scenarios
+bun run waygent:dogfood
 bun run check:legacy
 bun run --cwd apps/console build
 cd native/kernel && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace

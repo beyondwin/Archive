@@ -16,7 +16,7 @@
     "waygent:scenarios": "bun test tests/integration/waygent-scenarios.test.ts",
     "waygent:live-smoke": "bun test tests/integration/waygent-live-provider-smoke.test.ts",
     "waygent:live-provider-smoke": "bun run waygent:live-smoke",
-    "waygent:dogfood": "bun run waygent:scenarios"
+    "waygent:dogfood": "bun test tests/integration/waygent-dogfood-evidence.test.ts"
   },
   "dependencies": {
     "@waygent/orchestrator": "workspace:*",

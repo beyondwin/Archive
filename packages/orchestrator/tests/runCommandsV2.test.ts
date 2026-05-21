@@ -88,7 +88,64 @@ describe("Waygent run commands v2", () => {
       schema: "waygent.execution_explanation.v1",
       barriers: [{ task_id: "task_b", reason: "file_claim_conflict" }]
     });
+    expect(inspected.operational_maturity).toMatchObject({
+      schema: "waygent.operational_maturity.v1",
+      dogfood_evidence: { schema: "waygent.dogfood_evidence.v1" },
+      runtime_cost: { schema: "waygent.runtime_cost.v1" },
+      provider_readiness: { schema: "waygent.provider_readiness.v1", provider: "fake" }
+    });
+    expect(inspected.dogfood_evidence).toBe(inspected.operational_maturity?.dogfood_evidence);
+    expect(inspected.runtime_cost).toBe(inspected.operational_maturity?.runtime_cost);
+    expect(inspected.provider_readiness).toBe(inspected.operational_maturity?.provider_readiness);
     expect(explainRun({ root, run: runId }).summary).toContain("file_claim_conflict");
+  });
+
+  test("explain reports missing dogfood evidence when no hard blocker or hotspot exists", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-explain-dogfood-"));
+    const runId = "run_missing_dogfood";
+    writeRunStateV2(root, {
+      schema: "waygent.run_state.v2",
+      run_id: runId,
+      workspace: root,
+      source_branch: "main",
+      worktree_root: join(root, "worktrees"),
+      run_root: join(root, runId),
+      artifact_root: join(root, runId, "artifacts"),
+      state_path: runStatePath(root, runId),
+      event_journal_path: join(root, runId, "events.jsonl"),
+      plan_path: null,
+      spec_path: null,
+      provider_profile: { provider: "fake" },
+      status: "completed",
+      lifecycle_outcome: "finished",
+      current_phase: "complete",
+      safe_waves: [],
+      tasks: {},
+      provider_attempts: [],
+      reviews: [],
+      verification: [],
+      recovery: [],
+      apply: { status: "not_applied" },
+      context: { snapshot_path: null, basis_hash: null },
+      drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
+      completion_audit: null,
+      timestamps: {
+        started_at: "2026-05-22T00:00:00.000Z",
+        updated_at: "2026-05-22T00:00:00.000Z",
+        completed_at: "2026-05-22T00:00:00.000Z"
+      }
+    });
+    appendEvent(join(root, runId, "events.jsonl"), buildRunEvent({
+      run_id: runId,
+      sequence: 1,
+      event_type: "platform.run_started",
+      phase: "platform",
+      outcome: "running",
+      summary: "Run opened.",
+      payload: {}
+    }));
+
+    expect(explainRun({ root, run: runId }).summary).toContain("dogfood evidence partial");
   });
 
   test("resume blocks runs without v2 state", () => {

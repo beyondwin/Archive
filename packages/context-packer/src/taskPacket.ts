@@ -35,7 +35,7 @@ export function buildTaskPacket(input: BuildTaskPacketInput): WaygentTaskPacket 
     spec_excerpt: input.spec_excerpt,
     file_claims: input.task.file_claims,
     allowed_write_globs: input.task.file_claims.filter((claim) => claim.mode !== "read_only").map((claim) => claim.path),
-    forbidden_write_globs: [".git/**", "node_modules/**", "native/kernel/target/**", "components/agentlens/.venv/**"],
+    forbidden_write_globs: [".git/**", "node_modules/**", "native/kernel/target/**"],
     dependencies: input.task.dependencies,
     checkpoint_inputs: input.checkpoint_inputs ?? [],
     acceptance_commands: input.task.verification_commands,

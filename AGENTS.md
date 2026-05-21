@@ -17,8 +17,8 @@ Archive is now focused on these active Waygent surfaces:
 
 Waygent is the approved brand for the unified agent platform and user-facing
 orchestrator. Lens is the TypeScript projection and inspection layer inside
-Waygent. The legacy Python `components/agentlens/` tree is unsupported for new
-Waygent work and is scheduled for deletion after explicit blocker resolution.
+Waygent. The legacy Python `components/agentlens/` tree has been removed from
+this checkout; do not recreate it or route active Waygent work there.
 Historical AgentRunway names are read-compatibility context, not active
 routing.
 

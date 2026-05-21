@@ -1,7 +1,7 @@
 # Waygent Lens No-Python Observability Design
 
 Date: 2026-05-22
-Status: Source-aligned update for review
+Status: Completed source-aligned cutoff
 
 ## Goal
 
@@ -16,8 +16,8 @@ The product direction is now:
    execution explanations.
 4. `apps/api`, `apps/console`, and `waygent inspect/explain` expose those same
    facts.
-5. Python AgentLens is removed after active routing, docs, CI, and KWS executor
-   telemetry dependencies are dealt with explicitly.
+5. Python AgentLens has been removed after active routing, docs, CI, and KWS
+   executor telemetry dependencies were dealt with explicitly.
 
 This is not a new observability rewrite from scratch. Recent commits already
 implemented much of the TypeScript/Rust Waygent path. The remaining work is to
@@ -64,11 +64,10 @@ Cutoff surfaces addressed by this update:
   route active work to the TypeScript Waygent Lens path.
 - The stale `.github/workflows/dashboard-ci.yml` workflow, which targeted the
   old root `AgentLens/**` path, is removed.
+- The legacy Python `components/agentlens/` tree is deleted from tracked source
+  and local ignored residue.
 
-Remaining blockers:
-
-- `components/agentlens/` still contains the Python package, FastAPI app,
-  dashboard assets, schemas, evaluator, tests, and docs.
+Remaining blockers: none for the no-Python product cutoff.
 
 Resolved deletion policy:
 
@@ -77,7 +76,7 @@ Resolved deletion policy:
   `kws-cpe.*` and `kws-cme.*`.
 - Those references are skill-local/external observability, not active Waygent
   product telemetry. They may degrade if no external `agentlens` CLI is
-  installed after the Python tree is deleted.
+  installed now that the Python tree is deleted.
 - Do not migrate KWS telemetry into the TypeScript Waygent Lens path as part of
   the no-Python product deletion. Any future KWS telemetry rewrite must follow
   each skill's local protocol and eval gates.
@@ -158,10 +157,9 @@ readiness, trust, or blocker facts between CLI, API, and console.
 
 ### Python Legacy Boundary
 
-`components/agentlens` is legacy. It may remain in the repository only while
-deletion blockers are unresolved.
+`components/agentlens` was legacy and has been deleted from this checkout.
 
-Deletion includes:
+Deletion included:
 
 - Python package metadata and CLI commands;
 - Python schemas and validators;
@@ -173,21 +171,21 @@ Deletion includes:
 Historical migration docs may mention Python AgentLens when clearly framed as
 past context. Active docs and agent instructions must not send new work there.
 
-## Deletion Blockers
+## Resolved Deletion Blockers
 
-Before deleting `components/agentlens`, resolve these explicitly:
+Before deletion, these were resolved explicitly:
 
-1. Active Waygent docs and default verification must stop listing Python
+1. Active Waygent docs and default verification stopped listing Python
    AgentLens as a supported product surface.
-2. Stale dashboard CI must be removed or replaced with Waygent API/console
+2. Stale dashboard CI was removed or replaced with Waygent API/console
    checks.
-3. `bun run check:legacy` should scan active routing docs for
+3. `bun run check:legacy` scans active routing docs for
    active `components/agentlens` and Python AgentLens verification references.
-4. KWS executor telemetry policy must be explicit. Current decision:
+4. KWS executor telemetry policy is explicit. Current decision:
    `kws-cpe.*` and `kws-cme.*` are skill-local/external best-effort
    observability and may degrade if no external `agentlens` CLI is installed
    after Python removal; they are not active Waygent product telemetry.
-5. `rg` over active docs, apps, packages, tests, and CI must show no active
+5. `rg` over active docs, apps, packages, tests, and CI shows no active
    Python AgentLens instructions.
 
 ## Error Handling
@@ -247,7 +245,7 @@ only, not an active product gate.
 - Apply readiness remains based on v2 state, completion audit, checkpoint
   manifests, combined patch evidence, reconciliation, and clean checkout state.
 - `bun run check:legacy` flags active Python AgentLens routing references.
-- Deletion of `components/agentlens` has an explicit blocker decision for KWS
+- Deletion of `components/agentlens` had an explicit blocker decision for KWS
   executor telemetry.
 - Historical references are either under migration/spec history or clearly
   marked as historical.
@@ -259,7 +257,7 @@ only, not an active product gate.
   `components/agentlens`?
 - Does API, console, or CLI derive apply readiness independently of
   `projectApplyReadinessFromState` or v2 state?
-- Does the design treat KWS executor telemetry as a deliberate blocker instead
+- Did the cutoff treat KWS executor telemetry as a deliberate decision instead
   of ignoring it?
-- Can `components/agentlens` be deleted in a later patch without changing
-  active Waygent runtime behavior?
+- Did deleting `components/agentlens` avoid changing active Waygent runtime
+  behavior?

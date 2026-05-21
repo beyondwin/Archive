@@ -1,7 +1,11 @@
 # Waygent No-Legacy Runtime Design
 
 Date: 2026-05-22
-Status: Draft for user review
+Status: Historical; superseded for Python AgentLens by the no-Python Lens cutoff
+
+> Status: historical. This design predates deletion of the legacy Python
+> `components/agentlens` tree. Use current Waygent docs and the no-Python Lens
+> cutoff plan for active routing.
 
 ## Goal
 

@@ -41,16 +41,16 @@ Migration documents are historical planning records. Use the roadmap index for
 status and use architecture, operations, and contracts for current runtime
 behavior.
 
-## Component Docs
+## Lens Docs
 
-- [AgentLens docs](../components/agentlens/docs/README.md)
-- [AgentLens CLI](../components/agentlens/docs/cli.md)
-- [AgentLens dashboard](../components/agentlens/docs/dashboard.md)
-- [AgentLens security](../components/agentlens/docs/security.md)
+- [Lens architecture](architecture/agentlens.md)
+- [Event contract](contracts/events.md)
+- [Run-state contract](contracts/run-state.md)
+- [Operations](operations/waygent.md)
 
-AgentLens records, queries, evaluates, and visualizes run evidence. Waygent
-owns active scheduling, provider execution, verification, recovery, and apply
-readiness.
+Lens records, queries, evaluates, and visualizes run evidence through the
+TypeScript Waygent path. Waygent owns active scheduling, provider execution,
+verification, recovery, and apply readiness.
 
 ## Skill Docs
 

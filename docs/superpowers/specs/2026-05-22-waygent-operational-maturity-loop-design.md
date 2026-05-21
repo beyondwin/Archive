@@ -33,7 +33,7 @@ manifests, combined patch evidence, reconciliation, or clean-checkout checks.
 The current product baseline already includes these shipped pieces:
 
 - active Waygent product boundaries under `apps/`, `packages/`,
-  `native/kernel/`, `components/agentlens/`, `docs/`, and `skills/waygent/`;
+  `native/kernel/`, `docs/`, and `skills/waygent/`;
 - v2-only Waygent runtime state for active execution;
 - `platform.*`, `runway.*`, `kernel.*`, and `lens.*` active event families;
 - safe-wave scheduling with bounded parallel execution;

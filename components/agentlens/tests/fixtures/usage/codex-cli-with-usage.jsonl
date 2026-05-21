@@ -1,5 +1,0 @@
-{"type":"turn_context","payload":{"info":{"model":"gpt-5","tokens":{"input_tokens":500,"output_tokens":150,"cache_creation_tokens":0,"cache_read_tokens":100,"reasoning_tokens":40}}}}
-{"type":"turn_context","payload":{"info":{"model":"gpt-5","tokens":{"input_tokens":600,"output_tokens":200,"cache_creation_tokens":0,"cache_read_tokens":150,"reasoning_tokens":60}}}}
-{"type":"turn_context","payload":{"info":{"model":"gpt-5","tokens":{"input_tokens":700,"output_tokens":250,"cache_creation_tokens":0,"cache_read_tokens":200,"reasoning_tokens":80}}}}
-{"type":"turn_context","payload":{"info":{"model":"gpt-5","tokens":{"input_tokens":400,"output_tokens":120,"cache_creation_tokens":0,"cache_read_tokens":50,"reasoning_tokens":20}}}}
-{"type":"turn_context","payload":{"info":{"model":"gpt-5","tokens":{"input_tokens":300,"output_tokens":90,"cache_creation_tokens":0,"cache_read_tokens":30,"reasoning_tokens":10}}}}

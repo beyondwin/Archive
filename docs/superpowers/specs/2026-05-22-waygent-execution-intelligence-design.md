@@ -258,12 +258,8 @@ bun run --cwd apps/console build
 git diff --check
 ```
 
-If Python AgentLens files are changed unexpectedly, also run:
-
-```bash
-cd components/agentlens
-python -m pytest -q
-```
+The legacy Python AgentLens tree has been removed; do not add Python AgentLens
+pytest back to the active gate.
 
 ## Phased Implementation
 

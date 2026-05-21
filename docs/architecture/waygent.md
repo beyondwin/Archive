@@ -10,9 +10,8 @@ from durable safe-wave projection, not from chat context.
 
 The active product tree is `apps/`, `packages/`, `native/`, `tests/`, `docs/`,
 and `skills/waygent/`. The legacy Python `components/agentlens/`
-implementation is not an active Waygent product surface. New run inspection
-work uses the TypeScript Lens path and the Python tree is removed in the
-no-Python observability migration.
+implementation has been removed. New run inspection work uses the TypeScript
+Lens path.
 
 ## Current Architecture Pages
 
@@ -32,6 +31,8 @@ The follow-up speed and quality target is documented in
 [`2026-05-21-waygent-safe-wave-parallel-runtime-design.md`](./2026-05-21-waygent-safe-wave-parallel-runtime-design.md).
 Execution intelligence is documented in
 [`../superpowers/specs/2026-05-22-waygent-execution-intelligence-design.md`](../superpowers/specs/2026-05-22-waygent-execution-intelligence-design.md).
+The operator maturity loop is documented in
+[`../superpowers/specs/2026-05-22-waygent-operational-maturity-loop-design.md`](../superpowers/specs/2026-05-22-waygent-operational-maturity-loop-design.md).
 Waygent owns the product runtime directly; KWS executor skills are not product
 dependencies.
 
@@ -85,3 +86,25 @@ Operational completion requires these properties:
   checkpoint manifests, and reconciliation drift.
 - The offline maturity gate includes `bun run waygent:scenarios`; live Codex
   and Claude checks stay opt-in through `WAYGENT_LIVE_PROVIDER`.
+
+## Operational Maturity Loop
+
+`packages/lens-projectors` owns the shared operational maturity projection used
+by CLI inspect, API run detail, and the console. It composes four read-only
+views from `waygent.run_state.v2` and AgentLens events:
+
+- `dogfood_evidence`: evidence checklist and completeness status.
+- `runtime_cost`: wave count, parallelism score, serial barriers, phase totals,
+  hotspots, fixed costs, and recommendations.
+- `provider_readiness`: provider command/process classification and next
+  action.
+- `apply_readiness`: the existing readiness projection, included for context
+  but still the only apply authority.
+
+`waygent explain` prioritizes hard blockers, then scheduling or cost signals,
+then dogfood evidence gaps. API and console render the same projection fields
+instead of recomputing readiness or maturity independently.
+
+The maturity loop deliberately stays diagnostic. Apply remains governed by v2
+completion audit, checkpoint manifests, patch digest checks, checkpoint dry-run
+evidence, reconciliation, and clean-checkout validation.
