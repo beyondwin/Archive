@@ -142,6 +142,12 @@ waygent/
     testkit/
       src/
 
+  skills/
+    waygent/
+      SKILL.md
+      references/
+        commands.md
+
   native/
     kernel/
       Cargo.toml
@@ -248,6 +254,7 @@ Owns agent integration:
 - OpenCode/Gemini/Goose/ACP adapters when useful;
 - local fake adapter for deterministic tests;
 - capability matrix;
+- model profile manifests for main and subagent roles;
 - provider event normalization.
 
 Adapters produce typed events and result artifacts. They do not own scheduling,
@@ -269,7 +276,24 @@ Owns policy language:
 The policy package explains decisions. The Rust kernel enforces path, process,
 sandbox, and patch constraints.
 
-### 5.7 `packages/context-packer`
+### 5.7 `packages/orchestrator`
+
+Owns user intent after it has been converted into a stable command:
+
+- run lifecycle;
+- topic/latest/last resolution;
+- execution profile resolution;
+- default multi-agent dispatch policy;
+- main-agent and subagent role assignment;
+- provider profile override validation;
+- run summary handoff back to the launcher.
+
+The default execution mode is multi-agent. Single-agent execution is an explicit
+override, not the default. The orchestrator releases subagent waves through
+`runway-control`; it does not bypass file claims, risk barriers, or checkpoint
+requirements.
+
+### 5.8 `packages/context-packer`
 
 Replaces Graphify with on-demand context:
 
@@ -282,7 +306,7 @@ Replaces Graphify with on-demand context:
 Context packing is an input aid. It is not a scheduler truth source and not a
 runtime dependency.
 
-### 5.8 `native/kernel`
+### 5.9 `native/kernel`
 
 Owns dangerous hands:
 
@@ -299,11 +323,68 @@ Owns dangerous hands:
 The kernel exposes a small typed protocol over JSON-RPC, UDS, or stdio. Bun can
 request actions; Bun cannot bypass kernel validation for irreversible effects.
 
+### 5.10 `skills/waygent`
+
+Owns natural-language launch UX for Codex, Claude, and similar agent hosts:
+
+- interpret natural language into `waygent` commands;
+- resolve latest/topic/last run references;
+- choose provider and execution profile defaults;
+- pass explicit model overrides through CLI flags;
+- call `waygent run`, `status`, `inspect`, `explain`, `resume`, and `apply`;
+- summarize machine output for the user.
+
+The skill is intentionally thin. It must not implement scheduling, worktree
+mutation, recovery policy, trust scoring, or provider-specific runtime logic.
+Those responsibilities remain in Waygent core packages and the Rust kernel.
+
+## 5.11 Execution Profiles
+
+Waygent defaults to multi-agent execution:
+
+```yaml
+execution_mode: multi-agent
+providers:
+  codex:
+    main:
+      model: gpt-5.5
+      reasoning: xhigh
+    subagent:
+      model: gpt-5.5
+      reasoning: high
+  claude:
+    main:
+      model: opus
+      reasoning: high
+    subagent:
+      model: opus
+      reasoning: high
+```
+
+Overrides are allowed from both natural language and CLI flags. Precedence is:
+
+```text
+natural-language explicit override
+  > CLI flags
+  > plan metadata
+  > project config
+  > Waygent defaults
+```
+
+Examples:
+
+- "최근 플랜 Codex로 실행해줘" maps to `waygent run --latest --provider codex`.
+- "이번엔 Claude Opus high로 멀티에이전트 실행해줘" maps to
+  `waygent run --latest --provider claude --execution-mode multi-agent`.
+- "서브에이전트만 high 대신 medium으로 낮춰" maps to
+  `--subagent-reasoning medium`.
+
 ## 6. Data Flow
 
 ```text
-User / CLI / API
+User / Natural Language Skill / CLI / API
   -> Waygent
+  -> orchestrator resolves execution profile and multi-agent mode
   -> runway-control parses plan/spec and builds durable task graph
   -> lens-store records run_started and contract snapshot
   -> runway-control computes safe_wave
@@ -458,9 +539,11 @@ Core event families:
 
 - `platform.run_started`;
 - `platform.contract_snapshot`;
+- `runway.execution_profile_selected`;
 - `runway.task_ready`;
 - `runway.task_withheld`;
 - `runway.safe_wave_selected`;
+- `runway.subagent_wave_started`;
 - `runway.worker_started`;
 - `runway.worker_result`;
 - `kernel.exec_started`;
@@ -490,6 +573,9 @@ The first implementation plan should be contract-first and deterministic:
 - checked-in valid and invalid JSON fixtures for every cross-language schema;
 - kernel protocol golden fixtures;
 - fake provider adapter e2e runs;
+- natural-language launcher intent mapping tests;
+- execution profile resolver tests for Codex and Claude defaults;
+- model override precedence tests;
 - safe-wave scheduler tests;
 - file claim conflict tests;
 - failure barrier tests;
