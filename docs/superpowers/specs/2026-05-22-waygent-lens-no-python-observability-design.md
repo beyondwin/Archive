@@ -69,10 +69,18 @@ Remaining blockers:
 
 - `components/agentlens/` still contains the Python package, FastAPI app,
   dashboard assets, schemas, evaluator, tests, and docs.
+
+Resolved deletion policy:
+
 - KWS executor skills still document best-effort calls to `agentlens run-open`,
   `agentlens event append`, `agentlens run-close`, and `agentlens events` under
-  `kws-cpe.*` and `kws-cme.*`. Those skills are not the Waygent product
-  runtime, but they are load-bearing local executor contracts.
+  `kws-cpe.*` and `kws-cme.*`.
+- Those references are skill-local/external observability, not active Waygent
+  product telemetry. They may degrade if no external `agentlens` CLI is
+  installed after the Python tree is deleted.
+- Do not migrate KWS telemetry into the TypeScript Waygent Lens path as part of
+  the no-Python product deletion. Any future KWS telemetry rewrite must follow
+  each skill's local protocol and eval gates.
 
 ## Non-Goals
 
@@ -175,11 +183,10 @@ Before deleting `components/agentlens`, resolve these explicitly:
    checks.
 3. `bun run check:legacy` should scan active routing docs for
    active `components/agentlens` and Python AgentLens verification references.
-4. KWS executor skills must either:
-   - be declared historical/external to the Waygent product deletion, with no
-     expectation that their telemetry is supported by this checkout, or
-   - be migrated to a TypeScript Lens-compatible command or no-op telemetry
-     adapter before Python removal.
+4. KWS executor telemetry policy must be explicit. Current decision:
+   `kws-cpe.*` and `kws-cme.*` are skill-local/external best-effort
+   observability and may degrade if no external `agentlens` CLI is installed
+   after Python removal; they are not active Waygent product telemetry.
 5. `rg` over active docs, apps, packages, tests, and CI must show no active
    Python AgentLens instructions.
 

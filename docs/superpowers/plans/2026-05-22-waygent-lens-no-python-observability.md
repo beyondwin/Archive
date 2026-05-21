@@ -67,7 +67,9 @@ Corrected by this document update:
 Still unresolved:
 
 - `components/agentlens/` still exists.
-- KWS executor skill telemetry still depends on an `agentlens` CLI contract.
+- KWS executor skill telemetry still references an `agentlens` CLI contract,
+  but Task 4 now treats it as skill-local/external best-effort observability,
+  not an active Waygent product blocker.
 
 ## Execution Order
 
@@ -214,18 +216,34 @@ Expected: parity assertions pass.
 - Create or modify: a short decision note under `docs/architecture/decisions.md`
   or the no-Python plan if no ADR convention is available.
 
-- [ ] Inventory `agentlens run-open`, `agentlens event append`,
+- [x] Inventory `agentlens run-open`, `agentlens event append`,
   `agentlens run-close`, `agentlens events`, `AGENTLENS_HOME`,
   `AGENTLENS_PARENT_RUN_ID`, `agentlens_orchestration_run`, `kws-cpe.*`, and
   `kws-cme.*` references in KWS executor skills.
-- [ ] Decide one of:
+- [x] Decide one of:
   - KWS telemetry is historical/external to active Waygent and is allowed to
     degrade when Python AgentLens is removed;
   - KWS telemetry moves to a TypeScript Lens-compatible command;
   - KWS telemetry becomes explicit no-op best-effort with clear warnings.
-- [ ] Do not rewrite skill behavior without following each skill's local
+- [x] Do not rewrite skill behavior without following each skill's local
   protocol and eval requirements.
-- [ ] Document the chosen policy before deleting Python AgentLens.
+- [x] Document the chosen policy before deleting Python AgentLens.
+
+Audit result:
+
+- `skills/kws-codex-plan-executor` uses `kws-cpe.*` event namespaces,
+  `agentlens_orchestration_run`, and best-effort `agentlens run-open`,
+  `agentlens event append`, `agentlens run-close`, and `agentlens events`
+  references in SKILL, references, evals, and helper scripts.
+- `skills/kws-claude-multi-agent-executor` uses `kws-cme.*` event namespaces,
+  `AGENTLENS_HOME`, `AGENTLENS_PARENT_RUN_ID`,
+  `agentlens_orchestration_run`, and best-effort `agentlens run-open`,
+  `agentlens event append`, `agentlens run-close`, and `agentlens events`
+  references in SKILL, ARCHITECTURE, docs, evals, and helper scripts.
+- Policy: preserve those references as skill-local/external observability. They
+  are allowed to degrade if no external `agentlens` CLI exists after deleting
+  the Python product tree. Do not route them into active Waygent Lens as part
+  of this deletion.
 
 Verify:
 
