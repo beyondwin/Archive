@@ -5,11 +5,16 @@ for AI coding agents in this repository.
 
 Project focus:
 
-- `AgentLens/` contains the Python package, CLI, tests, and React dashboard.
-- `skills/` contains load-bearing executor skills used by Codex and Claude.
+- `apps/cli/`, `apps/api/`, and `apps/console/` contain the active Waygent
+  product surfaces.
+- `packages/lens-store/` and `packages/lens-projectors/` contain the active
+  TypeScript Lens storage and projection path.
+- `packages/orchestrator/`, `packages/runway-control/`,
+  `packages/provider-adapters/`, and `native/kernel/` contain the active
+  Waygent runtime.
+- `skills/` contains load-bearing local skills used by Codex and Claude.
 
 Follow subtree instructions when present, especially
-`skills/agent-runway/AGENTS.md` and
 `skills/kws-claude-multi-agent-executor/AGENTS.md`.
 
 Do not suggest committing runtime state, local caches, secrets, or machine-local

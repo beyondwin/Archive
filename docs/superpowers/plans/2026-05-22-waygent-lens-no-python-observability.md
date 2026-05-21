@@ -93,6 +93,7 @@ Human approval gates:
 
 - Modify: `AGENTS.md`
 - Modify: `CLAUDE.md`
+- Modify: `.github/copilot-instructions.md`
 - Modify: `README.md`
 - Modify: `docs/architecture/waygent.md`
 - Modify: `docs/architecture/agentlens.md`
@@ -118,6 +119,8 @@ Human approval gates:
 - [x] Update event docs so `agentlens.event.v3` is a durable event schema name,
   not a dependency on Python AgentLens.
 - [x] Remove Python pytest from active operations and verification checklists.
+- [x] Remove stale Copilot routing references to the old Python AgentLens and
+  AgentRunway surfaces.
 - [x] Remove the stale `dashboard-ci` workflow unless it is replaced by a
   Waygent API/console workflow.
 
@@ -142,15 +145,15 @@ AgentLens.
 - Modify: `packages/testkit/src/legacyCheck.ts`
 - Modify: `packages/testkit/tests/legacyCheck.test.ts`
 
-- [ ] Extend `activeRoutingRoots` or pattern checks to flag active
+- [x] Extend `activeRoutingRoots` or pattern checks to flag active
   `components/agentlens`, `AgentLens backend`, and Python AgentLens pytest
   instructions in `AGENTS.md`, `CLAUDE.md`, `README.md`, `.github`, active
   architecture docs, active operations docs, apps, packages, native, and tests.
-- [ ] Keep migration docs and superpowers plan/spec history out of hard-fail
+- [x] Keep migration docs and superpowers plan/spec history out of hard-fail
   scope unless they claim active routing.
-- [ ] Add tests that a fixture active doc containing `cd components/agentlens`
+- [x] Add tests that a fixture active doc containing `cd components/agentlens`
   or `python -m pytest` fails.
-- [ ] Add tests that historical migration text is allowed when it is outside
+- [x] Add tests that historical migration text is allowed when it is outside
   active routing roots.
 
 Verify:
@@ -178,15 +181,15 @@ Expected: both pass after active docs are updated.
 Current code already exposes `execution_explanation` and v2 apply readiness.
 This task is a parity hardening pass, not a rewrite.
 
-- [ ] Add a real fake-provider run assertion that `inspectRun`,
+- [x] Add a real fake-provider run assertion that `inspectRun`,
   `GET /runs/:runId`, and `buildRunDetailModel` agree on:
   run id, v2 status, trust status, apply readiness, checkpoint refs, combined
   patch ref, provider attempts, verification count, and first safe wave.
-- [ ] Assert console mapping does not recompute readiness from
+- [x] Assert console mapping does not recompute readiness from
   `runway.verification_result` when v2 readiness is `not_ready` or `blocked`.
-- [ ] Assert `explainRun` summary is grounded in v2 blocked-task evidence when
+- [x] Assert `explainRun` summary is grounded in v2 blocked-task evidence when
   present.
-- [ ] Prefer existing projector fields. Do not add a broad new inspection model
+- [x] Prefer existing projector fields. Do not add a broad new inspection model
   unless it wraps current projections and removes duplication.
 
 Verify:

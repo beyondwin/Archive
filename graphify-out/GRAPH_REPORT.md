@@ -1,16 +1,16 @@
 # Graph Report - Archive  (2026-05-22)
 
 ## Corpus Check
-- 785 files · ~520,933 words
+- 785 files · ~521,350 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 11438 nodes · 14160 edges · 950 communities (880 shown, 70 thin omitted)
+- 11443 nodes · 14169 edges · 959 communities (886 shown, 73 thin omitted)
 - Extraction: 92% EXTRACTED · 8% INFERRED · 0% AMBIGUOUS · INFERRED: 1090 edges (avg confidence: 0.79)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `eb7d0f6d`
+- Built from commit: `24b0dade`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -917,16 +917,25 @@
 - [[_COMMUNITY_Community 937|Community 937]]
 - [[_COMMUNITY_Community 938|Community 938]]
 - [[_COMMUNITY_Community 939|Community 939]]
+- [[_COMMUNITY_Community 940|Community 940]]
 - [[_COMMUNITY_Community 941|Community 941]]
+- [[_COMMUNITY_Community 942|Community 942]]
 - [[_COMMUNITY_Community 943|Community 943]]
 - [[_COMMUNITY_Community 944|Community 944]]
+- [[_COMMUNITY_Community 945|Community 945]]
 - [[_COMMUNITY_Community 946|Community 946]]
 - [[_COMMUNITY_Community 947|Community 947]]
 - [[_COMMUNITY_Community 948|Community 948]]
+- [[_COMMUNITY_Community 949|Community 949]]
 - [[_COMMUNITY_Community 950|Community 950]]
+- [[_COMMUNITY_Community 951|Community 951]]
+- [[_COMMUNITY_Community 952|Community 952]]
+- [[_COMMUNITY_Community 953|Community 953]]
+- [[_COMMUNITY_Community 954|Community 954]]
 - [[_COMMUNITY_Community 955|Community 955]]
 - [[_COMMUNITY_Community 956|Community 956]]
 - [[_COMMUNITY_Community 957|Community 957]]
+- [[_COMMUNITY_Community 958|Community 958]]
 
 ## God Nodes (most connected - your core abstractions)
 1. `validate_doc()` - 54 edges
@@ -941,38 +950,38 @@
 10. `runWaygent()` - 32 edges
 
 ## Surprising Connections (you probably didn't know these)
+- `runCli()` --calls--> `intentToCommand()`  [INFERRED]
+  apps/cli/src/index.ts → packages/orchestrator/src/naturalLanguageIntent.ts
 - `readRealRunDetail()` --calls--> `projectApplyState()`  [INFERRED]
   apps/api/src/server.ts → packages/lens-projectors/src/apply.ts
 - `readRealRunDetail()` --calls--> `projectExecutionExplanationFromState()`  [INFERRED]
   apps/api/src/server.ts → packages/lens-projectors/src/executionExplanation.ts
+- `readRealRunDetail()` --calls--> `projectFailureSummary()`  [INFERRED]
+  apps/api/src/server.ts → packages/lens-projectors/src/trust.ts
 - `tryReadRunStateV2()` --calls--> `validateContract()`  [INFERRED]
   apps/api/src/server.ts → packages/contracts/src/validate.ts
-- `summarizeRealRun()` --calls--> `rebuildRunSummary()`  [INFERRED]
-  apps/api/src/server.ts → packages/lens-store/src/projection.ts
-- `runCli()` --calls--> `statusRun()`  [INFERRED]
-  apps/cli/src/index.ts → packages/orchestrator/src/runCommands.ts
 
-## Communities (950 total, 70 thin omitted)
+## Communities (959 total, 73 thin omitted)
 
 ### Community 0 - "Community 0"
-Cohesion: 0.03
-Nodes (84): BaseSettings, --dev-proxy smoke test., test_dev_proxy_does_not_fail_to_mount(), test_dev_proxy_unknown_api_route_stays_404_problem(), Test that /api/v1/doctor mirrors the CLI doctor JSON output., test_doctor_returns_structured_payload(), _client(), ProblemDetails error mapping. (+76 more)
+Cohesion: 0.04
+Nodes (72): BaseSettings, --dev-proxy smoke test., test_dev_proxy_does_not_fail_to_mount(), test_dev_proxy_unknown_api_route_stays_404_problem(), Test that /api/v1/doctor mirrors the CLI doctor JSON output., test_doctor_returns_structured_payload(), _client(), ProblemDetails error mapping. (+64 more)
 
 ### Community 1 - "Community 1"
-Cohesion: 0.04
-Nodes (66): ApplyProjection, checkpointRefsFromCombined(), checkpointRefsFromState(), combinedPatchRef(), projectApplyReadinessFromState(), projectApplyState(), ApplyState, ApplyStatus (+58 more)
+Cohesion: 0.05
+Nodes (52): ApplyProjection, checkpointRefsFromCombined(), checkpointRefsFromState(), combinedPatchRef(), projectApplyReadinessFromState(), projectApplyState(), ApplyState, ApplyStatus (+44 more)
 
 ### Community 2 - "Community 2"
-Cohesion: 0.07
-Nodes (63): index_run(), init_db(), init_schema(), _migrate_runs_v1_columns(), open_db(), SQLite index over the run tree (spec §5.8, §7.3, §S1.6.8, §S1.8.3).  This module, Open (or create) the SQLite index database.      Args:         path: explicit DB, Add v1 additive columns to a pre-existing ``runs`` table.      Idempotent: detec (+55 more)
+Cohesion: 0.17
+Nodes (30): index_run(), init_schema(), open_db(), Open (or create) the SQLite index database.      Args:         path: explicit DB, Create all index tables and indexes. Idempotent.      Includes v1 additive ALTER, Upsert a single run's row set from its canonical JSON artifacts.      Reads ``ru, _index_names(), Tests for agentlens.store.sqlite_index (spec §5.8, §7.3). (+22 more)
 
 ### Community 3 - "Community 3"
-Cohesion: 0.06
-Nodes (35): AgentProfile, defaultProfiles, ExecutionMode, ExecutionProfile, ProfileOverride, ProviderName, ReasoningLevel, resolveExecutionProfile() (+27 more)
+Cohesion: 0.04
+Nodes (50): buildCompletionAudit(), AgentProfile, defaultProfiles, ExecutionMode, ExecutionProfile, ProfileOverride, ProviderName, ReasoningLevel (+42 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.05
-Nodes (42): detail, model, snapshot, verdicts, AppProps, EventTimeline(), verdictLabels, ApplyState (+34 more)
+Cohesion: 0.10
+Nodes (6): AppProps, verdictLabels, ConsoleRun, ConsoleSnapshot, RealRunSummaryResponse, RunDetailModel
 
 ### Community 5 - "Community 5"
 Cohesion: 0.36
@@ -983,8 +992,8 @@ Cohesion: 0.06
 Nodes (51): _extract_error_type(), _extract_exit_code(), _extract_pytest_summary(), Secret/path/excerpt patterns for the v1 redaction engine (spec §5.11).  This mod, Return the tail-summary line from pytest output, or ``None``.      Picks the **l, Return the line announcing a process exit code, or ``None``., Return the last ``<Type>: <message>`` line found in *raw*, or ``None``.      "La, apply_to_doc() (+43 more)
 
 ### Community 7 - "Community 7"
-Cohesion: 0.05
-Nodes (74): sha256(), writeArtifact(), CheckpointDryRunResult, CheckpointManifest, CheckpointValidationResult, CombinedCheckpointPatchResult, createCheckpointArtifact(), CreateCheckpointArtifactInput (+66 more)
+Cohesion: 0.06
+Nodes (69): sha256(), writeArtifact(), CheckpointDryRunResult, CheckpointManifest, CheckpointValidationResult, CombinedCheckpointPatchResult, createCheckpointArtifact(), CreateCheckpointArtifactInput (+61 more)
 
 ### Community 8 - "Community 8"
 Cohesion: 0.07
@@ -996,7 +1005,7 @@ Nodes (25): Retention thresholds (spec §5.9)., RetentionPolicy, _iso(), _make_r
 
 ### Community 10 - "Community 10"
 Cohesion: 0.06
-Nodes (35): DiffScopeInput, DiffScopeResult, listActualChangedFiles(), matchesPattern(), normalizePath(), validateDiffScope(), RunEventInput, artifactReferenceFromRunRef() (+27 more)
+Nodes (34): DiffScopeInput, DiffScopeResult, listActualChangedFiles(), matchesPattern(), normalizePath(), validateDiffScope(), RunEventInput, artifactReferenceFromRunRef() (+26 more)
 
 ### Community 11 - "Community 11"
 Cohesion: 0.04
@@ -1019,8 +1028,8 @@ Cohesion: 0.08
 Nodes (42): _cap_explicit(), extract_display_title(), _has_informative_char(), Pure display-title extractor for imported sessions (spec §4.2).  `extract_displa, Return a redaction-safe display title or ``None``.      See spec §4.2 for the fu, _truncate_url(), _fixture_pairs(), Unit tests for importers.title.extract_display_title (spec §4.2). (+34 more)
 
 ### Community 16 - "Community 16"
-Cohesion: 0.07
-Nodes (50): ConfigError, _disable_active(), _env_overrides(), load_config(), _load_yaml(), AgentLens configuration loader (spec §S1.3 row 69, §S1.4).  Implements the prior, Persist ``mode`` to ``<workspace_root>/.agentlens/config.yaml``.      Creates th, Raised for invalid configuration values (e.g. unknown ``mode``). (+42 more)
+Cohesion: 0.10
+Nodes (35): load_config(), Resolve the effective AgentLens config per the priority chain.      Returns a di, main(), run_snapshot(), run_snapshot_with_packets(), inspect(), main(), write_state() (+27 more)
 
 ### Community 17 - "Community 17"
 Cohesion: 0.08
@@ -1031,8 +1040,8 @@ Cohesion: 0.08
 Nodes (38): AgentLens constants (spec §S1.6.1).  Schema identifiers, recording defaults, and, compute_workspace_id(), _find_git_toplevel(), _git(), _git_branch(), _git_remote_url(), make_event_id(), make_run_id() (+30 more)
 
 ### Community 19 - "Community 19"
-Cohesion: 0.06
-Nodes (43): gc(), ``agentlens gc`` — apply retention policy to the run store (spec §5.9, §8.4).  T, Apply retention policy: list (or delete) eligible artifacts., _build_summary(), _failures_for_run(), ``agentlens show`` — full summary of a recorded run (spec §S1.11.1).  Resolves a, Print a full run summary (failures + risks included)., _resolve_row() (+35 more)
+Cohesion: 0.07
+Nodes (36): gc(), ``agentlens gc`` — apply retention policy to the run store (spec §5.9, §8.4).  T, Apply retention policy: list (or delete) eligible artifacts., _build_summary(), _failures_for_run(), ``agentlens show`` — full summary of a recorded run (spec §S1.11.1).  Resolves a, Print a full run summary (failures + risks included)., _resolve_row() (+28 more)
 
 ### Community 20 - "Community 20"
 Cohesion: 0.05
@@ -1047,12 +1056,12 @@ Cohesion: 0.09
 Nodes (40): _extract_first_user_text(), _extract_tool_use(), find_session(), _is_billable_assistant(), _iter_raw_lines(), list_sessions(), parse_session(), ParsedSession (+32 more)
 
 ### Community 23 - "Community 23"
-Cohesion: 0.15
-Nodes (15): buildDurableProjection(), mergeCandidate(), claimsConflict(), computeSafeWave(), createDecisionPacket(), samePathFamily(), terminalFailures, CandidateGateState (+7 more)
+Cohesion: 0.14
+Nodes (17): buildDurableProjection(), mergeCandidate(), assertAcyclic(), claimsConflict(), computeSafeWave(), createDecisionPacket(), createTaskGraph(), samePathFamily() (+9 more)
 
 ### Community 24 - "Community 24"
 Cohesion: 0.10
-Nodes (29): applyVerifiedCheckpoint(), hasApplyReadyCheckpoint(), appendEvent(), nextSequence(), ResumeActionInput, ResumeActionSelection, selectResumeAction(), applyRun() (+21 more)
+Nodes (34): applyVerifiedCheckpoint(), hasApplyReadyCheckpoint(), appendEvent(), nextSequence(), readEvents(), RunPaths, ResumeActionInput, ResumeActionSelection (+26 more)
 
 ### Community 25 - "Community 25"
 Cohesion: 0.05
@@ -1079,8 +1088,8 @@ Cohesion: 0.05
 Nodes (41): AgentLensEvent, ApplyReadinessProjection, ArtifactHealthSummary, ArtifactIndexEntry, ArtifactReference, DecisionPacket, EventOutcome, EventSeverity (+33 more)
 
 ### Community 31 - "Community 31"
-Cohesion: 0.09
-Nodes (36): append_event(), atomic_write_json(), _check_event_excerpt_size(), _maybe_redact(), Atomic, schema-validated writers for the run tree (spec §5.6, §S1.6.6).  All str, Append a single validated event line to ``run_dir/events.jsonl``.      Holds an, Write ``run_dir/run.json`` via ``atomic_write_json``., Create the workspace-local current-run marker for *run_id*.      The marker is i (+28 more)
+Cohesion: 0.10
+Nodes (33): append_event(), atomic_write_json(), _check_event_excerpt_size(), _maybe_redact(), Atomic, schema-validated writers for the run tree (spec §5.6, §S1.6.6).  All str, Append a single validated event line to ``run_dir/events.jsonl``.      Holds an, Write ``run_dir/run.json`` via ``atomic_write_json``., Raised for non-schema write failures (oversize excerpt, IO, etc.). (+25 more)
 
 ### Community 32 - "Community 32"
 Cohesion: 0.05
@@ -1239,8 +1248,8 @@ Cohesion: 0.12
 Nodes (22): accumulate(), _atomic_write_json(), _empty_aggregate(), _increment(), main(), _normalize_usage(), _resolve_active_plan_key(), _utc_now_iso() (+14 more)
 
 ### Community 71 - "Community 71"
-Cohesion: 0.09
-Nodes (22): attach(), ``agentlens attach`` — record an artifact.attached event.  For v0 the file is no, Append an ``artifact.attached`` event referencing *path*., eval_cmd(), ``agentlens eval`` — run the v0 evaluator stub against the active run., Evaluate a run and print its status., final(), ``agentlens final`` — write final.json and emit run.finalized event. (+14 more)
+Cohesion: 0.08
+Nodes (25): attach(), ``agentlens attach`` — record an artifact.attached event.  For v0 the file is no, Append an ``artifact.attached`` event referencing *path*., eval_cmd(), ``agentlens eval`` — run the v0 evaluator stub against the active run., Evaluate a run and print its status., final(), ``agentlens final`` — write final.json and emit run.finalized event. (+17 more)
 
 ### Community 72 - "Community 72"
 Cohesion: 0.10
@@ -1267,8 +1276,8 @@ Cohesion: 0.08
 Nodes (15): FirstError, ImportReport, Import-report dataclass and helpers (spec §4.1).  `ImportReport` is the per-impo, Account a successfully parsed line., Account a skipped line.          Bumps `total_scanned` and the per-reason counte, Mark that the byte-cap was reached during scanning., Attach the verbatim-transcript artifact pointer., Assign the derived display title and its provenance. (+7 more)
 
 ### Community 78 - "Community 78"
-Cohesion: 0.15
-Nodes (16): _materialise_demo_home(), ``agentlens serve`` - boot the dashboard., Copy bundled demo data into a fresh temp dir; return (home, marker)., Return an available port, optionally trying ``port + 1..max_offset``., Return only values explicitly supplied on the command line., Spawn the AgentLens web viewer., _select_port(), serve() (+8 more)
+Cohesion: 0.10
+Nodes (22): _materialise_demo_home(), ``agentlens serve`` - boot the dashboard., Copy bundled demo data into a fresh temp dir; return (home, marker)., Return an available port, optionally trying ``port + 1..max_offset``., Return only values explicitly supplied on the command line., Spawn the AgentLens web viewer., _select_port(), serve() (+14 more)
 
 ### Community 79 - "Community 79"
 Cohesion: 0.07
@@ -1335,16 +1344,16 @@ Cohesion: 0.08
 Nodes (23): Acceptance Criteria, Data Flow, Design Principles, Dogfood Verification, Error Handling, Goal, Integration Tests, Non-Goals (+15 more)
 
 ### Community 95 - "Community 95"
-Cohesion: 0.12
-Nodes (20): AgentLens persistent store layout helpers (spec §S1.6.4–§S1.6.7)., file_lock(), _is_pid_alive(), LockTimeoutError, Advisory file lock with timeout and stale-PID recovery (spec §5.5, §S1.6.5).  Po, Raised when the lock cannot be acquired within the timeout window., Acquire an advisory ``fcntl.flock`` on *path*.      Args:         path: lock fil, _read_pid() (+12 more)
+Cohesion: 0.13
+Nodes (19): file_lock(), _is_pid_alive(), LockTimeoutError, Advisory file lock with timeout and stale-PID recovery (spec §5.5, §S1.6.5).  Po, Raised when the lock cannot be acquired within the timeout window., Acquire an advisory ``fcntl.flock`` on *path*.      Args:         path: lock fil, _read_pid(), _resolve_timeout() (+11 more)
 
 ### Community 96 - "Community 96"
-Cohesion: 0.12
-Nodes (11): state, events, path, projection, summary, summary, dbPath, events (+3 more)
+Cohesion: 0.09
+Nodes (16): state, artifact, root, events, path, summary, root, worker (+8 more)
 
 ### Community 97 - "Community 97"
-Cohesion: 0.09
-Nodes (19): artifactIndexEntry(), ArtifactProducerPhase, mergeArtifactIndex(), rebuildRunSummary(), RunSummary, readProjectionCache(), rebuildProjectionCache(), artifact (+11 more)
+Cohesion: 0.06
+Nodes (26): artifactIndexEntry(), ArtifactProducerPhase, mergeArtifactIndex(), rebuildRunSummary(), RunSummary, shouldReviewTask(), readProjectionCache(), rebuildProjectionCache() (+18 more)
 
 ### Community 98 - "Community 98"
 Cohesion: 0.13
@@ -1375,8 +1384,8 @@ Cohesion: 0.14
 Nodes (14): _fake_binary(), home(), Integration tests for v1 TTY-aware shim passthrough (spec §4.5).  When the shim, The TTY guard must sit AFTER lockfile/SHA checks but BEFORE the     nested-polic, Regression guard: ``install_shim`` must NOT silently replace the     Codex Deskt, The TTY guard must NOT short-circuit -p / --print / stream-json modes., _read_shim(), TestClaudeInteractivePassthrough (+6 more)
 
 ### Community 105 - "Community 105"
-Cohesion: 0.13
-Nodes (15): code:python ("""ProblemDetails error mapping (spec §6, §8)."""), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:python ("""RFC 7807 ProblemDetails error mapping (spec §6, §8)."""), code:python (from agentlens.web.errors import install_error_handlers), code:python (install_error_handlers(app)), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:bash (git add AgentLens/src/agentlens/web/errors.py AgentLens/src/), code:python ("""Tests for agentlens.web.deps.""") (+7 more)
+Cohesion: 0.25
+Nodes (8): code:python ("""ProblemDetails error mapping (spec §6, §8)."""), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:python ("""RFC 7807 ProblemDetails error mapping (spec §6, §8)."""), code:python (from agentlens.web.errors import install_error_handlers), code:python (install_error_handlers(app)), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:bash (git add AgentLens/src/agentlens/web/errors.py AgentLens/src/), Task 4: RFC 7807 ProblemDetails error handler
 
 ### Community 106 - "Community 106"
 Cohesion: 0.09
@@ -1415,8 +1424,8 @@ Cohesion: 0.22
 Nodes (21): _decode_cursor(), _detail_payload(), _detect_partial(), _detect_schema(), download_artifact(), _encode_cursor(), _ensure_supported_schema(), _failure_counts_by_run() (+13 more)
 
 ### Community 115 - "Community 115"
-Cohesion: 0.08
-Nodes (28): Failure, ImportState, ModelUsageRow, Risk, RunArtifact, RunsPage, TrustReport, useRun() (+20 more)
+Cohesion: 0.18
+Nodes (13): ImportState, ModelUsageRow, Risk, RunArtifact, RunsPage, useRun(), useRunArtifacts(), useRunEvents() (+5 more)
 
 ### Community 116 - "Community 116"
 Cohesion: 0.10
@@ -1431,8 +1440,8 @@ Cohesion: 0.19
 Nodes (20): install_shim(), Install a shim for ``name`` pointing at ``real_path``.      Algorithm (spec §S1., home(), _make_fake_binary(), Unit tests for shim install/security (spec §S1.6.18, §S1.9.3)., Binary names users type (`claude`, `codex`) must map to the canonical     adapte, Redirect HOME so Path.home() == tmp_path during the test., Shim script must reference lockfile + delegate via `agentlens run`. (+12 more)
 
 ### Community 119 - "Community 119"
-Cohesion: 0.25
-Nodes (8): code:python ("""Tests for /api/v1/workspaces[/{id}]."""), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:python ("""/api/v1/workspaces (spec §6)."""), code:python (from agentlens.web.routers import workspaces as workspaces_r), code:python (app.include_router(workspaces_router.router)), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:bash (git add AgentLens/src/agentlens/web/routers/workspaces.py Ag), Task 12: Workspaces router (list + detail with aggregations)
+Cohesion: 0.10
+Nodes (21): code:python ("""Tests for /api/v1/runs/{id} and /api/v1/runs/{id}/verify.), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:python (import hashlib), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:bash (git add AgentLens/src/agentlens/web/routers/runs.py AgentLen), code:python ("""Tests for /api/v1/runs/{id}/events (NDJSON)."""), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:python (from fastapi.responses import StreamingResponse) (+13 more)
 
 ### Community 120 - "Community 120"
 Cohesion: 0.10
@@ -1443,8 +1452,8 @@ Cohesion: 0.11
 Nodes (18): AgentLens — agent-agnostic recording/evaluation contract (v0)., normalize_for_diff(), parse_iso(), Time helpers (spec §S1.6.2).  All AgentLens timestamps are UTC ISO8601 with a tr, Return True iff *s* is a valid UTC ISO8601 string per the spec., Parse a UTC ISO8601 string and return a tz-aware :class:`datetime`.      Raises, Replace every ISO8601-UTC substring with a fixed placeholder.      Used by deter, validate_iso8601_utc() (+10 more)
 
 ### Community 122 - "Community 122"
-Cohesion: 0.14
-Nodes (20): _agent_label_and_mode(), _backfill_pending_parents(), _build_meta(), codex_session(), _existing_run_for_import_key(), _import_one(), _iter_all_run_dirs(), _peek_session_id() (+12 more)
+Cohesion: 0.13
+Nodes (22): _agent_label_and_mode(), _backfill_pending_parents(), _build_meta(), codex_session(), _existing_run_for_import_key(), _import_one(), _iter_all_run_dirs(), _peek_session_id() (+14 more)
 
 ### Community 123 - "Community 123"
 Cohesion: 0.10
@@ -1615,8 +1624,8 @@ Cohesion: 0.25
 Nodes (15): _all_run_dirs(), env(), _find_capture_run_dir(), _meta_line(), Integration tests for ``agentlens import codex-session`` (spec §4.2.6).  The imp, _rollout_filename(), _seed_active(), _seed_archived() (+7 more)
 
 ### Community 165 - "Community 165"
-Cohesion: 0.28
-Nodes (10): acpCapabilityManifest, claudeCapabilityManifest, codexCapabilityManifest, fakeCapabilityManifest, AdapterRequest, ProviderAdapter, ProviderAdapterDescription, ProviderAdapterRunResult (+2 more)
+Cohesion: 0.15
+Nodes (13): acpCapabilityManifest, claudeCapabilityManifest, codexCapabilityManifest, fakeCapabilityManifest, ClaudeProviderAdapter, CodexProviderAdapter, runProviderProcess(), AdapterRequest (+5 more)
 
 ### Community 166 - "Community 166"
 Cohesion: 0.21
@@ -1648,7 +1657,7 @@ Nodes (16): expected, apply_status, blockers, checkpoints, combined_patch_ref, e
 
 ### Community 173 - "Community 173"
 Cohesion: 0.12
-Nodes (15): Acceptance Criteria, Acceptance Criteria, Acceptance Criteria, AgentLens v0 — Task-Formatted Plan, code:bash (cd AgentLens), code:bash (cd AgentLens), code:bash (cd AgentLens), Phase 1: M0 Contract Freeze (+7 more)
+Nodes (15): Acceptance Criteria, Acceptance Criteria, Acceptance Criteria, Acceptance Criteria, Acceptance Criteria, AgentLens v0 — Task-Formatted Plan, code:bash (cd AgentLens), code:bash (cd AgentLens) (+7 more)
 
 ### Community 174 - "Community 174"
 Cohesion: 0.16
@@ -1707,12 +1716,12 @@ Cohesion: 0.17
 Nodes (12): _find_fixtures_dir(), main(), Schema drift checker.  Run via ``python -m agentlens.schema.check_drift``. For e, Locate ``tests/fixtures/schemas/valid`` relative to CWD.      Walks parents of t, load_schema(), Load and cache a bundled Draft 2020-12 JSON Schema by short name.      Args:, test_each_schema_const_namespace(), test_each_schema_disallows_additional_properties() (+4 more)
 
 ### Community 188 - "Community 188"
-Cohesion: 0.22
-Nodes (9): code:bash (git add AgentLens/pyproject.toml AgentLens/src/agentlens/web), code:python ("""Smoke test: web backend modules import without error."""), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/unit/test_w), code:toml (dependencies = [), code:python ("""AgentLens web viewer (spec: docs/spec/2026-05-19-agentlen), code:python ("""FastAPI routers grouped by resource (runs, workspaces, fa), code:python ("""Built dashboard SPA assets packaged with AgentLens."""), code:bash (cd AgentLens && uv pip install -e . pytest && .venv/bin/pyth) (+1 more)
+Cohesion: 0.12
+Nodes (16): code:bash (git add AgentLens/pyproject.toml AgentLens/src/agentlens/web), code:python ("""Tests for agentlens.web.settings.ServeSettings."""), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/unit/test_w), code:python ("""Runtime configuration for ``agentlens serve``.), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/unit/test_w), code:bash (git add AgentLens/src/agentlens/web/settings.py AgentLens/te), code:python ("""Smoke test: web backend modules import without error."""), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/unit/test_w) (+8 more)
 
 ### Community 189 - "Community 189"
-Cohesion: 0.08
-Nodes (24): code:ts (export class ApiError extends Error {), code:ts (import { useQuery } from "@tanstack/react-query";), code:ts (import { useInfiniteQuery, useQuery } from "@tanstack/react-), code:ts (import { useQuery } from "@tanstack/react-query";), code:ts (import { useQuery } from "@tanstack/react-query";), code:ts (import { useQuery } from "@tanstack/react-query";), code:bash (git add AgentLens/web/src/api/), code:tsx (import { Card, CardBody } from "@/components/ui/card";) (+16 more)
+Cohesion: 0.05
+Nodes (42): code:ts (export class ApiError extends Error {), code:ts (import { useQuery } from "@tanstack/react-query";), code:ts (import { useInfiniteQuery, useQuery } from "@tanstack/react-), code:ts (import { useQuery } from "@tanstack/react-query";), code:ts (import { useQuery } from "@tanstack/react-query";), code:ts (import { useQuery } from "@tanstack/react-query";), code:bash (git add AgentLens/web/src/api/), code:tsx (import { Card, CardBody } from "@/components/ui/card";) (+34 more)
 
 ### Community 190 - "Community 190"
 Cohesion: 0.12
@@ -1903,16 +1912,16 @@ Cohesion: 0.13
 Nodes (14): error_cases, failures, passed, total, fixture, summary, pass_rate, total_checks (+6 more)
 
 ### Community 237 - "Community 237"
-Cohesion: 0.18
-Nodes (12): isTestkitPath(), LegacyCheckResult, result, runLegacyCheck(), walk(), walkActiveRouting(), historicalRuntime, legacyFence (+4 more)
+Cohesion: 0.17
+Nodes (13): isHistoricalDoc(), isTestkitPath(), LegacyCheckResult, result, runLegacyCheck(), walk(), walkActiveRouting(), historicalRuntime (+5 more)
 
 ### Community 238 - "Community 238"
 Cohesion: 0.06
 Nodes (30): Acceptance Criteria, API And Console Tests, CLI Tests, code:bash (WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke), code:bash (bun run check), code:bash (git diff --check), code:bash (WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke), code:bash (graphify update .) (+22 more)
 
 ### Community 239 - "Community 239"
-Cohesion: 0.13
-Nodes (15): useMeta(), RunsFilters, useRuns(), useWorkspace(), RunListTable(), AppShell(), TopBar(), EmptyRoute() (+7 more)
+Cohesion: 0.19
+Nodes (11): RunsFilters, useRuns(), useWorkspace(), RunListTable(), AppShell(), EmptyRoute(), RunsListRoute(), WorkspaceRoute() (+3 more)
 
 ### Community 240 - "Community 240"
 Cohesion: 0.13
@@ -1927,8 +1936,8 @@ Cohesion: 0.14
 Nodes (13): raw, broken, good, model, reps, summary, broken_code_quality_per_rep, broken_mean (+5 more)
 
 ### Community 243 - "Community 243"
-Cohesion: 0.06
-Nodes (29): cleanScalar(), ParsedWaygentPlan, ParsedWaygentTask, parseInlineClaim(), parseInlineList(), parseTaskBlock(), parseWaygentPlan(), pushClaim() (+21 more)
+Cohesion: 0.13
+Nodes (16): cleanScalar(), ParsedWaygentPlan, ParsedWaygentTask, parseInlineClaim(), parseInlineList(), parseTaskBlock(), pushClaim(), readFileClaims() (+8 more)
 
 ### Community 244 - "Community 244"
 Cohesion: 0.14
@@ -2244,7 +2253,7 @@ Nodes (12): maxLength, type, properties, pattern, type, type, excerpt, path_hash
 
 ### Community 322 - "Community 322"
 Cohesion: 0.17
-Nodes (12): pattern, type, maxLength, type, properties, pattern, type, type (+4 more)
+Nodes (12): pattern, type, properties, enum, type, pattern, type, type (+4 more)
 
 ### Community 323 - "Community 323"
 Cohesion: 0.17
@@ -2471,8 +2480,8 @@ Cohesion: 0.15
 Nodes (15): AgentLens Gate, code:bash (bun run check), code:bash (bun run --cwd apps/console build), code:bash (cd native/kernel && cargo fmt --all -- --check && cargo clip), code:bash (WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke), code:bash (git diff --check), code:bash (bun run check), code:bash (bun run check) (+7 more)
 
 ### Community 379 - "Community 379"
-Cohesion: 0.21
-Nodes (13): buildProviderPrompt(), failureClasses, isWorkerResultCandidate(), normalizeFailureClass(), normalizeProcessOutput(), normalizeWorkerStatus(), parseJsonText(), parseWorkerOutput() (+5 more)
+Cohesion: 0.20
+Nodes (14): buildProviderPrompt(), failed(), failureClasses, isWorkerResultCandidate(), normalizeFailureClass(), normalizeProcessOutput(), normalizeWorkerStatus(), parseJsonText() (+6 more)
 
 ### Community 380 - "Community 380"
 Cohesion: 0.33
@@ -2544,7 +2553,7 @@ Nodes (10): items, type, additionalProperties, required, type, changed_files, re
 
 ### Community 397 - "Community 397"
 Cohesion: 0.20
-Nodes (10): const, type, enum, type, absolute_paths, full_prompts, secret_like_values, properties (+2 more)
+Nodes (10): const, type, enum, type, absolute_paths, full_command_output, secret_like_values, properties (+2 more)
 
 ### Community 398 - "Community 398"
 Cohesion: 0.20
@@ -2671,8 +2680,8 @@ Cohesion: 0.20
 Nodes (9): compilerOptions, composite, declaration, outDir, rootDir, exclude, extends, include (+1 more)
 
 ### Community 430 - "Community 430"
-Cohesion: 0.18
-Nodes (11): getJson(), getNdjson(), DoctorReport, useDoctor(), Meta, RunRow, useWorkspaces(), WorkspaceDetail (+3 more)
+Cohesion: 0.16
+Nodes (13): getJson(), getNdjson(), DoctorReport, useDoctor(), Meta, useMeta(), RunRow, useWorkspaces() (+5 more)
 
 ### Community 431 - "Community 431"
 Cohesion: 0.20
@@ -2916,7 +2925,7 @@ Nodes (9): minLength, type, type, properties, command, evidence, status, enum (+
 
 ### Community 491 - "Community 491"
 Cohesion: 0.22
-Nodes (9): type, properties, changed_files, state_path, summary, minLength, type, minLength (+1 more)
+Nodes (9): minLength, type, type, properties, next_action, open_gaps, summary, minLength (+1 more)
 
 ### Community 492 - "Community 492"
 Cohesion: 0.22
@@ -3139,8 +3148,8 @@ Cohesion: 0.25
 Nodes (8): code:python ("""Tests for /api/v1/failures and /api/v1/risks (global)."""), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:python ("""/api/v1/failures and /api/v1/risks (spec §6)."""), code:python (from agentlens.web.routers import failures as failures_route), code:python (app.include_router(failures_router.router)), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:bash (git add AgentLens/src/agentlens/web/routers/failures.py Agen), Task 13: Global failures/risks router
 
 ### Community 547 - "Community 547"
-Cohesion: 0.09
-Nodes (22): isReasoning(), parseCli(), ParsedCli, resolveCliProfile(), runCli(), runCommandOptions(), valuesForFlag(), applyModelKeywords() (+14 more)
+Cohesion: 0.07
+Nodes (26): isReasoning(), parseCli(), ParsedCli, resolveCliProfile(), runCli(), runCommandOptions(), valuesForFlag(), defaultRunRoot() (+18 more)
 
 ### Community 548 - "Community 548"
 Cohesion: 0.14
@@ -3228,7 +3237,7 @@ Nodes (7): Decisions index, <Experiment name>, Findings index, Goal, Hypothesis,
 
 ### Community 569 - "Community 569"
 Cohesion: 0.25
-Nodes (8): items, type, items, type, open_gaps, residual_risk, items, type
+Nodes (8): items, type, type, items, changed_files, residual_risk, items, type
 
 ### Community 570 - "Community 570"
 Cohesion: 0.43
@@ -3319,8 +3328,8 @@ Cohesion: 0.29
 Nodes (6): code:block1 (Δ (quality_plus − balanced) on rubric pass_rate), Context, D006 — Pilot first, not full experiment, Decision, Decision-tree after pilot, Pilot success != ship gate
 
 ### Community 592 - "Community 592"
-Cohesion: 0.17
-Nodes (9): FakeProviderAdapter, failed(), ContractSchemaName, schemas, ajv, ContractValidationError, isContract(), validateContract() (+1 more)
+Cohesion: 0.25
+Nodes (6): ContractSchemaName, schemas, ajv, ContractValidationError, isContract(), validators
 
 ### Community 593 - "Community 593"
 Cohesion: 0.48
@@ -3635,8 +3644,8 @@ Cohesion: 0.33
 Nodes (6): code:ts (expect(manifest).toMatchObject({), code:bash (bun test packages/orchestrator/tests/worktreeManager.test.ts), code:ts (export interface ManagedWorktree {), code:bash (bun test packages/orchestrator/tests/worktreeManager.test.ts), code:bash (git add packages/orchestrator/src/worktreeManager.ts \), Task 7: Introduce Worktree Manager
 
 ### Community 672 - "Community 672"
-Cohesion: 0.11
-Nodes (17): AgentLens Dashboard Implementation Plan, API implementation overrides, code:python (import json), code:python ("""Tests for agentlens.web.settings.ServeSettings."""), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/unit/test_w), code:python ("""Runtime configuration for ``agentlens serve``.), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/unit/test_w), code:bash (git add AgentLens/src/agentlens/web/settings.py AgentLens/te) (+9 more)
+Cohesion: 0.33
+Nodes (6): API implementation overrides, code:python (import json), code:bash (cd AgentLens), Deep Review Update (2026-05-19), P0 corrections before implementation, Shared fixture helper required for API tests and demo data
 
 ### Community 673 - "Community 673"
 Cohesion: 0.33
@@ -4003,8 +4012,8 @@ Cohesion: 0.67
 Nodes (3): Acceptance Criteria, code:bash (cd AgentLens), Task 8: M2 determinism integration test (byte-equal regression)
 
 ### Community 772 - "Community 772"
-Cohesion: 0.20
-Nodes (10): code:tsx (import { useState } from "react";), code:tsx (import { useParams } from "react-router-dom";), code:tsx (import { useDoctor } from "@/api/doctor";), code:tsx (import { Badge } from "@/components/ui/badge";), code:tsx (import { DoctorFooter } from "@/components/doctor-footer";), code:tsx (import { RunDetailRoute } from "./routes/run-detail";), code:tsx ({ path: "/runs/:runId", element: <RunDetailRoute /> },), code:bash (cd AgentLens/web && npm run build) (+2 more)
+Cohesion: 0.15
+Nodes (24): Drop+recreate the index DB and re-scan every run under ``home/runs``.      Retur, rebuild_index(), _build_two_runs(), _iso(), Tests for agentlens.store.query (spec §S1.6.9, §5.8a).  Covers SQLite happy path, `failures` has a FK to `runs(run_id)`. With PRAGMA foreign_keys=ON,     a naive, test_failures_flattens_eval_failures(), test_failures_same_result_with_or_without_sqlite() (+16 more)
 
 ### Community 773 - "Community 773"
 Cohesion: 0.67
@@ -4067,8 +4076,8 @@ Cohesion: 0.67
 Nodes (3): severity, enum, type
 
 ### Community 788 - "Community 788"
-Cohesion: 0.25
-Nodes (8): code:ts (export function relativeFromNow(iso: string | null | undefin), code:tsx (import { Link } from "react-router-dom";), code:tsx (import { Button } from "@/components/ui/button";), code:tsx ({ path: "/", element: <RunsListRoute /> },), code:tsx (import { RunsListRoute } from "./routes/runs-list";), code:bash (cd AgentLens/web && npm run build), code:bash (git add AgentLens/web/src/routes/runs-list.tsx AgentLens/web), Task 25: Runs list route — table with filters and false-success highlight
+Cohesion: 0.13
+Nodes (18): ConfigError, _disable_active(), _env_overrides(), _load_yaml(), AgentLens configuration loader (spec §S1.3 row 69, §S1.4).  Implements the prior, Persist ``mode`` to ``<workspace_root>/.agentlens/config.yaml``.      Creates th, Raised for invalid configuration values (e.g. unknown ``mode``)., Return the path to the user-level config file. (+10 more)
 
 ### Community 789 - "Community 789"
 Cohesion: 0.67
@@ -4087,16 +4096,16 @@ Cohesion: 0.67
 Nodes (3): status, enum, type
 
 ### Community 793 - "Community 793"
-Cohesion: 0.22
-Nodes (3): ClaudeProviderAdapter, CodexProviderAdapter, runProviderProcess()
+Cohesion: 0.15
+Nodes (12): TrustReport, RedactionBadge(), Event, { container }, highlighted, TranscriptView(), typeTone, TrustReportPanel() (+4 more)
 
 ### Community 794 - "Community 794"
 Cohesion: 0.17
 Nodes (12): code:ts (export * from "./trust";), code:bash (bun test packages/lens-projectors/tests/operationalMaturity.), code:bash (git add packages/contracts/src/types.ts \), code:yaml (id: task_cli_maturity), code:ts (import { describe, expect, test } from "bun:test";), code:bash (bun test packages/lens-projectors/tests/operationalMaturity.), code:ts (export type DogfoodEvidenceStatus = "complete" | "partial" |), code:ts (import type {) (+4 more)
 
 ### Community 795 - "Community 795"
-Cohesion: 0.29
-Nodes (6): demo_root(), Bundled demo runs used by ``agentlens serve --demo``., Return the bundled demo data root resolved on disk., Tests for bundled demo data., test_demo_root_contains_runs(), test_demo_root_exists()
+Cohesion: 0.12
+Nodes (13): ConsoleApplyStatus, ConsoleDecisionPacket, ConsoleEvent, ConsoleFailure, ConsoleSection, consoleSections, ConsoleTask, ConsoleUiModel (+5 more)
 
 ### Community 796 - "Community 796"
 Cohesion: 0.12
@@ -4183,8 +4192,8 @@ Cohesion: 0.20
 Nodes (10): Pure resolver for the spec §5.16 final-outcome 3-branch logic.      Precedence (, resolve_agent_outcome(), sig_name set → cancelled, regardless of exit_code/final., explicit_final_present → agent wrote final.json; outcome is not     overwritten, No signal, no explicit final, exit_code == 0 → unknown (spec §5.16)., No signal, no explicit final, exit_code != 0 → failed (spec §5.16)., test_resolve_agent_outcome_explicit_final_passthrough_exit_code_zero(), test_resolve_agent_outcome_no_final_exit_code_nonzero_is_failed() (+2 more)
 
 ### Community 833 - "Community 833"
-Cohesion: 0.25
-Nodes (8): code:python ("""Common response headers (spec §6)."""), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:python ("""Common-response middleware (spec §6)."""), code:python (from agentlens.web.middleware import CommonHeadersMiddleware), code:python (app.add_middleware(CommonHeadersMiddleware)), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:bash (git add AgentLens/src/agentlens/web/middleware.py AgentLens/), Task 5: Common security headers + non-loopback warning header
+Cohesion: 0.10
+Nodes (19): AgentLens Dashboard Implementation Plan, code:bash (cd AgentLens), code:bash (pipx install --force ./dist/agentlens-0.1.0-py3-none-any.whl), code:python ("""Common response headers (spec §6)."""), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:python ("""Common-response middleware (spec §6)."""), code:python (from agentlens.web.middleware import CommonHeadersMiddleware), code:python (app.add_middleware(CommonHeadersMiddleware)) (+11 more)
 
 ### Community 834 - "Community 834"
 Cohesion: 0.18
@@ -4199,12 +4208,12 @@ Cohesion: 0.50
 Nodes (4): workspace, additionalProperties, required, type
 
 ### Community 858 - "Community 858"
-Cohesion: 0.29
-Nodes (7): code:python ("""Tests for /api/v1/runs/{id} and /api/v1/runs/{id}/verify.), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:python (import hashlib), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:bash (git add AgentLens/src/agentlens/web/routers/runs.py AgentLen), M2 — Read API Routers, Task 9: Run detail endpoint + manifest_seal + verify
+Cohesion: 0.20
+Nodes (10): detail, model, snapshot, verdicts, buildConsoleUiModel(), demoConsoleSnapshot, renderConsoleSnapshot(), model (+2 more)
 
 ### Community 872 - "Community 872"
-Cohesion: 0.11
-Nodes (17): ApplyVerifiedCheckpointInput, ApplyVerifiedCheckpointOutput, bound(), buildKernelRequest(), digest(), executeInProcess(), result(), classifyVerificationResult() (+9 more)
+Cohesion: 0.20
+Nodes (10): ApplyVerifiedCheckpointInput, ApplyVerifiedCheckpointOutput, classifyVerificationResult(), firstMatchingLine(), firstSignalLine(), runVerificationCommands(), VerificationRunInput, VerificationRunOutput (+2 more)
 
 ### Community 873 - "Community 873"
 Cohesion: 0.18
@@ -4215,8 +4224,8 @@ Cohesion: 0.20
 Nodes (10): code:yaml (id: task_projection_contracts), code:md (## Operational Maturity Loop), code:`md (## Dogfood Evidence Gate), code:block57, code:md (## Operational Maturity Loop), code:bash (bun test packages/lens-projectors/tests/operationalMaturity.), code:bash (graphify update .), code:bash (git add docs/operations/waygent.md docs/operations/verificat) (+2 more)
 
 ### Community 910 - "Community 910"
-Cohesion: 0.47
-Nodes (4): categories, categorizeProviderLogLine(), summarizeProviderStderr(), summary
+Cohesion: 0.38
+Nodes (5): categories, categorizeProviderLogLine(), summarizeProviderStderr(), withProcessEvidence(), summary
 
 ### Community 911 - "Community 911"
 Cohesion: 0.20
@@ -4227,16 +4236,24 @@ Cohesion: 0.20
 Nodes (9): code:bash (graphify update .), Component Docs, Current Product Docs, Graphify Map, Historical Planning, Reader Paths, Skill Docs, Start Here (+1 more)
 
 ### Community 913 - "Community 913"
-Cohesion: 0.33
-Nodes (6): code:python ("""Tests for /api/v1/runs/{id}/events (NDJSON)."""), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:python (from fastapi.responses import StreamingResponse), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:bash (git add AgentLens/src/agentlens/web/routers/runs.py AgentLen), Task 10: NDJSON events stream endpoint
+Cohesion: 0.24
+Nodes (7): bound(), buildKernelRequest(), digest(), executeInProcess(), result(), profile, result
 
 ### Community 914 - "Community 914"
 Cohesion: 0.32
 Nodes (7): _best_effort_index(), _find_run_dir(), ``agentlens run-close`` — finalize a container run (spec §4.2.2, S1.5.1).  Write, Scan ``<runs_root>/*/<run_id>/`` and return the first match., Update the SQLite index for *run_dir*; swallow all errors per §7.3., Close a container run; non-blocking on unknown run id., run_close()
 
+### Community 915 - "Community 915"
+Cohesion: 0.20
+Nodes (9): init_db(), _migrate_runs_v1_columns(), SQLite index over the run tree (spec §5.8, §7.3, §S1.6.8, §S1.8.3).  This module, Add v1 additive columns to a pre-existing ``runs`` table.      Idempotent: detec, Plan-aliased convenience: ``open_db(home/index.db)`` + ``init_schema``., Read+parse a JSON file; return ``None`` on missing/parse error., _read_json(), init_db(home) is a thin wrapper for open_db + init_schema. (+1 more)
+
+### Community 916 - "Community 916"
+Cohesion: 0.25
+Nodes (3): Failure, FailuresPanel(), onEvidenceClick
+
 ### Community 917 - "Community 917"
-Cohesion: 0.67
-Nodes (3): enum, type, kind
+Cohesion: 0.25
+Nodes (7): App(), EventTimeline(), root, buildRunDetailModel(), consoleRunToRealDetail(), isProviderLogSummary(), providerLogSummaryFromAttempts()
 
 ### Community 919 - "Community 919"
 Cohesion: 0.67
@@ -4279,8 +4296,8 @@ Cohesion: 0.67
 Nodes (3): schema, const, type
 
 ### Community 929 - "Community 929"
-Cohesion: 0.67
-Nodes (3): minLength, type, next_action
+Cohesion: 0.31
+Nodes (9): ApplyState, consoleStatus(), event(), eventsFromRealDetail(), hasDirtySourceBlock(), realRunDetailToConsoleRun(), realRunSummaryToConsoleRun(), trustScore() (+1 more)
 
 ### Community 930 - "Community 930"
 Cohesion: 0.15
@@ -4295,12 +4312,16 @@ Cohesion: 0.29
 Nodes (6): Current Product Baseline, Design-Only Work, Future Work, Historical Migration Records, Shipped Work, Waygent Roadmap
 
 ### Community 933 - "Community 933"
-Cohesion: 0.38
-Nodes (5): buildTaskPacket(), BuildTaskPacketInput, stableStringify(), TaskPacketTaskInput, packet
+Cohesion: 0.62
+Nodes (6): changed_files(), changed_files_for_state(), main(), run(), select_state_path(), task_statuses_complete()
 
 ### Community 935 - "Community 935"
 Cohesion: 0.33
 Nodes (6): devDependencies, bun-types, @types/bun, @types/react, @types/react-dom, typescript
+
+### Community 936 - "Community 936"
+Cohesion: 0.33
+Nodes (6): current_run_marker(), Return ``<root>/.agentlens/current-runs/<run_id>``.      The marker is itself a, Create the workspace-local current-run marker for *run_id*.      The marker is i, write_workspace_pointer(), test_current_run_marker_workspace_local(), test_write_workspace_pointer_creates_marker()
 
 ### Community 938 - "Community 938"
 Cohesion: 0.33
@@ -4310,6 +4331,10 @@ Nodes (6): devDependencies, bun-types, @types/bun, @types/react, @types/react-do
 Cohesion: 0.24
 Nodes (9): project_run_row(), Lock a single run-row to the v1 schema.      Accepts rows from :func:`agentlens., ``agentlens status`` — list runs including in-progress (spec §S1.11.1).  Identic, List all runs (including in-progress) as one line each., status(), get_workspace(), list_workspaces(), _runs_for_workspace() (+1 more)
 
+### Community 940 - "Community 940"
+Cohesion: 0.60
+Nodes (3): readLatestRunId(), writeLatestRunId(), root
+
 ### Community 943 - "Community 943"
 Cohesion: 0.67
 Nodes (3): sealed_at, pattern, type
@@ -4318,14 +4343,22 @@ Nodes (3): sealed_at, pattern, type
 Cohesion: 0.40
 Nodes (5): 7.1 다중 run 동시 진행, 7.2 한 run의 events.jsonl, 7.3 SQLite, 7.4 Nested run, 7. 동시성 모델
 
+### Community 947 - "Community 947"
+Cohesion: 0.67
+Nodes (3): maxLength, type, excerpt
+
+### Community 948 - "Community 948"
+Cohesion: 0.67
+Nodes (3): enum, type, full_prompts
+
 ### Community 950 - "Community 950"
 Cohesion: 0.67
-Nodes (3): enum, type, full_command_output
+Nodes (3): state_path, minLength, type
 
 ## Knowledge Gaps
-- **6083 isolated node(s):** `target`, `lib`, `module`, `moduleResolution`, `strict` (+6078 more)
+- **6087 isolated node(s):** `target`, `lib`, `module`, `moduleResolution`, `strict` (+6082 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **70 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **73 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_

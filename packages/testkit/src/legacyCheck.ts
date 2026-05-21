@@ -12,6 +12,8 @@ export function runLegacyCheck(root = process.cwd()): LegacyCheckResult {
     "AGENTS.md",
     "CLAUDE.md",
     "GEMINI.md",
+    "README.md",
+    ".github",
     "skills/README.md",
     "docs/architecture",
     "docs/operations",
@@ -90,6 +92,16 @@ function walkActiveRouting(path: string, root: string, violations: string[]): vo
     ) {
       violations.push(`${rel}: active AgentRunway routing reference`);
     }
+    if (isHistoricalDoc(rel, text)) return;
+    if (
+      /AgentLens backend|AgentLens docs|AgentLens lives|AgentLens stores|AgentLens is the observability|components\/agentlens\/docs/.test(
+        text
+      )
+      || /(?:^|\s)cd\s+components\/agentlens\b/.test(text)
+      || (/\bpython(?:3)?\s+-m\s+pytest\b/.test(text) && /AgentLens|agentlens|components\/agentlens/.test(text))
+    ) {
+      violations.push(`${rel}: active Python AgentLens routing reference`);
+    }
   } catch {
     return;
   }
@@ -97,6 +109,14 @@ function walkActiveRouting(path: string, root: string, violations: string[]): vo
 
 function isTestkitPath(rel: string): boolean {
   return rel === "packages/testkit" || rel.startsWith("packages/testkit/");
+}
+
+function isHistoricalDoc(rel: string, text: string): boolean {
+  return (
+    rel.startsWith("docs/migration/")
+    || rel.startsWith("docs/superpowers/")
+    || /^> Status: historical\b/m.test(text)
+  );
 }
 
 if (import.meta.main) {

@@ -3753,7 +3753,7 @@
       "source_file": "tests/e2e/lens-console-model.test.ts",
       "source_location": "L1",
       "id": "tests_e2e_lens_console_model_test_ts",
-      "community": 4,
+      "community": 858,
       "norm_label": "lens-console-model.test.ts"
     },
     {
@@ -3762,7 +3762,7 @@
       "source_file": "tests/e2e/lens-console-model.test.ts",
       "source_location": "L11",
       "id": "e2e_lens_console_model_test_model",
-      "community": 4,
+      "community": 858,
       "norm_label": "model"
     },
     {
@@ -3771,7 +3771,7 @@
       "source_file": "tests/e2e/lens-console-model.test.ts",
       "source_location": "L27",
       "id": "e2e_lens_console_model_test_verdicts",
-      "community": 4,
+      "community": 858,
       "norm_label": "verdicts"
     },
     {
@@ -3780,7 +3780,7 @@
       "source_file": "tests/e2e/lens-console-model.test.ts",
       "source_location": "L35",
       "id": "e2e_lens_console_model_test_snapshot",
-      "community": 4,
+      "community": 858,
       "norm_label": "snapshot"
     },
     {
@@ -3789,7 +3789,7 @@
       "source_file": "tests/e2e/lens-console-model.test.ts",
       "source_location": "L52",
       "id": "e2e_lens_console_model_test_detail",
-      "community": 4,
+      "community": 858,
       "norm_label": "detail"
     },
     {
@@ -4653,7 +4653,7 @@
       "source_file": "apps/console/src/App.tsx",
       "source_location": "L301",
       "id": "src_app_app",
-      "community": 239,
+      "community": 917,
       "norm_label": "app()"
     },
     {
@@ -4662,7 +4662,7 @@
       "source_file": "components/agentlens/web/src/main.tsx",
       "source_location": "L1",
       "id": "components_agentlens_web_src_main_tsx",
-      "community": 239,
+      "community": 917,
       "norm_label": "main.tsx"
     },
     {
@@ -5085,7 +5085,7 @@
       "source_file": "components/agentlens/web/src/components/redaction-badge.tsx",
       "source_location": "L1",
       "id": "components_agentlens_web_src_components_redaction_badge_tsx",
-      "community": 115,
+      "community": 793,
       "norm_label": "redaction-badge.tsx"
     },
     {
@@ -5094,7 +5094,7 @@
       "source_file": "components/agentlens/web/src/components/redaction-badge.tsx",
       "source_location": "L3",
       "id": "components_redaction_badge_redactionbadge",
-      "community": 115,
+      "community": 793,
       "norm_label": "redactionbadge()"
     },
     {
@@ -5184,7 +5184,7 @@
       "source_file": "components/agentlens/web/src/components/trust-report-panel.tsx",
       "source_location": "L1",
       "id": "components_agentlens_web_src_components_trust_report_panel_tsx",
-      "community": 115,
+      "community": 793,
       "norm_label": "trust-report-panel.tsx"
     },
     {
@@ -5193,7 +5193,7 @@
       "source_file": "components/agentlens/web/src/components/trust-report-panel.tsx",
       "source_location": "L4",
       "id": "components_trust_report_panel_verdicttone",
-      "community": 115,
+      "community": 793,
       "norm_label": "verdicttone()"
     },
     {
@@ -5202,7 +5202,7 @@
       "source_file": "components/agentlens/web/src/components/trust-report-panel.tsx",
       "source_location": "L13",
       "id": "components_trust_report_panel_trustreportpanel",
-      "community": 115,
+      "community": 793,
       "norm_label": "trustreportpanel()"
     },
     {
@@ -5211,7 +5211,7 @@
       "source_file": "components/agentlens/web/src/components/trust-report-panel.test.tsx",
       "source_location": "L1",
       "id": "components_agentlens_web_src_components_trust_report_panel_test_tsx",
-      "community": 115,
+      "community": 793,
       "norm_label": "trust-report-panel.test.tsx"
     },
     {
@@ -5337,7 +5337,7 @@
       "source_file": "components/agentlens/web/src/components/transcript-view.tsx",
       "source_location": "L1",
       "id": "components_agentlens_web_src_components_transcript_view_tsx",
-      "community": 115,
+      "community": 793,
       "norm_label": "transcript-view.tsx"
     },
     {
@@ -5346,7 +5346,7 @@
       "source_file": "components/agentlens/web/src/components/transcript-view.tsx",
       "source_location": "L3",
       "id": "components_transcript_view_event",
-      "community": 115,
+      "community": 793,
       "norm_label": "event"
     },
     {
@@ -5355,7 +5355,7 @@
       "source_file": "components/agentlens/web/src/components/transcript-view.tsx",
       "source_location": "L9",
       "id": "components_transcript_view_typetone",
-      "community": 115,
+      "community": 793,
       "norm_label": "typetone"
     },
     {
@@ -5364,7 +5364,7 @@
       "source_file": "components/agentlens/web/src/components/transcript-view.tsx",
       "source_location": "L17",
       "id": "components_transcript_view_transcriptview",
-      "community": 115,
+      "community": 793,
       "norm_label": "transcriptview()"
     },
     {
@@ -5373,7 +5373,7 @@
       "source_file": "components/agentlens/web/src/components/transcript-view.test.tsx",
       "source_location": "L1",
       "id": "components_agentlens_web_src_components_transcript_view_test_tsx",
-      "community": 115,
+      "community": 793,
       "norm_label": "transcript-view.test.tsx"
     },
     {
@@ -5382,7 +5382,7 @@
       "source_file": "components/agentlens/web/src/components/transcript-view.test.tsx",
       "source_location": "L28",
       "id": "components_transcript_view_test_container",
-      "community": 115,
+      "community": 793,
       "norm_label": "{ container }"
     },
     {
@@ -5391,7 +5391,7 @@
       "source_file": "components/agentlens/web/src/components/transcript-view.test.tsx",
       "source_location": "L42",
       "id": "components_transcript_view_test_highlighted",
-      "community": 115,
+      "community": 793,
       "norm_label": "highlighted"
     },
     {
@@ -5400,7 +5400,7 @@
       "source_file": "components/agentlens/web/src/components/failures-panel.test.tsx",
       "source_location": "L1",
       "id": "components_agentlens_web_src_components_failures_panel_test_tsx",
-      "community": 115,
+      "community": 916,
       "norm_label": "failures-panel.test.tsx"
     },
     {
@@ -5409,7 +5409,7 @@
       "source_file": "components/agentlens/web/src/components/failures-panel.test.tsx",
       "source_location": "L39",
       "id": "components_failures_panel_test_onevidenceclick",
-      "community": 115,
+      "community": 916,
       "norm_label": "onevidenceclick"
     },
     {
@@ -5436,7 +5436,7 @@
       "source_file": "components/agentlens/web/src/components/failures-panel.tsx",
       "source_location": "L1",
       "id": "components_agentlens_web_src_components_failures_panel_tsx",
-      "community": 115,
+      "community": 916,
       "norm_label": "failures-panel.tsx"
     },
     {
@@ -5445,7 +5445,7 @@
       "source_file": "components/agentlens/web/src/components/failures-panel.tsx",
       "source_location": "L7",
       "id": "components_failures_panel_severitytone",
-      "community": 115,
+      "community": 916,
       "norm_label": "severitytone()"
     },
     {
@@ -5454,7 +5454,7 @@
       "source_file": "components/agentlens/web/src/components/failures-panel.tsx",
       "source_location": "L13",
       "id": "components_failures_panel_failurespanel",
-      "community": 115,
+      "community": 916,
       "norm_label": "failurespanel()"
     },
     {
@@ -5526,7 +5526,7 @@
       "source_file": "components/agentlens/web/src/components/ui/dialog.tsx",
       "source_location": "L1",
       "id": "components_agentlens_web_src_components_ui_dialog_tsx",
-      "community": 115,
+      "community": 916,
       "norm_label": "dialog.tsx"
     },
     {
@@ -5535,7 +5535,7 @@
       "source_file": "components/agentlens/web/src/components/ui/dialog.tsx",
       "source_location": "L9",
       "id": "ui_dialog_dialogcontent",
-      "community": 115,
+      "community": 916,
       "norm_label": "dialogcontent()"
     },
     {
@@ -5544,7 +5544,7 @@
       "source_file": "components/agentlens/web/src/components/ui/badge.tsx",
       "source_location": "L1",
       "id": "components_agentlens_web_src_components_ui_badge_tsx",
-      "community": 115,
+      "community": 793,
       "norm_label": "badge.tsx"
     },
     {
@@ -5553,7 +5553,7 @@
       "source_file": "components/agentlens/web/src/components/ui/badge.tsx",
       "source_location": "L5",
       "id": "ui_badge_tone",
-      "community": 115,
+      "community": 793,
       "norm_label": "tone"
     },
     {
@@ -5562,7 +5562,7 @@
       "source_file": "components/agentlens/web/src/components/ui/badge.tsx",
       "source_location": "L7",
       "id": "ui_badge_toneclass",
-      "community": 115,
+      "community": 793,
       "norm_label": "toneclass"
     },
     {
@@ -5571,7 +5571,7 @@
       "source_file": "components/agentlens/web/src/components/ui/badge.tsx",
       "source_location": "L16",
       "id": "ui_badge_badge",
-      "community": 115,
+      "community": 793,
       "norm_label": "badge()"
     },
     {
@@ -5688,7 +5688,7 @@
       "source_file": "components/agentlens/web/src/components/layout/top-bar.tsx",
       "source_location": "L1",
       "id": "components_agentlens_web_src_components_layout_top_bar_tsx",
-      "community": 239,
+      "community": 430,
       "norm_label": "top-bar.tsx"
     },
     {
@@ -5697,7 +5697,7 @@
       "source_file": "components/agentlens/web/src/components/layout/top-bar.tsx",
       "source_location": "L6",
       "id": "layout_top_bar_topbar",
-      "community": 239,
+      "community": 430,
       "norm_label": "topbar()"
     },
     {
@@ -5706,7 +5706,7 @@
       "source_file": "components/agentlens/web/src/components/layout/app-shell.tsx",
       "source_location": "L1",
       "id": "components_agentlens_web_src_components_layout_app_shell_tsx",
-      "community": 239,
+      "community": 430,
       "norm_label": "app-shell.tsx"
     },
     {
@@ -5724,7 +5724,7 @@
       "source_file": "components/agentlens/web/src/lib/cn.ts",
       "source_location": "L1",
       "id": "components_agentlens_web_src_lib_cn_ts",
-      "community": 115,
+      "community": 916,
       "norm_label": "cn.ts"
     },
     {
@@ -5832,7 +5832,7 @@
       "source_file": "components/agentlens/web/src/api/meta.ts",
       "source_location": "L13",
       "id": "api_meta_usemeta",
-      "community": 239,
+      "community": 430,
       "norm_label": "usemeta()"
     },
     {
@@ -5904,7 +5904,7 @@
       "source_file": "components/agentlens/web/src/api/runs.ts",
       "source_location": "L28",
       "id": "api_runs_trustreport",
-      "community": 115,
+      "community": 793,
       "norm_label": "trustreport"
     },
     {
@@ -5922,7 +5922,7 @@
       "source_file": "components/agentlens/web/src/api/runs.ts",
       "source_location": "L64",
       "id": "api_runs_failure",
-      "community": 115,
+      "community": 916,
       "norm_label": "failure"
     },
     {
@@ -6165,7 +6165,7 @@
       "source_file": "components/agentlens/tests/helpers.py",
       "source_location": "L1",
       "id": "components_agentlens_tests_helpers_py",
-      "community": 0,
+      "community": 16,
       "norm_label": "helpers.py"
     },
     {
@@ -6174,7 +6174,7 @@
       "source_file": "components/agentlens/tests/helpers.py",
       "source_location": "L9",
       "id": "tests_helpers_copy_fixture_as_run_id",
-      "community": 0,
+      "community": 16,
       "norm_label": "copy_fixture_as_run_id()"
     },
     {
@@ -6183,7 +6183,7 @@
       "source_file": "components/agentlens/tests/helpers.py",
       "source_location": "L1",
       "id": "tests_helpers_rationale_1",
-      "community": 0,
+      "community": 16,
       "norm_label": "shared test helpers for agentlens tests."
     },
     {
@@ -6192,7 +6192,7 @@
       "source_file": "components/agentlens/tests/helpers.py",
       "source_location": "L12",
       "id": "tests_helpers_rationale_12",
-      "community": 0,
+      "community": 16,
       "norm_label": "copy a fixture under runs/<workspace_id>/<run_id> from run.json."
     },
     {
@@ -6363,7 +6363,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L1",
       "id": "components_agentlens_tests_unit_test_query_fallback_py",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_query_fallback.py"
     },
     {
@@ -6372,7 +6372,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L36",
       "id": "unit_test_query_fallback_now_iso",
-      "community": 2,
+      "community": 772,
       "norm_label": "_now_iso()"
     },
     {
@@ -6381,7 +6381,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L40",
       "id": "unit_test_query_fallback_iso",
-      "community": 2,
+      "community": 772,
       "norm_label": "_iso()"
     },
     {
@@ -6390,7 +6390,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L44",
       "id": "unit_test_query_fallback_write_run",
-      "community": 2,
+      "community": 772,
       "norm_label": "_write_run()"
     },
     {
@@ -6399,7 +6399,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L119",
       "id": "unit_test_query_fallback_build_two_runs",
-      "community": 2,
+      "community": 772,
       "norm_label": "_build_two_runs()"
     },
     {
@@ -6408,7 +6408,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L129",
       "id": "unit_test_query_fallback_test_latest_sqlite_path_returns_newest",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_latest_sqlite_path_returns_newest()"
     },
     {
@@ -6417,7 +6417,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L139",
       "id": "unit_test_query_fallback_test_latest_fallback_when_db_missing",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_latest_fallback_when_db_missing()"
     },
     {
@@ -6426,7 +6426,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L148",
       "id": "unit_test_query_fallback_test_latest_fallback_when_db_corrupt",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_latest_fallback_when_db_corrupt()"
     },
     {
@@ -6435,7 +6435,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L158",
       "id": "unit_test_query_fallback_test_latest_workspace_filter_sqlite",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_latest_workspace_filter_sqlite()"
     },
     {
@@ -6444,7 +6444,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L171",
       "id": "unit_test_query_fallback_test_latest_workspace_filter_fallback",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_latest_workspace_filter_fallback()"
     },
     {
@@ -6453,7 +6453,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L180",
       "id": "unit_test_query_fallback_test_latest_empty_home_returns_none",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_latest_empty_home_returns_none()"
     },
     {
@@ -6462,7 +6462,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L184",
       "id": "unit_test_query_fallback_test_rebuild_index_idempotent_when_failures_rows_present",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_rebuild_index_idempotent_when_failures_rows_present()"
     },
     {
@@ -6471,7 +6471,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L215",
       "id": "unit_test_query_fallback_test_failures_flattens_eval_failures",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_failures_flattens_eval_failures()"
     },
     {
@@ -6480,7 +6480,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L258",
       "id": "unit_test_query_fallback_test_failures_same_result_with_or_without_sqlite",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_failures_same_result_with_or_without_sqlite()"
     },
     {
@@ -6489,7 +6489,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L290",
       "id": "unit_test_query_fallback_test_risks_aggregates_three_sources",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_risks_aggregates_three_sources()"
     },
     {
@@ -6498,7 +6498,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L330",
       "id": "unit_test_query_fallback_test_risks_includes_schema_invalid",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_risks_includes_schema_invalid()"
     },
     {
@@ -6507,7 +6507,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L346",
       "id": "unit_test_query_fallback_test_full_scan_runs_surfaces_invalid_as_risk",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_full_scan_runs_surfaces_invalid_as_risk()"
     },
     {
@@ -6516,7 +6516,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L365",
       "id": "unit_test_query_fallback_test_get_run_returns_merged_dict",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_get_run_returns_merged_dict()"
     },
     {
@@ -6525,7 +6525,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L377",
       "id": "unit_test_query_fallback_test_get_run_missing_returns_none",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_get_run_missing_returns_none()"
     },
     {
@@ -6534,7 +6534,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L387",
       "id": "unit_test_query_fallback_test_list_runs_no_filter_returns_all",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_list_runs_no_filter_returns_all()"
     },
     {
@@ -6543,7 +6543,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L394",
       "id": "unit_test_query_fallback_test_list_runs_filter_by_workspace",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_list_runs_filter_by_workspace()"
     },
     {
@@ -6552,7 +6552,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L402",
       "id": "unit_test_query_fallback_test_list_runs_filter_by_agent_outcome",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_list_runs_filter_by_agent_outcome()"
     },
     {
@@ -6561,7 +6561,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L410",
       "id": "unit_test_query_fallback_test_list_runs_unknown_filter_key_ignored",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_list_runs_unknown_filter_key_ignored()"
     },
     {
@@ -6570,7 +6570,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L421",
       "id": "unit_test_query_fallback_test_plan_aliases_point_to_canonical",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_plan_aliases_point_to_canonical()"
     },
     {
@@ -6579,7 +6579,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L427",
       "id": "unit_test_query_fallback_test_module_exposes_expected_api",
-      "community": 2,
+      "community": 772,
       "norm_label": "test_module_exposes_expected_api()"
     },
     {
@@ -6588,7 +6588,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L1",
       "id": "unit_test_query_fallback_rationale_1",
-      "community": 2,
+      "community": 772,
       "norm_label": "tests for agentlens.store.query (spec \u00a7s1.6.9, \u00a75.8a).  covers sqlite happy path"
     },
     {
@@ -6597,7 +6597,7 @@
       "source_file": "components/agentlens/tests/unit/test_query_fallback.py",
       "source_location": "L185",
       "id": "unit_test_query_fallback_rationale_185",
-      "community": 2,
+      "community": 772,
       "norm_label": "`failures` has a fk to `runs(run_id)`. with pragma foreign_keys=on,     a naive"
     },
     {
@@ -7479,7 +7479,7 @@
       "source_file": "components/agentlens/tests/unit/test_demo_data.py",
       "source_location": "L1",
       "id": "components_agentlens_tests_unit_test_demo_data_py",
-      "community": 795,
+      "community": 78,
       "norm_label": "test_demo_data.py"
     },
     {
@@ -7488,7 +7488,7 @@
       "source_file": "components/agentlens/tests/unit/test_demo_data.py",
       "source_location": "L9",
       "id": "unit_test_demo_data_test_demo_root_exists",
-      "community": 795,
+      "community": 78,
       "norm_label": "test_demo_root_exists()"
     },
     {
@@ -7497,7 +7497,7 @@
       "source_file": "components/agentlens/tests/unit/test_demo_data.py",
       "source_location": "L14",
       "id": "unit_test_demo_data_test_demo_root_contains_runs",
-      "community": 795,
+      "community": 78,
       "norm_label": "test_demo_root_contains_runs()"
     },
     {
@@ -7506,7 +7506,7 @@
       "source_file": "components/agentlens/tests/unit/test_demo_data.py",
       "source_location": "L1",
       "id": "unit_test_demo_data_rationale_1",
-      "community": 795,
+      "community": 78,
       "norm_label": "tests for bundled demo data."
     },
     {
@@ -7650,7 +7650,7 @@
       "source_file": "components/agentlens/tests/unit/test_writer.py",
       "source_location": "L147",
       "id": "unit_test_writer_test_write_workspace_pointer_creates_marker",
-      "community": 31,
+      "community": 936,
       "norm_label": "test_write_workspace_pointer_creates_marker()"
     },
     {
@@ -9315,7 +9315,7 @@
       "source_file": "components/agentlens/tests/unit/test_sqlite_index.py",
       "source_location": "L131",
       "id": "unit_test_sqlite_index_test_init_db_alias",
-      "community": 2,
+      "community": 915,
       "norm_label": "test_init_db_alias()"
     },
     {
@@ -9495,7 +9495,7 @@
       "source_file": "components/agentlens/tests/unit/test_sqlite_index.py",
       "source_location": "L132",
       "id": "unit_test_sqlite_index_rationale_132",
-      "community": 2,
+      "community": 915,
       "norm_label": "init_db(home) is a thin wrapper for open_db + init_schema."
     },
     {
@@ -10593,7 +10593,7 @@
       "source_file": "components/agentlens/tests/unit/test_paths.py",
       "source_location": "L56",
       "id": "unit_test_paths_test_workspace_local",
-      "community": 19,
+      "community": 71,
       "norm_label": "test_workspace_local()"
     },
     {
@@ -10602,7 +10602,7 @@
       "source_file": "components/agentlens/tests/unit/test_paths.py",
       "source_location": "L62",
       "id": "unit_test_paths_test_current_run_marker_workspace_local",
-      "community": 19,
+      "community": 936,
       "norm_label": "test_current_run_marker_workspace_local()"
     },
     {
@@ -12564,7 +12564,7 @@
       "source_file": "components/agentlens/tests/integration/test_web_e2e_run_detail.py",
       "source_location": "L18",
       "id": "integration_test_web_e2e_run_detail_home_with_minimal",
-      "community": 0,
+      "community": 16,
       "norm_label": "home_with_minimal()"
     },
     {
@@ -13518,7 +13518,7 @@
       "source_file": "components/agentlens/tests/integration/test_web_e2e_failures_global.py",
       "source_location": "L17",
       "id": "integration_test_web_e2e_failures_global_home",
-      "community": 0,
+      "community": 16,
       "norm_label": "home()"
     },
     {
@@ -13572,7 +13572,7 @@
       "source_file": "components/agentlens/tests/integration/test_web_e2e_run_edge_cases.py",
       "source_location": "L18",
       "id": "integration_test_web_e2e_run_edge_cases_home",
-      "community": 0,
+      "community": 16,
       "norm_label": "home()"
     },
     {
@@ -13725,7 +13725,7 @@
       "source_file": "components/agentlens/tests/integration/test_web_e2e_workspaces.py",
       "source_location": "L17",
       "id": "integration_test_web_e2e_workspaces_home",
-      "community": 0,
+      "community": 16,
       "norm_label": "home()"
     },
     {
@@ -15255,7 +15255,7 @@
       "source_file": "components/agentlens/tests/integration/test_web_e2e_run_events.py",
       "source_location": "L1",
       "id": "components_agentlens_tests_integration_test_web_e2e_run_events_py",
-      "community": 0,
+      "community": 16,
       "norm_label": "test_web_e2e_run_events.py"
     },
     {
@@ -15264,7 +15264,7 @@
       "source_file": "components/agentlens/tests/integration/test_web_e2e_run_events.py",
       "source_location": "L18",
       "id": "integration_test_web_e2e_run_events_home",
-      "community": 0,
+      "community": 16,
       "norm_label": "home()"
     },
     {
@@ -15291,7 +15291,7 @@
       "source_file": "components/agentlens/tests/integration/test_web_e2e_run_events.py",
       "source_location": "L1",
       "id": "integration_test_web_e2e_run_events_rationale_1",
-      "community": 0,
+      "community": 16,
       "norm_label": "tests for /api/v1/runs/{id}/events (ndjson)."
     },
     {
@@ -15723,7 +15723,7 @@
       "source_file": "components/agentlens/tests/integration/test_web_e2e_run_aux.py",
       "source_location": "L19",
       "id": "integration_test_web_e2e_run_aux_home",
-      "community": 0,
+      "community": 16,
       "norm_label": "home()"
     },
     {
@@ -16434,7 +16434,7 @@
       "source_file": "components/agentlens/tests/integration/test_web_e2e_runs_list.py",
       "source_location": "L17",
       "id": "integration_test_web_e2e_runs_list_populated_home",
-      "community": 0,
+      "community": 16,
       "norm_label": "populated_home()"
     },
     {
@@ -23490,7 +23490,7 @@
       "source_file": "components/agentlens/src/agentlens/config.py",
       "source_location": "L1",
       "id": "components_agentlens_src_agentlens_config_py",
-      "community": 16,
+      "community": 788,
       "norm_label": "config.py"
     },
     {
@@ -23499,7 +23499,7 @@
       "source_file": "components/agentlens/src/agentlens/config.py",
       "source_location": "L37",
       "id": "agentlens_config_configerror",
-      "community": 16,
+      "community": 788,
       "norm_label": "configerror"
     },
     {
@@ -23517,7 +23517,7 @@
       "source_file": "components/agentlens/src/agentlens/config.py",
       "source_location": "L41",
       "id": "agentlens_config_user_config_path",
-      "community": 16,
+      "community": 788,
       "norm_label": "_user_config_path()"
     },
     {
@@ -23526,7 +23526,7 @@
       "source_file": "components/agentlens/src/agentlens/config.py",
       "source_location": "L46",
       "id": "agentlens_config_workspace_config_path",
-      "community": 16,
+      "community": 788,
       "norm_label": "_workspace_config_path()"
     },
     {
@@ -23535,7 +23535,7 @@
       "source_file": "components/agentlens/src/agentlens/config.py",
       "source_location": "L50",
       "id": "agentlens_config_load_yaml",
-      "community": 16,
+      "community": 788,
       "norm_label": "_load_yaml()"
     },
     {
@@ -23544,7 +23544,7 @@
       "source_file": "components/agentlens/src/agentlens/config.py",
       "source_location": "L69",
       "id": "agentlens_config_env_overrides",
-      "community": 16,
+      "community": 788,
       "norm_label": "_env_overrides()"
     },
     {
@@ -23553,7 +23553,7 @@
       "source_file": "components/agentlens/src/agentlens/config.py",
       "source_location": "L82",
       "id": "agentlens_config_disable_active",
-      "community": 16,
+      "community": 788,
       "norm_label": "_disable_active()"
     },
     {
@@ -23562,7 +23562,7 @@
       "source_file": "components/agentlens/src/agentlens/config.py",
       "source_location": "L89",
       "id": "agentlens_config_validate",
-      "community": 16,
+      "community": 788,
       "norm_label": "_validate()"
     },
     {
@@ -23580,7 +23580,7 @@
       "source_file": "components/agentlens/src/agentlens/config.py",
       "source_location": "L131",
       "id": "agentlens_config_write_workspace_mode",
-      "community": 16,
+      "community": 788,
       "norm_label": "write_workspace_mode()"
     },
     {
@@ -23589,7 +23589,7 @@
       "source_file": "components/agentlens/src/agentlens/config.py",
       "source_location": "L1",
       "id": "agentlens_config_rationale_1",
-      "community": 16,
+      "community": 788,
       "norm_label": "agentlens configuration loader (spec \u00a7s1.3 row 69, \u00a7s1.4).  implements the prior"
     },
     {
@@ -23598,7 +23598,7 @@
       "source_file": "components/agentlens/src/agentlens/config.py",
       "source_location": "L38",
       "id": "agentlens_config_rationale_38",
-      "community": 16,
+      "community": 788,
       "norm_label": "raised for invalid configuration values (e.g. unknown ``mode``)."
     },
     {
@@ -23607,7 +23607,7 @@
       "source_file": "components/agentlens/src/agentlens/config.py",
       "source_location": "L42",
       "id": "agentlens_config_rationale_42",
-      "community": 16,
+      "community": 788,
       "norm_label": "return the path to the user-level config file."
     },
     {
@@ -23616,7 +23616,7 @@
       "source_file": "components/agentlens/src/agentlens/config.py",
       "source_location": "L70",
       "id": "agentlens_config_rationale_70",
-      "community": 16,
+      "community": 788,
       "norm_label": "extract agentlens_<key> env vars as a config-shaped dict.      only ``agentlens_"
     },
     {
@@ -23634,7 +23634,7 @@
       "source_file": "components/agentlens/src/agentlens/config.py",
       "source_location": "L132",
       "id": "agentlens_config_rationale_132",
-      "community": 16,
+      "community": 788,
       "norm_label": "persist ``mode`` to ``<workspace_root>/.agentlens/config.yaml``.      creates th"
     },
     {
@@ -24525,7 +24525,7 @@
       "source_file": "components/agentlens/src/agentlens/demo_data/__init__.py",
       "source_location": "L1",
       "id": "components_agentlens_src_agentlens_demo_data_init_py",
-      "community": 795,
+      "community": 78,
       "norm_label": "__init__.py"
     },
     {
@@ -24534,7 +24534,7 @@
       "source_file": "components/agentlens/src/agentlens/demo_data/__init__.py",
       "source_location": "L8",
       "id": "demo_data_init_demo_root",
-      "community": 795,
+      "community": 78,
       "norm_label": "demo_root()"
     },
     {
@@ -24543,7 +24543,7 @@
       "source_file": "components/agentlens/src/agentlens/demo_data/__init__.py",
       "source_location": "L1",
       "id": "demo_data_init_rationale_1",
-      "community": 795,
+      "community": 78,
       "norm_label": "bundled demo runs used by ``agentlens serve --demo``."
     },
     {
@@ -24552,7 +24552,7 @@
       "source_file": "components/agentlens/src/agentlens/demo_data/__init__.py",
       "source_location": "L9",
       "id": "demo_data_init_rationale_9",
-      "community": 795,
+      "community": 78,
       "norm_label": "return the bundled demo data root resolved on disk."
     },
     {
@@ -27081,7 +27081,7 @@
       "source_file": "components/agentlens/src/agentlens/web/settings.py",
       "source_location": "L1",
       "id": "components_agentlens_src_agentlens_web_settings_py",
-      "community": 0,
+      "community": 942,
       "norm_label": "settings.py"
     },
     {
@@ -27117,7 +27117,7 @@
       "source_file": "components/agentlens/src/agentlens/web/settings.py",
       "source_location": "L33",
       "id": "web_settings_validate_dev_proxy",
-      "community": 0,
+      "community": 942,
       "norm_label": "_validate_dev_proxy()"
     },
     {
@@ -27126,7 +27126,7 @@
       "source_file": "components/agentlens/src/agentlens/web/settings.py",
       "source_location": "L1",
       "id": "web_settings_rationale_1",
-      "community": 0,
+      "community": 942,
       "norm_label": "runtime configuration for ``agentlens serve``."
     },
     {
@@ -35019,7 +35019,7 @@
       "source_file": "components/agentlens/src/agentlens/schema/jsonschema/final.v2.schema.json",
       "source_location": "L34",
       "id": "jsonschema_final_v2_schema_properties_kind",
-      "community": 917,
+      "community": 322,
       "norm_label": "kind"
     },
     {
@@ -35028,7 +35028,7 @@
       "source_file": "components/agentlens/src/agentlens/schema/jsonschema/final.v2.schema.json",
       "source_location": "L34",
       "id": "jsonschema_final_v2_schema_kind_type",
-      "community": 917,
+      "community": 322,
       "norm_label": "type"
     },
     {
@@ -35037,7 +35037,7 @@
       "source_file": "components/agentlens/src/agentlens/schema/jsonschema/final.v2.schema.json",
       "source_location": "L34",
       "id": "jsonschema_final_v2_schema_kind_enum",
-      "community": 917,
+      "community": 322,
       "norm_label": "enum"
     },
     {
@@ -35100,7 +35100,7 @@
       "source_file": "components/agentlens/src/agentlens/schema/jsonschema/final.v2.schema.json",
       "source_location": "L37",
       "id": "jsonschema_final_v2_schema_properties_excerpt",
-      "community": 322,
+      "community": 947,
       "norm_label": "excerpt"
     },
     {
@@ -35109,7 +35109,7 @@
       "source_file": "components/agentlens/src/agentlens/schema/jsonschema/final.v2.schema.json",
       "source_location": "L37",
       "id": "jsonschema_final_v2_schema_excerpt_type",
-      "community": 322,
+      "community": 947,
       "norm_label": "type"
     },
     {
@@ -35118,7 +35118,7 @@
       "source_file": "components/agentlens/src/agentlens/schema/jsonschema/final.v2.schema.json",
       "source_location": "L37",
       "id": "jsonschema_final_v2_schema_excerpt_maxlength",
-      "community": 322,
+      "community": 947,
       "norm_label": "maxlength"
     },
     {
@@ -35784,7 +35784,7 @@
       "source_file": "components/agentlens/src/agentlens/schema/jsonschema/manifest.schema.json",
       "source_location": "L71",
       "id": "jsonschema_manifest_schema_properties_full_prompts",
-      "community": 397,
+      "community": 948,
       "norm_label": "full_prompts"
     },
     {
@@ -35793,7 +35793,7 @@
       "source_file": "components/agentlens/src/agentlens/schema/jsonschema/manifest.schema.json",
       "source_location": "L72",
       "id": "jsonschema_manifest_schema_full_prompts_type",
-      "community": 397,
+      "community": 948,
       "norm_label": "type"
     },
     {
@@ -35802,7 +35802,7 @@
       "source_file": "components/agentlens/src/agentlens/schema/jsonschema/manifest.schema.json",
       "source_location": "L73",
       "id": "jsonschema_manifest_schema_full_prompts_enum",
-      "community": 397,
+      "community": 948,
       "norm_label": "enum"
     },
     {
@@ -35811,7 +35811,7 @@
       "source_file": "components/agentlens/src/agentlens/schema/jsonschema/manifest.schema.json",
       "source_location": "L75",
       "id": "jsonschema_manifest_schema_properties_full_command_output",
-      "community": 950,
+      "community": 397,
       "norm_label": "full_command_output"
     },
     {
@@ -35820,7 +35820,7 @@
       "source_file": "components/agentlens/src/agentlens/schema/jsonschema/manifest.schema.json",
       "source_location": "L76",
       "id": "jsonschema_manifest_schema_full_command_output_type",
-      "community": 950,
+      "community": 397,
       "norm_label": "type"
     },
     {
@@ -35829,7 +35829,7 @@
       "source_file": "components/agentlens/src/agentlens/schema/jsonschema/manifest.schema.json",
       "source_location": "L77",
       "id": "jsonschema_manifest_schema_full_command_output_enum",
-      "community": 950,
+      "community": 397,
       "norm_label": "enum"
     },
     {
@@ -37206,7 +37206,7 @@
       "source_file": "components/agentlens/src/agentlens/commands/mode.py",
       "source_location": "L1",
       "id": "components_agentlens_src_agentlens_commands_mode_py",
-      "community": 16,
+      "community": 788,
       "norm_label": "mode.py"
     },
     {
@@ -37215,7 +37215,7 @@
       "source_file": "components/agentlens/src/agentlens/commands/mode.py",
       "source_location": "L29",
       "id": "commands_mode_show",
-      "community": 16,
+      "community": 788,
       "norm_label": "show()"
     },
     {
@@ -37224,7 +37224,7 @@
       "source_file": "components/agentlens/src/agentlens/commands/mode.py",
       "source_location": "L36",
       "id": "commands_mode_set",
-      "community": 16,
+      "community": 788,
       "norm_label": "set_()"
     },
     {
@@ -37233,7 +37233,7 @@
       "source_file": "components/agentlens/src/agentlens/commands/mode.py",
       "source_location": "L1",
       "id": "commands_mode_rationale_1",
-      "community": 16,
+      "community": 788,
       "norm_label": "``agentlens mode`` \u2014 inspect and update the runtime mode (spec \u00a7s1.4).  provides"
     },
     {
@@ -37242,7 +37242,7 @@
       "source_file": "components/agentlens/src/agentlens/commands/mode.py",
       "source_location": "L30",
       "id": "commands_mode_rationale_30",
-      "community": 16,
+      "community": 788,
       "norm_label": "print the currently-resolved mode (one token, one line)."
     },
     {
@@ -37251,7 +37251,7 @@
       "source_file": "components/agentlens/src/agentlens/commands/mode.py",
       "source_location": "L41",
       "id": "commands_mode_rationale_41",
-      "community": 16,
+      "community": 788,
       "norm_label": "persist ``value`` to ``<cwd>/.agentlens/config.yaml``."
     },
     {
@@ -38394,7 +38394,7 @@
       "source_file": "components/agentlens/src/agentlens/store/paths.py",
       "source_location": "L31",
       "id": "store_paths_runs_root",
-      "community": 19,
+      "community": 122,
       "norm_label": "runs_root()"
     },
     {
@@ -38430,7 +38430,7 @@
       "source_file": "components/agentlens/src/agentlens/store/paths.py",
       "source_location": "L54",
       "id": "store_paths_workspace_local",
-      "community": 19,
+      "community": 71,
       "norm_label": "workspace_local()"
     },
     {
@@ -38439,7 +38439,7 @@
       "source_file": "components/agentlens/src/agentlens/store/paths.py",
       "source_location": "L59",
       "id": "store_paths_current_run_marker",
-      "community": 19,
+      "community": 936,
       "norm_label": "current_run_marker()"
     },
     {
@@ -38475,7 +38475,7 @@
       "source_file": "components/agentlens/src/agentlens/store/paths.py",
       "source_location": "L32",
       "id": "store_paths_rationale_32",
-      "community": 19,
+      "community": 122,
       "norm_label": "return ``<agentlens_home>/runs``."
     },
     {
@@ -38511,7 +38511,7 @@
       "source_file": "components/agentlens/src/agentlens/store/paths.py",
       "source_location": "L55",
       "id": "store_paths_rationale_55",
-      "community": 19,
+      "community": 71,
       "norm_label": "return ``<root>/.agentlens`` (workspace-local pointer dir)."
     },
     {
@@ -38520,7 +38520,7 @@
       "source_file": "components/agentlens/src/agentlens/store/paths.py",
       "source_location": "L60",
       "id": "store_paths_rationale_60",
-      "community": 19,
+      "community": 936,
       "norm_label": "return ``<root>/.agentlens/current-runs/<run_id>``.      the marker is itself a"
     },
     {
@@ -38763,7 +38763,7 @@
       "source_file": "components/agentlens/src/agentlens/store/sqlite_index.py",
       "source_location": "L1",
       "id": "components_agentlens_src_agentlens_store_sqlite_index_py",
-      "community": 2,
+      "community": 915,
       "norm_label": "sqlite_index.py"
     },
     {
@@ -38781,7 +38781,7 @@
       "source_file": "components/agentlens/src/agentlens/store/sqlite_index.py",
       "source_location": "L124",
       "id": "store_sqlite_index_migrate_runs_v1_columns",
-      "community": 2,
+      "community": 915,
       "norm_label": "_migrate_runs_v1_columns()"
     },
     {
@@ -38799,7 +38799,7 @@
       "source_file": "components/agentlens/src/agentlens/store/sqlite_index.py",
       "source_location": "L159",
       "id": "store_sqlite_index_init_db",
-      "community": 2,
+      "community": 915,
       "norm_label": "init_db()"
     },
     {
@@ -38808,7 +38808,7 @@
       "source_file": "components/agentlens/src/agentlens/store/sqlite_index.py",
       "source_location": "L166",
       "id": "store_sqlite_index_read_json",
-      "community": 2,
+      "community": 915,
       "norm_label": "_read_json()"
     },
     {
@@ -38826,7 +38826,7 @@
       "source_file": "components/agentlens/src/agentlens/store/sqlite_index.py",
       "source_location": "L299",
       "id": "store_sqlite_index_rebuild_index",
-      "community": 2,
+      "community": 772,
       "norm_label": "rebuild_index()"
     },
     {
@@ -38835,7 +38835,7 @@
       "source_file": "components/agentlens/src/agentlens/store/sqlite_index.py",
       "source_location": "L1",
       "id": "store_sqlite_index_rationale_1",
-      "community": 2,
+      "community": 915,
       "norm_label": "sqlite index over the run tree (spec \u00a75.8, \u00a77.3, \u00a7s1.6.8, \u00a7s1.8.3).  this module"
     },
     {
@@ -38853,7 +38853,7 @@
       "source_file": "components/agentlens/src/agentlens/store/sqlite_index.py",
       "source_location": "L125",
       "id": "store_sqlite_index_rationale_125",
-      "community": 2,
+      "community": 915,
       "norm_label": "add v1 additive columns to a pre-existing ``runs`` table.      idempotent: detec"
     },
     {
@@ -38871,7 +38871,7 @@
       "source_file": "components/agentlens/src/agentlens/store/sqlite_index.py",
       "source_location": "L160",
       "id": "store_sqlite_index_rationale_160",
-      "community": 2,
+      "community": 915,
       "norm_label": "plan-aliased convenience: ``open_db(home/index.db)`` + ``init_schema``."
     },
     {
@@ -38880,7 +38880,7 @@
       "source_file": "components/agentlens/src/agentlens/store/sqlite_index.py",
       "source_location": "L167",
       "id": "store_sqlite_index_rationale_167",
-      "community": 2,
+      "community": 915,
       "norm_label": "read+parse a json file; return ``none`` on missing/parse error."
     },
     {
@@ -38898,7 +38898,7 @@
       "source_file": "components/agentlens/src/agentlens/store/sqlite_index.py",
       "source_location": "L300",
       "id": "store_sqlite_index_rationale_300",
-      "community": 2,
+      "community": 772,
       "norm_label": "drop+recreate the index db and re-scan every run under ``home/runs``.      retur"
     },
     {
@@ -38907,7 +38907,7 @@
       "source_file": "components/agentlens/src/agentlens/store/__init__.py",
       "source_location": "L1",
       "id": "components_agentlens_src_agentlens_store_init_py",
-      "community": 95,
+      "community": 19,
       "norm_label": "__init__.py"
     },
     {
@@ -38916,7 +38916,7 @@
       "source_file": "components/agentlens/src/agentlens/store/__init__.py",
       "source_location": "L1",
       "id": "store_init_rationale_1",
-      "community": 95,
+      "community": 19,
       "norm_label": "agentlens persistent store layout helpers (spec \u00a7s1.6.4\u2013\u00a7s1.6.7)."
     },
     {
@@ -39735,7 +39735,7 @@
       "source_file": "components/agentlens/src/agentlens/store/writer.py",
       "source_location": "L176",
       "id": "store_writer_write_workspace_pointer",
-      "community": 31,
+      "community": 936,
       "norm_label": "write_workspace_pointer()"
     },
     {
@@ -39816,7 +39816,7 @@
       "source_file": "components/agentlens/src/agentlens/store/writer.py",
       "source_location": "L177",
       "id": "store_writer_rationale_177",
-      "community": 31,
+      "community": 936,
       "norm_label": "create the workspace-local current-run marker for *run_id*.      the marker is i"
     },
     {
@@ -40167,7 +40167,7 @@
       "source_file": "packages/lens-projectors/tests/executionExplanation.test.ts",
       "source_location": "L1",
       "id": "packages_lens_projectors_tests_executionexplanation_test_ts",
-      "community": 96,
+      "community": 97,
       "norm_label": "executionexplanation.test.ts"
     },
     {
@@ -40176,7 +40176,7 @@
       "source_file": "packages/lens-projectors/tests/executionExplanation.test.ts",
       "source_location": "L7",
       "id": "tests_executionexplanation_test_projection",
-      "community": 96,
+      "community": 97,
       "norm_label": "projection"
     },
     {
@@ -40185,7 +40185,7 @@
       "source_file": "packages/lens-projectors/tests/executionExplanation.test.ts",
       "source_location": "L99",
       "id": "tests_executionexplanation_test_task",
-      "community": 96,
+      "community": 97,
       "norm_label": "task()"
     },
     {
@@ -40194,7 +40194,7 @@
       "source_file": "packages/lens-projectors/tests/executionExplanation.test.ts",
       "source_location": "L118",
       "id": "tests_executionexplanation_test_makestate",
-      "community": 96,
+      "community": 97,
       "norm_label": "makestate()"
     },
     {
@@ -40509,7 +40509,7 @@
       "source_file": "packages/lens-projectors/src/trust.ts",
       "source_location": "L67",
       "id": "src_trust_projectfailuresummary",
-      "community": 1,
+      "community": 24,
       "norm_label": "projectfailuresummary()"
     },
     {
@@ -40905,7 +40905,7 @@
       "source_file": "packages/provider-adapters/src/processAdapters.ts",
       "source_location": "L82",
       "id": "src_processadapters_failed",
-      "community": 592,
+      "community": 379,
       "norm_label": "failed()"
     },
     {
@@ -40914,7 +40914,7 @@
       "source_file": "packages/provider-adapters/src/processAdapters.ts",
       "source_location": "L95",
       "id": "src_processadapters_runproviderprocess",
-      "community": 793,
+      "community": 165,
       "norm_label": "runproviderprocess()"
     },
     {
@@ -40986,7 +40986,7 @@
       "source_file": "packages/provider-adapters/src/processAdapters.ts",
       "source_location": "L301",
       "id": "src_processadapters_withprocessevidence",
-      "community": 379,
+      "community": 910,
       "norm_label": "withprocessevidence()"
     },
     {
@@ -41058,7 +41058,7 @@
       "source_file": "packages/provider-adapters/src/codexAdapter.ts",
       "source_location": "L5",
       "id": "src_codexadapter_codexprovideradapter",
-      "community": 793,
+      "community": 165,
       "norm_label": "codexprovideradapter"
     },
     {
@@ -41067,7 +41067,7 @@
       "source_file": "packages/provider-adapters/src/codexAdapter.ts",
       "source_location": "L8",
       "id": "src_codexadapter_codexprovideradapter_constructor",
-      "community": 793,
+      "community": 165,
       "norm_label": ".constructor()"
     },
     {
@@ -41076,7 +41076,7 @@
       "source_file": "packages/provider-adapters/src/codexAdapter.ts",
       "source_location": "L10",
       "id": "src_codexadapter_codexprovideradapter_describe",
-      "community": 793,
+      "community": 165,
       "norm_label": ".describe()"
     },
     {
@@ -41085,7 +41085,7 @@
       "source_file": "packages/provider-adapters/src/codexAdapter.ts",
       "source_location": "L18",
       "id": "src_codexadapter_codexprovideradapter_run",
-      "community": 793,
+      "community": 165,
       "norm_label": ".run()"
     },
     {
@@ -41175,7 +41175,7 @@
       "source_file": "packages/provider-adapters/src/fakeProvider.ts",
       "source_location": "L6",
       "id": "src_fakeprovider_fakeprovideradapter",
-      "community": 592,
+      "community": 949,
       "norm_label": "fakeprovideradapter"
     },
     {
@@ -41184,7 +41184,7 @@
       "source_file": "packages/provider-adapters/src/fakeProvider.ts",
       "source_location": "L9",
       "id": "src_fakeprovider_fakeprovideradapter_describe",
-      "community": 592,
+      "community": 949,
       "norm_label": ".describe()"
     },
     {
@@ -41193,7 +41193,7 @@
       "source_file": "packages/provider-adapters/src/fakeProvider.ts",
       "source_location": "L17",
       "id": "src_fakeprovider_fakeprovideradapter_run",
-      "community": 592,
+      "community": 949,
       "norm_label": ".run()"
     },
     {
@@ -41220,7 +41220,7 @@
       "source_file": "packages/provider-adapters/src/claudeAdapter.ts",
       "source_location": "L5",
       "id": "src_claudeadapter_claudeprovideradapter",
-      "community": 793,
+      "community": 165,
       "norm_label": "claudeprovideradapter"
     },
     {
@@ -41229,7 +41229,7 @@
       "source_file": "packages/provider-adapters/src/claudeAdapter.ts",
       "source_location": "L8",
       "id": "src_claudeadapter_claudeprovideradapter_constructor",
-      "community": 793,
+      "community": 165,
       "norm_label": ".constructor()"
     },
     {
@@ -41238,7 +41238,7 @@
       "source_file": "packages/provider-adapters/src/claudeAdapter.ts",
       "source_location": "L10",
       "id": "src_claudeadapter_claudeprovideradapter_describe",
-      "community": 793,
+      "community": 165,
       "norm_label": ".describe()"
     },
     {
@@ -41247,7 +41247,7 @@
       "source_file": "packages/provider-adapters/src/claudeAdapter.ts",
       "source_location": "L18",
       "id": "src_claudeadapter_claudeprovideradapter_run",
-      "community": 793,
+      "community": 165,
       "norm_label": ".run()"
     },
     {
@@ -41904,7 +41904,7 @@
       "source_file": "packages/contracts/src/validate.ts",
       "source_location": "L24",
       "id": "src_validate_validatecontract",
-      "community": 592,
+      "community": 379,
       "norm_label": "validatecontract()"
     },
     {
@@ -42471,7 +42471,7 @@
       "source_file": "packages/lens-store/tests/runIndex.test.ts",
       "source_location": "L1",
       "id": "packages_lens_store_tests_runindex_test_ts",
-      "community": 1,
+      "community": 940,
       "norm_label": "runindex.test.ts"
     },
     {
@@ -42480,7 +42480,7 @@
       "source_file": "packages/lens-store/tests/runIndex.test.ts",
       "source_location": "L9",
       "id": "tests_runindex_test_root",
-      "community": 1,
+      "community": 940,
       "norm_label": "root"
     },
     {
@@ -42489,7 +42489,7 @@
       "source_file": "packages/lens-store/tests/artifactStore.test.ts",
       "source_location": "L1",
       "id": "packages_lens_store_tests_artifactstore_test_ts",
-      "community": 10,
+      "community": 96,
       "norm_label": "artifactstore.test.ts"
     },
     {
@@ -42498,7 +42498,7 @@
       "source_file": "packages/lens-store/tests/artifactStore.test.ts",
       "source_location": "L9",
       "id": "tests_artifactstore_test_root",
-      "community": 10,
+      "community": 96,
       "norm_label": "root"
     },
     {
@@ -42507,7 +42507,7 @@
       "source_file": "packages/lens-store/tests/artifactStore.test.ts",
       "source_location": "L10",
       "id": "tests_artifactstore_test_artifact",
-      "community": 10,
+      "community": 96,
       "norm_label": "artifact"
     },
     {
@@ -42669,7 +42669,7 @@
       "source_file": "packages/lens-store/src/index.ts",
       "source_location": "L1",
       "id": "packages_lens_store_src_index_ts",
-      "community": 10,
+      "community": 96,
       "norm_label": "index.ts"
     },
     {
@@ -42696,7 +42696,7 @@
       "source_file": "packages/lens-store/src/eventJournal.ts",
       "source_location": "L14",
       "id": "src_eventjournal_readevents",
-      "community": 1,
+      "community": 24,
       "norm_label": "readevents()"
     },
     {
@@ -42714,7 +42714,7 @@
       "source_file": "packages/lens-store/src/paths.ts",
       "source_location": "L1",
       "id": "packages_lens_store_src_paths_ts",
-      "community": 1,
+      "community": 24,
       "norm_label": "paths.ts"
     },
     {
@@ -42723,7 +42723,7 @@
       "source_file": "packages/lens-store/src/paths.ts",
       "source_location": "L3",
       "id": "src_paths_runpaths",
-      "community": 1,
+      "community": 24,
       "norm_label": "runpaths"
     },
     {
@@ -42732,7 +42732,7 @@
       "source_file": "packages/lens-store/src/runIndex.ts",
       "source_location": "L1",
       "id": "packages_lens_store_src_runindex_ts",
-      "community": 1,
+      "community": 940,
       "norm_label": "runindex.ts"
     },
     {
@@ -42741,7 +42741,7 @@
       "source_file": "packages/lens-store/src/runIndex.ts",
       "source_location": "L4",
       "id": "src_runindex_writelatestrunid",
-      "community": 1,
+      "community": 940,
       "norm_label": "writelatestrunid()"
     },
     {
@@ -42750,7 +42750,7 @@
       "source_file": "packages/lens-store/src/runIndex.ts",
       "source_location": "L9",
       "id": "src_runindex_readlatestrunid",
-      "community": 1,
+      "community": 940,
       "norm_label": "readlatestrunid()"
     },
     {
@@ -42973,7 +42973,7 @@
       "label": "legacyRuntimeSchema",
       "file_type": "code",
       "source_file": "packages/testkit/tests/legacyCheck.test.ts",
-      "source_location": "L39",
+      "source_location": "L55",
       "id": "tests_legacycheck_test_legacyruntimeschema",
       "community": 237,
       "norm_label": "legacyruntimeschema"
@@ -42982,7 +42982,7 @@
       "label": "legacyFence",
       "file_type": "code",
       "source_file": "packages/testkit/tests/legacyCheck.test.ts",
-      "source_location": "L40",
+      "source_location": "L56",
       "id": "tests_legacycheck_test_legacyfence",
       "community": 237,
       "norm_label": "legacyfence"
@@ -42991,7 +42991,7 @@
       "label": "legacyProjectionKey",
       "file_type": "code",
       "source_file": "packages/testkit/tests/legacyCheck.test.ts",
-      "source_location": "L41",
+      "source_location": "L57",
       "id": "tests_legacycheck_test_legacyprojectionkey",
       "community": 237,
       "norm_label": "legacyprojectionkey"
@@ -43000,7 +43000,7 @@
       "label": "historicalRuntime",
       "file_type": "code",
       "source_file": "packages/testkit/tests/legacyCheck.test.ts",
-      "source_location": "L42",
+      "source_location": "L58",
       "id": "tests_legacycheck_test_historicalruntime",
       "community": 237,
       "norm_label": "historicalruntime"
@@ -43432,7 +43432,7 @@
       "label": "walk()",
       "file_type": "code",
       "source_file": "packages/testkit/src/legacyCheck.ts",
-      "source_location": "L36",
+      "source_location": "L38",
       "id": "src_legacycheck_walk",
       "community": 237,
       "norm_label": "walk()"
@@ -43441,7 +43441,7 @@
       "label": "walkActiveRouting()",
       "file_type": "code",
       "source_file": "packages/testkit/src/legacyCheck.ts",
-      "source_location": "L73",
+      "source_location": "L75",
       "id": "src_legacycheck_walkactiverouting",
       "community": 237,
       "norm_label": "walkactiverouting()"
@@ -43450,16 +43450,25 @@
       "label": "isTestkitPath()",
       "file_type": "code",
       "source_file": "packages/testkit/src/legacyCheck.ts",
-      "source_location": "L98",
+      "source_location": "L110",
       "id": "src_legacycheck_istestkitpath",
       "community": 237,
       "norm_label": "istestkitpath()"
     },
     {
+      "label": "isHistoricalDoc()",
+      "file_type": "code",
+      "source_file": "packages/testkit/src/legacyCheck.ts",
+      "source_location": "L114",
+      "id": "src_legacycheck_ishistoricaldoc",
+      "community": 237,
+      "norm_label": "ishistoricaldoc()"
+    },
+    {
       "label": "result",
       "file_type": "code",
       "source_file": "packages/testkit/src/legacyCheck.ts",
-      "source_location": "L103",
+      "source_location": "L123",
       "id": "src_legacycheck_result",
       "community": 237,
       "norm_label": "result"
@@ -43785,7 +43794,7 @@
       "source_file": "packages/kernel-client/src/kernelClient.ts",
       "source_location": "L1",
       "id": "packages_kernel_client_src_kernelclient_ts",
-      "community": 872,
+      "community": 913,
       "norm_label": "kernelclient.ts"
     },
     {
@@ -43794,7 +43803,7 @@
       "source_file": "packages/kernel-client/src/kernelClient.ts",
       "source_location": "L6",
       "id": "src_kernelclient_buildkernelrequest",
-      "community": 872,
+      "community": 913,
       "norm_label": "buildkernelrequest()"
     },
     {
@@ -43803,7 +43812,7 @@
       "source_file": "packages/kernel-client/src/kernelClient.ts",
       "source_location": "L23",
       "id": "src_kernelclient_executeinprocess",
-      "community": 872,
+      "community": 913,
       "norm_label": "executeinprocess()"
     },
     {
@@ -43812,7 +43821,7 @@
       "source_file": "packages/kernel-client/src/kernelClient.ts",
       "source_location": "L51",
       "id": "src_kernelclient_result",
-      "community": 872,
+      "community": 913,
       "norm_label": "result()"
     },
     {
@@ -43821,7 +43830,7 @@
       "source_file": "packages/kernel-client/src/kernelClient.ts",
       "source_location": "L80",
       "id": "src_kernelclient_bound",
-      "community": 872,
+      "community": 913,
       "norm_label": "bound()"
     },
     {
@@ -43830,7 +43839,7 @@
       "source_file": "packages/kernel-client/src/kernelClient.ts",
       "source_location": "L86",
       "id": "src_kernelclient_digest",
-      "community": 872,
+      "community": 913,
       "norm_label": "digest()"
     },
     {
@@ -44064,7 +44073,7 @@
       "source_file": "packages/context-packer/tests/taskPacket.test.ts",
       "source_location": "L1",
       "id": "packages_context_packer_tests_taskpacket_test_ts",
-      "community": 933,
+      "community": 97,
       "norm_label": "taskpacket.test.ts"
     },
     {
@@ -44073,7 +44082,7 @@
       "source_file": "packages/context-packer/tests/taskPacket.test.ts",
       "source_location": "L6",
       "id": "tests_taskpacket_test_packet",
-      "community": 933,
+      "community": 97,
       "norm_label": "packet"
     },
     {
@@ -44082,7 +44091,7 @@
       "source_file": "packages/context-packer/src/taskPacket.ts",
       "source_location": "L1",
       "id": "packages_context_packer_src_taskpacket_ts",
-      "community": 933,
+      "community": 97,
       "norm_label": "taskpacket.ts"
     },
     {
@@ -44091,7 +44100,7 @@
       "source_file": "packages/context-packer/src/taskPacket.ts",
       "source_location": "L5",
       "id": "src_taskpacket_taskpackettaskinput",
-      "community": 933,
+      "community": 97,
       "norm_label": "taskpackettaskinput"
     },
     {
@@ -44100,7 +44109,7 @@
       "source_file": "packages/context-packer/src/taskPacket.ts",
       "source_location": "L14",
       "id": "src_taskpacket_buildtaskpacketinput",
-      "community": 933,
+      "community": 97,
       "norm_label": "buildtaskpacketinput"
     },
     {
@@ -44109,7 +44118,7 @@
       "source_file": "packages/context-packer/src/taskPacket.ts",
       "source_location": "L26",
       "id": "src_taskpacket_buildtaskpacket",
-      "community": 933,
+      "community": 97,
       "norm_label": "buildtaskpacket()"
     },
     {
@@ -44118,7 +44127,7 @@
       "source_file": "packages/context-packer/src/taskPacket.ts",
       "source_location": "L60",
       "id": "src_taskpacket_stablestringify",
-      "community": 933,
+      "community": 97,
       "norm_label": "stablestringify()"
     },
     {
@@ -44442,7 +44451,7 @@
       "source_file": "packages/orchestrator/tests/taskGraph.test.ts",
       "source_location": "L1",
       "id": "packages_orchestrator_tests_taskgraph_test_ts",
-      "community": 243,
+      "community": 3,
       "norm_label": "taskgraph.test.ts"
     },
     {
@@ -44451,7 +44460,7 @@
       "source_file": "packages/orchestrator/tests/taskGraph.test.ts",
       "source_location": "L7",
       "id": "tests_taskgraph_test_parsed",
-      "community": 243,
+      "community": 3,
       "norm_label": "parsed"
     },
     {
@@ -44460,7 +44469,7 @@
       "source_file": "packages/runway-control/tests/taskGraph.test.ts",
       "source_location": "L15",
       "id": "tests_taskgraph_test_graph",
-      "community": 243,
+      "community": 3,
       "norm_label": "graph"
     },
     {
@@ -45189,7 +45198,7 @@
       "source_file": "packages/orchestrator/tests/runExecutionContext.test.ts",
       "source_location": "L1",
       "id": "packages_orchestrator_tests_runexecutioncontext_test_ts",
-      "community": 7,
+      "community": 3,
       "norm_label": "runexecutioncontext.test.ts"
     },
     {
@@ -45198,7 +45207,7 @@
       "source_file": "packages/orchestrator/tests/runExecutionContext.test.ts",
       "source_location": "L13",
       "id": "tests_runexecutioncontext_test_root",
-      "community": 7,
+      "community": 3,
       "norm_label": "root"
     },
     {
@@ -45207,7 +45216,7 @@
       "source_file": "packages/orchestrator/tests/runExecutionContext.test.ts",
       "source_location": "L14",
       "id": "tests_runexecutioncontext_test_state",
-      "community": 7,
+      "community": 3,
       "norm_label": "state"
     },
     {
@@ -45216,7 +45225,7 @@
       "source_file": "packages/orchestrator/tests/runExecutionContext.test.ts",
       "source_location": "L15",
       "id": "tests_runexecutioncontext_test_context",
-      "community": 7,
+      "community": 3,
       "norm_label": "context"
     },
     {
@@ -45333,7 +45342,7 @@
       "source_file": "packages/orchestrator/tests/orchestratorRun.test.ts",
       "source_location": "L1",
       "id": "packages_orchestrator_tests_orchestratorrun_test_ts",
-      "community": 3,
+      "community": 96,
       "norm_label": "orchestratorrun.test.ts"
     },
     {
@@ -45342,7 +45351,7 @@
       "source_file": "packages/orchestrator/tests/orchestratorRun.test.ts",
       "source_location": "L23",
       "id": "tests_orchestratorrun_test_initsourcecheckout",
-      "community": 3,
+      "community": 96,
       "norm_label": "initsourcecheckout()"
     },
     {
@@ -45351,7 +45360,7 @@
       "source_file": "packages/orchestrator/tests/orchestratorRun.test.ts",
       "source_location": "L36",
       "id": "tests_orchestratorrun_test_root",
-      "community": 3,
+      "community": 96,
       "norm_label": "root"
     },
     {
@@ -45360,7 +45369,7 @@
       "source_file": "packages/orchestrator/tests/orchestratorRun.test.ts",
       "source_location": "L37",
       "id": "tests_orchestratorrun_test_workspace",
-      "community": 3,
+      "community": 96,
       "norm_label": "workspace"
     },
     {
@@ -45369,7 +45378,7 @@
       "source_file": "packages/orchestrator/tests/orchestratorRun.test.ts",
       "source_location": "L159",
       "id": "tests_orchestratorrun_test_workerevent",
-      "community": 3,
+      "community": 96,
       "norm_label": "workerevent"
     },
     {
@@ -45378,7 +45387,7 @@
       "source_file": "packages/orchestrator/tests/orchestratorRun.test.ts",
       "source_location": "L160",
       "id": "tests_orchestratorrun_test_worker",
-      "community": 3,
+      "community": 96,
       "norm_label": "worker"
     },
     {
@@ -45405,7 +45414,7 @@
       "source_file": "packages/orchestrator/tests/reviewGate.test.ts",
       "source_location": "L1",
       "id": "packages_orchestrator_tests_reviewgate_test_ts",
-      "community": 243,
+      "community": 97,
       "norm_label": "reviewgate.test.ts"
     },
     {
@@ -45837,7 +45846,7 @@
       "source_file": "packages/orchestrator/src/runCommands.ts",
       "source_location": "L37",
       "id": "src_runcommands_statusrun",
-      "community": 1,
+      "community": 24,
       "norm_label": "statusrun()"
     },
     {
@@ -45855,7 +45864,7 @@
       "source_file": "packages/orchestrator/src/runCommands.ts",
       "source_location": "L60",
       "id": "src_runcommands_inspectrun",
-      "community": 1,
+      "community": 24,
       "norm_label": "inspectrun()"
     },
     {
@@ -45999,7 +46008,7 @@
       "source_file": "packages/orchestrator/src/planParser.ts",
       "source_location": "L21",
       "id": "src_planparser_parsewaygentplan",
-      "community": 243,
+      "community": 3,
       "norm_label": "parsewaygentplan()"
     },
     {
@@ -46152,7 +46161,7 @@
       "source_file": "packages/orchestrator/src/completionAudit.ts",
       "source_location": "L20",
       "id": "src_completionaudit_buildcompletionaudit",
-      "community": 7,
+      "community": 3,
       "norm_label": "buildcompletionaudit()"
     },
     {
@@ -46224,7 +46233,7 @@
       "source_file": "packages/orchestrator/src/runEvents.ts",
       "source_location": "L16",
       "id": "src_runevents_buildrunevent",
-      "community": 7,
+      "community": 3,
       "norm_label": "buildrunevent()"
     },
     {
@@ -46278,7 +46287,7 @@
       "source_file": "packages/orchestrator/src/reviewGate.ts",
       "source_location": "L1",
       "id": "packages_orchestrator_src_reviewgate_ts",
-      "community": 243,
+      "community": 97,
       "norm_label": "reviewgate.ts"
     },
     {
@@ -46287,7 +46296,7 @@
       "source_file": "packages/orchestrator/src/reviewGate.ts",
       "source_location": "L4",
       "id": "src_reviewgate_shouldreviewtask",
-      "community": 243,
+      "community": 97,
       "norm_label": "shouldreviewtask()"
     },
     {
@@ -46296,7 +46305,7 @@
       "source_file": "packages/orchestrator/src/reviewGate.ts",
       "source_location": "L10",
       "id": "src_reviewgate_isbroadclaim",
-      "community": 243,
+      "community": 97,
       "norm_label": "isbroadclaim()"
     },
     {
@@ -46350,7 +46359,7 @@
       "source_file": "packages/orchestrator/src/orchestrator.ts",
       "source_location": "L373",
       "id": "src_orchestrator_finalizerun",
-      "community": 1,
+      "community": 3,
       "norm_label": "finalizerun()"
     },
     {
@@ -46467,7 +46476,7 @@
       "source_file": "packages/orchestrator/src/taskExecutor.ts",
       "source_location": "L34",
       "id": "src_taskexecutor_waygenttaskexecutionresult",
-      "community": 3,
+      "community": 10,
       "norm_label": "waygenttaskexecutionresult"
     },
     {
@@ -46854,7 +46863,7 @@
       "source_file": "packages/orchestrator/src/taskGraph.ts",
       "source_location": "L1",
       "id": "packages_orchestrator_src_taskgraph_ts",
-      "community": 243,
+      "community": 3,
       "norm_label": "taskgraph.ts"
     },
     {
@@ -46863,7 +46872,7 @@
       "source_file": "packages/orchestrator/src/taskGraph.ts",
       "source_location": "L4",
       "id": "src_taskgraph_buildtaskgraphfromplan",
-      "community": 243,
+      "community": 3,
       "norm_label": "buildtaskgraphfromplan()"
     },
     {
@@ -47115,7 +47124,7 @@
       "source_file": "packages/orchestrator/src/naturalLanguageIntent.ts",
       "source_location": "L1",
       "id": "packages_orchestrator_src_naturallanguageintent_ts",
-      "community": 547,
+      "community": 3,
       "norm_label": "naturallanguageintent.ts"
     },
     {
@@ -47124,7 +47133,7 @@
       "source_file": "packages/orchestrator/src/naturalLanguageIntent.ts",
       "source_location": "L3",
       "id": "src_naturallanguageintent_waygentintent",
-      "community": 547,
+      "community": 3,
       "norm_label": "waygentintent"
     },
     {
@@ -47133,7 +47142,7 @@
       "source_file": "packages/orchestrator/src/naturalLanguageIntent.ts",
       "source_location": "L16",
       "id": "src_naturallanguageintent_parsenaturallanguageintent",
-      "community": 547,
+      "community": 3,
       "norm_label": "parsenaturallanguageintent()"
     },
     {
@@ -47142,7 +47151,7 @@
       "source_file": "packages/orchestrator/src/naturalLanguageIntent.ts",
       "source_location": "L41",
       "id": "src_naturallanguageintent_applymodelkeywords",
-      "community": 547,
+      "community": 3,
       "norm_label": "applymodelkeywords()"
     },
     {
@@ -47151,7 +47160,7 @@
       "source_file": "packages/orchestrator/src/naturalLanguageIntent.ts",
       "source_location": "L53",
       "id": "src_naturallanguageintent_intenttocommand",
-      "community": 547,
+      "community": 3,
       "norm_label": "intenttocommand()"
     },
     {
@@ -47727,7 +47736,7 @@
       "source_file": "packages/policy/tests/policy.test.ts",
       "source_location": "L1",
       "id": "packages_policy_tests_policy_test_ts",
-      "community": 872,
+      "community": 913,
       "norm_label": "policy.test.ts"
     },
     {
@@ -47736,7 +47745,7 @@
       "source_file": "packages/policy/tests/policy.test.ts",
       "source_location": "L6",
       "id": "tests_policy_test_result",
-      "community": 872,
+      "community": 913,
       "norm_label": "result"
     },
     {
@@ -47745,7 +47754,7 @@
       "source_file": "packages/policy/tests/permissionProfile.test.ts",
       "source_location": "L1",
       "id": "packages_policy_tests_permissionprofile_test_ts",
-      "community": 872,
+      "community": 913,
       "norm_label": "permissionprofile.test.ts"
     },
     {
@@ -47754,7 +47763,7 @@
       "source_file": "packages/policy/tests/permissionProfile.test.ts",
       "source_location": "L6",
       "id": "tests_permissionprofile_test_profile",
-      "community": 872,
+      "community": 913,
       "norm_label": "profile"
     },
     {
@@ -47835,7 +47844,7 @@
       "source_file": "packages/policy/src/index.ts",
       "source_location": "L1",
       "id": "packages_policy_src_index_ts",
-      "community": 872,
+      "community": 913,
       "norm_label": "index.ts"
     },
     {
@@ -48006,7 +48015,7 @@
       "source_file": "packages/runway-control/tests/taskGraph.test.ts",
       "source_location": "L1",
       "id": "packages_runway_control_tests_taskgraph_test_ts",
-      "community": 243,
+      "community": 3,
       "norm_label": "taskgraph.test.ts"
     },
     {
@@ -48015,7 +48024,7 @@
       "source_file": "packages/runway-control/tests/scheduler.test.ts",
       "source_location": "L1",
       "id": "packages_runway_control_tests_scheduler_test_ts",
-      "community": 243,
+      "community": 3,
       "norm_label": "scheduler.test.ts"
     },
     {
@@ -48024,7 +48033,7 @@
       "source_file": "packages/runway-control/tests/scheduler.test.ts",
       "source_location": "L6",
       "id": "tests_scheduler_test_graph",
-      "community": 243,
+      "community": 3,
       "norm_label": "graph"
     },
     {
@@ -48033,7 +48042,7 @@
       "source_file": "packages/runway-control/tests/mergeApply.test.ts",
       "source_location": "L1",
       "id": "packages_runway_control_tests_mergeapply_test_ts",
-      "community": 243,
+      "community": 3,
       "norm_label": "mergeapply.test.ts"
     },
     {
@@ -48042,7 +48051,7 @@
       "source_file": "packages/runway-control/tests/mergeApply.test.ts",
       "source_location": "L11",
       "id": "tests_mergeapply_test_merged",
-      "community": 243,
+      "community": 3,
       "norm_label": "merged"
     },
     {
@@ -48051,7 +48060,7 @@
       "source_file": "packages/runway-control/tests/barriers.test.ts",
       "source_location": "L1",
       "id": "packages_runway_control_tests_barriers_test_ts",
-      "community": 243,
+      "community": 3,
       "norm_label": "barriers.test.ts"
     },
     {
@@ -48060,7 +48069,7 @@
       "source_file": "packages/runway-control/tests/barriers.test.ts",
       "source_location": "L6",
       "id": "tests_barriers_test_graph",
-      "community": 243,
+      "community": 3,
       "norm_label": "graph"
     },
     {
@@ -48069,7 +48078,7 @@
       "source_file": "packages/runway-control/tests/barriers.test.ts",
       "source_location": "L10",
       "id": "tests_barriers_test_wave",
-      "community": 243,
+      "community": 3,
       "norm_label": "wave"
     },
     {
@@ -48078,7 +48087,7 @@
       "source_file": "packages/runway-control/tests/barriers.test.ts",
       "source_location": "L20",
       "id": "tests_barriers_test_projection",
-      "community": 243,
+      "community": 3,
       "norm_label": "projection"
     },
     {
@@ -48087,7 +48096,7 @@
       "source_file": "packages/runway-control/tests/recovery.test.ts",
       "source_location": "L1",
       "id": "packages_runway_control_tests_recovery_test_ts",
-      "community": 243,
+      "community": 3,
       "norm_label": "recovery.test.ts"
     },
     {
@@ -48096,7 +48105,7 @@
       "source_file": "packages/runway-control/tests/recovery.test.ts",
       "source_location": "L22",
       "id": "tests_recovery_test_task",
-      "community": 243,
+      "community": 3,
       "norm_label": "task"
     },
     {
@@ -48150,7 +48159,7 @@
       "source_file": "packages/runway-control/src/scheduler.ts",
       "source_location": "L4",
       "id": "src_scheduler_createtaskgraph",
-      "community": 243,
+      "community": 23,
       "norm_label": "createtaskgraph()"
     },
     {
@@ -48159,7 +48168,7 @@
       "source_file": "packages/runway-control/src/scheduler.ts",
       "source_location": "L17",
       "id": "src_scheduler_assertacyclic",
-      "community": 243,
+      "community": 23,
       "norm_label": "assertacyclic()"
     },
     {
@@ -48321,7 +48330,7 @@
       "source_file": "packages/runway-control/src/index.ts",
       "source_location": "L1",
       "id": "packages_runway_control_src_index_ts",
-      "community": 243,
+      "community": 3,
       "norm_label": "index.ts"
     },
     {
@@ -48330,7 +48339,7 @@
       "source_file": "skills/kws-codex-plan-executor/evals/check_execution.py",
       "source_location": "L1",
       "id": "skills_kws_codex_plan_executor_evals_check_execution_py",
-      "community": 16,
+      "community": 933,
       "norm_label": "check_execution.py"
     },
     {
@@ -48339,7 +48348,7 @@
       "source_file": "skills/kws-codex-plan-executor/evals/check_execution.py",
       "source_location": "L17",
       "id": "evals_check_execution_run",
-      "community": 16,
+      "community": 933,
       "norm_label": "run()"
     },
     {
@@ -48348,7 +48357,7 @@
       "source_file": "skills/kws-codex-plan-executor/evals/check_execution.py",
       "source_location": "L21",
       "id": "evals_check_execution_changed_files",
-      "community": 16,
+      "community": 933,
       "norm_label": "changed_files()"
     },
     {
@@ -48357,7 +48366,7 @@
       "source_file": "skills/kws-codex-plan-executor/evals/check_execution.py",
       "source_location": "L30",
       "id": "evals_check_execution_changed_files_for_state",
-      "community": 16,
+      "community": 933,
       "norm_label": "changed_files_for_state()"
     },
     {
@@ -48366,7 +48375,7 @@
       "source_file": "skills/kws-codex-plan-executor/evals/check_execution.py",
       "source_location": "L49",
       "id": "evals_check_execution_task_statuses_complete",
-      "community": 16,
+      "community": 933,
       "norm_label": "task_statuses_complete()"
     },
     {
@@ -48375,7 +48384,7 @@
       "source_file": "skills/kws-codex-plan-executor/evals/check_execution.py",
       "source_location": "L65",
       "id": "evals_check_execution_select_state_path",
-      "community": 16,
+      "community": 933,
       "norm_label": "select_state_path()"
     },
     {
@@ -48384,7 +48393,7 @@
       "source_file": "skills/kws-codex-plan-executor/evals/check_execution.py",
       "source_location": "L95",
       "id": "evals_check_execution_main",
-      "community": 16,
+      "community": 933,
       "norm_label": "main()"
     },
     {
@@ -48609,7 +48618,7 @@
       "source_file": "skills/kws-codex-plan-executor/evals/check_parse_plan.py",
       "source_location": "L1",
       "id": "skills_kws_codex_plan_executor_evals_check_parse_plan_py",
-      "community": 16,
+      "community": 945,
       "norm_label": "check_parse_plan.py"
     },
     {
@@ -48618,7 +48627,7 @@
       "source_file": "skills/kws-codex-plan-executor/evals/check_parse_plan.py",
       "source_location": "L16",
       "id": "evals_check_parse_plan_run",
-      "community": 16,
+      "community": 945,
       "norm_label": "run()"
     },
     {
@@ -48627,7 +48636,7 @@
       "source_file": "skills/kws-codex-plan-executor/evals/check_parse_plan.py",
       "source_location": "L20",
       "id": "evals_check_parse_plan_main",
-      "community": 16,
+      "community": 945,
       "norm_label": "main()"
     },
     {
@@ -50679,7 +50688,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L26",
       "id": "templates_headless_output_schema_properties_state_path",
-      "community": 491,
+      "community": 950,
       "norm_label": "state_path"
     },
     {
@@ -50688,7 +50697,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L27",
       "id": "templates_headless_output_schema_state_path_type",
-      "community": 491,
+      "community": 950,
       "norm_label": "type"
     },
     {
@@ -50697,7 +50706,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L28",
       "id": "templates_headless_output_schema_state_path_minlength",
-      "community": 491,
+      "community": 950,
       "norm_label": "minlength"
     },
     {
@@ -50733,7 +50742,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L34",
       "id": "templates_headless_output_schema_properties_changed_files",
-      "community": 491,
+      "community": 569,
       "norm_label": "changed_files"
     },
     {
@@ -50742,7 +50751,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L35",
       "id": "templates_headless_output_schema_changed_files_type",
-      "community": 491,
+      "community": 569,
       "norm_label": "type"
     },
     {
@@ -50868,7 +50877,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L59",
       "id": "templates_headless_output_schema_properties_open_gaps",
-      "community": 569,
+      "community": 491,
       "norm_label": "open_gaps"
     },
     {
@@ -50877,7 +50886,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L60",
       "id": "templates_headless_output_schema_open_gaps_type",
-      "community": 569,
+      "community": 491,
       "norm_label": "type"
     },
     {
@@ -51021,7 +51030,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L83",
       "id": "templates_headless_output_schema_properties_next_action",
-      "community": 929,
+      "community": 491,
       "norm_label": "next_action"
     },
     {
@@ -51030,7 +51039,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L84",
       "id": "templates_headless_output_schema_next_action_type",
-      "community": 929,
+      "community": 491,
       "norm_label": "type"
     },
     {
@@ -51039,7 +51048,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L85",
       "id": "templates_headless_output_schema_next_action_minlength",
-      "community": 929,
+      "community": 491,
       "norm_label": "minlength"
     },
     {
@@ -54045,61 +54054,88 @@
       "source_file": "apps/api/tests/api.test.ts",
       "source_location": "L1",
       "id": "apps_api_tests_api_test_ts",
-      "community": 1,
+      "community": 547,
       "norm_label": "api.test.ts"
     },
     {
       "label": "handler",
       "file_type": "code",
       "source_file": "apps/api/tests/api.test.ts",
-      "source_location": "L8",
+      "source_location": "L10",
       "id": "tests_api_test_handler",
-      "community": 1,
+      "community": 547,
       "norm_label": "handler"
     },
     {
       "label": "get()",
       "file_type": "code",
       "source_file": "apps/api/tests/api.test.ts",
-      "source_location": "L10",
+      "source_location": "L12",
       "id": "tests_api_test_get",
-      "community": 1,
+      "community": 547,
       "norm_label": "get()"
     },
     {
       "label": "root",
       "file_type": "code",
       "source_file": "apps/api/tests/api.test.ts",
-      "source_location": "L39",
+      "source_location": "L41",
       "id": "tests_api_test_root",
-      "community": 1,
+      "community": 547,
       "norm_label": "root"
     },
     {
       "label": "realHandler",
       "file_type": "code",
       "source_file": "apps/api/tests/api.test.ts",
-      "source_location": "L41",
+      "source_location": "L43",
       "id": "tests_api_test_realhandler",
-      "community": 1,
+      "community": 547,
       "norm_label": "realhandler"
+    },
+    {
+      "label": "inspected",
+      "file_type": "code",
+      "source_file": "apps/api/tests/api.test.ts",
+      "source_location": "L87",
+      "id": "tests_api_test_inspected",
+      "community": 547,
+      "norm_label": "inspected"
+    },
+    {
+      "label": "expectedCheckpointRefs",
+      "file_type": "code",
+      "source_file": "apps/api/tests/api.test.ts",
+      "source_location": "L91",
+      "id": "tests_api_test_expectedcheckpointrefs",
+      "community": 547,
+      "norm_label": "expectedcheckpointrefs"
+    },
+    {
+      "label": "consoleDetail",
+      "file_type": "code",
+      "source_file": "apps/api/tests/api.test.ts",
+      "source_location": "L97",
+      "id": "tests_api_test_consoledetail",
+      "community": 547,
+      "norm_label": "consoledetail"
     },
     {
       "label": "state",
       "file_type": "code",
       "source_file": "apps/api/tests/api.test.ts",
-      "source_location": "L76",
+      "source_location": "L125",
       "id": "tests_api_test_state",
-      "community": 1,
+      "community": 547,
       "norm_label": "state"
     },
     {
       "label": "initSourceCheckout()",
       "file_type": "code",
       "source_file": "apps/api/tests/api.test.ts",
-      "source_location": "L368",
+      "source_location": "L417",
       "id": "tests_api_test_initsourcecheckout",
-      "community": 1,
+      "community": 547,
       "norm_label": "initsourcecheckout()"
     },
     {
@@ -54394,7 +54430,7 @@
       "label": "tryReadRunStateV2()",
       "file_type": "code",
       "source_file": "apps/api/src/server.ts",
-      "source_location": "L259",
+      "source_location": "L260",
       "id": "src_server_tryreadrunstatev2",
       "community": 1,
       "norm_label": "tryreadrunstatev2()"
@@ -54403,7 +54439,7 @@
       "label": "runStatusFromV2()",
       "file_type": "code",
       "source_file": "apps/api/src/server.ts",
-      "source_location": "L297",
+      "source_location": "L298",
       "id": "src_server_runstatusfromv2",
       "community": 1,
       "norm_label": "runstatusfromv2()"
@@ -54412,7 +54448,7 @@
       "label": "statusFromEvents()",
       "file_type": "code",
       "source_file": "apps/api/src/server.ts",
-      "source_location": "L303",
+      "source_location": "L304",
       "id": "src_server_statusfromevents",
       "community": 1,
       "norm_label": "statusfromevents()"
@@ -54421,7 +54457,7 @@
       "label": "safeWaveFromEvents()",
       "file_type": "code",
       "source_file": "apps/api/src/server.ts",
-      "source_location": "L310",
+      "source_location": "L311",
       "id": "src_server_safewavefromevents",
       "community": 1,
       "norm_label": "safewavefromevents()"
@@ -54430,7 +54466,7 @@
       "label": "filterEventsByTask()",
       "file_type": "code",
       "source_file": "apps/api/src/server.ts",
-      "source_location": "L316",
+      "source_location": "L317",
       "id": "src_server_filtereventsbytask",
       "community": 1,
       "norm_label": "filtereventsbytask()"
@@ -54439,7 +54475,7 @@
       "label": "eventMatchesTask()",
       "file_type": "code",
       "source_file": "apps/api/src/server.ts",
-      "source_location": "L321",
+      "source_location": "L322",
       "id": "src_server_eventmatchestask",
       "community": 1,
       "norm_label": "eventmatchestask()"
@@ -54448,7 +54484,7 @@
       "label": "objectValue()",
       "file_type": "code",
       "source_file": "apps/api/src/server.ts",
-      "source_location": "L338",
+      "source_location": "L339",
       "id": "src_server_objectvalue",
       "community": 1,
       "norm_label": "objectvalue()"
@@ -54457,7 +54493,7 @@
       "label": "port",
       "file_type": "code",
       "source_file": "apps/api/src/server.ts",
-      "source_location": "L343",
+      "source_location": "L344",
       "id": "src_server_port",
       "community": 1,
       "norm_label": "port"
@@ -54666,7 +54702,7 @@
       "source_file": "apps/console/src/App.tsx",
       "source_location": "L83",
       "id": "src_app_eventtimeline",
-      "community": 4,
+      "community": 917,
       "norm_label": "eventtimeline()"
     },
     {
@@ -54774,7 +54810,7 @@
       "source_file": "apps/console/src/main.tsx",
       "source_location": "L1",
       "id": "apps_console_src_main_tsx",
-      "community": 239,
+      "community": 917,
       "norm_label": "main.tsx"
     },
     {
@@ -54783,7 +54819,7 @@
       "source_file": "apps/console/src/main.tsx",
       "source_location": "L5",
       "id": "src_main_root",
-      "community": 239,
+      "community": 917,
       "norm_label": "root"
     },
     {
@@ -54792,7 +54828,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L1",
       "id": "apps_console_src_uimodel_ts",
-      "community": 4,
+      "community": 795,
       "norm_label": "uimodel.ts"
     },
     {
@@ -54801,7 +54837,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L3",
       "id": "src_uimodel_trustverdict",
-      "community": 4,
+      "community": 929,
       "norm_label": "trustverdict"
     },
     {
@@ -54810,7 +54846,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L4",
       "id": "src_uimodel_applystate",
-      "community": 4,
+      "community": 929,
       "norm_label": "applystate"
     },
     {
@@ -54819,7 +54855,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L6",
       "id": "src_uimodel_consoleevent",
-      "community": 4,
+      "community": 795,
       "norm_label": "consoleevent"
     },
     {
@@ -54828,7 +54864,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L16",
       "id": "src_uimodel_consoletask",
-      "community": 4,
+      "community": 795,
       "norm_label": "consoletask"
     },
     {
@@ -54837,7 +54873,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L24",
       "id": "src_uimodel_consolefailure",
-      "community": 4,
+      "community": 795,
       "norm_label": "consolefailure"
     },
     {
@@ -54846,7 +54882,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L31",
       "id": "src_uimodel_consoledecisionpacket",
-      "community": 4,
+      "community": 795,
       "norm_label": "consoledecisionpacket"
     },
     {
@@ -54855,7 +54891,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L39",
       "id": "src_uimodel_consoleapplystatus",
-      "community": 4,
+      "community": 795,
       "norm_label": "consoleapplystatus"
     },
     {
@@ -54864,7 +54900,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L49",
       "id": "src_uimodel_rundetailsectionid",
-      "community": 4,
+      "community": 795,
       "norm_label": "rundetailsectionid"
     },
     {
@@ -54873,7 +54909,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L62",
       "id": "src_uimodel_realrundetailresponse",
-      "community": 4,
+      "community": 795,
       "norm_label": "realrundetailresponse"
     },
     {
@@ -54918,7 +54954,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L160",
       "id": "src_uimodel_consolesection",
-      "community": 4,
+      "community": 795,
       "norm_label": "consolesection"
     },
     {
@@ -54927,7 +54963,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L173",
       "id": "src_uimodel_consoleuimodel",
-      "community": 4,
+      "community": 795,
       "norm_label": "consoleuimodel"
     },
     {
@@ -54936,7 +54972,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L181",
       "id": "src_uimodel_democonsolesnapshot",
-      "community": 4,
+      "community": 858,
       "norm_label": "democonsolesnapshot"
     },
     {
@@ -54945,7 +54981,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L343",
       "id": "src_uimodel_consolesections",
-      "community": 4,
+      "community": 795,
       "norm_label": "consolesections"
     },
     {
@@ -54954,7 +54990,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L354",
       "id": "src_uimodel_event",
-      "community": 4,
+      "community": 929,
       "norm_label": "event()"
     },
     {
@@ -54963,7 +54999,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L373",
       "id": "src_uimodel_buildconsoleuimodel",
-      "community": 4,
+      "community": 858,
       "norm_label": "buildconsoleuimodel()"
     },
     {
@@ -54972,7 +55008,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L396",
       "id": "src_uimodel_buildrundetailmodel",
-      "community": 4,
+      "community": 917,
       "norm_label": "buildrundetailmodel()"
     },
     {
@@ -54981,7 +55017,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L436",
       "id": "src_uimodel_realrunsummarytoconsolerun",
-      "community": 4,
+      "community": 929,
       "norm_label": "realrunsummarytoconsolerun()"
     },
     {
@@ -54990,7 +55026,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L464",
       "id": "src_uimodel_realrundetailtoconsolerun",
-      "community": 4,
+      "community": 929,
       "norm_label": "realrundetailtoconsolerun()"
     },
     {
@@ -54999,7 +55035,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L527",
       "id": "src_uimodel_consoleruntorealdetail",
-      "community": 4,
+      "community": 917,
       "norm_label": "consoleruntorealdetail()"
     },
     {
@@ -55008,7 +55044,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L560",
       "id": "src_uimodel_eventsfromrealdetail",
-      "community": 4,
+      "community": 929,
       "norm_label": "eventsfromrealdetail()"
     },
     {
@@ -55017,7 +55053,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L584",
       "id": "src_uimodel_consolestatus",
-      "community": 4,
+      "community": 929,
       "norm_label": "consolestatus()"
     },
     {
@@ -55026,7 +55062,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L595",
       "id": "src_uimodel_trustscore",
-      "community": 4,
+      "community": 929,
       "norm_label": "trustscore()"
     },
     {
@@ -55035,7 +55071,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L607",
       "id": "src_uimodel_consoleoutcome",
-      "community": 4,
+      "community": 795,
       "norm_label": "consoleoutcome()"
     },
     {
@@ -55044,7 +55080,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L612",
       "id": "src_uimodel_stringvalue",
-      "community": 4,
+      "community": 795,
       "norm_label": "stringvalue()"
     },
     {
@@ -55053,7 +55089,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L616",
       "id": "src_uimodel_stringarray",
-      "community": 4,
+      "community": 795,
       "norm_label": "stringarray()"
     },
     {
@@ -55062,7 +55098,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L620",
       "id": "src_uimodel_tasktitle",
-      "community": 4,
+      "community": 795,
       "norm_label": "tasktitle()"
     },
     {
@@ -55071,7 +55107,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L630",
       "id": "src_uimodel_taskstatus",
-      "community": 4,
+      "community": 795,
       "norm_label": "taskstatus()"
     },
     {
@@ -55080,7 +55116,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L635",
       "id": "src_uimodel_providerowner",
-      "community": 4,
+      "community": 795,
       "norm_label": "providerowner()"
     },
     {
@@ -55089,7 +55125,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L640",
       "id": "src_uimodel_checkpointref",
-      "community": 4,
+      "community": 795,
       "norm_label": "checkpointref()"
     },
     {
@@ -55098,7 +55134,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L646",
       "id": "src_uimodel_hasdirtysourceblock",
-      "community": 4,
+      "community": 929,
       "norm_label": "hasdirtysourceblock()"
     },
     {
@@ -55107,7 +55143,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L651",
       "id": "src_uimodel_providerlogsummaryfromattempts",
-      "community": 4,
+      "community": 917,
       "norm_label": "providerlogsummaryfromattempts()"
     },
     {
@@ -55116,7 +55152,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L661",
       "id": "src_uimodel_isproviderlogsummary",
-      "community": 4,
+      "community": 917,
       "norm_label": "isproviderlogsummary()"
     },
     {
@@ -55125,7 +55161,7 @@
       "source_file": "apps/console/src/uiModel.ts",
       "source_location": "L676",
       "id": "src_uimodel_renderconsolesnapshot",
-      "community": 4,
+      "community": 858,
       "norm_label": "renderconsolesnapshot()"
     },
     {
@@ -55134,7 +55170,7 @@
       "source_file": "apps/console/src/uiModel.test.ts",
       "source_location": "L1",
       "id": "apps_console_src_uimodel_test_ts",
-      "community": 4,
+      "community": 858,
       "norm_label": "uimodel.test.ts"
     },
     {
@@ -55143,7 +55179,7 @@
       "source_file": "apps/console/src/uiModel.test.ts",
       "source_location": "L12",
       "id": "src_uimodel_test_model",
-      "community": 4,
+      "community": 858,
       "norm_label": "model"
     },
     {
@@ -55152,8 +55188,17 @@
       "source_file": "apps/console/src/uiModel.test.ts",
       "source_location": "L44",
       "id": "src_uimodel_test_snapshot",
-      "community": 4,
+      "community": 858,
       "norm_label": "snapshot"
+    },
+    {
+      "label": "run",
+      "file_type": "code",
+      "source_file": "apps/console/src/uiModel.test.ts",
+      "source_location": "L266",
+      "id": "src_uimodel_test_run",
+      "community": 858,
+      "norm_label": "run"
     },
     {
       "label": "PLANS.md",
@@ -58975,7 +59020,7 @@
       "label": "code:bash (rg -n \"components/agentlens|python -m pytest|AgentLens backe)",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L126",
+      "source_location": "L129",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_1",
       "community": 419,
       "norm_label": "code:bash (rg -n \"components/agentlens|python -m pytest|agentlens backe)"
@@ -58984,7 +59029,7 @@
       "label": "Task 2: Tighten Legacy Check Coverage",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L138",
+      "source_location": "L141",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_task_2_tighten_legacy_check_coverage",
       "community": 419,
       "norm_label": "task 2: tighten legacy check coverage"
@@ -58993,7 +59038,7 @@
       "label": "code:bash (bun test packages/testkit/tests/legacyCheck.test.ts)",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L158",
+      "source_location": "L161",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_2",
       "community": 419,
       "norm_label": "code:bash (bun test packages/testkit/tests/legacycheck.test.ts)"
@@ -59002,7 +59047,7 @@
       "label": "Task 3: Confirm Shared CLI/API/Console Projection Parity",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L167",
+      "source_location": "L170",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_task_3_confirm_shared_cli_api_console_projection_parity",
       "community": 419,
       "norm_label": "task 3: confirm shared cli/api/console projection parity"
@@ -59011,7 +59056,7 @@
       "label": "code:bash (bun test packages/orchestrator/tests/runCommandsV2.test.ts a)",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L194",
+      "source_location": "L197",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_3",
       "community": 419,
       "norm_label": "code:bash (bun test packages/orchestrator/tests/runcommandsv2.test.ts a)"
@@ -59020,7 +59065,7 @@
       "label": "Task 4: Audit KWS Executor Telemetry Before Python Deletion",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L202",
+      "source_location": "L205",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_task_4_audit_kws_executor_telemetry_before_python_deletion",
       "community": 419,
       "norm_label": "task 4: audit kws executor telemetry before python deletion"
@@ -59029,7 +59074,7 @@
       "label": "code:bash (rg -n \"agentlens run-open|agentlens event append|agentlens r)",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L229",
+      "source_location": "L232",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_4",
       "community": 419,
       "norm_label": "code:bash (rg -n \"agentlens run-open|agentlens event append|agentlens r)"
@@ -59038,7 +59083,7 @@
       "label": "Task 5: Delete Legacy Python AgentLens",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L239",
+      "source_location": "L242",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_task_5_delete_legacy_python_agentlens",
       "community": 419,
       "norm_label": "task 5: delete legacy python agentlens"
@@ -59047,7 +59092,7 @@
       "label": "code:bash (rg -n \"components/agentlens|AgentLens backend|python -m pyte)",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L258",
+      "source_location": "L261",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_5",
       "community": 419,
       "norm_label": "code:bash (rg -n \"components/agentlens|agentlens backend|python -m pyte)"
@@ -59056,7 +59101,7 @@
       "label": "code:bash (bun run check)",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L270",
+      "source_location": "L273",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_6",
       "community": 419,
       "norm_label": "code:bash (bun run check)"
@@ -59065,7 +59110,7 @@
       "label": "Task 6: Refresh Graphify And Close Documentation",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L283",
+      "source_location": "L286",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_task_6_refresh_graphify_and_close_documentation",
       "community": 419,
       "norm_label": "task 6: refresh graphify and close documentation"
@@ -59074,7 +59119,7 @@
       "label": "code:bash (git rev-parse HEAD)",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L301",
+      "source_location": "L304",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_7",
       "community": 419,
       "norm_label": "code:bash (git rev-parse head)"
@@ -59083,7 +59128,7 @@
       "label": "Final Verification Set",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L309",
+      "source_location": "L312",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_final_verification_set",
       "community": 675,
       "norm_label": "final verification set"
@@ -59092,7 +59137,7 @@
       "label": "code:bash (bun run check)",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L314",
+      "source_location": "L317",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_8",
       "community": 675,
       "norm_label": "code:bash (bun run check)"
@@ -59101,7 +59146,7 @@
       "label": "code:bash (cd native/kernel && cargo fmt --all -- --check && cargo clip)",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L325",
+      "source_location": "L328",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_9",
       "community": 675,
       "norm_label": "code:bash (cd native/kernel && cargo fmt --all -- --check && cargo clip)"
@@ -59110,7 +59155,7 @@
       "label": "code:bash (cd skills/kws-codex-plan-executor && ./evals/run.sh)",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L332",
+      "source_location": "L335",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_10",
       "community": 675,
       "norm_label": "code:bash (cd skills/kws-codex-plan-executor && ./evals/run.sh)"
@@ -59119,7 +59164,7 @@
       "label": "Self-Review Checklist",
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
-      "source_location": "L337",
+      "source_location": "L340",
       "id": "plans_2026_05_22_waygent_lens_no_python_observability_self_review_checklist",
       "community": 482,
       "norm_label": "self-review checklist"
@@ -71964,7 +72009,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L1",
       "id": "components_agentlens_docs_plan_2026_05_19_agentlens_dashboard_md",
-      "community": 672,
+      "community": 833,
       "norm_label": "2026-05-19-agentlens-dashboard.md"
     },
     {
@@ -71973,7 +72018,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L1",
       "id": "plan_2026_05_19_agentlens_dashboard_agentlens_dashboard_implementation_plan",
-      "community": 672,
+      "community": 833,
       "norm_label": "agentlens dashboard implementation plan"
     },
     {
@@ -72036,7 +72081,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L89",
       "id": "plan_2026_05_19_agentlens_dashboard_m0_project_skeleton",
-      "community": 672,
+      "community": 188,
       "norm_label": "m0 \u2014 project skeleton"
     },
     {
@@ -72126,7 +72171,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L190",
       "id": "plan_2026_05_19_agentlens_dashboard_task_2_implement_web_settings_py_with_pydantic_settings",
-      "community": 672,
+      "community": 188,
       "norm_label": "task 2: implement `web/settings.py` with pydantic-settings"
     },
     {
@@ -72135,7 +72180,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L200",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_11",
-      "community": 672,
+      "community": 188,
       "norm_label": "code:python (\"\"\"tests for agentlens.web.settings.servesettings.\"\"\")"
     },
     {
@@ -72144,7 +72189,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L246",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_12",
-      "community": 672,
+      "community": 188,
       "norm_label": "code:bash (cd agentlens && .venv/bin/python -m pytest tests/unit/test_w)"
     },
     {
@@ -72153,7 +72198,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L255",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_13",
-      "community": 672,
+      "community": 188,
       "norm_label": "code:python (\"\"\"runtime configuration for ``agentlens serve``.)"
     },
     {
@@ -72162,7 +72207,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L312",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_14",
-      "community": 672,
+      "community": 188,
       "norm_label": "code:bash (cd agentlens && .venv/bin/python -m pytest tests/unit/test_w)"
     },
     {
@@ -72171,7 +72216,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L319",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_15",
-      "community": 672,
+      "community": 188,
       "norm_label": "code:bash (git add agentlens/src/agentlens/web/settings.py agentlens/te)"
     },
     {
@@ -72279,7 +72324,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L518",
       "id": "plan_2026_05_19_agentlens_dashboard_m1_common_infrastructure",
-      "community": 105,
+      "community": 833,
       "norm_label": "m1 \u2014 common infrastructure"
     },
     {
@@ -72432,7 +72477,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L834",
       "id": "plan_2026_05_19_agentlens_dashboard_task_6_web_deps_py_agentlens_home_dependency",
-      "community": 105,
+      "community": 833,
       "norm_label": "task 6: `web/deps.py` \u2014 agentlens_home dependency"
     },
     {
@@ -72441,7 +72486,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L844",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_40",
-      "community": 105,
+      "community": 833,
       "norm_label": "code:python (\"\"\"tests for agentlens.web.deps.\"\"\")"
     },
     {
@@ -72450,7 +72495,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L871",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_41",
-      "community": 105,
+      "community": 833,
       "norm_label": "code:bash (cd agentlens && .venv/bin/python -m pytest tests/unit/test_w)"
     },
     {
@@ -72459,7 +72504,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L880",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_42",
-      "community": 105,
+      "community": 833,
       "norm_label": "code:python (\"\"\"fastapi dependencies for the web layer (spec \u00a74, \u00a75).\"\"\")"
     },
     {
@@ -72468,7 +72513,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L904",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_43",
-      "community": 105,
+      "community": 833,
       "norm_label": "code:bash (cd agentlens && .venv/bin/python -m pytest tests/unit/test_w)"
     },
     {
@@ -72477,7 +72522,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L911",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_44",
-      "community": 105,
+      "community": 833,
       "norm_label": "code:bash (git add agentlens/src/agentlens/web/deps.py agentlens/tests/)"
     },
     {
@@ -72486,7 +72531,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L918",
       "id": "plan_2026_05_19_agentlens_dashboard_m2_read_api_routers",
-      "community": 858,
+      "community": 119,
       "norm_label": "m2 \u2014 read api routers"
     },
     {
@@ -72639,7 +72684,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L1230",
       "id": "plan_2026_05_19_agentlens_dashboard_task_9_run_detail_endpoint_manifest_seal_verify",
-      "community": 858,
+      "community": 119,
       "norm_label": "task 9: run detail endpoint + manifest_seal + verify"
     },
     {
@@ -72648,7 +72693,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L1242",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_59",
-      "community": 858,
+      "community": 119,
       "norm_label": "code:python (\"\"\"tests for /api/v1/runs/{id} and /api/v1/runs/{id}/verify.)"
     },
     {
@@ -72657,7 +72702,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L1294",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_60",
-      "community": 858,
+      "community": 119,
       "norm_label": "code:bash (cd agentlens && .venv/bin/python -m pytest tests/integration)"
     },
     {
@@ -72666,7 +72711,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L1303",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_61",
-      "community": 858,
+      "community": 119,
       "norm_label": "code:python (import hashlib)"
     },
     {
@@ -72675,7 +72720,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L1376",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_62",
-      "community": 858,
+      "community": 119,
       "norm_label": "code:bash (cd agentlens && .venv/bin/python -m pytest tests/integration)"
     },
     {
@@ -72684,7 +72729,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L1383",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_63",
-      "community": 858,
+      "community": 119,
       "norm_label": "code:bash (git add agentlens/src/agentlens/web/routers/runs.py agentlen)"
     },
     {
@@ -72693,7 +72738,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L1390",
       "id": "plan_2026_05_19_agentlens_dashboard_task_10_ndjson_events_stream_endpoint",
-      "community": 913,
+      "community": 119,
       "norm_label": "task 10: ndjson events stream endpoint"
     },
     {
@@ -72702,7 +72747,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L1400",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_64",
-      "community": 913,
+      "community": 119,
       "norm_label": "code:python (\"\"\"tests for /api/v1/runs/{id}/events (ndjson).\"\"\")"
     },
     {
@@ -72711,7 +72756,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L1452",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_65",
-      "community": 913,
+      "community": 119,
       "norm_label": "code:bash (cd agentlens && .venv/bin/python -m pytest tests/integration)"
     },
     {
@@ -72720,7 +72765,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L1461",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_66",
-      "community": 913,
+      "community": 119,
       "norm_label": "code:python (from fastapi.responses import streamingresponse)"
     },
     {
@@ -72729,7 +72774,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L1498",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_67",
-      "community": 913,
+      "community": 119,
       "norm_label": "code:bash (cd agentlens && .venv/bin/python -m pytest tests/integration)"
     },
     {
@@ -72738,7 +72783,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L1505",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_68",
-      "community": 913,
+      "community": 119,
       "norm_label": "code:bash (git add agentlens/src/agentlens/web/routers/runs.py agentlen)"
     },
     {
@@ -73836,7 +73881,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L3779",
       "id": "plan_2026_05_19_agentlens_dashboard_task_25_runs_list_route_table_with_filters_and_false_success_highlight",
-      "community": 788,
+      "community": 189,
       "norm_label": "task 25: runs list route \u2014 table with filters and false-success highlight"
     },
     {
@@ -73845,7 +73890,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L3791",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_173",
-      "community": 788,
+      "community": 189,
       "norm_label": "code:ts (export function relativefromnow(iso: string | null | undefin)"
     },
     {
@@ -73854,7 +73899,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L3815",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_174",
-      "community": 788,
+      "community": 189,
       "norm_label": "code:tsx (import { link } from \"react-router-dom\";)"
     },
     {
@@ -73863,7 +73908,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L3867",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_175",
-      "community": 788,
+      "community": 189,
       "norm_label": "code:tsx (import { button } from \"@/components/ui/button\";)"
     },
     {
@@ -73872,7 +73917,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L3913",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_176",
-      "community": 788,
+      "community": 189,
       "norm_label": "code:tsx ({ path: \"/\", element: <runslistroute /> },)"
     },
     {
@@ -73881,7 +73926,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L3917",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_177",
-      "community": 788,
+      "community": 189,
       "norm_label": "code:tsx (import { runslistroute } from \"./routes/runs-list\";)"
     },
     {
@@ -73890,7 +73935,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L3923",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_178",
-      "community": 788,
+      "community": 189,
       "norm_label": "code:bash (cd agentlens/web && npm run build)"
     },
     {
@@ -73899,7 +73944,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L3929",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_179",
-      "community": 788,
+      "community": 189,
       "norm_label": "code:bash (git add agentlens/web/src/routes/runs-list.tsx agentlens/web)"
     },
     {
@@ -73989,7 +74034,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L4186",
       "id": "plan_2026_05_19_agentlens_dashboard_task_28_run_detail_route_workspace_route_doctor_footer",
-      "community": 772,
+      "community": 189,
       "norm_label": "task 28: run detail route + workspace route + doctor footer"
     },
     {
@@ -73998,7 +74043,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L4200",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_187",
-      "community": 772,
+      "community": 189,
       "norm_label": "code:tsx (import { usestate } from \"react\";)"
     },
     {
@@ -74007,7 +74052,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L4292",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_188",
-      "community": 772,
+      "community": 189,
       "norm_label": "code:tsx (import { useparams } from \"react-router-dom\";)"
     },
     {
@@ -74016,7 +74061,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L4322",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_189",
-      "community": 772,
+      "community": 189,
       "norm_label": "code:tsx (import { usedoctor } from \"@/api/doctor\";)"
     },
     {
@@ -74025,7 +74070,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L4341",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_190",
-      "community": 772,
+      "community": 189,
       "norm_label": "code:tsx (import { badge } from \"@/components/ui/badge\";)"
     },
     {
@@ -74034,7 +74079,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L4354",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_191",
-      "community": 772,
+      "community": 189,
       "norm_label": "code:tsx (import { doctorfooter } from \"@/components/doctor-footer\";)"
     },
     {
@@ -74043,7 +74088,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L4366",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_192",
-      "community": 772,
+      "community": 189,
       "norm_label": "code:tsx (import { rundetailroute } from \"./routes/run-detail\";)"
     },
     {
@@ -74052,7 +74097,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L4371",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_193",
-      "community": 772,
+      "community": 189,
       "norm_label": "code:tsx ({ path: \"/runs/:runid\", element: <rundetailroute /> },)"
     },
     {
@@ -74061,7 +74106,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L4378",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_194",
-      "community": 772,
+      "community": 189,
       "norm_label": "code:bash (cd agentlens/web && npm run build)"
     },
     {
@@ -74070,7 +74115,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L4384",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_195",
-      "community": 772,
+      "community": 189,
       "norm_label": "code:bash (git add agentlens/web/src/routes/ agentlens/web/src/componen)"
     },
     {
@@ -74439,7 +74484,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L5019",
       "id": "plan_2026_05_19_agentlens_dashboard_final_verification",
-      "community": 672,
+      "community": 833,
       "norm_label": "final verification"
     },
     {
@@ -74448,7 +74493,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L5023",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_228",
-      "community": 672,
+      "community": 833,
       "norm_label": "code:bash (cd agentlens)"
     },
     {
@@ -74457,7 +74502,7 @@
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L5038",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_229",
-      "community": 672,
+      "community": 833,
       "norm_label": "code:bash (pipx install --force ./dist/agentlens-0.1.0-py3-none-any.whl)"
     },
     {
@@ -78444,7 +78489,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L13",
       "id": "plan_agentlens_v0_tasks_phase_1_m0_contract_freeze",
-      "community": 173,
+      "community": 953,
       "norm_label": "phase 1: m0 contract freeze"
     },
     {
@@ -78453,7 +78498,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L15",
       "id": "plan_agentlens_v0_tasks_task_0_m0_docs_contract_security_integrations_cli",
-      "community": 173,
+      "community": 953,
       "norm_label": "task 0: m0 docs \u2014 contract/security/integrations/cli"
     },
     {
@@ -78489,7 +78534,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L74",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_74",
-      "community": 948,
+      "community": 173,
       "norm_label": "acceptance criteria"
     },
     {
@@ -78498,7 +78543,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L75",
       "id": "plan_agentlens_v0_tasks_codeblock_2",
-      "community": 948,
+      "community": 173,
       "norm_label": "code:bash (cd agentlens)"
     },
     {
@@ -78507,7 +78552,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L93",
       "id": "plan_agentlens_v0_tasks_phase_2_m1_vertical_slice",
-      "community": 173,
+      "community": 954,
       "norm_label": "phase 2: m1 vertical slice"
     },
     {
@@ -78516,7 +78561,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L95",
       "id": "plan_agentlens_v0_tasks_task_2_m1_foundation_constants_time_ids_store_paths",
-      "community": 173,
+      "community": 954,
       "norm_label": "task 2: m1 foundation \u2014 constants/time/ids/store/paths"
     },
     {
@@ -78624,7 +78669,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L211",
       "id": "plan_agentlens_v0_tasks_phase_3_m2_evaluator_hardening",
-      "community": 916,
+      "community": 173,
       "norm_label": "phase 3: m2 evaluator hardening"
     },
     {
@@ -78633,7 +78678,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L213",
       "id": "plan_agentlens_v0_tasks_task_6_m2_failure_taxonomy_12_deterministic_checks",
-      "community": 916,
+      "community": 173,
       "norm_label": "task 6: m2 failure taxonomy + 12 deterministic checks"
     },
     {
@@ -78696,7 +78741,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L280",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_280",
-      "community": 173,
+      "community": 951,
       "norm_label": "acceptance criteria"
     },
     {
@@ -78705,7 +78750,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L281",
       "id": "plan_agentlens_v0_tasks_codeblock_9",
-      "community": 173,
+      "community": 951,
       "norm_label": "code:bash (cd agentlens)"
     },
     {
@@ -78822,7 +78867,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L386",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_386",
-      "community": 173,
+      "community": 952,
       "norm_label": "acceptance criteria"
     },
     {
@@ -78831,7 +78876,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L387",
       "id": "plan_agentlens_v0_tasks_codeblock_13",
-      "community": 173,
+      "community": 952,
       "norm_label": "code:bash (cd agentlens)"
     },
     {
@@ -78912,7 +78957,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L470",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_470",
-      "community": 915,
+      "community": 173,
       "norm_label": "acceptance criteria"
     },
     {
@@ -78921,7 +78966,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L471",
       "id": "plan_agentlens_v0_tasks_codeblock_16",
-      "community": 915,
+      "community": 173,
       "norm_label": "code:bash (cd agentlens)"
     },
     {
@@ -79092,7 +79137,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L607",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_607",
-      "community": 947,
+      "community": 173,
       "norm_label": "acceptance criteria"
     },
     {
@@ -79101,7 +79146,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L608",
       "id": "plan_agentlens_v0_tasks_codeblock_22",
-      "community": 947,
+      "community": 173,
       "norm_label": "code:bash (cd agentlens)"
     },
     {
@@ -79110,7 +79155,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L616",
       "id": "plan_agentlens_v0_tasks_phase_9_m8_hardening",
-      "community": 173,
+      "community": 958,
       "norm_label": "phase 9: m8 hardening"
     },
     {
@@ -79119,7 +79164,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L618",
       "id": "plan_agentlens_v0_tasks_task_22_m8_redaction_engine_patterns",
-      "community": 173,
+      "community": 958,
       "norm_label": "task 22: m8 redaction engine + patterns"
     },
     {
@@ -79182,7 +79227,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L675",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_675",
-      "community": 936,
+      "community": 173,
       "norm_label": "acceptance criteria"
     },
     {
@@ -79191,7 +79236,7 @@
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L676",
       "id": "plan_agentlens_v0_tasks_codeblock_25",
-      "community": 936,
+      "community": 173,
       "norm_label": "code:bash (cd agentlens)"
     },
     {
@@ -174306,6 +174351,17 @@
       "relation": "imports_from",
       "context": "import",
       "confidence": "EXTRACTED",
+      "source_file": "apps/api/tests/api.test.ts",
+      "source_location": "L5",
+      "weight": 1.0,
+      "source": "apps_api_tests_api_test_ts",
+      "target": "packages_lens_store_src_index_ts",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
       "source_file": "apps/api/src/server.ts",
       "source_location": "L18",
       "weight": 1.0,
@@ -175736,6 +175792,16 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "packages/testkit/src/legacyCheck.ts",
+      "source_location": "L114",
+      "weight": 1.0,
+      "source": "packages_testkit_src_legacycheck_ts",
+      "target": "src_legacycheck_ishistoricaldoc",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "packages/testkit/src/legacyCheck.ts",
       "source_location": "L103",
       "weight": 1.0,
       "confidence_score": 1.0,
@@ -175785,6 +175851,17 @@
       "confidence_score": 1.0,
       "source": "src_legacycheck_walkactiverouting",
       "target": "src_legacycheck_istestkitpath"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "packages/testkit/src/legacyCheck.ts",
+      "source_location": "L95",
+      "weight": 1.0,
+      "source": "src_legacycheck_walkactiverouting",
+      "target": "src_legacycheck_ishistoricaldoc",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -194874,6 +194951,28 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "apps/api/tests/api.test.ts",
+      "source_location": "L7",
+      "weight": 1.0,
+      "source": "apps_api_tests_api_test_ts",
+      "target": "apps_console_src_uimodel_ts",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "apps/api/tests/api.test.ts",
+      "source_location": "L7",
+      "weight": 1.0,
+      "source": "apps_api_tests_api_test_ts",
+      "target": "src_uimodel_buildrundetailmodel",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "apps/api/tests/api.test.ts",
       "source_location": "L6",
       "weight": 1.0,
       "confidence_score": 1.0,
@@ -194930,6 +195029,36 @@
       "confidence_score": 1.0,
       "source": "apps_api_tests_api_test_ts",
       "target": "tests_api_test_realhandler"
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "apps/api/tests/api.test.ts",
+      "source_location": "L87",
+      "weight": 1.0,
+      "source": "apps_api_tests_api_test_ts",
+      "target": "tests_api_test_inspected",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "apps/api/tests/api.test.ts",
+      "source_location": "L91",
+      "weight": 1.0,
+      "source": "apps_api_tests_api_test_ts",
+      "target": "tests_api_test_expectedcheckpointrefs",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "apps/api/tests/api.test.ts",
+      "source_location": "L97",
+      "weight": 1.0,
+      "source": "apps_api_tests_api_test_ts",
+      "target": "tests_api_test_consoledetail",
+      "confidence_score": 1.0
     },
     {
       "relation": "contains",
@@ -196639,6 +196768,16 @@
     {
       "relation": "contains",
       "confidence": "EXTRACTED",
+      "source_file": "apps/console/src/uiModel.test.ts",
+      "source_location": "L266",
+      "weight": 1.0,
+      "source": "apps_console_src_uimodel_test_ts",
+      "target": "src_uimodel_test_run",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
       "source_file": "PLANS.md",
       "source_location": "L1",
       "weight": 1.0,
@@ -197042,9 +197181,9 @@
       "source_file": "AGENTS.md",
       "source_location": "L53",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "archive_agents_active_components",
-      "target": "archive_agents_lens",
-      "confidence_score": 1.0
+      "target": "archive_agents_lens"
     },
     {
       "relation": "contains",
@@ -197802,9 +197941,9 @@
       "source_file": "docs/operations/verification.md",
       "source_location": "L36",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "operations_verification_live_provider_gate",
-      "target": "operations_verification_codeblock_4",
-      "confidence_score": 1.0
+      "target": "operations_verification_codeblock_4"
     },
     {
       "relation": "contains",
@@ -197832,9 +197971,9 @@
       "source_file": "docs/operations/verification.md",
       "source_location": "L46",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "operations_verification_docs_only_gate",
-      "target": "operations_verification_codeblock_5",
-      "confidence_score": 1.0
+      "target": "operations_verification_codeblock_5"
     },
     {
       "relation": "contains",
@@ -197852,9 +197991,9 @@
       "source_file": "docs/operations/verification.md",
       "source_location": "L57",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "operations_verification_full_local_checklist",
-      "target": "operations_verification_codeblock_6",
-      "confidence_score": 1.0
+      "target": "operations_verification_codeblock_6"
     },
     {
       "relation": "contains",
@@ -198682,9 +198821,9 @@
       "source_file": "docs/architecture/agentlens.md",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "docs_architecture_agentlens_md",
-      "target": "architecture_agentlens_lens_architecture",
-      "confidence_score": 1.0
+      "target": "architecture_agentlens_lens_architecture"
     },
     {
       "relation": "contains",
@@ -198702,9 +198841,9 @@
       "source_file": "docs/architecture/agentlens.md",
       "source_location": "L3",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "architecture_agentlens_lens_architecture",
-      "target": "architecture_agentlens_role_in_waygent",
-      "confidence_score": 1.0
+      "target": "architecture_agentlens_role_in_waygent"
     },
     {
       "relation": "contains",
@@ -198712,9 +198851,9 @@
       "source_file": "docs/architecture/agentlens.md",
       "source_location": "L20",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "architecture_agentlens_lens_architecture",
-      "target": "architecture_agentlens_durable_artifacts",
-      "confidence_score": 1.0
+      "target": "architecture_agentlens_durable_artifacts"
     },
     {
       "relation": "contains",
@@ -198722,9 +198861,9 @@
       "source_file": "docs/architecture/agentlens.md",
       "source_location": "L27",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "architecture_agentlens_lens_architecture",
-      "target": "architecture_agentlens_projections",
-      "confidence_score": 1.0
+      "target": "architecture_agentlens_projections"
     },
     {
       "relation": "contains",
@@ -198732,9 +198871,9 @@
       "source_file": "docs/architecture/agentlens.md",
       "source_location": "L33",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "architecture_agentlens_lens_architecture",
-      "target": "architecture_agentlens_evaluation_and_trust",
-      "confidence_score": 1.0
+      "target": "architecture_agentlens_evaluation_and_trust"
     },
     {
       "relation": "contains",
@@ -198742,9 +198881,9 @@
       "source_file": "docs/architecture/agentlens.md",
       "source_location": "L40",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "architecture_agentlens_lens_architecture",
-      "target": "architecture_agentlens_boundaries",
-      "confidence_score": 1.0
+      "target": "architecture_agentlens_boundaries"
     },
     {
       "relation": "contains",
@@ -200792,9 +200931,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L31",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_waygent_lens_no_python_observability_implementation_plan",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_current_source_baseline",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_current_source_baseline"
     },
     {
       "relation": "contains",
@@ -200852,9 +200991,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L90",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_execution_order",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_task_1_lock_active_routing_away_from_python_agentlens",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_task_1_lock_active_routing_away_from_python_agentlens"
     },
     {
       "relation": "contains",
@@ -200862,9 +201001,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L138",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_execution_order",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_task_2_tighten_legacy_check_coverage",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_task_2_tighten_legacy_check_coverage"
     },
     {
       "relation": "contains",
@@ -200872,9 +201011,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L167",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_execution_order",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_task_3_confirm_shared_cli_api_console_projection_parity",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_task_3_confirm_shared_cli_api_console_projection_parity"
     },
     {
       "relation": "contains",
@@ -200882,9 +201021,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L202",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_execution_order",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_task_4_audit_kws_executor_telemetry_before_python_deletion",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_task_4_audit_kws_executor_telemetry_before_python_deletion"
     },
     {
       "relation": "contains",
@@ -200892,9 +201031,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L239",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_execution_order",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_task_5_delete_legacy_python_agentlens",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_task_5_delete_legacy_python_agentlens"
     },
     {
       "relation": "contains",
@@ -200902,9 +201041,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L283",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_execution_order",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_task_6_refresh_graphify_and_close_documentation",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_task_6_refresh_graphify_and_close_documentation"
     },
     {
       "relation": "contains",
@@ -201012,9 +201151,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L126",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_task_1_lock_active_routing_away_from_python_agentlens",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_1",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_1"
     },
     {
       "relation": "contains",
@@ -201032,9 +201171,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L158",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_task_2_tighten_legacy_check_coverage",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_2",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_2"
     },
     {
       "relation": "contains",
@@ -201052,9 +201191,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L194",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_task_3_confirm_shared_cli_api_console_projection_parity",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_3",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_3"
     },
     {
       "relation": "contains",
@@ -201072,9 +201211,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L229",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_task_4_audit_kws_executor_telemetry_before_python_deletion",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_4",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_4"
     },
     {
       "relation": "contains",
@@ -201092,9 +201231,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L258",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_task_5_delete_legacy_python_agentlens",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_5",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_5"
     },
     {
       "relation": "contains",
@@ -201102,9 +201241,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L270",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_task_5_delete_legacy_python_agentlens",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_6",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_6"
     },
     {
       "relation": "contains",
@@ -201132,9 +201271,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L301",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_task_6_refresh_graphify_and_close_documentation",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_7",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_7"
     },
     {
       "relation": "contains",
@@ -201152,9 +201291,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L314",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_final_verification_set",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_8",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_8"
     },
     {
       "relation": "contains",
@@ -201162,9 +201301,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L325",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_final_verification_set",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_9",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_9"
     },
     {
       "relation": "contains",
@@ -201172,9 +201311,9 @@
       "source_file": "docs/superpowers/plans/2026-05-22-waygent-lens-no-python-observability.md",
       "source_location": "L332",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_2026_05_22_waygent_lens_no_python_observability_final_verification_set",
-      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_10",
-      "confidence_score": 1.0
+      "target": "plans_2026_05_22_waygent_lens_no_python_observability_codeblock_10"
     },
     {
       "relation": "contains",
@@ -206272,9 +206411,9 @@
       "source_file": "docs/superpowers/specs/2026-05-22-waygent-lens-no-python-observability-design.md",
       "source_location": "L26",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "specs_2026_05_22_waygent_lens_no_python_observability_design_waygent_lens_no_python_observability_design",
-      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_source_audited_baseline",
-      "confidence_score": 1.0
+      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_source_audited_baseline"
     },
     {
       "relation": "contains",
@@ -206302,9 +206441,9 @@
       "source_file": "docs/superpowers/specs/2026-05-22-waygent-lens-no-python-observability-design.md",
       "source_location": "L168",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "specs_2026_05_22_waygent_lens_no_python_observability_design_waygent_lens_no_python_observability_design",
-      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_deletion_blockers",
-      "confidence_score": 1.0
+      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_deletion_blockers"
     },
     {
       "relation": "contains",
@@ -206382,9 +206521,9 @@
       "source_file": "docs/superpowers/specs/2026-05-22-waygent-lens-no-python-observability-design.md",
       "source_location": "L93",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "specs_2026_05_22_waygent_lens_no_python_observability_design_target_architecture",
-      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_active_runtime_evidence",
-      "confidence_score": 1.0
+      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_active_runtime_evidence"
     },
     {
       "relation": "contains",
@@ -206392,9 +206531,9 @@
       "source_file": "docs/superpowers/specs/2026-05-22-waygent-lens-no-python-observability-design.md",
       "source_location": "L108",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "specs_2026_05_22_waygent_lens_no_python_observability_design_target_architecture",
-      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_active_lens_read_path",
-      "confidence_score": 1.0
+      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_active_lens_read_path"
     },
     {
       "relation": "contains",
@@ -206402,9 +206541,9 @@
       "source_file": "docs/superpowers/specs/2026-05-22-waygent-lens-no-python-observability-design.md",
       "source_location": "L134",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "specs_2026_05_22_waygent_lens_no_python_observability_design_target_architecture",
-      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_api_and_console",
-      "confidence_score": 1.0
+      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_api_and_console"
     },
     {
       "relation": "contains",
@@ -206422,9 +206561,9 @@
       "source_file": "docs/superpowers/specs/2026-05-22-waygent-lens-no-python-observability-design.md",
       "source_location": "L151",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "specs_2026_05_22_waygent_lens_no_python_observability_design_target_architecture",
-      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_python_legacy_boundary",
-      "confidence_score": 1.0
+      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_python_legacy_boundary"
     },
     {
       "relation": "contains",
@@ -206482,9 +206621,9 @@
       "source_file": "docs/superpowers/specs/2026-05-22-waygent-lens-no-python-observability-design.md",
       "source_location": "L112",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "specs_2026_05_22_waygent_lens_no_python_observability_design_active_lens_read_path",
-      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_codeblock_1",
-      "confidence_score": 1.0
+      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_codeblock_1"
     },
     {
       "relation": "contains",
@@ -206502,9 +206641,9 @@
       "source_file": "docs/superpowers/specs/2026-05-22-waygent-lens-no-python-observability-design.md",
       "source_location": "L206",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "specs_2026_05_22_waygent_lens_no_python_observability_design_testing_strategy",
-      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_codeblock_2",
-      "confidence_score": 1.0
+      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_codeblock_2"
     },
     {
       "relation": "contains",
@@ -206512,9 +206651,9 @@
       "source_file": "docs/superpowers/specs/2026-05-22-waygent-lens-no-python-observability-design.md",
       "source_location": "L217",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "specs_2026_05_22_waygent_lens_no_python_observability_design_testing_strategy",
-      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_codeblock_3",
-      "confidence_score": 1.0
+      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_codeblock_3"
     },
     {
       "relation": "contains",
@@ -206522,9 +206661,9 @@
       "source_file": "docs/superpowers/specs/2026-05-22-waygent-lens-no-python-observability-design.md",
       "source_location": "L224",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "specs_2026_05_22_waygent_lens_no_python_observability_design_testing_strategy",
-      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_codeblock_4",
-      "confidence_score": 1.0
+      "target": "specs_2026_05_22_waygent_lens_no_python_observability_design_codeblock_4"
     },
     {
       "relation": "contains",
@@ -247918,5 +248057,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "eb7d0f6d7d5ebf02f2151f7f86103edc64a8979b"
+  "built_at_commit": "24b0dade05e7e47b1f96d08160cbe17dbdfa6d13"
 }
