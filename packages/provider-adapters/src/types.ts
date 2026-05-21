@@ -15,6 +15,14 @@ export interface AdapterRequest {
   changed_files?: string[];
 }
 
+export interface ProviderProcessOptions {
+  executable: string;
+  args?: string[];
+  cwd?: string;
+  env?: Record<string, string>;
+  timeout_ms?: number;
+}
+
 export interface ProviderAdapter {
   manifest: ProviderCapabilityManifest;
   describe(): ProviderAdapterDescription;

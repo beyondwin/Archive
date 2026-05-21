@@ -26,7 +26,10 @@ Waygent now owns the local product execution path end to end:
 - `packages/orchestrator` creates durable state, records completion audits,
   plans isolated Waygent-owned worktrees, and dispatches every safe-wave task.
 - `packages/provider-adapters` keeps fake, Codex, and Claude behind the same
-  `WorkerResult` boundary without direct AgentLens writes.
+  `WorkerResult` boundary without direct AgentLens writes. Codex and Claude
+  execute configured process commands, pass the task prompt through stdin, and
+  normalize direct JSON, JSONL result envelopes, and fenced JSON responses into
+  `runway.worker_result.v1`.
 - `packages/lens-store` and `packages/lens-projectors` rebuild timeline, trust,
   failure, and apply views from filesystem JSONL events.
 - `apps/api` and `apps/console` can inspect a run created by `waygent run`, not

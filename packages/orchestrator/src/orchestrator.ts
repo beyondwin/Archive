@@ -4,9 +4,9 @@ import type { AgentLensEvent } from "@waygent/contracts";
 import { buildKernelRequest, planWorktree, result as kernelResult } from "@waygent/kernel-client";
 import { projectFailureSummary, projectTimeline, projectTrustReport } from "@waygent/lens-projectors";
 import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeArtifact, writeLatestRunId } from "@waygent/lens-store";
-import { FakeProviderAdapter } from "@waygent/provider-adapters";
+import { ClaudeProviderAdapter, CodexProviderAdapter, FakeProviderAdapter, type ProviderAdapter, type ProviderProcessOptions } from "@waygent/provider-adapters";
 import { buildDurableProjection, mergeCandidate } from "@waygent/runway-control";
-import { resolveExecutionProfile, type ProfileOverride } from "./executionProfile";
+import { resolveExecutionProfile, type ProfileOverride, type ProviderName } from "./executionProfile";
 import { resolvePlanInput } from "./planDiscovery";
 import { parseWaygentPlan } from "./planParser";
 import { buildRunEvent } from "./runEvents";
@@ -24,6 +24,7 @@ export interface RunWaygentOptions {
   workspace?: string;
   worktree_root?: string;
   spec?: string;
+  provider_processes?: Partial<Record<Exclude<ProviderName, "fake">, ProviderProcessOptions>>;
 }
 
 export interface WaygentRunResult {
@@ -56,7 +57,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   const paths = runPaths(options.root, runId);
   rmSync(paths.root, { recursive: true, force: true });
   const profile = resolveExecutionProfile(options.profile, { provider: "fake" });
-  const provider = new FakeProviderAdapter();
+  const provider = createProviderAdapter(profile.provider, options.provider_processes);
   const planInput = resolveRunPlanInput(options);
   const parsed = parseWaygentPlan(planInput.markdown);
   const graph = buildTaskGraphFromPlan(parsed);
@@ -208,6 +209,15 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     projection: buildDurableProjection(graph),
     apply_state: "not_applied"
   };
+}
+
+function createProviderAdapter(
+  provider: ProviderName,
+  processes: RunWaygentOptions["provider_processes"] = {}
+): ProviderAdapter {
+  if (provider === "codex") return new CodexProviderAdapter(processes.codex);
+  if (provider === "claude") return new ClaudeProviderAdapter(processes.claude);
+  return new FakeProviderAdapter();
 }
 
 function buildTaskPrompt(task: { title: string; verification_commands: string[] } | undefined): string {
