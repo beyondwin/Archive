@@ -20,3 +20,25 @@ waygent explain --last
 waygent resume --last
 waygent apply --run run_example
 ```
+
+## Verification Commands
+
+```bash
+skills/waygent/evals/run.sh
+bun run waygent:scenarios
+WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke
+WAYGENT_LIVE_PROVIDER=claude bun run waygent:live-smoke
+```
+
+The scenario gate is offline and deterministic. Live provider smoke is opt-in
+and should remain skipped unless the selected provider CLI is installed and
+authenticated.
+
+## Stop Rules
+
+- If a run selection is ambiguous, ask for a plan path or run id.
+- If apply reports `dirty_source_checkout`, report the blocker and stop.
+- If verification fails, run `waygent explain --last` before `waygent resume --last`.
+- If apply reports no verified checkpoint, do not apply or retry from chat.
+- If `WAYGENT_LIVE_PROVIDER` is set but the provider CLI is unavailable, fall
+  back to the offline scenario gate.
