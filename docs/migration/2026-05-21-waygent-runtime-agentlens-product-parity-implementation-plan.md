@@ -1815,6 +1815,11 @@ git commit -m "docs: finalize Waygent parity operations"
 
 ## Final Completion Criteria
 
+Implementation status: complete. The task slices have shipped through the
+Waygent skill, CLI/runtime, provider boundary, AgentLens projection, API,
+console, apply/recovery, and operations docs surfaces. Final verification is
+recorded in the executor run state.
+
 The implementation is complete only when:
 
 - `skills/waygent/evals/run.sh` passes;
