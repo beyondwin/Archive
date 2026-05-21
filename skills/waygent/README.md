@@ -19,6 +19,11 @@ AgentLens events.
 Do not replace a Waygent run with host `spawn_agent` calls or direct file edits.
 If no `waygent run` occurs, no Waygent worktree will be created.
 
+In the Codex app or Codex CLI, `waygent run` defaults to the Codex provider and
+`multi-agent` execution when no provider or execution mode is specified. For a
+repo-local invocation that does not depend on PATH setup, use
+`bun run waygent -- run ...`.
+
 ## Host-Agent Model Policy
 
 When Codex is asked to implement, review, or coordinate Waygent runtime work
@@ -38,6 +43,7 @@ CLI/runtime boundary.
 
 ```bash
 waygent run --latest
+bun run waygent -- run --latest
 waygent run --plan docs/migration/example.md --provider fake
 waygent run --plan docs/migration/example-plan.md --spec docs/architecture/example-design.md --provider codex --execution-mode multi-agent
 waygent status --last
@@ -47,6 +53,9 @@ waygent explain --last
 waygent resume --last
 waygent apply --run run_example
 ```
+
+`waygent demo` is offline-only and rejects live providers. Use `waygent run`
+for Codex or Claude execution.
 
 ## Verification Commands
 

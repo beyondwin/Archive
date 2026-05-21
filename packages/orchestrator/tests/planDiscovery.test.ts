@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { discoverPlan, resolvePlanInput } from "../src/planDiscovery";
+import { discoverPlan, resolvePlanInput, resolveSpecInput } from "../src/planDiscovery";
 
 const legacyFence = [["agent", "runway"].join(""), "task"].join("-");
 
@@ -55,6 +55,47 @@ describe("Waygent plan discovery", () => {
     const found = resolvePlanInput({ workspace: root, topic: "console runtime" });
 
     expect(found.path?.endsWith("2026-05-21-console-runtime.md")).toBe(true);
+  });
+
+  test("resolves plan basenames from approved superpowers plan directories", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-superpowers-plan-"));
+    mkdirSync(join(root, "docs", "superpowers", "plans"), { recursive: true });
+    writeFileSync(join(root, "docs", "superpowers", "plans", "2026-05-22-runtime.md"), plan("runtime_task"));
+
+    const found = resolvePlanInput({ workspace: root, plan_path: "2026-05-22-runtime.md" });
+
+    expect(found.path?.endsWith("docs/superpowers/plans/2026-05-22-runtime.md")).toBe(true);
+    expect(found.markdown).toContain("id: runtime_task");
+  });
+
+  test("resolves spec basenames from approved superpowers spec directories", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-superpowers-spec-"));
+    mkdirSync(join(root, "docs", "superpowers", "specs"), { recursive: true });
+    writeFileSync(join(root, "docs", "superpowers", "specs", "2026-05-22-runtime-design.md"), "# Runtime Design\n");
+
+    const found = resolveSpecInput({ workspace: root, spec: "2026-05-22-runtime-design.md" });
+
+    expect(found.path?.endsWith("docs/superpowers/specs/2026-05-22-runtime-design.md")).toBe(true);
+    expect(found.markdown).toBe("# Runtime Design\n");
+  });
+
+  test("fails missing spec filenames instead of treating them as inline markdown", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-missing-spec-"));
+
+    expect(() => resolveSpecInput({ workspace: root, spec: "2026-05-22-runtime-desgin.md" })).toThrow(
+      /spec not found/
+    );
+  });
+
+  test("does not resolve directory-bearing plan typos by basename fallback", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-plan-path-typo-"));
+    mkdirSync(join(root, "docs", "superpowers", "plans"), { recursive: true });
+    mkdirSync(join(root, "docs", "plans"), { recursive: true });
+    writeFileSync(join(root, "docs", "plans", "runtime.md"), plan("wrong_task"));
+
+    expect(() => resolvePlanInput({ workspace: root, plan_path: "docs/superpowers/plans/runtime.md" })).toThrow(
+      /plan not found/
+    );
   });
 
   test("ignores legacy task plans during latest discovery", () => {
