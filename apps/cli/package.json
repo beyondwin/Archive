@@ -1,0 +1,14 @@
+{
+  "name": "@waygent/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "waygent": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test tests"
+  },
+  "dependencies": {
+    "@waygent/orchestrator": "workspace:*"
+  }
+}

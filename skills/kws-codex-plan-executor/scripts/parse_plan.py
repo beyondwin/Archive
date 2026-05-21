@@ -10,7 +10,9 @@ import sys
 from pathlib import Path
 
 
-TASK_RE = re.compile(r"(?m)^(#{2,4})\s+(?:Task|작업)\s+(\d+)\s*(?::|-|–)\s*(.+?)\s*$")
+TASK_RE = re.compile(
+    r"(?m)^(#{2,4})[ \t]+(?:Task|작업)[ \t]+(\d+(?:\.\d+)*)[ \t]*(?::|-|–)[ \t]*(.+?)[ \t]*$"
+)
 FENCE_RE = re.compile(r"^(?: {0,3})(?P<marker>`{3,}|~{3,})(?P<suffix>[^\r\n]*)$")
 FENCE_CLOSE_SUFFIX_RE = re.compile(r"^[ \t]*$")
 COMMENT_OPEN = "<!--"
@@ -34,6 +36,10 @@ SPEC_REFS_RE = re.compile(
     r"[ \t]*:[ \t]*(?:\*\*)?[ \t]*(?P<value>.+?)[ \t]*(?:\*\*)?[ \t]*$"
 )
 SPEC_REF_RE = re.compile(r"\bS\d+(?:\.\d+)*\b")
+YAML_TASK_RE = re.compile(r"```yaml\s+agentrunway-task\s*\n(?P<body>.*?)\n```", re.S)
+YAML_TASK_ID_RE = re.compile(r"(?m)^task_id:\s*(?P<value>\S+)\s*$")
+YAML_DEPENDENCIES_RE = re.compile(r"(?m)^dependencies:\s*\[(?P<value>[^\]]*)\]\s*$")
+YAML_FILE_CLAIM_RE = re.compile(r"-\s*\{path:\s*(?P<path>[^,}]+),\s*mode:\s*(?P<mode>[^}]+)\}")
 FILE_LINE_RE = re.compile(
     r"^\s*-\s+"
     r"(?:(?:Create|Modify|Read|Delete|Move|Update|생성|수정|읽기|삭제|이동|변경|갱신):\s*)?"
@@ -177,15 +183,23 @@ def _extract_files(body: str, repo_root: Path, body_start_line: int) -> tuple[li
     return sorted(dict.fromkeys(files)), True, locations
 
 
+def _task_id_from_number(value: str) -> str:
+    return "task_" + value.strip().replace(".", "_")
+
+
+def _task_number_value(value: str) -> int | str:
+    return int(value) if value.isdigit() else value
+
+
 def _extract_depends_on(body: str) -> list[str]:
     match = DEPENDS_RE.search(body)
     if not match:
         return []
     values = []
-    for item in re.split(r"[, ]+", match.group("value").strip()):
-        normalized = item.strip().removeprefix("task_")
-        if normalized.isdigit():
-            values.append(f"task_{normalized}")
+    for item in re.split(r"[, \[\]]+", match.group("value").strip()):
+        normalized = item.strip().removeprefix("task_").replace("_", ".")
+        if re.fullmatch(r"\d+(?:\.\d+)*", normalized):
+            values.append(_task_id_from_number(normalized))
     return sorted(dict.fromkeys(values))
 
 
@@ -209,6 +223,47 @@ def _body_line_range(markdown: str, body_start: int, body_end: int) -> tuple[int
     if first is None:
         return base_line, base_line
     return first, last if last is not None else first
+
+
+def _slice_lines(markdown: str, start_line: int, end_line: int) -> str:
+    lines = markdown.splitlines(keepends=True)
+    return "".join(lines[max(start_line - 1, 0) : max(end_line, start_line - 1)])
+
+
+def _extract_yaml_task_metadata(raw_body: str, repo_root: Path) -> dict:
+    match = YAML_TASK_RE.search(raw_body)
+    if not match:
+        return {"task_id": None, "depends_on_raw": [], "files": []}
+    yaml_body = match.group("body")
+    task_id_match = YAML_TASK_ID_RE.search(yaml_body)
+    dependencies_match = YAML_DEPENDENCIES_RE.search(yaml_body)
+    dependencies = []
+    if dependencies_match:
+        dependencies = [
+            item.strip().strip("'\"")
+            for item in dependencies_match.group("value").split(",")
+            if item.strip()
+        ]
+    files = [
+        _repo_relative(item.group("path").strip().strip("'\""), repo_root)
+        for item in YAML_FILE_CLAIM_RE.finditer(yaml_body)
+    ]
+    return {
+        "task_id": task_id_match.group("value") if task_id_match else None,
+        "depends_on_raw": dependencies,
+        "files": sorted(dict.fromkeys(files)),
+    }
+
+
+def _normalize_dependency(dep: str, aliases: dict[str, str]) -> str | None:
+    if dep in aliases:
+        return aliases[dep]
+    if dep.startswith("task_") and dep in aliases.values():
+        return dep
+    normalized = dep.removeprefix("task_").replace("_", ".")
+    if re.fullmatch(r"\d+(?:\.\d+)*", normalized):
+        return _task_id_from_number(normalized)
+    return dep if dep in aliases.values() else None
 
 
 def _validate_task_dependencies(tasks: list[dict]) -> None:
@@ -251,13 +306,23 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
         body_raw = markdown[body_start:body_end]
         body = body_raw.strip()
         body_line_start, body_line_end = _body_line_range(markdown, body_start, body_end)
+        raw_body = _slice_lines(
+            raw_markdown,
+            _line_number(markdown, body_start),
+            _line_number(markdown, body_end),
+        )
+        yaml_metadata = _extract_yaml_task_metadata(raw_body, repo_root)
         files, has_files, file_line_numbers = _extract_files(body_raw, repo_root, _line_number(markdown, body_start))
+        if not files and yaml_metadata["files"]:
+            files = yaml_metadata["files"]
+            has_files = True
         if mode in EXECUTION_MODES and not has_files:
-            _die(f"task_{match.group(2)} has no Files block")
+            _die(f"{_task_id_from_number(match.group(2))} has no Files block")
+        task_id = yaml_metadata["task_id"] or _task_id_from_number(match.group(2))
         tasks.append(
             {
-                "id": f"task_{match.group(2)}",
-                "number": int(match.group(2)),
+                "id": task_id,
+                "number": _task_number_value(match.group(2)),
                 "title": match.group(3).strip(),
                 "line": _line_number(markdown, match.start()),
                 "body": body,
@@ -267,9 +332,22 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
                 "file_line_numbers": file_line_numbers,
                 "spec_refs": _extract_spec_refs(body_raw),
                 "depends_on": _extract_depends_on(body),
+                "yaml_task_id": yaml_metadata["task_id"],
+                "_raw_depends_on": yaml_metadata["depends_on_raw"],
                 "has_acceptance_criteria": bool(AC_RE.search(body)),
             }
         )
+    aliases = {task["id"]: task["id"] for task in tasks}
+    aliases.update({_task_id_from_number(str(task["number"])): task["id"] for task in tasks})
+    aliases.update({task["yaml_task_id"]: task["id"] for task in tasks if task.get("yaml_task_id")})
+    for task in tasks:
+        raw_depends = task.pop("_raw_depends_on", [])
+        normalized_depends = [
+            normalized
+            for dep in raw_depends
+            if (normalized := _normalize_dependency(dep, aliases))
+        ]
+        task["depends_on"] = sorted(dict.fromkeys(task["depends_on"] + normalized_depends))
     _validate_task_dependencies(tasks)
 
     return {

@@ -1,0 +1,10 @@
+[package]
+name = "kernel-cli"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+kernel-protocol.workspace = true
+process-supervisor = { path = "../process-supervisor" }
+serde_json.workspace = true

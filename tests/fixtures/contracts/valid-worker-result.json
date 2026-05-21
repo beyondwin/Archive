@@ -1,0 +1,11 @@
+{
+  "schema": "runway.worker_result.v1",
+  "task_id": "task_demo",
+  "candidate_id": "candidate_demo",
+  "status": "completed",
+  "changed_files": ["README.md"],
+  "summary": "Fake provider completed the task.",
+  "evidence": {
+    "provider": "fake-provider"
+  }
+}
