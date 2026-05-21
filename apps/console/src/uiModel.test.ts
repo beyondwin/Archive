@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  buildRunDetailModel,
   buildConsoleUiModel,
   demoConsoleSnapshot,
   renderConsoleSnapshot
@@ -47,5 +48,30 @@ describe("Lens web console UI model", () => {
     expect(snapshot).toContain("failed");
     expect(snapshot).toContain("adapter_crashed");
     expect(snapshot).toContain("apply: not_ready");
+  });
+
+  test("builds detail sections from a real Waygent run API response", () => {
+    const model = buildRunDetailModel({
+      run_id: "run_real",
+      status: "completed",
+      trust_status: "trusted",
+      apply_status: "ready",
+      total_events: 6,
+      last_event_type: "lens.trust_report_updated",
+      safe_wave: ["task_real"],
+      failures: [],
+      timeline: [
+        { sequence: 1, phase: "platform", event_type: "platform.run_started", outcome: "running", summary: "Run opened." },
+        { sequence: 6, phase: "lens", event_type: "lens.trust_report_updated", outcome: "success", summary: "Trust report updated." }
+      ]
+    });
+
+    expect(model.header).toMatchObject({
+      run_id: "run_real",
+      status: "completed",
+      trust_status: "trusted",
+      apply_status: "ready"
+    });
+    expect(model.sections.map((section) => section.id)).toContain("safe-wave");
   });
 });
