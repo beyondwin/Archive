@@ -27,7 +27,10 @@ class AgentLensCliEmitter:
         )
         if not target_run:
             raise AgentLensEmitError("missing AgentLens run id")
-        raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+        outbound = dict(payload)
+        if outbound.get("schema") == "agentlens.event.v2":
+            outbound["run_id"] = target_run
+        raw = json.dumps(outbound, ensure_ascii=False, sort_keys=True)
         try:
             result = subprocess.run(
                 [self.cli, "event", "append", "--run", target_run, "--type", event_type, "--payload-stdin"],

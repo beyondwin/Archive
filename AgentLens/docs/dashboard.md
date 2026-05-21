@@ -32,8 +32,11 @@ Remove the flag to view your real `~/.agentlens` store.
 
 - A list of all runs, with status pills and a red highlight when
   `agent_outcome=success` but `eval_status=failed`.
+- AgentRunway trust verdicts from `artifacts/trust_report.json`, shown in the
+  run list and at the top of run detail.
 - A run-detail page that puts the agent's claimed outcome next to the
-  evaluator's verdict, then shows failures with linked evidence.
+  evaluator's verdict and the trust report, then shows failures with linked
+  evidence.
 - A transcript view of `events.jsonl` in chronological order.
 - A workspace summary with pass-rate aggregations.
 - A live `doctor` status pill in the sidebar.

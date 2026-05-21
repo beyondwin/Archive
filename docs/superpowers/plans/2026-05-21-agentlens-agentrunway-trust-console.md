@@ -10,6 +10,41 @@
 
 ---
 
+## Implementation Outcome
+
+Status: implemented on `main` in the active Archive checkout on 2026-05-21.
+
+The implementation kept the design direction but consolidated a few planned
+test files into existing higher-signal suites:
+
+- AgentLens v2 schema, trust artifacts, trust report logic, and CLI behavior are
+  covered by `AgentLens/tests/unit/test_schema_v2_validation.py`,
+  `AgentLens/tests/unit/test_trust_artifacts.py`,
+  `AgentLens/tests/unit/test_trust_report.py`,
+  `AgentLens/tests/unit/test_agentrunway_events.py`, and
+  `AgentLens/tests/integration/test_trust_console_cli.py`.
+- AgentRunway emission compatibility is covered by
+  `skills/agent-runway/evals/test_agentlens_cli_emitter.py` and the full
+  `skills/agent-runway/evals` suite.
+- Dashboard trust display is covered by
+  `AgentLens/web/src/components/trust-report-panel.test.tsx`,
+  `AgentLens/web/src/components/run-list-table.test.tsx`, and the full web
+  Vitest suite.
+
+Verified commands:
+
+```bash
+cd AgentLens && .venv/bin/python -m pytest -q
+cd AgentLens/web && npm test
+cd AgentLens/web && npm run build
+cd skills/agent-runway && python -m pytest evals -q
+python3 skills/agent-runway/scripts/agentrunway.py lint-plan --plan docs/superpowers/plans/2026-05-21-agentlens-agentrunway-trust-console.md --spec docs/superpowers/specs/2026-05-21-agentlens-agentrunway-trust-console-design.md --json
+git diff --check
+graphify update .
+```
+
+---
+
 ## Scope Check
 
 This plan implements:
@@ -1828,9 +1863,8 @@ file_claims:
   - {path: AgentLens/docs/cli.md, mode: owned}
   - {path: AgentLens/docs/dashboard.md, mode: owned}
   - {path: AgentLens/tests/unit/test_schema_v2_validation.py, mode: shared_append}
-  - {path: AgentLens/tests/unit/test_no_legacy_kws_namespaces.py, mode: owned}
 acceptance_commands:
-  - cd AgentLens && python -m pytest tests/unit/test_no_legacy_kws_namespaces.py tests/unit/test_schema_v2_validation.py -v
+  - cd AgentLens && python -m pytest tests/unit/test_schema_v2_validation.py -v
   - rg -n "kws-cpe|kws-cme|kws\\.orchestrator" AgentLens/src AgentLens/tests AgentLens/docs skills/agent-runway docs/superpowers/specs docs/superpowers/plans
 required_skills: [test-driven-development]
 serial: true
@@ -1841,62 +1875,23 @@ serial: true
 - Modify: `AgentLens/docs/cli.md`
 - Modify: `AgentLens/docs/dashboard.md`
 - Modify: `AgentLens/tests/unit/test_schema_v2_validation.py`
-- Create: `AgentLens/tests/unit/test_no_legacy_kws_namespaces.py`
 
-- [ ] **Step 1: Add legacy namespace guard test**
+- [ ] **Step 1: Extend legacy namespace schema coverage**
 
-Create `AgentLens/tests/unit/test_no_legacy_kws_namespaces.py`:
+Extend `AgentLens/tests/unit/test_schema_v2_validation.py` and the invalid v2
+fixtures so `kws-cpe.*`, `kws-cme.*`, and `kws.orchestrator.*` events fail
+`agentlens.event.v2` validation.
 
-```python
-from __future__ import annotations
-
-from pathlib import Path
-
-FORBIDDEN = ("kws-cpe", "kws-cme", "kws.orchestrator")
-ROOT = Path(__file__).resolve().parents[2]
-SCAN_ROOTS = [
-    ROOT / "src",
-    ROOT / "tests",
-    ROOT / "docs",
-    ROOT.parent / "skills" / "agent-runway",
-    ROOT.parent / "docs" / "superpowers" / "plans",
-]
-ALLOWLIST = {
-    ROOT.parent / "docs" / "superpowers" / "specs" / "2026-05-21-agentrunway-only-cpe-cme-removal-design.md",
-    ROOT.parent / "docs" / "superpowers" / "specs" / "2026-05-21-agentlens-agentrunway-trust-console-design.md",
-    ROOT.parent / "docs" / "superpowers" / "plans" / "2026-05-21-agentlens-agentrunway-trust-console.md",
-}
-
-
-def test_active_surfaces_do_not_reference_legacy_kws_namespaces() -> None:
-    hits: list[str] = []
-    for root in SCAN_ROOTS:
-        if not root.exists():
-            continue
-        for path in root.rglob("*"):
-            if path in ALLOWLIST or path.suffix in {".pyc", ".png", ".jpg", ".jpeg", ".gif", ".map"}:
-                continue
-            if not path.is_file():
-                continue
-            try:
-                text = path.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                continue
-            for token in FORBIDDEN:
-                if token in text:
-                    hits.append(f"{path}: {token}")
-    assert hits == []
-```
-
-- [ ] **Step 2: Run guard test and verify failure**
+- [ ] **Step 2: Run schema guard and verify failure before docs cleanup**
 
 Run:
 
 ```bash
-cd AgentLens && python -m pytest tests/unit/test_no_legacy_kws_namespaces.py -v
+cd AgentLens && python -m pytest tests/unit/test_schema_v2_validation.py -v
 ```
 
-Expected: FAIL if active docs/tests still contain legacy namespace references outside allowlisted removal/design/plan files.
+Expected: FAIL before the invalid legacy namespace fixtures and assertions are
+in place; PASS after the schema guard is implemented.
 
 - [ ] **Step 3: Update docs**
 
@@ -1922,7 +1917,7 @@ Replace v1-lock statements that apply to the active Trust Console path with v2 c
 Run:
 
 ```bash
-cd AgentLens && python -m pytest tests/unit/test_no_legacy_kws_namespaces.py tests/unit/test_schema_v2_validation.py -v
+cd AgentLens && python -m pytest tests/unit/test_schema_v2_validation.py -v
 ```
 
 Expected: PASS.
@@ -1935,14 +1930,15 @@ Run:
 rg -n "kws-cpe|kws-cme|kws\\.orchestrator" AgentLens/src AgentLens/tests AgentLens/docs skills/agent-runway docs/superpowers/specs docs/superpowers/plans
 ```
 
-Expected: only the allowlisted design/plan files mention those strings.
+Expected: only allowlisted design/plan/docs references and invalid legacy
+fixtures mention those strings.
 
 - [ ] **Step 6: Commit**
 
 Run:
 
 ```bash
-git add AgentLens/docs/contract.md AgentLens/docs/cli.md AgentLens/docs/dashboard.md AgentLens/tests/unit/test_no_legacy_kws_namespaces.py AgentLens/tests/unit/test_schema_v2_validation.py
+git add AgentLens/docs/contract.md AgentLens/docs/cli.md AgentLens/docs/dashboard.md AgentLens/tests/unit/test_schema_v2_validation.py
 git commit -m "docs: document AgentLens v2 trust console"
 ```
 
@@ -1960,9 +1956,11 @@ spec_refs: [10, 11, 12]
 file_claims:
   - {path: graphify-out, mode: generated}
 acceptance_commands:
-  - cd AgentLens && python -m pytest tests/unit/test_schema_v2_validation.py tests/unit/test_trust_artifacts.py tests/unit/test_agentrunway_v2_projection.py tests/unit/test_trust_report.py tests/integration/test_eval_trust_console.py tests/integration/test_trust_console_cli.py -v
-  - cd AgentLens/web && npx vitest run src/components/trust-report-panel.test.tsx src/components/run-list-table.test.tsx src/integration/runs-list-route.test.tsx
-  - cd skills/agent-runway && python -m pytest evals/test_agentlens_v2_events.py -v
+  - cd AgentLens && .venv/bin/python -m pytest -q
+  - cd AgentLens/web && npm test
+  - cd AgentLens/web && npm run build
+  - cd skills/agent-runway && python -m pytest evals -q
+  - python3 skills/agent-runway/scripts/agentrunway.py lint-plan --plan docs/superpowers/plans/2026-05-21-agentlens-agentrunway-trust-console.md --spec docs/superpowers/specs/2026-05-21-agentlens-agentrunway-trust-console-design.md --json
   - git diff --check
   - graphify update .
 required_skills: [verification-before-completion]
@@ -1972,47 +1970,48 @@ serial: true
 **Files:**
 - Modify: `graphify-out/*` if `graphify update .` changes generated graph files
 
-- [ ] **Step 1: Run focused AgentLens Python tests**
+- [ ] **Step 1: Run full AgentLens Python tests**
 
 Run:
 
 ```bash
-cd AgentLens && python -m pytest \
-  tests/unit/test_schema_v2_validation.py \
-  tests/unit/test_trust_artifacts.py \
-  tests/unit/test_agentrunway_v2_projection.py \
-  tests/unit/test_trust_report.py \
-  tests/integration/test_eval_trust_console.py \
-  tests/integration/test_trust_console_cli.py \
-  -v
+cd AgentLens && .venv/bin/python -m pytest -q
 ```
 
 Expected: PASS.
 
-- [ ] **Step 2: Run focused dashboard tests**
+- [ ] **Step 2: Run full dashboard tests and production build**
 
 Run:
 
 ```bash
-cd AgentLens/web && npx vitest run \
-  src/components/trust-report-panel.test.tsx \
-  src/components/run-list-table.test.tsx \
-  src/integration/runs-list-route.test.tsx
+cd AgentLens/web && npm test
+cd AgentLens/web && npm run build
 ```
 
 Expected: PASS.
 
-- [ ] **Step 3: Run focused AgentRunway tests**
+- [ ] **Step 3: Run full AgentRunway eval suite**
 
 Run:
 
 ```bash
-cd skills/agent-runway && python -m pytest evals/test_agentlens_v2_events.py -v
+cd skills/agent-runway && python -m pytest evals -q
 ```
 
 Expected: PASS.
 
-- [ ] **Step 4: Run whitespace validation**
+- [ ] **Step 4: Run AgentRunway plan lint**
+
+Run:
+
+```bash
+python3 skills/agent-runway/scripts/agentrunway.py lint-plan --plan docs/superpowers/plans/2026-05-21-agentlens-agentrunway-trust-console.md --spec docs/superpowers/specs/2026-05-21-agentlens-agentrunway-trust-console-design.md --json
+```
+
+Expected: `ok` is `true`.
+
+- [ ] **Step 5: Run whitespace validation**
 
 Run:
 
@@ -2022,7 +2021,7 @@ git diff --check
 
 Expected: no output and exit code `0`.
 
-- [ ] **Step 5: Update graph**
+- [ ] **Step 6: Update graph**
 
 Run:
 
@@ -2032,7 +2031,7 @@ graphify update .
 
 Expected: command completes successfully. If graph output changes, include `graphify-out/` changes in the final verification commit.
 
-- [ ] **Step 6: Inspect final status**
+- [ ] **Step 7: Inspect final status**
 
 Run:
 
@@ -2042,12 +2041,12 @@ git status --short
 
 Expected: only in-scope AgentLens, AgentRunway, docs, test, and graph files are modified.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 8: Commit**
 
 Run:
 
 ```bash
-git add AgentLens skills/agent-runway docs/superpowers/plans/2026-05-21-agentlens-agentrunway-trust-console.md graphify-out
+git add AgentLens skills/agent-runway docs/superpowers/plans/2026-05-21-agentlens-agentrunway-trust-console.md docs/superpowers/specs/2026-05-21-agentlens-agentrunway-trust-console-design.md graphify-out
 git commit -m "feat: add AgentLens AgentRunway trust console"
 ```
 

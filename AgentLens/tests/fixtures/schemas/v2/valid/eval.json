@@ -1,0 +1,16 @@
+{
+  "schema": "agentlens.eval.v2",
+  "run_id": "run_20260521_000000_agent",
+  "evaluated_at": "2026-05-21T00:02:30Z",
+  "status": "passed",
+  "claimed_outcome": "success",
+  "trust_report_ref": "artifacts/trust_report.json",
+  "projection_ref": "artifacts/agentrunway_projection.json",
+  "checks": [
+    {
+      "name": "trust_report_present",
+      "status": "passed"
+    }
+  ],
+  "failures": []
+}

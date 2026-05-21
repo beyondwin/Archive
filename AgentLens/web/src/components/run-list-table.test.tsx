@@ -22,6 +22,7 @@ function baseRow(overrides: Partial<RunRow> = {}): RunRow {
     display_title: null,
     usage: null,
     import_state: null,
+    trust_report: null,
     ...overrides,
   };
 }
@@ -214,5 +215,35 @@ describe("RunListTable", () => {
     expect(partialBadge.className).toMatch(/amber/);
     // Skipped is visually flagged (red tone)
     expect(skippedBadge.className).toMatch(/red/);
+  });
+
+  it("shows AgentRunway trust verdict when present", () => {
+    render(
+      <MemoryRouter>
+        <RunListTable
+          runs={[
+            baseRow({
+              run_id: "run_trusty",
+              trust_report: {
+                schema: "agentlens.trust_report.v1",
+                run_id: "run_trusty",
+                agentrunway_run_id: "ar-001",
+                claimed_outcome: "success",
+                trust_verdict: "trusted",
+                evidence_strength: "strong",
+                blocking_evidence: [],
+                missing_evidence: [],
+                residual_risks: [],
+                operator_actions: [],
+                projection_issues: [],
+              },
+            }),
+          ]}
+        />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("columnheader", { name: "Trust" })).toBeInTheDocument();
+    expect(screen.getByText("trusted")).toBeInTheDocument();
   });
 });

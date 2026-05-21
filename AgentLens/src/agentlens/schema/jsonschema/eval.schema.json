@@ -145,6 +145,15 @@
         }
       }
     },
+    "projection_ref": {
+      "type": "string"
+    },
+    "trust_report_ref": {
+      "type": "string"
+    },
+    "trust_report": {
+      "type": "object"
+    },
     "checks": {
       "type": "array",
       "items": {

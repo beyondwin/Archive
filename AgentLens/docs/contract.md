@@ -1,6 +1,6 @@
-# AgentLens Storage & Lifecycle Contract (v1 locked)
+# AgentLens Storage & Lifecycle Contract
 
-This document re-narrates spec section S1.4 (디렉터리 / 파일 트리) and the relevant lifecycle invariants from S1.2. The shape of every artifact described here is **v1 잠금 / v1 locked**: once a field name, file name, or seal phase is shipped under the `agentlens.*.v1` family, it is treated as a stable wire contract. Breaking changes require a new versioned schema (`v2`) and a deliberate migration plan — never an in-place edit.
+This document re-narrates spec section S1.4 (디렉터리 / 파일 트리) and the relevant lifecycle invariants from S1.2. Historical `agentlens.*.v1` artifacts remain readable. The AgentRunway Trust Console adds a new `agentlens.*.v2` runtime contract plus derived `agentlens.agentrunway_projection.v1` and `agentlens.trust_report.v1` artifacts.
 
 ## 1. Run directory layout
 
@@ -15,6 +15,8 @@ All durable run state lives under the user's home directory:
     eval.json          # agentlens.eval.v1    — evaluator output (after pre_eval seal)
     manifest.json      # agentlens.manifest.v1 — artifact sha256+size, sealed_phase, redaction notes
     artifacts/         # binary attachments (logs, screenshots, diffs)
+      agentrunway_projection.json # agentlens.agentrunway_projection.v1
+      trust_report.json           # agentlens.trust_report.v1
   current-runs/<workspace_id>/<run_id>     # active-run pointer / lock marker
   shims/                                    # 0700; per-binary shim script + .real lockfile
   config.yaml
@@ -69,6 +71,30 @@ The v1 lock is preserved by adding **only** additive optional fields. Three grou
 The `type` field is no longer a fixed enum; it is a lower-case dotted namespace:
 
 ```
+
+## 3b. AgentRunway Trust Console v2
+
+AgentRunway is the only first-class executor integration in the Trust Console
+path. Raw AgentRunway events use `agentlens.event.v2` and the
+`agentrunway.*` event family. Legacy `kws-cpe.*`, `kws-cme.*`, and
+`kws.orchestrator.*` event families are not accepted by the v2 schema.
+
+The v2 event envelope uses `event_type` and `occurred_at`, not the v1
+`type`/`ts` pair. It also requires `phase`, `outcome`, `severity`,
+`trust_impact`, `summary`, and a bounded `payload`.
+
+`agentlens eval` materializes two deterministic derived artifacts when a run
+contains AgentRunway evidence:
+
+- `artifacts/agentrunway_projection.json`: lifecycle, task, artifact,
+  coverage, retry, and projection-issue summary.
+- `artifacts/trust_report.json`: operator-facing verdict with
+  `trust_verdict`, `evidence_strength`, missing evidence, blocking evidence,
+  operator actions, and projection issues.
+
+`trust_report.json` is the shared source for CLI, API, and dashboard trust
+views. AgentLens remains downstream; it never mutates AgentRunway execution
+state.
 ^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)+$
 ```
 

@@ -14,6 +14,7 @@ import { FailuresPanel } from "@/components/failures-panel";
 import { OutcomeEvalPills } from "@/components/outcome-eval-pills";
 import { RedactionBadge } from "@/components/redaction-badge";
 import { TranscriptView } from "@/components/transcript-view";
+import { TrustReportPanel } from "@/components/trust-report-panel";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 function artifactHref(runId: string, artifact: RunArtifact): string | undefined {
@@ -153,6 +154,10 @@ export function RunDetailRoute() {
           evalStatus={detail.eval_status}
           failureCount={failureList.length}
         />
+      </div>
+
+      <div className="mt-3">
+        <TrustReportPanel report={detail.trust_report} />
       </div>
 
       <div className="mt-3 flex flex-wrap gap-4 text-xs text-zinc-600">

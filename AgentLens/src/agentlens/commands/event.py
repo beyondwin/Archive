@@ -105,6 +105,22 @@ def _resolve_payload(
     return parsed
 
 
+def _raw_v2_event(payload: dict, *, run: str, type_: str) -> dict | None:
+    if payload.get("schema") != "agentlens.event.v2":
+        return None
+    event_type = payload.get("event_type")
+    if event_type != type_:
+        raise typer.BadParameter(
+            f"raw v2 event_type {event_type!r} does not match --type {type_!r}"
+        )
+    event_run = payload.get("run_id")
+    if event_run != run:
+        raise typer.BadParameter(
+            f"raw v2 run_id {event_run!r} does not match --run {run!r}"
+        )
+    return payload
+
+
 @event_app.command("append")
 def append(
     run: str = typer.Option(..., "--run", help="run_id receiving the event"),
@@ -150,7 +166,7 @@ def append(
             )
             return
 
-        event = {
+        event = _raw_v2_event(payload, run=run, type_=type_) or {
             "schema": SCHEMA_EVENT_V1,
             "event_id": make_event_id(),
             "run_id": run,

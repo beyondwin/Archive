@@ -1,7 +1,7 @@
 # Design: AgentLens AgentRunway Trust Console
 
 Date: 2026-05-21
-Status: Approved for implementation planning
+Status: Implemented
 Owner: KWS
 
 ## 1. Summary
@@ -475,3 +475,22 @@ distinguishable in the run list.
 - `AgentLens/docs/contract.md`
 - `AgentLens/docs/dashboard.md`
 - `AgentLens/docs/adr/2026-05-19-agentlens-ecosystem-benchmark.md`
+
+## Implementation Notes
+
+The implemented direction was chosen after comparing the same plan/spec through
+three execution-skill paths:
+
+- AgentRunway preserved task metadata, spec references, dependency edges,
+  acceptance commands, and file claims.
+- KWS Codex Plan Executor parsed the task list but treated the AgentRunway YAML
+  metadata as opaque, losing spec references, dependencies, and acceptance
+  commands.
+- KWS Claude Multi Agent Executor provided a useful spec manifest check, but not
+  an AgentRunway-compatible execution contract.
+
+The resulting implementation keeps AgentRunway as the contract owner instead of
+adding a compatibility bridge to the older KWS executors. AgentLens now accepts
+raw `agentlens.event.v2` envelopes, materializes
+`artifacts/agentrunway_projection.json` and `artifacts/trust_report.json`, and
+surfaces the same trust report through CLI, API, and dashboard.

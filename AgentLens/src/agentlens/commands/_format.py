@@ -168,6 +168,8 @@ def project_run_row(row: dict[str, Any]) -> dict[str, Any]:
     # run is a container run without import artifacts).
     for key in _IMPORT_PROJECTION_KEYS:
         out[key] = row.get(key)
+    if row.get("trust_report") is not None:
+        out["trust_report"] = row.get("trust_report")
     return out
 
 
@@ -216,7 +218,7 @@ def project_show(
     fields plus task_11 additions (``workspace_id``, ``workspace_short``,
     ``failures``, ``risks``). All ten keys are always present.
     """
-    return {
+    out = {
         "run_id": _coalesce(row.get("run_id"), ""),
         "agent": _coalesce(row.get("agent"), "unknown"),
         "started_at": _coalesce(row.get("started_at"), ""),
@@ -232,3 +234,6 @@ def project_show(
         "failures": [project_failure(f) for f in failures],
         "risks": [project_risk(r) for r in risks],
     }
+    if row.get("trust_report") is not None:
+        out["trust_report"] = row.get("trust_report")
+    return out

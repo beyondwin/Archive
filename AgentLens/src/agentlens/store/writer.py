@@ -144,7 +144,7 @@ def append_event(run_dir: Path, event: dict[str, Any]) -> None:
 
     payload = _maybe_redact(event)
     _check_event_excerpt_size(payload)
-    _validate_or_write_error(payload, schema_name="event")
+    _validate_or_write_error(payload)
 
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)

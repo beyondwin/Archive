@@ -1,0 +1,13 @@
+{
+  "schema": "agentlens.trust_report.v1",
+  "run_id": "run_20260521_000000_agent",
+  "agentrunway_run_id": "ar-001",
+  "claimed_outcome": "success",
+  "trust_verdict": "trusted",
+  "evidence_strength": "strong",
+  "blocking_evidence": [],
+  "missing_evidence": [],
+  "residual_risks": [],
+  "operator_actions": [],
+  "projection_issues": []
+}

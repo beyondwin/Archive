@@ -1,15 +1,17 @@
-"""AgentLens v1 schema loader and validator.
+"""AgentLens schema loader and validator.
 
-Implements S1.6.11 — loads the bundled Draft 2020-12 schemas, validates
-documents and events.jsonl lines, and aggregates every jsonschema error
-into a single `SchemaError`/`EventLineError`.
+Loads bundled Draft 2020-12 schemas, validates documents and events.jsonl
+lines, and aggregates every jsonschema error into a single
+`SchemaError`/`EventLineError`.
 
 Public API:
     load_schema(name)
     validate_doc(doc, *, schema_name=None)
     validate_event_line(line)
 
-The five schema names are: "run", "event", "final", "eval", "manifest".
+The v1 runtime schemas keep their historical short names: "run", "event",
+"final", "eval", and "manifest". The AgentRunway Trust Console adds explicit
+v2 names plus derived artifacts.
 """
 from __future__ import annotations
 
@@ -21,11 +23,49 @@ from typing import Any, Literal
 import jsonschema
 from jsonschema import Draft202012Validator
 
-SchemaName = Literal["run", "event", "final", "eval", "manifest"]
+SchemaName = Literal[
+    "run",
+    "event",
+    "final",
+    "eval",
+    "manifest",
+    "run_v2",
+    "event_v2",
+    "final_v2",
+    "eval_v2",
+    "manifest_v2",
+    "agentrunway_projection",
+    "trust_report",
+]
 
-_SCHEMA_NAMES: tuple[str, ...] = ("run", "event", "final", "eval", "manifest")
+_SCHEMA_FILES: dict[str, str] = {
+    "run": "run.schema.json",
+    "event": "event.schema.json",
+    "final": "final.schema.json",
+    "eval": "eval.schema.json",
+    "manifest": "manifest.schema.json",
+    "run_v2": "run.v2.schema.json",
+    "event_v2": "event.v2.schema.json",
+    "final_v2": "final.v2.schema.json",
+    "eval_v2": "eval.v2.schema.json",
+    "manifest_v2": "manifest.v2.schema.json",
+    "agentrunway_projection": "agentrunway_projection.v1.schema.json",
+    "trust_report": "trust_report.v1.schema.json",
+}
+_SCHEMA_NAMES: tuple[str, ...] = tuple(_SCHEMA_FILES)
 _NAMESPACE_TO_NAME: dict[str, str] = {
-    f"agentlens.{name}.v1": name for name in _SCHEMA_NAMES
+    "agentlens.run.v1": "run",
+    "agentlens.event.v1": "event",
+    "agentlens.final.v1": "final",
+    "agentlens.eval.v1": "eval",
+    "agentlens.manifest.v1": "manifest",
+    "agentlens.run.v2": "run_v2",
+    "agentlens.event.v2": "event_v2",
+    "agentlens.final.v2": "final_v2",
+    "agentlens.eval.v2": "eval_v2",
+    "agentlens.manifest.v2": "manifest_v2",
+    "agentlens.agentrunway_projection.v1": "agentrunway_projection",
+    "agentlens.trust_report.v1": "trust_report",
 }
 _SCHEMA_DIR = Path(__file__).resolve().parent / "jsonschema"
 
@@ -75,7 +115,7 @@ def load_schema(name: SchemaName) -> dict[str, Any]:
     """Load and cache a bundled Draft 2020-12 JSON Schema by short name.
 
     Args:
-        name: one of "run", "event", "final", "eval", "manifest".
+        name: one of the keys in the AgentLens schema registry.
 
     Returns:
         Parsed schema as a dict.
@@ -88,7 +128,7 @@ def load_schema(name: SchemaName) -> dict[str, Any]:
         raise ValueError(
             f"unknown schema name: {name!r}; expected one of {_SCHEMA_NAMES!r}"
         )
-    path = _SCHEMA_DIR / f"{name}.schema.json"
+    path = _SCHEMA_DIR / _SCHEMA_FILES[str(name)]
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -188,7 +228,7 @@ def validate_event_line(line: str) -> dict[str, Any]:
         )
 
     try:
-        validate_doc(parsed, schema_name="event")
+        validate_doc(parsed)
     except SchemaError as exc:
         raise EventLineError(
             str(exc),

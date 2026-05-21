@@ -65,6 +65,7 @@ def _build_summary(row: dict[str, Any]) -> dict[str, Any]:
         "display_title": row.get("display_title"),
         "usage": row.get("usage"),
         "import_state": row.get("import_state"),
+        "trust_report": row.get("trust_report"),
         "failures": _failures_for_run(run_id) if run_id else [],
         "risks": _risks_for_run(run_id) if run_id else [],
     }
@@ -110,6 +111,11 @@ def show(
         )
         typer.echo(json.dumps(projected, sort_keys=True))
         return
+
+    trust_report = summary.get("trust_report")
+    if isinstance(trust_report, dict):
+        typer.echo(f"trust_verdict: {trust_report.get('trust_verdict', '-')}")
+        typer.echo(f"evidence_strength: {trust_report.get('evidence_strength', '-')}")
 
     for key in (
         "run_id",

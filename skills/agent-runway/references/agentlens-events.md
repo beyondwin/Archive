@@ -43,9 +43,14 @@ before AgentLens emission; oversized extras are replaced with truncation
 markers while preserving run id, phase, outcome, severity, summary, and privacy
 metadata.
 
-Payloads use `schema="agentrunway.event.v1"` and include
-`agentrunway_run_id`, `phase`, `outcome`, `severity`, `summary`, and bounded
-event-specific fields. AgentLens emission is best effort; failed emission must
+Local event payloads still include `schema="agentrunway.event.v1"` for runner
+state compatibility, but `events.jsonl` now stores an `agentlens.event.v2`
+envelope with `event_type`, `occurred_at`, `sequence`, `phase`, `outcome`,
+`severity`, `trust_impact`, evidence refs, artifact refs, and the bounded
+payload. When an AgentLens container run is open, external emission sends that
+raw v2 envelope to `agentlens event append`; the envelope `run_id` is rewritten
+to the AgentLens run id while the nested payload preserves
+`agentrunway_run_id`. AgentLens emission is best effort; failed emission must
 not stop plan execution.
 
 ## Quality Decision Events

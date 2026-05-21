@@ -25,6 +25,20 @@ export type UsageProjection = {
 
 export type ImportState = "full" | "partial" | "skipped";
 
+export type TrustReport = {
+  schema: "agentlens.trust_report.v1";
+  run_id: string;
+  agentrunway_run_id: string | null;
+  claimed_outcome: string;
+  trust_verdict: "trusted" | "partially_trusted" | "untrusted" | "blocked" | "degraded";
+  evidence_strength: "strong" | "adequate" | "weak" | "insufficient";
+  blocking_evidence: Array<Record<string, unknown>>;
+  missing_evidence: Array<Record<string, unknown>>;
+  residual_risks: Array<Record<string, unknown>>;
+  operator_actions: Array<Record<string, unknown>>;
+  projection_issues: Array<Record<string, unknown>>;
+};
+
 export type RunRow = {
   run_id: string;
   workspace_id: string;
@@ -42,6 +56,7 @@ export type RunRow = {
   display_title: string | null;
   usage: UsageProjection | null;
   import_state: ImportState | null;
+  trust_report?: TrustReport | null;
   failures_count?: number | null;
   failure_count?: number | null;
 };
@@ -91,6 +106,7 @@ export type RunDetail = {
   display_title: string | null;
   usage: UsageProjection | null;
   import_state: ImportState | null;
+  trust_report?: TrustReport | null;
   failures: Failure[];
   risks: Risk[];
   artifacts?: RunArtifact[];

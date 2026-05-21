@@ -1,4 +1,4 @@
-"""AgentLens v1 schema package.
+"""AgentLens schema package.
 
 Re-exports the validation API defined in :mod:`agentlens.schema.validate`.
 See spec §S1.5 and §S1.6.11.
