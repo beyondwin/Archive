@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -27,8 +27,12 @@ describe("waygent live provider smoke", () => {
       }
     };
 
+    const workspace = mkdtempSync(join(tmpdir(), "waygent-live-provider-source-"));
+    writeFileSync(join(workspace, "README.md"), "live provider smoke workspace\n");
+
     const run = await runWaygentScenario(scenario, {
       root: mkdtempSync(join(tmpdir(), "waygent-live-provider-")),
+      workspace,
       live_provider: liveProvider
     });
 
@@ -36,5 +40,5 @@ describe("waygent live provider smoke", () => {
     expect(run.normalized.apply_status).toBe("not_applied");
     expect(run.normalized.event_types).toContain("runway.worker_result");
     expect(run.normalized.checkpoints).toEqual(["checkpoint_task_live_provider_candidate_task_live_provider"]);
-  });
+  }, 120000);
 });

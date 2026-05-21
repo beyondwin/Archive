@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { resolve } from "node:path";
 import { CodexProviderAdapter, normalizeProcessOutput } from "../src";
 
 describe("Codex adapter normalization", () => {
@@ -31,6 +32,26 @@ describe("Codex adapter normalization", () => {
       stderr: ""
     });
     expect(result.changed_files).toEqual(["a.ts"]);
+  });
+
+  test("sets provider cwd and PWD from the adapter request", async () => {
+    const script = `
+      console.log(JSON.stringify({
+        summary: "cwd checked",
+        changed_files: [],
+        evidence: { pwd: process.env.PWD, cwd: process.cwd() }
+      }));
+    `;
+    const cwd = resolve(new URL(".", import.meta.url).pathname);
+
+    const result = await new CodexProviderAdapter({ executable: process.execPath, args: ["-e", script] }).run({
+      task_id: "task_demo",
+      candidate_id: "candidate_demo",
+      prompt: "demo",
+      cwd
+    });
+
+    expect(result.evidence.native).toMatchObject({ pwd: cwd, cwd });
   });
 
   test("normalizes Codex JSONL result envelopes", () => {
