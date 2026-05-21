@@ -80,4 +80,29 @@ verify:
     expect(result.projection.safe_wave).toEqual(["task_a", "task_b"]);
     expect(result.events.filter((event) => event.event_type === "runway.worker_result")).toHaveLength(2);
   });
+
+  test("uses the selected process provider instead of the fake provider", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-codex-provider-"));
+    const script = `
+      const prompt = await new Response(Bun.stdin.stream()).text();
+      console.log(JSON.stringify({
+        summary: "selected codex " + prompt.includes("Demo task"),
+        evidence: { prompt_length: prompt.length }
+      }));
+    `;
+
+    const result = await runWaygent({
+      root,
+      run_id: "run_codex",
+      plan,
+      profile: { provider: "codex", execution_mode: "multi-agent" },
+      provider_processes: { codex: { executable: process.execPath, args: ["-e", script] } }
+    });
+
+    const workerEvent = result.events.find((event) => event.event_type === "runway.worker_result");
+    const worker = (workerEvent?.payload.worker ?? {}) as { summary?: string; evidence?: Record<string, unknown> };
+    expect(worker.summary).toBe("selected codex true");
+    expect(worker.evidence).toMatchObject({ provider: "codex" });
+    expect(readRunState(root, "run_codex").provider).toBe("codex");
+  });
 });

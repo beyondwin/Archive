@@ -27,3 +27,10 @@ fi
 Generated local artifacts such as `node_modules/`, `apps/*/dist/`,
 `native/kernel/target/`, `components/agentlens/.venv/`, and pytest caches are
 ignored and should not be committed.
+
+Live provider smoke checks are intentionally separate from default local
+verification because they require authenticated local CLIs. Use
+`--provider codex` or `--provider claude` only when the matching CLI is
+installed and authenticated; the adapter will execute `codex exec --json -` or
+`claude -p --output-format json`, then normalize the provider output into
+`runway.worker_result.v1`.
