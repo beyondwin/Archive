@@ -1,5 +1,13 @@
 import type { ProviderCapabilityManifest, WorkerResult } from "@waygent/contracts";
 
+export type ProviderExecutionBoundary = "deterministic" | "process";
+
+export interface ProviderAdapterDescription {
+  provider: "fake" | "codex" | "claude";
+  execution: ProviderExecutionBoundary;
+  direct_agentlens_writes: false;
+}
+
 export interface AdapterRequest {
   task_id: string;
   candidate_id: string;
@@ -9,6 +17,7 @@ export interface AdapterRequest {
 
 export interface ProviderAdapter {
   manifest: ProviderCapabilityManifest;
+  describe(): ProviderAdapterDescription;
   run(request: AdapterRequest): Promise<WorkerResult>;
 }
 
