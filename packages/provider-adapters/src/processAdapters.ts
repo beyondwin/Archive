@@ -171,17 +171,25 @@ export async function runProviderProcess(
   });
 }
 
-function providerProcessArgs(provider: "codex" | "claude", options: ProviderProcessOptions, cwd: string | undefined, request: AdapterRequest): string[] {
+export function providerProcessArgs(provider: "codex" | "claude", options: ProviderProcessOptions, cwd: string | undefined, request: AdapterRequest): string[] {
   const args = options.args ?? [];
-  if (provider === "claude" && options.executable === "claude") {
+  if (provider === "claude") {
     const nextArgs = [...args];
-    if (cwd && !nextArgs.includes("--add-dir")) {
-      const allowedDirs = [cwd];
-      if (request.task_packet_path) allowedDirs.push(dirname(request.task_packet_path));
-      nextArgs.unshift("--add-dir", ...allowedDirs);
+    if (options.executable === "claude") {
+      if (cwd && !nextArgs.includes("--add-dir")) {
+        const allowedDirs = [cwd];
+        if (request.task_packet_path) allowedDirs.push(dirname(request.task_packet_path));
+        nextArgs.unshift("--add-dir", ...allowedDirs);
+      }
+      if (!nextArgs.includes("--permission-mode")) {
+        nextArgs.unshift("--permission-mode", "acceptEdits");
+      }
     }
-    if (!nextArgs.includes("--permission-mode")) {
-      nextArgs.unshift("--permission-mode", "acceptEdits");
+    if (options.effort && !nextArgs.includes("--effort")) {
+      nextArgs.unshift("--effort", options.effort);
+    }
+    if (options.model && !nextArgs.includes("--model")) {
+      nextArgs.unshift("--model", options.model);
     }
     return nextArgs;
   }

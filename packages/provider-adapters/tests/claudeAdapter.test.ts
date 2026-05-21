@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ClaudeProviderAdapter, normalizeProcessOutput } from "../src";
+import { ClaudeProviderAdapter, normalizeProcessOutput, providerProcessArgs } from "../src";
 
 describe("Claude adapter normalization", () => {
   test("executes a configured process and normalizes its worker result", async () => {
@@ -75,6 +75,40 @@ describe("Claude adapter normalization", () => {
       execution: "process",
       direct_agentlens_writes: false
     });
+  });
+
+  test("prepends --model and --effort to claude args when set", () => {
+    const args = providerProcessArgs(
+      "claude",
+      { executable: "claude", args: ["-p", "--output-format", "json"], model: "opus", effort: "high" },
+      "/tmp/work",
+      { task_id: "t", candidate_id: "c", prompt: "p" }
+    );
+    expect(args.slice(0, 4)).toEqual(["--model", "opus", "--effort", "high"]);
+    expect(args).toContain("--permission-mode");
+    expect(args).toContain("acceptEdits");
+  });
+
+  test("respects user-supplied --model and does not duplicate", () => {
+    const args = providerProcessArgs(
+      "claude",
+      { executable: "claude", args: ["--model", "sonnet", "-p"], model: "opus" },
+      undefined,
+      { task_id: "t", candidate_id: "c", prompt: "p" }
+    );
+    expect(args.filter((arg) => arg === "--model").length).toBe(1);
+    expect(args).toContain("sonnet");
+    expect(args).not.toContain("opus");
+  });
+
+  test("omits --model when option not set", () => {
+    const args = providerProcessArgs(
+      "claude",
+      { executable: "claude", args: ["-p"] },
+      undefined,
+      { task_id: "t", candidate_id: "c", prompt: "p" }
+    );
+    expect(args).not.toContain("--model");
   });
 
   test("classifies an unavailable Claude executable as an adapter crash", async () => {

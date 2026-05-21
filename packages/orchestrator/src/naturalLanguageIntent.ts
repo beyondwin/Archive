@@ -30,15 +30,24 @@ export function parseNaturalLanguageIntent(text: string): WaygentIntent {
   if (topicMatch?.[1]) intent.topic = topicMatch[1];
   if (provider) intent.provider = provider;
   if (executionMode) intent.execution_mode = executionMode;
-  if (lower.includes("opus")) {
-    intent.main_model = "opus";
-    intent.subagent_model = "opus";
-  }
-  if (lower.includes("xhigh")) intent.main_reasoning = "xhigh";
-  else if (lower.includes("high")) intent.main_reasoning = "high";
-  if (lower.includes("medium")) intent.subagent_reasoning = "medium";
-  else if (lower.includes("high")) intent.subagent_reasoning = "high";
+  applyModelKeywords(lower, intent);
+  if (lower.includes("xhigh") || lower.includes("초고")) intent.main_reasoning = "xhigh";
+  else if (lower.includes("high") || lower.includes("높")) intent.main_reasoning = "high";
+  if (lower.includes("medium") || lower.includes("보통")) intent.subagent_reasoning = "medium";
+  else if (lower.includes("high") || lower.includes("높")) intent.subagent_reasoning = "high";
   return intent;
+}
+
+function applyModelKeywords(lower: string, intent: WaygentIntent): void {
+  const mainMatch = lower.match(/main(?:[ _-]?(?:agent|model))?\s*(?:은|는|=|:)?\s*(opus|sonnet|haiku|claude-[a-z0-9.-]+)/);
+  const subMatch = lower.match(/(?:subagent|sub[ _-]agent|sub[ _-]?model|서브(?:에이전트|모델)?)\s*(?:은|는|=|:)?\s*(opus|sonnet|haiku|claude-[a-z0-9.-]+)/);
+  if (mainMatch?.[1]) intent.main_model = mainMatch[1];
+  if (subMatch?.[1]) intent.subagent_model = subMatch[1];
+  if (intent.main_model && intent.subagent_model) return;
+  const generic = lower.match(/\b(opus|sonnet|haiku)\b/);
+  if (!generic?.[1]) return;
+  if (!intent.main_model) intent.main_model = generic[1];
+  if (!intent.subagent_model) intent.subagent_model = generic[1];
 }
 
 export function intentToCommand(intent: WaygentIntent): string {
