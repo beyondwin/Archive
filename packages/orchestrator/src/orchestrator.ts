@@ -168,7 +168,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       : preflight.status === "dirty_unrelated"
         ? "Source checkout preflight found unrelated dirty files and continued."
         : "Source checkout preflight blocked dispatch.",
-    payload: preflight,
+    payload: { ...preflight },
     trust_impact: preflight.status === "clean" ? "supports_success" : "neutral"
   });
   appendEvent(paths.events, preflight.status === "dirty_unrelated" ? { ...preflightEvent, severity: "warning" } : preflightEvent);

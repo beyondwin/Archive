@@ -5,5 +5,9 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@waygent/contracts": "workspace:*",
+    "@waygent/lens-projectors": "workspace:*"
   }
 }
