@@ -60,4 +60,28 @@ verify: []
 `)
     ).toThrow("missing required waygent-task fields: id");
   });
+
+  test("imports existing agentrunway-task fences without depending on KWS runtime", () => {
+    const parsed = parseWaygentPlan(`
+\`\`\`yaml agentrunway-task
+task_id: phase9_task_004
+title: Implement Waygent CLI Commands
+risk: medium
+dependencies: [phase9_task_002, phase9_task_003]
+file_claims:
+  - {path: apps/cli, mode: owned}
+acceptance_commands:
+  - bun test apps/cli/tests/cli.test.ts
+\`\`\`
+`);
+
+    expect(parsed.tasks[0]).toEqual({
+      id: "phase9_task_004",
+      title: "Implement Waygent CLI Commands",
+      dependencies: ["phase9_task_002", "phase9_task_003"],
+      file_claims: [{ path: "apps/cli", mode: "owned" }],
+      risk: "medium",
+      verification_commands: ["bun test apps/cli/tests/cli.test.ts"]
+    });
+  });
 });

@@ -14,7 +14,7 @@ export interface ParsedWaygentPlan {
   tasks: ParsedWaygentTask[];
 }
 
-const TASK_BLOCK = /```yaml waygent-task\n([\s\S]*?)\n```/g;
+const TASK_BLOCK = /```yaml (?:waygent-task|agentrunway-task)\n([\s\S]*?)\n```/g;
 const VALID_RISK = new Set<RiskLevel>(["low", "medium", "high"]);
 const VALID_CLAIM_MODE = new Set<FileClaimMode>(["owned", "shared_append", "read_only"]);
 
@@ -37,7 +37,7 @@ function parseTaskBlock(block: string): ParsedWaygentTask {
     if (!line) continue;
     const scalarMatch = line.match(/^([a-z_]+):\s*(.*)$/);
     const key = scalarMatch?.[1];
-    if (key && key !== "file_claims" && key !== "verify") {
+    if (key && key !== "file_claims" && key !== "verify" && key !== "acceptance_commands") {
       scalar.set(key, scalarMatch[2] ?? "");
       continue;
     }
@@ -47,7 +47,15 @@ function parseTaskBlock(block: string): ParsedWaygentTask {
     }
     if (line === "verify:") {
       index = readStringList(lines, index + 1, verification) - 1;
+      continue;
     }
+    if (line === "acceptance_commands:") {
+      index = readStringList(lines, index + 1, verification) - 1;
+    }
+  }
+
+  if (!scalar.has("id") && scalar.has("task_id")) {
+    scalar.set("id", scalar.get("task_id")!);
   }
 
   const missing = ["id", "title", "dependencies", "risk"].filter((key) => !scalar.has(key));
@@ -77,16 +85,41 @@ function readFileClaims(lines: string[], start: number, out: FileClaim[]): numbe
     const line = lines[index] ?? "";
     if (!line.startsWith("  - ") && !line.startsWith("    ")) break;
     const trimmed = line.trim();
-    if (trimmed.startsWith("- path:")) {
+    if (trimmed.startsWith("- {")) {
       if (current) pushClaim(current, out);
-      current = { path: trimmed.slice("- path:".length).trim() };
+      pushClaim(parseInlineClaim(trimmed), out);
+      current = null;
+    } else if (trimmed.startsWith("- path:")) {
+      if (current) pushClaim(current, out);
+      current = { path: cleanScalar(trimmed.slice("- path:".length).trim()) };
     } else if (trimmed.startsWith("mode:")) {
       current = current ?? {};
-      current.mode = trimmed.slice("mode:".length).trim() as FileClaimMode;
+      current.mode = cleanScalar(trimmed.slice("mode:".length).trim()) as FileClaimMode;
     }
   }
   if (current) pushClaim(current, out);
   return index;
+}
+
+function parseInlineClaim(line: string): Partial<FileClaim> {
+  const body = line.replace(/^- \{/, "").replace(/\}$/, "");
+  const claim: Partial<FileClaim> = {};
+  for (const part of body.split(",")) {
+    const [rawKey, ...rawValue] = part.split(":");
+    const key = rawKey?.trim();
+    const value = cleanScalar(rawValue.join(":").trim());
+    if (key === "path") claim.path = value;
+    if (key === "mode") claim.mode = value as FileClaimMode;
+  }
+  return claim;
+}
+
+function cleanScalar(value: string): string {
+  const trimmed = value.trim();
+  if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+    return trimmed.slice(1, -1);
+  }
+  return trimmed;
 }
 
 function pushClaim(claim: Partial<FileClaim>, out: FileClaim[]): void {
