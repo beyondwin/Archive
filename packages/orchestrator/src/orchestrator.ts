@@ -9,7 +9,7 @@ import type { ProviderProcessOptions } from "@waygent/provider-adapters";
 import { buildDurableProjection } from "@waygent/runway-control";
 import { createCombinedCheckpointPatchArtifact } from "./checkpointArtifacts";
 import { buildCompletionAudit } from "./completionAudit";
-import { resolveExecutionProfile, type ProfileOverride, type ProviderName } from "./executionProfile";
+import { resolveExecutionProfile, type ExecutionProfile, type ProfileOverride, type ProviderName } from "./executionProfile";
 import { resolvePlanInput } from "./planDiscovery";
 import { parseWaygentPlan } from "./planParser";
 import { buildRunEvent } from "./runEvents";
@@ -223,6 +223,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       }
     });
     context.flushState();
+    const resolvedProviderProcesses = resolveProviderProcesses(profile, options.provider_processes);
     const results = await executeBoundedSafeWave({
       task_ids: activeSafeWave,
       concurrency,
@@ -240,7 +241,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
           checkpoint_inputs: dependencyCheckpointInputs(context.state, task.dependencies),
           spec: options.spec ?? null,
           provider: profile.provider,
-          ...(options.provider_processes ? { provider_processes: options.provider_processes } : {})
+          ...(Object.keys(resolvedProviderProcesses).length > 0 ? { provider_processes: resolvedProviderProcesses } : {})
         });
       }
     });
@@ -480,6 +481,29 @@ function providerProfileRecord(profile: ReturnType<typeof resolveExecutionProfil
     subagent: { ...profile.subagent },
     evidence_event_type: profile.evidence_event_type
   };
+}
+
+export function resolveProviderProcesses(
+  profile: ExecutionProfile,
+  overrides: Partial<Record<Exclude<ProviderName, "fake">, ProviderProcessOptions>> | undefined
+): Partial<Record<Exclude<ProviderName, "fake">, ProviderProcessOptions>> {
+  const result: Partial<Record<Exclude<ProviderName, "fake">, ProviderProcessOptions>> = {};
+  if (overrides?.codex) result.codex = overrides.codex;
+  if (profile.provider === "claude") {
+    const userClaude = overrides?.claude;
+    result.claude = {
+      executable: userClaude?.executable ?? "claude",
+      args: userClaude?.args ?? ["-p", "--output-format", "json"],
+      ...(userClaude?.cwd ? { cwd: userClaude.cwd } : {}),
+      ...(userClaude?.env ? { env: userClaude.env } : {}),
+      ...(userClaude?.timeout_ms ? { timeout_ms: userClaude.timeout_ms } : {}),
+      model: userClaude?.model ?? profile.subagent.model,
+      effort: userClaude?.effort ?? profile.subagent.reasoning
+    };
+  } else if (overrides?.claude) {
+    result.claude = overrides.claude;
+  }
+  return result;
 }
 
 export async function runWaygentDemo(options: RunWaygentOptions): Promise<WaygentRunResult> {

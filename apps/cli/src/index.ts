@@ -42,13 +42,18 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     return { command: intentToCommand(parseNaturalLanguageIntent(String(parsed.flags.text ?? ""))) };
   }
   if (parsed.command === "run" || parsed.command === "demo") {
+    const profile: NonNullable<Parameters<typeof runWaygentDemo>[0]["profile"]> = {
+      provider: parsed.flags.provider === "claude" ? "claude" : parsed.flags.provider === "codex" ? "codex" : "fake",
+      execution_mode: parsed.flags["execution-mode"] === "single-agent" ? "single-agent" : "multi-agent"
+    };
+    if (typeof parsed.flags["main-model"] === "string") profile.main_model = parsed.flags["main-model"];
+    if (isReasoning(parsed.flags["main-reasoning"])) profile.main_reasoning = parsed.flags["main-reasoning"];
+    if (typeof parsed.flags["subagent-model"] === "string") profile.subagent_model = parsed.flags["subagent-model"];
+    if (isReasoning(parsed.flags["subagent-reasoning"])) profile.subagent_reasoning = parsed.flags["subagent-reasoning"];
     const options: Parameters<typeof runWaygentDemo>[0] = {
       root: String(parsed.flags.root ?? defaultRunRoot()),
       workspace: String(parsed.flags.workspace ?? process.cwd()),
-      profile: {
-        provider: parsed.flags.provider === "claude" ? "claude" : parsed.flags.provider === "codex" ? "codex" : "fake",
-        execution_mode: parsed.flags["execution-mode"] === "single-agent" ? "single-agent" : "multi-agent"
-      }
+      profile
     };
     if (typeof parsed.flags.run === "string") options.run_id = parsed.flags.run;
     if (typeof parsed.flags.plan === "string") options.plan = parsed.flags.plan;
@@ -80,6 +85,10 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     return eventsRun(runCommandOptions(parsed));
   }
   return { usage: "waygent run|status|events|inspect|explain|resume|apply" };
+}
+
+function isReasoning(value: unknown): value is "medium" | "high" | "xhigh" {
+  return value === "medium" || value === "high" || value === "xhigh";
 }
 
 function runCommandOptions(parsed: ParsedCli): RunCommandOptions {

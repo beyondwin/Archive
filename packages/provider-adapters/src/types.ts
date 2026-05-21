@@ -24,6 +24,8 @@ export interface ProviderProcessOptions {
   cwd?: string;
   env?: Record<string, string>;
   timeout_ms?: number;
+  model?: string;
+  effort?: string;
 }
 
 export interface ProviderAdapterRunResult {
