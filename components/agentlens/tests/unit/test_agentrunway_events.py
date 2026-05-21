@@ -9,6 +9,7 @@ from agentlens.evaluator.agentrunway_events import (
     build_evidence_coverage,
     project_agentrunway_events,
 )
+from agentlens.evaluator.agentrunway_v2 import project_events
 from agentlens.evaluator.engine import evaluate
 from agentlens.schema.validate import validate_doc
 
@@ -29,7 +30,7 @@ def _event(
     }
 
 
-def test_projection_tracks_gate_retry_blocked_status_and_internal_resume_action() -> None:
+def test_legacy_agentrunway_events_project_for_read_compatibility() -> None:
     projection = project_agentrunway_events(
         [
             _event("run.started"),
@@ -129,6 +130,34 @@ def test_projection_tracks_gate_retry_blocked_status_and_internal_resume_action(
     assert projection["artifacts"]["artifact_graph"] == "present"
     assert projection["coverage"]["covered"] == ["S1"]
     assert projection["coverage"]["blocked"] == ["S2"]
+
+
+def test_active_runway_events_read_without_legacy_conversion() -> None:
+    projection = project_events(
+        [
+            {
+                "schema": "agentlens.event.v3",
+                "event_id": "event_run_demo_1",
+                "agentlens_run_id": "lens_run_demo",
+                "orchestrator_run_id": "run_demo",
+                "producer": {"name": "waygent", "kind": "orchestrator", "version": "0.1.0"},
+                "event_type": "runway.verification_result",
+                "occurred_at": "2026-05-21T00:00:00Z",
+                "sequence": 1,
+                "phase": "verify",
+                "outcome": "success",
+                "severity": "info",
+                "trust_impact": "supports_success",
+                "summary": "Verification passed.",
+                "payload": {"task_id": "task_demo"},
+            }
+        ]
+    )
+
+    assert projection["run_id"] == "run_demo"
+    assert projection["event_count"] == 0
+    assert projection["timeline"] == []
+    assert projection["projection_issues"] == []
 
 
 def test_evidence_coverage_is_not_applicable_for_non_agentrunway_runs() -> None:

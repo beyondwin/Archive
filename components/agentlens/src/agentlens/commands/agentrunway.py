@@ -1,4 +1,4 @@
-"""``agentlens agentrunway`` trust report command."""
+"""Legacy ``agentlens agentrunway`` trust report command."""
 from __future__ import annotations
 
 import json
@@ -38,7 +38,7 @@ def agentrunway(
     run_id: str = typer.Argument(..., help="run_id to inspect"),
     format: str = typer.Option("text", "--format", help="output format: 'text' or 'json'"),
 ) -> None:
-    """Print the AgentRunway trust report for a run."""
+    """Print the legacy AgentRunway trust report for a run."""
     if format not in {"text", "json"}:
         raise typer.BadParameter(f"unknown --format {format!r}; expected 'text' or 'json'")
     try:
