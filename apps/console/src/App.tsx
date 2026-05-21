@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import {
   buildConsoleUiModel,
+  buildRunDetailModel,
+  consoleRunToRealDetail,
   demoConsoleSnapshot,
   type ConsoleRun,
   type TrustVerdict
@@ -69,14 +71,18 @@ function TaskTimeline({ run }: { run: ConsoleRun }) {
 }
 
 function EventTimeline({ run }: { run: ConsoleRun }) {
+  const detail = buildRunDetailModel(consoleRunToRealDetail(run));
   return (
     <section className="section-band" aria-labelledby="events-heading">
       <h2 id="events-heading">Event Timeline</h2>
       <div className="event-stack">
-        {run.events.map((event) => (
-          <article className={`event-row ${event.severity}`} key={event.eventId}>
+        {detail.timeline.map((event) => (
+          <article
+            className={`event-row ${event.outcome === "failed" ? "error" : event.outcome === "blocked" ? "warning" : "info"}`}
+            key={`${event.sequence}-${event.event_type}`}
+          >
             <span>{event.sequence}</span>
-            <strong>{event.eventType}</strong>
+            <strong>{event.event_type}</strong>
             <span>{event.outcome}</span>
             <p>{event.summary}</p>
           </article>
@@ -166,6 +172,7 @@ export function App() {
     [selectedRunId]
   );
   const run = model.selectedRun;
+  const detail = buildRunDetailModel(consoleRunToRealDetail(run));
 
   return (
     <main className="console-shell">
@@ -176,6 +183,7 @@ export function App() {
         </div>
         <div className="topbar-metrics">
           <span>{run.status}</span>
+          <span>{detail.header.apply_status}</span>
           <span>{model.eventFamilies.join(" / ")}</span>
           <span>{model.generatedAt}</span>
         </div>
@@ -195,7 +203,11 @@ export function App() {
             </div>
             <div>
               <span>Apply</span>
-              <strong>{run.applyStatus.state}</strong>
+              <strong>{detail.header.apply_status}</strong>
+            </div>
+            <div>
+              <span>Safe wave</span>
+              <strong>{detail.safe_wave.join(", ") || "none"}</strong>
             </div>
           </section>
 

@@ -42,6 +42,36 @@ export interface ConsoleApplyStatus {
   checkpointRef: string;
 }
 
+export interface RealRunDetailResponse {
+  run_id: string;
+  status: string;
+  trust_status: string;
+  apply_status: string;
+  total_events: number;
+  last_event_type: string | null;
+  safe_wave: string[];
+  failures: Array<{ task_id: string; failure_class: string; count: number; recovery_action?: string }>;
+  timeline: Array<{ sequence: number; phase: string; event_type: string; outcome: string; summary: string }>;
+}
+
+export interface RunDetailModel {
+  header: {
+    run_id: string;
+    status: string;
+    trust_status: string;
+    apply_status: string;
+    total_events: number;
+    last_event_type: string | null;
+  };
+  safe_wave: string[];
+  failures: RealRunDetailResponse["failures"];
+  timeline: RealRunDetailResponse["timeline"];
+  sections: Array<{
+    id: "overview" | "safe-wave" | "timeline" | "trust-failure" | "apply-state";
+    label: string;
+  }>;
+}
+
 export interface ConsoleRun {
   runId: string;
   title: string;
@@ -290,6 +320,55 @@ export function buildConsoleUiModel(
     selectedRun,
     eventFamilies,
     sections: consoleSections
+  };
+}
+
+export function buildRunDetailModel(response: RealRunDetailResponse): RunDetailModel {
+  return {
+    header: {
+      run_id: response.run_id,
+      status: response.status,
+      trust_status: response.trust_status,
+      apply_status: response.apply_status,
+      total_events: response.total_events,
+      last_event_type: response.last_event_type
+    },
+    safe_wave: response.safe_wave,
+    failures: response.failures,
+    timeline: response.timeline,
+    sections: [
+      { id: "overview", label: "Overview" },
+      { id: "safe-wave", label: "Safe wave" },
+      { id: "timeline", label: "Timeline" },
+      { id: "trust-failure", label: "Trust and failure" },
+      { id: "apply-state", label: "Apply state" }
+    ]
+  };
+}
+
+export function consoleRunToRealDetail(run: ConsoleRun): RealRunDetailResponse {
+  const lastEvent = run.events.at(-1);
+  return {
+    run_id: run.runId,
+    status: run.status,
+    trust_status: run.trust.verdict,
+    apply_status: run.applyStatus.state,
+    total_events: run.events.length,
+    last_event_type: lastEvent?.eventType ?? null,
+    safe_wave: run.tasks.map((task) => task.taskId),
+    failures: run.failures.map((failure) => ({
+      task_id: failure.taskId,
+      failure_class: failure.failureClass,
+      recovery_action: failure.recoveryAction,
+      count: 1
+    })),
+    timeline: run.events.map((event) => ({
+      sequence: event.sequence,
+      phase: event.eventType.split(".")[0] ?? "unknown",
+      event_type: event.eventType,
+      outcome: event.outcome,
+      summary: event.summary
+    }))
   };
 }
 
