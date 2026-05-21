@@ -1,6 +1,7 @@
 import type { AgentLensEvent, FailureClass, RunStatus } from "@waygent/contracts";
 import { readEvents, readLatestRunId, rebuildRunSummary, runPaths } from "@waygent/lens-store";
 import { projectFailureSummary, projectTrustReport } from "@waygent/lens-projectors";
+import { hasRunState, readRunState, type WaygentRunState } from "./runState";
 export { buildRunEvent, nextRunEvent } from "./runEvents";
 
 export interface RunCommandOptions {
@@ -51,11 +52,13 @@ export function eventsRun(options: RunCommandOptions): { run_id: string; total_e
 
 export function inspectRun(options: RunCommandOptions): RunStatusView & {
   failures: ReturnType<typeof projectFailureSummary>;
+  state?: WaygentRunState;
 } {
   const status = statusRun(options);
   return {
     ...status,
-    failures: projectFailureSummary(readEvents(runPaths(options.root, status.run_id).events))
+    failures: projectFailureSummary(readEvents(runPaths(options.root, status.run_id).events)),
+    ...(hasRunState(options.root, status.run_id) ? { state: readRunState(options.root, status.run_id) } : {})
   };
 }
 
@@ -72,6 +75,16 @@ export function explainRun(options: RunCommandOptions): { run_id: string; blocke
 
 export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): { run_id: string; allowed_actions: string[]; dry_run: boolean } {
   const explanation = explainRun(options);
+  if (hasRunState(options.root, explanation.run_id)) {
+    const state = readRunState(options.root, explanation.run_id);
+    if (state.status === "completed") {
+      return {
+        run_id: explanation.run_id,
+        allowed_actions: ["inspect_run", "apply_verified_checkpoint"],
+        dry_run: options.dry_run ?? false
+      };
+    }
+  }
   return {
     run_id: explanation.run_id,
     allowed_actions: explanation.blocked_by === "verification_failed" ? ["retry_with_evidence", "update_plan"] : ["inspect_run"],

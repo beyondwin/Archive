@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { appendEvent, runPaths, writeLatestRunId } from "@waygent/lens-store";
+import { runWaygent } from "../src/orchestrator";
 import { buildRunEvent, explainRun, nextRunEvent, resumeRun, statusRun } from "../src/runCommands";
+import { inspectRun } from "../src/runCommands";
 
 describe("Waygent run commands", () => {
   test("status reads the latest run projection", () => {
@@ -91,5 +93,19 @@ describe("Waygent run commands", () => {
 
     expect(event.sequence).toBe(2);
     expect(event.occurred_at).toBe("2026-05-21T00:00:00Z");
+  });
+
+  test("inspect includes durable state and completed runs can apply verified checkpoint", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-inspect-state-"));
+    await runWaygent({ root, run_id: "run_stateful" });
+
+    expect(inspectRun({ root, run: "run_stateful" }).state).toMatchObject({
+      status: "completed",
+      completion_audit: { status: "passed" }
+    });
+    expect(resumeRun({ root, run: "run_stateful", dry_run: true }).allowed_actions).toEqual([
+      "inspect_run",
+      "apply_verified_checkpoint"
+    ]);
   });
 });
