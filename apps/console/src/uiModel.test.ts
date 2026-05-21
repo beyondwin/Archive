@@ -261,4 +261,48 @@ describe("Lens web console UI model", () => {
       combinedPatchRef: null
     });
   });
+
+  test("does not infer apply readiness from successful verification events", () => {
+    const run = realRunDetailToConsoleRun({
+      run_id: "run_verified_but_blocked",
+      status: "completed",
+      trust_status: "trusted",
+      apply_status: "ready",
+      total_events: 2,
+      last_event_type: "runway.verification_result",
+      safe_wave: ["task_a"],
+      failures: [],
+      timeline: [
+        { sequence: 1, phase: "platform", event_type: "platform.run_started", outcome: "running", summary: "Run opened." },
+        { sequence: 2, phase: "runway", event_type: "runway.verification_result", outcome: "success", summary: "Verification passed." }
+      ],
+      verification: [
+        {
+          verification_id: "verify_task_a_1",
+          task_id: "task_a",
+          command: "bun test",
+          status: "passed"
+        }
+      ],
+      apply_readiness: {
+        status: "blocked",
+        reason: "state_drift",
+        checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"],
+        combined_patch_ref: null,
+        source: "run_state_v2"
+      },
+      drift: {
+        last_checked_at: "2026-05-21T00:00:00Z",
+        records: [],
+        unrepaired_blockers: [{ failure_class: "state_drift" }]
+      }
+    });
+
+    expect(run.applyStatus).toMatchObject({
+      state: "blocked",
+      canApply: false,
+      reason: "state_drift",
+      checkpointRef: "artifacts/checkpoints/task_a/candidate_task_a.json"
+    });
+  });
 });

@@ -2,7 +2,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { readRunStateV2, runWaygentDemo, writeRunStateV2 } from "@waygent/orchestrator";
+import { appendEvent, runPaths } from "@waygent/lens-store";
+import { buildRunEvent, inspectRun, readRunStateV2, runWaygentDemo, writeRunStateV2 } from "@waygent/orchestrator";
+import { buildRunDetailModel } from "../../console/src/uiModel";
 import { createApiHandler } from "../src/server";
 
 const handler = createApiHandler();
@@ -67,6 +69,53 @@ describe("Waygent local API routes", () => {
     });
     expect(Array.isArray(detail.execution_explanation.waves)).toBe(true);
     expect(Array.isArray(detail.execution_explanation.recommended_next_actions)).toBe(true);
+  });
+
+  test("GET /runs/:runId and console detail stay in parity with inspect v2 projection facts", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-api-parity-"));
+    const runId = "run_api_parity";
+    await runWaygentDemo({ root, run_id: runId, workspace: initSourceCheckout("waygent-api-source-") });
+    appendEvent(runPaths(root, runId).events, buildRunEvent({
+      run_id: runId,
+      sequence: 999,
+      event_type: "runway.safe_wave_selected",
+      phase: "schedule",
+      outcome: "success",
+      summary: "Stale safe-wave event appended after state was written.",
+      payload: { safe_wave: ["stale_event_task"] }
+    }));
+    const inspected = inspectRun({ root, run: runId });
+    const state = inspected.state;
+    expect(state).toBeDefined();
+    const expectedSafeWave = inspected.execution_explanation?.waves[0]?.ready ?? [];
+    const expectedCheckpointRefs = Object.values(state!.tasks).flatMap((task) => task.checkpoint_refs);
+    const expectedCombinedPatchRef = state!.completion_audit?.combined_apply_evidence?.patch_ref ?? null;
+    const realHandler = createApiHandler({ runRoot: root });
+
+    const response = await realHandler(new Request(`http://waygent.local/runs/${runId}`));
+    const detail = await response.json();
+    const consoleDetail = buildRunDetailModel(detail);
+
+    expect(detail).toMatchObject({
+      run_id: inspected.run_id,
+      status: inspected.status,
+      trust_status: inspected.trust_status
+    });
+    expect(detail.safe_wave).toEqual(expectedSafeWave);
+    expect(detail.execution_explanation.waves[0].ready).toEqual(expectedSafeWave);
+    expect(detail.apply_readiness).toMatchObject({
+      status: "ready",
+      checkpoint_refs: expectedCheckpointRefs,
+      combined_patch_ref: expectedCombinedPatchRef,
+      source: "run_state_v2"
+    });
+    expect(detail.provider_attempts).toHaveLength(state!.provider_attempts.length);
+    expect(detail.verification).toHaveLength(state!.verification.length);
+    expect(consoleDetail.safe_wave).toEqual(expectedSafeWave);
+    expect(consoleDetail.apply_readiness?.checkpoint_refs).toEqual(expectedCheckpointRefs);
+    expect(consoleDetail.apply_readiness?.combined_patch_ref).toBe(expectedCombinedPatchRef);
+    expect(consoleDetail.provider_attempts).toHaveLength(state!.provider_attempts.length);
+    expect(consoleDetail.verification).toHaveLength(state!.verification.length);
   });
 
   test("GET /runs and /runs/:runId prefer v2 apply readiness over successful verification events", async () => {

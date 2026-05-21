@@ -231,12 +231,13 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
   const events = readEvents(runPaths(runRoot, runId).events);
   const stateV2 = tryReadRunStateV2(runRoot, runId);
   const applyReadiness = stateV2 ? projectApplyReadinessFromState(stateV2) : null;
+  const executionExplanation = stateV2 ? projectExecutionExplanationFromState(stateV2) : null;
   const summary = summarizeRealRun(runRoot, runId);
   return {
     ...summary,
     status: stateV2 ? runStatusFromV2(stateV2.status) : summary.status,
     apply_status: applyReadiness?.status ?? summary.apply_status,
-    safe_wave: safeWaveFromEvents(events),
+    safe_wave: executionExplanation?.waves[0]?.ready ?? safeWaveFromEvents(events),
     safe_waves: stateV2?.safe_waves ?? [],
     run_state_v2: stateV2,
     task_packets: stateV2 ? taskPacketMetadata(stateV2) : [],
@@ -247,7 +248,7 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
     decision_packets: stateV2 ? decisionPacketMetadata(stateV2) : [],
     drift: stateV2?.drift ?? null,
     apply_readiness: applyReadiness,
-    execution_explanation: stateV2 ? projectExecutionExplanationFromState(stateV2) : null,
+    execution_explanation: executionExplanation,
     failures: projectFailureSummary(events),
     timeline: projectTimeline(events),
     trust: projectTrustReport(events),

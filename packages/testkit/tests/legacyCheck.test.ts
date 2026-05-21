@@ -29,9 +29,25 @@ describe("legacy check", () => {
 
   test("allows historical migration references outside active routing", () => {
     const root = fixtureRoot();
-    writeFileSync(join(root, "docs/migration/history.md"), "Removed skills/agent-runway after parity.\n");
+    writeFileSync(join(root, "docs/migration/history.md"), [
+      "Removed skills/agent-runway after parity.",
+      "Old instructions used cd components/agentlens && python -m pytest -q."
+    ].join("\n"));
 
     expect(runLegacyCheck(root)).toEqual({ passed: true, violations: [] });
+  });
+
+  test("rejects active Python AgentLens routing references", () => {
+    const root = fixtureRoot();
+    writeFileSync(join(root, "docs/operations/waygent.md"), [
+      "Run the active AgentLens backend gate before shipping.",
+      "cd components/agentlens && python -m pytest -q"
+    ].join("\n"));
+
+    const result = runLegacyCheck(root);
+
+    expect(result.passed).toBe(false);
+    expect(result.violations).toContain("docs/operations/waygent.md: active Python AgentLens routing reference");
   });
 
   test("rejects active legacy Waygent compatibility tokens", () => {

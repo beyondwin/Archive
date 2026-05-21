@@ -59,9 +59,9 @@ Current active source surfaces:
 Cutoff surfaces addressed by this update:
 
 - `AGENTS.md`, `CLAUDE.md`, `README.md`, active architecture docs,
-  `docs/contracts/events.md`, `docs/operations/waygent.md`, and
-  `docs/operations/verification.md` now route active work to the TypeScript
-  Waygent Lens path.
+  `.github/copilot-instructions.md`, `docs/contracts/events.md`,
+  `docs/operations/waygent.md`, and `docs/operations/verification.md` now
+  route active work to the TypeScript Waygent Lens path.
 - The stale `.github/workflows/dashboard-ci.yml` workflow, which targeted the
   old root `AgentLens/**` path, is removed.
 
@@ -174,7 +174,7 @@ Before deleting `components/agentlens`, resolve these explicitly:
 2. Stale dashboard CI must be removed or replaced with Waygent API/console
    checks.
 3. `bun run check:legacy` should scan active routing docs for
-   `components/agentlens` and Python AgentLens verification references.
+   active `components/agentlens` and Python AgentLens verification references.
 4. KWS executor skills must either:
    - be declared historical/external to the Waygent product deletion, with no
      expectation that their telemetry is supported by this checkout, or
