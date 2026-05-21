@@ -29,6 +29,9 @@ Stop rules:
 - Ask for a plan path when `--latest` is ambiguous.
 - Stop on ambiguous active runs; do not choose one from chat context.
 - Stop when the selected live provider CLI is unavailable or unauthenticated.
+- For explicit Waygent implementation requests, do not use host `spawn_agent`
+  or direct file edits instead of `waygent run`; the runtime must create the
+  run state and worktree data.
 - Run `waygent explain --last` before `waygent resume --last` after failed
   verification.
 - `apply` is explicit, must refuse `dirty_source_checkout`, and must block

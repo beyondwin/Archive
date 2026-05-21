@@ -8,24 +8,38 @@ events, resume, and apply.
 KWS executor skills may remain in this repository, but they are outside the
 Waygent product boundary.
 
+## Invocation Boundary
+
+When this skill is explicitly invoked and the user asks to implement a plan,
+execute multi-agent work, or run work from a design/plan pair, use `waygent run`
+instead of host-managed workers. The Waygent runtime is responsible for
+creating run state, worker worktrees, provider attempts, checkpoints, and
+AgentLens events.
+
+Do not replace a Waygent run with host `spawn_agent` calls or direct file edits.
+If no `waygent run` occurs, no Waygent worktree will be created.
+
 ## Host-Agent Model Policy
 
 When Codex is asked to implement, review, or coordinate Waygent runtime work
 from a plan or design, use extra-high reasoning for the main coordinating agent
-when the host supports it. Spawn Waygent runtime implementation, review, and
-verification subagents as GPT-5.5 with high reasoning when explicit subagent
-model settings are available.
+when the host supports it. If a valid Waygent runtime execution or explicit
+post-run review step creates implementation, review, or verification subagents,
+prefer GPT-5.5 with high reasoning when explicit subagent model settings are
+available.
 
 If the host cannot change those settings, say so and use the strongest
 available configuration. This is a host-agent execution preference only; it
-does not make Waygent depend on KWS executor skills or allow bypassing the
-Waygent CLI/runtime boundary.
+does not make Waygent depend on KWS executor skills, authorize host
+`spawn_agent` as the implementation path, or allow bypassing the Waygent
+CLI/runtime boundary.
 
 ## Common Commands
 
 ```bash
 waygent run --latest
 waygent run --plan docs/migration/example.md --provider fake
+waygent run --plan docs/migration/example-plan.md --spec docs/architecture/example-design.md --provider codex --execution-mode multi-agent
 waygent status --last
 waygent events --run run_example --json
 waygent inspect --run run_example --json
