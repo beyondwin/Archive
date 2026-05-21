@@ -7,6 +7,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@waygent/contracts": "workspace:*",
     "@waygent/runway-control": "workspace:*"
   }
 }
