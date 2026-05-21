@@ -173,11 +173,12 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   writeRunState(options.root, {
     ...initialState,
     status: "completed",
-    tasks: parsed.tasks.map((candidate) => ({
-      id: candidate.id,
-      status: checkpointRefs.has(candidate.id) ? "verified" : "pending",
-      checkpoint_ref: checkpointRefs.get(candidate.id)
-    })),
+    tasks: parsed.tasks.map((candidate) => {
+      const checkpointRef = checkpointRefs.get(candidate.id);
+      return checkpointRef
+        ? { id: candidate.id, status: "verified", checkpoint_ref: checkpointRef }
+        : { id: candidate.id, status: "pending" };
+    }),
     completion_audit: {
       status: "passed",
       commands: safeWave.flatMap((taskId) => verificationCommands.get(taskId) ?? []),
@@ -224,13 +225,14 @@ export function defaultRunRoot(): string {
 
 function resolveRunPlanInput(options: RunWaygentOptions): { markdown: string; path: string | null } {
   if (options.plan_path || options.latest || options.topic) {
-    return resolvePlanInput({
-      workspace: options.workspace ?? process.cwd(),
-      plan_path: options.plan_path,
-      latest: options.latest,
-      topic: options.topic,
-      inline_plan: options.plan
-    });
+    const discoveryOptions: Parameters<typeof resolvePlanInput>[0] = {
+      workspace: options.workspace ?? process.cwd()
+    };
+    if (options.plan_path) discoveryOptions.plan_path = options.plan_path;
+    if (options.latest) discoveryOptions.latest = options.latest;
+    if (options.topic) discoveryOptions.topic = options.topic;
+    if (options.plan) discoveryOptions.inline_plan = options.plan;
+    return resolvePlanInput(discoveryOptions);
   }
   return { markdown: options.plan ?? DEMO_PLAN, path: null };
 }
