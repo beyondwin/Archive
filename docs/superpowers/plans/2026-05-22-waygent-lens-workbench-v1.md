@@ -1311,6 +1311,8 @@ git commit -m "feat: project operator decisions from Waygent state"
 **Files:**
 
 - Modify: `packages/orchestrator/src/runCommands.ts`
+- Modify: `packages/orchestrator/tests/runCommandsV2.test.ts`
+- Modify: `packages/orchestrator/tests/runCommands.test.ts`
 - Modify: `apps/api/src/server.ts`
 - Modify: `apps/api/tests/api.test.ts`
 - Modify: `apps/cli/tests/cli.test.ts`
@@ -1470,6 +1472,13 @@ return {
 
 Update the function return type to include `operator_decision`.
 
+Update `packages/orchestrator/tests/runCommandsV2.test.ts` and
+`packages/orchestrator/tests/runCommands.test.ts` so existing explain/inspect
+assertions follow the shared operator decision projection. Existing blocked,
+needs-rebase, missing dogfood, and missing-state assertions should verify the
+same `operator_decision.primary_blocker` and summary semantics that
+`explainRun()` now returns.
+
 - [ ] **Step 5: Update API real run summaries and detail**
 
 In `apps/api/src/server.ts`:
@@ -1531,6 +1540,7 @@ Run:
 
 ```bash
 bun test apps/api/tests/api.test.ts apps/cli/tests/cli.test.ts packages/lens-projectors/tests/operatorDecision.test.ts
+bun test packages/orchestrator/tests/runCommandsV2.test.ts packages/orchestrator/tests/runCommands.test.ts
 bun run typecheck
 ```
 
@@ -1539,7 +1549,7 @@ Expected: both commands exit 0.
 - [ ] **Step 7: Commit Task 3**
 
 ```bash
-git add packages/orchestrator/src/runCommands.ts apps/api/src/server.ts apps/api/tests/api.test.ts apps/cli/tests/cli.test.ts
+git add packages/orchestrator/src/runCommands.ts packages/orchestrator/tests/runCommandsV2.test.ts packages/orchestrator/tests/runCommands.test.ts apps/api/src/server.ts apps/api/tests/api.test.ts apps/cli/tests/cli.test.ts
 git commit -m "feat: expose operator decisions in API and CLI"
 ```
 
@@ -1549,6 +1559,7 @@ git commit -m "feat: expose operator decisions in API and CLI"
 
 - Modify: `apps/console/src/uiModel.ts`
 - Modify: `apps/console/src/uiModel.test.ts`
+- Modify: `tests/e2e/lens-console-model.test.ts`
 
 - [ ] **Step 1: Write UI model tests**
 
@@ -1809,12 +1820,17 @@ In `buildConsoleUiModel()`, sort copied runs by urgency:
 
 Use `runs` for `firstRun`, `selectedRun`, and return value.
 
+Update `tests/e2e/lens-console-model.test.ts` so the run-list expectation
+matches the new operator urgency sort order instead of the previous static demo
+fixture order.
+
 - [ ] **Step 5: Run Console model tests and typecheck**
 
 Run:
 
 ```bash
 bun test apps/console/src/uiModel.test.ts
+bun test tests/e2e/lens-console-model.test.ts
 bun run typecheck
 ```
 
@@ -1823,7 +1839,7 @@ Expected: both commands exit 0.
 - [ ] **Step 6: Commit Task 4**
 
 ```bash
-git add apps/console/src/uiModel.ts apps/console/src/uiModel.test.ts
+git add apps/console/src/uiModel.ts apps/console/src/uiModel.test.ts tests/e2e/lens-console-model.test.ts
 git commit -m "feat: model Lens Workbench operator state"
 ```
 
@@ -2175,9 +2191,12 @@ Run:
 bun test \
   packages/contracts/tests/contracts.test.ts \
   packages/lens-projectors/tests/operatorDecision.test.ts \
+  packages/orchestrator/tests/runCommandsV2.test.ts \
+  packages/orchestrator/tests/runCommands.test.ts \
   apps/api/tests/api.test.ts \
   apps/cli/tests/cli.test.ts \
-  apps/console/src/uiModel.test.ts
+  apps/console/src/uiModel.test.ts \
+  tests/e2e/lens-console-model.test.ts
 ```
 
 Expected: exit 0.
