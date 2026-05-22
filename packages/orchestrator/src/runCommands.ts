@@ -61,7 +61,21 @@ export function resolveRunId(options: RunCommandOptions): string {
 
 export function statusRun(options: RunCommandOptions): RunStatusView {
   const runId = resolveRunId(options);
-  const events = readEvents(runPaths(options.root, runId).events);
+  const paths = runPaths(options.root, runId);
+  // Guard against a stale `latest` pointer whose run directory has been
+  // removed out-of-band: without this check, status silently reports
+  // status:"running" total_events:0 last_event_type:null which is
+  // indistinguishable from a freshly-spawned run that has not emitted yet.
+  if (!existsSync(paths.root) && !existsSync(paths.events)) {
+    return {
+      run_id: runId,
+      status: "failed",
+      total_events: 0,
+      last_event_type: "evidence_cleared",
+      trust_status: "evidence_missing"
+    };
+  }
+  const events = readEvents(paths.events);
   const stateResult = readRunStateV2Result(options.root, runId);
   const model = projectRunReadModel({
     run_id: runId,

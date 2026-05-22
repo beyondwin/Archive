@@ -101,7 +101,8 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     spec_excerpt: input.spec ?? "",
     checkpoint_inputs: input.checkpoint_inputs,
     previous_failures: [],
-    decisions: input.decisions ?? []
+    decisions: input.decisions ?? [],
+    workspace: input.workspace
   });
   const packetArtifact = writeArtifact(inputRunRoot(input), `task_packets/${input.task.id}.json`, `${JSON.stringify(packet, null, 2)}\n`);
   artifactIndexEntries.push(artifactIndexEntry({ artifact: packetArtifact, producer_phase: "task_packet", task_id: input.task.id }));

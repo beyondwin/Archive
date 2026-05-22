@@ -192,4 +192,40 @@ bun test packages/orchestrator/tests/planNormalizer.test.ts
 
     expect(normalized.task_count).toBe(2);
   });
+
+  test("ignores ## Task N: headings that live inside fenced code blocks", () => {
+    const planWithFencedFixture = [
+      "# Demo Plan",
+      "",
+      "### Task 1: Real Task",
+      "",
+      "**Files:**",
+      "",
+      "- Modify: `README.md`",
+      "",
+      "Run:",
+      "",
+      "```bash",
+      "bun test",
+      "```",
+      "",
+      "Below is a unit-test fixture that demonstrates the parser format.",
+      "It is NOT a real task and must not be normalized:",
+      "",
+      "```ts",
+      "const FIXTURE = `",
+      "## Task 99: This Is Demo Text Inside A String Literal",
+      "Some prose with no Files: section and no Run: block.",
+      "`;",
+      "```",
+      ""
+    ].join("\n");
+
+    const normalized = normalizeWaygentPlanInput({
+      markdown: planWithFencedFixture,
+      path: "/tmp/plan.md"
+    });
+
+    expect(normalized.task_count).toBe(1);
+  });
 });

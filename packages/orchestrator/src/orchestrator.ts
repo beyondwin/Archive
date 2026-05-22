@@ -473,7 +473,11 @@ function resolveRunIdAndPaths(options: RunWaygentOptions): { runId: string; path
   if (options.run_id !== undefined) {
     const paths = runPaths(options.root, options.run_id);
     if (hasExistingRunEvidence(paths)) {
-      throw new Error("run_id_already_exists");
+      throw new Error(
+        `run_id_already_exists: ${options.run_id} (existing run at ${paths.root}). ` +
+          `To start fresh, choose a different --run id, omit --run to let Waygent derive a unique one, ` +
+          `or remove the existing run directory after confirming its evidence is no longer needed.`
+      );
     }
     return { runId: options.run_id, paths };
   }
