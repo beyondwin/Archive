@@ -8,6 +8,7 @@ export interface ParsedWaygentTask {
   file_claims: FileClaim[];
   risk: RiskLevel;
   verification_commands: string[];
+  instructions: string[];
 }
 
 export interface ParsedWaygentPlan {
@@ -36,13 +37,14 @@ function parseTaskBlock(block: string): ParsedWaygentTask {
   const scalar = new Map<string, string>();
   const fileClaims: FileClaim[] = [];
   const verification: string[] = [];
+  const instructions: string[] = [];
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]?.trim();
     if (!line) continue;
     const scalarMatch = line.match(/^([a-z_]+):\s*(.*)$/);
     const key = scalarMatch?.[1];
-    if (key && key !== "file_claims" && key !== "verify" && key !== "acceptance_commands") {
+    if (key && key !== "file_claims" && key !== "verify" && key !== "acceptance_commands" && key !== "instructions") {
       scalar.set(key, scalarMatch[2] ?? "");
       continue;
     }
@@ -56,6 +58,10 @@ function parseTaskBlock(block: string): ParsedWaygentTask {
     }
     if (line === "acceptance_commands:") {
       index = readStringList(lines, index + 1, verification) - 1;
+      continue;
+    }
+    if (line === "instructions:") {
+      index = readStringList(lines, index + 1, instructions) - 1;
     }
   }
 
@@ -79,7 +85,8 @@ function parseTaskBlock(block: string): ParsedWaygentTask {
     dependencies: parseInlineList(scalar.get("dependencies")!),
     file_claims: fileClaims,
     risk,
-    verification_commands: verification
+    verification_commands: verification,
+    instructions
   };
 }
 

@@ -30,6 +30,9 @@ file_claims:
 risk: medium
 verify:
   - bun run check
+instructions:
+  - Read the original task section before editing.
+  - Keep the change scoped.
 \`\`\`
 `;
 
@@ -47,6 +50,10 @@ describe("Waygent plan parser", () => {
     expect(parsed.tasks[0]?.file_claims).toEqual([{ path: "README.md", mode: "owned" }]);
     expect(parsed.tasks[1]?.dependencies).toEqual(["task_prepare"]);
     expect(parsed.tasks[1]?.verification_commands).toEqual(["bun run check"]);
+    expect(parsed.tasks[1]?.instructions).toEqual([
+      "Read the original task section before editing.",
+      "Keep the change scoped."
+    ]);
   });
 
   test("rejects missing task ids", () => {

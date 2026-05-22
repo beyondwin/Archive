@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import { hasWaygentTaskBlock } from "./planParser";
+import { isNormalizableSuperpowersPlan } from "./planNormalizer";
 
 export interface PlanDiscoveryOptions {
   workspace: string;
@@ -46,7 +47,7 @@ export function discoverPlan(options: PlanDiscoveryOptions): ResolvedPlanInput {
   const workspace = resolve(options.workspace);
   const candidates = collectMarkdownPlans(workspace)
     .map((path) => ({ path, markdown: readFileSync(path, "utf8") }))
-    .filter((candidate) => hasWaygentTaskBlock(candidate.markdown))
+    .filter((candidate) => isRunnableWaygentPlan(candidate.markdown))
     .filter((candidate) => matchesTopic(candidate.path, candidate.markdown, options.topic));
 
   if (candidates.length === 0) {
@@ -55,6 +56,10 @@ export function discoverPlan(options: PlanDiscoveryOptions): ResolvedPlanInput {
 
   candidates.sort((left, right) => planRank(right.path) - planRank(left.path) || right.path.localeCompare(left.path));
   return { markdown: candidates[0]!.markdown, path: candidates[0]!.path };
+}
+
+function isRunnableWaygentPlan(markdown: string): boolean {
+  return hasWaygentTaskBlock(markdown) || isNormalizableSuperpowersPlan(markdown);
 }
 
 function readPlanFile(path: string): ResolvedPlanInput {

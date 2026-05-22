@@ -82,7 +82,7 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     run_id: input.run_id,
     task: input.task,
     role: "implement",
-    plan_excerpt: input.task.title,
+    plan_excerpt: input.task.instructions.length > 0 ? input.task.instructions.join("\n") : input.task.title,
     spec_excerpt: input.spec ?? "",
     checkpoint_inputs: input.checkpoint_inputs,
     previous_failures: []
@@ -413,11 +413,12 @@ function normalizeProviderRunResult(
   return { worker: result };
 }
 
-function buildTaskPrompt(task: { title: string; verification_commands: string[] } | undefined, taskPacketPath?: string): string {
+function buildTaskPrompt(task: { title: string; verification_commands: string[]; instructions?: string[] } | undefined, taskPacketPath?: string): string {
   if (!task) return "Waygent task";
   return [
     task.title,
     taskPacketPath ? `task_packet_path: ${taskPacketPath}` : null,
+    task.instructions?.length ? ["Plan excerpt:", ...task.instructions].join("\n") : null,
     "Verify:",
     task.verification_commands.join("\n")
   ].filter(Boolean).join("\n\n");
