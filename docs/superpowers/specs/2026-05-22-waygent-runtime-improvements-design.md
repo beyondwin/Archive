@@ -1,7 +1,7 @@
 # Waygent Runtime Improvements - Source-Audited Design Spec
 
 Date: 2026-05-22
-Status: Source-audited revision
+Status: Source-audited and test-verified revision
 
 This document imports the FixThis draft
 `docs/superpowers/specs/2026-05-22-waygent-runtime-improvements-design.md`
@@ -11,8 +11,8 @@ into the active Waygent project and rewrites it against the current source in
 The imported draft had the right product direction, but several contracts were
 out of date for the current Waygent runtime:
 
-- it referenced non-existent package roots such as `packages/runtime`,
-  `packages/shared`, and `packages/cli`;
+- it referenced package roots that do not exist in Archive, including old
+  runtime, shared, and CLI package-root variants;
 - it used an abbreviated event envelope with `type`, `run_id`, and `ts`, while
   the current contract uses `event_type`, `orchestrator_run_id`,
   `occurred_at`, sequence numbers, producer metadata, outcome, severity, and
@@ -27,6 +27,18 @@ out of date for the current Waygent runtime:
   boundary.
 
 ## S0. Source Audit Baseline
+
+Re-audit evidence from 2026-05-22:
+
+- `git status --short --branch --untracked-files=all` reported a clean
+  checkout on `main...origin/main [ahead 1]`.
+- Focused Bun tests passed for CLI parsing/commands, contracts, task packets,
+  plan normalization, provider adapter normalization, and provider replay.
+- `bun run waygent:scenarios` passed all 7 golden scenario replays.
+- A direct probe confirmed `### Task N:` currently falls through as native
+  markdown with `task_count: 0`.
+- A direct probe confirmed repeated `--plan` and `--spec` flags are currently
+  overwritten by the last value in `parseCli()`.
 
 Active source paths:
 
@@ -52,8 +64,8 @@ Active source paths:
   `<root>/<run_id>/state.json`, `events.jsonl`, `artifacts/`, and
   `projection.sqlite`.
 - `skills/waygent/` owns the natural-language skill surface. It currently has
-  uncommitted local changes in this checkout and should not be edited without a
-  fresh status check.
+  no local modifications in this audit, but any future edit must still start
+  with a fresh status check and preserve unrelated user changes.
 
 Already implemented:
 
@@ -78,10 +90,12 @@ Observed defects and gaps:
 - The plan normalizer does not support the Superpowers standard
   `### Task N:` heading shape, even though the writing-plans skill emits that
   form.
-- Current plan/spec validation is mostly parse-time normalization plus source
-  checkout preflight. There is no dedicated plan/spec audit that catches missing
-  file claims, missing verification, bad spec refs, duplicate ownership, or
-  invalid command shape before a run is created.
+- Current plan validation is split between native task parsing and
+  Superpowers parse-time normalization. For recognized `## Task N:` sections,
+  missing file claims and safe verification commands are already rejected before
+  run creation. There is still no dedicated plan/spec audit for `### Task N:`,
+  path escape, duplicate ownership, bad spec refs, dependency cycles, or
+  invalid command shape as a named preflight phase.
 - Task packets already contain a `decisions` array, but no runtime decisions
   register populates it and there is no `waygent decisions` verb.
 - Every task receives the full spec text. There is no spec manifest or per-task
@@ -174,7 +188,7 @@ The implementation must use the current monorepo shape:
 | Run storage | `packages/lens-store/src/*` |
 | Waygent skill | `skills/waygent/*` |
 
-Do not introduce a new `packages/runtime` tree for these changes. Use small
+Do not introduce a new runtime package tree for these changes. Use small
 focused modules under the existing owner package, for example:
 
 - `packages/orchestrator/src/planPreflight.ts`
@@ -519,9 +533,9 @@ lexicon:
 - eval coverage in `skills/waygent/evals/check_skill_contract.py`;
 - explicit-wins-over-NL rules.
 
-Because `skills/waygent/SKILL.md` is currently dirty in the source checkout,
-Task 11 must start with `git status --short -- skills/waygent` and preserve
-unrelated user edits.
+`skills/waygent/SKILL.md` was clean in the 2026-05-22 audit. Task 11 must
+still start with `git status --short -- skills/waygent` because skill files are
+operator-facing contracts and may receive user edits between audits.
 
 ### F12. Orphan Run Advisory
 
@@ -567,9 +581,9 @@ The second command should print nothing after the self-filter.
 1. Should the public flag be `--preflight` or `--plan-preflight` now that source
    checkout preflight already exists? Recommendation: `--plan-preflight` to
    avoid semantic overlap.
-2. Should multi-plan chaining be one v3 state file or a chain id over multiple
-   v2 runs? Recommendation: chain id over v2 runs first; v3 only if the UX
-   needs single-file chain state.
+2. Should multi-plan chaining be one v3 state file or a chain id coordinating
+   multiple v2 child runs? Recommendation: chain id plus v2 child runs first;
+   v3 only if the UX needs single-file chain state.
 3. Which provider outputs expose actual token usage reliably enough for cost
    accounting? Recommendation: implement extractors with `unknown` fallback and
    treat budget math as exact only when `usage_source` is provider-backed.

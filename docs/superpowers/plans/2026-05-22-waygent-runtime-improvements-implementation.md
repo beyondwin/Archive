@@ -30,6 +30,22 @@ filesystem run artifacts, Waygent skill evals.
 
 - `docs/superpowers/specs/2026-05-22-waygent-runtime-improvements-design.md`
 
+## Source Audit Evidence
+
+This plan was rechecked against `/Users/kws/source/private/Archive` on
+2026-05-22.
+
+- `git status --short --branch --untracked-files=all` reported a clean
+  worktree on `main...origin/main [ahead 1]`.
+- Focused tests passed for `packages/orchestrator/tests/planNormalizer.test.ts`,
+  `apps/cli/tests/cli.test.ts`, `packages/contracts/tests/contracts.test.ts`,
+  `packages/context-packer/tests/taskPacket.test.ts`, and the relevant
+  provider adapter replay/normalization tests.
+- `bun run waygent:scenarios` passed all 7 integration scenario replays.
+- Direct probes confirmed two Task 1 and Task 10 assumptions: `### Task N:`
+  does not normalize today, and repeated `--plan`/`--spec` flags are
+  overwritten by the current CLI parser.
+
 ## Source Audit Corrections
 
 The FixThis draft was not copied verbatim. These corrections are mandatory:
@@ -47,8 +63,9 @@ The FixThis draft was not copied verbatim. These corrections are mandatory:
   mechanisms.
 - Treat hook enforcement as process-adapter-aware. Per-tool hooks are not
   available until provider event streams are parsed.
-- Preserve the existing dirty `skills/waygent/SKILL.md` until Task 11 starts
-  with a fresh git status and merges user changes carefully.
+- `skills/waygent/SKILL.md` was clean in the 2026-05-22 source audit. Task 11
+  must still start with a fresh `git status --short -- skills/waygent` and
+  preserve any user edits that appear after this audit.
 
 ## File Structure
 
@@ -96,11 +113,17 @@ The FixThis draft was not copied verbatim. These corrections are mandatory:
 
 ## Execution Order
 
-Parallel-safe after Task 1:
+Parallelizable after Task 1, with integration gates:
 
 - Task 2 decisions, Task 3 spec slicing, Task 8 watch, Task 11 lexicon, and
-  Task 12 orphan advisory can be developed independently if file scopes stay
-  separate.
+  Task 12 orphan advisory can be researched or prototyped independently.
+- Final integration is not file-parallel for most of those tasks because
+  `apps/cli/src/index.ts`, `apps/cli/tests/cli.test.ts`,
+  `packages/contracts/src/types.ts`, `packages/contracts/src/schemas.ts`,
+  `packages/orchestrator/src/orchestrator.ts`, and
+  `packages/orchestrator/src/runCommands.ts` are shared choke points.
+- If multiple workers are used, keep shared CLI/contracts/orchestrator wiring
+  as a short serial merge step after each isolated module and test file lands.
 
 Sequential/shared-core:
 
@@ -504,7 +527,8 @@ and record bypass evidence.
 
 - First change `parseCli()` so repeatable `--plan` and `--spec` values are not
   overwritten.
-- Prefer a chain id over multiple v2 child runs for the first implementation.
+- Prefer a chain id coordinating multiple v2 child runs for the first
+  implementation.
 - Only introduce `waygent.run_state.v3` if single-file chain state is approved.
 - Chain budget and decisions are shared at chain level; child run evidence
   remains v2-compatible.
@@ -562,7 +586,9 @@ Expected:
   table.
 - Existing Korean intents still pass.
 
-**Risk:** medium because `skills/waygent/SKILL.md` is currently dirty.
+**Risk:** low to medium. The skill tree was clean in the 2026-05-22 audit, but
+skill behavior is operator-facing and must preserve any user edits present when
+Task 11 begins.
 
 **Depends:** none.
 
@@ -645,5 +671,5 @@ local CLI auth, time, and cost are acceptable.
 - [ ] Method evidence does not weaken current checkpoint/completion/apply gates.
 - [ ] Hooks do not promise per-tool coverage before provider event streams are
       parsed.
-- [ ] Task 11 preserves existing dirty skill changes.
+- [ ] Task 11 starts with fresh skill-tree status and preserves any user edits.
 - [ ] Orphan cleanup never auto-deletes.
