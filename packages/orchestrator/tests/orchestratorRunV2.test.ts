@@ -185,6 +185,64 @@ verify:
     expect(packet.checkpoint_inputs).toEqual(["artifacts/checkpoints/task_base/candidate_task_base.json"]);
   });
 
+  test("passes transitive checkpoint refs into dependent task packets and worktrees", async () => {
+    const workspace = initSourceCheckout("waygent-run-v2-transitive-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-run-v2-transitive-"));
+    const transitivePlan = `
+\`\`\`yaml waygent-task
+id: task_base
+title: Create base file
+dependencies: []
+file_claims:
+  - path: base.txt
+    mode: owned
+risk: low
+verify:
+  - test -f base.txt
+\`\`\`
+\`\`\`yaml waygent-task
+id: task_middle
+title: Create middle file
+dependencies: [task_base]
+file_claims:
+  - path: middle.txt
+    mode: owned
+risk: low
+verify:
+  - test -f base.txt && test -f middle.txt
+\`\`\`
+\`\`\`yaml waygent-task
+id: task_final
+title: Create final file
+dependencies: [task_middle]
+file_claims:
+  - path: final.txt
+    mode: owned
+risk: low
+verify:
+  - test -f base.txt && test -f middle.txt && test -f final.txt
+\`\`\`
+`;
+
+    await runWaygent({
+      root,
+      workspace,
+      run_id: "run_transitive",
+      plan: transitivePlan,
+      profile: { provider: "fake", execution_mode: "multi-agent" }
+    });
+
+    const state = readRunStateV2(root, "run_transitive");
+    expect(state.status).toBe("completed");
+    const packetPath = state.tasks.task_final?.task_packet_path;
+    expect(packetPath).toBeTruthy();
+    const packet = JSON.parse(readFileSync(packetPath!, "utf8")) as { checkpoint_inputs?: string[] };
+    expect(packet.checkpoint_inputs).toEqual([
+      "artifacts/checkpoints/task_base/candidate_task_base.json",
+      "artifacts/checkpoints/task_middle/candidate_task_middle.json"
+    ]);
+  });
+
   test("blocks checkpoint sealing when actual worktree changes escape allowed scope", async () => {
     const workspace = initSourceCheckout("waygent-run-v2-diff-scope-source-");
     const root = mkdtempSync(join(tmpdir(), "waygent-run-v2-diff-scope-"));

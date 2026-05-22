@@ -576,5 +576,16 @@ function resolveRunPlanInput(options: RunWaygentOptions): { markdown: string; pa
 }
 
 function dependencyCheckpointInputs(state: WaygentRunStateV2, dependencies: string[]): string[] {
-  return dependencies.flatMap((dependency) => state.tasks[dependency]?.checkpoint_refs ?? []);
+  const checkpointRefs: string[] = [];
+  const visited = new Set<string>();
+  const visit = (taskId: string) => {
+    if (visited.has(taskId)) return;
+    visited.add(taskId);
+    const task = state.tasks[taskId];
+    if (!task) return;
+    for (const dependency of task.dependencies) visit(dependency);
+    checkpointRefs.push(...task.checkpoint_refs);
+  };
+  for (const dependency of dependencies) visit(dependency);
+  return [...new Set(checkpointRefs)];
 }
