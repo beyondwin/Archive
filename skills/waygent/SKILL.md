@@ -72,15 +72,32 @@ flags and explicit command names higher priority than NL interpretation.
 - "최근 승인된 플랜 실행해줘" -> `waygent run --latest`
 - "design.md plan.md 멀티에이전트로 구현해줘" ->
   `waygent run --plan plan.md --spec design.md --execution-mode multi-agent`
+- "최고 품질로 실행해줘" ->
+  `waygent run --plan plan.md --spec design.md --profile max-quality`
+- "비용 절약 모드로 실행해줘" ->
+  `waygent run --plan plan.md --profile cost-saver`
+- "이 run id로 다시 실행해줘" -> `waygent run --plan plan.md --run <run_id>`
 - "상태 보여줘" -> `waygent status --last`
 - "이벤트 보여줘" -> `waygent events --run <run_id> --json`
 - "자세히 검사해줘" -> `waygent inspect --run <run_id> --json`
 - "왜 막혔어?" -> `waygent explain --last`
 - "재개해줘" -> `waygent resume --last`
 - "검증 다시 실행해줘" -> `waygent verify --last`
+- "이 태스크만 검증 다시 실행해줘" -> `waygent verify --last --task <task_id>`
 - "검증 통과한 것만 적용해줘" -> `waygent apply --run <run_id>`
+- "고아 런 정리해줘" -> `waygent orphans` (delete via
+  `waygent orphans --delete <id> --yes`)
 - "실행 가능한 waygent-task 만들어줘" ->
   `waygent scaffold-plan --id <task_id> --title <title> --claim <path:mode> --risk <low|medium|high> --verify <command>`
+
+`--profile` presets:
+
+- `max-quality`: main=opus/high, subagents=opus/high.
+- `balanced`: main=opus/high, subagents=sonnet/medium.
+- `cost-saver`: main=haiku/medium, subagents=sonnet/medium.
+
+Explicit `--main-model`, `--main-reasoning`, `--subagent-model`, and
+`--subagent-reasoning` override any preset.
 
 Stop rules:
 
