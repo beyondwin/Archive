@@ -60,8 +60,8 @@ export function recoverWaygentPlanInput(input: RecoverWaygentPlanInput): Recover
       markdown: input.markdown,
       path: input.path,
       workspace: input.workspace,
-      unsafe_verification: input.unsafe_verification,
-      infer_risk: input.infer_risk
+      ...(input.unsafe_verification !== undefined ? { unsafe_verification: input.unsafe_verification } : {}),
+      ...(input.infer_risk !== undefined ? { infer_risk: input.infer_risk } : {})
     });
     return {
       status: "not_needed",
@@ -192,7 +192,7 @@ function recoverSection(section: LenientTaskSection, findings: IntakeFinding[], 
   return {
     id: taskId,
     title: section.title,
-    dependencies: [],
+    dependencies: [] as string[],
     file_claims: fileClaims,
     risk: "high" as const,
     verify,
