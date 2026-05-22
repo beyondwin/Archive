@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { hasWaygentTaskBlock } from "./planParser";
 
 export interface PlanDiscoveryOptions {
   workspace: string;
@@ -19,12 +20,11 @@ export interface ResolvedPlanInput {
   path: string | null;
 }
 
-const PLAN_MARKER = /```yaml waygent-task\n/;
 const SKIP_DIRS = new Set([".git", ".venv", "node_modules", "target", "tmp", "dist", "build"]);
 
 export function resolvePlanInput(options: PlanDiscoveryOptions): ResolvedPlanInput {
   if (options.inline_plan?.trim()) {
-    if (PLAN_MARKER.test(options.inline_plan)) return { markdown: options.inline_plan, path: null };
+    if (hasWaygentTaskBlock(options.inline_plan)) return { markdown: options.inline_plan, path: null };
     const candidate = resolve(options.workspace, options.inline_plan);
     if (existsSync(candidate)) return readPlanFile(candidate);
     if (!options.plan_path && !options.latest && !options.topic) return { markdown: options.inline_plan, path: null };
@@ -46,7 +46,7 @@ export function discoverPlan(options: PlanDiscoveryOptions): ResolvedPlanInput {
   const workspace = resolve(options.workspace);
   const candidates = collectMarkdownPlans(workspace)
     .map((path) => ({ path, markdown: readFileSync(path, "utf8") }))
-    .filter((candidate) => PLAN_MARKER.test(candidate.markdown))
+    .filter((candidate) => hasWaygentTaskBlock(candidate.markdown))
     .filter((candidate) => matchesTopic(candidate.path, candidate.markdown, options.topic));
 
   if (candidates.length === 0) {

@@ -79,4 +79,21 @@ acceptance_commands:
 `)
     ).toThrow("missing waygent-task block");
   });
+
+  test("rejects implementation plans with actionable scaffold guidance", () => {
+    expect(() =>
+      parseWaygentPlan(`
+# Implementation Plan
+
+## Task 1: Add Operator Decision Contract
+
+**Files:**
+
+- Modify: \`packages/contracts/src/types.ts\`
+- Modify: \`packages/contracts/src/schemas.ts\`
+
+- [ ] **Step 1: Write the failing contract test**
+`)
+    ).toThrow(/executable Waygent plan.*waygent scaffold-plan/s);
+  });
 });
