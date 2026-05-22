@@ -27,6 +27,11 @@ export class FakeProviderAdapter implements ProviderAdapter {
     });
     return {
       worker,
+      metadata: {
+        actual_model: { model: "fake", reasoning: null, source: "fake_provider" },
+        usage: { input_tokens: 0, output_tokens: 0, cached_read_tokens: 0, cached_write_tokens: 0 },
+        usage_source: "provider_json"
+      },
       process: {
         stdout: "",
         stderr: "",

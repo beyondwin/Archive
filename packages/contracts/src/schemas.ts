@@ -35,6 +35,19 @@ const failureClassValues = [
 const riskValues = ["low", "medium", "high"] as const;
 const providerRoleValues = ["implement", "review", "fix", "verify_assist"] as const;
 const providerLogCategoryValues = ["error", "warning", "mcp", "plugin_manifest", "skill_loader", "other"] as const;
+const usageSourceValues = ["provider_json", "event_stream", "unknown"] as const;
+const budgetActionValues = ["warn", "pause", "off"] as const;
+const specMappingSourceValues = ["explicit", "heuristic", "fallback"] as const;
+const failureBarrierTypeValues = [
+  "spec_blocker",
+  "env_blocker",
+  "ambiguity",
+  "quality_fail",
+  "verification_fail",
+  "budget_paused",
+  "checkpoint_missing",
+  "evidence_missing"
+] as const;
 const operatorRunStatusValues = [
   "running",
   "recovering",
@@ -103,6 +116,179 @@ const artifactIndexEntrySchema = {
     producer_phase: { enum: [...executionPhaseNameValues, "task_packet", "combined_apply", "decision"] },
     task_id: { type: "string", pattern: idPattern, nullable: true },
     created_at: { type: "string", pattern: isoTimestamp }
+  }
+} as const;
+
+const tokenUsageSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["input_tokens", "output_tokens", "cached_read_tokens", "cached_write_tokens"],
+  properties: {
+    input_tokens: { type: "integer", minimum: 0 },
+    output_tokens: { type: "integer", minimum: 0 },
+    cached_read_tokens: { type: "integer", minimum: 0 },
+    cached_write_tokens: { type: "integer", minimum: 0 }
+  }
+} as const;
+
+const modelRequestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["model", "reasoning"],
+  properties: {
+    model: { type: "string", nullable: true },
+    reasoning: { type: "string", nullable: true }
+  }
+} as const;
+
+const modelAttestationSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["model", "reasoning", "source"],
+  properties: {
+    model: { type: "string", nullable: true },
+    reasoning: { type: "string", nullable: true },
+    source: { type: "string", minLength: 1 }
+  }
+} as const;
+
+const decisionEntrySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["decision_id", "task_id", "decision", "files", "made_at", "supersedes"],
+  properties: {
+    decision_id: { type: "string", minLength: 1 },
+    task_id: { type: "string", pattern: idPattern },
+    decision: { type: "string", minLength: 1 },
+    files: { type: "array", items: { type: "string" } },
+    made_at: { type: "string", pattern: isoTimestamp },
+    supersedes: { type: "string", nullable: true }
+  }
+} as const;
+
+const specManifestSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["spec_path", "spec_total_chars", "sections", "task_to_sections", "fallback_policy", "built_at"],
+  properties: {
+    spec_path: { type: "string", nullable: true },
+    spec_total_chars: { type: "integer", minimum: 0 },
+    sections: {
+      type: "object",
+      additionalProperties: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "title", "range", "byte_offset"],
+        properties: {
+          id: { type: "string", minLength: 1 },
+          title: { type: "string", minLength: 1 },
+          range: {
+            type: "array",
+            minItems: 2,
+            maxItems: 2,
+            items: { type: "integer", minimum: 0 }
+          },
+          byte_offset: {
+            type: "array",
+            minItems: 2,
+            maxItems: 2,
+            items: { type: "integer", minimum: 0 }
+          }
+        }
+      }
+    },
+    task_to_sections: {
+      type: "object",
+      additionalProperties: {
+        type: "object",
+        additionalProperties: false,
+        required: ["sections", "fallback_used", "source"],
+        properties: {
+          sections: { type: "array", items: { type: "string", minLength: 1 } },
+          fallback_used: { type: "boolean" },
+          source: { enum: specMappingSourceValues }
+        }
+      }
+    },
+    fallback_policy: { enum: ["full_spec_on_blocker", "halt_on_blocker"] },
+    built_at: { type: "string", pattern: isoTimestamp }
+  }
+} as const;
+
+const costLedgerBucketSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["usage", "cost_usd", "dispatches"],
+  properties: {
+    usage: tokenUsageSchema,
+    cost_usd: { type: "number", minimum: 0 },
+    dispatches: { type: "integer", minimum: 0 }
+  }
+} as const;
+
+const costLedgerSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["by_task", "by_role", "by_model", "totals", "price_table_commit"],
+  properties: {
+    by_task: {
+      type: "object",
+      additionalProperties: {
+        type: "object",
+        additionalProperties: false,
+        required: ["usage", "cost_usd", "dispatches", "last_at", "model"],
+        properties: {
+          usage: tokenUsageSchema,
+          cost_usd: { type: "number", minimum: 0 },
+          dispatches: { type: "integer", minimum: 0 },
+          last_at: { type: "string", pattern: isoTimestamp },
+          model: { type: "string", nullable: true }
+        }
+      }
+    },
+    by_role: { type: "object", additionalProperties: costLedgerBucketSchema },
+    by_model: { type: "object", additionalProperties: costLedgerBucketSchema },
+    totals: {
+      type: "object",
+      additionalProperties: false,
+      required: ["input_tokens", "output_tokens", "cached_read_tokens", "cached_write_tokens", "cost_usd", "dispatches"],
+      properties: {
+        input_tokens: { type: "integer", minimum: 0 },
+        output_tokens: { type: "integer", minimum: 0 },
+        cached_read_tokens: { type: "integer", minimum: 0 },
+        cached_write_tokens: { type: "integer", minimum: 0 },
+        cost_usd: { type: "number", minimum: 0 },
+        dispatches: { type: "integer", minimum: 0 }
+      }
+    },
+    price_table_commit: { type: "string", minLength: 1 }
+  }
+} as const;
+
+const taskEvidencePolicySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["require_method_evidence", "verification_evidence", "method_audit_status", "waiver_reason"],
+  properties: {
+    require_method_evidence: { type: "boolean" },
+    verification_evidence: { const: "required" },
+    method_audit_status: { enum: ["missing", "present", "waived", "not_required"] },
+    waiver_reason: { type: "string", nullable: true }
+  }
+} as const;
+
+const failureBarrierProjectionSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["schema", "run_id", "barrier_type", "task_id", "failure_class", "reason", "evidence_refs"],
+  properties: {
+    schema: { const: "waygent.failure_barrier.v1" },
+    run_id: { type: "string", pattern: idPattern },
+    barrier_type: { enum: [...failureBarrierTypeValues, null] },
+    task_id: { type: "string", pattern: idPattern, nullable: true },
+    failure_class: { type: "string", nullable: true },
+    reason: { type: "string", nullable: true },
+    evidence_refs: { type: "array", items: { type: "string" } }
   }
 } as const;
 
@@ -606,7 +792,11 @@ export const providerAttemptSchema = {
     completed_at: { type: "string", pattern: isoTimestamp, nullable: true },
     worker_result_ref: { type: "string", nullable: true },
     failure_class: { enum: [...failureClassValues, null] },
-    process: providerProcessEvidenceSchema
+    process: providerProcessEvidenceSchema,
+    requested_model: modelRequestSchema,
+    actual_model: modelAttestationSchema,
+    usage: { ...tokenUsageSchema, nullable: true },
+    usage_source: { enum: usageSourceValues }
   }
 } as const;
 
@@ -671,7 +861,10 @@ const waygentRunStateTaskV2Schema = {
     latest_failure_class: { type: "string", nullable: true },
     decision_packet_ref: { type: "string", nullable: true },
     timing: { type: "object", additionalProperties: { type: "string" } },
-    phase_timings: { type: "array", items: executionPhaseTimingSchema }
+    phase_timings: { type: "array", items: executionPhaseTimingSchema },
+    evidence_policy: taskEvidencePolicySchema,
+    hook_retries: { type: "integer", minimum: 0 },
+    model_used: { type: "array", items: modelAttestationSchema }
   }
 } as const;
 
@@ -719,6 +912,13 @@ export const waygentRunStateV2Schema = {
     plan_path: { type: "string", nullable: true },
     spec_path: { type: "string", nullable: true },
     provider_profile: { type: "object", additionalProperties: true },
+    decisions_register: { type: "array", items: decisionEntrySchema },
+    spec_manifest: specManifestSchema,
+    cost_ledger: costLedgerSchema,
+    budget_cap_usd: { type: "number", minimum: 0, nullable: true },
+    budget_action: { enum: budgetActionValues },
+    method_evidence_required: { type: "boolean" },
+    hook_config: { type: "string" },
     status: { enum: ["initializing", "running", "blocked", "failed", "completed", "applying", "applied"] },
     lifecycle_outcome: { enum: ["finished", "blocked", "failed", "aborted", null] },
     current_phase: { enum: ["preflight", "dispatch", "review", "verify", "recover", "apply", "complete"] },
@@ -822,7 +1022,8 @@ const operatorBlockerSchema = {
     task_id: { type: "string", pattern: idPattern, nullable: true },
     evidence_refs: { type: "array", items: { type: "string", minLength: 1 } },
     missing_refs: { type: "array", items: { type: "string", minLength: 1 } },
-    recommended_action_ids: { type: "array", items: { enum: operatorActionIdValues } }
+    recommended_action_ids: { type: "array", items: { enum: operatorActionIdValues } },
+    failure_barrier: { ...failureBarrierProjectionSchema, nullable: true }
   }
 } as const;
 
@@ -1008,6 +1209,7 @@ export const schemas = {
   "runway.review_result.v1": reviewResultSchema,
   "runway.provider_attempt.v1": providerAttemptSchema,
   "waygent.run_state.v2": waygentRunStateV2Schema,
+  "waygent.failure_barrier.v1": failureBarrierProjectionSchema,
   "waygent.operator_decision.v1": operatorDecisionProjectionSchema
 } as const;
 

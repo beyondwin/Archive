@@ -108,6 +108,10 @@
     "packages/testkit": {
       "name": "@waygent/testkit",
       "version": "0.1.0",
+      "dependencies": {
+        "@waygent/contracts": "workspace:*",
+        "@waygent/lens-projectors": "workspace:*",
+      },
     },
   },
   "packages": {

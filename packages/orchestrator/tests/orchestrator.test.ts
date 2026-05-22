@@ -15,10 +15,11 @@ describe("Waygent orchestrator", () => {
       root: mkdtempSync(join(tmpdir(), "waygent-run-")),
       workspace: initSourceCheckout("waygent-demo-source-")
     });
-    expect(result.events).toHaveLength(9);
+    expect(result.events).toHaveLength(13);
     expect(result.events.map((event) => event.event_type)).toContain("runway.preflight_result");
     expect(result.events.map((event) => event.event_type)).toContain("runway.checkpoint_created");
     expect(result.events.map((event) => event.event_type)).toContain("runway.apply_dry_run_result");
+    expect(result.events.map((event) => event.event_type)).toContain("platform.cost_accumulated");
     expect(result.trust_report.trust_status).toBe("trusted");
     expect(result.projection.safe_wave).toEqual(["task_demo"]);
   });

@@ -14,6 +14,7 @@ import type {
   WaygentRunStateV2
 } from "@waygent/contracts";
 import { projectApplyReadinessFromState } from "./apply";
+import { projectFailureBarrierFromState } from "./failureBarrier";
 import { projectOperationalMaturityFromState } from "./operationalMaturity";
 
 type StateError =
@@ -167,7 +168,8 @@ export function projectOperatorDecisionFromState(input: OperatorDecisionInput): 
   const evidencePacket = evidencePacketFromState(state, input.events, applyReadiness);
   const blockers = blockersFromState(state, input.events, applyReadiness, evidencePacket);
   const sortedBlockers = [...blockers].sort((left, right) => priority(left) - priority(right));
-  const primaryBlocker = sortedBlockers[0] ?? null;
+  const failureBarrier = projectFailureBarrierFromState(state);
+  const primaryBlocker = sortedBlockers[0] ? { ...sortedBlockers[0], failure_barrier: failureBarrier } : null;
   const secondaryBlockers = primaryBlocker ? sortedBlockers.slice(1) : sortedBlockers;
   const displayStatus = displayStatusFromState(state, applyReadiness, primaryBlocker);
   const allowedActions = allowedActionsFor({ runId, state, applyReadiness, primaryBlocker, evidencePacket });

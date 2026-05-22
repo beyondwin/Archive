@@ -24,6 +24,14 @@ describe("Waygent CLI", () => {
     expect(parseCli(["run", "--plan", "plan.md", "--provider", "codex"]).flags.provider).toBe("codex");
   });
 
+  test("preserves repeatable plan and spec flags", () => {
+    expect(parseCli(["run", "--plan", "one.md", "--spec", "one-spec.md", "--plan", "two.md", "--spec", "two-spec.md"]).flags)
+      .toMatchObject({
+        plan: ["one.md", "two.md"],
+        spec: ["one-spec.md", "two-spec.md"]
+      });
+  });
+
   test("defaults CLI run to Codex multi-agent while demo stays offline fake multi-agent", () => {
     expect(resolveCliProfile(parseCli(["run"]))).toMatchObject({
       provider: "codex",
@@ -167,6 +175,28 @@ git add README.md
     });
   });
 
+  test("decisions, cost, watch, and orphans expose read-only operator surfaces", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-cli-ops-"));
+    await runCli(["run", "--provider", "fake", "--workspace", initSourceCheckout("waygent-cli-ops-source-"), "--root", root, "--run", "run_ops"]);
+
+    expect(await runCli(["decisions", "--root", root, "--last"])).toMatchObject({
+      run_id: "run_ops",
+      decision_count: 0
+    });
+    expect(await runCli(["cost", "--root", root, "--last"])).toMatchObject({
+      run_id: "run_ops",
+      cost_ledger: { totals: { dispatches: 1, cost_usd: 0 } }
+    });
+    expect(await runCli(["watch", "--root", root, "--last", "--json", "--timeout", "1ms"])).toMatchObject({
+      run_id: "run_ops",
+      lines: expect.any(Array)
+    });
+    expect(await runCli(["orphans", "--root", root])).toMatchObject({
+      root,
+      orphans: expect.any(Array)
+    });
+  });
+
   test("run --latest discovers and executes the newest local implementation plan", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "waygent-workspace-"));
     const root = mkdtempSync(join(tmpdir(), "waygent-runs-"));
@@ -201,6 +231,25 @@ git add README.md
     expect(state.spec_path?.endsWith("docs/superpowers/specs/2026-05-22-runtime-design.md")).toBe(true);
   });
 
+  test("run rejects repeated specs that do not match plan count", async () => {
+    const workspace = initSourceCheckout("waygent-cli-spec-mismatch-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-cli-spec-mismatch-runs-"));
+    writeFileSync(join(workspace, "plan.md"), plan("task_spec_mismatch"));
+    writeFileSync(join(workspace, "one.md"), "# One\n");
+    writeFileSync(join(workspace, "two.md"), "# Two\n");
+
+    await expect(runCli([
+      "run",
+      "--provider", "fake",
+      "--workspace", workspace,
+      "--root", root,
+      "--run", "run_spec_mismatch",
+      "--plan", "plan.md",
+      "--spec", "one.md",
+      "--spec", "two.md"
+    ])).rejects.toThrow(/mismatched plan\/spec counts/);
+  });
+
   test("scaffold-plan emits executable waygent-task markdown", async () => {
     const result = await runCli([
       "scaffold-plan",
@@ -220,10 +269,12 @@ git add README.md
 
     const result = await runCli(["events", "--root", root, "--run", "run_events"]);
 
-    expect(result).toMatchObject({ run_id: "run_events", total_events: 9 });
+    expect(result).toMatchObject({ run_id: "run_events", total_events: 13 });
     expect((result as { events: Array<{ event_type: string }> }).events[0]?.event_type).toBe("platform.run_started");
     expect((result as { events: Array<{ event_type: string }> }).events.map((event) => event.event_type))
       .toContain("runway.preflight_result");
+    expect((result as { events: Array<{ event_type: string }> }).events.map((event) => event.event_type))
+      .toContain("platform.cost_accumulated");
   });
 
   test("inspect and explain expose the shared operator decision", async () => {

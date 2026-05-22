@@ -129,6 +129,24 @@ export interface ProviderProcessEvidence {
   stderr_summary?: ProviderLogSummary;
 }
 
+export interface TokenUsage {
+  input_tokens: number;
+  output_tokens: number;
+  cached_read_tokens: number;
+  cached_write_tokens: number;
+}
+
+export interface ModelRequest {
+  model: string | null;
+  reasoning: string | null;
+}
+
+export interface ModelAttestation extends ModelRequest {
+  source: string;
+}
+
+export type UsageSource = "provider_json" | "event_stream" | "unknown";
+
 export interface ProviderAttempt {
   schema: "runway.provider_attempt.v1";
   attempt_id: string;
@@ -149,6 +167,10 @@ export interface ProviderAttempt {
   worker_result_ref: string | null;
   failure_class: FailureClass | null;
   process?: ProviderProcessEvidence;
+  requested_model?: ModelRequest;
+  actual_model?: ModelAttestation;
+  usage?: TokenUsage | null;
+  usage_source?: UsageSource;
 }
 
 export interface WaygentSourcePreflight {
@@ -209,6 +231,26 @@ export interface ArtifactHealthSummary {
   missing_count: number;
   drift_count: number;
   readiness_artifact_refs: string[];
+}
+
+export type FailureBarrierType =
+  | "spec_blocker"
+  | "env_blocker"
+  | "ambiguity"
+  | "quality_fail"
+  | "verification_fail"
+  | "budget_paused"
+  | "checkpoint_missing"
+  | "evidence_missing";
+
+export interface FailureBarrierProjection {
+  schema: "waygent.failure_barrier.v1";
+  run_id: string;
+  barrier_type: FailureBarrierType | null;
+  task_id: string | null;
+  failure_class: FailureClass | string | null;
+  reason: string | null;
+  evidence_refs: string[];
 }
 
 export interface ExecutionExplanationProjection {
@@ -355,6 +397,7 @@ export interface OperatorBlocker {
   evidence_refs: string[];
   missing_refs: string[];
   recommended_action_ids: OperatorActionId[];
+  failure_barrier?: FailureBarrierProjection | null;
 }
 
 export interface OperatorAllowedAction {
@@ -462,6 +505,63 @@ export interface WaygentWorktreeManifest {
   cleanup_status: "active" | "removed" | "failed" | "unknown";
 }
 
+export interface DecisionEntry {
+  decision_id: string;
+  task_id: string;
+  decision: string;
+  files: string[];
+  made_at: string;
+  supersedes: string | null;
+}
+
+export interface SpecManifestSection {
+  id: string;
+  title: string;
+  range: [number, number];
+  byte_offset: [number, number];
+}
+
+export interface SpecManifestTaskMapping {
+  sections: string[];
+  fallback_used: boolean;
+  source: "explicit" | "heuristic" | "fallback";
+}
+
+export interface SpecManifest {
+  spec_path: string | null;
+  spec_total_chars: number;
+  sections: Record<string, SpecManifestSection>;
+  task_to_sections: Record<string, SpecManifestTaskMapping>;
+  fallback_policy: "full_spec_on_blocker" | "halt_on_blocker";
+  built_at: string;
+}
+
+export interface CostLedgerBucket {
+  usage: TokenUsage;
+  cost_usd: number;
+  dispatches: number;
+}
+
+export interface CostLedgerTaskBucket extends CostLedgerBucket {
+  last_at: string;
+  model: string | null;
+}
+
+export interface CostLedger {
+  by_task: Record<string, CostLedgerTaskBucket>;
+  by_role: Record<string, CostLedgerBucket>;
+  by_model: Record<string, CostLedgerBucket>;
+  totals: TokenUsage & { cost_usd: number; dispatches: number };
+  price_table_commit: string;
+}
+
+export interface TaskEvidencePolicy {
+  require_method_evidence: boolean;
+  verification_evidence: "required";
+  method_audit_status: "missing" | "present" | "waived" | "not_required";
+  waiver_reason: string | null;
+}
+
 export interface WaygentRunStateTaskV2 {
   id: string;
   status: WaygentTaskStatusV2;
@@ -477,6 +577,9 @@ export interface WaygentRunStateTaskV2 {
   decision_packet_ref: string | null;
   timing: Record<string, string>;
   phase_timings?: ExecutionPhaseTiming[];
+  evidence_policy?: TaskEvidencePolicy;
+  hook_retries?: number;
+  model_used?: ModelAttestation[];
 }
 
 export interface WaygentRunStateV2 {
@@ -492,6 +595,13 @@ export interface WaygentRunStateV2 {
   plan_path: string | null;
   spec_path: string | null;
   provider_profile: Record<string, unknown>;
+  decisions_register?: DecisionEntry[];
+  spec_manifest?: SpecManifest;
+  cost_ledger?: CostLedger;
+  budget_cap_usd?: number | null;
+  budget_action?: "warn" | "pause" | "off";
+  method_evidence_required?: boolean;
+  hook_config?: "off" | "builtin" | string;
   status: WaygentRunStatusV2;
   lifecycle_outcome: WaygentLifecycleOutcome;
   current_phase: WaygentCurrentPhase;

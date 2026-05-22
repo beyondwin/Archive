@@ -101,7 +101,7 @@ describe("Waygent safe-wave parallel execution", () => {
       latest_failure_class: "adapter_crashed"
     });
     expect(state.provider_attempts.map((attempt) => attempt.task_id)).toContain("task_ok");
-    expect(events.find((event) => event.payload.task_id === "task_crash")).toMatchObject({
+    expect(events.find((event) => event.event_type === "runway.worker_result" && event.payload.task_id === "task_crash")).toMatchObject({
       outcome: "failed",
       payload: { failure_class: "adapter_crashed" }
     });
@@ -177,7 +177,7 @@ describe("Waygent safe-wave parallel execution", () => {
       exit_code: 2,
       failure_class: "adapter_crashed"
     });
-    expect(events.find((event) => event.payload.task_id === "task_provider_crash")).toMatchObject({
+    expect(events.find((event) => event.event_type === "runway.worker_result" && event.payload.task_id === "task_provider_crash")).toMatchObject({
       outcome: "failed"
     });
     expect(state.completion_audit).toMatchObject({ status: "failed" });

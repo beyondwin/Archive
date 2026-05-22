@@ -42,6 +42,26 @@ Executable `waygent-task` file claims use `owned`, `shared_append`, or
 `read_only`. Waygent also accepts `mode: edit` as a compatibility alias for
 `owned` so implementation-plan snippets can run without manual rewrite.
 
+`--plan-preflight off|deterministic|full` controls the plan/spec audit.
+Source checkout preflight is separate and always-on. Fake/demo runs default to
+deterministic plan preflight; live provider runs default to off during burn-in.
+The deterministic audit accepts both `## Task N:` and `### Task N:`
+Superpowers sections, rejects missing file claims or verification commands,
+blocks escaping file claims, and validates dependency references before run
+state is created.
+
+`--spec-slice off|manifest` controls task packet spec context. Manifest mode
+stores `spec_manifest` in run state, emits `runway.spec_slice_computed`, and
+falls back to the full spec when no section match is safe.
+
+`--budget-cap <USD> --budget-action warn|pause|off` records token/cost ledger
+policy. Budget pauses happen only at safe parent-process boundaries; Waygent
+does not interrupt an active provider process.
+
+`--hook-config off|builtin|<path>` controls runtime hooks. The first hook tier
+checks pre-dispatch task packets and final provider output; per-tool provider
+hooks require stable provider event streams and are not claimed by this slice.
+
 ### Apply Readiness
 
 `ready` means all of the following are true:
@@ -74,6 +94,12 @@ means the verified patch has already been applied.
 checks for a clean source checkout before applying and revalidates the same
 readiness contract used by `resume`, API, and console.
 
+`waygent apply --require-evidence --run <run_id>` enables the opt-in method
+evidence overlay. Missing structured `worker.evidence.method_audit` blocks
+apply with `lens.evidence_apply_blocked`; docs-only, config-only, and
+generated-only tasks can use allowlisted waivers. The existing checkpoint,
+completion, reconciliation, and clean-checkout gates remain authoritative.
+
 If post-apply verification fails, the apply result and `runway.apply_failed`
 event include `post_apply_verification` diagnostics with the failed command,
 request id, exit code, timeout flag, and short output snippets. Treat that
@@ -94,6 +120,21 @@ account can sustain the requested parallel work.
 `waygent inspect --json` and the console expose execution intelligence from
 durable run evidence. The projection explains safe waves, withheld tasks,
 barriers, phase timing, artifact health, and next plan-shaping actions.
+
+Additional read-only operator commands:
+
+- `waygent decisions --run <id>|--last`: reads the decision register and
+  `DECISIONS.md` projection.
+- `waygent cost --run <id>|--last`: reads the provider usage/cost ledger.
+- `waygent watch --run <id>|--last --json --timeout 1s`: reads the event
+  journal as filtered transitions.
+- `waygent orphans --root <root>`: lists invalid run roots and stale worktrees.
+  `waygent orphans --delete <id> --yes` deletes exactly one validated orphan;
+  there is no delete-all path.
+
+Repeated `--plan` and `--spec` flags form a plan chain. The first
+implementation keeps child runs as v2 run states coordinated by a chain id;
+it does not introduce `waygent.run_state.v3`.
 
 Execution intelligence is read-only. Apply readiness still comes from
 checkpoint manifests, patch digest checks, dry-run evidence, completion audit,
@@ -163,6 +204,10 @@ choosing a recovery action.
   stale checkpoint from chat context.
 - Dirty source checkout: clean or commit the checkout before resume or apply.
 - Duplicate run id: select a new run id or resume the existing run.
+- Budget paused: inspect `waygent cost --last` and raise or disable the cap
+  before resuming.
+- Missing method evidence: inspect `lens.evidence_apply_blocked` and either
+  provide structured method audit evidence or an allowlisted waiver.
 
 Default local verification:
 

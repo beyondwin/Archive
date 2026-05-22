@@ -7,7 +7,7 @@ const graphifyAuditCommand = ["graphify", "update", "."].join(" ");
 const executableSuperpowersPlan = `
 # Demo Implementation Plan
 
-## Task 1: Update README Contract
+### Task 1: Update README Contract
 
 **Files:**
 
@@ -25,7 +25,7 @@ ${graphifyAuditCommand}
 git add README.md
 \`\`\`
 
-## Task 2: Wire CLI Surface
+### Task 2: Wire CLI Surface
 
 **Files:**
 

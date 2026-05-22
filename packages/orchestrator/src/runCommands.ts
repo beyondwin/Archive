@@ -8,6 +8,7 @@ import {
   projectFailureSummary,
   projectOperationalMaturityFromState,
   projectOperatorDecisionFromState,
+  projectFailureBarrierFromState,
   projectRunReadModel
 } from "@waygent/lens-projectors";
 import { readRunStateV2Result, writeRunStateV2, type RunStateV2ReadResult, type WaygentRunStateV2 } from "./runState";
@@ -18,6 +19,9 @@ import type { PostApplyVerificationSummary } from "./applyEngine";
 import { resolveCheckpointPatch, resolveRunArtifactPath, validateCheckpointManifest } from "./checkpointArtifacts";
 import { hasApplyReadyCheckpoint } from "./completionAudit";
 import { selectResumeAction } from "./recoveryExecutor";
+import { validateMethodEvidenceForApply } from "./evidencePolicy";
+import { deleteResolvedOrphan, scanOrphanRuns } from "./orphanRuns";
+import { watchRun, type WatchRunOptions } from "./watchRun";
 
 export interface RunCommandOptions {
   root: string;
@@ -75,6 +79,7 @@ export function inspectRun(options: RunCommandOptions): RunStatusView & {
   runtime_cost?: ReturnType<typeof projectOperationalMaturityFromState>["runtime_cost"];
   provider_readiness?: ReturnType<typeof projectOperationalMaturityFromState>["provider_readiness"];
   operator_decision: OperatorDecisionProjection;
+  failure_barrier?: ReturnType<typeof projectFailureBarrierFromState>;
   state_error?: Exclude<RunStateV2ReadResult, { status: "ok" }>;
 } {
   const status = statusRun(options);
@@ -110,7 +115,8 @@ export function inspectRun(options: RunCommandOptions): RunStatusView & {
       dogfood_evidence: operationalMaturity.dogfood_evidence,
       runtime_cost: operationalMaturity.runtime_cost,
       provider_readiness: operationalMaturity.provider_readiness,
-      operator_decision: operatorDecision
+      operator_decision: operatorDecision,
+      failure_barrier: projectFailureBarrierFromState(stateResult.state)
     };
   }
   const operatorDecisionInput = {
@@ -137,6 +143,7 @@ export function explainRun(options: RunCommandOptions): {
   blocked_by: FailureClass | "unknown" | null;
   summary: string;
   operator_decision: OperatorDecisionProjection;
+  failure_barrier?: ReturnType<typeof projectFailureBarrierFromState>;
 } {
   const runId = resolveRunId(options);
   const events = readEvents(runPaths(options.root, runId).events);
@@ -166,7 +173,8 @@ export function explainRun(options: RunCommandOptions): {
     run_id: runId,
     blocked_by: operatorDecision.primary_blocker ? operatorDecision.primary_blocker.code as FailureClass | "unknown" : null,
     summary: operatorDecision.status_summary.summary,
-    operator_decision: operatorDecision
+    operator_decision: operatorDecision,
+    ...(stateResult.status === "ok" ? { failure_barrier: projectFailureBarrierFromState(stateResult.state) } : {})
   };
 }
 
@@ -248,7 +256,7 @@ export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): {
   };
 }
 
-export async function applyRun(options: RunCommandOptions & { workspace: string }): Promise<{
+export async function applyRun(options: RunCommandOptions & { workspace: string; require_method_evidence?: boolean }): Promise<{
   command: "apply";
   run_id: string;
   status: "blocked" | "applied" | "failed";
@@ -289,6 +297,41 @@ export async function applyRun(options: RunCommandOptions & { workspace: string 
     return { command: "apply", run_id: runId, status: "blocked", reason };
   }
   const v2State = stateResult.state;
+  const methodEvidence = validateMethodEvidenceForApply({
+    state: v2State,
+    require_method_evidence: options.require_method_evidence ?? v2State.method_evidence_required ?? false
+  });
+  if (methodEvidence.status === "blocked") {
+    appendEvent(paths.events, nextRunEvent(paths.events, {
+      run_id: runId,
+      event_type: "lens.evidence_apply_blocked",
+      phase: "apply",
+      outcome: "blocked",
+      summary: "Apply blocked by missing method evidence.",
+      payload: { ...methodEvidence },
+      trust_impact: "requires_review"
+    }));
+    writeRunStateV2(options.root, {
+      ...v2State,
+      tasks: Object.fromEntries(Object.entries(v2State.tasks).map(([taskId, task]) => [
+        taskId,
+        { ...task, ...(methodEvidence.policies[taskId] ? { evidence_policy: methodEvidence.policies[taskId] } : {}) }
+      ])),
+      apply: { status: "blocked", reason: methodEvidence.reason ?? "method_evidence_missing" }
+    });
+    return { command: "apply", run_id: runId, status: "blocked", reason: methodEvidence.reason ?? "method_evidence_missing" };
+  }
+  if (options.require_method_evidence ?? v2State.method_evidence_required ?? false) {
+    appendEvent(paths.events, nextRunEvent(paths.events, {
+      run_id: runId,
+      event_type: "lens.evidence_apply_gated",
+      phase: "apply",
+      outcome: "success",
+      summary: "Method evidence policy passed before apply.",
+      payload: { ...methodEvidence },
+      trust_impact: "supports_success"
+    }));
+  }
 
   const readiness = projectApplyReadinessFromState(v2State);
   if (readiness.status !== "ready") {
@@ -401,6 +444,50 @@ export async function applyRun(options: RunCommandOptions & { workspace: string 
     ...(applied.reason ? { reason: applied.reason } : {}),
     ...(applied.post_apply_verification ? { post_apply_verification: applied.post_apply_verification } : {})
   };
+}
+
+export function decisionsRun(options: RunCommandOptions): {
+  run_id: string;
+  decisions: NonNullable<WaygentRunStateV2["decisions_register"]>;
+  decision_count: number;
+  markdown_ref: string;
+} {
+  const runId = resolveRunId(options);
+  const state = readRunStateV2Result(options.root, runId);
+  if (state.status !== "ok") throw new Error(state.reason);
+  return {
+    run_id: runId,
+    decisions: state.state.decisions_register ?? [],
+    decision_count: state.state.decisions_register?.length ?? 0,
+    markdown_ref: `${state.state.run_root}/DECISIONS.md`
+  };
+}
+
+export function costRun(options: RunCommandOptions): {
+  run_id: string;
+  cost_ledger: WaygentRunStateV2["cost_ledger"] | null;
+  budget_cap_usd: number | null;
+  budget_action: WaygentRunStateV2["budget_action"] | null;
+} {
+  const runId = resolveRunId(options);
+  const state = readRunStateV2Result(options.root, runId);
+  if (state.status !== "ok") throw new Error(state.reason);
+  return {
+    run_id: runId,
+    cost_ledger: state.state.cost_ledger ?? null,
+    budget_cap_usd: state.state.budget_cap_usd ?? null,
+    budget_action: state.state.budget_action ?? null
+  };
+}
+
+export function watchRunCommand(options: WatchRunOptions): ReturnType<typeof watchRun> {
+  return watchRun(options);
+}
+
+export function orphansRun(options: RunCommandOptions & { delete?: string; yes?: boolean }): ReturnType<typeof scanOrphanRuns> | ReturnType<typeof deleteResolvedOrphan> {
+  const advisory = scanOrphanRuns({ root: options.root });
+  if (options.delete) return deleteResolvedOrphan({ root: options.root, id: options.delete, yes: Boolean(options.yes), advisory });
+  return advisory;
 }
 
 function finalContributingTaskIds(

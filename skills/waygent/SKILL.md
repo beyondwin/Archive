@@ -65,6 +65,10 @@ Host-agent model policy:
 
 Default mappings:
 
+Natural-language mappings are versioned in
+`references/nl-lexicon.md` (`waygent.nl_lexicon.v1`). Keep explicit CLI
+flags and explicit command names higher priority than NL interpretation.
+
 - "최근 승인된 플랜 실행해줘" -> `waygent run --latest`
 - "design.md plan.md 멀티에이전트로 구현해줘" ->
   `waygent run --plan plan.md --spec design.md --execution-mode multi-agent`

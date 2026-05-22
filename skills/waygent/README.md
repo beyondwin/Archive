@@ -57,6 +57,12 @@ waygent apply --run run_example
 `waygent demo` is offline-only and rejects live providers. Use `waygent run`
 for Codex or Claude execution.
 
+## Natural Language Lexicon
+
+The versioned natural-language mapping contract lives in
+`references/nl-lexicon.md` (`waygent.nl_lexicon.v1`). Explicit CLI flags and
+explicit command names take priority over inferred natural-language mappings.
+
 ## Verification Commands
 
 ```bash

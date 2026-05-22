@@ -7,6 +7,7 @@ import type {
   FailureClass,
   ProviderAttempt,
   ProviderProcessEvidence,
+  ModelRequest,
   WaygentWorktreeManifest,
   WorkerResult
 } from "@waygent/contracts";
@@ -17,7 +18,9 @@ import {
   CodexProviderAdapter,
   FakeProviderAdapter,
   type ProviderAdapter,
-  type ProviderProcessOptions
+  type ProviderAdapterRunResult,
+  type ProviderProcessOptions,
+  type ProviderRunMetadata
 } from "@waygent/provider-adapters";
 import { mergeCandidate } from "@waygent/runway-control";
 import { artifactIndexEntry } from "./artifactIndex";
@@ -27,6 +30,7 @@ import type { ProviderName } from "./executionProfile";
 import type { ParsedWaygentTask } from "./planParser";
 import type { RunEventInput } from "./runEvents";
 import { prepareVerificationEnvironment, type VerificationEnvironmentEvidence } from "./verificationEnvironment";
+import { debugArtifactDenials, evaluateFinalOutputHooks, evaluatePreDispatchHooks, type HookDenial } from "./runtimeHooks";
 import { runVerificationCommands, type VerificationRunOutput } from "./verification";
 import { prepareManagedTaskWorktree } from "./worktreeManager";
 
@@ -46,6 +50,7 @@ export interface WaygentTaskExecutionResult {
   events: TaskExecutionEventIntent[];
   timing: { started: string; completed: string; duration_ms: number };
   phase_timings: ExecutionPhaseTiming[];
+  worker_result: WorkerResult;
 }
 
 export interface ExecuteWaygentTaskInput {
@@ -58,6 +63,9 @@ export interface ExecuteWaygentTaskInput {
   spec: string | null;
   provider: ProviderName;
   provider_processes?: Partial<Record<Exclude<ProviderName, "fake">, ProviderProcessOptions>>;
+  decisions?: Array<{ decision_id: string; summary: string }>;
+  requested_model?: ModelRequest;
+  hooks_enabled?: boolean;
 }
 
 export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promise<WaygentTaskExecutionResult> {
@@ -92,7 +100,8 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     plan_excerpt: taskPlanExcerpt(input.task),
     spec_excerpt: input.spec ?? "",
     checkpoint_inputs: input.checkpoint_inputs,
-    previous_failures: []
+    previous_failures: [],
+    decisions: input.decisions ?? []
   });
   const packetArtifact = writeArtifact(inputRunRoot(input), `task_packets/${input.task.id}.json`, `${JSON.stringify(packet, null, 2)}\n`);
   artifactIndexEntries.push(artifactIndexEntry({ artifact: packetArtifact, producer_phase: "task_packet", task_id: input.task.id }));
@@ -102,6 +111,28 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
   const attemptStarted = new Date().toISOString();
   const stdinArtifact = writeArtifact(inputRunRoot(input), `provider/${attemptId}.stdin.txt`, prompt, "text/plain");
   artifactIndexEntries.push(artifactIndexEntry({ artifact: stdinArtifact, producer_phase: "provider", task_id: input.task.id }));
+  const preHook = evaluatePreDispatchHooks({
+    enabled: input.hooks_enabled ?? true,
+    task_id: input.task.id,
+    commands,
+    file_claims: input.task.file_claims
+  });
+  if (preHook.status === "denied") {
+    return hookDeniedResult({
+      input,
+      started,
+      startedAtMs,
+      worktreeManifest,
+      packetPath,
+      packetSha256: packetArtifact.sha256,
+      phaseTimings,
+      artifactIndexEntries,
+      stdinRef: stdinArtifact.path,
+      attemptId,
+      attemptStarted,
+      denials: preHook.denials
+    });
+  }
   const provider = createProviderAdapter(input.provider, input.provider_processes);
   const { value: adapterResult, timing: providerTiming } = await measurePhase("provider", () => provider.run({
     task_id: input.task.id,
@@ -113,7 +144,20 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     changed_files: writableClaimPaths(input.task)
   }));
   phaseTimings.push(providerTiming);
-  const { worker, processEvidence } = normalizeProviderRunResult(adapterResult);
+  const { worker, processEvidence, metadata } = normalizeProviderRunResult(adapterResult);
+  const finalHook = evaluateFinalOutputHooks({
+    enabled: input.hooks_enabled ?? true,
+    task_id: input.task.id,
+    worker,
+    stdout: processEvidence?.stdout ?? "",
+    stderr: processEvidence?.stderr ?? ""
+  });
+  if (finalHook.status === "denied" && worker.status === "completed") {
+    worker.status = "blocked";
+    worker.failure_class = "permission_denied";
+    worker.summary = "Runtime hook denied provider output.";
+    worker.evidence = { ...worker.evidence, hook_denials: finalHook.denials };
+  }
   const workerArtifact = writeArtifact(inputRunRoot(input), `worker/${input.task.id}.json`, JSON.stringify(worker, null, 2));
   const stdoutArtifact = writeArtifact(inputRunRoot(input), `provider/${attemptId}.stdout.txt`, processEvidence?.stdout ?? JSON.stringify(worker), "text/plain");
   const stderrArtifact = writeArtifact(inputRunRoot(input), `provider/${attemptId}.stderr.txt`, processEvidence?.stderr ?? "", "text/plain");
@@ -141,6 +185,10 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     completed_at: processEvidence?.completed_at ?? new Date().toISOString(),
     worker_result_ref: workerArtifact.path,
     failure_class: worker.failure_class ?? null,
+    ...(input.requested_model ? { requested_model: input.requested_model } : {}),
+    actual_model: metadata?.actual_model ?? { model: null, reasoning: null, source: "unknown" },
+    usage: metadata?.usage ?? null,
+    usage_source: metadata?.usage_source ?? "unknown",
     ...(processEvidence ? { process: processEvidence } : {})
   };
   const workerEvent: TaskExecutionEventIntent = {
@@ -152,6 +200,49 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     payload: { task_id: input.task.id, failure_class: worker.failure_class ?? null, worker, attempt }
   };
   const events: TaskExecutionEventIntent[] = [workerEvent];
+  if (preHook.status === "bypassed") {
+    events.push({
+      run_id: input.run_id,
+      event_type: "kernel.hook_bypassed",
+      phase: "hook",
+      outcome: "success",
+      summary: "Runtime hooks bypassed by configuration.",
+      payload: { task_id: input.task.id },
+      trust_impact: "neutral"
+    });
+  }
+  for (const denial of finalHook.denials) {
+    events.push({
+      run_id: input.run_id,
+      event_type: "kernel.hook_denied",
+      phase: "hook",
+      outcome: "blocked",
+      summary: denial.reason,
+      payload: { task_id: input.task.id, denial },
+      trust_impact: "requires_review"
+    });
+  }
+  if (attempt.actual_model?.model && input.requested_model?.model && attempt.actual_model.model !== input.requested_model.model) {
+    events.push({
+      run_id: input.run_id,
+      event_type: "lens.model_attestation_mismatch",
+      phase: "lens",
+      outcome: "blocked",
+      summary: "Provider actual model differed from requested model.",
+      payload: { task_id: input.task.id, requested_model: input.requested_model, actual_model: attempt.actual_model },
+      trust_impact: "requires_review"
+    });
+  } else if (attempt.actual_model?.model) {
+    events.push({
+      run_id: input.run_id,
+      event_type: "lens.model_attestation_confirmed",
+      phase: "lens",
+      outcome: "success",
+      summary: "Provider model attestation recorded.",
+      payload: { task_id: input.task.id, requested_model: input.requested_model ?? null, actual_model: attempt.actual_model },
+      trust_impact: "neutral"
+    });
+  }
 
   if (input.provider === "fake") materializeFakeProviderResult(taskWorktree.path, input.task);
 
@@ -282,7 +373,23 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
         trust_impact: "supports_failure"
       });
     }
+    const debugDenials = debugArtifactDenials(input.task.id, scopeValidation.ok ? scopeValidation.changed_files : []);
+    if (debugDenials.length > 0) {
+      latestFailureClass = "diff_scope_failed";
+      for (const denial of debugDenials) {
+        events.push({
+          run_id: input.run_id,
+          event_type: "kernel.hook_denied",
+          phase: "hook",
+          outcome: "blocked",
+          summary: denial.reason,
+          payload: { task_id: input.task.id, denial },
+          trust_impact: "requires_review"
+        });
+      }
+    }
     const verified = !scopeValidation.ok
+      || debugDenials.length > 0
       ? { merged: false }
       : mergeCandidate({ task_id: input.task.id, candidate_id: worker.candidate_id, reviewed: true, verified: true });
     if (verified.merged && writableClaimPaths(input.task).length > 0 && scopeValidation.ok) {
@@ -362,7 +469,7 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
       } else {
         latestFailureClass = dryRun.failure_class ?? "unsafe_apply";
       }
-    } else if (scopeValidation.ok) {
+    } else if (scopeValidation.ok && debugDenials.length === 0) {
       latestFailureClass = "missing_checkpoint";
     }
   }
@@ -387,7 +494,8 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     artifact_index_entries: artifactIndexEntries,
     events,
     timing: { started, completed, duration_ms: totalTiming.duration_ms ?? 0 },
-    phase_timings: [...phaseTimings, totalTiming]
+    phase_timings: [...phaseTimings, totalTiming],
+    worker_result: worker
   };
 }
 
@@ -398,6 +506,107 @@ function environmentBlockedVerification(taskId: string, reason: string | null): 
     failure_class: "environment_blocker",
     failure_summary: reason ? `verification environment setup failed: ${reason}` : "verification environment setup failed",
     failed_verification_id: `verify_${taskId}_environment`
+  };
+}
+
+function hookDeniedResult(input: {
+  input: ExecuteWaygentTaskInput;
+  started: string;
+  startedAtMs: number;
+  worktreeManifest: WaygentWorktreeManifest;
+  packetPath: string;
+  packetSha256: string;
+  phaseTimings: ExecutionPhaseTiming[];
+  artifactIndexEntries: ArtifactIndexEntry[];
+  stdinRef: string;
+  attemptId: string;
+  attemptStarted: string;
+  denials: HookDenial[];
+}): WaygentTaskExecutionResult {
+  const completed = new Date().toISOString();
+  const worker: WorkerResult = {
+    schema: "runway.worker_result.v1",
+    task_id: input.input.task.id,
+    candidate_id: `candidate_${input.input.task.id}`,
+    status: "blocked",
+    changed_files: [],
+    summary: "Runtime hook denied provider dispatch.",
+    evidence: { hook_denials: input.denials },
+    failure_class: "permission_denied"
+  };
+  const workerArtifact = writeArtifact(inputRunRoot(input.input), `worker/${input.input.task.id}.json`, JSON.stringify(worker, null, 2));
+  const stdoutArtifact = writeArtifact(inputRunRoot(input.input), `provider/${input.attemptId}.stdout.txt`, JSON.stringify(worker), "text/plain");
+  const stderrArtifact = writeArtifact(inputRunRoot(input.input), `provider/${input.attemptId}.stderr.txt`, "", "text/plain");
+  input.artifactIndexEntries.push(
+    artifactIndexEntry({ artifact: workerArtifact, producer_phase: "provider", task_id: input.input.task.id }),
+    artifactIndexEntry({ artifact: stdoutArtifact, producer_phase: "provider", task_id: input.input.task.id }),
+    artifactIndexEntry({ artifact: stderrArtifact, producer_phase: "provider", task_id: input.input.task.id })
+  );
+  const attempt: ProviderAttempt = {
+    schema: "runway.provider_attempt.v1",
+    attempt_id: input.attemptId,
+    run_id: input.input.run_id,
+    task_id: input.input.task.id,
+    role: "implement",
+    provider: input.input.provider,
+    command: ["hook-denied"],
+    cwd: input.worktreeManifest.path,
+    stdin_ref: input.stdinRef,
+    stdout_ref: stdoutArtifact.path,
+    stderr_ref: stderrArtifact.path,
+    event_stream_ref: null,
+    exit_code: 1,
+    timed_out: false,
+    started_at: input.attemptStarted,
+    completed_at: completed,
+    worker_result_ref: workerArtifact.path,
+    failure_class: "permission_denied",
+    ...(input.input.requested_model ? { requested_model: input.input.requested_model } : {}),
+    actual_model: { model: null, reasoning: null, source: "unknown" },
+    usage: null,
+    usage_source: "unknown"
+  };
+  const events: TaskExecutionEventIntent[] = [
+    ...input.denials.map((denial) => ({
+      run_id: input.input.run_id,
+      event_type: "kernel.hook_denied",
+      phase: "hook",
+      outcome: "blocked" as const,
+      summary: denial.reason,
+      payload: { task_id: input.input.task.id, denial },
+      trust_impact: "requires_review" as const
+    })),
+    {
+      run_id: input.input.run_id,
+      event_type: "runway.worker_result",
+      phase: "worker",
+      outcome: "failed",
+      summary: worker.summary,
+      payload: { task_id: input.input.task.id, failure_class: "permission_denied", worker, attempt },
+      trust_impact: "supports_failure"
+    }
+  ];
+  const totalTiming: ExecutionPhaseTiming = {
+    phase: "total",
+    started: input.started,
+    completed,
+    duration_ms: Math.round(performance.now() - input.startedAtMs)
+  };
+  return {
+    task_id: input.input.task.id,
+    status: "blocked",
+    latest_failure_class: "permission_denied",
+    worktree_manifest: input.worktreeManifest,
+    task_packet_path: input.packetPath,
+    task_packet_sha256: input.packetSha256,
+    provider_attempt: attempt,
+    verification_records: [],
+    checkpoint_refs: [],
+    artifact_index_entries: input.artifactIndexEntries,
+    events,
+    timing: { started: input.started, completed, duration_ms: totalTiming.duration_ms ?? 0 },
+    phase_timings: [...input.phaseTimings, totalTiming],
+    worker_result: worker
   };
 }
 
@@ -439,11 +648,12 @@ function createProviderAdapter(
 }
 
 function normalizeProviderRunResult(
-  result: WorkerResult | { worker: WorkerResult; process?: ProviderProcessEvidence }
-): { worker: WorkerResult; processEvidence?: ProviderProcessEvidence } {
+  result: WorkerResult | ProviderAdapterRunResult
+): { worker: WorkerResult; processEvidence?: ProviderProcessEvidence; metadata?: ProviderRunMetadata } {
   if (typeof result === "object" && result !== null && "worker" in result) {
     return {
       worker: result.worker,
+      ...("metadata" in result && result.metadata ? { metadata: result.metadata as ProviderRunMetadata } : {}),
       ...(result.process ? { processEvidence: result.process } : {})
     };
   }

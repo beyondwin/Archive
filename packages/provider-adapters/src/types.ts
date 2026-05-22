@@ -1,4 +1,4 @@
-import type { ProviderCapabilityManifest, ProviderRole, WorkerResult } from "@waygent/contracts";
+import type { ModelAttestation, ProviderCapabilityManifest, ProviderRole, TokenUsage, UsageSource, WorkerResult } from "@waygent/contracts";
 
 export type ProviderExecutionBoundary = "deterministic" | "process";
 
@@ -39,6 +39,13 @@ export interface ProviderAdapterRunResult {
     completed_at: string | null;
     event_stream: string | null;
   };
+  metadata?: ProviderRunMetadata;
+}
+
+export interface ProviderRunMetadata {
+  actual_model: ModelAttestation;
+  usage: TokenUsage | null;
+  usage_source: UsageSource;
 }
 
 export interface ProviderAdapter {
