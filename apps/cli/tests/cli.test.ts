@@ -107,20 +107,27 @@ describe("Waygent CLI", () => {
     await expect(Bun.file(join(shortRoot, "run_demo", "state.json")).exists()).resolves.toBe(false);
   });
 
-  test("run rejects incomplete implementation plans with scaffold guidance", async () => {
+  test("run routes incomplete implementation plans through intake recovery and blocks", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "waygent-non-executable-plan-"));
     const root = mkdtempSync(join(tmpdir(), "waygent-non-executable-root-"));
     const planPath = join(workspace, "plan.md");
     writeFileSync(planPath, "# Implementation Plan\n\n## Task 1: Add contract\n\n- Modify: `packages/contracts/src/types.ts`\n");
 
-    await expect(runCli([
+    const result = await runCli([
       "run",
       "--provider", "fake",
       "--workspace", workspace,
       "--root", root,
       "--run", "run_non_executable",
       "--plan", "plan.md"
-    ])).rejects.toThrow(/executable Waygent plan.*waygent scaffold-plan/s);
+    ]) as { run_id: string };
+
+    expect(result.run_id).toBe("run_non_executable");
+    const state = readRunStateV2(root, "run_non_executable");
+    expect(state.status).toBe("blocked");
+    expect(state.intake_recovery?.status).toBe("decision_required");
+    expect(state.intake_recovery?.can_start).toBe(false);
+    expect(state.apply).toMatchObject({ status: "blocked", reason: "intake_decision_required" });
   });
 
   test("run normalizes executable superpowers implementation plans before dispatch", async () => {
@@ -171,7 +178,8 @@ git add README.md
   test("CLI entrypoint formats runtime errors without stack traces", () => {
     const workspace = mkdtempSync(join(tmpdir(), "waygent-cli-entry-error-"));
     const root = mkdtempSync(join(tmpdir(), "waygent-cli-entry-error-root-"));
-    writeFileSync(join(workspace, "plan.md"), "# Implementation Plan\n\n## Task 1: Add contract\n");
+    // No plan.md is written: resolvePlanInput should throw "plan not found",
+    // exercising the CLI entrypoint's runtime-error JSON formatting.
 
     const result = Bun.spawnSync([
       process.execPath,
@@ -182,13 +190,13 @@ git add README.md
       "--workspace", workspace,
       "--root", root,
       "--run", "run_entry_error",
-      "--plan", "plan.md"
+      "--plan", "missing-plan.md"
     ]);
 
     expect(result.exitCode).toBe(1);
     const stderr = new TextDecoder().decode(result.stderr);
-    expect(stderr).toContain("executable Waygent plan");
-    expect(stderr).not.toContain("at parseWaygentPlan");
+    expect(stderr).toContain("plan not found");
+    expect(stderr).not.toMatch(/^\s+at /m);
   });
 
   test("status reads a run created by run", async () => {
