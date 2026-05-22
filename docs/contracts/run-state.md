@@ -21,6 +21,19 @@ Task state may also include additive runtime-improvement fields:
 - `hook_retries`: runtime hook denial count for the task.
 - `model_used`: provider-backed model attestations when available.
 
+## Task Packet Fields
+
+Task packets dispatched to providers may carry:
+
+- `plan_excerpt`: deterministic excerpt of the plan body for the task (D-06).
+- `spec_excerpt`: spec-slice manifest entry or full-spec fallback content.
+- `allowed_exec_commands`: array of shell commands the worker sandbox should
+  permit, derived from the task's declared `verification_commands` and the
+  current workspace's project-script catalog. Null when the workspace is not
+  known to the orchestrator.
+- `project_script_catalog`: discovered `bun run` / `npm run` / `cargo` /
+  `go test` entries inferred from the workspace.
+
 ## Safe Waves
 
 Safe waves describe which tasks can run together. The scheduler must respect

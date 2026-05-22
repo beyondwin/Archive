@@ -4,6 +4,24 @@ Related operations docs:
 
 - [Recovery](./recovery.md)
 - [Verification](./verification.md)
+- [State root migration](./state-root-migration.md)
+
+## Run State Root
+
+`waygent.run_state.v2` is written under a platform-aware default root when
+`--root` is not supplied:
+
+| Platform | `defaultRunRoot()` |
+|----------|--------------------|
+| darwin   | `~/Library/Application Support/waygent/runs/` |
+| linux    | `${XDG_DATA_HOME:-$HOME/.local/share}/waygent/runs/` |
+| win32    | `%LOCALAPPDATA%/waygent/runs/` |
+| other    | `$TMPDIR/waygent-runs/` (with stderr WARN) |
+
+`waygent orphans` without `--root` scans both the current default root and
+the legacy `$TMPDIR/waygent-runs/` root during the transition window, and
+flags legacy-root entries with `migration_suggested: true`. See
+[state-root-migration.md](./state-root-migration.md) for migration steps.
 
 ## Operational Trust Loop
 
@@ -23,8 +41,21 @@ or apply.
   commit the related files before retrying.
 
 If a target run id already has durable evidence, `waygent run` stops with
-`run_id_already_exists` instead of deleting the prior run root. Use a fresh run
-id or a resume path; do not overwrite the only evidence for a failed run.
+`run_id_already_exists` instead of deleting the prior run root. The error
+reports the conflicting run path and three concrete remediations: choose a
+different `--run <id>`, omit `--run` so Waygent derives a fresh slug+timestamp
+id, or remove the conflicting directory manually after inspecting it. Never
+overwrite the only evidence for a failed run.
+
+When `--run` is omitted, Waygent derives the run id from the plan slug and a
+UTC timestamp (`<plan-slug>_YYYYMMDD_HHMMSS`) and retries up to
+`RUN_ID_COLLISION_MAX_RETRIES` (16) with a numeric suffix on collision before
+giving up. Passing an explicit `--run` disables auto-suffix retries.
+
+`--profile <max-quality|balanced|cost-saver>` selects a packaged combination of
+main-agent and subagent model + reasoning level. Individual overrides
+(`--main-model`, `--main-reasoning`, `--subagent-model`, `--subagent-reasoning`)
+take priority over a preset.
 
 From the Codex app or Codex CLI, `waygent run` defaults to Codex provider and
 `multi-agent` execution. `waygent demo` is offline-only and rejects live
@@ -131,9 +162,16 @@ Additional read-only operator commands:
   records kernel evidence back into the run state and event journal.
 - `waygent watch --run <id>|--last --json --timeout 1s`: reads the event
   journal as filtered transitions.
-- `waygent orphans --root <root>`: lists invalid run roots and stale worktrees.
-  `waygent orphans --delete <id> --yes` deletes exactly one validated orphan;
-  there is no delete-all path.
+- `waygent orphans [--root <root>]`: lists invalid run roots and stale
+  worktrees. Without `--root`, scans both the platform default and legacy
+  `$TMPDIR/waygent-runs/` roots. `waygent orphans --delete <id> --yes` deletes
+  exactly one validated orphan; there is no delete-all path.
+
+`waygent status` returns explicit failure shape when the resolved run dir is
+missing (typical when a `latest` pointer is stale after manual cleanup):
+`status="failed"`, `last_event_type="evidence_cleared"`,
+`trust_status="evidence_missing"`. This is distinct from a fresh, in-flight
+run.
 
 Repeated `--plan` and `--spec` flags form a plan chain. The first
 implementation keeps child runs as v2 run states coordinated by a chain id;

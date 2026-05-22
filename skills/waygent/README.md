@@ -46,14 +46,28 @@ waygent run --latest
 bun run waygent -- run --latest
 waygent run --plan docs/migration/example.md --provider fake
 waygent run --plan docs/migration/example-plan.md --spec docs/architecture/example-design.md --provider codex --execution-mode multi-agent
+waygent run --plan docs/migration/example.md --profile max-quality
+waygent run --plan docs/migration/example.md --run my_run_id
 waygent status --last
 waygent events --run run_example --json
 waygent inspect --run run_example --json
 waygent explain --last
 waygent resume --last
 waygent verify --last
+waygent verify --last --task T3
 waygent apply --run run_example
+waygent orphans
+waygent orphans --delete stale_run_id --yes
 ```
+
+`--profile` presets (`max-quality | balanced | cost-saver`) select main and
+subagent model + reasoning level together. Explicit `--main-model`,
+`--main-reasoning`, `--subagent-model`, and `--subagent-reasoning` override the
+preset.
+
+When `--run` is omitted, Waygent derives the run id from the plan slug and a
+UTC timestamp and auto-retries with a numeric suffix on collision. Pass
+`--run <id>` to pin a specific id and disable auto-suffix retries.
 
 `waygent demo` is offline-only and rejects live providers. Use `waygent run`
 for Codex or Claude execution.

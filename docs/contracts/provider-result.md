@@ -11,8 +11,17 @@ runtime-owned evidence.
 
 The worker result contains the schema, task id, candidate id, status, changed
 files, summary, and evidence. The provider adapter accepts supported direct
-JSON, JSONL envelopes, and fenced JSON forms, then validates the normalized
-shape before the runtime records it.
+JSON, JSONL envelopes, and fenced JSON forms (including narrative-then-JSON
+output), then validates the normalized shape before the runtime records it.
+
+The `status` field is normalized against common provider synonyms:
+
+- `complete`, `implemented`, `done`, `ok`, `ready`, `succeeded` → `completed`
+- `error`, `errored`, `failure` → `failed`
+- `halted`, `stopped`, `paused` → `blocked`
+
+Unknown status strings still trip `malformed_result` so genuinely broken
+envelopes do not silently pass.
 
 ## Evidence
 

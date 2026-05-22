@@ -60,7 +60,12 @@ durable state and TypeScript projections, not from chat context.
 - Documentation index: [docs/README.md](docs/README.md)
 - Getting started: [docs/getting-started.md](docs/getting-started.md)
 - Event contracts: [docs/contracts/events.md](docs/contracts/events.md)
+- Run-state contract: [docs/contracts/run-state.md](docs/contracts/run-state.md)
+- Provider-result contract: [docs/contracts/provider-result.md](docs/contracts/provider-result.md)
 - Operations: [docs/operations/waygent.md](docs/operations/waygent.md)
+- Recovery: [docs/operations/recovery.md](docs/operations/recovery.md)
+- Verification: [docs/operations/verification.md](docs/operations/verification.md)
+- State root migration: [docs/operations/state-root-migration.md](docs/operations/state-root-migration.md)
 - Waygent skill: [skills/waygent/README.md](skills/waygent/README.md)
 
 ## Graphify Repository Map
