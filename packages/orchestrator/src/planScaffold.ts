@@ -8,6 +8,7 @@ export interface ScaffoldWaygentTaskInput {
   file_claims: FileClaim[];
   risk: RiskLevel;
   verify: string[];
+  instructions?: string[];
 }
 
 export function scaffoldWaygentTask(input: ScaffoldWaygentTaskInput): string {
@@ -25,6 +26,12 @@ export function scaffoldWaygentTask(input: ScaffoldWaygentTaskInput): string {
     `risk: ${input.risk}`,
     "verify:",
     ...input.verify.map((command) => `  - ${command}`),
+    ...(input.instructions?.length
+      ? [
+        "instructions:",
+        ...input.instructions.map((line) => `  - ${line}`)
+      ]
+      : []),
     "```",
     ""
   ].join("\n");

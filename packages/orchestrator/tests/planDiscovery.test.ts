@@ -34,6 +34,22 @@ verify:
 \`\`\`
 `;
 
+const superpowersPlan = `
+# Runtime Implementation Plan
+
+## Task 1: Update README
+
+**Files:**
+
+- Modify: \`README.md\`
+
+Run:
+
+\`\`\`bash
+test -f README.md
+\`\`\`
+`;
+
 describe("Waygent plan discovery", () => {
   test("discovers the newest Waygent plan by filename date", () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-plan-"));
@@ -104,5 +120,16 @@ describe("Waygent plan discovery", () => {
     writeFileSync(join(root, "docs", "migration", "2026-05-22-legacy.md"), legacyPlan("legacy_task"));
 
     expect(() => discoverPlan({ workspace: root, latest: true })).toThrow("no Waygent plan found");
+  });
+
+  test("discovers normalizable superpowers implementation plans during latest discovery", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-superpowers-latest-"));
+    mkdirSync(join(root, "docs", "superpowers", "plans"), { recursive: true });
+    writeFileSync(join(root, "docs", "superpowers", "plans", "2026-05-22-superpowers.md"), superpowersPlan);
+
+    const found = discoverPlan({ workspace: root, latest: true });
+
+    expect(found.path?.endsWith("docs/superpowers/plans/2026-05-22-superpowers.md")).toBe(true);
+    expect(found.markdown).toContain("## Task 1: Update README");
   });
 });

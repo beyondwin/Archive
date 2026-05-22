@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { AgentLensEvent, ArtifactIndexEntry, WaygentRunStateV2 } from "@waygent/contracts";
 import { planWorktree } from "@waygent/kernel-client";
 import { projectFailureSummary, projectTimeline, projectTrustReport } from "@waygent/lens-projectors";
-import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeLatestRunId } from "@waygent/lens-store";
+import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeArtifact, writeLatestRunId } from "@waygent/lens-store";
 import type { ProviderProcessOptions } from "@waygent/provider-adapters";
 import { buildDurableProjection } from "@waygent/runway-control";
 import { artifactIndexEntry, mergeArtifactIndex } from "./artifactIndex";
@@ -12,6 +12,7 @@ import { createCombinedCheckpointPatchArtifact, type CombinedCheckpointPatchResu
 import { buildCompletionAudit } from "./completionAudit";
 import { resolveExecutionProfile, type ExecutionProfile, type ProfileOverride, type ProviderName } from "./executionProfile";
 import { resolvePlanInput, resolveSpecInput } from "./planDiscovery";
+import { normalizeWaygentPlanInput } from "./planNormalizer";
 import { parseWaygentPlan } from "./planParser";
 import { buildRunEvent } from "./runEvents";
 import { createRunExecutionContext, type RunExecutionContext } from "./runExecutionContext";
@@ -74,7 +75,11 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     workspace,
     ...(options.spec !== undefined ? { spec: options.spec } : {})
   });
-  const parsed = parseWaygentPlan(planInput.markdown);
+  const normalizedPlan = normalizeWaygentPlanInput(planInput);
+  const normalizedPlanArtifact = normalizedPlan.mode === "superpowers"
+    ? writeArtifact(paths.root, "plan/normalized-waygent-plan.md", `${normalizedPlan.markdown.trimEnd()}\n`, "text/markdown")
+    : null;
+  const parsed = parseWaygentPlan(normalizedPlan.markdown);
   const graph = buildTaskGraphFromPlan(parsed);
   const projection = buildDurableProjection(graph);
   const safeWave = projection.safe_wave.length > 0 ? projection.safe_wave : parsed.tasks[0] ? [parsed.tasks[0].id] : [];
@@ -149,7 +154,12 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     phase: "platform",
     outcome: "running",
     summary: "Run opened.",
-    payload: { plan: planInput.path ?? options.plan, spec: specInput.path ?? options.spec, profile: providerProfile }
+    payload: {
+      plan: planInput.path ?? options.plan,
+      spec: specInput.path ?? options.spec,
+      profile: providerProfile,
+      plan_normalization: planNormalizationPayload(normalizedPlan, normalizedPlanArtifact?.path ?? null)
+    }
   }));
   context.appendEvent((sequence) => buildRunEvent({
     run_id: runId,
@@ -158,7 +168,12 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     phase: "plan",
     outcome: "success",
     summary: "Plan parsed into task graph.",
-    payload: { task_count: parsed.tasks.length, profile: providerProfile, worktree: plannedWorktree }
+    payload: {
+      task_count: parsed.tasks.length,
+      profile: providerProfile,
+      worktree: plannedWorktree,
+      plan_normalization: planNormalizationPayload(normalizedPlan, normalizedPlanArtifact?.path ?? null)
+    }
   }));
   context.appendEvent((sequence) => ({
     ...buildRunEvent({
@@ -499,6 +514,19 @@ function providerProfileRecord(profile: ReturnType<typeof resolveExecutionProfil
     main: { ...profile.main },
     subagent: { ...profile.subagent },
     evidence_event_type: profile.evidence_event_type
+  };
+}
+
+function planNormalizationPayload(
+  normalizedPlan: ReturnType<typeof normalizeWaygentPlanInput>,
+  artifactRef: string | null
+): Record<string, unknown> {
+  return {
+    mode: normalizedPlan.mode,
+    source_path: normalizedPlan.path,
+    task_count: normalizedPlan.task_count,
+    diagnostics: normalizedPlan.diagnostics,
+    normalized_plan_ref: artifactRef
   };
 }
 

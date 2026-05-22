@@ -74,7 +74,7 @@ describe("Waygent CLI", () => {
     await expect(Bun.file(join(shortRoot, "run_demo", "state.json")).exists()).resolves.toBe(false);
   });
 
-  test("run rejects non-executable implementation plans with scaffold guidance", async () => {
+  test("run rejects incomplete implementation plans with scaffold guidance", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "waygent-non-executable-plan-"));
     const root = mkdtempSync(join(tmpdir(), "waygent-non-executable-root-"));
     const planPath = join(workspace, "plan.md");
@@ -88,6 +88,51 @@ describe("Waygent CLI", () => {
       "--run", "run_non_executable",
       "--plan", "plan.md"
     ])).rejects.toThrow(/executable Waygent plan.*waygent scaffold-plan/s);
+  });
+
+  test("run normalizes executable superpowers implementation plans before dispatch", async () => {
+    const workspace = initSourceCheckout("waygent-superpowers-normalized-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-superpowers-normalized-root-"));
+    writeFileSync(join(workspace, "plan.md"), `
+# Demo Implementation Plan
+
+## Task 1: Update README
+
+**Files:**
+
+- Modify: \`README.md\`
+
+- [ ] **Step 1: Update the fixture README**
+
+Run:
+
+\`\`\`bash
+test -f README.md
+git add README.md
+\`\`\`
+`);
+    commitAll(workspace, "add superpowers plan");
+
+    const result = await runCli([
+      "run",
+      "--provider", "fake",
+      "--workspace", workspace,
+      "--root", root,
+      "--run", "run_superpowers_normalized",
+      "--plan", "plan.md"
+    ]);
+
+    expect(result).toMatchObject({ run_id: "run_superpowers_normalized" });
+    const state = readRunStateV2(root, "run_superpowers_normalized");
+    const task = Object.values(state.tasks)[0];
+    expect(task?.id).toBe("task_1_update_readme");
+    expect(task?.risk).toBe("high");
+    expect(task?.file_claims).toEqual([{ path: "README.md", mode: "owned" }]);
+    await expect(Bun.file(join(root, "run_superpowers_normalized", "artifacts", "plan", "normalized-waygent-plan.md")).exists())
+      .resolves.toBe(true);
+    const packet = JSON.parse(readFileSync(String(task?.task_packet_path), "utf8")) as { plan_excerpt?: string };
+    expect(packet.plan_excerpt).toContain("Step 1: Update the fixture README");
+    expect(packet.plan_excerpt).not.toContain("git add README.md");
   });
 
   test("CLI entrypoint formats runtime errors without stack traces", () => {
@@ -208,4 +253,14 @@ function initSourceCheckout(prefix: string): string {
     if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`);
   }
   return workspace;
+}
+
+function commitAll(workspace: string, message: string): void {
+  for (const args of [
+    ["add", "-A"],
+    ["commit", "-q", "-m", message]
+  ]) {
+    const result = Bun.spawnSync(["git", ...args], { cwd: workspace });
+    if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`);
+  }
 }

@@ -5,6 +5,7 @@ export * from "./checkpointArtifacts";
 export * from "./completionAudit";
 export * from "./orchestrator";
 export * from "./planDiscovery";
+export * from "./planNormalizer";
 export * from "./planParser";
 export * from "./planScaffold";
 export * from "./recoveryExecutor";
