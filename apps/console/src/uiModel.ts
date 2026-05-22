@@ -3,6 +3,7 @@ import type {
   ExecutionExplanationProjection,
   OperationalMaturityProjection,
   OperatorDecisionProjection,
+  OperatorIntakeRecoverySummary,
   OperatorTimelineRow,
   ProviderLogSummary,
   ProviderReadinessProjection,
@@ -58,6 +59,7 @@ export interface ConsoleApplyStatus {
 export type RunDetailSectionId =
   | "overview"
   | "operator-decision"
+  | "intake-recovery"
   | "operator-timeline"
   | "ai-handoff"
   | "raw-evidence"
@@ -142,6 +144,7 @@ export interface RunDetailModel {
   runtime_cost: RuntimeCostProjection | null;
   provider_readiness: ProviderReadinessProjection | null;
   operator_decision: OperatorDecisionProjection | null;
+  intake_recovery: OperatorIntakeRecoverySummary | null;
   outcome_strip: {
     display_status: string;
     primary_blocker: string | null;
@@ -149,6 +152,8 @@ export interface RunDetailModel {
     apply_status: string;
     confidence: string;
     summary: string;
+    intake_status: string | null;
+    intake_question: string | null;
   };
   operator_timeline: OperatorTimelineRow[];
   raw_evidence_refs: string[];
@@ -457,6 +462,7 @@ export function buildRunDetailModel(response: RealRunDetailResponse): RunDetailM
     runtime_cost: response.runtime_cost ?? response.operational_maturity?.runtime_cost ?? null,
     provider_readiness: response.provider_readiness ?? response.operational_maturity?.provider_readiness ?? null,
     operator_decision: operatorDecision,
+    intake_recovery: operatorDecision?.intake_recovery ?? null,
     outcome_strip: outcomeStrip,
     operator_timeline: operatorTimelineFromResponse(response),
     raw_evidence_refs: rawEvidenceRefsFromDecision(operatorDecision),
@@ -470,6 +476,7 @@ export function buildRunDetailModel(response: RealRunDetailResponse): RunDetailM
 function outcomeStripFromDecision(response: RealRunDetailResponse): RunDetailModel["outcome_strip"] {
   const decision = response.operator_decision ?? null;
   const fallbackSummary = response.timeline.at(-1)?.summary ?? response.last_event_type ?? response.status;
+  const intakeRecovery = decision?.intake_recovery ?? null;
 
   return {
     display_status: decision?.status_summary.display_status ?? response.status,
@@ -480,7 +487,9 @@ function outcomeStripFromDecision(response: RealRunDetailResponse): RunDetailMod
       ?? null,
     apply_status: decision?.status_summary.apply_status ?? response.apply_status,
     confidence: decision?.confidence ?? "unknown",
-    summary: decision?.status_summary.summary ?? fallbackSummary
+    summary: decision?.status_summary.summary ?? fallbackSummary,
+    intake_status: intakeRecovery?.status ?? null,
+    intake_question: intakeRecovery?.question ?? null
   };
 }
 
@@ -556,9 +565,14 @@ function detailSectionsFor(operatorDecision: OperatorDecisionProjection | null):
 
   if (!operatorDecision) return sections;
 
+  const intakeSection: RunDetailModel["sections"] = operatorDecision.intake_recovery
+    ? [{ id: "intake-recovery", label: "Intake recovery" }]
+    : [];
+
   return [
     sections[0]!,
     { id: "operator-decision", label: "Operator decision" },
+    ...intakeSection,
     { id: "operator-timeline", label: "Operator timeline" },
     { id: "ai-handoff", label: "AI handoff" },
     { id: "raw-evidence", label: "Raw evidence" },

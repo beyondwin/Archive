@@ -502,6 +502,111 @@ describe("Lens web console UI model", () => {
     expect(model.raw_evidence_refs).toEqual(["state:state.json", "events:events.jsonl"]);
   });
 
+  test("surfaces intake recovery decision in Workbench detail", () => {
+    const model = buildRunDetailModel({
+      run_id: "run_intake",
+      status: "blocked",
+      trust_status: "insufficient_evidence",
+      apply_status: "blocked",
+      total_events: 2,
+      last_event_type: "platform.intake_decision_required",
+      safe_wave: [],
+      failures: [],
+      timeline: [
+        { sequence: 1, phase: "platform", event_type: "platform.run_started", outcome: "running", summary: "Run opened." },
+        { sequence: 2, phase: "intake", event_type: "platform.intake_decision_required", outcome: "blocked", summary: "Intake recovery requires a decision." }
+      ],
+      operator_decision: {
+        schema: "waygent.operator_decision.v1",
+        run_id: "run_intake",
+        generated_at: "2026-05-23T00:00:00.000Z",
+        status_summary: {
+          display_status: "needs_input",
+          runtime_status: "blocked",
+          lifecycle_outcome: "blocked",
+          current_phase: "preflight",
+          active_tasks: 0,
+          completed_tasks: 0,
+          blocked_tasks: 0,
+          apply_status: "blocked",
+          summary: "run_intake is needs_input by intake_decision_required."
+        },
+        primary_blocker: {
+          code: "intake_decision_required",
+          title: "Intake recovery needs a decision",
+          summary: "The plan contains a destructive command candidate. Confirm the intended safe replacement.",
+          severity: "blocking",
+          evidence_refs: ["state:state.json", "artifacts/intake/recovery-report.json"],
+          missing_refs: ["destructive_command_candidate"],
+          recommended_action_ids: ["request_user_input", "open_ai_repair_handoff", "open_raw_evidence"]
+        },
+        secondary_blockers: [],
+        allowed_actions: [
+          { id: "inspect_run", label: "Inspect run", reason: "safe", evidence_refs: ["state:state.json"], requires_approval: false, requires_runtime_revalidation: false, command: "waygent inspect --run run_intake" },
+          { id: "request_user_input", label: "Request user input", reason: "needs decision", evidence_refs: ["state:state.json", "artifacts/intake/recovery-report.json"], requires_approval: true, requires_runtime_revalidation: true, command: null }
+        ],
+        blocked_actions: [
+          { id: "apply_run", label: "Apply run", reason: "Apply readiness is blocked by intake_decision_required.", evidence_refs: ["state:state.json"], unblocks_when: "Intake recovery decision is resolved." }
+        ],
+        evidence_packet: {
+          state_refs: ["state:state.json"],
+          event_refs: ["events:events.jsonl"],
+          artifact_refs: ["artifacts/intake/recovery-report.json"],
+          verification_refs: [],
+          checkpoint_refs: [],
+          projection_refs: ["waygent.execution_explanation.v1"],
+          missing_refs: [],
+          redaction_notes: []
+        },
+        ai_handoff: {
+          purpose: "draft_repair_plan",
+          prompt_summary: "Draft a repair plan for intake_decision_required using bounded evidence.",
+          run_id: "run_intake",
+          current_status: "needs_input",
+          primary_blocker: "intake_decision_required",
+          secondary_blockers: [],
+          allowed_action_ids: ["inspect_run", "request_user_input"],
+          blocked_action_ids: ["apply_run"],
+          constraints: ["Do not apply patches."],
+          evidence_refs: ["artifacts/intake/recovery-report.json"],
+          missing_evidence: [],
+          raw_fallback_refs: ["events:events.jsonl"],
+          safety_notes: ["Waygent runtime remains apply authority."]
+        },
+        confidence: "deterministic",
+        unknown_reasons: [],
+        intake_recovery: {
+          status: "decision_required",
+          can_start: false,
+          confidence: "blocked",
+          finding_codes: ["destructive_command_candidate"],
+          artifact_refs: ["artifacts/intake/recovery-report.json"],
+          question: "The plan contains a destructive command candidate. Confirm the intended safe replacement."
+        },
+        source_projection_refs: {
+          run_state_v2: "state:state.json",
+          apply_readiness: "waygent.apply_readiness",
+          execution_explanation: "waygent.execution_explanation.v1",
+          operational_maturity: "waygent.operational_maturity.v1"
+        }
+      }
+    });
+
+    expect(model.intake_recovery).toMatchObject({
+      status: "decision_required",
+      can_start: false,
+      question: "The plan contains a destructive command candidate. Confirm the intended safe replacement."
+    });
+    expect(model.outcome_strip).toMatchObject({
+      display_status: "needs_input",
+      primary_blocker: "intake_decision_required",
+      next_action: "inspect_run",
+      intake_status: "decision_required",
+      intake_question: "The plan contains a destructive command candidate. Confirm the intended safe replacement."
+    });
+    expect(model.sections.map((section) => section.id)).toContain("intake-recovery");
+  });
+
   test("sorts run board by operator urgency", () => {
     const model = buildConsoleUiModel({
       generatedAt: "2026-05-22T00:00:00.000Z",

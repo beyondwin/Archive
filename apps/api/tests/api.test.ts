@@ -478,6 +478,75 @@ describe("Waygent local API routes", () => {
     });
   });
 
+  test("GET /runs and /runs/:runId surface intake recovery decision evidence", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-api-intake-"));
+    const runId = "run_intake_decision";
+    await runWaygentDemo({ root, run_id: runId, workspace: initSourceCheckout("waygent-api-source-") });
+    const state = readRunStateV2(root, runId);
+    writeRunStateV2(root, {
+      ...state,
+      status: "blocked",
+      lifecycle_outcome: "blocked",
+      current_phase: "preflight",
+      tasks: {},
+      safe_waves: [],
+      apply: { status: "blocked", reason: "intake_decision_required" },
+      completion_audit: null,
+      intake_recovery: {
+        status: "decision_required",
+        started_at: "2026-05-22T00:00:00.000Z",
+        completed_at: "2026-05-22T00:00:01.000Z",
+        normalized_plan_ref: null,
+        recovery_report_ref: "artifacts/intake/recovery-report.json",
+        findings: [{
+          code: "destructive_command_candidate",
+          severity: "blocking",
+          message: "Plan contains a destructive command candidate.",
+          task_id: null,
+          evidence_refs: ["plan:plan.md"]
+        }],
+        repair_actions: [{
+          action: "deterministic_markdown_intake_repair",
+          status: "blocked",
+          reason: "High-risk ambiguity prevents automatic execution.",
+          evidence_refs: ["plan:plan.md"]
+        }],
+        can_start: false,
+        confidence: "blocked",
+        question: "The plan contains a destructive command candidate. Confirm the intended safe replacement."
+      }
+    });
+    const realHandler = createApiHandler({ runRoot: root });
+
+    const listResponse = await realHandler(new Request("http://waygent.local/runs"));
+    const list = await listResponse.json();
+    expect(list.runs[0]).toMatchObject({
+      run_id: runId,
+      operator_status: "needs_input",
+      primary_blocker: "intake_decision_required",
+      intake_status: "decision_required",
+      intake_can_start: false,
+      intake_question: "The plan contains a destructive command candidate. Confirm the intended safe replacement."
+    });
+
+    const detailResponse = await realHandler(new Request(`http://waygent.local/runs/${runId}`));
+    const detail = await detailResponse.json();
+    expect(detail.operator_decision).toMatchObject({
+      schema: "waygent.operator_decision.v1",
+      run_id: runId,
+      primary_blocker: { code: "intake_decision_required" },
+      intake_recovery: {
+        status: "decision_required",
+        can_start: false,
+        confidence: "blocked",
+        finding_codes: ["destructive_command_candidate"],
+        artifact_refs: ["artifacts/intake/recovery-report.json"]
+      }
+    });
+    expect(detail.operator_decision.allowed_actions.map((action: { id: string }) => action.id)).toContain("request_user_input");
+    expect(detail.operator_decision.blocked_actions.map((action: { id: string }) => action.id)).toContain("apply_run");
+  });
+
   test("unknown routes and runs return JSON 404 responses", async () => {
     expect((await get("/missing")).status).toBe(404);
 

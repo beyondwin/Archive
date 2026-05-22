@@ -9,8 +9,10 @@ import type {
   OperatorDecisionConfidence,
   OperatorDecisionProjection,
   OperatorEvidencePacket,
+  OperatorIntakeRecoverySummary,
   OperatorRunStatus,
   OperatorStatusSummary,
+  WaygentIntakeRecovery,
   WaygentRunStateV2
 } from "@waygent/contracts";
 import { projectApplyReadinessFromState } from "./apply";
@@ -133,6 +135,8 @@ const actionDefinitions: Record<OperatorActionId, ActionDefinition> = {
 const blockerPriority: Record<string, number> = {
   state_missing: 10,
   state_invalid: 10,
+  intake_decision_required: 15,
+  intake_recovery_failed: 15,
   checkpoint_digest_mismatch: 20,
   unsafe_apply: 20,
   runtime_active: 30,
@@ -187,6 +191,8 @@ export function projectOperatorDecisionFromState(input: OperatorDecisionInput): 
     evidencePacket
   });
 
+  const intakeRecoverySummary = intakeRecoverySummaryFromState(state);
+
   return {
     schema: "waygent.operator_decision.v1",
     run_id: runId,
@@ -200,6 +206,7 @@ export function projectOperatorDecisionFromState(input: OperatorDecisionInput): 
     ai_handoff: aiHandoff,
     confidence,
     unknown_reasons: unknownReasons,
+    ...(intakeRecoverySummary ? { intake_recovery: intakeRecoverySummary } : {}),
     source_projection_refs: {
       run_state_v2: stateRef(state),
       apply_readiness: "waygent.apply_readiness",
@@ -302,7 +309,10 @@ function evidencePacketFromState(
 ): OperatorEvidencePacket {
   const verificationRefs = verificationRefsFromState(state);
   const checkpointRefs = unique([...checkpointRefsFromTasks(state), ...applyReadiness.checkpoint_refs]);
-  const artifactRefs = artifactRefsFromState(state, applyReadiness);
+  const artifactRefs = unique([
+    ...artifactRefsFromState(state, applyReadiness),
+    ...intakeArtifactRefs(state.intake_recovery)
+  ]);
   const missingRefs = missingRefsFromState(state, checkpointRefs);
 
   return {
@@ -339,6 +349,9 @@ function blockersFromState(
   const blockers: OperatorBlocker[] = [];
   const taskFailure = firstTaskFailure(state);
   const applyReason = state.apply.reason ?? applyReadiness.reason ?? null;
+
+  const intakeBlocker = intakeRecoveryBlocker(state.intake_recovery, evidencePacket);
+  if (intakeBlocker) blockers.push(intakeBlocker);
 
   if (state.status === "initializing" || state.status === "running" || state.status === "applying") {
     blockers.push(makeBlocker({
@@ -455,6 +468,59 @@ function blockersFromState(
   return blockers;
 }
 
+function intakeRecoveryBlocker(
+  intakeRecovery: WaygentIntakeRecovery | undefined,
+  evidencePacket: OperatorEvidencePacket
+): OperatorBlocker | null {
+  if (!intakeRecovery) return null;
+  const evidenceRefs = unique([...evidencePacket.state_refs, ...intakeArtifactRefs(intakeRecovery)]);
+  const findingCodes = intakeRecovery.findings.map((finding) => finding.code);
+  if (intakeRecovery.status === "decision_required") {
+    return makeBlocker({
+      code: "intake_decision_required",
+      title: "Intake recovery needs a decision",
+      summary: intakeRecovery.question ?? "Waygent intake recovery requires an operator decision before execution.",
+      severity: "blocking",
+      evidenceRefs,
+      missingRefs: findingCodes,
+      recommendedActionIds: ["request_user_input", "open_ai_repair_handoff", "open_raw_evidence"]
+    });
+  }
+  if (intakeRecovery.status === "failed") {
+    return makeBlocker({
+      code: "intake_recovery_failed",
+      title: "Intake recovery failed",
+      summary: intakeRecovery.question ?? "Waygent intake recovery could not produce a safe normalized plan.",
+      severity: "blocking",
+      evidenceRefs,
+      missingRefs: findingCodes,
+      recommendedActionIds: ["inspect_run", "open_raw_evidence", "open_ai_repair_handoff"]
+    });
+  }
+  return null;
+}
+
+function intakeRecoverySummaryFromState(state: WaygentRunStateV2): OperatorIntakeRecoverySummary | null {
+  const recovery = state.intake_recovery;
+  if (!recovery) return null;
+  return {
+    status: recovery.status,
+    can_start: recovery.can_start,
+    confidence: recovery.confidence,
+    finding_codes: unique(recovery.findings.map((finding) => finding.code)),
+    artifact_refs: intakeArtifactRefs(recovery),
+    question: recovery.question
+  };
+}
+
+function intakeArtifactRefs(intakeRecovery: WaygentIntakeRecovery | undefined): string[] {
+  if (!intakeRecovery) return [];
+  const refs: string[] = [];
+  if (intakeRecovery.normalized_plan_ref) refs.push(intakeRecovery.normalized_plan_ref);
+  if (intakeRecovery.recovery_report_ref) refs.push(intakeRecovery.recovery_report_ref);
+  return refs;
+}
+
 function providerReadinessBlocker(
   state: WaygentRunStateV2,
   events: AgentLensEvent[],
@@ -498,6 +564,8 @@ function allowedActionsFor(input: {
     ids.push("request_user_input");
   } else if (input.primaryBlocker?.code === "needs_approval") {
     ids.push("approve_recovery");
+  } else if (input.primaryBlocker?.code === "intake_decision_required") {
+    ids.push("request_user_input");
   }
 
   return unique(ids).map((id) => allowedAction(id, input.runId, evidenceRefsForAction(id, input.evidencePacket)));
@@ -643,7 +711,7 @@ function displayStatusFromState(
   if (state.status === "failed" || state.lifecycle_outcome === "failed") return "failed";
   if (state.current_phase === "recover" && state.status === "running") return "recovering";
   if (state.status === "running" || state.status === "initializing" || state.status === "applying") return "running";
-  if (primaryBlocker?.code === "needs_user_input") return "needs_input";
+  if (primaryBlocker?.code === "needs_user_input" || primaryBlocker?.code === "intake_decision_required") return "needs_input";
   if (primaryBlocker?.code === "needs_approval") return "needs_approval";
   if (state.status === "blocked" || state.lifecycle_outcome === "blocked" || primaryBlocker) return "blocked";
   return "done";
@@ -804,6 +872,9 @@ function evidenceRefsForAction(id: OperatorActionId, evidencePacket: OperatorEvi
   if (id === "rerun_verification") return unique([...evidencePacket.state_refs, ...evidencePacket.verification_refs]);
   if (id === "regenerate_checkpoint" || id === "rebase_checkpoint" || id === "review_patch" || id === "apply_run") {
     return unique([...evidencePacket.state_refs, ...evidencePacket.checkpoint_refs, ...evidencePacket.artifact_refs]);
+  }
+  if (id === "request_user_input" || id === "approve_recovery") {
+    return unique([...evidencePacket.state_refs, ...evidencePacket.artifact_refs]);
   }
   return evidencePacket.state_refs.length > 0 ? evidencePacket.state_refs : evidencePacket.event_refs;
 }
