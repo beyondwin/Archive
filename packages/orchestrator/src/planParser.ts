@@ -1,5 +1,6 @@
 import type { RiskLevel } from "@waygent/contracts";
 import type { FileClaim, FileClaimMode } from "@waygent/runway-control";
+import { extractInstructionLines } from "./planAdapters/instructionsExtract";
 
 export interface ParsedWaygentTask {
   id: string;
@@ -15,13 +16,44 @@ export interface ParsedWaygentPlan {
   tasks: ParsedWaygentTask[];
 }
 
+export interface ParseWaygentPlanOptions {
+  inherit_plan_prose?: boolean;
+}
+
 const TASK_BLOCK = /```yaml\s+waygent-task\r?\n([\s\S]*?)\r?\n```/g;
 const TASK_MARKER = /```yaml\s+waygent-task\r?\n/;
+const TASK_HEADING = /^(#{2,3})\s+Task\s+\d+\s*[:.]/gm;
 const VALID_RISK = new Set<RiskLevel>(["low", "medium", "high"]);
 const VALID_CLAIM_MODE = new Set<FileClaimMode>(["owned", "shared_append", "read_only"]);
 
-export function parseWaygentPlan(markdown: string): ParsedWaygentPlan {
-  const tasks = [...markdown.matchAll(TASK_BLOCK)].map((match) => parseTaskBlock(match[1] ?? ""));
+export function parseWaygentPlan(markdown: string, options?: ParseWaygentPlanOptions): ParsedWaygentPlan {
+  const inheritProse = options?.inherit_plan_prose !== false;
+  const headings: Array<{ index: number }> = [];
+  for (const match of markdown.matchAll(TASK_HEADING)) {
+    if (match.index !== undefined) headings.push({ index: match.index + match[0].length });
+  }
+
+  const tasks: ParsedWaygentTask[] = [];
+  let lastBlockEnd = 0;
+  for (const match of markdown.matchAll(TASK_BLOCK)) {
+    if (match.index === undefined) continue;
+    const blockStart = match.index;
+    const yamlBody = match[1] ?? "";
+    const task = parseTaskBlock(yamlBody);
+
+    if (inheritProse && task.instructions.length === 0) {
+      const headingBefore = [...headings]
+        .reverse()
+        .find((h) => h.index > lastBlockEnd && h.index < blockStart);
+      if (headingBefore) {
+        const proseSlice = markdown.slice(headingBefore.index, blockStart);
+        task.instructions = extractInstructionLines(proseSlice);
+      }
+    }
+
+    tasks.push(task);
+    lastBlockEnd = blockStart + match[0].length;
+  }
   if (tasks.length === 0) {
     throw new Error(missingWaygentTaskBlockMessage(markdown));
   }
@@ -42,6 +74,25 @@ function parseTaskBlock(block: string): ParsedWaygentTask {
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]?.trim();
     if (!line) continue;
+    if (line === "dependencies:") {
+      const deps: string[] = [];
+      index = readStringList(lines, index + 1, deps) - 1;
+      scalar.set("dependencies", `[${deps.join(", ")}]`);
+      continue;
+    }
+    if (line.startsWith("dependencies:")) {
+      const value = line.slice("dependencies:".length).trim();
+      if (value === "") {
+        const deps: string[] = [];
+        index = readStringList(lines, index + 1, deps) - 1;
+        scalar.set("dependencies", `[${deps.join(", ")}]`);
+      } else if (value.startsWith("[")) {
+        scalar.set("dependencies", value);
+      } else {
+        scalar.set("dependencies", `[${value}]`);
+      }
+      continue;
+    }
     const scalarMatch = line.match(/^([a-z_]+):\s*(.*)$/);
     const key = scalarMatch?.[1];
     if (key && key !== "file_claims" && key !== "verify" && key !== "acceptance_commands" && key !== "instructions") {
