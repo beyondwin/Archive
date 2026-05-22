@@ -40,13 +40,17 @@ describe("runWaygent", () => {
     expect(readLatestRunId(root)).toBe("run_demo");
     expect(result.events.map((event) => event.event_type)).toEqual([
       "platform.run_started",
+      "platform.plan_preflight_completed",
       "runway.plan_loaded",
       "runway.preflight_result",
       "runway.safe_wave_selected",
+      "runway.spec_slice_computed",
       "runway.worker_result",
+      "lens.model_attestation_confirmed",
       "runway.verification_result",
       "runway.checkpoint_created",
       "runway.apply_dry_run_result",
+      "platform.cost_accumulated",
       "lens.trust_report_updated"
     ]);
     expect(result.trust_report.trust_status).toBe("trusted");

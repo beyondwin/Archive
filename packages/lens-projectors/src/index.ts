@@ -1,6 +1,7 @@
 export * from "./trust";
 export * from "./apply";
 export * from "./executionExplanation";
+export * from "./failureBarrier";
 export * from "./dogfoodEvidence";
 export * from "./runtimeCost";
 export * from "./providerReadiness";

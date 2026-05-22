@@ -15,6 +15,12 @@ Task state records pending, running, verified, failed, blocked, and completed
 work with task ids, candidate ids, file claims, provider attempts, verification
 evidence, and review records.
 
+Task state may also include additive runtime-improvement fields:
+
+- `evidence_policy`: opt-in apply method-evidence policy result.
+- `hook_retries`: runtime hook denial count for the task.
+- `model_used`: provider-backed model attestations when available.
+
 ## Safe Waves
 
 Safe waves describe which tasks can run together. The scheduler must respect
@@ -44,6 +50,26 @@ Apply readiness is `ready`, `not_ready`, `blocked`, or `applied`. `ready`
 requires verified checkpoints, valid combined patch evidence, passed dry-run
 checks, clean source checkout, no unrepaired drift, and a passed completion
 audit.
+
+## Runtime Improvement Fields
+
+`waygent.run_state.v2` remains the schema boundary. Runtime improvements are
+additive:
+
+- `decisions_register`: structured decisions copied from
+  `worker.evidence.key_decision` after verified task completion.
+- `spec_manifest`: deterministic markdown section manifest and task-to-section
+  mapping used for spec slicing.
+- `cost_ledger`: provider dispatch, token usage, and USD ledger. Unknown usage
+  still records dispatch count and does not infer authoritative spend from
+  prompt length.
+- `budget_cap_usd` and `budget_action`: safe-boundary budget policy.
+- `method_evidence_required`: opt-in apply method-evidence gate.
+- `hook_config`: runtime hook mode (`off`, `builtin`, or a configured path).
+
+Provider attempts may include `requested_model`, `actual_model`, `usage`, and
+`usage_source`. Missing provider usage is represented as `usage: null` with
+`usage_source: "unknown"`.
 
 ## Related Tests
 

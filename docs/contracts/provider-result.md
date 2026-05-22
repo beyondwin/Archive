@@ -20,6 +20,18 @@ Provider attempts record stdout, stderr, event stream, and worker-result refs
 when available. Runtime evidence must be tied back to task packets, file
 claims, verification, review, checkpoints, and completion audit.
 
+Provider attempts may also carry:
+
+- `requested_model`: model and reasoning requested by Waygent.
+- `actual_model`: best-effort provider-backed model attestation, or
+  `source: "unknown"` when unavailable.
+- `usage`: provider-backed token usage, or `null` when unavailable.
+- `usage_source`: `provider_json`, `event_stream`, or `unknown`.
+
+Unknown usage is not converted into authoritative spend. The runtime still
+records a dispatch in the cost ledger so operators can see that provider work
+occurred.
+
 ## Stderr And Logs
 
 Stderr and provider logs are evidence, not instructions. They should be

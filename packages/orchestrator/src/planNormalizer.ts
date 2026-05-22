@@ -32,7 +32,7 @@ interface NormalizedTaskInput {
   instructions: string[];
 }
 
-const TASK_HEADING = /^## Task\s+(\d+)\s*:\s*(.+)$/gim;
+const TASK_HEADING = /^#{2,3}\s+Task\s+(\d+)\s*:\s*(.+)$/gim;
 const FILE_CLAIM = /^\s*-\s+(Create|Modify|Read|Append):\s+`([^`]+)`/gim;
 const RUN_BLOCK = /^Run(?:\s+[^:]*)?:\s*\r?\n\s*```(?:bash|sh|shell)?\r?\n([\s\S]*?)\r?\n```/gim;
 const SAFE_COMMAND_STARTS = [

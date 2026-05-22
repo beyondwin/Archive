@@ -1,9 +1,9 @@
 import { spawn } from "node:child_process";
 import { dirname } from "node:path";
-import type { FailureClass, WorkerResult } from "@waygent/contracts";
+import type { FailureClass, ModelAttestation, TokenUsage, UsageSource, WorkerResult } from "@waygent/contracts";
 import { validateContract } from "@waygent/contracts";
 import { summarizeProviderStderr } from "./logSummary";
-import type { AdapterRequest, ProcessAdapterOutput, ProviderAdapterRunResult, ProviderProcessOptions } from "./types";
+import type { AdapterRequest, ProcessAdapterOutput, ProviderAdapterRunResult, ProviderProcessOptions, ProviderRunMetadata } from "./types";
 
 const defaultTimeoutMs = 30 * 60 * 1000;
 const failureClasses = new Set<FailureClass>([
@@ -50,6 +50,7 @@ export function normalizeProcessOutput(
   try {
     const parsed = parseWorkerOutput(output.stdout) as Partial<WorkerResult>;
     const failure_class = normalizeFailureClass(parsed.failure_class);
+    const metadata = metadataFromParsed(provider, parsed);
     const worker = validateContract<WorkerResult>("runway.worker_result.v1", {
       schema: "runway.worker_result.v1",
       task_id,
@@ -57,10 +58,10 @@ export function normalizeProcessOutput(
       status: normalizeWorkerStatus(parsed.status),
       changed_files: parsed.changed_files ?? [],
       summary: parsed.summary ?? `${provider} completed`,
-      evidence: { provider, native: parsed.evidence ?? parsed },
+      evidence: { provider, ...((parsed.evidence && typeof parsed.evidence === "object") ? parsed.evidence : {}), native: parsed.evidence ?? parsed },
       ...(failure_class ? { failure_class } : {})
     });
-    return withProcessEvidence(worker, output);
+    return withProcessEvidence(worker, output, metadata);
   } catch {
     return withProcessEvidence(failed(task_id, candidate_id, "malformed_result", `${provider} produced malformed output`), output);
   }
@@ -194,14 +195,22 @@ export function providerProcessArgs(provider: "codex" | "claude", options: Provi
     }
     return nextArgs;
   }
-  if (provider !== "codex" || !cwd || options.executable !== "codex" || args.includes("--cd") || args.includes("-C")) {
-    return args;
+  if (provider !== "codex") return args;
+  let nextArgs = [...args];
+  if (options.executable === "codex" && options.effort && !nextArgs.includes("--reasoning")) {
+    nextArgs = ["--reasoning", options.effort, ...nextArgs];
   }
-  const promptStdinIndex = args.lastIndexOf("-");
+  if (options.executable === "codex" && options.model && !nextArgs.includes("--model")) {
+    nextArgs = ["--model", options.model, ...nextArgs];
+  }
+  if (!cwd || options.executable !== "codex" || nextArgs.includes("--cd") || nextArgs.includes("-C")) {
+    return nextArgs;
+  }
+  const promptStdinIndex = nextArgs.lastIndexOf("-");
   if (promptStdinIndex >= 0) {
-    return [...args.slice(0, promptStdinIndex), "--cd", cwd, "--skip-git-repo-check", ...args.slice(promptStdinIndex)];
+    return [...nextArgs.slice(0, promptStdinIndex), "--cd", cwd, "--skip-git-repo-check", ...nextArgs.slice(promptStdinIndex)];
   }
-  return [...args, "--cd", cwd, "--skip-git-repo-check"];
+  return [...nextArgs, "--cd", cwd, "--skip-git-repo-check"];
 }
 
 export function buildProviderPrompt(provider: "codex" | "claude", request: AdapterRequest): string {
@@ -298,11 +307,64 @@ function tryParseJson(value: string): unknown | null {
   }
 }
 
-function withProcessEvidence(worker: WorkerResult, output: ProcessAdapterOutput): ProviderAdapterRunResult {
+function metadataFromParsed(provider: "codex" | "claude" | "acp", parsed: Partial<WorkerResult>): ProviderRunMetadata {
+  const evidence = parsed.evidence && typeof parsed.evidence === "object" ? parsed.evidence as Record<string, unknown> : {};
+  return {
+    actual_model: actualModelFromEvidence(evidence),
+    usage: usageFromEvidence(evidence),
+    usage_source: usageSourceFromEvidence(evidence, provider)
+  };
+}
+
+function actualModelFromEvidence(evidence: Record<string, unknown>): ModelAttestation {
+  const raw = evidence.actual_model ?? evidence.model;
+  if (raw && typeof raw === "object") {
+    const record = raw as Record<string, unknown>;
+    return {
+      model: typeof record.model === "string" ? record.model : null,
+      reasoning: typeof record.reasoning === "string" ? record.reasoning : null,
+      source: typeof record.source === "string" ? record.source : "provider_json"
+    };
+  }
+  if (typeof raw === "string" && raw.trim().length > 0) {
+    return { model: raw.trim(), reasoning: null, source: "provider_json" };
+  }
+  return { model: null, reasoning: null, source: "unknown" };
+}
+
+function usageFromEvidence(evidence: Record<string, unknown>): TokenUsage | null {
+  const raw = evidence.usage;
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const usage = {
+    input_tokens: numberField(record.input_tokens),
+    output_tokens: numberField(record.output_tokens),
+    cached_read_tokens: numberField(record.cached_read_tokens),
+    cached_write_tokens: numberField(record.cached_write_tokens)
+  };
+  return usage.input_tokens === null || usage.output_tokens === null || usage.cached_read_tokens === null || usage.cached_write_tokens === null
+    ? null
+    : usage as TokenUsage;
+}
+
+function usageSourceFromEvidence(evidence: Record<string, unknown>, _provider: "codex" | "claude" | "acp"): UsageSource {
+  return evidence.usage_source === "provider_json" || evidence.usage_source === "event_stream"
+    ? evidence.usage_source
+    : usageFromEvidence(evidence)
+      ? "provider_json"
+      : "unknown";
+}
+
+function numberField(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
+}
+
+function withProcessEvidence(worker: WorkerResult, output: ProcessAdapterOutput, metadata?: ProviderRunMetadata): ProviderAdapterRunResult {
   const fallbackCompletedAt = new Date().toISOString();
   const completedAt = output.completedAt === undefined ? fallbackCompletedAt : output.completedAt;
   return {
     worker,
+    ...(metadata ? { metadata } : { metadata: { actual_model: { model: null, reasoning: null, source: "unknown" }, usage: null, usage_source: "unknown" as const } }),
     process: {
       stdout: output.stdout,
       stderr: output.stderr,

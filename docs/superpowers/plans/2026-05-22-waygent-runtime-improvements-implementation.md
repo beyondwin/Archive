@@ -26,6 +26,55 @@ filesystem run artifacts, Waygent skill evals.
 
 ---
 
+## Executable Waygent Task
+
+```yaml waygent-task
+id: task_runtime_improvements
+title: Implement Waygent runtime improvements from source-audited plan
+dependencies: []
+file_claims:
+  - path: apps/cli/**
+    mode: owned
+  - path: packages/contracts/**
+    mode: owned
+  - path: packages/orchestrator/**
+    mode: owned
+  - path: packages/context-packer/**
+    mode: owned
+  - path: packages/provider-adapters/**
+    mode: owned
+  - path: packages/lens-projectors/**
+    mode: owned
+  - path: skills/waygent/**
+    mode: owned
+  - path: docs/operations/**
+    mode: owned
+  - path: docs/contracts/**
+    mode: owned
+  - path: graphify-out/**
+    mode: owned
+  - path: package.json
+    mode: owned
+  - path: bun.lock
+    mode: owned
+risk: high
+verify:
+  - bun test packages/orchestrator/tests packages/context-packer/tests packages/provider-adapters/tests packages/lens-projectors/tests apps/cli/tests
+  - bun run waygent:scenarios
+  - bun run waygent:dogfood
+  - bun run check
+  - skills/waygent/evals/run.sh
+  - git diff --check
+instructions:
+  - Read docs/superpowers/plans/2026-05-22-waygent-runtime-improvements-implementation.md and implement the detailed Task 1 through Task 12 sections.
+  - Use docs/superpowers/specs/2026-05-22-waygent-runtime-improvements-design.md as the source-audited design spec.
+  - Keep current Waygent boundaries: no legacy AgentLens Python tree, no KWS executor dependency, and additive waygent.run_state.v2 fields unless the chain boundary explicitly requires more.
+  - Refresh graphify-out with graphify update . if graphify-out exists and code or documentation structure changes.
+  - Preserve user edits and keep generated runtime state out of git.
+```
+
+---
+
 ## Source Design
 
 - `docs/superpowers/specs/2026-05-22-waygent-runtime-improvements-design.md`

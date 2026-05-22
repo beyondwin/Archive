@@ -8,21 +8,29 @@
   "expected": {
     "run_status": "failed",
     "apply_status": "blocked",
-    "total_events": 9,
-    "safe_wave": ["task_missing_checkpoint"],
+    "total_events": 13,
+    "safe_wave": [
+      "task_missing_checkpoint"
+    ],
     "event_types": [
       "platform.run_started",
+      "platform.plan_preflight_completed",
       "runway.plan_loaded",
       "runway.preflight_result",
       "runway.safe_wave_selected",
+      "runway.spec_slice_computed",
       "runway.worker_result",
+      "lens.model_attestation_confirmed",
       "runway.verification_result",
       "runway.checkpoint_created",
       "runway.apply_dry_run_result",
+      "platform.cost_accumulated",
       "lens.trust_report_updated"
     ],
     "checkpoints": [],
-    "blockers": ["force_missing_checkpoint"],
+    "blockers": [
+      "force_missing_checkpoint"
+    ],
     "combined_patch_ref": null,
     "provider_attempts": [
       {

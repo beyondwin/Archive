@@ -1,4 +1,5 @@
 import type { ProfileOverride } from "./executionProfile";
+import { nlLexicon } from "./nlLexicon";
 
 export interface WaygentIntent {
   command: "run" | "status" | "events" | "inspect" | "explain" | "resume" | "apply";
@@ -15,17 +16,17 @@ export interface WaygentIntent {
 
 export function parseNaturalLanguageIntent(text: string): WaygentIntent {
   const lower = text.toLowerCase();
-  const provider = lower.includes("claude") || lower.includes("opus") ? "claude" : lower.includes("codex") ? "codex" : undefined;
-  const executionMode = lower.includes("single") || lower.includes("단일") ? "single-agent" : lower.includes("multi") || lower.includes("멀티") ? "multi-agent" : undefined;
-  if (lower.includes("왜") || lower.includes("blocked") || lower.includes("explain")) return { command: "explain", last: true };
-  if (lower.includes("resume") || lower.includes("재개")) return { command: "resume", last: true };
-  if (lower.includes("apply") || lower.includes("적용")) return { command: "apply", last: true };
-  if (lower.includes("status") || lower.includes("상태")) return { command: "status", last: true };
-  if (lower.includes("event")) return { command: "events", last: true };
+  const provider = includesAny(lower, nlLexicon.provider.claude) ? "claude" : includesAny(lower, nlLexicon.provider.codex) ? "codex" : undefined;
+  const executionMode = includesAny(lower, nlLexicon.execution_mode["single-agent"]) ? "single-agent" : includesAny(lower, nlLexicon.execution_mode["multi-agent"]) ? "multi-agent" : undefined;
+  if (includesAny(lower, nlLexicon.explain)) return { command: "explain", last: true };
+  if (includesAny(lower, nlLexicon.resume)) return { command: "resume", last: true };
+  if (includesAny(lower, nlLexicon.apply)) return { command: "apply", last: true };
+  if (includesAny(lower, nlLexicon.status)) return { command: "status", last: true };
+  if (includesAny(lower, nlLexicon.events)) return { command: "events", last: true };
   const topicMatch = text.match(/topic[:=]\s*["']?([^"']+)["']?/i) ?? text.match(/"([^"]+)"/);
   const intent: WaygentIntent = {
     command: "run",
-    latest: lower.includes("latest") || lower.includes("최근") || lower.includes("승인")
+    latest: includesAny(lower, nlLexicon.latest)
   };
   if (topicMatch?.[1]) intent.topic = topicMatch[1];
   if (provider) intent.provider = provider;
@@ -36,6 +37,10 @@ export function parseNaturalLanguageIntent(text: string): WaygentIntent {
   if (lower.includes("medium") || lower.includes("보통")) intent.subagent_reasoning = "medium";
   else if (lower.includes("high") || lower.includes("높")) intent.subagent_reasoning = "high";
   return intent;
+}
+
+function includesAny(haystack: string, needles: readonly string[]): boolean {
+  return needles.some((needle) => haystack.includes(needle));
 }
 
 function applyModelKeywords(lower: string, intent: WaygentIntent): void {

@@ -172,7 +172,7 @@ function parseInlineList(value: string): string[] {
 function missingWaygentTaskBlockMessage(markdown: string): string {
   const looksLikeImplementationPlan =
     /^# .*Implementation Plan/im.test(markdown) ||
-    /^## Task\s+\d+/im.test(markdown) ||
+    /^#{2,3}\s+Task\s+\d+/im.test(markdown) ||
     /\*\*Files:\*\*/im.test(markdown) ||
     /-\s+(Create|Modify):\s+`[^`]+`/im.test(markdown);
   const prefix = looksLikeImplementationPlan

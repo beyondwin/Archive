@@ -10,10 +10,13 @@ import { buildDurableProjection } from "@waygent/runway-control";
 import { artifactIndexEntry, mergeArtifactIndex } from "./artifactIndex";
 import { createCombinedCheckpointPatchArtifact, type CombinedCheckpointPatchResult } from "./checkpointArtifacts";
 import { buildCompletionAudit } from "./completionAudit";
+import { createEmptyCostLedger, recordProviderAttemptCost, shouldPauseForBudget, shouldWarnForBudget, type BudgetPolicy } from "./costLedger";
+import { appendDecisionFromWorker, packetDecisionSummaries, writeDecisionsProjection } from "./decisions";
 import { resolveExecutionProfile, type ExecutionProfile, type ProfileOverride, type ProviderName } from "./executionProfile";
 import { resolvePlanInput, resolveSpecInput } from "./planDiscovery";
 import { normalizeWaygentPlanInput } from "./planNormalizer";
 import { parseWaygentPlan } from "./planParser";
+import { runPlanPreflight, type PlanPreflightMode } from "./planPreflight";
 import { buildRunEvent } from "./runEvents";
 import { createRunExecutionContext, type RunExecutionContext } from "./runExecutionContext";
 import { classifySourceCheckout } from "./sourceCheckout";
@@ -21,6 +24,7 @@ import { reconcileRunState } from "./stateReconciliation";
 import { buildTaskGraphFromPlan } from "./taskGraph";
 import { executeBoundedSafeWave, resolveWaveConcurrency } from "./safeWaveExecutor";
 import { executeWaygentTask, type WaygentTaskExecutionResult } from "./taskExecutor";
+import { buildSpecManifest, specSliceForTask } from "@waygent/context-packer";
 
 export interface RunWaygentOptions {
   root: string;
@@ -34,6 +38,12 @@ export interface RunWaygentOptions {
   worktree_root?: string;
   spec?: string;
   provider_processes?: Partial<Record<Exclude<ProviderName, "fake">, ProviderProcessOptions>>;
+  plan_preflight?: PlanPreflightMode;
+  spec_slice?: "off" | "manifest";
+  budget_cap_usd?: number | null;
+  budget_action?: "warn" | "pause" | "off";
+  hook_config?: "off" | "builtin" | string;
+  require_method_evidence?: boolean;
 }
 
 export interface WaygentRunResult {
@@ -76,10 +86,27 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     ...(options.spec !== undefined ? { spec: options.spec } : {})
   });
   const normalizedPlan = normalizeWaygentPlanInput(planInput);
+  const planPreflightMode = options.plan_preflight ?? (profile.provider === "fake" ? "deterministic" : "off");
+  const planPreflight = runPlanPreflight({
+    workspace,
+    plan_path: planInput.path,
+    normalized_plan: normalizedPlan,
+    spec_path: specInput.path
+  }, planPreflightMode);
+  if (planPreflight.status === "failed") {
+    throw new Error(`plan_preflight_failed:\n${planPreflight.errors.map((error) => `- ${error}`).join("\n")}`);
+  }
   const normalizedPlanArtifact = normalizedPlan.mode === "superpowers"
     ? writeArtifact(paths.root, "plan/normalized-waygent-plan.md", `${normalizedPlan.markdown.trimEnd()}\n`, "text/markdown")
     : null;
   const parsed = parseWaygentPlan(normalizedPlan.markdown);
+  const specManifest = options.spec_slice === "off"
+    ? undefined
+    : buildSpecManifest({
+      spec: specInput.markdown,
+      spec_path: specInput.path,
+      tasks: parsed.tasks.map((task) => ({ id: task.id, title: task.title, instructions: task.instructions }))
+    });
   const graph = buildTaskGraphFromPlan(parsed);
   const projection = buildDurableProjection(graph);
   const safeWave = projection.safe_wave.length > 0 ? projection.safe_wave : parsed.tasks[0] ? [parsed.tasks[0].id] : [];
@@ -109,6 +136,13 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     plan_path: planInput.path,
     spec_path: specInput.path,
     provider_profile: providerProfile,
+    decisions_register: [],
+    ...(specManifest ? { spec_manifest: specManifest } : {}),
+    cost_ledger: createEmptyCostLedger(),
+    budget_cap_usd: options.budget_cap_usd ?? null,
+    budget_action: options.budget_action ?? "off",
+    method_evidence_required: options.require_method_evidence ?? false,
+    hook_config: options.hook_config ?? "builtin",
     status: "running",
     lifecycle_outcome: null,
     current_phase: "preflight",
@@ -160,6 +194,16 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       profile: providerProfile,
       plan_normalization: planNormalizationPayload(normalizedPlan, normalizedPlanArtifact?.path ?? null)
     }
+  }));
+  context.appendEvent((sequence) => buildRunEvent({
+    run_id: runId,
+    sequence,
+    event_type: "platform.plan_preflight_completed",
+    phase: "preflight",
+    outcome: planPreflight.status === "passed" || planPreflight.status === "skipped" ? "success" : "blocked",
+    summary: planPreflight.status === "skipped" ? "Plan/spec preflight skipped." : "Plan/spec preflight completed.",
+    payload: { ...planPreflight },
+    trust_impact: planPreflight.status === "skipped" ? "neutral" : "supports_success"
   }));
   context.appendEvent((sequence) => buildRunEvent({
     run_id: runId,
@@ -226,6 +270,22 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   let waveIndex = 1;
   while (activeSafeWave.length > 0) {
     const waveId = `wave_${waveIndex}`;
+    if (shouldPauseForBudget(context.state.cost_ledger, budgetPolicyFromState(context.state))) {
+      pauseRunForBudget(context, activeSafeWave);
+      break;
+    }
+    if (shouldWarnForBudget(context.state.cost_ledger, budgetPolicyFromState(context.state))) {
+      context.appendEvent((sequence) => buildRunEvent({
+        run_id: runId,
+        sequence,
+        event_type: "platform.cost_budget_warning",
+        phase: "cost",
+        outcome: "success",
+        summary: "Cost budget warning threshold exceeded.",
+        payload: { cost_ledger: context.state.cost_ledger, budget_cap_usd: context.state.budget_cap_usd },
+        trust_impact: "requires_review"
+      }));
+    }
     const waveStarted = new Date().toISOString();
     const waveStartMs = performance.now();
     const concurrency = resolveWaveConcurrency({
@@ -253,6 +313,23 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
         if (!task) throw new Error(`task ${taskId} missing from graph`);
         const parsedTask = parsed.tasks.find((candidate) => candidate.id === task.id);
         if (!parsedTask) throw new Error(`task ${task.id} missing from parsed plan`);
+        const slice = specSliceForTask(specInput.markdown, specManifest, task.id);
+        context.appendEvent((sequence) => buildRunEvent({
+          run_id: runId,
+          sequence,
+          event_type: "runway.spec_slice_computed",
+          phase: "context",
+          outcome: "success",
+          summary: slice.fallback_used ? "Spec slice fell back to full spec." : "Spec slice computed for task.",
+          payload: {
+            task_id: task.id,
+            sections_used: slice.sections_used,
+            slice_bytes: slice.slice_bytes,
+            fallback_used: slice.fallback_used,
+            fallback_reason: slice.fallback_reason
+          },
+          trust_impact: "neutral"
+        }));
         return executeWaygentTask({
           root: options.root,
           run_id: runId,
@@ -260,8 +337,11 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
           worktree_root: worktreeRoot,
           task: parsedTask,
           checkpoint_inputs: dependencyCheckpointInputs(context.state, task.dependencies),
-          spec: specInput.markdown,
+          spec: slice.text,
           provider: profile.provider,
+          decisions: packetDecisionSummaries(context.state),
+          requested_model: requestedModelForProfile(profile),
+          hooks_enabled: options.hook_config !== "off",
           ...(Object.keys(resolvedProviderProcesses).length > 0 ? { provider_processes: resolvedProviderProcesses } : {})
         });
       }
@@ -277,6 +357,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
         continue;
       }
       replayTaskExecutionResult(context, waveResult.result);
+      recordRuntimeEvidence(context, waveResult.result);
       if (task && waveResult.result.status === "verified" && waveResult.result.checkpoint_refs[0]) {
         task.status = "APPLIED";
         task.checkpoint_ref = waveResult.result.checkpoint_refs[0];
@@ -293,6 +374,11 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       duration_ms: Math.round(performance.now() - waveStartMs)
     });
     context.flushState();
+    if (shouldPauseForBudget(context.state.cost_ledger, budgetPolicyFromState(context.state))) {
+      pauseRunForBudget(context, activeSafeWave);
+      context.flushState();
+      break;
+    }
     waveIndex += 1;
     const nextProjection = buildDurableProjection(graph);
     activeSafeWave = nextProjection.safe_wave;
@@ -317,6 +403,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   }
 
   let completionAuditStatus = "failed";
+  writeDecisionsProjection(paths.root, runId, context.state.decisions_register ?? []);
   context.mutateState((state) => {
     state.current_phase = "complete";
     const verifiedCheckpointRefs = Object.values(state.tasks)
@@ -442,6 +529,8 @@ function replayTaskExecutionResult(context: RunExecutionContext, result: Waygent
       task.timing.completed = result.timing.completed;
       task.timing.duration_ms = String(result.timing.duration_ms);
       task.phase_timings = result.phase_timings;
+      task.model_used = result.provider_attempt.actual_model ? [result.provider_attempt.actual_model] : [];
+      task.hook_retries = result.events.filter((event) => event.event_type === "kernel.hook_denied").length;
     }
   });
   for (const event of result.events) {
@@ -473,6 +562,86 @@ function replayTaskExecutionFailure(context: RunExecutionContext, taskId: string
       error: message
     },
     trust_impact: "supports_failure"
+  }));
+}
+
+function recordRuntimeEvidence(context: RunExecutionContext, result: WaygentTaskExecutionResult): void {
+  let decision: ReturnType<typeof appendDecisionFromWorker> = null;
+  context.mutateState((state) => {
+    state.cost_ledger = recordProviderAttemptCost(state.cost_ledger ?? createEmptyCostLedger(), {
+      task_id: result.task_id,
+      role: result.provider_attempt.role,
+      usage: result.provider_attempt.usage ?? null,
+      usage_source: result.provider_attempt.usage_source ?? "unknown",
+      recorded_at: result.provider_attempt.completed_at ?? new Date().toISOString(),
+      ...(result.provider_attempt.requested_model ? { requested_model: result.provider_attempt.requested_model } : {}),
+      ...(result.provider_attempt.actual_model ? { actual_model: result.provider_attempt.actual_model } : {})
+    });
+    if (result.status === "verified") {
+      decision = appendDecisionFromWorker(state, result.worker_result);
+      writeDecisionsProjection(state.run_root, state.run_id, state.decisions_register ?? []);
+    }
+  });
+  context.appendEvent((sequence) => buildRunEvent({
+    run_id: context.run_id,
+    sequence,
+    event_type: "platform.cost_accumulated",
+    phase: "cost",
+    outcome: "success",
+    summary: "Provider usage cost ledger updated.",
+    payload: {
+      task_id: result.task_id,
+      attempt_id: result.provider_attempt.attempt_id,
+      usage_source: result.provider_attempt.usage_source ?? "unknown",
+      usage: result.provider_attempt.usage ?? null,
+      actual_model: result.provider_attempt.actual_model ?? null
+    },
+    trust_impact: "neutral"
+  }));
+  if (decision) {
+    context.appendEvent((sequence) => buildRunEvent({
+      run_id: context.run_id,
+      sequence,
+      event_type: decision?.supersedes ? "runway.decision_superseded" : "runway.decision_appended",
+      phase: "decision",
+      outcome: "success",
+      summary: "Runtime decision appended.",
+      payload: { decision },
+      trust_impact: "supports_success"
+    }));
+  }
+}
+
+function pauseRunForBudget(context: RunExecutionContext, activeTaskIds: string[]): void {
+  context.mutateState((state) => {
+    state.status = "blocked";
+    state.lifecycle_outcome = "blocked";
+    state.current_phase = "dispatch";
+    state.apply = { status: "blocked", reason: "budget_paused" };
+    for (const taskId of activeTaskIds) {
+      const task = state.tasks[taskId];
+      if (task && task.status !== "verified" && task.status !== "applied") {
+        task.status = "blocked";
+        task.latest_failure_class = "needs_infra_fix";
+      }
+    }
+    state.recovery = [...state.recovery, {
+      failure_class: "budget_paused",
+      reason: "budget_paused",
+      budget_cap_usd: state.budget_cap_usd,
+      cost_usd: state.cost_ledger?.totals.cost_usd ?? 0,
+      recorded_at: new Date().toISOString()
+    }];
+  });
+  context.appendEvent((sequence) => buildRunEvent({
+    run_id: context.run_id,
+    sequence,
+    event_type: "platform.cost_budget_paused",
+    phase: "cost",
+    outcome: "blocked",
+    summary: "Budget cap paused execution at a safe boundary.",
+    payload: { budget_cap_usd: context.state.budget_cap_usd, cost_ledger: context.state.cost_ledger },
+    trust_impact: "requires_review"
   }));
 }
 
@@ -517,6 +686,14 @@ function providerProfileRecord(profile: ReturnType<typeof resolveExecutionProfil
   };
 }
 
+function requestedModelForProfile(profile: ExecutionProfile) {
+  const source = profile.execution_mode === "single-agent" ? profile.main : profile.subagent;
+  return {
+    model: source.model ?? null,
+    reasoning: source.reasoning ?? null
+  };
+}
+
 function planNormalizationPayload(
   normalizedPlan: ReturnType<typeof normalizeWaygentPlanInput>,
   artifactRef: string | null
@@ -535,7 +712,20 @@ export function resolveProviderProcesses(
   overrides: Partial<Record<Exclude<ProviderName, "fake">, ProviderProcessOptions>> | undefined
 ): Partial<Record<Exclude<ProviderName, "fake">, ProviderProcessOptions>> {
   const result: Partial<Record<Exclude<ProviderName, "fake">, ProviderProcessOptions>> = {};
-  if (overrides?.codex) result.codex = overrides.codex;
+  if (profile.provider === "codex") {
+    const userCodex = overrides?.codex;
+    result.codex = {
+      executable: userCodex?.executable ?? "codex",
+      args: userCodex?.args ?? ["exec", "--json", "-"],
+      ...(userCodex?.cwd ? { cwd: userCodex.cwd } : {}),
+      ...(userCodex?.env ? { env: userCodex.env } : {}),
+      ...(userCodex?.timeout_ms ? { timeout_ms: userCodex.timeout_ms } : {}),
+      model: userCodex?.model ?? profile.subagent.model,
+      effort: userCodex?.effort ?? profile.subagent.reasoning
+    };
+  } else if (overrides?.codex) {
+    result.codex = overrides.codex;
+  }
   if (profile.provider === "claude") {
     const userClaude = overrides?.claude;
     result.claude = {
@@ -559,6 +749,13 @@ export async function runWaygentDemo(options: RunWaygentOptions): Promise<Waygen
 
 export function defaultRunRoot(): string {
   return join(tmpdir(), "waygent-runs");
+}
+
+function budgetPolicyFromState(state: WaygentRunStateV2): BudgetPolicy {
+  const policy: BudgetPolicy = {};
+  if (state.budget_cap_usd !== undefined) policy.budget_cap_usd = state.budget_cap_usd;
+  if (state.budget_action !== undefined) policy.budget_action = state.budget_action;
+  return policy;
 }
 
 function resolveRunPlanInput(options: RunWaygentOptions): { markdown: string; path: string | null } {

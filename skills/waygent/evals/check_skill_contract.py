@@ -33,6 +33,7 @@ required_files = [
     "README.md",
     "references/commands.md",
     "references/modes.md",
+    "references/nl-lexicon.md",
 ]
 
 
@@ -45,6 +46,19 @@ def main() -> int:
     missing_phrases = [phrase for phrase in required_skill_phrases if phrase not in combined]
     if missing_phrases:
         raise SystemExit(f"missing contract phrases: {', '.join(missing_phrases)}")
+
+    lexicon = (ROOT / "references/nl-lexicon.md").read_text()
+    required_lexicon_phrases = [
+        "waygent.nl_lexicon.v1",
+        "Explicit CLI flags",
+        "최근",
+        "승인",
+        "멀티",
+        "waygent run --latest",
+    ]
+    missing_lexicon = [phrase for phrase in required_lexicon_phrases if phrase not in lexicon]
+    if missing_lexicon:
+        raise SystemExit(f"missing lexicon phrases: {', '.join(missing_lexicon)}")
 
     print("waygent skill contract ok")
     return 0

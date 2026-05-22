@@ -8,22 +8,31 @@
   "expected": {
     "run_status": "trusted",
     "apply_status": "ready",
-    "total_events": 14,
-    "safe_wave": ["task_overlap_a"],
+    "total_events": 21,
+    "safe_wave": [
+      "task_overlap_a"
+    ],
     "event_types": [
       "platform.run_started",
+      "platform.plan_preflight_completed",
       "runway.plan_loaded",
       "runway.preflight_result",
       "runway.safe_wave_selected",
+      "runway.spec_slice_computed",
       "runway.worker_result",
+      "lens.model_attestation_confirmed",
       "runway.verification_result",
       "runway.checkpoint_created",
       "runway.apply_dry_run_result",
+      "platform.cost_accumulated",
       "runway.safe_wave_selected",
+      "runway.spec_slice_computed",
       "runway.worker_result",
+      "lens.model_attestation_confirmed",
       "runway.verification_result",
       "runway.checkpoint_created",
       "runway.apply_dry_run_result",
+      "platform.cost_accumulated",
       "lens.trust_report_updated"
     ],
     "checkpoints": [
