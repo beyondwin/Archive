@@ -1,12 +1,13 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import type { AgentLensEvent, FailureClass, RunStatus } from "@waygent/contracts";
+import type { AgentLensEvent, FailureClass, OperatorDecisionProjection, RunStatus } from "@waygent/contracts";
 import { appendEvent, readEvents, readLatestRunId, runPaths, sha256 } from "@waygent/lens-store";
 import {
   projectApplyReadinessFromState,
   projectExecutionExplanationFromState,
   projectFailureSummary,
   projectOperationalMaturityFromState,
+  projectOperatorDecisionFromState,
   projectRunReadModel
 } from "@waygent/lens-projectors";
 import { readRunStateV2Result, writeRunStateV2, type RunStateV2ReadResult, type WaygentRunStateV2 } from "./runState";
@@ -73,6 +74,7 @@ export function inspectRun(options: RunCommandOptions): RunStatusView & {
   dogfood_evidence?: ReturnType<typeof projectOperationalMaturityFromState>["dogfood_evidence"];
   runtime_cost?: ReturnType<typeof projectOperationalMaturityFromState>["runtime_cost"];
   provider_readiness?: ReturnType<typeof projectOperationalMaturityFromState>["provider_readiness"];
+  operator_decision: OperatorDecisionProjection;
   state_error?: Exclude<RunStateV2ReadResult, { status: "ok" }>;
 } {
   const status = statusRun(options);
@@ -85,6 +87,16 @@ export function inspectRun(options: RunCommandOptions): RunStatusView & {
   });
   const failures = model.failures;
   if (stateResult.status === "ok") {
+    const executionExplanation = model.execution_explanation!;
+    const operationalMaturity = model.operational_maturity!;
+    const operatorDecisionInput = {
+      state: stateResult.state,
+      events,
+      apply_readiness: projectApplyReadinessFromState(stateResult.state),
+      execution_explanation: executionExplanation,
+      operational_maturity: operationalMaturity
+    };
+    const operatorDecision = projectOperatorDecisionFromState(operatorDecisionInput);
     return {
       run_id: model.run_id,
       status: model.status,
@@ -93,13 +105,21 @@ export function inspectRun(options: RunCommandOptions): RunStatusView & {
       trust_status: model.trust_status,
       failures,
       state: stateResult.state,
-      execution_explanation: model.execution_explanation!,
-      operational_maturity: model.operational_maturity!,
-      dogfood_evidence: model.operational_maturity!.dogfood_evidence,
-      runtime_cost: model.operational_maturity!.runtime_cost,
-      provider_readiness: model.operational_maturity!.provider_readiness
+      execution_explanation: executionExplanation,
+      operational_maturity: operationalMaturity,
+      dogfood_evidence: operationalMaturity.dogfood_evidence,
+      runtime_cost: operationalMaturity.runtime_cost,
+      provider_readiness: operationalMaturity.provider_readiness,
+      operator_decision: operatorDecision
     };
   }
+  const operatorDecisionInput = {
+    state: null,
+    events,
+    run_id: status.run_id,
+    state_error: stateResult
+  };
+  const operatorDecision = projectOperatorDecisionFromState(operatorDecisionInput);
   return {
     run_id: model.run_id,
     status: model.status,
@@ -107,42 +127,46 @@ export function inspectRun(options: RunCommandOptions): RunStatusView & {
     last_event_type: model.last_event_type,
     trust_status: model.trust_status,
     failures,
+    operator_decision: operatorDecision,
     state_error: stateResult
   };
 }
 
-export function explainRun(options: RunCommandOptions): { run_id: string; blocked_by: FailureClass | "unknown" | null; summary: string } {
+export function explainRun(options: RunCommandOptions): {
+  run_id: string;
+  blocked_by: FailureClass | "unknown" | null;
+  summary: string;
+  operator_decision: OperatorDecisionProjection;
+} {
   const runId = resolveRunId(options);
   const events = readEvents(runPaths(options.root, runId).events);
-  const failure = projectFailureSummary(events)[0] ?? null;
   const stateResult = readRunStateV2Result(options.root, runId);
+  let operatorDecision: OperatorDecisionProjection;
   if (stateResult.status === "ok") {
-    const explanation = projectExecutionExplanationFromState(stateResult.state);
-    const maturity = projectOperationalMaturityFromState({ state: stateResult.state, events });
-    const stateFailure = blockedTaskFailure(stateResult.state);
-    const activeFailure = stateFailure ?? failure;
-    const dryRunBlocker = activeFailure ? checkpointDryRunBlocker(events, activeFailure.task_id) : null;
-    const barrier = explanation.barriers[0];
-    const hotspot = explanation.cost_hotspots[0];
-    const dogfoodGap = maturity.dogfood_evidence.status !== "complete"
-      ? `dogfood evidence ${maturity.dogfood_evidence.status}: ${maturity.dogfood_evidence.missing_reasons[0] ?? "evidence incomplete"}`
-      : null;
-    const summaryParts = [
-      activeFailure ? failureSummary(activeFailure, dryRunBlocker) : "no active failure barrier",
-      barrier ? `scheduling barrier: ${barrier.task_id} ${barrier.reason}` : null,
-      hotspot ? `cost hotspot: ${hotspot.phase} ${hotspot.duration_ms}ms` : null,
-      !activeFailure && !barrier && !hotspot ? dogfoodGap : null
-    ].filter(Boolean);
-    return {
-      run_id: runId,
-      blocked_by: activeFailure?.failure_class ?? null,
-      summary: summaryParts.join("; ")
+    const executionExplanation = projectExecutionExplanationFromState(stateResult.state);
+    const operationalMaturity = projectOperationalMaturityFromState({ state: stateResult.state, events });
+    const operatorDecisionInput = {
+      state: stateResult.state,
+      events,
+      apply_readiness: projectApplyReadinessFromState(stateResult.state),
+      execution_explanation: executionExplanation,
+      operational_maturity: operationalMaturity
     };
+    operatorDecision = projectOperatorDecisionFromState(operatorDecisionInput);
+  } else {
+    const operatorDecisionInput = {
+      state: null,
+      events,
+      run_id: runId,
+      state_error: stateResult
+    };
+    operatorDecision = projectOperatorDecisionFromState(operatorDecisionInput);
   }
   return {
     run_id: runId,
-    blocked_by: failure?.failure_class ?? null,
-    summary: failure ? `${failure.task_id} blocked by ${failure.failure_class}` : "no active failure barrier"
+    blocked_by: operatorDecision.primary_blocker ? operatorDecision.primary_blocker.code as FailureClass | "unknown" : null,
+    summary: operatorDecision.status_summary.summary,
+    operator_decision: operatorDecision
   };
 }
 
@@ -222,49 +246,6 @@ export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): {
     allowed_actions: explanation.blocked_by === "verification_failed" ? ["retry_with_evidence", "update_plan"] : ["inspect_run"],
     dry_run: options.dry_run ?? false
   };
-}
-
-function blockedTaskFailure(state: WaygentRunStateV2): { task_id: string; failure_class: FailureClass | "unknown" } | null {
-  const task = Object.values(state.tasks).find((candidate) =>
-    (candidate.status === "blocked" || candidate.status === "failed" || state.status === "blocked") &&
-    typeof candidate.latest_failure_class === "string" &&
-    candidate.latest_failure_class.length > 0
-  );
-  if (!task?.latest_failure_class) return null;
-  return { task_id: task.id, failure_class: task.latest_failure_class as FailureClass | "unknown" };
-}
-
-function failureSummary(
-  activeFailure: { task_id: string; failure_class: FailureClass | "unknown" },
-  dryRunBlocker: { failed_files: string[]; evidence_ref: string | null } | null
-): string {
-  if (activeFailure.failure_class !== "needs_rebase" || !dryRunBlocker) {
-    return `${activeFailure.task_id} blocked by ${activeFailure.failure_class}`;
-  }
-  const files = dryRunBlocker.failed_files.length > 0 ? `; files: ${dryRunBlocker.failed_files.join(", ")}` : "";
-  const evidence = dryRunBlocker.evidence_ref ? `; evidence: ${dryRunBlocker.evidence_ref}` : "";
-  return `${activeFailure.task_id} blocked by needs_rebase: checkpoint patch dry-run failed against current source${files}${evidence}`;
-}
-
-function checkpointDryRunBlocker(
-  events: AgentLensEvent[],
-  taskId: string
-): { failed_files: string[]; evidence_ref: string | null } | null {
-  const event = [...events].reverse().find((candidate) =>
-    candidate.event_type === "runway.apply_dry_run_result" &&
-    candidate.outcome === "blocked" &&
-    String(candidate.payload.task_id ?? "") === taskId
-  );
-  const dryRun = event?.payload.dry_run;
-  if (!dryRun || typeof dryRun !== "object") return null;
-  const payload = dryRun as Record<string, unknown>;
-  const failedFiles = Array.isArray(payload.failed_files)
-    ? payload.failed_files.filter((item): item is string => typeof item === "string" && item.length > 0)
-    : [];
-  const evidenceRef = typeof payload.evidence_ref === "string" && payload.evidence_ref.length > 0
-    ? payload.evidence_ref
-    : null;
-  return { failed_files: failedFiles, evidence_ref: evidenceRef };
 }
 
 export async function applyRun(options: RunCommandOptions & { workspace: string }): Promise<{

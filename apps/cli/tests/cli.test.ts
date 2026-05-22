@@ -226,6 +226,47 @@ git add README.md
       .toContain("runway.preflight_result");
   });
 
+  test("inspect and explain expose the shared operator decision", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-cli-operator-"));
+    const runId = "run_cli_operator";
+    await runCli(["run", "--provider", "fake", "--workspace", initSourceCheckout("waygent-cli-operator-source-"), "--root", root, "--run", runId]);
+    const state = readRunStateV2(root, runId);
+    const taskId = Object.keys(state.tasks)[0]!;
+    writeFileSync(join(root, runId, "state.json"), JSON.stringify({
+      ...state,
+      status: "blocked",
+      lifecycle_outcome: "blocked",
+      current_phase: "recover",
+      tasks: {
+        ...state.tasks,
+        [taskId]: {
+          ...state.tasks[taskId],
+          status: "blocked",
+          checkpoint_refs: [],
+          latest_failure_class: "needs_rebase"
+        }
+      },
+      drift: {
+        last_checked_at: "2026-05-22T00:00:00.000Z",
+        records: [{ failure_class: "needs_rebase", files: ["README.md"] }],
+        unrepaired_blockers: [{ failure_class: "needs_rebase", files: ["README.md"] }]
+      },
+      apply: { status: "blocked", reason: "needs_rebase" },
+      completion_audit: null
+    }, null, 2));
+    const inspected = await runCli(["inspect", "--root", root, "--run", runId]) as {
+      operator_decision: { primary_blocker: { code: string }; allowed_actions: Array<{ id: string }> };
+    };
+    const explained = await runCli(["explain", "--root", root, "--run", runId]) as {
+      blocked_by: string | null;
+      operator_decision: { primary_blocker: { code: string } };
+    };
+    expect(inspected.operator_decision.primary_blocker.code).toBe("needs_rebase");
+    expect(inspected.operator_decision.allowed_actions.map((action) => action.id)).toContain("rebase_checkpoint");
+    expect(explained.blocked_by).toBe("needs_rebase");
+    expect(explained.operator_decision.primary_blocker.code).toBe("needs_rebase");
+  });
+
   test("apply refuses a dirty source checkout with an explicit blocker", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "waygent-dirty-"));
     writeFileSync(join(workspace, "dirty.txt"), "dirty");

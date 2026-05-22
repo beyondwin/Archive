@@ -8,6 +8,7 @@ describe("Waygent local API event stream", () => {
 
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toContain("text/event-stream");
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
 
     const body = await response.text();
     const frames = body.trim().split("\n\n");

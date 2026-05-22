@@ -63,7 +63,10 @@ describe("Waygent run commands", () => {
       })
     );
 
-    expect(explainRun({ root, last: true }).blocked_by).toBe("verification_failed");
+    const explanation = explainRun({ root, last: true });
+    expect(explanation.blocked_by).toBe("state_missing");
+    expect(explanation.operator_decision.primary_blocker).toMatchObject({ code: "state_missing" });
+    expect(explanation.summary).toBe(explanation.operator_decision.status_summary.summary);
     expect(resumeRun({ root, last: true, dry_run: true })).toEqual({
       run_id: "run_blocked",
       allowed_actions: ["inspect_run", "human_decision"],

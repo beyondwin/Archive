@@ -4,6 +4,7 @@ import {
   validateContract,
   type AgentLensEvent,
   type ApplyReadinessProjection,
+  type OperatorDecisionProjection,
   type RunStatus,
   type WaygentRunStateV2
 } from "@waygent/contracts";
@@ -12,6 +13,7 @@ import {
   projectExecutionExplanationFromState,
   projectFailureSummary,
   projectOperationalMaturityFromState,
+  projectOperatorDecisionFromState,
   projectRunReadModel,
   projectTimeline,
   projectTrustReport
@@ -26,13 +28,21 @@ export interface ApiContext {
 }
 
 function json(value: unknown, init: ResponseInit = {}): Response {
-  const headers = new Headers(init.headers);
+  const headers = corsHeaders(init.headers);
   headers.set("content-type", "application/json; charset=utf-8");
   return new Response(JSON.stringify(value), { ...init, headers });
 }
 
 function notFound(value: unknown): Response {
   return json(value, { status: 404 });
+}
+
+function corsHeaders(init?: HeadersInit): Headers {
+  const headers = new Headers(init);
+  headers.set("access-control-allow-origin", "*");
+  headers.set("access-control-allow-methods", "GET, OPTIONS");
+  headers.set("access-control-allow-headers", "content-type");
+  return headers;
 }
 
 function sseFrame(eventName: string, data: unknown): string {
@@ -51,11 +61,11 @@ function streamEvents(events: unknown[], runs: unknown[], scopedRunId?: string, 
   ];
 
   return new Response(frames.join(""), {
-    headers: {
+    headers: corsHeaders({
       "cache-control": "no-cache",
       connection: "keep-alive",
       "content-type": "text/event-stream; charset=utf-8"
-    }
+    })
   });
 }
 
@@ -64,6 +74,10 @@ export function createApiHandler(context: ApiContext = {}): ApiHandler {
     const url = new URL(request.url);
     const segments = url.pathname.split("/").filter(Boolean);
     const runRoot = context.runRoot ?? process.env.WAYGENT_RUN_ROOT;
+
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders() });
+    }
 
     if (request.method !== "GET") {
       return json({ error: "method_not_allowed" }, { status: 405 });
@@ -167,6 +181,10 @@ interface RealRunSummary {
   status: RunStatus;
   trust_status: string;
   apply_status: string;
+  operator_status: string;
+  primary_blocker: string | null;
+  next_action: string | null;
+  operator_confidence: string;
   total_events: number;
   last_event_type: string | null;
 }
@@ -196,16 +214,22 @@ function listRealRuns(runRoot: string): RealRunSummary[] {
 function summarizeRealRun(runRoot: string, runId: string): RealRunSummary {
   const events = readEvents(runPaths(runRoot, runId).events);
   const stateResult = readRealRunStateV2Result(runRoot, runId);
+  const stateV2 = stateResult.status === "ok" ? stateResult.state : null;
   const model = projectRunReadModel({
     run_id: runId,
     events,
     ...(stateResult.status === "ok" ? { state: stateResult.state } : { state_error: readModelStateBlocker(stateResult) })
   });
+  const operatorDecision = projectRealOperatorDecision(runId, events, stateV2, stateResult);
   return {
     run_id: runId,
     status: model.status,
     trust_status: model.trust_status,
     apply_status: model.apply_status,
+    operator_status: operatorDecision.status_summary.display_status,
+    primary_blocker: operatorDecision.primary_blocker?.code ?? null,
+    next_action: nextOperatorAction(operatorDecision),
+    operator_confidence: operatorDecision.confidence,
     total_events: model.total_events,
     last_event_type: model.last_event_type
   };
@@ -228,6 +252,7 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
   dogfood_evidence: ReturnType<typeof projectOperationalMaturityFromState>["dogfood_evidence"] | null;
   runtime_cost: ReturnType<typeof projectOperationalMaturityFromState>["runtime_cost"] | null;
   provider_readiness: ReturnType<typeof projectOperationalMaturityFromState>["provider_readiness"] | null;
+  operator_decision: OperatorDecisionProjection;
   failures: ReturnType<typeof projectFailureSummary>;
   timeline: ReturnType<typeof projectTimeline>;
   trust: ReturnType<typeof projectTrustReport>;
@@ -246,6 +271,7 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
   const applyReadiness = model.apply_readiness;
   const executionExplanation = model.execution_explanation;
   const operationalMaturity = model.operational_maturity;
+  const operatorDecision = projectRealOperatorDecision(runId, events, stateV2, stateResult);
   const summary = summarizeRealRun(runRoot, runId);
   return {
     ...summary,
@@ -267,6 +293,7 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
     dogfood_evidence: operationalMaturity?.dogfood_evidence ?? null,
     runtime_cost: operationalMaturity?.runtime_cost ?? null,
     provider_readiness: operationalMaturity?.provider_readiness ?? null,
+    operator_decision: operatorDecision,
     failures: model.failures,
     timeline: model.timeline,
     trust: model.trust,
@@ -298,6 +325,30 @@ function readModelStateBlocker(result: Exclude<RealRunStateV2ReadResult, { statu
   if (result.status === "unsupported") return { status: result.status, reason: result.reason, schema: result.schema };
   if (result.status === "invalid") return { status: result.status, reason: result.reason, error: result.error };
   return { status: result.status, reason: result.reason };
+}
+
+function projectRealOperatorDecision(
+  runId: string,
+  events: AgentLensEvent[],
+  stateV2: WaygentRunStateV2 | null,
+  stateResult: RealRunStateV2ReadResult
+): OperatorDecisionProjection {
+  if (stateResult.status === "ok") {
+    return projectOperatorDecisionFromState({ state: stateV2 ?? stateResult.state, events });
+  }
+  return projectOperatorDecisionFromState({
+    state: null,
+    events,
+    run_id: runId,
+    state_error: stateResult
+  });
+}
+
+function nextOperatorAction(operatorDecision: OperatorDecisionProjection): string | null {
+  const action = operatorDecision.allowed_actions.find((candidate) =>
+    !["inspect_run", "explain_run", "open_raw_evidence"].includes(candidate.id)
+  ) ?? operatorDecision.allowed_actions[0];
+  return action?.id ?? null;
 }
 
 function taskPacketMetadata(state: WaygentRunStateV2): TaskPacketMetadata[] {

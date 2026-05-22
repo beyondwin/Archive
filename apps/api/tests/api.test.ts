@@ -17,10 +17,25 @@ describe("Waygent local API routes", () => {
   test("GET /healthz reports local API status", async () => {
     const response = await get("/healthz");
     expect(response.status).toBe(200);
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
     expect(await response.json()).toEqual({
       ok: true,
       service: "waygent-local-api"
     });
+  });
+
+  test("OPTIONS preflight allows the console app to read the local API", async () => {
+    const response = await handler(new Request("http://waygent.local/runs", {
+      method: "OPTIONS",
+      headers: {
+        origin: "http://127.0.0.1:5174",
+        "access-control-request-method": "GET"
+      }
+    }));
+
+    expect(response.status).toBe(204);
+    expect(response.headers.get("access-control-allow-origin")).toBe("*");
+    expect(response.headers.get("access-control-allow-methods")).toContain("GET");
   });
 
   test("GET /runs lists demo runs with apply and trust summaries", async () => {
@@ -417,6 +432,49 @@ describe("Waygent local API routes", () => {
       taskId: "task_worker",
       failureClass: "adapter_crashed",
       recoveryAction: "switch_provider"
+    });
+  });
+
+  test("GET /runs/:runId exposes operator decision for real v2 runs", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-api-operator-decision-"));
+    const runId = "run_operator_blocked";
+    await runWaygentDemo({ root, run_id: runId, workspace: initSourceCheckout("waygent-api-source-") });
+    const state = readRunStateV2(root, runId);
+    writeRunStateV2(root, {
+      ...state,
+      status: "blocked",
+      lifecycle_outcome: "blocked",
+      current_phase: "recover",
+      tasks: Object.fromEntries(
+        Object.entries(state.tasks).map(([taskId, task]) => [taskId, {
+          ...task,
+          status: "blocked",
+          checkpoint_refs: [],
+          latest_failure_class: "verification_failed"
+        }])
+      ),
+      verification: [{ verification_id: "verify_task_1", task_id: Object.keys(state.tasks)[0], command: "bun test", status: "failed" }],
+      apply: { status: "blocked", reason: "verification_failed" },
+      completion_audit: null
+    });
+    const realHandler = createApiHandler({ runRoot: root });
+    const detailResponse = await realHandler(new Request(`http://waygent.local/runs/${runId}`));
+    const detail = await detailResponse.json();
+    const listResponse = await realHandler(new Request("http://waygent.local/runs"));
+    const list = await listResponse.json();
+    expect(detail.operator_decision).toMatchObject({
+      schema: "waygent.operator_decision.v1",
+      run_id: runId,
+      primary_blocker: { code: "verification_failed" },
+      status_summary: { display_status: "blocked", apply_status: "blocked" }
+    });
+    expect(detail.operator_decision.allowed_actions.map((action: { id: string }) => action.id)).toContain("open_ai_repair_handoff");
+    expect(detail.operator_decision.blocked_actions.map((action: { id: string }) => action.id)).toContain("apply_run");
+    expect(list.runs[0]).toMatchObject({
+      run_id: runId,
+      operator_status: "blocked",
+      primary_blocker: "verification_failed",
+      operator_confidence: "deterministic"
     });
   });
 

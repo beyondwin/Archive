@@ -6,3 +6,4 @@ export * from "./runtimeCost";
 export * from "./providerReadiness";
 export * from "./operationalMaturity";
 export * from "./runReadModel";
+export * from "./operatorDecision";
