@@ -17,6 +17,11 @@ shared maturity projection has complete dogfood evidence, runtime cost,
 provider readiness, real timestamps, provider attempts, verification evidence,
 and a precise explain result.
 
+`waygent:scenarios` includes blocked replay fixtures for source/apply
+readiness, including checkpoint dry-run conflicts. Those conflicts must surface
+as `needs_rebase` with no apply-ready checkpoint refs, not as
+`missing_checkpoint`.
+
 ## Console Gate
 
 ```bash

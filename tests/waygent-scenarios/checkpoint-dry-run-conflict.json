@@ -1,0 +1,39 @@
+{
+  "id": "checkpoint-dry-run-conflict",
+  "title": "Checkpoint dry-run conflict is reported as needs_rebase",
+  "provider_fixture": "fake-success",
+  "source_dirty_before_apply": false,
+  "force_missing_checkpoint": false,
+  "checkpoint_dry_run_conflict": true,
+  "plan": "```yaml waygent-task\nid: task_checkpoint_conflict\ntitle: Checkpoint conflict task\ndependencies: []\nfile_claims:\n  - path: README.md\n    mode: owned\nrisk: low\nverify:\n  - printf conflict\n```",
+  "expected": {
+    "run_status": "failed",
+    "apply_status": "blocked",
+    "total_events": 9,
+    "safe_wave": ["task_checkpoint_conflict"],
+    "event_types": [
+      "platform.run_started",
+      "runway.plan_loaded",
+      "runway.preflight_result",
+      "runway.safe_wave_selected",
+      "runway.worker_result",
+      "runway.verification_result",
+      "runway.checkpoint_created",
+      "runway.apply_dry_run_result",
+      "lens.trust_report_updated"
+    ],
+    "checkpoints": [],
+    "blockers": ["checkpoint_dry_run_conflict"],
+    "failure_classes": ["needs_rebase"],
+    "combined_patch_ref": null,
+    "provider_attempts": [
+      {
+        "task_id": "task_checkpoint_conflict",
+        "provider": "fake",
+        "stdout_ref": "artifacts/provider/attempt_task_checkpoint_conflict_1.stdout.txt",
+        "stderr_ref": "artifacts/provider/attempt_task_checkpoint_conflict_1.stderr.txt",
+        "worker_result_ref": "artifacts/worker/task_checkpoint_conflict.json"
+      }
+    ]
+  }
+}

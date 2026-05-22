@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { runVerificationCommands } from "./verification";
+import type { VerificationRunOutput } from "./verification";
 
 export interface ApplyVerifiedCheckpointInput {
   source: string;
@@ -12,6 +13,22 @@ export interface ApplyVerifiedCheckpointInput {
 export interface ApplyVerifiedCheckpointOutput {
   status: "applied" | "blocked" | "failed";
   reason?: string;
+  post_apply_verification?: PostApplyVerificationSummary;
+}
+
+export interface PostApplyVerificationSummary {
+  status: VerificationRunOutput["status"];
+  failure_class: VerificationRunOutput["failure_class"];
+  failure_summary: VerificationRunOutput["failure_summary"];
+  failed_verification_id: VerificationRunOutput["failed_verification_id"];
+  failed_commands: Array<{
+    request_id: string;
+    command: string;
+    exit_code: number | null;
+    timed_out: boolean;
+    stdout_snippet: string;
+    stderr_snippet: string;
+  }>;
 }
 
 export async function applyVerifiedCheckpoint(input: ApplyVerifiedCheckpointInput): Promise<ApplyVerifiedCheckpointOutput> {
@@ -24,7 +41,13 @@ export async function applyVerifiedCheckpoint(input: ApplyVerifiedCheckpointInpu
       cwd: input.source,
       commands: input.post_apply_commands
     });
-    if (verification.status !== "passed") return { status: "failed", reason: "post_apply_verification_failed" };
+    if (verification.status !== "passed") {
+      return {
+        status: "failed",
+        reason: "post_apply_verification_failed",
+        post_apply_verification: summarizePostApplyVerification(verification, input.post_apply_commands)
+      };
+    }
     return { status: "applied" };
   }
   const patchPath = join(input.source, ".waygent-apply.patch");
@@ -43,6 +66,40 @@ export async function applyVerifiedCheckpoint(input: ApplyVerifiedCheckpointInpu
     cwd: input.source,
     commands: input.post_apply_commands
   });
-  if (verification.status !== "passed") return { status: "failed", reason: "post_apply_verification_failed" };
+  if (verification.status !== "passed") {
+    return {
+      status: "failed",
+      reason: "post_apply_verification_failed",
+      post_apply_verification: summarizePostApplyVerification(verification, input.post_apply_commands)
+    };
+  }
   return { status: "applied" };
+}
+
+function summarizePostApplyVerification(
+  verification: VerificationRunOutput,
+  commands: string[]
+): PostApplyVerificationSummary {
+  return {
+    status: verification.status,
+    failure_class: verification.failure_class,
+    failure_summary: verification.failure_summary,
+    failed_verification_id: verification.failed_verification_id,
+    failed_commands: verification.results
+      .map((result, index) => ({ result, command: commands[index] ?? result.request_id }))
+      .filter(({ result }) => result.exit_code !== 0 || result.timed_out)
+      .map(({ result, command }) => ({
+        request_id: result.request_id,
+        command,
+        exit_code: result.exit_code,
+        timed_out: result.timed_out,
+        stdout_snippet: outputSnippet(result.stdout),
+        stderr_snippet: outputSnippet(result.stderr)
+      }))
+  };
+}
+
+function outputSnippet(output: string): string {
+  const trimmed = output.trim();
+  return trimmed.length > 1000 ? `${trimmed.slice(0, 1000)}...` : trimmed;
 }

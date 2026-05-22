@@ -64,7 +64,20 @@ describe("Waygent apply engine", () => {
     const patch = "diff --git a/README.md b/README.md\n--- a/README.md\n+++ b/README.md\n@@ -1 +1 @@\n-before\n+after\n";
     expect(await applyVerifiedCheckpoint({ source, patch, post_apply_commands: ["grep missing README.md"] })).toMatchObject({
       status: "failed",
-      reason: "post_apply_verification_failed"
+      reason: "post_apply_verification_failed",
+      post_apply_verification: {
+        status: "failed",
+        failure_class: "verification_failed",
+        failed_verification_id: "verify_post_apply_1",
+        failed_commands: [
+          {
+            request_id: "verify_post_apply_1",
+            command: "grep missing README.md",
+            exit_code: 1,
+            timed_out: false
+          }
+        ]
+      }
     });
   });
 });

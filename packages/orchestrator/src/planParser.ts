@@ -136,8 +136,14 @@ function cleanScalar(value: string): string {
 
 function pushClaim(claim: Partial<FileClaim>, out: FileClaim[]): void {
   if (!claim.path || !claim.mode) throw new Error("file_claims entries require path and mode");
-  if (!VALID_CLAIM_MODE.has(claim.mode)) throw new Error(`invalid file claim mode ${claim.mode}`);
-  out.push({ path: claim.path, mode: claim.mode });
+  const mode = normalizeClaimMode(claim.mode);
+  if (!VALID_CLAIM_MODE.has(mode)) throw new Error(`invalid file claim mode ${claim.mode}`);
+  out.push({ path: claim.path, mode });
+}
+
+function normalizeClaimMode(mode: FileClaimMode | string): FileClaimMode {
+  if (mode === "edit") return "owned";
+  return mode as FileClaimMode;
 }
 
 function readStringList(lines: string[], start: number, out: string[]): number {

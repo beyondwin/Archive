@@ -134,10 +134,17 @@ describe("Waygent local API routes", () => {
     const state = readRunStateV2(root, runId);
     writeRunStateV2(root, {
       ...state,
+      status: "blocked",
+      lifecycle_outcome: "blocked",
       tasks: Object.fromEntries(
-        Object.entries(state.tasks).map(([taskId, task]) => [taskId, { ...task, checkpoint_refs: [] }])
+        Object.entries(state.tasks).map(([taskId, task]) => [taskId, {
+          ...task,
+          status: "blocked",
+          checkpoint_refs: [],
+          latest_failure_class: "needs_rebase"
+        }])
       ),
-      apply: { status: "not_applied" },
+      apply: { status: "blocked", reason: "needs_rebase" },
       completion_audit: { status: "passed" }
     });
     const realHandler = createApiHandler({ runRoot: root });
@@ -147,17 +154,19 @@ describe("Waygent local API routes", () => {
       runs: [
         {
           run_id: runId,
-          apply_status: "not_ready"
+          status: "blocked",
+          apply_status: "blocked"
         }
       ]
     });
 
     const detailResponse = await realHandler(new Request(`http://waygent.local/runs/${runId}`));
     const detail = await detailResponse.json();
-    expect(detail.apply_status).toBe("not_ready");
+    expect(detail.status).toBe("blocked");
+    expect(detail.apply_status).toBe("blocked");
     expect(detail.apply_readiness).toEqual({
-      status: "not_ready",
-      reason: "missing_apply_ready_evidence",
+      status: "blocked",
+      reason: "needs_rebase",
       checkpoint_refs: [],
       combined_patch_ref: null,
       source: "run_state_v2"

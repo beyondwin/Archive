@@ -38,6 +38,10 @@ Ambiguous basenames fail with candidate paths instead of silently selecting
 one. Directory-bearing paths and markdown-looking spec filenames must exist;
 typos fail instead of being treated as inline spec text.
 
+Executable `waygent-task` file claims use `owned`, `shared_append`, or
+`read_only`. Waygent also accepts `mode: edit` as a compatibility alias for
+`owned` so implementation-plan snippets can run without manual rewrite.
+
 ### Apply Readiness
 
 `ready` means all of the following are true:
@@ -55,6 +59,12 @@ Waygent-owned verification both pass. Waygent records `no_op: true`, skips
 `git apply --check` for the empty patch, and still runs post-apply
 verification before marking apply complete.
 
+A checkpoint manifest and patch that exist but fail `git apply --check`
+against the current source checkout are classified as `needs_rebase`, not
+`missing_checkpoint`. Waygent preserves the manifest, patch, dry-run evidence,
+and failed file list, keeps `checkpoint_refs` empty until a dry-run passes, and
+blocks apply until the checkpoint is regenerated or reviewed.
+
 `not_ready` means the run lacks enough verified apply evidence. `blocked`
 means evidence exists that prevents apply, such as drift, missing artifacts, a
 provider failure, verification failure, or dirty source checkout. `applied`
@@ -63,6 +73,11 @@ means the verified patch has already been applied.
 `waygent apply --run <run_id>` is the only source-checkout mutation path. It
 checks for a clean source checkout before applying and revalidates the same
 readiness contract used by `resume`, API, and console.
+
+If post-apply verification fails, the apply result and `runway.apply_failed`
+event include `post_apply_verification` diagnostics with the failed command,
+request id, exit code, timeout flag, and short output snippets. Treat that
+payload as the first recovery target before rerunning or applying again.
 
 ## Safe-Wave Parallel Execution
 
@@ -97,7 +112,10 @@ operational maturity projection:
   recommendations.
 - `provider_readiness` classifies fake, Codex, and Claude process evidence as
   `ready`, `not_configured`, `unavailable`, `auth_required`, `failed`, or
-  `unknown` without running live providers by default.
+  `unknown` without running live providers by default. Successful provider
+  attempts with plugin-manifest, skill-loader, or MCP startup warnings stay
+  `ready`; the warnings are summarized as cleanup guidance rather than runtime
+  failure.
 
 The operator loop is:
 
@@ -140,6 +158,9 @@ choosing a recovery action.
   policy, switch provider, or route to human decision.
 - Verification failure: rerun verification after fixing the task worktree or
   choose human decision.
+- Checkpoint dry-run conflict: inspect the run, regenerate or rebase the
+  checkpoint against current source, or choose human decision. Do not apply the
+  stale checkpoint from chat context.
 - Dirty source checkout: clean or commit the checkout before resume or apply.
 - Duplicate run id: select a new run id or resume the existing run.
 

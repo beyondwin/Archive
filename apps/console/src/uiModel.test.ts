@@ -3,6 +3,7 @@ import {
   buildRunDetailModel,
   buildConsoleUiModel,
   demoConsoleSnapshot,
+  realRunSummaryToConsoleRun,
   realRunDetailToConsoleRun,
   renderConsoleSnapshot
 } from "./uiModel";
@@ -327,6 +328,24 @@ describe("Lens web console UI model", () => {
       reason: "state_drift",
       checkpointRef: "artifacts/checkpoints/task_a/candidate_task_a.json",
       combinedPatchRef: null
+    });
+  });
+
+  test("keeps console list apply disabled when API summary reports v2 blocker", () => {
+    const run = realRunSummaryToConsoleRun({
+      run_id: "run_needs_rebase",
+      status: "blocked",
+      trust_status: "trusted",
+      apply_status: "blocked",
+      total_events: 9,
+      last_event_type: "runway.apply_dry_run_result"
+    });
+
+    expect(run.status).toBe("blocked");
+    expect(run.applyStatus).toMatchObject({
+      state: "blocked",
+      canApply: false,
+      reason: "blocked"
     });
   });
 

@@ -169,6 +169,61 @@ describe("operational maturity projectors", () => {
       provider: "fake"
     });
   });
+
+  test("keeps successful noisy provider stderr diagnostic and recommends cleanup", () => {
+    const projection = projectProviderReadinessFromState({
+      state: makeState({
+        provider_profile: { provider: "codex" },
+        provider_attempts: [
+          providerAttempt({
+            provider: "codex",
+            exit_code: 0,
+            failure_class: null,
+            process: processEvidence({
+              stderr: [
+                "WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt",
+                "WARN codex_core_skills::loader: ignoring interface.icon_small"
+              ].join("\n"),
+              stderr_summary: {
+                total_lines: 2,
+                counts: { error: 0, warning: 0, mcp: 0, plugin_manifest: 1, skill_loader: 1, other: 0 },
+                samples: [
+                  { category: "plugin_manifest", line: "WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt" },
+                  { category: "skill_loader", line: "WARN codex_core_skills::loader: ignoring interface.icon_small" }
+                ]
+              }
+            })
+          })
+        ]
+      })
+    });
+
+    expect(projection.status).toBe("ready");
+    expect(projection.stderr_summary?.counts.plugin_manifest).toBe(1);
+    expect(projection.recommended_next_action).toContain("startup warnings");
+  });
+
+  test("recommends provider-cost inspection when provider time dominates the run", () => {
+    const projection = projectRuntimeCostFromState({
+      state: makeState({
+        safe_waves: [],
+        tasks: {
+          task_a: task("task_a", {
+            phase_timings: [
+              { phase: "provider", started: "2026-05-22T10:00:00.000Z", completed: "2026-05-22T10:00:09.000Z", duration_ms: 9000 },
+              { phase: "verification", started: "2026-05-22T10:00:09.000Z", completed: "2026-05-22T10:00:10.000Z", duration_ms: 1000 },
+              { phase: "checkpoint", started: "2026-05-22T10:00:10.000Z", completed: "2026-05-22T10:00:10.500Z", duration_ms: 500 },
+              { phase: "total", started: "2026-05-22T10:00:00.000Z", completed: "2026-05-22T10:00:10.500Z", duration_ms: 10500 }
+            ]
+          })
+        }
+      })
+    });
+
+    expect(projection.top_hotspots[0]).toMatchObject({ phase: "total" });
+    expect(projection.phase_totals.some((total) => total.phase === "provider" && total.duration_ms === 9000)).toBe(true);
+    expect(projection.recommended_next_actions).toContain("Inspect provider process cost before increasing safe-wave concurrency.");
+  });
 });
 
 function eventsFor(runId: string): AgentLensEvent[] {

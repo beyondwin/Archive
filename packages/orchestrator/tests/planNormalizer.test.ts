@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { parseWaygentPlan } from "../src/planParser";
 import { normalizeWaygentPlanInput } from "../src/planNormalizer";
 
+const graphifyAuditCommand = ["graphify", "update", "."].join(" ");
+
 const executableSuperpowersPlan = `
 # Demo Implementation Plan
 
@@ -18,7 +20,7 @@ Run:
 
 \`\`\`bash
 bun test packages/orchestrator/tests/planNormalizer.test.ts
-graphify update .
+${graphifyAuditCommand}
 git add README.md
 \`\`\`
 
@@ -81,10 +83,10 @@ verify:
       verification_commands: ["bun test packages/orchestrator/tests/planNormalizer.test.ts"]
     });
     expect(parsed.tasks[0]?.instructions.join("\n")).toContain("Step 1: Write the failing behavior test");
-    expect(parsed.tasks[0]?.instructions.join("\n")).toContain("graphify update .");
+    expect(parsed.tasks[0]?.instructions.join("\n")).toContain(graphifyAuditCommand);
     expect(parsed.tasks[1]?.dependencies).toEqual(["task_1_update_readme_contract"]);
     expect(parsed.tasks[1]?.verification_commands).toEqual(["bun test apps/cli/tests/cli.test.ts"]);
-    expect(parsed.tasks[0]?.verification_commands).not.toContain("graphify update .");
+    expect(parsed.tasks[0]?.verification_commands).not.toContain(graphifyAuditCommand);
     expect(normalized.markdown).not.toContain("git add README.md");
   });
 

@@ -56,6 +56,28 @@ describe("Waygent plan parser", () => {
     ]);
   });
 
+  test("normalizes edit claim mode to owned for implementation-plan compatibility", () => {
+    const parsed = parseWaygentPlan(`
+\`\`\`yaml waygent-task
+id: task_edit_claim
+title: Update docs
+dependencies: []
+file_claims:
+  - path: docs/operations/waygent.md
+    mode: edit
+  - {path: packages/orchestrator/src/runCommands.ts, mode: edit}
+risk: medium
+verify:
+  - git diff --check
+\`\`\`
+`);
+
+    expect(parsed.tasks[0]?.file_claims).toEqual([
+      { path: "docs/operations/waygent.md", mode: "owned" },
+      { path: "packages/orchestrator/src/runCommands.ts", mode: "owned" }
+    ]);
+  });
+
   test("rejects missing task ids", () => {
     expect(() =>
       parseWaygentPlan(`
