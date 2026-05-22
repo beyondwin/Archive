@@ -174,23 +174,44 @@ normalized plan with no dangerous ambiguity.
 
 ### Recovered Task Risk Classification
 
-Tasks emitted by deterministic repair from non-YAML or prose-shaped input
-MUST normalize to `risk: "high"`, regardless of the severity of recovered
-findings. The strict YAML `waygent-task` block is the only contract under
-which a task author declares a lower risk; recovered tasks have not been
-authored under that contract and therefore carry the most conservative
-classification until a human upgrades them in source.
+Tasks emitted from non-YAML or prose-shaped input MUST normalize to
+`risk: "high"`, regardless of the severity of recovered findings or the
+content of any project script catalog. The strict YAML `waygent-task`
+block is the only contract under which a task author declares a lower
+risk; tasks recovered from prose, superpowers-style markdown, or
+AI-assisted repair have not been authored under that contract and
+therefore carry the most conservative classification until a human
+upgrades them in source.
 
-This is independent of intake finding severity. Finding severity decides
-whether the run can start at all (recoverable vs decision_required); risk
-classification decides how cautiously the runtime schedules and gates the
-recovered task once it does start. Bounded AI repair is bound by the same
-rule: AI-repaired tasks emit `risk: "high"` until reviewed.
+This policy applies to ALL non-YAML normalization paths, not only the
+new deterministic repair function. Specifically it binds:
 
-Existing test surfaces that assert `risk: "high"` on recovered superpowers
-prose plans (e.g. `apps/cli/tests/cli.test.ts` "run normalizes executable
-superpowers implementation plans before dispatch") are load-bearing
-documentation of this policy and must remain green.
+- `planNormalizer.normalizeSuperpowersPlan` (legacy prose normalization);
+- `intakeRecovery.deterministicRepair` (new shape-fault recovery);
+- bounded AI repair when added;
+- any future fallback that materializes tasks from non-YAML input.
+
+The policy is independent of intake finding severity. Finding severity
+decides whether the run can start at all (recoverable vs
+decision_required); risk classification decides how cautiously the
+runtime schedules and gates the recovered task once it does start.
+
+Per-task risk inference (mapping prose keywords / catalog hits to
+`low`/`medium`/`high`) is an authoring tool, not a recovery tool. It
+MUST be opt-in via an explicit `infer_risk: true` input flag. The mere
+presence of a project script catalog (`buildProjectScriptCatalog(...)`
+returning a non-empty object) is NOT sufficient to enable risk
+inference, because catalog presence is determined by where the runtime
+is invoked from, not by author intent. A run started from a workspace
+that happens to contain a `package.json` must not silently downgrade a
+prose plan's task to `risk: "low"`.
+
+Existing test surfaces that document this policy (e.g.
+`apps/cli/tests/cli.test.ts` "run normalizes executable superpowers
+implementation plans before dispatch" asserting `risk: "high"`) are
+load-bearing and must remain green. Tests that exercise risk inference
+(e.g. `planNormalizer.fixtureLab.test.ts` asserting per-task
+`low`/`medium`/`low`) must opt in explicitly with `infer_risk: true`.
 
 ### Bounded AI Repair
 

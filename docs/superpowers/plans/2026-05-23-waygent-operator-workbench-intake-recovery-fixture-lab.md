@@ -862,29 +862,47 @@ dependencies: [task_2_deterministic_intake_recovery]
 file_claims:
   - path: packages/orchestrator/src/orchestrator.ts
     mode: owned
+  - path: packages/orchestrator/src/planNormalizer.ts
+    mode: owned
   - path: packages/orchestrator/tests/orchestratorRun.test.ts
+    mode: owned
+  - path: packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts
     mode: owned
   - path: apps/cli/tests/cli.test.ts
     mode: owned
 risk: high
 verify:
-  - bun test packages/orchestrator/tests/orchestratorRun.test.ts apps/cli/tests/cli.test.ts
-  - git diff --check -- packages/orchestrator/src/orchestrator.ts packages/orchestrator/tests/orchestratorRun.test.ts apps/cli/tests/cli.test.ts
+  - bun test packages/orchestrator/tests/orchestratorRun.test.ts packages/orchestrator/tests/planNormalizer.test.ts packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts apps/cli/tests/cli.test.ts
+  - git diff --check -- packages/orchestrator/src/orchestrator.ts packages/orchestrator/src/planNormalizer.ts packages/orchestrator/tests/orchestratorRun.test.ts packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts apps/cli/tests/cli.test.ts
 ```
 
 **Files:**
 - Modify: `packages/orchestrator/src/orchestrator.ts`
+- Modify: `packages/orchestrator/src/planNormalizer.ts`
 - Modify: `packages/orchestrator/tests/orchestratorRun.test.ts`
+- Modify: `packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts`
 - Modify: `apps/cli/tests/cli.test.ts`
 
-**Compatibility constraint:** The existing test
-`apps/cli/tests/cli.test.ts` "run normalizes executable superpowers
-implementation plans before dispatch" asserts
-`expect(task?.risk).toBe("high")` on a recovered prose plan. This
-assertion is load-bearing documentation of the Recovered Task Risk
-Classification policy (see design) and MUST remain green. Adding new
-intake-recovery assertions to `apps/cli/tests/cli.test.ts` is fine; do
-not relax or delete the existing risk assertion.
+**Compatibility constraint — Recovered Task Risk Classification:** Per
+the design section of the same name, ANY non-YAML normalization path
+(including the legacy `planNormalizer.normalizeSuperpowersPlan`) must
+emit `risk: "high"` by default. Per-task risk inference is opt-in via
+an explicit `infer_risk: true` input flag; project script catalog
+presence MUST NOT enable risk inference on its own. Two load-bearing
+test surfaces document this policy and must remain green:
+
+1. `apps/cli/tests/cli.test.ts` "run normalizes executable superpowers
+   implementation plans before dispatch" — asserts
+   `expect(task?.risk).toBe("high")` on a recovered prose plan. Do not
+   relax or delete this assertion. Adding new intake-recovery
+   assertions to `apps/cli/tests/cli.test.ts` is fine.
+2. `packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts`
+   "accepts fixture-lab plan with catalog and infers per-task risk" —
+   exercises the opt-in risk inference path. After the decoupling
+   (below), this test must explicitly pass `infer_risk: true` in its
+   `normalizeWaygentPlanInput({ ... })` call to retain its existing
+   `low`/`medium`/`low` assertions. Leave the assertions; flip the
+   flag.
 
 - [ ] **Step 1: Add failing run lifecycle tests**
 
@@ -1189,20 +1207,70 @@ In the `platform.run_started` payload, add:
       },
 ```
 
-- [ ] **Step 8: Run tests and commit**
+- [ ] **Step 8: Decouple risk inference from project script catalog**
 
-Run: `bun test packages/orchestrator/tests/orchestratorRun.test.ts apps/cli/tests/cli.test.ts`
+`packages/orchestrator/src/planNormalizer.ts` currently auto-enables
+per-task risk inference whenever `buildProjectScriptCatalog(workspace)`
+returns a non-empty result. That side-effect is what previously caused
+a benign superpowers prose plan to normalize to `risk: "low"` when the
+runtime is invoked from a workspace that happens to contain
+`package.json`. Per the design "Recovered Task Risk Classification"
+section, risk inference must be an explicit opt-in.
 
-Expected: PASS.
+In `packages/orchestrator/src/planNormalizer.ts`, find the line:
 
-Run: `git diff --check -- packages/orchestrator/src/orchestrator.ts packages/orchestrator/tests/orchestratorRun.test.ts apps/cli/tests/cli.test.ts`
+```ts
+  const useInferredRisk = input.infer_risk === true || catalog !== null;
+```
+
+Replace with:
+
+```ts
+  const useInferredRisk = input.infer_risk === true;
+```
+
+(Keep `catalog` itself — it is still used downstream by
+`extractVerificationCommands(section.body, catalog)`. Only the
+risk-inference gating drops the catalog dependency.)
+
+In `packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts`, the
+test "accepts fixture-lab plan with catalog and infers per-task risk"
+must continue to assert `risk: "low"` / `"medium"` / `"low"`. Add the
+explicit opt-in to each `normalizeWaygentPlanInput({ ... })` call in
+that file that asserts per-task inferred risk:
+
+```ts
+    const normalized = normalizeWaygentPlanInput({
+      markdown: planMarkdown,
+      path: "/tmp/fixture_lab_plan.md",
+      workspace,
+      infer_risk: true
+    });
+```
+
+Only the tests that depend on inferred risk need the flag. Tests that
+do not assert specific `risk` values can be left as is. Do not modify
+`packages/orchestrator/tests/planNormalizer.test.ts` unless a focused
+run shows it depends on the implicit-catalog branch.
+
+- [ ] **Step 9: Run tests and commit**
+
+Run: `bun test packages/orchestrator/tests/orchestratorRun.test.ts packages/orchestrator/tests/planNormalizer.test.ts packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts apps/cli/tests/cli.test.ts`
+
+Expected: PASS. In particular the load-bearing assertion at
+`apps/cli/tests/cli.test.ts` "run normalizes executable superpowers
+implementation plans before dispatch" → `expect(task?.risk).toBe("high")`
+must remain green AFTER routing through `recoverWaygentPlanInput` with
+`workspace` populated.
+
+Run: `git diff --check -- packages/orchestrator/src/orchestrator.ts packages/orchestrator/src/planNormalizer.ts packages/orchestrator/tests/orchestratorRun.test.ts packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts apps/cli/tests/cli.test.ts`
 
 Expected: no output.
 
 Commit:
 
 ```bash
-git add packages/orchestrator/src/orchestrator.ts packages/orchestrator/tests/orchestratorRun.test.ts apps/cli/tests/cli.test.ts
+git add packages/orchestrator/src/orchestrator.ts packages/orchestrator/src/planNormalizer.ts packages/orchestrator/tests/orchestratorRun.test.ts packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts apps/cli/tests/cli.test.ts
 git commit -m "feat: recover Waygent plan intake before dispatch"
 ```
 
