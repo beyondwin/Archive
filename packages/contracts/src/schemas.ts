@@ -35,6 +35,30 @@ const failureClassValues = [
 const riskValues = ["low", "medium", "high"] as const;
 const providerRoleValues = ["implement", "review", "fix", "verify_assist"] as const;
 const providerLogCategoryValues = ["error", "warning", "mcp", "plugin_manifest", "skill_loader", "other"] as const;
+const operatorRunStatusValues = [
+  "running",
+  "recovering",
+  "needs_input",
+  "needs_approval",
+  "blocked",
+  "ready_to_apply",
+  "done",
+  "failed"
+] as const;
+const operatorActionIdValues = [
+  "inspect_run",
+  "explain_run",
+  "open_raw_evidence",
+  "open_ai_repair_handoff",
+  "request_user_input",
+  "approve_recovery",
+  "resume_run",
+  "regenerate_checkpoint",
+  "rebase_checkpoint",
+  "rerun_verification",
+  "review_patch",
+  "apply_run"
+] as const;
 const executionPhaseNameValues = [
   "worktree_setup",
   "provider",
@@ -786,6 +810,191 @@ export const waygentRunStateV2Schema = {
   }
 } as const;
 
+const operatorBlockerSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["code", "title", "summary", "severity", "evidence_refs", "missing_refs", "recommended_action_ids"],
+  properties: {
+    code: { type: "string", minLength: 1 },
+    title: { type: "string", minLength: 1 },
+    summary: { type: "string", minLength: 1 },
+    severity: { enum: ["info", "warning", "blocking", "critical"] },
+    task_id: { type: "string", pattern: idPattern, nullable: true },
+    evidence_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    missing_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    recommended_action_ids: { type: "array", items: { enum: operatorActionIdValues } }
+  }
+} as const;
+
+const operatorAllowedActionSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "label", "reason", "evidence_refs", "requires_approval", "requires_runtime_revalidation", "command"],
+  properties: {
+    id: { enum: operatorActionIdValues },
+    label: { type: "string", minLength: 1 },
+    reason: { type: "string", minLength: 1 },
+    evidence_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    requires_approval: { type: "boolean" },
+    requires_runtime_revalidation: { type: "boolean" },
+    command: { type: "string", nullable: true }
+  }
+} as const;
+
+const operatorBlockedActionSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["id", "label", "reason", "evidence_refs", "unblocks_when"],
+  properties: {
+    id: { enum: operatorActionIdValues },
+    label: { type: "string", minLength: 1 },
+    reason: { type: "string", minLength: 1 },
+    evidence_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    unblocks_when: { type: "string", minLength: 1 }
+  }
+} as const;
+
+const operatorEvidencePacketSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "state_refs",
+    "event_refs",
+    "artifact_refs",
+    "verification_refs",
+    "checkpoint_refs",
+    "projection_refs",
+    "missing_refs",
+    "redaction_notes"
+  ],
+  properties: {
+    state_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    event_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    artifact_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    verification_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    checkpoint_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    projection_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    missing_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    redaction_notes: { type: "array", items: { type: "string", minLength: 1 } }
+  }
+} as const;
+
+export const operatorDecisionProjectionSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schema",
+    "run_id",
+    "generated_at",
+    "status_summary",
+    "primary_blocker",
+    "secondary_blockers",
+    "allowed_actions",
+    "blocked_actions",
+    "evidence_packet",
+    "ai_handoff",
+    "confidence",
+    "unknown_reasons",
+    "source_projection_refs"
+  ],
+  properties: {
+    schema: { const: "waygent.operator_decision.v1" },
+    run_id: { type: "string", pattern: idPattern },
+    generated_at: { type: "string", pattern: isoTimestamp },
+    status_summary: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "display_status",
+        "runtime_status",
+        "lifecycle_outcome",
+        "current_phase",
+        "active_tasks",
+        "completed_tasks",
+        "blocked_tasks",
+        "apply_status",
+        "summary"
+      ],
+      properties: {
+        display_status: { enum: operatorRunStatusValues },
+        runtime_status: {
+          enum: [
+            "initializing",
+            "running",
+            "blocked",
+            "failed",
+            "completed",
+            "applying",
+            "applied",
+            "missing",
+            "invalid",
+            "unsupported"
+          ]
+        },
+        lifecycle_outcome: { enum: ["finished", "blocked", "failed", "aborted", null] },
+        current_phase: { enum: ["preflight", "dispatch", "review", "verify", "recover", "apply", "complete", null] },
+        active_tasks: { type: "integer", minimum: 0 },
+        completed_tasks: { type: "integer", minimum: 0 },
+        blocked_tasks: { type: "integer", minimum: 0 },
+        apply_status: { enum: ["ready", "not_ready", "blocked", "applied", "unknown"] },
+        summary: { type: "string", minLength: 1 }
+      }
+    },
+    primary_blocker: { ...operatorBlockerSchema, nullable: true },
+    secondary_blockers: { type: "array", items: operatorBlockerSchema },
+    allowed_actions: { type: "array", items: operatorAllowedActionSchema },
+    blocked_actions: { type: "array", items: operatorBlockedActionSchema },
+    evidence_packet: operatorEvidencePacketSchema,
+    ai_handoff: {
+      type: "object",
+      additionalProperties: false,
+      required: [
+        "purpose",
+        "prompt_summary",
+        "run_id",
+        "current_status",
+        "primary_blocker",
+        "secondary_blockers",
+        "allowed_action_ids",
+        "blocked_action_ids",
+        "constraints",
+        "evidence_refs",
+        "missing_evidence",
+        "raw_fallback_refs",
+        "safety_notes"
+      ],
+      properties: {
+        purpose: { enum: ["draft_repair_plan", "summarize_blocker", "compare_recovery_options"] },
+        prompt_summary: { type: "string", minLength: 1 },
+        run_id: { type: "string", pattern: idPattern },
+        current_status: { enum: operatorRunStatusValues },
+        primary_blocker: { type: "string", nullable: true },
+        secondary_blockers: { type: "array", items: { type: "string", minLength: 1 } },
+        allowed_action_ids: { type: "array", items: { enum: operatorActionIdValues } },
+        blocked_action_ids: { type: "array", items: { enum: operatorActionIdValues } },
+        constraints: { type: "array", items: { type: "string", minLength: 1 } },
+        evidence_refs: { type: "array", items: { type: "string", minLength: 1 } },
+        missing_evidence: { type: "array", items: { type: "string", minLength: 1 } },
+        raw_fallback_refs: { type: "array", items: { type: "string", minLength: 1 } },
+        safety_notes: { type: "array", items: { type: "string", minLength: 1 } }
+      }
+    },
+    confidence: { enum: ["deterministic", "partial", "unknown"] },
+    unknown_reasons: { type: "array", items: { type: "string", minLength: 1 } },
+    source_projection_refs: {
+      type: "object",
+      additionalProperties: false,
+      required: ["run_state_v2", "apply_readiness", "execution_explanation", "operational_maturity"],
+      properties: {
+        run_state_v2: { type: "string", nullable: true },
+        apply_readiness: { type: "string", nullable: true },
+        execution_explanation: { type: "string", nullable: true },
+        operational_maturity: { type: "string", nullable: true }
+      }
+    }
+  }
+} as const;
+
 export const schemas = {
   "agentlens.event.v3": agentLensEventSchema,
   "lens.runway_projection.v1": lensRunwayProjectionSchema,
@@ -798,7 +1007,8 @@ export const schemas = {
   "waygent.task_packet.v1": waygentTaskPacketSchema,
   "runway.review_result.v1": reviewResultSchema,
   "runway.provider_attempt.v1": providerAttemptSchema,
-  "waygent.run_state.v2": waygentRunStateV2Schema
+  "waygent.run_state.v2": waygentRunStateV2Schema,
+  "waygent.operator_decision.v1": operatorDecisionProjectionSchema
 } as const;
 
 export type ContractSchemaName = keyof typeof schemas;

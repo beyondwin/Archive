@@ -13,7 +13,7 @@ describe("Lens web console UI model", () => {
     const model = buildConsoleUiModel(demoConsoleSnapshot);
 
     expect(model.runs).toHaveLength(3);
-    expect(model.selectedRun.runId).toBe("run_demo_trusted");
+    expect(model.selectedRun.runId).toBe("run_demo_blocked");
     expect(model.eventFamilies).toEqual(["platform", "runway", "lens"]);
     expect(model.sections.map((section) => section.id)).toEqual([
       "run-list",
@@ -50,6 +50,18 @@ describe("Lens web console UI model", () => {
     expect(snapshot).toContain("failed");
     expect(snapshot).toContain("adapter_crashed");
     expect(snapshot).toContain("apply: not_ready");
+  });
+
+  test("renders blocked Workbench decision text for browserless checks", () => {
+    const snapshot = renderConsoleSnapshot(
+      buildConsoleUiModel(demoConsoleSnapshot, "run_demo_blocked")
+    );
+
+    expect(snapshot).toContain("run_demo_blocked");
+    expect(snapshot).toContain("decision:");
+    expect(snapshot).toContain("verification_failed");
+    expect(snapshot).toContain("allowed: rerun_verification, update_plan");
+    expect(snapshot).toContain("apply: blocked dirty_source_checkout");
   });
 
   test("builds detail sections from a real Waygent run API response", () => {
@@ -391,5 +403,115 @@ describe("Lens web console UI model", () => {
       reason: "state_drift",
       checkpointRef: "artifacts/checkpoints/task_a/candidate_task_a.json"
     });
+  });
+
+  test("builds Workbench detail from operator decision projection", () => {
+    const model = buildRunDetailModel({
+      run_id: "run_workbench",
+      status: "blocked",
+      trust_status: "insufficient_evidence",
+      apply_status: "blocked",
+      total_events: 4,
+      last_event_type: "runway.verification_result",
+      safe_wave: [],
+      failures: [],
+      timeline: [
+        { sequence: 1, phase: "platform", event_type: "platform.run_started", outcome: "running", summary: "Run opened." },
+        { sequence: 2, phase: "runway", event_type: "runway.verification_result", outcome: "failed", summary: "Verification failed." }
+      ],
+      operator_decision: {
+        schema: "waygent.operator_decision.v1",
+        run_id: "run_workbench",
+        generated_at: "2026-05-22T00:00:00.000Z",
+        status_summary: {
+          display_status: "blocked",
+          runtime_status: "blocked",
+          lifecycle_outcome: "blocked",
+          current_phase: "recover",
+          active_tasks: 0,
+          completed_tasks: 0,
+          blocked_tasks: 1,
+          apply_status: "blocked",
+          summary: "run_workbench is blocked by verification_failed."
+        },
+        primary_blocker: {
+          code: "verification_failed",
+          title: "Verification failed",
+          summary: "task_a failed verification.",
+          severity: "blocking",
+          task_id: "task_a",
+          evidence_refs: ["verification:task_a"],
+          missing_refs: [],
+          recommended_action_ids: ["rerun_verification", "open_ai_repair_handoff"]
+        },
+        secondary_blockers: [],
+        allowed_actions: [
+          { id: "inspect_run", label: "Inspect run", reason: "safe", evidence_refs: ["state:state.json"], requires_approval: false, requires_runtime_revalidation: false, command: "waygent inspect --run run_workbench" },
+          { id: "open_ai_repair_handoff", label: "Open AI repair handoff", reason: "safe", evidence_refs: ["state:state.json"], requires_approval: false, requires_runtime_revalidation: false, command: null }
+        ],
+        blocked_actions: [
+          { id: "apply_run", label: "Apply run", reason: "Apply readiness is blocked by verification_failed.", evidence_refs: ["verification:task_a"], unblocks_when: "Verification passes." }
+        ],
+        evidence_packet: {
+          state_refs: ["state:state.json"],
+          event_refs: ["events:events.jsonl"],
+          artifact_refs: [],
+          verification_refs: ["verification:task_a"],
+          checkpoint_refs: [],
+          projection_refs: ["waygent.execution_explanation.v1"],
+          missing_refs: [],
+          redaction_notes: []
+        },
+        ai_handoff: {
+          purpose: "draft_repair_plan",
+          prompt_summary: "Draft a repair plan for verification_failed using bounded evidence.",
+          run_id: "run_workbench",
+          current_status: "blocked",
+          primary_blocker: "verification_failed",
+          secondary_blockers: [],
+          allowed_action_ids: ["inspect_run", "open_ai_repair_handoff"],
+          blocked_action_ids: ["apply_run"],
+          constraints: ["Do not apply patches."],
+          evidence_refs: ["verification:task_a"],
+          missing_evidence: [],
+          raw_fallback_refs: ["events:events.jsonl"],
+          safety_notes: ["Waygent runtime remains apply authority."]
+        },
+        confidence: "deterministic",
+        unknown_reasons: [],
+        source_projection_refs: {
+          run_state_v2: "state:state.json",
+          apply_readiness: "waygent.apply_readiness",
+          execution_explanation: "waygent.execution_explanation.v1",
+          operational_maturity: "waygent.operational_maturity.v1"
+        }
+      }
+    });
+
+    expect(model.operator_decision?.primary_blocker?.code).toBe("verification_failed");
+    expect(model.outcome_strip).toMatchObject({
+      display_status: "blocked",
+      primary_blocker: "verification_failed",
+      next_action: "inspect_run",
+      apply_status: "blocked",
+      confidence: "deterministic"
+    });
+    expect(model.operator_timeline.map((row) => row.row_type)).toEqual(["raw_event", "verification_result"]);
+    expect(model.sections.map((section) => section.id)).toContain("operator-decision");
+    expect(model.sections.map((section) => section.id)).toContain("ai-handoff");
+    expect(model.raw_evidence_refs).toEqual(["state:state.json", "events:events.jsonl"]);
+  });
+
+  test("sorts run board by operator urgency", () => {
+    const model = buildConsoleUiModel({
+      generatedAt: "2026-05-22T00:00:00.000Z",
+      runs: [
+        { ...demoConsoleSnapshot.runs[0]!, runId: "run_done", title: "Done", status: "completed" },
+        { ...demoConsoleSnapshot.runs[2]!, runId: "run_blocked", title: "Blocked", status: "blocked" },
+        { ...demoConsoleSnapshot.runs[1]!, runId: "run_failed", title: "Failed", status: "failed" }
+      ]
+    });
+
+    expect(model.runs.map((run) => run.runId)).toEqual(["run_blocked", "run_failed", "run_done"]);
   });
 });

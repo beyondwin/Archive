@@ -286,4 +286,108 @@ describe("Waygent contracts", () => {
 
     expect(validateContract("waygent.run_state.v2", state)).toEqual(state);
   });
+
+  test("validates operator decision projection contract", () => {
+    const decision = {
+      schema: "waygent.operator_decision.v1",
+      run_id: "run_demo",
+      generated_at: "2026-05-22T00:00:00.000Z",
+      status_summary: {
+        display_status: "blocked",
+        runtime_status: "blocked",
+        lifecycle_outcome: "blocked",
+        current_phase: "recover",
+        active_tasks: 0,
+        completed_tasks: 0,
+        blocked_tasks: 1,
+        apply_status: "blocked",
+        summary: "run_demo is blocked by verification_failed."
+      },
+      primary_blocker: {
+        code: "verification_failed",
+        title: "Verification failed",
+        summary: "task_demo failed verification.",
+        severity: "blocking",
+        task_id: "task_demo",
+        evidence_refs: ["state:/tmp/run/state.json", "verification:task_demo"],
+        missing_refs: [],
+        recommended_action_ids: ["rerun_verification", "open_ai_repair_handoff"]
+      },
+      secondary_blockers: [],
+      allowed_actions: [
+        {
+          id: "inspect_run",
+          label: "Inspect run",
+          reason: "Inspection is always safe.",
+          evidence_refs: ["state:/tmp/run/state.json"],
+          requires_approval: false,
+          requires_runtime_revalidation: false,
+          command: "waygent inspect --run run_demo"
+        },
+        {
+          id: "open_ai_repair_handoff",
+          label: "Open AI repair handoff",
+          reason: "AI can draft a repair plan from bounded evidence.",
+          evidence_refs: ["state:/tmp/run/state.json"],
+          requires_approval: false,
+          requires_runtime_revalidation: false,
+          command: null
+        }
+      ],
+      blocked_actions: [
+        {
+          id: "apply_run",
+          label: "Apply run",
+          reason: "Apply readiness is blocked by verification_failed.",
+          evidence_refs: ["state:/tmp/run/state.json"],
+          unblocks_when: "Verification and apply readiness pass."
+        }
+      ],
+      evidence_packet: {
+        state_refs: ["state:/tmp/run/state.json"],
+        event_refs: ["events:/tmp/run/events.jsonl"],
+        artifact_refs: [],
+        verification_refs: ["verification:task_demo"],
+        checkpoint_refs: [],
+        projection_refs: ["waygent.execution_explanation.v1"],
+        missing_refs: [],
+        redaction_notes: []
+      },
+      ai_handoff: {
+        purpose: "draft_repair_plan",
+        prompt_summary: "Draft a repair plan for verification_failed using bounded evidence.",
+        run_id: "run_demo",
+        current_status: "blocked",
+        primary_blocker: "verification_failed",
+        secondary_blockers: [],
+        allowed_action_ids: ["inspect_run", "open_ai_repair_handoff"],
+        blocked_action_ids: ["apply_run"],
+        constraints: [
+          "Do not apply patches.",
+          "Do not mutate source.",
+          "Do not override Waygent runtime policy."
+        ],
+        evidence_refs: ["state:/tmp/run/state.json", "verification:task_demo"],
+        missing_evidence: [],
+        raw_fallback_refs: ["events:/tmp/run/events.jsonl"],
+        safety_notes: ["Waygent runtime remains apply authority."]
+      },
+      confidence: "deterministic",
+      unknown_reasons: [],
+      source_projection_refs: {
+        run_state_v2: "state:/tmp/run/state.json",
+        apply_readiness: "waygent.apply_readiness",
+        execution_explanation: "waygent.execution_explanation.v1",
+        operational_maturity: "waygent.operational_maturity.v1"
+      }
+    };
+
+    expect(validateContract("waygent.operator_decision.v1", decision)).toEqual(decision);
+    expect(() =>
+      validateContract("waygent.operator_decision.v1", {
+        ...decision,
+        [["legacy", "source"].join("_")]: "components/agentlens"
+      })
+    ).toThrow(ContractValidationError);
+  });
 });

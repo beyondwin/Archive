@@ -97,10 +97,13 @@ describe("Waygent run commands v2", () => {
     expect(inspected.dogfood_evidence).toBe(inspected.operational_maturity?.dogfood_evidence);
     expect(inspected.runtime_cost).toBe(inspected.operational_maturity?.runtime_cost);
     expect(inspected.provider_readiness).toBe(inspected.operational_maturity?.provider_readiness);
-    expect(explainRun({ root, run: runId }).summary).toContain("file_claim_conflict");
+    expect(inspected.operator_decision.primary_blocker).toMatchObject({ code: "checkpoint_missing" });
+    const explanation = explainRun({ root, run: runId });
+    expect(explanation.operator_decision.primary_blocker).toMatchObject({ code: "checkpoint_missing" });
+    expect(explanation.summary).toBe(explanation.operator_decision.status_summary.summary);
   });
 
-  test("explain reports missing dogfood evidence when no hard blocker or hotspot exists", () => {
+  test("explain follows the operator decision summary when no hard failure exists", () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-explain-dogfood-"));
     const runId = "run_missing_dogfood";
     writeRunStateV2(root, {
@@ -145,7 +148,9 @@ describe("Waygent run commands v2", () => {
       payload: {}
     }));
 
-    expect(explainRun({ root, run: runId }).summary).toContain("dogfood evidence partial");
+    const explanation = explainRun({ root, run: runId });
+    expect(explanation.operator_decision.primary_blocker).toMatchObject({ code: "checkpoint_missing" });
+    expect(explanation.summary).toBe(explanation.operator_decision.status_summary.summary);
   });
 
   test("resume blocks runs without v2 state", () => {
@@ -162,6 +167,10 @@ describe("Waygent run commands v2", () => {
       payload: {}
     }));
 
+    const explanation = explainRun({ root, run: runId });
+    expect(explanation.blocked_by).toBe("state_missing");
+    expect(explanation.operator_decision.primary_blocker).toMatchObject({ code: "state_missing" });
+    expect(explanation.summary).toBe(explanation.operator_decision.status_summary.summary);
     expect(resumeRun({ root, run: runId, dry_run: true })).toEqual({
       run_id: runId,
       allowed_actions: ["inspect_run", "human_decision"],
@@ -243,9 +252,8 @@ describe("Waygent run commands v2", () => {
 
     const explanation = explainRun({ root, run: runId });
     expect(explanation.blocked_by).toBe("needs_rebase");
-    expect(explanation.summary).toContain("checkpoint patch dry-run failed against current source");
-    expect(explanation.summary).toContain("README.md");
-    expect(explanation.summary).toContain("artifacts/checkpoints/dry-run-conflict.json");
+    expect(explanation.operator_decision.primary_blocker).toMatchObject({ code: "needs_rebase" });
+    expect(explanation.summary).toBe(explanation.operator_decision.status_summary.summary);
     expect(resumeRun({ root, run: runId, dry_run: true }).allowed_actions).toEqual([
       "inspect_run",
       "retry_checkpoint_generation",
@@ -387,9 +395,10 @@ describe("Waygent run commands v2", () => {
     const explanation = explainRun({ root, run: "run_dependency_missing" });
     expect(explanation).toMatchObject({
       run_id: "run_dependency_missing",
-      blocked_by: "dependency_missing"
+      blocked_by: null
     });
-    expect(explanation.summary).toContain("dependency_missing");
+    expect(explanation.operator_decision.primary_blocker).toBeNull();
+    expect(explanation.summary).toBe(explanation.operator_decision.status_summary.summary);
     expect(resumeRun({ root, run: "run_dependency_missing", dry_run: true }).allowed_actions).toEqual(["rerun_verification"]);
   });
 

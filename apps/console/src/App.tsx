@@ -52,6 +52,7 @@ function RunList({
             <span>
               <strong>{run.title}</strong>
               <small>{run.runId}</small>
+              <small>{run.applyStatus.state} · {run.applyStatus.reason}</small>
             </span>
             <span className={`verdict ${run.trust.verdict}`}>{verdictLabels[run.trust.verdict]}</span>
           </button>
@@ -345,6 +346,107 @@ function OperationalEvidence({ detail }: { detail: RunDetailModel }) {
   );
 }
 
+function OutcomeStrip({ detail }: { detail: RunDetailModel }) {
+  const outcome = detail.outcome_strip;
+  return (
+    <section className="outcome-strip" aria-label="Operator outcome">
+      <div>
+        <span>Status</span>
+        <strong>{outcome.display_status}</strong>
+      </div>
+      <div>
+        <span>Primary blocker</span>
+        <strong>{outcome.primary_blocker ?? "none"}</strong>
+      </div>
+      <div>
+        <span>Next action</span>
+        <strong>{outcome.next_action ?? "inspect_run"}</strong>
+      </div>
+      <div>
+        <span>Apply</span>
+        <strong>{outcome.apply_status}</strong>
+      </div>
+      <div>
+        <span>Confidence</span>
+        <strong>{outcome.confidence}</strong>
+      </div>
+      <p>{outcome.summary}</p>
+    </section>
+  );
+}
+
+function OperatorTimeline({ detail }: { detail: RunDetailModel }) {
+  return (
+    <section className="operator-timeline" aria-label="Operator timeline">
+      <div className="section-title-row">
+        <h2>Operator Timeline</h2>
+        <span>{detail.operator_timeline.length}</span>
+      </div>
+      <div className="timeline-controls" aria-label="Timeline filters">
+        {["all", "blockers", "verification", "checkpoint", "provider", "apply", "recovery", "raw"].map((filter) => (
+          <button type="button" key={filter}>{filter}</button>
+        ))}
+      </div>
+      <div className="operator-rows">
+        {detail.operator_timeline.map((row) => (
+          <article className={`operator-row ${row.severity}`} key={row.id}>
+            <span>{row.sequence}</span>
+            <strong>{row.row_type}</strong>
+            <p>{String(row.metadata.summary ?? row.title)}</p>
+            <small>{row.evidence_refs.join(", ") || "no evidence ref"}</small>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function DecisionRail({ detail }: { detail: RunDetailModel }) {
+  const decision = detail.operator_decision;
+  return (
+    <aside className="decision-rail" aria-label="Decision and evidence rail">
+      <section>
+        <h2>Operator Decision</h2>
+        <strong>{decision?.primary_blocker?.code ?? "none"}</strong>
+        <p>{decision?.primary_blocker?.summary ?? detail.outcome_strip.summary}</p>
+      </section>
+      <section>
+        <h3>Allowed Actions</h3>
+        {(decision?.allowed_actions ?? []).map((action) => (
+          <button className="rail-action" key={action.id} type="button">
+            <span>{action.label}</span>
+            <small>{action.reason}</small>
+          </button>
+        ))}
+      </section>
+      <section>
+        <h3>Blocked Actions</h3>
+        {(decision?.blocked_actions ?? []).map((action) => (
+          <button className="rail-action disabled" disabled key={action.id} type="button">
+            <span>{action.label}</span>
+            <small>{action.reason}</small>
+          </button>
+        ))}
+      </section>
+      <section>
+        <h3>AI Handoff</h3>
+        <p>{decision?.ai_handoff.prompt_summary ?? "No AI handoff projection"}</p>
+        <code>{decision?.ai_handoff.evidence_refs.join(", ") ?? "no evidence refs"}</code>
+      </section>
+      <section>
+        <h3>Raw Evidence</h3>
+        {detail.raw_evidence_refs.length === 0 ? (
+          <p className="empty-state">No raw evidence refs</p>
+        ) : (
+          <ul>
+            {detail.raw_evidence_refs.map((ref) => <li key={ref}>{ref}</li>)}
+          </ul>
+        )}
+      </section>
+    </aside>
+  );
+}
+
 export function App({ apiRoot = defaultApiRoot() }: AppProps = {}) {
   const [snapshot, setSnapshot] = useState<ConsoleSnapshot>(demoConsoleSnapshot);
   const [selectedRunId, setSelectedRunId] = useState(demoConsoleSnapshot.runs[0]?.runId);
@@ -420,37 +522,17 @@ export function App({ apiRoot = defaultApiRoot() }: AppProps = {}) {
 
       <div className="console-grid">
         <RunList runs={model.runs} selectedRunId={run.runId} onSelect={setSelectedRunId} />
-        <div className="detail-surface">
-          <section className="run-detail" aria-label="Run detail">
-            <div>
-              <span>Run</span>
-              <strong>{run.runId}</strong>
+        <div className="workbench-surface">
+          <OutcomeStrip detail={detail} />
+          <div className="workbench-main">
+            <div className="workbench-center">
+              <OperatorTimeline detail={detail} />
+              <OperationalMaturity detail={detail} />
+              <ExecutionIntelligence detail={detail} />
+              <OperationalEvidence detail={detail} />
             </div>
-            <div>
-              <span>Trust</span>
-              <strong>{verdictLabels[run.trust.verdict]}</strong>
-            </div>
-            <div>
-              <span>Apply</span>
-              <strong>{detail.header.apply_status}</strong>
-            </div>
-            <div>
-              <span>Safe wave</span>
-              <strong>{detail.safe_wave.join(", ") || "none"}</strong>
-            </div>
-          </section>
-
-          <TaskTimeline run={run} />
-          <EventTimeline run={run} />
-          <div className="projection-grid">
-            <TrustReport run={run} />
-            <FailureBarriers run={run} />
-            <DecisionPackets run={run} />
-            <ApplyStatus run={run} />
+            <DecisionRail detail={detail} />
           </div>
-          <OperationalMaturity detail={detail} />
-          <ExecutionIntelligence detail={detail} />
-          <OperationalEvidence detail={detail} />
         </div>
       </div>
     </main>

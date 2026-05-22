@@ -2,6 +2,8 @@ import type {
   DogfoodEvidenceProjection,
   ExecutionExplanationProjection,
   OperationalMaturityProjection,
+  OperatorDecisionProjection,
+  OperatorTimelineRow,
   ProviderLogSummary,
   ProviderReadinessProjection,
   RuntimeCostProjection
@@ -55,6 +57,10 @@ export interface ConsoleApplyStatus {
 
 export type RunDetailSectionId =
   | "overview"
+  | "operator-decision"
+  | "operator-timeline"
+  | "ai-handoff"
+  | "raw-evidence"
   | "operational-maturity"
   | "safe-wave"
   | "execution-intelligence"
@@ -89,6 +95,7 @@ export interface RealRunDetailResponse {
   dogfood_evidence?: DogfoodEvidenceProjection | null;
   runtime_cost?: RuntimeCostProjection | null;
   provider_readiness?: ProviderReadinessProjection | null;
+  operator_decision?: OperatorDecisionProjection | null;
   apply_readiness?: {
     status: ApplyState;
     reason: string | null;
@@ -134,6 +141,17 @@ export interface RunDetailModel {
   dogfood_evidence: DogfoodEvidenceProjection | null;
   runtime_cost: RuntimeCostProjection | null;
   provider_readiness: ProviderReadinessProjection | null;
+  operator_decision: OperatorDecisionProjection | null;
+  outcome_strip: {
+    display_status: string;
+    primary_blocker: string | null;
+    next_action: string | null;
+    apply_status: string;
+    confidence: string;
+    summary: string;
+  };
+  operator_timeline: OperatorTimelineRow[];
+  raw_evidence_refs: string[];
   provider_log_summary: ProviderLogSummary | null;
   next_action: string | null;
   apply_readiness: RealRunDetailResponse["apply_readiness"];
@@ -390,19 +408,20 @@ export function buildConsoleUiModel(
   snapshot: ConsoleSnapshot,
   selectedRunId?: string
 ): ConsoleUiModel {
-  const firstRun = snapshot.runs[0];
+  const runs = [...snapshot.runs].sort(compareRunsByOperatorUrgency);
+  const firstRun = runs[0];
   if (!firstRun) {
     throw new Error("console snapshot requires at least one run");
   }
 
-  const selectedRun = snapshot.runs.find((run) => run.runId === selectedRunId) ?? firstRun;
+  const selectedRun = runs.find((run) => run.runId === selectedRunId) ?? firstRun;
   const eventFamilies = Array.from(
     new Set(selectedRun.events.map((item) => item.eventType.split(".")[0] ?? "unknown"))
   );
 
   return {
     generatedAt: snapshot.generatedAt,
-    runs: snapshot.runs,
+    runs,
     selectedRun,
     eventFamilies,
     sections: consoleSections
@@ -410,6 +429,9 @@ export function buildConsoleUiModel(
 }
 
 export function buildRunDetailModel(response: RealRunDetailResponse): RunDetailModel {
+  const operatorDecision = response.operator_decision ?? null;
+  const outcomeStrip = outcomeStripFromDecision(response);
+
   return {
     header: {
       run_id: response.run_id,
@@ -434,24 +456,126 @@ export function buildRunDetailModel(response: RealRunDetailResponse): RunDetailM
     dogfood_evidence: response.dogfood_evidence ?? response.operational_maturity?.dogfood_evidence ?? null,
     runtime_cost: response.runtime_cost ?? response.operational_maturity?.runtime_cost ?? null,
     provider_readiness: response.provider_readiness ?? response.operational_maturity?.provider_readiness ?? null,
+    operator_decision: operatorDecision,
+    outcome_strip: outcomeStrip,
+    operator_timeline: operatorTimelineFromResponse(response),
+    raw_evidence_refs: rawEvidenceRefsFromDecision(operatorDecision),
     provider_log_summary: providerLogSummaryFromAttempts(response.provider_attempts ?? []),
     next_action: response.operational_maturity?.next_action ?? response.execution_explanation?.recommended_next_actions[0] ?? null,
     apply_readiness: response.apply_readiness ?? null,
-    sections: [
-      { id: "overview", label: "Overview" },
-      { id: "operational-maturity", label: "Operational maturity" },
-      { id: "safe-wave", label: "Safe wave" },
-      { id: "execution-intelligence", label: "Execution intelligence" },
-      { id: "timeline", label: "Timeline" },
-      { id: "trust-failure", label: "Trust and failure" },
-      { id: "apply-state", label: "Apply state" },
-      { id: "provider-attempts", label: "Provider attempts" },
-      { id: "verification-evidence", label: "Verification evidence" },
-      { id: "review-findings", label: "Review findings" },
-      { id: "recovery-decisions", label: "Recovery decisions" },
-      { id: "drift", label: "Drift" }
-    ]
+    sections: detailSectionsFor(operatorDecision)
   };
+}
+
+function outcomeStripFromDecision(response: RealRunDetailResponse): RunDetailModel["outcome_strip"] {
+  const decision = response.operator_decision ?? null;
+  const fallbackSummary = response.timeline.at(-1)?.summary ?? response.last_event_type ?? response.status;
+
+  return {
+    display_status: decision?.status_summary.display_status ?? response.status,
+    primary_blocker: decision?.primary_blocker?.code ?? null,
+    next_action: decision?.allowed_actions[0]?.id
+      ?? response.operational_maturity?.next_action
+      ?? response.execution_explanation?.recommended_next_actions[0]
+      ?? null,
+    apply_status: decision?.status_summary.apply_status ?? response.apply_status,
+    confidence: decision?.confidence ?? "unknown",
+    summary: decision?.status_summary.summary ?? fallbackSummary
+  };
+}
+
+function operatorTimelineFromResponse(response: RealRunDetailResponse): OperatorTimelineRow[] {
+  return response.timeline.map((item) => ({
+    id: `timeline_${response.run_id}_${item.sequence}`,
+    sequence: item.sequence,
+    timestamp: null,
+    actor: item.phase || item.event_type.split(".")[0] || "unknown",
+    row_type: operatorTimelineRowType(item.event_type),
+    title: item.summary || item.event_type,
+    outcome: operatorTimelineOutcome(item.outcome),
+    severity: operatorTimelineSeverity(item.outcome),
+    task_id: null,
+    evidence_refs: [],
+    metadata: {
+      phase: item.phase,
+      event_type: item.event_type,
+      summary: item.summary
+    }
+  }));
+}
+
+function operatorTimelineRowType(eventType: string): OperatorTimelineRow["row_type"] {
+  if (eventType.includes("safe_wave")) return "safe_wave";
+  if (eventType.includes("task_packet")) return "task_packet";
+  if (eventType.includes("provider")) return "provider_attempt";
+  if (eventType.includes("worker_result")) return "worker_result";
+  if (eventType.includes("verification")) return "verification_result";
+  if (eventType.includes("checkpoint") || eventType.includes("dry_run")) return "checkpoint";
+  if (eventType.includes("review")) return "review_finding";
+  if (eventType.includes("recovery") || eventType.includes("decision_packet")) return "recovery_decision";
+  if (eventType.includes("apply")) return "apply_readiness";
+  if (eventType.includes("artifact")) return "artifact_health";
+  if (eventType.includes("readiness")) return "provider_readiness";
+  return "raw_event";
+}
+
+function operatorTimelineOutcome(value: string): OperatorTimelineRow["outcome"] {
+  if (value === "success" || value === "failed" || value === "blocked" || value === "cancelled" || value === "running") return value;
+  return "unknown";
+}
+
+function operatorTimelineSeverity(value: string): OperatorTimelineRow["severity"] {
+  if (value === "failed") return "error";
+  if (value === "blocked" || value === "cancelled") return "warning";
+  return "info";
+}
+
+function rawEvidenceRefsFromDecision(decision: OperatorDecisionProjection | null): string[] {
+  if (!decision) return [];
+  return uniqueStrings([
+    ...decision.evidence_packet.state_refs,
+    ...decision.evidence_packet.event_refs
+  ]);
+}
+
+function detailSectionsFor(operatorDecision: OperatorDecisionProjection | null): RunDetailModel["sections"] {
+  const sections: RunDetailModel["sections"] = [
+    { id: "overview", label: "Overview" },
+    { id: "operational-maturity", label: "Operational maturity" },
+    { id: "safe-wave", label: "Safe wave" },
+    { id: "execution-intelligence", label: "Execution intelligence" },
+    { id: "timeline", label: "Timeline" },
+    { id: "trust-failure", label: "Trust and failure" },
+    { id: "apply-state", label: "Apply state" },
+    { id: "provider-attempts", label: "Provider attempts" },
+    { id: "verification-evidence", label: "Verification evidence" },
+    { id: "review-findings", label: "Review findings" },
+    { id: "recovery-decisions", label: "Recovery decisions" },
+    { id: "drift", label: "Drift" }
+  ];
+
+  if (!operatorDecision) return sections;
+
+  return [
+    sections[0]!,
+    { id: "operator-decision", label: "Operator decision" },
+    { id: "operator-timeline", label: "Operator timeline" },
+    { id: "ai-handoff", label: "AI handoff" },
+    { id: "raw-evidence", label: "Raw evidence" },
+    ...sections.slice(1)
+  ];
+}
+
+function compareRunsByOperatorUrgency(left: ConsoleRun, right: ConsoleRun): number {
+  const priority = operatorUrgencyPriority(left) - operatorUrgencyPriority(right);
+  if (priority !== 0) return priority;
+  return left.runId.localeCompare(right.runId);
+}
+
+function operatorUrgencyPriority(run: ConsoleRun): number {
+  if (run.status === "blocked") return 0;
+  if (run.status === "failed") return 1;
+  return 2;
 }
 
 export function realRunSummaryToConsoleRun(summary: RealRunSummaryResponse): ConsoleRun {
@@ -636,6 +760,10 @@ function stringValue(value: unknown): string {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.map(String) : [];
+}
+
+function uniqueStrings(items: string[]): string[] {
+  return Array.from(new Set(items));
 }
 
 function taskTitle(taskPackets: Array<Record<string, unknown>>, taskId: string): string {

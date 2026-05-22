@@ -308,6 +308,151 @@ export interface OperationalMaturityProjection {
   projection_errors: Array<{ projection: string; message: string }>;
 }
 
+export type OperatorDecisionConfidence = "deterministic" | "partial" | "unknown";
+export type OperatorRunStatus =
+  | "running"
+  | "recovering"
+  | "needs_input"
+  | "needs_approval"
+  | "blocked"
+  | "ready_to_apply"
+  | "done"
+  | "failed";
+
+export type OperatorBlockerSeverity = "info" | "warning" | "blocking" | "critical";
+export type OperatorActionId =
+  | "inspect_run"
+  | "explain_run"
+  | "open_raw_evidence"
+  | "open_ai_repair_handoff"
+  | "request_user_input"
+  | "approve_recovery"
+  | "resume_run"
+  | "regenerate_checkpoint"
+  | "rebase_checkpoint"
+  | "rerun_verification"
+  | "review_patch"
+  | "apply_run";
+
+export interface OperatorStatusSummary {
+  display_status: OperatorRunStatus;
+  runtime_status: WaygentRunStatusV2 | "missing" | "invalid" | "unsupported";
+  lifecycle_outcome: WaygentLifecycleOutcome;
+  current_phase: WaygentCurrentPhase | null;
+  active_tasks: number;
+  completed_tasks: number;
+  blocked_tasks: number;
+  apply_status: ApplyReadinessProjection["status"] | "unknown";
+  summary: string;
+}
+
+export interface OperatorBlocker {
+  code: string;
+  title: string;
+  summary: string;
+  severity: OperatorBlockerSeverity;
+  task_id?: string;
+  evidence_refs: string[];
+  missing_refs: string[];
+  recommended_action_ids: OperatorActionId[];
+}
+
+export interface OperatorAllowedAction {
+  id: OperatorActionId;
+  label: string;
+  reason: string;
+  evidence_refs: string[];
+  requires_approval: boolean;
+  requires_runtime_revalidation: boolean;
+  command: string | null;
+}
+
+export interface OperatorBlockedAction {
+  id: OperatorActionId;
+  label: string;
+  reason: string;
+  evidence_refs: string[];
+  unblocks_when: string;
+}
+
+export interface OperatorEvidencePacket {
+  state_refs: string[];
+  event_refs: string[];
+  artifact_refs: string[];
+  verification_refs: string[];
+  checkpoint_refs: string[];
+  projection_refs: string[];
+  missing_refs: string[];
+  redaction_notes: string[];
+}
+
+export interface OperatorAiHandoff {
+  purpose: "draft_repair_plan" | "summarize_blocker" | "compare_recovery_options";
+  prompt_summary: string;
+  run_id: string;
+  current_status: OperatorRunStatus;
+  primary_blocker: string | null;
+  secondary_blockers: string[];
+  allowed_action_ids: OperatorActionId[];
+  blocked_action_ids: OperatorActionId[];
+  constraints: string[];
+  evidence_refs: string[];
+  missing_evidence: string[];
+  raw_fallback_refs: string[];
+  safety_notes: string[];
+}
+
+export interface OperatorSourceProjectionRefs {
+  run_state_v2: string | null;
+  apply_readiness: string | null;
+  execution_explanation: string | null;
+  operational_maturity: string | null;
+}
+
+export type OperatorTimelineRowType =
+  | "safe_wave"
+  | "task_packet"
+  | "provider_attempt"
+  | "worker_result"
+  | "verification_result"
+  | "checkpoint"
+  | "review_finding"
+  | "recovery_decision"
+  | "apply_readiness"
+  | "artifact_health"
+  | "provider_readiness"
+  | "raw_event";
+
+export interface OperatorTimelineRow {
+  id: string;
+  sequence: number;
+  timestamp: string | null;
+  actor: string;
+  row_type: OperatorTimelineRowType;
+  title: string;
+  outcome: EventOutcome | "unknown";
+  severity: EventSeverity;
+  task_id: string | null;
+  evidence_refs: string[];
+  metadata: Record<string, unknown>;
+}
+
+export interface OperatorDecisionProjection {
+  schema: "waygent.operator_decision.v1";
+  run_id: string;
+  generated_at: string;
+  status_summary: OperatorStatusSummary;
+  primary_blocker: OperatorBlocker | null;
+  secondary_blockers: OperatorBlocker[];
+  allowed_actions: OperatorAllowedAction[];
+  blocked_actions: OperatorBlockedAction[];
+  evidence_packet: OperatorEvidencePacket;
+  ai_handoff: OperatorAiHandoff;
+  confidence: OperatorDecisionConfidence;
+  unknown_reasons: string[];
+  source_projection_refs: OperatorSourceProjectionRefs;
+}
+
 export interface WaygentWorktreeManifest {
   task_id: string;
   branch: string;
