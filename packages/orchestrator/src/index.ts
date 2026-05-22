@@ -7,6 +7,7 @@ export * from "./completionAudit";
 export * from "./costLedger";
 export * from "./decisions";
 export * from "./evidencePolicy";
+export * from "./intakeRecovery";
 export * from "./orchestrator";
 export * from "./orphanRuns";
 export * from "./planDiscovery";
