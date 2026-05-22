@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentLensEvent, ArtifactIndexEntry, WaygentRunStateV2 } from "@waygent/contracts";
 import { planWorktree } from "@waygent/kernel-client";
@@ -765,7 +765,27 @@ export async function runWaygentDemo(options: RunWaygentOptions): Promise<Waygen
 }
 
 export function defaultRunRoot(): string {
-  return join(tmpdir(), "waygent-runs");
+  switch (process.platform) {
+    case "darwin":
+      return join(homedir(), "Library", "Application Support", "waygent", "runs");
+    case "linux": {
+      const xdg = process.env.XDG_DATA_HOME;
+      return xdg && xdg.length > 0
+        ? join(xdg, "waygent", "runs")
+        : join(homedir(), ".local", "share", "waygent", "runs");
+    }
+    case "win32":
+      return join(
+        process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"),
+        "waygent",
+        "runs"
+      );
+    default:
+      process.stderr.write(
+        `WARN: unsupported platform '${process.platform}'; using tmpdir for waygent runs (volatile)\n`
+      );
+      return join(tmpdir(), "waygent-runs");
+  }
 }
 
 function budgetPolicyFromState(state: WaygentRunStateV2): BudgetPolicy {

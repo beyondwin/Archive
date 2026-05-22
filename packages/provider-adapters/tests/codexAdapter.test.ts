@@ -134,10 +134,10 @@ describe("Codex adapter normalization", () => {
     expect(result.process.stderr).toBe("stderr evidence");
   });
 
-  test("rejects unknown worker status as malformed_result", () => {
+  test("rejects truly unknown worker status as malformed_result", () => {
     const result = normalizeProcessOutput("codex", "task_demo", "candidate_demo", {
       exitCode: 0,
-      stdout: JSON.stringify({ status: "done", summary: "ambiguous", changed_files: [], evidence: {} }),
+      stdout: JSON.stringify({ status: "quantum_superposition", summary: "ambiguous", changed_files: [], evidence: {} }),
       stderr: ""
     });
 

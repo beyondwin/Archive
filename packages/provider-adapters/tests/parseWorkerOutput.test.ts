@@ -172,4 +172,43 @@ describe("parseWorkerOutput hardening", () => {
     expect(result.worker.summary).toBe("envelope unwrap");
     expect(result.worker.changed_files).toEqual(["d.ts"]);
   });
+
+  test.each([
+    ["complete", "completed"],
+    ["implemented", "completed"],
+    ["success", "completed"],
+    ["succeeded", "completed"],
+    ["done", "completed"],
+    ["ok", "completed"],
+    ["ready", "completed"],
+    ["COMPLETE", "completed"],
+    [" Implemented ", "completed"],
+    ["error", "failed"],
+    ["errored", "failed"],
+    ["failure", "failed"],
+    ["halted", "blocked"],
+    ["stopped", "blocked"],
+    ["paused", "blocked"]
+  ])("accepts %p as worker status synonym and normalizes to %p", (raw, expected) => {
+    const stdout = JSON.stringify({
+      type: "result",
+      result: JSON.stringify({
+        schema: "runway.worker_result.v1",
+        task_id: "task_demo",
+        candidate_id: "candidate_demo",
+        status: raw,
+        changed_files: ["f.ts"],
+        summary: "synonym status accepted",
+        evidence: {}
+      })
+    });
+    const result = normalizeProcessOutput("claude", "task_demo", "candidate_demo", {
+      exitCode: 0,
+      stdout,
+      stderr: "",
+      timedOut: false
+    });
+    expect(result.worker.status).toBe(expected as "completed" | "failed" | "blocked");
+    expect(result.worker.failure_class).toBeUndefined();
+  });
 });

@@ -70,8 +70,24 @@ export function normalizeProcessOutput(
 
 function normalizeWorkerStatus(status: unknown): WorkerResult["status"] {
   if (status === undefined) return "completed";
-  if (status === "success") return "completed";
-  if (status === "completed" || status === "failed" || status === "blocked") return status;
+  if (typeof status !== "string") {
+    throw new Error(`unknown worker status: ${String(status)}`);
+  }
+  const lowered = status.trim().toLowerCase();
+  if (lowered === "completed" || lowered === "failed" || lowered === "blocked") return lowered;
+  if (
+    lowered === "success" ||
+    lowered === "succeeded" ||
+    lowered === "complete" ||
+    lowered === "implemented" ||
+    lowered === "done" ||
+    lowered === "ok" ||
+    lowered === "ready"
+  ) {
+    return "completed";
+  }
+  if (lowered === "failure" || lowered === "error" || lowered === "errored") return "failed";
+  if (lowered === "halted" || lowered === "stopped" || lowered === "paused") return "blocked";
   throw new Error(`unknown worker status: ${String(status)}`);
 }
 
