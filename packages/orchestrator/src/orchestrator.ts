@@ -1,18 +1,19 @@
 import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentLensEvent, ArtifactIndexEntry, WaygentRunStateV2 } from "@waygent/contracts";
+import type { AgentLensEvent, ArtifactIndexEntry, WaygentIntakeRecovery, WaygentRunStateV2 } from "@waygent/contracts";
 import { planWorktree } from "@waygent/kernel-client";
 import { projectFailureSummary, projectTimeline, projectTrustReport } from "@waygent/lens-projectors";
 import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeArtifact, writeLatestRunId } from "@waygent/lens-store";
 import type { ProviderProcessOptions } from "@waygent/provider-adapters";
-import { buildDurableProjection } from "@waygent/runway-control";
+import { buildDurableProjection, type TaskGraph } from "@waygent/runway-control";
 import { artifactIndexEntry, mergeArtifactIndex } from "./artifactIndex";
 import { createCombinedCheckpointPatchArtifact, type CombinedCheckpointPatchResult } from "./checkpointArtifacts";
 import { buildCompletionAudit } from "./completionAudit";
 import { createEmptyCostLedger, recordProviderAttemptCost, shouldPauseForBudget, shouldWarnForBudget, type BudgetPolicy } from "./costLedger";
 import { appendDecisionFromWorker, packetDecisionSummaries, writeDecisionsProjection } from "./decisions";
 import { resolveExecutionProfile, type ExecutionProfile, type ProfileOverride, type ProviderName } from "./executionProfile";
+import { recoverWaygentPlanInput } from "./intakeRecovery";
 import { resolvePlanInput, resolveSpecInput } from "./planDiscovery";
 import { normalizeWaygentPlanInput } from "./planNormalizer";
 import { parseWaygentPlan } from "./planParser";
@@ -82,7 +83,28 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     workspace,
     ...(options.spec !== undefined ? { spec: options.spec } : {})
   });
-  const normalizedPlan = normalizeWaygentPlanInput(planInput);
+  const worktreeRoot = options.worktree_root ?? join(options.root, "worktrees");
+  const recovered = recoverWaygentPlanInput({
+    markdown: planInput.markdown,
+    path: planInput.path,
+    workspace,
+    spec_markdown: specInput.markdown,
+    spec_path: specInput.path
+  });
+  if (recovered.status === "decision_required" || recovered.status === "failed") {
+    return finalizeIntakeBlockedRun({
+      options,
+      paths,
+      runId,
+      workspace,
+      worktreeRoot,
+      planInput,
+      specInput,
+      providerProfile,
+      intakeRecovery: recovered.report
+    });
+  }
+  const normalizedPlan = recovered.normalized_plan;
   const planPreflightMode = options.plan_preflight ?? (profile.provider === "fake" ? "deterministic" : "off");
   const planPreflight = runPlanPreflight({
     workspace,
@@ -112,7 +134,6 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   const firstTask = graph.tasks.get(firstTaskId);
   if (!firstTask) throw new Error(`task ${firstTaskId} missing from graph`);
   const preflight = classifySourceCheckout(workspace, parsed.tasks.flatMap((task) => task.file_claims));
-  const worktreeRoot = options.worktree_root ?? join(options.root, "worktrees");
   const plannedWorktree = planWorktree({
     run_id: runId,
     task_id: firstTask.id,
@@ -133,6 +154,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     plan_path: planInput.path,
     spec_path: specInput.path,
     provider_profile: providerProfile,
+    ...(recovered.status === "recovered" ? { intake_recovery: recovered.report } : {}),
     decisions_register: [],
     ...(specManifest ? { spec_manifest: specManifest } : {}),
     cost_ledger: createEmptyCostLedger(),
@@ -467,6 +489,93 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
 
 function hasExistingRunEvidence(paths: ReturnType<typeof runPaths>): boolean {
   return existsSync(paths.root) || existsSync(join(paths.root, "state.json")) || existsSync(paths.events);
+}
+
+interface FinalizeIntakeBlockedRunInput {
+  options: RunWaygentOptions;
+  paths: ReturnType<typeof runPaths>;
+  runId: string;
+  workspace: string;
+  worktreeRoot: string;
+  planInput: { markdown: string; path: string | null };
+  specInput: { markdown: string; path: string | null };
+  providerProfile: Record<string, unknown>;
+  intakeRecovery: WaygentIntakeRecovery;
+}
+
+function finalizeIntakeBlockedRun(input: FinalizeIntakeBlockedRunInput): WaygentRunResult {
+  const { options, paths, runId, workspace, worktreeRoot, planInput, specInput, providerProfile, intakeRecovery } = input;
+  const startedAt = new Date().toISOString();
+  writeArtifact(
+    paths.root,
+    "intake/recovery-report.json",
+    `${JSON.stringify(intakeRecovery, null, 2)}\n`,
+    "application/json"
+  );
+  const initialState: WaygentRunStateV2 = {
+    schema: "waygent.run_state.v2",
+    run_id: runId,
+    workspace,
+    source_branch: null,
+    worktree_root: worktreeRoot,
+    run_root: paths.root,
+    artifact_root: paths.artifacts,
+    state_path: join(paths.root, "state.json"),
+    event_journal_path: paths.events,
+    plan_path: planInput.path,
+    spec_path: specInput.path,
+    provider_profile: providerProfile,
+    intake_recovery: intakeRecovery,
+    decisions_register: [],
+    cost_ledger: createEmptyCostLedger(),
+    budget_cap_usd: options.budget_cap_usd ?? null,
+    budget_action: options.budget_action ?? "off",
+    method_evidence_required: options.require_method_evidence ?? false,
+    hook_config: options.hook_config ?? "builtin",
+    status: "blocked",
+    lifecycle_outcome: "blocked",
+    current_phase: "preflight",
+    worktrees: [],
+    artifact_index: [],
+    tasks: {},
+    safe_waves: [],
+    provider_attempts: [],
+    reviews: [],
+    verification: [],
+    recovery: [],
+    apply: { status: "blocked", reason: "intake_decision_required" },
+    context: { snapshot_path: null, basis_hash: null },
+    drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
+    completion_audit: null,
+    timestamps: { started_at: startedAt, updated_at: startedAt, completed_at: startedAt }
+  };
+  const context = createRunExecutionContext({ root: options.root, state: initialState, next_sequence: 1 });
+  context.flushState();
+  context.appendEvent((sequence) => buildRunEvent({
+    run_id: runId,
+    sequence,
+    event_type: "platform.run_started",
+    phase: "platform",
+    outcome: "running",
+    summary: "Run opened.",
+    payload: {
+      plan: planInput.path ?? options.plan,
+      spec: specInput.path ?? options.spec,
+      profile: providerProfile
+    }
+  }));
+  context.appendEvent((sequence) => buildRunEvent({
+    run_id: runId,
+    sequence,
+    event_type: "platform.intake_decision_required",
+    phase: "intake",
+    outcome: "blocked",
+    summary: intakeRecovery.question ?? "Intake recovery requires a user decision before execution.",
+    payload: { intake_recovery: intakeRecovery },
+    trust_impact: "requires_review"
+  }));
+  const emptyProjection = buildDurableProjection({ tasks: new Map() } as TaskGraph);
+  return finalizeRun(options.root, paths, runId, emptyProjection, context.nextSequence());
 }
 
 function resolveRunIdAndPaths(options: RunWaygentOptions): { runId: string; paths: ReturnType<typeof runPaths> } {

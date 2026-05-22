@@ -89,7 +89,7 @@ export function normalizeWaygentPlanInput(input: NormalizeWaygentPlanInput): Nor
 
   const catalog = input.workspace ? buildProjectScriptCatalog(input.workspace) : null;
   const unsafeVerification = input.unsafe_verification === true;
-  const useInferredRisk = input.infer_risk === true || catalog !== null;
+  const useInferredRisk = input.infer_risk === true;
   const errors: string[] = [];
   const diagnostics: string[] = [];
   const tasks: NormalizedTaskInput[] = [];

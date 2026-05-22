@@ -29,7 +29,8 @@ describe("planNormalizer fixture-lab integration", () => {
     const normalized = normalizeWaygentPlanInput({
       markdown: planMarkdown,
       path: "/tmp/fixture_lab_plan.md",
-      workspace
+      workspace,
+      infer_risk: true
     });
 
     expect(normalized.mode).toBe("superpowers");
@@ -51,7 +52,8 @@ describe("planNormalizer fixture-lab integration", () => {
     const normalized = normalizeWaygentPlanInput({
       markdown: planMarkdown,
       path: "/tmp/fixture_lab_plan.md",
-      workspace
+      workspace,
+      infer_risk: true
     });
 
     const trivialWarning = normalized.diagnostics.find(
