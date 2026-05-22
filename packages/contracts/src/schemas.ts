@@ -215,6 +215,60 @@ const specManifestSchema = {
   }
 } as const;
 
+const intakeFindingSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["code", "severity", "message", "task_id", "evidence_refs"],
+  properties: {
+    code: { type: "string", minLength: 1 },
+    severity: { enum: ["info", "warning", "blocking"] },
+    message: { type: "string", minLength: 1 },
+    task_id: { type: "string", nullable: true },
+    evidence_refs: { type: "array", items: { type: "string", minLength: 1 } }
+  }
+} as const;
+
+const intakeRepairActionSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["action", "status", "reason", "evidence_refs"],
+  properties: {
+    action: { type: "string", minLength: 1 },
+    status: { enum: ["applied", "blocked", "skipped"] },
+    reason: { type: "string", minLength: 1 },
+    evidence_refs: { type: "array", items: { type: "string", minLength: 1 } }
+  }
+} as const;
+
+const intakeRecoverySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "status",
+    "started_at",
+    "completed_at",
+    "normalized_plan_ref",
+    "recovery_report_ref",
+    "findings",
+    "repair_actions",
+    "can_start",
+    "confidence",
+    "question"
+  ],
+  properties: {
+    status: { enum: ["not_needed", "recovered", "decision_required", "failed"] },
+    started_at: { type: "string", pattern: isoTimestamp },
+    completed_at: { type: "string", pattern: isoTimestamp },
+    normalized_plan_ref: { type: "string", nullable: true },
+    recovery_report_ref: { type: "string", nullable: true },
+    findings: { type: "array", items: intakeFindingSchema },
+    repair_actions: { type: "array", items: intakeRepairActionSchema },
+    can_start: { type: "boolean" },
+    confidence: { enum: ["deterministic", "ai_assisted", "blocked"] },
+    question: { type: "string", nullable: true }
+  }
+} as const;
+
 const costLedgerBucketSchema = {
   type: "object",
   additionalProperties: false,
@@ -912,6 +966,7 @@ export const waygentRunStateV2Schema = {
     plan_path: { type: "string", nullable: true },
     spec_path: { type: "string", nullable: true },
     provider_profile: { type: "object", additionalProperties: true },
+    intake_recovery: intakeRecoverySchema,
     decisions_register: { type: "array", items: decisionEntrySchema },
     spec_manifest: specManifestSchema,
     cost_ledger: costLedgerSchema,
@@ -1182,6 +1237,20 @@ export const operatorDecisionProjectionSchema = {
     },
     confidence: { enum: ["deterministic", "partial", "unknown"] },
     unknown_reasons: { type: "array", items: { type: "string", minLength: 1 } },
+    intake_recovery: {
+      type: "object",
+      additionalProperties: false,
+      nullable: true,
+      required: ["status", "can_start", "confidence", "finding_codes", "artifact_refs", "question"],
+      properties: {
+        status: { enum: ["not_needed", "recovered", "decision_required", "failed"] },
+        can_start: { type: "boolean" },
+        confidence: { enum: ["deterministic", "ai_assisted", "blocked"] },
+        finding_codes: { type: "array", items: { type: "string", minLength: 1 } },
+        artifact_refs: { type: "array", items: { type: "string", minLength: 1 } },
+        question: { type: "string", nullable: true }
+      }
+    },
     source_projection_refs: {
       type: "object",
       additionalProperties: false,
