@@ -2221,3 +2221,174 @@ Use this for human or agent execution; one box per file group.
 
 When every box is ticked: the remediation is complete; D-01..D-11 are
 closed.
+
+---
+
+## §W — Waygent Execution Manifest
+
+The following `yaml waygent-task` blocks declare each §Tx as an executable
+Waygent task. They reference the explicit file list in §F2 (Source Tree Map)
+and the explicit test paths named in each §Tx subsection. Shared-file tasks
+are chained sequentially via `dependencies` so worker patches do not collide.
+
+```yaml waygent-task
+id: task_1
+title: Parser Hardening and Recovery (D-09, D-10)
+dependencies: []
+file_claims:
+  - path: packages/provider-adapters/src/processAdapters.ts
+    mode: owned
+  - path: packages/orchestrator/src/recoveryExecutor.ts
+    mode: owned
+  - path: packages/orchestrator/src/taskExecutor.ts
+    mode: owned
+  - path: packages/contracts/src/events.ts
+    mode: owned
+  - path: packages/provider-adapters/tests/parseWorkerOutput.test.ts
+    mode: owned
+  - path: packages/orchestrator/tests/recoveryExecutor.test.ts
+    mode: owned
+  - path: packages/provider-adapters/tests/fixtures/claude_task_3_narrative_then_json.stdout.txt
+    mode: owned
+  - path: packages/provider-adapters/tests/fixtures/synthetic_minimal.stdout.txt
+    mode: owned
+risk: medium
+verify:
+  - bun test packages/provider-adapters/tests/parseWorkerOutput.test.ts
+  - bun test packages/orchestrator/tests/recoveryExecutor.test.ts
+```
+
+```yaml waygent-task
+id: task_2
+title: Plan Body Propagation (D-06)
+dependencies: [task_1]
+file_claims:
+  - path: packages/orchestrator/src/planAdapters/instructionsExtract.ts
+    mode: owned
+  - path: packages/orchestrator/src/planParser.ts
+    mode: owned
+  - path: packages/context-packer/src/taskPacket.ts
+    mode: owned
+  - path: packages/contracts/src/types.ts
+    mode: owned
+  - path: packages/orchestrator/tests/planParser.deps.test.ts
+    mode: owned
+  - path: packages/orchestrator/tests/planParser.bodyPropagation.test.ts
+    mode: owned
+  - path: packages/context-packer/tests/taskPacket.planExcerpt.test.ts
+    mode: owned
+  - path: packages/context-packer/tests/fixtures/task_3_packet_baseline.json
+    mode: owned
+risk: medium
+verify:
+  - bun test packages/orchestrator/tests/planParser.deps.test.ts
+  - bun test packages/orchestrator/tests/planParser.bodyPropagation.test.ts
+  - bun test packages/context-packer/tests/taskPacket.planExcerpt.test.ts
+```
+
+```yaml waygent-task
+id: task_3
+title: Project Script Catalog and Risk Inference (D-01, D-07)
+dependencies: [task_2]
+file_claims:
+  - path: packages/orchestrator/src/planAdapters/projectScriptCatalog.ts
+    mode: owned
+  - path: packages/orchestrator/src/planAdapters/riskInference.ts
+    mode: owned
+  - path: packages/orchestrator/src/planAdapters/verifyQuality.ts
+    mode: owned
+  - path: packages/orchestrator/src/planNormalizer.ts
+    mode: owned
+  - path: packages/orchestrator/tests/projectScriptCatalog.test.ts
+    mode: owned
+  - path: packages/orchestrator/tests/riskInference.test.ts
+    mode: owned
+  - path: packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts
+    mode: owned
+  - path: packages/orchestrator/tests/fixtures/fixture_lab_plan.md
+    mode: owned
+  - path: packages/orchestrator/tests/fixtures/fixture_lab_design.md
+    mode: owned
+risk: medium
+verify:
+  - bun test packages/orchestrator/tests/projectScriptCatalog.test.ts
+  - bun test packages/orchestrator/tests/riskInference.test.ts
+  - bun test packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts
+```
+
+```yaml waygent-task
+id: task_4
+title: CLI Surface (D-02, D-03, D-04)
+dependencies: [task_3]
+file_claims:
+  - path: packages/orchestrator/src/runIdDerivation.ts
+    mode: owned
+  - path: packages/orchestrator/src/orchestrator.ts
+    mode: owned
+  - path: apps/cli/src/index.ts
+    mode: owned
+  - path: apps/cli/tests/profilePreset.test.ts
+    mode: owned
+  - path: apps/cli/tests/runIdAutoGen.test.ts
+    mode: owned
+  - path: apps/cli/tests/collisionRetry.test.ts
+    mode: owned
+  - path: packages/orchestrator/tests/runIdDerivation.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun test packages/orchestrator/tests/runIdDerivation.test.ts
+  - bun test apps/cli/tests/profilePreset.test.ts
+  - bun test apps/cli/tests/runIdAutoGen.test.ts
+  - bun test apps/cli/tests/collisionRetry.test.ts
+```
+
+```yaml waygent-task
+id: task_5
+title: Cost Ledger Envelope Extraction (D-08)
+dependencies: [task_4]
+file_claims:
+  - path: packages/provider-adapters/src/processAdapters.ts
+    mode: owned
+  - path: apps/cli/src/index.ts
+    mode: owned
+  - path: packages/provider-adapters/tests/usageExtraction.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun test packages/provider-adapters/tests/usageExtraction.test.ts
+```
+
+```yaml waygent-task
+id: task_6
+title: Worker Sandbox allowed_exec_commands (D-11)
+dependencies: [task_5]
+file_claims:
+  - path: packages/context-packer/src/taskPacket.ts
+    mode: owned
+  - path: packages/contracts/src/types.ts
+    mode: owned
+  - path: packages/context-packer/tests/taskPacket.execAllowlist.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun test packages/context-packer/tests/taskPacket.execAllowlist.test.ts
+```
+
+```yaml waygent-task
+id: task_7
+title: Persistent State Root (D-05)
+dependencies: [task_6]
+file_claims:
+  - path: packages/orchestrator/src/orphanRuns.ts
+    mode: owned
+  - path: packages/orchestrator/src/orchestrator.ts
+    mode: owned
+  - path: docs/operations/state-root-migration.md
+    mode: owned
+  - path: packages/orchestrator/tests/defaultRunRoot.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun test packages/orchestrator/tests/defaultRunRoot.test.ts
+```

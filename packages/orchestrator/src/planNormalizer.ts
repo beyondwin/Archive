@@ -2,10 +2,21 @@ import type { RiskLevel } from "@waygent/contracts";
 import type { FileClaim, FileClaimMode } from "@waygent/runway-control";
 import { hasWaygentTaskBlock } from "./planParser";
 import { scaffoldWaygentTask } from "./planScaffold";
+import { extractInstructionLines } from "./planAdapters/instructionsExtract";
+import {
+  buildProjectScriptCatalog,
+  isCommandInCatalog,
+  type ProjectScriptCatalog
+} from "./planAdapters/projectScriptCatalog";
+import { inferRiskLevel } from "./planAdapters/riskInference";
+import { detectVerifyTheater } from "./planAdapters/verifyQuality";
 
 export interface NormalizeWaygentPlanInput {
   markdown: string;
   path: string | null;
+  workspace?: string;
+  unsafe_verification?: boolean;
+  infer_risk?: boolean;
 }
 
 export interface NormalizedWaygentPlan {
@@ -76,28 +87,57 @@ export function normalizeWaygentPlanInput(input: NormalizeWaygentPlanInput): Nor
     };
   }
 
+  const catalog = input.workspace ? buildProjectScriptCatalog(input.workspace) : null;
+  const unsafeVerification = input.unsafe_verification === true;
+  const useInferredRisk = input.infer_risk === true || catalog !== null;
   const errors: string[] = [];
+  const diagnostics: string[] = [];
   const tasks: NormalizedTaskInput[] = [];
+
   for (const section of sections) {
     const fileClaims = extractFileClaims(section.body);
-    const verify = extractVerificationCommands(section.body);
+    const verify = extractVerificationCommands(section.body, catalog);
     if (fileClaims.length === 0) {
-      errors.push(`Task ${section.number} "${section.title}" is missing explicit file claims`);
+      const message = `Task ${section.number} "${section.title}" is missing explicit file claims`;
+      (unsafeVerification ? diagnostics : errors).push(message);
     }
     if (verify.length === 0) {
-      errors.push(`Task ${section.number} "${section.title}" is missing safe verification commands`);
+      const message = `Task ${section.number} "${section.title}" is missing safe verification commands`;
+      (unsafeVerification ? diagnostics : errors).push(message);
     }
+
+    const risk: RiskLevel = useInferredRisk
+      ? inferRiskLevel({
+          title: section.title,
+          body: section.body,
+          file_claims: fileClaims
+        }).risk
+      : "high";
+
+    const theater = detectVerifyTheater({ verify, file_claims: fileClaims });
+    if (theater.is_theater) {
+      diagnostics.push(
+        `Task ${section.number} "${section.title}" verification quality warning: ${theater.reasons.join("; ")}`
+      );
+    }
+
     tasks.push({
       id: `task_${section.number}_${slugify(section.title)}`,
       title: section.title,
       dependencies: tasks.length > 0 ? [tasks[tasks.length - 1]!.id] : [],
       file_claims: fileClaims,
-      risk: "high",
+      risk,
       verify,
       instructions: extractInstructionLines(section.body)
     });
   }
-  errors.push(...verificationClaimCoverageErrors(tasks));
+
+  const coverageErrors = verificationClaimCoverageErrors(tasks);
+  if (unsafeVerification) {
+    diagnostics.push(...coverageErrors);
+  } else {
+    errors.push(...coverageErrors);
+  }
 
   if (errors.length > 0) {
     throw new Error([
@@ -105,6 +145,21 @@ export function normalizeWaygentPlanInput(input: NormalizeWaygentPlanInput): Nor
       ...errors.map((error) => `- ${error}`),
       "Add one or more fenced ```yaml waygent-task blocks, or run waygent scaffold-plan with explicit file claims, risk, and verification commands."
     ].join("\n"));
+  }
+
+  if (useInferredRisk) {
+    const riskCounts = countRisks(tasks);
+    diagnostics.unshift(
+      `risk inferred for ${tasks.length} normalized tasks (low=${riskCounts.low}, medium=${riskCounts.medium}, high=${riskCounts.high})`
+    );
+  } else {
+    diagnostics.unshift(`risk defaulted to high for ${tasks.length} normalized tasks`);
+  }
+  if (catalog) {
+    diagnostics.push(`project script catalog applied (${catalog.commands.size} commands)`);
+  }
+  if (unsafeVerification) {
+    diagnostics.push("unsafe_verification: strict claim/verification checks downgraded to warnings");
   }
 
   return {
@@ -118,7 +173,7 @@ export function normalizeWaygentPlanInput(input: NormalizeWaygentPlanInput): Nor
     path: input.path,
     mode: "superpowers",
     task_count: tasks.length,
-    diagnostics: [`risk defaulted to high for ${tasks.length} normalized tasks`]
+    diagnostics
   };
 }
 
@@ -126,14 +181,19 @@ export function isNormalizableSuperpowersPlan(markdown: string): boolean {
   if (hasWaygentTaskBlock(markdown)) return true;
   const sections = extractSuperpowersTaskSections(markdown);
   if (sections.length === 0) return false;
-  return sections.some((section) => extractFileClaims(section.body).length > 0 && extractVerificationCommands(section.body).length > 0);
+  return sections.some(
+    (section) =>
+      extractFileClaims(section.body).length > 0 &&
+      extractVerificationCommands(section.body, null).length > 0
+  );
 }
 
 function extractSuperpowersTaskSections(markdown: string): SuperpowersTaskSection[] {
   const headings = [...markdown.matchAll(TASK_HEADING)];
   return headings.map((match, index) => {
     const start = match.index ?? 0;
-    const end = index + 1 < headings.length ? headings[index + 1]!.index ?? markdown.length : markdown.length;
+    const end =
+      index + 1 < headings.length ? headings[index + 1]!.index ?? markdown.length : markdown.length;
     return {
       number: Number(match[1]),
       title: (match[2] ?? "").trim(),
@@ -171,30 +231,26 @@ function dedupeClaims(claims: FileClaim[]): FileClaim[] {
   return [...byPath.values()];
 }
 
-function extractVerificationCommands(section: string): string[] {
+function extractVerificationCommands(
+  section: string,
+  catalog: ProjectScriptCatalog | null
+): string[] {
   const commands: string[] = [];
   for (const match of section.matchAll(RUN_BLOCK)) {
-    commands.push(...logicalCommandLines(match[1] ?? "").filter(isSafeVerificationCommand));
+    commands.push(
+      ...logicalCommandLines(match[1] ?? "").filter((cmd) =>
+        isSafeVerificationCommand(cmd, catalog)
+      )
+    );
   }
   return [...new Set(commands)];
 }
 
-function extractInstructionLines(section: string): string[] {
-  const normalized = section.replace(RUN_BLOCK, (_block, rawCommands: string) => {
-    const implementationCommands = logicalCommandLines(rawCommands).filter(isProviderInstructionCommand);
-    if (implementationCommands.length === 0) return "";
-    return ["Run:", "```bash", ...implementationCommands, "```"].join("\n");
-  });
-  return normalized
-    .split(/\r?\n/)
-    .map((line) => line.trimEnd())
-    .filter((line) => line.trim().length > 0)
-    .slice(0, 160);
-}
-
 function isProviderInstructionCommand(command: string): boolean {
   const normalized = command.replace(/\s+/g, " ").trim();
-  return !/^git\s+(add|commit|push|reset|checkout|merge|rebase|stash|clean|worktree)\b/.test(normalized);
+  return !/^git\s+(add|commit|push|reset|checkout|merge|rebase|stash|clean|worktree)\b/.test(
+    normalized
+  );
 }
 
 function logicalCommandLines(raw: string): string[] {
@@ -214,13 +270,20 @@ function logicalCommandLines(raw: string): string[] {
   return commands;
 }
 
-function isSafeVerificationCommand(command: string): boolean {
+function isSafeVerificationCommand(
+  command: string,
+  catalog: ProjectScriptCatalog | null
+): boolean {
   const normalized = command.replace(/\s+/g, " ").trim();
   if (!normalized) return false;
   const parts = normalized.split(/\s+&&\s+/);
   return parts.every((part, index) => {
     if (index === 0 && part.startsWith("cd ")) return true;
-    return SAFE_COMMAND_STARTS.some((prefix) => part === prefix.trim() || part.startsWith(prefix));
+    if (SAFE_COMMAND_STARTS.some((prefix) => part === prefix.trim() || part.startsWith(prefix))) {
+      return true;
+    }
+    if (catalog && isCommandInCatalog(part, catalog)) return true;
+    return false;
   });
 }
 
@@ -231,7 +294,9 @@ function verificationClaimCoverageErrors(tasks: NormalizedTaskInput[]): string[]
     for (const command of task.verify) {
       for (const path of explicitVerificationPaths(command)) {
         if (!allClaims.some((claim) => claimCoversPath(claim.path, path))) {
-          errors.push(`Task ${task.id.replace(/^task_(\d+)_.*$/, "$1")} "${task.title}" verification command references unclaimed path ${path}`);
+          errors.push(
+            `Task ${task.id.replace(/^task_(\d+)_.*$/, "$1")} "${task.title}" verification command references unclaimed path ${path}`
+          );
         }
       }
     }
@@ -288,3 +353,12 @@ function slugify(title: string): string {
     .replace(/^_+|_+$/g, "");
   return slug || "task";
 }
+
+function countRisks(tasks: ReadonlyArray<{ risk: RiskLevel }>): Record<RiskLevel, number> {
+  const counts: Record<RiskLevel, number> = { low: 0, medium: 0, high: 0 };
+  for (const task of tasks) counts[task.risk] += 1;
+  return counts;
+}
+
+// Re-export instruction extractor for compatibility with any direct consumers.
+export { extractInstructionLines };

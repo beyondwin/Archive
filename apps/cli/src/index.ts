@@ -52,7 +52,7 @@ export function parseCli(argv: string[]): ParsedCli {
 
 const usage = "waygent run|run-chain|status|events|inspect|explain|resume|verify|apply|decisions|cost|watch|orphans|scaffold-plan";
 const commandUsage: Record<string, string> = {
-  run: "waygent run --plan <waygent-task.md> [--spec <design.md>] [--provider codex|claude|fake] [--execution-mode multi-agent|single-agent] [--plan-preflight off|deterministic|full]",
+  run: "waygent run --plan <waygent-task.md> [--spec <design.md>] [--run <id>] [--provider codex|claude|fake] [--execution-mode multi-agent|single-agent] [--profile max-quality|balanced|cost-saver] [--main-model <name>] [--main-reasoning medium|high|xhigh] [--subagent-model <name>] [--subagent-reasoning medium|high|xhigh] [--plan-preflight off|deterministic|full]",
   "run-chain": "waygent run-chain --plan <p1> [--spec <s1>] --plan <p2> [--spec <s2>]",
   demo: "waygent demo [--provider fake]",
   status: "waygent status --run <run_id>|--last",
@@ -69,6 +69,25 @@ const commandUsage: Record<string, string> = {
   "scaffold-plan": "waygent scaffold-plan --id <task_id> --title <title> --claim <path:mode> --risk <low|medium|high> --verify <command>"
 };
 
+export type ProfilePreset = "max-quality" | "balanced" | "cost-saver";
+
+interface ProfilePresetSpec {
+  main_model: string;
+  main_reasoning: "medium" | "high" | "xhigh";
+  subagent_model: string;
+  subagent_reasoning: "medium" | "high" | "xhigh";
+}
+
+export const PROFILE_PRESETS: Record<ProfilePreset, ProfilePresetSpec> = {
+  "max-quality": { main_model: "opus", main_reasoning: "high", subagent_model: "opus", subagent_reasoning: "high" },
+  "balanced": { main_model: "opus", main_reasoning: "high", subagent_model: "sonnet", subagent_reasoning: "medium" },
+  "cost-saver": { main_model: "haiku", main_reasoning: "medium", subagent_model: "sonnet", subagent_reasoning: "medium" }
+};
+
+function isProfilePreset(value: unknown): value is ProfilePreset {
+  return value === "max-quality" || value === "balanced" || value === "cost-saver";
+}
+
 export function resolveCliProfile(parsed: ParsedCli): NonNullable<Parameters<typeof runWaygentDemo>[0]["profile"]> {
   const defaultProvider = parsed.command === "demo" ? "fake" : "codex";
   if (parsed.command === "demo" && parsed.flags.provider && parsed.flags.provider !== "fake") {
@@ -78,6 +97,15 @@ export function resolveCliProfile(parsed: ParsedCli): NonNullable<Parameters<typ
     provider: parsed.flags.provider === "claude" ? "claude" : parsed.flags.provider === "fake" ? "fake" : parsed.flags.provider === "codex" ? "codex" : defaultProvider,
     execution_mode: parsed.flags["execution-mode"] === "single-agent" ? "single-agent" : "multi-agent"
   };
+  if (isProfilePreset(parsed.flags.profile)) {
+    const preset = PROFILE_PRESETS[parsed.flags.profile];
+    profile.main_model = preset.main_model;
+    profile.main_reasoning = preset.main_reasoning;
+    profile.subagent_model = preset.subagent_model;
+    profile.subagent_reasoning = preset.subagent_reasoning;
+  } else if (parsed.flags.profile !== undefined) {
+    throw new Error(`unknown --profile preset '${String(parsed.flags.profile)}'; expected one of: max-quality, balanced, cost-saver`);
+  }
   if (typeof parsed.flags["main-model"] === "string") profile.main_model = parsed.flags["main-model"];
   if (isReasoning(parsed.flags["main-reasoning"])) profile.main_reasoning = parsed.flags["main-reasoning"];
   if (typeof parsed.flags["subagent-model"] === "string") profile.subagent_model = parsed.flags["subagent-model"];
@@ -143,6 +171,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     if (parsed.flags["budget-action"] === "warn" || parsed.flags["budget-action"] === "pause" || parsed.flags["budget-action"] === "off") options.budget_action = parsed.flags["budget-action"];
     if (typeof parsed.flags["hook-config"] === "string") options.hook_config = parsed.flags["hook-config"];
     if (parsed.flags["require-evidence"] || parsed.flags["require-method-evidence"]) options.require_method_evidence = true;
+    if (parsed.flags["require-cost-data"]) (options as RunCommandOptions & { require_cost_data?: boolean }).require_cost_data = true;
     if (parsed.flags.latest) options.latest = true;
     if (typeof parsed.flags.topic === "string") options.topic = parsed.flags.topic;
     if (parsed.command === "run") {

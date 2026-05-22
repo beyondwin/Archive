@@ -1,0 +1,37 @@
+{
+  "schema": "waygent.task_packet.v1",
+  "run_id": "trustworthy_fixture_lab_wg_20260522_200031",
+  "task_id": "task_3",
+  "role": "implement",
+  "task_title": "Project Script Catalog + Risk Inference",
+  "plan_excerpt": "Project Script Catalog + Risk Inference\n\nStep 1: catalog project scripts. Step 2: infer risk.",
+  "plan_body_truncated": false,
+  "spec_excerpt": "",
+  "file_claims": [
+    {
+      "path": "packages/orchestrator/src/planAdapters/projectScriptCatalog.ts",
+      "mode": "owned"
+    }
+  ],
+  "allowed_write_globs": [
+    "packages/orchestrator/src/planAdapters/projectScriptCatalog.ts"
+  ],
+  "forbidden_write_globs": [
+    ".git/**",
+    "node_modules/**",
+    "native/kernel/target/**"
+  ],
+  "dependencies": ["task_2"],
+  "checkpoint_inputs": [],
+  "acceptance_commands": [],
+  "verification_commands": [],
+  "risk": "medium",
+  "previous_failures": [],
+  "decisions": [],
+  "context_budget": {
+    "estimated_chars": 0,
+    "max_chars": 60000,
+    "status": "green"
+  },
+  "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+}

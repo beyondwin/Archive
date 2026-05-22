@@ -83,6 +83,7 @@ export interface WaygentTaskPacket {
   role: ProviderRole;
   task_title: string;
   plan_excerpt: string;
+  plan_body_truncated?: boolean;
   spec_excerpt: string;
   file_claims: WaygentFileClaim[];
   allowed_write_globs: string[];
@@ -91,6 +92,7 @@ export interface WaygentTaskPacket {
   checkpoint_inputs: string[];
   acceptance_commands: string[];
   verification_commands: string[];
+  allowed_exec_commands?: string[] | null;
   risk: RiskLevel;
   previous_failures: Array<{ failure_class: FailureClass; evidence_refs: string[]; summary: string }>;
   decisions: Array<{ decision_id: string; summary: string }>;

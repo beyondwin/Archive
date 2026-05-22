@@ -20,6 +20,7 @@ import { runPlanPreflight, type PlanPreflightMode } from "./planPreflight";
 import { buildRunEvent } from "./runEvents";
 import { createRunExecutionContext, type RunExecutionContext } from "./runExecutionContext";
 import { classifySourceCheckout } from "./sourceCheckout";
+import { deriveRunId, RUN_ID_COLLISION_MAX_RETRIES } from "./runIdDerivation";
 import { reconcileRunState } from "./stateReconciliation";
 import { buildTaskGraphFromPlan } from "./taskGraph";
 import { executeBoundedSafeWave, resolveWaveConcurrency } from "./safeWaveExecutor";
@@ -72,11 +73,7 @@ verify:
 `;
 
 export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRunResult> {
-  const runId = options.run_id ?? "run_demo";
-  const paths = runPaths(options.root, runId);
-  if (hasExistingRunEvidence(paths)) {
-    throw new Error("run_id_already_exists");
-  }
+  const { runId, paths } = resolveRunIdAndPaths(options);
   const workspace = options.workspace ?? process.cwd();
   const profile = resolveExecutionProfile(options.profile, { provider: "fake" });
   const providerProfile = providerProfileRecord(profile);
@@ -470,6 +467,26 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
 
 function hasExistingRunEvidence(paths: ReturnType<typeof runPaths>): boolean {
   return existsSync(paths.root) || existsSync(join(paths.root, "state.json")) || existsSync(paths.events);
+}
+
+function resolveRunIdAndPaths(options: RunWaygentOptions): { runId: string; paths: ReturnType<typeof runPaths> } {
+  if (options.run_id !== undefined) {
+    const paths = runPaths(options.root, options.run_id);
+    if (hasExistingRunEvidence(paths)) {
+      throw new Error("run_id_already_exists");
+    }
+    return { runId: options.run_id, paths };
+  }
+  const planPath = options.plan_path ?? null;
+  const now = new Date();
+  for (let suffix = 0; suffix <= RUN_ID_COLLISION_MAX_RETRIES; suffix += 1) {
+    const candidate = deriveRunId({ plan_path: planPath, now, suffix });
+    const paths = runPaths(options.root, candidate);
+    if (!hasExistingRunEvidence(paths)) {
+      return { runId: candidate, paths };
+    }
+  }
+  throw new Error("run_id_collision_unresolved");
 }
 
 function finalizeRun(

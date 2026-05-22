@@ -48,9 +48,10 @@ export function normalizeProcessOutput(
     return withProcessEvidence(failed(task_id, candidate_id, "adapter_crashed", `${provider} exited ${output.exitCode}`), output);
   }
   try {
-    const parsed = parseWorkerOutput(output.stdout) as Partial<WorkerResult>;
+    const { unwrapped, envelope } = parseWorkerOutput(output.stdout);
+    const parsed = unwrapped as Partial<WorkerResult>;
     const failure_class = normalizeFailureClass(parsed.failure_class);
-    const metadata = metadataFromParsed(provider, parsed);
+    const metadata = metadataFromParsed(provider, parsed, envelope);
     const worker = validateContract<WorkerResult>("runway.worker_result.v1", {
       schema: "runway.worker_result.v1",
       task_id,
@@ -231,7 +232,7 @@ export function buildProviderPrompt(provider: "codex" | "claude", request: Adapt
   ].join("\n");
 }
 
-function parseWorkerOutput(stdout: string): unknown {
+function parseWorkerOutput(stdout: string): { unwrapped: unknown; envelope: unknown | null } {
   const trimmed = stdout.trim();
   const candidates = [
     trimmed,
@@ -245,7 +246,10 @@ function parseWorkerOutput(stdout: string): unknown {
     const parsed = parseJsonText(candidate);
     if (!parsed) continue;
     const unwrapped = unwrapProviderEnvelope(parsed);
-    if (isWorkerResultCandidate(unwrapped)) return unwrapped;
+    if (isWorkerResultCandidate(unwrapped)) {
+      const envelope = unwrapped !== parsed && parsed && typeof parsed === "object" ? parsed : null;
+      return { unwrapped, envelope };
+    }
   }
   throw new Error("missing worker result JSON");
 }
@@ -284,19 +288,96 @@ function isWorkerResultCandidate(value: unknown): value is Partial<WorkerResult>
 
 function parseJsonText(value: string): unknown | null {
   const trimmed = value.trim();
+
+  // 1. Direct JSON. If it parses to a worker_result-shaped object, prefer it.
   const direct = tryParseJson(trimmed);
+  if (direct && isWorkerResultCandidate(direct)) return direct;
+
+  // 2. Enumerate every fenced block; prefer `json` label, then unlabeled,
+  //    then any other language. The previous non-global regex matched the
+  //    FIRST fence in document order, which let a `bash`/`yaml` block ahead
+  //    of the real worker_result fence win and drop $3+ of real work.
+  const fences = [...trimmed.matchAll(/```(\w+)?\s*([\s\S]*?)```/g)];
+  const ordered = [
+    ...fences.filter((m) => m[1]?.toLowerCase() === "json"),
+    ...fences.filter((m) => !m[1]),
+    ...fences.filter((m) => m[1] && m[1].toLowerCase() !== "json")
+  ];
+  for (const match of ordered) {
+    const body = (match[2] ?? "").trim();
+    if (body.length === 0) continue;
+    const parsed = tryParseJson(body);
+    if (parsed && isWorkerResultCandidate(parsed)) return parsed;
+  }
+
+  // 3. Balanced-brace fallback: enumerate every string-aware balanced
+  //    {...} span and try each, largest first. Replaces the brittle
+  //    `indexOf("{") .. lastIndexOf("}")` slice which over-spanned across
+  //    unrelated code blocks.
+  for (const span of enumerateBalancedBraceSpans(trimmed)) {
+    const parsed = tryParseJson(span);
+    if (parsed && isWorkerResultCandidate(parsed)) return parsed;
+  }
+
+  // 4. Final fallback: return whatever direct parse produced (may be an
+  //    envelope which the caller will unwrap), or null.
   if (direct) return direct;
-  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (fenced?.[1]) {
-    const parsed = tryParseJson(fenced[1].trim());
+  for (const span of enumerateBalancedBraceSpans(trimmed)) {
+    const parsed = tryParseJson(span);
     if (parsed) return parsed;
   }
-  const start = trimmed.indexOf("{");
-  const end = trimmed.lastIndexOf("}");
-  if (start >= 0 && end > start) {
-    return tryParseJson(trimmed.slice(start, end + 1));
-  }
   return null;
+}
+
+function* enumerateBalancedBraceSpans(text: string): Generator<string> {
+  type Span = { start: number; end: number };
+  const spans: Span[] = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== "{") {
+      i += 1;
+      continue;
+    }
+    const start = i;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    while (i < text.length) {
+      const ch = text[i];
+      if (escaped) {
+        escaped = false;
+        i += 1;
+        continue;
+      }
+      if (inString) {
+        if (ch === "\\") {
+          escaped = true;
+        } else if (ch === '"') {
+          inString = false;
+        }
+        i += 1;
+        continue;
+      }
+      if (ch === '"') {
+        inString = true;
+        i += 1;
+        continue;
+      }
+      if (ch === "{") depth += 1;
+      else if (ch === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          spans.push({ start, end: i + 1 });
+          i += 1;
+          break;
+        }
+      }
+      i += 1;
+    }
+    if (depth > 0) break;
+  }
+  spans.sort((a, b) => b.end - b.start - (a.end - a.start));
+  for (const s of spans) yield text.slice(s.start, s.end);
 }
 
 function tryParseJson(value: string): unknown | null {
@@ -307,13 +388,54 @@ function tryParseJson(value: string): unknown | null {
   }
 }
 
-function metadataFromParsed(provider: "codex" | "claude" | "acp", parsed: Partial<WorkerResult>): ProviderRunMetadata {
+function metadataFromParsed(
+  provider: "codex" | "claude" | "acp",
+  parsed: Partial<WorkerResult>,
+  envelope: unknown | null
+): ProviderRunMetadata {
   const evidence = parsed.evidence && typeof parsed.evidence === "object" ? parsed.evidence as Record<string, unknown> : {};
-  return {
-    actual_model: actualModelFromEvidence(evidence),
-    usage: usageFromEvidence(evidence),
-    usage_source: usageSourceFromEvidence(evidence, provider)
-  };
+  const envelopeUsage = usageFromEnvelope(envelope);
+  const evidenceUsage = usageFromEvidence(evidence);
+  const usage = envelopeUsage ?? evidenceUsage ?? null;
+  const usage_source: UsageSource = envelopeUsage
+    ? "provider_json"
+    : usageSourceFromEvidence(evidence, provider);
+  const envelopeModel = modelFromEnvelope(envelope, provider);
+  const evidenceModel = actualModelFromEvidence(evidence);
+  const actual_model = evidenceModel.model ? evidenceModel : (envelopeModel ?? evidenceModel);
+  return { actual_model, usage, usage_source };
+}
+
+function usageFromEnvelope(envelope: unknown): TokenUsage | null {
+  if (!envelope || typeof envelope !== "object") return null;
+  const record = envelope as Record<string, unknown>;
+  const raw = record.usage;
+  if (!raw || typeof raw !== "object") return null;
+  const u = raw as Record<string, unknown>;
+  const input_tokens = numberField(u.input_tokens);
+  const output_tokens = numberField(u.output_tokens);
+  if (input_tokens === null || output_tokens === null) return null;
+  const cached_read_tokens =
+    numberField(u.cache_read_input_tokens) ?? numberField(u.cached_read_tokens) ?? 0;
+  const cached_write_tokens =
+    numberField(u.cache_creation_input_tokens) ?? numberField(u.cached_write_tokens) ?? 0;
+  return { input_tokens, output_tokens, cached_read_tokens, cached_write_tokens };
+}
+
+function modelFromEnvelope(envelope: unknown, _provider: "codex" | "claude" | "acp"): ModelAttestation | null {
+  if (!envelope || typeof envelope !== "object") return null;
+  const record = envelope as Record<string, unknown>;
+  const modelUsage = record.modelUsage;
+  if (modelUsage && typeof modelUsage === "object" && !Array.isArray(modelUsage)) {
+    const keys = Object.keys(modelUsage as Record<string, unknown>);
+    if (keys.length > 0 && typeof keys[0] === "string" && keys[0].length > 0) {
+      return { model: keys[0], reasoning: null, source: "provider_json" };
+    }
+  }
+  if (typeof record.model === "string" && record.model.trim().length > 0) {
+    return { model: record.model.trim(), reasoning: null, source: "provider_json" };
+  }
+  return null;
 }
 
 function actualModelFromEvidence(evidence: Record<string, unknown>): ModelAttestation {
