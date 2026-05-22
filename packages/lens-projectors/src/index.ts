@@ -5,3 +5,4 @@ export * from "./dogfoodEvidence";
 export * from "./runtimeCost";
 export * from "./providerReadiness";
 export * from "./operationalMaturity";
+export * from "./runReadModel";

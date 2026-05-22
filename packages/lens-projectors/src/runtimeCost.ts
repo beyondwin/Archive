@@ -100,13 +100,19 @@ function runtimeRecommendations(
   const topPhase = phaseTotals[0]?.phase;
   const verificationTotal = phaseTotals.find((total) => total.phase === "verification")?.duration_ms ?? 0;
   const providerTotal = phaseTotals.find((total) => total.phase === "provider")?.duration_ms ?? 0;
+  const totalRuntime = phaseTotals.find((total) => total.phase === "total")?.duration_ms ?? 0;
+  const largestNonTotalPhase = phaseTotals.find((total) => total.phase !== "total")?.phase;
   if (topPhase === "verification") {
     recommendations.add("Inspect verification environment cost before changing provider concurrency.");
   }
   if (verificationTotal > 0 && verificationTotal >= providerTotal) {
     recommendations.add("Inspect verification environment cost before changing provider concurrency.");
   }
-  if (topPhase === "provider") {
+  if (
+    topPhase === "provider" ||
+    largestNonTotalPhase === "provider" ||
+    (totalRuntime > 0 && providerTotal / totalRuntime >= 0.5)
+  ) {
     recommendations.add("Inspect provider process cost before increasing safe-wave concurrency.");
   }
   if (dogfoodEvidence && dogfoodEvidence.status !== "complete") {

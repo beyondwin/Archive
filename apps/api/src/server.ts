@@ -8,15 +8,15 @@ import {
   type WaygentRunStateV2
 } from "@waygent/contracts";
 import {
-  projectApplyReadinessFromState,
   projectApplyState,
   projectExecutionExplanationFromState,
   projectFailureSummary,
   projectOperationalMaturityFromState,
+  projectRunReadModel,
   projectTimeline,
   projectTrustReport
 } from "@waygent/lens-projectors";
-import { listRunIds, readEvents, rebuildRunSummary, runPaths } from "@waygent/lens-store";
+import { listRunIds, readEvents, runPaths } from "@waygent/lens-store";
 import { demoRunDetails, findRun, listRuns } from "./demoData";
 
 export type ApiHandler = (request: Request) => Response | Promise<Response>;
@@ -195,17 +195,19 @@ function listRealRuns(runRoot: string): RealRunSummary[] {
 
 function summarizeRealRun(runRoot: string, runId: string): RealRunSummary {
   const events = readEvents(runPaths(runRoot, runId).events);
-  const summary = rebuildRunSummary(events);
-  const trust = projectTrustReport(events);
-  const stateV2 = tryReadRunStateV2(runRoot, runId);
-  const applyReadiness = stateV2 ? projectApplyReadinessFromState(stateV2) : null;
+  const stateResult = readRealRunStateV2Result(runRoot, runId);
+  const model = projectRunReadModel({
+    run_id: runId,
+    events,
+    ...(stateResult.status === "ok" ? { state: stateResult.state } : { state_error: readModelStateBlocker(stateResult) })
+  });
   return {
     run_id: runId,
-    status: statusFromEvents(events, trust.trust_status),
-    trust_status: trust.trust_status,
-    apply_status: applyReadiness?.status ?? "not_ready",
-    total_events: summary.total_events,
-    last_event_type: summary.last_event_type
+    status: model.status,
+    trust_status: model.trust_status,
+    apply_status: model.apply_status,
+    total_events: model.total_events,
+    last_event_type: model.last_event_type
   };
 }
 
@@ -234,16 +236,22 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
 }) | null {
   if (!listRunIds(runRoot).includes(runId)) return null;
   const events = readEvents(runPaths(runRoot, runId).events);
-  const stateV2 = tryReadRunStateV2(runRoot, runId);
-  const applyReadiness = stateV2 ? projectApplyReadinessFromState(stateV2) : null;
-  const executionExplanation = stateV2 ? projectExecutionExplanationFromState(stateV2) : null;
-  const operationalMaturity = stateV2 ? projectOperationalMaturityFromState({ state: stateV2, events }) : null;
+  const stateResult = readRealRunStateV2Result(runRoot, runId);
+  const stateV2 = stateResult.status === "ok" ? stateResult.state : null;
+  const model = projectRunReadModel({
+    run_id: runId,
+    events,
+    ...(stateResult.status === "ok" ? { state: stateResult.state } : { state_error: readModelStateBlocker(stateResult) })
+  });
+  const applyReadiness = model.apply_readiness;
+  const executionExplanation = model.execution_explanation;
+  const operationalMaturity = model.operational_maturity;
   const summary = summarizeRealRun(runRoot, runId);
   return {
     ...summary,
-    status: stateV2 ? runStatusFromV2(stateV2.status) : summary.status,
-    apply_status: applyReadiness?.status ?? summary.apply_status,
-    safe_wave: executionExplanation?.waves[0]?.ready ?? safeWaveFromEvents(events),
+    status: model.status,
+    apply_status: model.apply_status,
+    safe_wave: model.safe_wave,
     safe_waves: stateV2?.safe_waves ?? [],
     run_state_v2: stateV2,
     task_packets: stateV2 ? taskPacketMetadata(stateV2) : [],
@@ -259,26 +267,37 @@ function readRealRunDetail(runRoot: string, runId: string): (RealRunSummary & {
     dogfood_evidence: operationalMaturity?.dogfood_evidence ?? null,
     runtime_cost: operationalMaturity?.runtime_cost ?? null,
     provider_readiness: operationalMaturity?.provider_readiness ?? null,
-    failures: projectFailureSummary(events),
-    timeline: projectTimeline(events),
-    trust: projectTrustReport(events),
+    failures: model.failures,
+    timeline: model.timeline,
+    trust: model.trust,
     apply: projectApplyState(events),
     events
   };
 }
 
-function tryReadRunStateV2(runRoot: string, runId: string): WaygentRunStateV2 | null {
+type RealRunStateV2ReadResult =
+  | { status: "ok"; state: WaygentRunStateV2 }
+  | { status: "missing"; reason: "missing_run_state_v2" }
+  | { status: "unsupported"; reason: "unsupported_run_state"; schema: unknown }
+  | { status: "invalid"; reason: "invalid_run_state_v2"; error: string };
+
+function readRealRunStateV2Result(runRoot: string, runId: string): RealRunStateV2ReadResult {
   try {
     const parsed = JSON.parse(readFileSync(join(runPaths(runRoot, runId).root, "state.json"), "utf8")) as {
       schema?: string;
     };
-    if (parsed.schema !== "waygent.run_state.v2") return null;
-    return validateContract<WaygentRunStateV2>("waygent.run_state.v2", parsed);
+    if (parsed.schema !== "waygent.run_state.v2") return { status: "unsupported", reason: "unsupported_run_state", schema: parsed.schema };
+    return { status: "ok", state: validateContract<WaygentRunStateV2>("waygent.run_state.v2", parsed) };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    if (error instanceof SyntaxError) return null;
-    return null;
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { status: "missing", reason: "missing_run_state_v2" };
+    return { status: "invalid", reason: "invalid_run_state_v2", error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function readModelStateBlocker(result: Exclude<RealRunStateV2ReadResult, { status: "ok" }>) {
+  if (result.status === "unsupported") return { status: result.status, reason: result.reason, schema: result.schema };
+  if (result.status === "invalid") return { status: result.status, reason: result.reason, error: result.error };
+  return { status: result.status, reason: result.reason };
 }
 
 function taskPacketMetadata(state: WaygentRunStateV2): TaskPacketMetadata[] {
@@ -303,25 +322,6 @@ function decisionPacketMetadata(state: WaygentRunStateV2): DecisionPacketMetadat
       failure_class: task.latest_failure_class,
       decision_packet_ref: task.decision_packet_ref as string
     }));
-}
-
-function runStatusFromV2(status: WaygentRunStateV2["status"]): RunStatus {
-  if (status === "initializing") return "pending";
-  if (status === "applying") return "running";
-  return status;
-}
-
-function statusFromEvents(events: AgentLensEvent[], trustStatus: string): RunStatus {
-  if (events.some((event) => event.event_type === "runway.apply_completed")) return "applied";
-  if (events.some((event) => event.outcome === "blocked")) return "blocked";
-  if (events.some((event) => event.outcome === "failed")) return "failed";
-  return trustStatus === "trusted" ? "completed" : "running";
-}
-
-function safeWaveFromEvents(events: AgentLensEvent[]): string[] {
-  const selected = [...events].reverse().find((event) => event.event_type === "runway.safe_wave_selected");
-  const safeWave = selected?.payload.safe_wave;
-  return Array.isArray(safeWave) ? safeWave.map(String) : [];
 }
 
 function filterEventsByTask<T extends { payload?: Record<string, unknown> }>(events: T[], taskId?: string): T[] {

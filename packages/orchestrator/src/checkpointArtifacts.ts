@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import type { ArtifactReference } from "@waygent/contracts";
+import type { ArtifactReference, FailureClass } from "@waygent/contracts";
 import { sha256, writeArtifact } from "@waygent/lens-store";
 
 export interface CheckpointManifest {
@@ -50,7 +50,9 @@ export interface CheckpointValidationResult {
 
 export interface CheckpointDryRunResult {
   status: "passed" | "failed";
-  reason?: "checkpoint_unresolvable" | "patch_dry_run_failed";
+  reason?: "checkpoint_unresolvable" | "source_basis_conflict" | "patch_dry_run_failed";
+  failure_class?: FailureClass;
+  failed_files?: string[];
   no_op?: boolean;
   evidence_ref: string;
   evidence_artifact: ArtifactReference;
@@ -161,9 +163,16 @@ export function dryRunCheckpointPatch(input: { run_root: string; checkpoint_ref:
   if (!resolved) {
     const evidence = writeCheckpointDryRunEvidence(input.run_root, input.checkpoint_ref, {
       status: "failed",
-      reason: "checkpoint_unresolvable"
+      reason: "checkpoint_unresolvable",
+      failure_class: "artifact_missing"
     });
-    return { status: "failed", reason: "checkpoint_unresolvable", evidence_ref: evidence.path, evidence_artifact: evidence };
+    return {
+      status: "failed",
+      reason: "checkpoint_unresolvable",
+      failure_class: "artifact_missing",
+      evidence_ref: evidence.path,
+      evidence_artifact: evidence
+    };
   }
 
   if (isEmptyPatch(resolved.patch)) {
@@ -188,16 +197,18 @@ export function dryRunCheckpointPatch(input: { run_root: string; checkpoint_ref:
     });
 
     const status = dryRun.status === 0 ? "passed" : "failed";
+    const failure = status === "failed" ? classifyPatchDryRunFailure(dryRun.stderr) : null;
     const evidence = writeCheckpointDryRunEvidence(input.run_root, input.checkpoint_ref, {
       status,
       stdout: dryRun.stdout,
-      stderr: dryRun.stderr
+      stderr: dryRun.stderr,
+      ...(failure ?? {})
     });
     updateCheckpointManifestDryRun(input.run_root, input.checkpoint_ref, status, evidence.path);
 
     return {
       status,
-      ...(status === "failed" ? { reason: "patch_dry_run_failed" as const } : {}),
+      ...(failure ?? {}),
       evidence_ref: evidence.path,
       evidence_artifact: evidence
     };
@@ -414,4 +425,32 @@ function listUntrackedFiles(worktree: string): string[] {
 
 function isEmptyPatch(patch: string): boolean {
   return patch.trim().length === 0;
+}
+
+function classifyPatchDryRunFailure(stderr: string): Pick<CheckpointDryRunResult, "reason" | "failure_class" | "failed_files"> {
+  const failedFiles = extractPatchFailureFiles(stderr);
+  const sourceBasisConflict = failedFiles.length > 0
+    || /patch failed|patch does not apply|already exists in working directory|does not exist in index/i.test(stderr);
+  return {
+    reason: sourceBasisConflict ? "source_basis_conflict" : "patch_dry_run_failed",
+    failure_class: sourceBasisConflict ? "needs_rebase" : "unsafe_apply",
+    ...(failedFiles.length > 0 ? { failed_files: failedFiles } : {})
+  };
+}
+
+function extractPatchFailureFiles(stderr: string): string[] {
+  const files = new Set<string>();
+  for (const line of stderr.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    for (const pattern of [
+      /^error: patch failed: (.+?):\d+/,
+      /^error: (.+?): patch does not apply/,
+      /^error: (.+?): already exists in working directory/,
+      /^error: (.+?): does not exist in index/
+    ]) {
+      const match = trimmed.match(pattern);
+      if (match?.[1]) files.add(match[1]);
+    }
+  }
+  return [...files];
 }

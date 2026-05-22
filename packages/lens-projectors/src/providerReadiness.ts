@@ -52,7 +52,16 @@ export function projectProviderReadinessFromState(input: ProviderReadinessInput)
   if (failureClass || latestAttempt.exit_code !== 0 || !latestAttempt.worker_result_ref) {
     return projection(input.state.run_id, provider, "failed", command, latestAttempt.process?.stderr_summary ?? null, failureClass, attemptRefs, `Inspect ${provider} stdout, stderr, and worker result evidence before rerunning.`);
   }
-  return projection(input.state.run_id, provider, "ready", command, latestAttempt.process?.stderr_summary ?? null, null, attemptRefs, `Provider ${provider} has successful process evidence.`);
+  return projection(
+    input.state.run_id,
+    provider,
+    "ready",
+    command,
+    latestAttempt.process?.stderr_summary ?? null,
+    null,
+    attemptRefs,
+    providerReadyRecommendation(provider, latestAttempt)
+  );
 }
 
 function projection(
@@ -124,4 +133,15 @@ function looksUnavailable(stderr: string, attempt: ProviderAttempt): boolean {
     || /ENOENT|not found|command not found|failed to start|spawn .*enoent/i.test(stderr)
     || attempt.failure_class === "command_not_found"
     || attempt.failure_class === "service_unreachable";
+}
+
+function providerReadyRecommendation(provider: string, attempt: ProviderAttempt): string {
+  const summary = attempt.process?.stderr_summary;
+  const startupNoise = (summary?.counts.plugin_manifest ?? 0)
+    + (summary?.counts.skill_loader ?? 0)
+    + (summary?.counts.mcp ?? 0);
+  if (startupNoise > 0) {
+    return `Provider ${provider} is ready; clean provider startup warnings to reduce configuration noise.`;
+  }
+  return `Provider ${provider} has successful process evidence.`;
 }

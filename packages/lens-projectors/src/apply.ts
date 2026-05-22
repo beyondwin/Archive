@@ -50,6 +50,17 @@ export function projectApplyReadinessFromState(state: WaygentRunStateV2): ApplyR
   const combined = audit?.combined_apply_evidence;
   const refs = checkpointRefsFromCombined(combined) ?? checkpointRefsFromState(state);
   const patchRef = combinedPatchRef(state);
+  const taskBlocker = activeCheckpointTaskBlocker(state);
+
+  if (taskBlocker) {
+    return {
+      status: "blocked",
+      reason: taskBlocker,
+      checkpoint_refs: refs,
+      combined_patch_ref: patchRef,
+      source: "run_state_v2"
+    };
+  }
 
   if (audit?.status === "passed" && combined?.status === "passed" && patchRef && refs.length > 0) {
     return {
@@ -92,4 +103,14 @@ function combinedPatchRef(state: WaygentRunStateV2): string | null {
     combined_apply_evidence?: { patch_ref?: unknown };
   } | null)?.combined_apply_evidence;
   return typeof combined?.patch_ref === "string" && combined.patch_ref.length > 0 ? combined.patch_ref : null;
+}
+
+function activeCheckpointTaskBlocker(state: WaygentRunStateV2): string | null {
+  const task = Object.values(state.tasks).find((candidate) =>
+    (candidate.status === "blocked" || candidate.status === "failed" || state.status === "blocked" || state.status === "failed") &&
+    typeof candidate.latest_failure_class === "string" &&
+    (candidate.latest_failure_class === "needs_rebase" || candidate.latest_failure_class === "unsafe_apply") &&
+    candidate.checkpoint_refs.length === 0
+  );
+  return typeof task?.latest_failure_class === "string" ? task.latest_failure_class : null;
 }

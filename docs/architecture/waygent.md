@@ -51,8 +51,8 @@ Waygent now owns the local product execution path end to end:
   normalize direct JSON, JSONL result envelopes, and fenced JSON responses into
   `runway.worker_result.v1`.
 - `packages/lens-store` and `packages/lens-projectors` rebuild timeline, trust,
-  failure, execution explanation, and apply views from filesystem JSONL events
-  and `waygent.run_state.v2`.
+  failure, execution explanation, run-read, and apply views from filesystem
+  JSONL events and `waygent.run_state.v2`.
 - `apps/api` and `apps/console` can inspect a run created by `waygent run`, not
   only static demo fixtures.
 
@@ -84,14 +84,20 @@ Operational completion requires these properties:
 - API list/detail, console affordances, `resume`, and `apply` use the same
   readiness projection from completion audit, combined patch evidence,
   checkpoint manifests, and reconciliation drift.
+- Checkpoint patches that fail dry-run against current source are recorded as
+  `needs_rebase` blockers with dry-run evidence and failed files. They are not
+  treated as missing checkpoints.
 - The offline maturity gate includes `bun run waygent:scenarios`; live Codex
   and Claude checks stay opt-in through `WAYGENT_LIVE_PROVIDER`.
 
 ## Operational Maturity Loop
 
-`packages/lens-projectors` owns the shared operational maturity projection used
-by CLI inspect, API run detail, and the console. It composes four read-only
-views from `waygent.run_state.v2` and AgentLens events:
+`packages/lens-projectors` owns the shared run-read and operational maturity
+projections used by CLI status/inspect, API run list/detail, and the console.
+The run-read model prefers `waygent.run_state.v2` when present and treats
+missing, invalid, or unsupported state as an explicit read blocker instead of
+inferring apply readiness from successful-looking events. Operational maturity
+composes four read-only views from `waygent.run_state.v2` and AgentLens events:
 
 - `dogfood_evidence`: evidence checklist and completeness status.
 - `runtime_cost`: wave count, parallelism score, serial barriers, phase totals,

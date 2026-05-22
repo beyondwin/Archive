@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -168,6 +168,89 @@ describe("Waygent run commands v2", () => {
       dry_run: true,
       blocked_by: "missing_run_state_v2"
     });
+  });
+
+  test("explain and resume prioritize checkpoint dry-run conflicts over missing checkpoint text", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-run-commands-rebase-"));
+    const runId = "run_needs_rebase";
+    writeRunStateV2(root, {
+      schema: "waygent.run_state.v2",
+      run_id: runId,
+      workspace: root,
+      source_branch: "main",
+      worktree_root: join(root, "worktrees"),
+      run_root: join(root, runId),
+      artifact_root: join(root, runId, "artifacts"),
+      state_path: runStatePath(root, runId),
+      event_journal_path: join(root, runId, "events.jsonl"),
+      plan_path: null,
+      spec_path: null,
+      provider_profile: { provider: "fake" },
+      status: "blocked",
+      lifecycle_outcome: "blocked",
+      current_phase: "recover",
+      safe_waves: [],
+      tasks: {
+        task_conflict: {
+          id: "task_conflict",
+          status: "blocked",
+          risk: "low",
+          dependencies: [],
+          file_claims: [{ path: "README.md", mode: "owned" }],
+          attempts: [],
+          task_packet_path: null,
+          task_packet_sha256: null,
+          unit_manifest: { allowed_write_globs: ["README.md"] },
+          checkpoint_refs: [],
+          latest_failure_class: "needs_rebase",
+          decision_packet_ref: null,
+          timing: {}
+        }
+      },
+      provider_attempts: [],
+      reviews: [],
+      verification: [],
+      recovery: [],
+      apply: { status: "blocked", reason: "needs_rebase" },
+      context: { snapshot_path: null, basis_hash: null },
+      drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
+      completion_audit: null,
+      timestamps: {
+        started_at: "2026-05-22T00:00:00.000Z",
+        updated_at: "2026-05-22T00:00:01.000Z",
+        completed_at: "2026-05-22T00:00:01.000Z"
+      }
+    });
+    appendEvent(join(root, runId, "events.jsonl"), buildRunEvent({
+      run_id: runId,
+      sequence: 1,
+      event_type: "runway.apply_dry_run_result",
+      phase: "checkpoint",
+      outcome: "blocked",
+      summary: "Checkpoint patch dry-run failed.",
+      payload: {
+        task_id: "task_conflict",
+        checkpoint_ref: "artifacts/checkpoints/task_conflict/candidate_task_conflict.json",
+        dry_run: {
+          status: "failed",
+          reason: "source_basis_conflict",
+          failure_class: "needs_rebase",
+          failed_files: ["README.md"],
+          evidence_ref: "artifacts/checkpoints/dry-run-conflict.json"
+        }
+      }
+    }));
+
+    const explanation = explainRun({ root, run: runId });
+    expect(explanation.blocked_by).toBe("needs_rebase");
+    expect(explanation.summary).toContain("checkpoint patch dry-run failed against current source");
+    expect(explanation.summary).toContain("README.md");
+    expect(explanation.summary).toContain("artifacts/checkpoints/dry-run-conflict.json");
+    expect(resumeRun({ root, run: runId, dry_run: true }).allowed_actions).toEqual([
+      "inspect_run",
+      "retry_checkpoint_generation",
+      "human_decision"
+    ]);
   });
 
   test("apply blocks unsupported state schema", async () => {
@@ -542,6 +625,46 @@ describe("Waygent run commands v2", () => {
       run_id: "run_not_ready",
       status: "blocked",
       reason: "missing_apply_ready_evidence"
+    });
+  });
+
+  test("apply failure includes post-apply verification diagnostics", async () => {
+    const runId = "run_post_apply_failed";
+    const { root, workspace } = writeCompletedApplyRun(runId);
+    const state = readRunStateV2(root, runId);
+    writeRunStateV2(root, {
+      ...state,
+      verification: [{ task_id: "task_apply", command: "grep missing README.md", status: "passed" }]
+    });
+
+    expect(await applyRun({ root, run: runId, workspace })).toMatchObject({
+      command: "apply",
+      run_id: runId,
+      status: "failed",
+      reason: "post_apply_verification_failed",
+      post_apply_verification: {
+        status: "failed",
+        failure_class: "verification_failed",
+        failed_verification_id: "verify_post_apply_1",
+        failed_commands: [
+          {
+            request_id: "verify_post_apply_1",
+            command: "grep missing README.md",
+            exit_code: 1,
+            timed_out: false
+          }
+        ]
+      }
+    });
+
+    const events = readFileSync(join(root, runId, "events.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { event_type: string; payload: Record<string, unknown> });
+    const failedEvent = events.find((event) => event.event_type === "runway.apply_failed");
+    expect(failedEvent?.payload.post_apply_verification).toMatchObject({
+      status: "failed",
+      failed_commands: [{ command: "grep missing README.md", request_id: "verify_post_apply_1" }]
     });
   });
 

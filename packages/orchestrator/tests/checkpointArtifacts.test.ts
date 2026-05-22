@@ -200,6 +200,46 @@ describe("checkpoint artifacts", () => {
     });
   });
 
+  test("classifies source-basis patch conflicts as needs_rebase dry-run evidence", () => {
+    const runRoot = mkdtempSync(join(tmpdir(), "waygent-checkpoint-conflict-run-"));
+    const source = initRepo("waygent-checkpoint-conflict-source-");
+    const worktree = cloneWorktree(source, "waygent-checkpoint-conflict-worktree-");
+    writeFileSync(join(worktree, "README.md"), "candidate\n");
+    const checkpoint = createCheckpointArtifact({
+      run_root: runRoot,
+      run_id: "run_conflict",
+      task_id: "task_conflict",
+      candidate_id: "candidate_conflict",
+      worktree_path: worktree,
+      changed_files: ["README.md"],
+      verification_refs: []
+    });
+    writeFileSync(join(source, "README.md"), "source advanced\n");
+
+    const dryRun = dryRunCheckpointPatch({
+      run_root: runRoot,
+      checkpoint_ref: checkpoint.manifest_ref,
+      source
+    });
+
+    expect(dryRun).toMatchObject({
+      status: "failed",
+      reason: "source_basis_conflict",
+      failure_class: "needs_rebase",
+      failed_files: ["README.md"]
+    });
+    expect(JSON.parse(readFileSync(join(runRoot, dryRun.evidence_ref), "utf8"))).toMatchObject({
+      status: "failed",
+      reason: "source_basis_conflict",
+      failure_class: "needs_rebase",
+      failed_files: ["README.md"]
+    });
+    expect(readCheckpointManifest(runRoot, checkpoint.manifest_ref)).toMatchObject({
+      dry_run_status: "failed",
+      dry_run_evidence_ref: dryRun.evidence_ref
+    });
+  });
+
   test("treats empty combined apply patches as passed no-op evidence", () => {
     const runRoot = mkdtempSync(join(tmpdir(), "waygent-combined-noop-run-"));
     const source = initRepo("waygent-combined-noop-source-");

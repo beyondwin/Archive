@@ -82,7 +82,7 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     run_id: input.run_id,
     task: input.task,
     role: "implement",
-    plan_excerpt: input.task.instructions.length > 0 ? input.task.instructions.join("\n") : input.task.title,
+    plan_excerpt: taskPlanExcerpt(input.task),
     spec_excerpt: input.spec ?? "",
     checkpoint_inputs: input.checkpoint_inputs,
     previous_failures: []
@@ -317,13 +317,26 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
         event_type: "runway.apply_dry_run_result",
         phase: "checkpoint",
         outcome: dryRun.status === "passed" ? "success" : "blocked",
-        summary: dryRun.status === "passed" ? "Checkpoint patch dry-run passed." : "Checkpoint patch dry-run failed.",
-        payload: { task_id: input.task.id, checkpoint_ref: checkpoint.manifest_ref, dry_run: dryRun }
+        summary: dryRun.status === "passed"
+          ? "Checkpoint patch dry-run passed."
+          : dryRun.failure_class === "needs_rebase"
+            ? "Checkpoint patch dry-run failed against current source."
+            : "Checkpoint patch dry-run failed.",
+        payload: {
+          task_id: input.task.id,
+          checkpoint_ref: checkpoint.manifest_ref,
+          dry_run: dryRun,
+          ...(dryRun.status === "failed" ? {
+            reason: dryRun.reason ?? "patch_dry_run_failed",
+            failure_class: dryRun.failure_class ?? "unsafe_apply",
+            failed_files: dryRun.failed_files ?? []
+          } : {})
+        }
       });
       if (dryRun.status === "passed") {
         checkpointRefs.push(checkpoint.manifest_ref);
       } else {
-        latestFailureClass = "missing_checkpoint";
+        latestFailureClass = dryRun.failure_class ?? "unsafe_apply";
       }
     } else if (scopeValidation.ok) {
       latestFailureClass = "missing_checkpoint";
@@ -339,7 +352,7 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
   };
   return {
     task_id: input.task.id,
-    status: verificationPassed && latestFailureClass !== "diff_scope_failed" ? "verified" : "blocked",
+    status: verificationPassed && latestFailureClass === null ? "verified" : "blocked",
     latest_failure_class: latestFailureClass,
     worktree_manifest: worktreeManifest,
     task_packet_path: packetPath,
@@ -413,15 +426,20 @@ function normalizeProviderRunResult(
   return { worker: result };
 }
 
-function buildTaskPrompt(task: { title: string; verification_commands: string[]; instructions?: string[] } | undefined, taskPacketPath?: string): string {
+function buildTaskPrompt(task: Pick<ParsedWaygentTask, "title" | "instructions" | "verification_commands"> | undefined, taskPacketPath?: string): string {
   if (!task) return "Waygent task";
   return [
-    task.title,
+    taskPlanExcerpt(task),
     taskPacketPath ? `task_packet_path: ${taskPacketPath}` : null,
-    task.instructions?.length ? ["Plan excerpt:", ...task.instructions].join("\n") : null,
     "Verify:",
     task.verification_commands.join("\n")
   ].filter(Boolean).join("\n\n");
+}
+
+function taskPlanExcerpt(task: Pick<ParsedWaygentTask, "title" | "instructions">): string {
+  return task.instructions.length > 0
+    ? [task.title, ...task.instructions].join("\n")
+    : task.title;
 }
 
 function materializeFakeProviderResult(worktree: string, task: ParsedWaygentTask): void {

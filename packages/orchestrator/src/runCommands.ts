@@ -1,18 +1,19 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import type { AgentLensEvent, FailureClass, RunStatus } from "@waygent/contracts";
-import { appendEvent, readEvents, readLatestRunId, rebuildRunSummary, runPaths, sha256 } from "@waygent/lens-store";
+import { appendEvent, readEvents, readLatestRunId, runPaths, sha256 } from "@waygent/lens-store";
 import {
   projectApplyReadinessFromState,
   projectExecutionExplanationFromState,
   projectFailureSummary,
   projectOperationalMaturityFromState,
-  projectTrustReport
+  projectRunReadModel
 } from "@waygent/lens-projectors";
 import { readRunStateV2Result, writeRunStateV2, type RunStateV2ReadResult, type WaygentRunStateV2 } from "./runState";
 export { buildRunEvent, nextRunEvent } from "./runEvents";
 import { nextRunEvent } from "./runEvents";
 import { applyVerifiedCheckpoint } from "./applyEngine";
+import type { PostApplyVerificationSummary } from "./applyEngine";
 import { resolveCheckpointPatch, resolveRunArtifactPath, validateCheckpointManifest } from "./checkpointArtifacts";
 import { hasApplyReadyCheckpoint } from "./completionAudit";
 import { selectResumeAction } from "./recoveryExecutor";
@@ -43,17 +44,18 @@ export function resolveRunId(options: RunCommandOptions): string {
 export function statusRun(options: RunCommandOptions): RunStatusView {
   const runId = resolveRunId(options);
   const events = readEvents(runPaths(options.root, runId).events);
-  const summary = rebuildRunSummary(events);
-  const trust = projectTrustReport(events);
-  const blocked = events.some((event) => event.outcome === "blocked");
-  const failed = events.some((event) => event.outcome === "failed");
-  const status: RunStatus = blocked ? "blocked" : failed ? "failed" : trust.trust_status === "trusted" ? "completed" : "running";
+  const stateResult = readRunStateV2Result(options.root, runId);
+  const model = projectRunReadModel({
+    run_id: runId,
+    events,
+    ...(stateResult.status === "ok" ? { state: stateResult.state } : { state_error: readModelStateBlocker(stateResult) })
+  });
   return {
     run_id: runId,
-    status,
-    total_events: summary.total_events,
-    last_event_type: summary.last_event_type,
-    trust_status: trust.trust_status
+    status: model.status,
+    total_events: model.total_events,
+    last_event_type: model.last_event_type,
+    trust_status: model.trust_status
   };
 }
 
@@ -76,23 +78,34 @@ export function inspectRun(options: RunCommandOptions): RunStatusView & {
   const status = statusRun(options);
   const stateResult = readRunStateV2Result(options.root, status.run_id);
   const events = readEvents(runPaths(options.root, status.run_id).events);
-  const failures = projectFailureSummary(events);
+  const model = projectRunReadModel({
+    run_id: status.run_id,
+    events,
+    ...(stateResult.status === "ok" ? { state: stateResult.state } : { state_error: readModelStateBlocker(stateResult) })
+  });
+  const failures = model.failures;
   if (stateResult.status === "ok") {
-    const executionExplanation = projectExecutionExplanationFromState(stateResult.state);
-    const operationalMaturity = projectOperationalMaturityFromState({ state: stateResult.state, events });
     return {
-      ...status,
+      run_id: model.run_id,
+      status: model.status,
+      total_events: model.total_events,
+      last_event_type: model.last_event_type,
+      trust_status: model.trust_status,
       failures,
       state: stateResult.state,
-      execution_explanation: executionExplanation,
-      operational_maturity: operationalMaturity,
-      dogfood_evidence: operationalMaturity.dogfood_evidence,
-      runtime_cost: operationalMaturity.runtime_cost,
-      provider_readiness: operationalMaturity.provider_readiness
+      execution_explanation: model.execution_explanation!,
+      operational_maturity: model.operational_maturity!,
+      dogfood_evidence: model.operational_maturity!.dogfood_evidence,
+      runtime_cost: model.operational_maturity!.runtime_cost,
+      provider_readiness: model.operational_maturity!.provider_readiness
     };
   }
   return {
-    ...status,
+    run_id: model.run_id,
+    status: model.status,
+    total_events: model.total_events,
+    last_event_type: model.last_event_type,
+    trust_status: model.trust_status,
     failures,
     state_error: stateResult
   };
@@ -108,13 +121,14 @@ export function explainRun(options: RunCommandOptions): { run_id: string; blocke
     const maturity = projectOperationalMaturityFromState({ state: stateResult.state, events });
     const stateFailure = blockedTaskFailure(stateResult.state);
     const activeFailure = stateFailure ?? failure;
+    const dryRunBlocker = activeFailure ? checkpointDryRunBlocker(events, activeFailure.task_id) : null;
     const barrier = explanation.barriers[0];
     const hotspot = explanation.cost_hotspots[0];
     const dogfoodGap = maturity.dogfood_evidence.status !== "complete"
       ? `dogfood evidence ${maturity.dogfood_evidence.status}: ${maturity.dogfood_evidence.missing_reasons[0] ?? "evidence incomplete"}`
       : null;
     const summaryParts = [
-      activeFailure ? `${activeFailure.task_id} blocked by ${activeFailure.failure_class}` : "no active failure barrier",
+      activeFailure ? failureSummary(activeFailure, dryRunBlocker) : "no active failure barrier",
       barrier ? `scheduling barrier: ${barrier.task_id} ${barrier.reason}` : null,
       hotspot ? `cost hotspot: ${hotspot.phase} ${hotspot.duration_ms}ms` : null,
       !activeFailure && !barrier && !hotspot ? dogfoodGap : null
@@ -136,6 +150,12 @@ type StateBlocker = "missing_run_state_v2" | "unsupported_run_state" | "invalid_
 
 function stateBlocker(result: Exclude<RunStateV2ReadResult, { status: "ok" }>): StateBlocker {
   return result.reason;
+}
+
+function readModelStateBlocker(result: Exclude<RunStateV2ReadResult, { status: "ok" }>) {
+  if (result.status === "unsupported") return { status: result.status, reason: result.reason, schema: result.schema };
+  if (result.status === "invalid") return { status: result.status, reason: result.reason, error: result.error };
+  return { status: result.status, reason: result.reason };
 }
 
 export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): {
@@ -169,6 +189,13 @@ export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): {
     task.status === "blocked" || task.status === "failed" || (v2State.status === "blocked" && Boolean(task.latest_failure_class))
   );
   if (blockedTask?.latest_failure_class) {
+    if (blockedTask.latest_failure_class === "needs_rebase") {
+      return {
+        run_id: explanation.run_id,
+        allowed_actions: ["inspect_run", "retry_checkpoint_generation", "human_decision"],
+        dry_run: options.dry_run ?? false
+      };
+    }
     if (blockedTask.latest_failure_class === "dependency_missing" || blockedTask.latest_failure_class === "environment_blocker") {
       return {
         run_id: explanation.run_id,
@@ -207,11 +234,45 @@ function blockedTaskFailure(state: WaygentRunStateV2): { task_id: string; failur
   return { task_id: task.id, failure_class: task.latest_failure_class as FailureClass | "unknown" };
 }
 
+function failureSummary(
+  activeFailure: { task_id: string; failure_class: FailureClass | "unknown" },
+  dryRunBlocker: { failed_files: string[]; evidence_ref: string | null } | null
+): string {
+  if (activeFailure.failure_class !== "needs_rebase" || !dryRunBlocker) {
+    return `${activeFailure.task_id} blocked by ${activeFailure.failure_class}`;
+  }
+  const files = dryRunBlocker.failed_files.length > 0 ? `; files: ${dryRunBlocker.failed_files.join(", ")}` : "";
+  const evidence = dryRunBlocker.evidence_ref ? `; evidence: ${dryRunBlocker.evidence_ref}` : "";
+  return `${activeFailure.task_id} blocked by needs_rebase: checkpoint patch dry-run failed against current source${files}${evidence}`;
+}
+
+function checkpointDryRunBlocker(
+  events: AgentLensEvent[],
+  taskId: string
+): { failed_files: string[]; evidence_ref: string | null } | null {
+  const event = [...events].reverse().find((candidate) =>
+    candidate.event_type === "runway.apply_dry_run_result" &&
+    candidate.outcome === "blocked" &&
+    String(candidate.payload.task_id ?? "") === taskId
+  );
+  const dryRun = event?.payload.dry_run;
+  if (!dryRun || typeof dryRun !== "object") return null;
+  const payload = dryRun as Record<string, unknown>;
+  const failedFiles = Array.isArray(payload.failed_files)
+    ? payload.failed_files.filter((item): item is string => typeof item === "string" && item.length > 0)
+    : [];
+  const evidenceRef = typeof payload.evidence_ref === "string" && payload.evidence_ref.length > 0
+    ? payload.evidence_ref
+    : null;
+  return { failed_files: failedFiles, evidence_ref: evidenceRef };
+}
+
 export async function applyRun(options: RunCommandOptions & { workspace: string }): Promise<{
   command: "apply";
   run_id: string;
   status: "blocked" | "applied" | "failed";
   reason?: string;
+  post_apply_verification?: PostApplyVerificationSummary;
 }> {
   const runId = resolveRunId(options);
   const paths = runPaths(options.root, runId);
@@ -339,7 +400,11 @@ export async function applyRun(options: RunCommandOptions & { workspace: string 
     phase: "apply",
     outcome: applied.status === "applied" ? "success" : applied.status === "blocked" ? "blocked" : "failed",
     summary: applied.status === "applied" ? "Verified checkpoint applied." : "Verified checkpoint apply did not complete.",
-    payload: { checkpoint_refs: checkpointRefs, reason: applied.reason ?? null },
+    payload: {
+      checkpoint_refs: checkpointRefs,
+      reason: applied.reason ?? null,
+      ...(applied.post_apply_verification ? { post_apply_verification: applied.post_apply_verification } : {})
+    },
     trust_impact: applied.status === "applied" ? "supports_success" : "requires_review"
   }));
   writeRunStateV2(options.root, {
@@ -348,7 +413,13 @@ export async function applyRun(options: RunCommandOptions & { workspace: string 
     current_phase: "apply",
     apply: { status: applied.status, checkpoint_ref: checkpointRefs[0]!, ...(applied.reason ? { reason: applied.reason } : {}) }
   });
-  return { command: "apply", run_id: runId, status: applied.status, ...(applied.reason ? { reason: applied.reason } : {}) };
+  return {
+    command: "apply",
+    run_id: runId,
+    status: applied.status,
+    ...(applied.reason ? { reason: applied.reason } : {}),
+    ...(applied.post_apply_verification ? { post_apply_verification: applied.post_apply_verification } : {})
+  };
 }
 
 function finalContributingTaskIds(

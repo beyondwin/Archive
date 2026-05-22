@@ -39,6 +39,7 @@ export interface WaygentScenario {
   provider_fixture: WaygentScenarioProviderFixture;
   source_dirty_before_apply: boolean;
   force_missing_checkpoint: boolean;
+  checkpoint_dry_run_conflict?: boolean;
   plan: string;
   expected: WaygentScenarioExpectedReplay;
 }
@@ -121,6 +122,9 @@ export function loadWaygentScenario(path: string): WaygentScenario {
   }
   if (typeof raw.force_missing_checkpoint !== "boolean") {
     throw new Error(`${raw.id} must set force_missing_checkpoint`);
+  }
+  if (raw.checkpoint_dry_run_conflict !== undefined && typeof raw.checkpoint_dry_run_conflict !== "boolean") {
+    throw new Error(`${raw.id} checkpoint_dry_run_conflict must be boolean when set`);
   }
   if (!raw.plan || typeof raw.plan !== "string") throw new Error(`${raw.id} is missing plan`);
   if (!raw.expected) throw new Error(`${raw.id} is missing expected replay`);
@@ -282,6 +286,7 @@ function scenarioBlockers(scenario: WaygentScenario): string[] {
   const blockers: string[] = [];
   if (scenario.source_dirty_before_apply) blockers.push("source_dirty_before_apply");
   if (scenario.force_missing_checkpoint) blockers.push("force_missing_checkpoint");
+  if (scenario.checkpoint_dry_run_conflict) blockers.push("checkpoint_dry_run_conflict");
   return blockers;
 }
 
@@ -393,7 +398,7 @@ function readScenarioRunState(root: string, runId: string | undefined): WaygentR
 }
 
 function applyScenarioStateFaults(state: WaygentRunStateV2, scenario: WaygentScenario): WaygentRunStateV2 {
-  if (!scenario.source_dirty_before_apply && !scenario.force_missing_checkpoint) return state;
+  if (!scenario.source_dirty_before_apply && !scenario.force_missing_checkpoint && !scenario.checkpoint_dry_run_conflict) return state;
   const next = structuredClone(state) as WaygentRunStateV2;
   if (scenario.source_dirty_before_apply) {
     addDriftBlocker(next, "source_dirty_before_apply");
@@ -414,6 +419,27 @@ function applyScenarioStateFaults(state: WaygentRunStateV2, scenario: WaygentSce
     }
     addDriftBlocker(next, "force_missing_checkpoint");
     next.apply = { status: "blocked", reason: "force_missing_checkpoint" };
+  }
+  if (scenario.checkpoint_dry_run_conflict) {
+    for (const task of Object.values(next.tasks)) {
+      task.status = "blocked";
+      task.latest_failure_class = "needs_rebase";
+      task.checkpoint_refs = [];
+    }
+    next.status = "blocked";
+    next.lifecycle_outcome = "blocked";
+    next.completion_audit = {
+      ...(next.completion_audit ?? {}),
+      status: "failed"
+    };
+    const combined = combinedApplyEvidence(next);
+    if (combined) {
+      combined.status = "failed";
+      delete combined.patch_ref;
+      delete combined.checkpoint_refs;
+      combined.reason = "needs_rebase";
+    }
+    next.apply = { status: "blocked", reason: "needs_rebase" };
   }
   return next;
 }

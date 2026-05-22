@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -74,6 +74,42 @@ describe("executeWaygentTask", () => {
     });
     expect(result.events.find((event) => event.event_type === "runway.verification_result")?.payload).toMatchObject({
       failure_class: "dependency_missing"
+    });
+  });
+
+  test("records needs_rebase when checkpoint dry-run conflicts with the source basis", async () => {
+    const workspace = initSourceCheckout("waygent-task-executor-conflict-source-");
+    writeFileSync(join(workspace, "README.md"), "source advanced outside task worktree\n");
+    const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-conflict-root-"));
+    const parsed = parseWaygentPlan(oneTaskPlan("task_conflict", "README.md"));
+
+    const result = await executeWaygentTask({
+      root,
+      run_id: "run_task_conflict",
+      workspace,
+      worktree_root: join(root, "worktrees"),
+      task: parsed.tasks[0]!,
+      checkpoint_inputs: [],
+      spec: null,
+      provider: "fake",
+      provider_processes: {}
+    });
+
+    const dryRunEvent = result.events.find((event) => event.event_type === "runway.apply_dry_run_result");
+    expect(result.status).toBe("blocked");
+    expect(result.latest_failure_class).toBe("needs_rebase");
+    expect(result.checkpoint_refs).toEqual([]);
+    expect(result.artifact_index_entries.map((entry) => entry.producer_phase)).toContain("checkpoint");
+    expect(dryRunEvent).toMatchObject({
+      outcome: "blocked",
+      payload: {
+        task_id: "task_conflict",
+        dry_run: {
+          status: "failed",
+          failure_class: "needs_rebase",
+          failed_files: ["README.md"]
+        }
+      }
     });
   });
 });
