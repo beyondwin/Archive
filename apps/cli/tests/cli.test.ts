@@ -58,6 +58,61 @@ describe("Waygent CLI", () => {
     expect((await runCli(["intent", "--text", "최근 승인된 플랜 실행해줘"])) as { command: string }).toEqual({ command: "waygent run --latest" });
   });
 
+  test("run --help reports usage without opening the default run", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-help-root-"));
+
+    await expect(runCli(["run", "--help", "--root", root])).resolves.toMatchObject({
+      usage: expect.stringContaining("waygent run")
+    });
+
+    await expect(Bun.file(join(root, "run_demo", "state.json")).exists()).resolves.toBe(false);
+
+    const shortRoot = mkdtempSync(join(tmpdir(), "waygent-short-help-root-"));
+    await expect(runCli(["run", "-h", "--provider", "fake", "--root", shortRoot])).resolves.toMatchObject({
+      usage: expect.stringContaining("waygent run")
+    });
+    await expect(Bun.file(join(shortRoot, "run_demo", "state.json")).exists()).resolves.toBe(false);
+  });
+
+  test("run rejects non-executable implementation plans with scaffold guidance", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "waygent-non-executable-plan-"));
+    const root = mkdtempSync(join(tmpdir(), "waygent-non-executable-root-"));
+    const planPath = join(workspace, "plan.md");
+    writeFileSync(planPath, "# Implementation Plan\n\n## Task 1: Add contract\n\n- Modify: `packages/contracts/src/types.ts`\n");
+
+    await expect(runCli([
+      "run",
+      "--provider", "fake",
+      "--workspace", workspace,
+      "--root", root,
+      "--run", "run_non_executable",
+      "--plan", "plan.md"
+    ])).rejects.toThrow(/executable Waygent plan.*waygent scaffold-plan/s);
+  });
+
+  test("CLI entrypoint formats runtime errors without stack traces", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "waygent-cli-entry-error-"));
+    const root = mkdtempSync(join(tmpdir(), "waygent-cli-entry-error-root-"));
+    writeFileSync(join(workspace, "plan.md"), "# Implementation Plan\n\n## Task 1: Add contract\n");
+
+    const result = Bun.spawnSync([
+      process.execPath,
+      "run",
+      join(import.meta.dir, "..", "src", "index.ts"),
+      "run",
+      "--provider", "fake",
+      "--workspace", workspace,
+      "--root", root,
+      "--run", "run_entry_error",
+      "--plan", "plan.md"
+    ]);
+
+    expect(result.exitCode).toBe(1);
+    const stderr = new TextDecoder().decode(result.stderr);
+    expect(stderr).toContain("executable Waygent plan");
+    expect(stderr).not.toContain("at parseWaygentPlan");
+  });
+
   test("status reads a run created by run", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-cli-"));
     await runCli(["run", "--provider", "fake", "--workspace", initSourceCheckout("waygent-cli-source-"), "--root", root, "--run", "run_cli"]);

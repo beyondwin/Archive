@@ -25,6 +25,10 @@ export function parseCli(argv: string[]): ParsedCli {
   const flags: ParsedCli["flags"] = {};
   for (let index = 0; index < rest.length; index += 1) {
     const item = rest[index];
+    if (item === "-h") {
+      flags.help = true;
+      continue;
+    }
     if (!item?.startsWith("--")) continue;
     const key = item.slice(2);
     const next = rest[index + 1];
@@ -37,6 +41,19 @@ export function parseCli(argv: string[]): ParsedCli {
   }
   return { command, flags };
 }
+
+const usage = "waygent run|status|events|inspect|explain|resume|apply|scaffold-plan";
+const commandUsage: Record<string, string> = {
+  run: "waygent run --plan <waygent-task.md> [--spec <design.md>] [--provider codex|claude|fake] [--execution-mode multi-agent|single-agent]",
+  demo: "waygent demo [--provider fake]",
+  status: "waygent status --run <run_id>|--last",
+  events: "waygent events --run <run_id>|--last",
+  inspect: "waygent inspect --run <run_id>|--last",
+  explain: "waygent explain --run <run_id>|--last",
+  resume: "waygent resume --run <run_id>|--last",
+  apply: "waygent apply --run <run_id>",
+  "scaffold-plan": "waygent scaffold-plan --id <task_id> --title <title> --claim <path:mode> --risk <low|medium|high> --verify <command>"
+};
 
 export function resolveCliProfile(parsed: ParsedCli): NonNullable<Parameters<typeof runWaygentDemo>[0]["profile"]> {
   const defaultProvider = parsed.command === "demo" ? "fake" : "codex";
@@ -56,6 +73,9 @@ export function resolveCliProfile(parsed: ParsedCli): NonNullable<Parameters<typ
 
 export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
   const parsed = parseCli(argv);
+  if (isHelpRequest(parsed)) {
+    return { usage: commandUsage[parsed.command] ?? usage };
+  }
   if (parsed.command === "intent") {
     return { command: intentToCommand(parseNaturalLanguageIntent(String(parsed.flags.text ?? ""))) };
   }
@@ -106,7 +126,7 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
   if (parsed.command === "events") {
     return eventsRun(runCommandOptions(parsed));
   }
-  return { usage: "waygent run|status|events|inspect|explain|resume|apply|scaffold-plan" };
+  return { usage };
 }
 
 function isReasoning(value: unknown): value is "medium" | "high" | "xhigh" {
@@ -132,7 +152,16 @@ function valuesForFlag(argv: string[], flag: string): string[] {
   return values;
 }
 
+function isHelpRequest(parsed: ParsedCli): boolean {
+  return parsed.command === "help" || parsed.command === "--help" || parsed.command === "-h" || parsed.flags.help === true;
+}
+
 if (import.meta.main) {
-  const output = await runCli();
-  console.log(JSON.stringify(output, null, 2));
+  try {
+    const output = await runCli();
+    console.log(JSON.stringify(output, null, 2));
+  } catch (error) {
+    console.error(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }, null, 2));
+    process.exit(1);
+  }
 }

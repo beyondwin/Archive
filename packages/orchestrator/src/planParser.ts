@@ -14,16 +14,21 @@ export interface ParsedWaygentPlan {
   tasks: ParsedWaygentTask[];
 }
 
-const TASK_BLOCK = /```yaml waygent-task\n([\s\S]*?)\n```/g;
+const TASK_BLOCK = /```yaml\s+waygent-task\r?\n([\s\S]*?)\r?\n```/g;
+const TASK_MARKER = /```yaml\s+waygent-task\r?\n/;
 const VALID_RISK = new Set<RiskLevel>(["low", "medium", "high"]);
 const VALID_CLAIM_MODE = new Set<FileClaimMode>(["owned", "shared_append", "read_only"]);
 
 export function parseWaygentPlan(markdown: string): ParsedWaygentPlan {
   const tasks = [...markdown.matchAll(TASK_BLOCK)].map((match) => parseTaskBlock(match[1] ?? ""));
   if (tasks.length === 0) {
-    throw new Error("missing waygent-task block");
+    throw new Error(missingWaygentTaskBlockMessage(markdown));
   }
   return { tasks };
+}
+
+export function hasWaygentTaskBlock(markdown: string): boolean {
+  return TASK_MARKER.test(markdown);
 }
 
 function parseTaskBlock(block: string): ParsedWaygentTask {
@@ -149,4 +154,21 @@ function parseInlineList(value: string): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function missingWaygentTaskBlockMessage(markdown: string): string {
+  const looksLikeImplementationPlan =
+    /^# .*Implementation Plan/im.test(markdown) ||
+    /^## Task\s+\d+/im.test(markdown) ||
+    /\*\*Files:\*\*/im.test(markdown) ||
+    /-\s+(Create|Modify):\s+`[^`]+`/im.test(markdown);
+  const prefix = looksLikeImplementationPlan
+    ? "missing waygent-task block: this looks like a human implementation plan, not an executable Waygent plan."
+    : "missing waygent-task block: input is not an executable Waygent plan.";
+  return [
+    prefix,
+    "Add one or more fenced ```yaml waygent-task blocks with id, title, dependencies, file_claims, risk, and verify fields.",
+    "For a safe scaffold, run waygent scaffold-plan --id <task_id> --title <title> --claim <path:mode> --risk <low|medium|high> --verify <command>.",
+    "Waygent will not infer file claims, risk, or verification commands from prose."
+  ].join(" ");
 }
