@@ -189,7 +189,8 @@ export function isNormalizableSuperpowersPlan(markdown: string): boolean {
 }
 
 function extractSuperpowersTaskSections(markdown: string): SuperpowersTaskSection[] {
-  const headings = [...markdown.matchAll(TASK_HEADING)];
+  const masked = maskFencedCodeBlocks(markdown);
+  const headings = [...masked.matchAll(TASK_HEADING)];
   return headings.map((match, index) => {
     const start = match.index ?? 0;
     const end =
@@ -199,6 +200,19 @@ function extractSuperpowersTaskSections(markdown: string): SuperpowersTaskSectio
       title: (match[2] ?? "").trim(),
       body: markdown.slice(start, end)
     };
+  });
+}
+
+// Replaces the contents of fenced code blocks with blank-but-same-length
+// regions so structural offsets stay aligned for downstream slicing. This
+// prevents `## Task N:` headings that live inside ```ts/```bash demonstration
+// blocks (e.g. unit-test fixture string literals) from being mis-detected as
+// real Waygent task sections. The fenced-yaml waygent-task path uses its own
+// regex that already requires unescaped triple-backticks, so it is unaffected.
+function maskFencedCodeBlocks(markdown: string): string {
+  return markdown.replace(/(^|\n)(```[^\n]*\n)([\s\S]*?)(\n```)/g, (_match, lead: string, opener: string, body: string, closer: string) => {
+    const sanitized = body.replace(/[^\n]/g, " ");
+    return `${lead}${opener}${sanitized}${closer}`;
   });
 }
 
