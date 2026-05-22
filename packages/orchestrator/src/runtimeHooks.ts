@@ -55,15 +55,24 @@ export function evaluatePreDispatchHooks(input: RuntimeHookInput): HookEvaluatio
 export function evaluateFinalOutputHooks(input: FinalOutputHookInput): HookEvaluation {
   if (!input.enabled) return { status: "bypassed", denials: [] };
   const denials: HookDenial[] = [];
-  if (!isWorkerResultShape(input.worker)) {
+  const shapeValid = isWorkerResultShape(input.worker);
+  if (!shapeValid) {
     denials.push({
       hook_id: "worker_result_shape",
       reason: "provider final output is not a runway.worker_result.v1 object",
       evidence: { task_id: input.task_id }
     });
   }
-  const combined = `${input.stdout}\n${input.stderr}`;
-  if (DANGEROUS_COMMAND.test(combined)) {
+  // When the worker_result shape is valid, only scan executable fields and
+  // stderr — never the free-text summary or wrapping provider stdout, which
+  // legitimately quote destructive command names as descriptive prose.
+  // When the shape is invalid we have no structured surface, so fall back to
+  // the blunt stdout+stderr scan as defense in depth.
+  const scanTargets: string[] = shapeValid
+    ? [...workerExecutableStrings(input.worker), input.stderr]
+    : [input.stdout, input.stderr];
+  const offending = scanTargets.find((target) => typeof target === "string" && DANGEROUS_COMMAND.test(target));
+  if (offending !== undefined) {
     denials.push({
       hook_id: "dangerous_output_command",
       reason: "provider output contains a dangerous command pattern",
@@ -71,6 +80,15 @@ export function evaluateFinalOutputHooks(input: FinalOutputHookInput): HookEvalu
     });
   }
   return { status: denials.length > 0 ? "denied" : "passed", denials };
+}
+
+function workerExecutableStrings(worker: unknown): string[] {
+  if (!worker || typeof worker !== "object") return [];
+  const evidence = (worker as { evidence?: unknown }).evidence;
+  if (!evidence || typeof evidence !== "object") return [];
+  const verification = (evidence as { verification_commands?: unknown }).verification_commands;
+  if (!Array.isArray(verification)) return [];
+  return verification.filter((item): item is string => typeof item === "string");
 }
 
 export function debugArtifactDenials(taskId: string, changedFiles: string[], allowDebugArtifacts = false): HookDenial[] {
