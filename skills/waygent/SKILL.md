@@ -45,10 +45,18 @@ Host-agent model policy:
 
 - When the host agent is asked to implement, review, or coordinate Waygent
   runtime work from a plan or design, the main coordinating agent should run
-  with extra-high reasoning when the host supports it.
-- If a valid Waygent runtime execution or an explicit post-run review step
-  creates implementation, review, or verification subagents, prefer GPT-5.5
-  with high reasoning when the host supports explicit subagent model settings.
+  with the strongest reasoning the host supports.
+- Codex app / Codex CLI host:
+  - Main coordinating agent: extra-high reasoning.
+  - Implementation / review / verification subagents: prefer GPT-5.5 with high
+    reasoning when the host supports explicit subagent model settings.
+- Claude Code host:
+  - Main coordinating agent: Opus with high reasoning.
+  - Implementation / review / verification subagents: Opus with high reasoning
+    when the host supports explicit subagent model settings.
+- If the user explicitly names a different model in the request (e.g. "use
+  sonnet", "gpt-5 only", "소넷으로"), honor the user's explicit choice over
+  these defaults for that invocation.
 - If the host cannot change the main agent or subagent model settings, state
   that limitation and use the strongest available configuration instead.
 - This policy is a host-agent execution preference. It must not turn Waygent
