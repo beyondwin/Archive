@@ -128,6 +128,162 @@ describe("operator decision projector", () => {
     expect(projection.blocked_actions.map((action) => action.id)).toContain("apply_run");
   });
 
+  test("surfaces intake decision blocker and recovery summary", () => {
+    const projection = projectOperatorDecisionFromState({
+      state: makeState({
+        status: "blocked",
+        lifecycle_outcome: "blocked",
+        current_phase: "preflight",
+        tasks: {},
+        safe_waves: [],
+        artifact_index: [],
+        apply: { status: "blocked", reason: "intake_decision_required" },
+        intake_recovery: {
+          status: "decision_required",
+          started_at: "2026-05-22T00:00:00.000Z",
+          completed_at: "2026-05-22T00:00:01.000Z",
+          normalized_plan_ref: null,
+          recovery_report_ref: "artifacts/intake/recovery-report.json",
+          findings: [{
+            code: "destructive_command_candidate",
+            severity: "blocking",
+            message: "Plan contains a destructive command candidate.",
+            task_id: null,
+            evidence_refs: ["plan:plan.md"]
+          }],
+          repair_actions: [{
+            action: "deterministic_markdown_intake_repair",
+            status: "blocked",
+            reason: "High-risk ambiguity prevents automatic execution.",
+            evidence_refs: ["plan:plan.md"]
+          }],
+          can_start: false,
+          confidence: "blocked",
+          question: "The plan contains a destructive command candidate. Confirm the intended safe replacement."
+        }
+      }),
+      events: []
+    });
+
+    expect(projection.primary_blocker).toMatchObject({
+      code: "intake_decision_required",
+      severity: "blocking",
+      summary: "The plan contains a destructive command candidate. Confirm the intended safe replacement."
+    });
+    expect(projection.status_summary).toMatchObject({
+      display_status: "needs_input",
+      apply_status: "blocked"
+    });
+    expect(projection.allowed_actions.map((action) => action.id)).toContain("request_user_input");
+    expect(projection.allowed_actions.map((action) => action.id)).toContain("open_ai_repair_handoff");
+    expect(projection.blocked_actions.map((action) => action.id)).toContain("apply_run");
+    expect(projection.intake_recovery).toEqual({
+      status: "decision_required",
+      can_start: false,
+      confidence: "blocked",
+      finding_codes: ["destructive_command_candidate"],
+      artifact_refs: ["artifacts/intake/recovery-report.json"],
+      question: "The plan contains a destructive command candidate. Confirm the intended safe replacement."
+    });
+    expect(projection.evidence_packet.artifact_refs).toContain("artifacts/intake/recovery-report.json");
+  });
+
+  test("classifies intake recovery failure as blocking", () => {
+    const projection = projectOperatorDecisionFromState({
+      state: makeState({
+        status: "blocked",
+        lifecycle_outcome: "blocked",
+        current_phase: "preflight",
+        tasks: {},
+        safe_waves: [],
+        artifact_index: [],
+        apply: { status: "blocked", reason: "intake_decision_required" },
+        intake_recovery: {
+          status: "failed",
+          started_at: "2026-05-22T00:00:00.000Z",
+          completed_at: "2026-05-22T00:00:01.000Z",
+          normalized_plan_ref: null,
+          recovery_report_ref: "artifacts/intake/recovery-report.json",
+          findings: [{
+            code: "task_body_not_yaml",
+            severity: "blocking",
+            message: "Plan body was not recoverable.",
+            task_id: null,
+            evidence_refs: ["plan:plan.md"]
+          }],
+          repair_actions: [],
+          can_start: false,
+          confidence: "blocked",
+          question: null
+        }
+      }),
+      events: []
+    });
+
+    expect(projection.primary_blocker).toMatchObject({
+      code: "intake_recovery_failed",
+      severity: "blocking"
+    });
+    expect(projection.status_summary.display_status).toBe("blocked");
+    expect(projection.intake_recovery?.status).toBe("failed");
+    expect(projection.intake_recovery?.can_start).toBe(false);
+  });
+
+  test("includes intake recovery summary for recovered runs without a blocker", () => {
+    const projection = projectOperatorDecisionFromState({
+      state: makeState({
+        intake_recovery: {
+          status: "recovered",
+          started_at: "2026-05-22T00:00:00.000Z",
+          completed_at: "2026-05-22T00:00:01.000Z",
+          normalized_plan_ref: "artifacts/intake/normalized-plan.md",
+          recovery_report_ref: "artifacts/intake/recovery-report.json",
+          findings: [{
+            code: "task_body_not_yaml",
+            severity: "warning",
+            message: "Plan body was recovered from markdown headings.",
+            task_id: null,
+            evidence_refs: ["plan:plan.md"]
+          }],
+          repair_actions: [{
+            action: "deterministic_markdown_intake_repair",
+            status: "applied",
+            reason: "Recovered tasks from markdown sections.",
+            evidence_refs: ["artifacts/intake/normalized-plan.md"]
+          }],
+          can_start: true,
+          confidence: "deterministic",
+          question: null
+        },
+        completion_audit: {
+          status: "passed",
+          combined_apply_evidence: {
+            status: "passed",
+            checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"],
+            patch_ref: "artifacts/checkpoints/apply/run_ready.patch"
+          }
+        }
+      }),
+      events: []
+    });
+
+    expect(projection.primary_blocker).toBeNull();
+    expect(projection.intake_recovery).toEqual({
+      status: "recovered",
+      can_start: true,
+      confidence: "deterministic",
+      finding_codes: ["task_body_not_yaml"],
+      artifact_refs: ["artifacts/intake/normalized-plan.md", "artifacts/intake/recovery-report.json"],
+      question: null
+    });
+    expect(projection.evidence_packet.artifact_refs).toEqual(
+      expect.arrayContaining([
+        "artifacts/intake/normalized-plan.md",
+        "artifacts/intake/recovery-report.json"
+      ])
+    );
+  });
+
   test("marks missing evidence as partial confidence", () => {
     const projection = projectOperatorDecisionFromState({
       state: makeState({

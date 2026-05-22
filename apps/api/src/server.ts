@@ -185,6 +185,9 @@ interface RealRunSummary {
   primary_blocker: string | null;
   next_action: string | null;
   operator_confidence: string;
+  intake_status: string | null;
+  intake_can_start: boolean | null;
+  intake_question: string | null;
   total_events: number;
   last_event_type: string | null;
 }
@@ -221,6 +224,7 @@ function summarizeRealRun(runRoot: string, runId: string): RealRunSummary {
     ...(stateResult.status === "ok" ? { state: stateResult.state } : { state_error: readModelStateBlocker(stateResult) })
   });
   const operatorDecision = projectRealOperatorDecision(runId, events, stateV2, stateResult);
+  const intakeRecovery = operatorDecision.intake_recovery ?? null;
   return {
     run_id: runId,
     status: model.status,
@@ -230,6 +234,9 @@ function summarizeRealRun(runRoot: string, runId: string): RealRunSummary {
     primary_blocker: operatorDecision.primary_blocker?.code ?? null,
     next_action: nextOperatorAction(operatorDecision),
     operator_confidence: operatorDecision.confidence,
+    intake_status: intakeRecovery?.status ?? null,
+    intake_can_start: intakeRecovery?.can_start ?? null,
+    intake_question: intakeRecovery?.question ?? null,
     total_events: model.total_events,
     last_event_type: model.last_event_type
   };
