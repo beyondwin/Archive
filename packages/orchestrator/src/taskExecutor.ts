@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import type {
@@ -20,7 +21,7 @@ import {
 } from "@waygent/provider-adapters";
 import { mergeCandidate } from "@waygent/runway-control";
 import { artifactIndexEntry } from "./artifactIndex";
-import { createCheckpointArtifact, dryRunCheckpointPatch } from "./checkpointArtifacts";
+import { createCheckpointArtifact, dryRunCheckpointPatch, resolveCheckpointPatch } from "./checkpointArtifacts";
 import { listActualChangedFiles, validateDiffScope } from "./diffScope";
 import type { ProviderName } from "./executionProfile";
 import type { ParsedWaygentTask } from "./planParser";
@@ -76,6 +77,12 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
   };
   const phaseTimings: ExecutionPhaseTiming[] = [managedWorktree.timing];
   const artifactIndexEntries: ArtifactIndexEntry[] = [];
+
+  materializeCheckpointInputs({
+    run_root: inputRunRoot(input),
+    worktree: taskWorktree.path,
+    checkpoint_refs: input.checkpoint_inputs
+  });
 
   const commands = input.task.verification_commands.length > 0 ? input.task.verification_commands : ["printf hello"];
   const packet = buildTaskPacket({
@@ -304,7 +311,8 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
       const { value: dryRun, timing: dryRunTiming } = await measurePhase("checkpoint_dry_run", () => dryRunCheckpointPatch({
         run_root: inputRunRoot(input),
         checkpoint_ref: checkpoint.manifest_ref,
-        source: input.workspace
+        source: input.workspace,
+        base_checkpoint_refs: input.checkpoint_inputs
       }));
       phaseTimings.push(dryRunTiming);
       artifactIndexEntries.push(
@@ -444,6 +452,53 @@ function normalizeProviderRunResult(
 
 function isProviderEnvironmentSelfReport(failureClass: FailureClass | undefined): boolean {
   return failureClass === "dependency_missing" || failureClass === "environment_blocker";
+}
+
+function materializeCheckpointInputs(input: { run_root: string; worktree: string; checkpoint_refs: string[] }): void {
+  for (const checkpointRef of input.checkpoint_refs) {
+    const resolved = resolveCheckpointPatch(input.run_root, checkpointRef);
+    if (!resolved) throw new Error(`dependency checkpoint cannot be resolved: ${checkpointRef}`);
+    if (resolved.patch.trim().length === 0) continue;
+    const apply = spawnSync("git", ["apply", "-"], {
+      cwd: input.worktree,
+      input: resolved.patch,
+      encoding: "utf8",
+      stdio: ["pipe", "pipe", "pipe"]
+    });
+    if (apply.status !== 0) {
+      throw new Error(`dependency checkpoint apply failed for ${checkpointRef}: ${apply.stderr || apply.stdout}`);
+    }
+    runGit(input.worktree, ["add", "-A"]);
+    const dirtyIndex = spawnSync("git", ["diff", "--cached", "--quiet"], {
+      cwd: input.worktree,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    if (dirtyIndex.status === 0) continue;
+    if (dirtyIndex.status !== 1) {
+      throw new Error(`dependency checkpoint index check failed for ${checkpointRef}: ${dirtyIndex.stderr}`);
+    }
+    runGit(input.worktree, [
+      "-c",
+      "user.email=waygent@local",
+      "-c",
+      "user.name=Waygent",
+      "commit",
+      "-q",
+      "--no-verify",
+      "-m",
+      `waygent dependency checkpoint ${checkpointRef}`
+    ]);
+  }
+}
+
+function runGit(cwd: string, args: string[]): void {
+  const result = spawnSync("git", args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
 }
 
 function buildTaskPrompt(task: Pick<ParsedWaygentTask, "title" | "instructions" | "verification_commands"> | undefined, taskPacketPath?: string): string {

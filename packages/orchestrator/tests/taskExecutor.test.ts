@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -137,6 +137,58 @@ describe("executeWaygentTask", () => {
         failure_class: null
       }
     });
+  });
+
+  test("materializes dependency checkpoints as dependent task worktree baseline", async () => {
+    const workspace = initSourceCheckout("waygent-task-executor-checkpoint-input-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-checkpoint-input-root-"));
+    const base = parseWaygentPlan(oneTaskPlan("task_base", "base.txt"));
+    const baseResult = await executeWaygentTask({
+      root,
+      run_id: "run_checkpoint_input",
+      workspace,
+      worktree_root: join(root, "worktrees"),
+      task: base.tasks[0]!,
+      checkpoint_inputs: [],
+      spec: null,
+      provider: "fake",
+      provider_processes: {}
+    });
+    expect(baseResult.status).toBe("verified");
+    const dependencyCheckpoint = baseResult.checkpoint_refs[0]!;
+
+    const dependent = parseWaygentPlan([
+      "```yaml waygent-task",
+      "id: task_dependent",
+      "title: Create dependent output using checkpoint input",
+      "dependencies: [task_base]",
+      "file_claims:",
+      "  - path: dependent.txt",
+      "    mode: owned",
+      "risk: low",
+      "verify:",
+      "  - test -f base.txt && test -f dependent.txt",
+      "```"
+    ].join("\n"));
+
+    const result = await executeWaygentTask({
+      root,
+      run_id: "run_checkpoint_input",
+      workspace,
+      worktree_root: join(root, "worktrees"),
+      task: dependent.tasks[0]!,
+      checkpoint_inputs: [dependencyCheckpoint],
+      spec: null,
+      provider: "fake",
+      provider_processes: {}
+    });
+
+    expect(result.status).toBe("verified");
+    expect(result.latest_failure_class).toBeNull();
+    expect(result.checkpoint_refs[0]).toContain("artifacts/checkpoints/task_dependent/");
+    const patch = readFileSync(join(root, "run_checkpoint_input", result.checkpoint_refs[0]!.replace(/\.json$/, ".patch")), "utf8");
+    expect(patch).toContain("dependent.txt");
+    expect(patch).not.toContain("base.txt");
   });
 
   test("records needs_rebase when checkpoint dry-run conflicts with the source basis", async () => {

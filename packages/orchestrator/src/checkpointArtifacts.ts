@@ -158,7 +158,12 @@ export function resolveCheckpointPatch(runRoot: string, checkpointRef: string): 
   };
 }
 
-export function dryRunCheckpointPatch(input: { run_root: string; checkpoint_ref: string; source: string }): CheckpointDryRunResult {
+export function dryRunCheckpointPatch(input: {
+  run_root: string;
+  checkpoint_ref: string;
+  source: string;
+  base_checkpoint_refs?: string[];
+}): CheckpointDryRunResult {
   const resolved = resolveCheckpointPatch(input.run_root, input.checkpoint_ref);
   if (!resolved) {
     const evidence = writeCheckpointDryRunEvidence(input.run_root, input.checkpoint_ref, {
@@ -190,8 +195,14 @@ export function dryRunCheckpointPatch(input: { run_root: string; checkpoint_ref:
   const patchPath = join(scratchDir, "candidate.patch");
   try {
     writeFileSync(patchPath, resolved.patch);
+    const dryRunCwd = prepareDryRunSource({
+      run_root: input.run_root,
+      source: input.source,
+      scratch_dir: scratchDir,
+      base_checkpoint_refs: input.base_checkpoint_refs ?? []
+    });
     const dryRun = spawnSync("git", ["apply", "--check", patchPath], {
-      cwd: input.source,
+      cwd: dryRunCwd,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"]
     });
@@ -215,6 +226,37 @@ export function dryRunCheckpointPatch(input: { run_root: string; checkpoint_ref:
   } finally {
     rmSync(scratchDir, { recursive: true, force: true });
   }
+}
+
+function prepareDryRunSource(input: {
+  run_root: string;
+  source: string;
+  scratch_dir: string;
+  base_checkpoint_refs: string[];
+}): string {
+  if (input.base_checkpoint_refs.length === 0) return input.source;
+  const sourceClone = join(input.scratch_dir, "source");
+  const clone = spawnSync("git", ["clone", "--quiet", "--shared", input.source, sourceClone], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (clone.status !== 0) throw new Error(`failed to prepare checkpoint dry-run source: ${clone.stderr || clone.stdout}`);
+  for (const [index, checkpointRef] of input.base_checkpoint_refs.entries()) {
+    const resolved = resolveCheckpointPatch(input.run_root, checkpointRef);
+    if (!resolved) throw new Error(`dependency checkpoint cannot be resolved for dry-run: ${checkpointRef}`);
+    if (resolved.patch.trim().length === 0) continue;
+    const patchPath = join(input.scratch_dir, `base-${index}.patch`);
+    writeFileSync(patchPath, resolved.patch);
+    const apply = spawnSync("git", ["apply", patchPath], {
+      cwd: sourceClone,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"]
+    });
+    if (apply.status !== 0) {
+      throw new Error(`dependency checkpoint dry-run base apply failed for ${checkpointRef}: ${apply.stderr || apply.stdout}`);
+    }
+  }
+  return sourceClone;
 }
 
 export function createCombinedCheckpointPatchArtifact(input: {
