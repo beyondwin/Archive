@@ -97,6 +97,7 @@ export function normalizeWaygentPlanInput(input: NormalizeWaygentPlanInput): Nor
       instructions: extractInstructionLines(section.body)
     });
   }
+  errors.push(...verificationClaimCoverageErrors(tasks));
 
   if (errors.length > 0) {
     throw new Error([
@@ -221,6 +222,63 @@ function isSafeVerificationCommand(command: string): boolean {
     if (index === 0 && part.startsWith("cd ")) return true;
     return SAFE_COMMAND_STARTS.some((prefix) => part === prefix.trim() || part.startsWith(prefix));
   });
+}
+
+function verificationClaimCoverageErrors(tasks: NormalizedTaskInput[]): string[] {
+  const allClaims = tasks.flatMap((task) => task.file_claims);
+  const errors: string[] = [];
+  for (const task of tasks) {
+    for (const command of task.verify) {
+      for (const path of explicitVerificationPaths(command)) {
+        if (!allClaims.some((claim) => claimCoversPath(claim.path, path))) {
+          errors.push(`Task ${task.id.replace(/^task_(\d+)_.*$/, "$1")} "${task.title}" verification command references unclaimed path ${path}`);
+        }
+      }
+    }
+  }
+  return errors;
+}
+
+function explicitVerificationPaths(command: string): string[] {
+  const paths = new Set<string>();
+  for (const part of command.replace(/\s+/g, " ").trim().split(/\s+&&\s+/)) {
+    const normalized = part.trim();
+    if (normalized.startsWith("cd ")) continue;
+    if (normalized.startsWith("bun test ")) {
+      for (const token of commandTokens(normalized).slice(2)) {
+        if (isExplicitPathToken(token)) paths.add(token);
+      }
+      continue;
+    }
+    if (normalized.startsWith("git diff --check")) {
+      const tokens = commandTokens(normalized);
+      const separatorIndex = tokens.indexOf("--");
+      if (separatorIndex >= 0) {
+        for (const token of tokens.slice(separatorIndex + 1)) {
+          if (isExplicitPathToken(token)) paths.add(token);
+        }
+      }
+    }
+  }
+  return [...paths];
+}
+
+function commandTokens(command: string): string[] {
+  return command
+    .split(/\s+/)
+    .map((token) => token.replace(/^['"]|['"]$/g, ""))
+    .filter(Boolean);
+}
+
+function isExplicitPathToken(token: string): boolean {
+  if (!token || token.startsWith("-")) return false;
+  return token.includes("/") || token.startsWith(".") || /\.[a-zA-Z0-9]+$/.test(token);
+}
+
+function claimCoversPath(claimPath: string, path: string): boolean {
+  const normalizedClaim = claimPath.replace(/\/\*\*$/, "").replace(/\/$/, "");
+  const normalizedPath = path.replace(/\/$/, "");
+  return normalizedPath === normalizedClaim || normalizedPath.startsWith(`${normalizedClaim}/`);
 }
 
 function slugify(title: string): string {

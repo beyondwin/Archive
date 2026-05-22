@@ -13,6 +13,7 @@ const executableSuperpowersPlan = `
 
 - Modify: \`README.md\`
 - Create: \`docs/runtime.md\`
+- Modify: \`packages/orchestrator/tests/planNormalizer.test.ts\`
 
 - [ ] **Step 1: Write the failing behavior test**
 
@@ -78,7 +79,8 @@ verify:
       risk: "high",
       file_claims: [
         { path: "README.md", mode: "owned" },
-        { path: "docs/runtime.md", mode: "owned" }
+        { path: "docs/runtime.md", mode: "owned" },
+        { path: "packages/orchestrator/tests/planNormalizer.test.ts", mode: "owned" }
       ],
       verification_commands: ["bun test packages/orchestrator/tests/planNormalizer.test.ts"]
     });
@@ -131,5 +133,63 @@ git commit -m "update readme"
         path: "/tmp/plan.md"
       })
     ).toThrow(/cannot normalize superpowers implementation plan.*Task 1.*missing safe verification commands/s);
+  });
+
+  test("rejects superpowers verification commands that reference unclaimed files", () => {
+    expect(() =>
+      normalizeWaygentPlanInput({
+        markdown: `
+# Demo Implementation Plan
+
+## Task 1: Missing Verification Claim
+
+**Files:**
+
+- Modify: \`README.md\`
+
+Run:
+
+\`\`\`bash
+bun test packages/orchestrator/tests/planNormalizer.test.ts
+\`\`\`
+`,
+        path: "/tmp/plan.md"
+      })
+    ).toThrow(/Task 1.*verification command references unclaimed path packages\/orchestrator\/tests\/planNormalizer\.test\.ts/s);
+  });
+
+  test("allows verification commands that reference files claimed by another task", () => {
+    const normalized = normalizeWaygentPlanInput({
+      markdown: `
+# Demo Implementation Plan
+
+## Task 1: Own Shared Test
+
+**Files:**
+
+- Modify: \`packages/orchestrator/tests/planNormalizer.test.ts\`
+
+Run:
+
+\`\`\`bash
+bun test packages/orchestrator/tests/planNormalizer.test.ts
+\`\`\`
+
+## Task 2: Verify Shared Test
+
+**Files:**
+
+- Modify: \`README.md\`
+
+Run:
+
+\`\`\`bash
+bun test packages/orchestrator/tests/planNormalizer.test.ts
+\`\`\`
+`,
+      path: "/tmp/plan.md"
+    });
+
+    expect(normalized.task_count).toBe(2);
   });
 });
