@@ -66,6 +66,17 @@ describe("Waygent CLI", () => {
     expect((await runCli(["intent", "--text", "최근 승인된 플랜 실행해줘"])) as { command: string }).toEqual({ command: "waygent run --latest" });
   });
 
+  test("verify exposes the operator rerun-verification command", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-verify-root-"));
+
+    expect(await runCli(["verify", "--root", root, "--run", "run_missing"])).toMatchObject({
+      command: "verify",
+      run_id: "run_missing",
+      status: "blocked",
+      reason: "missing_run_state_v2"
+    });
+  });
+
   test("run --help reports usage without opening the default run", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-help-root-"));
 

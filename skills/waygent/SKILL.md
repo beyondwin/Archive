@@ -1,12 +1,12 @@
 ---
 name: waygent
-description: Translate natural-language Waygent run, status, explain, resume, and apply requests into stable CLI commands.
+description: Translate natural-language Waygent run, status, explain, resume, verify, and apply requests into stable CLI commands.
 ---
 
 # Waygent
 
-Use this skill when the user asks to run, inspect, resume, explain, or apply a
-Waygent execution from natural language.
+Use this skill when the user asks to run, inspect, resume, explain, verify, or
+apply a Waygent execution from natural language.
 
 Waygent is the product runtime. This skill translates operator intent into the
 `waygent` CLI and then reports the command outcome. It must not implement
@@ -77,6 +77,7 @@ flags and explicit command names higher priority than NL interpretation.
 - "자세히 검사해줘" -> `waygent inspect --run <run_id> --json`
 - "왜 막혔어?" -> `waygent explain --last`
 - "재개해줘" -> `waygent resume --last`
+- "검증 다시 실행해줘" -> `waygent verify --last`
 - "검증 통과한 것만 적용해줘" -> `waygent apply --run <run_id>`
 - "실행 가능한 waygent-task 만들어줘" ->
   `waygent scaffold-plan --id <task_id> --title <title> --claim <path:mode> --risk <low|medium|high> --verify <command>`
@@ -88,7 +89,8 @@ Stop rules:
   verification commands, ask for those fields instead of inferring
   apply-capable write scope from prose.
 - If apply reports `dirty_source_checkout`, report the blocker and do not retry.
-- If verification fails, use `waygent explain --last` before resume.
+- If verification fails, use `waygent explain --last` before `waygent verify`
+  or `waygent resume`.
 - If `resume` does not report `apply_verified_checkpoint`, do not run `apply`;
   inspect or explain the run first.
 - If apply reports `checkpoint_manifest_missing`, `checkpoint_patch_missing`,

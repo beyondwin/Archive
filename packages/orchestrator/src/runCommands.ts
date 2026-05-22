@@ -1,7 +1,7 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import type { AgentLensEvent, FailureClass, OperatorDecisionProjection, RunStatus } from "@waygent/contracts";
-import { appendEvent, readEvents, readLatestRunId, runPaths, sha256 } from "@waygent/lens-store";
+import { appendEvent, readEvents, readLatestRunId, runPaths, sha256, writeArtifact } from "@waygent/lens-store";
 import {
   projectApplyReadinessFromState,
   projectExecutionExplanationFromState,
@@ -21,6 +21,7 @@ import { hasApplyReadyCheckpoint } from "./completionAudit";
 import { selectResumeAction } from "./recoveryExecutor";
 import { validateMethodEvidenceForApply } from "./evidencePolicy";
 import { deleteResolvedOrphan, scanOrphanRuns } from "./orphanRuns";
+import { runVerificationCommands } from "./verification";
 import { watchRun, type WatchRunOptions } from "./watchRun";
 
 export interface RunCommandOptions {
@@ -35,6 +36,18 @@ export interface RunStatusView {
   total_events: number;
   last_event_type: string | null;
   trust_status: string;
+}
+
+export interface VerifyRunResult {
+  command: "verify";
+  run_id: string;
+  status: "passed" | "failed" | "blocked";
+  verification_refs: string[];
+  total_results: number;
+  task_id?: string;
+  reason?: string;
+  failure_class?: FailureClass | string | null;
+  failure_summary?: string | null;
 }
 
 export function resolveRunId(options: RunCommandOptions): string {
@@ -190,6 +203,68 @@ function readModelStateBlocker(result: Exclude<RunStateV2ReadResult, { status: "
   return { status: result.status, reason: result.reason };
 }
 
+function blockedVerifyResult(runId: string, reason: string, taskId?: string): VerifyRunResult {
+  const result: VerifyRunResult = {
+    command: "verify",
+    run_id: runId,
+    status: "blocked",
+    reason,
+    verification_refs: [],
+    total_results: 0
+  };
+  if (taskId) result.task_id = taskId;
+  return result;
+}
+
+function selectVerificationTask(state: WaygentRunStateV2, explicitTaskId?: string): {
+  task: WaygentRunStateV2["tasks"][string] | null;
+  reason: string;
+  task_id?: string;
+} {
+  if (explicitTaskId) {
+    const task = state.tasks[explicitTaskId] ?? null;
+    return task ? { task, reason: "selected" } : { task: null, reason: "unknown_task", task_id: explicitTaskId };
+  }
+  const tasks = Object.values(state.tasks);
+  const verificationBlocked = tasks.filter((task) =>
+    (task.status === "blocked" || task.status === "failed")
+    && isVerificationFailureClass(task.latest_failure_class)
+  );
+  if (verificationBlocked.length === 1) return { task: verificationBlocked[0]!, reason: "selected" };
+  const blocked = tasks.filter((task) => task.status === "blocked" || task.status === "failed");
+  if (blocked.length === 1) return { task: blocked[0]!, reason: "selected" };
+  if (tasks.length === 1) return { task: tasks[0]!, reason: "selected" };
+  return { task: null, reason: tasks.length === 0 ? "no_tasks" : "ambiguous_task_selection" };
+}
+
+function isVerificationFailureClass(value: FailureClass | string | null): boolean {
+  return value === "verification_failed"
+    || value === "dependency_missing"
+    || value === "environment_blocker"
+    || value === "command_not_found"
+    || value === "permission_denied"
+    || value === "timeout";
+}
+
+function readTaskPacketVerificationCommands(path: string): string[] {
+  const parsed = JSON.parse(readFileSync(path, "utf8")) as {
+    verification_commands?: unknown;
+    acceptance_commands?: unknown;
+  };
+  const verification = stringArray(parsed.verification_commands);
+  return verification.length > 0 ? verification : stringArray(parsed.acceptance_commands);
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0) : [];
+}
+
+function nextVerificationFailureClass(task: WaygentRunStateV2["tasks"][string], status: "passed" | "failed"): FailureClass | string | null {
+  if (status === "failed") return task.latest_failure_class;
+  const needsCheckpoint = task.file_claims.some((claim) => claim.mode !== "read_only") && task.checkpoint_refs.length === 0;
+  return needsCheckpoint ? "missing_checkpoint" : null;
+}
+
 export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): {
   run_id: string;
   allowed_actions: string[];
@@ -253,6 +328,107 @@ export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): {
     run_id: explanation.run_id,
     allowed_actions: explanation.blocked_by === "verification_failed" ? ["retry_with_evidence", "update_plan"] : ["inspect_run"],
     dry_run: options.dry_run ?? false
+  };
+}
+
+export async function verifyRun(options: RunCommandOptions & { task?: string }): Promise<VerifyRunResult> {
+  const runId = resolveRunId(options);
+  const stateResult = readRunStateV2Result(options.root, runId);
+  if (stateResult.status !== "ok") {
+    return blockedVerifyResult(runId, stateBlocker(stateResult));
+  }
+  const state = stateResult.state;
+  const selection = selectVerificationTask(state, options.task);
+  if (!selection.task) return blockedVerifyResult(runId, selection.reason, selection.task_id);
+  const task = selection.task;
+  if (!task.task_packet_path || !existsSync(task.task_packet_path)) {
+    return blockedVerifyResult(runId, "missing_task_packet", task.id);
+  }
+  const commands = readTaskPacketVerificationCommands(task.task_packet_path);
+  if (commands.length === 0) return blockedVerifyResult(runId, "missing_verification_commands", task.id);
+  const worktree = state.worktrees?.find((item) => item.task_id === task.id && item.cleanup_status === "active");
+  if (!worktree || !existsSync(worktree.path)) return blockedVerifyResult(runId, "missing_task_worktree", task.id);
+
+  const verifiedAt = new Date().toISOString();
+  const verification = await runVerificationCommands({
+    run_id: runId,
+    task_id: task.id,
+    cwd: worktree.path,
+    commands
+  });
+  const paths = runPaths(options.root, runId);
+  const verificationRecords = verification.results.map((kernel, index) => {
+    const artifact = writeArtifact(
+      paths.root,
+      `kernel/rerun_${task.id}_${index + 1}_${Date.now()}.json`,
+      `${JSON.stringify(kernel, null, 2)}\n`
+    );
+    const passed = kernel.exit_code === 0 && !kernel.timed_out;
+    return {
+      verification_id: kernel.request_id,
+      task_id: task.id,
+      command: commands[index] ?? "",
+      status: passed ? "passed" : "failed",
+      kernel_result_ref: artifact.path,
+      kernel_result_sha256: artifact.sha256,
+      rerun: true,
+      verified_at: verifiedAt,
+      failure_class: passed ? null : verification.failure_class,
+      failure_summary: passed ? null : verification.failure_summary
+    };
+  });
+  const verificationRefs = verificationRecords.map((record) => String(record.kernel_result_ref));
+  const nextFailureClass = nextVerificationFailureClass(task, verification.status);
+  const nextTaskStatus = verification.status === "passed" && nextFailureClass === null ? "verified" : "blocked";
+  const nextTasks: WaygentRunStateV2["tasks"] = {
+    ...state.tasks,
+    [task.id]: {
+      ...task,
+      status: nextTaskStatus,
+      latest_failure_class: verification.status === "passed" ? nextFailureClass : verification.failure_class,
+      timing: { ...task.timing, verification_rerun_at: verifiedAt }
+    }
+  };
+  const allTasksVerified = Object.values(nextTasks).every((item) => item.status === "verified");
+  const nextState: WaygentRunStateV2 = {
+    ...state,
+    tasks: nextTasks,
+    verification: [...state.verification, ...verificationRecords],
+    status: allTasksVerified ? "completed" : "blocked",
+    lifecycle_outcome: allTasksVerified ? "finished" : "blocked",
+    current_phase: allTasksVerified ? "complete" : "recover",
+    timestamps: {
+      ...state.timestamps,
+      updated_at: verifiedAt,
+      completed_at: allTasksVerified ? state.timestamps.completed_at ?? verifiedAt : state.timestamps.completed_at
+    }
+  };
+  writeRunStateV2(options.root, nextState);
+  appendEvent(paths.events, nextRunEvent(paths.events, {
+    run_id: runId,
+    event_type: "runway.verification_result",
+    phase: "verify",
+    outcome: verification.status === "passed" ? "success" : "failed",
+    summary: verification.status === "passed" ? "Verification rerun passed." : "Verification rerun failed.",
+    payload: {
+      task_id: task.id,
+      rerun: true,
+      commands: commands.length,
+      verification_refs: verificationRefs,
+      failure_class: verification.failure_class,
+      failure_summary: verification.failure_summary
+    },
+    trust_impact: verification.status === "passed" ? "supports_success" : "supports_failure"
+  }));
+  return {
+    command: "verify",
+    run_id: runId,
+    task_id: task.id,
+    status: verification.status,
+    verification_refs: verificationRefs,
+    total_results: verification.results.length,
+    failure_class: verification.failure_class,
+    failure_summary: verification.failure_summary
   };
 }
 
