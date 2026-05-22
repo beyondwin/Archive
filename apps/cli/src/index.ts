@@ -88,8 +88,25 @@ function isProfilePreset(value: unknown): value is ProfilePreset {
   return value === "max-quality" || value === "balanced" || value === "cost-saver";
 }
 
-export function resolveCliProfile(parsed: ParsedCli): NonNullable<Parameters<typeof runWaygentDemo>[0]["profile"]> {
-  const defaultProvider = parsed.command === "demo" ? "fake" : "codex";
+export type WaygentHost = "claude" | "codex" | "unknown";
+
+export function detectHost(env: NodeJS.ProcessEnv = process.env): WaygentHost {
+  if (env.WAYGENT_HOST === "claude" || env.WAYGENT_HOST === "codex") return env.WAYGENT_HOST;
+  if (env.CLAUDECODE === "1" || typeof env.CLAUDE_CODE_ENTRYPOINT === "string") return "claude";
+  if (env.CODEX_APP === "1" || env.CODEX_CLI === "1" || typeof env.CODEX_ENTRYPOINT === "string") return "codex";
+  return "unknown";
+}
+
+export function resolveCliProfile(
+  parsed: ParsedCli,
+  env: NodeJS.ProcessEnv = process.env
+): NonNullable<Parameters<typeof runWaygentDemo>[0]["profile"]> {
+  const host = detectHost(env);
+  const defaultProvider = parsed.command === "demo"
+    ? "fake"
+    : host === "claude"
+      ? "claude"
+      : "codex";
   if (parsed.command === "demo" && parsed.flags.provider && parsed.flags.provider !== "fake") {
     throw new Error("waygent demo only supports the offline fake provider; use waygent run for live providers");
   }

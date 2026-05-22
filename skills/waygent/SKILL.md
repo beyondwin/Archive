@@ -34,8 +34,13 @@ Invocation boundary:
   plan with `--plan` and the design/spec with `--spec`.
 - If the user says "멀티에이전트", "multi-agent", or similar, include
   `--execution-mode multi-agent`.
-- In the Codex app or Codex CLI, `waygent run` defaults to Codex provider and
-  `multi-agent` execution when no provider or execution mode is specified.
+- `waygent run` auto-detects the host and picks the default provider when
+  `--provider` is not passed: Claude Code (`CLAUDECODE=1` or
+  `CLAUDE_CODE_ENTRYPOINT` set) → `claude`; Codex app/CLI (`CODEX_APP=1`,
+  `CODEX_CLI=1`, or `CODEX_ENTRYPOINT` set) → `codex`; unknown host → `codex`
+  (preserved fallback). Set `WAYGENT_HOST=claude|codex` to force a host.
+  Execution mode defaults to `multi-agent` in every case.
+- Explicit `--provider` always wins over auto-detection.
 - `waygent demo` is the deterministic offline path and only supports the fake
   provider. Use `waygent run` for Codex or Claude provider execution.
 - The repo-local fallback command is `bun run waygent -- run ...`; it maps to
