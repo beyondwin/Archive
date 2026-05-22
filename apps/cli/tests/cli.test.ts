@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { readRunStateV2 } from "@waygent/orchestrator";
-import { parseCli, resolveCliProfile, runCli } from "../src/index";
+import { detectHost, parseCli, resolveCliProfile, runCli } from "../src/index";
 
 const plan = (id: string) => `
 \`\`\`yaml waygent-task
@@ -32,19 +32,33 @@ describe("Waygent CLI", () => {
       });
   });
 
-  test("defaults CLI run to Codex multi-agent while demo stays offline fake multi-agent", () => {
-    expect(resolveCliProfile(parseCli(["run"]))).toMatchObject({
+  test("defaults CLI run to Codex multi-agent on unknown hosts while demo stays offline fake multi-agent", () => {
+    expect(resolveCliProfile(parseCli(["run"]), {})).toMatchObject({
       provider: "codex",
       execution_mode: "multi-agent"
     });
-    expect(resolveCliProfile(parseCli(["demo"]))).toMatchObject({
+    expect(resolveCliProfile(parseCli(["demo"]), {})).toMatchObject({
       provider: "fake",
       execution_mode: "multi-agent"
     });
   });
 
+  test("auto-detects host and routes default provider accordingly", () => {
+    expect(detectHost({ CLAUDECODE: "1" })).toBe("claude");
+    expect(detectHost({ CLAUDE_CODE_ENTRYPOINT: "cli" })).toBe("claude");
+    expect(detectHost({ CODEX_CLI: "1" })).toBe("codex");
+    expect(detectHost({ CODEX_APP: "1" })).toBe("codex");
+    expect(detectHost({})).toBe("unknown");
+    expect(detectHost({ WAYGENT_HOST: "claude", CODEX_CLI: "1" })).toBe("claude");
+
+    expect(resolveCliProfile(parseCli(["run"]), { CLAUDECODE: "1" })).toMatchObject({ provider: "claude" });
+    expect(resolveCliProfile(parseCli(["run"]), { CODEX_CLI: "1" })).toMatchObject({ provider: "codex" });
+    expect(resolveCliProfile(parseCli(["run", "--provider", "codex"]), { CLAUDECODE: "1" })).toMatchObject({ provider: "codex" });
+    expect(resolveCliProfile(parseCli(["run", "--provider", "claude"]), { CODEX_CLI: "1" })).toMatchObject({ provider: "claude" });
+  });
+
   test("refuses live providers for deterministic demo runs", () => {
-    expect(() => resolveCliProfile(parseCli(["demo", "--provider", "codex"]))).toThrow(/waygent demo/);
+    expect(() => resolveCliProfile(parseCli(["demo", "--provider", "codex"]), {})).toThrow(/waygent demo/);
   });
 
   test("root package exposes a stable waygent script", () => {
