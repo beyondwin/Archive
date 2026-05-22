@@ -136,14 +136,15 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     failure_class: worker.failure_class ?? null,
     ...(processEvidence ? { process: processEvidence } : {})
   };
-  const events: TaskExecutionEventIntent[] = [{
+  const workerEvent: TaskExecutionEventIntent = {
     run_id: input.run_id,
     event_type: "runway.worker_result",
     phase: "worker",
     outcome: worker.status === "completed" ? "success" : "failed",
     summary: worker.summary,
     payload: { task_id: input.task.id, failure_class: worker.failure_class ?? null, worker, attempt }
-  }];
+  };
+  const events: TaskExecutionEventIntent[] = [workerEvent];
 
   if (input.provider === "fake") materializeFakeProviderResult(taskWorktree.path, input.task);
 
@@ -212,7 +213,22 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
       failure_summary: verification.failure_summary
     });
   }
-  const verificationPassed = verification.status === "passed" && worker.status === "completed";
+  const providerEnvironmentBlockerOverridden =
+    verification.status === "passed" && isProviderEnvironmentSelfReport(worker.failure_class);
+  if (providerEnvironmentBlockerOverridden) {
+    workerEvent.outcome = "success";
+    workerEvent.summary = `${worker.summary} Kernel verification passed; provider environment self-report was kept as evidence.`;
+    workerEvent.payload = {
+      task_id: input.task.id,
+      failure_class: null,
+      provider_reported_failure_class: worker.failure_class ?? null,
+      worker,
+      attempt
+    };
+    workerEvent.trust_impact = "supports_success";
+  }
+  const providerAccepted = worker.status === "completed" || providerEnvironmentBlockerOverridden;
+  const verificationPassed = verification.status === "passed" && providerAccepted;
   const verificationFailureClass = verification.failure_class ?? (verificationPassed ? null : worker.failure_class ?? "verification_failed");
   events.push({
     run_id: input.run_id,
@@ -424,6 +440,10 @@ function normalizeProviderRunResult(
     };
   }
   return { worker: result };
+}
+
+function isProviderEnvironmentSelfReport(failureClass: FailureClass | undefined): boolean {
+  return failureClass === "dependency_missing" || failureClass === "environment_blocker";
 }
 
 function buildTaskPrompt(task: Pick<ParsedWaygentTask, "title" | "instructions" | "verification_commands"> | undefined, taskPacketPath?: string): string {
