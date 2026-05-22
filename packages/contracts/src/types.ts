@@ -495,6 +495,7 @@ export interface OperatorDecisionProjection {
   ai_handoff: OperatorAiHandoff;
   confidence: OperatorDecisionConfidence;
   unknown_reasons: string[];
+  intake_recovery?: OperatorIntakeRecoverySummary;
   source_projection_refs: OperatorSourceProjectionRefs;
 }
 
@@ -597,6 +598,7 @@ export interface WaygentRunStateV2 {
   plan_path: string | null;
   spec_path: string | null;
   provider_profile: Record<string, unknown>;
+  intake_recovery?: WaygentIntakeRecovery;
   decisions_register?: DecisionEntry[];
   spec_manifest?: SpecManifest;
   cost_ledger?: CostLedger;
@@ -627,6 +629,65 @@ export interface WaygentRunStateV2 {
   drift: { last_checked_at: string | null; records: Array<Record<string, unknown>>; unrepaired_blockers: Array<Record<string, unknown>> };
   completion_audit: null | Record<string, unknown>;
   timestamps: { started_at: string; updated_at: string; completed_at: string | null };
+}
+
+export type IntakeRecoveryStatus = "not_needed" | "recovered" | "decision_required" | "failed";
+export type IntakeRecoveryConfidence = "deterministic" | "ai_assisted" | "blocked";
+export type IntakeFindingSeverity = "info" | "warning" | "blocking";
+
+export type IntakeFindingCode =
+  | "task_heading_unrecognized"
+  | "task_body_not_yaml"
+  | "missing_frontmatter"
+  | "single_spec_candidate_by_basename"
+  | "file_claims_in_prose"
+  | "verification_command_in_prose"
+  | "verification_command_unclassified_but_safe"
+  | "plan_section_body_sparse_but_spec_section_available"
+  | "multiple_plan_or_spec_candidates"
+  | "destructive_command_candidate"
+  | "conflicting_owned_claim"
+  | "path_escape"
+  | "missing_verification_for_source_mutation"
+  | "external_credentials_required"
+  | "scope_expansion"
+  | "apply_without_verification_evidence";
+
+export interface IntakeFinding {
+  code: IntakeFindingCode | string;
+  severity: IntakeFindingSeverity;
+  message: string;
+  task_id: string | null;
+  evidence_refs: string[];
+}
+
+export interface IntakeRepairAction {
+  action: string;
+  status: "applied" | "blocked" | "skipped";
+  reason: string;
+  evidence_refs: string[];
+}
+
+export interface WaygentIntakeRecovery {
+  status: IntakeRecoveryStatus;
+  started_at: string;
+  completed_at: string;
+  normalized_plan_ref: string | null;
+  recovery_report_ref: string | null;
+  findings: IntakeFinding[];
+  repair_actions: IntakeRepairAction[];
+  can_start: boolean;
+  confidence: IntakeRecoveryConfidence;
+  question: string | null;
+}
+
+export interface OperatorIntakeRecoverySummary {
+  status: IntakeRecoveryStatus;
+  can_start: boolean;
+  confidence: IntakeRecoveryConfidence;
+  finding_codes: string[];
+  artifact_refs: string[];
+  question: string | null;
 }
 
 export interface ApplyReadinessProjection {

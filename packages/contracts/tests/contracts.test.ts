@@ -287,6 +287,136 @@ describe("Waygent contracts", () => {
     expect(validateContract("waygent.run_state.v2", state)).toEqual(state);
   });
 
+  test("accepts intake recovery state and operator projection summary", () => {
+    const intake = {
+      status: "recovered",
+      started_at: "2026-05-23T00:00:00.000Z",
+      completed_at: "2026-05-23T00:00:01.000Z",
+      normalized_plan_ref: "artifacts/intake/normalized-plan.md",
+      recovery_report_ref: "artifacts/intake/recovery-report.json",
+      findings: [
+        {
+          code: "task_body_not_yaml",
+          severity: "warning",
+          message: "Task 1 used prose instead of waygent-task YAML.",
+          task_id: "task_1_update_readme",
+          evidence_refs: ["plan:plan.md#task-1"]
+        }
+      ],
+      repair_actions: [
+        {
+          action: "deterministic_superpowers_normalization",
+          status: "applied",
+          reason: "Recovered file claims and verification commands from markdown sections.",
+          evidence_refs: ["artifacts/intake/normalized-plan.md"]
+        }
+      ],
+      can_start: true,
+      confidence: "deterministic",
+      question: null
+    };
+
+    const state: WaygentRunStateV2 = {
+      schema: "waygent.run_state.v2",
+      run_id: "run_intake",
+      workspace: "/tmp/workspace",
+      source_branch: "main",
+      worktree_root: "/tmp/worktrees",
+      run_root: "/tmp/run",
+      artifact_root: "/tmp/run/artifacts",
+      state_path: "/tmp/run/state.json",
+      event_journal_path: "/tmp/run/events.jsonl",
+      plan_path: "/tmp/workspace/plan.md",
+      spec_path: "/tmp/workspace/spec.md",
+      provider_profile: { provider: "fake" },
+      intake_recovery: intake,
+      status: "completed",
+      lifecycle_outcome: "finished",
+      current_phase: "complete",
+      tasks: {},
+      safe_waves: [],
+      provider_attempts: [],
+      reviews: [],
+      verification: [],
+      recovery: [],
+      apply: { status: "not_applied" },
+      context: { snapshot_path: null, basis_hash: null },
+      drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
+      completion_audit: null,
+      timestamps: {
+        started_at: "2026-05-23T00:00:00.000Z",
+        updated_at: "2026-05-23T00:00:01.000Z",
+        completed_at: "2026-05-23T00:00:01.000Z"
+      }
+    };
+
+    expect(validateContract("waygent.run_state.v2", state)).toEqual(state);
+
+    const decision = validateContract("waygent.operator_decision.v1", {
+      schema: "waygent.operator_decision.v1",
+      run_id: "run_intake",
+      generated_at: "2026-05-23T00:00:02.000Z",
+      status_summary: {
+        display_status: "done",
+        runtime_status: "completed",
+        lifecycle_outcome: "finished",
+        current_phase: "complete",
+        active_tasks: 0,
+        completed_tasks: 0,
+        blocked_tasks: 0,
+        apply_status: "not_ready",
+        summary: "run_intake completed after deterministic intake recovery."
+      },
+      primary_blocker: null,
+      secondary_blockers: [],
+      allowed_actions: [],
+      blocked_actions: [],
+      evidence_packet: {
+        state_refs: ["state:/tmp/run/state.json"],
+        event_refs: [],
+        artifact_refs: ["artifacts/intake/normalized-plan.md", "artifacts/intake/recovery-report.json"],
+        verification_refs: [],
+        checkpoint_refs: [],
+        projection_refs: [],
+        missing_refs: [],
+        redaction_notes: []
+      },
+      ai_handoff: {
+        purpose: "summarize_blocker",
+        prompt_summary: "Summarize the intake recovery result.",
+        run_id: "run_intake",
+        current_status: "done",
+        primary_blocker: null,
+        secondary_blockers: [],
+        allowed_action_ids: [],
+        blocked_action_ids: [],
+        constraints: ["Do not override Waygent runtime policy."],
+        evidence_refs: ["artifacts/intake/recovery-report.json"],
+        missing_evidence: [],
+        raw_fallback_refs: [],
+        safety_notes: ["Waygent runtime remains apply authority."]
+      },
+      confidence: "deterministic",
+      unknown_reasons: [],
+      intake_recovery: {
+        status: "recovered",
+        can_start: true,
+        confidence: "deterministic",
+        finding_codes: ["task_body_not_yaml"],
+        artifact_refs: ["artifacts/intake/normalized-plan.md", "artifacts/intake/recovery-report.json"],
+        question: null
+      },
+      source_projection_refs: {
+        run_state_v2: "state:/tmp/run/state.json",
+        apply_readiness: "waygent.apply_readiness",
+        execution_explanation: "waygent.execution_explanation.v1",
+        operational_maturity: "waygent.operational_maturity.v1"
+      }
+    }) as { intake_recovery?: { status: string; can_start: boolean } };
+
+    expect(decision.intake_recovery).toMatchObject({ status: "recovered", can_start: true });
+  });
+
   test("validates operator decision projection contract", () => {
     const decision = {
       schema: "waygent.operator_decision.v1",
