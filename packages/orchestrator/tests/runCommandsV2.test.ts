@@ -2,9 +2,9 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { appendEvent, runPaths } from "@waygent/lens-store";
+import { appendEvent, readEvents, runPaths } from "@waygent/lens-store";
 import { createCheckpointArtifact, createCombinedCheckpointPatchArtifact, dryRunCheckpointPatch } from "../src/checkpointArtifacts";
-import { applyRun, buildRunEvent, explainRun, inspectRun, resumeRun } from "../src/runCommands";
+import { applyRun, buildRunEvent, explainRun, inspectRun, resumeRun, verifyRun } from "../src/runCommands";
 import { readRunStateV2, runStatePath, writeRunStateV2 } from "../src/runState";
 
 describe("Waygent run commands v2", () => {
@@ -151,6 +151,89 @@ describe("Waygent run commands v2", () => {
     const explanation = explainRun({ root, run: runId });
     expect(explanation.operator_decision.primary_blocker).toMatchObject({ code: "checkpoint_missing" });
     expect(explanation.summary).toBe(explanation.operator_decision.status_summary.summary);
+  });
+
+  test("verify reruns task verification in the existing worktree and persists evidence", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-verify-v2-"));
+    const runId = "run_verify_v2";
+    const taskId = "task_verify";
+    const runRoot = join(root, runId);
+    const worktree = join(root, "worktrees", runId, taskId);
+    const taskPacketPath = join(runRoot, "artifacts", "task_packets", `${taskId}.json`);
+    mkdirSync(worktree, { recursive: true });
+    mkdirSync(join(runRoot, "artifacts", "task_packets"), { recursive: true });
+    writeFileSync(join(worktree, "ready.txt"), "ready\n");
+    writeFileSync(taskPacketPath, JSON.stringify({
+      schema: "waygent.task_packet.v1",
+      verification_commands: ["test -f ready.txt"],
+      acceptance_commands: ["test -f ready.txt"]
+    }, null, 2));
+    writeRunStateV2(root, {
+      schema: "waygent.run_state.v2",
+      run_id: runId,
+      workspace: root,
+      source_branch: "main",
+      worktree_root: join(root, "worktrees"),
+      run_root: runRoot,
+      artifact_root: join(runRoot, "artifacts"),
+      state_path: runStatePath(root, runId),
+      event_journal_path: join(runRoot, "events.jsonl"),
+      plan_path: null,
+      spec_path: null,
+      provider_profile: { provider: "fake" },
+      status: "blocked",
+      lifecycle_outcome: "blocked",
+      current_phase: "recover",
+      safe_waves: [],
+      worktrees: [{
+        task_id: taskId,
+        branch: "waygent/run_verify_v2/task_verify",
+        path: worktree,
+        source: root,
+        source_commit: null,
+        cleanup_status: "active"
+      }],
+      tasks: {
+        [taskId]: {
+          id: taskId,
+          status: "blocked",
+          risk: "low",
+          dependencies: [],
+          file_claims: [{ path: "ready.txt", mode: "read_only" }],
+          attempts: [],
+          task_packet_path: taskPacketPath,
+          task_packet_sha256: null,
+          unit_manifest: null,
+          checkpoint_refs: [],
+          latest_failure_class: "verification_failed",
+          decision_packet_ref: null,
+          timing: {}
+        }
+      },
+      provider_attempts: [],
+      reviews: [],
+      verification: [],
+      recovery: [],
+      apply: { status: "not_applied" },
+      context: { snapshot_path: null, basis_hash: null },
+      drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
+      completion_audit: null,
+      timestamps: {
+        started_at: "2026-05-22T00:00:00.000Z",
+        updated_at: "2026-05-22T00:00:00.000Z",
+        completed_at: null
+      }
+    });
+
+    const result = await verifyRun({ root, run: runId });
+
+    expect(result).toMatchObject({ command: "verify", run_id: runId, task_id: taskId, status: "passed" });
+    expect(result.verification_refs).toHaveLength(1);
+    const state = readRunStateV2(root, runId);
+    expect(state.tasks[taskId]?.status).toBe("verified");
+    expect(state.tasks[taskId]?.latest_failure_class).toBe(null);
+    expect(state.verification).toHaveLength(1);
+    expect(readEvents(join(runRoot, "events.jsonl")).at(-1)?.event_type).toBe("runway.verification_result");
   });
 
   test("resume blocks runs without v2 state", () => {

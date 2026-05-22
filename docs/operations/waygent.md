@@ -126,6 +126,9 @@ Additional read-only operator commands:
 - `waygent decisions --run <id>|--last`: reads the decision register and
   `DECISIONS.md` projection.
 - `waygent cost --run <id>|--last`: reads the provider usage/cost ledger.
+- `waygent verify --run <id>|--last [--task <task_id>]`: reruns the selected
+  task packet's verification commands in its existing active worktree and
+  records kernel evidence back into the run state and event journal.
 - `waygent watch --run <id>|--last --json --timeout 1s`: reads the event
   journal as filtered transitions.
 - `waygent orphans --root <root>`: lists invalid run roots and stale worktrees.

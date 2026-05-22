@@ -16,6 +16,7 @@ import {
   runWaygentDemo,
   scaffoldWaygentTask,
   statusRun,
+  verifyRun,
   watchRunCommand
 } from "@waygent/orchestrator";
 import type { RunCommandOptions, WatchRunOptions } from "@waygent/orchestrator";
@@ -49,7 +50,7 @@ export function parseCli(argv: string[]): ParsedCli {
   return { command, flags };
 }
 
-const usage = "waygent run|run-chain|status|events|inspect|explain|resume|apply|decisions|cost|watch|orphans|scaffold-plan";
+const usage = "waygent run|run-chain|status|events|inspect|explain|resume|verify|apply|decisions|cost|watch|orphans|scaffold-plan";
 const commandUsage: Record<string, string> = {
   run: "waygent run --plan <waygent-task.md> [--spec <design.md>] [--provider codex|claude|fake] [--execution-mode multi-agent|single-agent] [--plan-preflight off|deterministic|full]",
   "run-chain": "waygent run-chain --plan <p1> [--spec <s1>] --plan <p2> [--spec <s2>]",
@@ -59,6 +60,7 @@ const commandUsage: Record<string, string> = {
   inspect: "waygent inspect --run <run_id>|--last",
   explain: "waygent explain --run <run_id>|--last",
   resume: "waygent resume --run <run_id>|--last",
+  verify: "waygent verify --run <run_id>|--last [--task <task_id>]",
   apply: "waygent apply --run <run_id>",
   decisions: "waygent decisions --run <run_id>|--last",
   cost: "waygent cost --run <run_id>|--last",
@@ -159,6 +161,11 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
   }
   if (parsed.command === "resume") {
     return resumeRun({ ...runCommandOptions(parsed), dry_run: true });
+  }
+  if (parsed.command === "verify") {
+    const options: Parameters<typeof verifyRun>[0] = runCommandOptions(parsed);
+    if (typeof parsed.flags.task === "string") options.task = parsed.flags.task;
+    return verifyRun(options);
   }
   if (parsed.command === "apply") {
     return applyRun({
