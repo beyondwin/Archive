@@ -172,6 +172,26 @@ The cheap repair tier handles common document drift:
 Deterministic repair may proceed only when it can produce a traceable
 normalized plan with no dangerous ambiguity.
 
+### Recovered Task Risk Classification
+
+Tasks emitted by deterministic repair from non-YAML or prose-shaped input
+MUST normalize to `risk: "high"`, regardless of the severity of recovered
+findings. The strict YAML `waygent-task` block is the only contract under
+which a task author declares a lower risk; recovered tasks have not been
+authored under that contract and therefore carry the most conservative
+classification until a human upgrades them in source.
+
+This is independent of intake finding severity. Finding severity decides
+whether the run can start at all (recoverable vs decision_required); risk
+classification decides how cautiously the runtime schedules and gates the
+recovered task once it does start. Bounded AI repair is bound by the same
+rule: AI-repaired tasks emit `risk: "high"` until reviewed.
+
+Existing test surfaces that assert `risk: "high"` on recovered superpowers
+prose plans (e.g. `apps/cli/tests/cli.test.ts` "run normalizes executable
+superpowers implementation plans before dispatch") are load-bearing
+documentation of this policy and must remain green.
+
 ### Bounded AI Repair
 
 AI repair is used only when deterministic repair cannot confidently normalize

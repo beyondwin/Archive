@@ -729,7 +729,11 @@ function recoverSection(section: LenientTaskSection, findings: IntakeFinding[], 
     title: section.title,
     dependencies: [],
     file_claims: fileClaims,
-    risk: "medium" as const,
+    // Recovered tasks are always high risk regardless of finding severity.
+    // The strict YAML waygent-task block is the only contract a task author
+    // can use to declare a lower risk; recovered tasks have not been authored
+    // under that contract. See design "Recovered Task Risk Classification".
+    risk: "high" as const,
     verify,
     instructions: instructionLines(section.body)
   };
@@ -872,6 +876,15 @@ verify:
 - Modify: `packages/orchestrator/src/orchestrator.ts`
 - Modify: `packages/orchestrator/tests/orchestratorRun.test.ts`
 - Modify: `apps/cli/tests/cli.test.ts`
+
+**Compatibility constraint:** The existing test
+`apps/cli/tests/cli.test.ts` "run normalizes executable superpowers
+implementation plans before dispatch" asserts
+`expect(task?.risk).toBe("high")` on a recovered prose plan. This
+assertion is load-bearing documentation of the Recovered Task Risk
+Classification policy (see design) and MUST remain green. Adding new
+intake-recovery assertions to `apps/cli/tests/cli.test.ts` is fine; do
+not relax or delete the existing risk assertion.
 
 - [ ] **Step 1: Add failing run lifecycle tests**
 
