@@ -26,6 +26,9 @@ required_skill_phrases = [
     "Do not use host `spawn_agent`",
     "The Waygent runtime owns worktree creation",
     "If no `waygent run` occurs, no Waygent worktree will be created",
+    "intake_decision_required",
+    "normalized plan",
+    "recovery report",
 ]
 
 required_files = [

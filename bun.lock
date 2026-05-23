@@ -6,7 +6,10 @@
       "name": "waygent",
       "dependencies": {
         "@vitejs/plugin-react": "^5.1.1",
+        "@waygent/lens-projectors": "workspace:*",
+        "@waygent/lens-store": "workspace:*",
         "@waygent/orchestrator": "workspace:*",
+        "@waygent/provider-adapters": "workspace:*",
         "ajv": "^8.17.1",
         "ajv-formats": "^3.0.1",
         "react": "^19.2.3",

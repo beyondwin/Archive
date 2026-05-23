@@ -136,6 +136,24 @@ event include `post_apply_verification` diagnostics with the failed command,
 request id, exit code, timeout flag, and short output snippets. Treat that
 payload as the first recovery target before rerunning or applying again.
 
+### Intake Recovery
+
+Waygent attempts strict plan parsing first. If the supplied design or
+implementation document is clearly intended for execution but does not match
+the executable `waygent-task` shape, Waygent runs deterministic intake recovery
+before plan preflight.
+
+Recoverable examples include prose task bodies, `### Task` headings, file
+claims written as path references, and safe verification commands in fenced
+shell blocks. Waygent writes `artifacts/intake/normalized-plan.md` and
+`artifacts/intake/recovery-report.json`, then continues through the normal
+preflight, scheduling, verification, checkpoint, and apply-readiness gates.
+
+High-risk intake blockers still stop execution and surface
+`intake_decision_required`. These include destructive commands, multiple
+matching plan/spec candidates, path escapes, missing verification for
+source-mutating work, and apply-like mutation before verification evidence.
+
 ## Safe-Wave Parallel Execution
 
 Waygent may run tasks in the same scheduler-approved safe wave concurrently.

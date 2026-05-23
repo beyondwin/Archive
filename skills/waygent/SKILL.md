@@ -118,3 +118,8 @@ Stop rules:
 - If apply reports `checkpoint_manifest_missing`, `checkpoint_patch_missing`,
   or `checkpoint_digest_mismatch`, report the blocker and do not retry from
   chat.
+- If a run reports `intake_decision_required`, explain the specific blocker
+  and ask only the short question from the operator decision. Do not rewrite
+  the plan from chat unless the user approves the change.
+- If intake recovery reports `recovered`, proceed with the run result and
+  mention the normalized plan and recovery report artifact refs when useful.
