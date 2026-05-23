@@ -1,0 +1,9 @@
+Implementation complete.
+
+```bash
+echo not-json
+```
+
+```json
+{"schema":"runway.worker_result.v1","task_id":"task_demo","candidate_id":"candidate_task_demo","status":"completed","changed_files":["README.md"],"summary":"Recovered worker JSON from second fence.","evidence":{"usage":{"input_tokens":1,"output_tokens":2,"cached_read_tokens":0,"cached_write_tokens":0}}}
+```
