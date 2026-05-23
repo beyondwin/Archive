@@ -84,7 +84,9 @@ function normalizeWorkerStatus(status: unknown): WorkerResult["status"] {
     lowered === "ok" ||
     lowered === "ready" ||
     lowered === "ready_for_review" ||
-    lowered === "ready-for-review"
+    lowered === "ready-for-review" ||
+    lowered === "ready_for_verification" ||
+    lowered === "ready-for-verification"
   ) {
     return "completed";
   }
