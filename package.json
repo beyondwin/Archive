@@ -20,6 +20,7 @@
     "waygent:dogfood": "bun test tests/integration/waygent-dogfood-evidence.test.ts"
   },
   "dependencies": {
+    "@waygent/design-contract": "workspace:*",
     "@waygent/lens-projectors": "workspace:*",
     "@waygent/lens-store": "workspace:*",
     "@waygent/orchestrator": "workspace:*",

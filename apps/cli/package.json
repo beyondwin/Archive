@@ -9,6 +9,7 @@
     "test": "bun test tests"
   },
   "dependencies": {
+    "@waygent/design-contract": "workspace:*",
     "@waygent/orchestrator": "workspace:*"
   }
 }

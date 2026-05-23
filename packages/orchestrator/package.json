@@ -9,6 +9,7 @@
   "dependencies": {
     "@waygent/context-packer": "workspace:*",
     "@waygent/contracts": "workspace:*",
+    "@waygent/design-contract": "workspace:*",
     "@waygent/kernel-client": "workspace:*",
     "@waygent/lens-projectors": "workspace:*",
     "@waygent/lens-store": "workspace:*",
