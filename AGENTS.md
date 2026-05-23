@@ -125,6 +125,11 @@ git diff --check
 For docs-only changes, at minimum run `git diff --check` and manually inspect
 links/paths touched by the change.
 
+Tasks that edit two or more `packages/*` or touch `bun.lock` automatically
+run verify under `isolated_workspace_resolve`. See
+`docs/operations/verification.md` for strategy, failure surface, and kill
+switches.
+
 ## Prompt Shape
 
 When handing work to an agent, include:
