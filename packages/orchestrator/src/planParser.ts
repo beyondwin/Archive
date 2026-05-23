@@ -2,6 +2,8 @@ import type { RiskLevel } from "@waygent/contracts";
 import type { FileClaim, FileClaimMode } from "@waygent/runway-control";
 import { extractInstructionLines } from "./planAdapters/instructionsExtract";
 
+export type VerifyIsolation = "isolated" | "fast" | "auto";
+
 export interface ParsedWaygentTask {
   id: string;
   title: string;
@@ -10,6 +12,7 @@ export interface ParsedWaygentTask {
   risk: RiskLevel;
   verification_commands: string[];
   instructions: string[];
+  verify_isolation?: VerifyIsolation;
 }
 
 export interface ParsedWaygentPlan {
@@ -130,6 +133,15 @@ function parseTaskBlock(block: string): ParsedWaygentTask {
     throw new Error(`invalid risk ${risk}`);
   }
 
+  const verifyIsolationRaw = scalar.get("verify_isolation");
+  let verifyIsolation: VerifyIsolation | undefined;
+  if (typeof verifyIsolationRaw === "string") {
+    const value = cleanScalar(verifyIsolationRaw);
+    if (value === "isolated" || value === "fast" || value === "auto") {
+      verifyIsolation = value;
+    }
+  }
+
   return {
     id: scalar.get("id")!,
     title: scalar.get("title")!,
@@ -137,7 +149,8 @@ function parseTaskBlock(block: string): ParsedWaygentTask {
     file_claims: fileClaims,
     risk,
     verification_commands: verification,
-    instructions
+    instructions,
+    ...(verifyIsolation ? { verify_isolation: verifyIsolation } : {})
   };
 }
 

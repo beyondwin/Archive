@@ -255,6 +255,11 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
   let verificationEnvironmentEvidence: VerificationEnvironmentEvidence = {
     status: "skipped",
     strategy: "none",
+    decision: { requested: input.task.verify_isolation ?? "auto", resolved: "fast", reason: "not_prepared" },
+    isolation_status: "not_required",
+    isolated_packages: [],
+    resolved_paths: {},
+    cache: null,
     created_paths: [],
     cleanup_status: "not_needed",
     reason: "not_prepared"
@@ -263,11 +268,15 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     const verificationEnvironment = prepareVerificationEnvironment({
       workspace: input.workspace,
       worktree: taskWorktree.path,
-      disabled: process.env.WAYGENT_DISABLE_VERIFICATION_ENV === "1"
+      disabled: process.env.WAYGENT_DISABLE_VERIFICATION_ENV === "1",
+      ...(input.task.verify_isolation ? { verifyIsolation: input.task.verify_isolation } : {})
     });
     verificationEnvironmentEvidence = verificationEnvironment.evidence;
     try {
-      if (verificationEnvironment.evidence.status === "failed") {
+      if (
+        verificationEnvironment.evidence.status === "failed" ||
+        verificationEnvironment.evidence.isolation_status === "unavailable"
+      ) {
         return environmentBlockedVerification(input.task.id, verificationEnvironment.evidence.reason);
       }
       return await runVerificationCommands({
@@ -334,6 +343,24 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
   const providerAccepted = worker.status === "completed" || providerEnvironmentBlockerOverridden;
   const verificationPassed = verification.status === "passed" && providerAccepted;
   const verificationFailureClass = verification.failure_class ?? (verificationPassed ? null : worker.failure_class ?? "verification_failed");
+  if (verificationEnvironmentEvidence.isolation_status === "unavailable") {
+    events.push({
+      run_id: input.run_id,
+      event_type: "runway.verification_environment",
+      phase: "verify",
+      outcome: "failed",
+      summary: `Isolated workspace resolve unavailable: ${verificationEnvironmentEvidence.reason ?? "unknown"}`,
+      payload: {
+        task_id: input.task.id,
+        strategy: verificationEnvironmentEvidence.strategy,
+        isolation_status: verificationEnvironmentEvidence.isolation_status,
+        decision: verificationEnvironmentEvidence.decision,
+        cache: verificationEnvironmentEvidence.cache,
+        reason: verificationEnvironmentEvidence.reason
+      },
+      trust_impact: "supports_failure"
+    });
+  }
   events.push({
     run_id: input.run_id,
     event_type: "runway.verification_result",
