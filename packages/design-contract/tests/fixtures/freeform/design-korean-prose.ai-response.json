@@ -1,0 +1,34 @@
+{
+  "schemaPayload": {
+    "invariants": [
+      {
+        "id": "INV-001",
+        "description": "Recovered tasks emit risk=high",
+        "paths_bound": [
+          "packages/orchestrator/src/planNormalizer.ts",
+          "packages/orchestrator/src/intakeRecovery.ts"
+        ],
+        "enforcement": {
+          "mode": "deterministic",
+          "check": {
+            "kind": "rg",
+            "pattern": "risk:\\s*\"high\"\\s+as const",
+            "paths": [
+              "packages/orchestrator/src/planNormalizer.ts",
+              "packages/orchestrator/src/intakeRecovery.ts"
+            ],
+            "must_match": true
+          }
+        },
+        "policy_ack_required": true,
+        "policy_ack_min_confidence": "verified"
+      }
+    ],
+    "prescriptive_blocks": []
+  },
+  "reasoning": "Document explicitly names two file paths and requires risk:\"high\" as const at both.",
+  "evidenceQuotes": [
+    { "line_range": [3, 6], "quote": "두 곳에 적용된다... 두 곳 모두 `risk: \"high\" as const`가 하드코드되어 있어야 한다." }
+  ],
+  "confidence": "high"
+}

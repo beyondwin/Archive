@@ -20,6 +20,9 @@ import {
   watchRunCommand
 } from "@waygent/orchestrator";
 import type { RunCommandOptions, WatchRunOptions } from "@waygent/orchestrator";
+import { FakeExtractorProvider, lintDesign, lintPlan } from "@waygent/design-contract";
+import { readFileSync } from "node:fs";
+import { join as joinPath } from "node:path";
 
 type FlagValue = string | boolean | string[];
 
@@ -50,7 +53,7 @@ export function parseCli(argv: string[]): ParsedCli {
   return { command, flags };
 }
 
-const usage = "waygent run|run-chain|status|events|inspect|explain|resume|verify|apply|decisions|cost|watch|orphans|scaffold-plan";
+const usage = "waygent run|run-chain|status|events|inspect|explain|resume|verify|apply|decisions|cost|watch|orphans|scaffold-plan|lint-design|lint-plan";
 const commandUsage: Record<string, string> = {
   run: "waygent run --plan <waygent-task.md> [--spec <design.md>] [--run <id>] [--provider codex|claude|fake] [--execution-mode multi-agent|single-agent] [--profile max-quality|balanced|cost-saver] [--main-model <name>] [--main-reasoning medium|high|xhigh] [--subagent-model <name>] [--subagent-reasoning medium|high|xhigh] [--plan-preflight off|deterministic|full]",
   "run-chain": "waygent run-chain --plan <p1> [--spec <s1>] --plan <p2> [--spec <s2>]",
@@ -238,6 +241,20 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     const timeoutMs = parseDurationMs(typeof parsed.flags.timeout === "string" ? parsed.flags.timeout : undefined);
     if (timeoutMs !== undefined) watchOptions.timeout_ms = timeoutMs;
     return watchRunCommand(watchOptions);
+  }
+  if (parsed.command === "lint-design" || parsed.command === "lint-plan") {
+    const pathFlag = parsed.flags.path;
+    if (typeof pathFlag !== "string") {
+      return { command: parsed.command, error: `${parsed.command} requires --path <markdown>` };
+    }
+    const cacheRoot = typeof parsed.flags["cache-root"] === "string"
+      ? parsed.flags["cache-root"]
+      : joinPath(process.cwd(), ".waygent", "design-contract-cache");
+    const markdown = readFileSync(pathFlag, "utf8");
+    const provider = new FakeExtractorProvider(new Map());
+    const lintFn = parsed.command === "lint-design" ? lintDesign : lintPlan;
+    const result = await lintFn(markdown, pathFlag, { cacheRoot, provider });
+    return { command: parsed.command, parser: result.parser, report: result.report };
   }
   if (parsed.command === "orphans") {
     const orphanOptions: Parameters<typeof orphansRun>[0] = {
