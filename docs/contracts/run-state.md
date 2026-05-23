@@ -79,6 +79,9 @@ additive:
 - `budget_cap_usd` and `budget_action`: safe-boundary budget policy.
 - `method_evidence_required`: opt-in apply method-evidence gate.
 - `hook_config`: runtime hook mode (`off`, `builtin`, or a configured path).
+- `intake_recovery`: records strict parser/preflight shape failures, automatic
+  repair actions, normalized plan artifact refs, recovery report refs, and
+  whether execution may start without user input.
 
 Provider attempts may include `requested_model`, `actual_model`, `usage`, and
 `usage_source`. Missing provider usage is represented as `usage: null` with

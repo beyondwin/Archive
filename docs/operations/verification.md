@@ -22,6 +22,10 @@ readiness, including checkpoint dry-run conflicts. Those conflicts must surface
 as `needs_rebase` with no apply-ready checkpoint refs, not as
 `missing_checkpoint`.
 
+`bun run waygent:fixture-lab` replays recoverable and unsafe intake examples.
+It proves that bad-but-recoverable plan/spec shapes start safely, unsafe input
+asks for a user decision, and provider-output parser regressions remain covered.
+
 ## Console Gate
 
 ```bash
