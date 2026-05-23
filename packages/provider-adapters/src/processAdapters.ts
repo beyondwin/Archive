@@ -82,7 +82,9 @@ function normalizeWorkerStatus(status: unknown): WorkerResult["status"] {
     lowered === "implemented" ||
     lowered === "done" ||
     lowered === "ok" ||
-    lowered === "ready"
+    lowered === "ready" ||
+    lowered === "ready_for_review" ||
+    lowered === "ready-for-review"
   ) {
     return "completed";
   }

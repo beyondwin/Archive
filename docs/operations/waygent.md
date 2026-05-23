@@ -2,6 +2,7 @@
 
 Related operations docs:
 
+- [Plan Authoring](./plan-authoring.md)
 - [Recovery](./recovery.md)
 - [Verification](./verification.md)
 - [State root migration](./state-root-migration.md)

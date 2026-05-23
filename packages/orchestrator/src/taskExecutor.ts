@@ -17,6 +17,7 @@ import {
   ClaudeProviderAdapter,
   CodexProviderAdapter,
   FakeProviderAdapter,
+  modelsMatch,
   type ProviderAdapter,
   type ProviderAdapterRunResult,
   type ProviderProcessOptions,
@@ -223,7 +224,11 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
       trust_impact: "requires_review"
     });
   }
-  if (attempt.actual_model?.model && input.requested_model?.model && attempt.actual_model.model !== input.requested_model.model) {
+  if (
+    attempt.actual_model?.model &&
+    input.requested_model?.model &&
+    !modelsMatch(input.requested_model.model, attempt.actual_model.model)
+  ) {
     events.push({
       run_id: input.run_id,
       event_type: "lens.model_attestation_mismatch",
