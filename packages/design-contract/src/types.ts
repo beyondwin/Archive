@@ -213,3 +213,103 @@ export interface DesignContractArtifactRefs {
   parser_design?: ParserSource;
   parser_plan?: ParserSource;
 }
+
+/**
+ * Unified design contract shape produced by any parser source
+ * (deterministic, ai, cached). Downstream pipeline stages consume this
+ * uniformly via `ParseOutcome<DesignNormalized>`.
+ */
+export interface DesignNormalized {
+  schema: "waygent.design_contract.v1";
+  source_path: string;
+  source_sha256: string;
+  invariants: unknown[];
+  prescriptive_blocks: Array<{
+    id: string;
+    language: string;
+    body: string;
+    sha256: string;
+  }>;
+  parser: ParserSource;
+  extraction_confidence: "high" | "low";
+  extracted_at: string;
+}
+
+/**
+ * SP-1 invariant check kinds. The deterministic parser and AI extractor
+ * both emit invariants whose `enforcement.check` matches one of these.
+ */
+export type InvariantCheck =
+  | { kind: "shell"; command: string; expect_exit_zero: boolean }
+  | { kind: "file_exists"; path: string }
+  | { kind: "rg"; pattern: string; paths: string[]; must_match: boolean };
+
+export type EnforcementMode = "deterministic" | "advisory";
+
+export interface CrossPathInvariant {
+  id: string;
+  description: string;
+  paths_bound: string[];
+  enforcement:
+    | { mode: "deterministic"; check: InvariantCheck }
+    | { mode: "advisory"; rationale: string };
+  policy_ack_required: boolean;
+  policy_ack_min_confidence: AckConfidence;
+}
+
+export interface PolicyAck {
+  invariant_id: string;
+  confidence: AckConfidence;
+  evidence: string;
+}
+
+/**
+ * worker_result.v2 envelope shape consumed by SP-1's post-worker
+ * validation. The envelope itself is owned by the orchestrator; SP-1
+ * validates the additive fields (policy_ack, stale_test_candidates,
+ * prescriptive_block_outputs).
+ */
+export interface WorkerEnvelopeV2 {
+  schema: "waygent.worker_result.v2";
+  task_id: string;
+  summary: string;
+  evidence: Record<string, unknown>;
+  policy_ack: PolicyAck[];
+  stale_test_candidates: string[];
+  prescriptive_block_outputs: Array<{ id: string; sha256: string }>;
+}
+
+export interface PlanNormalized {
+  schema: "waygent.plan_contract.v1";
+  source_path: string;
+  source_sha256: string;
+  tasks: unknown[];
+  parser: ParserSource;
+  extraction_confidence: "high" | "low";
+  extracted_at: string;
+}
+
+/**
+ * Unified parse outcome returned by the fallback chain
+ * (cache -> deterministic -> AI).
+ */
+export type ParseOutcome<T> =
+  | { kind: "ok"; value: T; log: ParseExtractionLog }
+  | { kind: "incomplete"; reason: IncompleteParseReason; details?: string }
+  | { kind: "failed"; reason: string };
+
+/**
+ * Audit log written alongside the normalized JSON. Used to evidence which
+ * parser ran, which prompt version (when AI), the source hash, and AI
+ * evidence quotes.
+ */
+export interface ParseExtractionLog {
+  source_path: string;
+  source_sha256: string;
+  parser: ParserSource;
+  extracted_at: string;
+  ai_prompt_sha256: string | null;
+  ai_response_excerpt: string | null;
+  evidence_quotes: Array<{ line_range: [number, number]; quote: string }>;
+  reasoning: string | null;
+}
