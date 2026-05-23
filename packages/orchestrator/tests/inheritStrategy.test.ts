@@ -2,16 +2,16 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { prepareVerificationEnvironment } from "../src/verificationEnvironment";
+import { prepareInheritStrategy } from "../src/inheritStrategy";
 
-describe("verification environment", () => {
+describe("inherit strategy", () => {
   test("links source node_modules into the worktree for verification and cleans it up", () => {
     const workspace = mkdtempSync(join(tmpdir(), "waygent-verify-env-source-"));
     const worktree = mkdtempSync(join(tmpdir(), "waygent-verify-env-worktree-"));
     mkdirSync(join(workspace, "node_modules"));
     writeFileSync(join(workspace, "node_modules", ".keep"), "source dependency marker\n");
 
-    const prepared = prepareVerificationEnvironment({ workspace, worktree });
+    const prepared = prepareInheritStrategy({ workspace, worktree });
 
     expect(prepared.evidence.status).toBe("prepared");
     expect(prepared.evidence.strategy).toBe("inherit_node_modules");
@@ -27,7 +27,7 @@ describe("verification environment", () => {
     mkdirSync(join(workspace, "node_modules"));
     mkdirSync(join(worktree, "node_modules"));
 
-    const prepared = prepareVerificationEnvironment({ workspace, worktree });
+    const prepared = prepareInheritStrategy({ workspace, worktree });
 
     expect(prepared.evidence.status).toBe("skipped");
     expect(prepared.evidence.reason).toBe("worktree_node_modules_exists");
@@ -40,7 +40,7 @@ describe("verification environment", () => {
     const worktree = mkdtempSync(join(tmpdir(), "waygent-verify-env-worktree-"));
     mkdirSync(join(workspace, "node_modules"));
 
-    const prepared = prepareVerificationEnvironment({ workspace, worktree, disabled: true });
+    const prepared = prepareInheritStrategy({ workspace, worktree, disabled: true });
 
     expect(prepared.evidence.status).toBe("skipped");
     expect(prepared.evidence.reason).toBe("disabled");
@@ -51,7 +51,7 @@ describe("verification environment", () => {
     const workspace = mkdtempSync(join(tmpdir(), "waygent-verify-env-source-"));
     const worktree = mkdtempSync(join(tmpdir(), "waygent-verify-env-worktree-"));
     mkdirSync(join(workspace, "node_modules"));
-    const prepared = prepareVerificationEnvironment({ workspace, worktree });
+    const prepared = prepareInheritStrategy({ workspace, worktree });
     rmSync(join(worktree, "node_modules"), { force: true, recursive: true });
     symlinkSync(join(workspace, "node_modules"), join(worktree, "node_modules"));
 
@@ -64,7 +64,7 @@ describe("verification environment", () => {
     const workspace = mkdtempSync(join(tmpdir(), "waygent-verify-env-source-"));
     const worktree = mkdtempSync(join(tmpdir(), "waygent-verify-env-worktree-"));
     mkdirSync(join(workspace, "node_modules"));
-    const prepared = prepareVerificationEnvironment({ workspace, worktree });
+    const prepared = prepareInheritStrategy({ workspace, worktree });
     const inheritedPath = join(worktree, "node_modules");
 
     rmSync(inheritedPath, { force: true, recursive: true });
