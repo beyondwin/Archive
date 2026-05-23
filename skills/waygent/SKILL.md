@@ -94,6 +94,8 @@ flags and explicit command names higher priority than NL interpretation.
   `waygent orphans --delete <id> --yes`)
 - "실행 가능한 waygent-task 만들어줘" ->
   `waygent scaffold-plan --id <task_id> --title <title> --claim <path:mode> --risk <low|medium|high> --verify <command>`
+- "design 검증해줘" -> `waygent lint-design --path design.md`
+- "plan 검증해줘" -> `waygent lint-plan --path plan.md`
 
 `--profile` presets:
 
@@ -121,5 +123,9 @@ Stop rules:
 - If a run reports `intake_decision_required`, explain the specific blocker
   and ask only the short question from the operator decision. Do not rewrite
   the plan from chat unless the user approves the change.
+- If a run reports `invariant_violation_predispatch`, `prescriptive_drift`,
+  `policy_ack_missing`, or `stale_test_candidates_missing`, the normalized
+  design contract is the source of truth. Reference the `normalized_design`
+  artifact when explaining the blocker.
 - If intake recovery reports `recovered`, proceed with the run result and
   mention the normalized plan and recovery report artifact refs when useful.

@@ -29,6 +29,11 @@ required_skill_phrases = [
     "intake_decision_required",
     "normalized plan",
     "recovery report",
+    "waygent lint-design",
+    "waygent lint-plan",
+    "invariant_violation_predispatch",
+    "prescriptive_drift",
+    "normalized_design",
 ]
 
 required_files = [
