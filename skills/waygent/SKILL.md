@@ -106,6 +106,15 @@ flags and explicit command names higher priority than NL interpretation.
 Explicit `--main-model`, `--main-reasoning`, `--subagent-model`, and
 `--subagent-reasoning` override any preset.
 
+Plan-author guidance — `verify_isolation` (optional):
+
+Each task may declare `verify_isolation: "isolated" | "fast" | "auto"`. The
+default is `"auto"`. Use `"isolated"` when the verify command must observe
+the worker's cross-package changes (most integration tests). Use `"fast"`
+to opt out of automatic escalation when you are certain the diff is
+self-contained. See `docs/operations/verification.md` for failure surface
+and kill switches.
+
 Stop rules:
 
 - If the plan is missing or `--latest` is ambiguous, ask for the plan path.
