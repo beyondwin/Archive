@@ -57,6 +57,22 @@
 
 ### Task 0.1: Create `@waygent/design-contract` package
 
+```yaml waygent-task
+id: task_1
+title: Create @waygent/design-contract package skeleton
+dependencies: []
+file_claims:
+  - path: packages/design-contract/package.json
+    mode: owned
+  - path: packages/design-contract/tsconfig.json
+    mode: owned
+  - path: packages/design-contract/src/index.ts
+    mode: owned
+risk: low
+verify:
+  - bun run typecheck
+```
+
 **Files:**
 - Create: `packages/design-contract/package.json`
 - Create: `packages/design-contract/tsconfig.json`
@@ -115,6 +131,22 @@ git commit -m "feat(design-contract): scaffold @waygent/design-contract package"
 
 ### Task 0.2: Wire workspace dependencies in consumer packages
 
+```yaml waygent-task
+id: task_2
+title: Wire workspace dependencies in consumer packages
+dependencies: [task_1]
+file_claims:
+  - path: apps/cli/package.json
+    mode: owned
+  - path: packages/orchestrator/package.json
+    mode: owned
+  - path: package.json
+    mode: owned
+risk: low
+verify:
+  - bun run typecheck
+```
+
 **Files:**
 - Modify: `apps/cli/package.json`
 - Modify: `packages/orchestrator/package.json`
@@ -157,6 +189,20 @@ git commit -m "chore(design-contract): wire workspace deps in cli/orchestrator"
 ## Phase 1 — Schema + Deterministic Parser + Cache
 
 ### Task 1.1: Define types (`src/types.ts`)
+
+```yaml waygent-task
+id: task_3
+title: Define DesignContract/PlanContract types
+dependencies: [task_2]
+file_claims:
+  - path: packages/design-contract/src/types.ts
+    mode: owned
+  - path: packages/design-contract/src/index.ts
+    mode: owned
+risk: low
+verify:
+  - bun run typecheck
+```
 
 **Files:**
 - Create: `packages/design-contract/src/types.ts`
@@ -285,7 +331,7 @@ export type DesignBlockerKind =
 - [ ] **Step 2: Re-export from `src/index.ts`**
 
 ```ts
-export * from "./types.ts";
+export * from "./types";
 ```
 
 - [ ] **Step 3: Typecheck**
@@ -301,6 +347,24 @@ git commit -m "feat(design-contract): add DesignContract/PlanContract type decla
 ```
 
 ### Task 1.2: Author canonical fixtures
+
+```yaml waygent-task
+id: task_4
+title: Author canonical design/plan fixtures
+dependencies: [task_3]
+file_claims:
+  - path: packages/design-contract/tests/fixtures/canonical/design-simple.md
+    mode: owned
+  - path: packages/design-contract/tests/fixtures/canonical/design-simple.expected.json
+    mode: owned
+  - path: packages/design-contract/tests/fixtures/canonical/plan-simple.md
+    mode: owned
+  - path: packages/design-contract/tests/fixtures/canonical/plan-simple.expected.json
+    mode: owned
+risk: low
+verify:
+  - bun run typecheck
+```
 
 **Files:**
 - Create: `packages/design-contract/tests/fixtures/canonical/design-simple.md`
@@ -433,6 +497,18 @@ git commit -m "test(design-contract): add canonical design/plan fixtures"
 
 ### Task 1.3: Failing test for deterministic parser
 
+```yaml waygent-task
+id: task_5
+title: Write failing test for deterministic parser
+dependencies: [task_4]
+file_claims:
+  - path: packages/design-contract/tests/parseDeterministic.test.ts
+    mode: owned
+risk: low
+verify:
+  - bun run typecheck
+```
+
 **Files:**
 - Create: `packages/design-contract/tests/parseDeterministic.test.ts`
 
@@ -442,7 +518,7 @@ git commit -m "test(design-contract): add canonical design/plan fixtures"
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseDesignDeterministic, parsePlanDeterministic } from "../src/parse/deterministic.ts";
+import { parseDesignDeterministic, parsePlanDeterministic } from "../src/parse/deterministic";
 
 const fixDir = join(import.meta.dir, "fixtures/canonical");
 
@@ -484,6 +560,19 @@ Expected: FAIL with module-not-found on `../src/parse/deterministic.ts`.
 
 ### Task 1.4: Implement deterministic parser
 
+```yaml waygent-task
+id: task_6
+title: Implement deterministic parser
+dependencies: [task_5]
+file_claims:
+  - path: packages/design-contract/src/parse/deterministic.ts
+    mode: owned
+risk: low
+verify:
+  - bun run typecheck
+  - bun test packages/design-contract/tests/parseDeterministic.test.ts
+```
+
 **Files:**
 - Create: `packages/design-contract/src/parse/deterministic.ts`
 
@@ -499,7 +588,7 @@ import type {
   PlanContractTask,
   ParseOutcome,
   ExtractionLog
-} from "../types.ts";
+} from "../types";
 
 function sha256(s: string): string {
   return createHash("sha256").update(s).digest("hex");
@@ -757,6 +846,18 @@ git commit -m "feat(design-contract): deterministic parser for canonical design/
 
 ### Task 1.5: Failing test for parse cache
 
+```yaml waygent-task
+id: task_7
+title: Write failing test for parse cache
+dependencies: [task_6]
+file_claims:
+  - path: packages/design-contract/tests/cache.test.ts
+    mode: owned
+risk: low
+verify:
+  - bun run typecheck
+```
+
 **Files:**
 - Create: `packages/design-contract/tests/cache.test.ts`
 
@@ -767,7 +868,7 @@ import { describe, expect, it, beforeEach } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ArtifactCache } from "../src/parse/cache.ts";
+import { ArtifactCache } from "../src/parse/cache";
 
 let root: string;
 
@@ -808,6 +909,19 @@ Run: `bun test packages/design-contract/tests/cache.test.ts`
 Expected: FAIL — module not found.
 
 ### Task 1.6: Implement cache
+
+```yaml waygent-task
+id: task_8
+title: Implement parse cache
+dependencies: [task_7]
+file_claims:
+  - path: packages/design-contract/src/parse/cache.ts
+    mode: owned
+risk: low
+verify:
+  - bun run typecheck
+  - bun test packages/design-contract/tests/cache.test.ts
+```
 
 **Files:**
 - Create: `packages/design-contract/src/parse/cache.ts`
@@ -871,6 +985,22 @@ git commit -m "feat(design-contract): hash-keyed parse artifact cache"
 
 ### Task 2.1: ExtractorProvider interface + fake implementation
 
+```yaml waygent-task
+id: task_9
+title: ExtractorProvider interface and fake implementation
+dependencies: [task_8]
+file_claims:
+  - path: packages/design-contract/src/parse/ai.ts
+    mode: owned
+  - path: packages/design-contract/tests/fixtures/freeform/design-korean-prose.md
+    mode: owned
+  - path: packages/design-contract/tests/fixtures/freeform/design-korean-prose.ai-response.json
+    mode: owned
+risk: medium
+verify:
+  - bun run typecheck
+```
+
 **Files:**
 - Create: `packages/design-contract/src/parse/ai.ts`
 - Create: `packages/design-contract/tests/fixtures/freeform/design-korean-prose.md`
@@ -887,7 +1017,7 @@ import type {
   PlanContract,
   ParseOutcome,
   ExtractionLog
-} from "../types.ts";
+} from "../types";
 
 export const EXTRACTOR_VERSION = "v1";
 
@@ -1112,6 +1242,19 @@ git commit -m "feat(design-contract): ExtractorProvider interface + fake impl + 
 
 ### Task 2.2: Tests for AI extractor
 
+```yaml waygent-task
+id: task_10
+title: Tests for AI extractor
+dependencies: [task_9]
+file_claims:
+  - path: packages/design-contract/tests/parseAI.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun run typecheck
+  - bun test packages/design-contract/tests/parseAI.test.ts
+```
+
 **Files:**
 - Create: `packages/design-contract/tests/parseAI.test.ts`
 
@@ -1121,7 +1264,7 @@ git commit -m "feat(design-contract): ExtractorProvider interface + fake impl + 
 import { describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { FakeExtractorProvider, extractDesignWithAI, type ExtractorResponse } from "../src/parse/ai.ts";
+import { FakeExtractorProvider, extractDesignWithAI, type ExtractorResponse } from "../src/parse/ai";
 
 const fixDir = join(import.meta.dir, "fixtures/freeform");
 
@@ -1177,6 +1320,21 @@ git commit -m "test(design-contract): cover AI extractor success + retry/fail pa
 
 ### Task 2.3: Fallback chain (`parse/index.ts`)
 
+```yaml waygent-task
+id: task_11
+title: Implement parse fallback chain (cache + deterministic + AI)
+dependencies: [task_10]
+file_claims:
+  - path: packages/design-contract/src/parse/index.ts
+    mode: owned
+  - path: packages/design-contract/tests/parseIndex.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun run typecheck
+  - bun test packages/design-contract/tests/parseIndex.test.ts
+```
+
 **Files:**
 - Create: `packages/design-contract/src/parse/index.ts`
 - Create: `packages/design-contract/tests/parseIndex.test.ts`
@@ -1189,8 +1347,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { FakeExtractorProvider, type ExtractorResponse } from "../src/parse/ai.ts";
-import { parseDesignSource } from "../src/parse/index.ts";
+import { FakeExtractorProvider, type ExtractorResponse } from "../src/parse/ai";
+import { parseDesignSource } from "../src/parse/index";
 
 const fixCanonical = join(import.meta.dir, "fixtures/canonical");
 const fixFreeform = join(import.meta.dir, "fixtures/freeform");
@@ -1257,10 +1415,10 @@ Expected: FAIL (module not found).
 
 ```ts
 import { createHash } from "node:crypto";
-import type { DesignContract, PlanContract, ParseOutcome, ExtractionLog } from "../types.ts";
-import { ArtifactCache } from "./cache.ts";
-import { parseDesignDeterministic, parsePlanDeterministic } from "./deterministic.ts";
-import { EXTRACTOR_VERSION, extractDesignWithAI, extractPlanWithAI, type ExtractorProvider } from "./ai.ts";
+import type { DesignContract, PlanContract, ParseOutcome, ExtractionLog } from "../types";
+import { ArtifactCache } from "./cache";
+import { parseDesignDeterministic, parsePlanDeterministic } from "./deterministic";
+import { EXTRACTOR_VERSION, extractDesignWithAI, extractPlanWithAI, type ExtractorProvider } from "./ai";
 
 export interface ParseOptions {
   cacheRoot: string;
@@ -1351,11 +1509,11 @@ Expected: PASS.
 In `packages/design-contract/src/index.ts`, add:
 
 ```ts
-export * from "./types.ts";
-export * from "./parse/index.ts";
-export * from "./parse/ai.ts";
-export * from "./parse/deterministic.ts";
-export * from "./parse/cache.ts";
+export * from "./types";
+export * from "./parse/index";
+export * from "./parse/ai";
+export * from "./parse/deterministic";
+export * from "./parse/cache";
 ```
 
 - [ ] **Step 6: Commit**
@@ -1371,6 +1529,23 @@ git commit -m "feat(design-contract): cache-aware deterministic→AI fallback ch
 
 ### Task 3.1: Shell check kind + runner
 
+```yaml waygent-task
+id: task_12
+title: Shell check kind and runner
+dependencies: [task_11]
+file_claims:
+  - path: packages/design-contract/src/checks/shell.ts
+    mode: owned
+  - path: packages/design-contract/src/checks/index.ts
+    mode: owned
+  - path: packages/design-contract/tests/checks.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun run typecheck
+  - bun test packages/design-contract/tests/checks.test.ts
+```
+
 **Files:**
 - Create: `packages/design-contract/src/checks/shell.ts`
 - Create: `packages/design-contract/src/checks/index.ts`
@@ -1380,7 +1555,7 @@ git commit -m "feat(design-contract): cache-aware deterministic→AI fallback ch
 
 ```ts
 import { describe, expect, it } from "bun:test";
-import { runInvariantCheck } from "../src/checks/index.ts";
+import { runInvariantCheck } from "../src/checks/index";
 
 describe("runInvariantCheck", () => {
   it("shell: passes when command exits 0", async () => {
@@ -1449,8 +1624,8 @@ export function runShell(command: string, cwd: string): Promise<ShellCheckResult
 ```ts
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { InvariantCheck } from "../types.ts";
-import { runShell } from "./shell.ts";
+import type { InvariantCheck } from "../types";
+import { runShell } from "./shell";
 
 export interface CheckResult {
   passed: boolean;
@@ -1496,6 +1671,21 @@ git commit -m "feat(design-contract): invariant check kinds (shell, file_exists,
 
 ### Task 3.2: Invariant runner — paths_bound + ack validation
 
+```yaml waygent-task
+id: task_13
+title: Invariant runner with paths_bound and ack validation
+dependencies: [task_12]
+file_claims:
+  - path: packages/design-contract/src/invariants.ts
+    mode: owned
+  - path: packages/design-contract/tests/invariants.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun run typecheck
+  - bun test packages/design-contract/tests/invariants.test.ts
+```
+
 **Files:**
 - Create: `packages/design-contract/src/invariants.ts`
 - Create: `packages/design-contract/tests/invariants.test.ts`
@@ -1507,8 +1697,8 @@ import { describe, expect, it } from "bun:test";
 import {
   runInvariantsAgainstFileClaims,
   validatePolicyAcks
-} from "../src/invariants.ts";
-import type { CrossPathInvariant, PolicyAck } from "../src/types.ts";
+} from "../src/invariants";
+import type { CrossPathInvariant, PolicyAck } from "../src/types";
 
 const inv: CrossPathInvariant = {
   id: "INV-001",
@@ -1559,8 +1749,8 @@ describe("validatePolicyAcks", () => {
 `packages/design-contract/src/invariants.ts`:
 
 ```ts
-import type { CrossPathInvariant, PolicyAck } from "./types.ts";
-import { runInvariantCheck } from "./checks/index.ts";
+import type { CrossPathInvariant, PolicyAck } from "./types";
+import { runInvariantCheck } from "./checks/index";
 
 export interface InvariantRunResult {
   invariant_id: string;
@@ -1651,6 +1841,21 @@ git commit -m "feat(design-contract): invariant runner + policy ack validator"
 
 ### Task 3.3: Worker envelope validator + prescriptive drift
 
+```yaml waygent-task
+id: task_14
+title: Worker envelope validator and prescriptive drift detection
+dependencies: [task_13]
+file_claims:
+  - path: packages/design-contract/src/workerEnvelope.ts
+    mode: owned
+  - path: packages/design-contract/tests/workerEnvelope.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun run typecheck
+  - bun test packages/design-contract/tests/workerEnvelope.test.ts
+```
+
 **Files:**
 - Create: `packages/design-contract/src/workerEnvelope.ts`
 - Create: `packages/design-contract/tests/workerEnvelope.test.ts`
@@ -1660,8 +1865,8 @@ git commit -m "feat(design-contract): invariant runner + policy ack validator"
 ```ts
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
-import { validateWorkerEnvelope } from "../src/workerEnvelope.ts";
-import type { DesignContract, WorkerEnvelopeV2 } from "../src/types.ts";
+import { validateWorkerEnvelope } from "../src/workerEnvelope";
+import type { DesignContract, WorkerEnvelopeV2 } from "../src/types";
 
 function sha(s: string) { return createHash("sha256").update(s).digest("hex"); }
 
@@ -1718,7 +1923,7 @@ describe("validateWorkerEnvelope", () => {
 `packages/design-contract/src/workerEnvelope.ts`:
 
 ```ts
-import type { DesignContract, DesignBlockerKind, WorkerEnvelopeV2 } from "./types.ts";
+import type { DesignContract, DesignBlockerKind, WorkerEnvelopeV2 } from "./types";
 
 export interface EnvelopeBlocker {
   kind: DesignBlockerKind;
@@ -1765,9 +1970,9 @@ Expected: PASS.
 In `src/index.ts`, add:
 
 ```ts
-export * from "./invariants.ts";
-export * from "./workerEnvelope.ts";
-export * from "./checks/index.ts";
+export * from "./invariants";
+export * from "./workerEnvelope";
+export * from "./checks/index";
 ```
 
 ```bash
@@ -1781,6 +1986,21 @@ git commit -m "feat(design-contract): worker_result.v2 envelope validator + drif
 
 ### Task 4.1: lint.ts module
 
+```yaml waygent-task
+id: task_15
+title: Implement lint.ts dry-run extraction backend
+dependencies: [task_14]
+file_claims:
+  - path: packages/design-contract/src/lint.ts
+    mode: owned
+  - path: packages/design-contract/tests/lint.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun run typecheck
+  - bun test packages/design-contract/tests/lint.test.ts
+```
+
 **Files:**
 - Create: `packages/design-contract/src/lint.ts`
 - Create: `packages/design-contract/tests/lint.test.ts`
@@ -1793,8 +2013,8 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
-import { lintDesign } from "../src/lint.ts";
-import { FakeExtractorProvider } from "../src/parse/ai.ts";
+import { lintDesign } from "../src/lint";
+import { FakeExtractorProvider } from "../src/parse/ai";
 
 describe("lintDesign", () => {
   it("renders normalized invariants and 'no blockers' for canonical input", async () => {
@@ -1821,8 +2041,8 @@ describe("lintDesign", () => {
 `packages/design-contract/src/lint.ts`:
 
 ```ts
-import type { ParserUsed } from "./types.ts";
-import { parseDesignSource, parsePlanSource, type ParseOptions } from "./parse/index.ts";
+import type { ParserUsed } from "./types";
+import { parseDesignSource, parsePlanSource, type ParseOptions } from "./parse/index";
 
 export interface LintResult {
   parser: ParserUsed | "failed";
@@ -1881,7 +2101,7 @@ Expected: PASS.
 In `src/index.ts` add:
 
 ```ts
-export * from "./lint.ts";
+export * from "./lint";
 ```
 
 - [ ] **Step 4: Commit**
@@ -1892,6 +2112,21 @@ git commit -m "feat(design-contract): lint helpers for design/plan dry-run repor
 ```
 
 ### Task 4.2: CLI commands `waygent lint-design` and `waygent lint-plan`
+
+```yaml waygent-task
+id: task_16
+title: Add waygent lint-design and lint-plan CLI commands
+dependencies: [task_15]
+file_claims:
+  - path: apps/cli/src/index.ts
+    mode: owned
+  - path: apps/cli/tests/cli.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun run typecheck
+  - bun test apps/cli/tests/cli.test.ts -t "lint-design CLI"
+```
 
 **Files:**
 - Modify: `apps/cli/src/index.ts`
@@ -2003,6 +2238,23 @@ git commit -m "feat(cli): add lint-design and lint-plan commands"
 
 ### Task 5.1: Add `design_contract` to run state contracts
 
+```yaml waygent-task
+id: task_17
+title: Add design_contract field to run-state contracts and schemas
+dependencies: [task_16]
+file_claims:
+  - path: packages/contracts/src/types.ts
+    mode: owned
+  - path: packages/contracts/src/schemas.ts
+    mode: owned
+  - path: packages/contracts/tests
+    mode: shared_append
+risk: high
+verify:
+  - bun run typecheck
+  - bun test packages/contracts/tests
+```
+
 **Files:**
 - Modify: `packages/contracts/src/types.ts`
 - Modify: `packages/contracts/src/schemas.ts`
@@ -2090,6 +2342,23 @@ git commit -m "feat(contracts): add WaygentDesignContractRef to run_state.v2"
 
 ### Task 5.2: Pre-dispatch invariant runner integration
 
+```yaml waygent-task
+id: task_18
+title: Pre-dispatch invariant runner orchestrator integration
+dependencies: [task_17]
+file_claims:
+  - path: packages/orchestrator/src/intakeRecovery.ts
+    mode: owned
+  - path: packages/orchestrator/src/safeWaveExecutor.ts
+    mode: owned
+  - path: packages/orchestrator/tests/designContractPreDispatch.test.ts
+    mode: owned
+risk: high
+verify:
+  - bun run typecheck
+  - bun test packages/orchestrator/tests/designContractPreDispatch.test.ts
+```
+
 **Files:**
 - Modify: `packages/orchestrator/src/intakeRecovery.ts` — invoke design-contract parse, store refs
 - Modify: `packages/orchestrator/src/safeWaveExecutor.ts` (or `taskExecutor.ts` if dispatch lives there) — call invariant runner before dispatching each task
@@ -2115,7 +2384,7 @@ import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeExtractorProvider } from "@waygent/design-contract";
-import { runWithDesignContractEnforcement } from "../src/intakeRecovery.ts";
+import { runWithDesignContractEnforcement } from "../src/intakeRecovery";
 
 describe("design-contract pre-dispatch enforcement", () => {
   it("blocks dispatch when invariant deterministic check fails", async () => {
@@ -2268,6 +2537,20 @@ git commit -m "feat(orchestrator): pre-dispatch design-contract invariant enforc
 
 ### Task 5.3: Wire pre-dispatch hook into the run path
 
+```yaml waygent-task
+id: task_19
+title: Wire pre-dispatch hook into the run path
+dependencies: [task_18]
+file_claims:
+  - path: packages/orchestrator/src/safeWaveExecutor.ts
+    mode: owned
+  - path: apps/cli/src/index.ts
+    mode: owned
+risk: high
+verify:
+  - bun run typecheck
+```
+
 **Files:**
 - Modify: `packages/orchestrator/src/safeWaveExecutor.ts` (or wherever `runTask` lives — confirmed in Task 5.2 Step 1)
 - Modify: `apps/cli/src/index.ts` (pass extractor provider + cache root into orchestrator entrypoint)
@@ -2323,6 +2606,21 @@ git commit -m "feat(orchestrator): invoke design-contract enforcement after inta
 
 ### Task 5.4: Post-worker envelope validation
 
+```yaml waygent-task
+id: task_20
+title: Post-worker envelope validation in runtime hooks
+dependencies: [task_19]
+file_claims:
+  - path: packages/orchestrator/src/runtimeHooks.ts
+    mode: owned
+  - path: packages/orchestrator/tests/designContractPostWorker.test.ts
+    mode: owned
+risk: high
+verify:
+  - bun run typecheck
+  - bun test packages/orchestrator/tests/designContractPostWorker.test.ts
+```
+
 **Files:**
 - Modify: `packages/orchestrator/src/runtimeHooks.ts`
 - Create: `packages/orchestrator/tests/designContractPostWorker.test.ts`
@@ -2344,7 +2642,7 @@ Find where the parsed worker output is validated for shape today (or where stdou
 ```ts
 import { describe, expect, it } from "bun:test";
 import { createHash } from "node:crypto";
-import { evaluateWorkerEnvelopeAgainstDesign } from "../src/runtimeHooks.ts";
+import { evaluateWorkerEnvelopeAgainstDesign } from "../src/runtimeHooks";
 import type { DesignContract, WorkerEnvelopeV2 } from "@waygent/design-contract";
 
 function sha(s: string) { return createHash("sha256").update(s).digest("hex"); }
@@ -2424,6 +2722,19 @@ git commit -m "feat(orchestrator): post-worker envelope evaluation via design-co
 
 ### Task 5.5: Integration test — full CLI run with design-contract path
 
+```yaml waygent-task
+id: task_21
+title: Full CLI integration test for design-contract path
+dependencies: [task_20]
+file_claims:
+  - path: apps/cli/tests/cli.test.ts
+    mode: owned
+risk: high
+verify:
+  - bun run typecheck
+  - bun test apps/cli/tests/cli.test.ts -t "waygent run with design-contract"
+```
+
 **Files:**
 - Modify: `apps/cli/tests/cli.test.ts` (add new describe block)
 
@@ -2477,6 +2788,20 @@ git commit -m "test(cli): integration scenario for design-contract pre-dispatch 
 ## Phase 6 — Fixture-Lab + Docs
 
 ### Task 6.1: Extend fixture-lab with freeform + degraded cases
+
+```yaml waygent-task
+id: task_22
+title: Extend fixture-lab with freeform and degraded cases
+dependencies: [task_21]
+file_claims:
+  - path: tests/integration/waygent-fixture-lab.test.ts
+    mode: owned
+  - path: packages/design-contract/tests/fixtures/degraded/design-extraction-failed.md
+    mode: owned
+risk: low
+verify:
+  - bun run waygent:fixture-lab
+```
 
 **Files:**
 - Modify: `tests/integration/waygent-fixture-lab.test.ts`
@@ -2560,6 +2885,18 @@ git commit -m "test(fixture-lab): design-contract canonical/freeform/degraded re
 
 ### Task 6.2: Document `design_contract` in run-state contract
 
+```yaml waygent-task
+id: task_23
+title: Document design_contract field in run-state contract docs
+dependencies: [task_22]
+file_claims:
+  - path: docs/contracts/run-state.md
+    mode: owned
+risk: low
+verify:
+  - git diff --check
+```
+
 **Files:**
 - Modify: `docs/contracts/run-state.md`
 
@@ -2582,6 +2919,18 @@ git commit -m "docs(contracts): document design_contract field in run_state.v2"
 ```
 
 ### Task 6.3: Document lint commands + authoring guide
+
+```yaml waygent-task
+id: task_24
+title: Document lint commands and authoring guide
+dependencies: [task_23]
+file_claims:
+  - path: docs/operations/waygent.md
+    mode: owned
+risk: low
+verify:
+  - git diff --check
+```
 
 **Files:**
 - Modify: `docs/operations/waygent.md`
@@ -2623,6 +2972,18 @@ git commit -m "docs(operations): add design contract lint and authoring guide"
 
 ### Task 6.4: Register design-contract gates
 
+```yaml waygent-task
+id: task_25
+title: Register design-contract gates in verification docs
+dependencies: [task_24]
+file_claims:
+  - path: docs/operations/verification.md
+    mode: owned
+risk: low
+verify:
+  - git diff --check
+```
+
 **Files:**
 - Modify: `docs/operations/verification.md`
 
@@ -2657,6 +3018,20 @@ git commit -m "docs(operations): register design-contract verification gates"
 ```
 
 ### Task 6.5: Update skill contract
+
+```yaml waygent-task
+id: task_26
+title: Update Waygent skill contract with lint commands and blockers
+dependencies: [task_25]
+file_claims:
+  - path: skills/waygent/SKILL.md
+    mode: owned
+  - path: skills/waygent/evals/check_skill_contract.py
+    mode: owned
+risk: low
+verify:
+  - python3 skills/waygent/evals/check_skill_contract.py
+```
 
 **Files:**
 - Modify: `skills/waygent/SKILL.md`
@@ -2709,6 +3084,20 @@ git commit -m "docs(skills): wire design-contract lint commands and blockers int
 ## Phase 7 — Live Provider Drift Smoke (Opt-In)
 
 ### Task 7.1: Live drift smoke test scaffold
+
+```yaml waygent-task
+id: task_27
+title: Live provider drift smoke test scaffold (opt-in)
+dependencies: [task_26]
+file_claims:
+  - path: tests/integration/waygent-design-contract-live-smoke.test.ts
+    mode: owned
+  - path: package.json
+    mode: owned
+risk: medium
+verify:
+  - bun test tests/integration/waygent-design-contract-live-smoke.test.ts
+```
 
 **Files:**
 - Create: `tests/integration/waygent-design-contract-live-smoke.test.ts`
