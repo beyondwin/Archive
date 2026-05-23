@@ -1,5 +1,10 @@
 # Waygent Commands
 
+See `docs/operations/plan-authoring.md` for plan-author conventions
+(verify-must-not-mutate, strict-typecheck-in-verify, `.ts` import rules,
+file-claim patterns).
+
+
 ```bash
 waygent run --plan <path> --spec <path>
 bun run waygent -- run --plan <path> --spec <path>
