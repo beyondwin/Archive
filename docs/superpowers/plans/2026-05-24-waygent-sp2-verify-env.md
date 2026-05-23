@@ -81,6 +81,24 @@
 
 ## Task 1: Extract `inheritStrategy` (zero behavior change)
 
+```yaml waygent-task
+id: task_1
+title: Extract inheritStrategy (zero behavior change)
+dependencies: []
+file_claims:
+  - path: packages/orchestrator/src/inheritStrategy.ts
+    mode: owned
+  - path: packages/orchestrator/src/verificationEnvironment.ts
+    mode: owned
+  - path: packages/orchestrator/tests/inheritStrategy.test.ts
+    mode: owned
+  - path: packages/orchestrator/tests/verificationEnvironment.test.ts
+    mode: owned
+risk: low
+verify:
+  - bun test packages/orchestrator
+```
+
 **Files:**
 - Create: `packages/orchestrator/src/inheritStrategy.ts`
 - Modify: `packages/orchestrator/src/verificationEnvironment.ts`
@@ -252,6 +270,20 @@ git commit -m "refactor(orchestrator): extract inheritStrategy from verification
 
 ## Task 2: `strategyDecider` (pure function, no callers yet)
 
+```yaml waygent-task
+id: task_2
+title: strategyDecider pure function
+dependencies: [task_1]
+file_claims:
+  - path: packages/orchestrator/src/strategyDecider.ts
+    mode: owned
+  - path: packages/orchestrator/tests/strategyDecider.test.ts
+    mode: owned
+risk: low
+verify:
+  - bun test packages/orchestrator/tests/strategyDecider.test.ts
+```
+
 **Files:**
 - Create: `packages/orchestrator/src/strategyDecider.ts`
 - Create: `packages/orchestrator/tests/strategyDecider.test.ts`
@@ -421,6 +453,20 @@ git commit -m "feat(orchestrator): strategyDecider pure function (SP-2 T2)"
 ---
 
 ## Task 3a: `cacheKey` content-addressed hashing
+
+```yaml waygent-task
+id: task_3a
+title: cacheKey content-addressed hashing
+dependencies: [task_2]
+file_claims:
+  - path: packages/orchestrator/src/isolatedStrategy/cacheKey.ts
+    mode: owned
+  - path: packages/orchestrator/tests/cacheKey.test.ts
+    mode: owned
+risk: low
+verify:
+  - bun test packages/orchestrator/tests/cacheKey.test.ts
+```
 
 **Files:**
 - Create: `packages/orchestrator/src/isolatedStrategy/cacheKey.ts`
@@ -613,6 +659,20 @@ git commit -m "feat(orchestrator): content-addressed cacheKey (SP-2 T3a)"
 
 ## Task 3b: `workspaceManifest` enumeration
 
+```yaml waygent-task
+id: task_3b
+title: workspaceManifest enumeration and drift detection
+dependencies: [task_2]
+file_claims:
+  - path: packages/orchestrator/src/isolatedStrategy/workspaceManifest.ts
+    mode: owned
+  - path: packages/orchestrator/tests/workspaceManifest.test.ts
+    mode: owned
+risk: low
+verify:
+  - bun test packages/orchestrator/tests/workspaceManifest.test.ts
+```
+
 **Files:**
 - Create: `packages/orchestrator/src/isolatedStrategy/workspaceManifest.ts`
 - Create: `packages/orchestrator/tests/workspaceManifest.test.ts`
@@ -769,6 +829,20 @@ git commit -m "feat(orchestrator): workspaceManifest enumeration + drift detecti
 ---
 
 ## Task 3c: `snapshot` storage with LRU eviction
+
+```yaml waygent-task
+id: task_3c
+title: snapshot storage with LRU eviction
+dependencies: [task_3b]
+file_claims:
+  - path: packages/orchestrator/src/isolatedStrategy/snapshot.ts
+    mode: owned
+  - path: packages/orchestrator/tests/snapshotLru.test.ts
+    mode: owned
+risk: low
+verify:
+  - bun test packages/orchestrator/tests/snapshotLru.test.ts
+```
 
 **Files:**
 - Create: `packages/orchestrator/src/isolatedStrategy/snapshot.ts`
@@ -928,6 +1002,20 @@ git commit -m "feat(orchestrator): snapshot storage + LRU eviction (SP-2 T3c)"
 ---
 
 ## Task 3d: `isolatedStrategy` core + integration tests
+
+```yaml waygent-task
+id: task_3d
+title: isolatedStrategy core plus integration tests
+dependencies: [task_3a, task_3b, task_3c]
+file_claims:
+  - path: packages/orchestrator/src/isolatedStrategy/index.ts
+    mode: owned
+  - path: packages/orchestrator/tests/isolatedStrategy.integ.test.ts
+    mode: owned
+risk: medium
+verify:
+  - WAYGENT_RUN_INTEG_TESTS=1 bun test packages/orchestrator/tests/isolatedStrategy.integ.test.ts
+```
 
 **Files:**
 - Create: `packages/orchestrator/src/isolatedStrategy/index.ts`
@@ -1341,6 +1429,27 @@ git commit -m "feat(orchestrator): isolatedStrategy core + integration scenarios
 
 ## Task 4: Dispatcher activates `auto`, evidence/events extended, plan field parser
 
+```yaml waygent-task
+id: task_4
+title: Dispatcher activates auto, evidence and events extended, plan field parser
+dependencies: [task_3d]
+file_claims:
+  - path: packages/orchestrator/src/verificationEnvironment.ts
+    mode: owned
+  - path: packages/orchestrator/src/taskExecutor.ts
+    mode: owned
+  - path: packages/design-contract/src/types.ts
+    mode: owned
+  - path: packages/design-contract/src/parse
+    mode: owned
+  - path: packages/design-contract/tests/verifyIsolationField.test.ts
+    mode: owned
+risk: high
+verify:
+  - bun test packages/orchestrator
+  - bun test packages/design-contract
+```
+
 **Files:**
 - Modify: `packages/orchestrator/src/verificationEnvironment.ts`
 - Modify: `packages/orchestrator/src/taskExecutor.ts`
@@ -1670,6 +1779,18 @@ git commit -m "feat(orchestrator,design-contract): activate auto-isolation + ver
 
 ## Task 5: SP-2 Reproduction Test (Acceptance Gate)
 
+```yaml waygent-task
+id: task_5
+title: SP-2 reproduction test acceptance gate
+dependencies: [task_4]
+file_claims:
+  - path: tests/sp2-reproduction/cross-package-edit.test.ts
+    mode: owned
+risk: medium
+verify:
+  - WAYGENT_RUN_INTEG_TESTS=1 bun test tests/sp2-reproduction/cross-package-edit.test.ts
+```
+
 **Files:**
 - Create: `tests/sp2-reproduction/cross-package-edit.test.ts`
 
@@ -1790,6 +1911,22 @@ git commit -m "test(sp2): cross-package edit reproduction acceptance gate (SP-2 
 ---
 
 ## Task 6: Docs
+
+```yaml waygent-task
+id: task_6
+title: Docs for verify env isolation
+dependencies: [task_5]
+file_claims:
+  - path: docs/operations/verification.md
+    mode: owned
+  - path: AGENTS.md
+    mode: owned
+  - path: skills/waygent/SKILL.md
+    mode: owned
+risk: low
+verify:
+  - git diff --check
+```
 
 **Files:**
 - Create: `docs/operations/verification.md`
