@@ -302,7 +302,7 @@ git add README.md
 
     const result = await runCli(["events", "--root", root, "--run", "run_events"]);
 
-    expect(result).toMatchObject({ run_id: "run_events", total_events: 14 });
+    expect(result).toMatchObject({ run_id: "run_events", total_events: 16 });
     expect((result as { events: Array<{ event_type: string }> }).events[0]?.event_type).toBe("platform.run_started");
     expect((result as { events: Array<{ event_type: string }> }).events.map((event) => event.event_type))
       .toContain("runway.preflight_result");

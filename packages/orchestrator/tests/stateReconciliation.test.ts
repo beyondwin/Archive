@@ -37,7 +37,8 @@ describe("Waygent state reconciliation", () => {
     ["missing_combined_patch", "artifact_missing"],
     ["combined_patch_digest_mismatch", "state_drift"],
     ["missing_event_journal", "artifact_missing"],
-    ["completed_without_terminal_trust_event", "state_drift"]
+    ["completed_without_terminal_trust_event", "state_drift"],
+    ["completed_with_failed_completion_audit", "state_drift"]
   ] as const)("blocks %s as %s", (mutation, expectedType) => {
     const fixture = writeReconciliationFixture(`run_${mutation}`);
     mutateFixture(fixture, mutation);
@@ -94,7 +95,8 @@ type ReconciliationMutation =
   | "missing_combined_patch"
   | "combined_patch_digest_mismatch"
   | "missing_event_journal"
-  | "completed_without_terminal_trust_event";
+  | "completed_without_terminal_trust_event"
+  | "completed_with_failed_completion_audit";
 
 interface ReconciliationFixture {
   root: string;
@@ -209,7 +211,12 @@ function writeReconciliationFixture(runId: string): ReconciliationFixture {
     apply: { status: "not_applied", checkpoint_ref: checkpoint.manifest_ref },
     context: { snapshot_path: null, basis_hash: null },
     drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
-    completion_audit: { status: "passed", combined_apply_evidence: combined },
+    completion_audit: {
+      status: "passed",
+      combined_apply_evidence: combined,
+      state_reconciliation: { passed: true, records: [], unrepaired_blockers: [] },
+      residual_risk: []
+    },
     timestamps: {
       started_at: "2026-05-21T00:00:00Z",
       updated_at: "2026-05-21T00:00:01Z",
@@ -274,6 +281,16 @@ function mutateFixture(fixture: ReconciliationFixture, mutation: ReconciliationM
     case "completed_without_terminal_trust_event":
       mkdirSync(fixture.runRoot, { recursive: true });
       writeFileSync(state.event_journal_path, "");
+      break;
+    case "completed_with_failed_completion_audit":
+      writeRunStateV2(fixture.root, {
+        ...state,
+        completion_audit: {
+          ...(state.completion_audit ?? {}),
+          status: "failed",
+          residual_risk: ["state_reconciliation:blocking"]
+        }
+      });
       break;
   }
 }

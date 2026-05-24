@@ -46,6 +46,8 @@ describe("runWaygent", () => {
       "runway.preflight_result",
       "runway.safe_wave_selected",
       "runway.spec_slice_computed",
+      "context.packet_budget_evaluated",
+      "handoff.created",
       "runway.worker_result",
       "lens.model_attestation_confirmed",
       "runway.verification_result",

@@ -91,6 +91,8 @@ const DEFAULT_POLICY: Record<FailureClass, RecoveryPolicyEntry> = {
   unsafe_apply: { action: "request_decision", max_attempts: 1 },
   state_drift: { action: "request_decision", max_attempts: 1 },
   artifact_missing: { action: "retry_with_strict_prompt", max_attempts: 1 },
+  context_missing: { action: "retry_with_evidence", max_attempts: 1 },
+  insufficient_context: { action: "retry_with_evidence", max_attempts: 2 },
   stale_activity: { action: "request_decision", max_attempts: 1 },
   terminal_rejected: { action: "halt", max_attempts: 0 }
 };
@@ -142,6 +144,8 @@ function buildStrictPromptSuffix(
     "You MUST respond with ONLY a single fenced ```json block containing the",
     "runway.worker_result.v1 object. Required fields: schema, task_id,",
     "candidate_id, status, changed_files, summary, evidence. No prose before",
-    "or after the fence. No additional fenced blocks of any language."
+    "or after the fence. No additional fenced blocks of any language.",
+    "If the prior failure was context-related, use only the task packet, evidence",
+    "refs, dependency checkpoint summaries, and spec sections supplied in this retry."
   ].join("\n");
 }

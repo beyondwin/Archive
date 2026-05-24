@@ -26,6 +26,7 @@ import {
 import { mergeCandidate } from "@waygent/runway-control";
 import { artifactIndexEntry } from "./artifactIndex";
 import { createCheckpointArtifact, dryRunCheckpointPatch, resolveCheckpointPatch } from "./checkpointArtifacts";
+import { evaluateContextBudget, type ContextBudgetDecision } from "./contextBudgetGate";
 import { listActualChangedFiles, validateDiffScope } from "./diffScope";
 import type { ProviderName } from "./executionProfile";
 import type { ParsedWaygentTask } from "./planParser";
@@ -67,6 +68,7 @@ export interface ExecuteWaygentTaskInput {
   decisions?: Array<{ decision_id: string; summary: string }>;
   requested_model?: ModelRequest;
   hooks_enabled?: boolean;
+  task_packet_max_chars?: number;
 }
 
 export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promise<WaygentTaskExecutionResult> {
@@ -103,7 +105,8 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     checkpoint_inputs: input.checkpoint_inputs,
     previous_failures: [],
     decisions: input.decisions ?? [],
-    workspace: input.workspace
+    workspace: input.workspace,
+    ...(input.task_packet_max_chars ? { max_chars: input.task_packet_max_chars } : {})
   });
   const packetArtifact = writeArtifact(inputRunRoot(input), `task_packets/${input.task.id}.json`, `${JSON.stringify(packet, null, 2)}\n`);
   artifactIndexEntries.push(artifactIndexEntry({ artifact: packetArtifact, producer_phase: "task_packet", task_id: input.task.id }));
@@ -113,6 +116,52 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
   const attemptStarted = new Date().toISOString();
   const stdinArtifact = writeArtifact(inputRunRoot(input), `provider/${attemptId}.stdin.txt`, prompt, "text/plain");
   artifactIndexEntries.push(artifactIndexEntry({ artifact: stdinArtifact, producer_phase: "provider", task_id: input.task.id }));
+  const contextDecision = evaluateContextBudget(packet);
+  const contextBudgetPayload = {
+    task_id: input.task.id,
+    task_packet_ref: packetArtifact.path,
+    task_packet_sha256: packetArtifact.sha256,
+    context_budget: packet.context_budget,
+    shrink_actions: contextDecision.shrink_actions
+  };
+  const events: TaskExecutionEventIntent[] = [
+    {
+      run_id: input.run_id,
+      event_type: "context.packet_budget_evaluated",
+      phase: "context",
+      outcome: contextDecision.status === "block" ? "blocked" : "success",
+      summary: contextDecision.summary,
+      payload: contextBudgetPayload,
+      trust_impact: contextDecision.status === "block" ? "supports_failure" : "neutral"
+    }
+  ];
+  if (contextDecision.status === "block") {
+    return contextBudgetBlockedResult({
+      input,
+      started,
+      startedAtMs,
+      worktreeManifest,
+      packetPath,
+      packetSha256: packetArtifact.sha256,
+      phaseTimings,
+      artifactIndexEntries,
+      stdinRef: stdinArtifact.path,
+      attemptId,
+      attemptStarted,
+      decision: contextDecision,
+      payload: contextBudgetPayload,
+      events
+    });
+  }
+  events.push({
+    run_id: input.run_id,
+    event_type: "handoff.created",
+    phase: "context",
+    outcome: "success",
+    summary: "Provider handoff created from bounded task packet.",
+    payload: contextBudgetPayload,
+    trust_impact: "neutral"
+  });
   const preHook = evaluatePreDispatchHooks({
     enabled: input.hooks_enabled ?? true,
     task_id: input.task.id,
@@ -201,7 +250,7 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     summary: worker.summary,
     payload: { task_id: input.task.id, failure_class: worker.failure_class ?? null, worker, attempt }
   };
-  const events: TaskExecutionEventIntent[] = [workerEvent];
+  events.push(workerEvent);
   if (preHook.status === "bypassed") {
     events.push({
       run_id: input.run_id,
@@ -539,6 +588,89 @@ function environmentBlockedVerification(taskId: string, reason: string | null): 
     failure_class: "environment_blocker",
     failure_summary: reason ? `verification environment setup failed: ${reason}` : "verification environment setup failed",
     failed_verification_id: `verify_${taskId}_environment`
+  };
+}
+
+function contextBudgetBlockedResult(input: {
+  input: ExecuteWaygentTaskInput;
+  started: string;
+  startedAtMs: number;
+  worktreeManifest: WaygentWorktreeManifest;
+  packetPath: string;
+  packetSha256: string;
+  phaseTimings: ExecutionPhaseTiming[];
+  artifactIndexEntries: ArtifactIndexEntry[];
+  stdinRef: string;
+  attemptId: string;
+  attemptStarted: string;
+  decision: ContextBudgetDecision;
+  payload: Record<string, unknown>;
+  events: TaskExecutionEventIntent[];
+}): WaygentTaskExecutionResult {
+  const completed = new Date().toISOString();
+  const worker: WorkerResult = {
+    schema: "runway.worker_result.v1",
+    task_id: input.input.task.id,
+    candidate_id: `candidate_${input.input.task.id}`,
+    status: "blocked",
+    changed_files: [],
+    summary: input.decision.summary,
+    evidence: input.payload,
+    failure_class: "context_missing"
+  };
+  const workerArtifact = writeArtifact(inputRunRoot(input.input), `worker/${input.input.task.id}.json`, JSON.stringify(worker, null, 2));
+  const stdoutArtifact = writeArtifact(inputRunRoot(input.input), `provider/${input.attemptId}.stdout.txt`, JSON.stringify(worker), "text/plain");
+  const stderrArtifact = writeArtifact(inputRunRoot(input.input), `provider/${input.attemptId}.stderr.txt`, "", "text/plain");
+  input.artifactIndexEntries.push(
+    artifactIndexEntry({ artifact: workerArtifact, producer_phase: "provider", task_id: input.input.task.id }),
+    artifactIndexEntry({ artifact: stdoutArtifact, producer_phase: "provider", task_id: input.input.task.id }),
+    artifactIndexEntry({ artifact: stderrArtifact, producer_phase: "provider", task_id: input.input.task.id })
+  );
+  const attempt: ProviderAttempt = {
+    schema: "runway.provider_attempt.v1",
+    attempt_id: input.attemptId,
+    run_id: input.input.run_id,
+    task_id: input.input.task.id,
+    role: "implement",
+    provider: input.input.provider,
+    command: ["context-budget-gate"],
+    cwd: input.worktreeManifest.path,
+    stdin_ref: input.stdinRef,
+    stdout_ref: stdoutArtifact.path,
+    stderr_ref: stderrArtifact.path,
+    event_stream_ref: null,
+    exit_code: 1,
+    timed_out: false,
+    started_at: input.attemptStarted,
+    completed_at: completed,
+    worker_result_ref: workerArtifact.path,
+    failure_class: "context_missing",
+    ...(input.input.requested_model ? { requested_model: input.input.requested_model } : {}),
+    actual_model: { model: null, reasoning: null, source: "unknown" },
+    usage: null,
+    usage_source: "unknown"
+  };
+  const totalTiming: ExecutionPhaseTiming = {
+    phase: "total",
+    started: input.started,
+    completed,
+    duration_ms: Math.round(performance.now() - input.startedAtMs)
+  };
+  return {
+    task_id: input.input.task.id,
+    status: "blocked",
+    latest_failure_class: "context_missing",
+    worktree_manifest: input.worktreeManifest,
+    task_packet_path: input.packetPath,
+    task_packet_sha256: input.packetSha256,
+    provider_attempt: attempt,
+    verification_records: [],
+    checkpoint_refs: [],
+    artifact_index_entries: input.artifactIndexEntries,
+    events: input.events,
+    timing: { started: input.started, completed, duration_ms: totalTiming.duration_ms ?? 0 },
+    phase_timings: [...input.phaseTimings, totalTiming],
+    worker_result: worker
   };
 }
 

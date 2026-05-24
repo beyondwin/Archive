@@ -20,6 +20,7 @@ export * from "./planNormalizer";
 export * from "./planParser";
 export * from "./planScaffold";
 export * from "./recoveryExecutor";
+export * from "./reviewEvidence";
 export * from "./reviewGate";
 export * from "./runCommands";
 export * from "./runEvents";

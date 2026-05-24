@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentLensEvent, ArtifactIndexEntry, IntakeFinding, WaygentIntakeRecovery, WaygentRunStateV2 } from "@waygent/contracts";
+import type { AgentLensEvent, ArtifactIndexEntry, FailureClass, IntakeFinding, ReviewResult, WaygentIntakeRecovery, WaygentRunStateV2 } from "@waygent/contracts";
 import { planWorktree } from "@waygent/kernel-client";
 import { projectFailureSummary, projectTimeline, projectTrustReport } from "@waygent/lens-projectors";
 import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeArtifact, writeLatestRunId } from "@waygent/lens-store";
@@ -25,12 +25,15 @@ import { classifyVerificationCommand } from "./planAdapters/verificationPolicy";
 import { runPlanPreflight, type PlanPreflightMode } from "./planPreflight";
 import { buildRunEvent } from "./runEvents";
 import { createRunExecutionContext, type RunExecutionContext } from "./runExecutionContext";
+import { readRunStateV2 } from "./runState";
 import { classifySourceCheckout } from "./sourceCheckout";
 import { deriveRunId, RUN_ID_COLLISION_MAX_RETRIES } from "./runIdDerivation";
 import { reconcileRunState } from "./stateReconciliation";
 import { buildTaskGraphFromPlan } from "./taskGraph";
 import { executeBoundedSafeWave, resolveWaveConcurrency } from "./safeWaveExecutor";
+import { appendSchedulerRecovery } from "./taskRecovery";
 import { executeWaygentTask, type WaygentTaskExecutionResult } from "./taskExecutor";
+import { evaluateTerminalCompletionInvariant } from "./terminalInvariant";
 import { buildSpecManifest, specSliceForTask } from "@waygent/context-packer";
 
 export interface RunWaygentOptions {
@@ -51,6 +54,7 @@ export interface RunWaygentOptions {
   budget_action?: "warn" | "pause" | "off";
   hook_config?: "off" | "builtin" | string;
   require_method_evidence?: boolean;
+  initial_reviews?: ReviewResult[];
 }
 
 export interface WaygentRunResult {
@@ -219,7 +223,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     }])),
     safe_waves: [{ wave_id: "wave_1", ready: safeWave, withheld: projection.withheld_tasks }],
     provider_attempts: [],
-    reviews: [],
+    reviews: options.initial_reviews ?? [],
     verification: [],
     recovery: [],
     apply: { status: "not_applied" },
@@ -476,9 +480,22 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       const task = graph.tasks.get(waveResult.task_id);
       if (waveResult.status === "rejected") {
         replayTaskExecutionFailure(context, waveResult.task_id, waveResult.error);
+        const recovery = recordTaskRecovery(context, {
+          task_id: waveResult.task_id,
+          failure_class: "adapter_crashed",
+          prior_summary: errorSummary(waveResult.error),
+          evidence_refs: []
+        });
         if (task) {
-          task.status = "FAILED_TERMINAL";
-          task.latest_failure_class = "adapter_crashed";
+          if (isRetryRecoveryAction(recovery.decision.action)) {
+            task.status = "READY";
+            task.retry_count = (task.retry_count ?? 0) + 1;
+            delete task.latest_failure_class;
+            markStateTaskReadyForRetry(context, task.id, "adapter_crashed");
+          } else {
+            task.status = "FAILED_TERMINAL";
+            task.latest_failure_class = "adapter_crashed";
+          }
         }
         continue;
       }
@@ -488,8 +505,22 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
         task.status = "APPLIED";
         task.checkpoint_ref = waveResult.result.checkpoint_refs[0];
       } else if (task) {
-        task.status = "FAILED_TERMINAL";
-        task.latest_failure_class = waveResult.result.latest_failure_class ?? "verification_failed";
+        const failureClass = waveResult.result.latest_failure_class ?? "verification_failed";
+        const recovery = recordTaskRecovery(context, {
+          task_id: waveResult.result.task_id,
+          failure_class: failureClass,
+          prior_summary: waveResult.result.worker_result.summary,
+          evidence_refs: taskRecoveryEvidenceRefs(waveResult.result)
+        });
+        if (isRetryRecoveryAction(recovery.decision.action)) {
+          task.status = "READY";
+          task.retry_count = (task.retry_count ?? 0) + 1;
+          delete task.latest_failure_class;
+          markStateTaskReadyForRetry(context, task.id, failureClass);
+        } else {
+          task.status = "FAILED_TERMINAL";
+          task.latest_failure_class = failureClass;
+        }
       }
     }
     recordWaveTiming(context, {
@@ -547,11 +578,19 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       })
       : undefined;
     state.artifact_index = mergeArtifactIndex(state.artifact_index, combinedApplyArtifactEntries(combinedApplyEvidence));
+    const reviewEvidence = state.reviews.map((review) => ({
+      task_id: review.task_id,
+      attempt_id: review.attempt_id,
+      verdict: review.verdict,
+      spec_score: review.spec_score,
+      quality_score: review.quality_score,
+      residual_risk: review.residual_risk
+    }));
     state.completion_audit = buildCompletionAudit({
       state,
       required_checks: parsed.tasks.flatMap((task) => task.verification_commands.length > 0 ? task.verification_commands : ["printf hello"]),
       verification_evidence: state.verification,
-      review_evidence: [],
+      review_evidence: reviewEvidence,
       ...(combinedApplyEvidence ? { combined_apply_evidence: combinedApplyEvidence } : {}),
       prompt_to_artifact_checklist: [
         "task_packet_written",
@@ -561,10 +600,10 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       ]
     });
     completionAuditStatus = String((state.completion_audit as { status?: string }).status ?? "failed");
-    state.status = completionAuditStatus === "passed" ? "completed" : "blocked";
-    state.lifecycle_outcome = completionAuditStatus === "passed" ? "finished" : "blocked";
+    state.status = completionAuditStatus === "passed" ? "running" : "blocked";
+    state.lifecycle_outcome = completionAuditStatus === "passed" ? null : "blocked";
     state.timestamps.updated_at = new Date().toISOString();
-    state.timestamps.completed_at = state.timestamps.updated_at;
+    state.timestamps.completed_at = completionAuditStatus === "passed" ? null : state.timestamps.updated_at;
   });
   context.flushState();
   const trust = projectTrustReport(readEvents(paths.events));
@@ -578,16 +617,34 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     payload: { trust_status: trust.trust_status }
   }));
   const reconciliation = reconcileRunState(options.root, runId);
+  const reconciledDrift = readRunStateV2(options.root, runId).drift;
   context.mutateState((state) => {
+    state.drift = reconciledDrift;
+    const reconciliationResidualRisk = reconciliation.passed ? [] : ["state_reconciliation:blocking"];
+    const auditResidualRisk = Array.isArray((state.completion_audit as { residual_risk?: unknown } | null)?.residual_risk)
+      ? (state.completion_audit as { residual_risk: unknown[] }).residual_risk.map(String)
+      : ["completion_audit:missing_residual_risk"];
+    const candidateAuditStatus = completionAuditStatus === "passed" && reconciliation.passed ? "passed" : "failed";
     state.completion_audit = {
       ...(state.completion_audit ?? {}),
       state_reconciliation: reconciliation,
-      status: completionAuditStatus === "passed" && reconciliation.passed ? "passed" : "failed"
+      status: candidateAuditStatus,
+      residual_risk: [...new Set([...auditResidualRisk, ...reconciliationResidualRisk])]
     };
-    if (!reconciliation.passed) {
-      state.status = "blocked";
-      state.lifecycle_outcome = "blocked";
-    }
+    const terminalInvariant = evaluateTerminalCompletionInvariant(state);
+    const terminalResidualRisk = terminalInvariant.blockers.map((blocker) => `terminal_invariant:${blocker.code}`);
+    const currentResidualRisk = Array.isArray((state.completion_audit as { residual_risk?: unknown } | null)?.residual_risk)
+      ? (state.completion_audit as { residual_risk: unknown[] }).residual_risk.map(String)
+      : [];
+    state.completion_audit = {
+      ...(state.completion_audit ?? {}),
+      terminal_invariant: terminalInvariant,
+      status: terminalInvariant.passed ? "passed" : "failed",
+      residual_risk: terminalInvariant.passed ? [] : [...new Set([...currentResidualRisk, ...terminalResidualRisk])]
+    };
+    state.status = terminalInvariant.passed ? "completed" : "blocked";
+    state.lifecycle_outcome = terminalInvariant.passed ? "finished" : "blocked";
+    state.timestamps.completed_at = new Date().toISOString();
     state.timestamps.updated_at = new Date().toISOString();
   });
   context.flushState();
@@ -877,6 +934,72 @@ function recordRuntimeEvidence(context: RunExecutionContext, result: WaygentTask
       trust_impact: "supports_success"
     }));
   }
+}
+
+function recordTaskRecovery(
+  context: RunExecutionContext,
+  input: { task_id: string; failure_class: FailureClass; prior_summary: string; evidence_refs: string[] }
+): ReturnType<typeof appendSchedulerRecovery> {
+  let recoveryRef: ReturnType<typeof appendSchedulerRecovery> | null = null;
+  context.mutateState((state) => {
+    state.current_phase = "recover";
+    recoveryRef = appendSchedulerRecovery({ state, ...input });
+  });
+  const recovery = recoveryRef as ReturnType<typeof appendSchedulerRecovery> | null;
+  if (!recovery) throw new Error(`recovery decision missing for ${input.task_id}`);
+  const retryable = isRetryRecoveryAction(recovery.decision.action);
+  context.appendEvent((sequence) => buildRunEvent({
+    run_id: context.run_id,
+    sequence,
+    event_type: retryable ? "runway.recovery_scheduled" : "runway.recovery_decision_required",
+    phase: "recover",
+    outcome: retryable ? "success" : "blocked",
+    summary: retryable
+      ? "Scheduler recovery retry scheduled."
+      : "Scheduler recovery requires an operator decision.",
+    payload: {
+      task_id: input.task_id,
+      failure_class: input.failure_class,
+      action: recovery.decision.action,
+      attempt_number: recovery.decision.attempt_number,
+      max_attempts: recovery.decision.max_attempts,
+      evidence_refs: input.evidence_refs
+    },
+    trust_impact: retryable ? "neutral" : "requires_review"
+  }));
+  return recovery;
+}
+
+function isRetryRecoveryAction(action: string): boolean {
+  return action === "retry_with_strict_prompt" || action === "retry_with_evidence";
+}
+
+function markStateTaskReadyForRetry(
+  context: RunExecutionContext,
+  taskId: string,
+  failureClass: FailureClass
+): void {
+  context.mutateState((state) => {
+    const task = state.tasks[taskId];
+    if (!task) return;
+    task.status = "ready";
+    task.latest_failure_class = failureClass;
+  });
+}
+
+function taskRecoveryEvidenceRefs(result: WaygentTaskExecutionResult): string[] {
+  const refs = [
+    result.provider_attempt.worker_result_ref,
+    ...result.verification_records
+      .map((record) => record.kernel_result_ref)
+      .filter((ref): ref is string => typeof ref === "string" && ref.length > 0),
+    result.task_packet_path
+  ].filter((ref): ref is string => typeof ref === "string" && ref.length > 0);
+  return [...new Set(refs)];
+}
+
+function errorSummary(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function pauseRunForBudget(context: RunExecutionContext, activeTaskIds: string[]): void {

@@ -3,6 +3,7 @@ import type { FailureClass } from "@waygent/contracts";
 import { readEvents, sha256 } from "@waygent/lens-store";
 import { readCheckpointManifest, resolveRunArtifactPath, validateCheckpointManifest } from "./checkpointArtifacts";
 import { readRunStateV2, writeRunStateV2 } from "./runState";
+import { evaluateTerminalCompletionInvariant } from "./terminalInvariant";
 
 export interface ReconciliationRecord {
   type: "artifact_missing" | "state_drift";
@@ -135,6 +136,19 @@ export function reconcileRunState(root: string, runId: string): ReconciliationRe
       }
     } catch {
       records.push(drift("event journal cannot be read", state.event_journal_path));
+    }
+  }
+
+  if (state.status === "completed" || state.lifecycle_outcome === "finished") {
+    for (const blocker of evaluateTerminalCompletionInvariant(state).blockers) {
+      records.push({
+        type: blocker.type,
+        severity: "blocking",
+        failure_class: blocker.failure_class,
+        message: `terminal completion invariant failed: ${blocker.message}`,
+        ...(blocker.artifact_ref ? { artifact_ref: blocker.artifact_ref } : {}),
+        ...(blocker.task_id ? { task_id: blocker.task_id } : {})
+      });
     }
   }
 

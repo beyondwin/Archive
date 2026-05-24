@@ -86,6 +86,13 @@ describe("nextRecoveryAction — D-10 policy matrix", () => {
     expect(nextRecoveryAction("artifact_missing", 1).action).toBe("request_decision");
   });
 
+  test("context failures retry with bounded evidence", () => {
+    expect(nextRecoveryAction("context_missing", 0).action).toBe("retry_with_evidence");
+    expect(nextRecoveryAction("context_missing", 1).action).toBe("request_decision");
+    expect(nextRecoveryAction("insufficient_context", 1).action).toBe("retry_with_evidence");
+    expect(nextRecoveryAction("insufficient_context", 2).action).toBe("request_decision");
+  });
+
   test("unknown failure_class defaults to request_decision", () => {
     const decision = nextRecoveryAction("not_a_known_class", 0);
     expect(decision.action).toBe("request_decision");
@@ -132,6 +139,8 @@ describe("nextRecoveryAction — D-10 policy matrix", () => {
       "unsafe_apply",
       "state_drift",
       "artifact_missing",
+      "context_missing",
+      "insufficient_context",
       "stale_activity",
       "terminal_rejected"
     ];

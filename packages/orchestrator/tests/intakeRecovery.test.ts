@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseWaygentPlan } from "../src/planParser";
 import { recoverWaygentPlanInput } from "../src/intakeRecovery";
@@ -141,8 +142,33 @@ Run:
       spec_path: null
     });
 
-    expect(recovered.status).toBe("not_needed");
+    expect(recovered.status).toBe("recovered");
     expect(recovered.report.can_start).toBe(true);
     expect(recovered.report.findings.some((finding) => finding.message.includes("no recoverable file claim"))).toBe(false);
+  });
+
+  test("recovers memory-second-brain style plans without an operator decision", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "waygent-memory-recovery-"));
+    writeFileSync(join(workspace, "package.json"), JSON.stringify({
+      scripts: {
+        build: "vite build",
+        validate: "astro check",
+        "memory:validate": "node scripts/memory/validate.mjs"
+      }
+    }));
+
+    const recovered = recoverWaygentPlanInput({
+      markdown: fixture("memory_second_brain_plan.md"),
+      path: "/tmp/memory_second_brain.md",
+      workspace,
+      spec_markdown: "# Memory Second Brain\n",
+      spec_path: "/tmp/memory_spec.md"
+    });
+
+    expect(recovered.status).toBe("recovered");
+    expect(recovered.report.can_start).toBe(true);
+    expect(recovered.report.question).toBeNull();
+    expect(recovered.report.normalized_plan_ref).toBe("artifacts/intake/normalized-plan.md");
+    expect(recovered.report.findings.some((finding) => finding.severity === "blocking")).toBe(false);
   });
 });
