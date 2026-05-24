@@ -47,6 +47,8 @@ export type FailureClass =
   | "service_unreachable"
   | "dependency_missing"
   | "environment_blocker"
+  | "context_missing"
+  | "insufficient_context"
   | "flaky_unconfirmed"
   | "command_not_found"
   | "dependency_blocked"
@@ -96,7 +98,12 @@ export interface WaygentTaskPacket {
   risk: RiskLevel;
   previous_failures: Array<{ failure_class: FailureClass; evidence_refs: string[]; summary: string }>;
   decisions: Array<{ decision_id: string; summary: string }>;
-  context_budget: { estimated_chars: number; max_chars: number; status: "green" | "yellow" | "red" };
+  context_budget: {
+    estimated_chars: number;
+    max_chars: number;
+    status: "green" | "yellow" | "red";
+    shrink_actions?: string[];
+  };
   sha256: string;
 }
 

@@ -94,6 +94,13 @@ does not interrupt an active provider process.
 checks pre-dispatch task packets and final provider output; per-tool provider
 hooks require stable provider event streams and are not claimed by this slice.
 
+### Context Budget Gate
+
+Waygent evaluates each task packet before provider dispatch. Green packets
+dispatch normally. Yellow packets dispatch with `context.packet_budget_evaluated`
+evidence. Red packets do not dispatch; Waygent records `context_missing` and the
+ordered shrink actions needed to make the handoff executable.
+
 ### Apply Readiness
 
 `ready` means all of the following are true:
@@ -229,6 +236,14 @@ The operator loop is:
 Operational maturity is diagnostic. It never marks a run apply-ready and never
 mutates the source checkout.
 
+### Scheduler Recovery Loop
+
+Recoverable task failures are routed through `nextRecoveryAction` before the
+run is blocked. Waygent records each attempt in `state.recovery[]`, emits either
+`runway.recovery_scheduled` or `runway.recovery_decision_required`, and retries
+only from safe task boundaries. Recovery never changes completion audit
+requirements.
+
 ## Verification Environment
 
 Waygent prepares verification-only dependency access for isolated local
@@ -325,6 +340,13 @@ manifest-backed checkpoint refs, combined patch evidence, provider attempt
 artifacts, and explicit blockers. Fake-provider scenarios are the default
 offline gate; live Codex and Claude checks remain opt-in through
 `WAYGENT_LIVE_PROVIDER`.
+
+### Review Evidence Gate
+
+When a task is high risk, a recovery attempt occurred, or method evidence is
+required, completion audit requires review evidence. Missing review evidence is
+recorded as `review_evidence:<reason>` in residual risk and blocks completed
+status.
 
 ## Operator Stop Rules
 

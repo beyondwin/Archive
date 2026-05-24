@@ -8,7 +8,7 @@
   "expected": {
     "run_status": "trusted",
     "apply_status": "ready",
-    "total_events": 14,
+    "total_events": 16,
     "safe_wave": [
       "task_trivial"
     ],
@@ -20,6 +20,8 @@
       "runway.preflight_result",
       "runway.safe_wave_selected",
       "runway.spec_slice_computed",
+      "context.packet_budget_evaluated",
+      "handoff.created",
       "runway.worker_result",
       "lens.model_attestation_confirmed",
       "runway.verification_result",

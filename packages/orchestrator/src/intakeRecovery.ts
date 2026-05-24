@@ -59,14 +59,16 @@ export function recoverWaygentPlanInput(input: RecoverWaygentPlanInput): Recover
       workspace: input.workspace,
       catalog
     });
+    const status: WaygentIntakeRecovery["status"] =
+      normalized.mode === "superpowers" ? "recovered" : "not_needed";
     return {
-      status: "not_needed",
+      status,
       normalized_plan: normalized,
       report: {
-        status: "not_needed",
+        status,
         started_at: startedAt,
         completed_at: new Date().toISOString(),
-        normalized_plan_ref: null,
+        normalized_plan_ref: status === "recovered" ? "artifacts/intake/normalized-plan.md" : null,
         recovery_report_ref: null,
         findings: [],
         repair_actions: [],

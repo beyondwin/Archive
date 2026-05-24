@@ -63,6 +63,18 @@ If the run genuinely needs a regenerated lockfile, add the lockfile to the
 task's `file_claims` with `mode: owned` *and* run the generating command
 inside the implementation, not the verify step.
 
+### Superpowers Plan Normalization
+
+When a Superpowers-style implementation plan includes task headings, file
+claims, and safe verification commands, Waygent normalizes it into executable
+`yaml waygent-task` blocks during intake. Commands that install dependencies,
+format files, generate code, update Graphify output, or mutate git state are
+preserved as implementation instructions and removed from `verify`.
+
+Waygent asks for a decision only when the command is destructive, escapes the
+workspace, writes unclaimed files, or leaves a source-changing task without a
+usable verification command.
+
 ### Verify Must Exercise Strict TypeScript
 
 `bun test` transpiles TypeScript permissively — strict-mode diagnostics

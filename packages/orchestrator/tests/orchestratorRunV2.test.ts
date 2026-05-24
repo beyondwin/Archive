@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { validateContract } from "@waygent/contracts";
+import { validateContract, type ReviewResult } from "@waygent/contracts";
 import { readLatestRunId } from "@waygent/lens-store";
 import { runWaygent } from "../src/orchestrator";
 import { readRunStateV2 } from "../src/runState";
@@ -338,6 +338,145 @@ verify:
       }
     });
   });
+
+  test("schedules recovery retry for malformed worker result before completing run", async () => {
+    const workspace = initSourceCheckout("waygent-run-v2-recovery-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-run-v2-recovery-"));
+    const provider = writeRecoveringMalformedProviderScript(root);
+    const retryPlan = `
+\`\`\`yaml waygent-task
+id: task_retry
+title: Create file after recovery
+dependencies: []
+file_claims:
+  - path: a.txt
+    mode: owned
+risk: low
+verify:
+  - test -f a.txt
+\`\`\`
+`;
+
+    const result = await runWaygent({
+      root,
+      workspace,
+      run_id: "run_recovery_retry",
+      plan: retryPlan,
+      profile: { provider: "codex", execution_mode: "multi-agent" },
+      provider_processes: { codex: { executable: provider, args: [] } },
+      initial_reviews: [reviewResult("run_recovery_retry", "task_retry", "candidate_task_retry")]
+    });
+
+    const state = readRunStateV2(root, "run_recovery_retry");
+    expect(state.recovery.some((record) =>
+      record.task_id === "task_retry" &&
+      record.failure_class === "malformed_result" &&
+      record.action === "retry_with_strict_prompt"
+    )).toBe(true);
+    expect(result.events.some((event) => event.event_type === "runway.recovery_scheduled")).toBe(true);
+    expect(state.status).toBe("completed");
+    expect(state.completion_audit?.status).toBe("passed");
+  });
+
+  test("blocks completion audit for high-risk tasks without review evidence", async () => {
+    const workspace = initSourceCheckout("waygent-run-v2-high-risk-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-run-v2-high-risk-"));
+    const highRiskPlan = `
+\`\`\`yaml waygent-task
+id: task_high
+title: Create high-risk file
+dependencies: []
+file_claims:
+  - path: a.txt
+    mode: owned
+risk: high
+verify:
+  - test -f a.txt
+\`\`\`
+`;
+
+    await runWaygent({
+      root,
+      workspace,
+      run_id: "run_high_risk_no_review",
+      plan: highRiskPlan,
+      profile: { provider: "fake", execution_mode: "multi-agent" }
+    });
+
+    const state = readRunStateV2(root, "run_high_risk_no_review");
+    expect(state.status).toBe("blocked");
+    expect(state.completion_audit?.status).toBe("failed");
+    expect(state.completion_audit?.residual_risk).toContain("review_evidence:high_risk_task");
+  });
+
+  test("passes completion audit for high-risk tasks with review evidence", async () => {
+    const workspace = initSourceCheckout("waygent-run-v2-high-risk-reviewed-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-run-v2-high-risk-reviewed-"));
+    const highRiskPlan = `
+\`\`\`yaml waygent-task
+id: task_high
+title: Create high-risk file
+dependencies: []
+file_claims:
+  - path: a.txt
+    mode: owned
+risk: high
+verify:
+  - test -f a.txt
+\`\`\`
+`;
+
+    await runWaygent({
+      root,
+      workspace,
+      run_id: "run_high_risk_reviewed",
+      plan: highRiskPlan,
+      profile: { provider: "fake", execution_mode: "multi-agent" },
+      initial_reviews: [reviewResult("run_high_risk_reviewed", "task_high", "candidate_task_high")]
+    });
+
+    const state = readRunStateV2(root, "run_high_risk_reviewed");
+    expect(state.status).toBe("completed");
+    expect(state.completion_audit?.review_evidence).toHaveLength(1);
+    expect(state.completion_audit?.residual_risk ?? []).not.toContain("review_evidence:high_risk_task");
+  });
+
+  test("blocks terminal completion when required method evidence is missing", async () => {
+    const workspace = initSourceCheckout("waygent-run-v2-method-evidence-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-run-v2-method-evidence-"));
+    const provider = writeNoMethodEvidenceProviderScript(root);
+
+    await runWaygent({
+      root,
+      workspace,
+      run_id: "run_method_evidence_missing",
+      plan,
+      profile: { provider: "codex", execution_mode: "multi-agent" },
+      provider_processes: {
+        codex: {
+          executable: process.execPath,
+          args: ["-e", provider]
+        }
+      },
+      require_method_evidence: true
+    });
+
+    const state = readRunStateV2(root, "run_method_evidence_missing");
+    expect(state.tasks.task_a).toMatchObject({ status: "verified" });
+    expect(state).toMatchObject({
+      status: "blocked",
+      lifecycle_outcome: "blocked",
+      completion_audit: {
+        status: "failed",
+        terminal_invariant: {
+          passed: false,
+          blockers: expect.arrayContaining([
+            expect.objectContaining({ code: "method_evidence_missing", task_id: "task_a" })
+          ])
+        }
+      }
+    });
+  });
 });
 
 function writeLeakyProviderScript(root: string): string {
@@ -357,6 +496,44 @@ process.stdout.write(JSON.stringify({
   evidence: { provider: "test-leaky-provider" }
 }));
 `);
+  return scriptPath;
+}
+
+function writeRecoveringMalformedProviderScript(root: string): string {
+  const scriptPath = join(root, "recovering-malformed-provider.mjs");
+  const counterPath = join(root, "recovering-malformed-provider-count.txt");
+  writeFileSync(scriptPath, `#!/usr/bin/env node
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+
+const counterPath = ${JSON.stringify(counterPath)};
+const count = existsSync(counterPath) ? Number(readFileSync(counterPath, "utf8")) : 0;
+writeFileSync(counterPath, String(count + 1));
+writeFileSync("a.txt", count === 0 ? "created before recovery\\n" : "created after recovery\\n");
+
+if (count === 0) {
+  process.stdout.write(JSON.stringify({
+    schema: "runway.worker_result.v1",
+    task_id: "task_retry",
+    candidate_id: "candidate_task_retry",
+    status: "blocked",
+    changed_files: ["a.txt"],
+    summary: "First attempt produced malformed output shape after editing.",
+    evidence: { provider: "test-recovering-provider", attempt: count + 1 },
+    failure_class: "malformed_result"
+  }));
+} else {
+  process.stdout.write(JSON.stringify({
+    schema: "runway.worker_result.v1",
+    task_id: "task_retry",
+    candidate_id: "candidate_task_retry",
+    status: "completed",
+    changed_files: ["a.txt"],
+    summary: "Created file after scheduler recovery retry.",
+    evidence: { provider: "test-recovering-provider", attempt: count + 1 }
+  }));
+}
+`);
+  chmodSync(scriptPath, 0o755);
   return scriptPath;
 }
 
@@ -383,6 +560,44 @@ process.stdout.write(JSON.stringify({
 `);
   chmodSync(scriptPath, 0o755);
   return scriptPath;
+}
+
+function writeNoMethodEvidenceProviderScript(_root: string): string {
+  return `
+import { writeFileSync } from "node:fs";
+
+if (process.argv.includes("--help")) {
+  process.stdout.write("codex help fixture\\n");
+  process.exit(0);
+}
+
+writeFileSync("a.txt", "created without method audit\\n");
+process.stdout.write(JSON.stringify({
+  schema: "runway.worker_result.v1",
+  task_id: "task_a",
+  candidate_id: "candidate_task_a",
+  status: "completed",
+  changed_files: ["a.txt"],
+  summary: "Created file without method evidence.",
+  evidence: { provider: "test-codex-provider" }
+}));
+`;
+}
+
+function reviewResult(runId: string, taskId: string, attemptId: string): ReviewResult {
+  return {
+    schema: "runway.review_result.v1",
+    run_id: runId,
+    task_id: taskId,
+    attempt_id: attemptId,
+    provider: "test-reviewer",
+    verdict: "pass",
+    spec_score: 1,
+    quality_score: 1,
+    findings: [],
+    residual_risk: [],
+    summary: "Reviewed test fixture."
+  };
 }
 
 function initSourceCheckout(prefix: string): string {

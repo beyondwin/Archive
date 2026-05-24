@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseWaygentPlan } from "../src/planParser";
 import { normalizeWaygentPlanInput } from "../src/planNormalizer";
 
@@ -251,5 +254,39 @@ bun test packages/orchestrator/tests/planNormalizer.test.ts
     });
 
     expect(normalized.task_count).toBe(1);
+  });
+
+  test("normalizes memory-second-brain style plans and strips implementation-only verify commands", () => {
+    const fixture = readFileSync(join(import.meta.dir, "fixtures", "memory_second_brain_plan.md"), "utf8");
+    const workspace = mkdtempSync(join(tmpdir(), "waygent-memory-plan-"));
+    writeFileSync(join(workspace, "package.json"), JSON.stringify({
+      scripts: {
+        build: "vite build",
+        validate: "astro check",
+        "memory:validate": "node scripts/memory/validate.mjs"
+      }
+    }));
+
+    const normalized = normalizeWaygentPlanInput({
+      markdown: fixture,
+      path: "/tmp/memory_second_brain.md",
+      workspace
+    });
+    const parsed = parseWaygentPlan(normalized.markdown);
+
+    expect(normalized.mode).toBe("superpowers");
+    expect(parsed.tasks).toHaveLength(2);
+    expect(parsed.tasks[0]?.verification_commands).toEqual([
+      "npm test -- --runInBand",
+      "npm run memory:validate"
+    ]);
+    expect(parsed.tasks[1]?.verification_commands).toEqual([
+      "npm run build",
+      "npm run validate"
+    ]);
+    expect(parsed.tasks[0]?.instructions.join("\n")).toContain("npm install");
+    expect(parsed.tasks[1]?.instructions.join("\n")).toContain("graphify update .");
+    expect(normalized.markdown).not.toContain("verify:\n  - npm install");
+    expect(normalized.markdown).not.toContain("verify:\n  - graphify update .");
   });
 });

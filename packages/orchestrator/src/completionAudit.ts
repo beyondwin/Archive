@@ -7,6 +7,7 @@ import {
   resolveRunArtifactPath,
   validateCheckpointManifest
 } from "./checkpointArtifacts";
+import { reviewEvidenceMissing } from "./reviewEvidence";
 
 export interface CompletionAuditInput {
   state: WaygentRunStateV2;
@@ -52,9 +53,16 @@ export function buildCompletionAudit(input: CompletionAuditInput): Record<string
   if (!combinedApplyOk) {
     residualRisk.push(`combined_apply:${input.combined_apply_evidence?.reason ?? "missing_verified_checkpoint"}`);
   }
+  const missingReviewReason = reviewEvidenceMissing({
+    state: input.state,
+    review_evidence: input.review_evidence
+  });
+  if (missingReviewReason) {
+    residualRisk.push(`review_evidence:${missingReviewReason}`);
+  }
 
   return {
-    status: failed.length === 0 && taskResults.length > 0 && combinedApplyOk ? "passed" : "failed",
+    status: failed.length === 0 && taskResults.length > 0 && combinedApplyOk && !missingReviewReason ? "passed" : "failed",
     required_checks: input.required_checks,
     verification_evidence: input.verification_evidence,
     review_evidence: input.review_evidence,

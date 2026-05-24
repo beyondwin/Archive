@@ -106,6 +106,44 @@ describe("Waygent contracts", () => {
     ).toBeTruthy();
   });
 
+  test("task packet context budget can include shrink actions", () => {
+    const packet = validateContract("waygent.task_packet.v1", {
+      schema: "waygent.task_packet.v1",
+      run_id: "run_context",
+      task_id: "task_context",
+      role: "implement",
+      task_title: "Context task",
+      plan_excerpt: "Do the work",
+      spec_excerpt: "Spec section",
+      file_claims: [],
+      allowed_write_globs: [],
+      forbidden_write_globs: [".git/**"],
+      dependencies: [],
+      checkpoint_inputs: [],
+      acceptance_commands: ["printf hello"],
+      verification_commands: ["printf hello"],
+      risk: "low",
+      previous_failures: [
+        {
+          failure_class: "context_missing",
+          evidence_refs: ["artifacts/task_packets/task_context.json"],
+          summary: "Task packet exceeded the provider context budget."
+        }
+      ],
+      decisions: [],
+      context_budget: {
+        estimated_chars: 120000,
+        max_chars: 60000,
+        status: "red",
+        shrink_actions: ["replace_full_logs_with_digest"]
+      },
+      sha256: "a".repeat(64)
+    }) as { context_budget: { status: string; shrink_actions?: string[] } };
+
+    expect(packet.context_budget.status).toBe("red");
+    expect(packet.context_budget.shrink_actions).toEqual(["replace_full_logs_with_digest"]);
+  });
+
   test("validates lens runway projection contract", () => {
     expect(
       validateContract("lens.runway_projection.v1", {

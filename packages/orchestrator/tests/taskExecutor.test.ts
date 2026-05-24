@@ -191,6 +191,44 @@ describe("executeWaygentTask", () => {
     expect(patch).not.toContain("base.txt");
   });
 
+  test("blocks red task packets before provider dispatch", async () => {
+    const workspace = initSourceCheckout("waygent-task-executor-red-context-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-red-context-root-"));
+    const parsed = parseWaygentPlan([
+      "```yaml waygent-task",
+      "id: task_red_context",
+      "title: Create red context output",
+      "dependencies: []",
+      "file_claims:",
+      "  - path: red.txt",
+      "    mode: owned",
+      "risk: low",
+      "instructions:",
+      `  - ${"Include compact context only. ".repeat(80)}`,
+      "verify:",
+      "  - test -f red.txt",
+      "```"
+    ].join("\n"));
+
+    const result = await executeWaygentTask({
+      root,
+      run_id: "run_red_context",
+      workspace,
+      worktree_root: join(root, "worktrees"),
+      task: parsed.tasks[0]!,
+      checkpoint_inputs: [],
+      spec: null,
+      provider: "fake",
+      provider_processes: {},
+      task_packet_max_chars: 500
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.latest_failure_class).toBe("context_missing");
+    expect(result.events.map((event) => event.event_type)).toContain("context.packet_budget_evaluated");
+    expect(result.events.map((event) => event.event_type)).not.toContain("runway.worker_result");
+  });
+
   test("records needs_rebase when checkpoint dry-run conflicts with the source basis", async () => {
     const workspace = initSourceCheckout("waygent-task-executor-conflict-source-");
     writeFileSync(join(workspace, "README.md"), "source advanced outside task worktree\n");

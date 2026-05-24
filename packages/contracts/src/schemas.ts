@@ -21,6 +21,8 @@ const failureClassValues = [
   "service_unreachable",
   "dependency_missing",
   "environment_blocker",
+  "context_missing",
+  "insufficient_context",
   "flaky_unconfirmed",
   "command_not_found",
   "dependency_blocked",
@@ -736,7 +738,8 @@ export const waygentTaskPacketSchema = {
       properties: {
         estimated_chars: { type: "integer", minimum: 0 },
         max_chars: { type: "integer", minimum: 1 },
-        status: { enum: ["green", "yellow", "red"] }
+        status: { enum: ["green", "yellow", "red"] },
+        shrink_actions: { type: "array", items: { type: "string", minLength: 1 } }
       }
     },
     sha256: { type: "string", pattern: "^[a-f0-9]{64}$" }

@@ -65,9 +65,15 @@ export function classifyVerificationCommand(input: VerificationPolicyInput): Ver
     return { command: input.command, status: "unsafe", reason: unsafe.reason, segments };
   }
   const safe = [...segments].reverse().find((segment) => segment.status === "safe");
+  const safeVerification = [...segments]
+    .reverse()
+    .find((segment) => segment.status === "safe" && !isWorkspaceChangeSegment(segment.command));
   const implementationOnly = segments.find((segment) => segment.reason === "implementation_only");
-  if (safe && implementationOnly) {
+  if (safeVerification && implementationOnly) {
     return { command: input.command, status: "unsafe", reason: "implementation_only", segments };
+  }
+  if (implementationOnly) {
+    return { command: input.command, status: "ignored", reason: "implementation_only", segments };
   }
   return {
     command: input.command,
@@ -116,8 +122,15 @@ function classifySegment(
 }
 
 function isImplementationOnlyCommand(segment: string): boolean {
+  if (/^(npm|bun|pnpm|yarn)\s+install\b/.test(segment)) return true;
+  if (/^(npm|bun|pnpm|yarn)\s+run\s+(format|fmt|generate|codegen)\b/.test(segment)) return true;
+  if (/^prettier\s+--write\b/.test(segment)) return true;
   if (segment === "graphify update ." || segment.startsWith("graphify update ")) return true;
   return /^git\s+(add|commit|push|checkout|merge|rebase|stash|worktree|cherry-pick)\b/.test(segment);
+}
+
+function isWorkspaceChangeSegment(segment: string): boolean {
+  return segment.startsWith("cd ");
 }
 
 function cdStaysInsideWorkspace(segment: string, workspace: string): boolean {

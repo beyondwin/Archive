@@ -8,7 +8,7 @@
   "expected": {
     "run_status": "failed",
     "apply_status": "not_ready",
-    "total_events": 12,
+    "total_events": 15,
     "safe_wave": [
       "task_dependency_missing"
     ],
@@ -20,10 +20,13 @@
       "runway.preflight_result",
       "runway.safe_wave_selected",
       "runway.spec_slice_computed",
+      "context.packet_budget_evaluated",
+      "handoff.created",
       "runway.worker_result",
       "lens.model_attestation_confirmed",
       "runway.verification_result",
       "platform.cost_accumulated",
+      "runway.recovery_decision_required",
       "lens.trust_report_updated"
     ],
     "checkpoints": [],

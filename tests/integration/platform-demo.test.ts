@@ -11,7 +11,7 @@ describe("platform demo", () => {
       workspace: initSourceCheckout("waygent-platform-source-")
     });
     expect(result.trust_report.trust_status).toBe("trusted");
-    expect(result.summary.total_events).toBe(14);
+    expect(result.summary.total_events).toBe(16);
     expect(result.timeline.map((entry) => entry.event_type)).toEqual([
       "platform.run_started",
       "platform.intake_extract_completed",
@@ -20,6 +20,8 @@ describe("platform demo", () => {
       "runway.preflight_result",
       "runway.safe_wave_selected",
       "runway.spec_slice_computed",
+      "context.packet_budget_evaluated",
+      "handoff.created",
       "runway.worker_result",
       "lens.model_attestation_confirmed",
       "runway.verification_result",
@@ -36,7 +38,7 @@ describe("platform demo", () => {
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout.toString())).toMatchObject({
       trust_status: "trusted",
-      total_events: 14,
+      total_events: 16,
       apply_state: "not_applied"
     });
   });
