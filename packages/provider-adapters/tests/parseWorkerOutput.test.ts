@@ -183,6 +183,8 @@ describe("parseWorkerOutput hardening", () => {
     ["ready", "completed"],
     ["ready_for_review", "completed"],
     ["ready-for-review", "completed"],
+    ["needs_verification", "completed"],
+    ["needs-verification", "completed"],
     ["Ready_For_Review", "completed"],
     ["COMPLETE", "completed"],
     [" Implemented ", "completed"],

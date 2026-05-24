@@ -2,8 +2,25 @@ import { existsSync } from "node:fs";
 import { isAbsolute, normalize, resolve } from "node:path";
 import { parseWaygentPlan, type ParsedWaygentPlan } from "./planParser";
 import type { NormalizedWaygentPlan } from "./planNormalizer";
+import {
+  buildProjectScriptCatalog,
+  type ProjectScriptCatalog
+} from "./planAdapters/projectScriptCatalog";
+import { commandSegments } from "./planAdapters/commandLines";
+import { classifyVerificationCommand } from "./planAdapters/verificationPolicy";
 
 export type PlanPreflightMode = "off" | "deterministic" | "full";
+
+// Native waygent-task plans historically allowed a small set of inspect-only
+// commands (`grep`, `node -e`) that the shared superpowers verification policy
+// intentionally excludes. The preflight extends the shared policy with these
+// legacy prefixes so already-published native plans keep validating; new
+// normalized plans continue to flow only through the shared classification.
+const NATIVE_TASK_EXTRA_SAFE_PREFIXES: ReadonlyArray<string> = [
+  "node -e ",
+  "grep "
+];
+const NATIVE_TASK_UNSAFE_SHELL = /\b(rm\s+-rf|git\s+reset\s+--hard|git\s+clean\s+-fd|drop\s+table|kubectl\s+delete)\b/i;
 
 export interface PlanPreflightInput {
   workspace: string;
@@ -20,26 +37,6 @@ export interface PlanPreflightResult {
   warnings: string[];
   task_count: number;
 }
-
-const SAFE_COMMAND_STARTS = [
-  "bun test",
-  "bun run test",
-  "bun run check",
-  "bun run typecheck",
-  "bun run build",
-  "bun run waygent:scenarios",
-  "bun run waygent:dogfood",
-  "cargo test",
-  "npm test",
-  "npm run test",
-  "node -e ",
-  "pnpm test",
-  "yarn test",
-  "test ",
-  "grep ",
-  "printf ",
-  "git diff --check"
-];
 
 export function runPlanPreflight(input: PlanPreflightInput, mode: PlanPreflightMode = "deterministic"): PlanPreflightResult {
   if (mode === "off") {
@@ -79,6 +76,7 @@ export function runPlanPreflight(input: PlanPreflightInput, mode: PlanPreflightM
 function validateTasks(plan: ParsedWaygentPlan, workspace: string): string[] {
   const errors: string[] = [];
   const ids = new Set(plan.tasks.map((task) => task.id));
+  const catalog: ProjectScriptCatalog | null = safeBuildCatalog(workspace);
   for (const task of plan.tasks) {
     if (task.file_claims.length === 0) errors.push(`${task.id} has no explicit file claims`);
     if (task.verification_commands.length === 0) errors.push(`${task.id} has no safe verification commands`);
@@ -89,11 +87,38 @@ function validateTasks(plan: ParsedWaygentPlan, workspace: string): string[] {
       if (!ids.has(dependency)) errors.push(`${task.id} depends on unknown task ${dependency}`);
     }
     for (const command of task.verification_commands) {
-      if (!isSafeVerificationCommand(command)) errors.push(`${task.id} has unsafe verification command: ${command}`);
+      const classification = classifyVerificationCommand({ command, workspace, catalog });
+      if (classification.status !== "safe" && !isLegacyNativeSafeCommand(command, classification)) {
+        errors.push(`${task.id} has unsafe verification command: ${command}`);
+      }
     }
   }
   errors.push(...dependencyCycleErrors(plan));
   return errors;
+}
+
+function isLegacyNativeSafeCommand(
+  command: string,
+  classification: ReturnType<typeof classifyVerificationCommand>
+): boolean {
+  return commandSegments(command).every((segment, index) => {
+    const classified = classification.segments[index];
+    if (classified?.status === "safe") return true;
+    if (classified?.reason && classified.reason !== "unknown") return false;
+    if (NATIVE_TASK_UNSAFE_SHELL.test(segment) || /[|;`]/.test(segment) || /\s[12]?>/.test(segment)) {
+      return false;
+    }
+    return NATIVE_TASK_EXTRA_SAFE_PREFIXES.some((prefix) => segment.startsWith(prefix));
+  });
+}
+
+function safeBuildCatalog(workspace: string): ProjectScriptCatalog | null {
+  if (!workspace) return null;
+  try {
+    return buildProjectScriptCatalog(workspace);
+  } catch {
+    return null;
+  }
 }
 
 function claimEscapesWorkspace(workspace: string, claimPath: string): boolean {
@@ -121,12 +146,4 @@ function dependencyCycleErrors(plan: ParsedWaygentPlan): string[] {
   };
   for (const task of plan.tasks) visit(task.id, []);
   return errors;
-}
-
-function isSafeVerificationCommand(command: string): boolean {
-  const parts = command.replace(/\s+/g, " ").trim().split(/\s+&&\s+/);
-  return parts.every((part, index) => {
-    if (index === 0 && part.startsWith("cd ")) return true;
-    return SAFE_COMMAND_STARTS.some((prefix) => part === prefix.trim() || part.startsWith(prefix));
-  });
 }

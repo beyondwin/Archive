@@ -240,6 +240,27 @@ const intakeRepairActionSchema = {
   }
 } as const;
 
+const intakeTaskRecoveryStatusSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "task_id",
+    "status",
+    "title",
+    "file_claim_count",
+    "verification_command_count",
+    "blockers"
+  ],
+  properties: {
+    task_id: { type: "string", pattern: idPattern },
+    status: { enum: ["normalized", "recovered", "blocked", "warning"] },
+    title: { type: "string", minLength: 1 },
+    file_claim_count: { type: "integer", minimum: 0 },
+    verification_command_count: { type: "integer", minimum: 0 },
+    blockers: { type: "array", items: { type: "string", minLength: 1 } }
+  }
+} as const;
+
 const intakeRecoverySchema = {
   type: "object",
   additionalProperties: false,
@@ -265,7 +286,12 @@ const intakeRecoverySchema = {
     repair_actions: { type: "array", items: intakeRepairActionSchema },
     can_start: { type: "boolean" },
     confidence: { enum: ["deterministic", "ai_assisted", "blocked"] },
-    question: { type: "string", nullable: true }
+    question: { type: "string", nullable: true },
+    strict_task_status: { type: "array", items: intakeTaskRecoveryStatusSchema },
+    fallback_task_status: { type: "array", items: intakeTaskRecoveryStatusSchema },
+    merged_task_status: { type: "array", items: intakeTaskRecoveryStatusSchema },
+    blocked_tasks: { type: "array", items: intakeTaskRecoveryStatusSchema },
+    extract_report_ref: { type: "string", nullable: true }
   }
 } as const;
 

@@ -145,6 +145,7 @@ verify:
   test("blocks checkpoint sealing when actual worktree changes escape allowed scope", async () => {
     const workspace = initSourceCheckout("waygent-diff-scope-source-");
     const root = mkdtempSync(join(tmpdir(), "waygent-diff-scope-run-"));
+    const leakyProvider = writeLeakyProviderScript(root);
     const leakingPlan = `
 \`\`\`yaml waygent-task
 id: task_scope
@@ -155,7 +156,7 @@ file_claims:
     mode: owned
 risk: low
 verify:
-  - test -f a.txt && printf leak > secrets.txt
+  - test -f a.txt
 \`\`\`
 `;
 
@@ -164,7 +165,13 @@ verify:
       workspace,
       run_id: "run_diff_scope",
       plan: leakingPlan,
-      profile: { provider: "fake", execution_mode: "multi-agent" }
+      profile: { provider: "codex", execution_mode: "multi-agent" },
+      provider_processes: {
+        codex: {
+          executable: process.execPath,
+          args: [leakyProvider]
+        }
+      }
     });
 
     const state = readRunStateV2(root, "run_diff_scope");
@@ -184,6 +191,26 @@ verify:
     });
   });
 });
+
+function writeLeakyProviderScript(root: string): string {
+  const scriptPath = join(root, "leaky-provider.mjs");
+  writeFileSync(scriptPath, `
+import { writeFileSync } from "node:fs";
+
+writeFileSync("a.txt", "allowed\\n");
+writeFileSync("secrets.txt", "leak\\n");
+process.stdout.write(JSON.stringify({
+  schema: "runway.worker_result.v1",
+  task_id: "task_scope",
+  candidate_id: "candidate_task_scope",
+  status: "completed",
+  changed_files: ["a.txt", "secrets.txt"],
+  summary: "Created an allowed file and an out-of-scope file.",
+  evidence: { provider: "test-leaky-provider" }
+}));
+`);
+  return scriptPath;
+}
 
 function initSourceCheckout(prefix: string): string {
   const workspace = mkdtempSync(join(tmpdir(), prefix));

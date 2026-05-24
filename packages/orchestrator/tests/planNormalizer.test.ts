@@ -135,6 +135,30 @@ git commit -m "update readme"
     ).toThrow(/cannot normalize superpowers implementation plan.*Task 1.*missing safe verification commands/s);
   });
 
+  test("rejects mixed safe and unsafe verification blocks", () => {
+    expect(() =>
+      normalizeWaygentPlanInput({
+        markdown: `
+# Demo Implementation Plan
+
+## Task 1: Mixed Verification
+
+**Files:**
+
+- Modify: \`README.md\`
+
+Run:
+
+\`\`\`bash
+git diff --check -- README.md
+rm -rf build
+\`\`\`
+`,
+        path: "/tmp/plan.md"
+      })
+    ).toThrow(/Task 1.*unsafe verification command.*rm -rf build/s);
+  });
+
   test("rejects superpowers verification commands that reference unclaimed files", () => {
     expect(() =>
       normalizeWaygentPlanInput({

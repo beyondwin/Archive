@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
-import { CodexProviderAdapter, normalizeProcessOutput } from "../src";
+import { CodexProviderAdapter, normalizeProcessOutput, providerProcessArgs } from "../src";
 
 describe("Codex adapter normalization", () => {
   test("executes a configured process and normalizes its worker result", async () => {
@@ -199,5 +199,25 @@ describe("Codex adapter normalization", () => {
     expect(result.process.stdout).toContain("before timeout");
     expect(result.process.timed_out).toBe(true);
     expect(result.process.completed_at).toMatch(/\d{4}-\d{2}-\d{2}T/);
+  });
+
+  test("recognizes absolute Codex CLI executable paths", () => {
+    const args = providerProcessArgs(
+      "codex",
+      {
+        executable: "/usr/local/bin/codex",
+        args: ["exec", "--json", "-"],
+        model: "gpt-5.5",
+        effort: "high"
+      },
+      "/tmp/work",
+      { task_id: "t", candidate_id: "c", prompt: "p" }
+    );
+    expect(args).toContain("--model");
+    expect(args).toContain("gpt-5.5");
+    expect(args).toContain("--reasoning");
+    expect(args).toContain("high");
+    expect(args).toContain("--cd");
+    expect(args).toContain("/tmp/work");
   });
 });

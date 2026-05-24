@@ -8,16 +8,18 @@
   "expected": {
     "run_status": "failed",
     "apply_status": "not_ready",
-    "total_events": 10,
+    "total_events": 12,
     "safe_wave": [
       "task_provider"
     ],
     "event_types": [
       "platform.run_started",
+      "platform.intake_extract_completed",
       "platform.plan_preflight_completed",
       "runway.plan_loaded",
       "runway.preflight_result",
       "runway.safe_wave_selected",
+      "platform.provider_capability_attested",
       "runway.spec_slice_computed",
       "runway.worker_result",
       "runway.verification_result",

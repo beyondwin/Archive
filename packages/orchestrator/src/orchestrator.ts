@@ -1,12 +1,14 @@
 import { existsSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentLensEvent, ArtifactIndexEntry, WaygentIntakeRecovery, WaygentRunStateV2 } from "@waygent/contracts";
+import type { AgentLensEvent, ArtifactIndexEntry, IntakeFinding, WaygentIntakeRecovery, WaygentRunStateV2 } from "@waygent/contracts";
 import { planWorktree } from "@waygent/kernel-client";
 import { projectFailureSummary, projectTimeline, projectTrustReport } from "@waygent/lens-projectors";
 import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeArtifact, writeLatestRunId } from "@waygent/lens-store";
-import type { ProviderProcessOptions } from "@waygent/provider-adapters";
+import { attestProviderProcessOptions, probeProviderHelp, type ProviderCapabilityAttestation, type ProviderProcessOptions } from "@waygent/provider-adapters";
 import { buildDurableProjection, type TaskGraph } from "@waygent/runway-control";
+import { auditAdjacentContracts } from "./adjacentContractAudit";
+import { applyExecutionDependencyBarriers } from "./executionDependencyBarrier";
 import { artifactIndexEntry, mergeArtifactIndex } from "./artifactIndex";
 import { createCombinedCheckpointPatchArtifact, type CombinedCheckpointPatchResult } from "./checkpointArtifacts";
 import { buildCompletionAudit } from "./completionAudit";
@@ -17,6 +19,9 @@ import { recoverWaygentPlanInput } from "./intakeRecovery";
 import { resolvePlanInput, resolveSpecInput } from "./planDiscovery";
 import { normalizeWaygentPlanInput } from "./planNormalizer";
 import { parseWaygentPlan } from "./planParser";
+import { extractSuperpowersPlan } from "./planAdapters/planClaimExtraction";
+import { buildProjectScriptCatalog } from "./planAdapters/projectScriptCatalog";
+import { classifyVerificationCommand } from "./planAdapters/verificationPolicy";
 import { runPlanPreflight, type PlanPreflightMode } from "./planPreflight";
 import { buildRunEvent } from "./runEvents";
 import { createRunExecutionContext, type RunExecutionContext } from "./runExecutionContext";
@@ -84,6 +89,28 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     ...(options.spec !== undefined ? { spec: options.spec } : {})
   });
   const worktreeRoot = options.worktree_root ?? join(options.root, "worktrees");
+  const extractedPlan = extractSuperpowersPlan(planInput.markdown);
+  const extractionCatalog = buildProjectScriptCatalog(workspace);
+  const extractReport = {
+    tasks: extractedPlan.tasks.map((task) => ({
+      number: task.number,
+      title: task.title,
+      explicit_file_claims: task.explicit_file_claims,
+      prose_file_claims: task.prose_file_claims,
+      fenced_commands: task.fenced_commands,
+      verification: task.fenced_commands.map((command) =>
+        classifyVerificationCommand({ command, workspace, catalog: extractionCatalog })
+      )
+    }))
+  };
+  const contractAuditFindings = auditAdjacentContracts({
+    plan_markdown: planInput.markdown,
+    spec_markdown: specInput.markdown,
+    file_claims: extractedPlan.tasks.flatMap((task) => [
+      ...task.explicit_file_claims.map((claim) => claim.path),
+      ...task.prose_file_claims.map((claim) => claim.path)
+    ])
+  });
   const recovered = recoverWaygentPlanInput({
     markdown: planInput.markdown,
     path: planInput.path,
@@ -101,7 +128,9 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       planInput,
       specInput,
       providerProfile,
-      intakeRecovery: recovered.report
+      intakeRecovery: recovered.report,
+      extractReport,
+      adjacentContractFindings: contractAuditFindings
     });
   }
   const normalizedPlan = recovered.normalized_plan;
@@ -118,7 +147,9 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   const normalizedPlanArtifact = normalizedPlan.mode === "superpowers"
     ? writeArtifact(paths.root, "plan/normalized-waygent-plan.md", `${normalizedPlan.markdown.trimEnd()}\n`, "text/markdown")
     : null;
-  const parsed = parseWaygentPlan(normalizedPlan.markdown);
+  const parsedBeforeBarriers = parseWaygentPlan(normalizedPlan.markdown);
+  const barrierResult = applyExecutionDependencyBarriers(parsedBeforeBarriers);
+  const parsed = barrierResult.plan;
   const specManifest = options.spec_slice === "off"
     ? undefined
     : buildSpecManifest({
@@ -214,6 +245,26 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       plan_normalization: planNormalizationPayload(normalizedPlan, normalizedPlanArtifact?.path ?? null)
     }
   }));
+  const extractReportArtifact = writeArtifact(
+    paths.root,
+    "intake/extract-report.json",
+    `${JSON.stringify(extractReport, null, 2)}\n`,
+    "application/json"
+  );
+  context.appendEvent((sequence) => buildRunEvent({
+    run_id: runId,
+    sequence,
+    event_type: "platform.intake_extract_completed",
+    phase: "intake",
+    outcome: "success",
+    summary: "Plan intake extraction completed.",
+    payload: {
+      extract_report_ref: extractReportArtifact.path,
+      task_count: extractedPlan.tasks.length,
+      adjacent_contract_findings: contractAuditFindings
+    },
+    trust_impact: contractAuditFindings.length > 0 ? "requires_review" : "neutral"
+  }));
   context.appendEvent((sequence) => buildRunEvent({
     run_id: runId,
     sequence,
@@ -285,6 +336,62 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     payload: { safe_wave: projection.safe_wave, wave_id: "wave_1" }
   }));
 
+  for (const barrier of barrierResult.barriers) {
+    context.appendEvent((sequence) => buildRunEvent({
+      run_id: runId,
+      sequence,
+      event_type: "runway.wave_barrier_inserted",
+      phase: "schedule",
+      outcome: "success",
+      summary: "Execution dependency barrier inserted.",
+      payload: barrier as unknown as Record<string, unknown>,
+      trust_impact: "requires_review"
+    }));
+  }
+
+  const resolvedProviderProcessesBase = resolveProviderProcesses(profile, options.provider_processes);
+  const providerCapabilityAttestations: ProviderCapabilityAttestation[] = [];
+  const attestedProviderProcesses: typeof resolvedProviderProcessesBase = { ...resolvedProviderProcessesBase };
+  if (profile.provider === "codex" && resolvedProviderProcessesBase.codex) {
+    const attested = attestProviderProcessOptions(
+      "codex",
+      resolvedProviderProcessesBase.codex,
+      probeProviderHelp("codex", resolvedProviderProcessesBase.codex)
+    );
+    attestedProviderProcesses.codex = attested.options;
+    providerCapabilityAttestations.push(attested.capability);
+  }
+  if (profile.provider === "claude" && resolvedProviderProcessesBase.claude) {
+    const attested = attestProviderProcessOptions(
+      "claude",
+      resolvedProviderProcessesBase.claude,
+      probeProviderHelp("claude", resolvedProviderProcessesBase.claude)
+    );
+    attestedProviderProcesses.claude = attested.options;
+    providerCapabilityAttestations.push(attested.capability);
+  }
+  if (providerCapabilityAttestations.length > 0) {
+    const capabilityArtifact = writeArtifact(
+      paths.root,
+      "platform/provider-capabilities.json",
+      `${JSON.stringify({ provider_capabilities: providerCapabilityAttestations }, null, 2)}\n`,
+      "application/json"
+    );
+    context.appendEvent((sequence) => buildRunEvent({
+      run_id: runId,
+      sequence,
+      event_type: "platform.provider_capability_attested",
+      phase: "platform",
+      outcome: "success",
+      summary: "Provider CLI capability attested.",
+      payload: {
+        provider_capabilities_ref: capabilityArtifact.path,
+        provider_capabilities: providerCapabilityAttestations
+      },
+      trust_impact: providerCapabilityAttestations.some((item) => item.reason !== "supported") ? "requires_review" : "neutral"
+    }));
+  }
+
   let activeSafeWave = safeWave;
   let waveIndex = 1;
   while (activeSafeWave.length > 0) {
@@ -323,7 +430,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       }
     });
     context.flushState();
-    const resolvedProviderProcesses = resolveProviderProcesses(profile, options.provider_processes);
+    const resolvedProviderProcesses = attestedProviderProcesses;
     const results = await executeBoundedSafeWave({
       task_ids: activeSafeWave,
       concurrency,
@@ -501,11 +608,21 @@ interface FinalizeIntakeBlockedRunInput {
   specInput: { markdown: string; path: string | null };
   providerProfile: Record<string, unknown>;
   intakeRecovery: WaygentIntakeRecovery;
+  extractReport?: Record<string, unknown>;
+  adjacentContractFindings?: IntakeFinding[];
 }
 
 function finalizeIntakeBlockedRun(input: FinalizeIntakeBlockedRunInput): WaygentRunResult {
   const { options, paths, runId, workspace, worktreeRoot, planInput, specInput, providerProfile, intakeRecovery } = input;
   const startedAt = new Date().toISOString();
+  const extractArtifact = input.extractReport
+    ? writeArtifact(
+      paths.root,
+      "intake/extract-report.json",
+      `${JSON.stringify(input.extractReport, null, 2)}\n`,
+      "application/json"
+    )
+    : null;
   writeArtifact(
     paths.root,
     "intake/recovery-report.json",
@@ -564,6 +681,26 @@ function finalizeIntakeBlockedRun(input: FinalizeIntakeBlockedRunInput): Waygent
       profile: providerProfile
     }
   }));
+  if (extractArtifact || input.extractReport) {
+    const adjacentFindings = input.adjacentContractFindings ?? [];
+    const taskCount = Array.isArray((input.extractReport as { tasks?: unknown[] } | undefined)?.tasks)
+      ? ((input.extractReport as { tasks: unknown[] }).tasks).length
+      : 0;
+    context.appendEvent((sequence) => buildRunEvent({
+      run_id: runId,
+      sequence,
+      event_type: "platform.intake_extract_completed",
+      phase: "intake",
+      outcome: "success",
+      summary: "Plan intake extraction completed.",
+      payload: {
+        extract_report_ref: extractArtifact?.path ?? null,
+        task_count: taskCount,
+        adjacent_contract_findings: adjacentFindings
+      },
+      trust_impact: adjacentFindings.length > 0 ? "requires_review" : "neutral"
+    }));
+  }
   context.appendEvent((sequence) => buildRunEvent({
     run_id: runId,
     sequence,

@@ -8,12 +8,13 @@
   "expected": {
     "run_status": "failed",
     "apply_status": "blocked",
-    "total_events": 13,
+    "total_events": 14,
     "safe_wave": [
       "task_missing_checkpoint"
     ],
     "event_types": [
       "platform.run_started",
+      "platform.intake_extract_completed",
       "platform.plan_preflight_completed",
       "runway.plan_loaded",
       "runway.preflight_result",

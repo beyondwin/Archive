@@ -8,12 +8,13 @@
   "expected": {
     "run_status": "failed",
     "apply_status": "not_ready",
-    "total_events": 11,
+    "total_events": 12,
     "safe_wave": [
       "task_dependency_missing"
     ],
     "event_types": [
       "platform.run_started",
+      "platform.intake_extract_completed",
       "platform.plan_preflight_completed",
       "runway.plan_loaded",
       "runway.preflight_result",

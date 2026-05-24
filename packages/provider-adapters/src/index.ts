@@ -1,4 +1,5 @@
 export * from "./capabilities";
+export * from "./capabilityProbe";
 export * from "./claudeAdapter";
 export * from "./codexAdapter";
 export * from "./fakeProvider";

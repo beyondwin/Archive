@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -246,6 +246,7 @@ verify:
   test("blocks checkpoint sealing when actual worktree changes escape allowed scope", async () => {
     const workspace = initSourceCheckout("waygent-run-v2-diff-scope-source-");
     const root = mkdtempSync(join(tmpdir(), "waygent-run-v2-diff-scope-"));
+    const leakyProvider = writeLeakyProviderScript(root);
     const leakingPlan = `
 \`\`\`yaml waygent-task
 id: task_scope
@@ -256,7 +257,7 @@ file_claims:
     mode: owned
 risk: low
 verify:
-  - test -f a.txt && printf leak > secrets.txt
+  - test -f a.txt
 \`\`\`
 `;
 
@@ -265,7 +266,13 @@ verify:
       workspace,
       run_id: "run_diff_scope",
       plan: leakingPlan,
-      profile: { provider: "fake", execution_mode: "multi-agent" }
+      profile: { provider: "codex", execution_mode: "multi-agent" },
+      provider_processes: {
+        codex: {
+          executable: process.execPath,
+          args: [leakyProvider]
+        }
+      }
     });
 
     const state = readRunStateV2(root, "run_diff_scope");
@@ -284,7 +291,99 @@ verify:
       }
     });
   });
+
+  test("provider capability probe failures do not project a successful run as blocked", async () => {
+    const workspace = initSourceCheckout("waygent-run-v2-probe-failed-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-run-v2-probe-failed-"));
+    const provider = writeHelpFailingCodexProviderScript(root);
+    const createPlan = `
+\`\`\`yaml waygent-task
+id: task_probe
+title: Create file after failed probe
+dependencies: []
+file_claims:
+  - path: a.txt
+    mode: owned
+risk: low
+verify:
+  - test -f a.txt
+\`\`\`
+`;
+
+    const result = await runWaygent({
+      root,
+      workspace,
+      run_id: "run_probe_failed",
+      plan: createPlan,
+      profile: { provider: "codex", execution_mode: "multi-agent" },
+      provider_processes: {
+        codex: {
+          executable: provider,
+          args: ["exec", "--json", "-"]
+        }
+      }
+    });
+
+    const state = readRunStateV2(root, "run_probe_failed");
+    const capabilityEvent = result.events.find((event) => event.event_type === "platform.provider_capability_attested");
+
+    expect(state.status).toBe("completed");
+    expect(capabilityEvent).toMatchObject({
+      outcome: "success",
+      trust_impact: "requires_review",
+      payload: {
+        provider_capabilities: [
+          expect.objectContaining({ reason: "probe_failed" })
+        ]
+      }
+    });
+  });
 });
+
+function writeLeakyProviderScript(root: string): string {
+  const scriptPath = join(root, "leaky-provider.mjs");
+  writeFileSync(scriptPath, `
+import { writeFileSync } from "node:fs";
+
+writeFileSync("a.txt", "allowed\\n");
+writeFileSync("secrets.txt", "leak\\n");
+process.stdout.write(JSON.stringify({
+  schema: "runway.worker_result.v1",
+  task_id: "task_scope",
+  candidate_id: "candidate_task_scope",
+  status: "completed",
+  changed_files: ["a.txt", "secrets.txt"],
+  summary: "Created an allowed file and an out-of-scope file.",
+  evidence: { provider: "test-leaky-provider" }
+}));
+`);
+  return scriptPath;
+}
+
+function writeHelpFailingCodexProviderScript(root: string): string {
+  const scriptPath = join(root, "codex");
+  writeFileSync(scriptPath, `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+
+if (process.argv.slice(2).join(" ") === "exec --help") {
+  process.stderr.write("help unavailable\\n");
+  process.exit(1);
+}
+
+writeFileSync("a.txt", "created after probe failure\\n");
+process.stdout.write(JSON.stringify({
+  schema: "runway.worker_result.v1",
+  task_id: "task_probe",
+  candidate_id: "candidate_task_probe",
+  status: "completed",
+  changed_files: ["a.txt"],
+  summary: "Created file despite help probe failure.",
+  evidence: { provider: "test-codex-provider" }
+}));
+`);
+  chmodSync(scriptPath, 0o755);
+  return scriptPath;
+}
 
 function initSourceCheckout(prefix: string): string {
   const workspace = mkdtempSync(join(tmpdir(), prefix));

@@ -104,4 +104,36 @@ verify:
     expect(result.status).toBe("failed");
     expect(result.errors.join("\n")).toContain("spec not found");
   });
+
+  test("rejects destructive segments after legacy native node checks", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "waygent-plan-preflight-node-"));
+
+    const result = runPlanPreflight({
+      workspace,
+      plan_path: null,
+      normalized_plan: {
+        path: null,
+        markdown: `
+\`\`\`yaml waygent-task
+id: task_native_node
+title: Native node compatibility
+dependencies: []
+file_claims:
+  - path: README.md
+    mode: owned
+risk: low
+verify:
+  - node -e "console.log('ok')" && rm -rf build
+\`\`\`
+`,
+        mode: "native",
+        task_count: 1,
+        diagnostics: []
+      },
+      spec_path: null
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.errors.join("\n")).toContain("unsafe verification command");
+  });
 });

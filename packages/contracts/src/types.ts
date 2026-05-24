@@ -646,6 +646,10 @@ export type IntakeFindingCode =
   | "plan_section_body_sparse_but_spec_section_available"
   | "multiple_plan_or_spec_candidates"
   | "destructive_command_candidate"
+  | "unsafe_verification_command"
+  | "verification_claim_mismatch"
+  | "missing_file_claim"
+  | "adjacent_contract_candidate"
   | "conflicting_owned_claim"
   | "path_escape"
   | "missing_verification_for_source_mutation"
@@ -668,6 +672,17 @@ export interface IntakeRepairAction {
   evidence_refs: string[];
 }
 
+export type IntakeTaskStatus = "normalized" | "recovered" | "blocked" | "warning";
+
+export interface IntakeTaskRecoveryStatus {
+  task_id: string;
+  status: IntakeTaskStatus;
+  title: string;
+  file_claim_count: number;
+  verification_command_count: number;
+  blockers: string[];
+}
+
 export interface WaygentIntakeRecovery {
   status: IntakeRecoveryStatus;
   started_at: string;
@@ -679,6 +694,11 @@ export interface WaygentIntakeRecovery {
   can_start: boolean;
   confidence: IntakeRecoveryConfidence;
   question: string | null;
+  strict_task_status?: IntakeTaskRecoveryStatus[];
+  fallback_task_status?: IntakeTaskRecoveryStatus[];
+  merged_task_status?: IntakeTaskRecoveryStatus[];
+  blocked_tasks?: IntakeTaskRecoveryStatus[];
+  extract_report_ref?: string | null;
 }
 
 export interface OperatorIntakeRecoverySummary {

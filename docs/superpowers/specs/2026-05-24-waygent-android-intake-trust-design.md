@@ -396,6 +396,13 @@ dogfood check against the reduced source-matching trust fixture.
 
 ## 8. Rollout Plan
 
+Implementation note: the shared command parser lives in
+`packages/orchestrator/src/planAdapters/commandLines.ts`, the shared
+verification policy in
+`packages/orchestrator/src/planAdapters/verificationPolicy.ts`, and the
+Superpowers extractor in
+`packages/orchestrator/src/planAdapters/planClaimExtraction.ts`.
+
 1. Add shared extraction and verification policy modules behind existing
    behavior-preserving tests.
 2. Refactor `planNormalizer`, `intakeRecovery`, and `planPreflight` to consume
