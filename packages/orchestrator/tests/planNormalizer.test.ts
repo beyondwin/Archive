@@ -282,6 +282,83 @@ FIXTHIS_BUNDLE_REPRODUCIBLE=1 node scripts/build-console-assets.mjs
     expect(normalized.diagnostics.join("\n")).toContain("ignored non-verification command");
   });
 
+  test("normalizes writing-plans RED-only tasks as expected-failure verification", () => {
+    const normalized = normalizeWaygentPlanInput({
+      markdown: `
+# Red Contract Implementation Plan
+
+## Task 1: Lock Contract
+
+**Files:**
+
+- Modify: \`tests/red-contract.test.ts\`
+
+- [ ] **Step 1: Write the failing test**
+
+\`\`\`ts
+test("new contract", () => expect(false).toBe(true));
+\`\`\`
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run:
+
+\`\`\`bash
+bun test tests/red-contract.test.ts
+\`\`\`
+
+Expected: FAIL because the implementation does not exist yet.
+`,
+      path: "/tmp/red-plan.md"
+    });
+    const parsed = parseWaygentPlan(normalized.markdown);
+
+    expect(normalized.markdown).toContain("verify_fail:");
+    expect(parsed.tasks[0]?.verification_commands).toEqual(["bun test tests/red-contract.test.ts"]);
+    expect(parsed.tasks[0]?.verification_expectations).toEqual([
+      { command: "bun test tests/red-contract.test.ts", expected_exit: "nonzero" }
+    ]);
+  });
+
+  test("normalizes writing-plans mixed RED/GREEN tasks to final passing verification only", () => {
+    const normalized = normalizeWaygentPlanInput({
+      markdown: `
+# Feature Implementation Plan
+
+## Task 1: Implement Feature
+
+**Files:**
+
+- Modify: \`src/feature.ts\`
+- Test: \`tests/feature.test.ts\`
+
+- [ ] **Step 1: Write the failing test**
+
+Run: \`bun test tests/feature.test.ts\`
+Expected: FAIL because feature() is not exported.
+
+- [ ] **Step 2: Implement feature**
+
+\`\`\`ts
+export function feature() { return true; }
+\`\`\`
+
+- [ ] **Step 3: Run test to verify it passes**
+
+Run: \`bun test tests/feature.test.ts\`
+Expected: PASS.
+`,
+      path: "/tmp/mixed-plan.md"
+    });
+    const parsed = parseWaygentPlan(normalized.markdown);
+
+    expect(normalized.markdown).not.toContain("verify_fail:");
+    expect(parsed.tasks[0]?.verification_commands).toEqual(["bun test tests/feature.test.ts"]);
+    expect(parsed.tasks[0]?.verification_expectations).toEqual([
+      { command: "bun test tests/feature.test.ts", expected_exit: "zero" }
+    ]);
+  });
+
   test("normalizes claimless final verification as a read-only workspace task", () => {
     const normalized = normalizeWaygentPlanInput({
       markdown: `

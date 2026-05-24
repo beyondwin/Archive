@@ -5,6 +5,7 @@ import { scaffoldWaygentTask } from "./planScaffold";
 import { extractInstructionLines } from "./planAdapters/instructionsExtract";
 import {
   extractSuperpowersPlan,
+  type ExtractedCommandCandidate,
   type ExtractedPlanTask
 } from "./planAdapters/planClaimExtraction";
 import {
@@ -18,6 +19,7 @@ import {
 } from "./planAdapters/verificationPolicy";
 import { verificationClaimCoverageErrors } from "./planAdapters/verificationCoverage";
 import { detectVerifyTheater } from "./planAdapters/verifyQuality";
+import type { VerificationExpectedExit } from "./verification";
 
 export interface NormalizeWaygentPlanInput {
   markdown: string;
@@ -42,7 +44,13 @@ interface NormalizedTaskInput {
   file_claims: FileClaim[];
   risk: RiskLevel;
   verify: string[];
+  verify_fail: string[];
   instructions: string[];
+}
+
+interface VerificationPlanCommand {
+  command: string;
+  expected_exit: VerificationExpectedExit;
 }
 
 export function normalizeWaygentPlanInput(input: NormalizeWaygentPlanInput): NormalizedWaygentPlan {
@@ -76,7 +84,8 @@ export function normalizeWaygentPlanInput(input: NormalizeWaygentPlanInput): Nor
   const tasks: NormalizedTaskInput[] = [];
 
   for (const section of extracted.tasks) {
-    const classifications = section.fenced_commands.map((command) =>
+    const commandCandidates = verificationCommandCandidates(section);
+    const classifications = commandCandidates.map(({ command }) =>
       classifyVerificationCommand({ command, workspace, catalog })
     );
     for (const classification of classifications) {
@@ -88,13 +97,16 @@ export function normalizeWaygentPlanInput(input: NormalizeWaygentPlanInput): Nor
         diagnostics.push(`Task ${section.number} "${section.title}" ignored non-verification command: ${unsafeSegment}`);
       }
     }
-    const verify = safeVerificationCommands(section.fenced_commands, workspace, catalog);
-    const fileClaims = fileClaimsFor(section, verify);
+    const verificationSpecs = safeVerificationCommands(commandCandidates, workspace, catalog);
+    const verify = verificationSpecs.filter((spec) => spec.expected_exit === "zero").map((spec) => spec.command);
+    const verifyFail = verificationSpecs.filter((spec) => spec.expected_exit === "nonzero").map((spec) => spec.command);
+    const verifyCommands = verificationSpecs.map((spec) => spec.command);
+    const fileClaims = fileClaimsFor(section, verifyCommands);
     if (fileClaims.length === 0) {
       const message = `Task ${section.number} "${section.title}" is missing recoverable file claims`;
       (unsafeVerification ? diagnostics : errors).push(message);
     }
-    if (verify.length === 0) {
+    if (verificationSpecs.length === 0) {
       const message = `Task ${section.number} "${section.title}" is missing safe verification commands`;
       (unsafeVerification ? diagnostics : errors).push(message);
     }
@@ -107,7 +119,7 @@ export function normalizeWaygentPlanInput(input: NormalizeWaygentPlanInput): Nor
         }).risk
       : "high";
 
-    const theater = detectVerifyTheater({ verify, file_claims: fileClaims });
+    const theater = detectVerifyTheater({ verify: verifyCommands, file_claims: fileClaims });
     if (theater.is_theater) {
       diagnostics.push(
         `Task ${section.number} "${section.title}" verification quality warning: ${theater.reasons.join("; ")}`
@@ -121,6 +133,7 @@ export function normalizeWaygentPlanInput(input: NormalizeWaygentPlanInput): Nor
       file_claims: fileClaims,
       risk,
       verify,
+      verify_fail: verifyFail,
       instructions: extractInstructionLines(section.body)
     });
   }
@@ -129,7 +142,7 @@ export function normalizeWaygentPlanInput(input: NormalizeWaygentPlanInput): Nor
     title: task.title,
     label: `Task ${task.id.replace(/^task_(\d+)_.*$/, "$1")} "${task.title}"`,
     file_claims: task.file_claims,
-    verification_commands: task.verify
+    verification_commands: [...task.verify, ...task.verify_fail]
   })));
   if (unsafeVerification) {
     diagnostics.push(...coverageErrors);
@@ -183,8 +196,8 @@ export function isNormalizableSuperpowersPlan(markdown: string, workspace?: stri
   const ws = workspace ?? "";
   return extracted.tasks.some(
     (task: ExtractedPlanTask) =>
-      safeVerificationCommands(task.fenced_commands, ws, catalog).length > 0 &&
-      fileClaimsFor(task, safeVerificationCommands(task.fenced_commands, ws, catalog)).length > 0
+      safeVerificationCommands(verificationCommandCandidates(task), ws, catalog).length > 0 &&
+      fileClaimsFor(task, safeVerificationCommands(verificationCommandCandidates(task), ws, catalog).map((spec) => spec.command)).length > 0
   );
 }
 
@@ -213,20 +226,46 @@ function blocksSuperpowersNormalization(
 }
 
 function safeVerificationCommands(
-  commands: ReadonlyArray<string>,
+  commands: ReadonlyArray<VerificationPlanCommand>,
   workspace: string,
   catalog: ProjectScriptCatalog | null
-): string[] {
+): VerificationPlanCommand[] {
+  const safe = commands.filter(({ command }) => isSafeVerificationCommand({ command, workspace, catalog }));
+  const finalExpected = safe.some((spec) => spec.expected_exit === "zero") ? "zero" : "nonzero";
   const seen = new Set<string>();
-  const out: string[] = [];
-  for (const command of commands) {
-    if (seen.has(command)) continue;
-    if (isSafeVerificationCommand({ command, workspace, catalog })) {
-      seen.add(command);
-      out.push(command);
-    }
+  const out: VerificationPlanCommand[] = [];
+  for (const spec of safe) {
+    if (spec.expected_exit !== finalExpected || seen.has(spec.command)) continue;
+    seen.add(spec.command);
+    out.push(spec);
   }
   return out;
+}
+
+function verificationCommandCandidates(section: ExtractedPlanTask): VerificationPlanCommand[] {
+  const candidates = section.command_candidates?.length
+    ? section.command_candidates
+    : section.fenced_commands.map((command) => ({ command, line_end: section.line_start } as ExtractedCommandCandidate));
+  return candidates.map((candidate) => ({
+    command: candidate.command,
+    expected_exit: expectedExitForCandidate(section, candidate)
+  }));
+}
+
+function expectedExitForCandidate(section: ExtractedPlanTask, candidate: Pick<ExtractedCommandCandidate, "line_end">): VerificationExpectedExit {
+  const lines = section.body.split(/\r?\n/);
+  const relativeEndLine = Math.max(0, candidate.line_end - section.line_start);
+  for (let index = relativeEndLine + 1; index < lines.length; index += 1) {
+    const line = (lines[index] ?? "").trim();
+    if (!line) continue;
+    if (/^#{2,6}\s+/.test(line) || /^-\s+\[[ xX]\]\s+/.test(line)) break;
+    const expected = line.match(/^Expected:\s*(.*)$/i);
+    if (!expected) continue;
+    return /\b(FAIL|RED|fail|failed|failing|실패)\b/i.test(expected[1] ?? "")
+      ? "nonzero"
+      : "zero";
+  }
+  return "zero";
 }
 
 function slugify(title: string): string {
