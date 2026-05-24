@@ -17,6 +17,9 @@ export type DiffScopeResult =
       | "changed_file_matches_forbidden_globs"
       | "changed_file_missing_provider_claim";
     changed_files: string[];
+    violating_files: string[];
+    allowed_write_globs: string[];
+    provider_claimed_changed_files: string[];
   };
 
 export function listActualChangedFiles(worktree: string): string[] {
@@ -43,20 +46,37 @@ export function validateDiffScope(input: DiffScopeInput): DiffScopeResult {
   const changed_files = input.actual_changed_files.map(normalizePath).filter(Boolean);
   const forbidden = changed_files.filter((file) => matchesAny(file, input.forbidden_write_globs));
   if (forbidden.length > 0) {
-    return { ok: false, failure_class: "diff_scope_failed", reason: "changed_file_matches_forbidden_globs", changed_files };
+    return failed("changed_file_matches_forbidden_globs", changed_files, forbidden, input);
   }
 
   const outsideAllowed = changed_files.filter((file) => !matchesAny(file, input.allowed_write_globs));
   if (outsideAllowed.length > 0) {
-    return { ok: false, failure_class: "diff_scope_failed", reason: "changed_file_outside_allowed_globs", changed_files };
+    return failed("changed_file_outside_allowed_globs", changed_files, outsideAllowed, input);
   }
 
   const missingClaim = changed_files.filter((file) => !matchesAny(file, input.claimed_changed_files));
   if (missingClaim.length > 0) {
-    return { ok: false, failure_class: "diff_scope_failed", reason: "changed_file_missing_provider_claim", changed_files };
+    return failed("changed_file_missing_provider_claim", changed_files, missingClaim, input);
   }
 
   return { ok: true, changed_files };
+}
+
+function failed(
+  reason: Exclude<DiffScopeResult, { ok: true }>["reason"],
+  changed_files: string[],
+  violating_files: string[],
+  input: DiffScopeInput
+): Exclude<DiffScopeResult, { ok: true }> {
+  return {
+    ok: false,
+    failure_class: "diff_scope_failed",
+    reason,
+    changed_files,
+    violating_files,
+    allowed_write_globs: input.allowed_write_globs.map(normalizePath).filter(Boolean),
+    provider_claimed_changed_files: input.claimed_changed_files.map(normalizePath).filter(Boolean)
+  };
 }
 
 function matchesAny(file: string, patterns: string[]): boolean {

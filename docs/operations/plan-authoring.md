@@ -142,6 +142,9 @@ Before submitting a plan to `waygent run`:
 - [ ] `dependencies` lists are sequential where work is sequential.
 - [ ] `file_claims` cover every file the worker will write, including tests
       and any barrel re-export it appends.
+- [ ] Every path named by a `verify` command is covered by some task's
+      `file_claims`; native `waygent-task` plans fail preflight before
+      dispatch when verification names an unclaimed file.
 - [ ] `verify` does not invoke `bun install`, formatters in write mode, or
       code generators.
 - [ ] `verify` includes `bun run typecheck` for any task writing

@@ -8,6 +8,7 @@ import {
 } from "./planAdapters/projectScriptCatalog";
 import { commandSegments } from "./planAdapters/commandLines";
 import { classifyVerificationCommand } from "./planAdapters/verificationPolicy";
+import { verificationClaimCoverageErrors } from "./planAdapters/verificationCoverage";
 
 export type PlanPreflightMode = "off" | "deterministic" | "full";
 
@@ -93,6 +94,12 @@ function validateTasks(plan: ParsedWaygentPlan, workspace: string): string[] {
       }
     }
   }
+  errors.push(...verificationClaimCoverageErrors(plan.tasks.map((task) => ({
+    title: task.title,
+    label: `Task ${task.id}`,
+    file_claims: task.file_claims,
+    verification_commands: task.verification_commands
+  }))));
   errors.push(...dependencyCycleErrors(plan));
   return errors;
 }

@@ -89,6 +89,8 @@ file_claims:
     mode: owned
   - path: packages/orchestrator/tests/intakeRecovery.test.ts
     mode: owned
+  - path: packages/orchestrator/tests/verificationPolicy.test.ts
+    mode: owned
   - path: docs/operations/plan-authoring.md
     mode: owned
 risk: medium
@@ -745,6 +747,8 @@ file_claims:
   - path: packages/orchestrator/src/orchestrator.ts
     mode: owned
   - path: packages/orchestrator/src/recoveryExecutor.ts
+    mode: owned
+  - path: packages/orchestrator/tests/recoveryExecutor.test.ts
     mode: owned
   - path: packages/orchestrator/tests/taskRecovery.test.ts
     mode: owned
