@@ -8,12 +8,13 @@
   "expected": {
     "run_status": "trusted",
     "apply_status": "ready",
-    "total_events": 21,
+    "total_events": 22,
     "safe_wave": [
       "task_overlap_a"
     ],
     "event_types": [
       "platform.run_started",
+      "platform.intake_extract_completed",
       "platform.plan_preflight_completed",
       "runway.plan_loaded",
       "runway.preflight_result",

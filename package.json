@@ -15,6 +15,7 @@
     "check:legacy": "bun run packages/testkit/src/legacyCheck.ts",
     "waygent:scenarios": "bun test tests/integration/waygent-scenarios.test.ts",
     "waygent:fixture-lab": "bun test tests/integration/waygent-fixture-lab.test.ts",
+    "waygent:android-intake-trust": "bun test tests/integration/waygent-android-intake-trust.test.ts",
     "waygent:live-smoke": "bun test tests/integration/waygent-live-provider-smoke.test.ts",
     "waygent:live-provider-smoke": "bun run waygent:live-smoke",
     "waygent:dogfood": "bun test tests/integration/waygent-dogfood-evidence.test.ts"

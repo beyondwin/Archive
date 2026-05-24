@@ -123,6 +123,18 @@ The `reason` field is namespaced:
 There is no automatic retry and no automatic fallback to the fast path. The
 operator must intervene.
 
+## Intake Verification Policy
+
+Waygent classifies plan verification commands before provider dispatch. The
+same policy is used by Superpowers plan normalization, deterministic intake
+recovery, and plan preflight. Safe commands include known test runners,
+declared package scripts, `node --test`, `git diff --check`, and Android Gradle
+invocations through `./gradlew` or `gradle`.
+
+Command chains split by `&&` are safe only when every segment is safe. A leading
+`cd` is allowed only when it stays inside the workspace. Destructive commands,
+workspace escapes, shell redirection, and unknown shell features block intake.
+
 ### Cache
 
 - Location: `<workspace>/.waygent/verify-env-snapshot/<cache_key>/`

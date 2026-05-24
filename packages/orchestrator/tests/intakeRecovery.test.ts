@@ -51,4 +51,98 @@ describe("Waygent intake recovery", () => {
       severity: "blocking"
     }));
   });
+
+  test("blocks recovery when verification references unclaimed paths", () => {
+    const recovered = recoverWaygentPlanInput({
+      markdown: `
+# Demo Implementation Plan
+
+## Task 1: Missing Verification Claim
+
+**Files:**
+
+- Modify: \`README.md\`
+
+Run:
+
+\`\`\`bash
+bun test packages/orchestrator/tests/planNormalizer.test.ts
+\`\`\`
+`,
+      path: "/tmp/strict.md",
+      workspace: "/tmp/workspace",
+      spec_markdown: "",
+      spec_path: null
+    });
+
+    expect(recovered.status).toBe("decision_required");
+    expect(recovered.normalized_plan.mode).toBe("native");
+    expect(recovered.report.normalized_plan_ref).toBeNull();
+    expect(recovered.report.can_start).toBe(false);
+    expect(recovered.report.findings).toContainEqual(expect.objectContaining({
+      code: "verification_claim_mismatch",
+      severity: "blocking"
+    }));
+  });
+
+  test("blocks unsafe-only verification without throwing during recovery", () => {
+    const recovered = recoverWaygentPlanInput({
+      markdown: `
+# Demo Implementation Plan
+
+## Task 1: Unsafe Only
+
+**Files:**
+
+- Modify: \`README.md\`
+
+Run:
+
+\`\`\`bash
+npm run missing-script
+\`\`\`
+`,
+      path: "/tmp/unsafe-only.md",
+      workspace: "/tmp/workspace",
+      spec_markdown: "",
+      spec_path: null
+    });
+
+    expect(recovered.status).toBe("decision_required");
+    expect(recovered.normalized_plan.mode).toBe("native");
+    expect(recovered.report.normalized_plan_ref).toBeNull();
+    expect(recovered.report.can_start).toBe(false);
+    expect(recovered.report.findings).toContainEqual(expect.objectContaining({
+      code: "unsafe_verification_command",
+      severity: "blocking"
+    }));
+  });
+
+  test("does not report Kotlin and Gradle plans as missing claims", () => {
+    const recovered = recoverWaygentPlanInput({
+      markdown: `
+# Source Matching Trust Program
+
+### Task 3: Improve Precise And Compact Handoff Trust Wording
+
+**Files:**
+- Modify: \`fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/FeedbackQueueFormatterTest.kt\`
+- Modify: \`fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/FeedbackQueueFormatter.kt\`
+
+Run:
+
+\`\`\`bash
+./gradlew :fixthis-mcp:test --tests "*FeedbackQueueFormatterTest" --no-daemon
+\`\`\`
+`,
+      path: "/tmp/source-matching-trust-program.md",
+      workspace: "/tmp/workspace",
+      spec_markdown: "",
+      spec_path: null
+    });
+
+    expect(recovered.status).toBe("not_needed");
+    expect(recovered.report.can_start).toBe(true);
+    expect(recovered.report.findings.some((finding) => finding.message.includes("no recoverable file claim"))).toBe(false);
+  });
 });

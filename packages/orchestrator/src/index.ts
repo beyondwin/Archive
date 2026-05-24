@@ -1,3 +1,5 @@
+export * from "./adjacentContractAudit";
+export * from "./executionDependencyBarrier";
 export * from "./executionProfile";
 export * from "./naturalLanguageIntent";
 export * from "./nlLexicon";
@@ -8,6 +10,7 @@ export * from "./costLedger";
 export * from "./decisions";
 export * from "./evidencePolicy";
 export * from "./intakeRecovery";
+export * from "./intakeRepairPlanner";
 export * from "./orchestrator";
 export * from "./orphanRuns";
 export * from "./planDiscovery";

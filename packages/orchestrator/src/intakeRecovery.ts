@@ -3,12 +3,22 @@ import type {
   IntakeRepairAction,
   WaygentIntakeRecovery
 } from "@waygent/contracts";
-import type { FileClaim, FileClaimMode } from "@waygent/runway-control";
+import type { FileClaim } from "@waygent/runway-control";
 import {
   normalizeWaygentPlanInput,
   type NormalizedWaygentPlan
 } from "./planNormalizer";
 import { scaffoldWaygentTask } from "./planScaffold";
+import {
+  extractSuperpowersPlan,
+  type ExtractedPlanTask
+} from "./planAdapters/planClaimExtraction";
+import {
+  buildProjectScriptCatalog,
+  type ProjectScriptCatalog
+} from "./planAdapters/projectScriptCatalog";
+import { classifyVerificationCommand } from "./planAdapters/verificationPolicy";
+import { mergeIntakeRepair } from "./intakeRepairPlanner";
 
 export interface RecoverWaygentPlanInput {
   markdown: string;
@@ -26,32 +36,7 @@ export interface RecoveredWaygentPlan {
   report: WaygentIntakeRecovery;
 }
 
-interface LenientTaskSection {
-  number: number;
-  title: string;
-  body: string;
-}
-
-const TASK_HEADING = /^#{1,4}\s+(?:Task|작업|Phase)\s+(\d+)\s*[:.)-]?\s*(.*)$/gim;
-const INLINE_PATH = /`([^`]+\.(?:ts|tsx|js|jsx|json|md|mdx|toml|yaml|yml|rs|py|sh|css|html))`/g;
-const FENCED_COMMAND = /```(?:bash|sh|shell)?\r?\n([\s\S]*?)\r?\n```/gim;
 const DESTRUCTIVE_COMMAND = /\b(rm\s+-rf|git\s+reset\s+--hard|git\s+clean\s+-fd|drop\s+table|kubectl\s+delete)\b/i;
-const SAFE_VERIFY_PREFIXES = [
-  "bun test",
-  "bun run check",
-  "bun run typecheck",
-  "bun run build",
-  "bun run waygent:scenarios",
-  "bun run waygent:dogfood",
-  "cargo test",
-  "npm test",
-  "npm run test",
-  "pnpm test",
-  "yarn test",
-  "test ",
-  "git diff --check",
-  "printf "
-];
 
 export function recoverWaygentPlanInput(input: RecoverWaygentPlanInput): RecoveredWaygentPlan {
   const startedAt = new Date().toISOString();
@@ -62,6 +47,17 @@ export function recoverWaygentPlanInput(input: RecoverWaygentPlanInput): Recover
       workspace: input.workspace,
       ...(input.unsafe_verification !== undefined ? { unsafe_verification: input.unsafe_verification } : {}),
       ...(input.infer_risk !== undefined ? { infer_risk: input.infer_risk } : {})
+    });
+    const extracted = extractSuperpowersPlan(input.markdown);
+    const catalog = buildProjectScriptCatalog(input.workspace);
+    const normalizedIds = new Set(extracted.tasks.map((task) => taskIdFor(task)));
+    const merge = mergeIntakeRepair({
+      extracted,
+      strict_error: null,
+      normalized_task_ids: normalizedIds,
+      plan_path: input.path,
+      workspace: input.workspace,
+      catalog
     });
     return {
       status: "not_needed",
@@ -76,7 +72,12 @@ export function recoverWaygentPlanInput(input: RecoverWaygentPlanInput): Recover
         repair_actions: [],
         can_start: true,
         confidence: "deterministic",
-        question: null
+        question: null,
+        strict_task_status: merge.strict_task_status,
+        fallback_task_status: merge.fallback_task_status,
+        merged_task_status: merge.merged_task_status,
+        blocked_tasks: merge.blocked_tasks,
+        extract_report_ref: "artifacts/intake/extract-report.json"
       }
     };
   } catch (error) {
@@ -97,8 +98,20 @@ function deterministicRepair(
     evidence_refs: planEvidence(input.path)
   }];
   const actions: IntakeRepairAction[] = [];
-  const sections = extractLenientTaskSections(input.markdown);
-  const tasks = sections.map((section) => recoverSection(section, findings, input.path));
+  const extracted = extractSuperpowersPlan(input.markdown);
+  const catalog = buildProjectScriptCatalog(input.workspace);
+  const merge = mergeIntakeRepair({
+    extracted,
+    strict_error: strictError,
+    normalized_task_ids: new Set(),
+    plan_path: input.path,
+    workspace: input.workspace,
+    catalog
+  });
+  findings.push(...merge.findings);
+  const tasks = extracted.tasks.map((section) =>
+    recoverSection(section, findings, input.path, input.workspace, catalog)
+  );
   for (let index = 1; index < tasks.length; index += 1) {
     tasks[index]!.dependencies = [tasks[index - 1]!.id];
   }
@@ -141,7 +154,12 @@ function deterministicRepair(
     repair_actions: actions,
     can_start: canStart,
     confidence: canStart ? "deterministic" : "blocked",
-    question: canStart ? null : questionFor(blocking)
+    question: canStart ? null : questionFor(blocking),
+    strict_task_status: merge.strict_task_status,
+    fallback_task_status: merge.fallback_task_status,
+    merged_task_status: merge.merged_task_status,
+    blocked_tasks: merge.blocked_tasks,
+    extract_report_ref: "artifacts/intake/extract-report.json"
   };
 
   return {
@@ -157,11 +175,21 @@ function deterministicRepair(
   };
 }
 
-function recoverSection(section: LenientTaskSection, findings: IntakeFinding[], planPath: string | null) {
-  const taskId = `task_${section.number}_${slugify(section.title)}`;
+function recoverSection(
+  section: ExtractedPlanTask,
+  findings: IntakeFinding[],
+  planPath: string | null,
+  workspace: string,
+  catalog: ProjectScriptCatalog
+) {
+  const taskId = taskIdFor(section);
   const evidenceRefs = [...planEvidence(planPath), `plan:task-${section.number}`];
-  const fileClaims = extractFileClaims(section.body, findings, taskId, evidenceRefs);
-  const verify = extractVerificationCommands(section.body, findings, taskId, evidenceRefs);
+  const fileClaims: FileClaim[] = section.explicit_file_claims.length > 0
+    ? section.explicit_file_claims
+    : section.prose_file_claims;
+  const verify = section.fenced_commands.filter((command) =>
+    classifyVerificationCommand({ command, workspace, catalog }).status === "safe"
+  );
   if (DESTRUCTIVE_COMMAND.test(section.body)) {
     findings.push({
       code: "destructive_command_candidate",
@@ -171,20 +199,20 @@ function recoverSection(section: LenientTaskSection, findings: IntakeFinding[], 
       evidence_refs: evidenceRefs
     });
   }
-  if (fileClaims.length === 0) {
+  if (fileClaims.length > 0) {
     findings.push({
       code: "file_claims_in_prose",
-      severity: "blocking",
-      message: `Task ${section.number} has no recoverable file claim.`,
+      severity: section.explicit_file_claims.length > 0 ? "info" : "warning",
+      message: `Recovered ${fileClaims.length} file claim(s).`,
       task_id: taskId,
       evidence_refs: evidenceRefs
     });
   }
-  if (verify.length === 0) {
+  if (verify.length > 0) {
     findings.push({
-      code: "missing_verification_for_source_mutation",
-      severity: "blocking",
-      message: `Task ${section.number} has no safe verification command.`,
+      code: "verification_command_in_prose",
+      severity: "warning",
+      message: `Recovered ${verify.length} verification command(s) from prose.`,
       task_id: taskId,
       evidence_refs: evidenceRefs
     });
@@ -200,69 +228,6 @@ function recoverSection(section: LenientTaskSection, findings: IntakeFinding[], 
   };
 }
 
-function extractLenientTaskSections(markdown: string): LenientTaskSection[] {
-  const headings = [...markdown.matchAll(TASK_HEADING)];
-  return headings.map((match, index) => {
-    const start = typeof match.index === "number" ? match.index : 0;
-    const nextIndex = index + 1 < headings.length ? headings[index + 1]!.index : undefined;
-    const end = typeof nextIndex === "number" ? nextIndex : markdown.length;
-    const rawTitle = (match[2] || "").trim();
-    return {
-      number: Number(match[1]),
-      title: rawTitle || `Task ${match[1]}`,
-      body: markdown.slice(start, end)
-    };
-  });
-}
-
-function extractFileClaims(body: string, findings: IntakeFinding[], taskId: string, evidenceRefs: string[]): FileClaim[] {
-  const claims: FileClaim[] = [];
-  for (const match of body.matchAll(INLINE_PATH)) {
-    const path = (match[1] || "").trim();
-    if (!path || path.includes("..")) continue;
-    claims.push({ path, mode: inferClaimMode(body, path) });
-  }
-  const unique = new Map(claims.map((claim) => [claim.path, claim]));
-  if (unique.size > 0) {
-    findings.push({
-      code: "file_claims_in_prose",
-      severity: "warning",
-      message: `Recovered ${unique.size} file claim(s) from prose.`,
-      task_id: taskId,
-      evidence_refs: evidenceRefs
-    });
-  }
-  return [...unique.values()];
-}
-
-function inferClaimMode(body: string, path: string): FileClaimMode {
-  const before = body.slice(Math.max(0, body.indexOf(path) - 80), body.indexOf(path)).toLowerCase();
-  if (/\b(read|inspect|review)\b/.test(before)) return "read_only";
-  if (/\b(append|add to)\b/.test(before)) return "shared_append";
-  return "owned";
-}
-
-function extractVerificationCommands(body: string, findings: IntakeFinding[], taskId: string, evidenceRefs: string[]): string[] {
-  const commands = [...body.matchAll(FENCED_COMMAND)]
-    .flatMap((match) => logicalCommandLines(match[1] || ""))
-    .filter((command) => SAFE_VERIFY_PREFIXES.some((prefix) => command === prefix.trim() || command.startsWith(prefix)));
-  const unique = [...new Set(commands)];
-  if (unique.length > 0) {
-    findings.push({
-      code: "verification_command_in_prose",
-      severity: "warning",
-      message: `Recovered ${unique.length} verification command(s) from prose.`,
-      task_id: taskId,
-      evidence_refs: evidenceRefs
-    });
-  }
-  return unique;
-}
-
-function logicalCommandLines(raw: string): string[] {
-  return raw.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith("#"));
-}
-
 function instructionLines(body: string): string[] {
   return body.split(/\r?\n/)
     .map((line) => line.trim())
@@ -271,14 +236,21 @@ function instructionLines(body: string): string[] {
 }
 
 function questionFor(blocking: IntakeFinding[]): string {
-  if (blocking.some((finding) => finding.code === "destructive_command_candidate")) {
+  if (blocking.some((finding) => finding.code === "destructive_command_candidate" || finding.code === "unsafe_verification_command")) {
     return "The plan contains a destructive command candidate. Confirm the intended safe replacement before execution.";
+  }
+  if (blocking.some((finding) => finding.code === "verification_claim_mismatch")) {
+    return "A verification command references paths outside the task claims. Add matching file claims or narrow the verification command.";
   }
   return "Waygent could not recover a safe executable plan. Provide explicit file claims and verification commands.";
 }
 
 function planEvidence(path: string | null): string[] {
   return [path ? `plan:${path}` : "plan:inline"];
+}
+
+function taskIdFor(section: ExtractedPlanTask): string {
+  return `task_${section.number}_${slugify(section.title)}`;
 }
 
 function slugify(title: string): string {

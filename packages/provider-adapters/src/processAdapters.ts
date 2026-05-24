@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { dirname } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, dirname } from "node:path";
 import type { FailureClass, ModelAttestation, TokenUsage, UsageSource, WorkerResult } from "@waygent/contracts";
 import { validateContract } from "@waygent/contracts";
 import { summarizeProviderStderr } from "./logSummary";
@@ -85,6 +86,8 @@ function normalizeWorkerStatus(status: unknown): WorkerResult["status"] {
     lowered === "ready" ||
     lowered === "ready_for_review" ||
     lowered === "ready-for-review" ||
+    lowered === "needs_verification" ||
+    lowered === "needs-verification" ||
     lowered === "ready_for_verification" ||
     lowered === "ready-for-verification"
   ) {
@@ -120,7 +123,7 @@ export async function runProviderProcess(
   options: ProviderProcessOptions
 ): Promise<ProviderAdapterRunResult> {
   return new Promise<ProviderAdapterRunResult>((resolve) => {
-    const cwd = options.cwd ?? request.cwd;
+    const cwd = normalizeProcessCwd(options.cwd ?? request.cwd);
     const startedAt = new Date().toISOString();
     const child = spawn(options.executable, providerProcessArgs(provider, options, cwd, request), {
       cwd,
@@ -194,11 +197,22 @@ export async function runProviderProcess(
   });
 }
 
+function normalizeProcessCwd(cwd: string | undefined): string | undefined {
+  if (!cwd || existsSync(cwd)) return cwd;
+  try {
+    const decoded = decodeURIComponent(cwd);
+    return existsSync(decoded) ? decoded : cwd;
+  } catch {
+    return cwd;
+  }
+}
+
 export function providerProcessArgs(provider: "codex" | "claude", options: ProviderProcessOptions, cwd: string | undefined, request: AdapterRequest): string[] {
   const args = options.args ?? [];
   if (provider === "claude") {
     const nextArgs = [...args];
-    if (options.executable === "claude") {
+    const isClaudeCli = isProviderCliExecutable("claude", options.executable);
+    if (isClaudeCli) {
       if (cwd && !nextArgs.includes("--add-dir")) {
         const allowedDirs = [cwd];
         if (request.task_packet_path) allowedDirs.push(dirname(request.task_packet_path));
@@ -208,23 +222,24 @@ export function providerProcessArgs(provider: "codex" | "claude", options: Provi
         nextArgs.unshift("--permission-mode", "acceptEdits");
       }
     }
-    if (options.effort && !nextArgs.includes("--effort")) {
+    if (isClaudeCli && options.effort && !nextArgs.includes("--effort")) {
       nextArgs.unshift("--effort", options.effort);
     }
-    if (options.model && !nextArgs.includes("--model")) {
+    if (isClaudeCli && options.model && !nextArgs.includes("--model")) {
       nextArgs.unshift("--model", options.model);
     }
     return nextArgs;
   }
   if (provider !== "codex") return args;
   let nextArgs = [...args];
-  if (options.executable === "codex" && options.effort && !nextArgs.includes("--reasoning")) {
+  const isCodexCli = isProviderCliExecutable("codex", options.executable);
+  if (isCodexCli && options.effort && !nextArgs.includes("--reasoning")) {
     nextArgs = ["--reasoning", options.effort, ...nextArgs];
   }
-  if (options.executable === "codex" && options.model && !nextArgs.includes("--model")) {
+  if (isCodexCli && options.model && !nextArgs.includes("--model")) {
     nextArgs = ["--model", options.model, ...nextArgs];
   }
-  if (!cwd || options.executable !== "codex" || nextArgs.includes("--cd") || nextArgs.includes("-C")) {
+  if (!cwd || !isCodexCli || nextArgs.includes("--cd") || nextArgs.includes("-C")) {
     return nextArgs;
   }
   const promptStdinIndex = nextArgs.lastIndexOf("-");
@@ -232,6 +247,11 @@ export function providerProcessArgs(provider: "codex" | "claude", options: Provi
     return [...nextArgs.slice(0, promptStdinIndex), "--cd", cwd, "--skip-git-repo-check", ...nextArgs.slice(promptStdinIndex)];
   }
   return [...nextArgs, "--cd", cwd, "--skip-git-repo-check"];
+}
+
+function isProviderCliExecutable(provider: "codex" | "claude", executable: string): boolean {
+  const name = basename(executable).replace(/\.(cmd|exe|bat)$/i, "");
+  return name === provider;
 }
 
 export function buildProviderPrompt(provider: "codex" | "claude", request: AdapterRequest): string {

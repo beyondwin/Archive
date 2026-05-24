@@ -40,6 +40,7 @@ describe("runWaygent", () => {
     expect(readLatestRunId(root)).toBe("run_demo");
     expect(result.events.map((event) => event.event_type)).toEqual([
       "platform.run_started",
+      "platform.intake_extract_completed",
       "platform.plan_preflight_completed",
       "runway.plan_loaded",
       "runway.preflight_result",

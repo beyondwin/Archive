@@ -111,6 +111,30 @@ describe("Claude adapter normalization", () => {
     expect(args).not.toContain("--model");
   });
 
+  test("does not prepend Claude CLI flags for custom executables", () => {
+    const args = providerProcessArgs(
+      "claude",
+      { executable: process.execPath, args: ["worker.mjs"], model: "opus", effort: "high" },
+      "/tmp/work",
+      { task_id: "t", candidate_id: "c", prompt: "p" }
+    );
+    expect(args).toEqual(["worker.mjs"]);
+  });
+
+  test("recognizes absolute Claude CLI executable paths", () => {
+    const args = providerProcessArgs(
+      "claude",
+      { executable: "/usr/local/bin/claude", args: ["-p"], model: "opus", effort: "high" },
+      "/tmp/work",
+      { task_id: "t", candidate_id: "c", prompt: "p" }
+    );
+    expect(args).toContain("--model");
+    expect(args).toContain("opus");
+    expect(args).toContain("--effort");
+    expect(args).toContain("high");
+    expect(args).toContain("--add-dir");
+  });
+
   test("classifies an unavailable Claude executable as an adapter crash", async () => {
     const result = await new ClaudeProviderAdapter({ executable: "__missing_claude_for_test__" }).run({
       task_id: "task_demo",
