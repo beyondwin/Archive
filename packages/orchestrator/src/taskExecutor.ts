@@ -34,7 +34,12 @@ import type { RunEventInput } from "./runEvents";
 import { prepareVerificationEnvironment, type VerificationEnvironmentEvidence } from "./verificationEnvironment";
 import { debugArtifactDenials, evaluateFinalOutputHooks, evaluatePreDispatchHooks, type HookDenial } from "./runtimeHooks";
 import { taskRequiresCheckpoint } from "./taskCheckpointPolicy";
-import { runVerificationCommands, type VerificationRunOutput } from "./verification";
+import {
+  normalizeVerificationCommandSpec,
+  runVerificationCommands,
+  verificationResultMatchesExpectation,
+  type VerificationRunOutput
+} from "./verification";
 import { prepareManagedTaskWorktree } from "./worktreeManager";
 
 export type TaskExecutionEventIntent = Omit<RunEventInput, "sequence">;
@@ -96,7 +101,13 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     checkpoint_refs: input.checkpoint_inputs
   });
 
-  const commands = input.task.verification_commands.length > 0 ? input.task.verification_commands : ["printf hello"];
+  const verificationSpecs = input.task.verification_expectations.length > 0
+    ? input.task.verification_expectations
+    : input.task.verification_commands.map((command) => ({ command, expected_exit: "zero" as const }));
+  const commandSpecs = verificationSpecs.length > 0
+    ? verificationSpecs.map(normalizeVerificationCommandSpec)
+    : [normalizeVerificationCommandSpec("printf hello")];
+  const commands = commandSpecs.map((spec) => spec.command);
   const packet = buildTaskPacket({
     run_id: input.run_id,
     task: input.task,
@@ -333,7 +344,7 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
         run_id: input.run_id,
         task_id: input.task.id,
         cwd: taskWorktree.path,
-        commands
+        commands: commandSpecs
       });
     } finally {
       verificationEnvironment.cleanup();
@@ -344,7 +355,8 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     const command = commands[index] ?? "";
     const kernelArtifact = writeArtifact(inputRunRoot(input), `kernel/${kernel.request_id}.json`, JSON.stringify(kernel, null, 2));
     artifactIndexEntries.push(artifactIndexEntry({ artifact: kernelArtifact, producer_phase: "verification", task_id: input.task.id }));
-    const passed = kernel.exit_code === 0 && !kernel.timed_out;
+    const expectation = commandSpecs[index] ?? normalizeVerificationCommandSpec(command);
+    const passed = verificationResultMatchesExpectation(kernel, expectation);
     return {
       verification_id: kernel.request_id,
       task_id: input.task.id,
@@ -356,6 +368,7 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
       stdout_sha256: kernel.stdout_sha256,
       stderr_sha256: kernel.stderr_sha256,
       status: passed ? "passed" : "failed",
+      expected_exit: expectation.expected_exit,
       verification_environment: verificationEnvironmentEvidence,
       failure_class: passed ? null : verification.failure_class,
       failure_summary: passed ? null : verification.failure_summary

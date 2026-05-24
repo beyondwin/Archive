@@ -4,6 +4,7 @@ export interface ExtractedPlanTask {
   number: number;
   title: string;
   body: string;
+  line_start: number;
   explicit_file_claims: FileClaim[];
   prose_file_claims: FileClaim[];
   fenced_commands: string[];
@@ -32,7 +33,7 @@ export interface ExtractedSuperpowersPlan {
 }
 
 const taskHeading = /^#{2,4}\s+(?:Task|작업|Phase)\s+(\d+)\s*[:.)-]?\s*(.*)$/gim;
-const explicitClaim = /^\s*-\s+(Create|Modify|Read|Append):\s+`([^`]+)`/gim;
+const explicitClaim = /^\s*-\s+(Create|Modify|Read|Append|Test):\s+`([^`]+)`/gim;
 const inlinePath = /`([^`]+\.(?:ts|tsx|js|jsx|mjs|json|md|mdx|toml|yaml|yml|rs|py|sh|css|html|kt|kts|gradle|gradle\.kts|java|xml))`/g;
 const shellFenceLanguages = new Set(["bash", "sh", "shell", "zsh"]);
 
@@ -46,21 +47,46 @@ export function extractSuperpowersPlan(markdown: string): ExtractedSuperpowersPl
     const number = Number(match[1]);
     const title = (match[2] ?? "").trim() || `Task ${number}`;
     const body = markdown.slice(start, end);
+    const lineStart = lineNumberAtIndex(markdown, start);
     const explicit = extractExplicitFileClaims(body);
     const prose = extractProseFileClaims(body, explicit);
-    const fenced = extractFencedEvidence(body, lineNumberAtIndex(markdown, start) - 1);
+    const fenced = extractFencedEvidence(body, lineStart - 1);
+    const inlineRunCandidates = extractInlineRunCandidates(body, lineStart - 1);
+    const commandCandidates = [...fenced.command_candidates, ...inlineRunCandidates];
     return {
       number,
       title,
       body,
+      line_start: lineStart,
       explicit_file_claims: explicit,
       prose_file_claims: prose,
-      fenced_commands: fenced.fenced_commands,
+      fenced_commands: [...new Set(commandCandidates.map((candidate) => candidate.command))],
       fenced_examples: fenced.fenced_examples,
-      command_candidates: fenced.command_candidates
+      command_candidates: commandCandidates
     };
   });
   return { tasks };
+}
+
+function extractInlineRunCandidates(section: string, lineOffset: number): ExtractedCommandCandidate[] {
+  const candidates: ExtractedCommandCandidate[] = [];
+  const lines = section.split(/\r?\n/);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const match = line.match(/\bRun:\s*`([^`]+)`/i);
+    if (!match) continue;
+    const command = (match[1] ?? "").trim();
+    if (!command) continue;
+    const sourceLine = lineOffset + index + 1;
+    candidates.push({
+      command,
+      source: "prose_hint",
+      language: null,
+      line_start: sourceLine,
+      line_end: sourceLine
+    });
+  }
+  return candidates;
 }
 
 export function maskFencedCodeBlocks(markdown: string): string {

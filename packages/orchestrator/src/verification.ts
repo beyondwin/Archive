@@ -5,8 +5,15 @@ export interface VerificationRunInput {
   run_id: string;
   task_id: string;
   cwd: string;
-  commands: string[];
+  commands: Array<string | VerificationCommandSpec>;
   timeout_ms?: number;
+}
+
+export type VerificationExpectedExit = "zero" | "nonzero";
+
+export interface VerificationCommandSpec {
+  command: string;
+  expected_exit?: VerificationExpectedExit;
 }
 
 export interface VerificationRunOutput {
@@ -19,8 +26,9 @@ export interface VerificationRunOutput {
 
 export async function runVerificationCommands(input: VerificationRunInput): Promise<VerificationRunOutput> {
   const results: KernelExecutionResult[] = [];
-  for (let index = 0; index < input.commands.length; index += 1) {
-    const command = input.commands[index]!;
+  const commands = input.commands.map(normalizeVerificationCommandSpec);
+  for (let index = 0; index < commands.length; index += 1) {
+    const { command } = commands[index]!;
     const request = buildKernelRequest({
       request_id: `verify_${input.task_id}_${index + 1}`,
       run_id: input.run_id,
@@ -31,15 +39,50 @@ export async function runVerificationCommands(input: VerificationRunInput): Prom
     });
     results.push(await executeInProcess(request));
   }
-  const failed = results.find((result) => result.exit_code !== 0 || result.timed_out) ?? null;
-  const classified = failed ? classifyVerificationResult(failed) : null;
+  const failedIndex = results.findIndex((result, index) =>
+    !verificationResultMatchesExpectation(result, commands[index]!)
+  );
+  const failed = failedIndex >= 0 ? results[failedIndex]! : null;
+  const failedSpec = failedIndex >= 0 ? commands[failedIndex]! : null;
+  const classified = failed && failedSpec ? classifyVerificationMismatch(failed, failedSpec) : null;
   return {
-    status: failed ? "failed" : "passed",
+    status: failedIndex >= 0 ? "failed" : "passed",
     results,
     failure_class: classified?.failure_class ?? null,
     failure_summary: classified?.failure_summary ?? null,
     failed_verification_id: failed?.request_id ?? null
   };
+}
+
+export function normalizeVerificationCommandSpec(input: string | VerificationCommandSpec): Required<VerificationCommandSpec> {
+  if (typeof input === "string") return { command: input, expected_exit: "zero" };
+  return { command: input.command, expected_exit: input.expected_exit ?? "zero" };
+}
+
+export function verificationResultMatchesExpectation(
+  result: KernelExecutionResult,
+  spec: Required<VerificationCommandSpec>
+): boolean {
+  if (result.timed_out) return false;
+  if (spec.expected_exit === "zero") return result.exit_code === 0;
+  if (result.exit_code === 0 || result.exit_code === null) return false;
+  return classifyVerificationResult(result).failure_class === "verification_failed";
+}
+
+function classifyVerificationMismatch(
+  result: KernelExecutionResult,
+  spec: Required<VerificationCommandSpec>
+): {
+  failure_class: FailureClass;
+  failure_summary: string;
+} {
+  if (spec.expected_exit === "nonzero" && result.exit_code === 0 && !result.timed_out) {
+    return {
+      failure_class: "verification_failed",
+      failure_summary: `expected verification command to fail but it exited 0: ${spec.command}`
+    };
+  }
+  return classifyVerificationResult(result);
 }
 
 export function classifyVerificationResult(result: KernelExecutionResult): {

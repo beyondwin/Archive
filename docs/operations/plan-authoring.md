@@ -36,6 +36,25 @@ tasks append into the same file (e.g., `packages/.../src/index.ts`
 re-exports), and `read_only` when the worker needs to read a file outside its
 write scope.
 
+Use `verify_fail` only for a task whose final deliverable is an intentionally
+failing RED contract. This is common in Superpowers `writing-plans` output when
+one task locks a failing test and the next task implements the production code.
+`verify_fail` commands must fail with an ordinary test/assertion failure; a
+missing command, missing dependency, permission error, or timeout still blocks
+the run.
+
+```yaml waygent-task
+id: task_1_lock_contract
+title: Lock RED contract
+dependencies: []
+file_claims:
+  - path: tests/contract.test.ts
+    mode: owned
+risk: medium
+verify_fail:
+  - bun test tests/contract.test.ts
+```
+
 ## Verification Commands
 
 Verification runs inside the task worktree after the worker reports a result.
@@ -70,6 +89,12 @@ claims, and safe verification commands, Waygent normalizes it into executable
 `yaml waygent-task` blocks during intake. Commands that install dependencies,
 format files, generate code, update Graphify output, or mutate git state are
 preserved as implementation instructions and removed from `verify`.
+
+Waygent also reads the `writing-plans` convention of pairing `Run:` commands
+with `Expected:` lines. If a task only contains safe commands whose expected
+outcome is `FAIL`, those commands become `verify_fail`. If a task contains both
+RED and GREEN steps, final passing commands win and the RED commands remain
+worker evidence instead of post-task verification.
 
 Waygent asks for a decision only when the command is destructive, escapes the
 workspace, writes unclaimed files, or leaves a source-changing task without a

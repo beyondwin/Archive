@@ -77,6 +77,44 @@ describe("executeWaygentTask", () => {
     });
   });
 
+  test("verifies and checkpoints RED-only tasks with explicit expected-failure commands", async () => {
+    const workspace = initSourceCheckout("waygent-task-executor-red-verify-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-red-verify-root-"));
+    const parsed = parseWaygentPlan([
+      "```yaml waygent-task",
+      "id: task_red_contract",
+      "title: Lock expected failure contract",
+      "dependencies: []",
+      "file_claims:",
+      "  - path: red.txt",
+      "    mode: owned",
+      "risk: low",
+      "verify_fail:",
+      "  - test -f missing-red-contract.txt",
+      "```"
+    ].join("\n"));
+
+    const result = await executeWaygentTask({
+      root,
+      run_id: "run_red_contract",
+      workspace,
+      worktree_root: join(root, "worktrees"),
+      task: parsed.tasks[0]!,
+      checkpoint_inputs: [],
+      spec: null,
+      provider: "fake",
+      provider_processes: {}
+    });
+
+    expect(result.status).toBe("verified");
+    expect(result.latest_failure_class).toBeNull();
+    expect(result.checkpoint_refs[0]).toContain("artifacts/checkpoints/task_red_contract/");
+    expect(result.verification_records[0]).toMatchObject({
+      status: "passed",
+      expected_exit: "nonzero"
+    });
+  });
+
   test("accepts provider self-reported environment blockers when kernel verification passes", async () => {
     const workspace = initSourceCheckout("waygent-task-executor-provider-env-source-");
     const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-provider-env-root-"));

@@ -8,6 +8,7 @@ export interface ScaffoldWaygentTaskInput {
   file_claims: FileClaim[];
   risk: RiskLevel;
   verify: string[];
+  verify_fail?: string[];
   instructions?: string[];
 }
 
@@ -15,7 +16,7 @@ export function scaffoldWaygentTask(input: ScaffoldWaygentTaskInput): string {
   if (!input.id.trim()) throw new Error("task id required");
   if (!input.title.trim()) throw new Error("title required");
   if (input.file_claims.length === 0) throw new Error("file claims required");
-  if (input.verify.length === 0) throw new Error("verification commands required");
+  if (input.verify.length === 0 && (input.verify_fail ?? []).length === 0) throw new Error("verification commands required");
   return [
     "```yaml waygent-task",
     `id: ${input.id}`,
@@ -24,8 +25,18 @@ export function scaffoldWaygentTask(input: ScaffoldWaygentTaskInput): string {
     "file_claims:",
     ...input.file_claims.flatMap((claim) => [`  - path: ${claim.path}`, `    mode: ${claim.mode}`]),
     `risk: ${input.risk}`,
-    "verify:",
-    ...input.verify.map((command) => `  - ${command}`),
+    ...(input.verify.length > 0
+      ? [
+        "verify:",
+        ...input.verify.map((command) => `  - ${command}`)
+      ]
+      : []),
+    ...((input.verify_fail ?? []).length > 0
+      ? [
+        "verify_fail:",
+        ...(input.verify_fail ?? []).map((command) => `  - ${command}`)
+      ]
+      : []),
     ...(input.instructions?.length
       ? [
         "instructions:",

@@ -1,6 +1,7 @@
 import type { RiskLevel } from "@waygent/contracts";
 import type { FileClaim, FileClaimMode } from "@waygent/runway-control";
 import { extractInstructionLines } from "./planAdapters/instructionsExtract";
+import type { VerificationExpectedExit } from "./verification";
 
 export type VerifyIsolation = "isolated" | "fast" | "auto";
 
@@ -11,8 +12,14 @@ export interface ParsedWaygentTask {
   file_claims: FileClaim[];
   risk: RiskLevel;
   verification_commands: string[];
+  verification_expectations: VerificationCommandExpectation[];
   instructions: string[];
   verify_isolation?: VerifyIsolation;
+}
+
+export interface VerificationCommandExpectation {
+  command: string;
+  expected_exit: VerificationExpectedExit;
 }
 
 export interface ParsedWaygentPlan {
@@ -72,6 +79,7 @@ function parseTaskBlock(block: string): ParsedWaygentTask {
   const scalar = new Map<string, string>();
   const fileClaims: FileClaim[] = [];
   const verification: string[] = [];
+  const verificationExpectations: VerificationCommandExpectation[] = [];
   const instructions: string[] = [];
 
   for (let index = 0; index < lines.length; index += 1) {
@@ -98,7 +106,7 @@ function parseTaskBlock(block: string): ParsedWaygentTask {
     }
     const scalarMatch = line.match(/^([a-z_]+):\s*(.*)$/);
     const key = scalarMatch?.[1];
-    if (key && key !== "file_claims" && key !== "verify" && key !== "acceptance_commands" && key !== "instructions") {
+    if (key && key !== "file_claims" && key !== "verify" && key !== "verify_fail" && key !== "acceptance_commands" && key !== "instructions") {
       scalar.set(key, scalarMatch[2] ?? "");
       continue;
     }
@@ -107,11 +115,15 @@ function parseTaskBlock(block: string): ParsedWaygentTask {
       continue;
     }
     if (line === "verify:") {
-      index = readStringList(lines, index + 1, verification) - 1;
+      index = readVerificationList(lines, index + 1, verification, verificationExpectations, "zero") - 1;
+      continue;
+    }
+    if (line === "verify_fail:") {
+      index = readVerificationList(lines, index + 1, verification, verificationExpectations, "nonzero") - 1;
       continue;
     }
     if (line === "acceptance_commands:") {
-      index = readStringList(lines, index + 1, verification) - 1;
+      index = readVerificationList(lines, index + 1, verification, verificationExpectations, "zero") - 1;
       continue;
     }
     if (line === "instructions:") {
@@ -149,9 +161,28 @@ function parseTaskBlock(block: string): ParsedWaygentTask {
     file_claims: fileClaims,
     risk,
     verification_commands: verification,
+    verification_expectations: verificationExpectations.length > 0
+      ? verificationExpectations
+      : verification.map((command) => ({ command, expected_exit: "zero" })),
     instructions,
     ...(verifyIsolation ? { verify_isolation: verifyIsolation } : {})
   };
+}
+
+function readVerificationList(
+  lines: string[],
+  start: number,
+  commands: string[],
+  expectations: VerificationCommandExpectation[],
+  expectedExit: VerificationExpectedExit
+): number {
+  const values: string[] = [];
+  const next = readStringList(lines, start, values);
+  for (const command of values) {
+    commands.push(command);
+    expectations.push({ command, expected_exit: expectedExit });
+  }
+  return next;
 }
 
 function readFileClaims(lines: string[], start: number, out: FileClaim[]): number {

@@ -78,6 +78,27 @@ verify:
     ]);
   });
 
+  test("parses explicit expected-failure verification commands", () => {
+    const parsed = parseWaygentPlan(`
+\`\`\`yaml waygent-task
+id: task_red
+title: Lock red contract
+dependencies: []
+file_claims:
+  - path: tests/red.test.ts
+    mode: owned
+risk: medium
+verify_fail:
+  - bun test tests/red.test.ts
+\`\`\`
+`);
+
+    expect(parsed.tasks[0]?.verification_commands).toEqual(["bun test tests/red.test.ts"]);
+    expect(parsed.tasks[0]?.verification_expectations).toEqual([
+      { command: "bun test tests/red.test.ts", expected_exit: "nonzero" }
+    ]);
+  });
+
   test("rejects missing task ids", () => {
     expect(() =>
       parseWaygentPlan(`
