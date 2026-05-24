@@ -107,4 +107,43 @@ describe("verification policy", () => {
       reason: "implementation_only"
     });
   });
+
+  test("classifies read-only diagnostics as ignored evidence", () => {
+    expect(classify("git status --short --branch")).toMatchObject({
+      status: "ignored",
+      reason: "diagnostic_readonly",
+      role: "diagnostic_readonly"
+    });
+    expect(classify("git log --oneline -3")).toMatchObject({
+      status: "ignored",
+      reason: "diagnostic_readonly",
+      role: "diagnostic_readonly"
+    });
+    expect(classify("git diff --stat")).toMatchObject({
+      status: "ignored",
+      reason: "diagnostic_readonly",
+      role: "diagnostic_readonly"
+    });
+  });
+
+  test("classifies optional Android environment probes as ignored evidence", () => {
+    expect(classify("command -v adb || true")).toMatchObject({
+      status: "ignored",
+      reason: "optional_environment",
+      role: "optional_environment"
+    });
+    expect(classify("adb devices")).toMatchObject({
+      status: "ignored",
+      reason: "optional_environment",
+      role: "optional_environment"
+    });
+  });
+
+  test("keeps unknown shell commands blocking", () => {
+    expect(classify("custom-tool verify runtime")).toMatchObject({
+      status: "unsafe",
+      reason: "unknown",
+      role: "unknown"
+    });
+  });
 });

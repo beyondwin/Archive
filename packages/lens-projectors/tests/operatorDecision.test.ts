@@ -144,6 +144,7 @@ describe("operator decision projector", () => {
           completed_at: "2026-05-22T00:00:01.000Z",
           normalized_plan_ref: null,
           recovery_report_ref: "artifacts/intake/recovery-report.json",
+          extract_report_ref: "artifacts/intake/extract-report.json",
           findings: [{
             code: "destructive_command_candidate",
             severity: "blocking",
@@ -182,10 +183,11 @@ describe("operator decision projector", () => {
       can_start: false,
       confidence: "blocked",
       finding_codes: ["destructive_command_candidate"],
-      artifact_refs: ["artifacts/intake/recovery-report.json"],
+      artifact_refs: ["artifacts/intake/recovery-report.json", "artifacts/intake/extract-report.json"],
       question: "The plan contains a destructive command candidate. Confirm the intended safe replacement."
     });
     expect(projection.evidence_packet.artifact_refs).toContain("artifacts/intake/recovery-report.json");
+    expect(projection.evidence_packet.artifact_refs).toContain("artifacts/intake/extract-report.json");
   });
 
   test("classifies intake recovery failure as blocking", () => {
@@ -238,6 +240,7 @@ describe("operator decision projector", () => {
           completed_at: "2026-05-22T00:00:01.000Z",
           normalized_plan_ref: "artifacts/intake/normalized-plan.md",
           recovery_report_ref: "artifacts/intake/recovery-report.json",
+          extract_report_ref: "artifacts/intake/extract-report.json",
           findings: [{
             code: "task_body_not_yaml",
             severity: "warning",
@@ -273,13 +276,18 @@ describe("operator decision projector", () => {
       can_start: true,
       confidence: "deterministic",
       finding_codes: ["task_body_not_yaml"],
-      artifact_refs: ["artifacts/intake/normalized-plan.md", "artifacts/intake/recovery-report.json"],
+      artifact_refs: [
+        "artifacts/intake/normalized-plan.md",
+        "artifacts/intake/recovery-report.json",
+        "artifacts/intake/extract-report.json"
+      ],
       question: null
     });
     expect(projection.evidence_packet.artifact_refs).toEqual(
       expect.arrayContaining([
         "artifacts/intake/normalized-plan.md",
-        "artifacts/intake/recovery-report.json"
+        "artifacts/intake/recovery-report.json",
+        "artifacts/intake/extract-report.json"
       ])
     );
   });

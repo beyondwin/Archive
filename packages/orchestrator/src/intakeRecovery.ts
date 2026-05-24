@@ -192,11 +192,18 @@ function recoverSection(
   const verify = section.fenced_commands.filter((command) =>
     classifyVerificationCommand({ command, workspace, catalog }).status === "safe"
   );
-  if (DESTRUCTIVE_COMMAND.test(section.body)) {
+  const destructiveCommands = (section.command_candidates ?? section.fenced_commands.map((command) => ({
+    command,
+    source: "shell_fence" as const,
+    language: "shell",
+    line_start: 0,
+    line_end: 0
+  }))).filter((candidate) => DESTRUCTIVE_COMMAND.test(candidate.command));
+  if (destructiveCommands.length > 0) {
     findings.push({
       code: "destructive_command_candidate",
       severity: "blocking",
-      message: `Task ${section.number} contains a destructive command candidate.`,
+      message: `Task ${section.number} contains ${destructiveCommands.length} destructive command candidate(s).`,
       task_id: taskId,
       evidence_refs: evidenceRefs
     });

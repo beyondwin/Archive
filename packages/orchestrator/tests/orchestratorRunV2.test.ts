@@ -55,6 +55,53 @@ describe("runWaygent v2 lifecycle", () => {
     expect(readLatestRunId(root)).toBe("run_v2");
   });
 
+  test("passes completion audit when a read-only final verification task has no checkpoint", async () => {
+    const workspace = initSourceCheckout("waygent-run-v2-readonly-final-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-run-v2-readonly-final-"));
+    const planWithReadOnlyFinal = `
+\`\`\`yaml waygent-task
+id: task_a
+title: Create file A
+dependencies: []
+file_claims:
+  - path: a.txt
+    mode: owned
+risk: low
+verify:
+  - test -f a.txt
+\`\`\`
+
+\`\`\`yaml waygent-task
+id: task_final_verification
+title: Verify final state
+dependencies:
+  - task_a
+file_claims:
+  - path: README.md
+    mode: read_only
+risk: low
+verify:
+  - git diff --check
+\`\`\`
+`;
+
+    await runWaygent({
+      root,
+      workspace,
+      run_id: "run_readonly_final",
+      plan: planWithReadOnlyFinal,
+      profile: { provider: "fake", execution_mode: "multi-agent" }
+    });
+
+    const state = readRunStateV2(root, "run_readonly_final");
+    expect(state.status).toBe("completed");
+    expect(state.tasks.task_final_verification?.checkpoint_refs).toEqual([]);
+    expect(state.completion_audit).toMatchObject({
+      status: "passed",
+      combined_apply_evidence: expect.objectContaining({ status: "passed" })
+    });
+  });
+
   test("blocks dirty related source checkout before provider dispatch", async () => {
     const workspace = initSourceCheckout("waygent-run-v2-dirty-related-source-");
     writeFileSync(join(workspace, "a.txt"), "dirty source evidence\n");

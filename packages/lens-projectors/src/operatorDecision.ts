@@ -518,6 +518,7 @@ function intakeArtifactRefs(intakeRecovery: WaygentIntakeRecovery | undefined): 
   const refs: string[] = [];
   if (intakeRecovery.normalized_plan_ref) refs.push(intakeRecovery.normalized_plan_ref);
   if (intakeRecovery.recovery_report_ref) refs.push(intakeRecovery.recovery_report_ref);
+  if (intakeRecovery.extract_report_ref) refs.push(intakeRecovery.extract_report_ref);
   return refs;
 }
 

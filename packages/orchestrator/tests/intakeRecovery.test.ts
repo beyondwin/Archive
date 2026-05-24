@@ -53,6 +53,45 @@ describe("Waygent intake recovery", () => {
     }));
   });
 
+  test("ignores destructive-looking text in non-shell example fences", () => {
+    const recovered = recoverWaygentPlanInput({
+      markdown: `
+# Demo Implementation Plan
+
+## Task 1: Document cleanup guard
+
+**Files:**
+
+- Modify: \`README.md\`
+
+Run:
+
+\`\`\`bash
+git diff --check -- README.md
+\`\`\`
+
+Example:
+
+\`\`\`js
+const warning = "do not run rm -rf build";
+\`\`\`
+`,
+      path: "/tmp/example-fence.md",
+      workspace: "/tmp/workspace",
+      spec_markdown: "",
+      spec_path: null
+    });
+
+    expect(recovered.status).toBe("recovered");
+    expect(recovered.report.can_start).toBe(true);
+    expect(recovered.report.findings).not.toContainEqual(expect.objectContaining({
+      code: "destructive_command_candidate"
+    }));
+    expect(parseWaygentPlan(recovered.normalized_plan.markdown).tasks[0]?.verification_commands).toEqual([
+      "git diff --check -- README.md"
+    ]);
+  });
+
   test("blocks recovery when verification references unclaimed paths", () => {
     const recovered = recoverWaygentPlanInput({
       markdown: `
@@ -170,5 +209,37 @@ Run:
     expect(recovered.report.question).toBeNull();
     expect(recovered.report.normalized_plan_ref).toBe("artifacts/intake/normalized-plan.md");
     expect(recovered.report.findings.some((finding) => finding.severity === "blocking")).toBe(false);
+  });
+
+  test("recovers the full-plan fixture with verification for every source-mutating task", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "waygent-full-plan-recovery-"));
+    writeFileSync(join(workspace, "package.json"), JSON.stringify({
+      scripts: {
+        "source-matching:fixtures:test": "node --test scripts/source-matching-fixtures-test.mjs",
+        "source-matching:fixtures:runtime": "node scripts/source-matching-fixtures.mjs runtime"
+      }
+    }));
+
+    const recovered = recoverWaygentPlanInput({
+      markdown: fixture("full_plan_intake_hardening.md"),
+      path: "/tmp/full_plan_intake_hardening.md",
+      workspace,
+      spec_markdown: "# Source Matching Runtime Trust Fixtures\n",
+      spec_path: "/tmp/full_plan_spec.md"
+    });
+
+    expect(recovered.status).toBe("recovered");
+    expect(recovered.report.can_start).toBe(true);
+    expect(recovered.report.question).toBeNull();
+    expect(recovered.report.findings).not.toContainEqual(expect.objectContaining({
+      code: "unsafe_verification_command"
+    }));
+    expect(recovered.report.merged_task_status).toHaveLength(3);
+    for (const task of recovered.report.merged_task_status) {
+      expect(task.file_claim_count).toBeGreaterThan(0);
+      expect(task.verification_command_count).toBeGreaterThan(0);
+      expect(task.blockers).not.toContain("unsafe_verification_command");
+      expect(task.blockers).not.toContain("missing_verification_for_source_mutation");
+    }
   });
 });

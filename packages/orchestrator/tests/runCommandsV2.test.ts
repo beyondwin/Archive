@@ -163,6 +163,11 @@ describe("Waygent run commands v2", () => {
     mkdirSync(worktree, { recursive: true });
     mkdirSync(join(runRoot, "artifacts", "task_packets"), { recursive: true });
     writeFileSync(join(worktree, "ready.txt"), "ready\n");
+    Bun.spawnSync(["git", "init", "-q"], { cwd: worktree });
+    Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: worktree });
+    Bun.spawnSync(["git", "config", "user.name", "Test"], { cwd: worktree });
+    Bun.spawnSync(["git", "add", "-A"], { cwd: worktree });
+    Bun.spawnSync(["git", "commit", "-q", "-m", "init"], { cwd: worktree });
     writeFileSync(taskPacketPath, JSON.stringify({
       schema: "waygent.task_packet.v1",
       verification_commands: ["test -f ready.txt"],

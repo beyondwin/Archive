@@ -4,6 +4,7 @@ import { sha256 } from "@waygent/lens-store";
 import { readCheckpointManifest, resolveRunArtifactPath, validateCheckpointManifest } from "./checkpointArtifacts";
 import { validateMethodEvidenceForApply } from "./evidencePolicy";
 import { shouldReviewTask } from "./reviewGate";
+import { taskRequiresCheckpoint } from "./taskCheckpointPolicy";
 
 export type TerminalInvariantCode =
   | "completion_audit_missing"
@@ -115,6 +116,7 @@ function checkTaskCheckpoint(
   task: WaygentRunStateTaskV2,
   blockers: TerminalInvariantBlocker[]
 ): void {
+  if (!taskRequiresCheckpoint(task)) return;
   if (task.checkpoint_refs.length === 0) {
     blockers.push(missing("checkpoint_missing", `${task.id} has no apply-ready checkpoint reference`, undefined, task.id));
     return;

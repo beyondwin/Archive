@@ -1,5 +1,4 @@
 import type { FileClaim, FileClaimMode } from "@waygent/runway-control";
-import { logicalCommandLines } from "./commandLines";
 
 export interface ExtractedPlanTask {
   number: number;
@@ -8,6 +7,23 @@ export interface ExtractedPlanTask {
   explicit_file_claims: FileClaim[];
   prose_file_claims: FileClaim[];
   fenced_commands: string[];
+  fenced_examples?: ExtractedFenceBlock[];
+  command_candidates?: ExtractedCommandCandidate[];
+}
+
+export interface ExtractedFenceBlock {
+  language: string | null;
+  content: string;
+  line_start: number;
+  line_end: number;
+}
+
+export interface ExtractedCommandCandidate {
+  command: string;
+  source: "shell_fence" | "prose_hint" | "diagnostic_hint";
+  language: string | null;
+  line_start: number;
+  line_end: number;
 }
 
 export interface ExtractedSuperpowersPlan {
@@ -16,8 +32,8 @@ export interface ExtractedSuperpowersPlan {
 
 const taskHeading = /^#{2,4}\s+(?:Task|작업|Phase)\s+(\d+)\s*[:.)-]?\s*(.*)$/gim;
 const explicitClaim = /^\s*-\s+(Create|Modify|Read|Append):\s+`([^`]+)`/gim;
-const fencedCommand = /```(?:bash|sh|shell)?\r?\n([\s\S]*?)\r?\n```/gim;
 const inlinePath = /`([^`]+\.(?:ts|tsx|js|jsx|mjs|json|md|mdx|toml|yaml|yml|rs|py|sh|css|html|kt|kts|gradle|gradle\.kts|java|xml))`/g;
+const shellFenceLanguages = new Set(["bash", "sh", "shell", "zsh"]);
 
 export function extractSuperpowersPlan(markdown: string): ExtractedSuperpowersPlan {
   const masked = maskFencedCodeBlocks(markdown);
@@ -31,13 +47,16 @@ export function extractSuperpowersPlan(markdown: string): ExtractedSuperpowersPl
     const body = markdown.slice(start, end);
     const explicit = extractExplicitFileClaims(body);
     const prose = extractProseFileClaims(body, explicit);
+    const fenced = extractFencedEvidence(body, lineNumberAtIndex(markdown, start) - 1);
     return {
       number,
       title,
       body,
       explicit_file_claims: explicit,
       prose_file_claims: prose,
-      fenced_commands: extractFencedCommands(body)
+      fenced_commands: fenced.fenced_commands,
+      fenced_examples: fenced.fenced_examples,
+      command_candidates: fenced.command_candidates
     };
   });
   return { tasks };
@@ -76,10 +95,148 @@ export function extractProseFileClaims(section: string, explicitClaims: FileClai
 }
 
 export function extractFencedCommands(section: string): string[] {
-  const commands = [...section.matchAll(fencedCommand)].flatMap((match) =>
-    logicalCommandLines(match[1] ?? "")
-  );
-  return [...new Set(commands)];
+  return extractFencedEvidence(section, 0).fenced_commands;
+}
+
+function extractFencedEvidence(
+  section: string,
+  lineOffset: number
+): {
+  fenced_commands: string[];
+  fenced_examples: ExtractedFenceBlock[];
+  command_candidates: ExtractedCommandCandidate[];
+} {
+  const blocks = scanFencedBlocks(section, lineOffset);
+  const commandCandidates = blocks
+    .filter((block) => isShellFence(block.language))
+    .flatMap((block) => extractCommandCandidates(block));
+  return {
+    fenced_commands: [...new Set(commandCandidates.map((candidate) => candidate.command))],
+    fenced_examples: blocks.filter((block) => !isShellFence(block.language)),
+    command_candidates: commandCandidates
+  };
+}
+
+function scanFencedBlocks(section: string, lineOffset: number): ExtractedFenceBlock[] {
+  const blocks: ExtractedFenceBlock[] = [];
+  const lines = section.split(/\r?\n/);
+  let active:
+    | {
+      fenceLength: number;
+      language: string | null;
+      openerLine: number;
+      contentLines: string[];
+    }
+    | null = null;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] ?? "";
+    const sourceLine = lineOffset + index + 1;
+
+    if (active) {
+      if (isFenceCloser(line, active.fenceLength)) {
+        blocks.push({
+          language: active.language,
+          content: active.contentLines.join("\n"),
+          line_start: active.openerLine,
+          line_end: sourceLine
+        });
+        active = null;
+        continue;
+      }
+      active.contentLines.push(line);
+      continue;
+    }
+
+    const opener = parseFenceOpener(line);
+    if (!opener) continue;
+    active = {
+      fenceLength: opener.fenceLength,
+      language: opener.language,
+      openerLine: sourceLine,
+      contentLines: []
+    };
+  }
+
+  if (active) {
+    blocks.push({
+      language: active.language,
+      content: active.contentLines.join("\n"),
+      line_start: active.openerLine,
+      line_end: lineOffset + lines.length
+    });
+  }
+
+  return blocks;
+}
+
+function extractCommandCandidates(block: ExtractedFenceBlock): ExtractedCommandCandidate[] {
+  const candidates: ExtractedCommandCandidate[] = [];
+  let current = "";
+  let currentStart: number | null = null;
+  const lines = block.content.split(/\r?\n/);
+  const contentLineOffset = block.line_start;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = (lines[index] ?? "").trim();
+    const sourceLine = contentLineOffset + index + 1;
+    if (!trimmed || trimmed.startsWith("#")) continue;
+
+    if (trimmed.endsWith("\\")) {
+      if (currentStart === null) currentStart = sourceLine;
+      current += `${trimmed.slice(0, -1).trim()} `;
+      continue;
+    }
+
+    candidates.push({
+      command: `${current}${trimmed}`.trim(),
+      source: "shell_fence",
+      language: block.language,
+      line_start: currentStart ?? sourceLine,
+      line_end: sourceLine
+    });
+    current = "";
+    currentStart = null;
+  }
+
+  if (current.trim()) {
+    candidates.push({
+      command: current.trim(),
+      source: "shell_fence",
+      language: block.language,
+      line_start: currentStart ?? block.line_start + 1,
+      line_end: block.line_start + lines.length
+    });
+  }
+
+  return candidates;
+}
+
+function parseFenceOpener(line: string): { fenceLength: number; language: string | null } | null {
+  const match = line.match(/^\s*(`{3,})([^`]*)$/);
+  if (!match) return null;
+  return {
+    fenceLength: match[1]!.length,
+    language: normalizeFenceLanguage(match[2] ?? "")
+  };
+}
+
+function isFenceCloser(line: string, fenceLength: number): boolean {
+  const match = line.match(/^\s*(`{3,})\s*$/);
+  return match ? match[1]!.length >= fenceLength : false;
+}
+
+function normalizeFenceLanguage(info: string): string | null {
+  const language = info.trim().split(/\s+/, 1)[0]?.toLowerCase() ?? "";
+  return language || null;
+}
+
+function isShellFence(language: string | null): boolean {
+  return language !== null && shellFenceLanguages.has(language);
+}
+
+function lineNumberAtIndex(text: string, index: number): number {
+  return text.slice(0, index).split(/\r?\n/).length;
 }
 
 function claimModeForVerb(verb: string): FileClaimMode {

@@ -33,6 +33,7 @@ import { buildTaskGraphFromPlan } from "./taskGraph";
 import { executeBoundedSafeWave, resolveWaveConcurrency } from "./safeWaveExecutor";
 import { appendSchedulerRecovery } from "./taskRecovery";
 import { executeWaygentTask, type WaygentTaskExecutionResult } from "./taskExecutor";
+import { taskRequiresCheckpoint } from "./taskCheckpointPolicy";
 import { evaluateTerminalCompletionInvariant } from "./terminalInvariant";
 import { buildSpecManifest, specSliceForTask } from "@waygent/context-packer";
 
@@ -102,6 +103,16 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       explicit_file_claims: task.explicit_file_claims,
       prose_file_claims: task.prose_file_claims,
       fenced_commands: task.fenced_commands,
+      fenced_examples: (task.fenced_examples ?? []).map((block) => ({
+        language: block.language,
+        content: block.content,
+        line_start: block.line_start,
+        line_end: block.line_end
+      })),
+      command_candidates: (task.command_candidates ?? []).map((candidate) => ({
+        ...candidate,
+        classification: classifyVerificationCommand({ command: candidate.command, workspace, catalog: extractionCatalog })
+      })),
       verification: task.fenced_commands.map((command) =>
         classifyVerificationCommand({ command, workspace, catalog: extractionCatalog })
       )
@@ -501,9 +512,9 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       }
       replayTaskExecutionResult(context, waveResult.result);
       recordRuntimeEvidence(context, waveResult.result);
-      if (task && waveResult.result.status === "verified" && waveResult.result.checkpoint_refs[0]) {
+      if (task && waveResult.result.status === "verified") {
         task.status = "APPLIED";
-        task.checkpoint_ref = waveResult.result.checkpoint_refs[0];
+        if (waveResult.result.checkpoint_refs[0]) task.checkpoint_ref = waveResult.result.checkpoint_refs[0];
       } else if (task) {
         const failureClass = waveResult.result.latest_failure_class ?? "verification_failed";
         const recovery = recordTaskRecovery(context, {
@@ -563,11 +574,11 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   writeDecisionsProjection(paths.root, runId, context.state.decisions_register ?? []);
   context.mutateState((state) => {
     state.current_phase = "complete";
-    const verifiedCheckpointRefs = Object.values(state.tasks)
-      .filter((task) => task.status === "verified")
+    const checkpointedTasks = Object.values(state.tasks)
+      .filter((task) => task.status === "verified" && taskRequiresCheckpoint(task));
+    const verifiedCheckpointRefs = checkpointedTasks
       .flatMap((task) => task.checkpoint_refs);
-    const allVerifiedTasksHaveCheckpoints = Object.values(state.tasks)
-      .filter((task) => task.status === "verified")
+    const allVerifiedTasksHaveCheckpoints = checkpointedTasks
       .every((task) => task.checkpoint_refs.length > 0);
     const combinedApplyEvidence = verifiedCheckpointRefs.length > 0 && allVerifiedTasksHaveCheckpoints
       ? createCombinedCheckpointPatchArtifact({

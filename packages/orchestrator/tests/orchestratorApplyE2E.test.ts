@@ -56,7 +56,7 @@ describe("Waygent run to apply E2E", () => {
     });
   });
 
-  test("a run with no checkpoint artifact is blocked before completion", async () => {
+  test("a read-only-only run is inspect-only instead of retrying checkpoint generation", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-no-checkpoint-root-"));
     const workspace = initSourceCheckout();
     const noWritePlan = `
@@ -85,9 +85,7 @@ verify:
     expect(state.status).toBe("blocked");
     expect(state.lifecycle_outcome).toBe("blocked");
     expect(state.completion_audit).toMatchObject({ status: "failed" });
-    expect(resumeRun({ root, run: "run_no_checkpoint", dry_run: true }).allowed_actions).toEqual([
-      "retry_checkpoint_generation"
-    ]);
+    expect(resumeRun({ root, run: "run_no_checkpoint", dry_run: true }).allowed_actions).toEqual(["inspect_run"]);
   });
 
   test("a verified no-op run remains apply-ready and applies without a patch mutation", async () => {
