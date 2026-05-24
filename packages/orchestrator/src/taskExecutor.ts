@@ -450,7 +450,10 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
           task_id: input.task.id,
           failure_class: scopeValidation.failure_class,
           reason: scopeValidation.reason,
-          changed_files: scopeValidation.changed_files
+          changed_files: scopeValidation.changed_files,
+          violating_files: scopeValidation.violating_files,
+          allowed_write_globs: scopeValidation.allowed_write_globs,
+          provider_claimed_changed_files: scopeValidation.provider_claimed_changed_files
         },
         trust_impact: "supports_failure"
       });

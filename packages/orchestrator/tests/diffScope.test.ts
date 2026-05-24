@@ -38,7 +38,8 @@ describe("diff scope validation", () => {
       ok: false,
       failure_class: "diff_scope_failed",
       reason: "changed_file_outside_allowed_globs",
-      changed_files: ["secrets.txt"]
+      changed_files: ["secrets.txt"],
+      violating_files: ["secrets.txt"]
     });
   });
 
@@ -52,7 +53,8 @@ describe("diff scope validation", () => {
       ok: false,
       failure_class: "diff_scope_failed",
       reason: "changed_file_matches_forbidden_globs",
-      changed_files: [".git/config"]
+      changed_files: [".git/config"],
+      violating_files: [".git/config"]
     });
   });
 
@@ -66,7 +68,8 @@ describe("diff scope validation", () => {
       ok: false,
       failure_class: "diff_scope_failed",
       reason: "changed_file_missing_provider_claim",
-      changed_files: ["README.md"]
+      changed_files: ["README.md"],
+      violating_files: ["README.md"]
     });
   });
 
@@ -186,7 +189,10 @@ verify:
         task_id: "task_scope",
         failure_class: "diff_scope_failed",
         reason: "changed_file_outside_allowed_globs",
-        changed_files: ["a.txt", "secrets.txt"]
+        changed_files: ["a.txt", "secrets.txt"],
+        violating_files: ["secrets.txt"],
+        allowed_write_globs: ["a.txt"],
+        provider_claimed_changed_files: ["a.txt", "secrets.txt"]
       }
     });
   });

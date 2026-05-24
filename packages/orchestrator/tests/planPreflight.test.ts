@@ -136,4 +136,38 @@ verify:
     expect(result.status).toBe("failed");
     expect(result.errors.join("\n")).toContain("unsafe verification command");
   });
+
+  test("rejects native plan verification paths that are not covered by file claims", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "waygent-plan-preflight-coverage-"));
+
+    const result = runPlanPreflight({
+      workspace,
+      plan_path: null,
+      normalized_plan: {
+        path: null,
+        markdown: `
+\`\`\`yaml waygent-task
+id: task_recovery
+title: Recovery
+dependencies: []
+file_claims:
+  - path: packages/orchestrator/src/recoveryExecutor.ts
+    mode: owned
+risk: high
+verify:
+  - bun test packages/orchestrator/tests/recoveryExecutor.test.ts
+\`\`\`
+`,
+        mode: "native",
+        task_count: 1,
+        diagnostics: []
+      },
+      spec_path: null
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.errors.join("\n")).toContain(
+      "Task task_recovery verification command references unclaimed path packages/orchestrator/tests/recoveryExecutor.test.ts"
+    );
+  });
 });
