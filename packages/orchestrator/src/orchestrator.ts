@@ -105,6 +105,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       fenced_commands: task.fenced_commands,
       fenced_examples: (task.fenced_examples ?? []).map((block) => ({
         language: block.language,
+        source: block.source,
         content: block.content,
         line_start: block.line_start,
         line_end: block.line_end

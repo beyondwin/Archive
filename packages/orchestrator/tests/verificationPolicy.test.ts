@@ -47,11 +47,18 @@ describe("verification policy", () => {
     });
   });
 
-  test("rejects undeclared scripts and destructive command chains", () => {
+  test("accepts package-manager run commands without requiring a catalog hit", () => {
     expect(classify("npm run unknown-script")).toMatchObject({
-      status: "unsafe",
-      reason: "unknown"
+      status: "safe",
+      reason: "known_runner"
     });
+    expect(classify("bun run scenarios")).toMatchObject({
+      status: "safe",
+      reason: "known_runner"
+    });
+  });
+
+  test("rejects destructive command chains", () => {
     expect(classify("npm test && rm -rf build")).toMatchObject({
       status: "unsafe",
       reason: "destructive"

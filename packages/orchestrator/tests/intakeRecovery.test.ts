@@ -22,9 +22,7 @@ describe("Waygent intake recovery", () => {
     expect(recovered.status).toBe("recovered");
     expect(recovered.normalized_plan.task_count).toBe(1);
     expect(recovered.report.can_start).toBe(true);
-    expect(recovered.report.findings.map((finding) => finding.code)).toContain("task_body_not_yaml");
-    expect(recovered.report.findings.map((finding) => finding.code)).toContain("file_claims_in_prose");
-    expect(recovered.report.findings.map((finding) => finding.code)).toContain("verification_command_in_prose");
+    expect(recovered.report.question).toBeNull();
 
     const parsed = parseWaygentPlan(recovered.normalized_plan.markdown);
     expect(parsed.tasks[0]).toMatchObject({
@@ -125,12 +123,12 @@ bun test packages/orchestrator/tests/planNormalizer.test.ts
     }));
   });
 
-  test("blocks unsafe-only verification without throwing during recovery", () => {
+  test("blocks unknown-only verification without throwing during recovery", () => {
     const recovered = recoverWaygentPlanInput({
       markdown: `
 # Demo Implementation Plan
 
-## Task 1: Unsafe Only
+## Task 1: Unknown Only
 
 **Files:**
 
@@ -139,7 +137,7 @@ bun test packages/orchestrator/tests/planNormalizer.test.ts
 Run:
 
 \`\`\`bash
-npm run missing-script
+custom-tool verify runtime
 \`\`\`
 `,
       path: "/tmp/unsafe-only.md",

@@ -61,9 +61,13 @@ const knownPrefixes = [
   "cargo test",
   "npm test",
   "npm run test",
+  "npm run ",
   "pnpm test",
   "pnpm run test",
+  "pnpm run ",
   "yarn test",
+  "yarn run ",
+  "bun run ",
   "test ",
   "printf "
 ];
