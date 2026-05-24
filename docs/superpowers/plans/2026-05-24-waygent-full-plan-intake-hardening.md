@@ -29,6 +29,140 @@
   - `tests/integration/waygent-android-intake-trust.test.ts`
   - `packages/lens-projectors/tests/operatorDecision.test.ts`
 
+## Waygent Task Manifest
+
+The blocks below are the executable Waygent intake surface. The detailed
+Superpowers task sections that follow remain the implementation source of
+truth for exact test bodies, code snippets, and commit boundaries.
+
+```yaml waygent-task
+id: task_full_plan_fixture_tests
+title: Add full-plan fixture and extraction tests
+dependencies: []
+file_claims:
+  - path: packages/orchestrator/tests/fixtures/full_plan_intake_hardening.md
+    mode: owned
+  - path: packages/orchestrator/tests/planClaimExtraction.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun test packages/orchestrator/tests/planClaimExtraction.test.ts
+instructions:
+  - Implement the detailed Task 1 section below.
+  - Add the reduced FixThis-style full-plan fixture and failing extraction coverage first.
+  - Keep non-shell example fences out of executable command expectations.
+```
+
+```yaml waygent-task
+id: task_fence_scanner
+title: Replace fenced command regex with scanner
+dependencies: [task_full_plan_fixture_tests]
+file_claims:
+  - path: packages/orchestrator/src/planAdapters/planClaimExtraction.ts
+    mode: owned
+  - path: packages/orchestrator/tests/planClaimExtraction.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun test packages/orchestrator/tests/planClaimExtraction.test.ts
+instructions:
+  - Implement the detailed Task 2 section below.
+  - Replace regex-only fenced command extraction with a line scanner.
+  - Preserve fenced_commands compatibility while adding fenced_examples and command_candidates evidence.
+```
+
+```yaml waygent-task
+id: task_command_roles
+title: Add command roles for diagnostics and optional environment checks
+dependencies: [task_fence_scanner]
+file_claims:
+  - path: packages/orchestrator/src/planAdapters/verificationPolicy.ts
+    mode: owned
+  - path: packages/orchestrator/tests/verificationPolicy.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun test packages/orchestrator/tests/verificationPolicy.test.ts
+instructions:
+  - Implement the detailed Task 3 section below.
+  - Add role-aware classification for verification, implementation-only, diagnostics, optional environment probes, unsafe, and unknown commands.
+  - Keep unknown commands blocking by default.
+```
+
+```yaml waygent-task
+id: task_full_plan_recovery
+title: Prove full-plan recovery and integration dispatch
+dependencies: [task_command_roles]
+file_claims:
+  - path: packages/orchestrator/tests/intakeRecovery.test.ts
+    mode: owned
+  - path: tests/integration/waygent-android-intake-trust.test.ts
+    mode: owned
+  - path: packages/orchestrator/src/orchestrator.ts
+    mode: owned
+risk: high
+verify_isolation: isolated
+verify:
+  - bun test packages/orchestrator/tests/intakeRecovery.test.ts tests/integration/waygent-android-intake-trust.test.ts
+instructions:
+  - Implement the detailed Task 4 section below.
+  - Prove the full-plan fixture recovers without intake_decision_required.
+  - Add structured extraction evidence to the intake extract report.
+```
+
+```yaml waygent-task
+id: task_operator_extract_report
+title: Expose extract report in operator evidence
+dependencies: [task_full_plan_recovery]
+file_claims:
+  - path: packages/lens-projectors/src/operatorDecision.ts
+    mode: owned
+  - path: packages/lens-projectors/tests/operatorDecision.test.ts
+    mode: owned
+risk: medium
+verify:
+  - bun test packages/lens-projectors/tests/operatorDecision.test.ts
+instructions:
+  - Implement the detailed Task 5 section below.
+  - Include extract_report_ref in intake recovery artifact refs and evidence packet assertions.
+```
+
+```yaml waygent-task
+id: task_final_verification
+title: Run final verification for full-plan intake hardening
+dependencies: [task_operator_extract_report]
+file_claims:
+  - path: docs/superpowers/specs/2026-05-24-waygent-full-plan-intake-hardening-design.md
+    mode: read_only
+  - path: docs/superpowers/plans/2026-05-24-waygent-full-plan-intake-hardening.md
+    mode: read_only
+  - path: packages/orchestrator/tests/planClaimExtraction.test.ts
+    mode: read_only
+  - path: packages/orchestrator/tests/verificationPolicy.test.ts
+    mode: read_only
+  - path: packages/orchestrator/tests/intakeRecovery.test.ts
+    mode: read_only
+  - path: packages/orchestrator/tests/intakeRepairPlanner.test.ts
+    mode: read_only
+  - path: packages/orchestrator/tests/planNormalizer.test.ts
+    mode: read_only
+  - path: packages/orchestrator/tests/planPreflight.test.ts
+    mode: read_only
+  - path: packages/lens-projectors/tests/operatorDecision.test.ts
+    mode: read_only
+  - path: tests/integration/waygent-android-intake-trust.test.ts
+    mode: read_only
+risk: low
+verify_isolation: isolated
+verify:
+  - bun test packages/orchestrator/tests/planClaimExtraction.test.ts packages/orchestrator/tests/verificationPolicy.test.ts packages/orchestrator/tests/intakeRecovery.test.ts packages/orchestrator/tests/intakeRepairPlanner.test.ts packages/orchestrator/tests/planNormalizer.test.ts packages/orchestrator/tests/planPreflight.test.ts packages/lens-projectors/tests/operatorDecision.test.ts tests/integration/waygent-android-intake-trust.test.ts
+  - bun run typecheck
+  - git diff --check
+instructions:
+  - Implement the detailed Task 6 section below, except keep graphify update and git status as post-apply operator actions rather than Waygent verification commands.
+  - Confirm focused tests, typecheck, and diff hygiene pass.
+```
+
 ### Task 1: Add Full-Plan Fixture And Failing Extraction Tests
 
 **Files:**
