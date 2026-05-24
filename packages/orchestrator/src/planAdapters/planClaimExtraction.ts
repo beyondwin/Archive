@@ -16,6 +16,7 @@ export interface ExtractedFenceBlock {
   content: string;
   line_start: number;
   line_end: number;
+  source: "command" | "example";
 }
 
 export interface ExtractedCommandCandidate {
@@ -108,11 +109,11 @@ function extractFencedEvidence(
 } {
   const blocks = scanFencedBlocks(section, lineOffset);
   const commandCandidates = blocks
-    .filter((block) => isShellFence(block.language))
+    .filter((block) => block.source === "command")
     .flatMap((block) => extractCommandCandidates(block));
   return {
     fenced_commands: [...new Set(commandCandidates.map((candidate) => candidate.command))],
-    fenced_examples: blocks.filter((block) => !isShellFence(block.language)),
+    fenced_examples: blocks.filter((block) => block.source === "example"),
     command_candidates: commandCandidates
   };
 }
@@ -125,6 +126,7 @@ function scanFencedBlocks(section: string, lineOffset: number): ExtractedFenceBl
       fenceLength: number;
       language: string | null;
       openerLine: number;
+      source: "command" | "example";
       contentLines: string[];
     }
     | null = null;
@@ -139,7 +141,8 @@ function scanFencedBlocks(section: string, lineOffset: number): ExtractedFenceBl
           language: active.language,
           content: active.contentLines.join("\n"),
           line_start: active.openerLine,
-          line_end: sourceLine
+          line_end: sourceLine,
+          source: active.source
         });
         active = null;
         continue;
@@ -154,6 +157,7 @@ function scanFencedBlocks(section: string, lineOffset: number): ExtractedFenceBl
       fenceLength: opener.fenceLength,
       language: opener.language,
       openerLine: sourceLine,
+      source: fenceSource(lines, index, opener.language),
       contentLines: []
     };
   }
@@ -163,7 +167,8 @@ function scanFencedBlocks(section: string, lineOffset: number): ExtractedFenceBl
       language: active.language,
       content: active.contentLines.join("\n"),
       line_start: active.openerLine,
-      line_end: lineOffset + lines.length
+      line_end: lineOffset + lines.length,
+      source: active.source
     });
   }
 
@@ -235,6 +240,50 @@ function isShellFence(language: string | null): boolean {
   return language !== null && shellFenceLanguages.has(language);
 }
 
+function fenceSource(
+  lines: ReadonlyArray<string>,
+  openerIndex: number,
+  language: string | null
+): "command" | "example" {
+  if (!isShellFence(language)) return "example";
+  const previous = previousNonEmptyLine(lines, openerIndex);
+  const step = previousStepLine(lines, openerIndex);
+  if (isNonVerificationIntentLine(previous)) return "example";
+  if (step && isNonVerificationStepLine(step)) return "example";
+  return "command";
+}
+
+function previousNonEmptyLine(lines: ReadonlyArray<string>, beforeIndex: number): string {
+  for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    const line = (lines[index] ?? "").trim();
+    if (line) return line;
+  }
+  return "";
+}
+
+function previousStepLine(lines: ReadonlyArray<string>, beforeIndex: number): string {
+  for (let index = beforeIndex - 1; index >= 0; index -= 1) {
+    const line = (lines[index] ?? "").trim();
+    if (!line) continue;
+    if (/^#{2,6}\s+/.test(line) || /^\s*-\s+\[[ xX]\]\s+/.test(line)) return line;
+  }
+  return "";
+}
+
+function isVerificationIntentLine(line: string): boolean {
+  return /^(run|verify|verification|checks?|test|tests|final checks?|final verification):$/i.test(line.trim());
+}
+
+function isNonVerificationIntentLine(line: string): boolean {
+  const normalized = line.trim();
+  return /^(example|examples?|commit|checkpoint|optional|notes?):$/i.test(normalized) ||
+    (!isVerificationIntentLine(normalized) && /^(example|commit|checkpoint|optional)\b/i.test(normalized));
+}
+
+function isNonVerificationStepLine(line: string): boolean {
+  return /\b(commit|checkpoint|example|optional|when checkout exists|external smoke|graphify|refresh graphify|post-apply)\b/i.test(line);
+}
+
 function lineNumberAtIndex(text: string, index: number): number {
   return text.slice(0, index).split(/\r?\n/).length;
 }
@@ -248,8 +297,17 @@ function claimModeForVerb(verb: string): FileClaimMode {
 function inferClaimMode(body: string, path: string): FileClaimMode {
   const index = body.indexOf(path);
   const before = body.slice(Math.max(0, index - 80), index).toLowerCase();
-  if (/\b(read|inspect|review)\b/.test(before)) return "read_only";
-  if (/\b(append|add to)\b/.test(before)) return "shared_append";
+  const readIndex = Math.max(before.lastIndexOf("read"), before.lastIndexOf("inspect"), before.lastIndexOf("review"));
+  const appendIndex = Math.max(before.lastIndexOf("append"), before.lastIndexOf("add to"));
+  const writeIndex = Math.max(
+    before.lastIndexOf("update"),
+    before.lastIndexOf("modify"),
+    before.lastIndexOf("change"),
+    before.lastIndexOf("create"),
+    before.lastIndexOf("write")
+  );
+  if (appendIndex > readIndex && appendIndex > writeIndex) return "shared_append";
+  if (readIndex > writeIndex) return "read_only";
   return "owned";
 }
 

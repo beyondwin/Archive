@@ -78,19 +78,15 @@ describe("Superpowers plan claim extraction", () => {
 });
 
 describe("Superpowers full-plan fence extraction", () => {
-  test("extracts commands only from explicit shell fences", () => {
+  test("extracts commands only from verification-intent shell fences", () => {
     const extracted = extractSuperpowersPlan(fixture("full_plan_intake_hardening.md"));
 
     expect(extracted.tasks.map((task) => task.number)).toEqual([1, 2, 3]);
     expect(extracted.tasks[0]?.fenced_commands).toEqual([
-      "npm run source-matching:fixtures:test",
-      "git add package.json fixtures/source-matching/manifest.json scripts/source-matching-fixtures.mjs scripts/source-matching-fixtures-test.mjs",
-      'git commit -m "feat: split source matching fixture contracts"'
+      "npm run source-matching:fixtures:test"
     ]);
     expect(extracted.tasks[1]?.fenced_commands).toEqual([
-      './gradlew :fixthis-mcp:test --tests "*RuntimeTrustFixtureRunnerTest" --no-daemon',
-      "git add fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/fixture",
-      'git commit -m "feat: add runtime trust fixture runner"'
+      './gradlew :fixthis-mcp:test --tests "*RuntimeTrustFixtureRunnerTest" --no-daemon'
     ]);
     expect(extracted.tasks[2]?.fenced_commands).toEqual([
       "npm run source-matching:fixtures:test",
@@ -100,22 +96,22 @@ describe("Superpowers full-plan fence extraction", () => {
       "git diff --check",
       "graphify update .",
       "git status --short --branch",
-      "command -v adb || true",
-      "npm run source-matching:fixtures:runtime",
-      "npm run source-matching:fixtures:runtime -- --strict"
+      "command -v adb || true"
     ]);
   });
 
-  test("keeps non-shell fences as examples and out of command candidates", () => {
+  test("keeps non-verification fences as examples and out of command candidates", () => {
     const extracted = extractSuperpowersPlan(fixture("full_plan_intake_hardening.md"));
 
     expect(extracted.tasks[0]?.fenced_examples?.map((block) => block.language)).toEqual([
       "javascript",
-      "json"
+      "json",
+      "bash"
     ]);
     expect(extracted.tasks[1]?.fenced_examples?.map((block) => block.language)).toEqual([
       "kotlin",
-      "kotlin"
+      "kotlin",
+      "bash"
     ]);
     const commands = extracted.tasks.flatMap((task) => task.command_candidates ?? []).map((candidate) => candidate.command);
     expect(commands).not.toContain("- [ ] **Step 1: Write failing package and manifest tests**");
@@ -150,5 +146,55 @@ npm test \\
       line_start: 9,
       line_end: 10
     }]);
+  });
+
+  test("only treats verification-intent shell fences as command candidates", () => {
+    const extracted = extractSuperpowersPlan(`
+### Task 1: Curated Task Context
+
+**Files:**
+- Modify: \`README.md\`
+
+- [ ] **Step 1: Run verification**
+
+Run:
+
+\`\`\`bash
+bun test packages/orchestrator/tests/planClaimExtraction.test.ts
+\`\`\`
+
+- [ ] **Step 2: Commit checkpoint**
+
+\`\`\`bash
+git add README.md
+git commit -m "docs"
+\`\`\`
+
+- [ ] **Step 3: Optional external smoke when checkout exists**
+
+Run:
+
+\`\`\`bash
+bun -e 'console.log("external smoke")'
+\`\`\`
+
+Example:
+
+\`\`\`shell
+echo "illustrative only"
+\`\`\`
+`);
+
+    expect(extracted.tasks[0]?.fenced_commands).toEqual([
+      "bun test packages/orchestrator/tests/planClaimExtraction.test.ts"
+    ]);
+    expect(extracted.tasks[0]?.command_candidates?.map((candidate) => candidate.command)).toEqual([
+      "bun test packages/orchestrator/tests/planClaimExtraction.test.ts"
+    ]);
+    expect(extracted.tasks[0]?.fenced_examples?.map((block) => block.language)).toEqual([
+      "bash",
+      "bash",
+      "shell"
+    ]);
   });
 });

@@ -95,7 +95,7 @@ verify:
     expect(normalized.markdown).not.toContain("git add README.md");
   });
 
-  test("rejects superpowers tasks without explicit file claims", () => {
+  test("rejects superpowers tasks without recoverable file claims", () => {
     expect(() =>
       normalizeWaygentPlanInput({
         markdown: `
@@ -111,7 +111,7 @@ bun test packages/orchestrator/tests/planNormalizer.test.ts
 `,
         path: "/tmp/plan.md"
       })
-    ).toThrow(/cannot normalize superpowers implementation plan.*Task 1.*missing explicit file claims/s);
+    ).toThrow(/cannot normalize superpowers implementation plan.*Task 1.*missing recoverable file claims/s);
   });
 
   test("rejects superpowers tasks without safe verification commands", () => {
@@ -218,6 +218,100 @@ bun test packages/orchestrator/tests/planNormalizer.test.ts
     });
 
     expect(normalized.task_count).toBe(2);
+  });
+
+  test("normalizes tasks that provide recoverable prose file claims", () => {
+    const normalized = normalizeWaygentPlanInput({
+      markdown: `
+# Demo Implementation Plan
+
+## Task 1: Update Referenced Docs
+
+Inspect \`README.md\` and update \`docs/runtime.md\`.
+
+Run:
+
+\`\`\`bash
+git diff --check -- docs/runtime.md
+\`\`\`
+`,
+      path: "/tmp/prose-claims.md"
+    });
+    const parsed = parseWaygentPlan(normalized.markdown);
+
+    expect(normalized.mode).toBe("superpowers");
+    expect(parsed.tasks[0]).toMatchObject({
+      id: "task_1_update_referenced_docs",
+      file_claims: [
+        { path: "README.md", mode: "read_only" },
+        { path: "docs/runtime.md", mode: "owned" }
+      ],
+      verification_commands: ["git diff --check -- docs/runtime.md"]
+    });
+  });
+
+  test("tolerates generator commands mixed into superpowers verification fences", () => {
+    const normalized = normalizeWaygentPlanInput({
+      markdown: `
+# Console Implementation Plan
+
+## Task 1: Implement Console Bundle Change
+
+**Files:**
+
+- Modify: \`fixthis-mcp/src/main/console/preview.js\`
+- Modify: \`fixthis-mcp/src/main/resources/console/app.js\`
+
+Run:
+
+\`\`\`bash
+node --test scripts/studioReliabilityContract-test.mjs
+FIXTHIS_BUNDLE_REPRODUCIBLE=1 node scripts/build-console-assets.mjs
+\`\`\`
+`,
+      path: "/tmp/console-plan.md"
+    });
+    const parsed = parseWaygentPlan(normalized.markdown);
+
+    expect(parsed.tasks[0]?.verification_commands).toEqual([
+      "node --test scripts/studioReliabilityContract-test.mjs"
+    ]);
+    expect(parsed.tasks[0]?.instructions.join("\n")).toContain(
+      "FIXTHIS_BUNDLE_REPRODUCIBLE=1 node scripts/build-console-assets.mjs"
+    );
+    expect(normalized.diagnostics.join("\n")).toContain("ignored non-verification command");
+  });
+
+  test("normalizes claimless final verification as a read-only workspace task", () => {
+    const normalized = normalizeWaygentPlanInput({
+      markdown: `
+# Console Implementation Plan
+
+## Task 1: Final Verification
+
+**Files:**
+- No source edits unless verification exposes failures.
+
+Run:
+
+\`\`\`bash
+node --test scripts/studioReliabilityContract-test.mjs
+FIXTHIS_BUNDLE_REPRODUCIBLE=1 node scripts/build-console-assets.mjs
+git diff --check
+\`\`\`
+`,
+      path: "/tmp/final-verification.md"
+    });
+    const parsed = parseWaygentPlan(normalized.markdown);
+
+    expect(parsed.tasks[0]).toMatchObject({
+      id: "task_1_final_verification",
+      file_claims: [{ path: ".", mode: "read_only" }],
+      verification_commands: [
+        "node --test scripts/studioReliabilityContract-test.mjs",
+        "git diff --check"
+      ]
+    });
   });
 
   test("ignores ## Task N: headings that live inside fenced code blocks", () => {

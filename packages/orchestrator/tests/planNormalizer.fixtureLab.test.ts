@@ -123,11 +123,11 @@ bun test packages/orchestrator/tests/planNormalizer.test.ts
     ).toBe(true);
   });
 
-  test("catalog extends safe verification allowlist", () => {
+  test("package manager run commands remain usable without a catalog", () => {
     const planUsingCatalog = `
 # Catalog plan
 
-## Task 1: Use a catalog command for verification
+## Task 1: Use a package command for verification
 
 **Files:**
 
@@ -140,24 +140,22 @@ bun run scenarios
 \`\`\`
 `;
 
-    // Without workspace/catalog: "bun run scenarios" is not in SAFE_COMMAND_STARTS
-    // (only specific bun run subcommands are). Strict mode rejects.
-    expect(() =>
-      normalizeWaygentPlanInput({
-        markdown: planUsingCatalog,
-        path: "/tmp/catalog.md"
-      })
-    ).toThrow(/missing safe verification commands/);
+    const withoutCatalog = normalizeWaygentPlanInput({
+      markdown: planUsingCatalog,
+      path: "/tmp/catalog.md"
+    });
+    expect(parseWaygentPlan(withoutCatalog.markdown).tasks[0]?.verification_commands).toEqual([
+      "bun run scenarios"
+    ]);
 
-    // With workspace whose package.json declares a "scenarios" script,
-    // catalog accepts "bun run scenarios" as safe verification.
-    const normalized = normalizeWaygentPlanInput({
+    const withCatalog = normalizeWaygentPlanInput({
       markdown: planUsingCatalog,
       path: "/tmp/catalog.md",
       workspace
     });
 
-    const parsed = parseWaygentPlan(normalized.markdown);
+    const parsed = parseWaygentPlan(withCatalog.markdown);
     expect(parsed.tasks[0]?.verification_commands).toEqual(["bun run scenarios"]);
+    expect(withCatalog.diagnostics.some((d) => d.startsWith("project script catalog applied"))).toBe(true);
   });
 });

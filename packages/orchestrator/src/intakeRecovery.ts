@@ -69,7 +69,7 @@ export function recoverWaygentPlanInput(input: RecoverWaygentPlanInput): Recover
         started_at: startedAt,
         completed_at: new Date().toISOString(),
         normalized_plan_ref: status === "recovered" ? "artifacts/intake/normalized-plan.md" : null,
-        recovery_report_ref: null,
+        recovery_report_ref: status === "recovered" ? "artifacts/intake/recovery-report.json" : null,
         findings: [],
         repair_actions: [],
         can_start: true,

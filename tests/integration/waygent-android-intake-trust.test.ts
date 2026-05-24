@@ -181,10 +181,12 @@ git diff --check
     expect(extractReport.tasks[0]?.fenced_examples?.map((block) => block.language)).toEqual([
       "javascript",
       "json",
+      "bash",
     ]);
     expect(extractReport.tasks[1]?.fenced_examples?.map((block) => block.language)).toEqual([
       "kotlin",
       "kotlin",
+      "bash",
     ]);
 
     const candidates = extractReport.tasks.flatMap((task) => task.command_candidates ?? []);

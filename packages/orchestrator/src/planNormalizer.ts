@@ -76,18 +76,22 @@ export function normalizeWaygentPlanInput(input: NormalizeWaygentPlanInput): Nor
   const tasks: NormalizedTaskInput[] = [];
 
   for (const section of extracted.tasks) {
-    const fileClaims = section.explicit_file_claims;
     const classifications = section.fenced_commands.map((command) =>
       classifyVerificationCommand({ command, workspace, catalog })
     );
     for (const classification of classifications) {
       if (classification.status !== "unsafe") continue;
       const unsafeSegment = classification.segments.find((segment) => segment.status === "unsafe")?.command ?? classification.command;
-      errors.push(`Task ${section.number} "${section.title}" has unsafe verification command: ${unsafeSegment}`);
+      if (blocksSuperpowersNormalization(classification)) {
+        errors.push(`Task ${section.number} "${section.title}" has unsafe verification command: ${unsafeSegment}`);
+      } else {
+        diagnostics.push(`Task ${section.number} "${section.title}" ignored non-verification command: ${unsafeSegment}`);
+      }
     }
     const verify = safeVerificationCommands(section.fenced_commands, workspace, catalog);
+    const fileClaims = fileClaimsFor(section, verify);
     if (fileClaims.length === 0) {
-      const message = `Task ${section.number} "${section.title}" is missing explicit file claims`;
+      const message = `Task ${section.number} "${section.title}" is missing recoverable file claims`;
       (unsafeVerification ? diagnostics : errors).push(message);
     }
     if (verify.length === 0) {
@@ -179,8 +183,32 @@ export function isNormalizableSuperpowersPlan(markdown: string, workspace?: stri
   const ws = workspace ?? "";
   return extracted.tasks.some(
     (task: ExtractedPlanTask) =>
-      task.explicit_file_claims.length > 0 &&
-      safeVerificationCommands(task.fenced_commands, ws, catalog).length > 0
+      safeVerificationCommands(task.fenced_commands, ws, catalog).length > 0 &&
+      fileClaimsFor(task, safeVerificationCommands(task.fenced_commands, ws, catalog)).length > 0
+  );
+}
+
+function fileClaimsFor(section: ExtractedPlanTask, verify: ReadonlyArray<string> = []): FileClaim[] {
+  if (section.explicit_file_claims.length > 0) return section.explicit_file_claims;
+  if (section.prose_file_claims.length > 0) return section.prose_file_claims;
+  if (isClaimlessVerificationTask(section, verify)) return [{ path: ".", mode: "read_only" }];
+  return [];
+}
+
+function isClaimlessVerificationTask(section: ExtractedPlanTask, verify: ReadonlyArray<string>): boolean {
+  if (verify.length === 0) return false;
+  if (/^(final\s+)?verification$/i.test(section.title.trim())) return true;
+  return /\bno source edits\b/i.test(section.body);
+}
+
+function blocksSuperpowersNormalization(
+  classification: ReturnType<typeof classifyVerificationCommand>
+): boolean {
+  return classification.segments.some((segment) =>
+    segment.reason === "destructive" ||
+    segment.reason === "workspace_escape" ||
+    /[|;`]/.test(segment.command) ||
+    /\s[12]?>/.test(segment.command)
   );
 }
 
