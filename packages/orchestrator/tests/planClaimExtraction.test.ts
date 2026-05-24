@@ -1,5 +1,11 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { extractSuperpowersPlan } from "../src/planAdapters/planClaimExtraction";
+
+function fixture(name: string): string {
+  return readFileSync(join(import.meta.dir, "fixtures", name), "utf8");
+}
 
 const androidPlan = `
 # Android Intake Plan
@@ -68,5 +74,81 @@ describe("Superpowers plan claim extraction", () => {
       { path: "fixthis-compose-core/src/main/kotlin/io/github/beyondwin/fixthis/compose/core/source/SourceIndex.kt", mode: "read_only" },
       { path: "docs/reference/source-matching.md", mode: "owned" }
     ]);
+  });
+});
+
+describe("Superpowers full-plan fence extraction", () => {
+  test("extracts commands only from explicit shell fences", () => {
+    const extracted = extractSuperpowersPlan(fixture("full_plan_intake_hardening.md"));
+
+    expect(extracted.tasks.map((task) => task.number)).toEqual([1, 2, 3]);
+    expect(extracted.tasks[0]?.fenced_commands).toEqual([
+      "npm run source-matching:fixtures:test",
+      "git add package.json fixtures/source-matching/manifest.json scripts/source-matching-fixtures.mjs scripts/source-matching-fixtures-test.mjs",
+      'git commit -m "feat: split source matching fixture contracts"'
+    ]);
+    expect(extracted.tasks[1]?.fenced_commands).toEqual([
+      './gradlew :fixthis-mcp:test --tests "*RuntimeTrustFixtureRunnerTest" --no-daemon',
+      "git add fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/fixture",
+      'git commit -m "feat: add runtime trust fixture runner"'
+    ]);
+    expect(extracted.tasks[2]?.fenced_commands).toEqual([
+      "npm run source-matching:fixtures:test",
+      './gradlew :fixthis-compose-core:test --tests "*SourceMatcherTest" --tests "*TargetReliabilityCalculatorTest" --no-daemon',
+      './gradlew :fixthis-mcp:test --tests "*TargetEvidenceServiceTest" --tests "*RuntimeTrustFixtureRunnerTest" --no-daemon',
+      "./gradlew spotlessCheck --no-daemon",
+      "git diff --check",
+      "graphify update .",
+      "git status --short --branch",
+      "command -v adb || true",
+      "npm run source-matching:fixtures:runtime",
+      "npm run source-matching:fixtures:runtime -- --strict"
+    ]);
+  });
+
+  test("keeps non-shell fences as examples and out of command candidates", () => {
+    const extracted = extractSuperpowersPlan(fixture("full_plan_intake_hardening.md"));
+
+    expect(extracted.tasks[0]?.fenced_examples?.map((block) => block.language)).toEqual([
+      "javascript",
+      "json"
+    ]);
+    expect(extracted.tasks[1]?.fenced_examples?.map((block) => block.language)).toEqual([
+      "kotlin",
+      "kotlin"
+    ]);
+    const commands = extracted.tasks.flatMap((task) => task.command_candidates ?? []).map((candidate) => candidate.command);
+    expect(commands).not.toContain("- [ ] **Step 1: Write failing package and manifest tests**");
+    expect(commands).not.toContain("Run:");
+    expect(commands).not.toContain("Expected: PASS after the runner tests are implemented.");
+    expect(commands.some((command) => command.includes("RuntimeTrustFixtureInput("))).toBe(false);
+  });
+
+  test("records command candidate source lines from shell fences", () => {
+    const extracted = extractSuperpowersPlan(`
+### Task 1: Line Evidence
+
+\`\`\`text
+Run:
+\`\`\`
+
+\`\`\`zsh
+npm test \\
+  -- --runInBand
+\`\`\`
+`);
+
+    expect(extracted.tasks[0]?.fenced_examples?.[0]).toMatchObject({
+      language: "text",
+      line_start: 4,
+      line_end: 6
+    });
+    expect(extracted.tasks[0]?.command_candidates).toEqual([{
+      command: "npm test -- --runInBand",
+      source: "shell_fence",
+      language: "zsh",
+      line_start: 9,
+      line_end: 10
+    }]);
   });
 });

@@ -5,10 +5,10 @@ import { appendEvent, readEvents, readLatestRunId, runPaths, sha256, writeArtifa
 import {
   projectApplyReadinessFromState,
   projectExecutionExplanationFromState,
+  projectFailureBarrierFromState,
   projectFailureSummary,
   projectOperationalMaturityFromState,
   projectOperatorDecisionFromState,
-  projectFailureBarrierFromState,
   projectRunReadModel
 } from "@waygent/lens-projectors";
 import { readRunStateV2Result, writeRunStateV2, type RunStateV2ReadResult, type WaygentRunStateV2 } from "./runState";
@@ -17,12 +17,15 @@ import { nextRunEvent } from "./runEvents";
 import { applyVerifiedCheckpoint } from "./applyEngine";
 import type { PostApplyVerificationSummary } from "./applyEngine";
 import { resolveCheckpointPatch, resolveRunArtifactPath, validateCheckpointManifest } from "./checkpointArtifacts";
-import { hasApplyReadyCheckpoint } from "./completionAudit";
+import { buildCompletionAudit, hasApplyReadyCheckpoint } from "./completionAudit";
 import { selectResumeAction } from "./recoveryExecutor";
 import { validateMethodEvidenceForApply } from "./evidencePolicy";
 import { deleteResolvedOrphan, scanOrphanRuns } from "./orphanRuns";
 import { runVerificationCommands } from "./verification";
 import { watchRun, type WatchRunOptions } from "./watchRun";
+import { reconcileRunState } from "./stateReconciliation";
+import { taskIsReadOnlyOnly, taskRequiresCheckpoint } from "./taskCheckpointPolicy";
+import { evaluateTerminalCompletionInvariant } from "./terminalInvariant";
 
 export interface RunCommandOptions {
   root: string;
@@ -275,7 +278,7 @@ function stringArray(value: unknown): string[] {
 
 function nextVerificationFailureClass(task: WaygentRunStateV2["tasks"][string], status: "passed" | "failed"): FailureClass | string | null {
   if (status === "failed") return task.latest_failure_class;
-  const needsCheckpoint = task.file_claims.some((claim) => claim.mode !== "read_only") && task.checkpoint_refs.length === 0;
+  const needsCheckpoint = taskRequiresCheckpoint(task) && task.checkpoint_refs.length === 0;
   return needsCheckpoint ? "missing_checkpoint" : null;
 }
 
@@ -392,58 +395,165 @@ export async function verifyRun(options: RunCommandOptions & { task?: string }):
     };
   });
   const verificationRefs = verificationRecords.map((record) => String(record.kernel_result_ref));
-  const nextFailureClass = nextVerificationFailureClass(task, verification.status);
-  const nextTaskStatus = verification.status === "passed" && nextFailureClass === null ? "verified" : "blocked";
+  const readOnlyWorktreeFailure = verification.status === "passed" ? readOnlyWorktreeFailureClass(task, worktree.path) : null;
+  const nextFailureClass = readOnlyWorktreeFailure ?? nextVerificationFailureClass(task, verification.status);
+  const effectiveStatus = verification.status === "passed" && nextFailureClass !== null ? "failed" : verification.status;
+  const failureSummary = readOnlyWorktreeFailure
+    ? "read-only verification worktree has uncheckpointed changes"
+    : verification.failure_summary;
+  const nextTaskStatus = effectiveStatus === "passed" && nextFailureClass === null ? "verified" : "blocked";
   const nextTasks: WaygentRunStateV2["tasks"] = {
     ...state.tasks,
     [task.id]: {
       ...task,
       status: nextTaskStatus,
-      latest_failure_class: verification.status === "passed" ? nextFailureClass : verification.failure_class,
+      latest_failure_class: effectiveStatus === "passed" ? nextFailureClass : nextFailureClass ?? verification.failure_class,
       timing: { ...task.timing, verification_rerun_at: verifiedAt }
     }
   };
   const allTasksVerified = Object.values(nextTasks).every((item) => item.status === "verified");
-  const nextState: WaygentRunStateV2 = {
+  const nextStateBase: WaygentRunStateV2 = {
     ...state,
     tasks: nextTasks,
     verification: [...state.verification, ...verificationRecords],
-    status: allTasksVerified ? "completed" : "blocked",
-    lifecycle_outcome: allTasksVerified ? "finished" : "blocked",
+    status: allTasksVerified ? "running" : "blocked",
+    lifecycle_outcome: allTasksVerified ? null : "blocked",
     current_phase: allTasksVerified ? "complete" : "recover",
     timestamps: {
       ...state.timestamps,
       updated_at: verifiedAt,
-      completed_at: allTasksVerified ? state.timestamps.completed_at ?? verifiedAt : state.timestamps.completed_at
+      completed_at: allTasksVerified ? state.timestamps.completed_at : state.timestamps.completed_at
     }
   };
+  let nextState: WaygentRunStateV2 = {
+    ...nextStateBase,
+    completion_audit: refreshedCompletionAudit(nextStateBase, commands)
+  };
   writeRunStateV2(options.root, nextState);
+  if (allTasksVerified) {
+    const reconciliation = reconcileRunState(options.root, runId);
+    const reconciled = readRunStateV2Result(options.root, runId);
+    if (reconciled.status === "ok") {
+      const refreshed = refreshedCompletionAudit(reconciled.state, commands);
+      const completionAudit = finalizeCompletionAudit(reconciled.state, refreshed, reconciliation);
+      const terminalPassed = completionAuditStatus(completionAudit) === "passed";
+      nextState = {
+        ...reconciled.state,
+        completion_audit: completionAudit,
+        status: terminalPassed ? "completed" : "blocked",
+        lifecycle_outcome: terminalPassed ? "finished" : "blocked",
+        current_phase: terminalPassed ? "complete" : "recover",
+        timestamps: {
+          ...reconciled.state.timestamps,
+          updated_at: verifiedAt,
+          completed_at: terminalPassed ? reconciled.state.timestamps.completed_at ?? verifiedAt : reconciled.state.timestamps.completed_at
+        }
+      };
+      writeRunStateV2(options.root, nextState);
+    }
+  }
   appendEvent(paths.events, nextRunEvent(paths.events, {
     run_id: runId,
     event_type: "runway.verification_result",
     phase: "verify",
-    outcome: verification.status === "passed" ? "success" : "failed",
-    summary: verification.status === "passed" ? "Verification rerun passed." : "Verification rerun failed.",
+    outcome: effectiveStatus === "passed" ? "success" : "failed",
+    summary: effectiveStatus === "passed" ? "Verification rerun passed." : "Verification rerun failed.",
     payload: {
       task_id: task.id,
       rerun: true,
       commands: commands.length,
       verification_refs: verificationRefs,
-      failure_class: verification.failure_class,
-      failure_summary: verification.failure_summary
+      failure_class: nextFailureClass ?? verification.failure_class,
+      failure_summary: failureSummary
     },
-    trust_impact: verification.status === "passed" ? "supports_success" : "supports_failure"
+    trust_impact: effectiveStatus === "passed" ? "supports_success" : "supports_failure"
   }));
   return {
     command: "verify",
     run_id: runId,
     task_id: task.id,
-    status: verification.status,
+    status: effectiveStatus,
     verification_refs: verificationRefs,
     total_results: verification.results.length,
-    failure_class: verification.failure_class,
-    failure_summary: verification.failure_summary
+    failure_class: nextFailureClass ?? verification.failure_class,
+    failure_summary: failureSummary
   };
+}
+
+function readOnlyWorktreeFailureClass(task: WaygentRunStateV2["tasks"][string], cwd: string): FailureClass | null {
+  if (!taskIsReadOnlyOnly(task)) return null;
+  const status = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"]
+  });
+  if (status.status !== 0 || status.stdout.trim().length > 0) return "state_drift";
+  return null;
+}
+
+function refreshedCompletionAudit(state: WaygentRunStateV2, fallbackRequiredChecks: string[]): WaygentRunStateV2["completion_audit"] {
+  const previous = state.completion_audit as {
+    required_checks?: unknown;
+    review_evidence?: unknown;
+    combined_apply_evidence?: unknown;
+    prompt_to_artifact_checklist?: unknown;
+  } | null;
+  if (!previous) return state.completion_audit;
+  const auditInput: Parameters<typeof buildCompletionAudit>[0] = {
+    state,
+    required_checks: stringArray(previous.required_checks).length > 0
+      ? stringArray(previous.required_checks)
+      : fallbackRequiredChecks,
+    verification_evidence: state.verification as Array<Record<string, unknown>>,
+    review_evidence: recordArray(previous.review_evidence),
+    prompt_to_artifact_checklist: stringArray(previous.prompt_to_artifact_checklist)
+  };
+  if (previous.combined_apply_evidence) {
+    auditInput.combined_apply_evidence = previous.combined_apply_evidence as NonNullable<Parameters<typeof buildCompletionAudit>[0]["combined_apply_evidence"]>;
+  }
+  return buildCompletionAudit(auditInput);
+}
+
+function finalizeCompletionAudit(
+  state: WaygentRunStateV2,
+  audit: WaygentRunStateV2["completion_audit"],
+  reconciliation: { passed: boolean; records: unknown[]; unrepaired_blockers: unknown[] }
+): WaygentRunStateV2["completion_audit"] {
+  if (!audit) return audit;
+  const auditResidualRisk = Array.isArray((audit as { residual_risk?: unknown }).residual_risk)
+    ? (audit as { residual_risk: unknown[] }).residual_risk.map(String)
+    : ["completion_audit:missing_residual_risk"];
+  const reconciliationResidualRisk = reconciliation.passed ? [] : ["state_reconciliation:blocking"];
+  const withReconciliation = {
+    ...audit,
+    state_reconciliation: reconciliation,
+    status: audit.status === "passed" && reconciliation.passed ? "passed" : "failed",
+    residual_risk: [...new Set([...auditResidualRisk, ...reconciliationResidualRisk])]
+  };
+  const terminalState = { ...state, completion_audit: withReconciliation };
+  const terminalInvariant = evaluateTerminalCompletionInvariant(terminalState);
+  const terminalResidualRisk = terminalInvariant.blockers.map((blocker) => `terminal_invariant:${blocker.code}`);
+  const residualRisk = Array.isArray(withReconciliation.residual_risk)
+    ? withReconciliation.residual_risk.map(String)
+    : [];
+  return {
+    ...withReconciliation,
+    terminal_invariant: terminalInvariant,
+    status: terminalInvariant.passed ? "passed" : "failed",
+    residual_risk: terminalInvariant.passed ? [] : [...new Set([...residualRisk, ...terminalResidualRisk])]
+  };
+}
+
+function completionAuditStatus(audit: WaygentRunStateV2["completion_audit"]): string | null {
+  if (!audit || typeof audit !== "object" || Array.isArray(audit)) return null;
+  const status = (audit as { status?: unknown }).status;
+  return typeof status === "string" ? status : null;
+}
+
+function recordArray(value: unknown): Array<Record<string, unknown>> {
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null && !Array.isArray(item))
+    : [];
 }
 
 export async function applyRun(options: RunCommandOptions & { workspace: string; require_method_evidence?: boolean }): Promise<{

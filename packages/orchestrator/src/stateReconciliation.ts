@@ -3,6 +3,7 @@ import type { FailureClass } from "@waygent/contracts";
 import { readEvents, sha256 } from "@waygent/lens-store";
 import { readCheckpointManifest, resolveRunArtifactPath, validateCheckpointManifest } from "./checkpointArtifacts";
 import { readRunStateV2, writeRunStateV2 } from "./runState";
+import { taskRequiresCheckpoint } from "./taskCheckpointPolicy";
 import { evaluateTerminalCompletionInvariant } from "./terminalInvariant";
 
 export interface ReconciliationRecord {
@@ -47,7 +48,7 @@ export function reconcileRunState(root: string, runId: string): ReconciliationRe
     if (task.status === "verified" && !task.unit_manifest) {
       records.push(drift(`${task.id} missing unit manifest`, undefined, task.id));
     }
-    if (task.status === "verified" && task.checkpoint_refs.length === 0) {
+    if (task.status === "verified" && taskRequiresCheckpoint(task) && task.checkpoint_refs.length === 0) {
       records.push(missing(`${task.id} has no checkpoint manifest`, undefined, task.id));
     }
     for (const checkpointRef of task.checkpoint_refs) {

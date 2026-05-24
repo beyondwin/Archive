@@ -8,6 +8,7 @@ import {
   validateCheckpointManifest
 } from "./checkpointArtifacts";
 import { reviewEvidenceMissing } from "./reviewEvidence";
+import { taskRequiresCheckpoint } from "./taskCheckpointPolicy";
 
 export interface CompletionAuditInput {
   state: WaygentRunStateV2;
@@ -22,6 +23,9 @@ export function buildCompletionAudit(input: CompletionAuditInput): Record<string
   const taskResults: Array<Record<string, unknown> & { task_id: string; ok: boolean; reason?: string }> = Object.values(input.state.tasks).map((task) => {
     if (task.status !== "verified") {
       return { task_id: task.id, ok: false, reason: `task_${task.status}` };
+    }
+    if (!taskRequiresCheckpoint(task)) {
+      return { task_id: task.id, ok: true, reason: "read_only_no_checkpoint_required" };
     }
     if (task.checkpoint_refs.length === 0) {
       return { task_id: task.id, ok: false, reason: "missing_checkpoint" };
@@ -96,6 +100,7 @@ export function hasApplyReadyCheckpoint(state: WaygentRunStateV2): boolean {
   if (typeof evidence.patch_byte_length === "number" && patch.byteLength !== evidence.patch_byte_length) return false;
   return Object.values(state.tasks)
     .filter((task) => task.status === "verified")
+    .filter(taskRequiresCheckpoint)
     .every((task) =>
       task.checkpoint_refs.some((ref) => {
         if (!validateCheckpointManifest(state.run_root, ref).ok) return false;

@@ -33,6 +33,7 @@ import type { ParsedWaygentTask } from "./planParser";
 import type { RunEventInput } from "./runEvents";
 import { prepareVerificationEnvironment, type VerificationEnvironmentEvidence } from "./verificationEnvironment";
 import { debugArtifactDenials, evaluateFinalOutputHooks, evaluatePreDispatchHooks, type HookDenial } from "./runtimeHooks";
+import { taskRequiresCheckpoint } from "./taskCheckpointPolicy";
 import { runVerificationCommands, type VerificationRunOutput } from "./verification";
 import { prepareManagedTaskWorktree } from "./worktreeManager";
 
@@ -554,7 +555,7 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
       } else {
         latestFailureClass = dryRun.failure_class ?? "unsafe_apply";
       }
-    } else if (scopeValidation.ok && debugDenials.length === 0) {
+    } else if (scopeValidation.ok && debugDenials.length === 0 && taskRequiresCheckpoint(input.task)) {
       latestFailureClass = "missing_checkpoint";
     }
   }

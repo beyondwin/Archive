@@ -4,6 +4,14 @@ import { isCommandInCatalog, type ProjectScriptCatalog } from "./projectScriptCa
 
 export type VerificationClassificationStatus = "safe" | "unsafe" | "ignored";
 
+export type VerificationCommandRole =
+  | "verification"
+  | "implementation_only"
+  | "diagnostic_readonly"
+  | "optional_environment"
+  | "unsafe"
+  | "unknown";
+
 export type VerificationClassificationReason =
   | "gradle_wrapper"
   | "gradle"
@@ -11,6 +19,8 @@ export type VerificationClassificationReason =
   | "package_script"
   | "known_runner"
   | "implementation_only"
+  | "diagnostic_readonly"
+  | "optional_environment"
   | "git_diff_check"
   | "destructive"
   | "workspace_escape"
@@ -20,6 +30,7 @@ export interface VerificationCommandSegment {
   command: string;
   status: VerificationClassificationStatus;
   reason: VerificationClassificationReason;
+  role: VerificationCommandRole;
 }
 
 export interface VerificationPolicyInput {
@@ -32,6 +43,7 @@ export interface VerificationClassification {
   command: string;
   status: VerificationClassificationStatus;
   reason: VerificationClassificationReason;
+  role: VerificationCommandRole;
   segments: VerificationCommandSegment[];
 }
 
@@ -60,25 +72,57 @@ export function classifyVerificationCommand(input: VerificationPolicyInput): Ver
   const segments = commandSegments(input.command).map((segment, index) =>
     classifySegment(segment, index, input.workspace, input.catalog)
   );
-  const unsafe = segments.find((segment) => segment.status === "unsafe");
-  if (unsafe) {
-    return { command: input.command, status: "unsafe", reason: unsafe.reason, segments };
+  const blocking = segments.find((segment) => segment.role === "unsafe" || segment.role === "unknown");
+  if (blocking) {
+    return { command: input.command, status: "unsafe", reason: blocking.reason, role: blocking.role, segments };
   }
-  const safe = [...segments].reverse().find((segment) => segment.status === "safe");
-  const safeVerification = [...segments]
+
+  const verification = [...segments].reverse().find((segment) => segment.role === "verification");
+  const executableVerification = [...segments]
     .reverse()
-    .find((segment) => segment.status === "safe" && !isWorkspaceChangeSegment(segment.command));
-  const implementationOnly = segments.find((segment) => segment.reason === "implementation_only");
-  if (safeVerification && implementationOnly) {
-    return { command: input.command, status: "unsafe", reason: "implementation_only", segments };
+    .find((segment) => segment.role === "verification" && !isWorkspaceChangeSegment(segment.command));
+  const implementationOnly = segments.find((segment) => segment.role === "implementation_only");
+  if (executableVerification && implementationOnly) {
+    return { command: input.command, status: "unsafe", reason: "implementation_only", role: "unsafe", segments };
   }
+
   if (implementationOnly) {
-    return { command: input.command, status: "ignored", reason: "implementation_only", segments };
+    return {
+      command: input.command,
+      status: "ignored",
+      reason: "implementation_only",
+      role: "implementation_only",
+      segments
+    };
   }
+
+  const optionalEnvironment = segments.find((segment) => segment.role === "optional_environment");
+  if (optionalEnvironment) {
+    return {
+      command: input.command,
+      status: "ignored",
+      reason: "optional_environment",
+      role: "optional_environment",
+      segments
+    };
+  }
+
+  const diagnostic = segments.find((segment) => segment.role === "diagnostic_readonly");
+  if (diagnostic) {
+    return {
+      command: input.command,
+      status: "ignored",
+      reason: "diagnostic_readonly",
+      role: "diagnostic_readonly",
+      segments
+    };
+  }
+
   return {
     command: input.command,
-    status: safe ? "safe" : "ignored",
-    reason: safe?.reason ?? "unknown",
+    status: executableVerification ? "safe" : "ignored",
+    reason: executableVerification?.reason ?? verification?.reason ?? "unknown",
+    role: executableVerification ? "verification" : verification ? "verification" : "unknown",
     segments
   };
 }
@@ -87,38 +131,74 @@ export function isSafeVerificationCommand(input: VerificationPolicyInput): boole
   return classifyVerificationCommand(input).status === "safe";
 }
 
+function segment(
+  command: string,
+  status: VerificationClassificationStatus,
+  reason: VerificationClassificationReason,
+  role: VerificationCommandRole
+): VerificationCommandSegment {
+  return { command, status, reason, role };
+}
+
+function verification(command: string, reason: VerificationClassificationReason): VerificationCommandSegment {
+  return segment(command, "safe", reason, "verification");
+}
+
+function ignored(
+  command: string,
+  reason: VerificationClassificationReason,
+  role: VerificationCommandRole
+): VerificationCommandSegment {
+  return segment(command, "ignored", reason, role);
+}
+
+function blocked(
+  command: string,
+  reason: VerificationClassificationReason,
+  role: VerificationCommandRole = "unsafe"
+): VerificationCommandSegment {
+  return segment(command, "unsafe", reason, role);
+}
+
 function classifySegment(
-  segment: string,
+  rawSegment: string,
   index: number,
   workspace: string,
   catalog: ProjectScriptCatalog | null
 ): VerificationCommandSegment {
-  if (!segment) return { command: segment, status: "ignored", reason: "unknown" };
-  if (destructivePattern.test(segment)) return { command: segment, status: "unsafe", reason: "destructive" };
-  if (/[|;`]/.test(segment) || /\s[12]?>/.test(segment)) {
-    return { command: segment, status: "unsafe", reason: "unknown" };
+  const segmentText = rawSegment.trim();
+  if (!segmentText) return ignored(segmentText, "unknown", "unknown");
+  if (isOptionalEnvironmentCommand(segmentText)) {
+    return ignored(segmentText, "optional_environment", "optional_environment");
   }
-  if (segment.startsWith("cd ")) {
-    if (index !== 0 || !cdStaysInsideWorkspace(segment, workspace)) {
-      return { command: segment, status: "unsafe", reason: "workspace_escape" };
+  if (destructivePattern.test(segmentText)) return blocked(segmentText, "destructive");
+  if (/[|;`]/.test(segmentText) || /\s[12]?>/.test(segmentText)) {
+    return blocked(segmentText, "unknown", "unknown");
+  }
+  if (segmentText.startsWith("cd ")) {
+    if (index !== 0 || !cdStaysInsideWorkspace(segmentText, workspace)) {
+      return blocked(segmentText, "workspace_escape");
     }
-    return { command: segment, status: "safe", reason: "known_runner" };
+    return verification(segmentText, "known_runner");
   }
-  if (isImplementationOnlyCommand(segment)) {
-    return { command: segment, status: "ignored", reason: "implementation_only" };
+  if (isImplementationOnlyCommand(segmentText)) {
+    return ignored(segmentText, "implementation_only", "implementation_only");
   }
-  if (segment.startsWith("./gradlew ")) return { command: segment, status: "safe", reason: "gradle_wrapper" };
-  if (segment === "./gradlew") return { command: segment, status: "safe", reason: "gradle_wrapper" };
-  if (segment.startsWith("gradle ")) return { command: segment, status: "safe", reason: "gradle" };
-  if (segment.startsWith("node --test")) return { command: segment, status: "safe", reason: "node_test" };
-  if (segment.startsWith("git diff --check")) return { command: segment, status: "safe", reason: "git_diff_check" };
-  if (catalog && isCommandInCatalog(segment, catalog)) {
-    return { command: segment, status: "safe", reason: "package_script" };
+  if (isDiagnosticReadOnlyCommand(segmentText)) {
+    return ignored(segmentText, "diagnostic_readonly", "diagnostic_readonly");
   }
-  if (knownPrefixes.some((prefix) => segment === prefix.trim() || segment.startsWith(prefix))) {
-    return { command: segment, status: "safe", reason: "known_runner" };
+  if (segmentText.startsWith("./gradlew ")) return verification(segmentText, "gradle_wrapper");
+  if (segmentText === "./gradlew") return verification(segmentText, "gradle_wrapper");
+  if (segmentText.startsWith("gradle ")) return verification(segmentText, "gradle");
+  if (segmentText.startsWith("node --test")) return verification(segmentText, "node_test");
+  if (segmentText.startsWith("git diff --check")) return verification(segmentText, "git_diff_check");
+  if (catalog && isCommandInCatalog(segmentText, catalog)) {
+    return verification(segmentText, "package_script");
   }
-  return { command: segment, status: "unsafe", reason: "unknown" };
+  if (knownPrefixes.some((prefix) => segmentText === prefix.trim() || segmentText.startsWith(prefix))) {
+    return verification(segmentText, "known_runner");
+  }
+  return blocked(segmentText, "unknown", "unknown");
 }
 
 function isImplementationOnlyCommand(segment: string): boolean {
@@ -127,6 +207,20 @@ function isImplementationOnlyCommand(segment: string): boolean {
   if (/^prettier\s+--write\b/.test(segment)) return true;
   if (segment === "graphify update ." || segment.startsWith("graphify update ")) return true;
   return /^git\s+(add|commit|push|checkout|merge|rebase|stash|worktree|cherry-pick)\b/.test(segment);
+}
+
+function isDiagnosticReadOnlyCommand(segment: string): boolean {
+  return /^git\s+status\b/.test(segment) ||
+    /^git\s+log\b/.test(segment) ||
+    /^git\s+diff\s+--stat\b/.test(segment) ||
+    /^git\s+branch\b/.test(segment) ||
+    /^git\s+rev-parse\b/.test(segment);
+}
+
+function isOptionalEnvironmentCommand(segment: string): boolean {
+  return segment === "command -v adb || true" ||
+    segment === "adb devices" ||
+    segment === "adb devices -l";
 }
 
 function isWorkspaceChangeSegment(segment: string): boolean {
