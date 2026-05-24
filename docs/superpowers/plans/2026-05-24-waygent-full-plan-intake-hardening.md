@@ -46,10 +46,11 @@ file_claims:
     mode: owned
 risk: medium
 verify:
-  - bun test packages/orchestrator/tests/planClaimExtraction.test.ts
+  - git diff --check
 instructions:
   - Implement the detailed Task 1 section below.
   - Add the reduced FixThis-style full-plan fixture and failing extraction coverage first.
+  - This is the red-stage test task; do not implement the scanner here.
   - Keep non-shell example fences out of executable command expectations.
 ```
 
