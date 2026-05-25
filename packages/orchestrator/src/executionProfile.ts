@@ -1,7 +1,7 @@
 export type ProviderName = "codex" | "claude" | "fake";
 export type ExecutionMode = "multi-agent" | "single-agent";
 export type ReasoningLevel = "medium" | "high" | "xhigh";
-export type WorkerRoleSlot = "implement" | "review" | "verify_assist";
+export type WorkerRoleSlot = "implement" | "review" | "verify_assist" | "repair";
 
 export interface AgentProfile {
   model: string;
@@ -33,7 +33,7 @@ export interface ProfileOverride {
   role_reasoning?: Partial<Record<WorkerRoleSlot, ReasoningLevel>>;
 }
 
-export const ROLE_SLOTS: readonly WorkerRoleSlot[] = ["implement", "review", "verify_assist"];
+export const ROLE_SLOTS: readonly WorkerRoleSlot[] = ["implement", "review", "verify_assist", "repair"];
 
 export const defaultProfiles: Record<ProviderName, ExecutionProfile> = {
   codex: {
@@ -44,7 +44,8 @@ export const defaultProfiles: Record<ProviderName, ExecutionProfile> = {
     roles: {
       implement: { model: "gpt-5.5", reasoning: "high" },
       review: { model: "gpt-5.5", reasoning: "high" },
-      verify_assist: { model: "gpt-5.5", reasoning: "high" }
+      verify_assist: { model: "gpt-5.5", reasoning: "high" },
+      repair: { model: "gpt-5.5", reasoning: "medium" }
     },
     evidence_event_type: "runway.execution_profile_selected"
   },
@@ -56,7 +57,8 @@ export const defaultProfiles: Record<ProviderName, ExecutionProfile> = {
     roles: {
       implement: { model: "opus", reasoning: "high" },
       review: { model: "opus", reasoning: "high" },
-      verify_assist: { model: "opus", reasoning: "high" }
+      verify_assist: { model: "opus", reasoning: "high" },
+      repair: { model: "sonnet", reasoning: "medium" }
     },
     evidence_event_type: "runway.execution_profile_selected"
   },
@@ -68,7 +70,8 @@ export const defaultProfiles: Record<ProviderName, ExecutionProfile> = {
     roles: {
       implement: { model: "fake", reasoning: "medium" },
       review: { model: "fake", reasoning: "medium" },
-      verify_assist: { model: "fake", reasoning: "medium" }
+      verify_assist: { model: "fake", reasoning: "medium" },
+      repair: { model: "fake", reasoning: "medium" }
     },
     evidence_event_type: "runway.execution_profile_selected"
   }
@@ -88,7 +91,8 @@ export function resolveExecutionProfile(...layers: Array<ProfileOverride | undef
   const roles: RoleRouting = {
     implement: resolveRoleSlot(base, "implement", merged, subagent),
     review: resolveRoleSlot(base, "review", merged, subagent),
-    verify_assist: resolveRoleSlot(base, "verify_assist", merged, subagent)
+    verify_assist: resolveRoleSlot(base, "verify_assist", merged, subagent),
+    repair: resolveRoleSlot(base, "repair", merged, subagent)
   };
   return {
     provider: merged.provider ?? base.provider,
@@ -154,7 +158,7 @@ export function roleProfileFor(profile: ExecutionProfile, role: WorkerRoleSlot):
 }
 
 export function isWorkerRoleSlot(value: unknown): value is WorkerRoleSlot {
-  return value === "implement" || value === "review" || value === "verify_assist";
+  return value === "implement" || value === "review" || value === "verify_assist" || value === "repair";
 }
 
 export function isReasoningLevel(value: unknown): value is ReasoningLevel {
