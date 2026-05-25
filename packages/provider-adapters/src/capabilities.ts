@@ -1,5 +1,23 @@
 import type { ProviderCapabilityManifest } from "@waygent/contracts";
 
+export interface ProviderSupports {
+  settings_path: boolean;
+  mcp_config_path: boolean;
+  session_id_first_attempt: boolean;
+  reasoning: boolean;
+}
+
+declare module "@waygent/contracts" {
+  interface ProviderCapabilityManifest {
+    supports?: {
+      settings_path: boolean;
+      mcp_config_path: boolean;
+      session_id_first_attempt: boolean;
+      reasoning: boolean;
+    };
+  }
+}
+
 export const fakeCapabilityManifest: ProviderCapabilityManifest = {
   schema: "provider.capability_manifest.v1",
   provider: "fake",
@@ -9,7 +27,8 @@ export const fakeCapabilityManifest: ProviderCapabilityManifest = {
   shell: false,
   streaming: false,
   approvals: false,
-  result_schema: "runway.worker_result.v1"
+  result_schema: "runway.worker_result.v1",
+  supports: { settings_path: false, mcp_config_path: false, session_id_first_attempt: false, reasoning: false }
 };
 
 export const codexCapabilityManifest: ProviderCapabilityManifest = {
@@ -21,7 +40,8 @@ export const codexCapabilityManifest: ProviderCapabilityManifest = {
   shell: true,
   streaming: true,
   approvals: true,
-  result_schema: "runway.worker_result.v1"
+  result_schema: "runway.worker_result.v1",
+  supports: { settings_path: false, mcp_config_path: false, session_id_first_attempt: false, reasoning: false }
 };
 
 export const claudeCapabilityManifest: ProviderCapabilityManifest = {
@@ -33,7 +53,8 @@ export const claudeCapabilityManifest: ProviderCapabilityManifest = {
   shell: true,
   streaming: true,
   approvals: false,
-  result_schema: "runway.worker_result.v1"
+  result_schema: "runway.worker_result.v1",
+  supports: { settings_path: true, mcp_config_path: true, session_id_first_attempt: true, reasoning: true }
 };
 
 export const acpCapabilityManifest: ProviderCapabilityManifest = {
@@ -45,8 +66,16 @@ export const acpCapabilityManifest: ProviderCapabilityManifest = {
   shell: false,
   streaming: true,
   approvals: false,
-  result_schema: "runway.worker_result.v1"
+  result_schema: "runway.worker_result.v1",
+  supports: { settings_path: false, mcp_config_path: false, session_id_first_attempt: false, reasoning: false }
 };
+
+export function providerSupportsCapabilities(provider: "codex" | "claude" | "fake" | "acp"): ProviderSupports {
+  if (provider === "claude") return claudeCapabilityManifest.supports!;
+  if (provider === "codex") return codexCapabilityManifest.supports!;
+  if (provider === "acp") return acpCapabilityManifest.supports!;
+  return fakeCapabilityManifest.supports!;
+}
 
 export function assertCapabilities(
   manifest: ProviderCapabilityManifest,

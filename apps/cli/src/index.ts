@@ -55,7 +55,7 @@ export function parseCli(argv: string[]): ParsedCli {
 
 const usage = "waygent run|run-chain|status|events|inspect|explain|resume|verify|apply|decisions|cost|watch|orphans|scaffold-plan|lint-design|lint-plan";
 const commandUsage: Record<string, string> = {
-  run: "waygent run --plan <waygent-task.md> [--spec <design.md>] [--run <id>] [--provider codex|claude|fake] [--execution-mode multi-agent|single-agent] [--profile max-quality|balanced|cost-saver] [--main-model <name>] [--main-reasoning medium|high|xhigh] [--subagent-model <name>] [--subagent-reasoning medium|high|xhigh] [--plan-preflight off|deterministic|full]",
+  run: "waygent run --plan <waygent-task.md> [--spec <design.md>] [--run <id>] [--provider codex|claude|fake] [--execution-mode multi-agent|single-agent] [--profile max-quality|balanced|cost-saver] [--main-model <name>] [--main-reasoning medium|high|xhigh] [--subagent-model <name>] [--subagent-reasoning medium|high|xhigh] [--role-model implement=<name>,review=<name>,verify_assist=<name>] [--role-reasoning implement=medium|high|xhigh,...] [--plan-preflight off|deterministic|full]",
   "run-chain": "waygent run-chain --plan <p1> [--spec <s1>] --plan <p2> [--spec <s2>]",
   demo: "waygent demo [--provider fake]",
   status: "waygent status --run <run_id>|--last",
@@ -74,17 +74,36 @@ const commandUsage: Record<string, string> = {
 
 export type ProfilePreset = "max-quality" | "balanced" | "cost-saver";
 
+export type WorkerRoleSlot = "implement" | "review" | "verify_assist";
+const WORKER_ROLE_SLOTS: readonly WorkerRoleSlot[] = ["implement", "review", "verify_assist"];
+
 interface ProfilePresetSpec {
   main_model: string;
   main_reasoning: "medium" | "high" | "xhigh";
   subagent_model: string;
   subagent_reasoning: "medium" | "high" | "xhigh";
+  role_models?: Partial<Record<WorkerRoleSlot, string>>;
+  role_reasoning?: Partial<Record<WorkerRoleSlot, "medium" | "high" | "xhigh">>;
 }
 
 export const PROFILE_PRESETS: Record<ProfilePreset, ProfilePresetSpec> = {
   "max-quality": { main_model: "opus", main_reasoning: "high", subagent_model: "opus", subagent_reasoning: "high" },
-  "balanced": { main_model: "opus", main_reasoning: "high", subagent_model: "sonnet", subagent_reasoning: "medium" },
-  "cost-saver": { main_model: "haiku", main_reasoning: "medium", subagent_model: "sonnet", subagent_reasoning: "medium" }
+  "balanced": {
+    main_model: "opus",
+    main_reasoning: "high",
+    subagent_model: "sonnet",
+    subagent_reasoning: "medium",
+    role_models: { implement: "opus" },
+    role_reasoning: { implement: "high" }
+  },
+  "cost-saver": {
+    main_model: "haiku",
+    main_reasoning: "medium",
+    subagent_model: "sonnet",
+    subagent_reasoning: "medium",
+    role_models: { review: "haiku", verify_assist: "haiku" },
+    role_reasoning: { review: "medium", verify_assist: "medium" }
+  }
 };
 
 function isProfilePreset(value: unknown): value is ProfilePreset {
@@ -123,6 +142,8 @@ export function resolveCliProfile(
     profile.main_reasoning = preset.main_reasoning;
     profile.subagent_model = preset.subagent_model;
     profile.subagent_reasoning = preset.subagent_reasoning;
+    if (preset.role_models) profile.role_models = { ...preset.role_models };
+    if (preset.role_reasoning) profile.role_reasoning = { ...preset.role_reasoning };
   } else if (parsed.flags.profile !== undefined) {
     throw new Error(`unknown --profile preset '${String(parsed.flags.profile)}'; expected one of: max-quality, balanced, cost-saver`);
   }
@@ -130,7 +151,63 @@ export function resolveCliProfile(
   if (isReasoning(parsed.flags["main-reasoning"])) profile.main_reasoning = parsed.flags["main-reasoning"];
   if (typeof parsed.flags["subagent-model"] === "string") profile.subagent_model = parsed.flags["subagent-model"];
   if (isReasoning(parsed.flags["subagent-reasoning"])) profile.subagent_reasoning = parsed.flags["subagent-reasoning"];
+  const roleModelFlag = stringValueOf(parsed.flags["role-model"]);
+  if (roleModelFlag !== null) {
+    profile.role_models = { ...(profile.role_models ?? {}), ...parseRoleModelFlag(roleModelFlag) };
+  }
+  const roleReasoningFlag = stringValueOf(parsed.flags["role-reasoning"]);
+  if (roleReasoningFlag !== null) {
+    profile.role_reasoning = { ...(profile.role_reasoning ?? {}), ...parseRoleReasoningFlag(roleReasoningFlag) };
+  }
   return profile;
+}
+
+function stringValueOf(value: FlagValue | undefined): string | null {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string").join(",");
+  return null;
+}
+
+export function parseRoleModelFlag(raw: string): Partial<Record<WorkerRoleSlot, string>> {
+  const out: Partial<Record<WorkerRoleSlot, string>> = {};
+  for (const pair of raw.split(",")) {
+    const trimmed = pair.trim();
+    if (trimmed.length === 0) continue;
+    const equals = trimmed.indexOf("=");
+    if (equals < 0) throw new Error(`--role-model entry must be key=value: '${trimmed}'`);
+    const key = trimmed.slice(0, equals).trim();
+    const value = trimmed.slice(equals + 1).trim();
+    if (!isWorkerRoleSlot(key)) {
+      throw new Error(`--role-model unknown role '${key}'; expected one of: ${WORKER_ROLE_SLOTS.join(", ")}`);
+    }
+    if (value.length === 0) throw new Error(`--role-model entry missing value for '${key}'`);
+    out[key] = value;
+  }
+  return out;
+}
+
+export function parseRoleReasoningFlag(raw: string): Partial<Record<WorkerRoleSlot, "medium" | "high" | "xhigh">> {
+  const out: Partial<Record<WorkerRoleSlot, "medium" | "high" | "xhigh">> = {};
+  for (const pair of raw.split(",")) {
+    const trimmed = pair.trim();
+    if (trimmed.length === 0) continue;
+    const equals = trimmed.indexOf("=");
+    if (equals < 0) throw new Error(`--role-reasoning entry must be key=value: '${trimmed}'`);
+    const key = trimmed.slice(0, equals).trim();
+    const value = trimmed.slice(equals + 1).trim();
+    if (!isWorkerRoleSlot(key)) {
+      throw new Error(`--role-reasoning unknown role '${key}'; expected one of: ${WORKER_ROLE_SLOTS.join(", ")}`);
+    }
+    if (!isReasoning(value)) {
+      throw new Error(`--role-reasoning unknown level '${value}' for '${key}'; expected one of: medium, high, xhigh`);
+    }
+    out[key] = value;
+  }
+  return out;
+}
+
+function isWorkerRoleSlot(value: string): value is WorkerRoleSlot {
+  return value === "implement" || value === "review" || value === "verify_assist";
 }
 
 export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {

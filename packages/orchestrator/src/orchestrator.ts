@@ -14,7 +14,7 @@ import { createCombinedCheckpointPatchArtifact, type CombinedCheckpointPatchResu
 import { buildCompletionAudit } from "./completionAudit";
 import { createEmptyCostLedger, recordProviderAttemptCost, shouldPauseForBudget, shouldWarnForBudget, type BudgetPolicy } from "./costLedger";
 import { appendDecisionFromWorker, packetDecisionSummaries, writeDecisionsProjection } from "./decisions";
-import { resolveExecutionProfile, type ExecutionProfile, type ProfileOverride, type ProviderName } from "./executionProfile";
+import { resolveExecutionProfile, roleProfileFor, type ExecutionProfile, type ProfileOverride, type ProviderName, type WorkerRoleSlot } from "./executionProfile";
 import { recoverWaygentPlanInput } from "./intakeRecovery";
 import { resolvePlanInput, resolveSpecInput } from "./planDiscovery";
 import { normalizeWaygentPlanInput } from "./planNormalizer";
@@ -410,6 +410,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
 
   let activeSafeWave = safeWave;
   let waveIndex = 1;
+  const codexResumeSessions = new Map<string, string>();
   while (activeSafeWave.length > 0) {
     const waveId = `wave_${waveIndex}`;
     if (shouldPauseForBudget(context.state.cost_ledger, budgetPolicyFromState(context.state))) {
@@ -472,6 +473,10 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
           },
           trust_impact: "neutral"
         }));
+        const dispatchRole: WorkerRoleSlot = "implement";
+        const roleAwareProcesses = applyRoleRoutingToProcesses(resolvedProviderProcesses, profile, dispatchRole);
+        const codexResume = codexResumeSessions.get(task.id);
+        const processesWithResume = applyCodexResumeContext(roleAwareProcesses, codexResume);
         return executeWaygentTask({
           root: options.root,
           run_id: runId,
@@ -482,10 +487,10 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
           spec: slice.text,
           provider: profile.provider,
           decisions: packetDecisionSummaries(context.state),
-          requested_model: requestedModelForProfile(profile),
+          requested_model: requestedModelForProfile(profile, dispatchRole),
           hooks_enabled: options.hook_config !== "off",
           attempt: (task.retry_count ?? 0) + 1,
-          ...(Object.keys(resolvedProviderProcesses).length > 0 ? { provider_processes: resolvedProviderProcesses } : {})
+          ...(Object.keys(processesWithResume).length > 0 ? { provider_processes: processesWithResume } : {})
         });
       }
     });
@@ -514,6 +519,10 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       }
       replayTaskExecutionResult(context, waveResult.result);
       recordRuntimeEvidence(context, waveResult.result);
+      const capturedSessionId = extractSessionIdFromWorker(waveResult.result.worker_result);
+      if (profile.provider === "codex" && capturedSessionId) {
+        codexResumeSessions.set(waveResult.task_id, capturedSessionId);
+      }
       if (task && waveResult.result.status === "verified") {
         task.status = "APPLIED";
         if (waveResult.result.checkpoint_refs[0]) task.checkpoint_ref = waveResult.result.checkpoint_refs[0];
@@ -1089,12 +1098,54 @@ function providerProfileRecord(profile: ReturnType<typeof resolveExecutionProfil
   };
 }
 
-function requestedModelForProfile(profile: ExecutionProfile) {
-  const source = profile.execution_mode === "single-agent" ? profile.main : profile.subagent;
+function requestedModelForProfile(profile: ExecutionProfile, role: WorkerRoleSlot = "implement") {
+  if (profile.execution_mode === "single-agent") {
+    return {
+      model: profile.main.model ?? null,
+      reasoning: profile.main.reasoning ?? null
+    };
+  }
+  const source = roleProfileFor(profile, role);
   return {
     model: source.model ?? null,
     reasoning: source.reasoning ?? null
   };
+}
+
+export function applyRoleRoutingToProcesses(
+  processes: Partial<Record<Exclude<ProviderName, "fake">, ProviderProcessOptions>>,
+  profile: ExecutionProfile,
+  role: WorkerRoleSlot
+): Partial<Record<Exclude<ProviderName, "fake">, ProviderProcessOptions>> {
+  if (profile.execution_mode === "single-agent") return processes;
+  const target = roleProfileFor(profile, role);
+  const next: typeof processes = { ...processes };
+  if (next.codex) {
+    next.codex = { ...next.codex, model: target.model, effort: target.reasoning };
+  }
+  if (next.claude) {
+    next.claude = { ...next.claude, model: target.model, effort: target.reasoning };
+  }
+  return next;
+}
+
+export function applyCodexResumeContext(
+  processes: Partial<Record<Exclude<ProviderName, "fake">, ProviderProcessOptions>>,
+  resumeSessionId: string | undefined
+): Partial<Record<Exclude<ProviderName, "fake">, ProviderProcessOptions>> {
+  if (!resumeSessionId || !processes.codex) return processes;
+  if (processes.codex.resume_session_id) return processes;
+  return {
+    ...processes,
+    codex: { ...processes.codex, resume_session_id: resumeSessionId }
+  };
+}
+
+function extractSessionIdFromWorker(worker: { evidence: Record<string, unknown> } | undefined): string | null {
+  if (!worker) return null;
+  const evidence = worker.evidence ?? {};
+  const value = (evidence as Record<string, unknown>).session_id;
+  return typeof value === "string" && value.length > 0 ? value : null;
 }
 
 function planNormalizationPayload(
@@ -1123,6 +1174,7 @@ export function resolveProviderProcesses(
       ...(userCodex?.cwd ? { cwd: userCodex.cwd } : {}),
       ...(userCodex?.env ? { env: userCodex.env } : {}),
       ...(userCodex?.timeout_ms ? { timeout_ms: userCodex.timeout_ms } : {}),
+      ...(userCodex?.resume_session_id ? { resume_session_id: userCodex.resume_session_id } : {}),
       model: userCodex?.model ?? profile.subagent.model,
       effort: userCodex?.effort ?? profile.subagent.reasoning
     };

@@ -3,8 +3,9 @@ import { existsSync } from "node:fs";
 import { basename, dirname } from "node:path";
 import type { FailureClass, ModelAttestation, ProviderRole, TokenUsage, UsageSource, WorkerResult } from "@waygent/contracts";
 import { validateContract } from "@waygent/contracts";
+import { providerSupportsCapabilities, type ProviderSupports } from "./capabilities";
 import { summarizeProviderStderr } from "./logSummary";
-import type { AdapterRequest, ProcessAdapterOutput, ProviderAdapterRunResult, ProviderProcessOptions, ProviderRunMetadata } from "./types";
+import type { AdapterRequest, ProcessAdapterOutput, ProviderAdapterRunResult, ProviderProcessOptions, ProviderRunMetadata, ToolCallEvidence } from "./types";
 
 const defaultTimeoutMs = 30 * 60 * 1000;
 const failureClasses = new Set<FailureClass>([
@@ -46,7 +47,17 @@ const knownProviderRoles: ReadonlySet<ProviderRole> = new Set<ProviderRole>([
   "verify_assist"
 ]);
 
-const HOST_ENV_KEYS_TO_DROP = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_PROJECT_DIR"] as const;
+// Host env vars dropped when launching a child provider from a Claude Code or
+// Codex CLI host process. CODEX_HOME is intentionally NOT dropped — it points at
+// the Codex auth credential storage and removing it breaks child authentication.
+const HOST_ENV_KEYS_TO_DROP = [
+  "CLAUDECODE",
+  "CLAUDE_CODE_ENTRYPOINT",
+  "CLAUDE_PROJECT_DIR",
+  "CODEX_APP",
+  "CODEX_CLI",
+  "CODEX_ENTRYPOINT"
+] as const;
 
 export function normalizeProcessOutput(
   provider: "codex" | "claude" | "acp",
@@ -56,7 +67,9 @@ export function normalizeProcessOutput(
 ): ProviderAdapterRunResult {
   if (output.exitCode !== 0) {
     const failureMetadata = metadataFromStreamOnly(provider, output.stdout, output.stderr);
-    return withProcessEvidence(failed(task_id, candidate_id, "adapter_crashed", `${provider} exited ${output.exitCode}`), output, failureMetadata);
+    const failure = withProcessEvidence(failed(task_id, candidate_id, "adapter_crashed", `${provider} exited ${output.exitCode}`), output, failureMetadata);
+    enrichWorkerEvidence(failure, provider, output);
+    return failure;
   }
   try {
     const parsedOutput = parseWorkerOutput(output.stdout);
@@ -73,10 +86,47 @@ export function normalizeProcessOutput(
       evidence: { provider, ...((parsed.evidence && typeof parsed.evidence === "object") ? parsed.evidence : {}), native: parsed.evidence ?? parsed },
       ...(failure_class ? { failure_class } : {})
     });
-    return withProcessEvidence(worker, output, metadata);
+    const result = withProcessEvidence(worker, output, metadata);
+    enrichWorkerEvidence(result, provider, output);
+    return result;
   } catch {
     const metadata = metadataFromStreamOnly(provider, output.stdout, output.stderr);
-    return withProcessEvidence(failed(task_id, candidate_id, "malformed_result", `${provider} produced malformed output`), output, metadata);
+    const malformed = withProcessEvidence(failed(task_id, candidate_id, "malformed_result", `${provider} produced malformed output`), output, metadata);
+    enrichWorkerEvidence(malformed, provider, output);
+    return malformed;
+  }
+}
+
+function enrichWorkerEvidence(
+  result: ProviderAdapterRunResult,
+  provider: "codex" | "claude" | "acp",
+  output: ProcessAdapterOutput
+): void {
+  const evidence = (result.worker.evidence ?? {}) as Record<string, unknown>;
+  let mutated = false;
+  if (provider === "claude" && typeof output.eventStream === "string") {
+    const toolCalls = parseStreamJsonToolCalls(output.eventStream);
+    if (toolCalls !== undefined) {
+      evidence.tool_calls = toolCalls;
+      if (result.metadata) result.metadata.tool_calls = toolCalls;
+      mutated = true;
+    }
+  }
+  if (provider === "codex") {
+    const sessionId = sessionIdFromCodexFirstEnvelope(output.stdout);
+    if (sessionId) {
+      evidence.session_id = sessionId;
+      if (result.metadata) result.metadata.session_id = sessionId;
+      mutated = true;
+    }
+    if (detectCodexResumeSessionMissing(output.stderr)) {
+      evidence.resume_session_missing = true;
+      if (result.metadata) result.metadata.resume_session_missing = true;
+      mutated = true;
+    }
+  }
+  if (mutated) {
+    result.worker.evidence = evidence;
   }
 }
 
@@ -179,7 +229,9 @@ export function buildSpawnEnv(
   cwd: string | undefined
 ): Record<string, string> {
   const keepHostEnv = parentEnv.WAYGENT_KEEP_HOST_ENV === "1";
-  const shouldSanitize = !keepHostEnv && (parentEnv.CLAUDECODE === "1" || typeof parentEnv.CLAUDE_CODE_ENTRYPOINT === "string");
+  const claudeHost = parentEnv.CLAUDECODE === "1" || typeof parentEnv.CLAUDE_CODE_ENTRYPOINT === "string";
+  const codexHost = parentEnv.CODEX_APP === "1" || parentEnv.CODEX_CLI === "1" || typeof parentEnv.CODEX_ENTRYPOINT === "string";
+  const shouldSanitize = !keepHostEnv && (claudeHost || codexHost);
   const next: Record<string, string> = {};
   for (const [key, value] of Object.entries(parentEnv)) {
     if (value === undefined) continue;
@@ -203,7 +255,13 @@ export async function runProviderProcess(
   return new Promise<ProviderAdapterRunResult>((resolve) => {
     const cwd = normalizeProcessCwd(options.cwd ?? request.cwd);
     const startedAt = new Date().toISOString();
-    const { args: spawnArgs, warnings } = providerProcessArgsWithWarnings(provider, options, cwd, request);
+    const adapterWarnings = gatherUnsupportedOptionWarnings(provider, options);
+    // Strip unsupported options before computing spawn args so we honor the
+    // manifest contract: the operator either sees a warning OR the option is
+    // honored, never silently retained-but-ignored.
+    const honoredOptions = stripUnsupportedOptions(provider, options);
+    const { args: spawnArgs, warnings } = providerProcessArgsWithWarnings(provider, honoredOptions, cwd, request);
+    const combinedWarnings = [...adapterWarnings, ...warnings];
     const child = spawn(options.executable, spawnArgs, {
       cwd,
       env: buildSpawnEnv(process.env, options.env, cwd),
@@ -213,7 +271,7 @@ export async function runProviderProcess(
     let settled = false;
     let timedOut = false;
     let stdout = "";
-    let stderr = warnings.length > 0 ? warnings.map((line) => `${line}\n`).join("") : "";
+    let stderr = combinedWarnings.length > 0 ? combinedWarnings.map((line) => `${line}\n`).join("") : "";
     const finish = (result: ProviderAdapterRunResult): void => {
       if (settled) return;
       settled = true;
@@ -250,30 +308,30 @@ export async function runProviderProcess(
       const completedAt = new Date().toISOString();
       const eventStream = usesStreamJson ? stdout : null;
       if (timedOut) {
-        finish(
-          withProcessEvidence(failed(request.task_id, request.candidate_id, "timeout", `${provider} timed out after ${resolveTimeoutMs(options, request.role)}ms`), {
-            exitCode: code,
-            stdout,
-            stderr,
-            timedOut: true,
-            startedAt,
-            completedAt,
-            eventStream
-          })
-        );
-        return;
-      }
-      finish(
-        normalizeProcessOutput(provider, request.task_id, request.candidate_id, {
-          exitCode: code ?? 1,
+        const timedOutResult = withProcessEvidence(failed(request.task_id, request.candidate_id, "timeout", `${provider} timed out after ${resolveTimeoutMs(options, request.role)}ms`), {
+          exitCode: code,
           stdout,
           stderr,
-          timedOut: false,
+          timedOut: true,
           startedAt,
           completedAt,
           eventStream
-        })
-      );
+        });
+        attachAdapterWarnings(timedOutResult, adapterWarnings);
+        finish(timedOutResult);
+        return;
+      }
+      const result = normalizeProcessOutput(provider, request.task_id, request.candidate_id, {
+        exitCode: code ?? 1,
+        stdout,
+        stderr,
+        timedOut: false,
+        startedAt,
+        completedAt,
+        eventStream
+      });
+      attachAdapterWarnings(result, adapterWarnings);
+      finish(result);
     });
     child.stdin.on("error", () => {});
     child.stdin.end(buildProviderStdinPrompt(provider, request));
@@ -345,6 +403,17 @@ export function providerProcessArgsWithWarnings(
   if (provider !== "codex") return { args, warnings };
   let nextArgs = [...args];
   const isCodexCli = isProviderCliExecutable("codex", options.executable);
+  if (isCodexCli && options.resume_session_id) {
+    const execIndex = nextArgs.indexOf("exec");
+    if (execIndex >= 0 && !nextArgs.includes("resume")) {
+      nextArgs = [
+        ...nextArgs.slice(0, execIndex + 1),
+        "resume",
+        options.resume_session_id,
+        ...nextArgs.slice(execIndex + 1)
+      ];
+    }
+  }
   if (isCodexCli && options.effort && !nextArgs.includes("--reasoning")) {
     nextArgs = ["--reasoning", options.effort, ...nextArgs];
   }
@@ -428,13 +497,26 @@ export function buildProviderUserPrompt(provider: "codex" | "claude", request: A
 }
 
 // What we actually pipe to stdin for each provider. Claude moves the contract
-// reminder block out of stdin and into --append-system-prompt; Codex still
-// receives the legacy combined prompt because it has no equivalent surface.
-function buildProviderStdinPrompt(provider: "codex" | "claude", request: AdapterRequest): string {
+// reminder block out of stdin and into --append-system-prompt; Codex CLI has no
+// equivalent flag, so we emit a sentinel-marked single message with a
+// byte-stable per-role system_instructions prefix so the Codex provider can
+// cache it across workers. Sentinel tags `<system_instructions role="...">`
+// and `<user_request>` are cross-path contract — fixture tests assert the
+// exact strings.
+export function buildProviderStdinPrompt(provider: "codex" | "claude", request: AdapterRequest): string {
   if (provider === "claude") return buildProviderUserPrompt(provider, request);
-  const legacy = buildProviderPrompt(provider, request);
-  if (!request.retry_context) return legacy;
-  return `${buildRetryPromptPrefix(request.retry_context)}\n\n${legacy}`;
+  const role = request.role ?? "implement";
+  const systemPrompt = buildProviderSystemPrompt(role);
+  const userPrompt = buildProviderUserPrompt(provider, request);
+  return [
+    `<system_instructions role="${role}">`,
+    systemPrompt,
+    "</system_instructions>",
+    "",
+    "<user_request>",
+    userPrompt,
+    "</user_request>"
+  ].join("\n");
 }
 
 export function buildRetryPromptPrefix(context: { failure_class: FailureClass; stderr_summary?: string }): string {
@@ -789,6 +871,192 @@ function usageSourceFromEvidence(evidence: Record<string, unknown>, _provider: "
 
 function numberField(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
+}
+
+type SupportsKey = keyof ProviderSupports;
+
+const UNSUPPORTED_OPTION_CHECKS: Array<{ key: SupportsKey; predicate: (options: ProviderProcessOptions) => boolean }> = [
+  { key: "settings_path", predicate: (options) => typeof options.settings_path === "string" && options.settings_path.length > 0 },
+  { key: "mcp_config_path", predicate: (options) => typeof options.mcp_config_path === "string" && options.mcp_config_path.length > 0 },
+  { key: "session_id_first_attempt", predicate: (options) => typeof options.session_id === "string" && options.session_id.length > 0 && !options.resume_session_id },
+  { key: "reasoning", predicate: (options) => typeof options.effort === "string" && options.effort.length > 0 }
+];
+
+export function gatherUnsupportedOptionWarnings(
+  provider: "codex" | "claude",
+  options: ProviderProcessOptions
+): string[] {
+  const supports = providerSupportsCapabilities(provider);
+  const warnings: string[] = [];
+  for (const check of UNSUPPORTED_OPTION_CHECKS) {
+    if (!supports[check.key] && check.predicate(options)) {
+      warnings.push(`unsupported_provider_option: ${check.key} (${provider})`);
+    }
+  }
+  return warnings;
+}
+
+export function stripUnsupportedOptions(
+  provider: "codex" | "claude",
+  options: ProviderProcessOptions
+): ProviderProcessOptions {
+  const supports = providerSupportsCapabilities(provider);
+  const next: ProviderProcessOptions = { ...options };
+  if (!supports.settings_path) delete next.settings_path;
+  if (!supports.mcp_config_path) delete next.mcp_config_path;
+  if (!supports.session_id_first_attempt && !next.resume_session_id) delete next.session_id;
+  if (!supports.reasoning) delete next.effort;
+  return next;
+}
+
+function attachAdapterWarnings(result: ProviderAdapterRunResult, warnings: string[]): void {
+  if (warnings.length === 0) return;
+  const existingEvidence = (result.worker.evidence ?? {}) as Record<string, unknown>;
+  const priorWarnings = Array.isArray(existingEvidence.adapter_warnings)
+    ? (existingEvidence.adapter_warnings as unknown[]).filter((value): value is string => typeof value === "string")
+    : [];
+  result.worker.evidence = {
+    ...existingEvidence,
+    adapter_warnings: [...priorWarnings, ...warnings]
+  };
+  if (result.metadata) {
+    result.metadata.adapter_warnings = [...(result.metadata.adapter_warnings ?? []), ...warnings];
+  }
+}
+
+interface ParsedToolCallAccumulator {
+  pending: Map<string, { name: string; input: Record<string, unknown>; ts: number | null }>;
+  completed: ToolCallEvidence[];
+}
+
+function parseStreamJsonToolCalls(stdout: string): ToolCallEvidence[] | undefined {
+  try {
+    const trimmed = stdout.trim();
+    if (trimmed.length === 0) return [];
+    const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const acc: ParsedToolCallAccumulator = { pending: new Map(), completed: [] };
+    for (const line of lines) {
+      const parsed = tryParseJson(line);
+      if (!parsed || typeof parsed !== "object") continue;
+      const record = parsed as Record<string, unknown>;
+      const envelopeTs = parseEnvelopeTimestamp(record);
+      if (record.type === "assistant") {
+        const message = record.message;
+        if (!message || typeof message !== "object") continue;
+        const content = (message as Record<string, unknown>).content;
+        if (!Array.isArray(content)) continue;
+        for (const block of content) {
+          if (!block || typeof block !== "object") continue;
+          const blockRecord = block as Record<string, unknown>;
+          if (blockRecord.type !== "tool_use") continue;
+          const id = typeof blockRecord.id === "string" ? blockRecord.id : null;
+          const name = typeof blockRecord.name === "string" ? blockRecord.name : null;
+          if (!id || !name) continue;
+          const input = (blockRecord.input && typeof blockRecord.input === "object" && !Array.isArray(blockRecord.input))
+            ? blockRecord.input as Record<string, unknown>
+            : {};
+          acc.pending.set(id, { name, input, ts: envelopeTs });
+        }
+      } else if (record.type === "user") {
+        const message = record.message;
+        if (!message || typeof message !== "object") continue;
+        const content = (message as Record<string, unknown>).content;
+        if (!Array.isArray(content)) continue;
+        for (const block of content) {
+          if (!block || typeof block !== "object") continue;
+          const blockRecord = block as Record<string, unknown>;
+          if (blockRecord.type !== "tool_result") continue;
+          const id = typeof blockRecord.tool_use_id === "string" ? blockRecord.tool_use_id : null;
+          if (!id) continue;
+          const pending = acc.pending.get(id);
+          if (!pending) continue;
+          const isError = blockRecord.is_error === true;
+          const summaryBytes = computeToolResultBytes(blockRecord.content);
+          const duration = pending.ts !== null && envelopeTs !== null ? envelopeTs - pending.ts : null;
+          acc.pending.delete(id);
+          acc.completed.push({
+            tool_use_id: id,
+            name: pending.name,
+            input_summary: summarizeToolInput(pending.input),
+            result: { status: isError ? "error" : "ok", summary_bytes: summaryBytes, is_error: isError },
+            duration_ms: duration
+          });
+        }
+      }
+    }
+    for (const [id, pending] of acc.pending) {
+      acc.completed.push({
+        tool_use_id: id,
+        name: pending.name,
+        input_summary: summarizeToolInput(pending.input),
+        result: null,
+        duration_ms: null
+      });
+    }
+    return acc.completed;
+  } catch {
+    return undefined;
+  }
+}
+
+function summarizeToolInput(input: Record<string, unknown>): { keys: string[]; sizes_bytes: Record<string, number> } {
+  const keys = Object.keys(input).sort();
+  const sizes_bytes: Record<string, number> = {};
+  for (const key of keys) {
+    const value = input[key];
+    if (typeof value === "string") {
+      sizes_bytes[key] = Buffer.byteLength(value, "utf8");
+    }
+  }
+  return { keys, sizes_bytes };
+}
+
+function computeToolResultBytes(content: unknown): number {
+  if (typeof content === "string") return Buffer.byteLength(content, "utf8");
+  if (!Array.isArray(content)) return 0;
+  let total = 0;
+  for (const block of content) {
+    if (typeof block === "string") {
+      total += Buffer.byteLength(block, "utf8");
+      continue;
+    }
+    if (!block || typeof block !== "object") continue;
+    const record = block as Record<string, unknown>;
+    if (typeof record.text === "string") total += Buffer.byteLength(record.text, "utf8");
+    if (typeof record.content === "string") total += Buffer.byteLength(record.content, "utf8");
+  }
+  return total;
+}
+
+function parseEnvelopeTimestamp(record: Record<string, unknown>): number | null {
+  const candidates = [record.timestamp, record.ts, record.received_at, record.created_at];
+  for (const value of candidates) {
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string") {
+      const parsed = Date.parse(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
+function sessionIdFromCodexFirstEnvelope(stdout: string): string | null {
+  const trimmed = stdout.trim();
+  if (trimmed.length === 0) return null;
+  const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  for (const line of lines) {
+    const parsed = tryParseJson(line);
+    if (!parsed || typeof parsed !== "object") continue;
+    const record = parsed as Record<string, unknown>;
+    if (typeof record.session_id === "string" && record.session_id.length > 0) return record.session_id;
+    if (typeof record.thread_id === "string" && record.thread_id.length > 0) return record.thread_id;
+  }
+  return null;
+}
+
+function detectCodexResumeSessionMissing(stderr: string): boolean {
+  if (!stderr) return false;
+  return /(session|thread).*not.*found/i.test(stderr);
 }
 
 function withProcessEvidence(worker: WorkerResult, output: ProcessAdapterOutput, metadata?: ProviderRunMetadata): ProviderAdapterRunResult {
