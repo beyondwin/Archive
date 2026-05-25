@@ -575,4 +575,37 @@ describe("Waygent contracts", () => {
       })
     ).toThrow(ContractValidationError);
   });
+
+  test("WaygentRunStateV2 type accepts optional repair_budget keyed by task_id", () => {
+    const state: import("../src/types").WaygentRunStateV2 = {
+      schema: "waygent.run_state.v2",
+      run_id: "run_repair_state",
+      workspace: "/tmp/ws",
+      source_branch: null,
+      worktree_root: "/tmp/wt",
+      run_root: "/tmp/run",
+      artifact_root: "/tmp/run/artifacts",
+      state_path: "/tmp/run/state.json",
+      event_journal_path: "/tmp/run/events.jsonl",
+      plan_path: null,
+      spec_path: null,
+      provider_profile: { provider: "fake" },
+      status: "completed",
+      lifecycle_outcome: "finished",
+      current_phase: "complete",
+      tasks: {},
+      safe_waves: [],
+      provider_attempts: [],
+      reviews: [],
+      verification: [],
+      recovery: [],
+      apply: { status: "not_applied" },
+      context: { snapshot_path: null, basis_hash: null },
+      drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
+      completion_audit: null,
+      timestamps: { started_at: "2026-05-25T00:00:00Z", updated_at: "2026-05-25T00:00:00Z", completed_at: null },
+      repair_budget: { task_a: { max_attempts: 2, current: 0 } }
+    };
+    expect(state.repair_budget?.task_a?.max_attempts).toBe(2);
+  });
 });

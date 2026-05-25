@@ -636,6 +636,7 @@ export interface WaygentRunStateV2 {
   drift: { last_checked_at: string | null; records: Array<Record<string, unknown>>; unrepaired_blockers: Array<Record<string, unknown>> };
   completion_audit: null | Record<string, unknown>;
   timestamps: { started_at: string; updated_at: string; completed_at: string | null };
+  repair_budget?: Record<string, { max_attempts: number; current: number }>;
 }
 
 export type IntakeRecoveryStatus = "not_needed" | "recovered" | "decision_required" | "failed";
