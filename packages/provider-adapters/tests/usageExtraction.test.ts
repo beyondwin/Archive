@@ -181,6 +181,41 @@ describe("envelope-level usage extraction (D-08)", () => {
     expect(result.metadata?.actual_model.reasoning).toBe("high");
   });
 
+  test("system.init.model from a JSONL stream overrides envelope modelUsage", () => {
+    const workerBody = {
+      schema: "runway.worker_result.v1",
+      task_id: "task_system_init",
+      candidate_id: "candidate_task_system_init",
+      status: "completed",
+      changed_files: ["f.ts"],
+      summary: "system.init wins",
+      evidence: {}
+    };
+    const lines = [
+      JSON.stringify({
+        type: "system",
+        subtype: "init",
+        session_id: "session_42",
+        model: "claude-opus-4-7"
+      }),
+      JSON.stringify({
+        type: "result",
+        result: `\`\`\`json\n${JSON.stringify(workerBody)}\n\`\`\``,
+        usage: { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+        modelUsage: { "claude-sonnet-stale": { duration_ms: 100 } }
+      })
+    ].join("\n");
+    const result = normalizeProcessOutput("claude", "task_system_init", "candidate_task_system_init", {
+      exitCode: 0,
+      stdout: lines,
+      stderr: "",
+      timedOut: false
+    });
+    expect(result.metadata?.actual_model.model).toBe("claude-opus-4-7");
+    expect(result.metadata?.actual_model.source).toBe("provider_json");
+    expect(result.metadata?.session_id).toBe("session_42");
+  });
+
   test("direct worker_result without envelope still extracts evidence.usage", () => {
     const result = normalizeProcessOutput("codex", "task_direct", "candidate_task_direct", {
       exitCode: 0,

@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"session_stream_fixture","model":"claude-opus-4-7","cwd":"/work"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Thinking through the task..."}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Producing final worker_result."}]}}
+{"type":"result","subtype":"success","is_error":false,"duration_ms":12345,"num_turns":4,"result":"```json\n{\"schema\":\"runway.worker_result.v1\",\"task_id\":\"task_stream\",\"candidate_id\":\"candidate_task_stream\",\"status\":\"completed\",\"changed_files\":[\"src/feature.ts\"],\"summary\":\"stream-json fixture worker_result\",\"evidence\":{\"command\":\"claude\"}}\n```","session_id":"session_stream_fixture","usage":{"input_tokens":1500,"output_tokens":420,"cache_read_input_tokens":900,"cache_creation_input_tokens":200},"modelUsage":{"claude-opus-4-7":{"duration_ms":12345}}}

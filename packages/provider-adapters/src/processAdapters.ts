@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { basename, dirname } from "node:path";
-import type { FailureClass, ModelAttestation, TokenUsage, UsageSource, WorkerResult } from "@waygent/contracts";
+import type { FailureClass, ModelAttestation, ProviderRole, TokenUsage, UsageSource, WorkerResult } from "@waygent/contracts";
 import { validateContract } from "@waygent/contracts";
 import { summarizeProviderStderr } from "./logSummary";
 import type { AdapterRequest, ProcessAdapterOutput, ProviderAdapterRunResult, ProviderProcessOptions, ProviderRunMetadata } from "./types";
@@ -39,6 +39,15 @@ const failureClasses = new Set<FailureClass>([
   "terminal_rejected"
 ]);
 
+const knownProviderRoles: ReadonlySet<ProviderRole> = new Set<ProviderRole>([
+  "implement",
+  "review",
+  "fix",
+  "verify_assist"
+]);
+
+const HOST_ENV_KEYS_TO_DROP = ["CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_PROJECT_DIR"] as const;
+
 export function normalizeProcessOutput(
   provider: "codex" | "claude" | "acp",
   task_id: string,
@@ -46,13 +55,14 @@ export function normalizeProcessOutput(
   output: ProcessAdapterOutput
 ): ProviderAdapterRunResult {
   if (output.exitCode !== 0) {
-    return withProcessEvidence(failed(task_id, candidate_id, "adapter_crashed", `${provider} exited ${output.exitCode}`), output);
+    const failureMetadata = metadataFromStreamOnly(provider, output.stdout, output.stderr);
+    return withProcessEvidence(failed(task_id, candidate_id, "adapter_crashed", `${provider} exited ${output.exitCode}`), output, failureMetadata);
   }
   try {
-    const { unwrapped, envelope } = parseWorkerOutput(output.stdout);
-    const parsed = unwrapped as Partial<WorkerResult>;
+    const parsedOutput = parseWorkerOutput(output.stdout);
+    const parsed = parsedOutput.unwrapped as Partial<WorkerResult>;
     const failure_class = normalizeFailureClass(parsed.failure_class);
-    const metadata = metadataFromParsed(provider, parsed, envelope);
+    const metadata = metadataFromParsed(provider, parsed, parsedOutput.envelope, parsedOutput.systemInit, output.stderr);
     const worker = validateContract<WorkerResult>("runway.worker_result.v1", {
       schema: "runway.worker_result.v1",
       task_id,
@@ -65,7 +75,8 @@ export function normalizeProcessOutput(
     });
     return withProcessEvidence(worker, output, metadata);
   } catch {
-    return withProcessEvidence(failed(task_id, candidate_id, "malformed_result", `${provider} produced malformed output`), output);
+    const metadata = metadataFromStreamOnly(provider, output.stdout, output.stderr);
+    return withProcessEvidence(failed(task_id, candidate_id, "malformed_result", `${provider} produced malformed output`), output, metadata);
   }
 }
 
@@ -117,6 +128,39 @@ export function failed(task_id: string, candidate_id: string, failure_class: Fai
   });
 }
 
+function resolveTimeoutMs(options: ProviderProcessOptions, role: ProviderRole | undefined): number {
+  if (role && options.timeout_ms_by_role) {
+    const override = options.timeout_ms_by_role[role];
+    if (typeof override === "number" && Number.isFinite(override) && override > 0) return override;
+  }
+  if (typeof options.timeout_ms === "number" && Number.isFinite(options.timeout_ms) && options.timeout_ms > 0) {
+    return options.timeout_ms;
+  }
+  return defaultTimeoutMs;
+}
+
+export function buildSpawnEnv(
+  parentEnv: NodeJS.ProcessEnv,
+  optionEnv: Record<string, string> | undefined,
+  cwd: string | undefined
+): Record<string, string> {
+  const keepHostEnv = parentEnv.WAYGENT_KEEP_HOST_ENV === "1";
+  const shouldSanitize = !keepHostEnv && (parentEnv.CLAUDECODE === "1" || typeof parentEnv.CLAUDE_CODE_ENTRYPOINT === "string");
+  const next: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parentEnv)) {
+    if (value === undefined) continue;
+    if (shouldSanitize && (HOST_ENV_KEYS_TO_DROP as readonly string[]).includes(key)) continue;
+    next[key] = value;
+  }
+  if (optionEnv) {
+    for (const [key, value] of Object.entries(optionEnv)) {
+      next[key] = value;
+    }
+  }
+  if (cwd) next.PWD = cwd;
+  return next;
+}
+
 export async function runProviderProcess(
   provider: "codex" | "claude",
   request: AdapterRequest,
@@ -125,15 +169,17 @@ export async function runProviderProcess(
   return new Promise<ProviderAdapterRunResult>((resolve) => {
     const cwd = normalizeProcessCwd(options.cwd ?? request.cwd);
     const startedAt = new Date().toISOString();
-    const child = spawn(options.executable, providerProcessArgs(provider, options, cwd, request), {
+    const { args: spawnArgs, warnings } = providerProcessArgsWithWarnings(provider, options, cwd, request);
+    const child = spawn(options.executable, spawnArgs, {
       cwd,
-      env: { ...process.env, ...options.env, ...(cwd ? { PWD: cwd } : {}) },
+      env: buildSpawnEnv(process.env, options.env, cwd),
       stdio: ["pipe", "pipe", "pipe"]
     });
+    const usesStreamJson = provider === "claude" && spawnArgs.includes("stream-json");
     let settled = false;
     let timedOut = false;
     let stdout = "";
-    let stderr = "";
+    let stderr = warnings.length > 0 ? warnings.map((line) => `${line}\n`).join("") : "";
     const finish = (result: ProviderAdapterRunResult): void => {
       if (settled) return;
       settled = true;
@@ -143,7 +189,7 @@ export async function runProviderProcess(
     const timeout = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
-    }, options.timeout_ms ?? defaultTimeoutMs);
+    }, resolveTimeoutMs(options, request.role));
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk) => {
@@ -168,15 +214,17 @@ export async function runProviderProcess(
     });
     child.on("close", (code) => {
       const completedAt = new Date().toISOString();
+      const eventStream = usesStreamJson ? stdout : null;
       if (timedOut) {
         finish(
-          withProcessEvidence(failed(request.task_id, request.candidate_id, "timeout", `${provider} timed out after ${options.timeout_ms ?? defaultTimeoutMs}ms`), {
+          withProcessEvidence(failed(request.task_id, request.candidate_id, "timeout", `${provider} timed out after ${resolveTimeoutMs(options, request.role)}ms`), {
             exitCode: code,
             stdout,
             stderr,
             timedOut: true,
             startedAt,
-            completedAt
+            completedAt,
+            eventStream
           })
         );
         return;
@@ -188,12 +236,13 @@ export async function runProviderProcess(
           stderr,
           timedOut: false,
           startedAt,
-          completedAt
+          completedAt,
+          eventStream
         })
       );
     });
     child.stdin.on("error", () => {});
-    child.stdin.end(buildProviderPrompt(provider, request));
+    child.stdin.end(buildProviderStdinPrompt(provider, request));
   });
 }
 
@@ -207,8 +256,19 @@ function normalizeProcessCwd(cwd: string | undefined): string | undefined {
   }
 }
 
-export function providerProcessArgs(provider: "codex" | "claude", options: ProviderProcessOptions, cwd: string | undefined, request: AdapterRequest): string[] {
+export interface ProviderProcessArgsResult {
+  args: string[];
+  warnings: string[];
+}
+
+export function providerProcessArgsWithWarnings(
+  provider: "codex" | "claude",
+  options: ProviderProcessOptions,
+  cwd: string | undefined,
+  request: AdapterRequest
+): ProviderProcessArgsResult {
   const args = options.args ?? [];
+  const warnings: string[] = [];
   if (provider === "claude") {
     const nextArgs = [...args];
     const isClaudeCli = isProviderCliExecutable("claude", options.executable);
@@ -218,8 +278,26 @@ export function providerProcessArgs(provider: "codex" | "claude", options: Provi
         if (request.task_packet_path) allowedDirs.push(dirname(request.task_packet_path));
         nextArgs.unshift("--add-dir", ...allowedDirs);
       }
-      if (!nextArgs.includes("--permission-mode")) {
-        nextArgs.unshift("--permission-mode", "acceptEdits");
+      const role = resolveRole(request.role, warnings);
+      applyClaudeRoleArgs(nextArgs, role);
+      if (options.settings_path && !nextArgs.includes("--settings")) {
+        nextArgs.push("--settings", options.settings_path);
+      }
+      if (options.mcp_config_path && !nextArgs.includes("--mcp-config")) {
+        nextArgs.push("--mcp-config", options.mcp_config_path);
+      }
+      const systemPrompt = buildProviderSystemPrompt(role);
+      if (systemPrompt && !nextArgs.includes("--append-system-prompt")) {
+        nextArgs.push("--append-system-prompt", systemPrompt);
+      }
+      if (options.resume_session_id) {
+        if (!nextArgs.includes("--resume")) {
+          nextArgs.push("--resume", options.resume_session_id);
+        }
+      } else if (options.session_id) {
+        if (!nextArgs.includes("--session-id")) {
+          nextArgs.push("--session-id", options.session_id);
+        }
       }
     }
     if (isClaudeCli && options.effort && !nextArgs.includes("--effort")) {
@@ -228,9 +306,9 @@ export function providerProcessArgs(provider: "codex" | "claude", options: Provi
     if (isClaudeCli && options.model && !nextArgs.includes("--model")) {
       nextArgs.unshift("--model", options.model);
     }
-    return nextArgs;
+    return { args: nextArgs, warnings };
   }
-  if (provider !== "codex") return args;
+  if (provider !== "codex") return { args, warnings };
   let nextArgs = [...args];
   const isCodexCli = isProviderCliExecutable("codex", options.executable);
   if (isCodexCli && options.effort && !nextArgs.includes("--reasoning")) {
@@ -240,13 +318,47 @@ export function providerProcessArgs(provider: "codex" | "claude", options: Provi
     nextArgs = ["--model", options.model, ...nextArgs];
   }
   if (!cwd || !isCodexCli || nextArgs.includes("--cd") || nextArgs.includes("-C")) {
-    return nextArgs;
+    return { args: nextArgs, warnings };
   }
   const promptStdinIndex = nextArgs.lastIndexOf("-");
   if (promptStdinIndex >= 0) {
-    return [...nextArgs.slice(0, promptStdinIndex), "--cd", cwd, "--skip-git-repo-check", ...nextArgs.slice(promptStdinIndex)];
+    return {
+      args: [...nextArgs.slice(0, promptStdinIndex), "--cd", cwd, "--skip-git-repo-check", ...nextArgs.slice(promptStdinIndex)],
+      warnings
+    };
   }
-  return [...nextArgs, "--cd", cwd, "--skip-git-repo-check"];
+  return { args: [...nextArgs, "--cd", cwd, "--skip-git-repo-check"], warnings };
+}
+
+export function providerProcessArgs(provider: "codex" | "claude", options: ProviderProcessOptions, cwd: string | undefined, request: AdapterRequest): string[] {
+  return providerProcessArgsWithWarnings(provider, options, cwd, request).args;
+}
+
+function resolveRole(role: ProviderRole | undefined, warnings: string[]): ProviderRole {
+  if (role === undefined) return "implement";
+  if (knownProviderRoles.has(role)) return role;
+  warnings.push(`waygent: unknown provider role '${String(role)}' — falling back to 'implement'`);
+  return "implement";
+}
+
+function applyClaudeRoleArgs(nextArgs: string[], role: ProviderRole): void {
+  const hasPermissionMode = nextArgs.includes("--permission-mode");
+  if (role === "review") {
+    if (!hasPermissionMode) nextArgs.unshift("--permission-mode", "plan");
+    if (!nextArgs.includes("--disallowedTools")) {
+      nextArgs.unshift("--disallowedTools", "Edit,Write,MultiEdit");
+    }
+    return;
+  }
+  if (role === "verify_assist") {
+    if (!hasPermissionMode) nextArgs.unshift("--permission-mode", "acceptEdits");
+    if (!nextArgs.includes("--allowedTools")) {
+      nextArgs.unshift("--allowedTools", "Bash,Read,Glob,Grep");
+    }
+    return;
+  }
+  // implement / fix / undefined-resolved-to-implement
+  if (!hasPermissionMode) nextArgs.unshift("--permission-mode", "acceptEdits");
 }
 
 function isProviderCliExecutable(provider: "codex" | "claude", executable: string): boolean {
@@ -254,6 +366,49 @@ function isProviderCliExecutable(provider: "codex" | "claude", executable: strin
   return name === provider;
 }
 
+export function buildProviderSystemPrompt(role: ProviderRole): string {
+  const roleLine = `You are the Waygent worker with role: ${role}.`;
+  return [
+    roleLine,
+    "Return only one JSON object matching runway.worker_result.v1 unless the provider wrapper emits JSONL envelopes.",
+    "Do not write AgentLens events directly.",
+    "Do not apply changes to the source checkout.",
+    "Edit only the isolated Waygent worktree.",
+    "Obey the task packet write policy.",
+    "Required JSON fields: schema, task_id, candidate_id, status, changed_files, summary, evidence."
+  ].join("\n");
+}
+
+export function buildProviderUserPrompt(provider: "codex" | "claude", request: AdapterRequest): string {
+  const retryPrefix = request.retry_context ? buildRetryPromptPrefix(request.retry_context) : null;
+  const body = [
+    `Provider: ${provider}.`,
+    `role: ${request.role ?? "implement"}`,
+    `task_id: ${request.task_id}`,
+    `candidate_id: ${request.candidate_id}`,
+    request.task_packet_path ? `task_packet_path: ${request.task_packet_path}` : "task_packet_path: none",
+    "Task prompt:",
+    request.prompt
+  ].join("\n");
+  return retryPrefix ? `${retryPrefix}\n\n${body}` : body;
+}
+
+// What we actually pipe to stdin for each provider. Claude moves the contract
+// reminder block out of stdin and into --append-system-prompt; Codex still
+// receives the legacy combined prompt because it has no equivalent surface.
+function buildProviderStdinPrompt(provider: "codex" | "claude", request: AdapterRequest): string {
+  if (provider === "claude") return buildProviderUserPrompt(provider, request);
+  const legacy = buildProviderPrompt(provider, request);
+  if (!request.retry_context) return legacy;
+  return `${buildRetryPromptPrefix(request.retry_context)}\n\n${legacy}`;
+}
+
+export function buildRetryPromptPrefix(context: { failure_class: FailureClass; stderr_summary?: string }): string {
+  const summary = (context.stderr_summary ?? "").slice(0, 300);
+  return `Prior attempt failed: ${context.failure_class}. stderr summary: ${summary}. Fix and respond with the same runway.worker_result.v1 contract.`;
+}
+
+// Back-compat: kept for tests / callers that still expect the legacy combined prompt.
 export function buildProviderPrompt(provider: "codex" | "claude", request: AdapterRequest): string {
   return [
     `You are the ${provider} worker for a Waygent task.`,
@@ -272,15 +427,38 @@ export function buildProviderPrompt(provider: "codex" | "claude", request: Adapt
   ].join("\n");
 }
 
-function parseWorkerOutput(stdout: string): { unwrapped: unknown; envelope: unknown | null } {
+export interface ParsedWorkerOutput {
+  unwrapped: unknown;
+  envelope: unknown | null;
+  systemInit: Record<string, unknown> | null;
+}
+
+function parseWorkerOutput(stdout: string): ParsedWorkerOutput {
   const trimmed = stdout.trim();
+  const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  let systemInit: Record<string, unknown> | null = null;
+  let resultEvent: Record<string, unknown> | null = null;
+  for (const line of lines) {
+    const parsed = tryParseJson(line);
+    if (!parsed || typeof parsed !== "object") continue;
+    const record = parsed as Record<string, unknown>;
+    if (record.type === "system" && record.subtype === "init" && !systemInit) {
+      systemInit = record;
+    } else if (record.type === "result") {
+      resultEvent = record;
+    }
+  }
+  if (resultEvent) {
+    const unwrapped = unwrapProviderEnvelope(resultEvent);
+    if (isWorkerResultCandidate(unwrapped)) {
+      return { unwrapped, envelope: resultEvent, systemInit };
+    }
+  }
+
+  // Legacy / single-blob path.
   const candidates = [
     trimmed,
-    ...trimmed
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .reverse()
+    ...lines.slice().reverse()
   ];
   for (const candidate of candidates) {
     const parsed = parseJsonText(candidate);
@@ -288,7 +466,7 @@ function parseWorkerOutput(stdout: string): { unwrapped: unknown; envelope: unkn
     const unwrapped = unwrapProviderEnvelope(parsed);
     if (isWorkerResultCandidate(unwrapped)) {
       const envelope = unwrapped !== parsed && parsed && typeof parsed === "object" ? parsed : null;
-      return { unwrapped, envelope };
+      return { unwrapped, envelope, systemInit };
     }
   }
   throw new Error("missing worker result JSON");
@@ -329,14 +507,9 @@ function isWorkerResultCandidate(value: unknown): value is Partial<WorkerResult>
 function parseJsonText(value: string): unknown | null {
   const trimmed = value.trim();
 
-  // 1. Direct JSON. If it parses to a worker_result-shaped object, prefer it.
   const direct = tryParseJson(trimmed);
   if (direct && isWorkerResultCandidate(direct)) return direct;
 
-  // 2. Enumerate every fenced block; prefer `json` label, then unlabeled,
-  //    then any other language. The previous non-global regex matched the
-  //    FIRST fence in document order, which let a `bash`/`yaml` block ahead
-  //    of the real worker_result fence win and drop $3+ of real work.
   const fences = [...trimmed.matchAll(/```(\w+)?\s*([\s\S]*?)```/g)];
   const ordered = [
     ...fences.filter((m) => m[1]?.toLowerCase() === "json"),
@@ -350,17 +523,11 @@ function parseJsonText(value: string): unknown | null {
     if (parsed && isWorkerResultCandidate(parsed)) return parsed;
   }
 
-  // 3. Balanced-brace fallback: enumerate every string-aware balanced
-  //    {...} span and try each, largest first. Replaces the brittle
-  //    `indexOf("{") .. lastIndexOf("}")` slice which over-spanned across
-  //    unrelated code blocks.
   for (const span of enumerateBalancedBraceSpans(trimmed)) {
     const parsed = tryParseJson(span);
     if (parsed && isWorkerResultCandidate(parsed)) return parsed;
   }
 
-  // 4. Final fallback: return whatever direct parse produced (may be an
-  //    envelope which the caller will unwrap), or null.
   if (direct) return direct;
   for (const span of enumerateBalancedBraceSpans(trimmed)) {
     const parsed = tryParseJson(span);
@@ -428,10 +595,44 @@ function tryParseJson(value: string): unknown | null {
   }
 }
 
+function metadataFromStreamOnly(
+  provider: "codex" | "claude" | "acp",
+  stdout: string,
+  stderr: string
+): ProviderRunMetadata {
+  let systemInit: Record<string, unknown> | null = null;
+  const trimmed = stdout.trim();
+  if (trimmed.length > 0) {
+    const lines = trimmed.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    for (const line of lines) {
+      const parsed = tryParseJson(line);
+      if (parsed && typeof parsed === "object") {
+        const record = parsed as Record<string, unknown>;
+        if (record.type === "system" && record.subtype === "init") {
+          systemInit = record;
+          break;
+        }
+      }
+    }
+  }
+  const session_id = sessionIdFromInit(systemInit);
+  const resume_session_missing = detectResumeSessionMissing(stderr);
+  const meta: ProviderRunMetadata = {
+    actual_model: modelFromSystemInit(systemInit) ?? { model: null, reasoning: null, source: "unknown" },
+    usage: null,
+    usage_source: "unknown"
+  };
+  if (session_id !== null) meta.session_id = session_id;
+  if (resume_session_missing) meta.resume_session_missing = true;
+  return meta;
+}
+
 function metadataFromParsed(
   provider: "codex" | "claude" | "acp",
   parsed: Partial<WorkerResult>,
-  envelope: unknown | null
+  envelope: unknown | null,
+  systemInit: Record<string, unknown> | null,
+  stderr: string
 ): ProviderRunMetadata {
   const evidence = parsed.evidence && typeof parsed.evidence === "object" ? parsed.evidence as Record<string, unknown> : {};
   const envelopeUsage = usageFromEnvelope(envelope);
@@ -440,10 +641,45 @@ function metadataFromParsed(
   const usage_source: UsageSource = envelopeUsage
     ? "provider_json"
     : usageSourceFromEvidence(evidence, provider);
+  const systemInitModel = modelFromSystemInit(systemInit);
   const envelopeModel = modelFromEnvelope(envelope, provider);
   const evidenceModel = actualModelFromEvidence(evidence);
-  const actual_model = evidenceModel.model ? evidenceModel : (envelopeModel ?? evidenceModel);
-  return { actual_model, usage, usage_source };
+  let actual_model: ModelAttestation;
+  if (evidenceModel.model) {
+    actual_model = evidenceModel;
+  } else if (systemInitModel) {
+    actual_model = systemInitModel;
+  } else if (envelopeModel) {
+    actual_model = envelopeModel;
+  } else {
+    actual_model = evidenceModel;
+  }
+  const session_id = sessionIdFromInit(systemInit);
+  const resume_session_missing = detectResumeSessionMissing(stderr);
+  const meta: ProviderRunMetadata = { actual_model, usage, usage_source };
+  if (session_id !== null) meta.session_id = session_id;
+  if (resume_session_missing) meta.resume_session_missing = true;
+  return meta;
+}
+
+function sessionIdFromInit(systemInit: Record<string, unknown> | null): string | null {
+  if (!systemInit) return null;
+  const value = systemInit.session_id;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function detectResumeSessionMissing(stderr: string): boolean {
+  if (!stderr) return false;
+  return /session.*not.*found/i.test(stderr);
+}
+
+function modelFromSystemInit(systemInit: Record<string, unknown> | null): ModelAttestation | null {
+  if (!systemInit) return null;
+  const model = systemInit.model;
+  if (typeof model === "string" && model.trim().length > 0) {
+    return { model: model.trim(), reasoning: null, source: "provider_json" };
+  }
+  return null;
 }
 
 function usageFromEnvelope(envelope: unknown): TokenUsage | null {

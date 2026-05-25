@@ -25,8 +25,15 @@ export const codexCapabilityManifest: ProviderCapabilityManifest = {
 };
 
 export const claudeCapabilityManifest: ProviderCapabilityManifest = {
-  ...codexCapabilityManifest,
-  provider: "claude"
+  schema: "provider.capability_manifest.v1",
+  provider: "claude",
+  supported_modes: ["single-agent", "multi-agent", "review", "verify"],
+  tool_calls: true,
+  file_edits: true,
+  shell: true,
+  streaming: true,
+  approvals: false,
+  result_schema: "runway.worker_result.v1"
 };
 
 export const acpCapabilityManifest: ProviderCapabilityManifest = {

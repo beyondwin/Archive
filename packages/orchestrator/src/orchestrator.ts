@@ -1132,10 +1132,15 @@ export function resolveProviderProcesses(
     const userClaude = overrides?.claude;
     result.claude = {
       executable: userClaude?.executable ?? "claude",
-      args: userClaude?.args ?? ["-p", "--output-format", "json"],
+      args: userClaude?.args ?? ["-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose"],
       ...(userClaude?.cwd ? { cwd: userClaude.cwd } : {}),
       ...(userClaude?.env ? { env: userClaude.env } : {}),
       ...(userClaude?.timeout_ms ? { timeout_ms: userClaude.timeout_ms } : {}),
+      ...(userClaude?.timeout_ms_by_role ? { timeout_ms_by_role: userClaude.timeout_ms_by_role } : {}),
+      ...(userClaude?.settings_path ? { settings_path: userClaude.settings_path } : {}),
+      ...(userClaude?.mcp_config_path ? { mcp_config_path: userClaude.mcp_config_path } : {}),
+      ...(userClaude?.session_id ? { session_id: userClaude.session_id } : {}),
+      ...(userClaude?.resume_session_id ? { resume_session_id: userClaude.resume_session_id } : {}),
       model: userClaude?.model ?? profile.subagent.model,
       effort: userClaude?.effort ?? profile.subagent.reasoning
     };
