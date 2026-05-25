@@ -16,6 +16,7 @@ import { createEmptyCostLedger, recordProviderAttemptCost, shouldPauseForBudget,
 import { appendDecisionFromWorker, packetDecisionSummaries, writeDecisionsProjection } from "./decisions";
 import { resolveExecutionProfile, roleProfileFor, type ExecutionProfile, type ProfileOverride, type ProviderName, type WorkerRoleSlot } from "./executionProfile";
 import { recoverWaygentPlanInput } from "./intakeRecovery";
+import { captureWorktreePatch } from "./patchCapture";
 import { resolvePlanInput, resolveSpecInput } from "./planDiscovery";
 import { normalizeWaygentPlanInput } from "./planNormalizer";
 import { parseWaygentPlan } from "./planParser";
@@ -519,6 +520,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       }
       replayTaskExecutionResult(context, waveResult.result);
       recordRuntimeEvidence(context, waveResult.result);
+      capturePatchForCompletedWorker(context, waveResult.result, paths.root);
       const capturedSessionId = extractSessionIdFromWorker(waveResult.result.worker_result);
       if (profile.provider === "codex" && capturedSessionId) {
         codexResumeSessions.set(waveResult.task_id, capturedSessionId);
@@ -956,6 +958,52 @@ function recordRuntimeEvidence(context: RunExecutionContext, result: WaygentTask
       trust_impact: "supports_success"
     }));
   }
+}
+
+function capturePatchForCompletedWorker(
+  context: RunExecutionContext,
+  result: WaygentTaskExecutionResult,
+  runRoot: string
+): void {
+  if (result.worker_result.status !== "completed") return;
+  let captured: ReturnType<typeof captureWorktreePatch>;
+  try {
+    const base = result.worktree_manifest.source_commit ?? "HEAD";
+    captured = captureWorktreePatch({
+      worktree: result.worktree_manifest.path,
+      base
+    });
+  } catch (err) {
+    console.error("[orchestrator] patch capture failed:", err);
+    return;
+  }
+  if (!captured) return;
+  const attemptNumber =
+    context.state.tasks[result.task_id]?.attempts.length ?? 1;
+  const relativePath = `worker/${result.task_id}/attempt_${attemptNumber}_patch.diff`;
+  const patchArtifact = writeArtifact(runRoot, relativePath, captured.patch, "text/x-diff");
+  const evidence = (result.worker_result.evidence ?? {}) as Record<string, unknown>;
+  evidence.patch_ref = patchArtifact.path;
+  evidence.patch_sha256 = captured.sha256;
+  evidence.patch_byte_length = captured.byteLength;
+  if (captured.truncatedWarning) evidence.patch_truncated_warning = true;
+  result.worker_result.evidence = evidence;
+  // Re-persist worker_result so downstream consumers (selectRepairAction +
+  // task packets for repair worker) can read patch_ref from disk. The
+  // original write happened in taskExecutor before patch capture existed,
+  // so its sha256 in artifact_index would now mismatch the on-disk bytes —
+  // refresh the index entry to keep stateReconciliation digest checks happy.
+  const workerArtifact = writeArtifact(
+    runRoot,
+    `worker/${result.task_id}.json`,
+    JSON.stringify(result.worker_result, null, 2)
+  );
+  context.mutateState((state) => {
+    state.artifact_index = mergeArtifactIndex(state.artifact_index, [
+      artifactIndexEntry({ artifact: patchArtifact, producer_phase: "provider", task_id: result.task_id }),
+      artifactIndexEntry({ artifact: workerArtifact, producer_phase: "provider", task_id: result.task_id })
+    ]);
+  });
 }
 
 function recordTaskRecovery(
