@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { CodexProviderAdapter, normalizeProcessOutput, providerProcessArgs } from "../src";
 
 describe("Codex adapter normalization", () => {
@@ -54,7 +55,7 @@ describe("Codex adapter normalization", () => {
         evidence: { pwd: process.env.PWD, cwd: process.cwd() }
       }));
     `;
-    const cwd = resolve(new URL(".", import.meta.url).pathname);
+    const cwd = resolve(fileURLToPath(new URL(".", import.meta.url)));
 
     const result = await new CodexProviderAdapter({ executable: process.execPath, args: ["-e", script] }).run({
       task_id: "task_demo",
