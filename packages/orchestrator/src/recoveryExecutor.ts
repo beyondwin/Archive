@@ -1,4 +1,4 @@
-import type { FailureClass } from "@waygent/contracts";
+import type { FailureClass, WorkerResult } from "@waygent/contracts";
 
 export interface ResumeActionInput {
   failure_class: FailureClass | string;
@@ -148,4 +148,27 @@ function buildStrictPromptSuffix(
     "If the prior failure was context-related, use only the task packet, evidence",
     "refs, dependency checkpoint summaries, and spec sections supplied in this retry."
   ].join("\n");
+}
+
+export interface RepairActionInput {
+  failure_class: string;
+  prior_worker_result: WorkerResult | null;
+  repair_budget: { max_attempts: number; current: number };
+}
+
+export type RepairActionDecision =
+  | { action: "dispatch_repair"; attempt_number: number; max_attempts: number }
+  | { action: "request_decision"; attempt_number: number; max_attempts: number };
+
+export function selectRepairAction(input: RepairActionInput): RepairActionDecision | null {
+  if (input.failure_class !== "verification_failed") return null;
+  const prior = input.prior_worker_result;
+  if (!prior || prior.status !== "completed") return null;
+  const patchRef = prior.evidence?.patch_ref;
+  if (typeof patchRef !== "string" || patchRef.length === 0) return null;
+  const { current, max_attempts } = input.repair_budget;
+  if (current >= max_attempts) {
+    return { action: "request_decision", attempt_number: current + 1, max_attempts };
+  }
+  return { action: "dispatch_repair", attempt_number: current + 1, max_attempts };
 }
