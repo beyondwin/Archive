@@ -12,6 +12,47 @@
 
 ---
 
+```yaml waygent-task
+id: task_claude_host_enhancements
+title: Implement Claude host execution enhancements across four phases (honest capability manifest and role-aware Claude CLI args, stream-json output with first-class result parsing, prompt split with --append-system-prompt + --settings/--mcp-config pass-through + nested host env sanitize, session resume + retry context wiring) per docs/superpowers/specs/2026-05-25-waygent-claude-host-enhancements-design.md without weakening apply readiness.
+dependencies: []
+file_claims:
+  - path: packages/provider-adapters/src/capabilities.ts
+    mode: owned
+  - path: packages/provider-adapters/src/types.ts
+    mode: owned
+  - path: packages/provider-adapters/src/processAdapters.ts
+    mode: owned
+  - path: packages/provider-adapters/src/claudeAdapter.ts
+    mode: owned
+  - path: packages/provider-adapters/tests/manifest.test.ts
+    mode: owned
+  - path: packages/provider-adapters/tests/claudeAdapter.test.ts
+    mode: owned
+  - path: packages/provider-adapters/tests/streamJson.test.ts
+    mode: owned
+  - path: packages/provider-adapters/tests/usageExtraction.test.ts
+    mode: owned
+  - path: packages/provider-adapters/tests/envSanitize.test.ts
+    mode: owned
+  - path: packages/provider-adapters/tests/fixtures/claude/stream_json_success.jsonl
+    mode: owned
+  - path: packages/orchestrator/src/orchestrator.ts
+    mode: owned
+  - path: packages/orchestrator/src/taskExecutor.ts
+    mode: owned
+  - path: packages/orchestrator/tests/claudeResume.test.ts
+    mode: owned
+risk: high
+verify_isolation: isolated
+verify:
+  - bun run typecheck
+  - bun test packages/provider-adapters/tests
+  - bun test packages/orchestrator/tests
+```
+
+---
+
 ## Conventions
 
 - Bun is the package manager and test runner. Run tests with `bun test <path>`.
@@ -50,7 +91,7 @@ Each phase touches a small set of files:
 
 Phase 1 split-out goal: Honest capability manifest + role-aware Claude CLI args + per-role timeout, with no behavior change for the `implement` role that the orchestrator actually uses today.
 
-## Task 1.1: Split `claudeCapabilityManifest` from `codexCapabilityManifest`
+### Step 1.1: Split `claudeCapabilityManifest` from `codexCapabilityManifest`
 
 **Files:**
 - Modify: `packages/provider-adapters/src/capabilities.ts`
@@ -147,7 +188,7 @@ EOF
 )"
 ```
 
-## Task 1.2: Add `timeout_ms_by_role` to `ProviderProcessOptions`
+### Step 1.2: Add `timeout_ms_by_role` to `ProviderProcessOptions`
 
 **Files:**
 - Modify: `packages/provider-adapters/src/types.ts`
@@ -275,7 +316,7 @@ EOF
 )"
 ```
 
-## Task 1.3: Role-aware Claude args in `providerProcessArgs`
+### Step 1.3: Role-aware Claude args in `providerProcessArgs`
 
 **Files:**
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`providerProcessArgs`)
@@ -427,7 +468,7 @@ EOF
 )"
 ```
 
-## Task 1.4: Phase 1 integration gate
+### Step 1.4: Phase 1 integration gate
 
 - [ ] **Step 1: Run full repo check**
 
@@ -455,7 +496,7 @@ Expected: empty (no trailing whitespace).
 
 Phase 2 goal: Switch the Claude default to stream-json, persist the JSONL into `event_stream`, parse the `result` event as a first-class path, and promote `system.init.model` to the primary attestation source. Flip `claudeCapabilityManifest.streaming` to `true` once the change actually streams.
 
-## Task 2.1: Fixture for Claude stream-json output
+### Step 2.1: Fixture for Claude stream-json output
 
 **Files:**
 - Create: `packages/provider-adapters/tests/fixtures/claude/stream_json_success.jsonl`
@@ -491,7 +532,7 @@ EOF
 )"
 ```
 
-## Task 2.2: `event_stream` capture for stream-json args
+### Step 2.2: `event_stream` capture for stream-json args
 
 **Files:**
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`runProviderProcess`)
@@ -606,7 +647,7 @@ EOF
 )"
 ```
 
-## Task 2.3: First-class `result`-event parsing path
+### Step 2.3: First-class `result`-event parsing path
 
 **Files:**
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`parseWorkerOutput`)
@@ -707,7 +748,7 @@ EOF
 )"
 ```
 
-## Task 2.4: `system.init.model` as primary attestation source
+### Step 2.4: `system.init.model` as primary attestation source
 
 **Files:**
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`modelFromEnvelope` and `metadataFromParsed`)
@@ -824,7 +865,7 @@ EOF
 )"
 ```
 
-## Task 2.5: Switch Claude default args to stream-json + flip `streaming` to true
+### Step 2.5: Switch Claude default args to stream-json + flip `streaming` to true
 
 **Files:**
 - Modify: `packages/provider-adapters/src/claudeAdapter.ts`
@@ -914,7 +955,7 @@ EOF
 )"
 ```
 
-## Task 2.6: Phase 2 integration gate
+### Step 2.6: Phase 2 integration gate
 
 - [ ] **Step 1: Run `bun run check`**
 
@@ -937,7 +978,7 @@ Expected: empty.
 
 Phase 3 goal: Split the prompt into a stable per-role system prompt (delivered via `--append-system-prompt`) plus a per-task user prompt (stdin). Add `--settings` and `--mcp-config` pass-through. Sanitize nested Claude Code host env.
 
-## Task 3.1: Split `buildProviderPrompt` into system + user halves
+### Step 3.1: Split `buildProviderPrompt` into system + user halves
 
 **Files:**
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`buildProviderPrompt`)
@@ -1050,7 +1091,7 @@ EOF
 )"
 ```
 
-## Task 3.2: Wire `--append-system-prompt` and switch Claude stdin to the user prompt
+### Step 3.2: Wire `--append-system-prompt` and switch Claude stdin to the user prompt
 
 **Files:**
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`providerProcessArgs` Claude branch; `runProviderProcess` stdin write)
@@ -1136,7 +1177,7 @@ EOF
 )"
 ```
 
-## Task 3.3: `--settings` / `--mcp-config` pass-through
+### Step 3.3: `--settings` / `--mcp-config` pass-through
 
 **Files:**
 - Modify: `packages/provider-adapters/src/types.ts`
@@ -1214,7 +1255,7 @@ EOF
 )"
 ```
 
-## Task 3.4: Nested Claude Code host env sanitize
+### Step 3.4: Nested Claude Code host env sanitize
 
 **Files:**
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`runProviderProcess` env composition)
@@ -1352,7 +1393,7 @@ EOF
 )"
 ```
 
-## Task 3.5: Phase 3 integration gate
+### Step 3.5: Phase 3 integration gate
 
 - [ ] **Step 1: Run `bun run check`**
 
@@ -1375,7 +1416,7 @@ Expected: empty.
 
 Phase 4 goal: Add deterministic Claude `--session-id` on first attempt, capture the session id into worker evidence, and resume failed retries with `--resume`. Downgrade to a fresh attempt once if the session is missing.
 
-## Task 4.1: Add `session_id` and `resume_session_id` to `ProviderProcessOptions`; wire CLI args
+### Step 4.1: Add `session_id` and `resume_session_id` to `ProviderProcessOptions`; wire CLI args
 
 **Files:**
 - Modify: `packages/provider-adapters/src/types.ts`
@@ -1465,7 +1506,7 @@ EOF
 )"
 ```
 
-## Task 4.2: Capture `session_id` and detect `session_missing` in worker evidence
+### Step 4.2: Capture `session_id` and detect `session_missing` in worker evidence
 
 **Files:**
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`normalizeProcessOutput`, `withProcessEvidence`, attestation)
@@ -1578,7 +1619,7 @@ EOF
 )"
 ```
 
-## Task 4.3: Orchestrator retry: deterministic session id and resume wiring
+### Step 4.3: Orchestrator retry: deterministic session id and resume wiring
 
 **Files:**
 - Modify: `packages/orchestrator/src/taskExecutor.ts` (find the Claude adapter construction or option-build site; thread `session_id` and `resume_session_id` from prior attempt evidence)
@@ -1717,7 +1758,7 @@ EOF
 )"
 ```
 
-## Task 4.4: Retry user-prompt prefix
+### Step 4.4: Retry user-prompt prefix
 
 **Files:**
 - Modify: `packages/provider-adapters/src/types.ts` (`AdapterRequest` retry context)
@@ -1837,7 +1878,7 @@ EOF
 )"
 ```
 
-## Task 4.5: Phase 4 integration gate
+### Step 4.5: Phase 4 integration gate
 
 - [ ] **Step 1: Run full repo check**
 
