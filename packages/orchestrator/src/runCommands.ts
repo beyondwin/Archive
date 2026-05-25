@@ -596,7 +596,16 @@ export async function applyRun(options: RunCommandOptions & { workspace: string;
     }));
     return { command: "apply", run_id: runId, status: "blocked", reason };
   }
-  const v2State = stateResult.state;
+  let v2State = stateResult.state;
+  // The live isDirtySourceCheckout above passed. If the cached apply state still
+  // says blocked-by-dirty-source from a prior attempt, that record is stale and
+  // would otherwise leak through projectApplyReadinessFromState as the readiness
+  // reason. Reset to not_ready so downstream readiness reflects real evidence.
+  if (v2State.apply.status === "blocked" && v2State.apply.reason === "dirty_source_checkout") {
+    const { reason: _stale, ...applyRest } = v2State.apply;
+    v2State = { ...v2State, apply: { ...applyRest, status: "not_ready" } };
+    writeRunStateV2(options.root, v2State);
+  }
   const methodEvidence = validateMethodEvidenceForApply({
     state: v2State,
     require_method_evidence: options.require_method_evidence ?? v2State.method_evidence_required ?? false
