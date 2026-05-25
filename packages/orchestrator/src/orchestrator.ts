@@ -484,6 +484,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
           decisions: packetDecisionSummaries(context.state),
           requested_model: requestedModelForProfile(profile),
           hooks_enabled: options.hook_config !== "off",
+          attempt: (task.retry_count ?? 0) + 1,
           ...(Object.keys(resolvedProviderProcesses).length > 0 ? { provider_processes: resolvedProviderProcesses } : {})
         });
       }

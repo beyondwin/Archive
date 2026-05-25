@@ -76,6 +76,7 @@ export interface ExecuteWaygentTaskInput {
   requested_model?: ModelRequest;
   hooks_enabled?: boolean;
   task_packet_max_chars?: number;
+  attempt?: number;
 }
 
 export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promise<WaygentTaskExecutionResult> {
@@ -200,7 +201,8 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
   const resolvedProcesses = injectClaudeSessionContext(input.provider_processes, {
     run_id: input.run_id,
     task_id: input.task.id,
-    candidate_id: `candidate_${input.task.id}`
+    candidate_id: `candidate_${input.task.id}`,
+    attempt: input.attempt ?? 1
   });
   const provider = createProviderAdapter(input.provider, resolvedProcesses);
   const { value: adapterResult, timing: providerTiming } = await measurePhase("provider", () => provider.run({
@@ -837,8 +839,14 @@ function createProviderAdapter(
 
 const CLAUDE_SESSION_NAMESPACE = "7ee29b85-1f54-4d1a-9a6b-7ef9b0b53f70";
 
-export function deriveClaudeSessionId(input: { run_id: string; task_id: string; candidate_id: string }): string {
-  const name = `${input.run_id}-${input.task_id}-${input.candidate_id}`;
+export function deriveClaudeSessionId(input: {
+  run_id: string;
+  task_id: string;
+  candidate_id: string;
+  attempt?: number;
+}): string {
+  const attempt = input.attempt ?? 1;
+  const name = `${input.run_id}-${input.task_id}-${input.candidate_id}-attempt-${attempt}`;
   return uuidV5(CLAUDE_SESSION_NAMESPACE, name);
 }
 
@@ -870,10 +878,15 @@ function bytesToUuid(bytes: Uint8Array): string {
 
 export function injectClaudeSessionContext(
   processes: ExecuteWaygentTaskInput["provider_processes"] | undefined,
-  context: { run_id: string; task_id: string; candidate_id: string }
+  context: { run_id: string; task_id: string; candidate_id: string; attempt?: number }
 ): ExecuteWaygentTaskInput["provider_processes"] {
   if (!processes?.claude) return processes;
-  if (processes.claude.session_id || processes.claude.resume_session_id) return processes;
+  if (processes.claude.resume_session_id) return processes;
+  const attempt = context.attempt ?? 1;
+  // On the first attempt, honor an explicit session_id (operator override).
+  // On retries, always derive a fresh per-attempt session_id so Claude CLI does
+  // not reject the request with "Session ID … is already in use".
+  if (processes.claude.session_id && attempt <= 1) return processes;
   return {
     ...processes,
     claude: {
