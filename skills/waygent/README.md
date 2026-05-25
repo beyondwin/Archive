@@ -99,6 +99,25 @@ or documentation structure changes. Graphify output is not Waygent runtime
 state and does not replace `waygent.run_state.v2`, AgentLens events, or
 contract tests.
 
+## Closeout Loop
+
+After a Waygent run, apply, resume, or implementation-producing command changes
+code or docs, close the loop before reporting completion:
+
+```bash
+git status --short --branch --untracked-files=all
+graphify update .   # when graphify-out/ exists and code/docs structure changed
+git diff --check
+```
+
+Use the smallest additional verification gate that covers the changed surface:
+offline Waygent gates for runtime changes, console build for console changes,
+and the native kernel gate for native changes. If verification or Graphify
+mutates tracked files after staging, restage those generated changes and rerun
+`git diff --check` before committing or declaring the work complete. Keep
+pre-existing user changes separate from the current Waygent work in the final
+summary.
+
 ## Stop Rules
 
 - If a run selection is ambiguous, ask for a plan path or run id.
