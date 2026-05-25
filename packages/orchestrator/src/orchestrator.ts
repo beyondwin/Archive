@@ -1,11 +1,21 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentLensEvent, ArtifactIndexEntry, FailureClass, IntakeFinding, ReviewResult, WaygentIntakeRecovery, WaygentRunStateV2 } from "@waygent/contracts";
+import type { AgentLensEvent, ArtifactIndexEntry, FailureClass, IntakeFinding, ProviderAttempt, ProviderProcessEvidence, ReviewResult, WaygentIntakeRecovery, WaygentRunStateV2, WorkerResult } from "@waygent/contracts";
 import { planWorktree } from "@waygent/kernel-client";
 import { projectFailureSummary, projectTimeline, projectTrustReport } from "@waygent/lens-projectors";
 import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeArtifact, writeLatestRunId } from "@waygent/lens-store";
-import { attestProviderProcessOptions, probeProviderHelp, type ProviderCapabilityAttestation, type ProviderProcessOptions } from "@waygent/provider-adapters";
+import {
+  attestProviderProcessOptions,
+  ClaudeProviderAdapter,
+  CodexProviderAdapter,
+  FakeProviderAdapter,
+  probeProviderHelp,
+  type ProviderAdapter,
+  type ProviderAdapterRunResult,
+  type ProviderCapabilityAttestation,
+  type ProviderProcessOptions
+} from "@waygent/provider-adapters";
 import { buildDurableProjection, type TaskGraph } from "@waygent/runway-control";
 import { auditAdjacentContracts } from "./adjacentContractAudit";
 import { applyExecutionDependencyBarriers } from "./executionDependencyBarrier";
@@ -17,6 +27,9 @@ import { appendDecisionFromWorker, packetDecisionSummaries, writeDecisionsProjec
 import { resolveExecutionProfile, roleProfileFor, type ExecutionProfile, type ProfileOverride, type ProviderName, type WorkerRoleSlot } from "./executionProfile";
 import { recoverWaygentPlanInput } from "./intakeRecovery";
 import { captureWorktreePatch } from "./patchCapture";
+import { selectRepairAction } from "./recoveryExecutor";
+import { prepareRepairWorktree } from "./repairDispatch";
+import { buildRepairPacket, type RepairPacketVerificationInput } from "./repairPacket";
 import { resolvePlanInput, resolveSpecInput } from "./planDiscovery";
 import { normalizeWaygentPlanInput } from "./planNormalizer";
 import { parseWaygentPlan } from "./planParser";
@@ -530,6 +543,39 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
         if (waveResult.result.checkpoint_refs[0]) task.checkpoint_ref = waveResult.result.checkpoint_refs[0];
       } else if (task) {
         const failureClass = waveResult.result.latest_failure_class ?? "verification_failed";
+        const priorWorker = waveResult.result.worker_result;
+        const repairBudget = context.state.repair_budget?.[waveResult.task_id] ?? { max_attempts: 2, current: 0 };
+        const repair = selectRepairAction({
+          failure_class: failureClass,
+          prior_worker_result: priorWorker,
+          repair_budget: repairBudget
+        });
+        if (repair && repair.action === "dispatch_repair") {
+          const dispatched = await runRepairAttempt({
+            context,
+            run_id: runId,
+            paths,
+            workspace,
+            worktree_root: worktreeRoot,
+            task_id: waveResult.task_id,
+            prior_result: waveResult.result,
+            repair,
+            profile,
+            provider_processes: attestedProviderProcesses,
+            task_file_claims: task?.file_claims ?? []
+          });
+          if (dispatched.status === "dispatched") {
+            if (task) {
+              task.status = "READY";
+              task.retry_count = (task.retry_count ?? 0) + 1;
+              delete task.latest_failure_class;
+              markStateTaskReadyForRetry(context, task.id, "verification_failed");
+            }
+            context.flushState();
+            continue;
+          }
+          // dispatch blocked — fall through to existing recovery path
+        }
         const recovery = recordTaskRecovery(context, {
           task_id: waveResult.result.task_id,
           failure_class: failureClass,
@@ -1004,6 +1050,312 @@ function capturePatchForCompletedWorker(
       artifactIndexEntry({ artifact: workerArtifact, producer_phase: "provider", task_id: result.task_id })
     ]);
   });
+}
+
+interface RunRepairAttemptInput {
+  context: RunExecutionContext;
+  run_id: string;
+  paths: ReturnType<typeof runPaths>;
+  workspace: string;
+  worktree_root: string;
+  task_id: string;
+  prior_result: WaygentTaskExecutionResult;
+  repair: { attempt_number: number; max_attempts: number };
+  profile: ExecutionProfile;
+  provider_processes: Partial<Record<Exclude<ProviderName, "fake">, ProviderProcessOptions>>;
+  task_file_claims: Array<{ path: string; mode: string }>;
+}
+
+type RunRepairAttemptOutcome =
+  | { status: "dispatched"; worker_result: WorkerResult; patch_ref: string | null }
+  | { status: "blocked"; reason: string };
+
+async function runRepairAttempt(input: RunRepairAttemptInput): Promise<RunRepairAttemptOutcome> {
+  const { context, run_id, paths, workspace, worktree_root, task_id, prior_result, repair, profile, provider_processes, task_file_claims } = input;
+  const priorWorker = prior_result.worker_result;
+  const patchRef = typeof priorWorker.evidence?.patch_ref === "string" ? priorWorker.evidence.patch_ref : null;
+  if (!patchRef) {
+    return { status: "blocked", reason: "missing_prior_patch_ref" };
+  }
+  const priorPatchAbs = join(paths.root, patchRef);
+  const destination = join(worktree_root, `${task_id}_repair_${repair.attempt_number}`);
+  const prep = prepareRepairWorktree({
+    source_repo: workspace,
+    destination,
+    base_branch: "main",
+    prior_patch_path: priorPatchAbs
+  });
+  if (prep.status === "blocked") {
+    context.appendEvent((sequence) => buildRunEvent({
+      run_id,
+      sequence,
+      event_type: "runway.repair_result",
+      phase: "repair",
+      outcome: "failed",
+      summary: `Repair preparation blocked: ${prep.reason}`,
+      payload: {
+        task_id,
+        attempt_number: repair.attempt_number,
+        max_attempts: repair.max_attempts,
+        status: "blocked",
+        failure_class: prep.reason
+      },
+      trust_impact: "supports_failure"
+    }));
+    context.mutateState((state) => {
+      state.repair_budget = {
+        ...(state.repair_budget ?? {}),
+        [task_id]: { max_attempts: repair.max_attempts, current: repair.attempt_number }
+      };
+    });
+    context.flushState();
+    return { status: "blocked", reason: prep.reason };
+  }
+
+  const verifications: RepairPacketVerificationInput[] = prior_result.verification_records.map((record) => {
+    const ref = typeof record.kernel_result_ref === "string" ? record.kernel_result_ref : null;
+    let stdout = "";
+    let stderr = "";
+    if (ref) {
+      try {
+        const kernelJson = JSON.parse(readFileSync(join(paths.root, ref), "utf8")) as { stdout?: unknown; stderr?: unknown };
+        if (typeof kernelJson.stdout === "string") stdout = kernelJson.stdout;
+        if (typeof kernelJson.stderr === "string") stderr = kernelJson.stderr;
+      } catch {
+        // leave excerpts empty if the kernel record cannot be read
+      }
+    }
+    return {
+      verification_id: String(record.verification_id ?? ""),
+      command: String(record.command ?? ""),
+      exit_code: typeof record.exit_code === "number" ? record.exit_code : null,
+      timed_out: Boolean(record.timed_out),
+      stdout,
+      stderr,
+      status: record.status === "passed" ? "passed" : "failed"
+    };
+  });
+
+  const attemptId = `attempt_${task_id}_repair_${repair.attempt_number}`;
+  const candidateId = `candidate_${task_id}_repair_${repair.attempt_number}`;
+  const repairPacket = buildRepairPacket({
+    task_id,
+    attempt_id: attemptId,
+    prior_worker_result: priorWorker,
+    verifications
+  });
+  const packetArtifact = writeArtifact(
+    paths.root,
+    `task_packets/repair_${task_id}_${repair.attempt_number}.json`,
+    `${JSON.stringify(repairPacket, null, 2)}\n`,
+    "application/json"
+  );
+  const packetPath = join(paths.root, packetArtifact.path);
+
+  context.appendEvent((sequence) => buildRunEvent({
+    run_id,
+    sequence,
+    event_type: "runway.repair_dispatched",
+    phase: "repair",
+    outcome: "success",
+    summary: "Repair worker dispatched.",
+    payload: {
+      task_id,
+      attempt_id: attemptId,
+      attempt_number: repair.attempt_number,
+      max_attempts: repair.max_attempts,
+      role: "repair",
+      prior_diff_ref: repairPacket.prior_diff_ref,
+      evidence_refs: [packetArtifact.path]
+    },
+    trust_impact: "neutral"
+  }));
+
+  const repairProcesses = applyRoleRoutingToProcesses(provider_processes, profile, "repair");
+  const adapter: ProviderAdapter = profile.provider === "codex"
+    ? new CodexProviderAdapter(repairProcesses.codex)
+    : profile.provider === "claude"
+      ? new ClaudeProviderAdapter(repairProcesses.claude)
+      : new FakeProviderAdapter();
+
+  const changedFilesHint = task_file_claims
+    .filter((claim) => claim.mode !== "read_only")
+    .map((claim) => claim.path);
+  const prompt = [
+    `Repair task: ${task_id}`,
+    `task_packet_path: ${packetPath}`,
+    "",
+    "You are the Waygent repair worker. The worktree contains the prior diff already applied.",
+    "Read the task packet for failed-verification evidence, and produce the smallest patch that",
+    "makes the failed verifications pass."
+  ].join("\n");
+
+  const startedAt = new Date().toISOString();
+  let adapterResult: ProviderAdapterRunResult | null = null;
+  let adapterError: unknown = null;
+  try {
+    adapterResult = await adapter.run({
+      task_id,
+      candidate_id: candidateId,
+      role: "fix",
+      prompt,
+      task_packet_path: packetPath,
+      cwd: destination,
+      ...(changedFilesHint.length > 0 ? { changed_files: changedFilesHint } : {})
+    });
+  } catch (err) {
+    adapterError = err;
+  }
+  const completedAt = new Date().toISOString();
+
+  let repairWorker: WorkerResult;
+  let processEvidence: ProviderProcessEvidence | undefined;
+  if (adapterResult) {
+    repairWorker = adapterResult.worker;
+    if (adapterResult.process) processEvidence = adapterResult.process;
+  } else {
+    repairWorker = {
+      schema: "runway.worker_result.v1",
+      task_id,
+      candidate_id: candidateId,
+      status: "blocked",
+      changed_files: [],
+      summary: adapterError instanceof Error ? adapterError.message : "Repair adapter crashed.",
+      evidence: {},
+      failure_class: "adapter_crashed"
+    };
+  }
+
+  let cumulativePatchRef: string | null = null;
+  let cumulativePatchSha: string | null = null;
+  let cumulativePatchBytes: number | null = null;
+  if (repairWorker.status === "completed") {
+    try {
+      const captured = captureWorktreePatch({ worktree: destination, base: "main" });
+      if (captured) {
+        const ref = `worker/${task_id}/attempt_${repair.attempt_number}_repair_patch.diff`;
+        const patchArtifact = writeArtifact(paths.root, ref, captured.patch, "text/x-diff");
+        cumulativePatchRef = patchArtifact.path;
+        cumulativePatchSha = captured.sha256;
+        cumulativePatchBytes = captured.byteLength;
+        const ev = (repairWorker.evidence ?? {}) as Record<string, unknown>;
+        ev.patch_ref = patchArtifact.path;
+        ev.patch_sha256 = captured.sha256;
+        ev.patch_byte_length = captured.byteLength;
+        if (captured.truncatedWarning) ev.patch_truncated_warning = true;
+        repairWorker.evidence = ev;
+      }
+    } catch (err) {
+      console.error("[orchestrator] repair patch capture failed:", err);
+    }
+  }
+
+  const workerArtifact = writeArtifact(
+    paths.root,
+    `worker/${task_id}/repair_${repair.attempt_number}.json`,
+    JSON.stringify(repairWorker, null, 2)
+  );
+  const stdinArtifact = writeArtifact(paths.root, `provider/${attemptId}.stdin.txt`, prompt, "text/plain");
+  const stdoutArtifact = writeArtifact(
+    paths.root,
+    `provider/${attemptId}.stdout.txt`,
+    processEvidence?.stdout ?? JSON.stringify(repairWorker),
+    "text/plain"
+  );
+  const stderrArtifact = writeArtifact(
+    paths.root,
+    `provider/${attemptId}.stderr.txt`,
+    processEvidence?.stderr ?? "",
+    "text/plain"
+  );
+
+  const providerAttempt: ProviderAttempt = {
+    schema: "runway.provider_attempt.v1",
+    attempt_id: attemptId,
+    run_id,
+    task_id,
+    role: "fix",
+    provider: profile.provider,
+    command: profile.provider === "fake" ? ["fake-provider"] : [profile.provider],
+    cwd: destination,
+    stdin_ref: stdinArtifact.path,
+    stdout_ref: stdoutArtifact.path,
+    stderr_ref: stderrArtifact.path,
+    event_stream_ref: null,
+    exit_code: processEvidence?.exit_code ?? (repairWorker.status === "completed" ? 0 : 1),
+    timed_out: processEvidence?.timed_out ?? false,
+    started_at: processEvidence?.started_at ?? startedAt,
+    completed_at: processEvidence?.completed_at ?? completedAt,
+    worker_result_ref: workerArtifact.path,
+    failure_class: repairWorker.failure_class ?? null,
+    actual_model: adapterResult?.metadata?.actual_model ?? { model: null, reasoning: null, source: "unknown" },
+    usage: adapterResult?.metadata?.usage ?? null,
+    usage_source: adapterResult?.metadata?.usage_source ?? "unknown",
+    ...(processEvidence ? { process: processEvidence } : {})
+  };
+
+  context.mutateState((state) => {
+    state.provider_attempts = [...state.provider_attempts, providerAttempt];
+    const indexEntries: ArtifactIndexEntry[] = [
+      artifactIndexEntry({ artifact: packetArtifact, producer_phase: "task_packet", task_id }),
+      artifactIndexEntry({ artifact: workerArtifact, producer_phase: "provider", task_id }),
+      artifactIndexEntry({ artifact: stdinArtifact, producer_phase: "provider", task_id }),
+      artifactIndexEntry({ artifact: stdoutArtifact, producer_phase: "provider", task_id }),
+      artifactIndexEntry({ artifact: stderrArtifact, producer_phase: "provider", task_id })
+    ];
+    if (cumulativePatchRef && cumulativePatchSha !== null && cumulativePatchBytes !== null) {
+      indexEntries.push(artifactIndexEntry({
+        artifact: {
+          path: cumulativePatchRef,
+          sha256: cumulativePatchSha,
+          byte_length: cumulativePatchBytes,
+          media_type: "text/x-diff"
+        },
+        producer_phase: "provider",
+        task_id
+      }));
+    }
+    state.artifact_index = mergeArtifactIndex(state.artifact_index, indexEntries);
+    const stateTask = state.tasks[task_id];
+    if (stateTask) {
+      stateTask.attempts = [...new Set([...stateTask.attempts, attemptId])];
+    }
+    state.repair_budget = {
+      ...(state.repair_budget ?? {}),
+      [task_id]: { max_attempts: repair.max_attempts, current: repair.attempt_number }
+    };
+    state.cost_ledger = recordProviderAttemptCost(state.cost_ledger ?? createEmptyCostLedger(), {
+      task_id: providerAttempt.task_id,
+      role: providerAttempt.role,
+      usage: providerAttempt.usage ?? null,
+      usage_source: providerAttempt.usage_source ?? "unknown",
+      recorded_at: providerAttempt.completed_at ?? new Date().toISOString(),
+      ...(providerAttempt.requested_model ? { requested_model: providerAttempt.requested_model } : {}),
+      ...(providerAttempt.actual_model ? { actual_model: providerAttempt.actual_model } : {})
+    });
+  });
+
+  context.appendEvent((sequence) => buildRunEvent({
+    run_id,
+    sequence,
+    event_type: "runway.repair_result",
+    phase: "repair",
+    outcome: repairWorker.status === "completed" ? "success" : "failed",
+    summary: repairWorker.summary,
+    payload: {
+      task_id,
+      attempt_id: attemptId,
+      attempt_number: repair.attempt_number,
+      max_attempts: repair.max_attempts,
+      status: repairWorker.status,
+      patch_ref: cumulativePatchRef,
+      summary: repairWorker.summary,
+      failure_class: repairWorker.failure_class ?? null
+    },
+    trust_impact: repairWorker.status === "completed" ? "supports_success" : "supports_failure"
+  }));
+
+  return { status: "dispatched", worker_result: repairWorker, patch_ref: cumulativePatchRef };
 }
 
 function recordTaskRecovery(

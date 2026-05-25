@@ -10,6 +10,7 @@ import {
   orphansRun,
   parseClaimFlag,
   parseNaturalLanguageIntent,
+  repairRun,
   resumeRun,
   runPlanChain,
   runWaygent,
@@ -53,7 +54,7 @@ export function parseCli(argv: string[]): ParsedCli {
   return { command, flags };
 }
 
-const usage = "waygent run|run-chain|status|events|inspect|explain|resume|verify|apply|decisions|cost|watch|orphans|scaffold-plan|lint-design|lint-plan";
+const usage = "waygent run|run-chain|status|events|inspect|explain|resume|verify|apply|repair|decisions|cost|watch|orphans|scaffold-plan|lint-design|lint-plan";
 const commandUsage: Record<string, string> = {
   run: "waygent run --plan <waygent-task.md> [--spec <design.md>] [--run <id>] [--provider codex|claude|fake] [--execution-mode multi-agent|single-agent] [--profile max-quality|balanced|cost-saver] [--main-model <name>] [--main-reasoning medium|high|xhigh] [--subagent-model <name>] [--subagent-reasoning medium|high|xhigh] [--role-model implement=<name>,review=<name>,verify_assist=<name>] [--role-reasoning implement=medium|high|xhigh,...] [--plan-preflight off|deterministic|full]",
   "run-chain": "waygent run-chain --plan <p1> [--spec <s1>] --plan <p2> [--spec <s2>]",
@@ -65,6 +66,7 @@ const commandUsage: Record<string, string> = {
   resume: "waygent resume --run <run_id>|--last",
   verify: "waygent verify --run <run_id>|--last [--task <task_id>]",
   apply: "waygent apply --run <run_id>",
+  repair: "waygent repair --run <id> [--task <task_id>] [--instruction \"<note>\"] [--evidence <verification_id>[,...]] [--dry-run]",
   decisions: "waygent decisions --run <run_id>|--last",
   cost: "waygent cost --run <run_id>|--last",
   watch: "waygent watch --run <run_id>|--last [--json] [--filter all|task_transition|failure|cost]",
@@ -299,6 +301,18 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
       workspace: String(parsed.flags.workspace ?? process.cwd()),
       require_method_evidence: Boolean(parsed.flags["require-evidence"] || parsed.flags["require-method-evidence"])
     });
+  }
+  if (parsed.command === "repair") {
+    const options: Parameters<typeof repairRun>[0] = runCommandOptions(parsed);
+    if (typeof parsed.flags.task === "string") options.task = parsed.flags.task;
+    if (typeof parsed.flags.instruction === "string") options.instruction = parsed.flags.instruction;
+    if (typeof parsed.flags.evidence === "string") {
+      options.evidence = parsed.flags.evidence.split(",").map((s: string) => s.trim()).filter(Boolean);
+    } else if (Array.isArray(parsed.flags.evidence)) {
+      options.evidence = parsed.flags.evidence.flatMap((entry) => entry.split(",")).map((s) => s.trim()).filter(Boolean);
+    }
+    if (parsed.flags["dry-run"]) options.dry_run = true;
+    return repairRun(options);
   }
   if (parsed.command === "events") {
     return eventsRun(runCommandOptions(parsed));

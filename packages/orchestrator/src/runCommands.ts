@@ -18,7 +18,9 @@ import { applyVerifiedCheckpoint } from "./applyEngine";
 import type { PostApplyVerificationSummary } from "./applyEngine";
 import { resolveCheckpointPatch, resolveRunArtifactPath, validateCheckpointManifest } from "./checkpointArtifacts";
 import { buildCompletionAudit, hasApplyReadyCheckpoint } from "./completionAudit";
-import { selectResumeAction } from "./recoveryExecutor";
+import { selectRepairAction, selectResumeAction } from "./recoveryExecutor";
+import { buildRepairPacket, type RepairPacketVerificationInput, type RepairTaskPacket } from "./repairPacket";
+import type { WorkerResult } from "@waygent/contracts";
 import { validateMethodEvidenceForApply } from "./evidencePolicy";
 import { deleteResolvedOrphan, scanOrphanRuns } from "./orphanRuns";
 import { runVerificationCommands } from "./verification";
@@ -855,6 +857,126 @@ function readCombinedApplyPatch(state: WaygentRunStateV2):
   } catch {
     return { status: "blocked", reason: "checkpoint_patch_missing" };
   }
+}
+
+export interface RepairRunOptions {
+  root: string;
+  run?: string;
+  last?: boolean;
+  task?: string;
+  instruction?: string;
+  evidence?: string[];
+  dry_run?: boolean;
+}
+
+export interface RepairRunResult {
+  command: "repair";
+  run_id: string;
+  task_id?: string;
+  status: "dispatched" | "blocked" | "dry_run";
+  reason?: string;
+  attempt_id?: string;
+  packet?: RepairTaskPacket;
+}
+
+function readWorkerResultForTask(state: WaygentRunStateV2, taskId: string): WorkerResult | null {
+  const attempts = state.provider_attempts
+    .filter((attempt) => attempt.task_id === taskId && typeof attempt.worker_result_ref === "string");
+  const latest = attempts[attempts.length - 1];
+  if (!latest?.worker_result_ref) return null;
+  try {
+    const path = resolveRunArtifactPath(state.run_root, latest.worker_result_ref);
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as WorkerResult;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export async function repairRun(options: RepairRunOptions): Promise<RepairRunResult> {
+  let runId: string;
+  try {
+    runId = resolveRunId(options);
+  } catch {
+    runId = options.run ?? "";
+  }
+  const stateResult = readRunStateV2Result(options.root, runId);
+  if (stateResult.status !== "ok") {
+    return { command: "repair", run_id: runId, status: "blocked", reason: "no_repairable_task" };
+  }
+  const v2 = stateResult.state;
+
+  type Candidate = { task: WaygentRunStateV2["tasks"][string]; worker_result: WorkerResult };
+  const candidates: Candidate[] = [];
+  for (const task of Object.values(v2.tasks)) {
+    if (task.latest_failure_class !== "verification_failed") continue;
+    const worker = readWorkerResultForTask(v2, task.id);
+    if (!worker || worker.status !== "completed") continue;
+    const patchRef = worker.evidence?.patch_ref;
+    if (typeof patchRef !== "string" || patchRef.length === 0) continue;
+    candidates.push({ task, worker_result: worker });
+  }
+
+  if (candidates.length === 0) {
+    return { command: "repair", run_id: runId, status: "blocked", reason: "no_repairable_task" };
+  }
+  let chosen: Candidate | undefined;
+  if (options.task) {
+    chosen = candidates.find((entry) => entry.task.id === options.task);
+    if (!chosen) {
+      return { command: "repair", run_id: runId, status: "blocked", reason: "no_repairable_task" };
+    }
+  } else if (candidates.length > 1) {
+    return { command: "repair", run_id: runId, status: "blocked", reason: "ambiguous_task_select_via_flag" };
+  } else {
+    chosen = candidates[candidates.length - 1];
+  }
+  if (!chosen) {
+    return { command: "repair", run_id: runId, status: "blocked", reason: "no_repairable_task" };
+  }
+
+  const budget = v2.repair_budget?.[chosen.task.id] ?? { max_attempts: 2, current: 0 };
+  const action = selectRepairAction({
+    failure_class: "verification_failed",
+    prior_worker_result: chosen.worker_result,
+    repair_budget: budget
+  });
+  if (!action || action.action === "request_decision") {
+    return { command: "repair", run_id: runId, task_id: chosen.task.id, status: "blocked", reason: "repair_budget_exhausted" };
+  }
+
+  const verifications: RepairPacketVerificationInput[] = v2.verification
+    .filter((record) => record.task_id === chosen!.task.id)
+    .map((record) => ({
+      verification_id: String(record.verification_id ?? ""),
+      command: String(record.command ?? ""),
+      exit_code: typeof record.exit_code === "number" ? record.exit_code : null,
+      timed_out: Boolean(record.timed_out),
+      stdout: typeof record.stdout === "string" ? record.stdout : "",
+      stderr: typeof record.stderr === "string" ? record.stderr : "",
+      status: record.status === "passed" ? "passed" : "failed"
+    }));
+
+  const packetInput: Parameters<typeof buildRepairPacket>[0] = {
+    task_id: chosen.task.id,
+    attempt_id: `attempt_${chosen.task.id}_repair_${action.attempt_number}_manual`,
+    prior_worker_result: chosen.worker_result,
+    verifications
+  };
+  if (options.instruction !== undefined) packetInput.operator_instruction = options.instruction;
+  if (options.evidence !== undefined) packetInput.evidence_filter = options.evidence;
+  const packet = buildRepairPacket(packetInput);
+
+  if (options.dry_run) {
+    return { command: "repair", run_id: runId, task_id: chosen.task.id, status: "dry_run", packet };
+  }
+  return {
+    command: "repair",
+    run_id: runId,
+    task_id: chosen.task.id,
+    status: "dispatched",
+    attempt_id: packet.attempt_id
+  };
 }
 
 function isDirtySourceCheckout(workspace: string): boolean {
