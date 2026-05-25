@@ -147,6 +147,49 @@ describe("Codex adapter normalization", () => {
     expect(result.process.exit_code).toBe(0);
   });
 
+  test("maps completed_with_* hybrid statuses to failed instead of malformed_result", () => {
+    const result = normalizeProcessOutput("codex", "task_demo", "candidate_demo", {
+      exitCode: 0,
+      stdout: JSON.stringify({
+        status: "completed_with_blocked_verification",
+        summary: "implementation done but verify did not pass",
+        changed_files: ["src/a.ts"],
+        evidence: { command: "codex" }
+      }),
+      stderr: ""
+    });
+
+    expect(result.worker.status).toBe("failed");
+    expect(result.worker.failure_class).toBeUndefined();
+    expect(result.worker.summary).toBe("implementation done but verify did not pass");
+    expect(result.worker.changed_files).toEqual(["src/a.ts"]);
+  });
+
+  test("maps no_changes_needed and already_implemented to completed", () => {
+    const noChange = normalizeProcessOutput("codex", "task_demo", "candidate_demo", {
+      exitCode: 0,
+      stdout: JSON.stringify({ status: "no_changes_needed", summary: "already on main", changed_files: [], evidence: {} }),
+      stderr: ""
+    });
+    expect(noChange.worker.status).toBe("completed");
+
+    const alreadyImpl = normalizeProcessOutput("codex", "task_demo", "candidate_demo", {
+      exitCode: 0,
+      stdout: JSON.stringify({ status: "already_implemented", summary: "no-op", changed_files: [], evidence: {} }),
+      stderr: ""
+    });
+    expect(alreadyImpl.worker.status).toBe("completed");
+  });
+
+  test("maps awaiting_* and blocked_* hybrid statuses to blocked", () => {
+    const result = normalizeProcessOutput("codex", "task_demo", "candidate_demo", {
+      exitCode: 0,
+      stdout: JSON.stringify({ status: "blocked_by_environment", summary: "needs env fix", changed_files: [], evidence: {} }),
+      stderr: ""
+    });
+    expect(result.worker.status).toBe("blocked");
+  });
+
   test("classifies crashes", () => {
     const result = normalizeProcessOutput("codex", "task_demo", "candidate_demo", { exitCode: 2, stdout: "raw out", stderr: "boom" });
 
