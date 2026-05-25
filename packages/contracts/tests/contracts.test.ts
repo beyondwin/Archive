@@ -89,6 +89,23 @@ describe("Waygent contracts", () => {
     ).toBeTruthy();
   });
 
+  test("worker_result.v1 accepts optional patch_ref / patch_sha256 / patch_byte_length in evidence", () => {
+    const workerResult = {
+      schema: "runway.worker_result.v1",
+      task_id: "task_a",
+      candidate_id: "cand_a",
+      status: "completed",
+      changed_files: ["src/foo.ts"],
+      summary: "done",
+      evidence: {
+        patch_ref: "artifacts/worker/task_a/attempt_1_patch.diff",
+        patch_sha256: "a".repeat(64),
+        patch_byte_length: 12345
+      }
+    };
+    expect(validateContract("runway.worker_result.v1", workerResult)).toEqual(workerResult);
+  });
+
   test("accepts worker results and provider manifests", () => {
     expect(validateContract("runway.worker_result.v1", workerResult)).toEqual(workerResult);
     expect(

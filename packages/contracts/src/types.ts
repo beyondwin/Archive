@@ -809,6 +809,9 @@ export interface WorkerResult {
   status: "completed" | "failed" | "blocked";
   changed_files: string[];
   summary: string;
+  // Open-typed bag. Convention (no schema bump): orchestrator may stamp
+  // `patch_ref`, `patch_sha256`, `patch_byte_length`, `patch_truncated_warning`
+  // after capturing the worker's diff for repair/checkpoint reuse.
   evidence: Record<string, unknown>;
   failure_class?: FailureClass;
 }
