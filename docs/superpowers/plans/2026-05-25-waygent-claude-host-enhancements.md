@@ -97,7 +97,7 @@ Phase 1 split-out goal: Honest capability manifest + role-aware Claude CLI args 
 - Modify: `packages/provider-adapters/src/capabilities.ts`
 - Create: `packages/provider-adapters/tests/manifest.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `packages/provider-adapters/tests/manifest.test.ts`:
 
@@ -131,12 +131,12 @@ describe("claudeCapabilityManifest (Phase 1: honest manifest)", () => {
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/provider-adapters/tests/manifest.test.ts`
 Expected: FAIL — `streaming` is `true` and `approvals` is `true` (currently copied from codex).
 
-- [ ] **Step 3: Edit `capabilities.ts` to split the manifest**
+- [x] **Step 3: Edit `capabilities.ts` to split the manifest**
 
 In `packages/provider-adapters/src/capabilities.ts`, replace:
 
@@ -163,17 +163,17 @@ export const claudeCapabilityManifest: ProviderCapabilityManifest = {
 };
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `bun test packages/provider-adapters/tests/manifest.test.ts`
 Expected: PASS (3 tests).
 
-- [ ] **Step 5: Run package tests for regression**
+- [x] **Step 5: Run package tests for regression**
 
 Run: `cd packages/provider-adapters && bun test`
 Expected: All tests PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/provider-adapters/src/capabilities.ts packages/provider-adapters/tests/manifest.test.ts
@@ -195,7 +195,7 @@ EOF
 - Modify: `packages/provider-adapters/src/processAdapters.ts:144` (timeout resolution site)
 - Modify: `packages/provider-adapters/tests/claudeAdapter.test.ts` (append timeout test)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `packages/provider-adapters/tests/claudeAdapter.test.ts` inside the existing `describe("Claude adapter normalization", ...)` block:
 
@@ -218,12 +218,12 @@ test("per-role timeout override applies before scalar timeout_ms (Phase 1)", asy
 });
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `bun test packages/provider-adapters/tests/claudeAdapter.test.ts`
 Expected: FAIL — `timeout_ms_by_role` is not a known option; the 5_000 ms timeout wins and the test sleeps to completion.
 
-- [ ] **Step 3: Extend the type**
+- [x] **Step 3: Extend the type**
 
 In `packages/provider-adapters/src/types.ts`, change:
 
@@ -258,7 +258,7 @@ export interface ProviderProcessOptions {
 
 (The `ProviderRole` import already exists at the top of the file — verify it; if not, add `ProviderRole` to the import list.)
 
-- [ ] **Step 4: Resolve role-aware timeout in `runProviderProcess`**
+- [x] **Step 4: Resolve role-aware timeout in `runProviderProcess`**
 
 In `packages/provider-adapters/src/processAdapters.ts`, find the line:
 
@@ -292,17 +292,17 @@ function resolveRoleTimeout(options: ProviderProcessOptions, role: ProviderRole 
 
 Import `ProviderRole` from `@waygent/contracts` at the top of the file.
 
-- [ ] **Step 5: Run test to verify it passes**
+- [x] **Step 5: Run test to verify it passes**
 
 Run: `bun test packages/provider-adapters/tests/claudeAdapter.test.ts`
 Expected: PASS, including the new timeout test.
 
-- [ ] **Step 6: Run full package tests**
+- [x] **Step 6: Run full package tests**
 
 Run: `cd packages/provider-adapters && bun test`
 Expected: all PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/provider-adapters/src/types.ts packages/provider-adapters/src/processAdapters.ts packages/provider-adapters/tests/claudeAdapter.test.ts
@@ -322,7 +322,7 @@ EOF
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`providerProcessArgs`)
 - Modify: `packages/provider-adapters/tests/claudeAdapter.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `packages/provider-adapters/tests/claudeAdapter.test.ts`:
 
@@ -378,12 +378,12 @@ describe("Phase 1 — role-aware Claude args", () => {
 });
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `bun test packages/provider-adapters/tests/claudeAdapter.test.ts`
 Expected: 4 FAIL (the `implement`/`undefined` tests pass).
 
-- [ ] **Step 3: Branch on role inside `providerProcessArgs`**
+- [x] **Step 3: Branch on role inside `providerProcessArgs`**
 
 In `packages/provider-adapters/src/processAdapters.ts`, locate the existing Claude branch (currently injecting `--add-dir` and `--permission-mode acceptEdits`). Replace the `if (provider === "claude") { ... }` block with the version below. Keep model/effort handling intact at the end.
 
@@ -443,17 +443,17 @@ function claudeRolePolicy(role: ProviderRole | undefined): ClaudeRolePolicy {
 }
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/provider-adapters/tests/claudeAdapter.test.ts`
 Expected: all PASS, including the four new role tests AND the existing `implement` regression tests.
 
-- [ ] **Step 5: Full package test**
+- [x] **Step 5: Full package test**
 
 Run: `cd packages/provider-adapters && bun test`
 Expected: all PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/provider-adapters/src/processAdapters.ts packages/provider-adapters/tests/claudeAdapter.test.ts
@@ -470,22 +470,22 @@ EOF
 
 ### Step 1.4: Phase 1 integration gate
 
-- [ ] **Step 1: Run full repo check**
+- [x] **Step 1: Run full repo check**
 
 Run: `bun run check`
 Expected: all packages green.
 
-- [ ] **Step 2: Run waygent scenarios**
+- [x] **Step 2: Run waygent scenarios**
 
 Run: `bun run waygent:scenarios`
 Expected: green (no regression on implement-role behavior).
 
-- [ ] **Step 3: Run platform demo**
+- [x] **Step 3: Run platform demo**
 
 Run: `bun run platform:demo`
 Expected: green.
 
-- [ ] **Step 4: Patch hygiene**
+- [x] **Step 4: Patch hygiene**
 
 Run: `git diff --check`
 Expected: empty (no trailing whitespace).
@@ -501,7 +501,7 @@ Phase 2 goal: Switch the Claude default to stream-json, persist the JSONL into `
 **Files:**
 - Create: `packages/provider-adapters/tests/fixtures/claude/stream_json_success.jsonl`
 
-- [ ] **Step 1: Create the fixture**
+- [x] **Step 1: Create the fixture**
 
 Write `packages/provider-adapters/tests/fixtures/claude/stream_json_success.jsonl` with one JSON object per line (no trailing newline issues):
 
@@ -512,12 +512,12 @@ Write `packages/provider-adapters/tests/fixtures/claude/stream_json_success.json
 {"type":"result","subtype":"success","session_id":"test-session-abc","model":"claude-opus-4-7","result":"```json\n{\"schema\":\"runway.worker_result.v1\",\"task_id\":\"task_stream\",\"candidate_id\":\"candidate_stream\",\"status\":\"completed\",\"changed_files\":[\"a.ts\"],\"summary\":\"stream-json success\",\"evidence\":{}}\n```","usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":600,"cache_creation_input_tokens":50},"modelUsage":{"claude-opus-4-7":{"duration_ms":1200}}}
 ```
 
-- [ ] **Step 2: Sanity-load the fixture**
+- [x] **Step 2: Sanity-load the fixture**
 
 Run: `bun -e 'console.log(require("fs").readFileSync("packages/provider-adapters/tests/fixtures/claude/stream_json_success.jsonl","utf8").split("\n").filter(Boolean).map(l => JSON.parse(l).type))'`
 Expected output: `[ "system", "assistant", "assistant", "result" ]`
 
-- [ ] **Step 3: Commit the fixture**
+- [x] **Step 3: Commit the fixture**
 
 ```bash
 git add packages/provider-adapters/tests/fixtures/claude/stream_json_success.jsonl
@@ -538,7 +538,7 @@ EOF
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`runProviderProcess`)
 - Create: `packages/provider-adapters/tests/streamJson.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `packages/provider-adapters/tests/streamJson.test.ts`:
 
@@ -573,12 +573,12 @@ describe("Phase 2 — Claude stream-json capture", () => {
 
 Note: the script uses `-e` so bun runs the inline code; the prepended args (`-p`, `--output-format stream-json`, etc.) get ignored by bun but they must be on `options.args` so the adapter's stream-json detection kicks in.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run: `bun test packages/provider-adapters/tests/streamJson.test.ts`
 Expected: FAIL — `event_stream` is currently always `null`.
 
-- [ ] **Step 3: Implement stream-json detection + persistence**
+- [x] **Step 3: Implement stream-json detection + persistence**
 
 In `packages/provider-adapters/src/processAdapters.ts`, inside `runProviderProcess`, after computing the resolved args (and before the `child.on("close", ...)` block), detect stream-json mode:
 
@@ -621,17 +621,17 @@ finish(
 );
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `bun test packages/provider-adapters/tests/streamJson.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Full package test**
+- [x] **Step 5: Full package test**
 
 Run: `cd packages/provider-adapters && bun test`
 Expected: all PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/provider-adapters/src/processAdapters.ts packages/provider-adapters/tests/streamJson.test.ts
@@ -653,7 +653,7 @@ EOF
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`parseWorkerOutput`)
 - Modify: `packages/provider-adapters/tests/streamJson.test.ts` (extend)
 
-- [ ] **Step 1: Add the failing test**
+- [x] **Step 1: Add the failing test**
 
 Append to `packages/provider-adapters/tests/streamJson.test.ts`:
 
@@ -682,12 +682,12 @@ describe("Phase 2 — Claude stream-json parsing", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `bun test packages/provider-adapters/tests/streamJson.test.ts`
 Expected: FAIL — current parser walks lines in reverse first and may take the earlier assistant fence depending on order, or the assertion may otherwise mismatch. Confirm the failure mode before fixing.
 
-- [ ] **Step 3: Implement the priority path**
+- [x] **Step 3: Implement the priority path**
 
 In `packages/provider-adapters/src/processAdapters.ts`, modify `parseWorkerOutput` to prefer the last JSON line whose `type === "result"`:
 
@@ -723,17 +723,17 @@ function parseWorkerOutput(stdout: string): { unwrapped: unknown; envelope: unkn
 }
 ```
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `bun test packages/provider-adapters/tests/streamJson.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Run all parsing-related tests for regression**
+- [x] **Step 5: Run all parsing-related tests for regression**
 
 Run: `cd packages/provider-adapters && bun test`
 Expected: all PASS, including `usageExtraction.test.ts` and `claudeAdapter.test.ts`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/provider-adapters/src/processAdapters.ts packages/provider-adapters/tests/streamJson.test.ts
@@ -754,7 +754,7 @@ EOF
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`modelFromEnvelope` and `metadataFromParsed`)
 - Modify: `packages/provider-adapters/tests/usageExtraction.test.ts` (append test)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `packages/provider-adapters/tests/usageExtraction.test.ts`:
 
@@ -775,12 +775,12 @@ test("system.init.model wins over modelUsage keys[0] when stream-json is present
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `bun test packages/provider-adapters/tests/usageExtraction.test.ts`
 Expected: FAIL — `modelUsage` keys[0] wins and returns `claude-different-model`.
 
-- [ ] **Step 3: Plumb event-stream-aware attestation**
+- [x] **Step 3: Plumb event-stream-aware attestation**
 
 The current code path doesn't have access to the JSONL when computing `metadataFromParsed`. Pass it in.
 
@@ -840,17 +840,17 @@ function modelFromStreamInit(eventStreamText: string | null): ModelAttestation |
 
 The precedence is: evidence-self-report (worker_result) → stream init → envelope `modelUsage`/`model` → unknown.
 
-- [ ] **Step 4: Run the test to verify it passes**
+- [x] **Step 4: Run the test to verify it passes**
 
 Run: `bun test packages/provider-adapters/tests/usageExtraction.test.ts`
 Expected: all PASS, including the new precedence test and the existing tests (which do not set a stream init and so still resolve to `modelUsage` or evidence as before).
 
-- [ ] **Step 5: Full package test**
+- [x] **Step 5: Full package test**
 
 Run: `cd packages/provider-adapters && bun test`
 Expected: all PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/provider-adapters/src/processAdapters.ts packages/provider-adapters/tests/usageExtraction.test.ts
@@ -874,25 +874,25 @@ EOF
 - Modify: `packages/provider-adapters/tests/manifest.test.ts`
 - Modify: `packages/provider-adapters/tests/claudeAdapter.test.ts` (existing args test that hard-codes `["-p", "--output-format", "json"]`)
 
-- [ ] **Step 1: Update the manifest lock test**
+- [x] **Step 1: Update the manifest lock test**
 
 In `packages/provider-adapters/tests/manifest.test.ts`, change `expect(claudeCapabilityManifest.streaming).toBe(false);` to `expect(claudeCapabilityManifest.streaming).toBe(true);`.
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `bun test packages/provider-adapters/tests/manifest.test.ts`
 Expected: FAIL on the streaming assertion.
 
-- [ ] **Step 3: Flip the manifest**
+- [x] **Step 3: Flip the manifest**
 
 In `packages/provider-adapters/src/capabilities.ts`, change `streaming: false` to `streaming: true` in `claudeCapabilityManifest`.
 
-- [ ] **Step 4: Run to verify the manifest test passes**
+- [x] **Step 4: Run to verify the manifest test passes**
 
 Run: `bun test packages/provider-adapters/tests/manifest.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Update Claude adapter defaults**
+- [x] **Step 5: Update Claude adapter defaults**
 
 In `packages/provider-adapters/src/claudeAdapter.ts`, change:
 
@@ -911,7 +911,7 @@ constructor(
 ) {}
 ```
 
-- [ ] **Step 6: Update orchestrator default**
+- [x] **Step 6: Update orchestrator default**
 
 In `packages/orchestrator/src/orchestrator.ts`, find the Claude branch:
 
@@ -925,21 +925,21 @@ Change to:
 args: userClaude?.args ?? ["-p", "--output-format", "stream-json", "--include-partial-messages", "--verbose"],
 ```
 
-- [ ] **Step 7: Fix the now-stale claudeAdapter test arg expectation**
+- [x] **Step 7: Fix the now-stale claudeAdapter test arg expectation**
 
 In `packages/provider-adapters/tests/claudeAdapter.test.ts`, the test "prepends --model and --effort to claude args when set" passes args `["-p", "--output-format", "json"]` explicitly. That call still works because the test passes its own args; do not change it. But the test "preserves provider supplied failure_class from fenced Claude JSON" and other parsing tests use direct JSON output paths — leave them alone too. The only change needed here is verifying nothing test-side broke. Re-run all adapter tests below.
 
-- [ ] **Step 8: Run package tests**
+- [x] **Step 8: Run package tests**
 
 Run: `cd packages/provider-adapters && bun test`
 Expected: all PASS.
 
-- [ ] **Step 9: Run orchestrator tests**
+- [x] **Step 9: Run orchestrator tests**
 
 Run: `cd packages/orchestrator && bun test`
 Expected: all PASS.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 git add packages/provider-adapters/src/claudeAdapter.ts packages/provider-adapters/src/capabilities.ts packages/provider-adapters/tests/manifest.test.ts packages/orchestrator/src/orchestrator.ts
@@ -957,17 +957,17 @@ EOF
 
 ### Step 2.6: Phase 2 integration gate
 
-- [ ] **Step 1: Run `bun run check`**
+- [x] **Step 1: Run `bun run check`**
 
 Run: `bun run check`
 Expected: green.
 
-- [ ] **Step 2: Run scenarios + platform demo**
+- [x] **Step 2: Run scenarios + platform demo**
 
 Run: `bun run waygent:scenarios && bun run platform:demo`
 Expected: green.
 
-- [ ] **Step 3: `git diff --check`**
+- [x] **Step 3: `git diff --check`**
 
 Run: `git diff --check`
 Expected: empty.
@@ -984,7 +984,7 @@ Phase 3 goal: Split the prompt into a stable per-role system prompt (delivered v
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`buildProviderPrompt`)
 - Modify: `packages/provider-adapters/tests/claudeAdapter.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `packages/provider-adapters/tests/claudeAdapter.test.ts`:
 
@@ -1026,12 +1026,12 @@ describe("Phase 3 — prompt split", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify it fails**
+- [x] **Step 2: Run to verify it fails**
 
 Run: `bun test packages/provider-adapters/tests/claudeAdapter.test.ts`
 Expected: FAIL — `buildProviderSystemPrompt`/`buildProviderUserPrompt` are not exported.
 
-- [ ] **Step 3: Implement the split**
+- [x] **Step 3: Implement the split**
 
 In `packages/provider-adapters/src/processAdapters.ts`, replace the existing `buildProviderPrompt` export with three exports — preserve the original as a thin combinator so any external caller still works:
 
@@ -1066,17 +1066,17 @@ export function buildProviderPrompt(provider: "codex" | "claude", request: Adapt
 }
 ```
 
-- [ ] **Step 4: Run to verify the split tests pass**
+- [x] **Step 4: Run to verify the split tests pass**
 
 Run: `bun test packages/provider-adapters/tests/claudeAdapter.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Full package test (regression for codex / fake)**
+- [x] **Step 5: Full package test (regression for codex / fake)**
 
 Run: `cd packages/provider-adapters && bun test`
 Expected: all PASS — `buildProviderPrompt` still composes the same combined string for codex.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/provider-adapters/src/processAdapters.ts packages/provider-adapters/tests/claudeAdapter.test.ts
@@ -1097,7 +1097,7 @@ EOF
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`providerProcessArgs` Claude branch; `runProviderProcess` stdin write)
 - Modify: `packages/provider-adapters/tests/claudeAdapter.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `packages/provider-adapters/tests/claudeAdapter.test.ts`:
 
@@ -1126,12 +1126,12 @@ test("Phase 3 — non-CLI Claude executable does not get --append-system-prompt"
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `bun test packages/provider-adapters/tests/claudeAdapter.test.ts`
 Expected: FAIL.
 
-- [ ] **Step 3: Inject `--append-system-prompt` and switch stdin**
+- [x] **Step 3: Inject `--append-system-prompt` and switch stdin**
 
 In `processAdapters.ts`, inside the Claude branch of `providerProcessArgs` (only when `isClaudeCli`), after the role policy block, add:
 
@@ -1152,17 +1152,17 @@ child.stdin.end(stdinPayload);
 
 You will need `isProviderCliExecutable` and the prompt builders in scope at that site — they already live in this file.
 
-- [ ] **Step 4: Run to verify tests pass**
+- [x] **Step 4: Run to verify tests pass**
 
 Run: `bun test packages/provider-adapters/tests/claudeAdapter.test.ts`
 Expected: PASS, including existing tests (no behavior change for codex; Claude regression tests pass because the stable system prompt + user prompt still contain the same task content).
 
-- [ ] **Step 5: Full package test**
+- [x] **Step 5: Full package test**
 
 Run: `cd packages/provider-adapters && bun test`
 Expected: all PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/provider-adapters/src/processAdapters.ts packages/provider-adapters/tests/claudeAdapter.test.ts
@@ -1184,7 +1184,7 @@ EOF
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`providerProcessArgs` Claude branch)
 - Modify: `packages/provider-adapters/tests/claudeAdapter.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```ts
 test("Phase 3 — settings_path and mcp_config_path pass through to claude args", () => {
@@ -1208,12 +1208,12 @@ test("Phase 3 — settings_path and mcp_config_path pass through to claude args"
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `bun test packages/provider-adapters/tests/claudeAdapter.test.ts`
 Expected: FAIL — options not on type, args not injected.
 
-- [ ] **Step 3: Extend the type and the args branch**
+- [x] **Step 3: Extend the type and the args branch**
 
 In `types.ts`, add:
 
@@ -1235,12 +1235,12 @@ if (options.mcp_config_path && !nextArgs.includes("--mcp-config")) {
 }
 ```
 
-- [ ] **Step 4: Run to verify the test passes**
+- [x] **Step 4: Run to verify the test passes**
 
 Run: `bun test packages/provider-adapters/tests/claudeAdapter.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/provider-adapters/src/types.ts packages/provider-adapters/src/processAdapters.ts packages/provider-adapters/tests/claudeAdapter.test.ts
@@ -1261,7 +1261,7 @@ EOF
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`runProviderProcess` env composition)
 - Create: `packages/provider-adapters/tests/envSanitize.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `packages/provider-adapters/tests/envSanitize.test.ts`:
 
@@ -1323,12 +1323,12 @@ describe("Phase 3 — nested Claude Code env sanitize", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `bun test packages/provider-adapters/tests/envSanitize.test.ts`
 Expected: FAIL — env vars leak from parent.
 
-- [ ] **Step 3: Implement env sanitize in `runProviderProcess`**
+- [x] **Step 3: Implement env sanitize in `runProviderProcess`**
 
 In `processAdapters.ts`, replace the env composition currently passed to `spawn`:
 
@@ -1367,17 +1367,17 @@ function composeChildEnv(
 
 (Type note: `spawn` accepts `undefined` values; the `delete` operator is preferred over assignment to `undefined`, which the helper uses.)
 
-- [ ] **Step 4: Run to verify the tests pass**
+- [x] **Step 4: Run to verify the tests pass**
 
 Run: `bun test packages/provider-adapters/tests/envSanitize.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Full package test for regression**
+- [x] **Step 5: Full package test for regression**
 
 Run: `cd packages/provider-adapters && bun test`
 Expected: all PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/provider-adapters/src/processAdapters.ts packages/provider-adapters/tests/envSanitize.test.ts
@@ -1395,17 +1395,17 @@ EOF
 
 ### Step 3.5: Phase 3 integration gate
 
-- [ ] **Step 1: Run `bun run check`**
+- [x] **Step 1: Run `bun run check`**
 
 Run: `bun run check`
 Expected: green.
 
-- [ ] **Step 2: Run scenarios + platform demo**
+- [x] **Step 2: Run scenarios + platform demo**
 
 Run: `bun run waygent:scenarios && bun run platform:demo`
 Expected: green.
 
-- [ ] **Step 3: `git diff --check`**
+- [x] **Step 3: `git diff --check`**
 
 Run: `git diff --check`
 Expected: empty.
@@ -1423,7 +1423,7 @@ Phase 4 goal: Add deterministic Claude `--session-id` on first attempt, capture 
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`providerProcessArgs` Claude branch)
 - Modify: `packages/provider-adapters/tests/claudeAdapter.test.ts`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `claudeAdapter.test.ts`:
 
@@ -1462,12 +1462,12 @@ describe("Phase 4 — session id / resume", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `bun test packages/provider-adapters/tests/claudeAdapter.test.ts`
 Expected: FAIL — options not on type, args not injected.
 
-- [ ] **Step 3: Extend the type and the args branch**
+- [x] **Step 3: Extend the type and the args branch**
 
 In `types.ts`, add to `ProviderProcessOptions`:
 
@@ -1486,12 +1486,12 @@ if (options.resume_session_id && !nextArgs.includes("--resume")) {
 }
 ```
 
-- [ ] **Step 4: Run to verify tests pass**
+- [x] **Step 4: Run to verify tests pass**
 
 Run: `bun test packages/provider-adapters/tests/claudeAdapter.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/provider-adapters/src/types.ts packages/provider-adapters/src/processAdapters.ts packages/provider-adapters/tests/claudeAdapter.test.ts
@@ -1512,7 +1512,7 @@ EOF
 - Modify: `packages/provider-adapters/src/processAdapters.ts` (`normalizeProcessOutput`, `withProcessEvidence`, attestation)
 - Modify: `packages/provider-adapters/tests/streamJson.test.ts`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `streamJson.test.ts`:
 
@@ -1542,12 +1542,12 @@ describe("Phase 4 — session id capture and missing-session detection", () => {
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `bun test packages/provider-adapters/tests/streamJson.test.ts`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement evidence enrichment**
+- [x] **Step 3: Implement evidence enrichment**
 
 In `processAdapters.ts`, modify `normalizeProcessOutput` (or `withProcessEvidence` — pick the simpler site) to enrich the worker's evidence with `session_id` and `resume_session_missing` after construction.
 
@@ -1593,17 +1593,17 @@ if (output.exitCode !== 0) {
 
 (Note: `failed()` validates via the contract, so mutating evidence after construction is safe as long as `evidence` is a plain object — which it is.)
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `bun test packages/provider-adapters/tests/streamJson.test.ts`
 Expected: PASS.
 
-- [ ] **Step 5: Full package test**
+- [x] **Step 5: Full package test**
 
 Run: `cd packages/provider-adapters && bun test`
 Expected: all PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/provider-adapters/src/processAdapters.ts packages/provider-adapters/tests/streamJson.test.ts
@@ -1626,7 +1626,7 @@ EOF
 
 Before this task, **orient first**: run the search commands in Step 1 to locate the exact lines in `taskExecutor.ts` where the Claude adapter is constructed and where retries are issued. The orchestrator code is large enough that the right insertion point must be verified by reading, not assumed.
 
-- [ ] **Step 1: Orient — locate Claude adapter construction and retry site**
+- [x] **Step 1: Orient — locate Claude adapter construction and retry site**
 
 Run:
 
@@ -1641,7 +1641,7 @@ Read the surrounding ~60 lines for each match and identify:
 - (b) where retries are dispatched (look for repeated dispatch with an attempt counter or a `retry`/`revive` function name).
 - (c) where the prior attempt's worker result (evidence) is in scope.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Add a new test file `packages/orchestrator/tests/claudeResume.test.ts`:
 
@@ -1685,12 +1685,12 @@ describe("Phase 4 — Claude provider options per attempt", () => {
 });
 ```
 
-- [ ] **Step 3: Run to verify failure**
+- [x] **Step 3: Run to verify failure**
 
 Run: `bun test packages/orchestrator/tests/claudeResume.test.ts`
 Expected: FAIL — `buildClaudeProviderOptionsForAttempt` is not exported.
 
-- [ ] **Step 4: Implement and export the option builder**
+- [x] **Step 4: Implement and export the option builder**
 
 In `packages/orchestrator/src/taskExecutor.ts`, add (near the existing Claude adapter wiring):
 
@@ -1732,17 +1732,17 @@ const claudeOpts: ProviderProcessOptions = {
 
 If the prior-attempt evidence isn't already threaded into the dispatch site, follow the existing retry plumbing (whatever Step 1 surfaced) and pass it in. Do NOT invent a new orchestrator concept of "prior attempt" — use whatever the existing retry/revive code already has.
 
-- [ ] **Step 5: Run the unit test to verify it passes**
+- [x] **Step 5: Run the unit test to verify it passes**
 
 Run: `bun test packages/orchestrator/tests/claudeResume.test.ts`
 Expected: PASS.
 
-- [ ] **Step 6: Run orchestrator + adapter package tests**
+- [x] **Step 6: Run orchestrator + adapter package tests**
 
 Run: `cd packages/orchestrator && bun test && cd ../provider-adapters && bun test`
 Expected: all PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/orchestrator/src/taskExecutor.ts packages/orchestrator/tests/claudeResume.test.ts
@@ -1766,7 +1766,7 @@ EOF
 - Modify: `packages/provider-adapters/tests/claudeAdapter.test.ts`
 - Modify: `packages/orchestrator/src/taskExecutor.ts` (populate retry context)
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `claudeAdapter.test.ts`:
 
@@ -1790,12 +1790,12 @@ test("Phase 4 — retry context prepends failure summary into the user prompt", 
 });
 ```
 
-- [ ] **Step 2: Run to verify failure**
+- [x] **Step 2: Run to verify failure**
 
 Run: `bun test packages/provider-adapters/tests/claudeAdapter.test.ts`
 Expected: FAIL — `retry_context` is not on the type.
 
-- [ ] **Step 3: Extend `AdapterRequest`**
+- [x] **Step 3: Extend `AdapterRequest`**
 
 In `types.ts`:
 
@@ -1815,7 +1815,7 @@ export interface AdapterRequest {
 }
 ```
 
-- [ ] **Step 4: Update `buildProviderUserPrompt`**
+- [x] **Step 4: Update `buildProviderUserPrompt`**
 
 In `processAdapters.ts`, change `buildProviderUserPrompt` to:
 
@@ -1839,7 +1839,7 @@ export function buildProviderUserPrompt(request: AdapterRequest): string {
 }
 ```
 
-- [ ] **Step 5: Populate retry_context from the orchestrator**
+- [x] **Step 5: Populate retry_context from the orchestrator**
 
 In `packages/orchestrator/src/taskExecutor.ts`, at the dispatch site where `AdapterRequest` is built, if a prior attempt exists, include:
 
@@ -1858,12 +1858,12 @@ const request: AdapterRequest = {
 
 Adapt field names to whatever the in-scope `priorAttempt` actually exposes; Step 1 of Task 4.3 already located these.
 
-- [ ] **Step 6: Run tests to verify**
+- [x] **Step 6: Run tests to verify**
 
 Run: `cd packages/provider-adapters && bun test`
 Expected: all PASS, including the new retry-prefix test.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/provider-adapters/src/types.ts packages/provider-adapters/src/processAdapters.ts packages/provider-adapters/tests/claudeAdapter.test.ts packages/orchestrator/src/taskExecutor.ts
@@ -1880,22 +1880,22 @@ EOF
 
 ### Step 4.5: Phase 4 integration gate
 
-- [ ] **Step 1: Run full repo check**
+- [x] **Step 1: Run full repo check**
 
 Run: `bun run check`
 Expected: green.
 
-- [ ] **Step 2: Run scenarios + platform demo**
+- [x] **Step 2: Run scenarios + platform demo**
 
 Run: `bun run waygent:scenarios && bun run platform:demo`
 Expected: green.
 
-- [ ] **Step 3: `git diff --check`**
+- [x] **Step 3: `git diff --check`**
 
 Run: `git diff --check`
 Expected: empty.
 
-- [ ] **Step 4: Manual smoke (optional, requires `claude` CLI on PATH and credentials)**
+- [x] **Step 4: Manual smoke (optional, requires `claude` CLI on PATH and credentials)**
 
 Run a tiny one-task plan through Waygent twice in quick succession against a worktree where the first attempt is expected to fail (e.g., a plan whose `verify` will fail once). Confirm:
 
@@ -1909,15 +1909,15 @@ Document the observation in a short note attached to the PR / Lens evidence — 
 
 # Cross-cutting wrap-up
 
-- [ ] **Repo-wide regression sweep**
+- [x] **Repo-wide regression sweep**
 
 Run: `bun run check && bun run waygent:scenarios && bun run platform:demo && cd packages/provider-adapters && bun test && cd ../orchestrator && bun test && cd ../.. && git diff --check`
 Expected: all green.
 
-- [ ] **Doc sync**
+- [x] **Doc sync**
 
 If `docs/operations/verification.md` or any user-facing doc references "Claude provider behavior", add a short note about stream-json, resume, and per-role permissions. If no such reference exists, skip — the spec covers contributors.
 
-- [ ] **Branch wrap**
+- [x] **Branch wrap**
 
 Use `superpowers:finishing-a-development-branch` to choose merge / PR / cleanup path.
