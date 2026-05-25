@@ -181,6 +181,26 @@ describe("Codex adapter normalization", () => {
     expect(alreadyImpl.worker.status).toBe("completed");
   });
 
+  test("maps no_changes/already_done shorthand variants to completed", () => {
+    for (const status of [
+      "no_changes",
+      "no-changes",
+      "no_change",
+      "already_done",
+      "already_satisfied",
+      "nothing_to_do",
+      "skipped",
+      "skipped_already_done"
+    ]) {
+      const result = normalizeProcessOutput("codex", "task_demo", "candidate_demo", {
+        exitCode: 0,
+        stdout: JSON.stringify({ status, summary: `noop:${status}`, changed_files: [], evidence: {} }),
+        stderr: ""
+      });
+      expect(result.worker.status).toBe("completed");
+    }
+  });
+
   test("maps awaiting_* and blocked_* hybrid statuses to blocked", () => {
     const result = normalizeProcessOutput("codex", "task_demo", "candidate_demo", {
       exitCode: 0,

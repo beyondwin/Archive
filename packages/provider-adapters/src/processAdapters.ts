@@ -105,8 +105,24 @@ function normalizeWorkerStatus(status: unknown): WorkerResult["status"] {
     lowered === "completed-with-warnings" ||
     lowered === "no_changes_needed" ||
     lowered === "no-changes-needed" ||
+    lowered === "no_changes" ||
+    lowered === "no-changes" ||
+    lowered === "no_change" ||
+    lowered === "nochanges" ||
+    lowered === "noop" ||
+    lowered === "no_op" ||
+    lowered === "no-op" ||
+    lowered === "nothing_to_do" ||
+    lowered === "nothing-to-do" ||
     lowered === "already_implemented" ||
-    lowered === "already-implemented"
+    lowered === "already-implemented" ||
+    lowered === "already_done" ||
+    lowered === "already-done" ||
+    lowered === "already_satisfied" ||
+    lowered === "already-satisfied" ||
+    lowered === "skipped" ||
+    lowered === "skip" ||
+    lowered === "skipped_already_done"
   ) {
     return "completed";
   }
@@ -119,6 +135,11 @@ function normalizeWorkerStatus(status: unknown): WorkerResult["status"] {
   if (lowered.startsWith("completed_with_") || lowered.startsWith("completed-with-")) return "failed";
   if (lowered.startsWith("partially_") || lowered.startsWith("partial_")) return "failed";
   if (lowered.startsWith("blocked_") || lowered.startsWith("awaiting_") || lowered.startsWith("waiting_")) return "blocked";
+  // Broad "no work needed" prefixes (no_changes_*, no-changes-*, already_*, nothing_*).
+  if (lowered.startsWith("no_change") || lowered.startsWith("no-change")) return "completed";
+  if (lowered.startsWith("already_") || lowered.startsWith("already-")) return "completed";
+  if (lowered.startsWith("nothing_") || lowered.startsWith("nothing-")) return "completed";
+  if (lowered.startsWith("skipped_") || lowered.startsWith("skipped-")) return "completed";
   throw new Error(`unknown worker status: ${String(status)}`);
 }
 
