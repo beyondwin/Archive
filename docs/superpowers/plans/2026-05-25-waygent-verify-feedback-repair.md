@@ -327,7 +327,7 @@ Expected: No new failures. (Existing tests that construct `RoleRouting` literall
 
 Search for places constructing the type literally:
 ```bash
-grep -rn "roles: {$\|roles: {" packages/orchestrator/tests/ apps/cli/tests/ packages/provider-adapters/tests/ 2>&1 | grep -v "\.d\.ts" | head
+grep -rln --include="*.ts" --exclude="*.d.ts" "roles: {" packages/orchestrator/tests/ apps/cli/tests/ packages/provider-adapters/tests/
 ```
 
 For each match where a literal `{ implement: ..., review: ..., verify_assist: ... }` is constructed, add the `repair` key. Example pattern: `repair: { model: "fake", reasoning: "medium" }`.
