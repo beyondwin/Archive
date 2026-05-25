@@ -100,12 +100,25 @@ function normalizeWorkerStatus(status: unknown): WorkerResult["status"] {
     lowered === "needs_verification" ||
     lowered === "needs-verification" ||
     lowered === "ready_for_verification" ||
-    lowered === "ready-for-verification"
+    lowered === "ready-for-verification" ||
+    lowered === "completed_with_warnings" ||
+    lowered === "completed-with-warnings" ||
+    lowered === "no_changes_needed" ||
+    lowered === "no-changes-needed" ||
+    lowered === "already_implemented" ||
+    lowered === "already-implemented"
   ) {
     return "completed";
   }
   if (lowered === "failure" || lowered === "error" || lowered === "errored") return "failed";
   if (lowered === "halted" || lowered === "stopped" || lowered === "paused") return "blocked";
+  // Hybrid statuses observed in practice: the worker did the implementation but verification
+  // or follow-up gates flagged something. Surface as failed so the recovery / verify loop can
+  // act on it, instead of throwing and collapsing the whole result into malformed_result
+  // (which discards the worker's diff and forces a retry from scratch).
+  if (lowered.startsWith("completed_with_") || lowered.startsWith("completed-with-")) return "failed";
+  if (lowered.startsWith("partially_") || lowered.startsWith("partial_")) return "failed";
+  if (lowered.startsWith("blocked_") || lowered.startsWith("awaiting_") || lowered.startsWith("waiting_")) return "blocked";
   throw new Error(`unknown worker status: ${String(status)}`);
 }
 
