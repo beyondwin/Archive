@@ -12,13 +12,20 @@ const claudeProfile: ExecutionProfile = {
   evidence_event_type: "runway.execution_profile_selected"
 };
 
-const DERIVED_SESSION_ID = "456256f7-f40f-5e91-bb7a-c6373f2eaa73";
+const DERIVED_SESSION_ID = "07a67cfa-920e-5b02-97f8-ed7d722fef69";
+const DERIVED_SESSION_ID_ATTEMPT_2 = "175052af-a04c-586c-a280-306a0ab0d707";
 
 describe("Claude resume / session_id wiring", () => {
-  test("deriveClaudeSessionId returns a deterministic UUIDv5 derived from run_id, task_id, candidate_id", () => {
+  test("deriveClaudeSessionId returns a deterministic per-attempt UUIDv5", () => {
     expect(
       deriveClaudeSessionId({ run_id: "run_1", task_id: "task_a", candidate_id: "candidate_task_a" })
     ).toBe(DERIVED_SESSION_ID);
+    expect(
+      deriveClaudeSessionId({ run_id: "run_1", task_id: "task_a", candidate_id: "candidate_task_a", attempt: 1 })
+    ).toBe(DERIVED_SESSION_ID);
+    expect(
+      deriveClaudeSessionId({ run_id: "run_1", task_id: "task_a", candidate_id: "candidate_task_a", attempt: 2 })
+    ).toBe(DERIVED_SESSION_ID_ATTEMPT_2);
   });
 
   test("injectClaudeSessionContext adds session_id when none configured", () => {
@@ -29,7 +36,15 @@ describe("Claude resume / session_id wiring", () => {
     expect(processes?.claude?.session_id).toBe(DERIVED_SESSION_ID);
   });
 
-  test("injectClaudeSessionContext leaves existing session_id and resume_session_id intact", () => {
+  test("injectClaudeSessionContext refreshes session_id on retries to avoid Claude CLI session collisions", () => {
+    const processes = injectClaudeSessionContext(
+      { claude: { executable: "claude", args: ["-p"], session_id: DERIVED_SESSION_ID } },
+      { run_id: "run_1", task_id: "task_a", candidate_id: "candidate_task_a", attempt: 2 }
+    );
+    expect(processes?.claude?.session_id).toBe(DERIVED_SESSION_ID_ATTEMPT_2);
+  });
+
+  test("injectClaudeSessionContext leaves existing session_id and resume_session_id intact on first attempt", () => {
     const processes = injectClaudeSessionContext(
       { claude: { executable: "claude", args: ["-p"], session_id: "explicit", resume_session_id: "earlier" } },
       { run_id: "run_1", task_id: "task_a", candidate_id: "candidate_task_a" }
