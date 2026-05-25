@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import type {
@@ -834,8 +835,37 @@ function createProviderAdapter(
   return new FakeProviderAdapter();
 }
 
+const CLAUDE_SESSION_NAMESPACE = "7ee29b85-1f54-4d1a-9a6b-7ef9b0b53f70";
+
 export function deriveClaudeSessionId(input: { run_id: string; task_id: string; candidate_id: string }): string {
-  return `${input.run_id}-${input.task_id}-${input.candidate_id}`;
+  const name = `${input.run_id}-${input.task_id}-${input.candidate_id}`;
+  return uuidV5(CLAUDE_SESSION_NAMESPACE, name);
+}
+
+function uuidV5(namespace: string, name: string): string {
+  const nsBytes = uuidToBytes(namespace);
+  const nameBytes = new TextEncoder().encode(name);
+  const buf = new Uint8Array(nsBytes.length + nameBytes.length);
+  buf.set(nsBytes, 0);
+  buf.set(nameBytes, nsBytes.length);
+  const hash = createHash("sha1").update(buf).digest();
+  const out = new Uint8Array(16);
+  out.set(hash.subarray(0, 16));
+  out[6] = (out[6]! & 0x0f) | 0x50;
+  out[8] = (out[8]! & 0x3f) | 0x80;
+  return bytesToUuid(out);
+}
+
+function uuidToBytes(uuid: string): Uint8Array {
+  const hex = uuid.replace(/-/g, "");
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < 16; i += 1) bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  return bytes;
+}
+
+function bytesToUuid(bytes: Uint8Array): string {
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
 export function injectClaudeSessionContext(

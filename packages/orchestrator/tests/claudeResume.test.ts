@@ -12,11 +12,13 @@ const claudeProfile: ExecutionProfile = {
   evidence_event_type: "runway.execution_profile_selected"
 };
 
+const DERIVED_SESSION_ID = "456256f7-f40f-5e91-bb7a-c6373f2eaa73";
+
 describe("Claude resume / session_id wiring", () => {
-  test("deriveClaudeSessionId composes run_id, task_id, candidate_id", () => {
+  test("deriveClaudeSessionId returns a deterministic UUIDv5 derived from run_id, task_id, candidate_id", () => {
     expect(
       deriveClaudeSessionId({ run_id: "run_1", task_id: "task_a", candidate_id: "candidate_task_a" })
-    ).toBe("run_1-task_a-candidate_task_a");
+    ).toBe(DERIVED_SESSION_ID);
   });
 
   test("injectClaudeSessionContext adds session_id when none configured", () => {
@@ -24,7 +26,7 @@ describe("Claude resume / session_id wiring", () => {
       { claude: { executable: "claude", args: ["-p"] } },
       { run_id: "run_1", task_id: "task_a", candidate_id: "candidate_task_a" }
     );
-    expect(processes?.claude?.session_id).toBe("run_1-task_a-candidate_task_a");
+    expect(processes?.claude?.session_id).toBe(DERIVED_SESSION_ID);
   });
 
   test("injectClaudeSessionContext leaves existing session_id and resume_session_id intact", () => {
@@ -78,13 +80,13 @@ describe("Claude resume / session_id wiring", () => {
       {
         executable: "claude",
         args: ["-p", "--output-format", "stream-json"],
-        session_id: "run_1-task_a-candidate_task_a"
+        session_id: DERIVED_SESSION_ID
       },
       undefined,
       { task_id: "task_a", candidate_id: "candidate_task_a", role: "implement", prompt: "go" }
     );
     expect(args).toContain("--session-id");
-    expect(args[args.indexOf("--session-id") + 1]).toBe("run_1-task_a-candidate_task_a");
+    expect(args[args.indexOf("--session-id") + 1]).toBe(DERIVED_SESSION_ID);
     expect(args).not.toContain("--resume");
   });
 
@@ -94,14 +96,14 @@ describe("Claude resume / session_id wiring", () => {
       {
         executable: "claude",
         args: ["-p", "--output-format", "stream-json"],
-        session_id: "run_1-task_a-candidate_task_a",
-        resume_session_id: "run_1-task_a-candidate_task_a"
+        session_id: DERIVED_SESSION_ID,
+        resume_session_id: DERIVED_SESSION_ID
       },
       undefined,
       { task_id: "task_a", candidate_id: "candidate_task_a", role: "implement", prompt: "go" }
     );
     expect(args).toContain("--resume");
-    expect(args[args.indexOf("--resume") + 1]).toBe("run_1-task_a-candidate_task_a");
+    expect(args[args.indexOf("--resume") + 1]).toBe(DERIVED_SESSION_ID);
     expect(args).not.toContain("--session-id");
   });
 });
