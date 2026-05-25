@@ -22,10 +22,12 @@ this checkout; do not recreate it or route active Waygent work there.
 Historical AgentRunway names are read-compatibility context, not active
 routing.
 
-The old root `docs/` library was pruned. Do not assume root-level
-`docs/superpowers/` or `docs/_index/` exists unless the current worktree
-actually contains it. Historical references to those paths may appear in older
-skill docs or git history.
+The old root `docs/` library was pruned. `docs/superpowers/plans/` and
+`docs/superpowers/specs/` exist as a design-only working area for Superpowers
+brainstorm/plan artifacts; they are not canonical runtime documentation. Do
+not assume root-level `docs/_index/` exists unless the current worktree
+actually contains it. Historical references to other pruned paths may appear
+in older skill docs or git history.
 
 Graphify is approved as a repository map and documentation-audit tool. Use
 `graphify-out/` when it exists, and refresh it with `graphify update .` after

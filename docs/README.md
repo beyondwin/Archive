@@ -31,6 +31,8 @@ understanding current behavior.
 - [Operations](operations/waygent.md)
 - [Recovery](operations/recovery.md)
 - [Verification](operations/verification.md)
+- [Plan authoring](operations/plan-authoring.md)
+- [State root migration](operations/state-root-migration.md)
 - [Event contract](contracts/events.md)
 - [Run-state contract](contracts/run-state.md)
 - [Provider-result contract](contracts/provider-result.md)

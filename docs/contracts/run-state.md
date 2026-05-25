@@ -31,8 +31,6 @@ Task packets dispatched to providers may carry:
   permit, derived from the task's declared `verification_commands` and the
   current workspace's project-script catalog. Null when the workspace is not
   known to the orchestrator.
-- `project_script_catalog`: discovered `bun run` / `npm run` / `cargo` /
-  `go test` entries inferred from the workspace.
 
 ## Safe Waves
 

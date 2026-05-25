@@ -134,10 +134,11 @@ checks for a clean source checkout before applying and revalidates the same
 readiness contract used by `resume`, API, and console.
 
 `waygent apply --require-evidence --run <run_id>` enables the opt-in method
-evidence overlay. Missing structured `worker.evidence.method_audit` blocks
-apply with `lens.evidence_apply_blocked`; docs-only, config-only, and
-generated-only tasks can use allowlisted waivers. The existing checkpoint,
-completion, reconciliation, and clean-checkout gates remain authoritative.
+evidence overlay (`--require-method-evidence` is accepted as an alias).
+Missing structured `worker.evidence.method_audit` blocks apply with
+`lens.evidence_apply_blocked`; docs-only, config-only, and generated-only
+tasks can use allowlisted waivers. The existing checkpoint, completion,
+reconciliation, and clean-checkout gates remain authoritative.
 
 If post-apply verification fails, the apply result and `runway.apply_failed`
 event include `post_apply_verification` diagnostics with the failed command,
@@ -186,8 +187,12 @@ Additional read-only operator commands:
 - `waygent verify --run <id>|--last [--task <task_id>]`: reruns the selected
   task packet's verification commands in its existing active worktree and
   records kernel evidence back into the run state and event journal.
-- `waygent watch --run <id>|--last --json --timeout 1s`: reads the event
-  journal as filtered transitions.
+- `waygent watch --run <id>|--last [--json] [--timeout <duration>] [--filter all|task_transition|failure|cost]`:
+  reads the event journal as filtered transitions. `--filter` defaults to
+  `all`; unrecognized values are treated as `all`.
+- `waygent events --run <id>|--last`: streams the raw event journal entries
+  for a run. Use this instead of `watch` when you need every payload rather
+  than transition-filtered output.
 - `waygent orphans [--root <root>]`: lists invalid run roots and stale
   worktrees. Without `--root`, scans both the platform default and legacy
   `$TMPDIR/waygent-runs/` roots. `waygent orphans --delete <id> --yes` deletes
@@ -201,7 +206,24 @@ run.
 
 Repeated `--plan` and `--spec` flags form a plan chain. The first
 implementation keeps child runs as v2 run states coordinated by a chain id;
-it does not introduce `waygent.run_state.v3`.
+it does not introduce `waygent.run_state.v3`. The dedicated entry point is
+`waygent run-chain --plan <p1> [--spec <s1>] --plan <p2> [--spec <s2>]`.
+
+### Plan-Author Tools
+
+These commands help author and validate plan and design markdown before a
+run, and do not mutate run state or the source checkout:
+
+- `waygent scaffold-plan --id <task_id> --title <title> --claim <path:mode> --risk <low|medium|high> --verify <command>`:
+  emits a Superpowers-shaped `waygent-task` block ready to paste into an
+  implementation plan.
+- `waygent lint-plan --path <waygent-task.md>`: runs the deterministic plan
+  parser plus the design-contract envelope check against an implementation
+  plan and reports parser issues and contract findings.
+- `waygent lint-design --path <design.md>`: runs the same envelope check
+  against a design document. Both `lint-*` commands use the local
+  `@waygent/design-contract` cache under `.waygent/design-contract-cache/`
+  by default; override with `--cache-root <path>`.
 
 Execution intelligence is read-only. Apply readiness still comes from
 checkpoint manifests, patch digest checks, dry-run evidence, completion audit,
