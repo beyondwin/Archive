@@ -1,0 +1,3 @@
+{"type":"thread.started","thread_id":"thread_codex_init_fixture"}
+{"type":"item.completed","item":{"type":"agent_message","text":"{\"schema\":\"runway.worker_result.v1\",\"task_id\":\"task_codex\",\"candidate_id\":\"candidate_task_codex\",\"status\":\"completed\",\"summary\":\"codex session init fixture\",\"changed_files\":[],\"evidence\":{\"command\":\"codex\"}}"}}
+{"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":3}}

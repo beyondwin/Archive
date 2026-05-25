@@ -63,4 +63,75 @@ describe("buildSpawnEnv - nested host env sanitization", () => {
     expect(env.PATH).toBe("/override");
     expect(env.PWD).toBe("/work");
   });
+
+  test("drops nested Codex host env vars when CODEX_APP=1 in parent", () => {
+    const parent = {
+      PATH: "/usr/bin",
+      CODEX_APP: "1",
+      CODEX_CLI: "1",
+      CODEX_ENTRYPOINT: "cli",
+      CODEX_HOME: "/home/user/.codex",
+      OTHER: "kept"
+    } as NodeJS.ProcessEnv;
+    const env = buildSpawnEnv(parent, undefined, undefined);
+    expect(env.CODEX_APP).toBeUndefined();
+    expect(env.CODEX_CLI).toBeUndefined();
+    expect(env.CODEX_ENTRYPOINT).toBeUndefined();
+    // CODEX_HOME points at credential storage and MUST survive sanitization.
+    expect(env.CODEX_HOME).toBe("/home/user/.codex");
+    expect(env.OTHER).toBe("kept");
+  });
+
+  test("drops nested Codex host env vars when CODEX_CLI=1 in parent", () => {
+    const parent = {
+      CODEX_CLI: "1",
+      CODEX_HOME: "/codex-home",
+      CODEX_APP: "1"
+    } as NodeJS.ProcessEnv;
+    const env = buildSpawnEnv(parent, undefined, undefined);
+    expect(env.CODEX_CLI).toBeUndefined();
+    expect(env.CODEX_APP).toBeUndefined();
+    expect(env.CODEX_HOME).toBe("/codex-home");
+  });
+
+  test("drops nested Codex host env vars when CODEX_ENTRYPOINT is set in parent", () => {
+    const parent = {
+      CODEX_ENTRYPOINT: "ide",
+      CODEX_APP: "1",
+      CODEX_HOME: "/codex-home"
+    } as NodeJS.ProcessEnv;
+    const env = buildSpawnEnv(parent, undefined, undefined);
+    expect(env.CODEX_ENTRYPOINT).toBeUndefined();
+    expect(env.CODEX_APP).toBeUndefined();
+    expect(env.CODEX_HOME).toBe("/codex-home");
+  });
+
+  test("WAYGENT_KEEP_HOST_ENV=1 also preserves Codex host vars", () => {
+    const parent = {
+      CODEX_APP: "1",
+      CODEX_CLI: "1",
+      CODEX_ENTRYPOINT: "cli",
+      WAYGENT_KEEP_HOST_ENV: "1"
+    } as NodeJS.ProcessEnv;
+    const env = buildSpawnEnv(parent, undefined, undefined);
+    expect(env.CODEX_APP).toBe("1");
+    expect(env.CODEX_CLI).toBe("1");
+    expect(env.CODEX_ENTRYPOINT).toBe("cli");
+  });
+
+  test("sanitizes mixed host signals (Claude + Codex parent both detected)", () => {
+    const parent = {
+      CLAUDECODE: "1",
+      CODEX_CLI: "1",
+      CLAUDE_PROJECT_DIR: "/p",
+      CODEX_ENTRYPOINT: "cli",
+      CODEX_HOME: "/h"
+    } as NodeJS.ProcessEnv;
+    const env = buildSpawnEnv(parent, undefined, undefined);
+    expect(env.CLAUDECODE).toBeUndefined();
+    expect(env.CODEX_CLI).toBeUndefined();
+    expect(env.CLAUDE_PROJECT_DIR).toBeUndefined();
+    expect(env.CODEX_ENTRYPOINT).toBeUndefined();
+    expect(env.CODEX_HOME).toBe("/h");
+  });
 });

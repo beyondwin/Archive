@@ -39,6 +39,21 @@ export interface ProviderProcessOptions {
   resume_session_id?: string;
 }
 
+export interface ToolCallEvidence {
+  tool_use_id: string;
+  name: string;
+  input_summary: {
+    keys: string[];
+    sizes_bytes: Record<string, number>;
+  };
+  result: {
+    status: "ok" | "error";
+    summary_bytes: number;
+    is_error: boolean;
+  } | null;
+  duration_ms: number | null;
+}
+
 export interface ProviderAdapterRunResult {
   worker: WorkerResult;
   process: {
@@ -59,6 +74,8 @@ export interface ProviderRunMetadata {
   usage_source: UsageSource;
   session_id?: string | null;
   resume_session_missing?: boolean;
+  tool_calls?: ToolCallEvidence[];
+  adapter_warnings?: string[];
 }
 
 export interface ProviderAdapter {
