@@ -35,11 +35,16 @@ Useful Waygent commands:
 
 ```bash
 waygent run --latest
+waygent run-chain --plan <p1.md> --plan <p2.md>
 waygent status --last
+waygent events --last
 waygent inspect --run <run_id> --json
 waygent explain --last
 waygent resume --last
 waygent apply --run <run_id>
+waygent lint-design --path <design.md>
+waygent lint-plan --path <waygent-task.md>
+waygent scaffold-plan --id <task_id> --title <title> --claim <path:mode> --risk <low|medium|high> --verify <command>
 ```
 
 Live Codex and Claude provider checks are opt-in because they require installed

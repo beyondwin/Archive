@@ -18,26 +18,34 @@ Legacy KWS executor namespaces are rejected by the contract validator.
 Filesystem JSONL artifacts remain the source of truth. SQLite is a rebuildable
 projection cache.
 
-## Runtime Improvement Events
+## Event Families
 
-The runtime improvement slice adds these active Waygent events:
+The `platform.*`, `runway.*`, `kernel.*`, and `lens.*` family prefixes are the
+authoritative boundary. Active event types within each family evolve with the
+runtime; the JSONL journal and the orchestrator emitter are the source of
+truth for the current set.
 
-- `platform.plan_preflight_completed`: deterministic plan/spec audit result.
-- `platform.cost_accumulated`: provider dispatch usage and cost ledger update.
-- `platform.cost_budget_warning`: configured warning budget was exceeded.
-- `platform.cost_budget_paused`: configured pause budget stopped the next safe
-  boundary.
-- `runway.decision_appended` and `runway.decision_superseded`: structured
-  worker decision was persisted to the run decision register.
-- `runway.spec_slice_computed`: task packet spec context was sliced or fell
-  back to the full spec.
-- `kernel.hook_denied` and `kernel.hook_bypassed`: runtime hook decision at
-  pre-dispatch or final-output boundaries.
-- `lens.model_attestation_confirmed` and
-  `lens.model_attestation_mismatch`: requested and actual provider model
-  comparison.
-- `lens.evidence_apply_blocked` and `lens.evidence_apply_gated`: opt-in method
-  evidence policy at apply time.
+Representative events seen in current runs include:
+
+- Platform: `platform.run_started`, `platform.plan_preflight_completed`,
+  `platform.intake_extract_completed`, `platform.intake_decision_required`,
+  `platform.cost_accumulated`, `platform.cost_budget_warning`,
+  `platform.cost_budget_paused`, `platform.provider_capability_attested`.
+- Runway: `runway.plan_loaded`, `runway.preflight_result`,
+  `runway.execution_profile_selected`, `runway.safe_wave_selected`,
+  `runway.wave_barrier_inserted`, `runway.diff_scope_result`,
+  `runway.verification_environment`, `runway.verification_result`,
+  `runway.checkpoint_created`, `runway.recovery_scheduled`,
+  `runway.recovery_decision_required`, `runway.apply_blocked`,
+  `runway.apply_completed`, `runway.decision_appended`,
+  `runway.decision_superseded`, `runway.spec_slice_computed`.
+- Kernel: `kernel.hook_denied`, `kernel.hook_bypassed`, and other
+  kernel-boundary decisions.
+- Lens: `lens.model_attestation_confirmed`, `lens.model_attestation_mismatch`,
+  `lens.evidence_apply_blocked`, `lens.evidence_apply_gated`.
+
+Consumers should treat the family prefix as the contract and discover specific
+event types from the journal rather than relying on a frozen list here.
 
 Event payloads use `.event_type`; consumers must not query legacy `.type`.
 
