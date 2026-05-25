@@ -99,14 +99,21 @@ and tool isolation. Allow per-role timeout overrides.
   `{ streaming: false, approvals: false, shell: true, file_edits: true,
   tool_calls: true, supported_modes: ["single-agent", "multi-agent",
   "review", "verify"], result_schema: "runway.worker_result.v1" }`.
-- `providerProcessArgs` branches on `request.role`:
+- `providerProcessArgs` branches on `request.role` (using
+  `ProviderRole = "implement" | "review" | "fix" | "verify_assist"`):
   - `implement` → existing `--permission-mode acceptEdits`.
+  - `fix` → same as `implement`.
   - `review` → `--permission-mode plan` +
     `--disallowedTools Edit,Write,MultiEdit`
     (Bash kept for grep / find inspection; plan mode prevents writes).
-  - `verify` → `--permission-mode acceptEdits` +
+  - `verify_assist` → `--permission-mode acceptEdits` +
     `--allowedTools Bash,Read,Glob,Grep`.
-  - unknown → implement defaults; append warning to `stderr_summary`.
+  - undefined / unknown → implement defaults; append warning to
+    `stderr_summary` only for unknown values, not undefined.
+- Role wiring note: today `packages/orchestrator/src/taskExecutor.ts`
+  only constructs requests with `role: "implement"`. This phase lays the
+  adapter-side infrastructure so future review / verify_assist callers
+  get correct args without re-touching the adapter.
 - `ProviderProcessOptions.timeout_ms_by_role?: Partial<Record<ProviderRole,
   number>>`. Resolution order: role override → `timeout_ms` → default
   (30 min).
