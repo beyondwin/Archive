@@ -196,7 +196,12 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
       denials: preHook.denials
     });
   }
-  const provider = createProviderAdapter(input.provider, input.provider_processes);
+  const resolvedProcesses = injectClaudeSessionContext(input.provider_processes, {
+    run_id: input.run_id,
+    task_id: input.task.id,
+    candidate_id: `candidate_${input.task.id}`
+  });
+  const provider = createProviderAdapter(input.provider, resolvedProcesses);
   const { value: adapterResult, timing: providerTiming } = await measurePhase("provider", () => provider.run({
     task_id: input.task.id,
     candidate_id: `candidate_${input.task.id}`,
@@ -827,6 +832,25 @@ function createProviderAdapter(
   if (provider === "codex") return new CodexProviderAdapter(processes.codex);
   if (provider === "claude") return new ClaudeProviderAdapter(processes.claude);
   return new FakeProviderAdapter();
+}
+
+export function deriveClaudeSessionId(input: { run_id: string; task_id: string; candidate_id: string }): string {
+  return `${input.run_id}-${input.task_id}-${input.candidate_id}`;
+}
+
+export function injectClaudeSessionContext(
+  processes: ExecuteWaygentTaskInput["provider_processes"] | undefined,
+  context: { run_id: string; task_id: string; candidate_id: string }
+): ExecuteWaygentTaskInput["provider_processes"] {
+  if (!processes?.claude) return processes;
+  if (processes.claude.session_id || processes.claude.resume_session_id) return processes;
+  return {
+    ...processes,
+    claude: {
+      ...processes.claude,
+      session_id: deriveClaudeSessionId(context)
+    }
+  };
 }
 
 function normalizeProviderRunResult(

@@ -1,4 +1,4 @@
-import type { ModelAttestation, ProviderCapabilityManifest, ProviderRole, TokenUsage, UsageSource, WorkerResult } from "@waygent/contracts";
+import type { FailureClass, ModelAttestation, ProviderCapabilityManifest, ProviderRole, TokenUsage, UsageSource, WorkerResult } from "@waygent/contracts";
 
 export type ProviderExecutionBoundary = "deterministic" | "process";
 
@@ -6,6 +6,11 @@ export interface ProviderAdapterDescription {
   provider: "fake" | "codex" | "claude";
   execution: ProviderExecutionBoundary;
   direct_agentlens_writes: false;
+}
+
+export interface AdapterRetryContext {
+  failure_class: FailureClass;
+  stderr_summary?: string;
 }
 
 export interface AdapterRequest {
@@ -16,6 +21,7 @@ export interface AdapterRequest {
   task_packet_path?: string;
   cwd?: string;
   changed_files?: string[];
+  retry_context?: AdapterRetryContext;
 }
 
 export interface ProviderProcessOptions {
@@ -24,8 +30,13 @@ export interface ProviderProcessOptions {
   cwd?: string;
   env?: Record<string, string>;
   timeout_ms?: number;
+  timeout_ms_by_role?: Partial<Record<ProviderRole, number>>;
   model?: string;
   effort?: string;
+  settings_path?: string;
+  mcp_config_path?: string;
+  session_id?: string;
+  resume_session_id?: string;
 }
 
 export interface ProviderAdapterRunResult {
@@ -46,6 +57,8 @@ export interface ProviderRunMetadata {
   actual_model: ModelAttestation;
   usage: TokenUsage | null;
   usage_source: UsageSource;
+  session_id?: string | null;
+  resume_session_missing?: boolean;
 }
 
 export interface ProviderAdapter {
