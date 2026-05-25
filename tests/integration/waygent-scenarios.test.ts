@@ -35,7 +35,17 @@ describe("waygent scenario golden replays", () => {
 function expectReplay(actual: NormalizedWaygentReplay, expected: WaygentScenarioExpectedReplay): void {
   expect(actual.run_status).toBe(expected.run_status);
   expect(actual.apply_status).toBe(expected.apply_status);
-  expect(actual.event_types).toEqual(expected.event_types);
+  // Assertion mode: scenarios may pin the full event_types list (exact) for stable golden
+  // replays, OR provide event_types_must_include for forward-compatible subset assertions
+  // (e.g. repair pipeline where future events may be added without invalidating fixtures).
+  const subsetField = (expected as unknown as { event_types_must_include?: unknown }).event_types_must_include;
+  if (Array.isArray(subsetField)) {
+    for (const required of subsetField) {
+      expect(actual.event_types).toContain(String(required));
+    }
+  } else {
+    expect(actual.event_types).toEqual(expected.event_types);
+  }
   if (expected.total_events !== undefined) expect(actual.total_events).toBe(expected.total_events);
   if (expected.safe_wave !== undefined) expect(actual.safe_wave).toEqual(expected.safe_wave);
   if (expected.checkpoints !== undefined) expect(actual.checkpoints).toEqual(expected.checkpoints);
