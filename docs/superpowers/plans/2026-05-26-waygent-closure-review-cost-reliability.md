@@ -2725,6 +2725,15 @@ patch can surface `provider_not_ready` first when provider readiness is the
 earliest operator blocker. The fixture must still prove the important behavior:
 the salvage event is present and review is available/required before apply.
 
+Also update the pre-existing `tests/waygent-scenarios/malformed-provider.json`
+golden to use `event_types_must_include` instead of an exact `event_types`
+sequence. The number of recovery retries is a runtime policy detail and may be
+two or three attempts; the fixture should assert the durable contract only:
+run starts, malformed worker failure is observed, recovery is scheduled, a
+later worker attempt succeeds or recovery eventually requires decision, and the
+trust report is updated when blocked. Do not require a full event list equality
+for this scenario.
+
 - [ ] **Step 5: Extend scenario harness expected fields**
 
 Modify `packages/testkit/src/waygentScenarioHarness.ts`:
