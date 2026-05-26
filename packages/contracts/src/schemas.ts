@@ -1051,6 +1051,18 @@ export const waygentRunStateV2Schema = {
     reviews: { type: "array", items: reviewResultSchema },
     verification: { type: "array", items: { type: "object", additionalProperties: true } },
     recovery: { type: "array", items: { type: "object", additionalProperties: true } },
+    repair_budget: {
+      type: "object",
+      additionalProperties: {
+        type: "object",
+        additionalProperties: false,
+        required: ["max_attempts", "current"],
+        properties: {
+          max_attempts: { type: "integer", minimum: 0 },
+          current: { type: "integer", minimum: 0 }
+        }
+      }
+    },
     apply: {
       type: "object",
       additionalProperties: false,

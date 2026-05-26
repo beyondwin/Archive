@@ -332,6 +332,12 @@ describe("Waygent contracts", () => {
           patch_ref: "artifacts/checkpoints/apply/run_demo.patch"
         }
       },
+      repair_budget: {
+        task_demo: {
+          max_attempts: 2,
+          current: 1
+        }
+      },
       timestamps: {
         started_at: "2026-05-21T00:00:00Z",
         updated_at: "2026-05-21T00:00:02Z",
