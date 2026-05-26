@@ -8,6 +8,7 @@ export interface StrategyDecision {
 export interface DeciderInput {
   requested: VerifyIsolationRequest | undefined;
   worktreeDiff: string[];
+  verificationCommands?: string[];
 }
 
 const PACKAGE_DIR_PREFIX = "packages/";
@@ -18,6 +19,10 @@ export function decideVerificationStrategy(input: DeciderInput): StrategyDecisio
 
   if (requested === "isolated") return { resolved: "isolated", reason: "explicit_tag" };
   if (requested === "fast") return { resolved: "fast", reason: "explicit_tag" };
+
+  if ((input.verificationCommands ?? []).some(isDependencyInstallCommand)) {
+    return { resolved: "isolated", reason: "verification_dependency_install" };
+  }
 
   const paths = input.worktreeDiff
     .map((line) => extractPath(line))
@@ -40,6 +45,10 @@ export function decideVerificationStrategy(input: DeciderInput): StrategyDecisio
   if (packageDirs.size === 0) return { resolved: "fast", reason: "diff_no_package_changes" };
   if (packageDirs.size === 1) return { resolved: "fast", reason: "diff_single_package" };
   return { resolved: "isolated", reason: "diff_cross_package" };
+}
+
+function isDependencyInstallCommand(command: string): boolean {
+  return /(^|&&|\|\||;)\s*(npm|pnpm|yarn|bun)\s+(install|i)\b/.test(command);
 }
 
 function extractPath(porcelainLine: string): string | null {

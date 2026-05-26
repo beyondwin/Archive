@@ -483,9 +483,12 @@ describe("Waygent run commands v2", () => {
     const explanation = explainRun({ root, run: "run_dependency_missing" });
     expect(explanation).toMatchObject({
       run_id: "run_dependency_missing",
-      blocked_by: null
+      blocked_by: "dependency_missing"
     });
-    expect(explanation.operator_decision.primary_blocker).toBeNull();
+    expect(explanation.operator_decision.primary_blocker).toMatchObject({
+      code: "dependency_missing",
+      task_id: "task_dependency_missing"
+    });
     expect(explanation.summary).toBe(explanation.operator_decision.status_summary.summary);
     expect(resumeRun({ root, run: "run_dependency_missing", dry_run: true }).allowed_actions).toEqual(["rerun_verification"]);
   });

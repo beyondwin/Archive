@@ -63,6 +63,22 @@ describe("Waygent verification", () => {
     expect(result.failure_summary).toContain("Cannot find package");
   });
 
+  test("classifies pnpm non-tty install purge as environment_blocker", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "waygent-verify-"));
+    const result = await runVerificationCommands({
+      run_id: "run_verify",
+      task_id: "task_verify",
+      cwd,
+      commands: [
+        "printf 'Scope: all 4 workspace projects\\nERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY Aborted removal of modules directory due to no TTY\\n' && exit 1"
+      ]
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.failure_class).toBe("environment_blocker");
+    expect(result.failure_summary).toContain("ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY");
+  });
+
   test("classifies missing command verification output as command_not_found", async () => {
     const cwd = mkdtempSync(join(tmpdir(), "waygent-verify-"));
     const result = await runVerificationCommands({

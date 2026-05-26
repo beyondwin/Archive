@@ -7,7 +7,7 @@
   "plan": "```yaml waygent-task\nid: task_dependency_missing\ntitle: Dependency missing verification task\ndependencies: []\nfile_claims:\n  - path: dependency.txt\n    mode: owned\nrisk: low\nverify:\n  - node -e \"throw new Error('Cannot find package ajv from validate.ts')\"\n```",
   "expected": {
     "run_status": "failed",
-    "apply_status": "not_ready",
+    "apply_status": "blocked",
     "total_events": 15,
     "safe_wave": [
       "task_dependency_missing"

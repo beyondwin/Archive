@@ -47,6 +47,15 @@ describe("decideVerificationStrategy", () => {
     expect(out).toEqual({ resolved: "isolated", reason: "diff_lockfile_touched" });
   });
 
+  it("auto: isolates package-manager install verification commands", () => {
+    const out = decideVerificationStrategy({
+      requested: "auto",
+      worktreeDiff: [" M front/features/platform-admin/route/admin-health-route.tsx"],
+      verificationCommands: ["pnpm install --frozen-lockfile --prefer-offline", "pnpm --dir front test -- --run"]
+    });
+    expect(out).toEqual({ resolved: "isolated", reason: "verification_dependency_install" });
+  });
+
   it("auto: returns isolated when root package.json changes", () => {
     const out = decideVerificationStrategy({
       requested: "auto",

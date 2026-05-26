@@ -77,6 +77,47 @@ describe("executeWaygentTask", () => {
     });
   });
 
+  test("records per-command verification failure summaries", async () => {
+    const workspace = initSourceCheckout("waygent-task-executor-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-root-"));
+    const parsed = parseWaygentPlan([
+      "```yaml waygent-task",
+      "id: task_multiple_failures",
+      "title: Preserve per-command verification failures",
+      "dependencies: []",
+      "file_claims:",
+      "  - path: multi.txt",
+      "    mode: owned",
+      "risk: low",
+      "verify:",
+      "  - node -e \"throw new Error('Cannot find package ajv from validate.ts')\"",
+      "  - definitely-not-a-waygent-command",
+      "```"
+    ].join("\n"));
+
+    const result = await executeWaygentTask({
+      root,
+      run_id: "run_multiple_failures",
+      workspace,
+      worktree_root: join(root, "worktrees"),
+      task: parsed.tasks[0]!,
+      checkpoint_inputs: [],
+      spec: null,
+      provider: "fake",
+      provider_processes: {}
+    });
+
+    expect(result.status).toBe("blocked");
+    expect(result.verification_records[0]).toMatchObject({
+      failure_class: "dependency_missing",
+      failure_summary: expect.stringContaining("Cannot find package")
+    });
+    expect(result.verification_records[1]).toMatchObject({
+      failure_class: "command_not_found",
+      failure_summary: expect.stringContaining("command not found")
+    });
+  });
+
   test("verifies and checkpoints RED-only tasks with explicit expected-failure commands", async () => {
     const workspace = initSourceCheckout("waygent-task-executor-red-verify-source-");
     const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-red-verify-root-"));
