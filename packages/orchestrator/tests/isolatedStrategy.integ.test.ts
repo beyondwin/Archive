@@ -168,4 +168,25 @@ dscribe("isolatedStrategy (integration)", () => {
       cleanup();
     }
   });
+
+  it("scenario G: replaces stale worker-installed bun node_modules before materializing", () => {
+    const { workspace, cleanup } = makeWorkspace();
+    try {
+      const worktree = copyAsWorktree(workspace);
+      mkdirSync(join(worktree, "node_modules/.bun/ajv@8.0.0/node_modules"), { recursive: true });
+      writeFileSync(join(worktree, "node_modules/.bun/ajv@8.0.0/package.json"), "{}");
+      mkdirSync(join(worktree, "node_modules/@waygent"), { recursive: true });
+      symlinkSync("../packages/foo", join(worktree, "node_modules/@waygent/foo"), "dir");
+
+      const prepared = prepareIsolatedStrategy({ workspace, worktree });
+
+      expect(prepared.evidence.isolation_status).toBe("prepared");
+      expect(readFileSync(join(worktree, "node_modules/@waygent/foo/index.js"), "utf8")).toContain("main");
+
+      prepared.cleanup();
+      expect(existsSync(join(worktree, "node_modules"))).toBe(false);
+    } finally {
+      cleanup();
+    }
+  });
 });
