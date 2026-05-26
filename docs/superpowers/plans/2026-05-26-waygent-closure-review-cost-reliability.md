@@ -2290,6 +2290,13 @@ function costSummaryFromState(state: WaygentRunStateV2): NonNullable<OperatorDec
 
 In `packages/orchestrator/src/orchestrator.ts`, after `platform.cost_accumulated`, evaluate budget. When warning:
 
+Implementation guardrail: the `budget` value used in the
+`platform.cost_accumulated` payload must be computed inside
+`recordRuntimeEvidence` after the cost ledger mutation, before appending the
+event. Do not place this local variable in `replayTaskExecutionFailure`; that
+leaves `recordRuntimeEvidence` with `cost_summary: budget` and causes CLI
+run/status/events tests to fail with `ReferenceError: budget is not defined`.
+
 ```ts
 context.appendEvent((sequence) => buildRunEvent({
   run_id: runId,
