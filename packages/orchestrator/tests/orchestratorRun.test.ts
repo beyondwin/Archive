@@ -144,6 +144,68 @@ verify:
     expect(readRunStateV2(root, "run_dependent_wave").tasks.task_followup?.status).toBe("verified");
   });
 
+  test("continues after repair budget state is persisted", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-repair-budget-"));
+    const workspace = initSourceCheckout("waygent-repair-budget-source-");
+    const counterPath = join(root, "counter.txt");
+    const script = `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const prompt = fs.readFileSync(0, "utf8");
+      const counterPath = process.env.WAYGENT_TEST_COUNTER;
+      const previous = fs.existsSync(counterPath) ? Number(fs.readFileSync(counterPath, "utf8")) : 0;
+      const next = previous + 1;
+      fs.writeFileSync(counterPath, String(next));
+      const isRepair = prompt.includes("role: fix") || prompt.includes("Repair task:");
+      if (isRepair || next > 2) {
+        fs.writeFileSync(path.join(process.cwd(), "fixed.txt"), "fixed\\n");
+      } else {
+        fs.writeFileSync(path.join(process.cwd(), "README.md"), "broken\\n");
+      }
+      console.log(JSON.stringify({
+        status: "completed",
+        changed_files: isRepair || next > 2 ? ["README.md", "fixed.txt"] : ["README.md"],
+        summary: isRepair ? "repair wrote fixed file" : "implement attempt " + next,
+        evidence: { attempt: next, role: isRepair ? "fix" : "implement" }
+      }));
+    `;
+
+    const result = await runWaygent({
+      root,
+      workspace,
+      run_id: "run_repair_budget",
+      profile: { provider: "codex", execution_mode: "multi-agent" },
+      provider_processes: {
+        codex: {
+          executable: process.execPath,
+          args: ["-e", script],
+          env: { WAYGENT_TEST_COUNTER: counterPath }
+        }
+      },
+      plan: `
+\`\`\`yaml waygent-task
+id: task_repair
+title: Repair then retry
+dependencies: []
+file_claims:
+  - path: README.md
+    mode: owned
+  - path: fixed.txt
+    mode: owned
+risk: low
+verify:
+  - test -f fixed.txt
+\`\`\`
+`
+    });
+
+    const state = readRunStateV2(root, "run_repair_budget");
+    expect(result.events.map((event) => event.event_type)).toContain("runway.repair_result");
+    expect(state.repair_budget?.task_repair).toEqual({ max_attempts: 2, current: 1 });
+    expect(state.status).toBe("completed");
+    expect(state.tasks.task_repair?.status).toBe("verified");
+  });
+
   test("uses the selected process provider instead of the fake provider", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-codex-provider-"));
     const script = `
