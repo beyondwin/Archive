@@ -1871,6 +1871,8 @@ file_claims:
     mode: owned
   - path: packages/orchestrator/src/orchestrator.ts
     mode: owned
+  - path: packages/orchestrator/src/index.ts
+    mode: owned
   - path: packages/orchestrator/tests/recoveryExecutor.test.ts
     mode: owned
   - path: packages/orchestrator/tests/salvage.test.ts
