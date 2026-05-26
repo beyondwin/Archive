@@ -38,6 +38,24 @@ describe("codex retry resume (C3)", () => {
     expect(args[args.length - 1]).toBe("-");
   });
 
+  test("retry resume args use process cwd instead of unsupported --cd flag", () => {
+    const args = providerProcessArgs(
+      "codex",
+      {
+        executable: "codex",
+        args: ["exec", "--json", "-"],
+        resume_session_id: "thread_codex_init_fixture",
+        model: "gpt-5.5"
+      },
+      "/tmp/waygent-task",
+      { task_id: "t", candidate_id: "c", role: "implement", prompt: "go" }
+    );
+    expect(args).not.toContain("--cd");
+    expect(args).not.toContain("-C");
+    expect(args).toContain("--skip-git-repo-check");
+    expect(args[args.length - 1]).toBe("-");
+  });
+
   test("session_id is captured from the first stream-json envelope into evidence", () => {
     const stdout = readFileSync(fixturePath, "utf8");
     const result = normalizeProcessOutput("codex", "task_codex", "candidate_task_codex", {

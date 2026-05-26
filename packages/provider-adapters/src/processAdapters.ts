@@ -420,6 +420,9 @@ export function providerProcessArgsWithWarnings(
   if (isCodexCli && options.model && !nextArgs.includes("--model")) {
     nextArgs = ["--model", options.model, ...nextArgs];
   }
+  if (isCodexCli && options.resume_session_id) {
+    return { args: insertBeforePromptStdin(nextArgs, "--skip-git-repo-check"), warnings };
+  }
   if (!cwd || !isCodexCli || nextArgs.includes("--cd") || nextArgs.includes("-C")) {
     return { args: nextArgs, warnings };
   }
@@ -431,6 +434,15 @@ export function providerProcessArgsWithWarnings(
     };
   }
   return { args: [...nextArgs, "--cd", cwd, "--skip-git-repo-check"], warnings };
+}
+
+function insertBeforePromptStdin(args: string[], option: string): string[] {
+  if (args.includes(option)) return args;
+  const promptStdinIndex = args.lastIndexOf("-");
+  if (promptStdinIndex >= 0) {
+    return [...args.slice(0, promptStdinIndex), option, ...args.slice(promptStdinIndex)];
+  }
+  return [...args, option];
 }
 
 export function providerProcessArgs(provider: "codex" | "claude", options: ProviderProcessOptions, cwd: string | undefined, request: AdapterRequest): string[] {
