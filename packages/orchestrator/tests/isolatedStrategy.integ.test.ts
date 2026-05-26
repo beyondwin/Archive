@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { prepareIsolatedStrategy } from "../src/isolatedStrategy";
@@ -140,6 +140,30 @@ dscribe("isolatedStrategy (integration)", () => {
       prepared.cleanup();
       expect(existsSync(join(worktree, "node_modules"))).toBe(false);
       expect(existsSync(snapshotDir)).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("scenario F: replaces stale worker-created node_modules links before materializing", () => {
+    const { workspace, cleanup } = makeWorkspace();
+    try {
+      mkdirSync(join(workspace, "node_modules"));
+      const worktree = copyAsWorktree(workspace);
+      rmSync(join(worktree, "node_modules"), { force: true, recursive: true });
+      symlinkSync(join(workspace, "node_modules"), join(worktree, "node_modules"), "dir");
+      mkdirSync(join(worktree, "packages/foo/node_modules/@waygent"), { recursive: true });
+      symlinkSync("../../../foo", join(worktree, "packages/foo/node_modules/@waygent/foo"), "dir");
+
+      const prepared = prepareIsolatedStrategy({ workspace, worktree });
+
+      expect(prepared.evidence.isolation_status).toBe("prepared");
+      expect(existsSync(join(worktree, "node_modules/@waygent/foo"))).toBe(true);
+
+      prepared.cleanup();
+
+      expect(existsSync(join(worktree, "node_modules"))).toBe(false);
+      expect(existsSync(join(worktree, "packages/foo/node_modules"))).toBe(false);
     } finally {
       cleanup();
     }
