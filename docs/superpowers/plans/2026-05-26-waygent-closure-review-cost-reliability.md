@@ -407,6 +407,10 @@ AJV compatibility rule: every schema property that uses `nullable` must also
 declare an explicit `type`, and every string discriminator that uses `const`
 must declare `type: "string"` alongside the `const`. Do not emit
 `{ nullable: true }` or `{ const: "..." }` by itself.
+For optional TypeScript fields such as `stale_run_status?: StaleRunStatus`,
+make the property optional by omitting it from `required`; do not add
+`nullable: true`. If null support is intentionally needed, use
+`type: ["object", "null"]` or `anyOf`, never a bare `nullable`.
 
 ```ts
 const providerRoleValues = [
@@ -479,6 +483,32 @@ export const salvageResultSchema = {
     changed_files: { type: "array", items: { type: "string" } },
     reason: { type: ["string", "null"] },
     evidence_refs: { type: "array", items: { type: "string" } }
+  },
+  additionalProperties: false
+} as const;
+
+export const staleRunStatusSchema = {
+  type: "object",
+  required: ["run_id", "stale", "reason", "safe_actions"],
+  properties: {
+    run_id: { type: "string", minLength: 1 },
+    stale: { type: "boolean" },
+    reason: {
+      enum: [
+        "heartbeat_expired",
+        "provider_process_missing",
+        "worktree_missing",
+        "state_event_mismatch",
+        "manual_pause",
+        "active"
+      ]
+    },
+    safe_actions: {
+      type: "array",
+      items: {
+        enum: ["inspect", "mark_blocked", "resume", "cleanup_worktree"]
+      }
+    }
   },
   additionalProperties: false
 } as const;
