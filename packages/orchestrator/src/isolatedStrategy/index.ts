@@ -1,7 +1,7 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, rmSync, symlinkSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { computeCacheKey } from "./cacheKey";
 import { detectManifestDrift, enumerateWorkspaceManifest, type WorkspaceManifest } from "./workspaceManifest";
 import {
@@ -100,7 +100,9 @@ export function prepareIsolatedStrategy(input: {
     evidence.created_paths = ["node_modules"];
     evidence.cleanup_status = "pending";
   } catch (error) {
-    cleanupWorktreeLinks(input.worktree);
+    if (!(error instanceof UnsafePreexistingNodeModulesError)) {
+      cleanupWorktreeLinks(input.worktree, currentManifest);
+    }
     evidence.reason = `isolation_unavailable.materialize: ${describeError(error)}`;
     return { evidence, cleanup: () => {} };
   }
@@ -123,7 +125,7 @@ export function prepareIsolatedStrategy(input: {
     cleanup() {
       if (evidence.cleanup_status !== "pending") return;
       try {
-        cleanupWorktreeLinks(input.worktree);
+        cleanupWorktreeLinks(input.worktree, currentManifest);
         evidence.cleanup_status = "removed";
       } catch (error) {
         evidence.cleanup_status = "failed";
@@ -169,9 +171,10 @@ function materialize(
   paths: ReturnType<typeof snapshotPaths>,
   currentManifest: WorkspaceManifest
 ): Record<string, string> {
+  removeSafePreexistingNodeModules(worktree, currentManifest);
   const target = join(worktree, "node_modules");
   if (existsSync(target)) {
-    throw new Error("worktree_node_modules_exists");
+    throw new UnsafePreexistingNodeModulesError("worktree_node_modules_exists");
   }
   cpSync(paths.nodeModules, target, { recursive: true, dereference: false });
 
@@ -187,10 +190,16 @@ function materialize(
   return resolved;
 }
 
-function cleanupWorktreeLinks(worktree: string): void {
+function cleanupWorktreeLinks(worktree: string, currentManifest?: WorkspaceManifest): void {
   const target = join(worktree, "node_modules");
   if (existsSync(target)) {
     rmSync(target, { force: true, recursive: true });
+  }
+  for (const { relative_path: relPath } of currentManifest?.packages ?? []) {
+    const nested = join(worktree, relPath, "node_modules");
+    if (existsSync(nested) && isWaygentLinkOnlyNodeModules(nested, worktree)) {
+      rmSync(nested, { force: true, recursive: true });
+    }
   }
 }
 
@@ -204,4 +213,46 @@ function normalizeFailureCode(error: unknown): string {
     if (typeof code === "string" && code.startsWith("isolation_unavailable.")) return code;
   }
   return "isolation_unavailable.snapshot_io";
+}
+
+class UnsafePreexistingNodeModulesError extends Error {}
+
+function removeSafePreexistingNodeModules(worktree: string, currentManifest: WorkspaceManifest): void {
+  removeSafeNodeModules(join(worktree, "node_modules"), worktree);
+  for (const { relative_path: relPath } of currentManifest.packages) {
+    removeSafeNodeModules(join(worktree, relPath, "node_modules"), worktree);
+  }
+}
+
+function removeSafeNodeModules(target: string, worktree: string): void {
+  if (!existsSync(target)) return;
+  const stat = lstatSync(target);
+  if (stat.isSymbolicLink()) {
+    rmSync(target, { force: true, recursive: true });
+    return;
+  }
+  if (stat.isDirectory() && isWaygentLinkOnlyNodeModules(target, worktree)) {
+    rmSync(target, { force: true, recursive: true });
+    return;
+  }
+  throw new UnsafePreexistingNodeModulesError("worktree_node_modules_exists");
+}
+
+function isWaygentLinkOnlyNodeModules(target: string, worktree: string): boolean {
+  const entries = readdirSync(target, { withFileTypes: true });
+  if (entries.length !== 1 || entries[0]?.name !== "@waygent" || !entries[0].isDirectory()) return false;
+  const scopedDir = join(target, "@waygent");
+  const scopedEntries = readdirSync(scopedDir, { withFileTypes: true });
+  if (scopedEntries.length === 0) return false;
+  return scopedEntries.every((entry) => {
+    if (!entry.isSymbolicLink()) return false;
+    const linkPath = join(scopedDir, entry.name);
+    const linkTarget = resolve(dirname(linkPath), readlinkSync(linkPath));
+    return isInside(worktree, linkTarget);
+  });
+}
+
+function isInside(root: string, candidate: string): boolean {
+  const rel = relative(resolve(root), resolve(candidate));
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
