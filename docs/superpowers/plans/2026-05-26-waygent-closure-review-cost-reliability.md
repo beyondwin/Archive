@@ -2705,11 +2705,18 @@ Create `tests/waygent-scenarios/salvaged-patch-needs-review.json`:
   "plan": "```yaml waygent-task\nid: task_salvage\ntitle: salvage task\ndependencies: []\nfile_claims:\n  - path: salvage.txt\n    mode: owned\nrisk: medium\nverify:\n  - test -f salvage.txt\n```",
   "expected": {
     "run_status": "blocked",
-    "primary_blocker": "review_evidence_missing",
+    "allowed_primary_blockers": ["review_evidence_missing", "provider_not_ready"],
+    "operator_allowed_actions_must_include": ["run_review"],
     "expected_event_types": ["runway.patch_salvaged"]
   }
 }
 ```
+
+For `salvaged-patch-needs-review`, do not make the golden overly brittle by
+requiring `review_evidence_missing` as the sole primary blocker. A salvaged
+patch can surface `provider_not_ready` first when provider readiness is the
+earliest operator blocker. The fixture must still prove the important behavior:
+the salvage event is present and review is available/required before apply.
 
 - [ ] **Step 5: Extend scenario harness expected fields**
 
@@ -2718,6 +2725,8 @@ Modify `packages/testkit/src/waygentScenarioHarness.ts`:
 ```ts
 export interface WaygentScenarioExpected {
   primary_blocker?: string | null;
+  allowed_primary_blockers?: string[];
+  operator_allowed_actions_must_include?: string[];
   forbidden_blockers?: string[];
   trust_status?: string;
   recovered_failure_count?: number;
@@ -2746,6 +2755,12 @@ Modify `tests/integration/waygent-scenarios.test.ts`:
 
 ```ts
 if (expected.primary_blocker !== undefined) expect(actual.primary_blocker).toBe(expected.primary_blocker);
+if (expected.allowed_primary_blockers) expect(expected.allowed_primary_blockers).toContain(actual.primary_blocker);
+if (expected.operator_allowed_actions_must_include) {
+  for (const action of expected.operator_allowed_actions_must_include) {
+    expect(actual.operator_allowed_actions).toContain(action);
+  }
+}
 if (expected.forbidden_blockers) expect(expected.forbidden_blockers).not.toContain(actual.primary_blocker);
 if (expected.trust_status !== undefined) expect(actual.trust_status).toBe(expected.trust_status);
 if (expected.recovered_failure_count !== undefined) expect(actual.recovered_failure_count).toBe(expected.recovered_failure_count);
@@ -2753,6 +2768,11 @@ if (expected.budget_status !== undefined) expect(actual.budget_status).toBe(expe
 if (expected.review_status?.missing_task_ids) expect(actual.review_status?.missing_task_ids).toEqual(expected.review_status.missing_task_ids);
 if (expected.review_status?.passed_task_ids) expect(actual.review_status?.passed_task_ids).toEqual(expected.review_status.passed_task_ids);
 ```
+
+For fixture-lab stale verification trust tests, pass representative verification
+events into `projectTrustReport`. A bare synthetic state with `events: []` is
+expected to remain `insufficient_evidence`; it must not be asserted as
+`trusted` unless kernel/verification evidence is present.
 
 - [ ] **Step 7: Run integration gates**
 
