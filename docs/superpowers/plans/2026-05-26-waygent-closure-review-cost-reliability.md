@@ -2732,7 +2732,9 @@ two or three attempts; the fixture should assert the durable contract only:
 run starts, malformed worker failure is observed, recovery is scheduled, a
 later worker attempt succeeds or recovery eventually requires decision, and the
 trust report is updated when blocked. Do not require a full event list equality
-for this scenario.
+for this scenario. Remove exact `total_events` and exact `provider_attempts`
+length assertions from that fixture as well, because those encode the retry
+budget rather than the observable malformed-provider contract.
 
 - [ ] **Step 5: Extend scenario harness expected fields**
 
