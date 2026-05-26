@@ -218,13 +218,13 @@ function normalizeFailureCode(error: unknown): string {
 class UnsafePreexistingNodeModulesError extends Error {}
 
 function removeSafePreexistingNodeModules(worktree: string, currentManifest: WorkspaceManifest): void {
-  removeSafeNodeModules(join(worktree, "node_modules"), worktree);
+  removeSafeNodeModules(join(worktree, "node_modules"), worktree, { allowBunManaged: true });
   for (const { relative_path: relPath } of currentManifest.packages) {
     removeSafeNodeModules(join(worktree, relPath, "node_modules"), worktree);
   }
 }
 
-function removeSafeNodeModules(target: string, worktree: string): void {
+function removeSafeNodeModules(target: string, worktree: string, options: { allowBunManaged?: boolean } = {}): void {
   if (!existsSync(target)) return;
   const stat = lstatSync(target);
   if (stat.isSymbolicLink()) {
@@ -232,6 +232,10 @@ function removeSafeNodeModules(target: string, worktree: string): void {
     return;
   }
   if (stat.isDirectory() && isWaygentLinkOnlyNodeModules(target, worktree)) {
+    rmSync(target, { force: true, recursive: true });
+    return;
+  }
+  if (options.allowBunManaged && stat.isDirectory() && existsSync(join(target, ".bun"))) {
     rmSync(target, { force: true, recursive: true });
     return;
   }
