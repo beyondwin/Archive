@@ -270,6 +270,106 @@ describe("executeWaygentTask", () => {
     expect(patch).not.toContain("base.txt");
   });
 
+  test("materializes independent dependency checkpoints with nearby insertions", async () => {
+    const workspace = initSourceCheckout("waygent-task-executor-checkpoint-merge-source-");
+    writeFileSync(join(workspace, "source.ts"), [
+      "import { base } from './base';",
+      "import { tail } from './tail';",
+      "",
+      "export const value = base + tail;",
+      ""
+    ].join("\n"));
+    for (const args of [["add", "-A"], ["commit", "-q", "-m", "add source"]]) {
+      const result = Bun.spawnSync(["git", ...args], { cwd: workspace });
+      if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`);
+    }
+
+    const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-checkpoint-merge-root-"));
+    const providerScript = `
+      const { readFileSync, writeFileSync } = require("node:fs");
+      const { join } = require("node:path");
+      const prompt = readFileSync(0, "utf8");
+      const packetPath = prompt.match(/task_packet_path: (.+)/)[1].trim();
+      const packet = JSON.parse(readFileSync(packetPath, "utf8"));
+      const sourcePath = join(process.cwd(), "source.ts");
+      if (packet.task_id === "task_review_import") {
+        const source = readFileSync(sourcePath, "utf8");
+        writeFileSync(sourcePath, source.replace("import { tail } from './tail';", "import { review } from './review';\\nimport { tail } from './tail';"));
+      } else if (packet.task_id === "task_salvage_import") {
+        const source = readFileSync(sourcePath, "utf8");
+        writeFileSync(sourcePath, source.replace("import { tail } from './tail';", "import { salvage } from './salvage';\\nimport { tail } from './tail';"));
+      } else {
+        writeFileSync(join(process.cwd(), "merged.txt"), readFileSync(sourcePath, "utf8"));
+      }
+      const changed = packet.task_id === "task_final" ? ["merged.txt"] : ["source.ts"];
+      console.log(JSON.stringify({
+        schema: "runway.worker_result.v1",
+        task_id: packet.task_id,
+        candidate_id: "candidate_" + packet.task_id,
+        status: "completed",
+        changed_files: changed,
+        summary: packet.task_id + " completed",
+        evidence: { provider: "fixture" }
+      }));
+    `;
+    const provider = { codex: { executable: process.execPath, args: ["-e", providerScript] } };
+    const taskPlan = (id: string, title: string, dependencies: string[], verify: string[]) => parseWaygentPlan([
+      "```yaml waygent-task",
+      `id: ${id}`,
+      `title: ${title}`,
+      `dependencies: [${dependencies.join(", ")}]`,
+      "file_claims:",
+      `  - path: ${id === "task_final" ? "merged.txt" : "source.ts"}`,
+      "    mode: owned",
+      "risk: low",
+      "verify:",
+      ...verify.map((command) => `  - ${command}`),
+      "```"
+    ].join("\n")).tasks[0]!;
+
+    const review = await executeWaygentTask({
+      root,
+      run_id: "run_checkpoint_merge",
+      workspace,
+      worktree_root: join(root, "worktrees"),
+      task: taskPlan("task_review_import", "Add review import", [], ["grep -q review source.ts"]),
+      checkpoint_inputs: [],
+      spec: null,
+      provider: "codex",
+      provider_processes: provider
+    });
+    const salvage = await executeWaygentTask({
+      root,
+      run_id: "run_checkpoint_merge",
+      workspace,
+      worktree_root: join(root, "worktrees"),
+      task: taskPlan("task_salvage_import", "Add salvage import", [], ["grep -q salvage source.ts"]),
+      checkpoint_inputs: [],
+      spec: null,
+      provider: "codex",
+      provider_processes: provider
+    });
+
+    const result = await executeWaygentTask({
+      root,
+      run_id: "run_checkpoint_merge",
+      workspace,
+      worktree_root: join(root, "worktrees"),
+      task: taskPlan("task_final", "Consume both imports", ["task_review_import", "task_salvage_import"], [
+        "grep -q review source.ts && grep -q salvage source.ts && test -f merged.txt"
+      ]),
+      checkpoint_inputs: [review.checkpoint_refs[0]!, salvage.checkpoint_refs[0]!],
+      spec: null,
+      provider: "codex",
+      provider_processes: provider
+    });
+
+    expect(result.status).toBe("verified");
+    const merged = readFileSync(join(result.worktree_manifest.path, "source.ts"), "utf8");
+    expect(merged).toContain("import { review } from './review';");
+    expect(merged).toContain("import { salvage } from './salvage';");
+  });
+
   test("blocks red task packets before provider dispatch", async () => {
     const workspace = initSourceCheckout("waygent-task-executor-red-context-source-");
     const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-red-context-root-"));

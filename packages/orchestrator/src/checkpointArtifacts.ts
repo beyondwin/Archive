@@ -247,7 +247,7 @@ function prepareDryRunSource(input: {
     if (resolved.patch.trim().length === 0) continue;
     const patchPath = join(input.scratch_dir, `base-${index}.patch`);
     writeFileSync(patchPath, resolved.patch);
-    const apply = spawnSync("git", ["apply", patchPath], {
+    const apply = spawnSync("git", ["apply", "--3way", "--union", patchPath], {
       cwd: sourceClone,
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"]

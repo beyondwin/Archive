@@ -921,7 +921,7 @@ function materializeCheckpointInputs(input: { run_root: string; worktree: string
     const resolved = resolveCheckpointPatch(input.run_root, checkpointRef);
     if (!resolved) throw new Error(`dependency checkpoint cannot be resolved: ${checkpointRef}`);
     if (resolved.patch.trim().length === 0) continue;
-    const apply = spawnSync("git", ["apply", "-"], {
+    const apply = spawnSync("git", ["apply", "--3way", "--union", "-"], {
       cwd: input.worktree,
       input: resolved.patch,
       encoding: "utf8",
