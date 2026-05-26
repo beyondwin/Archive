@@ -69,6 +69,46 @@ describe("apply projector", () => {
       source: "run_state_v2"
     });
   });
+
+  test("reports failed task blocker before generic missing apply evidence", () => {
+    const state = makeState({
+      status: "blocked",
+      lifecycle_outcome: "blocked",
+      tasks: {
+        task_a: {
+          id: "task_a",
+          status: "blocked",
+          risk: "medium",
+          dependencies: [],
+          file_claims: [{ path: "front/feature.ts", mode: "owned" }],
+          attempts: ["attempt_task_a_1"],
+          task_packet_path: null,
+          task_packet_sha256: null,
+          unit_manifest: null,
+          checkpoint_refs: [],
+          latest_failure_class: "verification_failed",
+          decision_packet_ref: null,
+          timing: {}
+        }
+      },
+      apply: { status: "blocked", reason: "missing_apply_ready_evidence" },
+      completion_audit: {
+        status: "failed",
+        combined_apply_evidence: {
+          status: "passed",
+          checkpoint_refs: ["artifacts/checkpoints/task_base/candidate_task_base.json"],
+          patch_ref: "artifacts/checkpoints/apply/run_partial.patch"
+        }
+      }
+    });
+
+    expect(projectApplyReadinessFromState(state)).toMatchObject({
+      status: "blocked",
+      reason: "verification_failed",
+      checkpoint_refs: ["artifacts/checkpoints/task_base/candidate_task_base.json"],
+      combined_patch_ref: "artifacts/checkpoints/apply/run_partial.patch"
+    });
+  });
 });
 
 function makeState(overrides: Partial<WaygentRunStateV2> = {}): WaygentRunStateV2 {

@@ -7,7 +7,7 @@
   "plan": "```yaml waygent-task\nid: task_provider\ntitle: Provider fixture task\ndependencies: []\nfile_claims:\n  - path: provider.txt\n    mode: owned\nrisk: low\nverify:\n  - printf provider\n```",
   "expected": {
     "run_status": "failed",
-    "apply_status": "not_ready",
+    "apply_status": "blocked",
     "total_events": 31,
     "safe_wave": [
       "task_provider"

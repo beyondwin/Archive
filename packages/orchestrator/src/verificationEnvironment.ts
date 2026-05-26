@@ -37,6 +37,7 @@ export interface PrepareInput {
   worktree: string;
   disabled?: boolean;
   verifyIsolation?: VerifyIsolationRequest;
+  verificationCommands?: string[];
 }
 
 export function prepareVerificationEnvironment(input: PrepareInput): PreparedVerificationEnvironment {
@@ -59,7 +60,8 @@ export function prepareVerificationEnvironment(input: PrepareInput): PreparedVer
   const worktreeDiff = collectDiff(input.worktree);
   const decision = decideVerificationStrategy({
     requested: input.verifyIsolation,
-    worktreeDiff
+    worktreeDiff,
+    ...(input.verificationCommands ? { verificationCommands: input.verificationCommands } : {})
   });
 
   if (decision.resolved === "fast") {

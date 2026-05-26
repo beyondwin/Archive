@@ -35,6 +35,7 @@ export async function runVerificationCommands(input: VerificationRunInput): Prom
       task_id: input.task_id,
       cwd: input.cwd,
       argv: ["bash", "-lc", command],
+      env: verificationCommandEnv(command),
       timeout_ms: input.timeout_ms ?? 120000
     });
     results.push(await executeInProcess(request));
@@ -69,7 +70,7 @@ export function verificationResultMatchesExpectation(
   return classifyVerificationResult(result).failure_class === "verification_failed";
 }
 
-function classifyVerificationMismatch(
+export function classifyVerificationMismatch(
   result: KernelExecutionResult,
   spec: Required<VerificationCommandSpec>
 ): {
@@ -93,6 +94,10 @@ export function classifyVerificationResult(result: KernelExecutionResult): {
   if (result.timed_out || (result.exit_code === 143 && firstSignalLine(text) === "verification failed")) {
     return { failure_class: "timeout", failure_summary: "verification timed out" };
   }
+  const pnpmNonTtyLine = firstMatchingLine(text, /ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY|confirmModulesPurge/i);
+  if (pnpmNonTtyLine) {
+    return { failure_class: "environment_blocker", failure_summary: pnpmNonTtyLine };
+  }
   const dependencyLine = firstMatchingLine(text, /Cannot find package|ERR_MODULE_NOT_FOUND|Cannot find module/i);
   if (dependencyLine) {
     return { failure_class: "dependency_missing", failure_summary: dependencyLine };
@@ -106,6 +111,15 @@ export function classifyVerificationResult(result: KernelExecutionResult): {
     return { failure_class: "permission_denied", failure_summary: permissionLine };
   }
   return { failure_class: "verification_failed", failure_summary: firstSignalLine(text) };
+}
+
+function verificationCommandEnv(command: string): Record<string, string> {
+  if (!/(^|&&|\|\||;)\s*(npm|pnpm|yarn|bun)\s+(install|i)\b/.test(command)) return {};
+  return {
+    CI: "true",
+    npm_config_confirm_modules_purge: "false",
+    PNPM_CONFIG_CONFIRM_MODULES_PURGE: "false"
+  };
 }
 
 function firstSignalLine(text: string): string {

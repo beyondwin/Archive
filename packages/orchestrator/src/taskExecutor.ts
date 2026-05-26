@@ -37,6 +37,7 @@ import { debugArtifactDenials, evaluateFinalOutputHooks, evaluatePreDispatchHook
 import { taskRequiresCheckpoint } from "./taskCheckpointPolicy";
 import {
   normalizeVerificationCommandSpec,
+  classifyVerificationMismatch,
   runVerificationCommands,
   verificationResultMatchesExpectation,
   type VerificationRunOutput
@@ -338,6 +339,7 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
       workspace: input.workspace,
       worktree: taskWorktree.path,
       disabled: process.env.WAYGENT_DISABLE_VERIFICATION_ENV === "1",
+      verificationCommands: commands,
       ...(input.task.verify_isolation ? { verifyIsolation: input.task.verify_isolation } : {})
     });
     verificationEnvironmentEvidence = verificationEnvironment.evidence;
@@ -365,6 +367,7 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     artifactIndexEntries.push(artifactIndexEntry({ artifact: kernelArtifact, producer_phase: "verification", task_id: input.task.id }));
     const expectation = commandSpecs[index] ?? normalizeVerificationCommandSpec(command);
     const passed = verificationResultMatchesExpectation(kernel, expectation);
+    const classified = passed ? null : classifyVerificationMismatch(kernel, expectation);
     return {
       verification_id: kernel.request_id,
       task_id: input.task.id,
@@ -378,8 +381,8 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
       status: passed ? "passed" : "failed",
       expected_exit: expectation.expected_exit,
       verification_environment: verificationEnvironmentEvidence,
-      failure_class: passed ? null : verification.failure_class,
-      failure_summary: passed ? null : verification.failure_summary
+      failure_class: passed ? null : classified?.failure_class ?? verification.failure_class,
+      failure_summary: passed ? null : classified?.failure_summary ?? verification.failure_summary
     };
   });
   if (verification.results.length === 0 && verification.failure_class) {

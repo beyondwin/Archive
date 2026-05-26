@@ -109,7 +109,6 @@ function activeCheckpointTaskBlocker(state: WaygentRunStateV2): string | null {
   const task = Object.values(state.tasks).find((candidate) =>
     (candidate.status === "blocked" || candidate.status === "failed" || state.status === "blocked" || state.status === "failed") &&
     typeof candidate.latest_failure_class === "string" &&
-    (candidate.latest_failure_class === "needs_rebase" || candidate.latest_failure_class === "unsafe_apply") &&
     candidate.checkpoint_refs.length === 0
   );
   return typeof task?.latest_failure_class === "string" ? task.latest_failure_class : null;

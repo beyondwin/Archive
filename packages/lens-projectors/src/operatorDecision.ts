@@ -143,6 +143,9 @@ const blockerPriority: Record<string, number> = {
   needs_user_input: 40,
   needs_approval: 40,
   verification_failed: 50,
+  dependency_missing: 50,
+  environment_blocker: 50,
+  command_not_found: 50,
   checkpoint_dry_run_failed: 60,
   needs_rebase: 60,
   checkpoint_missing: 70,
@@ -399,6 +402,18 @@ function blockersFromState(
       taskId: taskFailure?.task.id,
       evidenceRefs: evidencePacket.state_refs,
       recommendedActionIds: ["open_raw_evidence", "open_ai_repair_handoff"]
+    }));
+  }
+
+  if (taskFailure && !["verification_failed", "needs_rebase", "unsafe_apply"].includes(taskFailure.failureClass)) {
+    blockers.push(makeBlocker({
+      code: taskFailure.failureClass,
+      title: "Task is blocked",
+      summary: `${taskFailure.task.id} is blocked by ${taskFailure.failureClass}.`,
+      severity: "blocking",
+      taskId: taskFailure.task.id,
+      evidenceRefs: evidencePacket.state_refs,
+      recommendedActionIds: ["rerun_verification", "open_ai_repair_handoff", "open_raw_evidence"]
     }));
   }
 
