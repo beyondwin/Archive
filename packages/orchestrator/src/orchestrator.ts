@@ -533,7 +533,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       }
       replayTaskExecutionResult(context, waveResult.result);
       recordRuntimeEvidence(context, waveResult.result);
-      capturePatchForCompletedWorker(context, waveResult.result, paths.root);
+      capturePatchForWorkerAttempt(context, waveResult.result, paths.root);
       const capturedSessionId = extractSessionIdFromWorker(waveResult.result.worker_result);
       if (profile.provider === "codex" && capturedSessionId) {
         codexResumeSessions.set(waveResult.task_id, capturedSessionId);
@@ -1006,12 +1006,11 @@ function recordRuntimeEvidence(context: RunExecutionContext, result: WaygentTask
   }
 }
 
-function capturePatchForCompletedWorker(
+function capturePatchForWorkerAttempt(
   context: RunExecutionContext,
   result: WaygentTaskExecutionResult,
   runRoot: string
 ): void {
-  if (result.worker_result.status !== "completed") return;
   let captured: ReturnType<typeof captureWorktreePatch>;
   try {
     const base = result.worktree_manifest.source_commit ?? "HEAD";
@@ -1032,13 +1031,13 @@ function capturePatchForCompletedWorker(
   evidence.patch_ref = patchArtifact.path;
   evidence.patch_sha256 = captured.sha256;
   evidence.patch_byte_length = captured.byteLength;
+  if (result.worker_result.status !== "completed") evidence.patch_salvaged = true;
   if (captured.truncatedWarning) evidence.patch_truncated_warning = true;
   result.worker_result.evidence = evidence;
-  // Re-persist worker_result so downstream consumers (selectRepairAction +
-  // task packets for repair worker) can read patch_ref from disk. The
-  // original write happened in taskExecutor before patch capture existed,
-  // so its sha256 in artifact_index would now mismatch the on-disk bytes —
-  // refresh the index entry to keep stateReconciliation digest checks happy.
+  // Re-persist worker_result so downstream consumers can read patch_ref from
+  // disk. The original write happened in taskExecutor before patch capture
+  // existed, so its sha256 in artifact_index would now mismatch the on-disk
+  // bytes — refresh the index entry to keep stateReconciliation checks happy.
   const workerArtifact = writeArtifact(
     runRoot,
     `worker/${result.task_id}.json`,

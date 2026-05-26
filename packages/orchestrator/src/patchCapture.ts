@@ -16,6 +16,7 @@ export interface CaptureInput {
 }
 
 export function captureWorktreePatch(input: CaptureInput): CapturedPatch | null {
+  markUntrackedFilesForDiff(input.worktree);
   const args = ["diff", input.base, "--binary"];
   const result = spawnSync("git", args, {
     cwd: input.worktree,
@@ -37,4 +38,20 @@ export function captureWorktreePatch(input: CaptureInput): CapturedPatch | null 
     byteLength,
     truncatedWarning: byteLength > PATCH_WARN_BYTES,
   };
+}
+
+function markUntrackedFilesForDiff(worktree: string): void {
+  const result = spawnSync("git", ["ls-files", "--others", "--exclude-standard"], {
+    cwd: worktree,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+  });
+  if (result.status !== 0 || !result.stdout.trim()) return;
+  const files = result.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
+  if (files.length === 0) return;
+  spawnSync("git", ["add", "-N", "--", ...files], {
+    cwd: worktree,
+    encoding: "utf8",
+    stdio: ["ignore", "ignore", "ignore"],
+  });
 }
