@@ -41,6 +41,19 @@ describe("captureWorktreePatch", () => {
     }
   });
 
+  test("includes untracked files in captured patches", () => {
+    const root = makeRepo();
+    try {
+      writeFileSync(join(root, "new-file.txt"), "new content\n");
+      const captured = captureWorktreePatch({ worktree: root, base: "main" });
+      expect(captured).not.toBeNull();
+      expect(captured!.patch).toContain("new-file.txt");
+      expect(captured!.patch).toContain("+new content");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("flags patch_truncated_warning when patch exceeds 1MB", () => {
     const root = makeRepo();
     try {
