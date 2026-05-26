@@ -2760,6 +2760,26 @@ file_claims:
     mode: owned
   - path: graphify-out/graph.json
     mode: owned
+  - path: packages/lens-projectors/src/operatorDecision.ts
+    mode: owned
+  - path: packages/orchestrator/src/completionAudit.ts
+    mode: owned
+  - path: packages/orchestrator/src/index.ts
+    mode: owned
+  - path: packages/orchestrator/src/orchestrator.ts
+    mode: owned
+  - path: packages/orchestrator/src/orphanRuns.ts
+    mode: owned
+  - path: packages/orchestrator/src/reviewEvidence.ts
+    mode: owned
+  - path: packages/orchestrator/src/reviewRunner.ts
+    mode: owned
+  - path: packages/orchestrator/src/runCommands.ts
+    mode: owned
+  - path: apps/console/src/App.tsx
+    mode: owned
+  - path: apps/console/src/uiModel.test.ts
+    mode: owned
 risk: medium
 verify:
   - bun run check
@@ -2777,6 +2797,8 @@ verify:
 - Modify: `skills/waygent/SKILL.md`
 - Modify generated: `graphify-out/GRAPH_REPORT.md`
 - Modify generated: `graphify-out/graph.json`
+- Fix full-gate typecheck issues found after all dependency checkpoints are
+  materialized, limited to the file claims above.
 
 - [ ] **Step 1: Update verification docs**
 
