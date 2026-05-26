@@ -403,6 +403,11 @@ export interface OperatorDecisionProjection {
 
 Modify `packages/contracts/src/schemas.ts`:
 
+AJV compatibility rule: every schema property that uses `nullable` must also
+declare an explicit `type`, and every string discriminator that uses `const`
+must declare `type: "string"` alongside the `const`. Do not emit
+`{ nullable: true }` or `{ const: "..." }` by itself.
+
 ```ts
 const providerRoleValues = [
   "implement",
@@ -432,7 +437,7 @@ export const taskReviewArtifactSchema = {
     "created_at"
   ],
   properties: {
-    schema: { const: "waygent.task_review.v1" },
+    schema: { type: "string", const: "waygent.task_review.v1" },
     run_id: { type: "string", minLength: 1 },
     task_id: { type: "string", minLength: 1 },
     review_id: { type: "string", minLength: 1 },
@@ -466,7 +471,7 @@ export const salvageResultSchema = {
   type: "object",
   required: ["schema", "task_id", "attempt_id", "status", "patch_ref", "changed_files", "reason", "evidence_refs"],
   properties: {
-    schema: { const: "waygent.salvage_result.v1" },
+    schema: { type: "string", const: "waygent.salvage_result.v1" },
     task_id: { type: "string", minLength: 1 },
     attempt_id: { type: "string", minLength: 1 },
     status: { enum: ["salvaged_patch", "no_patch", "unsafe_patch"] },
