@@ -2089,6 +2089,8 @@ file_claims:
     mode: owned
   - path: apps/cli/src/index.ts
     mode: owned
+  - path: apps/cli/tests/cli.test.ts
+    mode: owned
 risk: medium
 verify:
   - bun test packages/orchestrator/tests/budgetPolicy.test.ts packages/orchestrator/tests/runCommandsV2.test.ts apps/cli/tests/cli.test.ts
