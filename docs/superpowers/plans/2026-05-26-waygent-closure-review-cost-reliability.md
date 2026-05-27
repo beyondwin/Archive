@@ -1150,6 +1150,8 @@ file_claims:
     mode: owned
   - path: packages/orchestrator/src/completionAudit.ts
     mode: owned
+  - path: packages/orchestrator/src/index.ts
+    mode: owned
   - path: packages/orchestrator/tests/reviewEvidence.test.ts
     mode: owned
   - path: packages/orchestrator/tests/completionAudit.test.ts
@@ -1163,6 +1165,7 @@ verify:
 - Create: `packages/orchestrator/src/reviewArtifacts.ts`
 - Modify: `packages/orchestrator/src/reviewEvidence.ts`
 - Modify: `packages/orchestrator/src/completionAudit.ts`
+- Modify: `packages/orchestrator/src/index.ts`
 - Test: `packages/orchestrator/tests/reviewEvidence.test.ts`
 - Test: `packages/orchestrator/tests/completionAudit.test.ts`
 
@@ -1368,7 +1371,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add packages/orchestrator/src/reviewEvidence.ts packages/orchestrator/src/reviewArtifacts.ts packages/orchestrator/src/completionAudit.ts packages/orchestrator/tests/reviewEvidence.test.ts packages/orchestrator/tests/completionAudit.test.ts
+git add packages/orchestrator/src/reviewEvidence.ts packages/orchestrator/src/reviewArtifacts.ts packages/orchestrator/src/completionAudit.ts packages/orchestrator/src/index.ts packages/orchestrator/tests/reviewEvidence.test.ts packages/orchestrator/tests/completionAudit.test.ts
 git commit -m "feat(orchestrator): require review evidence after recovery"
 ```
 
