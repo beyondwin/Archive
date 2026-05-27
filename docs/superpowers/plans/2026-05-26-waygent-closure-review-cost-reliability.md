@@ -2866,6 +2866,12 @@ file_claims:
     mode: owned
   - path: packages/orchestrator/src/runCommands.ts
     mode: owned
+  - path: packages/orchestrator/tests/orchestratorRunV2.test.ts
+    mode: owned
+  - path: packages/testkit/src/waygentScenarioHarness.ts
+    mode: owned
+  - path: packages/testkit/tests/waygentScenarioHarness.test.ts
+    mode: owned
   - path: apps/console/src/App.tsx
     mode: owned
   - path: apps/console/src/uiModel.test.ts
@@ -2891,6 +2897,12 @@ verify:
   `review_required` mismatch in `packages/lens-projectors/src/runReadModel.ts`.
 - Fix full-gate typecheck issues found after all dependency checkpoints are
   materialized, limited to the file claims above.
+- Fix final full-gate test drift in `packages/orchestrator/tests/orchestratorRunV2.test.ts`
+  when the new salvage-first policy makes recovered malformed provider output
+  stop as review-required instead of retrying with a strict prompt.
+- Fix final full-gate testkit typing or fixture drift in
+  `packages/testkit/src/waygentScenarioHarness.ts` and its focused tests when
+  earlier integration fixture checkpoints make replay events stricter.
 
 - [ ] **Step 1: Update verification docs**
 
