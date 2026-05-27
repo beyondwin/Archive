@@ -9,6 +9,12 @@ describe("codex resume context injection (C3 orchestrator)", () => {
     expect(next.codex?.resume_session_id).toBe("thread_abc");
   });
 
+  test("default Codex process disables nested MCP servers", () => {
+    const profile = resolveExecutionProfile({ provider: "codex" });
+    const base = resolveProviderProcesses(profile, undefined);
+    expect(base.codex?.args).toEqual(["-c", "mcp_servers={}", "exec", "--json", "-"]);
+  });
+
   test("applyCodexResumeContext is a no-op when no resume session captured yet", () => {
     const profile = resolveExecutionProfile({ provider: "codex" });
     const base = resolveProviderProcesses(profile, undefined);

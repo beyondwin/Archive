@@ -8,6 +8,7 @@ import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeArtifact, wr
 import {
   attestProviderProcessOptions,
   ClaudeProviderAdapter,
+  CODEX_DEFAULT_ARGS,
   CodexProviderAdapter,
   FakeProviderAdapter,
   probeProviderHelp,
@@ -1569,7 +1570,7 @@ export function resolveProviderProcesses(
     const userCodex = overrides?.codex;
     result.codex = {
       executable: userCodex?.executable ?? "codex",
-      args: userCodex?.args ?? ["exec", "--json", "-"],
+      args: userCodex?.args ?? [...CODEX_DEFAULT_ARGS],
       ...(userCodex?.cwd ? { cwd: userCodex.cwd } : {}),
       ...(userCodex?.env ? { env: userCodex.env } : {}),
       ...(userCodex?.timeout_ms ? { timeout_ms: userCodex.timeout_ms } : {}),
