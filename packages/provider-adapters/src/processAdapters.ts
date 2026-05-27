@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
-import { basename, dirname } from "node:path";
+import { chmodSync, existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import type { FailureClass, ModelAttestation, ProviderRole, TokenUsage, UsageSource, WorkerResult } from "@waygent/contracts";
 import { validateContract } from "@waygent/contracts";
 import { providerSupportsCapabilities, type ProviderSupports } from "./capabilities";
@@ -48,8 +49,8 @@ const knownProviderRoles: ReadonlySet<ProviderRole> = new Set<ProviderRole>([
 ]);
 
 // Host env vars dropped when launching a child provider from a Claude Code or
-// Codex CLI host process. CODEX_HOME is intentionally NOT dropped — it points at
-// the Codex auth credential storage and removing it breaks child authentication.
+// Codex CLI host process. Codex workers get a separate minimal CODEX_HOME below
+// so they can reuse auth without inheriting host MCP/plugin configuration.
 const HOST_ENV_KEYS_TO_DROP = [
   "CLAUDECODE",
   "CLAUDE_CODE_ENTRYPOINT",
@@ -247,6 +248,49 @@ export function buildSpawnEnv(
   return next;
 }
 
+export interface PreparedCodexWorkerHomeEnv {
+  env: Record<string, string>;
+  cleanup(): void;
+}
+
+export function prepareCodexWorkerHomeEnv(
+  env: Record<string, string>,
+  cwd: string | undefined
+): PreparedCodexWorkerHomeEnv {
+  if (env.WAYGENT_DISABLE_CODEX_WORKER_HOME === "1" || env.CODEX_HOME) {
+    return { env, cleanup: () => {} };
+  }
+  const sourceHome = process.env.CODEX_HOME ?? join(homedir(), ".codex");
+  const authPath = join(sourceHome, "auth.json");
+  if (!existsSync(authPath)) {
+    return { env, cleanup: () => {} };
+  }
+  const workerHome = mkdtempSync(join(tmpdir(), "waygent-codex-home-"));
+  try {
+    symlinkSync(authPath, join(workerHome, "auth.json"));
+    const project = cwd ? `[projects.${JSON.stringify(cwd)}]\ntrust_level = "trusted"\n` : "";
+    writeFileSync(
+      join(workerHome, "config.toml"),
+      [
+        'approval_policy = "never"',
+        'sandbox_mode = "danger-full-access"',
+        'model_reasoning_effort = "high"',
+        project.trimEnd()
+      ].filter(Boolean).join("\n") + "\n"
+    );
+    chmodSync(join(workerHome, "config.toml"), 0o600);
+  } catch (error) {
+    rmSync(workerHome, { force: true, recursive: true });
+    throw error;
+  }
+  return {
+    env: { ...env, CODEX_HOME: workerHome },
+    cleanup() {
+      rmSync(workerHome, { force: true, recursive: true });
+    }
+  };
+}
+
 export async function runProviderProcess(
   provider: "codex" | "claude",
   request: AdapterRequest,
@@ -262,9 +306,13 @@ export async function runProviderProcess(
     const honoredOptions = stripUnsupportedOptions(provider, options);
     const { args: spawnArgs, warnings } = providerProcessArgsWithWarnings(provider, honoredOptions, cwd, request);
     const combinedWarnings = [...adapterWarnings, ...warnings];
+    const baseEnv = buildSpawnEnv(process.env, options.env, cwd);
+    const preparedEnv = provider === "codex" && isProviderCliExecutable("codex", options.executable)
+      ? prepareCodexWorkerHomeEnv(baseEnv, cwd)
+      : { env: baseEnv, cleanup: () => {} };
     const child = spawn(options.executable, spawnArgs, {
       cwd,
-      env: buildSpawnEnv(process.env, options.env, cwd),
+      env: preparedEnv.env,
       stdio: ["pipe", "pipe", "pipe"]
     });
     const usesStreamJson = provider === "claude" && spawnArgs.includes("stream-json");
@@ -276,6 +324,7 @@ export async function runProviderProcess(
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
+      preparedEnv.cleanup();
       resolve(result);
     };
     const timeout = setTimeout(() => {
