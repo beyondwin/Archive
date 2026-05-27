@@ -1756,6 +1756,11 @@ verify:
 - When recording review packet/result/provider artifacts in `orchestrator.ts`, prefer the artifacts already returned by `writeArtifact`/`runTaskReview` and wrap them directly with `artifactIndexEntry`.
 - If an existing run-relative ref must be indexed from `orchestrator.ts`, import `resolveRunArtifactPath` from `./checkpointArtifacts` and compute a local artifact reference from `readFileSync(...)` plus the existing `sha256` helper. Do not invent an unimported helper name.
 - Before returning task 6, run `rg -n "artifactReferenceFromRunRef" packages/orchestrator/src/orchestrator.ts` and require no matches.
+- Preserve the existing crash-path completion audit behavior in
+  `packages/orchestrator/tests/orchestratorParallel.test.ts`. Automatic review
+  scheduling must not leave provider-crash safe-wave runs without
+  `state.completion_audit`; crash/sibling-evidence tests expect a failed
+  completion audit object, not `undefined`.
 
 - [ ] **Step 1: Add failing orchestrator review lifecycle test**
 
@@ -2131,6 +2136,8 @@ dependencies:
   - task_1_contracts_closure_review_cost
 file_claims:
   - path: packages/orchestrator/src/budgetPolicy.ts
+    mode: owned
+  - path: packages/orchestrator/src/index.ts
     mode: owned
   - path: packages/orchestrator/src/orchestrator.ts
     mode: owned
