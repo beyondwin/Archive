@@ -2894,6 +2894,8 @@ file_claims:
     mode: owned
   - path: packages/orchestrator/src/orphanRuns.ts
     mode: owned
+  - path: packages/orchestrator/src/recoveryExecutor.ts
+    mode: owned
   - path: packages/orchestrator/src/reviewArtifacts.ts
     mode: owned
   - path: packages/orchestrator/src/reviewEvidence.ts
@@ -2942,6 +2944,9 @@ verify:
 - Fix final salvage optional-field schema drift in
   `packages/orchestrator/src/salvage.ts` if the full gate rejects undefined
   optional values.
+- Fix final recovery action shape drift in
+  `packages/orchestrator/src/recoveryExecutor.ts` if the full gate rejects
+  legacy `selectRepairAction` expectations after salvage/review policy changes.
 - Fix final full-gate test drift in `packages/orchestrator/tests/orchestratorRunV2.test.ts`
   when the new salvage-first policy makes recovered malformed provider output
   stop as review-required instead of retrying with a strict prompt.
