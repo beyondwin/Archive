@@ -2792,6 +2792,14 @@ for this scenario. Remove exact `total_events` and exact `provider_attempts`
 length assertions from that fixture as well, because those encode the retry
 budget rather than the observable malformed-provider contract.
 
+Also update the pre-existing `tests/waygent-scenarios/dependency-missing.json`
+golden so the new automatic-review lifecycle is not treated as an unexpected
+event. Prefer `event_types_must_include` over exact `event_types`; if an exact
+list remains necessary, include `runway.review_required` after
+`runway.recovery_decision_required` and before `lens.trust_report_updated`.
+This fixture should assert the durable dependency-missing contract, not the
+absence of review lifecycle evidence.
+
 - [ ] **Step 5: Extend scenario harness expected fields**
 
 Modify `packages/testkit/src/waygentScenarioHarness.ts`:
