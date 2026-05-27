@@ -1152,6 +1152,8 @@ file_claims:
     mode: owned
   - path: packages/orchestrator/src/index.ts
     mode: owned
+  - path: packages/orchestrator/src/orchestrator.ts
+    mode: owned
   - path: packages/orchestrator/tests/reviewEvidence.test.ts
     mode: owned
   - path: packages/orchestrator/tests/completionAudit.test.ts
@@ -1166,6 +1168,7 @@ verify:
 - Modify: `packages/orchestrator/src/reviewEvidence.ts`
 - Modify: `packages/orchestrator/src/completionAudit.ts`
 - Modify: `packages/orchestrator/src/index.ts`
+- Modify: `packages/orchestrator/src/orchestrator.ts`
 - Test: `packages/orchestrator/tests/reviewEvidence.test.ts`
 - Test: `packages/orchestrator/tests/completionAudit.test.ts`
 
