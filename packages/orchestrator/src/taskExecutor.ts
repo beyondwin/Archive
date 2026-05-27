@@ -916,21 +916,24 @@ function normalizeProviderRunResult(
 function providerSelfReportedFailureClass(worker: WorkerResult): FailureClass | undefined {
   if (worker.failure_class) return worker.failure_class;
   const evidence = worker.evidence;
-  if (!evidence || typeof evidence !== "object") return undefined;
-  const direct = (evidence as { failure_class?: unknown }).failure_class;
-  if (isFailureClassString(direct)) return direct;
-  const verification = (evidence as { verification?: unknown }).verification;
-  const verificationFailureClass = providerVerificationFailureClass(verification);
-  if (verificationFailureClass) return verificationFailureClass;
-  const native = (evidence as { native?: unknown }).native;
-  if (native && typeof native === "object") {
-    const nested = (native as { failure_class?: unknown }).failure_class;
-    if (isFailureClassString(nested)) return nested;
-    const nativeVerification = (native as { verification?: unknown }).verification;
-    const nativeVerificationFailureClass = providerVerificationFailureClass(nativeVerification);
-    if (nativeVerificationFailureClass) return nativeVerificationFailureClass;
+  if (evidence && typeof evidence === "object") {
+    const direct = (evidence as { failure_class?: unknown }).failure_class;
+    if (isFailureClassString(direct)) return direct;
+    const verification = (evidence as { verification?: unknown }).verification;
+    const verificationFailureClass = providerVerificationFailureClass(verification);
+    if (verificationFailureClass) return verificationFailureClass;
+    const native = (evidence as { native?: unknown }).native;
+    if (native && typeof native === "object") {
+      const nested = (native as { failure_class?: unknown }).failure_class;
+      if (isFailureClassString(nested)) return nested;
+      const nativeVerification = (native as { verification?: unknown }).verification;
+      const nativeVerificationFailureClass = providerVerificationFailureClass(nativeVerification);
+      if (nativeVerificationFailureClass) return nativeVerificationFailureClass;
+    }
+    const evidenceTextFailureClass = providerEnvironmentTextFailureClass(JSON.stringify(evidence));
+    if (evidenceTextFailureClass) return evidenceTextFailureClass;
   }
-  return undefined;
+  return providerEnvironmentTextFailureClass(worker.summary);
 }
 
 function isFailureClassString(value: unknown): value is FailureClass {
@@ -946,9 +949,17 @@ function providerVerificationFailureClass(value: unknown): FailureClass | undefi
     (value as { stdout_excerpt?: unknown }).stdout_excerpt,
     (value as { note?: unknown }).note
   ].filter((entry): entry is string => typeof entry === "string").join("\n");
-  return /Cannot find package|Cannot find module|ERR_MODULE_NOT_FOUND/i.test(text)
-    ? "dependency_missing"
-    : "environment_blocker";
+  return providerEnvironmentTextFailureClass(text) ?? "environment_blocker";
+}
+
+function providerEnvironmentTextFailureClass(text: string): FailureClass | undefined {
+  if (/Cannot find package|Cannot find module|ERR_MODULE_NOT_FOUND|package\s+['"]?[\w@./-]+['"]?\s+is missing|missing .*dependenc/i.test(text)) {
+    return "dependency_missing";
+  }
+  if (/blocked by .*environment|blocked_by_environment|isolated worktree|workspace dependencies unavailable/i.test(text)) {
+    return "environment_blocker";
+  }
+  return undefined;
 }
 
 function isProviderEnvironmentSelfReport(failureClass: FailureClass | undefined): boolean {
