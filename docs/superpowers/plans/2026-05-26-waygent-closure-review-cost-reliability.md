@@ -2838,6 +2838,8 @@ file_claims:
     mode: owned
   - path: packages/lens-projectors/src/operatorDecision.ts
     mode: owned
+  - path: packages/orchestrator/src/budgetPolicy.ts
+    mode: owned
   - path: packages/orchestrator/src/completionAudit.ts
     mode: owned
   - path: packages/orchestrator/src/index.ts
@@ -2845,6 +2847,8 @@ file_claims:
   - path: packages/orchestrator/src/orchestrator.ts
     mode: owned
   - path: packages/orchestrator/src/orphanRuns.ts
+    mode: owned
+  - path: packages/orchestrator/src/reviewArtifacts.ts
     mode: owned
   - path: packages/orchestrator/src/reviewEvidence.ts
     mode: owned
