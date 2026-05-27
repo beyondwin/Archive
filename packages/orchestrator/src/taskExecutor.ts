@@ -400,15 +400,16 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
       failure_summary: verification.failure_summary
     });
   }
+  const providerReportedFailureClass = providerSelfReportedFailureClass(worker);
   const providerEnvironmentBlockerOverridden =
-    verification.status === "passed" && isProviderEnvironmentSelfReport(worker.failure_class);
+    verification.status === "passed" && isProviderEnvironmentSelfReport(providerReportedFailureClass);
   if (providerEnvironmentBlockerOverridden) {
     workerEvent.outcome = "success";
     workerEvent.summary = `${worker.summary} Kernel verification passed; provider environment self-report was kept as evidence.`;
     workerEvent.payload = {
       task_id: input.task.id,
       failure_class: null,
-      provider_reported_failure_class: worker.failure_class ?? null,
+      provider_reported_failure_class: providerReportedFailureClass ?? null,
       worker,
       attempt
     };
@@ -910,6 +911,24 @@ function normalizeProviderRunResult(
     };
   }
   return { worker: result };
+}
+
+function providerSelfReportedFailureClass(worker: WorkerResult): FailureClass | undefined {
+  if (worker.failure_class) return worker.failure_class;
+  const evidence = worker.evidence;
+  if (!evidence || typeof evidence !== "object") return undefined;
+  const direct = (evidence as { failure_class?: unknown }).failure_class;
+  if (isFailureClassString(direct)) return direct;
+  const native = (evidence as { native?: unknown }).native;
+  if (native && typeof native === "object") {
+    const nested = (native as { failure_class?: unknown }).failure_class;
+    if (isFailureClassString(nested)) return nested;
+  }
+  return undefined;
+}
+
+function isFailureClassString(value: unknown): value is FailureClass {
+  return typeof value === "string" && value.length > 0;
 }
 
 function isProviderEnvironmentSelfReport(failureClass: FailureClass | undefined): boolean {
