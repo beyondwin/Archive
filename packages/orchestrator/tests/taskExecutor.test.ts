@@ -334,6 +334,65 @@ describe("executeWaygentTask", () => {
     });
   });
 
+  test("accepts summary-only provider dependency self-reports when kernel verification passes", async () => {
+    const workspace = initSourceCheckout("waygent-task-executor-provider-summary-env-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-provider-summary-env-root-"));
+    const parsed = parseWaygentPlan([
+      "```yaml waygent-task",
+      "id: task_provider_summary_env",
+      "title: Provider reports dependency blocker only in summary/evidence text",
+      "dependencies: []",
+      "file_claims:",
+      "  - path: summary-env.txt",
+      "    mode: owned",
+      "risk: low",
+      "verify:",
+      "  - test -f summary-env.txt",
+      "```"
+    ].join("\n"));
+    const script = `
+      const { writeFileSync } = require("node:fs");
+      const { join } = require("node:path");
+      writeFileSync(join(process.cwd(), "summary-env.txt"), "verified by kernel\\n");
+      console.log(JSON.stringify({
+        schema: "runway.worker_result.v1",
+        task_id: "task_provider_summary_env",
+        candidate_id: "candidate_task_provider_summary_env",
+        status: "blocked",
+        changed_files: ["summary-env.txt"],
+        summary: "Required verification is blocked because this isolated worktree is missing the existing ajv dependency required by packages/contracts/src/validate.ts.",
+        evidence: {
+          blocked: [{
+            command: "bun test apps/api/tests/api.test.ts",
+            result: "apps/api cannot load because package ajv is missing from packages/contracts/src/validate.ts"
+          }]
+        }
+      }));
+    `;
+
+    const result = await executeWaygentTask({
+      root,
+      run_id: "run_provider_summary_env",
+      workspace,
+      worktree_root: join(root, "worktrees"),
+      task: parsed.tasks[0]!,
+      checkpoint_inputs: [],
+      spec: null,
+      provider: "codex",
+      provider_processes: { codex: { executable: process.execPath, args: ["-e", script] } }
+    });
+
+    expect(result.status).toBe("verified");
+    expect(result.latest_failure_class).toBeNull();
+    expect(result.events.find((event) => event.event_type === "runway.worker_result")).toMatchObject({
+      outcome: "success",
+      payload: {
+        failure_class: null,
+        provider_reported_failure_class: "dependency_missing"
+      }
+    });
+  });
+
   test("materializes dependency checkpoints as dependent task worktree baseline", async () => {
     const workspace = initSourceCheckout("waygent-task-executor-checkpoint-input-source-");
     const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-checkpoint-input-root-"));
