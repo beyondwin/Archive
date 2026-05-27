@@ -1,9 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CodexProviderAdapter, normalizeProcessOutput, providerProcessArgs } from "../src";
+import { CODEX_DEFAULT_ARGS, CodexProviderAdapter, normalizeProcessOutput, providerProcessArgs } from "../src";
 
 describe("Codex adapter normalization", () => {
+  test("default args disable nested MCP servers for worker runs", () => {
+    expect(CODEX_DEFAULT_ARGS).toEqual(["-c", "mcp_servers={}", "exec", "--json", "-"]);
+    const args = providerProcessArgs(
+      "codex",
+      { executable: "codex", args: [...CODEX_DEFAULT_ARGS], model: "gpt-5.5" },
+      "/tmp/waygent-task",
+      { task_id: "task_demo", candidate_id: "candidate_demo", prompt: "demo" }
+    );
+    expect(args.slice(0, 2)).toEqual(["--model", "gpt-5.5"]);
+    expect(args).toContain("mcp_servers={}");
+    expect(args.indexOf("-c")).toBeLessThan(args.indexOf("exec"));
+    expect(args).toContain("--cd");
+    expect(args[args.length - 1]).toBe("-");
+  });
+
   test("executes a configured process and normalizes its worker result", async () => {
     const script = `
       const prompt = await new Response(Bun.stdin.stream()).text();
