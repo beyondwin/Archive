@@ -2844,6 +2844,10 @@ file_claims:
     mode: owned
   - path: packages/lens-projectors/src/operatorDecision.ts
     mode: owned
+  - path: packages/lens-projectors/src/runReadModel.ts
+    mode: owned
+  - path: packages/lens-projectors/tests/runReadModel.test.ts
+    mode: owned
   - path: packages/orchestrator/src/budgetPolicy.ts
     mode: owned
   - path: packages/orchestrator/src/completionAudit.ts
@@ -2883,6 +2887,8 @@ verify:
 - Modify: `skills/waygent/SKILL.md`
 - Modify generated: `graphify-out/GRAPH_REPORT.md`
 - Modify generated: `graphify-out/graph.json`
+- Fix final read-model status typing if the full gate exposes a
+  `review_required` mismatch in `packages/lens-projectors/src/runReadModel.ts`.
 - Fix full-gate typecheck issues found after all dependency checkpoints are
   materialized, limited to the file claims above.
 
@@ -2972,6 +2978,10 @@ git diff --check
 ```
 
 Expected: every command exits 0.
+
+Do not install or leave local dependency/build artifacts while satisfying this
+task. `node_modules/`, build outputs, and caches must remain absent from the
+task diff before checkpoint sealing.
 
 - [ ] **Step 5: Refresh Graphify**
 
