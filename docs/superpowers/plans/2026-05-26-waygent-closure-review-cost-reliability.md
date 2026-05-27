@@ -2623,6 +2623,31 @@ verify:
 - Modify: `packages/testkit/src/waygentScenarioHarness.ts`
 - Test: `packages/testkit/tests/waygentScenarioHarness.test.ts`
 
+- [ ] **Step 0: Keep scenario replay deterministic and bounded**
+
+The golden scenario tests must complete under Bun's normal 30s per-test timeout.
+Do not solve timeout failures by only raising `--timeout`.
+
+In `packages/testkit/src/waygentScenarioHarness.ts`, fault-injection scenarios
+must not repeatedly invoke a full `runWaygent(...)` runtime run. Any scenario
+with one of these flags should be replayed through deterministic in-memory
+state/event projection:
+
+- `source_dirty_before_apply`
+- `force_missing_checkpoint`
+- `checkpoint_dry_run_conflict`
+- `stale_verification_recovered`
+- `missing_review_evidence`
+- `review_pass_apply_ready`
+- `budget_paused`
+- `salvaged_patch_needs_review`
+
+Reserve a real fake-provider runtime call only for the minimal baseline smoke
+scenario. The synthetic/fault replay path must still assert the same
+operator-decision, apply-readiness, checkpoint, recovered-failure, and provider
+attempt projections. Add harness tests that prove fault scenarios do not call
+the runtime runner and complete synchronously.
+
 - [ ] **Step 1: Add scenario fixture for stale verification**
 
 Create `tests/waygent-scenarios/stale-verification-recovered.json`:
