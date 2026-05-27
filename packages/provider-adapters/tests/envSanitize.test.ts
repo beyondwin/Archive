@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { buildSpawnEnv } from "../src/processAdapters";
+import { existsSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { buildSpawnEnv, prepareCodexWorkerHomeEnv } from "../src/processAdapters";
 
 describe("buildSpawnEnv - nested host env sanitization", () => {
   test("drops nested Claude host env vars when CLAUDECODE=1 in parent", () => {
@@ -133,5 +136,37 @@ describe("buildSpawnEnv - nested host env sanitization", () => {
     expect(env.CLAUDE_PROJECT_DIR).toBeUndefined();
     expect(env.CODEX_ENTRYPOINT).toBeUndefined();
     expect(env.CODEX_HOME).toBe("/h");
+  });
+
+  test("prepares a minimal Codex worker home without inheriting host MCP config", () => {
+    const previous = process.env.CODEX_HOME;
+    const sourceHome = mkdtempSync(join(tmpdir(), "codex-source-home-"));
+    writeFileSync(join(sourceHome, "auth.json"), "{}\n");
+    process.env.CODEX_HOME = sourceHome;
+    try {
+      const prepared = prepareCodexWorkerHomeEnv({ PATH: "/usr/bin" }, "/worktree");
+      expect(prepared.env.CODEX_HOME).toBeDefined();
+      expect(prepared.env.CODEX_HOME).not.toBe(sourceHome);
+      expect(readlinkSync(join(prepared.env.CODEX_HOME!, "auth.json"))).toBe(join(sourceHome, "auth.json"));
+      const config = readFileSync(join(prepared.env.CODEX_HOME!, "config.toml"), "utf8");
+      expect(config).toContain('approval_policy = "never"');
+      expect(config).toContain('[projects."/worktree"]');
+      expect(config).not.toContain("mcp_servers");
+      const workerHome = prepared.env.CODEX_HOME!;
+      prepared.cleanup();
+      expect(existsSync(workerHome)).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previous;
+      rmSync(sourceHome, { force: true, recursive: true });
+    }
+  });
+
+  test("does not replace an explicitly supplied Codex home", () => {
+    const prepared = prepareCodexWorkerHomeEnv({
+      CODEX_HOME: "/custom/codex-home",
+      WAYGENT_DISABLE_CODEX_WORKER_HOME: "1"
+    }, "/worktree");
+    expect(prepared.env.CODEX_HOME).toBe("/custom/codex-home");
   });
 });
