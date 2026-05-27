@@ -3041,7 +3041,19 @@ Add stop rule:
 
 - [ ] **Step 4: Run full verification**
 
-Run each command separately:
+First ensure the isolated Waygent worktree has dependencies available. If
+`node_modules/` is absent, run:
+
+```bash
+bun install --frozen-lockfile
+```
+
+This is allowed inside the isolated worktree because `node_modules/` is ignored
+runtime setup, not checkpoint content. Do not stage, checkpoint, or document
+`node_modules/`, build outputs, package-manager caches, or tool caches as source
+changes.
+
+Then run each verification command separately:
 
 ```bash
 bun run check
@@ -3055,9 +3067,9 @@ git diff --check
 
 Expected: every command exits 0.
 
-Do not install or leave local dependency/build artifacts while satisfying this
-task. `node_modules/`, build outputs, and caches must remain absent from the
-task diff before checkpoint sealing.
+Dependency/build artifacts may exist in the isolated worktree after verification,
+but they must remain ignored and absent from the task diff before checkpoint
+sealing.
 
 Do not run destructive cleanup commands such as `rm -rf node_modules`,
 `git clean -fd`, or `git reset --hard` to satisfy the artifact-cleanliness
@@ -3071,13 +3083,34 @@ Run: `graphify update .`
 
 Expected: `graphify-out/GRAPH_REPORT.md` and `graphify-out/graph.json` update successfully.
 
+If Graphify fails only because the tool cannot be fetched or installed from the
+network/PyPI/uv cache, record that as external environment evidence and continue
+to emit a valid worker result. Do not include raw install logs in the worker
+result; summarize the command, status, and short failure reason. Source
+verification failures still block this task.
+
 - [ ] **Step 6: Re-run diff hygiene**
 
 Run: `git diff --check`
 
 Expected: no output and exit 0.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 7: Return parseable worker result**
+
+The final worker response must be exactly one compact JSON object matching
+`runway.worker_result.v1`, with no markdown fences, no raw command logs, and no
+extra prose.
+
+Allowed `status` values for this task are only:
+
+- `completed` when source verification passes and checkpoint diff hygiene is
+  clean, even if Graphify recorded an external network/tooling blocker.
+- `failed` when a source verification command fails or the checkpoint diff is
+  dirty.
+
+Do not return custom statuses such as `verification_failed`.
+
+- [ ] **Step 8: Commit**
 
 ```bash
 git add docs/operations/verification.md docs/operations/waygent.md skills/waygent/SKILL.md graphify-out/GRAPH_REPORT.md graphify-out/graph.json
