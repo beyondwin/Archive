@@ -218,6 +218,61 @@ describe("executeWaygentTask", () => {
     });
   });
 
+  test("accepts nested provider dependency self-reports when kernel verification passes", async () => {
+    const workspace = initSourceCheckout("waygent-task-executor-provider-nested-env-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-provider-nested-env-root-"));
+    const parsed = parseWaygentPlan([
+      "```yaml waygent-task",
+      "id: task_provider_nested_env",
+      "title: Provider reports nested dependency blocker after writing valid output",
+      "dependencies: []",
+      "file_claims:",
+      "  - path: nested-env.txt",
+      "    mode: owned",
+      "risk: low",
+      "verify:",
+      "  - test -f nested-env.txt",
+      "```"
+    ].join("\n"));
+    const script = `
+      const { writeFileSync } = require("node:fs");
+      const { join } = require("node:path");
+      writeFileSync(join(process.cwd(), "nested-env.txt"), "verified by kernel\\n");
+      console.log(JSON.stringify({
+        schema: "runway.worker_result.v1",
+        task_id: "task_provider_nested_env",
+        candidate_id: "candidate_task_provider_nested_env",
+        status: "blocked",
+        changed_files: ["nested-env.txt"],
+        summary: "provider verification missed dependencies after writing valid output",
+        evidence: { failure_class: "dependency_missing" }
+      }));
+    `;
+
+    const result = await executeWaygentTask({
+      root,
+      run_id: "run_provider_nested_env",
+      workspace,
+      worktree_root: join(root, "worktrees"),
+      task: parsed.tasks[0]!,
+      checkpoint_inputs: [],
+      spec: null,
+      provider: "codex",
+      provider_processes: { codex: { executable: process.execPath, args: ["-e", script] } }
+    });
+
+    expect(result.status).toBe("verified");
+    expect(result.latest_failure_class).toBeNull();
+    expect(result.checkpoint_refs[0]).toContain("artifacts/checkpoints/task_provider_nested_env/");
+    expect(result.events.find((event) => event.event_type === "runway.worker_result")).toMatchObject({
+      outcome: "success",
+      payload: {
+        failure_class: null,
+        provider_reported_failure_class: "dependency_missing"
+      }
+    });
+  });
+
   test("materializes dependency checkpoints as dependent task worktree baseline", async () => {
     const workspace = initSourceCheckout("waygent-task-executor-checkpoint-input-source-");
     const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-checkpoint-input-root-"));
