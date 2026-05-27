@@ -1761,6 +1761,12 @@ verify:
   scheduling must not leave provider-crash safe-wave runs without
   `state.completion_audit`; crash/sibling-evidence tests expect a failed
   completion audit object, not `undefined`.
+- Preserve existing review evidence. If a task already has valid
+  `initial_reviews`, `state.reviews`, or `review_refs` satisfying the review
+  evidence policy, automatic review scheduling must be idempotent and must not
+  append duplicate spec/quality review artifacts. The existing
+  `passes completion audit for high-risk tasks with review evidence` test
+  expects exactly one review evidence entry.
 
 - [ ] **Step 1: Add failing orchestrator review lifecycle test**
 
