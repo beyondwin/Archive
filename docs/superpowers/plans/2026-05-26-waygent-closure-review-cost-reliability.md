@@ -2846,6 +2846,8 @@ file_claims:
     mode: owned
   - path: packages/lens-projectors/src/runReadModel.ts
     mode: owned
+  - path: packages/lens-projectors/src/trust.ts
+    mode: owned
   - path: packages/lens-projectors/tests/runReadModel.test.ts
     mode: owned
   - path: packages/orchestrator/src/budgetPolicy.ts
@@ -2866,7 +2868,11 @@ file_claims:
     mode: owned
   - path: packages/orchestrator/src/runCommands.ts
     mode: owned
+  - path: packages/orchestrator/src/salvage.ts
+    mode: owned
   - path: packages/orchestrator/tests/orchestratorRunV2.test.ts
+    mode: owned
+  - path: packages/testkit/src/index.ts
     mode: owned
   - path: packages/testkit/src/waygentScenarioHarness.ts
     mode: owned
@@ -2895,14 +2901,20 @@ verify:
 - Modify generated: `graphify-out/graph.json`
 - Fix final read-model status typing if the full gate exposes a
   `review_required` mismatch in `packages/lens-projectors/src/runReadModel.ts`.
+- Fix final trust projection typing in `packages/lens-projectors/src/trust.ts`
+  if strict TypeScript rejects review records read from state.
 - Fix full-gate typecheck issues found after all dependency checkpoints are
   materialized, limited to the file claims above.
+- Fix final salvage optional-field schema drift in
+  `packages/orchestrator/src/salvage.ts` if the full gate rejects undefined
+  optional values.
 - Fix final full-gate test drift in `packages/orchestrator/tests/orchestratorRunV2.test.ts`
   when the new salvage-first policy makes recovered malformed provider output
   stop as review-required instead of retrying with a strict prompt.
 - Fix final full-gate testkit typing or fixture drift in
-  `packages/testkit/src/waygentScenarioHarness.ts` and its focused tests when
-  earlier integration fixture checkpoints make replay events stricter.
+  `packages/testkit/src/waygentScenarioHarness.ts`, `packages/testkit/src/index.ts`,
+  and focused tests when earlier integration fixture checkpoints make replay
+  events stricter.
 
 - [ ] **Step 1: Update verification docs**
 
@@ -2994,6 +3006,12 @@ Expected: every command exits 0.
 Do not install or leave local dependency/build artifacts while satisfying this
 task. `node_modules/`, build outputs, and caches must remain absent from the
 task diff before checkpoint sealing.
+
+Do not run destructive cleanup commands such as `rm -rf node_modules`,
+`git clean -fd`, or `git reset --hard` to satisfy the artifact-cleanliness
+requirement. If verification creates ignored dependency/build outputs, leave
+them ignored and confirm with `git status --short --ignored=matching` or
+`git diff --check`; they must not be included in the checkpoint diff.
 
 - [ ] **Step 5: Refresh Graphify**
 
