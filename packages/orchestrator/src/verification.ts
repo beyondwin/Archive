@@ -36,7 +36,7 @@ export async function runVerificationCommands(input: VerificationRunInput): Prom
       cwd: input.cwd,
       argv: ["bash", "-lc", command],
       env: verificationCommandEnv(command),
-      timeout_ms: input.timeout_ms ?? 120000
+      timeout_ms: input.timeout_ms ?? 300000
     });
     results.push(await executeInProcess(request));
   }
@@ -91,7 +91,7 @@ export function classifyVerificationResult(result: KernelExecutionResult): {
   failure_summary: string;
 } {
   const text = `${result.stderr}\n${result.stdout}`;
-  if (result.timed_out || (result.exit_code === 143 && firstSignalLine(text) === "verification failed")) {
+  if (result.timed_out || result.exit_code === 143) {
     return { failure_class: "timeout", failure_summary: "verification timed out" };
   }
   const pnpmNonTtyLine = firstMatchingLine(text, /ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY|confirmModulesPurge/i);

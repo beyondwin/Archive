@@ -919,16 +919,36 @@ function providerSelfReportedFailureClass(worker: WorkerResult): FailureClass | 
   if (!evidence || typeof evidence !== "object") return undefined;
   const direct = (evidence as { failure_class?: unknown }).failure_class;
   if (isFailureClassString(direct)) return direct;
+  const verification = (evidence as { verification?: unknown }).verification;
+  const verificationFailureClass = providerVerificationFailureClass(verification);
+  if (verificationFailureClass) return verificationFailureClass;
   const native = (evidence as { native?: unknown }).native;
   if (native && typeof native === "object") {
     const nested = (native as { failure_class?: unknown }).failure_class;
     if (isFailureClassString(nested)) return nested;
+    const nativeVerification = (native as { verification?: unknown }).verification;
+    const nativeVerificationFailureClass = providerVerificationFailureClass(nativeVerification);
+    if (nativeVerificationFailureClass) return nativeVerificationFailureClass;
   }
   return undefined;
 }
 
 function isFailureClassString(value: unknown): value is FailureClass {
   return typeof value === "string" && value.length > 0;
+}
+
+function providerVerificationFailureClass(value: unknown): FailureClass | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const status = (value as { status?: unknown }).status;
+  if (status !== "blocked_by_environment") return undefined;
+  const text = [
+    (value as { stderr_excerpt?: unknown }).stderr_excerpt,
+    (value as { stdout_excerpt?: unknown }).stdout_excerpt,
+    (value as { note?: unknown }).note
+  ].filter((entry): entry is string => typeof entry === "string").join("\n");
+  return /Cannot find package|Cannot find module|ERR_MODULE_NOT_FOUND/i.test(text)
+    ? "dependency_missing"
+    : "environment_blocker";
 }
 
 function isProviderEnvironmentSelfReport(failureClass: FailureClass | undefined): boolean {

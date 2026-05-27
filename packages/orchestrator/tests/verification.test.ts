@@ -105,4 +105,18 @@ describe("Waygent verification", () => {
     expect(result.status).toBe("failed");
     expect(result.failure_class).toBe("timeout");
   });
+
+  test("classifies SIGTERM-style verification exit as timeout", async () => {
+    const cwd = mkdtempSync(join(tmpdir(), "waygent-verify-"));
+    const result = await runVerificationCommands({
+      run_id: "run_verify",
+      task_id: "task_verify",
+      cwd,
+      commands: ["printf 'bun test v1.3.10\\n' && kill -TERM $$"]
+    });
+
+    expect(result.status).toBe("failed");
+    expect(result.results[0]?.exit_code).toBe(143);
+    expect(result.failure_class).toBe("timeout");
+  });
 });
