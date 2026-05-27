@@ -138,11 +138,12 @@ describe("buildSpawnEnv - nested host env sanitization", () => {
     expect(env.CODEX_HOME).toBe("/h");
   });
 
-  test("prepares a minimal Codex worker home without inheriting host MCP config", () => {
+  test("prepares a stable minimal Codex worker home without inheriting host MCP config", () => {
     const previous = process.env.CODEX_HOME;
     const sourceHome = mkdtempSync(join(tmpdir(), "codex-source-home-"));
     writeFileSync(join(sourceHome, "auth.json"), "{}\n");
     process.env.CODEX_HOME = sourceHome;
+    let workerHome: string | undefined;
     try {
       const prepared = prepareCodexWorkerHomeEnv({ PATH: "/usr/bin" }, "/worktree");
       expect(prepared.env.CODEX_HOME).toBeDefined();
@@ -152,7 +153,31 @@ describe("buildSpawnEnv - nested host env sanitization", () => {
       expect(config).toContain('approval_policy = "never"');
       expect(config).toContain('[projects."/worktree"]');
       expect(config).not.toContain("mcp_servers");
+      workerHome = prepared.env.CODEX_HOME!;
+      const again = prepareCodexWorkerHomeEnv({ PATH: "/usr/bin" }, "/worktree");
+      expect(again.env.CODEX_HOME).toBe(workerHome);
+      prepared.cleanup();
+      expect(existsSync(workerHome)).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previous;
+      if (workerHome) rmSync(workerHome, { force: true, recursive: true });
+      rmSync(sourceHome, { force: true, recursive: true });
+    }
+  });
+
+  test("can clean up a prepared Codex worker home when explicitly requested", () => {
+    const previous = process.env.CODEX_HOME;
+    const sourceHome = mkdtempSync(join(tmpdir(), "codex-source-home-"));
+    writeFileSync(join(sourceHome, "auth.json"), "{}\n");
+    process.env.CODEX_HOME = sourceHome;
+    try {
+      const prepared = prepareCodexWorkerHomeEnv({
+        PATH: "/usr/bin",
+        WAYGENT_CLEANUP_CODEX_WORKER_HOME: "1"
+      }, "/cleanup-worktree");
       const workerHome = prepared.env.CODEX_HOME!;
+      expect(existsSync(workerHome)).toBe(true);
       prepared.cleanup();
       expect(existsSync(workerHome)).toBe(false);
     } finally {

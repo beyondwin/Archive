@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { FailureClass, ModelAttestation, ProviderRole, TokenUsage, UsageSource, WorkerResult } from "@waygent/contracts";
@@ -265,9 +266,13 @@ export function prepareCodexWorkerHomeEnv(
   if (!existsSync(authPath)) {
     return { env, cleanup: () => {} };
   }
-  const workerHome = mkdtempSync(join(tmpdir(), "waygent-codex-home-"));
+  const workerHome = cwd
+    ? join(tmpdir(), `waygent-codex-home-${createHash("sha256").update(`${sourceHome}\0${cwd}`).digest("hex").slice(0, 16)}`)
+    : mkdtempSync(join(tmpdir(), "waygent-codex-home-"));
   try {
-    symlinkSync(authPath, join(workerHome, "auth.json"));
+    mkdirSync(workerHome, { recursive: true });
+    const workerAuthPath = join(workerHome, "auth.json");
+    if (!existsSync(workerAuthPath)) symlinkSync(authPath, workerAuthPath);
     const project = cwd ? `[projects.${JSON.stringify(cwd)}]\ntrust_level = "trusted"\n` : "";
     writeFileSync(
       join(workerHome, "config.toml"),
@@ -286,7 +291,9 @@ export function prepareCodexWorkerHomeEnv(
   return {
     env: { ...env, CODEX_HOME: workerHome },
     cleanup() {
-      rmSync(workerHome, { force: true, recursive: true });
+      if (env.WAYGENT_CLEANUP_CODEX_WORKER_HOME === "1") {
+        rmSync(workerHome, { force: true, recursive: true });
+      }
     }
   };
 }
