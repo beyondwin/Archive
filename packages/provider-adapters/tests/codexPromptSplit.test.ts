@@ -65,4 +65,13 @@ describe("codex sentinel prompt split (C2)", () => {
     const retryIdx = stdin.indexOf("Prior attempt failed");
     expect(retryIdx).toBeGreaterThan(userStart);
   });
+
+  test("system prompt forbids destructive cleanup of ignored verification artifacts", () => {
+    const systemPrompt = buildProviderSystemPrompt("verify_assist");
+    expect(systemPrompt).toContain("Do not run destructive cleanup commands");
+    expect(systemPrompt).toContain("rm -rf");
+    expect(systemPrompt).toContain("git clean -fd");
+    expect(systemPrompt).toContain("git reset --hard");
+    expect(systemPrompt).toContain("ignored dependency or build outputs");
+  });
 });

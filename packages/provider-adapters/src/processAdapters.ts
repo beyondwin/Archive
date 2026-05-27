@@ -537,6 +537,11 @@ function isProviderCliExecutable(provider: "codex" | "claude", executable: strin
   return name === provider;
 }
 
+const providerSafetyInstructions = [
+  "Do not run destructive cleanup commands such as rm -rf, git clean -fd, or git reset --hard.",
+  "If ignored dependency or build outputs remain after verification, leave them in place and report them as ignored artifacts."
+];
+
 export function buildProviderSystemPrompt(role: ProviderRole): string {
   const roleLine = `You are the Waygent worker with role: ${role}.`;
   return [
@@ -546,6 +551,7 @@ export function buildProviderSystemPrompt(role: ProviderRole): string {
     "Do not apply changes to the source checkout.",
     "Edit only the isolated Waygent worktree.",
     "Obey the task packet write policy.",
+    ...providerSafetyInstructions,
     "Required JSON fields: schema, task_id, candidate_id, status, changed_files, summary, evidence."
   ].join("\n");
 }
@@ -605,6 +611,7 @@ export function buildProviderPrompt(provider: "codex" | "claude", request: Adapt
     "Do not apply changes to the source checkout.",
     "Edit only the isolated Waygent worktree.",
     "Obey the task packet write policy.",
+    ...providerSafetyInstructions,
     "Required JSON fields: schema, task_id, candidate_id, status, changed_files, summary, evidence.",
     "Task prompt:",
     request.prompt
