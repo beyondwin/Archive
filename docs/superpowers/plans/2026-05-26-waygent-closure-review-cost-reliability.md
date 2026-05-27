@@ -1742,6 +1742,12 @@ verify:
 - Test: `packages/orchestrator/tests/orchestratorRunV2.test.ts`
 - Test: `packages/orchestrator/tests/orchestratorParallel.test.ts`
 
+**Implementation guardrails discovered during Waygent retry:**
+- Do not call `artifactReferenceFromRunRef` from `packages/orchestrator/src/orchestrator.ts`; that helper is local to `taskExecutor.ts` and is not exported.
+- When recording review packet/result/provider artifacts in `orchestrator.ts`, prefer the artifacts already returned by `writeArtifact`/`runTaskReview` and wrap them directly with `artifactIndexEntry`.
+- If an existing run-relative ref must be indexed from `orchestrator.ts`, import `resolveRunArtifactPath` from `./checkpointArtifacts` and compute a local artifact reference from `readFileSync(...)` plus the existing `sha256` helper. Do not invent an unimported helper name.
+- Before returning task 6, run `rg -n "artifactReferenceFromRunRef" packages/orchestrator/src/orchestrator.ts` and require no matches.
+
 - [ ] **Step 1: Add failing orchestrator review lifecycle test**
 
 Append to `packages/orchestrator/tests/orchestratorRunV2.test.ts`:
