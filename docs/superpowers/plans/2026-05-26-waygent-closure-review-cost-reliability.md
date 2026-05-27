@@ -1392,6 +1392,8 @@ file_claims:
     mode: owned
   - path: packages/orchestrator/src/runCommands.ts
     mode: owned
+  - path: packages/orchestrator/src/index.ts
+    mode: owned
   - path: packages/contracts/src/types.ts
     mode: owned
   - path: packages/contracts/src/schemas.ts
@@ -1411,6 +1413,7 @@ verify:
 - Create: `packages/orchestrator/src/reviewPacket.ts`
 - Create: `packages/orchestrator/src/reviewRunner.ts`
 - Modify: `packages/orchestrator/src/runCommands.ts`
+- Modify: `packages/orchestrator/src/index.ts`
 - Modify: `packages/contracts/src/types.ts`
 - Modify: `packages/contracts/src/schemas.ts`
 - Modify: `apps/cli/src/index.ts`
