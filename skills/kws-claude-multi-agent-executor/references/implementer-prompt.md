@@ -48,17 +48,39 @@ Spec sections included: `{spec_section_label}` (per `<active>.spec_manifest.task
 
 {list from the task's Files: block — create / modify / test}
 
-## Context from Previous Tasks
+## Context (pre-resolved by orchestrator — v2.19)
 
-Read `{orch_dir}/state.json`. Resolve which task tree applies to you using this rule (v2.13):
+{context_slice}
 
-- `state.plan_chain` exists (multi-plan) → active tree is `state.plan_chain[state.active_plan]`. Read `task_summaries` and `global_constraints.shared_files` from there.
-- `state.plan_chain` absent + `state.active_plan == "plan2"` (v2.12 legacy two-plan) → read from `state.plan2_state.task_summaries` and `state.plan2_state.global_constraints.shared_files`.
-- Otherwise (single-plan) → read top-level `state.task_summaries` and `state.global_constraints.shared_files`.
+The block above was prepared by the orchestrator at dispatch time from the
+active plan's `task_summaries` and `global_constraints.shared_files`. Use ONLY
+this block for upstream context. Do NOT look at raw git log for context, and
+do NOT read state.json yourself unless the fallback below applies.
 
-Focus on `for_next_tasks` for the task IDs in `{deps_for_this_task}` — that is what upstream tasks explicitly pass down. Do NOT look at raw git log for context — use only the state file summary. Dependencies never cross plan boundaries — when you are working on plan_chain[i], your deps only reference tasks within plan_chain[i].
+**Dependencies semantics**: `deps_for_this_task` lists the IDs of upstream
+tasks. Their `for_next_tasks` summaries are what those tasks explicitly passed
+down. Dependencies never cross plan boundaries.
 
-**Shared files alert**: After resolving the active `shared_files` map above, if any file in your `{files to touch}` appears as a key, the value is a list of other task IDs (within the same plan) that touch it. Read those tasks' `for_next_tasks` summaries before modifying. If the other task is BEFORE this one and COMPLETE: confirm your changes don't undo theirs. If AFTER: leave a clear `for_next_tasks` note about any shape changes you made.
+**Shared files alert**: if the `shared_files` map in the context block has any
+entry whose key appears in your `{files to touch}`, those values are other
+task IDs (within the same plan) that touch the same file. The block already
+includes their `for_next_tasks` summaries. If the other task is BEFORE this
+one and COMPLETE: confirm your changes don't undo theirs. If AFTER: leave a
+clear `for_next_tasks` note about any shape changes you made.
+
+### Context fallback (only if the pre-resolved block above is missing/empty)
+
+If you don't see the `## Context (pre-resolved by orchestrator — v2.19)`
+block above, or it is empty/malformed, that is an **orchestrator bug**. Recover
+by reading `{orch_dir}/state.json` and resolving the active task tree:
+
+- `state.plan_chain` exists (multi-plan) → active tree is `state.plan_chain[state.active_plan]`.
+- `state.plan_chain` absent + `state.active_plan == "plan2"` (v2.12 legacy two-plan) → `state.plan2_state`.
+- Otherwise (single-plan) → top-level `state.task_summaries` / `state.global_constraints.shared_files`.
+
+Then emit one extra line in your STATUS output: `CONTEXT_SOURCE: fallback-read`
+so the orchestrator can detect and fix the bug. Normal dispatches emit
+`CONTEXT_SOURCE: pre-resolved`.
 
 {IF this is a re-dispatch after review failure, append:}
 ## Fix Required
@@ -97,6 +119,7 @@ The previous implementation had these issues. Address ALL of them:
 ## Output Format (required — do not deviate)
 
 STATUS: DONE | ESCALATE
+CONTEXT_SOURCE: pre-resolved | fallback-read
 SUMMARY: <≤3 sentences>
 ISSUES:
   - <issue encountered, or "none">
