@@ -2965,6 +2965,8 @@ file_claims:
     mode: owned
   - path: packages/lens-projectors/src/operatorDecision.ts
     mode: owned
+  - path: packages/lens-projectors/tests/operatorDecision.test.ts
+    mode: owned
   - path: packages/lens-projectors/src/executionExplanation.ts
     mode: owned
   - path: packages/lens-projectors/src/runReadModel.ts
@@ -3028,6 +3030,15 @@ verify:
 - Modify generated: `graphify-out/graph.json`
 - Fix final read-model status typing if the full gate exposes a
   `review_required` mismatch in `packages/lens-projectors/src/runReadModel.ts`.
+- Fix final operator decision typing if the full gate reports that
+  `ACTION_DEFINITIONS` is missing members from `OperatorActionId`; keep the
+  definition exhaustive for `run_review`, `mark_stale_blocked`, and
+  `cleanup_stale_worktree`, and add focused projection coverage in
+  `packages/lens-projectors/tests/operatorDecision.test.ts` if behavior changes.
+- Fix final `exactOptionalPropertyTypes` drift in
+  `packages/lens-projectors/src/runReadModel.ts`; do not pass
+  `state_error: undefined` into operator-decision projection inputs. Omit the
+  optional field unless a state blocker exists.
 - Fix final execution-explanation typing if the full gate exposes
   `CompletionAuditProjection` vs `Record<string, unknown>` drift in
   `packages/lens-projectors/src/executionExplanation.ts`.
@@ -3076,6 +3087,11 @@ bun run waygent:dogfood
 bun run --cwd apps/console build
 git diff --check
 ```
+
+This task is not allowed to report "no source changes needed" while these
+documentation sections or skill mappings are absent from the worktree. It must
+produce a checkpointable diff for the docs/skill/Graphify updates, and may also
+include tightly scoped full-gate type fixes from the file claims above.
 
 Expected operator behavior:
 
