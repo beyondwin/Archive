@@ -3045,6 +3045,8 @@ file_claims:
     mode: owned
   - path: packages/lens-projectors/src/trust.ts
     mode: owned
+  - path: packages/lens-projectors/src/verificationResolution.ts
+    mode: owned
   - path: packages/lens-projectors/tests/runReadModel.test.ts
     mode: owned
   - path: packages/orchestrator/src/budgetPolicy.ts
@@ -3154,6 +3156,20 @@ verify:
   `verification_failed` primary blocker while preserving the stale failure as
   recovered evidence. Do not update fixture expectations to accept an active
   stale blocker.
+- Fix final stale verification resolution type drift in
+  `packages/lens-projectors/src/verificationResolution.ts`. Under strict
+  TypeScript, `list[list.length - 1]` is possibly undefined even after grouping.
+  Guard empty lists before reading `latest.status` / `latest.ref`, or use a
+  local helper that returns `VerificationEntry | null` and skip null results.
+  Do not suppress the error with `as VerificationEntry` unless the empty-list
+  branch is still explicit and covered by existing behavior.
+- Fix final recovery policy exhaustiveness drift in
+  `packages/orchestrator/src/recoveryExecutor.ts`. Because Task 1 adds
+  `review_failed` to `FailureClass`, `DEFAULT_POLICY: Record<FailureClass,
+  RecoveryPolicyEntry>` must include a `review_failed` entry. Use the same
+  retry-with-evidence policy as `review_changes_requested` unless the local
+  salvage-first helper already gives a stricter review-failed behavior; do not
+  remove `review_failed` from the contract to make the typecheck pass.
 - Fix final scenario, fixture-lab, and dogfood expectation drift according to
   the implemented runtime contract:
   - budget-paused fixtures must still project the correct run/apply status and
