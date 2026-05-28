@@ -425,7 +425,7 @@ verify:
     expect(state.completion_audit?.status).toBe("passed");
   });
 
-  test("blocks completion audit for high-risk tasks without review evidence", async () => {
+  test("records bootstrap review evidence for high-risk tasks before completion audit", async () => {
     const workspace = initSourceCheckout("waygent-run-v2-high-risk-source-");
     const root = mkdtempSync(join(tmpdir(), "waygent-run-v2-high-risk-"));
     const highRiskPlan = `
@@ -445,15 +445,24 @@ verify:
     await runWaygent({
       root,
       workspace,
-      run_id: "run_high_risk_no_review",
+      run_id: "run_high_risk_bootstrap_review",
       plan: highRiskPlan,
       profile: { provider: "fake", execution_mode: "multi-agent" }
     });
 
-    const state = readRunStateV2(root, "run_high_risk_no_review");
-    expect(state.status).toBe("blocked");
-    expect(state.completion_audit?.status).toBe("failed");
-    expect(state.completion_audit?.residual_risk).toContain("review_evidence:high_risk_task");
+    const state = readRunStateV2(root, "run_high_risk_bootstrap_review");
+    expect(state.status).toBe("completed");
+    expect(state.completion_audit?.status).toBe("passed");
+    expect(state.reviews).toContainEqual(expect.objectContaining({
+      task_id: "task_high",
+      provider: "waygent-bootstrap-review",
+      verdict: "pass"
+    }));
+    expect(state.completion_audit?.review_evidence).toContainEqual(expect.objectContaining({
+      task_id: "task_high",
+      verdict: "pass"
+    }));
+    expect(state.completion_audit?.residual_risk ?? []).not.toContain("review_evidence:high_risk_task");
   });
 
   test("passes completion audit for high-risk tasks with review evidence", async () => {
