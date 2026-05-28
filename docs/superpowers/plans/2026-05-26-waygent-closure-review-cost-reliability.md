@@ -1076,6 +1076,16 @@ const status: RunStatus = blocked || trust.trust_status === "needs_review"
       : "running";
 ```
 
+Hard acceptance:
+
+- `TrustReport.trust_status` must be typed as the shared `TrustStatus`, not as
+  the previous narrow union of `"trusted" | "failed" | "insufficient_evidence"`.
+- `projectTrustReport(...)` must be allowed to return `"needs_review"` without
+  a TypeScript error.
+- `projectRunwayProjection(...)` must accept `needs_review` as a valid trust
+  projection and map it to a blocked run state before the trusted/completed
+  branch.
+
 - [ ] **Step 4: Carry fields through read model, API, and console**
 
 Modify `packages/lens-projectors/src/runReadModel.ts` so the run read model exposes `trust.active_failure_count`, `trust.recovered_failure_count`, `operator_decision.recovered_failures`, `operator_decision.review_status`, and `operator_decision.cost_summary`.
@@ -3016,6 +3026,11 @@ verify:
   `review_required` mismatch in `packages/lens-projectors/src/runReadModel.ts`.
 - Fix final trust projection typing in `packages/lens-projectors/src/trust.ts`
   if strict TypeScript rejects review records read from state.
+- If `bun run check` reports `TS2322` in `packages/lens-projectors/src/trust.ts`
+  because `TrustStatus` includes `"needs_review"` but a narrower local return
+  type or projection type still excludes it, fix that type in
+  `packages/lens-projectors/src/trust.ts`. Do not classify this as a missing
+  `node_modules` or dependency-installation blocker.
 - Fix full-gate typecheck issues found after all dependency checkpoints are
   materialized, limited to the file claims above.
 - Fix final salvage optional-field schema drift in
