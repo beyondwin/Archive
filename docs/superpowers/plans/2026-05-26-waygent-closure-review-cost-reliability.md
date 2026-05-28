@@ -2965,6 +2965,8 @@ file_claims:
     mode: owned
   - path: packages/lens-projectors/src/operatorDecision.ts
     mode: owned
+  - path: packages/lens-projectors/src/executionExplanation.ts
+    mode: owned
   - path: packages/lens-projectors/src/runReadModel.ts
     mode: owned
   - path: packages/lens-projectors/src/trust.ts
@@ -3005,6 +3007,8 @@ file_claims:
     mode: owned
   - path: apps/console/src/uiModel.test.ts
     mode: owned
+  - path: apps/cli/tests/cli.test.ts
+    mode: owned
 risk: medium
 verify:
   - bun run check
@@ -3024,6 +3028,9 @@ verify:
 - Modify generated: `graphify-out/graph.json`
 - Fix final read-model status typing if the full gate exposes a
   `review_required` mismatch in `packages/lens-projectors/src/runReadModel.ts`.
+- Fix final execution-explanation typing if the full gate exposes
+  `CompletionAuditProjection` vs `Record<string, unknown>` drift in
+  `packages/lens-projectors/src/executionExplanation.ts`.
 - Fix final trust projection typing in `packages/lens-projectors/src/trust.ts`
   if strict TypeScript rejects review records read from state.
 - If `bun run check` reports `TS2322` in `packages/lens-projectors/src/trust.ts`
@@ -3042,6 +3049,9 @@ verify:
 - Fix final full-gate test drift in `packages/orchestrator/tests/orchestratorRunV2.test.ts`
   when the new salvage-first policy makes recovered malformed provider output
   stop as review-required instead of retrying with a strict prompt.
+- Fix final CLI test syntax/setup drift in `apps/cli/tests/cli.test.ts` when
+  budget, stale-run, dirty-apply, or review command coverage changes the shared
+  CLI fixtures.
 - Fix final full-gate testkit typing or fixture drift in
   `packages/testkit/src/waygentScenarioHarness.ts`, `packages/testkit/src/index.ts`,
   and focused tests when earlier integration fixture checkpoints make replay
