@@ -3067,6 +3067,33 @@ verify:
   `packages/testkit/src/waygentScenarioHarness.ts`, `packages/testkit/src/index.ts`,
   and focused tests when earlier integration fixture checkpoints make replay
   events stricter.
+- Fix final package barrel export drift in `packages/orchestrator/src/index.ts`.
+  If the full gate reports duplicate exports such as
+  `CombinedCheckpointPatchResult` or `shouldPauseForBudget`, do not leave broad
+  `export *` ambiguity in place. Use explicit named exports or remove legacy
+  duplicate exports so TypeScript can resolve the public orchestrator surface
+  deterministically.
+- Fix final budget-policy optional-field drift. Under
+  `exactOptionalPropertyTypes`, do not pass `ledger: undefined` or other
+  optional fields with explicit `undefined` values into budget projection helpers.
+  Either omit the field or pass `null` according to the helper contract.
+- Fix stale verification resolution regressions surfaced by the full gate; a
+  later passing verification/state record for the same task must clear the active
+  `verification_failed` primary blocker while preserving the stale failure as
+  recovered evidence. Do not update fixture expectations to accept an active
+  stale blocker.
+- Fix final scenario, fixture-lab, and dogfood expectation drift according to
+  the implemented runtime contract:
+  - budget-paused fixtures must still project the correct run/apply status and
+    budget blocker rather than becoming trusted by accident;
+  - dependency-missing and review-required scenarios may include
+    `runway.review_required` only when that event is part of the intended new
+    lifecycle, and expected event lists must be updated deliberately;
+  - dogfood assertions must handle the operator decision shape that the shared
+    explain/API/console projection actually returns, without dereferencing an
+    optional blocker blindly.
+  Treat these as source/fixture contract fixes, not dependency-installation
+  blockers.
 
 - [ ] **Step 1: Update verification docs**
 
