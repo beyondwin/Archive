@@ -2935,12 +2935,48 @@ events into `projectTrustReport`. A bare synthetic state with `events: []` is
 expected to remain `insufficient_evidence`; it must not be asserted as
 `trusted` unless kernel/verification evidence is present.
 
+When injecting stale verification failures, preserve the current verification
+resolution contract instead of relying on array order or a task-level
+`latest_failure_class` alone:
+
+- Add the stale failed verification with a `verified_at` timestamp older than
+  the latest passing verification, or explicitly set
+  `state.verification_resolutions` / `task.verification_resolution` with
+  `latest_status: "passed"` and the stale failure ref in `stale_failure_refs`.
+- If `projectOperatorDecisionFromState(...)` still returns
+  `primary_blocker.code === "verification_failed"` for the stale-verification
+  fixture, the fixture is invalid. Do not loosen the expectation to accept an
+  active verification blocker.
+- Do not set `task.latest_failure_class = "verification_failed"` on a recovered
+  fixture unless the task remains `verified` and the verification-resolution
+  projection also proves the latest verification is passed.
+
 If the assertion specifically checks recovered verification count, derive it
 from the projection contract that actually exposes recovered failures. Do not
 assert `projectTrustReport(...).recovered_failure_count` unless that field
 exists on the trust projection; either add the field in the projector with
 focused coverage or assert the recovered-failure array/count from the shared
 operator/read-model projection used by API, console, and explain.
+
+For review-required and review-passed fixtures, remember that
+`reviewStatusFromState(state)` is intentionally recovery-driven. A synthetic
+fixture that only mutates `task.review_status` is not enough to make review
+required. Add a representative `state.recovery` record with the task id and
+failure class for these fixtures:
+
+- `missing-review-evidence` must include recovery evidence for its task and no
+  passing review record, so the projection reports `required: true` and the task
+  in `missing_task_ids`.
+- `review-pass-apply-ready` must include the same recovery evidence plus valid
+  passing review artifacts/records, so the projection reports `required: true`,
+  empty `missing_task_ids`, and the task in `passed_task_ids`.
+- `salvaged-patch-needs-review` must include recovery/salvage evidence and keep
+  review evidence missing; do not make it apply-ready.
+
+The state fault names in the harness must match the plan contract exactly. Use
+`review_pass_apply_ready` for the review-pass fixture; do not introduce a
+separate `review_passed` alias unless the loader normalizes both names and has
+focused tests for the alias.
 
 For `tests/integration/waygent-dogfood-evidence.test.ts`, the agreement fixture
 must create a valid `WaygentRunStateV2` before calling `readRunStateV2`. Do not
@@ -2949,6 +2985,14 @@ hand-write an incomplete blocked-state JSON blob that fails state parsing with
 or include all required fields and valid task/verification/recovery records.
 The dogfood test should fail on projection disagreement, not on invalid fixture
 shape.
+
+`projectRunReadModel(...)` is the shared Lens read model and does not by itself
+expose `operator_decision`. The API run-detail layer adds
+`operator_decision` separately via `projectOperatorDecisionFromState(...)`.
+In the dogfood agreement test, either call `projectOperatorDecisionFromState`
+next to `projectRunReadModel`, or exercise the API run-detail assembly that
+already combines those projections. Do not read
+`apiProjection.operator_decision` from the raw `projectRunReadModel` result.
 
 - [ ] **Step 7: Run integration gates**
 
