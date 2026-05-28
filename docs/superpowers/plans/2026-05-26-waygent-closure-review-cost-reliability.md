@@ -2670,11 +2670,36 @@ state/event projection:
 - `budget_paused`
 - `salvaged_patch_needs_review`
 
+The same deterministic replay rule applies to the pre-existing fault fixtures
+that do not yet expose one of those boolean flags. At minimum, these fixture ids
+must not call the full runtime runner inside `bun run waygent:scenarios`:
+
+- `checkpoint-dry-run-conflict`
+- `dependency-missing`
+- `dirty-apply-block`
+- `malformed-provider`
+- `missing-checkpoint`
+- `overlapping-claims`
+
+Provider fixture names that encode failure/recovery behavior must also route to
+synthetic replay unless the test explicitly opts into a slow smoke run:
+
+- `verification-fail-then-pass`
+- `malformed-then-success`
+- `review-pass-after-recovery`
+- `adapter-crash-with-patch`
+- any dependency-missing, malformed-output, dirty-apply, missing-checkpoint,
+  overlapping-claims, or checkpoint-conflict fixture variant
+
 Reserve a real fake-provider runtime call only for the minimal baseline smoke
 scenario. The synthetic/fault replay path must still assert the same
 operator-decision, apply-readiness, checkpoint, recovered-failure, and provider
-attempt projections. Add harness tests that prove fault scenarios do not call
-the runtime runner and complete synchronously.
+attempt projections. Add harness tests that prove every fault fixture listed
+above does not call the runtime runner and completes synchronously. The
+`waygent scenario golden replays` test suite must not contain any fixture that
+spends the full 30s Bun timeout in normal operation; if a fixture needs a runtime
+smoke test, move that fixture behind an explicit slow-test opt-in instead of
+leaving it in the default golden replay loop.
 
 - [ ] **Step 1: Add scenario fixture for stale verification**
 
