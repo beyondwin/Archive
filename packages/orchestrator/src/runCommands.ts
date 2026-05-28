@@ -23,7 +23,8 @@ import { buildRepairPacket, type RepairPacketVerificationInput, type RepairTaskP
 import type { WorkerResult } from "@waygent/contracts";
 import { validateMethodEvidenceForApply } from "./evidencePolicy";
 import { deleteResolvedOrphan, scanOrphanRuns } from "./orphanRuns";
-import { runVerificationCommands } from "./verification";
+import { runVerificationCommands, type VerificationRunOutput } from "./verification";
+import { prepareVerificationEnvironment } from "./verificationEnvironment";
 import { watchRun, type WatchRunOptions } from "./watchRun";
 import { reconcileRunState } from "./stateReconciliation";
 import { taskIsReadOnlyOnly, taskRequiresCheckpoint } from "./taskCheckpointPolicy";
@@ -369,12 +370,34 @@ export async function verifyRun(options: RunCommandOptions & { task?: string }):
   if (!worktree || !existsSync(worktree.path)) return blockedVerifyResult(runId, "missing_task_worktree", task.id);
 
   const verifiedAt = new Date().toISOString();
-  const verification = await runVerificationCommands({
-    run_id: runId,
-    task_id: task.id,
-    cwd: worktree.path,
-    commands
+  const verificationEnvironment = prepareVerificationEnvironment({
+    workspace: state.workspace,
+    worktree: worktree.path,
+    disabled: process.env.WAYGENT_DISABLE_VERIFICATION_ENV === "1",
+    verificationCommands: commands
   });
+  let verification: VerificationRunOutput;
+  try {
+    verification = verificationEnvironment.evidence.status === "failed"
+      || verificationEnvironment.evidence.isolation_status === "unavailable"
+      ? {
+        status: "failed" as const,
+        results: [],
+        failure_class: "environment_blocker" as const,
+        failure_summary: verificationEnvironment.evidence.reason
+          ? `verification environment setup failed: ${verificationEnvironment.evidence.reason}`
+          : "verification environment setup failed",
+        failed_verification_id: `verify_${task.id}_environment`
+      }
+      : await runVerificationCommands({
+        run_id: runId,
+        task_id: task.id,
+        cwd: worktree.path,
+        commands
+      });
+  } finally {
+    verificationEnvironment.cleanup();
+  }
   const paths = runPaths(options.root, runId);
   const verificationRecords = verification.results.map((kernel, index) => {
     const artifact = writeArtifact(
@@ -392,6 +415,7 @@ export async function verifyRun(options: RunCommandOptions & { task?: string }):
       kernel_result_sha256: artifact.sha256,
       rerun: true,
       verified_at: verifiedAt,
+      verification_environment: verificationEnvironment.evidence,
       failure_class: passed ? null : verification.failure_class,
       failure_summary: passed ? null : verification.failure_summary
     };

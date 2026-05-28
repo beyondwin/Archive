@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -207,6 +207,37 @@ describe("apply readiness", () => {
 
     expect(readRunStateV2(root, state.run_id).drift.unrepaired_blockers).toEqual([]);
     expect(resumeRun({ root, run: state.run_id, dry_run: true }).allowed_actions).toContain("apply_verified_checkpoint");
+  });
+
+  test("verification rerun prepares dependency environment for active worktrees", async () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-rerun-env-"));
+    const state = baseV2State({ root, run_id: "run_rerun_env" });
+    mkdirSync(join(state.workspace, "node_modules"), { recursive: true });
+    writeFileSync(join(state.workspace, "node_modules", ".keep"), "source dependency marker\n");
+    const worktree = join(root, "worktree");
+    initVerificationWorktree(worktree);
+    const taskPacket = join(root, "task_final_verification.json");
+    writeFile(taskPacket, `${JSON.stringify({ verification_commands: ["test -f node_modules/.keep"] })}\n`);
+    state.status = "blocked";
+    state.lifecycle_outcome = "blocked";
+    state.current_phase = "recover";
+    state.tasks.task_a.status = "verified";
+    state.tasks.task_a.checkpoint_refs = [writePassedCheckpoint(state, "task_a")];
+    addReadOnlyFinalTask(state, "blocked");
+    state.tasks.task_final_verification.task_packet_path = taskPacket;
+    addActiveWorktree(state, "task_final_verification", worktree);
+    state.completion_audit = {
+      status: "failed",
+      combined_apply_evidence: combinedApplyEvidence(state, state.tasks.task_a.checkpoint_refs),
+      residual_risk: ["task_final_verification:task_blocked"]
+    };
+    appendTrustEvent(state);
+    writeRunStateV2(root, state);
+
+    expect(await verifyRun({ root, run: state.run_id, task: "task_final_verification" })).toMatchObject({ status: "passed" });
+    const rerunRecord = readRunStateV2(root, state.run_id).verification.at(-1) as { verification_environment?: { strategy?: string } };
+    expect(rerunRecord.verification_environment).toMatchObject({ strategy: "inherit_node_modules" });
+    expect(existsSync(join(worktree, "node_modules"))).toBe(false);
   });
 
   test("read-only verification rerun blocks dirty worktrees instead of marking them verified", async () => {
