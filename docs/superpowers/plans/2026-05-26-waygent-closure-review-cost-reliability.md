@@ -2858,6 +2858,12 @@ for this scenario. Remove exact `total_events` and exact `provider_attempts`
 length assertions from that fixture as well, because those encode the retry
 budget rather than the observable malformed-provider contract.
 
+Concretely, do not keep a malformed-provider expectation that requires an exact
+second recovery wave. A valid current replay may go directly from the second
+failed verification/cost update to `runway.recovery_decision_required` and
+`lens.trust_report_updated`. Use subset expectations for the durable events
+instead of exact `event_types` equality for this fixture.
+
 Also update the pre-existing `tests/waygent-scenarios/dependency-missing.json`
 golden so the new automatic-review lifecycle is not treated as an unexpected
 event. Prefer `event_types_must_include` over exact `event_types`; if an exact
@@ -2921,6 +2927,21 @@ For fixture-lab stale verification trust tests, pass representative verification
 events into `projectTrustReport`. A bare synthetic state with `events: []` is
 expected to remain `insufficient_evidence`; it must not be asserted as
 `trusted` unless kernel/verification evidence is present.
+
+If the assertion specifically checks recovered verification count, derive it
+from the projection contract that actually exposes recovered failures. Do not
+assert `projectTrustReport(...).recovered_failure_count` unless that field
+exists on the trust projection; either add the field in the projector with
+focused coverage or assert the recovered-failure array/count from the shared
+operator/read-model projection used by API, console, and explain.
+
+For `tests/integration/waygent-dogfood-evidence.test.ts`, the agreement fixture
+must create a valid `WaygentRunStateV2` before calling `readRunStateV2`. Do not
+hand-write an incomplete blocked-state JSON blob that fails state parsing with
+`invalid_run_state_v2`; build it through the existing testkit/run-state helpers
+or include all required fields and valid task/verification/recovery records.
+The dogfood test should fail on projection disagreement, not on invalid fixture
+shape.
 
 - [ ] **Step 7: Run integration gates**
 
