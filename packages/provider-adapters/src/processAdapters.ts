@@ -85,7 +85,7 @@ export function normalizeProcessOutput(
       status: normalizeWorkerStatus(parsed.status),
       changed_files: parsed.changed_files ?? [],
       summary: parsed.summary ?? `${provider} completed`,
-      evidence: { provider, ...((parsed.evidence && typeof parsed.evidence === "object") ? parsed.evidence : {}), native: parsed.evidence ?? parsed },
+      evidence: normalizeWorkerEvidence(provider, parsed),
       ...(failure_class ? { failure_class } : {})
     });
     const result = withProcessEvidence(worker, output, metadata);
@@ -142,6 +142,9 @@ function normalizeWorkerStatus(status: unknown): WorkerResult["status"] {
   if (
     lowered === "success" ||
     lowered === "succeeded" ||
+    lowered === "passed" ||
+    lowered === "pass" ||
+    lowered === "passes" ||
     lowered === "complete" ||
     lowered === "implemented" ||
     lowered === "done" ||
@@ -193,6 +196,17 @@ function normalizeWorkerStatus(status: unknown): WorkerResult["status"] {
   if (lowered.startsWith("nothing_") || lowered.startsWith("nothing-")) return "completed";
   if (lowered.startsWith("skipped_") || lowered.startsWith("skipped-")) return "completed";
   throw new Error(`unknown worker status: ${String(status)}`);
+}
+
+function normalizeWorkerEvidence(provider: "codex" | "claude" | "acp", parsed: Partial<WorkerResult>): Record<string, unknown> {
+  const rawEvidence = parsed.evidence;
+  if (rawEvidence && typeof rawEvidence === "object" && !Array.isArray(rawEvidence)) {
+    return { provider, ...(rawEvidence as Record<string, unknown>), native: rawEvidence };
+  }
+  if (Array.isArray(rawEvidence)) {
+    return { provider, entries: rawEvidence, native: rawEvidence };
+  }
+  return { provider, native: rawEvidence ?? parsed };
 }
 
 function normalizeFailureClass(value: unknown): FailureClass | undefined {
