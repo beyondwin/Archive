@@ -1808,6 +1808,13 @@ verify:
   append duplicate spec/quality review artifacts. The existing
   `passes completion audit for high-risk tasks with review evidence` test
   expects exactly one review evidence entry.
+- High-risk tasks are intentionally serialized by the safe-wave scheduler. Do
+  not add an `orchestratorParallel.test.ts` expectation that a high-risk plan
+  produces `safe_waves[0].ready === ["task_1", "task_2"]`. If a parallel review
+  regression test uses high-risk tasks to trigger review, assert review events,
+  review refs, and final audit status without expecting both tasks in the first
+  wave; or expect sequential waves. Keep the existing low-risk parallelism test
+  as the proof that bounded parallel waves still work.
 
 - [ ] **Step 1: Add failing orchestrator review lifecycle test**
 
