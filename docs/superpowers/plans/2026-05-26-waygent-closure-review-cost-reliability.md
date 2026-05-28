@@ -1516,6 +1516,22 @@ Hard acceptance for CLI blocked responses:
 - Keep the focused CLI assertion strict enough to catch a missing `role`; do
   not loosen the test to only assert `status` and `reason`.
 
+Hard acceptance for review state transitions:
+
+- A single `spec_reviewer` pass must not mark the run completed or finished.
+  It should leave the run in the same blocked/review-required operator state
+  until the quality review has passed or automatic review lifecycle advances it.
+- `refreshReviewCompletion`, terminal invariant evaluation, or completion audit
+  refresh must not convert a partially reviewed task into `state.status ===
+  "completed"` just because spec review passed.
+- Add a regression in `packages/orchestrator/tests/reviewRun.test.ts` that
+  calls `reviewRun({ role: "spec_reviewer" })` on a blocked review-required
+  task and asserts the persisted state remains `blocked` while the task records
+  `review_status: "spec_review_passed"` or equivalent non-final review progress.
+- Only a `quality_reviewer` pass, or the later automatic review lifecycle after
+  both required review roles are satisfied, may set final checkpoint/apply-ready
+  review completion fields.
+
 - [ ] **Step 4: Implement review packet builder**
 
 Create `packages/orchestrator/src/reviewPacket.ts`:
