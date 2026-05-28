@@ -1504,6 +1504,18 @@ Run: `bun test apps/cli/tests/cli.test.ts packages/orchestrator/tests/reviewRun.
 
 Expected: FAIL because `reviewRun` and CLI command wiring do not exist.
 
+Hard acceptance for CLI blocked responses:
+
+- `waygent review --run <missing> --role spec_reviewer` must preserve the
+  requested role in its blocked response:
+  `{ command: "review", run_id, role: "spec_reviewer", status: "blocked", reason: "missing_run_state_v2" }`.
+- `reviewRun` may include additional diagnostic arrays such as `packet_refs`,
+  `review_refs`, or `task_ids`, but those additions must not replace or omit
+  the requested `role`.
+- Apply the same role preservation to `no_reviewable_task` blocked responses.
+- Keep the focused CLI assertion strict enough to catch a missing `role`; do
+  not loosen the test to only assert `status` and `reason`.
+
 - [ ] **Step 4: Implement review packet builder**
 
 Create `packages/orchestrator/src/reviewPacket.ts`:
@@ -1640,11 +1652,11 @@ export async function reviewRun(options: ReviewRunOptions): Promise<{
 }> {
   const runId = resolveRunId(options);
   const stateResult = readRunStateV2Result(options.root, runId);
-  if (stateResult.status !== "ok") return { command: "review", run_id: runId, status: "blocked", reason: stateBlocker(stateResult) };
-  const state = stateResult.state;
   const role = options.role ?? "spec_reviewer";
+  if (stateResult.status !== "ok") return { command: "review", run_id: runId, role, status: "blocked", reason: stateBlocker(stateResult) };
+  const state = stateResult.state;
   const taskId = options.task ?? Object.values(state.tasks).find((task) => task.review_status === "required" || task.review_status === "pending")?.id;
-  if (!taskId || !state.tasks[taskId]) return { command: "review", run_id: runId, status: "blocked", reason: "no_reviewable_task" };
+  if (!taskId || !state.tasks[taskId]) return { command: "review", run_id: runId, role, status: "blocked", reason: "no_reviewable_task" };
   const packet = buildReviewPacket({ state, task_id: taskId, role });
   const result = await runReviewPacket({ root: options.root, state, packet, dry_run: options.dry_run });
   if (result.status === "dry_run") return { command: "review", run_id: runId, task_id: taskId, role, status: "dry_run", packet };
