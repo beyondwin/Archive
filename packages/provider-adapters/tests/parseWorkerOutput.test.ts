@@ -178,6 +178,9 @@ describe("parseWorkerOutput hardening", () => {
     ["implemented", "completed"],
     ["success", "completed"],
     ["succeeded", "completed"],
+    ["passed", "completed"],
+    ["pass", "completed"],
+    ["passes", "completed"],
     ["done", "completed"],
     ["ok", "completed"],
     ["ready", "completed"],
@@ -215,5 +218,43 @@ describe("parseWorkerOutput hardening", () => {
     });
     expect(result.worker.status).toBe(expected as "completed" | "failed" | "blocked");
     expect(result.worker.failure_class).toBeUndefined();
+  });
+
+  test("accepts Codex passed status and preserves array evidence entries", () => {
+    const stdout = [
+      JSON.stringify({ type: "thread.started", thread_id: "session_array_evidence" }),
+      JSON.stringify({
+        type: "item.completed",
+        item: {
+          type: "agent_message",
+          text: JSON.stringify({
+            schema: "runway.worker_result.v1",
+            task_id: "task_demo",
+            candidate_id: "candidate_demo",
+            status: "passed",
+            changed_files: [],
+            summary: "verification-only task passed",
+            evidence: [
+              "`bun test`: passed",
+              "`git status`: clean"
+            ]
+          })
+        }
+      })
+    ].join("\n");
+    const result = normalizeProcessOutput("codex", "task_demo", "candidate_demo", {
+      exitCode: 0,
+      stdout,
+      stderr: "",
+      timedOut: false
+    });
+
+    expect(result.worker.status).toBe("completed");
+    expect(result.worker.failure_class).toBeUndefined();
+    expect(result.worker.evidence.entries).toEqual([
+      "`bun test`: passed",
+      "`git status`: clean"
+    ]);
+    expect(result.worker.evidence.session_id).toBe("session_array_evidence");
   });
 });
