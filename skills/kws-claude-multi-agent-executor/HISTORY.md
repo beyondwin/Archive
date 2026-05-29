@@ -21,6 +21,97 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.21.0 — Slimming & enforcement (2026-05-29)
+
+A structural release with no new runtime feature — it hardens *how* the existing
+behavior is specified so mandatory steps stop getting silently skipped, and slims
+the resident orchestrator prefix.
+
+**SKILL.md split (D005, extends v2.19 D001).** The ~1900-line monolith is now a
+~300-line entrypoint (path layout, `<active>` resolution table, phase-entry
+pointers, cross-cutting pointers, the full Guardrails table, arg/prompt tables)
+plus extracted procedure files under `references/phases/` (phase-minus-1, phase-0,
+phase-1-task-cycle, phase-1-parallel-subflow, phase-1-escalation, phase-transition,
+phase-2-finalization) and five `references/cross-cutting/` references
+(state-schema, multi-plan-chain, agentlens-emit-sites, safety-hooks,
+decisions-register). The orchestrator `Read`s a phase file when it reaches that
+phase rather than carrying all of it resident for the whole session.
+
+**Boundary-helper enforcement (D001 `state_set.py`, D002 `phase_boundary.py`).**
+The recurring "prose-only mandatory step silently skipped" regression (cost ledger
+in v2.14, `completed_at` pre-v2.16, `timing.started` pre-v2.16) is structurally
+prevented: paired state-write + AgentLens-emit boundaries are bundled into single
+eval-checkable helper calls. `phase_boundary.py` provides `task-start` (pre-sha +
+`timing.started`), `task-complete` (result + `timing.completed` + last_completed
+pointers + `kws-cme.task_completed` emit), and `phase-emit --type
+{phase_0_started|compaction|phase_2_complete}` (emit + paired run-level timestamp).
+`state_set.py` does atomic, flock-protected, `<active>`-resolving field writes for
+anchors and pointers. `check_skill_contract.py` gained 7 emit-site wiring checks
+that verify the phase references actually invoke these helpers.
+
+**Legacy `plan2_state` retirement (D004).** The v2.12 two-plan dual-path is gone
+from all live-execution code. `scripts/migrate_legacy_state.py` runs once at Phase
+0 Step 0 on resume, rewriting a legacy `plan2_state`-shaped state.json into the
+`plan_chain[]` shape before any `<active>` logic runs — so no live state.json
+reaching Phase 1 carries `plan2_state`. The `<active>` resolution table is now two
+rows (multi-plan `plan_chain` / single-plan top-level). `validate_method_audit.py`
+deliberately retains `plan2_state` *read* support for historical archive replay.
+The migration does NOT rewrite `mode`, so `plan2_running` stays a recognized resume
+mode; the Cross-Plan Trigger now writes `plan_chain_running` (added to the `mode`
+enum alongside it).
+
+**AgentLens reachability probe (item 5).** New run-level `agentlens_healthy`
+(`bool | null`) records whether `agentlens run-open` succeeded at Phase -1 step b,
+disambiguating "no events because nothing happened" from "no events because every
+emit silently no-op'd on an unreachable CLI" in post-run forensics.
+
+**Headless-default vs cache-warmth (D003).** Recorded as an ADR rather than a code
+change — the self-spawn-headless default stands; interactive `mode=interactive`
+remains the cache-warm escape hatch.
+
+**`state_set.py` list-index hardening (caught by the eval).** The fixture-04
+(cross-plan handoff) eval run exposed a data-loss bug in the new D001 helper: a
+`--field plan_chain.0.status` write walked the dotted path by replacing any
+non-dict intermediate with `{}`, which collapsed the `plan_chain` *list* into a
+dict and dropped plan 0's data (the run recovered by reconstructing the entry).
+Fixed: `_navigate_create`/`apply_op`/`_read_field` now index existing list
+elements by integer segment and **refuse** (raise) rather than overwrite an
+existing non-container intermediate — so the dotted form used for non-active-index
+writes (`plan_chain[i+1].baseline`, `plan_chain[i].status` in the Cross-Plan
+Trigger) is safe. The Cross-Plan Trigger reference now names this mechanism
+explicitly so the orchestrator does not improvise a `jq` reassignment. Regression
+tests added in `scripts/test_state_set.py`.
+
+**Eval-harness measurement fixes (surfaced by the eval runs).** The re-runs exposed
+three long-standing `evals/run.sh` bugs that mis-measured multi-plan runs:
+(1) it captured top-level `jq '.tasks'`, which is `null` for a `plan_chain` run
+(tasks live under `plan_chain[N].tasks`), leaving the judge unable to verify state;
+(2) it ran `test_after`/`git diff` in `dirname(dirname(state_file))`, which since
+the v2.18 path split is the orchestrator base dir, not the worktree (a sibling under
+`~/.claude/worktrees/`); (3) it picked `state.json` via `ls -t .../orchestrator/*/
+| head -1` — the GLOBAL newest across all runs/sessions, not scoped to the current
+fixture — so a degenerate fixture run inherited a foreign run's state (it scored
+fixture 02 against fixture 04's multi-plan state). All three fixed: capture branches
+on `.plan_chain`, the worktree path comes from `state.worktree`, and the capture is
+now scoped to the orchestrator dir that appeared during this fixture's run (snapshot
+before, diff after; fall back to mtime > start_ts, then empty — never a foreign
+run). All predate v2.21 but only surfaced as fixtures exercised multi-plan and
+flaky-run paths.
+
+Verified: `check_skill_contract.py` green (incl. the new V221 wiring checks);
+`check_doc_freshness.py` green; `scripts/` test suite green (60 tests); `run.sh`
+`bash -n` clean and the capture fixes verified against synthetic state. Paid eval
+regression on fixtures 02 (three-file refactor) + 04 (cross-plan handoff) run three
+times: the first run caught the `state_set.py` list-collapse bug; re-run #1 recorded
+02 → 0.7 / 04 → 0.5 and exposed harness bugs (1)+(2); re-run #2 (on the fixed
+harness) recorded 04 → 0.9 (pass, correctness 1.0/spec 1.0 — the trustworthy
+multi-plan number) and 02 → 0.0, which exposed harness bug (3). Skill correctness is
+established for both fixtures: 04 by the judge, and 02 by direct inspection of its
+genuine run (`plan-20260529-222620`: 3 tasks complete, exact expected files, clean
+`add_nums→add` rename, 3 conventional commits). Every failing/low recorded number
+traced to a harness measurement artifact, not a skill defect. Experiment record
+under `docs/experiments/v2.21-slimming-and-enforcement/`.
+
 ### v2.20.0 — Repo-scoped cross-run isolation (2026-05-29)
 
 Phase 0 Step 1.5(a) "mode exclusivity" was machine-global: it scanned every `~/.claude/orchestrator/*` directory and blocked on *any* live headless PID, because run state lives under `$HOME` rather than inside the repo. This blocked concurrent runs even when they targeted completely different repos, where the stated race surfaces (git operations, branch namespace) cannot actually collide.

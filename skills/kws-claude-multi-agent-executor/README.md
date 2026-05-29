@@ -2,9 +2,12 @@
 
 구현 계획(plan)과 디자인 스펙(spec)을 입력받아 **자율적으로** 끝까지 실행하는 Claude Code 스킬. Opus **오케스트레이터** 한 명이 새로 생성되는 Sonnet **서브 에이전트**들(Implementer / Reviewer / Verifier / Plan Reviewer / Docs Updater)에게 작업을 분배합니다. 오케스트레이터는 3단계 라이프사이클을 결정론적으로 진행하며, 각 실행은 별도의 git worktree에 격리되고, 모든 태스크는 구조화된 루브릭으로 채점되며, 주요 이벤트는 **AgentLens** (`kws-cme.*` 이벤트 네임스페이스) 에 기록되어 스킬 자체의 개선에 사용됩니다.
 
-**현재 버전**: `2.17.0` (2026-05-19) — 버전 타임라인은 [`HISTORY.md`](./HISTORY.md) 참조.
+**현재 버전**: `2.21.0` (2026-05-29) — 버전 타임라인은 [`HISTORY.md`](./HISTORY.md) 참조.
 
 **최근 변경 (Recent changes)**:
+- **v2.21** — Slimming & enforcement: SKILL.md를 ~300줄 엔트리포인트 + `references/phases/` & `references/cross-cutting/` 분할 (D005); 경계 헬퍼 강제 (`state_set.py` D001, `phase_boundary.py` D002 — prose-only mandatory step silent skip 회귀를 단일 eval-체크 호출로 구조적 방지); 레거시 `plan2_state` 듀얼패스 은퇴 (D004 — `migrate_legacy_state.py` 1회 변환); `agentlens_healthy` reachability probe; `check_skill_contract.py` 에 emit-site 와이어링 체크 7개 추가.
+- **v2.18–v2.19** — SKILL.md 분할 준비: 워크트리 hook 경로 정리 (v2.18), Phase -1 추출 PoC (v2.19 D001).
+- **v2.20** — Repo-scoped cross-run isolation: `state.source_repo` 기준으로 같은 repo만 차단, 다른 repo 동시 실행 허용 (보수적: source_repo 불명이면 차단).
 - **v2.17** — AgentLens 컷오버 (Task 11): `append_learning_event.py` + 평행 `~/.claude/learning/...` 쓰기 경로 제거. AgentLens 단독 이벤트 싱크 (`kws-cme.*`). `agentlens_orchestration_run` run-level 필드, `ORCH_RUN_ID` env 전파, Resume Chain handoff에서 `kws-cme.context_health` 스냅샷 emit. dormant `archive_run.sh` + `render_html_report.py` 체인(v2.14 F1/F3) 제거. 패리티는 `scripts/compare_agentlens_events.py --self-test`로 검증.
 - **v2.16** — Timing/cost 헬퍼 강화: `timing.started` (태스크 디스패치 전), `state.timestamps.completed_at` (Phase 2 Step 2), `scripts/accumulate_cost.py` (F2 비용 집계가 v2.14에서는 prose-only로 silent skip 됐던 회귀 수정).
 - **v2.15** — Context engineering: 티어드 spec injection (`spec_manifest`), per-plan `decisions_register`, 토큰 기반 Resume Chain 트리거.

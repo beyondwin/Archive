@@ -71,6 +71,21 @@ def main() -> int:
 
     skill_text = skill_path.read_text(encoding="utf-8")
 
+    # v2.21 split: phase + cross-cutting prose migrates from SKILL.md into
+    # references/phases/ and references/cross-cutting/. The contract verifies
+    # that the skill *collectively* wires its invariants (see module docstring),
+    # so token-presence and section-anchored wording checks search a corpus of
+    # SKILL.md plus those extracted references rather than SKILL.md alone.
+    # `corpus_texts` is the ordered list of (label, text); `corpus` is their join.
+    corpus_texts: list[tuple[str, str]] = [("SKILL.md", skill_text)]
+    for sub in ("phases", "cross-cutting"):
+        sub_dir = skill_dir / "references" / sub
+        if sub_dir.is_dir():
+            for ref in sorted(sub_dir.glob("*.md")):
+                corpus_texts.append((f"references/{sub}/{ref.name}",
+                                     ref.read_text(encoding="utf-8")))
+    corpus = "\n".join(text for _, text in corpus_texts)
+
     learning_log_md = skill_dir / "references" / "learning-log.md"
     learning_log_text = learning_log_md.read_text(encoding="utf-8") if learning_log_md.is_file() else ""
 
@@ -89,7 +104,7 @@ def main() -> int:
     # ---- SKILL.md wires AgentLens event publishing (v2.17 cutover) ----
     record(
         "skill_md_mentions_agentlens_lifecycle",
-        all(token in skill_text for token in [
+        all(token in corpus for token in [
             "ORCH_RUN_ID",
             "agentlens run-open",
             "agentlens event append",
@@ -101,7 +116,7 @@ def main() -> int:
 
     record(
         "skill_md_describes_exit_paths",
-        all(token in skill_text for token in [
+        all(token in corpus for token in [
             "--outcome success",
             "--outcome blocked",
             "--outcome aborted",
@@ -111,7 +126,7 @@ def main() -> int:
 
     record(
         "skill_md_describes_chained_run_propagation",
-        all(token in skill_text for token in [
+        all(token in corpus for token in [
             "AGENTLENS_PARENT_RUN_ID",
             "Resume Chain",
         ]),
@@ -123,7 +138,7 @@ def main() -> int:
     # harness can detect adherence via AgentLens.
     record(
         "skill_md_v217_mandatory_framing",
-        all(token in skill_text for token in [
+        all(token in corpus for token in [
             "MANDATORY",
             "DO NOT SKIP THIS STEP",
             "kws-cme.phase_0_started",
@@ -131,12 +146,82 @@ def main() -> int:
         "SKILL.md Phase 0 boundary emit step must use MANDATORY framing and emit kws-cme.phase_0_started (v2.17)",
     )
 
+    # ---- v2.21 helper contracts (state_set / phase_boundary / migrate shim) ----
+    # The helpers must exist on disk and carry their CLI contract.
+    V221_HELPERS = {
+        "scripts/state_set.py": ["--field", "--plan-scope", "resolve_active_tree"],
+        "scripts/phase_boundary.py": ["task-start", "task-complete", "phase-emit"],
+        "scripts/migrate_legacy_state.py": ["plan_chain", "plan2_state", "active_plan"],
+    }
+    for rel_path, tokens in V221_HELPERS.items():
+        full = skill_dir / rel_path
+        if not full.is_file():
+            record(f"v221_helper_exists_{rel_path.replace('/', '_')}", False,
+                   f"{rel_path} must exist (v2.21)")
+            continue
+        body = full.read_text(encoding="utf-8")
+        record(
+            f"v221_helper_contract_{rel_path.replace('/', '_')}",
+            all(t in body for t in tokens),
+            f"{rel_path} must define its CLI contract tokens: {', '.join(tokens)}",
+        )
+
+    # ---- v2.21 emit-site wiring (D005 delta 1) ----
+    # The SKILL.md split has landed, so the phase references must now invoke the
+    # boundary helpers at their mandated emit sites rather than carrying inline
+    # state-write / agentlens-append prose. The corpus spans SKILL.md +
+    # references/phases/*.md + references/cross-cutting/*.md, so these tokens
+    # survive the migration regardless of which file holds the call.
+    V221_WIRING = {
+        "phase_boundary_task_start_wired": (
+            "phase_boundary.py task-start",
+            "task-start boundary (pre-sha + timing.started) must be wired via phase_boundary.py",
+        ),
+        "phase_boundary_task_complete_wired": (
+            "phase_boundary.py task-complete",
+            "task-complete boundary (result + timing + last_completed + emit) must be wired via phase_boundary.py",
+        ),
+        "phase_boundary_phase_emit_wired": (
+            "phase_boundary.py phase-emit",
+            "phase boundary emits must be wired via phase_boundary.py phase-emit",
+        ),
+        "phase_boundary_phase_0_started_wired": (
+            "--type phase_0_started",
+            "Phase 0 start boundary must invoke phase-emit --type phase_0_started",
+        ),
+        "phase_boundary_compaction_wired": (
+            "--type compaction",
+            "Compaction boundary must invoke phase-emit --type compaction",
+        ),
+        "phase_boundary_phase_2_complete_wired": (
+            "--type phase_2_complete",
+            "Phase 2 completion boundary must invoke phase-emit --type phase_2_complete",
+        ),
+        "state_set_wired": (
+            "state_set.py",
+            "Anchor/pointer state writes must be wired via state_set.py",
+        ),
+    }
+    for check_id, (token, msg) in V221_WIRING.items():
+        record(check_id, token in corpus, msg)
+
+    record(
+        "skill_md_wires_legacy_migration_shim",
+        "migrate_legacy_state.py" in corpus,
+        "SKILL.md Phase 0 Step 0 must wire the v2.21 legacy plan2_state migration shim",
+    )
+    record(
+        "skill_md_records_agentlens_healthy",
+        "agentlens_healthy" in corpus,
+        "SKILL.md must record the run-level agentlens_healthy health-probe field (v2.21)",
+    )
+
     record(
         "skill_md_tdd_not_size_gated",
-        "SMALL skips TDD" not in skill_text
-        and "skip TDD" not in skill_text
-        and "TDD recommended" not in skill_text
-        and "Task size is not a TDD skip condition" in skill_text,
+        "SMALL skips TDD" not in corpus
+        and "skip TDD" not in corpus
+        and "TDD recommended" not in corpus
+        and "Task size is not a TDD skip condition" in corpus,
         "SKILL.md must not describe task-size TDD skipping; task size is not a TDD skip condition",
     )
 
@@ -316,16 +401,27 @@ def main() -> int:
 
     for anchor, substring in REQUIRED_WORDING:
         check_key = f"wording_v211_{anchor[:20].lower().replace(' ', '_').replace('`', '').replace(':', '').replace('#', '').strip()}_{substring[:15].lower().replace(' ', '_').replace('-', '_')}"
-        idx = skill_text.find(anchor)
-        if idx == -1:
+        # The anchor and its required wording co-locate within one phase; after
+        # the v2.21 split that phase may be SKILL.md or a phases/ reference, so
+        # search each corpus file for the anchor and check the window in the
+        # first file that contains it.
+        found_label = None
+        ok = False
+        for label, text in corpus_texts:
+            idx = text.find(anchor)
+            if idx == -1:
+                continue
+            found_label = label
+            ok = substring in text[idx: idx + SECTION_WINDOW]
+            break
+        if found_label is None:
             record(check_key, False,
-                   f"SKILL.md: section anchor '{anchor}' not found (needed to verify '{substring}')")
+                   f"section anchor '{anchor}' not found in SKILL.md or phase references (needed to verify '{substring}')")
             continue
-        window = skill_text[idx: idx + SECTION_WINDOW]
         record(
             check_key,
-            substring in window,
-            f"SKILL.md: '{substring}' not found within {SECTION_WINDOW} chars after '{anchor}'",
+            ok,
+            f"{found_label}: '{substring}' not found within {SECTION_WINDOW} chars after '{anchor}'",
         )
 
     payload = {"passed": not failures, "checks": checks, "failures": failures}

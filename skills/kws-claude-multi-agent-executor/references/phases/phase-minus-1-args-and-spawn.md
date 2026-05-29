@@ -96,6 +96,18 @@ After Phase -1.0 parsing:
 2. If invocation prompt contains literal `<<HEADLESS_KWS_ORCHESTRATOR>>` anywhere: this is the headless instance — skip Phase -1, proceed to Phase 0.
 3. Otherwise: execute Self-Spawn Procedure below, then exit.
 
+> **Headless default vs cache warmth (v2.21, D003).** The default (case 3) is
+> headless self-spawn because it lets the run proceed start-to-finish without
+> occupying the user's interactive session — autonomy is the point. It is **not**
+> cache-optimal: the headless orchestrator is itself a `claude -p` process that
+> receives SessionStart hooks, whose dynamic context (timestamps, git status,
+> system-reminders) shifts the cached prefix turn-to-turn and degrades hit ratio
+> even within one long-lived session. The v2.21 SKILL.md slim (~70% smaller
+> orchestrator prefix) makes any such cache miss cheap, which is the main
+> mitigation. For attended or cache-sensitive runs, pass `mode=interactive`
+> (case 1) to run in the warm subscription session. No auto-fan-out is added in
+> any mode — sub-agent dispatch stays demand-driven (one per task/role).
+
 ### Self-Spawn Procedure
 
 **a. Run Phase 0 Steps 1, 1.5, 2, 2.5 in interactive context.**
@@ -119,12 +131,17 @@ ORCH_RUN_ID=$(agentlens run-open \
   --meta plan="$PLAN_PATH" \
   --meta spec="$SPEC_PATH" \
   2>/dev/null || echo "")
-if [ -z "$ORCH_RUN_ID" ]; then
-  echo "WARN: AgentLens unavailable (CLI missing or registry write failed); event observability disabled for this run. To enable, install agentlens CLI and rerun." >&2
+if [ -n "$ORCH_RUN_ID" ]; then
+  AGENTLENS_HEALTHY=true
+else
+  AGENTLENS_HEALTHY=false
+  echo "WARN: AgentLens unreachable — this run will produce no observability events. (CLI missing, registry write failed, or run-open returned empty.) To enable, install the agentlens CLI and rerun." >&2
 fi
 ```
 
-If `ORCH_RUN_ID` is empty (AgentLens CLI missing, registry write failure, etc.), substitute `null` into the JSON (not the empty string) so the field type is `string|null`. This is **never** a blocking failure — the orchestrator proceeds regardless. The single stderr WARN above is the one-shot user notification so AgentLens absence is not a silent degradation; downstream emits remain `2>/dev/null || true` no-ops. The value persists for the lifetime of the run and is read by Phase 0 / Phase 1 / Phase Transition / Phase 2 emit sites that publish events into AgentLens. (v2.17 cutover, Task 11: the legacy learning-log helper `append_learning_event.py` has been removed — AgentLens is now the sole event sink. See `scripts/compare_agentlens_events.py` for parity verification on historical runs.)
+**AgentLens health probe (v2.21 — RUN-LEVEL):** the run-open call above *is* the reachability probe — its success (non-empty `ORCH_RUN_ID`) means the CLI is present AND the registry write succeeded. Record the result in `state.agentlens_healthy` (boolean, templated into the minimal state.json below as `$AGENTLENS_HEALTHY`). This field exists so a post-run audit can distinguish "no AgentLens events because nothing happened" from "no events because every emit silently no-op'd on an unreachable CLI" — without it, the two are indistinguishable from an empty event stream. The probe fires exactly once per run (here); the boolean persists for the run's lifetime and is preserved across plan_chain swap and Resume Chain handoff alongside `agentlens_orchestration_run`.
+
+If `ORCH_RUN_ID` is empty (AgentLens CLI missing, registry write failure, etc.), substitute `null` into the JSON (not the empty string) so the field type is `string|null`, and `agentlens_healthy` is `false`. This is **never** a blocking failure — the orchestrator proceeds regardless. The single stderr WARN above is the one-shot user notification so AgentLens absence is not a silent degradation; downstream emits remain `2>/dev/null || true` no-ops. The value persists for the lifetime of the run and is read by Phase 0 / Phase 1 / Phase Transition / Phase 2 emit sites that publish events into AgentLens. (v2.17 cutover, Task 11: the legacy learning-log helper `append_learning_event.py` has been removed — AgentLens is now the sole event sink. See `scripts/compare_agentlens_events.py` for parity verification on historical runs.)
 
 **Capture `source_repo` (v2.20 — repo-scoped exclusivity):** before writing state.json, resolve the source repo identity from the interactive parent's cwd (still the source repo at this point — worktree creation in step a does not change the parent's cwd):
 
@@ -151,6 +168,7 @@ If the parsed plan list has length 1: write the minimal state.json in v2.12 shap
   "source_repo": "<$SELF_REPO — canonical git common dir of the source repo; repo-scoped exclusivity key (v2.20)>",
   "implementer_model": {"used": "<parsed value or sonnet>", "default": "sonnet"},
   "agentlens_orchestration_run": "<$ORCH_RUN_ID or null>",
+  "agentlens_healthy": "<$AGENTLENS_HEALTHY — true|false boolean, NOT a string>",
   "timestamps": {
     "interactive_setup_at": "<iso8601 now>",
     "headless_started_at": null,
@@ -174,6 +192,7 @@ If the parsed plan list has length ≥ 2: write the v2.13 multi-plan minimal sta
   "source_repo": "<$SELF_REPO — canonical git common dir of the source repo; repo-scoped exclusivity key (v2.20)>",
   "implementer_model": {"used": "<parsed value or sonnet>", "default": "sonnet"},
   "agentlens_orchestration_run": "<$ORCH_RUN_ID or null>",
+  "agentlens_healthy": "<$AGENTLENS_HEALTHY — true|false boolean, NOT a string>",
   "plan_chain": [
     {"index": 0, "plan_path": "<plan_path_0>", "spec_path": "<spec_path_0>", "status": "running",
      "blocked_until": null, "baseline": null,
@@ -275,7 +294,7 @@ Monitor live (stream-json events):
   tail -f <orch_dir>/headless.jsonl | jq -c 'select(.type=="text" or .type=="tool_use")'
 
 Status snapshot:
-  jq 'def active: if .plan_chain then .plan_chain[.active_plan] elif .active_plan=="plan2" then .plan2_state else . end; {current_task, mode, completed: (active.tasks | to_entries | map(select(.value.status=="COMPLETE")) | length)}' <orch_dir>/state.json
+  jq 'def active: if .plan_chain then .plan_chain[.active_plan] else . end; {current_task, mode, completed: (active.tasks | to_entries | map(select(.value.status=="COMPLETE")) | length)}' <orch_dir>/state.json
 
 Completion check:
   test -f <orch_dir>/HEADLESS_DONE.txt && cat <orch_dir>/HEADLESS_DONE.txt
@@ -307,17 +326,13 @@ while true; do
   # Re-read PID each loop — Resume Chain (see below) may have replaced it.
   HEADLESS_PID=$(cat $OD/headless.pid 2>/dev/null || echo "")
   if [ -f $OD/state.json ]; then
-    # Resolve active task tree (v2.13 plan_chain[N] > v2.12 plan2_state > top-level).
+    # Resolve active task tree (plan_chain[N] for multi-plan > top-level for single-plan).
     HAS_CHAIN=$(jq -r '.plan_chain != null' $OD/state.json 2>/dev/null)
     AP=$(jq -r '.active_plan // "plan1"' $OD/state.json 2>/dev/null)
     if [ "$HAS_CHAIN" = "true" ]; then
       TASKS_FILTER=".plan_chain[$AP].tasks"
       LATEST_FILTER=".plan_chain[$AP].tasks"
       LABEL="plan_chain[$AP]"
-    elif [ "$AP" = "plan2" ]; then
-      TASKS_FILTER='.plan2_state.tasks'
-      LATEST_FILTER='.plan2_state.tasks'
-      LABEL="plan2"
     else
       TASKS_FILTER='.tasks'
       LATEST_FILTER='.tasks'
@@ -328,7 +343,7 @@ while true; do
     if [ "$cur_c" != "$prev_c" ] || [ "$cur_s" != "$prev_s" ]; then
       # P14: read explicit last_completed_task field (NOT JSON insertion order).
       # last_completed_task lives under <active> for multi-plan; resolve same way.
-      LCT_PATH=$(jq -r "if .plan_chain then .plan_chain[.active_plan].last_completed_task elif .active_plan==\"plan2\" then .plan2_state.last_completed_task else .last_completed_task end" $OD/state.json 2>/dev/null)
+      LCT_PATH=$(jq -r "if .plan_chain then .plan_chain[.active_plan].last_completed_task else .last_completed_task end" $OD/state.json 2>/dev/null)
       if [ "$LCT_PATH" != "null" ] && [ -n "$LCT_PATH" ]; then
         latest=$(jq -r "$LATEST_FILTER[\"$LCT_PATH\"] | \"$LCT_PATH \\(.status) risk=\\(.risk) review_retries=\\(.review_retries // 0)\"" $OD/state.json 2>/dev/null)
       else

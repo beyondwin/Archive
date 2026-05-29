@@ -135,6 +135,15 @@ GI
   local eval_preamble="EVAL_RUN: This is an automated regression test of the kws-claude-multi-agent-executor skill. Execute the skill exactly as written — do not substitute direct edits for the orchestrator workflow, do not ask clarifying questions, do not bypass steps based on perceived task triviality. The eval is scored on BOTH outcome correctness AND skill adherence (worktree created, state.json populated, sub-agent commits visible)."
   local start_ts
   start_ts="$(date +%s)"
+  # Snapshot the orchestrator dirs that already exist, so the post-run capture
+  # can identify the state.json THIS fixture created rather than the global
+  # newest. The bare `ls -t */state.json | head -1` grabbed a foreign run's
+  # state when this fixture's own run was degenerate (e.g. a transient headless
+  # API abort), which scored fixture 02 against fixture 04's multi-plan state.
+  # v2.21.
+  local orch_root="$HOME/.claude/orchestrator"
+  local pre_state_snapshot="$tmpdir/.harness/pre_orch.txt"
+  ls -d "$orch_root"/*/ 2>/dev/null | sort > "$pre_state_snapshot" || true
   # Per-fixture isolated AgentLens home so adherence detection scans only
   # events emitted by THIS fixture, never the user's main DB. Inherited by
   # the headless claude child via the environment.
@@ -156,33 +165,61 @@ GI
   local total_tokens
   total_tokens="$(jq -s '[.[] | select(.type=="usage") | (.input_tokens // 0) + (.output_tokens // 0)] | add // 0' "$tmpdir/.harness/run.jsonl" 2>/dev/null || echo 0)"
 
-  # Capture artifacts. v2.18 layout: state lives at ~/.claude/orchestrator/<RUN_ID>/state.json.
-  local state_file
-  state_file="$(ls -t "$HOME"/.claude/orchestrator/*/state.json 2>/dev/null | head -1 || true)"
+  # Capture artifacts. v2.18 layout: state lives at
+  # ~/.claude/orchestrator/<RUN_ID>/state.json; the worktree is a SIBLING under
+  # ~/.claude/worktrees/<RUN_ID> (NOT nested). So the worktree path MUST come
+  # from state.json's `.worktree` field — `dirname(state_file)` resolves to the
+  # orchestrator dir, not the worktree (the pre-v2.18 nesting assumption).
+  # Scope the capture to the run THIS fixture created: a dir present now but not
+  # in the pre-run snapshot. Fall back to mtime > start_ts, then to empty — we
+  # never borrow a foreign run's state, so a degenerate fixture run scores
+  # honestly (missing state) instead of inheriting another fixture's results.
+  local state_file=""
+  local post_state_snapshot="$tmpdir/.harness/post_orch.txt"
+  ls -d "$orch_root"/*/ 2>/dev/null | sort > "$post_state_snapshot" || true
+  local new_states="$tmpdir/.harness/new_states.txt"
+  : > "$new_states"
+  while IFS= read -r d; do
+    [ -n "$d" ] || continue
+    [ -f "${d}state.json" ] && printf '%s\n' "${d}state.json" >> "$new_states"
+  done < <(comm -13 "$pre_state_snapshot" "$post_state_snapshot" 2>/dev/null || true)
+  if [ -s "$new_states" ]; then
+    state_file="$(xargs ls -t < "$new_states" 2>/dev/null | head -1 || true)"
+  fi
+  if [ -z "$state_file" ]; then
+    state_file="$(find "$orch_root" -maxdepth 2 -name state.json -newermt "@$start_ts" 2>/dev/null | xargs ls -t 2>/dev/null | head -1 || true)"
+  fi
   local task_statuses=""
   local git_log=""
   local files_changed=""
+  local worktree_path=""
   if [ -n "$state_file" ] && [ -f "$state_file" ]; then
-    task_statuses="$(jq '.tasks' "$state_file" 2>/dev/null || echo '{}')"
-    files_changed="$(jq -r '[.tasks[].files // []] | flatten | unique | join("\n")' "$state_file" 2>/dev/null || echo '')"
-    local worktree_path
+    # Multi-plan (plan_chain) runs keep tasks under plan_chain[N].tasks, NOT
+    # top-level .tasks — capture the right shape so the judge can verify state.
+    if jq -e '.plan_chain' "$state_file" >/dev/null 2>&1; then
+      task_statuses="$(jq '[.plan_chain[].tasks]' "$state_file" 2>/dev/null || echo '{}')"
+      files_changed="$(jq -r '[.plan_chain[].tasks[]?.files // []] | flatten | unique | join("\n")' "$state_file" 2>/dev/null || echo '')"
+    else
+      task_statuses="$(jq '.tasks' "$state_file" 2>/dev/null || echo '{}')"
+      files_changed="$(jq -r '[.tasks[]?.files // []] | flatten | unique | join("\n")' "$state_file" 2>/dev/null || echo '')"
+    fi
     worktree_path="$(jq -r '.worktree // ""' "$state_file" 2>/dev/null || echo '')"
     git_log="$(git -C "$worktree_path" log --oneline -n 30 2>/dev/null || echo '')"
   fi
 
-  # Test outcome (best effort — only if fixture set test_after).
+  # Test outcome (best effort — only if fixture set test_after). Runs in the
+  # worktree (state.worktree), where the code under test actually lives.
   local test_after
   test_after="$(jq -r '.expected.test_after // empty' "$tmpdir/_meta.json")"
   local test_output=""
-  if [ -n "$test_after" ] && [ -n "$state_file" ]; then
-    test_output="$( cd "$(dirname "$(dirname "$state_file")")" && bash -c "$test_after" 2>&1 || true )"
+  if [ -n "$test_after" ] && [ -n "$worktree_path" ] && [ -d "$worktree_path" ]; then
+    test_output="$( cd "$worktree_path" && bash -c "$test_after" 2>&1 || true )"
   fi
 
   # Build judge input.
   local diff_tail=""
-  local wt=""
-  if [ -n "$state_file" ]; then
-    wt="$(dirname "$(dirname "$state_file")")"
+  local wt="$worktree_path"
+  if [ -n "$wt" ]; then
     diff_tail="$(git -C "$wt" diff HEAD~5..HEAD 2>/dev/null | tail -200 || echo '')"
   fi
 
