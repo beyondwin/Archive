@@ -551,6 +551,8 @@ dependencies:
 file_claims:
   - path: packages/lens-projectors/src/verificationResolution.ts
     mode: owned
+  - path: packages/lens-projectors/src/index.ts
+    mode: owned
   - path: packages/lens-projectors/src/applyReason.ts
     mode: owned
   - path: packages/lens-projectors/src/apply.ts
@@ -3093,6 +3095,8 @@ file_claims:
     mode: owned
   - path: packages/lens-projectors/src/verificationResolution.ts
     mode: owned
+  - path: packages/lens-projectors/src/index.ts
+    mode: owned
   - path: packages/lens-projectors/tests/runReadModel.test.ts
     mode: owned
   - path: packages/orchestrator/src/budgetPolicy.ts
@@ -3209,6 +3213,22 @@ verify:
   local helper that returns `VerificationEntry | null` and skip null results.
   Do not suppress the error with `as VerificationEntry` unless the empty-list
   branch is still explicit and covered by existing behavior.
+- Fix final Lens package barrel export drift in
+  `packages/lens-projectors/src/index.ts`. If integration or fixture-lab tests
+  import `projectVerificationResolutions` through `@waygent/lens-projectors`,
+  export the new verification-resolution helper from the package index instead
+  of changing tests to reach into source internals.
+- Fix final operator-decision optional-field drift in
+  `packages/lens-projectors/src/operatorDecision.ts`. Under
+  `exactOptionalPropertyTypes`, do not pass `missingRefs: undefined` into
+  blocker/action helpers. Build the object without the optional key unless
+  missing refs exist, or normalize to an explicit `string[]` where the target
+  type requires one.
+- Fix final stale-run optional-field drift in
+  `packages/orchestrator/src/orphanRuns.ts`. Under
+  `exactOptionalPropertyTypes`, do not pass `now: undefined` into helpers that
+  declare `now?: Date`; omit the key unless the caller supplied a concrete
+  `Date`.
 - Fix final recovery policy exhaustiveness drift in
   `packages/orchestrator/src/recoveryExecutor.ts`. Because Task 1 adds
   `review_failed` to `FailureClass`, `DEFAULT_POLICY: Record<FailureClass,
