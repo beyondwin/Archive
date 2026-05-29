@@ -929,6 +929,10 @@ file_claims:
     mode: owned
   - path: packages/lens-projectors/src/runReadModel.ts
     mode: owned
+  - path: packages/lens-projectors/src/operatorDecision.ts
+    mode: owned
+  - path: packages/lens-projectors/src/verificationResolution.ts
+    mode: owned
   - path: packages/lens-projectors/tests/trust.test.ts
     mode: owned
   - path: packages/lens-projectors/tests/runReadModel.test.ts
@@ -1085,6 +1089,21 @@ Hard acceptance:
 - `projectRunwayProjection(...)` must accept `needs_review` as a valid trust
   projection and map it to a blocked run state before the trusted/completed
   branch.
+- `run_state_v2` verification state remains authoritative over older event
+  history unless an explicit verification resolution proves the failure is
+  stale/recovered. A state record with `status: "failed"` or a blocked/failed
+  task with `latest_failure_class: "verification_failed"` must still project
+  `operator_decision.primary_blocker.code === "verification_failed"` even when
+  the event journal also contains older successful verification events from a
+  demo/bootstrap run. Do not let timestamped success events silently override
+  a newer state-only failed verification that lacks `verified_at`.
+- If a fixture is meant to represent a recovered stale verification failure,
+  make that explicit with an older failed `verified_at` plus a newer passed
+  verification, or with `state.verification_resolutions` /
+  `task.verification_resolution` showing `latest_status: "passed"` and
+  `stale_failure_refs`. Do not treat the API operator-decision blocked-run
+  fixture as recovered; it must keep `primary_blocker.code ===
+  "verification_failed"`, not the generic `apply_blocked` fallback.
 
 - [ ] **Step 4: Carry fields through read model, API, and console**
 
