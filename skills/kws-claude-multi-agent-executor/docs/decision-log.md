@@ -72,6 +72,26 @@
 
 ---
 
+## v2.19 — 토큰/비용 최적화 (진행 중)
+
+| ADR | 주제 | 결과 |
+|-----|------|------|
+| [D001 SKILL.md split boundary](../docs/experiments/v2.19-token-cost-optimization/decisions/D001-skill-md-split-boundary.md) | SKILL.md 분할 경계 — Phase 축 + cross-cutting 축 | **결정(초안)**: Option C 하이브리드 (phases/ + cross-cutting/); v2.21 D005 가 확정 |
+| [D002 Extended cache applicability](../docs/experiments/v2.19-token-cost-optimization/decisions/D002-extended-cache-applicability.md) | 확장 캐시 적용 범위 | 분석 |
+| [D003 Subagent state read](../docs/experiments/v2.19-token-cost-optimization/decisions/D003-subagent-state-read.md) | 서브에이전트 상태 읽기 (pre-resolved slice vs state.json fallback) | 분석/결정 |
+
+## v2.21 — 슬리밍 + 강제 (진행 중)
+
+| ADR | 주제 | 결과 |
+|-----|------|------|
+| [D001 state_set helper](../docs/experiments/v2.21-slimming-and-enforcement/decisions/D001-state-set-helper.md) | active-tree 쓰기 단일 헬퍼 — inline jq vs `state_set.py` | **결정**: 단일 `state_set.py` (dotpath + flock R-M-W + readback); active-tree 해석 내장 |
+| [D002 Phase-boundary helper](../docs/experiments/v2.21-slimming-and-enforcement/decisions/D002-phase-boundary-helper.md) | 위상 경계 강제 — hook vs 헬퍼 스크립트 | **결정**: `phase_boundary.py` (task-start/task-complete/phase-emit); 비용 누적은 dispatch 경계로 분리 (accumulate_cost.py 유지) |
+| [D003 Headless default vs cache](../docs/experiments/v2.21-slimming-and-enforcement/decisions/D003-headless-default-vs-cache.md) | headless 기본값 vs 캐시 온기 | **결정**: headless 기본값 유지(자율성), 캐시 분석 정정·문서화; auto-fan-out 미추가; `mode=interactive` 권장 (사용자) |
+| [D004 Legacy plan2_state retirement](../docs/experiments/v2.21-slimming-and-enforcement/decisions/D004-legacy-plan2state-retirement.md) | v2.12 `plan2_state` 이중 경로 은퇴 | **결정**: resume 마이그레이션 shim (`migrate_legacy_state.py`) → `plan_chain[]` 변환 후 legacy 분기 제거 |
+| [D005 Split boundary](../docs/experiments/v2.21-slimming-and-enforcement/decisions/D005-split-boundary.md) | SKILL.md 분할 경계 확정 (v2.19 D001 재확인) | **결정**: v2.19 하이브리드 레이아웃 채택 + 헬퍼 와이어링·post-D004 multi-plan·health probe 델타 |
+
+---
+
 ## 가로지르는 결정 (한 실험 아래에 속하지 않음)
 
 ### 오케스트레이터-워커 패턴 (vs 단일 세션)
