@@ -2,8 +2,8 @@
 name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation. NOTE — single-session execution is preferable for ≤5-task plans or plans with deep cross-task coupling (multi-agent overhead exceeds the parallelism win).
 metadata:
-  version: "2.18.0"
-  updated_at: "2026-05-19"
+  version: "2.20.0"
+  updated_at: "2026-05-29"
 ---
 
 # KWS Claude Multi-Agent Executor
@@ -136,8 +136,11 @@ Use `$ACTIVE.tasks`, `$ACTIVE.quality_trend`, etc. in jq queries downstream.
 1.5. **Cross-run isolation checks:**
    Enumerate every orchestrator-state directory under `~/.claude/orchestrator/` and catch state that prior crashed runs left behind. Two independent checks:
 
-   **(a) Mode exclusivity** — refuse to start if another run is alive. Enumerate every orchestrator-state directory directly:
+   **(a) Mode exclusivity — repo-scoped (v2.20)** — refuse to start only if another run **targeting the same source repo** is alive. The exclusivity key is the source repo's git common dir (`git rev-parse --git-common-dir`, canonicalized): every worktree this skill creates for a repo shares that common dir, so it is a stable per-repo identity. Two runs against *different* repos have disjoint `.git` object stores and branch namespaces — they cannot race on git operations — so they are allowed to run concurrently. Enumerate every orchestrator-state directory directly and compare `source_repo`:
    ```bash
+   # Identity of THIS invocation's repo (Step 1.5 runs before worktree creation,
+   # so cwd is still the source repo). All worktrees of a repo share this value.
+   SELF_REPO="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)"
    for dir in "$HOME/.claude/orchestrator/"*/; do
      [ -d "$dir" ] || continue
      pid_file="${dir}headless.pid"
@@ -146,13 +149,20 @@ Use `$ACTIVE.tasks`, `$ACTIVE.quality_trend`, etc. in jq queries downstream.
      if [ -f "$pid_file" ] && [ ! -f "$done_file" ] && [ ! -f "$halted_file" ]; then
        pid=$(cat "$pid_file")
        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-         echo "BLOCKED: active run at $dir (PID $pid). Halt with 'kill $pid' or wait for HEADLESS_DONE.txt. To force-clear after confirming the process is dead, remove $pid_file." >&2
+         other_repo=$(jq -r '.source_repo // ""' "${dir}state.json" 2>/dev/null)
+         # Different repo with a known identity on BOTH sides → no git/branch race; allow.
+         if [ -n "$other_repo" ] && [ -n "$SELF_REPO" ] && [ "$other_repo" != "$SELF_REPO" ]; then
+           echo "INFO: live run at $dir (PID $pid) targets a different repo ($other_repo); not blocking this run ($SELF_REPO)." >&2
+           continue
+         fi
+         # Same repo, OR either identity unknown (legacy state.json / not-in-git) → conservative block.
+         echo "BLOCKED: active run at $dir (PID $pid) targets the same repo ($SELF_REPO), or its repo identity is unknown. Halt with 'kill $pid' or wait for HEADLESS_DONE.txt. To force-clear after confirming the process is dead, remove $pid_file." >&2
          exit 1
        fi
      fi
    done
    ```
-   On detection: halt with the message above. Do NOT silently proceed — concurrent runs can race on git fetches, AgentLens emits, and the user-local branch namespace.
+   On detection: halt with the message above. Do NOT silently proceed when the repos match — same-repo concurrent runs can race on git operations, branch namespace, and the shared worktree object store. **Conservative-block rule:** if either `source_repo` is empty (a pre-v2.20 run with no `source_repo` field, or this invocation is somehow not inside a git repo), block — an unknown identity cannot be proven safe. Cross-repo AgentLens emits are safe: each run owns a distinct `agentlens_orchestration_run` id and events are appended per-run, so concurrent different-repo runs do not collide on the event stream.
 
    **(b) Stale-state report (advisory, NOT auto-delete)** — for any `$HOME/.claude/orchestrator/<RUN_ID>/` directory with **no `state.json`** AND mtime > 7 days, list it to the user once:
    > "Orphan orchestrator-state directories detected (no state.json, last modified >7d ago):
@@ -179,6 +189,7 @@ Use `$ACTIVE.tasks`, `$ACTIVE.quality_trend`, etc. in jq queries downstream.
    mkdir -p $HOME/.claude/orchestrator/<plan-slug>-<YYYYMMDD-HHMMSS>
    ```
    - Capture both paths into your internal notes; they will be persisted into `state.worktree` and `state.orchestrator_dir` at Step 7.
+   - **Capture `source_repo` (v2.20 — repo-scoped exclusivity):** before this step `cd`s into the worktree, resolve the source repo identity with `SELF_REPO="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)"` and record it in internal notes; persist it into `state.source_repo` at Step 7. This is the key Step 1.5(a) uses to allow concurrent runs against *different* repos. (Self-spawn runs already captured this in Phase -1 step b; the headless child resuming from `mode=headless_pending` **preserves the parent's `state.source_repo` as-is** at Step 7 — it does NOT recompute, since the child's cwd is the worktree whose common dir resolves to the same value but recomputation is unnecessary.) Empty value → write `null`.
    - Throughout the rest of this document, `<worktree_path>` (or `<worktree>`) refers to `WORKTREE_ABS` and `<orch_dir>` refers to `ORCH_DIR`. The two are no longer nested — `<orch_dir>` is NOT under `<worktree_path>`.
 
 2.5. **Write worktree safety hooks + gate hooks (P1) — v2.18 paths:**
@@ -489,6 +500,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
      "branch": "<branch name>",
      "worktree": "<worktree path — $HOME/.claude/worktrees/<RUN_ID>>",
      "orchestrator_dir": "<orch_dir path — $HOME/.claude/orchestrator/<RUN_ID>>",
+     "source_repo": "<canonical git common dir of the source repo — repo-scoped exclusivity key (v2.20)>",
      "test_command": "<derived in Phase 0 baseline step>",
      "baseline": {"passing": 0, "failing": 0},
      "risk_levels": {},
@@ -572,6 +584,7 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
      "branch": "...",
      "worktree": "<$HOME/.claude/worktrees/<RUN_ID>>",
      "orchestrator_dir": "<$HOME/.claude/orchestrator/<RUN_ID>>",
+     "source_repo": "<canonical git common dir of the source repo — repo-scoped exclusivity key (v2.20)>",
      "test_command": "<shared across all plans — derived once>",
      "implementer_model": {"used": "...", "default": "sonnet"},
      "plan_chain": [
@@ -1817,7 +1830,7 @@ These rules are absolute. No exceptions.
 | **Single-writer for learning events** | Only the orchestrator invokes the helper. Sub-agents write event candidates as JSON files under `<orch_dir>/learning_events/<task_id>-<role>.json`; the orchestrator reads and forwards them. Never let a sub-agent prompt instruct direct helper invocation. |
 | **`context_health` is observation-only (v2.10)** | Emitted at Phase Transition T3 and Resume Chain chained-orchestrator startup. Counts compaction index, completed tasks, chain handoffs. **MUST NOT alter orchestrator control flow** — Goodhart's-law guard. Behavior changes require a follow-on experiment under `docs/experiments/v2.10-context-health/` after ≥ 2 weeks of real-run data. See `references/learning-log.md`. |
 | **Polite-stop anti-pattern is forbidden (v2.10.1)** | A sub-agent returning PASS / APPROVED is a checkpoint inside the autonomous loop, never a reporting moment. The orchestrator MUST proceed immediately to the next phase step in the same turn. The only legitimate reporting moments are: Phase 2 success completion, ESCALATE that exceeds `escalation_count > 3`, headless `HEADLESS_HALTED.txt`, or hook denial. Any prompt edit that introduces "summarize and wait for user acknowledgment" between PASS and the next step IS the regression this invariant exists to prevent. |
-| **Cross-run isolation is enforced (v2.10.1)** | Phase 0 Step 1.5 refuses to start when another worktree of this skill has a live headless PID. Mode exclusivity is concurrent-safe by halt, not by lock — the user is responsible for choosing which run continues. Orphan worktrees with no state.json + >7d mtime are reported but never auto-deleted (may hold uncommitted manual debugging). |
+| **Cross-run isolation is repo-scoped (v2.10.1, narrowed v2.20)** | Phase 0 Step 1.5(a) refuses to start only when another live headless run targets the **same source repo** (key: canonical `git rev-parse --git-common-dir`, stored as `state.source_repo`). Runs against *different* repos are allowed to run concurrently — disjoint `.git` object stores and branch namespaces cannot race, and each run owns a distinct `agentlens_orchestration_run` id. **Conservative block:** if either side's `source_repo` is empty/unknown (pre-v2.20 state.json, or not in a git repo), block rather than guess. Mode exclusivity is concurrent-safe by halt, not by lock — for same-repo collisions the user chooses which run continues. Orphan worktrees with no state.json + >7d mtime are reported but never auto-deleted (may hold uncommitted manual debugging). |
 | **Method audit fields are populated at Agent Cleanup (v2.11)** | Method audit fields are populated at Phase 1 Step 4 from structured sub-agent output. |
 | **Method audit must pass before Phase 2 close-run** | Phase 2 Step 1.5 runs `scripts/validate_method_audit.py`. A task is `applied` only when it has evidence references (RED command, GREEN command, commands_run, findings_count). FAIL halts before close-run; user re-dispatches or edits `<active>.tasks.<id>.method_audit.waived` with a reason. v2.13: the validator must iterate every `state.plan_chain[N].tasks` for chain runs, not just top-level. |
 | **Method audit fields populated at Phase 1 Step 4** | Orchestrator parses `METHOD_AUDIT:` from Implementer, `REVIEW_FINDINGS:` from Combined Reviewer, `commands_run` from Verifier result JSON. Written under `<active>.tasks` per the resolution table. |

@@ -126,6 +126,14 @@ fi
 
 If `ORCH_RUN_ID` is empty (AgentLens CLI missing, registry write failure, etc.), substitute `null` into the JSON (not the empty string) so the field type is `string|null`. This is **never** a blocking failure — the orchestrator proceeds regardless. The single stderr WARN above is the one-shot user notification so AgentLens absence is not a silent degradation; downstream emits remain `2>/dev/null || true` no-ops. The value persists for the lifetime of the run and is read by Phase 0 / Phase 1 / Phase Transition / Phase 2 emit sites that publish events into AgentLens. (v2.17 cutover, Task 11: the legacy learning-log helper `append_learning_event.py` has been removed — AgentLens is now the sole event sink. See `scripts/compare_agentlens_events.py` for parity verification on historical runs.)
 
+**Capture `source_repo` (v2.20 — repo-scoped exclusivity):** before writing state.json, resolve the source repo identity from the interactive parent's cwd (still the source repo at this point — worktree creation in step a does not change the parent's cwd):
+
+```bash
+SELF_REPO="$(cd "$(git rev-parse --git-common-dir 2>/dev/null)" 2>/dev/null && pwd -P)"
+```
+
+Substitute `$SELF_REPO` into the `source_repo` field of the JSON below (templated in at Write time, like `$ORCH_RUN_ID`). This is the same value Step 1.5(a) computed for the mode-exclusivity gate; persisting it lets *future* invocations from other repos detect that this run targets a different repo and run concurrently. If `SELF_REPO` is empty (not in a git repo — should not happen), write `null`; downstream gates then conservatively block against this run.
+
 **Multi-plan vs single-plan write rules (v2.13):**
 
 If the parsed plan list has length 1: write the minimal state.json in v2.12 shape (no `plan_chain` field). Substitute `$ORCH_RUN_ID` (or `null`) for the `agentlens_orchestration_run` field — the Write tool cannot capture shell variables, so template it in before calling Write:
@@ -140,6 +148,7 @@ If the parsed plan list has length 1: write the minimal state.json in v2.12 shap
   "branch": "<branch name>",
   "worktree": "<$HOME/.claude/worktrees/<RUN_ID>>",
   "orchestrator_dir": "<$HOME/.claude/orchestrator/<RUN_ID>>",
+  "source_repo": "<$SELF_REPO — canonical git common dir of the source repo; repo-scoped exclusivity key (v2.20)>",
   "implementer_model": {"used": "<parsed value or sonnet>", "default": "sonnet"},
   "agentlens_orchestration_run": "<$ORCH_RUN_ID or null>",
   "timestamps": {
@@ -162,6 +171,7 @@ If the parsed plan list has length ≥ 2: write the v2.13 multi-plan minimal sta
   "branch": "<branch name>",
   "worktree": "<$HOME/.claude/worktrees/<RUN_ID>>",
   "orchestrator_dir": "<$HOME/.claude/orchestrator/<RUN_ID>>",
+  "source_repo": "<$SELF_REPO — canonical git common dir of the source repo; repo-scoped exclusivity key (v2.20)>",
   "implementer_model": {"used": "<parsed value or sonnet>", "default": "sonnet"},
   "agentlens_orchestration_run": "<$ORCH_RUN_ID or null>",
   "plan_chain": [

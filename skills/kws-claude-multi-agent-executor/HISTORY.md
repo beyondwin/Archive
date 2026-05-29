@@ -21,6 +21,14 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.20.0 — Repo-scoped cross-run isolation (2026-05-29)
+
+Phase 0 Step 1.5(a) "mode exclusivity" was machine-global: it scanned every `~/.claude/orchestrator/*` directory and blocked on *any* live headless PID, because run state lives under `$HOME` rather than inside the repo. This blocked concurrent runs even when they targeted completely different repos, where the stated race surfaces (git operations, branch namespace) cannot actually collide.
+
+The gate is now **repo-scoped**. A new run-level field `state.source_repo` records the source repo's canonical git common dir (`cd "$(git rev-parse --git-common-dir)" && pwd -P`) — stable across every worktree this skill creates for that repo. Step 1.5(a) reads each live run's `source_repo` and **allows** concurrency when the other run targets a different repo; it **blocks** only on same-repo collisions. Conservative-block rule: if either side's `source_repo` is empty/unknown (pre-v2.20 state.json, or not in a git repo), block rather than guess. Cross-repo AgentLens emits are safe — each run owns a distinct `agentlens_orchestration_run` id, appended per-run.
+
+`source_repo` is captured in Phase -1 step b (self-spawn) and Phase 0 Step 2 (interactive), persisted in the minimal and full state.json shapes (single- and multi-plan), and preserved as-is by the headless child at Step 7.
+
 ### v2.17.0 — AgentLens cutover (2026-05-19, Task 11 of agentlens-v1-and-kws-unification)
 
 Closes the dual-write window opened in the unification plan: AgentLens is now the sole event sink for `kws-cme.*` events. Five orchestrator emit sites are documented and enforced: Phase -1 step b (`agentlens run-open` → `ORCH_RUN_ID`), Phase 0 Step 7.5 (`kws-cme.phase_0_started`), Phase 1 Step 2.6 (`kws-cme.task_completed`), Phase Transition T3 (`kws-cme.compaction` + `context_health` candidate drain), Phase 2 Step 2 (`kws-cme.phase_2_complete` + `agentlens run-close --outcome success`). The candidate-drain loop in Phase 1 Step 3.5 republishes sub-agent `<worktree>/.orchestrator/learning_events/*.json` candidates as `kws-cme.<event_type>`. Hard-halt branches emit `kws-cme.blocker` and call `agentlens run-close --outcome aborted|blocked`.
