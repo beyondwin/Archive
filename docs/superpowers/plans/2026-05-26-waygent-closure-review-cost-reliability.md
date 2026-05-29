@@ -2666,6 +2666,7 @@ file_claims:
   - path: packages/testkit/tests/waygentScenarioHarness.test.ts
     mode: owned
 risk: high
+verify_isolation: isolated
 verify:
   - bun run waygent:scenarios
   - bun run waygent:fixture-lab
@@ -2934,6 +2935,32 @@ For fixture-lab stale verification trust tests, pass representative verification
 events into `projectTrustReport`. A bare synthetic state with `events: []` is
 expected to remain `insufficient_evidence`; it must not be asserted as
 `trusted` unless kernel/verification evidence is present.
+
+Task 10 verification must run in an isolated workspace because the integration
+fixtures depend on checkpointed changes from Tasks 2, 3, 6, 7, 8, and 9. Do not
+run this task through inherited source `node_modules` if that makes
+`@waygent/lens-projectors` resolve to the source checkout without dependency
+checkpoints. If `bun run waygent:fixture-lab` reports either of these failures,
+fix module resolution or the test imports before changing expectations:
+
+- `projectOperatorDecisionFromState(...)` returns
+  `primary_blocker.code === "verification_failed"` for
+  `stale-verification-recovered`.
+- `projectTrustReport(replay.events, { state: replay.state })` returns
+  `failed` for `missing-review-evidence`.
+
+Those failures mean the test is not observing the checkpointed state-aware
+projectors. They are not valid product expectations. The acceptable fixes are:
+
+- preserve `verify_isolation: isolated` for this task so package imports resolve
+  against the dependency-materialized worktree; and
+- in `tests/integration/waygent-fixture-lab.test.ts`, import the projector
+  helpers from the local worktree source path if the package alias still resolves
+  outside the worktree during verification.
+
+Do not loosen the fixture-lab expectations to accept an active
+`verification_failed` blocker or a `failed` trust status for recovered review
+fixtures.
 
 When injecting stale verification failures, preserve the current verification
 resolution contract instead of relying on array order or a task-level
