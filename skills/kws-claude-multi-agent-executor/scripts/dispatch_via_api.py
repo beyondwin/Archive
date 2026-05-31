@@ -58,6 +58,16 @@ PROMPT_FILE_ROLE = {
     TRANSITION_ROLE: "transition",
 }
 
+# Roles whose prompt lives at an EXACT filename that the simple
+# ``<file_role>-prompt.md`` template cannot produce (e.g. a plural stem). The
+# Docs Updater (v2.22 §2.B2) shares one template across the Phase and Final call
+# sites; its file is ``docs-updater-prompts.md`` (plural). The matching scaffold
+# sibling is ``_scaffolds/docs_updater_prompts-scaffold.md`` (the linter's
+# ``scaffold_path_for`` derives it from the ``docs-updater-prompts`` stem).
+PROMPT_FILE_OVERRIDE = {
+    "docs_updater": "docs-updater-prompts.md",
+}
+
 
 def _scripts_dir() -> Path:
     return Path(__file__).resolve().parent
@@ -73,8 +83,12 @@ def load_prompt(role: str, sk_root) -> tuple[str, str]:
     # Role tokens use underscores; the prompt filenames use hyphens
     # (e.g. role "plan_reviewer" -> "plan-reviewer-prompt.md"). A few roles map
     # to a differently-named prompt file (see ``PROMPT_FILE_ROLE``).
-    file_role = PROMPT_FILE_ROLE.get(role, role.replace("_", "-"))
-    path = Path(sk_root) / "references" / f"{file_role}-prompt.md"
+    override = PROMPT_FILE_OVERRIDE.get(role)
+    if override is not None:
+        path = Path(sk_root) / "references" / override
+    else:
+        file_role = PROMPT_FILE_ROLE.get(role, role.replace("_", "-"))
+        path = Path(sk_root) / "references" / f"{file_role}-prompt.md"
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
 
@@ -350,7 +364,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
         description="Dispatch a headless role via the Anthropic API (v2.22 §2.B1).")
     ap.add_argument(
         "--role", required=True,
-        choices=["plan_reviewer", "verifier", "docs_updater", "transition_combined"],
+        choices=["plan_reviewer", "verifier", "docs_updater",
+                 "transition_combined"],
         help="headless role to dispatch")
     ap.add_argument("--task-context", required=True,
                     help="path to JSON with the payload placeholder values")
