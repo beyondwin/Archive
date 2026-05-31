@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Changed context snapshot budgeting for task-packet runs so budget status is
+  based on the largest packet instead of oversized source plan/spec sections,
+  while preserving summed packet estimates for auditability.
+- Added `--context-threshold` support to context snapshot generation so tuned
+  invocation settings apply consistently beyond task packet construction.
+- Aligned task packet `--context-threshold` validation with the invocation
+  contract's `[0.05,0.95]` range.
 - Added execution hardening for prompt cache boundaries, optional cache
   observations, Graphify freshness audits, and deterministic subagent
   pre-dispatch decisions.

@@ -32,6 +32,7 @@ Snapshot-level summary:
     "packet_count": 0,
     "status": "green",
     "max_chars": 120000,
+    "context_threshold": 0.7,
     "estimated_chars": 4210,
     "included_sections": [],
     "omitted_sections": []
@@ -42,7 +43,14 @@ Snapshot-level summary:
 When task packets are present, `context.json` does not inline packet text.
 Instead it records `active_strategy: "task_packet"`, `packet_count`, and a
 `task_packet_index` with task id, packet path, packet hash, and estimated
-characters.
+characters. In this mode, the budget status is based on the largest individual
+packet, not the combined source plan/spec size, because only one task packet is
+active execution context at a time. `estimated_chars` remains the sum of packet
+estimates for audit readability, and `max_packet_chars` records the value used
+for the green/yellow/red status.
+
+Pass `--context-threshold` to tune the green/yellow boundary consistently for
+source snapshots and task-packet snapshots. The accepted range is `[0.05,0.95]`.
 
 Build snapshots with a budget:
 
@@ -56,6 +64,7 @@ python3 scripts/build_context_snapshot.py \
   --spec-manifest "$RUN_DIR/spec_manifest.json" \
   --task-packet-dir "$RUN_DIR/task_packets" \
   --max-chars 120000 \
+  --context-threshold 0.70 \
   --output "$RUN_DIR/context.json"
 ```
 

@@ -14,7 +14,14 @@ def write_json(path: Path, payload: dict | list) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def run_packet(root: Path, plan: dict, spec_text: str, manifest: dict, task_id: str) -> tuple[subprocess.CompletedProcess[str], dict]:
+def run_packet(
+    root: Path,
+    plan: dict,
+    spec_text: str,
+    manifest: dict,
+    task_id: str,
+    extra_args: list[str] | None = None,
+) -> tuple[subprocess.CompletedProcess[str], dict]:
     script = Path(__file__).resolve().parents[1] / "scripts" / "build_task_packet.py"
     plan_json = root / "plan.json"
     spec = root / "spec.md"
@@ -25,23 +32,26 @@ def run_packet(root: Path, plan: dict, spec_text: str, manifest: dict, task_id: 
     spec.write_text(spec_text, encoding="utf-8")
     write_json(manifest_path, manifest)
     write_json(decisions, [])
+    command = [
+        sys.executable,
+        str(script),
+        "--plan-json",
+        str(plan_json),
+        "--task-id",
+        task_id,
+        "--spec",
+        str(spec),
+        "--spec-manifest",
+        str(manifest_path),
+        "--decisions",
+        str(decisions),
+        "--output",
+        str(output),
+    ]
+    if extra_args:
+        command.extend(extra_args)
     result = subprocess.run(
-        [
-            sys.executable,
-            str(script),
-            "--plan-json",
-            str(plan_json),
-            "--task-id",
-            task_id,
-            "--spec",
-            str(spec),
-            "--spec-manifest",
-            str(manifest_path),
-            "--decisions",
-            str(decisions),
-            "--output",
-            str(output),
-        ],
+        command,
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -130,6 +140,21 @@ def main() -> int:
         )
         if not checks["fallback_full_spec"]:
             failures.append("unmapped task should use full-spec fallback marker")
+
+        invalid_threshold_result, _ = run_packet(
+            root,
+            plan_for(explicit_task),
+            spec_text,
+            manifest,
+            "task_0",
+            extra_args=["--context-threshold", "1.0"],
+        )
+        checks["context_threshold_range_matches_invocation_parser"] = (
+            invalid_threshold_result.returncode != 0
+            and "[0.05,0.95]" in (invalid_threshold_result.stderr + invalid_threshold_result.stdout)
+        )
+        if not checks["context_threshold_range_matches_invocation_parser"]:
+            failures.append("task packet context_threshold should reject values outside [0.05,0.95]")
 
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, ensure_ascii=False, indent=2))
