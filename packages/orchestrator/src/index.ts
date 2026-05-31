@@ -1,6 +1,7 @@
 export * from "./adjacentContractAudit";
 export * from "./executionDependencyBarrier";
 export * from "./executionProfile";
+export * from "./failureEvidence";
 export * from "./naturalLanguageIntent";
 export * from "./nlLexicon";
 export * from "./applyEngine";
