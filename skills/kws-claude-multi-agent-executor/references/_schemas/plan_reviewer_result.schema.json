@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "plan_reviewer_result.schema.json",
+  "title": "Plan Reviewer result tool contract",
+  "description": "v2.22 §2.B4 — input_schema for the report_plan_reviewer tool forced via tool_choice. Mirrors references/plan-reviewer-prompt.md Output Format: a single issues[] array with a per-issue severity field (BLOCKER | WARN).",
+  "type": "object",
+  "required": ["status", "summary", "issues"],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "enum": ["PASS", "ISSUES_FOUND"],
+      "description": "PASS when every rubric item passes; ISSUES_FOUND otherwise."
+    },
+    "summary": {
+      "type": "string",
+      "description": "<=2 sentences — overall plan health."
+    },
+    "issues": {
+      "type": "array",
+      "description": "Empty when status==PASS.",
+      "items": {"$ref": "#/$defs/issue"}
+    }
+  },
+  "$defs": {
+    "issue": {
+      "type": "object",
+      "required": ["severity", "category", "description"],
+      "additionalProperties": true,
+      "properties": {
+        "severity": {
+          "enum": ["BLOCKER", "WARN"],
+          "description": "BLOCKER would cause a SPEC_BLOCKER escalation; WARN is friction only."
+        },
+        "task": {
+          "type": ["string", "null"],
+          "description": "task_<id> the issue belongs to, or null for plan-wide issues."
+        },
+        "category": {
+          "type": "string",
+          "description": "e.g. missing_ac | contract_mismatch | naming_drift | dep_inconsistency | missing_files | out_of_repo | resource_key_collision | spec_manifest_invalid_ref | spec_manifest_fallback_used | spec_manifest_unused_section."
+        },
+        "description": {
+          "type": "string",
+          "description": "One sentence — what is wrong."
+        },
+        "evidence": {
+          "type": "string",
+          "description": "file:line or section reference."
+        },
+        "suggested_fix": {
+          "type": "string",
+          "description": "One sentence — smallest edit that resolves it."
+        }
+      }
+    }
+  }
+}

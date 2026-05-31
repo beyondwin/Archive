@@ -1,0 +1,108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "transition_combined_result.schema.json",
+  "title": "Combined Phase Transition T1.2 dispatch contract",
+  "description": "v2.22 §2.A2 — single combined dispatch invoking two tools (verify_low_batch, update_phase_docs) in one sub-agent turn. `tools` declares the two tool specs offered to the sub-agent; `result` models the combined {verify, docs} JSON written to <orch_dir>/transition_results/<plan_idx>_<compaction_idx>.json.",
+  "tools": [
+    {
+      "name": "verify_low_batch",
+      "description": "Run the batch Verifier over all accumulated LOW tasks since the last compaction point and report PASS / FAIL / ESCALATE.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "files_changed": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "All files from accumulated LOW tasks since last compaction."
+          },
+          "test_command": {"type": "string"},
+          "baseline": {
+            "type": "object",
+            "properties": {
+              "passing": {"type": "integer"},
+              "failing": {"type": "integer"}
+            },
+            "required": ["passing", "failing"]
+          }
+        },
+        "required": ["files_changed", "test_command"]
+      }
+    },
+    {
+      "name": "update_phase_docs",
+      "description": "Update documentation in scope to reflect the changes made during this phase, then commit the docs together.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "files_changed": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Implementation files changed across tasks in this phase."
+          },
+          "docs_scope": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Doc files the updater may touch."
+          }
+        },
+        "required": ["files_changed", "docs_scope"]
+      }
+    }
+  ],
+  "type": "object",
+  "required": ["verify", "docs"],
+  "additionalProperties": false,
+  "properties": {
+    "verify": {"$ref": "#/$defs/verify_result"},
+    "docs": {"$ref": "#/$defs/docs_result"}
+  },
+  "result": {
+    "description": "Combined {verify, docs} shape persisted to the transition_results file.",
+    "type": "object",
+    "required": ["verify", "docs"],
+    "properties": {
+      "verify": {"$ref": "#/$defs/verify_result"},
+      "docs": {"$ref": "#/$defs/docs_result"}
+    }
+  },
+  "$defs": {
+    "verify_result": {
+      "type": "object",
+      "description": "Output of the verify_low_batch tool.",
+      "required": ["status"],
+      "properties": {
+        "status": {"enum": ["PASS", "FAIL", "ESCALATE"]},
+        "commands_run": {"type": "array", "items": {"type": "string"}},
+        "exit_codes": {"type": "array", "items": {"type": "integer"}},
+        "issues": {"type": "array"},
+        "category": {"type": "string"},
+        "blocker": {"type": "string"},
+        "options": {"type": "object"}
+      }
+    },
+    "docs_result": {
+      "type": "object",
+      "description": "Output of the update_phase_docs tool.",
+      "required": ["status"],
+      "properties": {
+        "status": {"enum": ["DONE", "ESCALATE"]},
+        "summary": {"type": "string"},
+        "files_updated": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {"type": "string"},
+              "change": {"type": "string"}
+            }
+          }
+        },
+        "commit": {"type": "string"},
+        "escalation": {
+          "type": "object",
+          "properties": {"blocker": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

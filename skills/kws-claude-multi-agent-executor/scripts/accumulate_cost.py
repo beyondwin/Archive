@@ -53,7 +53,17 @@ except ImportError:
     from price_table import compute_cost  # type: ignore
 
 
-USAGE_FIELDS = ("input_tokens", "output_tokens", "cached_read_tokens", "cached_write_tokens")
+USAGE_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cached_read_tokens",
+    "cached_write_tokens",
+    # API-aligned canonical cache-token names (Anthropic Messages usage splits
+    # cache_read_input_tokens / cache_creation_input_tokens). Retained alongside
+    # the legacy cached_* names for backward compatibility.
+    "cache_read_tokens",
+    "cache_creation_tokens",
+)
 VALID_ROLES = {"implementer", "reviewer", "verifier", "plan_reviewer", "docs_updater"}
 
 
@@ -68,6 +78,8 @@ def _empty_aggregate() -> dict:
         "output_tokens": 0,
         "cached_read_tokens": 0,
         "cached_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
         "cost_usd": 0.0,
         "dispatches": 0,
     }
@@ -120,6 +132,7 @@ def accumulate(
     role: str,
     model: str,
     usage: dict,
+    combined_roles: list[str] | None = None,
 ) -> dict:
     usage = _normalize_usage(usage)
     cost = compute_cost(model, usage) if model != "unknown" else 0.0
@@ -146,6 +159,8 @@ def accumulate(
             "role": role,
             "dispatched_at": _utc_now_iso(),
         }
+        if combined_roles:
+            entry["combined_roles"] = list(combined_roles)
         ledger["by_task"][key] = entry  # role-specific; same-role retries overwrite
 
         role_agg = ledger["by_role"].setdefault(role, _empty_aggregate())
@@ -167,6 +182,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--task-id", required=True, help="e.g. task_3")
     ap.add_argument("--role", required=True, choices=sorted(VALID_ROLES))
     ap.add_argument("--model", required=True, help="opus|sonnet|haiku|claude-...|unknown")
+    ap.add_argument(
+        "--combined-roles",
+        help="comma-separated split roles for a merged dispatch, e.g. verify,docs; "
+        "tags the ledger row with combined_roles for split-line forensics",
+    )
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--usage-json", help="inline JSON string with usage fields")
     g.add_argument("--usage-file", help="path to file containing usage JSON")
@@ -187,8 +207,15 @@ def main(argv: list[str] | None = None) -> int:
         print("usage must be a JSON object", file=sys.stderr)
         return 1
 
+    combined_roles = None
+    if args.combined_roles:
+        combined_roles = [r.strip() for r in args.combined_roles.split(",") if r.strip()]
+
     try:
-        entry = accumulate(state_path, args.task_id, args.role, args.model, usage)
+        entry = accumulate(
+            state_path, args.task_id, args.role, args.model, usage,
+            combined_roles=combined_roles,
+        )
     except OSError as exc:
         print(f"state.json write failed: {exc}", file=sys.stderr)
         return 1

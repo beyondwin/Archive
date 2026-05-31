@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "verifier_result.schema.json",
+  "title": "Verifier result tool contract",
+  "description": "v2.22 §2.B2 — input_schema for the report_verifier tool forced via tool_choice. Shared by the batch (Phase Transition T1) and per-task Verifier dispatches. Mirrors references/verifier-prompt.md Result JSON: a PASS/FAIL/ESCALATE status with verification-evidence commands_run/exit_codes, FAIL issues[]/category, and ESCALATE blocker/options.",
+  "type": "object",
+  "required": ["status"],
+  "properties": {
+    "status": {
+      "enum": ["PASS", "FAIL", "ESCALATE"],
+      "description": "PASS when all risk-tier checks/AC pass with no new failures vs baseline; FAIL on a real failure; ESCALATE when unresolvable."
+    },
+    "commands_run": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "Verification-evidence list; harvested into method_audit.applied."
+    },
+    "exit_codes": {
+      "type": "array",
+      "items": {"type": "integer"},
+      "description": "Exit code per command in commands_run."
+    },
+    "issues": {
+      "type": "array",
+      "description": "Present on FAIL — the failing-test details."
+    },
+    "category": {
+      "type": "string",
+      "description": "Optional on FAIL; one of the ENV_BLOCKER triage categories from references/escalation-playbook.md (default \"other\")."
+    },
+    "blocker": {
+      "type": "string",
+      "description": "Present on ESCALATE — the unresolvable blocker."
+    },
+    "options": {
+      "type": "object",
+      "description": "Present on ESCALATE — remediation options for the orchestrator."
+    }
+  }
+}
