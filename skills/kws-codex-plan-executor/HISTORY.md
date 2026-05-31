@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Tightened state validation so finished runs must record a concrete
+  `timestamps.completed_at` ISO timestamp.
+- Tightened state validation so `current_task` must reference an existing task
+  whenever the run state has task records.
 - Changed context snapshot budgeting for task-packet runs so budget status is
   based on the largest packet instead of oversized source plan/spec sections,
   while preserving summed packet estimates for auditability.
