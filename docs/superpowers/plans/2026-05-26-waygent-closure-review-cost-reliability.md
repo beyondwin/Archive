@@ -3215,9 +3215,12 @@ verify:
   branch is still explicit and covered by existing behavior.
 - Fix final Lens package barrel export drift in
   `packages/lens-projectors/src/index.ts`. If integration or fixture-lab tests
-  import `projectVerificationResolutions` through `@waygent/lens-projectors`,
-  export the new verification-resolution helper from the package index instead
-  of changing tests to reach into source internals.
+  import `projectVerificationResolutions` or `resolveTaskVerifications` through
+  `@waygent/lens-projectors`, export the new verification-resolution helpers
+  from the package index instead of changing tests to reach into source
+  internals. The final gate is not complete until:
+  `rg -n "resolveTaskVerifications|projectVerificationResolutions" packages/lens-projectors/src/index.ts`
+  returns both exported names.
 - Fix final operator-decision optional-field drift in
   `packages/lens-projectors/src/operatorDecision.ts`. Under
   `exactOptionalPropertyTypes`, do not pass `missingRefs: undefined` into
@@ -3235,7 +3238,16 @@ verify:
   RecoveryPolicyEntry>` must include a `review_failed` entry. Use the same
   retry-with-evidence policy as `review_changes_requested` unless the local
   salvage-first helper already gives a stricter review-failed behavior; do not
-  remove `review_failed` from the contract to make the typecheck pass.
+  remove `review_failed` from the contract to make the typecheck pass. The
+  final gate is not complete until:
+  `rg -n "review_failed" packages/orchestrator/src/recoveryExecutor.ts`
+  shows a `DEFAULT_POLICY` entry for `review_failed`.
+- Task 11 is an integration repair task, not docs-only. If `bun run check`,
+  `bun run waygent:fixture-lab`, or another final verification command fails
+  because a claimed source file is missing an export or exhaustive policy entry,
+  fix the source file in the task 11 worktree before editing docs. Do not return
+  a worker result that only changes `docs/operations/*`, `skills/waygent/SKILL.md`,
+  or Graphify outputs while final source verification is still failing.
 - Fix final scenario, fixture-lab, and dogfood expectation drift according to
   the implemented runtime contract:
   - budget-paused fixtures must still project the correct run/apply status and
