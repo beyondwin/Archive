@@ -37,7 +37,7 @@ the chain: plan 0's data writes to top-level while plan 1's writes to
 ```json
 {
   "schema_version": "2",
-  "mode": "<interactive_session | headless_running>",
+  "mode": "<interactive_session | interactive_attached | headless_running>",
   "active_plan": "plan1",
   "plan": "<plan path>",
   "spec": "<spec path>",
@@ -159,8 +159,11 @@ per-plan data when its swap fires at Phase 2 Step -1.
 ## Field-group notes
 
 - **`mode`** is always a non-null string ∈ `{interactive_session,
-  headless_pending, headless_running, headless_chained, plan_chain_running,
-  plan2_running}`. The resume protocol (Phase 0 Step 0) dispatches on this value.
+  interactive_attached, headless_pending, headless_running, headless_chained,
+  plan_chain_running, plan2_running}`. The resume protocol (Phase 0 Step 0)
+  dispatches on this value. `interactive_attached` is the v2.22.0
+  attached-by-default in-session mode (a bare invocation with neither `detach`
+  nor `mode` passed runs attached rather than self-spawning headless).
   `plan_chain_running` is written by the Phase 2 Step -1 Cross-Plan Trigger when
   it advances `active_plan` to the next plan in a chain. `plan2_running` is the
   legacy v2.12 equivalent: a migrated state may still read it because the
