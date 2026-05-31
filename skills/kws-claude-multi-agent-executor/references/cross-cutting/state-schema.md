@@ -79,7 +79,8 @@ the chain: plan 0's data writes to top-level while plan 1's writes to
   "cost_ledger": {
     "by_task": {}, "by_role": {}, "by_model": {},
     "totals": {"input_tokens": 0, "output_tokens": 0, "cached_read_tokens": 0,
-               "cached_write_tokens": 0, "cost_usd": 0.0, "dispatches": 0}
+               "cached_write_tokens": 0, "cache_read_tokens": 0,
+               "cache_creation_tokens": 0, "cost_usd": 0.0, "dispatches": 0}
   },
   "archive": null,
   "agentlens_orchestration_run": null,

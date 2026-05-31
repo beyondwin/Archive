@@ -61,6 +61,62 @@ class AccumulateBasicTests(unittest.TestCase):
             self.assertEqual(state["cost_ledger"]["by_role"]["implementer"]["dispatches"], 1)
 
 
+CACHE_USAGE = {
+    "input_tokens": 1_000_000,
+    "output_tokens": 1_000_000,
+    "cache_read_tokens": 1_000_000,
+    "cache_creation_tokens": 1_000_000,
+}
+
+
+class CacheTokenTests(unittest.TestCase):
+    def test_cache_tokens_preserved_on_by_task_row(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            state_path = _make_state(Path(td))
+            entry = accumulate_cost.accumulate(
+                state_path, "task_5", "implementer", "opus", dict(CACHE_USAGE)
+            )
+            self.assertEqual(entry["cache_read_tokens"], 1_000_000)
+            self.assertEqual(entry["cache_creation_tokens"], 1_000_000)
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            row = state["cost_ledger"]["by_task"]["plan1::task_5::implementer"]
+            self.assertEqual(row["cache_read_tokens"], 1_000_000)
+            self.assertEqual(row["cache_creation_tokens"], 1_000_000)
+
+    def test_cache_tokens_totals_increment_across_two_dispatches(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            state_path = _make_state(Path(td))
+            accumulate_cost.accumulate(
+                state_path, "task_5", "implementer", "opus", dict(CACHE_USAGE)
+            )
+            accumulate_cost.accumulate(
+                state_path, "task_6", "reviewer", "opus", dict(CACHE_USAGE)
+            )
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            totals = state["cost_ledger"]["totals"]
+            self.assertEqual(totals["cache_read_tokens"], 2_000_000)
+            self.assertEqual(totals["cache_creation_tokens"], 2_000_000)
+
+    def test_cache_tokens_reflected_in_cost(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            state_path = _make_state(Path(td))
+            entry = accumulate_cost.accumulate(
+                state_path, "task_5", "implementer", "opus", dict(CACHE_USAGE)
+            )
+            # opus: 1M input*$15 + 1M output*$75 + 1M cache_read*$1.50
+            #       + 1M cache_creation*$18.75 = 110.25
+            self.assertAlmostEqual(entry["cost_usd"], 110.25, places=3)
+
+    def test_cache_tokens_fixture_totals_field_exists(self) -> None:
+        fixture = (
+            Path(__file__).resolve().parent.parent
+            / "tests" / "fixtures" / "cost_ledger_post_v22.json"
+        )
+        data = json.loads(fixture.read_text(encoding="utf-8"))
+        self.assertGreater(data["totals"]["cache_read_tokens"], 0)
+        self.assertGreater(data["totals"]["cache_creation_tokens"], 0)
+
+
 class CombinedRoleTests(unittest.TestCase):
     def test_combined_roles_tag_recorded_on_ledger_row(self) -> None:
         with tempfile.TemporaryDirectory() as td:
