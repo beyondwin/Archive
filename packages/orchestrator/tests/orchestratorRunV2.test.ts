@@ -417,7 +417,7 @@ verify:
     const state = readRunStateV2(root, "run_recovery_retry");
     expect(state.recovery.some((record) =>
       record.task_id === "task_retry" &&
-      record.failure_class === "recoverable_patch" &&
+      record.failure_class === "malformed_result" &&
       record.action === "salvage_then_review"
     )).toBe(true);
     expect(result.events.some((event) => event.event_type === "runway.patch_salvaged")).toBe(true);

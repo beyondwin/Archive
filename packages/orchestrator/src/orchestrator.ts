@@ -608,6 +608,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
             state: context.state,
             task_id: failureDecision.task_id,
             attempt_id: waveResult.result.provider_attempt.attempt_id,
+            failure_class: failureDecision.failure_class,
             status: "salvaged_patch",
             patch_ref: failureDecision.patch_ref,
             changed_files: failureDecision.changed_files,
