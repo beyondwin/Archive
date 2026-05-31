@@ -1,0 +1,48 @@
+name: waygent-task-blocks
+mode: interactive
+plan: |
+  # Plan With Waygent Contracts
+
+  ```yaml waygent-task
+  id: phase_1_front_contract
+  title: Phase 1 -- Align frontend contract
+  dependencies: []
+  file_claims:
+    - path: front/features/platform-admin/model/platform-admin-health-model.ts
+      mode: owned
+    - path: front/features/platform-admin/ui/admin-health-card.tsx
+      mode: owned
+  verify:
+    - pnpm --dir front test
+  ```
+
+  ```yaml waygent-task
+  id: phase_2_backend_health
+  title: Phase 2 -- Harden backend health service
+  dependencies: [phase_1_front_contract]
+  file_claims:
+    - path: server/src/main/kotlin/com/readmates/admin/health/application/service/PlatformAdminHealthService.kt
+      mode: owned
+  verify:
+    - ./server/gradlew -p server unitTest
+  ```
+expected:
+  files:
+    - front/features/platform-admin/model/platform-admin-health-model.ts
+    - front/features/platform-admin/ui/admin-health-card.tsx
+    - server/src/main/kotlin/com/readmates/admin/health/application/service/PlatformAdminHealthService.kt
+  depends_on:
+    phase_1_front_contract: []
+    phase_2_backend_health:
+      - phase_1_front_contract
+  tasks:
+    - id: phase_1_front_contract
+      number: 1
+      title: Phase 1 -- Align frontend contract
+      line: 3
+      has_acceptance_criteria: true
+    - id: phase_2_backend_health
+      number: 2
+      title: Phase 2 -- Harden backend health service
+      line: 16
+      has_acceptance_criteria: true

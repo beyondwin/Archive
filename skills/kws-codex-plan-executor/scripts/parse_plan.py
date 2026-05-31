@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 TASK_RE = re.compile(
-    r"(?m)^(#{2,4})[ \t]+(?:Task|작업)[ \t]+(\d+(?:\.\d+)*)[ \t]*(?::|-|–)[ \t]*(.+?)[ \t]*$"
+    r"(?m)^(#{2,4})[ \t]+(?:Task|작업)[ \t]+(\d+(?:\.\d+)*)[ \t]*(?::|-|–|—)[ \t]*(.+?)[ \t]*$"
 )
 FENCE_RE = re.compile(r"^(?: {0,3})(?P<marker>`{3,}|~{3,})(?P<suffix>[^\r\n]*)$")
 FENCE_CLOSE_SUFFIX_RE = re.compile(r"^[ \t]*$")
@@ -36,10 +36,16 @@ SPEC_REFS_RE = re.compile(
     r"[ \t]*:[ \t]*(?:\*\*)?[ \t]*(?P<value>.+?)[ \t]*(?:\*\*)?[ \t]*$"
 )
 SPEC_REF_RE = re.compile(r"\bS\d+(?:\.\d+)*\b")
-YAML_TASK_RE = re.compile(r"```yaml\s+agentrunway-task\s*\n(?P<body>.*?)\n```", re.S)
-YAML_TASK_ID_RE = re.compile(r"(?m)^task_id:\s*(?P<value>\S+)\s*$")
+YAML_TASK_BLOCK_RE = re.compile(
+    r"(?ms)^```yaml[ \t]+(?P<kind>(?:agentrunway|waygent)-task)[^\n]*\n(?P<body>.*?)\n```"
+)
+YAML_TASK_RE = re.compile(r"```yaml\s+(?:agentrunway|waygent)-task\s*\n(?P<body>.*?)\n```", re.S)
+YAML_TASK_ID_RE = re.compile(r"(?m)^(?:task_id|id):\s*(?P<value>\S+)\s*$")
+YAML_TITLE_RE = re.compile(r"(?m)^title:\s*(?P<value>.+?)\s*$")
 YAML_DEPENDENCIES_RE = re.compile(r"(?m)^dependencies:\s*\[(?P<value>[^\]]*)\]\s*$")
 YAML_FILE_CLAIM_RE = re.compile(r"-\s*\{path:\s*(?P<path>[^,}]+),\s*mode:\s*(?P<mode>[^}]+)\}")
+YAML_FILE_CLAIM_LINE_RE = re.compile(r"(?m)^\s*-\s+path:\s*(?P<path>.+?)\s*$")
+YAML_VERIFY_RE = re.compile(r"(?m)^(?:verify|acceptance|verification):\s*(?:$|.+)")
 FILE_LINE_RE = re.compile(
     r"^\s*-\s+"
     r"(?:(?:Create|Modify|Read|Delete|Move|Update|생성|수정|읽기|삭제|이동|변경|갱신):\s*)?"
@@ -210,6 +216,10 @@ def _extract_spec_refs(body: str) -> list[str]:
     return list(dict.fromkeys(SPEC_REF_RE.findall(match.group("value"))))
 
 
+def _clean_yaml_scalar(value: str) -> str:
+    return value.strip().strip("'\"")
+
+
 def _body_line_range(markdown: str, body_start: int, body_end: int) -> tuple[int, int]:
     body = markdown[body_start:body_end]
     base_line = _line_number(markdown, body_start)
@@ -230,29 +240,91 @@ def _slice_lines(markdown: str, start_line: int, end_line: int) -> str:
     return "".join(lines[max(start_line - 1, 0) : max(end_line, start_line - 1)])
 
 
+def _extract_yaml_dependencies(yaml_body: str) -> list[str]:
+    dependencies_match = YAML_DEPENDENCIES_RE.search(yaml_body)
+    if not dependencies_match:
+        return []
+    return [
+        _clean_yaml_scalar(item)
+        for item in dependencies_match.group("value").split(",")
+        if item.strip()
+    ]
+
+
+def _extract_yaml_file_claims(
+    yaml_body: str,
+    repo_root: Path,
+    source_markdown: str | None = None,
+    body_offset: int = 0,
+) -> tuple[list[str], dict[str, int]]:
+    files: list[str] = []
+    locations: dict[str, int] = {}
+
+    for item in YAML_FILE_CLAIM_RE.finditer(yaml_body):
+        repo_path = _repo_relative(_clean_yaml_scalar(item.group("path")), repo_root)
+        files.append(repo_path)
+        if source_markdown is not None:
+            locations.setdefault(repo_path, _line_number(source_markdown, body_offset + item.start("path")))
+
+    for item in YAML_FILE_CLAIM_LINE_RE.finditer(yaml_body):
+        repo_path = _repo_relative(_clean_yaml_scalar(item.group("path")), repo_root)
+        files.append(repo_path)
+        if source_markdown is not None:
+            locations.setdefault(repo_path, _line_number(source_markdown, body_offset + item.start("path")))
+
+    return sorted(dict.fromkeys(files)), locations
+
+
 def _extract_yaml_task_metadata(raw_body: str, repo_root: Path) -> dict:
     match = YAML_TASK_RE.search(raw_body)
     if not match:
         return {"task_id": None, "depends_on_raw": [], "files": []}
     yaml_body = match.group("body")
     task_id_match = YAML_TASK_ID_RE.search(yaml_body)
-    dependencies_match = YAML_DEPENDENCIES_RE.search(yaml_body)
-    dependencies = []
-    if dependencies_match:
-        dependencies = [
-            item.strip().strip("'\"")
-            for item in dependencies_match.group("value").split(",")
-            if item.strip()
-        ]
-    files = [
-        _repo_relative(item.group("path").strip().strip("'\""), repo_root)
-        for item in YAML_FILE_CLAIM_RE.finditer(yaml_body)
-    ]
+    files, _ = _extract_yaml_file_claims(yaml_body, repo_root)
     return {
-        "task_id": task_id_match.group("value") if task_id_match else None,
-        "depends_on_raw": dependencies,
-        "files": sorted(dict.fromkeys(files)),
+        "task_id": _clean_yaml_scalar(task_id_match.group("value")) if task_id_match else None,
+        "depends_on_raw": _extract_yaml_dependencies(yaml_body),
+        "files": files,
     }
+
+
+def _extract_yaml_task_blocks(raw_markdown: str, repo_root: Path, mode: str) -> list[dict]:
+    tasks: list[dict] = []
+    for index, match in enumerate(YAML_TASK_BLOCK_RE.finditer(raw_markdown), start=1):
+        yaml_body = match.group("body")
+        task_id_match = YAML_TASK_ID_RE.search(yaml_body)
+        if not task_id_match:
+            _die(f"yaml task block at line {_line_number(raw_markdown, match.start())} has no id")
+        task_id = _clean_yaml_scalar(task_id_match.group("value"))
+        title_match = YAML_TITLE_RE.search(yaml_body)
+        files, file_line_numbers = _extract_yaml_file_claims(
+            yaml_body,
+            repo_root,
+            source_markdown=raw_markdown,
+            body_offset=match.start("body"),
+        )
+        if mode in EXECUTION_MODES and not files:
+            _die(f"{task_id} has no file claims")
+        tasks.append(
+            {
+                "id": task_id,
+                "number": index,
+                "title": _clean_yaml_scalar(title_match.group("value")) if title_match else task_id,
+                "line": _line_number(raw_markdown, match.start()),
+                "body": yaml_body.strip(),
+                "body_line_start": _line_number(raw_markdown, match.start("body")),
+                "body_line_end": _line_number(raw_markdown, match.end("body")),
+                "files": files,
+                "file_line_numbers": file_line_numbers,
+                "spec_refs": _extract_spec_refs(yaml_body),
+                "depends_on": [],
+                "yaml_task_id": task_id,
+                "_raw_depends_on": _extract_yaml_dependencies(yaml_body),
+                "has_acceptance_criteria": bool(YAML_VERIFY_RE.search(yaml_body)),
+            }
+        )
+    return tasks
 
 
 def _normalize_dependency(dep: str, aliases: dict[str, str]) -> str | None:
@@ -294,13 +366,18 @@ def _validate_task_dependencies(tasks: list[dict]) -> None:
 
 def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
     raw_markdown = plan_path.read_text(encoding="utf-8")
+    yaml_tasks = _extract_yaml_task_blocks(raw_markdown, repo_root, mode)
+    if yaml_tasks:
+        tasks = yaml_tasks
+    else:
+        tasks = []
+
     markdown = _visible_markdown(raw_markdown)
     matches = list(TASK_RE.finditer(markdown))
-    if not matches:
+    if not tasks and not matches:
         _die("plan has no Task N headings")
 
-    tasks = []
-    for index, match in enumerate(matches):
+    for index, match in enumerate(matches if not tasks else []):
         body_start = match.end()
         body_end = matches[index + 1].start() if index + 1 < len(matches) else len(markdown)
         body_raw = markdown[body_start:body_end]

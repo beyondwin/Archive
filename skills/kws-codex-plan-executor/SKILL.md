@@ -89,6 +89,10 @@ accepting subagent output.
 - Execution plans may use `Files`, `Affected files`, `Modified files`,
   `Changed files`, `수정 파일`, `변경 파일`, `대상 파일`, or `파일` headings for
   task file blocks. Execution mode still stops if no file block is present.
+- Execution plans may also use fenced `yaml waygent-task` or
+  `yaml agentrunway-task` blocks with `id`, `title`, `dependencies`, and
+  `file_claims`; these blocks are executable task contracts and satisfy the
+  file-scope requirement when their paths stay inside the repo.
 - Resume mode uses an explicit state path/run id, or the only active run found
   under `~/.codex/orchestrator/`. Do not infer between multiple ambiguous active
   runs. `resume=latest` scans `~/.codex/orchestrator/*/state.json`.
