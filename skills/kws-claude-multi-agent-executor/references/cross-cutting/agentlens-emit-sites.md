@@ -48,6 +48,7 @@ become silent no-ops when no run is open.
 | Phase 2 Step 2 | `kws-cme.phase_2_complete` | `phase_boundary.py phase-emit --type phase_2_complete` (bundles `timestamps.completed_at` overwrite) |
 | Phase 2 Step 2 | run close | `agentlens run-close --outcome success` |
 | Per API dispatch | `kws-cme.dispatch_via_api` | `scripts/dispatch_via_api.py` `dispatch()` `_emit_agentlens()` (see below) |
+| Phase 2 Step 0 (batch fallback) | `kws-cme.batch_timeout` | `scripts/dispatch_final_sweep_batch.py` on poll-timeout before per-task API fallback |
 | Hard-halt paths | `kws-cme.blocker` + run close | escalation-exhaustion / budget pause / T3 state-write failure → `run-close --outcome aborted\|blocked` |
 
 The three boundary emits (`phase_0_started`, `compaction`, `phase_2_complete`)
