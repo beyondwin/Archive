@@ -1559,13 +1559,32 @@ Hard acceptance for CLI blocked responses:
 
 - `waygent review --run <missing> --role spec_reviewer` must preserve the
   requested role in its blocked response:
-  `{ command: "review", run_id, role: "spec_reviewer", status: "blocked", reason: "missing_run_state_v2" }`.
+  `{ command: "review", run_id, roles: ["spec_reviewer"], status: "blocked", reason: "missing_run_state_v2" }`.
 - `reviewRun` may include additional diagnostic arrays such as `packet_refs`,
   `review_refs`, or `task_ids`, but those additions must not replace or omit
-  the requested `role`.
+  the requested `roles` array.
+- Do not add empty diagnostic arrays to blocked responses when the focused CLI
+  test does not expect them. In particular, do not return `task_ids: []` for
+  `missing_run_state_v2`; keep the blocked shape minimal plus `roles`.
 - Apply the same role preservation to `no_reviewable_task` blocked responses.
 - Keep the focused CLI assertion strict enough to catch a missing `role`; do
   not loosen the test to only assert `status` and `reason`.
+
+Hard acceptance for packet refs:
+
+- `reviewRunCommand` / `reviewRun` packet creation responses must expose
+  `packet_refs` as relative artifact path strings, not rich artifact objects.
+  The test must be able to call:
+  `readFileSync(join(state.run_root, result.packet_refs[0]!))`.
+- Persist the same string refs into task review state fields:
+  `review_refs`, `spec_review_ref`, and `quality_review_ref`. Do not store
+  `{ path, sha256 }` or other objects in these fields unless you also update
+  the tests and all callers that join refs with `state.run_root`.
+- If verification fails with `TypeError: The "paths[1]" property must be of
+  type string, got object`, fix the return/state shape to string refs; do not
+  loosen the tests.
+- The selected-role path must satisfy:
+  `updated.tasks.task_a.review_state?.quality_review_ref === result.packet_refs[0]`.
 
 Hard acceptance for review state transitions:
 
