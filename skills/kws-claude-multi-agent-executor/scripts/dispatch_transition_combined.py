@@ -38,6 +38,41 @@ def parse_combined_result(subagent_output: dict) -> dict:
     return {"verify": by_name[VERIFY_TOOL], "docs": by_name[DOCS_TOOL]}
 
 
+def dispatch_combined_via_api(
+    task_context: dict,
+    model: str,
+    orch_dir: str,
+    sk_root,
+    plan_idx,
+    compaction_idx,
+    client=None,
+):
+    """Drive the combined transition through the Anthropic Messages API (v2.22).
+
+    Thin delegation to ``dispatch_via_api.dispatch`` with
+    ``role="transition_combined"``: the two-tool turn is built and extracted
+    there, and the combined ``{verify, docs}`` dict is written to
+    ``transition_result_path(orch_dir, plan_idx, compaction_idx)``. Returns the
+    combined result dict (or an ENV_BLOCKER ESCALATE dict on persistent failure).
+
+    ``dispatch_via_api`` has no eager ``anthropic`` import, so a normal import is
+    safe even when the SDK is absent (unit tests inject ``client=``).
+    """
+    import dispatch_via_api  # safe: no eager SDK import
+
+    output_path = transition_result_path(orch_dir, plan_idx, compaction_idx)
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    return dispatch_via_api.dispatch(
+        role="transition_combined",
+        task_context=task_context,
+        model=model,
+        orch_dir=orch_dir,
+        sk_root=sk_root,
+        output_path=output_path,
+        client=client,
+    )
+
+
 def transition_result_path(orch_dir: str, plan_idx, compaction_idx) -> str:
     """Return the combined-result path for the given plan/compaction indices."""
     return os.path.join(

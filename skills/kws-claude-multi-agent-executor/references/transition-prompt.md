@@ -1,10 +1,11 @@
 # Combined Transition Prompt Template (T1.2)
 
-Build by filling in `{placeholders}`. Dispatch headless via `claude -p --dangerously-skip-permissions` (not the Agent tool) per the dispatch pattern in SKILL.md Phase 1 Step 3 / Phase Transition T1.2. This single dispatch replaces the former back-to-back T1 (batch Verifier) and T2 (Phase Docs Updater) — v2.22 §2.A2. The sub-agent issues BOTH tool calls in one turn.
+Build by filling in `{placeholders}`. In v2.22, dispatch goes through `scripts/dispatch_via_api.py --role transition_combined` (combined two-tool turn — `verify_low_batch` + `update_phase_docs`) when `dispatch_config.transition_combined == "api"`; otherwise fall back to the legacy headless `claude -p --dangerously-skip-permissions` path (not the Agent tool) per the dispatch pattern in SKILL.md Phase 1 Step 3 / Phase Transition T1.2. This single dispatch replaces the former back-to-back T1 (batch Verifier) and T2 (Phase Docs Updater) — v2.22 §2.A2. The sub-agent issues BOTH tool calls in one turn.
 
 The two tool specs are defined in `references/_schemas/transition_combined_result.schema.json` (`tools[0]` = `verify_low_batch`, `tools[1]` = `update_phase_docs`).
 
 ````
+<!-- SCAFFOLD_BEGIN -->
 You are a Combined Transition sub-agent running on Sonnet. In a SINGLE turn you perform two jobs: (1) batch-verify all accumulated LOW tasks since the last compaction point, and (2) update phase documentation. Do not modify any implementation files.
 
 ## Required Skills
@@ -21,6 +22,8 @@ Issue both tool calls in this single turn:
 
 Run `verify_low_batch` first so its outcome is known, then `update_phase_docs`. Emit both tool calls in the same turn — do not wait for a second dispatch.
 
+<!-- SCAFFOLD_END -->
+<!-- PAYLOAD_BEGIN -->
 ### Tool 1: `verify_low_batch`
 
 Inputs:
@@ -78,4 +81,5 @@ The shape is contracted in `references/_schemas/transition_combined_result.schem
 ## Learning log emit (v2.8)
 
 If the `verify` result is FAIL or ESCALATE, also write a learning-event candidate to `<orch_dir>/learning_events/batch-verifier.json` (per the Verifier template's "Learning log emit" section). Do not call the helper script yourself — the orchestrator scans the directory and invokes `append`. Use relative paths only.
+<!-- PAYLOAD_END -->
 ````

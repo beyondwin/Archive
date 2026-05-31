@@ -43,6 +43,15 @@ class FakeResponse:
         self.usage = usage or FakeUsage()
 
 
+class FakeMultiToolResponse:
+    """A response carrying several tool_use blocks (combined transition)."""
+
+    def __init__(self, tool_calls, usage=None):
+        # tool_calls: iterable of (name, input) tuples.
+        self.content = [FakeToolUse(name, inp) for name, inp in tool_calls]
+        self.usage = usage or FakeUsage()
+
+
 class FakeAPIError(Exception):
     def __init__(self, status_code, body="boom"):
         super().__init__(body)
@@ -298,6 +307,86 @@ class VerifierBatchTests(unittest.TestCase):
         written = json.loads(out.read_text())
         self.assertEqual(written["status"], "PASS")
         self.assertEqual(written["commands_run"], ["python3 -m unittest"])
+
+
+# --------------------------------------------------------------------------- #
+# Combined Transition (T1.2) — role "transition_combined", TWO tools per turn
+# --------------------------------------------------------------------------- #
+def _transition_ctx():
+    return {
+        "test_command": "python3 -m unittest",
+        "result_json_path": "/tmp/transition_out.json",
+    }
+
+
+def _transition_response():
+    return FakeMultiToolResponse([
+        ("verify_low_batch",
+         {"status": "PASS", "commands_run": ["python3 -m unittest"],
+          "exit_codes": [0]}),
+        ("update_phase_docs",
+         {"status": "DONE", "summary": "docs updated",
+          "files_updated": [{"path": "README.md", "change": "noted phase"}],
+          "commit": "abc123"}),
+    ])
+
+
+class TransitionCombinedTests(unittest.TestCase):
+    def test_transition_combined_scaffold_payload_split_loads(self):
+        scaffold, payload = dva.load_prompt("transition_combined", SK_ROOT)
+        self.assertNotIn("{", scaffold)
+        self.assertIn("Combined Transition sub-agent", scaffold)
+        self.assertIn("{test_command}", payload)
+
+    def test_transition_combined_build_request_emits_two_tools_and_any_choice(self):
+        scaffold, payload = dva.load_prompt("transition_combined", SK_ROOT)
+        schema = dva.load_schema("transition_combined", SK_ROOT)
+        req = dva.build_request(
+            scaffold, payload, schema, "transition_combined",
+            "claude-sonnet-4-5-20250929", _transition_ctx())
+        self.assertEqual(len(req["tools"]), 2)
+        names = {t["name"] for t in req["tools"]}
+        self.assertEqual(names, {"verify_low_batch", "update_phase_docs"})
+        self.assertEqual(req["tool_choice"], {"type": "any"})
+
+    def test_transition_combined_cache_control_on_scaffold_block(self):
+        scaffold, payload = dva.load_prompt("transition_combined", SK_ROOT)
+        schema = dva.load_schema("transition_combined", SK_ROOT)
+        req = dva.build_request(
+            scaffold, payload, schema, "transition_combined",
+            "claude-sonnet-4-5-20250929", _transition_ctx())
+        self.assertTrue(any(
+            isinstance(b, dict) and b.get("cache_control") == {"type": "ephemeral"}
+            for b in req["system"]))
+
+    def test_transition_combined_extract_combined_returns_verify_and_docs(self):
+        combined = dva._extract_combined(_transition_response())
+        self.assertEqual(combined["verify"]["status"], "PASS")
+        self.assertEqual(combined["docs"]["status"], "DONE")
+        self.assertEqual(combined["docs"]["commit"], "abc123")
+
+    def test_transition_combined_extract_combined_missing_tool_raises(self):
+        only_verify = FakeMultiToolResponse([
+            ("verify_low_batch", {"status": "PASS"})])
+        with self.assertRaises(ValueError):
+            dva._extract_combined(only_verify)
+
+    def test_transition_combined_dispatch_writes_combined_result(self):
+        orch = _tmp_orch()
+        out = Path(orch) / "transition_result.json"
+        msgs = FakeMessages(response=_transition_response())
+        client = FakeClient(messages=msgs)
+        res = dva.dispatch("transition_combined", _transition_ctx(),
+                           "claude-sonnet-4-5-20250929", orch, SK_ROOT, str(out),
+                           client=client, max_retries=3)
+        self.assertIn("verify", res)
+        self.assertIn("docs", res)
+        self.assertEqual(res["verify"]["status"], "PASS")
+        self.assertEqual(res["docs"]["status"], "DONE")
+        self.assertTrue(out.is_file())
+        written = json.loads(out.read_text())
+        self.assertEqual(written["verify"]["status"], "PASS")
+        self.assertEqual(written["docs"]["commit"], "abc123")
 
 
 class CliTests(unittest.TestCase):
