@@ -540,6 +540,22 @@ def main() -> int:
     if not checks["last_completed_task_must_exist"]:
         failures.append("last_completed_task should reference a task or be null")
 
+    missing_completed_timestamp = base_state()
+    missing_completed_timestamp["timestamps"]["completed_at"] = None
+    result = run_validator(script, missing_completed_timestamp)
+    checks["finished_state_requires_completed_at"] = (
+        result.returncode != 0 and "timestamps.completed_at" in (result.stderr + result.stdout)
+    )
+    if not checks["finished_state_requires_completed_at"]:
+        failures.append("finished state should require timestamps.completed_at")
+
+    missing_current_task = base_state()
+    missing_current_task["current_task"] = "task_404"
+    result = run_validator(script, missing_current_task)
+    checks["current_task_must_exist"] = result.returncode != 0 and "current_task" in (result.stderr + result.stdout)
+    if not checks["current_task_must_exist"]:
+        failures.append("current_task should reference a task when tasks are present")
+
     payload_out = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload_out, indent=2))
     return 0 if not failures else 1

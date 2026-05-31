@@ -233,6 +233,22 @@ def _validate_completion_audit(data: dict, errors: list[str]) -> None:
         errors.append("handoff_reason must be non-empty for non-success lifecycle_outcome")
 
 
+def _validate_timestamps(data: dict, errors: list[str]) -> None:
+    timestamps = data.get("timestamps")
+    if not isinstance(timestamps, dict):
+        errors.append("timestamps must be an object")
+        return
+    for key in ("started_at", "updated_at"):
+        if _parse_ts(timestamps.get(key)) is None:
+            errors.append(f"timestamps.{key} must be an ISO timestamp")
+    completed_at = timestamps.get("completed_at")
+    if data.get("lifecycle_outcome") == "finished":
+        if _parse_ts(completed_at) is None:
+            errors.append("timestamps.completed_at must be an ISO timestamp when lifecycle_outcome is finished")
+    elif completed_at is not None and _parse_ts(completed_at) is None:
+        errors.append("timestamps.completed_at must be an ISO timestamp or null")
+
+
 def _validate_contract(task_id: str, contract: object, errors: list[str]) -> None:
     if not isinstance(contract, dict):
         errors.append(f"{task_id}: contract must be an object")
@@ -286,6 +302,9 @@ def _validate_tasks(data: dict, errors: list[str]) -> None:
     if not isinstance(tasks, dict):
         errors.append("tasks must be an object")
         return
+    current_task = data.get("current_task")
+    if tasks and current_task not in tasks:
+        errors.append("current_task must reference a task in state when tasks are present")
     outcome = data.get("lifecycle_outcome")
     for task_id, task in tasks.items():
         if not isinstance(task, dict):
@@ -759,6 +778,7 @@ def validate(data: dict) -> list[str]:
             errors.append("context_snapshot_path must be present after execution preflight")
     _validate_context_health(data, errors)
     _validate_completion_audit(data, errors)
+    _validate_timestamps(data, errors)
     _validate_tasks(data, errors)
     _validate_subagents(data, errors)
     _validate_command_observations(data, errors)

@@ -69,6 +69,7 @@ Required path invariants:
 - `run_dir` ends with `.codex/orchestrator/<run_id>`.
 - `worktree` ends with `.codex/worktrees/<run_id>`.
 - `state_path` equals `run_dir/state.json`.
+- When `tasks` is non-empty, `current_task` references one of its task ids.
 - `context_snapshot_path`, when present, equals `run_dir/context.json`.
 - `spec_manifest_path`, when present, equals `run_dir/spec_manifest.json`.
 - `task_packet_dir`, when present, equals `run_dir/task_packets`.
@@ -100,6 +101,9 @@ Required path invariants:
 - `dispatch_decisions` records output from `scripts/preflight_dispatch.py`.
   Decisions are `delegate`, `local_fallback`, or `block`; finished runs cannot
   retain a `block` decision.
+- `timestamps.started_at` and `timestamps.updated_at` are ISO timestamps.
+  `timestamps.completed_at` is nullable while a run is active, but must be an
+  ISO timestamp before `lifecycle_outcome=finished`.
 
 v2.20 context-intelligence state may add per-task fields:
 
