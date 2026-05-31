@@ -4,8 +4,9 @@
 - Writing executor state into the repository worktree.
 - Treating prompt or handoff export as an execution mode.
 - Treating `subagents=auto` as permission to spawn without an explicit user
-  request; use default `subagents=on` when task-packet-scoped delegation should
-  be permitted.
+  request.
+- Treating `subagents=on` as permission-only; eligible write-capable tasks are
+  subagent-first and local fallback requires a task `subagent_strategy` reason.
 - Marking a run finished while subagent work is still running or unreviewed.
 - Reporting success without `completion_audit`, `context_health`, and
   verification evidence.

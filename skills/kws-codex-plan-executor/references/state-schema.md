@@ -69,6 +69,12 @@ Required path invariants:
   default. Set it to `false` only for `subagents=off`, or for `subagents=auto`
   when there was no explicit user request for subagents/delegation/parallel
   work.
+- In finished v2.20+ runs with `subagents_requested=true`, completed
+  write-capable tasks must include `subagent_strategy`:
+  - `mode=delegated`: `run_ids` references reviewed completed
+    `subagent_runs` for the same task.
+  - `mode=local_fallback`: `run_ids` is empty and `reason` explains the failed
+    pre-dispatch prerequisite or safety reason.
 
 v2.20 context-intelligence state may add per-task fields:
 
@@ -79,6 +85,11 @@ v2.20 context-intelligence state may add per-task fields:
     "task_packet_sha256": "<sha256>",
     "spec_section_ids": ["S1"],
     "fallback_spec_used": false,
+    "subagent_strategy": {
+      "mode": "delegated",
+      "run_ids": ["agent_123"],
+      "reason": "Default subagent-first execution for an eligible task packet."
+    },
     "timing": {
       "started": "2026-05-19T14:31:00Z",
       "completed": "2026-05-19T14:34:00Z",

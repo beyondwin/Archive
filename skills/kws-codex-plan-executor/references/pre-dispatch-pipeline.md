@@ -1,6 +1,7 @@
 # Pre-Dispatch Pipeline
 
-Before delegating work:
+`subagents=on` is subagent-first. Run this pipeline before each eligible
+write-capable task and delegate when every prerequisite passes.
 
 1. Confirm the resolved invocation has `subagents=on`, or has
    `subagents=auto` plus an explicit user request for subagents, delegation, or
@@ -18,3 +19,8 @@ Before delegating work:
    scope, and verification expectation.
 10. After completion, run `scripts/check_run_diffs.py` and perform post-diff
     and state review before accepting subagent output.
+
+If any prerequisite fails under `subagents=on`, run the task locally only after
+recording `subagent_strategy.mode = local_fallback` on the task with the exact
+failed prerequisite or safety reason. If delegation succeeds, record
+`subagent_strategy.mode = delegated` with the accepted `subagent_runs` ids.

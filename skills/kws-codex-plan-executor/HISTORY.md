@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Changed the default `subagents=on` behavior from permission-only to
+  subagent-first execution for eligible write-capable tasks, with task-level
+  `subagent_strategy` audit records for delegated and local-fallback outcomes.
 - Added parser support for fenced `yaml waygent-task` and
   `yaml agentrunway-task` execution contracts, including file claims and
   dependencies.

@@ -5,9 +5,9 @@
 Create or resume a dedicated execution worktree at
 `~/.codex/worktrees/<plan-slug>-<YYYYMMDD-HHMMSS>`. Keep all executor state in
 `~/.codex/orchestrator/<run_id>/state.json`. `subagents=on` is the default and
-permits task-packet-scoped subagents. `subagents=auto` is conservative and
-remains local unless the user explicitly requests delegation/parallel agent
-work. `subagents=off` is always local-only.
+uses task-packet-scoped subagents first for eligible write-capable tasks.
+`subagents=auto` is conservative and remains local unless the user explicitly
+requests delegation/parallel agent work. `subagents=off` is always local-only.
 
 ## headless
 
