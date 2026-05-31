@@ -7713,7 +7713,7 @@
       "source_file": "packages/provider-adapters/tests/codexResume.test.ts",
       "source_location": "L1",
       "id": "packages_provider_adapters_tests_codexresume_test_ts",
-      "community": 687,
+      "community": 1014,
       "norm_label": "codexresume.test.ts"
     },
     {
@@ -7722,7 +7722,7 @@
       "source_file": "packages/provider-adapters/tests/codexResume.test.ts",
       "source_location": "L6",
       "id": "tests_codexresume_test_fixturepath",
-      "community": 687,
+      "community": 1014,
       "norm_label": "fixturepath"
     },
     {
@@ -18340,7 +18340,7 @@
       "label": "hasExistingRunEvidence()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L797",
+      "source_location": "L798",
       "id": "src_orchestrator_hasexistingrunevidence",
       "community": 117,
       "norm_label": "hasexistingrunevidence()"
@@ -18349,7 +18349,7 @@
       "label": "FinalizeIntakeBlockedRunInput",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L801",
+      "source_location": "L802",
       "id": "src_orchestrator_finalizeintakeblockedruninput",
       "community": 96,
       "norm_label": "finalizeintakeblockedruninput"
@@ -18358,7 +18358,7 @@
       "label": "finalizeIntakeBlockedRun()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L815",
+      "source_location": "L816",
       "id": "src_orchestrator_finalizeintakeblockedrun",
       "community": 117,
       "norm_label": "finalizeintakeblockedrun()"
@@ -18367,7 +18367,7 @@
       "label": "resolveRunIdAndPaths()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L920",
+      "source_location": "L921",
       "id": "src_orchestrator_resolverunidandpaths",
       "community": 117,
       "norm_label": "resolverunidandpaths()"
@@ -18376,7 +18376,7 @@
       "label": "finalizeRun()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L944",
+      "source_location": "L945",
       "id": "src_orchestrator_finalizerun",
       "community": 117,
       "norm_label": "finalizerun()"
@@ -18385,7 +18385,7 @@
       "label": "replayTaskExecutionResult()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L979",
+      "source_location": "L980",
       "id": "src_orchestrator_replaytaskexecutionresult",
       "community": 117,
       "norm_label": "replaytaskexecutionresult()"
@@ -18394,7 +18394,7 @@
       "label": "replayTaskExecutionFailure()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1010",
+      "source_location": "L1011",
       "id": "src_orchestrator_replaytaskexecutionfailure",
       "community": 117,
       "norm_label": "replaytaskexecutionfailure()"
@@ -18403,7 +18403,7 @@
       "label": "recordRuntimeEvidence()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1037",
+      "source_location": "L1038",
       "id": "src_orchestrator_recordruntimeevidence",
       "community": 117,
       "norm_label": "recordruntimeevidence()"
@@ -18412,7 +18412,7 @@
       "label": "capturePatchForWorkerAttempt()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1089",
+      "source_location": "L1090",
       "id": "src_orchestrator_capturepatchforworkerattempt",
       "community": 117,
       "norm_label": "capturepatchforworkerattempt()"
@@ -18421,7 +18421,7 @@
       "label": "RunRepairAttemptInput",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1134",
+      "source_location": "L1135",
       "id": "src_orchestrator_runrepairattemptinput",
       "community": 187,
       "norm_label": "runrepairattemptinput"
@@ -18430,7 +18430,7 @@
       "label": "RunRepairAttemptOutcome",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1148",
+      "source_location": "L1149",
       "id": "src_orchestrator_runrepairattemptoutcome",
       "community": 117,
       "norm_label": "runrepairattemptoutcome"
@@ -18439,7 +18439,7 @@
       "label": "runRepairAttempt()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1152",
+      "source_location": "L1153",
       "id": "src_orchestrator_runrepairattempt",
       "community": 117,
       "norm_label": "runrepairattempt()"
@@ -18448,7 +18448,7 @@
       "label": "recordTaskRecovery()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1462",
+      "source_location": "L1463",
       "id": "src_orchestrator_recordtaskrecovery",
       "community": 117,
       "norm_label": "recordtaskrecovery()"
@@ -18457,7 +18457,7 @@
       "label": "isRetryRecoveryAction()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1496",
+      "source_location": "L1497",
       "id": "src_orchestrator_isretryrecoveryaction",
       "community": 117,
       "norm_label": "isretryrecoveryaction()"
@@ -18466,7 +18466,7 @@
       "label": "markStateTaskReadyForRetry()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1500",
+      "source_location": "L1501",
       "id": "src_orchestrator_markstatetaskreadyforretry",
       "community": 117,
       "norm_label": "markstatetaskreadyforretry()"
@@ -18475,7 +18475,7 @@
       "label": "taskRecoveryEvidenceRefs()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1513",
+      "source_location": "L1514",
       "id": "src_orchestrator_taskrecoveryevidencerefs",
       "community": 117,
       "norm_label": "taskrecoveryevidencerefs()"
@@ -18484,7 +18484,7 @@
       "label": "errorSummary()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1524",
+      "source_location": "L1525",
       "id": "src_orchestrator_errorsummary",
       "community": 117,
       "norm_label": "errorsummary()"
@@ -18493,7 +18493,7 @@
       "label": "pauseRunForBudget()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1528",
+      "source_location": "L1529",
       "id": "src_orchestrator_pauserunforbudget",
       "community": 117,
       "norm_label": "pauserunforbudget()"
@@ -18502,7 +18502,7 @@
       "label": "evaluateBudgetFromState()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1566",
+      "source_location": "L1567",
       "id": "src_orchestrator_evaluatebudgetfromstate",
       "community": 117,
       "norm_label": "evaluatebudgetfromstate()"
@@ -18511,7 +18511,7 @@
       "label": "emitBudgetWarning()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1574",
+      "source_location": "L1575",
       "id": "src_orchestrator_emitbudgetwarning",
       "community": 117,
       "norm_label": "emitbudgetwarning()"
@@ -18520,7 +18520,7 @@
       "label": "recordWaveTiming()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1598",
+      "source_location": "L1599",
       "id": "src_orchestrator_recordwavetiming",
       "community": 117,
       "norm_label": "recordwavetiming()"
@@ -18529,7 +18529,7 @@
       "label": "combinedApplyArtifactEntries()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1619",
+      "source_location": "L1620",
       "id": "src_orchestrator_combinedapplyartifactentries",
       "community": 117,
       "norm_label": "combinedapplyartifactentries()"
@@ -18538,7 +18538,7 @@
       "label": "providerProfileRecord()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1629",
+      "source_location": "L1630",
       "id": "src_orchestrator_providerprofilerecord",
       "community": 117,
       "norm_label": "providerprofilerecord()"
@@ -18547,7 +18547,7 @@
       "label": "requestedModelForProfile()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1639",
+      "source_location": "L1640",
       "id": "src_orchestrator_requestedmodelforprofile",
       "community": 117,
       "norm_label": "requestedmodelforprofile()"
@@ -18556,7 +18556,7 @@
       "label": "applyRoleRoutingToProcesses()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1653",
+      "source_location": "L1654",
       "id": "src_orchestrator_applyroleroutingtoprocesses",
       "community": 117,
       "norm_label": "applyroleroutingtoprocesses()"
@@ -18565,7 +18565,7 @@
       "label": "applyCodexResumeContext()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1670",
+      "source_location": "L1671",
       "id": "src_orchestrator_applycodexresumecontext",
       "community": 187,
       "norm_label": "applycodexresumecontext()"
@@ -18574,7 +18574,7 @@
       "label": "extractSessionIdFromWorker()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1682",
+      "source_location": "L1683",
       "id": "src_orchestrator_extractsessionidfromworker",
       "community": 117,
       "norm_label": "extractsessionidfromworker()"
@@ -18583,7 +18583,7 @@
       "label": "planNormalizationPayload()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1689",
+      "source_location": "L1690",
       "id": "src_orchestrator_plannormalizationpayload",
       "community": 117,
       "norm_label": "plannormalizationpayload()"
@@ -18592,7 +18592,7 @@
       "label": "resolveProviderProcesses()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1702",
+      "source_location": "L1703",
       "id": "src_orchestrator_resolveproviderprocesses",
       "community": 117,
       "norm_label": "resolveproviderprocesses()"
@@ -18601,7 +18601,7 @@
       "label": "dispatchAutomaticReviews()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1744",
+      "source_location": "L1745",
       "id": "src_orchestrator_dispatchautomaticreviews",
       "community": 117,
       "norm_label": "dispatchautomaticreviews()"
@@ -18610,7 +18610,7 @@
       "label": "refreshRunExecutionContext()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1784",
+      "source_location": "L1785",
       "id": "src_orchestrator_refreshrunexecutioncontext",
       "community": 117,
       "norm_label": "refreshrunexecutioncontext()"
@@ -18619,7 +18619,7 @@
       "label": "nextEventSequence()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1792",
+      "source_location": "L1793",
       "id": "src_orchestrator_nexteventsequence",
       "community": 117,
       "norm_label": "nexteventsequence()"
@@ -18628,7 +18628,7 @@
       "label": "taskHasPassedReviewEvidence()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1797",
+      "source_location": "L1798",
       "id": "src_orchestrator_taskhaspassedreviewevidence",
       "community": 117,
       "norm_label": "taskhaspassedreviewevidence()"
@@ -18637,7 +18637,7 @@
       "label": "recordBootstrapReviewEvidence()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1807",
+      "source_location": "L1808",
       "id": "src_orchestrator_recordbootstrapreviewevidence",
       "community": 117,
       "norm_label": "recordbootstrapreviewevidence()"
@@ -18646,7 +18646,7 @@
       "label": "runWaygentDemo()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1890",
+      "source_location": "L1891",
       "id": "src_orchestrator_runwaygentdemo",
       "community": 830,
       "norm_label": "runwaygentdemo()"
@@ -18655,7 +18655,7 @@
       "label": "defaultRunRoot()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1894",
+      "source_location": "L1895",
       "id": "src_orchestrator_defaultrunroot",
       "community": 4,
       "norm_label": "defaultrunroot()"
@@ -18664,7 +18664,7 @@
       "label": "budgetPolicyFromOptions()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1918",
+      "source_location": "L1919",
       "id": "src_orchestrator_budgetpolicyfromoptions",
       "community": 117,
       "norm_label": "budgetpolicyfromoptions()"
@@ -18673,7 +18673,7 @@
       "label": "resolveRunPlanInput()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1935",
+      "source_location": "L1936",
       "id": "src_orchestrator_resolverunplaninput",
       "community": 117,
       "norm_label": "resolverunplaninput()"
@@ -18682,7 +18682,7 @@
       "label": "dependencyCheckpointInputs()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/orchestrator.ts",
-      "source_location": "L1949",
+      "source_location": "L1950",
       "id": "src_orchestrator_dependencycheckpointinputs",
       "community": 117,
       "norm_label": "dependencycheckpointinputs()"
@@ -21292,7 +21292,7 @@
       "label": "RecordSalvageArtifactResult",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
-      "source_location": "L16",
+      "source_location": "L17",
       "id": "src_salvageartifacts_recordsalvageartifactresult",
       "community": 203,
       "norm_label": "recordsalvageartifactresult"
@@ -21301,7 +21301,7 @@
       "label": "recordSalvageArtifact()",
       "file_type": "code",
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
-      "source_location": "L22",
+      "source_location": "L23",
       "id": "src_salvageartifacts_recordsalvageartifact",
       "community": 117,
       "norm_label": "recordsalvageartifact()"
@@ -27674,7 +27674,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L26",
       "id": "templates_headless_output_schema_properties_state_path",
-      "community": 362,
+      "community": 491,
       "norm_label": "state_path"
     },
     {
@@ -27683,7 +27683,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L27",
       "id": "templates_headless_output_schema_state_path_type",
-      "community": 362,
+      "community": 491,
       "norm_label": "type"
     },
     {
@@ -27692,7 +27692,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L28",
       "id": "templates_headless_output_schema_state_path_minlength",
-      "community": 362,
+      "community": 491,
       "norm_label": "minlength"
     },
     {
@@ -27728,7 +27728,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L34",
       "id": "templates_headless_output_schema_properties_changed_files",
-      "community": 491,
+      "community": 569,
       "norm_label": "changed_files"
     },
     {
@@ -27737,7 +27737,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L35",
       "id": "templates_headless_output_schema_changed_files_type",
-      "community": 491,
+      "community": 569,
       "norm_label": "type"
     },
     {
@@ -27890,7 +27890,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L63",
       "id": "templates_headless_output_schema_properties_residual_risk",
-      "community": 569,
+      "community": 491,
       "norm_label": "residual_risk"
     },
     {
@@ -27899,7 +27899,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L64",
       "id": "templates_headless_output_schema_residual_risk_type",
-      "community": 569,
+      "community": 491,
       "norm_label": "type"
     },
     {
@@ -28016,7 +28016,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L83",
       "id": "templates_headless_output_schema_properties_next_action",
-      "community": 491,
+      "community": 362,
       "norm_label": "next_action"
     },
     {
@@ -28025,7 +28025,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L84",
       "id": "templates_headless_output_schema_next_action_type",
-      "community": 491,
+      "community": 362,
       "norm_label": "type"
     },
     {
@@ -28034,7 +28034,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L85",
       "id": "templates_headless_output_schema_next_action_minlength",
-      "community": 491,
+      "community": 362,
       "norm_label": "minlength"
     },
     {
@@ -78022,7 +78022,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-24-waygent-full-plan-intake-hardening.md",
       "source_location": "L673",
-      "community": 929,
+      "community": 933,
       "norm_label": "code:ts (export function classifyverificationcommand(input: verificat)",
       "id": "plans_2026_05_24_waygent_full_plan_intake_hardening_codeblock_32"
     },
@@ -78040,7 +78040,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-24-waygent-full-plan-intake-hardening.md",
       "source_location": "L745",
-      "community": 933,
+      "community": 929,
       "norm_label": "code:ts (function classifysegment()",
       "id": "plans_2026_05_24_waygent_full_plan_intake_hardening_codeblock_34"
     },
@@ -78067,7 +78067,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-24-waygent-full-plan-intake-hardening.md",
       "source_location": "L818",
-      "community": 929,
+      "community": 933,
       "norm_label": "code:bash (git add packages/orchestrator/src/planadapters/verificationp)",
       "id": "plans_2026_05_24_waygent_full_plan_intake_hardening_codeblock_37"
     },
@@ -78724,7 +78724,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-operator-workbench-intake-recovery-fixture-lab.md",
       "source_location": "L1734",
-      "community": 928,
+      "community": 978,
       "norm_label": "code:json (\"waygent:fixture-lab\": \"bun test tests/integration/waygent-f)",
       "id": "plans_2026_05_23_waygent_operator_workbench_intake_recovery_fixture_lab_codeblock_49"
     },
@@ -78733,7 +78733,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-operator-workbench-intake-recovery-fixture-lab.md",
       "source_location": "L1752",
-      "community": 978,
+      "community": 928,
       "norm_label": "code:bash (git add tests/fixtures/waygent-lab/recoverable-prose-plan.md)",
       "id": "plans_2026_05_23_waygent_operator_workbench_intake_recovery_fixture_lab_codeblock_50"
     },
@@ -94457,7 +94457,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/tests/codexResume.test.ts",
       "source_location": "L10",
-      "community": 687,
+      "community": 1014,
       "norm_label": "args",
       "id": "tests_codexresume_test_args"
     },
@@ -94466,7 +94466,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/tests/codexResume.test.ts",
       "source_location": "L33",
-      "community": 687,
+      "community": 1014,
       "norm_label": "execidx",
       "id": "tests_codexresume_test_execidx"
     },
@@ -94475,7 +94475,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/tests/codexResume.test.ts",
       "source_location": "L34",
-      "community": 687,
+      "community": 1014,
       "norm_label": "resumeidx",
       "id": "tests_codexresume_test_resumeidx"
     },
@@ -94484,7 +94484,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/tests/codexResume.test.ts",
       "source_location": "L42",
-      "community": 687,
+      "community": 1014,
       "norm_label": "stdout",
       "id": "tests_codexresume_test_stdout"
     },
@@ -94493,7 +94493,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/tests/codexResume.test.ts",
       "source_location": "L43",
-      "community": 687,
+      "community": 1014,
       "norm_label": "result",
       "id": "tests_codexresume_test_result"
     },
@@ -111926,7 +111926,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L93",
-      "community": 173,
+      "community": 687,
       "norm_label": "phase 2: m1 vertical slice",
       "id": "plan_agentlens_v0_tasks_phase_2_m1_vertical_slice"
     },
@@ -111935,7 +111935,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L95",
-      "community": 173,
+      "community": 687,
       "norm_label": "task 2: m1 foundation \u2014 constants/time/ids/store/paths",
       "id": "plan_agentlens_v0_tasks_task_2_m1_foundation_constants_time_ids_store_paths"
     },
@@ -112178,7 +112178,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L328",
-      "community": 659,
+      "community": 173,
       "norm_label": "acceptance criteria",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_328"
     },
@@ -112187,7 +112187,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L329",
-      "community": 659,
+      "community": 173,
       "norm_label": "code:bash (cd agentlens)",
       "id": "plan_agentlens_v0_tasks_codeblock_11"
     },
@@ -112241,7 +112241,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L386",
-      "community": 173,
+      "community": 659,
       "norm_label": "acceptance criteria",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_386"
     },
@@ -112250,7 +112250,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L387",
-      "community": 173,
+      "community": 659,
       "norm_label": "code:bash (cd agentlens)",
       "id": "plan_agentlens_v0_tasks_codeblock_13"
     },
@@ -112259,7 +112259,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L395",
-      "community": 773,
+      "community": 173,
       "norm_label": "phase 6: m5 process wrapper",
       "id": "plan_agentlens_v0_tasks_phase_6_m5_process_wrapper"
     },
@@ -112268,7 +112268,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L397",
-      "community": 773,
+      "community": 173,
       "norm_label": "task 13: m5 process wrapper core \u2014 spawn + dual-stream drain + excerpt",
       "id": "plan_agentlens_v0_tasks_task_13_m5_process_wrapper_core_spawn_dual_stream_drain_excerpt"
     },
@@ -112331,7 +112331,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L470",
-      "community": 712,
+      "community": 173,
       "norm_label": "acceptance criteria",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_470"
     },
@@ -112340,7 +112340,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L471",
-      "community": 712,
+      "community": 173,
       "norm_label": "code:bash (cd agentlens)",
       "id": "plan_agentlens_v0_tasks_codeblock_16"
     },
@@ -112529,7 +112529,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L616",
-      "community": 173,
+      "community": 712,
       "norm_label": "phase 9: m8 hardening",
       "id": "plan_agentlens_v0_tasks_phase_9_m8_hardening"
     },
@@ -112538,7 +112538,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L618",
-      "community": 173,
+      "community": 712,
       "norm_label": "task 22: m8 redaction engine + patterns",
       "id": "plan_agentlens_v0_tasks_task_22_m8_redaction_engine_patterns"
     },
@@ -296575,5 +296575,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "3aab4294d981e953ad6d94f0e0ba1c3839910738"
+  "built_at_commit": "9391fd94c6f6ba2cb5d5839e8fdddaa14952b677"
 }
