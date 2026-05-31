@@ -1764,6 +1764,31 @@ Under `exactOptionalPropertyTypes`, do not pass `dry_run: undefined` to
 `runReviewPacket`. Build the input without the optional key unless the CLI or
 caller supplied a concrete boolean, as shown above.
 
+- [ ] **Step 6a: Keep orchestrator public exports compatible**
+
+Modify `packages/orchestrator/src/index.ts` in the same task. The task owns this
+file and the review command test imports the public orchestrator surface, so the
+index must export every helper that existing tests and callers already consume.
+
+At minimum, keep these exports present after adding the review command:
+
+```ts
+export { reviewRun } from "./runCommands";
+export { runPaths } from "./runPaths";
+```
+
+Do not move `runPaths` behind an internal-only import or delete the existing
+public export while adding `reviewRun`. The verification command is not allowed
+to fail with:
+
+```txt
+SyntaxError: Export named 'runPaths' not found in module '.../packages/orchestrator/src/index.ts'
+```
+
+If `packages/orchestrator/tests/reviewRun.test.ts` or `apps/cli/tests/cli.test.ts`
+reports that error, fix `packages/orchestrator/src/index.ts`; do not describe it
+as a missing dependency or loosen the test import.
+
 - [ ] **Step 7: Wire CLI command**
 
 Modify `apps/cli/src/index.ts` imports:
