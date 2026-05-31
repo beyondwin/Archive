@@ -3245,6 +3245,33 @@ verify:
   `node_modules` or dependency-installation blocker.
 - Fix full-gate typecheck issues found after all dependency checkpoints are
   materialized, limited to the file claims above.
+- Fix the concrete Task 11 full-gate TypeScript failures observed after
+  materializing Tasks 1-10. Do not reclassify these as missing dependencies or
+  docs-only cleanup:
+  - in `packages/lens-projectors/src/trust.ts`, narrow
+    `ReviewResult | TaskReviewArtifact` before reading `.status`;
+  - in `packages/orchestrator/src/budgetPolicy.ts`,
+    `packages/orchestrator/src/orchestrator.ts`, and
+    `packages/orchestrator/src/runCommands.ts`, omit optional properties instead
+    of passing `ledger: undefined`, `provider_attempts: undefined`,
+    `budget_cap_usd: undefined`, `budget_action: undefined`, or
+    `recovery_options: undefined`;
+  - in `packages/orchestrator/src/orchestrator.ts`, serialize
+    `SalvageResult` into a plain `Record<string, unknown>` evidence payload
+    instead of assigning the typed object directly;
+  - in `packages/orchestrator/src/orphanRuns.ts`, read run ids through the
+    event payload shape rather than assuming `AgentLensEvent.run_id`;
+  - in `packages/orchestrator/src/reviewEvidence.ts`, guard undefined regex or
+    capture matches before indexing or passing values to string helpers;
+  - in `packages/orchestrator/src/reviewRunner.ts`, construct reviewed task
+    updates without `review_required: undefined`, and guard missing tasks before
+    reading them;
+  - in `apps/console/src/App.tsx`, add the `needs_review` trust verdict mapping.
+- Task 11 must not create or preserve `node_modules` in its task worktree. Do
+  not run package-install commands as part of the task. If tooling leaves a
+  task-worktree-local `node_modules` directory behind, remove it before returning
+  the worker result so isolated verification does not fail with
+  `isolation_unavailable.materialize: worktree_node_modules_exists`.
 - Fix final salvage optional-field schema drift in
   `packages/orchestrator/src/salvage.ts` if the full gate rejects undefined
   optional values.
