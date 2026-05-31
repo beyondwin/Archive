@@ -94,19 +94,21 @@ After Phase -1.0 parsing:
 
 1. If parsed args contain `mode=interactive` (any source — explicit or NL): legacy single-session mode — skip Phase -1, proceed to Phase 0.
 2. If invocation prompt contains literal `<<HEADLESS_KWS_ORCHESTRATOR>>` anywhere: this is the headless instance — skip Phase -1, proceed to Phase 0.
-3. Otherwise: execute Self-Spawn Procedure below, then exit.
+3. If parsed args contain `detach=true` (any source — explicit or NL): execute the Self-Spawn Procedure below, then exit. (Self-Spawn is now opt-in as of v2.22.0.)
+4. Otherwise (bare invocation — neither `detach` nor `mode` passed): run ATTACHED in-session (the new v2.22.0 default; set `state.mode = "interactive_attached"`) and proceed to Phase 0. Additionally, during the 2-week deprecation window, emit a one-line deprecation warning — e.g. `DEPRECATION: bare invocation now runs attached in-session by default; pass detach=true for the old headless self-spawn behavior` — UNLESS `state.deprecation_warnings.attach_default` has already been recorded/acknowledged. This warning is controlled by `state.deprecation_warnings.attach_default`.
 
-> **Headless default vs cache warmth (v2.21, D003).** The default (case 3) is
-> headless self-spawn because it lets the run proceed start-to-finish without
-> occupying the user's interactive session — autonomy is the point. It is **not**
-> cache-optimal: the headless orchestrator is itself a `claude -p` process that
+> **Attached default vs cache warmth (v2.22.0; supersedes v2.21 D003).** As of
+> v2.22.0 the default (case 4, bare invocation) is **attached in-session**
+> (`state.mode = "interactive_attached"`) — it runs in the warm subscription
+> session, which is cache-optimal. Passing `detach=true` (case 3) opts into the
+> headless self-spawn: the orchestrator becomes its own `claude -p` process that
 > receives SessionStart hooks, whose dynamic context (timestamps, git status,
-> system-reminders) shifts the cached prefix turn-to-turn and degrades hit ratio
-> even within one long-lived session. The v2.21 SKILL.md slim (~70% smaller
-> orchestrator prefix) makes any such cache miss cheap, which is the main
-> mitigation. For attended or cache-sensitive runs, pass `mode=interactive`
-> (case 1) to run in the warm subscription session. No auto-fan-out is added in
-> any mode — sub-agent dispatch stays demand-driven (one per task/role).
+> system-reminders) shifts the cached prefix turn-to-turn and degrades hit ratio.
+> The v2.21 SKILL.md slim (~70% smaller orchestrator prefix) makes any such cache
+> miss on the detached path cheap. Choose `detach=true` when you want the run to
+> proceed start-to-finish without occupying your interactive session. No
+> auto-fan-out is added in any mode — sub-agent dispatch stays demand-driven (one
+> per task/role).
 
 ### Self-Spawn Procedure
 
