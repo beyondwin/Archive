@@ -783,14 +783,21 @@ export function hasActiveVerificationFailure(
 }
 ```
 
+Also export any helper consumed by integration fixtures from this file. At
+minimum `resolveTaskVerifications`, `projectVerificationResolutions`,
+`hasActiveVerificationFailure`, and `hasRecoveredFailure` must be exported
+through `packages/lens-projectors/src/index.ts`. Do not update fixture-lab tests
+to import from `src/verificationResolution` directly.
+
 - [ ] **Step 5: Implement apply reason mapper**
 
 Create `packages/lens-projectors/src/applyReason.ts`:
 
 ```ts
 import type { ApplyReadinessReason, WaygentRunStateV2 } from "@waygent/contracts";
+import type { AgentLensEvent } from "@waygent/contracts";
 
-export function applyReadinessReasonFromState(state: WaygentRunStateV2): ApplyReadinessReason {
+export function applyReadinessReasonFromState(state: WaygentRunStateV2, events?: AgentLensEvent[]): ApplyReadinessReason {
   if (state.drift.unrepaired_blockers.length > 0) return "state_drift";
   const audit = state.completion_audit as {
     status?: string;
@@ -814,6 +821,12 @@ export function applyReadinessReasonFromState(state: WaygentRunStateV2): ApplyRe
   return "missing_apply_ready_evidence";
 }
 ```
+
+Under `exactOptionalPropertyTypes`, callers must not pass
+`events: undefined` to helpers that declare `events?: AgentLensEvent[]`. In
+`applyReason.ts` and `apply.ts`, either accept an optional positional
+`events?: AgentLensEvent[]` parameter as above or build the object without the
+`events` key unless a concrete array exists.
 
 - [ ] **Step 6: Wire apply readiness**
 
@@ -902,6 +915,13 @@ Modify `packages/lens-projectors/src/index.ts`:
 ```ts
 export * from "./verificationResolution";
 export * from "./applyReason";
+```
+
+The package index must export every verification-resolution helper referenced
+by integration fixtures. The final line check must pass:
+
+```bash
+rg -n "resolveTaskVerifications|projectVerificationResolutions|hasActiveVerificationFailure|hasRecoveredFailure" packages/lens-projectors/src/index.ts
 ```
 
 - [ ] **Step 9: Run tests**
@@ -1705,7 +1725,9 @@ export async function reviewRun(options: ReviewRunOptions): Promise<{
   const taskId = options.task ?? Object.values(state.tasks).find((task) => task.review_status === "required" || task.review_status === "pending")?.id;
   if (!taskId || !state.tasks[taskId]) return { command: "review", run_id: runId, role, status: "blocked", reason: "no_reviewable_task" };
   const packet = buildReviewPacket({ state, task_id: taskId, role });
-  const result = await runReviewPacket({ root: options.root, state, packet, dry_run: options.dry_run });
+  const runInput: Parameters<typeof runReviewPacket>[0] = { root: options.root, state, packet };
+  if (options.dry_run !== undefined) runInput.dry_run = options.dry_run;
+  const result = await runReviewPacket(runInput);
   if (result.status === "dry_run") return { command: "review", run_id: runId, task_id: taskId, role, status: "dry_run", packet };
 
   const task = state.tasks[taskId]!;
@@ -1737,6 +1759,10 @@ export async function reviewRun(options: ReviewRunOptions): Promise<{
   return { command: "review", run_id: runId, task_id: taskId, role, status: "passed", review_ref: result.artifact_ref };
 }
 ```
+
+Under `exactOptionalPropertyTypes`, do not pass `dry_run: undefined` to
+`runReviewPacket`. Build the input without the optional key unless the CLI or
+caller supplied a concrete boolean, as shown above.
 
 - [ ] **Step 7: Wire CLI command**
 
@@ -3215,12 +3241,22 @@ verify:
   branch is still explicit and covered by existing behavior.
 - Fix final Lens package barrel export drift in
   `packages/lens-projectors/src/index.ts`. If integration or fixture-lab tests
-  import `projectVerificationResolutions` or `resolveTaskVerifications` through
-  `@waygent/lens-projectors`, export the new verification-resolution helpers
-  from the package index instead of changing tests to reach into source
-  internals. The final gate is not complete until:
-  `rg -n "resolveTaskVerifications|projectVerificationResolutions" packages/lens-projectors/src/index.ts`
-  returns both exported names.
+  import `projectVerificationResolutions`, `resolveTaskVerifications`, or
+  `hasRecoveredFailure` through `@waygent/lens-projectors`, export the new
+  verification-resolution helpers from the package index instead of changing
+  tests to reach into source internals. The final gate is not complete until:
+  `rg -n "resolveTaskVerifications|projectVerificationResolutions|hasRecoveredFailure" packages/lens-projectors/src/index.ts`
+  returns all exported names.
+- Fix final apply-reason optional-field drift in
+  `packages/lens-projectors/src/applyReason.ts`. Under
+  `exactOptionalPropertyTypes`, do not pass `events: undefined` into
+  verification-resolution helpers. Omit the key or accept an optional positional
+  `events?: AgentLensEvent[]` parameter and normalize to `[]` internally.
+- Fix final review-run optional-field drift in
+  `packages/orchestrator/src/runCommands.ts`. Under
+  `exactOptionalPropertyTypes`, do not pass `dry_run: undefined` to
+  `runReviewPacket`; construct the input without the optional key unless a
+  concrete boolean is present.
 - Fix final operator-decision optional-field drift in
   `packages/lens-projectors/src/operatorDecision.ts`. Under
   `exactOptionalPropertyTypes`, do not pass `missingRefs: undefined` into
