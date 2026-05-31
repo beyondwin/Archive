@@ -45,6 +45,19 @@ SCAFFOLD_END = "<!-- SCAFFOLD_END -->"
 PAYLOAD_BEGIN = "<!-- PAYLOAD_BEGIN -->"
 PAYLOAD_END = "<!-- PAYLOAD_END -->"
 
+# Combined Transition (v2.22 §2.A2) issues TWO tools in one turn.
+TRANSITION_ROLE = "transition_combined"
+VERIFY_TOOL = "verify_low_batch"
+DOCS_TOOL = "update_phase_docs"
+
+# Roles whose prompt filename does not follow the simple ``role.replace("_","-")``
+# convention. The combined-transition prompt lives at ``transition-prompt.md``
+# (role token ``transition_combined``) so its scaffold sibling is
+# ``_scaffolds/transition-scaffold.md`` (matches the Task 5 linter mapping).
+PROMPT_FILE_ROLE = {
+    TRANSITION_ROLE: "transition",
+}
+
 
 def _scripts_dir() -> Path:
     return Path(__file__).resolve().parent
@@ -58,8 +71,9 @@ def load_prompt(role: str, sk_root) -> tuple[str, str]:
     ``ValueError`` if any marker is missing or out of order.
     """
     # Role tokens use underscores; the prompt filenames use hyphens
-    # (e.g. role "plan_reviewer" -> "plan-reviewer-prompt.md").
-    file_role = role.replace("_", "-")
+    # (e.g. role "plan_reviewer" -> "plan-reviewer-prompt.md"). A few roles map
+    # to a differently-named prompt file (see ``PROMPT_FILE_ROLE``).
+    file_role = PROMPT_FILE_ROLE.get(role, role.replace("_", "-"))
     path = Path(sk_root) / "references" / f"{file_role}-prompt.md"
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
@@ -110,10 +124,8 @@ def build_request(scaffold: str, payload: str, schema: dict, role: str,
     (``cache_control: ephemeral``); the substituted PAYLOAD is the per-call user
     message. Structured output is forced with one tool + ``tool_choice``.
     """
-    tool_name = f"report_{role}"
-    input_schema = schema.get("input_schema", schema)
     rendered_payload = _substitute(payload, task_context)
-    return {
+    req = {
         "model": model,
         "max_tokens": MAX_TOKENS,
         "system": [
@@ -126,15 +138,29 @@ def build_request(scaffold: str, payload: str, schema: dict, role: str,
         "messages": [
             {"role": "user", "content": rendered_payload},
         ],
-        "tools": [
-            {
-                "name": tool_name,
-                "description": f"Report the structured {role} result.",
-                "input_schema": input_schema,
-            }
-        ],
-        "tool_choice": {"type": "tool", "name": tool_name},
     }
+
+    if role == TRANSITION_ROLE:
+        # Combined Transition (v2.22 §2.A2): offer BOTH tool specs verbatim from
+        # the schema and force at least one tool use ("any" disables free text
+        # and permits both tools in the same turn).
+        req["tools"] = schema["tools"]
+        req["tool_choice"] = {"type": "any"}
+        return req
+
+    # Single-tool roles (plan_reviewer, verifier, docs_updater): force the one
+    # report_<role> tool. Unchanged behavior.
+    tool_name = f"report_{role}"
+    input_schema = schema.get("input_schema", schema)
+    req["tools"] = [
+        {
+            "name": tool_name,
+            "description": f"Report the structured {role} result.",
+            "input_schema": input_schema,
+        }
+    ]
+    req["tool_choice"] = {"type": "tool", "name": tool_name}
+    return req
 
 
 def _is_retryable(exc: BaseException) -> bool:
@@ -156,6 +182,26 @@ def _extract_tool_input(response, tool_name: str) -> dict:
         if getattr(block, "type", None) == "tool_use":
             return dict(block.input)
     raise ValueError("no tool_use block in response content")
+
+
+def _extract_combined(response) -> dict:
+    """Pull the combined ``{verify, docs}`` shape from a two-tool response.
+
+    Scans ``response.content`` for the ``verify_low_batch`` and
+    ``update_phase_docs`` tool_use blocks (v2.22 §2.A2 combined transition) and
+    returns ``{"verify": <verify input>, "docs": <docs input>}``. Raises
+    ``ValueError`` if either tool block is missing.
+    """
+    by_name: dict = {}
+    for block in getattr(response, "content", []) or []:
+        if getattr(block, "type", None) == "tool_use":
+            by_name[getattr(block, "name", None)] = dict(block.input)
+    missing = [name for name in (VERIFY_TOOL, DOCS_TOOL) if name not in by_name]
+    if missing:
+        raise ValueError(
+            "combined transition response missing tool_use block(s): "
+            + ", ".join(missing))
+    return {"verify": by_name[VERIFY_TOOL], "docs": by_name[DOCS_TOOL]}
 
 
 def _usage_fields(response) -> dict:
@@ -248,7 +294,6 @@ def dispatch(role: str, task_context: dict, model: str, orch_dir, sk_root,
     scaffold, payload = load_prompt(role, sk_root)
     schema = load_schema(role, sk_root)
     req = build_request(scaffold, payload, schema, role, model, task_context)
-    tool_name = f"report_{role}"
 
     if client is None:
         # Lazy import — only reached for real runs; SDK absent in unit tests.
@@ -273,7 +318,11 @@ def dispatch(role: str, task_context: dict, model: str, orch_dir, sk_root,
             attempt += 1
 
     wall_ms = int((time.monotonic() - start) * 1000)
-    result = _extract_tool_input(response, tool_name)
+    if role == TRANSITION_ROLE:
+        # Combined Transition writes the merged {verify, docs} dict.
+        result = _extract_combined(response)
+    else:
+        result = _extract_tool_input(response, f"report_{role}")
     _write_output(output_path, result)
 
     usage = _usage_fields(response)
