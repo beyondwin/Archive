@@ -6,6 +6,7 @@ export interface RecordSalvageArtifactInput {
   state: WaygentRunStateV2;
   task_id: string;
   attempt_id: string;
+  failure_class: string;
   status: SalvageResult["status"];
   patch_ref: string | null;
   changed_files: string[];
@@ -46,7 +47,7 @@ export function recordSalvageArtifact(input: RecordSalvageArtifactInput): Record
       ...input.state.recovery,
       {
         task_id: input.task_id,
-        failure_class: input.reason ?? "recoverable_patch",
+        failure_class: input.failure_class,
         action: blocked ? "request_decision" : "salvage_then_review",
         automatic: !blocked,
         result: blocked ? "blocked" : "scheduled",

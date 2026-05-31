@@ -13,6 +13,7 @@ describe("recordSalvageArtifact", () => {
       state,
       task_id: "task_a",
       attempt_id: "attempt_task_a_1",
+      failure_class: "malformed_result",
       status: "salvaged_patch",
       patch_ref: "artifacts/worker/task_a/attempt_1_patch.diff",
       changed_files: ["a.txt"],
@@ -41,6 +42,7 @@ describe("recordSalvageArtifact", () => {
       expect.arrayContaining([
         expect.objectContaining({
           task_id: "task_a",
+          failure_class: "malformed_result",
           action: "salvage_then_review",
           salvage_ref: "artifacts/salvage/task_a/attempt_task_a_1.json"
         })
@@ -55,6 +57,7 @@ describe("recordSalvageArtifact", () => {
       state,
       task_id: "task_a",
       attempt_id: "attempt_task_a_1",
+      failure_class: "malformed_result",
       status: "unsafe_patch",
       patch_ref: null,
       changed_files: ["../escape.txt"],
