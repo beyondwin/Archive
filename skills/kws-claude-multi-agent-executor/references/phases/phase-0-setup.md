@@ -384,6 +384,8 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 
    **Dispatch headless** via `claude -p --dangerously-skip-permissions` (same pattern as Verifier — Phase 1 Step 3). Prompt path: `<orch_dir>/plan_review_prompt.txt`. Result path: `<orch_dir>/plan_review.json`. Missing/malformed result → log warning and proceed (Plan Reviewer is advisory; absence is NOT a halt).
 
+   **Model selection (forensics):** the Plan Reviewer runs on `claude-haiku-4-5-20251001` by default (mechanical rubric; overridable via `state.dispatch_config.plan_reviewer_model`). The orchestrator records the selected model into `state.plan_review.model_used` (`model_used` token) so later analysis can attribute review decisions to the exact model used. Selection logic lives in `scripts/dispatch_plan_reviewer.py`.
+
    **Parse the result:**
 
    - `status: "PASS"` → record `<active>.plan_review = {status: "PASS", warnings: []}` at Step 7. Proceed.
