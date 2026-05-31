@@ -945,6 +945,32 @@ function readWorkerResultForTask(state: WaygentRunStateV2, taskId: string): Work
   }
 }
 
+export interface SalvageRepairCandidate {
+  task_id: string;
+  failure_class: string;
+  patch_ref: string;
+  salvage_ref: string | null;
+  evidence_refs: string[];
+}
+
+export function repairCandidateFromRecoveryRecord(record: Record<string, unknown>): SalvageRepairCandidate | null {
+  if (record.action !== "salvage_then_review" && record.action !== "dispatch_repair") return null;
+  const taskId = typeof record.task_id === "string" ? record.task_id : null;
+  const patchRef = typeof record.patch_ref === "string" ? record.patch_ref : null;
+  if (!taskId || !patchRef) return null;
+  const salvageRef = typeof record.salvage_ref === "string" ? record.salvage_ref : null;
+  const evidenceRefs = Array.isArray(record.evidence_refs)
+    ? record.evidence_refs.filter((ref): ref is string => typeof ref === "string" && ref.length > 0)
+    : [];
+  return {
+    task_id: taskId,
+    failure_class: typeof record.failure_class === "string" ? record.failure_class : "unknown",
+    patch_ref: patchRef,
+    salvage_ref: salvageRef,
+    evidence_refs: [...new Set([...evidenceRefs, patchRef, ...(salvageRef ? [salvageRef] : [])])]
+  };
+}
+
 export async function repairRun(options: RepairRunOptions): Promise<RepairRunResult> {
   let runId: string;
   try {
@@ -968,8 +994,48 @@ export async function repairRun(options: RepairRunOptions): Promise<RepairRunRes
     if (typeof patchRef !== "string" || patchRef.length === 0) continue;
     candidates.push({ task, worker_result: worker });
   }
+  const salvageCandidates = v2.recovery
+    .map((record) => repairCandidateFromRecoveryRecord(record as Record<string, unknown>))
+    .filter((candidate): candidate is SalvageRepairCandidate => candidate !== null)
+    .filter((candidate) => !options.task || candidate.task_id === options.task);
 
   if (candidates.length === 0) {
+    if (salvageCandidates.length > 0) {
+      if (!options.task && salvageCandidates.length > 1) {
+        return { command: "repair", run_id: runId, status: "blocked", reason: "ambiguous_task_select_via_flag" };
+      }
+      const salvage = salvageCandidates.at(-1)!;
+      const task = v2.tasks[salvage.task_id];
+      if (!task) return { command: "repair", run_id: runId, status: "blocked", reason: "no_repairable_task" };
+      const packet = buildRepairPacket({
+        task_id: salvage.task_id,
+        attempt_id: `attempt_${salvage.task_id}_repair_salvage_manual`,
+        prior_worker_result: {
+          schema: "runway.worker_result.v1",
+          task_id: salvage.task_id,
+          candidate_id: `candidate_${salvage.task_id}_salvaged`,
+          status: "completed",
+          changed_files: task.file_claims.filter((claim) => claim.mode !== "read_only").map((claim) => claim.path),
+          summary: `Repair from salvaged patch ${salvage.patch_ref}`,
+          evidence: {
+            patch_ref: salvage.patch_ref,
+            salvage_ref: salvage.salvage_ref,
+            evidence_refs: salvage.evidence_refs
+          }
+        },
+        verifications: []
+      });
+      if (options.dry_run) {
+        return { command: "repair", run_id: runId, task_id: salvage.task_id, status: "dry_run", packet };
+      }
+      return {
+        command: "repair",
+        run_id: runId,
+        task_id: salvage.task_id,
+        status: "blocked",
+        reason: "salvage_repair_requires_runtime_resume"
+      };
+    }
     return { command: "repair", run_id: runId, status: "blocked", reason: "no_repairable_task" };
   }
   let chosen: Candidate | undefined;

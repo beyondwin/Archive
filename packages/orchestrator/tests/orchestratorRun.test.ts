@@ -206,6 +206,46 @@ verify:
     expect(state.tasks.task_repair?.status).toBe("verified");
   });
 
+  test("records salvage evidence for malformed provider output with captured patch", async () => {
+    const workspace = initSourceCheckout("waygent-salvage-malformed-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-salvage-malformed-root-"));
+    const script = join(workspace, "malformed-provider.mjs");
+    writeFileSync(script, [
+      "import { writeFileSync } from 'node:fs';",
+      "writeFileSync('salvage.txt', 'salvaged\\n');",
+      "process.stdout.write('{not json');"
+    ].join("\n"));
+
+    const result = await runWaygent({
+      root,
+      workspace,
+      run_id: "run_salvage_malformed",
+      plan: "```yaml waygent-task\nid: task_salvage\ntitle: Salvage malformed provider\ndependencies: []\nfile_claims:\n  - path: salvage.txt\n    mode: owned\nrisk: low\nverify:\n  - test -f salvage.txt\n```",
+      profile: { provider: "codex", execution_mode: "multi-agent" },
+      provider_processes: {
+        codex: {
+          executable: process.execPath,
+          args: [script]
+        }
+      }
+    });
+
+    const state = readRunStateV2(root, "run_salvage_malformed");
+    expect(result.events.map((event) => event.event_type)).toContain("runway.patch_salvaged");
+    expect(state.recovery).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          task_id: "task_salvage",
+          action: "salvage_then_review",
+          result: "scheduled",
+          salvage_ref: "artifacts/salvage/task_salvage/attempt_task_salvage_1.json"
+        })
+      ])
+    );
+    expect(state.apply.status).toBe("blocked");
+    expect(state.completion_audit?.status).toBe("failed");
+  });
+
   test("uses the selected process provider instead of the fake provider", async () => {
     const root = mkdtempSync(join(tmpdir(), "waygent-codex-provider-"));
     const script = `
