@@ -44,6 +44,16 @@ Example:
   "risk_levels": {},
   "review_issue_keys": [],
   "verification": [],
+  "cache_strategy": {
+    "mode": "interactive-default",
+    "stable_prefix_policy": "static-first-hot-tail",
+    "provider_cache_control": "unavailable",
+    "prompt_audit_version": "1"
+  },
+  "cache_observations": [],
+  "prompt_audit": null,
+  "graphify_audit": null,
+  "dispatch_decisions": [],
   "session_owned_resources": [],
   "last_checkpoint": null,
   "timestamps": {
@@ -75,6 +85,21 @@ Required path invariants:
     `subagent_runs` for the same task.
   - `mode=local_fallback`: `run_ids` is empty and `reason` explains the failed
     pre-dispatch prerequisite or safety reason.
+- Cache fields are optional for older runs. When present,
+  `cache_strategy.mode` is one of `interactive-default`,
+  `headless-explicit`, `prompt-export`, or `handoff-export`; provider cache
+  control is one of `unavailable`, `available-unused`, `available-enabled`, or
+  `unknown`.
+- Provider cache counters are telemetry only. Missing cache read/write counters
+  are recorded as `null`, not zero.
+- Finished runs cannot carry non-empty
+  `prompt_audit.dynamic_marker_violations`.
+- `graphify_audit` records deterministic freshness output from
+  `scripts/check_graphify_freshness.py`. Finished runs cannot carry
+  non-empty `graphify_audit.errors`.
+- `dispatch_decisions` records output from `scripts/preflight_dispatch.py`.
+  Decisions are `delegate`, `local_fallback`, or `block`; finished runs cannot
+  retain a `block` decision.
 
 v2.20 context-intelligence state may add per-task fields:
 

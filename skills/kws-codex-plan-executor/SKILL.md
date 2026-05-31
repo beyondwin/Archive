@@ -143,6 +143,22 @@ post-diff and state review before accepting subagent output.
 - Command observations classify bounded command evidence before root cause is
   assigned. Finished runs with `category=unknown` observations must mention the
   command in `completion_audit.residual_risk`.
+- Prompt-generating artifacts follow `references/cache-strategy.md`. The
+  stable prefix role, safety, required-skill, and output-schema content stays before
+  the stable-prefix boundary; run-specific paths, task packets, timestamps, git
+  status, diffs, decisions, and verification evidence stay in the hot tail.
+  Run `scripts/audit_prompt_cache.py`, and finished runs cannot retain
+  non-empty `prompt_audit.dynamic_marker_violations`.
+- Graphify-aware repositories record `graphify_audit` evidence using
+  `scripts/check_graphify_freshness.py`. If `graphify update .` is required
+  after code or meaningful documentation-structure changes, the completion
+  audit records whether the command ran and whether tracked or ignored outputs
+  changed.
+- Subagent pre-dispatch decisions use `scripts/preflight_dispatch.py` before
+  spawning for eligible write-capable tasks. The decision is one of `delegate`,
+  `local_fallback`, or `block`; `local_fallback` reasons flow into task
+  `subagent_strategy.reason`, and `dispatch_decisions` with `block` cannot be
+  carried into a finished lifecycle outcome.
 - In interactive and headless execution, feature, bugfix, refactor, or
   behavior-change implementation must invoke `using-superpowers` as the skill
   gate and `test-driven-development` before implementation code. This is not a
@@ -220,8 +236,8 @@ omitting Spark routes.
 
 | Mode | Required checks before completion |
 |------|-----------------------------------|
-| `interactive` | `scripts/parse_plan.py`, `context.json`, `context_health`, changed-project tests or honest substitute, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py` |
-| `headless` | `scripts/parse_plan.py`, `context.json`, `context_health`, acceptance command or honest substitute, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py`, headless JSONL/final artifact review |
+| `interactive` | `scripts/parse_plan.py`, `context.json`, `context_health`, changed-project tests or honest substitute, prompt cache audit, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py` |
+| `headless` | `scripts/parse_plan.py`, `context.json`, `context_health`, acceptance command or honest substitute, prompt cache audit, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py`, headless JSONL/final artifact review |
 | `prompt` | `evals/check_prompt.py` or the prompt export checklist when no fixture exists |
 | `handoff` | `evals/check_prompt.py` or the prompt export checklist, plus source state/path readability |
 

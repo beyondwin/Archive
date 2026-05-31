@@ -23,10 +23,13 @@
    reading local skill files. Do not hard-code `.system` or any other root. If a
    read fails, re-check the registry entry and root table first; classify it as
    an operator path-resolution error unless the registry itself is proven stale.
-10. If repo instructions mention graphify, read `graphify-out/GRAPH_REPORT.md`,
-   compare `Built from commit` with `git rev-parse HEAD`, run
-   `graphify update .` after code changes, and write the result into
-   `completion_audit.verification_evidence`.
+10. If repo instructions mention graphify, run:
+    `python3 scripts/check_graphify_freshness.py --repo-root "$WORKTREE_ABS" --output "$RUN_DIR/graphify_audit.json"`.
+    After code changes or meaningful documentation-structure changes, run
+    `graphify update .`, then
+    `python3 scripts/check_graphify_freshness.py --repo-root "$WORKTREE_ABS" --update-ran --output "$RUN_DIR/graphify_audit.json"`.
+    Copy or reference the JSON result in state as `graphify_audit` and in
+    `completion_audit.verification_evidence`.
 11. For each task, state the `TASK EXECUTION CONTRACT`, record `unit_manifest`,
    invoke `using-superpowers`, invoke `test-driven-development` for code
    changes, capture RED evidence, implement, capture GREEN evidence, then run

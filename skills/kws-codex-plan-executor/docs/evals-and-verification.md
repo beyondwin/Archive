@@ -16,6 +16,10 @@ python3 evals/check_local_env_preflight.py
 python3 evals/check_invocation_args.py
 python3 evals/check_inspect_runs.py
 python3 evals/check_decisions_register.py
+python3 evals/check_prompt_cache_audit.py
+python3 evals/check_cache_observations.py
+python3 evals/check_graphify_freshness.py
+python3 evals/check_preflight_dispatch.py
 python3 -m py_compile scripts/*.py evals/*.py
 bash -n evals/run.sh
 ```
@@ -24,3 +28,7 @@ The fixture harness copies the skill under test into a fixture repository, then
 uses deterministic runners to generate prompt/handoff outputs and execution
 repository/state artifacts. `check_prompt.py` and `check_execution.py` still
 validate the generated outputs, state, context snapshots, and forbidden edits.
+
+The execution-hardening evals cover prompt cache boundaries, optional provider
+cache observations, Graphify freshness evidence, and deterministic subagent
+pre-dispatch decisions.

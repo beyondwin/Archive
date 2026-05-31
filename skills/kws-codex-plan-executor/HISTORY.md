@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added execution hardening for prompt cache boundaries, optional cache
+  observations, Graphify freshness audits, and deterministic subagent
+  pre-dispatch decisions.
 - Changed the default `subagents=on` behavior from permission-only to
   subagent-first execution for eligible write-capable tasks, with task-level
   `subagent_strategy` audit records for delegated and local-fallback outcomes.

@@ -31,3 +31,11 @@ concrete reason.
 
 AgentLens events provide best-effort replay and learning telemetry. State in
 `~/.codex/orchestrator/<run_id>/state.json` remains the source of truth.
+
+Prompt construction uses a stable prefix/hot tail split. The stable prefix
+contains invariant execution rules; task/run payloads live in the hot tail and
+are audited by `scripts/audit_prompt_cache.py`.
+
+Graphify freshness and subagent dispatch readiness are represented as JSON
+evidence. State remains authoritative; helper outputs are accepted only after
+state validation and parent review.

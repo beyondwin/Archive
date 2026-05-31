@@ -43,3 +43,46 @@ Result:
 - Dynamic prompt/handoff smoke:
   `CODEX_EVAL_TIMEOUT_SECONDS=240 bash evals/run.sh evals/fixtures/01-prompt-only.yaml evals/fixtures/03-continuation.yaml`
   passed both fixtures.
+
+## 2026-05-31
+
+Scope:
+
+- Prompt cache boundary audit and optional provider cache observations.
+- Graphify freshness audit evidence.
+- Deterministic subagent pre-dispatch decisions.
+- Contract, state schema, and docs updates for the execution-hardening gates.
+
+Commands:
+
+```bash
+python3 evals/check_skill_contract.py --skill SKILL.md
+python3 evals/check_state_schema.py
+python3 evals/check_state_reconciliation.py
+python3 evals/check_context_snapshot.py
+python3 evals/check_headless_result.py
+python3 evals/check_spec_manifest.py
+python3 evals/check_task_packet.py
+python3 evals/check_local_env_preflight.py
+python3 evals/check_invocation_args.py
+python3 evals/check_inspect_runs.py
+python3 evals/check_decisions_register.py
+python3 evals/check_prompt_cache_audit.py
+python3 evals/check_cache_observations.py
+python3 evals/check_graphify_freshness.py
+python3 evals/check_preflight_dispatch.py
+python3 -m py_compile scripts/*.py evals/*.py
+bash -n evals/run.sh
+bash evals/run.sh
+graphify update .
+python3 skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py --repo-root /Users/kws/.codex/worktrees/2026-05-31-cpe-execution-hardening-20260531-202212 --update-ran --output /tmp/cpe-graphify-audit-final.json
+```
+
+Result:
+
+- Deterministic evals: pass.
+- Full fixture harness: pass.
+- Python compile and shell syntax: pass.
+- Graphify update: pass; `graphify-out/GRAPH_REPORT.md` and `graph.json`
+  refreshed with `Built from commit: b094e729`.
+- Graphify freshness audit: pass with `fresh=true` and no errors.

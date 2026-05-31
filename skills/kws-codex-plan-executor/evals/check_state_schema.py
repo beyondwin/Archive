@@ -383,6 +383,89 @@ def main() -> int:
     if not checks["valid_v220_context_state_passes"]:
         failures.append("valid v2.20 context-intelligence state should pass: " + (valid_v220.stderr or valid_v220.stdout))
 
+    valid_hardening_fields = v220_state()
+    valid_hardening_fields["cache_strategy"] = {
+        "mode": "interactive-default",
+        "stable_prefix_policy": "static-first-hot-tail",
+        "provider_cache_control": "unavailable",
+        "prompt_audit_version": "1",
+    }
+    valid_hardening_fields["cache_observations"] = [
+        {
+            "observed_at": "2026-05-19T14:33:00Z",
+            "source": "codex-metadata",
+            "unit": "task_0",
+            "mode": "interactive",
+            "model": "gpt-5",
+            "input_tokens": 100,
+            "cached_read_tokens": None,
+            "cached_write_tokens": None,
+            "output_tokens": 20,
+        }
+    ]
+    valid_hardening_fields["prompt_audit"] = {
+        "last_checked_at": "2026-05-19T14:33:00Z",
+        "stable_prefix_hashes": {"templates/fresh-session-prompt.txt": "abc"},
+        "stable_prefix_bytes": {"templates/fresh-session-prompt.txt": 100},
+        "dynamic_marker_violations": [],
+    }
+    valid_hardening_fields["graphify_audit"] = {
+        "schema_version": "1",
+        "graphify_present": True,
+        "fresh": True,
+        "update_required": False,
+        "warnings": [],
+        "errors": [],
+    }
+    valid_hardening_fields["dispatch_decisions"] = [
+        {
+            "schema_version": "1",
+            "task_id": "task_0",
+            "decision": "delegate",
+            "reason": "all pre-dispatch prerequisites passed",
+            "write_scope": ["docs/example.md"],
+            "failed_prerequisites": [],
+        }
+    ]
+    result = run_validator(script, valid_hardening_fields)
+    checks["valid_hardening_fields_pass"] = result.returncode == 0
+    if not checks["valid_hardening_fields_pass"]:
+        failures.append("valid cache, graphify, and dispatch fields should pass: " + (result.stderr or result.stdout))
+
+    graphify_error = v220_state()
+    graphify_error["graphify_audit"] = {
+        "schema_version": "1",
+        "graphify_present": True,
+        "fresh": False,
+        "update_required": True,
+        "warnings": [],
+        "errors": ["graphify report is stale and update evidence is missing"],
+    }
+    result = run_validator(script, graphify_error)
+    checks["finished_graphify_errors_fail"] = result.returncode != 0 and "graphify_audit.errors" in (
+        result.stderr + result.stdout
+    )
+    if not checks["finished_graphify_errors_fail"]:
+        failures.append("finished state with graphify audit errors should fail")
+
+    dispatch_block = v220_state()
+    dispatch_block["dispatch_decisions"] = [
+        {
+            "schema_version": "1",
+            "task_id": "task_0",
+            "decision": "block",
+            "reason": "dirty files overlap delegated write scope",
+            "write_scope": ["docs/example.md"],
+            "failed_prerequisites": ["dirty_overlap:docs/example.md"],
+        }
+    ]
+    result = run_validator(script, dispatch_block)
+    checks["finished_dispatch_block_fails"] = result.returncode != 0 and "block decision" in (
+        result.stderr + result.stdout
+    )
+    if not checks["finished_dispatch_block_fails"]:
+        failures.append("finished state with dispatch block decision should fail")
+
     missing_subagent_strategy = v220_state()
     missing_subagent_strategy["tasks"]["task_0"].pop("subagent_strategy")
     result = run_validator(script, missing_subagent_strategy)
