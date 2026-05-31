@@ -382,7 +382,11 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
    - `{risk_levels_yaml}` — from Step 4 (YAML-formatted `task_N: <risk>`)
    - `{result_json_path}` — `<orch_dir>/plan_review.json`
 
-   **Dispatch headless** via `claude -p --dangerously-skip-permissions` (same pattern as Verifier — Phase 1 Step 3). Prompt path: `<orch_dir>/plan_review_prompt.txt`. Result path: `<orch_dir>/plan_review.json`. Missing/malformed result → log warning and proceed (Plan Reviewer is advisory; absence is NOT a halt).
+   **Dispatch mode (v2.22 §2.B1):** branch on `state.dispatch_config.plan_reviewer` (default `"api"` in v2.22):
+   - `"api"` (default) → dispatch via `scripts/dispatch_via_api.py --role plan_reviewer --task-context <orch_dir>/plan_review_ctx.json --output <orch_dir>/plan_review.json --model <selected-model> --orch-dir <orch_dir>`. Write the placeholder values (`plan_path`, `plan_full_text`, `spec_path`, `spec_full_text`, `risk_levels_yaml`, `spec_manifest_json`, `result_json_path`) into `<orch_dir>/plan_review_ctx.json` first; the helper splits the cached scaffold from the per-invocation payload, forces structured output via the `report_plan_reviewer` tool, accumulates cost, and emits the `kws-cme.dispatch_via_api` AgentLens event. An ENV_BLOCKER ESCALATE result (`status: "ESCALATE"`, `type: "ENV_BLOCKER"`) means the API failed after 3 retries — do NOT silently fall back to `-p`; surface it so the user can rerun with `dispatch_config.plan_reviewer="p"`.
+   - `"p"` → use the legacy path below.
+
+   **Legacy dispatch headless** (`dispatch_config.plan_reviewer == "p"`) via `claude -p --dangerously-skip-permissions` (same pattern as Verifier — Phase 1 Step 3). Prompt path: `<orch_dir>/plan_review_prompt.txt`. Result path: `<orch_dir>/plan_review.json`. Missing/malformed result → log warning and proceed (Plan Reviewer is advisory; absence is NOT a halt).
 
    **Model selection (forensics):** the Plan Reviewer runs on `claude-haiku-4-5-20251001` by default (mechanical rubric; overridable via `state.dispatch_config.plan_reviewer_model`). The orchestrator records the selected model into `state.plan_review.model_used` (`model_used` token) so later analysis can attribute review decisions to the exact model used. Selection logic lives in `scripts/dispatch_plan_reviewer.py`.
 
