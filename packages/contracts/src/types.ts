@@ -552,6 +552,26 @@ export interface OperatorEvidencePacket {
   redaction_notes: string[];
 }
 
+export type RecoverableEvidenceKind = "recoverable_patch" | "recoverable_worker_result";
+export type RecoverableEvidenceAction = "dispatch_repair" | "salvage_then_review";
+
+export interface OperatorRecoverableEvidence {
+  task_id: string;
+  failure_class: FailureClass | string;
+  kind: RecoverableEvidenceKind;
+  patch_ref: string | null;
+  worker_result_ref?: string | null;
+  salvage_ref: string | null;
+  recommended_action: RecoverableEvidenceAction;
+  evidence_refs: string[];
+}
+
+export interface OperatorWhyNotApplyReady {
+  reason: string;
+  missing_contracts: string[];
+  evidence_refs: string[];
+}
+
 export interface OperatorAiHandoff {
   purpose: "draft_repair_plan" | "summarize_blocker" | "compare_recovery_options";
   prompt_summary: string;
@@ -627,6 +647,8 @@ export interface OperatorDecisionProjection {
     failure_class: string;
     evidence_refs: string[];
   }>;
+  recoverable_evidence?: OperatorRecoverableEvidence[];
+  why_not_apply_ready?: OperatorWhyNotApplyReady | null;
   cost_summary?: CostSummaryProjection;
   stale_run_status?: StaleRunStatus;
   source_projection_refs: OperatorSourceProjectionRefs;
