@@ -25,7 +25,7 @@ Two field classes, dispatched by whether `plan_chain` is present:
 
 | Class | Fields |
 |-------|--------|
-| **Run-level** | `schema_version`, `mode`, `active_plan`, `plan`, `spec`, `branch`, `worktree`, `orchestrator_dir`, `source_repo`, `test_command`, `implementer_model`, `spec_edits`, `chain_resume`, `current_task`, `current_step_within_task`, `current_pre_task_sha`, `current_pre_group_sha`, `current_review_retries`, `current_verifier_retries`, `current_escalation_count`, `current_previous_issues`, `phase_summaries`, `phase_doc_commits`, `budget_cap_usd`, `budget_action`, `cost_ledger`, `archive`, `agentlens_orchestration_run`, `agentlens_healthy`, `context_budget`, `timestamps`, `plan_chain` |
+| **Run-level** | `schema_version`, `mode`, `active_plan`, `plan`, `spec`, `branch`, `worktree`, `orchestrator_dir`, `source_repo`, `test_command`, `implementer_model`, `spec_edits`, `chain_resume`, `current_task`, `current_step_within_task`, `current_pre_task_sha`, `current_pre_group_sha`, `current_review_retries`, `current_verifier_retries`, `current_escalation_count`, `current_previous_issues`, `phase_summaries`, `phase_doc_commits`, `budget_cap_usd`, `budget_action`, `cost_ledger`, `archive`, `agentlens_orchestration_run`, `agentlens_healthy`, `context_budget`, `timestamps`, `plan_chain`, `dispatch_config` |
 | **Per-plan** (`<active>`) | `tasks`, `task_summaries`, `quality_trend`, `baseline`, `low_tasks_pending_verification`, `global_constraints`, `compaction_points`, `execution_plan`, `risk_levels`, `task_complexity`, `task_header_prefix`, `last_compaction_after_task`, `last_completed_task`, `last_completed_at`, `plan_review`, `spec_manifest`, `decisions_register` |
 
 Hard-coding a per-plan field at top-level for a multi-plan run silently corrupts
@@ -76,6 +76,10 @@ the chain: plan 0's data writes to top-level while plan 1's writes to
   "chain_resume": null,
   "budget_cap_usd": null,
   "budget_action": "warn",
+  "dispatch_config": {
+    "plan_reviewer": "api", "verifier_batch": "api", "verifier_per_task": "api",
+    "transition_combined": "api", "docs_updater_phase": "api", "docs_updater_final": "api"
+  },
   "cost_ledger": {
     "by_task": {}, "by_role": {}, "by_model": {},
     "totals": {"input_tokens": 0, "output_tokens": 0, "cached_read_tokens": 0,
@@ -171,6 +175,12 @@ per-plan data when its swap fires at Phase 2 Step -1.
   run-level and span the chain. `by_task` is keyed
   `"<plan_index_or_'top'>::<task_id>::<role>"` so one ledger covers the chain.
   `budget_action ∈ {pause, warn, off}`.
+- **`dispatch_config`** (v2.22) is run-level and spans the chain. Six role gates —
+  `plan_reviewer`, `verifier_batch`, `verifier_per_task`, `transition_combined`,
+  `docs_updater_phase`, `docs_updater_final` — each `"p" | "api"`, default `"api"`.
+  `"api"` routes the role through `scripts/dispatch_via_api.py` (Anthropic Messages
+  API + prompt caching); `"p"` falls back to the legacy `claude -p` subprocess path
+  for that role. The selection is NOT duplicated per plan_chain entry.
 - **`agentlens_orchestration_run` / `agentlens_healthy`** are run-level and
   preserved across swaps/handoffs — see `cross-cutting/agentlens-emit-sites.md`.
 - **`timestamps.started_at`** is stamped at Phase 0 Step 7.5 (setdefault, via
