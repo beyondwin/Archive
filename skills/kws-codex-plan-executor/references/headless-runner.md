@@ -23,6 +23,11 @@ Before task execution, create the git worktree under `$WORKTREE`; if the branch
 name already exists, append the run_id or another unique suffix. Do not implement from `main`.
 Do not implement from the caller's original checkout.
 
+Headless execution uses the same subagent-first default as interactive mode:
+`subagents=on` delegates eligible write-capable tasks from task packets by
+default, while local fallback must be recorded in task `subagent_strategy` with
+the concrete prerequisite or safety reason.
+
 When `CODEX_EVAL_HOME` is present, the current `codex exec --cd` repository is
 already the isolated execution workspace. In that eval runtime, do not run
 `git worktree add` or write git refs. Use the current repository for edits,

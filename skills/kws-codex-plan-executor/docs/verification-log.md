@@ -9,6 +9,9 @@ Scope:
 - v2.20.0 subagent default is `on`; spawning remains task-packet-scoped,
   `subagents=auto` is conservative explicit-request mode, and `subagents=off`
   is local-only.
+- v2.21.0 tightens that default to subagent-first execution for eligible
+  write-capable tasks and validates task-level `subagent_strategy` records for
+  delegated and local-fallback outcomes.
 - Retired local replay and learning helper surface removed from active docs,
   scripts, and eval expectations.
 - AgentLens outcome mapping, redacted payload refs, non-mutating reconcile

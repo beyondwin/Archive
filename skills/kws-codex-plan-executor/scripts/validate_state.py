@@ -70,6 +70,7 @@ VALID_SUBAGENT_STATUSES = {"queued", "running", "completed", "failed", "cancelle
 VALID_SUBAGENT_REVIEW_STATUSES = {"unreviewed", "accepted", "rejected", "changes_requested"}
 REQUIRED_SUBAGENT_FIELDS = {"id", "owner_task", "mode", "write_scope", "status", "result_summary"}
 COMPLETED_SUBAGENT_FIELDS = {"changed_files", "review_status"}
+VALID_SUBAGENT_STRATEGY_MODES = {"delegated", "local_fallback"}
 VALID_COMMAND_OBSERVATION_CATEGORIES = {
     "source_failure",
     "missing_local_env",
@@ -326,6 +327,24 @@ def _globs_overlap(left: list[str], right: list[str]) -> bool:
     return False
 
 
+def _reviewed_completed_subagent_run_ids(data: dict, task_id: str) -> set[str]:
+    runs = data.get("subagent_runs", [])
+    if not isinstance(runs, list):
+        return set()
+    ids: set[str] = set()
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        if (
+            run.get("owner_task") == task_id
+            and run.get("status") == "completed"
+            and run.get("review_status") == "accepted"
+            and _has_substantive_value(run.get("id"))
+        ):
+            ids.add(str(run["id"]))
+    return ids
+
+
 def _validate_subagents(data: dict, errors: list[str]) -> None:
     requested = data.get("subagents_requested")
     runs = data.get("subagent_runs", [])
@@ -507,6 +526,49 @@ def _validate_compaction(value: object, errors: list[str]) -> None:
         errors.append("compaction.context_drop_count must be a non-negative integer")
 
 
+def _validate_subagent_strategy(task_id: str, task: dict, data: dict, errors: list[str]) -> None:
+    if data.get("lifecycle_outcome") != "finished" or data.get("subagents_requested") is not True:
+        return
+    completed = str(task.get("status", "")).lower() in {"complete", "completed", "done", "verified", "pass", "passed"}
+    if not completed:
+        return
+    manifest = task.get("unit_manifest")
+    if not isinstance(manifest, dict):
+        return
+    allowed = manifest.get("allowed_write_globs")
+    tool_policy = manifest.get("tool_policy")
+    write_capable = (
+        tool_policy in {"implementation", "docs"}
+        and isinstance(allowed, list)
+        and any(isinstance(item, str) and item.strip() for item in allowed)
+    )
+    if not write_capable:
+        return
+
+    strategy = task.get("subagent_strategy")
+    if not isinstance(strategy, dict):
+        errors.append(f"{task_id}: completed v2.20 subagents=on write task missing subagent_strategy")
+        return
+    mode = strategy.get("mode")
+    if mode not in VALID_SUBAGENT_STRATEGY_MODES:
+        errors.append(f"{task_id}: subagent_strategy.mode must be one of {sorted(VALID_SUBAGENT_STRATEGY_MODES)}")
+    if not _has_substantive_value(strategy.get("reason")):
+        errors.append(f"{task_id}: subagent_strategy.reason must explain the delegation or local fallback")
+    run_ids = strategy.get("run_ids")
+    if run_ids is None:
+        run_ids = []
+    if not isinstance(run_ids, list) or not all(isinstance(item, str) and item.strip() for item in run_ids):
+        errors.append(f"{task_id}: subagent_strategy.run_ids must be a list of strings")
+        run_ids = []
+    if mode == "delegated":
+        reviewed = _reviewed_completed_subagent_run_ids(data, task_id)
+        missing = [run_id for run_id in run_ids if run_id not in reviewed]
+        if not run_ids or missing:
+            errors.append(f"{task_id}: delegated subagent_strategy requires a reviewed completed subagent_run")
+    elif mode == "local_fallback" and run_ids:
+        errors.append(f"{task_id}: local_fallback subagent_strategy must not list delegated run_ids")
+
+
 def _validate_v220_task(task_id: str, task: dict, data: dict, errors: list[str]) -> None:
     run_dir = data.get("run_dir")
     packet_dir = data.get("task_packet_dir")
@@ -535,6 +597,7 @@ def _validate_v220_task(task_id: str, task: dict, data: dict, errors: list[str])
         errors.append(f"{task_id}: timing must be an object")
     if isinstance(run_dir, str) and isinstance(packet_path, str) and not packet_path.startswith(run_dir):
         errors.append(f"{task_id}: task_packet_path must be under run_dir")
+    _validate_subagent_strategy(task_id, task, data, errors)
 
 
 def _validate_v220(data: dict, errors: list[str]) -> None:

@@ -23,9 +23,12 @@ before creating the worktree or orchestrator directory.
 - `context_budget=60000`
 - `manifest_fallback=full_spec_on_blocker`
 
-`subagents=on` permits task-packet-scoped subagents by default. Pass
-`subagents=auto` for conservative spawning only after an explicit delegation or
-parallel-work request, or `subagents=off` for a local-only run.
+`subagents=on` is the subagent-first default. Eligible write-capable tasks run
+through task-packet-scoped subagents by default, with parent post-diff and state
+review before acceptance. Pass `subagents=auto` for conservative spawning only
+after an explicit delegation or parallel-work request, or `subagents=off` for a
+local-only run. A `subagents=on` local fallback must record the concrete reason
+in task `subagent_strategy`.
 
 ## Validation
 

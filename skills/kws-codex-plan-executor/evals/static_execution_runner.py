@@ -97,6 +97,35 @@ def build_state(
     )
 
     acceptance = " && ".join(f"test -f {path}" for path in changed_files) or "no repository edit required"
+    subagent_runs = []
+    subagent_strategy = {
+        "mode": "local_fallback",
+        "run_ids": [],
+        "reason": "No repository write was required by the deterministic fixture.",
+    }
+    if changed_files:
+        subagent_runs = [
+            {
+                "id": "agent_static_task_0",
+                "owner_task": "task_0",
+                "mode": "fork_context",
+                "task_packet_path": str(packet_path),
+                "state_path": str(run_dir / "state.json"),
+                "write_scope": changed_files,
+                "verification_expectation": acceptance,
+                "status": "completed",
+                "result_summary": "Applied deterministic fixture edits through the simulated subagent path.",
+                "changed_files": changed_files,
+                "review_status": "accepted",
+                "merged_at": now,
+                "overlap_rationale": "Subagent owned task_0 edits; parent reviewed and accepted the diff.",
+            }
+        ]
+        subagent_strategy = {
+            "mode": "delegated",
+            "run_ids": ["agent_static_task_0"],
+            "reason": "Default subagent-first execution for an eligible task packet in the deterministic fixture.",
+        }
     contract = {
         "scope": "Execute deterministic eval fixture task.",
         "files_to_inspect": ["plan.md", "spec.md", *changed_files],
@@ -139,7 +168,7 @@ def build_state(
             "verification_evidence": [acceptance],
         },
         "subagents_requested": True,
-        "subagent_runs": [],
+        "subagent_runs": subagent_runs,
         "tasks": {
             "task_0": {
                 "status": "completed",
@@ -162,6 +191,7 @@ def build_state(
                 "task_packet_sha256": packet_sha,
                 "spec_section_ids": [],
                 "fallback_spec_used": False,
+                "subagent_strategy": subagent_strategy,
                 "timing": {"started": now, "completed": now, "verified": now},
             }
         },

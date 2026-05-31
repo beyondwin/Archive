@@ -2,8 +2,8 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "2.20.0"
-  updated_at: "2026-05-19"
+  version: "2.21.0"
+  updated_at: "2026-05-31"
 ---
 
 # KWS Codex Plan Executor
@@ -29,10 +29,10 @@ Supported arguments:
 - `resume=latest|<state-path>|<run_id>` optional; if multiple candidate active
   runs exist, stop and ask which run/state to resume.
 - `mode=interactive|headless|prompt|handoff` optional, default `interactive`.
-- `subagents=auto|on|off` optional, default `on`; `subagents=on` permits
-  subagents for this run, `subagents=off` forces a local-only run, and
-  `subagents=auto` uses conservative spawning only when the user explicitly
-  requested subagents, delegation, or parallel work.
+- `subagents=auto|on|off` optional, default `on`; `subagents=on` is the
+  subagent-first default for eligible executable tasks, `subagents=off` forces
+  a local-only run, and `subagents=auto` uses conservative spawning only when
+  the user explicitly requested subagents, delegation, or parallel work.
 - `headless_sandbox=workspace-write|read-only` optional, default
   `workspace-write`; `read-only` is for preflight/prompt verification and
   blocks edit execution.
@@ -57,15 +57,18 @@ checkout. If a dedicated non-conflicting worktree under `~/.codex/worktrees/`
 cannot be created or selected before task contracts and edits, stop with a
 blocker.
 
-Only use `spawn_agent` when the resolved invocation has `subagents=on`, or when
-`subagents=auto` and the user explicitly requested subagents, delegation, or
-parallel agent work. Do not spawn subagents when `subagents=auto` without an
-explicit user request, or when `subagents=off`.
+Use `spawn_agent` by default for eligible executable tasks when the resolved
+invocation has `subagents=on`. Use it for `subagents=auto` only when the user
+explicitly requested subagents, delegation, or parallel agent work. Do not spawn
+subagents when `subagents=auto` without an explicit user request, or when
+`subagents=off`.
 
-When subagents are permitted, dispatch from task packets, not raw full-plan
-context. Do not ask a subagent to infer its write scope from the entire plan.
-The main agent remains responsible for post-diff and state review before
-accepting subagent output.
+When dispatching subagents, use task packets, not raw full-plan context. Do not
+ask a subagent to infer its write scope from the entire plan.
+If an otherwise executable task falls back to local implementation under
+`subagents=on`, record the failed pre-dispatch prerequisite or concrete reason
+in the task `subagent_strategy`. The main agent remains responsible for
+post-diff and state review before accepting subagent output.
 
 ## Core Invariants
 
@@ -133,6 +136,10 @@ accepting subagent output.
   the run is explicitly local-only (`subagents=off`) or conservative auto mode
   without an explicit subagent/delegation/parallel request. Finished runs cannot
   retain running or unreviewed subagent records.
+- For v2.20+ finished runs with `subagents_requested=true`, every completed
+  write-capable task records `subagent_strategy`. `mode=delegated` must point
+  to reviewed completed `subagent_runs`; `mode=local_fallback` must include a
+  concrete reason and no delegated run ids.
 - Command observations classify bounded command evidence before root cause is
   assigned. Finished runs with `category=unknown` observations must mention the
   command in `completion_audit.residual_risk`.

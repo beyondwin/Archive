@@ -114,6 +114,14 @@ def completed_subagent_run() -> dict:
     }
 
 
+def completed_task_subagent_run() -> dict:
+    run = completed_subagent_run()
+    run["write_scope"] = ["docs/example.md"]
+    run["changed_files"] = ["docs/example.md"]
+    run["overlap_rationale"] = "Subagent owned task_0 edits; parent reviewed and accepted the diff."
+    return run
+
+
 def valid_command_observation() -> dict:
     return {
         "command": "pnpm test",
@@ -172,6 +180,11 @@ def v220_state() -> dict:
             "task_packet_sha256": "a" * 64,
             "spec_section_ids": ["S1"],
             "fallback_spec_used": False,
+            "subagent_strategy": {
+                "mode": "delegated",
+                "run_ids": ["agent_123"],
+                "reason": "Default subagent-first execution for an eligible task packet.",
+            },
             "timing": {
                 "started": "2026-05-19T14:31:00Z",
                 "completed": "2026-05-19T14:34:00Z",
@@ -179,6 +192,7 @@ def v220_state() -> dict:
             },
         }
     )
+    state["subagent_runs"] = [completed_task_subagent_run()]
     return state
 
 
@@ -204,13 +218,13 @@ def main() -> int:
     if not checks["valid_contract_passes"]:
         failures.append("valid v2.19 state should pass: " + (valid.stderr or valid.stdout))
 
-    subagents_on_without_runs = base_state()
-    subagents_on_without_runs["subagents_requested"] = True
-    subagents_on_without_runs["subagent_runs"] = []
-    result = run_validator(script, subagents_on_without_runs)
-    checks["subagents_on_without_runs_passes"] = result.returncode == 0
-    if not checks["subagents_on_without_runs_passes"]:
-        failures.append("subagents on with no delegated runs should pass")
+    legacy_subagents_on_without_runs = base_state()
+    legacy_subagents_on_without_runs["subagents_requested"] = True
+    legacy_subagents_on_without_runs["subagent_runs"] = []
+    result = run_validator(script, legacy_subagents_on_without_runs)
+    checks["legacy_subagents_on_without_runs_passes"] = result.returncode == 0
+    if not checks["legacy_subagents_on_without_runs_passes"]:
+        failures.append("legacy v2.19 subagents on with no delegated runs should pass")
 
     subagents_off = base_state()
     subagents_off["subagents_requested"] = False
@@ -368,6 +382,36 @@ def main() -> int:
     checks["valid_v220_context_state_passes"] = valid_v220.returncode == 0
     if not checks["valid_v220_context_state_passes"]:
         failures.append("valid v2.20 context-intelligence state should pass: " + (valid_v220.stderr or valid_v220.stdout))
+
+    missing_subagent_strategy = v220_state()
+    missing_subagent_strategy["tasks"]["task_0"].pop("subagent_strategy")
+    result = run_validator(script, missing_subagent_strategy)
+    checks["finished_v220_subagents_on_requires_subagent_strategy"] = (
+        result.returncode != 0 and "subagent_strategy" in (result.stderr + result.stdout)
+    )
+    if not checks["finished_v220_subagents_on_requires_subagent_strategy"]:
+        failures.append("finished v2.20 subagents=on task should require a subagent_strategy audit decision")
+
+    local_fallback = v220_state()
+    local_fallback["subagent_runs"] = []
+    local_fallback["tasks"]["task_0"]["subagent_strategy"] = {
+        "mode": "local_fallback",
+        "run_ids": [],
+        "reason": "No safe disjoint write scope was available after the pre-dispatch checks.",
+    }
+    result = run_validator(script, local_fallback)
+    checks["finished_v220_local_fallback_with_reason_passes"] = result.returncode == 0
+    if not checks["finished_v220_local_fallback_with_reason_passes"]:
+        failures.append("finished v2.20 local fallback with a reason should pass: " + (result.stderr or result.stdout))
+
+    delegated_without_run = v220_state()
+    delegated_without_run["subagent_runs"] = []
+    result = run_validator(script, delegated_without_run)
+    checks["delegated_strategy_requires_reviewed_subagent_run"] = (
+        result.returncode != 0 and "reviewed completed subagent_run" in (result.stderr + result.stdout)
+    )
+    if not checks["delegated_strategy_requires_reviewed_subagent_run"]:
+        failures.append("delegated subagent_strategy should require a reviewed completed subagent_run")
 
     bad_manifest_path = v220_state()
     bad_manifest_path["spec_manifest_path"] = f"{run_dir()}/wrong.json"

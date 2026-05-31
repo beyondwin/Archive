@@ -1,7 +1,8 @@
 # Subagent Run Store
 
 Subagent records are execution artifacts for runs that permit delegation.
-`subagents=on` is the default and permits task-packet-scoped spawning.
+`subagents=on` is the subagent-first default and uses task-packet-scoped
+spawning for eligible write-capable tasks.
 `subagents=auto` does not by itself authorize spawning unless the user
 explicitly requests subagents, delegation, or parallel work.
 
@@ -29,6 +30,10 @@ Rules:
 - `subagent_runs` requires `subagents_requested=true`, which is the default for
   `subagents=on` runs. Empty `subagent_runs` may appear with
   `subagents_requested=false` for `subagents=off` or conservative auto runs.
+- In finished v2.20+ runs with `subagents_requested=true`, each completed
+  write-capable task records `subagent_strategy`. Delegated strategies list the
+  accepted subagent run ids; local fallback strategies explain why delegation
+  was unsafe or unavailable.
 - `owner_task` must reference a task in state.
 - Delegated workers receive only task id, task packet path, state path, write
   scope, and verification expectation; they do not receive raw full-plan

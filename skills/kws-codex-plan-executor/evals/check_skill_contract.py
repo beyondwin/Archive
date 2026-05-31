@@ -52,10 +52,11 @@ def main() -> int:
     ]
 
     checks = {
-        "version_2200": 'version: "2.20.0"' in text,
+        "version_2210": 'version: "2.21.0"' in text,
         "resume_argument": "resume=latest|<state-path>" in invocation,
         "subagents_on_default": "subagents=auto|on|off" in invocation and "default `on`" in invocation,
-        "subagents_on_is_default_permission": "permits subagents for this run" in normalized
+        "subagents_on_is_subagent_first_default": "subagent-first default" in normalized
+        and "subagent_strategy" in state_schema
         and "Subagent records are execution artifacts" in subagents,
         "subagents_auto_requires_user_request": "`subagents=auto` does not by itself authorize spawning" in subagents
         and "Do not spawn subagents when `subagents=auto` without an explicit user request" in normalized,
@@ -68,8 +69,8 @@ def main() -> int:
         ),
         "main_agent_reviews_post_diff_and_state": "post-diff and state" in runtime
         and "before accepting subagent output" in runtime,
-        "subagents_not_raw_full_plan_context": "dispatch from task packets, not raw full-plan\ncontext" in text
-        and "Do not ask a subagent to infer its write scope from the entire plan" in text,
+        "subagents_not_raw_full_plan_context": "use task packets, not raw full-plan context" in normalized
+        and "Do not ask a subagent to infer its write scope from the entire plan" in normalized,
         "subagents_on_default_documented": "subagents=on" in template
         and "기본값" in template
         and "subagents=off" in template,
