@@ -55,6 +55,30 @@ Expected operator behavior:
 - budget pauses emit `platform.budget_paused`;
 - stale runs can be marked blocked without mutating source checkouts.
 
+## Recovery-to-Review Gate
+
+Use this gate after changes to failure evidence classification, salvage
+artifacts, repair scheduling, review-required recovered work, or operator
+projection fields:
+
+```bash
+bun test packages/orchestrator/tests/failureEvidence.test.ts packages/orchestrator/tests/salvageArtifacts.test.ts
+bun test packages/lens-projectors/tests/operatorDecision.test.ts
+bun run waygent:scenarios
+bun run waygent:fixture-lab
+bun run waygent:dogfood
+git diff --check
+```
+
+Expected behavior:
+
+- patch-bearing verification failures route to focused repair before full retry;
+- malformed provider output with a safe captured diff records salvage evidence;
+- salvaged patches block as review-required until review evidence exists;
+- recovered and reviewed verification failures can become apply-ready;
+- `waygent explain`, API, and console projections read the same operator
+  decision fields.
+
 ## Console Gate
 
 ```bash

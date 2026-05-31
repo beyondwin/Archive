@@ -283,6 +283,20 @@ run is blocked. Waygent records each attempt in `state.recovery[]`, emits either
 only from safe task boundaries. Recovery never changes completion audit
 requirements.
 
+### Recovery-to-Review Loop
+
+Patch-bearing failures are recovered before full worker retry when the evidence
+is safe to inspect. `verification_failed` with a completed worker result and a
+patch ref routes to focused repair. `malformed_result`, `adapter_crashed`, and
+`timeout` with a bounded captured diff record `waygent.salvage_result.v1` and
+block as review-required evidence until review and verification pass.
+
+Salvage is not success. A salvaged patch can start repair or review, but it
+does not create an apply-ready checkpoint by itself. Apply readiness still
+requires review evidence when policy requires it, verification evidence,
+checkpoint manifests, dry-run evidence, combined apply evidence, reconciliation,
+and a clean source checkout.
+
 ## Verification Environment
 
 Waygent prepares verification-only dependency access for isolated local
