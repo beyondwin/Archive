@@ -362,6 +362,58 @@ describe("operator decision projector", () => {
     expect(projection.evidence_packet.recovered_failure_refs).toContain("event:event_failed");
   });
 
+  test("surfaces salvage recovery as recoverable evidence and review blocker", () => {
+    const state = makeState({
+      status: "blocked",
+      lifecycle_outcome: "blocked",
+      current_phase: "review",
+      tasks: {
+        task_a: task("task_a", {
+          status: "verified",
+          review_required: true,
+          review_status: "pending",
+          latest_failure_class: null
+        })
+      },
+      recovery: [
+        {
+          task_id: "task_a",
+          failure_class: "malformed_result",
+          action: "salvage_then_review",
+          result: "scheduled",
+          salvage_ref: "artifacts/salvage/task_a/attempt_task_a_1.json",
+          patch_ref: "artifacts/worker/task_a/attempt_1_patch.diff",
+          evidence_refs: ["artifacts/provider/attempt_task_a_1.stdout.txt"]
+        }
+      ],
+      completion_audit: {
+        status: "failed",
+        residual_risk: ["review_evidence:recovery_attempted"]
+      },
+      apply: { status: "blocked", reason: "review_evidence_missing" }
+    });
+
+    const projection = projectOperatorDecisionFromState({ state, events: [] });
+
+    expect(projection.primary_blocker?.code).toBe("review_evidence_missing");
+    expect(projection.recoverable_evidence).toEqual([
+      expect.objectContaining({
+        task_id: "task_a",
+        failure_class: "malformed_result",
+        kind: "recoverable_patch",
+        patch_ref: "artifacts/worker/task_a/attempt_1_patch.diff",
+        salvage_ref: "artifacts/salvage/task_a/attempt_task_a_1.json",
+        recommended_action: "salvage_then_review"
+      })
+    ]);
+    expect(projection.why_not_apply_ready).toEqual({
+      reason: "review_evidence_missing",
+      missing_contracts: ["review_evidence"],
+      evidence_refs: ["state:/tmp/run_demo/state.json"]
+    });
+    expect(projection.allowed_actions.map((action) => action.id)).toContain("run_review");
+  });
+
   test("marks missing evidence as partial confidence", () => {
     const projection = projectOperatorDecisionFromState({
       state: makeState({
