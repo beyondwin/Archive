@@ -63,3 +63,5 @@ that evidence in the completion audit.
 
 - `docs/experiments/v2.20-context-intelligence/PLAN.md`
 - `docs/experiments/v2.20-context-intelligence/IMPLEMENTATION.md`
+- `docs/experiments/v2.21-cache-friendly-execution/PLAN.md`
+- `docs/experiments/v2.21-cache-friendly-execution/IMPLEMENTATION.md`
