@@ -310,6 +310,65 @@ class VerifierBatchTests(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
+# Verifier per-task (T8) — MID/HIGH gate `verifier_per_task == "api"`.
+# Reuses the SAME `verifier` role/scaffold/tool as the batch path (T6); the
+# distinction is the dispatch_config gate, not the role token. These methods are
+# named *verifier_per_task* so `-k verifier_per_task` selects exactly them.
+# --------------------------------------------------------------------------- #
+def _verifier_per_task_ctx():
+    # A per-task (MID/HIGH) verifier context — single task, not a LOW batch.
+    return {
+        "test_command": "python3 -m unittest",
+        "acceptance_criteria": "python3 scripts/test_foo.py passes",
+        "result_json_path": "/tmp/verifier_task_7.json",
+    }
+
+
+class VerifierPerTaskTests(unittest.TestCase):
+    def test_verifier_per_task_loads_shared_verifier_scaffold(self):
+        scaffold, payload = dva.load_prompt("verifier", SK_ROOT)
+        self.assertNotIn("{", scaffold)
+        self.assertIn("Verifier sub-agent", scaffold)
+        self.assertIn("{test_command}", payload)
+        self.assertIn("acceptance_criteria", payload)
+        self.assertIn("## Acceptance Criteria", payload)
+
+    def test_verifier_per_task_build_request_forces_report_verifier_and_caches(self):
+        scaffold, payload = dva.load_prompt("verifier", SK_ROOT)
+        schema = dva.load_schema("verifier", SK_ROOT)
+        req = dva.build_request(
+            scaffold, payload, schema, "verifier", "claude-sonnet-4-5-20250929",
+            _verifier_per_task_ctx())
+        # tool_choice forced to the shared report_verifier tool
+        self.assertEqual(req["tool_choice"],
+                         {"type": "tool", "name": "report_verifier"})
+        self.assertEqual(req["tools"][0]["name"], "report_verifier")
+        self.assertIn("input_schema", req["tools"][0])
+        # cache_control ephemeral on the scaffold block
+        self.assertTrue(any(
+            isinstance(b, dict) and b.get("cache_control") == {"type": "ephemeral"}
+            for b in req["system"]))
+
+    def test_verifier_per_task_dispatch_writes_result_to_output_path(self):
+        orch = _tmp_orch()
+        out = Path(orch) / "verifier_results" / "task_7.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        msgs = FakeMessages(response=FakeResponse(
+            "report_verifier",
+            {"status": "PASS", "commands_run": ["python3 -m unittest"],
+             "exit_codes": [0]}))
+        client = FakeClient(messages=msgs)
+        res = dva.dispatch("verifier", _verifier_per_task_ctx(),
+                           "claude-sonnet-4-5-20250929", orch, SK_ROOT, str(out),
+                           client=client, max_retries=3)
+        self.assertEqual(res["status"], "PASS")
+        self.assertTrue(out.is_file())
+        written = json.loads(out.read_text())
+        self.assertEqual(written["status"], "PASS")
+        self.assertEqual(written["commands_run"], ["python3 -m unittest"])
+
+
+# --------------------------------------------------------------------------- #
 # Combined Transition (T1.2) — role "transition_combined", TWO tools per turn
 # --------------------------------------------------------------------------- #
 def _transition_ctx():
