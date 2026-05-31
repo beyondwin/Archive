@@ -238,6 +238,8 @@ export function projectOperatorDecisionFromState(input: OperatorDecisionInput): 
     confidence,
     unknown_reasons: unknownReasons,
     recovered_failures: recoveredFailuresFromState(state),
+    recoverable_evidence: recoverableEvidenceFromState(state),
+    why_not_apply_ready: whyNotApplyReadyFromState(state, applyReadiness),
     ...(intakeRecoverySummary ? { intake_recovery: intakeRecoverySummary } : {}),
     source_projection_refs: {
       run_state_v2: stateRef(state),
@@ -578,6 +580,56 @@ function intakeRecoverySummaryFromState(state: WaygentRunStateV2): OperatorIntak
 
 function recoveredFailuresFromState(state: WaygentRunStateV2): NonNullable<OperatorDecisionProjection["recovered_failures"]> {
   return recoveredFailureRecords(state);
+}
+
+function recoverableEvidenceFromState(state: WaygentRunStateV2): NonNullable<OperatorDecisionProjection["recoverable_evidence"]> {
+  return (state.recovery ?? [])
+    .filter((record) => record && typeof record === "object")
+    .map((record) => record as Record<string, unknown>)
+    .filter((record) => record.action === "salvage_then_review" || record.action === "dispatch_repair")
+    .map((record) => {
+      const taskId = typeof record.task_id === "string" ? record.task_id : "";
+      const patchRef = typeof record.patch_ref === "string" ? record.patch_ref : null;
+      const workerResultRef = typeof record.worker_result_ref === "string" ? record.worker_result_ref : null;
+      const salvageRef = typeof record.salvage_ref === "string" ? record.salvage_ref : null;
+      const evidenceRefs = Array.isArray(record.evidence_refs)
+        ? record.evidence_refs.filter((ref): ref is string => typeof ref === "string" && ref.length > 0)
+        : [];
+      return {
+        task_id: taskId,
+        failure_class: typeof record.failure_class === "string" ? record.failure_class : "unknown",
+        kind: patchRef ? ("recoverable_patch" as const) : ("recoverable_worker_result" as const),
+        patch_ref: patchRef,
+        worker_result_ref: workerResultRef,
+        salvage_ref: salvageRef,
+        recommended_action: record.action === "dispatch_repair" ? ("dispatch_repair" as const) : ("salvage_then_review" as const),
+        evidence_refs: unique([...evidenceRefs, ...(patchRef ? [patchRef] : []), ...(salvageRef ? [salvageRef] : [])])
+      };
+    })
+    .filter((item) => item.task_id.length > 0 && item.evidence_refs.length > 0);
+}
+
+function whyNotApplyReadyFromState(
+  state: WaygentRunStateV2,
+  applyReadiness: ApplyReadinessProjection
+): OperatorDecisionProjection["why_not_apply_ready"] {
+  if (applyReadiness.status === "ready") return null;
+  const reason = applyReadiness.reason ?? state.apply.reason ?? applyReadiness.status;
+  return {
+    reason,
+    missing_contracts: missingApplyContracts(reason),
+    evidence_refs: [stateRef(state)]
+  };
+}
+
+function missingApplyContracts(reason: string): string[] {
+  if (reason === "review_evidence_missing") return ["review_evidence"];
+  if (reason === "combined_apply_evidence_missing") return ["combined_apply_evidence"];
+  if (reason === "checkpoint_not_apply_ready" || reason === "missing_checkpoint") return ["checkpoint_evidence"];
+  if (reason === "state_reconciliation_failed" || reason === "state_drift") return ["state_reconciliation"];
+  if (reason === "dirty_source_checkout") return ["clean_source_checkout"];
+  if (reason === "verification_failed") return ["verification_evidence"];
+  return [reason];
 }
 
 function intakeArtifactRefs(intakeRecovery: WaygentIntakeRecovery | undefined): string[] {
