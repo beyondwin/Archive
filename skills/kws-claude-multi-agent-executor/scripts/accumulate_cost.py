@@ -53,7 +53,17 @@ except ImportError:
     from price_table import compute_cost  # type: ignore
 
 
-USAGE_FIELDS = ("input_tokens", "output_tokens", "cached_read_tokens", "cached_write_tokens")
+USAGE_FIELDS = (
+    "input_tokens",
+    "output_tokens",
+    "cached_read_tokens",
+    "cached_write_tokens",
+    # API-aligned canonical cache-token names (Anthropic Messages usage splits
+    # cache_read_input_tokens / cache_creation_input_tokens). Retained alongside
+    # the legacy cached_* names for backward compatibility.
+    "cache_read_tokens",
+    "cache_creation_tokens",
+)
 VALID_ROLES = {"implementer", "reviewer", "verifier", "plan_reviewer", "docs_updater"}
 
 
@@ -68,6 +78,8 @@ def _empty_aggregate() -> dict:
         "output_tokens": 0,
         "cached_read_tokens": 0,
         "cached_write_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 0,
         "cost_usd": 0.0,
         "dispatches": 0,
     }

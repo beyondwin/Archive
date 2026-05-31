@@ -1,0 +1,84 @@
+{
+  "schema_version": "2",
+  "active_plan": "plan1",
+  "by_task": {
+    "plan1::task_1::implementer": {
+      "input_tokens": 120000,
+      "output_tokens": 4500,
+      "cached_read_tokens": 0,
+      "cached_write_tokens": 0,
+      "cache_read_tokens": 95000,
+      "cache_creation_tokens": 30000,
+      "cost_usd": 2.8425,
+      "model": "opus",
+      "role": "implementer",
+      "dispatched_at": "2026-05-31T12:14:45Z"
+    },
+    "plan1::task_1::reviewer": {
+      "input_tokens": 60000,
+      "output_tokens": 2000,
+      "cached_read_tokens": 0,
+      "cached_write_tokens": 0,
+      "cache_read_tokens": 48000,
+      "cache_creation_tokens": 12000,
+      "cost_usd": 0.2694,
+      "model": "sonnet",
+      "role": "reviewer",
+      "dispatched_at": "2026-05-31T12:14:45Z"
+    }
+  },
+  "by_role": {
+    "implementer": {
+      "input_tokens": 120000,
+      "output_tokens": 4500,
+      "cached_read_tokens": 0,
+      "cached_write_tokens": 0,
+      "cache_read_tokens": 95000,
+      "cache_creation_tokens": 30000,
+      "cost_usd": 2.8425,
+      "dispatches": 1
+    },
+    "reviewer": {
+      "input_tokens": 60000,
+      "output_tokens": 2000,
+      "cached_read_tokens": 0,
+      "cached_write_tokens": 0,
+      "cache_read_tokens": 48000,
+      "cache_creation_tokens": 12000,
+      "cost_usd": 0.2694,
+      "dispatches": 1
+    }
+  },
+  "by_model": {
+    "opus": {
+      "input_tokens": 120000,
+      "output_tokens": 4500,
+      "cached_read_tokens": 0,
+      "cached_write_tokens": 0,
+      "cache_read_tokens": 95000,
+      "cache_creation_tokens": 30000,
+      "cost_usd": 2.8425,
+      "dispatches": 1
+    },
+    "sonnet": {
+      "input_tokens": 60000,
+      "output_tokens": 2000,
+      "cached_read_tokens": 0,
+      "cached_write_tokens": 0,
+      "cache_read_tokens": 48000,
+      "cache_creation_tokens": 12000,
+      "cost_usd": 0.2694,
+      "dispatches": 1
+    }
+  },
+  "totals": {
+    "input_tokens": 180000,
+    "output_tokens": 6500,
+    "cached_read_tokens": 0,
+    "cached_write_tokens": 0,
+    "cache_read_tokens": 143000,
+    "cache_creation_tokens": 42000,
+    "cost_usd": 3.1119,
+    "dispatches": 2
+  }
+}

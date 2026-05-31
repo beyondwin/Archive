@@ -249,8 +249,10 @@ def _accumulate_cost(orch_dir, role: str, model: str, usage: dict) -> None:
             usage={
                 "input_tokens": usage["input_tokens"],
                 "output_tokens": usage["output_tokens"],
-                "cached_read_tokens": usage["cache_read_tokens"],
-                "cached_write_tokens": usage["cache_creation_tokens"],
+                # Pass canonical API-aligned names straight through so cache
+                # tokens land in the new cost-ledger fields (v2.22 §2.B7).
+                "cache_read_tokens": usage["cache_read_tokens"],
+                "cache_creation_tokens": usage["cache_creation_tokens"],
             },
         )
     except Exception:
