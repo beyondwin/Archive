@@ -14904,7 +14904,7 @@
       "source_file": "packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts",
       "source_location": "L1",
       "id": "packages_orchestrator_tests_plannormalizer_fixturelab_test_ts",
-      "community": 168,
+      "community": 1018,
       "norm_label": "plannormalizer.fixturelab.test.ts"
     },
     {
@@ -14913,7 +14913,7 @@
       "source_file": "packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts",
       "source_location": "L8",
       "id": "tests_plannormalizer_fixturelab_test_planmarkdown",
-      "community": 168,
+      "community": 1018,
       "norm_label": "planmarkdown"
     },
     {
@@ -15217,7 +15217,7 @@
       "label": "writeLeakyProviderScript()",
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/orchestratorRunV2.test.ts",
-      "source_location": "L596",
+      "source_location": "L597",
       "id": "tests_orchestratorrunv2_test_writeleakyproviderscript",
       "community": 48,
       "norm_label": "writeleakyproviderscript()"
@@ -15226,7 +15226,7 @@
       "label": "writeRecoveringMalformedProviderScript()",
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/orchestratorRunV2.test.ts",
-      "source_location": "L616",
+      "source_location": "L617",
       "id": "tests_orchestratorrunv2_test_writerecoveringmalformedproviderscript",
       "community": 48,
       "norm_label": "writerecoveringmalformedproviderscript()"
@@ -15235,7 +15235,7 @@
       "label": "writeHelpFailingCodexProviderScript()",
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/orchestratorRunV2.test.ts",
-      "source_location": "L654",
+      "source_location": "L655",
       "id": "tests_orchestratorrunv2_test_writehelpfailingcodexproviderscript",
       "community": 48,
       "norm_label": "writehelpfailingcodexproviderscript()"
@@ -15244,7 +15244,7 @@
       "label": "writeNoMethodEvidenceProviderScript()",
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/orchestratorRunV2.test.ts",
-      "source_location": "L679",
+      "source_location": "L680",
       "id": "tests_orchestratorrunv2_test_writenomethodevidenceproviderscript",
       "community": 48,
       "norm_label": "writenomethodevidenceproviderscript()"
@@ -15253,7 +15253,7 @@
       "label": "reviewResult()",
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/orchestratorRunV2.test.ts",
-      "source_location": "L701",
+      "source_location": "L702",
       "id": "tests_orchestratorrunv2_test_reviewresult",
       "community": 48,
       "norm_label": "reviewresult()"
@@ -15262,7 +15262,7 @@
       "label": "initSourceCheckout()",
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/orchestratorRunV2.test.ts",
-      "source_location": "L717",
+      "source_location": "L718",
       "id": "tests_orchestratorrunv2_test_initsourcecheckout",
       "community": 48,
       "norm_label": "initsourcecheckout()"
@@ -15903,7 +15903,7 @@
       "source_file": "packages/orchestrator/tests/planNormalizer.test.ts",
       "source_location": "L1",
       "id": "packages_orchestrator_tests_plannormalizer_test_ts",
-      "community": 1018,
+      "community": 168,
       "norm_label": "plannormalizer.test.ts"
     },
     {
@@ -15912,7 +15912,7 @@
       "source_file": "packages/orchestrator/tests/planNormalizer.test.ts",
       "source_location": "L8",
       "id": "tests_plannormalizer_test_graphifyauditcommand",
-      "community": 1018,
+      "community": 168,
       "norm_label": "graphifyauditcommand"
     },
     {
@@ -15975,7 +15975,7 @@
       "source_file": "packages/orchestrator/tests/executionDependencyBarrier.test.ts",
       "source_location": "L1",
       "id": "packages_orchestrator_tests_executiondependencybarrier_test_ts",
-      "community": 1018,
+      "community": 184,
       "norm_label": "executiondependencybarrier.test.ts"
     },
     {
@@ -15984,7 +15984,7 @@
       "source_file": "packages/orchestrator/tests/executionDependencyBarrier.test.ts",
       "source_location": "L5",
       "id": "tests_executiondependencybarrier_test_plan",
-      "community": 1018,
+      "community": 184,
       "norm_label": "plan"
     },
     {
@@ -17001,7 +17001,7 @@
       "source_file": "packages/orchestrator/src/planParser.ts",
       "source_location": "L8",
       "id": "src_planparser_parsedwaygenttask",
-      "community": 1018,
+      "community": 184,
       "norm_label": "parsedwaygenttask"
     },
     {
@@ -17019,7 +17019,7 @@
       "source_file": "packages/orchestrator/src/planParser.ts",
       "source_location": "L25",
       "id": "src_planparser_parsedwaygentplan",
-      "community": 1018,
+      "community": 184,
       "norm_label": "parsedwaygentplan"
     },
     {
@@ -21312,7 +21312,7 @@
       "source_file": "packages/orchestrator/src/executionDependencyBarrier.ts",
       "source_location": "L1",
       "id": "packages_orchestrator_src_executiondependencybarrier_ts",
-      "community": 1018,
+      "community": 184,
       "norm_label": "executiondependencybarrier.ts"
     },
     {
@@ -21321,7 +21321,7 @@
       "source_file": "packages/orchestrator/src/executionDependencyBarrier.ts",
       "source_location": "L3",
       "id": "src_executiondependencybarrier_executiondependencybarrier",
-      "community": 1018,
+      "community": 184,
       "norm_label": "executiondependencybarrier"
     },
     {
@@ -21330,7 +21330,7 @@
       "source_file": "packages/orchestrator/src/executionDependencyBarrier.ts",
       "source_location": "L10",
       "id": "src_executiondependencybarrier_executiondependencybarrierresult",
-      "community": 1018,
+      "community": 184,
       "norm_label": "executiondependencybarrierresult"
     },
     {
@@ -21339,7 +21339,7 @@
       "source_file": "packages/orchestrator/src/executionDependencyBarrier.ts",
       "source_location": "L15",
       "id": "src_executiondependencybarrier_applyexecutiondependencybarriers",
-      "community": 1018,
+      "community": 184,
       "norm_label": "applyexecutiondependencybarriers()"
     },
     {
@@ -21348,7 +21348,7 @@
       "source_file": "packages/orchestrator/src/executionDependencyBarrier.ts",
       "source_location": "L37",
       "id": "src_executiondependencybarrier_hasbroadgradleverification",
-      "community": 1018,
+      "community": 184,
       "norm_label": "hasbroadgradleverification()"
     },
     {
@@ -21357,7 +21357,7 @@
       "source_file": "packages/orchestrator/src/executionDependencyBarrier.ts",
       "source_location": "L49",
       "id": "src_executiondependencybarrier_claimedmodules",
-      "community": 1018,
+      "community": 184,
       "norm_label": "claimedmodules()"
     },
     {
@@ -27674,7 +27674,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L26",
       "id": "templates_headless_output_schema_properties_state_path",
-      "community": 491,
+      "community": 362,
       "norm_label": "state_path"
     },
     {
@@ -27683,7 +27683,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L27",
       "id": "templates_headless_output_schema_state_path_type",
-      "community": 491,
+      "community": 362,
       "norm_label": "type"
     },
     {
@@ -27692,7 +27692,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L28",
       "id": "templates_headless_output_schema_state_path_minlength",
-      "community": 491,
+      "community": 362,
       "norm_label": "minlength"
     },
     {
@@ -28016,7 +28016,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L83",
       "id": "templates_headless_output_schema_properties_next_action",
-      "community": 184,
+      "community": 491,
       "norm_label": "next_action"
     },
     {
@@ -28025,7 +28025,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L84",
       "id": "templates_headless_output_schema_next_action_type",
-      "community": 184,
+      "community": 491,
       "norm_label": "type"
     },
     {
@@ -28034,7 +28034,7 @@
       "source_file": "skills/kws-codex-plan-executor/templates/headless-output-schema.json",
       "source_location": "L85",
       "id": "templates_headless_output_schema_next_action_minlength",
-      "community": 184,
+      "community": 491,
       "norm_label": "minlength"
     },
     {
@@ -45248,7 +45248,7 @@
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-sp1-design-contract.md",
       "source_location": "L191",
       "id": "plans_2026_05_23_waygent_sp1_design_contract_task_1_1_define_types_src_types_ts",
-      "community": 982,
+      "community": 347,
       "norm_label": "task 1.1: define types (`src/types.ts`)"
     },
     {
@@ -45257,7 +45257,7 @@
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-sp1-design-contract.md",
       "source_location": "L349",
       "id": "plans_2026_05_23_waygent_sp1_design_contract_task_1_2_author_canonical_fixtures",
-      "community": 659,
+      "community": 982,
       "norm_label": "task 1.2: author canonical fixtures"
     },
     {
@@ -78067,7 +78067,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-24-waygent-full-plan-intake-hardening.md",
       "source_location": "L818",
-      "community": 933,
+      "community": 929,
       "norm_label": "code:bash (git add packages/orchestrator/src/planadapters/verificationp)",
       "id": "plans_2026_05_24_waygent_full_plan_intake_hardening_codeblock_37"
     },
@@ -81055,7 +81055,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-sp1-design-contract.md",
       "source_location": "L193",
-      "community": 982,
+      "community": 347,
       "norm_label": "code:yaml (id: task_3)",
       "id": "plans_2026_05_23_waygent_sp1_design_contract_codeblock_10"
     },
@@ -81064,7 +81064,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-sp1-design-contract.md",
       "source_location": "L215",
-      "community": 982,
+      "community": 347,
       "norm_label": "code:ts (export type confidencelevel = \"verified\" | \"best_effort\";)",
       "id": "plans_2026_05_23_waygent_sp1_design_contract_codeblock_11"
     },
@@ -81073,7 +81073,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-sp1-design-contract.md",
       "source_location": "L333",
-      "community": 982,
+      "community": 347,
       "norm_label": "code:ts (export * from \"./types\";)",
       "id": "plans_2026_05_23_waygent_sp1_design_contract_codeblock_12"
     },
@@ -81082,7 +81082,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-sp1-design-contract.md",
       "source_location": "L344",
-      "community": 982,
+      "community": 347,
       "norm_label": "code:bash (git add packages/design-contract/src/)",
       "id": "plans_2026_05_23_waygent_sp1_design_contract_codeblock_13"
     },
@@ -81091,7 +81091,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-sp1-design-contract.md",
       "source_location": "L351",
-      "community": 659,
+      "community": 982,
       "norm_label": "code:yaml (id: task_4)",
       "id": "plans_2026_05_23_waygent_sp1_design_contract_codeblock_14"
     },
@@ -81100,7 +81100,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-sp1-design-contract.md",
       "source_location": "L377",
-      "community": 659,
+      "community": 982,
       "norm_label": "code:markdown (# design: recovered task risk)",
       "id": "plans_2026_05_23_waygent_sp1_design_contract_codeblock_15"
     },
@@ -81109,7 +81109,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-sp1-design-contract.md",
       "source_location": "L403",
-      "community": 659,
+      "community": 982,
       "norm_label": "code:block16",
       "id": "plans_2026_05_23_waygent_sp1_design_contract_codeblock_16"
     },
@@ -81118,7 +81118,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-sp1-design-contract.md",
       "source_location": "L408",
-      "community": 659,
+      "community": 982,
       "norm_label": "code:json ({)",
       "id": "plans_2026_05_23_waygent_sp1_design_contract_codeblock_17"
     },
@@ -81127,7 +81127,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-sp1-design-contract.md",
       "source_location": "L452",
-      "community": 659,
+      "community": 982,
       "norm_label": "code:markdown (# plan: recovered task risk)",
       "id": "plans_2026_05_23_waygent_sp1_design_contract_codeblock_18"
     },
@@ -81136,7 +81136,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-sp1-design-contract.md",
       "source_location": "L471",
-      "community": 659,
+      "community": 982,
       "norm_label": "code:json ({)",
       "id": "plans_2026_05_23_waygent_sp1_design_contract_codeblock_19"
     },
@@ -81145,7 +81145,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-23-waygent-sp1-design-contract.md",
       "source_location": "L493",
-      "community": 659,
+      "community": 982,
       "norm_label": "code:bash (git add packages/design-contract/tests/fixtures/canonical/)",
       "id": "plans_2026_05_23_waygent_sp1_design_contract_codeblock_20"
     },
@@ -95564,7 +95564,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts",
       "source_location": "L29",
-      "community": 168,
+      "community": 1018,
       "norm_label": "normalized",
       "id": "tests_plannormalizer_fixturelab_test_normalized"
     },
@@ -95573,7 +95573,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts",
       "source_location": "L39",
-      "community": 168,
+      "community": 1018,
       "norm_label": "parsed",
       "id": "tests_plannormalizer_fixturelab_test_parsed"
     },
@@ -95582,7 +95582,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts",
       "source_location": "L59",
-      "community": 168,
+      "community": 1018,
       "norm_label": "trivialwarning",
       "id": "tests_plannormalizer_fixturelab_test_trivialwarning"
     },
@@ -95591,7 +95591,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts",
       "source_location": "L143",
-      "community": 168,
+      "community": 1018,
       "norm_label": "withoutcatalog",
       "id": "tests_plannormalizer_fixturelab_test_withoutcatalog"
     },
@@ -95600,7 +95600,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/planNormalizer.fixtureLab.test.ts",
       "source_location": "L151",
-      "community": 168,
+      "community": 1018,
       "norm_label": "withcatalog",
       "id": "tests_plannormalizer_fixturelab_test_withcatalog"
     },
@@ -97076,7 +97076,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/planNormalizer.test.ts",
       "source_location": "L63",
-      "community": 1018,
+      "community": 168,
       "norm_label": "normalized",
       "id": "tests_plannormalizer_test_normalized"
     },
@@ -97085,7 +97085,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/planNormalizer.test.ts",
       "source_location": "L72",
-      "community": 1018,
+      "community": 168,
       "norm_label": "parsed",
       "id": "tests_plannormalizer_test_parsed"
     },
@@ -97094,7 +97094,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/planNormalizer.test.ts",
       "source_location": "L395",
-      "community": 1018,
+      "community": 168,
       "norm_label": "planwithfencedfixture",
       "id": "tests_plannormalizer_test_planwithfencedfixture"
     },
@@ -97103,7 +97103,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/planNormalizer.test.ts",
       "source_location": "L431",
-      "community": 1018,
+      "community": 168,
       "norm_label": "fixture",
       "id": "tests_plannormalizer_test_fixture"
     },
@@ -97112,7 +97112,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/planNormalizer.test.ts",
       "source_location": "L432",
-      "community": 1018,
+      "community": 168,
       "norm_label": "workspace",
       "id": "tests_plannormalizer_test_workspace"
     },
@@ -97193,7 +97193,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/executionDependencyBarrier.test.ts",
       "source_location": "L39",
-      "community": 1018,
+      "community": 184,
       "norm_label": "result",
       "id": "tests_executiondependencybarrier_test_result"
     },
@@ -105698,7 +105698,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L518",
-      "community": 356,
+      "community": 279,
       "norm_label": "m1 \u2014 common infrastructure",
       "id": "plan_2026_05_19_agentlens_dashboard_m1_common_infrastructure"
     },
@@ -105851,7 +105851,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L834",
-      "community": 356,
+      "community": 279,
       "norm_label": "task 6: `web/deps.py` \u2014 agentlens_home dependency",
       "id": "plan_2026_05_19_agentlens_dashboard_task_6_web_deps_py_agentlens_home_dependency"
     },
@@ -105860,7 +105860,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L844",
-      "community": 356,
+      "community": 279,
       "norm_label": "code:python (\"\"\"tests for agentlens.web.deps.\"\"\")",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_40"
     },
@@ -105869,7 +105869,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L871",
-      "community": 356,
+      "community": 279,
       "norm_label": "code:bash (cd agentlens && .venv/bin/python -m pytest tests/unit/test_w)",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_41"
     },
@@ -105878,7 +105878,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L880",
-      "community": 356,
+      "community": 279,
       "norm_label": "code:python (\"\"\"fastapi dependencies for the web layer (spec \u00a74, \u00a75).\"\"\")",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_42"
     },
@@ -105887,7 +105887,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L904",
-      "community": 356,
+      "community": 279,
       "norm_label": "code:bash (cd agentlens && .venv/bin/python -m pytest tests/unit/test_w)",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_43"
     },
@@ -105896,7 +105896,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L911",
-      "community": 356,
+      "community": 279,
       "norm_label": "code:bash (git add agentlens/src/agentlens/web/deps.py agentlens/tests/)",
       "id": "plan_2026_05_19_agentlens_dashboard_codeblock_44"
     },
@@ -105905,7 +105905,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/2026-05-19-agentlens-dashboard.md",
       "source_location": "L918",
-      "community": 380,
+      "community": 381,
       "norm_label": "m2 \u2014 read api routers",
       "id": "plan_2026_05_19_agentlens_dashboard_m2_read_api_routers"
     },
@@ -111926,7 +111926,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L93",
-      "community": 364,
+      "community": 173,
       "norm_label": "phase 2: m1 vertical slice",
       "id": "plan_agentlens_v0_tasks_phase_2_m1_vertical_slice"
     },
@@ -111935,7 +111935,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L95",
-      "community": 364,
+      "community": 173,
       "norm_label": "task 2: m1 foundation \u2014 constants/time/ids/store/paths",
       "id": "plan_agentlens_v0_tasks_task_2_m1_foundation_constants_time_ids_store_paths"
     },
@@ -112115,7 +112115,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L280",
-      "community": 173,
+      "community": 364,
       "norm_label": "acceptance criteria",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_280"
     },
@@ -112124,7 +112124,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L281",
-      "community": 173,
+      "community": 364,
       "norm_label": "code:bash (cd agentlens)",
       "id": "plan_agentlens_v0_tasks_codeblock_9"
     },
@@ -112178,7 +112178,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L328",
-      "community": 173,
+      "community": 659,
       "norm_label": "acceptance criteria",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_328"
     },
@@ -112187,7 +112187,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L329",
-      "community": 173,
+      "community": 659,
       "norm_label": "code:bash (cd agentlens)",
       "id": "plan_agentlens_v0_tasks_codeblock_11"
     },
@@ -112241,7 +112241,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L386",
-      "community": 347,
+      "community": 173,
       "norm_label": "acceptance criteria",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_386"
     },
@@ -112250,7 +112250,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L387",
-      "community": 347,
+      "community": 173,
       "norm_label": "code:bash (cd agentlens)",
       "id": "plan_agentlens_v0_tasks_codeblock_13"
     },
@@ -112259,7 +112259,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L395",
-      "community": 173,
+      "community": 773,
       "norm_label": "phase 6: m5 process wrapper",
       "id": "plan_agentlens_v0_tasks_phase_6_m5_process_wrapper"
     },
@@ -112268,7 +112268,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L397",
-      "community": 173,
+      "community": 773,
       "norm_label": "task 13: m5 process wrapper core \u2014 spawn + dual-stream drain + excerpt",
       "id": "plan_agentlens_v0_tasks_task_13_m5_process_wrapper_core_spawn_dual_stream_drain_excerpt"
     },
@@ -112331,7 +112331,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L470",
-      "community": 173,
+      "community": 712,
       "norm_label": "acceptance criteria",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_470"
     },
@@ -112340,7 +112340,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L471",
-      "community": 173,
+      "community": 712,
       "norm_label": "code:bash (cd agentlens)",
       "id": "plan_agentlens_v0_tasks_codeblock_16"
     },
@@ -112421,7 +112421,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L543",
-      "community": 362,
+      "community": 173,
       "norm_label": "acceptance criteria",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_543"
     },
@@ -112430,7 +112430,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L544",
-      "community": 362,
+      "community": 173,
       "norm_label": "code:bash (cd agentlens)",
       "id": "plan_agentlens_v0_tasks_codeblock_19"
     },
@@ -112529,7 +112529,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L616",
-      "community": 712,
+      "community": 173,
       "norm_label": "phase 9: m8 hardening",
       "id": "plan_agentlens_v0_tasks_phase_9_m8_hardening"
     },
@@ -112538,7 +112538,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L618",
-      "community": 712,
+      "community": 173,
       "norm_label": "task 22: m8 redaction engine + patterns",
       "id": "plan_agentlens_v0_tasks_task_22_m8_redaction_engine_patterns"
     },
@@ -119998,9 +119998,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L2",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tsconfig_base_json",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions"
     },
     {
       "relation": "contains",
@@ -120008,9 +120008,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L12",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_allowsyntheticdefaultimports",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_allowsyntheticdefaultimports"
     },
     {
       "relation": "contains",
@@ -120018,9 +120018,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_baseurl",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_baseurl"
     },
     {
       "relation": "contains",
@@ -120028,9 +120028,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L10",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_exactoptionalpropertytypes",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_exactoptionalpropertytypes"
     },
     {
       "relation": "contains",
@@ -120038,9 +120038,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L4",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_lib",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_lib"
     },
     {
       "relation": "contains",
@@ -120048,9 +120048,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L5",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_module",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_module"
     },
     {
       "relation": "contains",
@@ -120058,9 +120058,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L6",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_moduleresolution",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_moduleresolution"
     },
     {
       "relation": "contains",
@@ -120068,9 +120068,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L9",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_nouncheckedindexedaccess",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_nouncheckedindexedaccess"
     },
     {
       "relation": "contains",
@@ -120078,9 +120078,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L15",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_paths",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_paths"
     },
     {
       "relation": "contains",
@@ -120088,9 +120088,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L11",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_resolvejsonmodule",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_resolvejsonmodule"
     },
     {
       "relation": "contains",
@@ -120098,9 +120098,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L8",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_skiplibcheck",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_skiplibcheck"
     },
     {
       "relation": "contains",
@@ -120108,9 +120108,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L7",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_strict",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_strict"
     },
     {
       "relation": "contains",
@@ -120118,9 +120118,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L3",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_target",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_target"
     },
     {
       "relation": "contains",
@@ -120128,9 +120128,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L14",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_types",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_types"
     },
     {
       "relation": "contains",
@@ -120138,9 +120138,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L24",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_paths",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_context_packer",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_context_packer"
     },
     {
       "relation": "contains",
@@ -120148,9 +120148,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L16",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_paths",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_contracts",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_contracts"
     },
     {
       "relation": "contains",
@@ -120158,9 +120158,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L21",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_paths",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_kernel_client",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_kernel_client"
     },
     {
       "relation": "contains",
@@ -120168,9 +120168,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L19",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_paths",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_lens_projectors",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_lens_projectors"
     },
     {
       "relation": "contains",
@@ -120178,9 +120178,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L18",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_paths",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_lens_store",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_lens_store"
     },
     {
       "relation": "contains",
@@ -120188,9 +120188,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L23",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_paths",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_orchestrator",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_orchestrator"
     },
     {
       "relation": "contains",
@@ -120198,9 +120198,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L22",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_paths",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_policy",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_policy"
     },
     {
       "relation": "contains",
@@ -120208,9 +120208,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L20",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_paths",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_provider_adapters",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_provider_adapters"
     },
     {
       "relation": "contains",
@@ -120218,9 +120218,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L17",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_paths",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_runway_control",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_runway_control"
     },
     {
       "relation": "contains",
@@ -120228,9 +120228,9 @@
       "source_file": "tsconfig.base.json",
       "source_location": "L25",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_compileroptions_paths",
-      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_testkit",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_tsconfig_base_paths_waygent_testkit"
     },
     {
       "relation": "contains",
@@ -120588,9 +120588,9 @@
       "source_file": "package.json",
       "source_location": "L23",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "package_json",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies"
     },
     {
       "relation": "contains",
@@ -120598,9 +120598,9 @@
       "source_file": "package.json",
       "source_location": "L36",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "package_json",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_devdependencies",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_devdependencies"
     },
     {
       "relation": "contains",
@@ -120608,9 +120608,9 @@
       "source_file": "package.json",
       "source_location": "L2",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "package_json",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_name",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_name"
     },
     {
       "relation": "contains",
@@ -120618,9 +120618,9 @@
       "source_file": "package.json",
       "source_location": "L3",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "package_json",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_private",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_private"
     },
     {
       "relation": "contains",
@@ -120628,9 +120628,9 @@
       "source_file": "package.json",
       "source_location": "L9",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "package_json",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts"
     },
     {
       "relation": "contains",
@@ -120638,9 +120638,9 @@
       "source_file": "package.json",
       "source_location": "L4",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "package_json",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_type",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_type"
     },
     {
       "relation": "contains",
@@ -120648,9 +120648,9 @@
       "source_file": "package.json",
       "source_location": "L5",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "package_json",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_workspaces",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_workspaces"
     },
     {
       "relation": "contains",
@@ -120658,9 +120658,9 @@
       "source_file": "package.json",
       "source_location": "L12",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_scripts",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_check",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_check"
     },
     {
       "relation": "contains",
@@ -120668,9 +120668,9 @@
       "source_file": "package.json",
       "source_location": "L15",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_scripts",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_check_legacy",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_check_legacy"
     },
     {
       "relation": "contains",
@@ -120678,9 +120678,9 @@
       "source_file": "package.json",
       "source_location": "L14",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_scripts",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_platform_demo",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_platform_demo"
     },
     {
       "relation": "contains",
@@ -120688,9 +120688,9 @@
       "source_file": "package.json",
       "source_location": "L11",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_scripts",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_test",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_test"
     },
     {
       "relation": "contains",
@@ -120698,9 +120698,9 @@
       "source_file": "package.json",
       "source_location": "L10",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_scripts",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_typecheck",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_typecheck"
     },
     {
       "relation": "contains",
@@ -120708,9 +120708,9 @@
       "source_file": "package.json",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_scripts",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_waygent",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_waygent"
     },
     {
       "relation": "contains",
@@ -120718,9 +120718,9 @@
       "source_file": "package.json",
       "source_location": "L18",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_scripts",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_waygent_android_intake_trust",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_waygent_android_intake_trust"
     },
     {
       "relation": "contains",
@@ -120728,9 +120728,9 @@
       "source_file": "package.json",
       "source_location": "L21",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_scripts",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_waygent_dogfood",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_waygent_dogfood"
     },
     {
       "relation": "contains",
@@ -120738,9 +120738,9 @@
       "source_file": "package.json",
       "source_location": "L17",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_scripts",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_waygent_fixture_lab",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_waygent_fixture_lab"
     },
     {
       "relation": "contains",
@@ -120748,9 +120748,9 @@
       "source_file": "package.json",
       "source_location": "L20",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_scripts",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_waygent_live_provider_smoke",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_waygent_live_provider_smoke"
     },
     {
       "relation": "contains",
@@ -120758,9 +120758,9 @@
       "source_file": "package.json",
       "source_location": "L19",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_scripts",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_waygent_live_smoke",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_waygent_live_smoke"
     },
     {
       "relation": "contains",
@@ -120768,9 +120768,9 @@
       "source_file": "package.json",
       "source_location": "L16",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_scripts",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_waygent_scenarios",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_scripts_waygent_scenarios"
     },
     {
       "relation": "contains",
@@ -120778,9 +120778,9 @@
       "source_file": "package.json",
       "source_location": "L30",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_dependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_ajv",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_ajv"
     },
     {
       "relation": "contains",
@@ -120788,9 +120788,9 @@
       "source_file": "package.json",
       "source_location": "L31",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_dependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_ajv_formats",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_ajv_formats"
     },
     {
       "relation": "contains",
@@ -120798,9 +120798,9 @@
       "source_file": "package.json",
       "source_location": "L33",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_dependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_react",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_react"
     },
     {
       "relation": "contains",
@@ -120808,9 +120808,9 @@
       "source_file": "package.json",
       "source_location": "L34",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_dependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_react_dom",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_react_dom"
     },
     {
       "relation": "contains",
@@ -120818,9 +120818,9 @@
       "source_file": "package.json",
       "source_location": "L32",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_dependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_vite",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_vite"
     },
     {
       "relation": "contains",
@@ -120828,9 +120828,9 @@
       "source_file": "package.json",
       "source_location": "L29",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_dependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_vitejs_plugin_react",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_vitejs_plugin_react"
     },
     {
       "relation": "contains",
@@ -120838,9 +120838,9 @@
       "source_file": "package.json",
       "source_location": "L24",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_dependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_waygent_design_contract",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_waygent_design_contract"
     },
     {
       "relation": "contains",
@@ -120848,9 +120848,9 @@
       "source_file": "package.json",
       "source_location": "L25",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_dependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_waygent_lens_projectors",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_waygent_lens_projectors"
     },
     {
       "relation": "contains",
@@ -120858,9 +120858,9 @@
       "source_file": "package.json",
       "source_location": "L26",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_dependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_waygent_lens_store",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_waygent_lens_store"
     },
     {
       "relation": "contains",
@@ -120868,9 +120868,9 @@
       "source_file": "package.json",
       "source_location": "L27",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_dependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_waygent_orchestrator",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_waygent_orchestrator"
     },
     {
       "relation": "contains",
@@ -120878,9 +120878,9 @@
       "source_file": "package.json",
       "source_location": "L28",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_dependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_waygent_provider_adapters",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_dependencies_waygent_provider_adapters"
     },
     {
       "relation": "contains",
@@ -120888,9 +120888,9 @@
       "source_file": "package.json",
       "source_location": "L40",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_devdependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_devdependencies_bun_types",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_devdependencies_bun_types"
     },
     {
       "relation": "contains",
@@ -120898,9 +120898,9 @@
       "source_file": "package.json",
       "source_location": "L37",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_devdependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_devdependencies_types_bun",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_devdependencies_types_bun"
     },
     {
       "relation": "contains",
@@ -120908,9 +120908,9 @@
       "source_file": "package.json",
       "source_location": "L38",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_devdependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_devdependencies_types_react",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_devdependencies_types_react"
     },
     {
       "relation": "contains",
@@ -120918,9 +120918,9 @@
       "source_file": "package.json",
       "source_location": "L39",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_devdependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_devdependencies_types_react_dom",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_devdependencies_types_react_dom"
     },
     {
       "relation": "contains",
@@ -120928,9 +120928,9 @@
       "source_file": "package.json",
       "source_location": "L41",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_package_devdependencies",
-      "target": "waygent_recovery_review_loop_20260601_011010_package_devdependencies_typescript",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_package_devdependencies_typescript"
     },
     {
       "relation": "imports_from",
@@ -122967,9 +122967,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L9",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_malformed_output_salvaged_patch_json",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected"
     },
     {
       "relation": "contains",
@@ -122977,9 +122977,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L6",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_malformed_output_salvaged_patch_json",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_force_missing_checkpoint",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_force_missing_checkpoint"
     },
     {
       "relation": "contains",
@@ -122987,9 +122987,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L2",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_malformed_output_salvaged_patch_json",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_id",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_id"
     },
     {
       "relation": "contains",
@@ -122997,9 +122997,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L7",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_malformed_output_salvaged_patch_json",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_malformed_output_salvaged_patch",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_malformed_output_salvaged_patch"
     },
     {
       "relation": "contains",
@@ -123007,9 +123007,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L8",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_malformed_output_salvaged_patch_json",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_plan",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_plan"
     },
     {
       "relation": "contains",
@@ -123017,9 +123017,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L4",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_malformed_output_salvaged_patch_json",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_provider_fixture",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_provider_fixture"
     },
     {
       "relation": "contains",
@@ -123027,9 +123027,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L5",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_malformed_output_salvaged_patch_json",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_source_dirty_before_apply",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_source_dirty_before_apply"
     },
     {
       "relation": "contains",
@@ -123037,9 +123037,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L3",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_malformed_output_salvaged_patch_json",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_title",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_title"
     },
     {
       "relation": "contains",
@@ -123047,9 +123047,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_malformed_output_salvaged_patch_expected",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_apply_reason",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_apply_reason"
     },
     {
       "relation": "contains",
@@ -123057,9 +123057,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L11",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_malformed_output_salvaged_patch_expected",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_apply_status",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_apply_status"
     },
     {
       "relation": "contains",
@@ -123067,9 +123067,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L27",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_malformed_output_salvaged_patch_expected",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_blockers",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_blockers"
     },
     {
       "relation": "contains",
@@ -123077,9 +123077,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L30",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_malformed_output_salvaged_patch_expected",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_combined_patch_ref",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_combined_patch_ref"
     },
     {
       "relation": "contains",
@@ -123087,9 +123087,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L21",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_malformed_output_salvaged_patch_expected",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_event_types_must_include",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_event_types_must_include"
     },
     {
       "relation": "contains",
@@ -123097,9 +123097,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L15",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_malformed_output_salvaged_patch_expected",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_operator_allowed_actions",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_operator_allowed_actions"
     },
     {
       "relation": "contains",
@@ -123107,9 +123107,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L14",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_malformed_output_salvaged_patch_expected",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_operator_primary_blocker",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_operator_primary_blocker"
     },
     {
       "relation": "contains",
@@ -123117,9 +123117,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L10",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_malformed_output_salvaged_patch_expected",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_run_status",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_run_status"
     },
     {
       "relation": "contains",
@@ -123127,9 +123127,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L18",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_malformed_output_salvaged_patch_expected",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_safe_wave",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_safe_wave"
     },
     {
       "relation": "contains",
@@ -123137,9 +123137,9 @@
       "source_file": "tests/waygent-scenarios/malformed-output-salvaged-patch.json",
       "source_location": "L12",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_malformed_output_salvaged_patch_expected",
-      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_trust_status",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_malformed_output_salvaged_patch_expected_trust_status"
     },
     {
       "relation": "contains",
@@ -123977,9 +123977,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L9",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_verification_failed_repair_reviewed_json",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected"
     },
     {
       "relation": "contains",
@@ -123987,9 +123987,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L6",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_verification_failed_repair_reviewed_json",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_force_missing_checkpoint",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_force_missing_checkpoint"
     },
     {
       "relation": "contains",
@@ -123997,9 +123997,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L2",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_verification_failed_repair_reviewed_json",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_id",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_id"
     },
     {
       "relation": "contains",
@@ -124007,9 +124007,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L8",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_verification_failed_repair_reviewed_json",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_plan",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_plan"
     },
     {
       "relation": "contains",
@@ -124017,9 +124017,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L4",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_verification_failed_repair_reviewed_json",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_provider_fixture",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_provider_fixture"
     },
     {
       "relation": "contains",
@@ -124027,9 +124027,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L5",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_verification_failed_repair_reviewed_json",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_source_dirty_before_apply",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_source_dirty_before_apply"
     },
     {
       "relation": "contains",
@@ -124037,9 +124037,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L3",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_verification_failed_repair_reviewed_json",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_title",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_title"
     },
     {
       "relation": "contains",
@@ -124047,9 +124047,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L7",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "tests_waygent_scenarios_verification_failed_repair_reviewed_json",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_verification_failed_repair_reviewed",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_verification_failed_repair_reviewed"
     },
     {
       "relation": "contains",
@@ -124057,9 +124057,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L13",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_verification_failed_repair_reviewed_expected",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_apply_reason",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_apply_reason"
     },
     {
       "relation": "contains",
@@ -124067,9 +124067,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L11",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_verification_failed_repair_reviewed_expected",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_apply_status",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_apply_status"
     },
     {
       "relation": "contains",
@@ -124077,9 +124077,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L29",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_verification_failed_repair_reviewed_expected",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_combined_patch_ref",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_combined_patch_ref"
     },
     {
       "relation": "contains",
@@ -124087,9 +124087,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L21",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_verification_failed_repair_reviewed_expected",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_event_types_must_include",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_event_types_must_include"
     },
     {
       "relation": "contains",
@@ -124097,9 +124097,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L15",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_verification_failed_repair_reviewed_expected",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_operator_allowed_actions",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_operator_allowed_actions"
     },
     {
       "relation": "contains",
@@ -124107,9 +124107,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L14",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_verification_failed_repair_reviewed_expected",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_operator_primary_blocker",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_operator_primary_blocker"
     },
     {
       "relation": "contains",
@@ -124117,9 +124117,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L10",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_verification_failed_repair_reviewed_expected",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_run_status",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_run_status"
     },
     {
       "relation": "contains",
@@ -124127,9 +124127,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L18",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_verification_failed_repair_reviewed_expected",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_safe_wave",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_safe_wave"
     },
     {
       "relation": "contains",
@@ -124137,9 +124137,9 @@
       "source_file": "tests/waygent-scenarios/verification-failed-repair-reviewed.json",
       "source_location": "L12",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_scenarios_verification_failed_repair_reviewed_expected",
-      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_trust_status",
-      "confidence_score": 1.0
+      "target": "waygent_scenarios_verification_failed_repair_reviewed_expected_trust_status"
     },
     {
       "relation": "contains",
@@ -130176,9 +130176,9 @@
       "source_file": "packages/lens-projectors/src/operatorDecision.ts",
       "source_location": "L625",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_lens_projectors_src_operatordecision_ts",
-      "target": "src_operatordecision_missingapplycontracts",
-      "confidence_score": 1.0
+      "target": "src_operatordecision_missingapplycontracts"
     },
     {
       "relation": "contains",
@@ -130266,9 +130266,9 @@
       "source_file": "packages/lens-projectors/src/operatorDecision.ts",
       "source_location": "L585",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_lens_projectors_src_operatordecision_ts",
-      "target": "src_operatordecision_recoverableevidencefromstate",
-      "confidence_score": 1.0
+      "target": "src_operatordecision_recoverableevidencefromstate"
     },
     {
       "relation": "contains",
@@ -130386,9 +130386,9 @@
       "source_file": "packages/lens-projectors/src/operatorDecision.ts",
       "source_location": "L612",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_lens_projectors_src_operatordecision_ts",
-      "target": "src_operatordecision_whynotapplyreadyfromstate",
-      "confidence_score": 1.0
+      "target": "src_operatordecision_whynotapplyreadyfromstate"
     },
     {
       "relation": "imports",
@@ -130782,9 +130782,9 @@
       "source_file": "packages/lens-projectors/src/operatorDecision.ts",
       "source_location": "L241",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_operatordecision_projectoperatordecisionfromstate",
-      "target": "src_operatordecision_recoverableevidencefromstate",
-      "confidence_score": 1.0
+      "target": "src_operatordecision_recoverableevidencefromstate"
     },
     {
       "relation": "calls",
@@ -130848,9 +130848,9 @@
       "source_file": "packages/lens-projectors/src/operatorDecision.ts",
       "source_location": "L242",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_operatordecision_projectoperatordecisionfromstate",
-      "target": "src_operatordecision_whynotapplyreadyfromstate",
-      "confidence_score": 1.0
+      "target": "src_operatordecision_whynotapplyreadyfromstate"
     },
     {
       "relation": "calls",
@@ -131321,9 +131321,9 @@
       "source_file": "packages/lens-projectors/src/operatorDecision.ts",
       "source_location": "L620",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_operatordecision_whynotapplyreadyfromstate",
-      "target": "src_operatordecision_missingapplycontracts",
-      "confidence_score": 1.0
+      "target": "src_operatordecision_missingapplycontracts"
     },
     {
       "relation": "calls",
@@ -131332,9 +131332,9 @@
       "source_file": "packages/lens-projectors/src/operatorDecision.ts",
       "source_location": "L621",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_operatordecision_whynotapplyreadyfromstate",
-      "target": "src_operatordecision_stateref",
-      "confidence_score": 1.0
+      "target": "src_operatordecision_stateref"
     },
     {
       "relation": "calls",
@@ -140101,9 +140101,9 @@
       "source_file": "packages/contracts/src/schemas.ts",
       "source_location": "L1009",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_contracts_src_schemas_ts",
-      "target": "src_schemas_recoverableevidenceschema",
-      "confidence_score": 1.0
+      "target": "src_schemas_recoverableevidenceschema"
     },
     {
       "relation": "contains",
@@ -140331,9 +140331,9 @@
       "source_file": "packages/contracts/src/schemas.ts",
       "source_location": "L1025",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_contracts_src_schemas_ts",
-      "target": "src_schemas_whynotapplyreadyschema",
-      "confidence_score": 1.0
+      "target": "src_schemas_whynotapplyreadyschema"
     },
     {
       "relation": "contains",
@@ -141121,9 +141121,9 @@
       "source_file": "packages/contracts/src/types.ts",
       "source_location": "L558",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_contracts_src_types_ts",
-      "target": "src_types_operatorrecoverableevidence",
-      "confidence_score": 1.0
+      "target": "src_types_operatorrecoverableevidence"
     },
     {
       "relation": "contains",
@@ -141181,9 +141181,9 @@
       "source_file": "packages/contracts/src/types.ts",
       "source_location": "L569",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_contracts_src_types_ts",
-      "target": "src_types_operatorwhynotapplyready",
-      "confidence_score": 1.0
+      "target": "src_types_operatorwhynotapplyready"
     },
     {
       "relation": "contains",
@@ -141291,9 +141291,9 @@
       "source_file": "packages/contracts/src/types.ts",
       "source_location": "L556",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_contracts_src_types_ts",
-      "target": "src_types_recoverableevidenceaction",
-      "confidence_score": 1.0
+      "target": "src_types_recoverableevidenceaction"
     },
     {
       "relation": "contains",
@@ -141301,9 +141301,9 @@
       "source_file": "packages/contracts/src/types.ts",
       "source_location": "L555",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_contracts_src_types_ts",
-      "target": "src_types_recoverableevidencekind",
-      "confidence_score": 1.0
+      "target": "src_types_recoverableevidencekind"
     },
     {
       "relation": "contains",
@@ -141907,9 +141907,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_failureevidence_ts",
-      "target": "src_types_failureclass",
-      "confidence_score": 1.0
+      "target": "src_types_failureclass"
     },
     {
       "relation": "imports",
@@ -142061,9 +142061,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L16",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_failureevidence_failureevidenceinput",
-      "target": "src_types_failureclass",
-      "confidence_score": 1.0
+      "target": "src_types_failureclass"
     },
     {
       "relation": "references",
@@ -142424,9 +142424,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_salvageartifacts_ts",
-      "target": "src_types_salvageresult",
-      "confidence_score": 1.0
+      "target": "src_types_salvageresult"
     },
     {
       "relation": "references",
@@ -142435,9 +142435,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L9",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_salvageartifacts_recordsalvageartifactinput",
-      "target": "src_types_salvageresult",
-      "confidence_score": 1.0
+      "target": "src_types_salvageresult"
     },
     {
       "relation": "references",
@@ -142446,9 +142446,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L19",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_salvageartifacts_recordsalvageartifactresult",
-      "target": "src_types_salvageresult",
-      "confidence_score": 1.0
+      "target": "src_types_salvageresult"
     },
     {
       "relation": "imports",
@@ -143326,9 +143326,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_salvageartifacts_ts",
-      "target": "src_types_waygentrunstatev2",
-      "confidence_score": 1.0
+      "target": "src_types_waygentrunstatev2"
     },
     {
       "relation": "imports",
@@ -143524,9 +143524,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L6",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_salvageartifacts_recordsalvageartifactinput",
-      "target": "src_types_waygentrunstatev2",
-      "confidence_score": 1.0
+      "target": "src_types_waygentrunstatev2"
     },
     {
       "relation": "references",
@@ -143535,9 +143535,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L17",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_salvageartifacts_recordsalvageartifactresult",
-      "target": "src_types_waygentrunstatev2",
-      "confidence_score": 1.0
+      "target": "src_types_waygentrunstatev2"
     },
     {
       "relation": "references",
@@ -143964,9 +143964,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_salvageartifacts_ts",
-      "target": "src_types_artifactreference",
-      "confidence_score": 1.0
+      "target": "src_types_artifactreference"
     },
     {
       "relation": "imports",
@@ -144008,9 +144008,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L18",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_salvageartifacts_recordsalvageartifactresult",
-      "target": "src_types_artifactreference",
-      "confidence_score": 1.0
+      "target": "src_types_artifactreference"
     },
     {
       "relation": "imports",
@@ -144074,9 +144074,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_failureevidence_ts",
-      "target": "src_types_workerresult",
-      "confidence_score": 1.0
+      "target": "src_types_workerresult"
     },
     {
       "relation": "imports",
@@ -144151,9 +144151,9 @@
       "source_file": "packages/orchestrator/tests/failureEvidence.test.ts",
       "source_location": "L2",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_tests_failureevidence_test_ts",
-      "target": "src_types_workerresult",
-      "confidence_score": 1.0
+      "target": "src_types_workerresult"
     },
     {
       "relation": "imports",
@@ -144173,9 +144173,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L17",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_failureevidence_failureevidenceinput",
-      "target": "src_types_workerresult",
-      "confidence_score": 1.0
+      "target": "src_types_workerresult"
     },
     {
       "relation": "references",
@@ -144503,9 +144503,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_failureevidence_ts",
-      "target": "packages_contracts_src_index_ts",
-      "confidence_score": 1.0
+      "target": "packages_contracts_src_index_ts"
     },
     {
       "relation": "imports_from",
@@ -144734,9 +144734,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_salvageartifacts_ts",
-      "target": "packages_contracts_src_index_ts",
-      "confidence_score": 1.0
+      "target": "packages_contracts_src_index_ts"
     },
     {
       "relation": "imports_from",
@@ -144877,9 +144877,9 @@
       "source_file": "packages/orchestrator/tests/failureEvidence.test.ts",
       "source_location": "L2",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_tests_failureevidence_test_ts",
-      "target": "packages_contracts_src_index_ts",
-      "confidence_score": 1.0
+      "target": "packages_contracts_src_index_ts"
     },
     {
       "relation": "imports_from",
@@ -149069,9 +149069,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L2",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_salvageartifacts_ts",
-      "target": "src_artifactstore_writeartifact",
-      "confidence_score": 1.0
+      "target": "src_artifactstore_writeartifact"
     },
     {
       "relation": "imports",
@@ -149443,9 +149443,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L2",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_salvageartifacts_ts",
-      "target": "packages_lens_store_src_index_ts",
-      "confidence_score": 1.0
+      "target": "packages_lens_store_src_index_ts"
     },
     {
       "relation": "imports_from",
@@ -156958,9 +156958,9 @@
       "source_file": "packages/orchestrator/tests/repairAction.test.ts",
       "source_location": "L3",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_tests_repairaction_test_ts",
-      "target": "packages_orchestrator_src_runcommands_ts",
-      "confidence_score": 1.0
+      "target": "packages_orchestrator_src_runcommands_ts"
     },
     {
       "relation": "imports",
@@ -156980,9 +156980,9 @@
       "source_file": "packages/orchestrator/tests/repairAction.test.ts",
       "source_location": "L3",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_tests_repairaction_test_ts",
-      "target": "src_runcommands_repaircandidatefromrecoveryrecord",
-      "confidence_score": 1.0
+      "target": "src_runcommands_repaircandidatefromrecoveryrecord"
     },
     {
       "relation": "contains",
@@ -158367,9 +158367,9 @@
       "source_file": "packages/orchestrator/tests/salvageArtifacts.test.ts",
       "source_location": "L5",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_tests_salvageartifacts_test_ts",
-      "target": "packages_orchestrator_src_salvageartifacts_ts",
-      "confidence_score": 1.0
+      "target": "packages_orchestrator_src_salvageartifacts_ts"
     },
     {
       "relation": "imports_from",
@@ -158378,9 +158378,9 @@
       "source_file": "packages/orchestrator/tests/salvageArtifacts.test.ts",
       "source_location": "L6",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_tests_salvageartifacts_test_ts",
-      "target": "packages_orchestrator_tests_support_runstatefixture_ts",
-      "confidence_score": 1.0
+      "target": "packages_orchestrator_tests_support_runstatefixture_ts"
     },
     {
       "relation": "imports",
@@ -158389,9 +158389,9 @@
       "source_file": "packages/orchestrator/tests/salvageArtifacts.test.ts",
       "source_location": "L5",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_tests_salvageartifacts_test_ts",
-      "target": "src_salvageartifacts_recordsalvageartifact",
-      "confidence_score": 1.0
+      "target": "src_salvageartifacts_recordsalvageartifact"
     },
     {
       "relation": "imports",
@@ -158400,9 +158400,9 @@
       "source_file": "packages/orchestrator/tests/salvageArtifacts.test.ts",
       "source_location": "L6",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_tests_salvageartifacts_test_ts",
-      "target": "support_runstatefixture_basev2state",
-      "confidence_score": 1.0
+      "target": "support_runstatefixture_basev2state"
     },
     {
       "relation": "imports_from",
@@ -159953,9 +159953,9 @@
       "source_file": "packages/orchestrator/tests/failureEvidence.test.ts",
       "source_location": "L3",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_tests_failureevidence_test_ts",
-      "target": "packages_orchestrator_src_failureevidence_ts",
-      "confidence_score": 1.0
+      "target": "packages_orchestrator_src_failureevidence_ts"
     },
     {
       "relation": "imports",
@@ -159964,9 +159964,9 @@
       "source_file": "packages/orchestrator/tests/failureEvidence.test.ts",
       "source_location": "L3",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_tests_failureevidence_test_ts",
-      "target": "src_failureevidence_classifyfailureevidence",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_classifyfailureevidence"
     },
     {
       "relation": "contains",
@@ -159974,9 +159974,9 @@
       "source_file": "packages/orchestrator/tests/failureEvidence.test.ts",
       "source_location": "L5",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_tests_failureevidence_test_ts",
-      "target": "tests_failureevidence_test_completedworkerwithpatch",
-      "confidence_score": 1.0
+      "target": "tests_failureevidence_test_completedworkerwithpatch"
     },
     {
       "relation": "imports_from",
@@ -161903,9 +161903,9 @@
       "source_file": "packages/orchestrator/src/runCommands.ts",
       "source_location": "L956",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_runcommands_ts",
-      "target": "src_runcommands_repaircandidatefromrecoveryrecord",
-      "confidence_score": 1.0
+      "target": "src_runcommands_repaircandidatefromrecoveryrecord"
     },
     {
       "relation": "contains",
@@ -162003,9 +162003,9 @@
       "source_file": "packages/orchestrator/src/runCommands.ts",
       "source_location": "L948",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_runcommands_ts",
-      "target": "src_runcommands_salvagerepaircandidate",
-      "confidence_score": 1.0
+      "target": "src_runcommands_salvagerepaircandidate"
     },
     {
       "relation": "contains",
@@ -166286,9 +166286,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L117",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_failureevidence_ts",
-      "target": "src_failureevidence_changedfilesfrom",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_changedfilesfrom"
     },
     {
       "relation": "contains",
@@ -166296,9 +166296,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L60",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_failureevidence_ts",
-      "target": "src_failureevidence_classifyfailureevidence",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_classifyfailureevidence"
     },
     {
       "relation": "contains",
@@ -166306,9 +166306,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L128",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_failureevidence_ts",
-      "target": "src_failureevidence_decisionrequired",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_decisionrequired"
     },
     {
       "relation": "contains",
@@ -166316,9 +166316,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L122",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_failureevidence_ts",
-      "target": "src_failureevidence_evidencerefsfor",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_evidencerefsfor"
     },
     {
       "relation": "contains",
@@ -166326,9 +166326,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L25",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_failureevidence_ts",
-      "target": "src_failureevidence_failureevidencedecision",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_failureevidencedecision"
     },
     {
       "relation": "contains",
@@ -166336,9 +166336,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L14",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_failureevidence_ts",
-      "target": "src_failureevidence_failureevidenceinput",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_failureevidenceinput"
     },
     {
       "relation": "contains",
@@ -166346,9 +166346,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L3",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_failureevidence_ts",
-      "target": "src_failureevidence_failureevidencekind",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_failureevidencekind"
     },
     {
       "relation": "contains",
@@ -166356,9 +166356,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L106",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_failureevidence_ts",
-      "target": "src_failureevidence_patchreffrominput",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_patchreffrominput"
     },
     {
       "relation": "contains",
@@ -166366,9 +166366,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L9",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_failureevidence_ts",
-      "target": "src_failureevidence_repairbudgetsnapshot",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_repairbudgetsnapshot"
     },
     {
       "relation": "contains",
@@ -166376,9 +166376,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L58",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_failureevidence_ts",
-      "target": "src_failureevidence_salvage_failures",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_salvage_failures"
     },
     {
       "relation": "re_exports",
@@ -166387,9 +166387,9 @@
       "source_file": "packages/orchestrator/src/index.ts",
       "source_location": "L4",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_index_ts",
-      "target": "packages_orchestrator_src_failureevidence_ts",
-      "confidence_score": 1.0
+      "target": "packages_orchestrator_src_failureevidence_ts"
     },
     {
       "relation": "imports_from",
@@ -166398,9 +166398,9 @@
       "source_file": "packages/orchestrator/src/orchestrator.ts",
       "source_location": "L39",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_orchestrator_ts",
-      "target": "packages_orchestrator_src_failureevidence_ts",
-      "confidence_score": 1.0
+      "target": "packages_orchestrator_src_failureevidence_ts"
     },
     {
       "relation": "imports",
@@ -166409,9 +166409,9 @@
       "source_file": "packages/orchestrator/src/orchestrator.ts",
       "source_location": "L39",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_orchestrator_ts",
-      "target": "src_failureevidence_classifyfailureevidence",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_classifyfailureevidence"
     },
     {
       "relation": "calls",
@@ -166420,9 +166420,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L81",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_failureevidence_classifyfailureevidence",
-      "target": "src_failureevidence_changedfilesfrom",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_changedfilesfrom"
     },
     {
       "relation": "calls",
@@ -166431,9 +166431,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L86",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_failureevidence_classifyfailureevidence",
-      "target": "src_failureevidence_decisionrequired",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_decisionrequired"
     },
     {
       "relation": "calls",
@@ -166442,9 +166442,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L62",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_failureevidence_classifyfailureevidence",
-      "target": "src_failureevidence_evidencerefsfor",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_evidencerefsfor"
     },
     {
       "relation": "calls",
@@ -166453,9 +166453,9 @@
       "source_file": "packages/orchestrator/src/failureEvidence.ts",
       "source_location": "L61",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "src_failureevidence_classifyfailureevidence",
-      "target": "src_failureevidence_patchreffrominput",
-      "confidence_score": 1.0
+      "target": "src_failureevidence_patchreffrominput"
     },
     {
       "relation": "calls",
@@ -168705,9 +168705,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L3",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_salvageartifacts_ts",
-      "target": "packages_orchestrator_src_artifactindex_ts",
-      "confidence_score": 1.0
+      "target": "packages_orchestrator_src_artifactindex_ts"
     },
     {
       "relation": "imports_from",
@@ -168749,9 +168749,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L3",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_salvageartifacts_ts",
-      "target": "src_artifactindex_artifactindexentry",
-      "confidence_score": 1.0
+      "target": "src_artifactindex_artifactindexentry"
     },
     {
       "relation": "imports",
@@ -168881,9 +168881,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L3",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_salvageartifacts_ts",
-      "target": "src_artifactindex_mergeartifactindex",
-      "confidence_score": 1.0
+      "target": "src_artifactindex_mergeartifactindex"
     },
     {
       "relation": "calls",
@@ -169349,9 +169349,9 @@
       "source_file": "packages/orchestrator/src/orchestrator.ts",
       "source_location": "L59",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_orchestrator_ts",
-      "target": "packages_orchestrator_src_salvageartifacts_ts",
-      "confidence_score": 1.0
+      "target": "packages_orchestrator_src_salvageartifacts_ts"
     },
     {
       "relation": "imports_from",
@@ -170240,9 +170240,9 @@
       "source_file": "packages/orchestrator/src/orchestrator.ts",
       "source_location": "L59",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_orchestrator_ts",
-      "target": "src_salvageartifacts_recordsalvageartifact",
-      "confidence_score": 1.0
+      "target": "src_salvageartifacts_recordsalvageartifact"
     },
     {
       "relation": "imports",
@@ -176758,9 +176758,9 @@
       "source_file": "packages/orchestrator/src/index.ts",
       "source_location": "L30",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_index_ts",
-      "target": "packages_orchestrator_src_salvageartifacts_ts",
-      "confidence_score": 1.0
+      "target": "packages_orchestrator_src_salvageartifacts_ts"
     },
     {
       "relation": "re_exports",
@@ -178000,9 +178000,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L22",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_salvageartifacts_ts",
-      "target": "src_salvageartifacts_recordsalvageartifact",
-      "confidence_score": 1.0
+      "target": "src_salvageartifacts_recordsalvageartifact"
     },
     {
       "relation": "contains",
@@ -178010,9 +178010,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L5",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_salvageartifacts_ts",
-      "target": "src_salvageartifacts_recordsalvageartifactinput",
-      "confidence_score": 1.0
+      "target": "src_salvageartifacts_recordsalvageartifactinput"
     },
     {
       "relation": "contains",
@@ -178020,9 +178020,9 @@
       "source_file": "packages/orchestrator/src/salvageArtifacts.ts",
       "source_location": "L16",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "packages_orchestrator_src_salvageartifacts_ts",
-      "target": "src_salvageartifacts_recordsalvageartifactresult",
-      "confidence_score": 1.0
+      "target": "src_salvageartifacts_recordsalvageartifactresult"
     },
     {
       "relation": "contains",
@@ -183630,9 +183630,9 @@
       "source_file": "skills/kws-codex-plan-executor/evals/run.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "skills_kws_codex_plan_executor_evals_run_sh",
-      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_codex_plan_executor_evals_run_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_codex_plan_executor_evals_run_sh__entry"
     },
     {
       "relation": "contains",
@@ -193742,9 +193742,9 @@
       "source_file": "skills/waygent/evals/run.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "skills_waygent_evals_run_sh",
-      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_waygent_evals_run_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_waygent_evals_run_sh__entry"
     },
     {
       "relation": "contains",
@@ -193773,9 +193773,9 @@
       "source_file": "skills/kws-spec-implementation-docs/evals/run.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "skills_kws_spec_implementation_docs_evals_run_sh",
-      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_spec_implementation_docs_evals_run_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_spec_implementation_docs_evals_run_sh__entry"
     },
     {
       "relation": "contains",
@@ -194663,9 +194663,9 @@
       "source_file": "skills/kws-claude-multi-agent-executor/evals/run.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_evals_run_sh",
-      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_evals_run_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_evals_run_sh__entry"
     },
     {
       "relation": "contains",
@@ -194684,9 +194684,9 @@
       "source_location": "L310",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_evals_run_sh__entry",
-      "target": "evals_run_run_one_fixture",
-      "confidence_score": 1.0
+      "target": "evals_run_run_one_fixture"
     },
     {
       "relation": "calls",
@@ -195646,9 +195646,9 @@
       "source_file": "skills/kws-claude-multi-agent-executor/evals/plan-reviewer-rubric/run.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_evals_plan_reviewer_rubric_run_sh",
-      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_evals_plan_reviewer_rubric_run_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_evals_plan_reviewer_rubric_run_sh__entry"
     },
     {
       "relation": "contains",
@@ -195796,9 +195796,9 @@
       "source_file": "skills/kws-claude-multi-agent-executor/evals/transition-merge/run.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_evals_transition_merge_run_sh",
-      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_evals_transition_merge_run_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_evals_transition_merge_run_sh__entry"
     },
     {
       "relation": "contains",
@@ -199225,9 +199225,9 @@
       "source_file": "skills/kws-claude-multi-agent-executor/docs/experiments/v2.19-token-cost-optimization/scripts/run_ablation.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_19_token_cost_optimization_scripts_run_ablation_sh",
-      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_docs_experiments_v2_19_token_cost_optimization_scripts_run_ablation_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_docs_experiments_v2_19_token_cost_optimization_scripts_run_ablation_sh__entry"
     },
     {
       "relation": "contains",
@@ -199246,9 +199246,9 @@
       "source_location": "L89",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_docs_experiments_v2_19_token_cost_optimization_scripts_run_ablation_sh__entry",
-      "target": "scripts_run_ablation_run_one_fixture",
-      "confidence_score": 1.0
+      "target": "scripts_run_ablation_run_one_fixture"
     },
     {
       "relation": "calls",
@@ -199257,9 +199257,9 @@
       "source_location": "L50",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_docs_experiments_v2_19_token_cost_optimization_scripts_run_ablation_sh__entry",
-      "target": "scripts_run_ablation_usage",
-      "confidence_score": 1.0
+      "target": "scripts_run_ablation_usage"
     },
     {
       "relation": "calls",
@@ -201865,9 +201865,9 @@
       "source_file": "skills/kws-claude-multi-agent-executor/scripts/query_state.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_scripts_query_state_sh",
-      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry"
     },
     {
       "relation": "calls",
@@ -201876,9 +201876,9 @@
       "source_location": "L281",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_cost",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_cost"
     },
     {
       "relation": "calls",
@@ -201887,9 +201887,9 @@
       "source_location": "L279",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_current",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_current"
     },
     {
       "relation": "calls",
@@ -201898,9 +201898,9 @@
       "source_location": "L285",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_eta",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_eta"
     },
     {
       "relation": "calls",
@@ -201909,9 +201909,9 @@
       "source_location": "L286",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_failures",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_failures"
     },
     {
       "relation": "calls",
@@ -201920,9 +201920,9 @@
       "source_location": "L280",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_progress",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_progress"
     },
     {
       "relation": "calls",
@@ -201931,9 +201931,9 @@
       "source_location": "L284",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_quality",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_quality"
     },
     {
       "relation": "calls",
@@ -201942,9 +201942,9 @@
       "source_location": "L283",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_tier_dist",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_tier_dist"
     },
     {
       "relation": "calls",
@@ -201953,9 +201953,9 @@
       "source_location": "L282",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_warn",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_warn"
     },
     {
       "relation": "calls",
@@ -201964,9 +201964,9 @@
       "source_location": "L83",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_usage",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_usage"
     },
     {
       "relation": "calls",
@@ -204881,9 +204881,9 @@
       "source_file": "skills/kws-claude-multi-agent-executor/scripts/test_query_state.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_scripts_test_query_state_sh",
-      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_test_query_state_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_test_query_state_sh__entry"
     },
     {
       "relation": "calls",
@@ -204892,9 +204892,9 @@
       "source_location": "L72",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_test_query_state_sh__entry",
-      "target": "scripts_test_query_state_assert_eq",
-      "confidence_score": 1.0
+      "target": "scripts_test_query_state_assert_eq"
     },
     {
       "relation": "calls",
@@ -207612,9 +207612,9 @@
       "source_file": "skills/kws-claude-multi-agent-executor/scripts/query_run.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_scripts_query_run_sh",
-      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry"
     },
     {
       "relation": "calls",
@@ -207623,9 +207623,9 @@
       "source_location": "L350",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry",
-      "target": "scripts_query_run_cmd_find",
-      "confidence_score": 1.0
+      "target": "scripts_query_run_cmd_find"
     },
     {
       "relation": "calls",
@@ -207634,9 +207634,9 @@
       "source_location": "L347",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry",
-      "target": "scripts_query_run_cmd_last",
-      "confidence_score": 1.0
+      "target": "scripts_query_run_cmd_last"
     },
     {
       "relation": "calls",
@@ -207645,9 +207645,9 @@
       "source_location": "L344",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry",
-      "target": "scripts_query_run_cmd_list_runs",
-      "confidence_score": 1.0
+      "target": "scripts_query_run_cmd_list_runs"
     },
     {
       "relation": "calls",
@@ -207656,9 +207656,9 @@
       "source_location": "L323",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry",
-      "target": "scripts_query_run_outcome_for",
-      "confidence_score": 1.0
+      "target": "scripts_query_run_outcome_for"
     },
     {
       "relation": "calls",
@@ -207667,9 +207667,9 @@
       "source_location": "L330",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry",
-      "target": "scripts_query_run_run_subcmd_on_dir",
-      "confidence_score": 1.0
+      "target": "scripts_query_run_run_subcmd_on_dir"
     },
     {
       "relation": "calls",
@@ -207678,9 +207678,9 @@
       "source_location": "L289",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_codex_worktrees_waygent_recovery_review_loop_20260601_011010_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry",
-      "target": "scripts_query_run_usage",
-      "confidence_score": 1.0
+      "target": "scripts_query_run_usage"
     },
     {
       "relation": "calls",
@@ -214397,9 +214397,9 @@
       "source_file": "PLANS.md",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plans_md",
-      "target": "waygent_recovery_review_loop_20260601_011010_plans_implementation_plan_template",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_plans_implementation_plan_template"
     },
     {
       "relation": "contains",
@@ -214407,9 +214407,9 @@
       "source_file": "PLANS.md",
       "source_location": "L10",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_plans_implementation_plan_template",
-      "target": "waygent_recovery_review_loop_20260601_011010_plans_context",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_plans_context"
     },
     {
       "relation": "contains",
@@ -214417,9 +214417,9 @@
       "source_file": "PLANS.md",
       "source_location": "L35",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_plans_implementation_plan_template",
-      "target": "waygent_recovery_review_loop_20260601_011010_plans_execution_order",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_plans_execution_order"
     },
     {
       "relation": "contains",
@@ -214427,9 +214427,9 @@
       "source_file": "PLANS.md",
       "source_location": "L6",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_plans_implementation_plan_template",
-      "target": "waygent_recovery_review_loop_20260601_011010_plans_goal",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_plans_goal"
     },
     {
       "relation": "contains",
@@ -214437,9 +214437,9 @@
       "source_file": "PLANS.md",
       "source_location": "L48",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_plans_implementation_plan_template",
-      "target": "waygent_recovery_review_loop_20260601_011010_plans_review",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_plans_review"
     },
     {
       "relation": "contains",
@@ -214447,9 +214447,9 @@
       "source_file": "PLANS.md",
       "source_location": "L17",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_plans_implementation_plan_template",
-      "target": "waygent_recovery_review_loop_20260601_011010_plans_task_breakdown",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_plans_task_breakdown"
     },
     {
       "relation": "contains",
@@ -214457,9 +214457,9 @@
       "source_file": "PLANS.md",
       "source_location": "L41",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_plans_implementation_plan_template",
-      "target": "waygent_recovery_review_loop_20260601_011010_plans_verification",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_plans_verification"
     },
     {
       "relation": "contains",
@@ -214517,9 +214517,9 @@
       "source_file": "README.md",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "readme_md",
-      "target": "waygent_recovery_review_loop_20260601_011010_readme_waygent",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_readme_waygent"
     },
     {
       "relation": "contains",
@@ -214527,9 +214527,9 @@
       "source_file": "README.md",
       "source_location": "L58",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_readme_waygent",
-      "target": "waygent_recovery_review_loop_20260601_011010_readme_architecture",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_readme_architecture"
     },
     {
       "relation": "contains",
@@ -214537,9 +214537,9 @@
       "source_file": "README.md",
       "source_location": "L76",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_readme_waygent",
-      "target": "waygent_recovery_review_loop_20260601_011010_readme_graphify_repository_map",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_readme_graphify_repository_map"
     },
     {
       "relation": "contains",
@@ -214547,9 +214547,9 @@
       "source_file": "README.md",
       "source_location": "L14",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_readme_waygent",
-      "target": "waygent_recovery_review_loop_20260601_011010_readme_project_map",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_readme_project_map"
     },
     {
       "relation": "contains",
@@ -214557,9 +214557,9 @@
       "source_file": "README.md",
       "source_location": "L24",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_readme_waygent",
-      "target": "waygent_recovery_review_loop_20260601_011010_readme_quick_start",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_readme_quick_start"
     },
     {
       "relation": "contains",
@@ -214567,9 +214567,9 @@
       "source_file": "README.md",
       "source_location": "L107",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_readme_waygent",
-      "target": "waygent_recovery_review_loop_20260601_011010_readme_working_rules",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_readme_working_rules"
     },
     {
       "relation": "contains",
@@ -214627,9 +214627,9 @@
       "source_file": "code_review.md",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "code_review_md",
-      "target": "waygent_recovery_review_loop_20260601_011010_code_review_code_review_guide",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_code_review_code_review_guide"
     },
     {
       "relation": "contains",
@@ -214637,9 +214637,9 @@
       "source_file": "code_review.md",
       "source_location": "L19",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_code_review_code_review_guide",
-      "target": "waygent_recovery_review_loop_20260601_011010_code_review_agentlens_checks",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_code_review_agentlens_checks"
     },
     {
       "relation": "contains",
@@ -214647,9 +214647,9 @@
       "source_file": "code_review.md",
       "source_location": "L36",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_code_review_code_review_guide",
-      "target": "waygent_recovery_review_loop_20260601_011010_code_review_output_format",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_code_review_output_format"
     },
     {
       "relation": "contains",
@@ -214657,9 +214657,9 @@
       "source_file": "code_review.md",
       "source_location": "L6",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_code_review_code_review_guide",
-      "target": "waygent_recovery_review_loop_20260601_011010_code_review_review_priorities",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_code_review_review_priorities"
     },
     {
       "relation": "contains",
@@ -214667,9 +214667,9 @@
       "source_file": "code_review.md",
       "source_location": "L27",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_code_review_code_review_guide",
-      "target": "waygent_recovery_review_loop_20260601_011010_code_review_waygent_runtime_checks",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_code_review_waygent_runtime_checks"
     },
     {
       "relation": "contains",
@@ -214727,9 +214727,9 @@
       "source_file": "GEMINI.md",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "gemini_md",
-      "target": "waygent_recovery_review_loop_20260601_011010_gemini_gemini_md_archive",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_gemini_gemini_md_archive"
     },
     {
       "relation": "contains",
@@ -214787,9 +214787,9 @@
       "source_file": "AGENTS.md",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "agents_md",
-      "target": "waygent_recovery_review_loop_20260601_011010_agents_agents_md_archive",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_agents_agents_md_archive"
     },
     {
       "relation": "contains",
@@ -214797,9 +214797,9 @@
       "source_file": "AGENTS.md",
       "source_location": "L53",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_agents_agents_md_archive",
-      "target": "waygent_recovery_review_loop_20260601_011010_agents_active_components",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_agents_active_components"
     },
     {
       "relation": "contains",
@@ -214807,9 +214807,9 @@
       "source_file": "AGENTS.md",
       "source_location": "L160",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_agents_agents_md_archive",
-      "target": "waygent_recovery_review_loop_20260601_011010_agents_editing_rules",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_agents_editing_rules"
     },
     {
       "relation": "contains",
@@ -214817,9 +214817,9 @@
       "source_file": "AGENTS.md",
       "source_location": "L146",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_agents_agents_md_archive",
-      "target": "waygent_recovery_review_loop_20260601_011010_agents_external_context_and_safety",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_agents_external_context_and_safety"
     },
     {
       "relation": "contains",
@@ -214827,9 +214827,9 @@
       "source_file": "AGENTS.md",
       "source_location": "L175",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_agents_agents_md_archive",
-      "target": "waygent_recovery_review_loop_20260601_011010_agents_git_hygiene",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_agents_git_hygiene"
     },
     {
       "relation": "contains",
@@ -214837,9 +214837,9 @@
       "source_file": "AGENTS.md",
       "source_location": "L5",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_agents_agents_md_archive",
-      "target": "waygent_recovery_review_loop_20260601_011010_agents_project_shape",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_agents_project_shape"
     },
     {
       "relation": "contains",
@@ -214847,9 +214847,9 @@
       "source_file": "AGENTS.md",
       "source_location": "L135",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_agents_agents_md_archive",
-      "target": "waygent_recovery_review_loop_20260601_011010_agents_prompt_shape",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_agents_prompt_shape"
     },
     {
       "relation": "contains",
@@ -214857,9 +214857,9 @@
       "source_file": "AGENTS.md",
       "source_location": "L39",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_agents_agents_md_archive",
-      "target": "waygent_recovery_review_loop_20260601_011010_agents_read_order",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_agents_read_order"
     },
     {
       "relation": "contains",
@@ -214867,9 +214867,9 @@
       "source_file": "AGENTS.md",
       "source_location": "L101",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_agents_agents_md_archive",
-      "target": "waygent_recovery_review_loop_20260601_011010_agents_verification_commands",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_agents_verification_commands"
     },
     {
       "relation": "contains",
@@ -214877,9 +214877,9 @@
       "source_file": "AGENTS.md",
       "source_location": "L86",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_agents_active_components",
-      "target": "waygent_recovery_review_loop_20260601_011010_agents_kws_executor_skills",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_agents_kws_executor_skills"
     },
     {
       "relation": "contains",
@@ -214887,9 +214887,9 @@
       "source_file": "AGENTS.md",
       "source_location": "L55",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_agents_active_components",
-      "target": "waygent_recovery_review_loop_20260601_011010_agents_lens",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_agents_lens"
     },
     {
       "relation": "contains",
@@ -214897,9 +214897,9 @@
       "source_file": "AGENTS.md",
       "source_location": "L72",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_agents_active_components",
-      "target": "waygent_recovery_review_loop_20260601_011010_agents_waygent_runtime",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_agents_waygent_runtime"
     },
     {
       "relation": "contains",
@@ -214957,9 +214957,9 @@
       "source_file": "CLAUDE.md",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "claude_md",
-      "target": "waygent_recovery_review_loop_20260601_011010_claude_claude_md_archive",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_claude_claude_md_archive"
     },
     {
       "relation": "contains",
@@ -214967,9 +214967,9 @@
       "source_file": "CLAUDE.md",
       "source_location": "L12",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_claude_claude_md_archive",
-      "target": "waygent_recovery_review_loop_20260601_011010_claude_claude_specific_notes",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_claude_claude_specific_notes"
     },
     {
       "relation": "contains",
@@ -214977,9 +214977,9 @@
       "source_file": "CLAUDE.md",
       "source_location": "L6",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_claude_claude_md_archive",
-      "target": "waygent_recovery_review_loop_20260601_011010_claude_start_here",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_claude_start_here"
     },
     {
       "relation": "contains",
@@ -214987,9 +214987,9 @@
       "source_file": "CLAUDE.md",
       "source_location": "L28",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "waygent_recovery_review_loop_20260601_011010_claude_claude_md_archive",
-      "target": "waygent_recovery_review_loop_20260601_011010_claude_useful_checks",
-      "confidence_score": 1.0
+      "target": "waygent_recovery_review_loop_20260601_011010_claude_useful_checks"
     },
     {
       "relation": "contains",
@@ -216387,9 +216387,9 @@
       "source_file": "docs/operations/verification.md",
       "source_location": "L58",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "operations_verification_waygent_verification",
-      "target": "operations_verification_recovery_to_review_gate",
-      "confidence_score": 1.0
+      "target": "operations_verification_recovery_to_review_gate"
     },
     {
       "relation": "contains",
@@ -216727,9 +216727,9 @@
       "source_file": "docs/operations/waygent.md",
       "source_location": "L286",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "operations_waygent_operational_maturity_loop",
-      "target": "operations_waygent_recovery_to_review_loop",
-      "confidence_score": 1.0
+      "target": "operations_waygent_recovery_to_review_loop"
     },
     {
       "relation": "contains",
@@ -296575,5 +296575,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "cd569a3af5840c4a36f2ed30184a0040ee1dd94b"
+  "built_at_commit": "3aab4294d981e953ad6d94f0e0ba1c3839910738"
 }
