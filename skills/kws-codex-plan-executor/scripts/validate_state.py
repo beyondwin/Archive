@@ -83,6 +83,9 @@ VALID_COMMAND_OBSERVATION_CATEGORIES = {
     "unknown",
 }
 REQUIRED_COMMAND_OBSERVATION_FIELDS = {"command", "status", "category", "evidence", "next_action"}
+VALID_CACHE_STRATEGY_MODES = {"interactive-default", "headless-explicit", "prompt-export", "handoff-export"}
+VALID_PROVIDER_CACHE_CONTROL = {"unavailable", "available-unused", "available-enabled", "unknown"}
+TOKEN_FIELDS = {"input_tokens", "cached_read_tokens", "cached_write_tokens", "output_tokens"}
 V220_TOP_LEVEL_FIELDS = {
     "spec_manifest_path",
     "task_packet_dir",
@@ -447,6 +450,115 @@ def _validate_command_observations(data: dict, errors: list[str]) -> None:
                 errors.append(f"unknown command observation must be mentioned in completion_audit.residual_risk: {command}")
 
 
+def _validate_cache_fields(data: dict, errors: list[str]) -> None:
+    strategy = data.get("cache_strategy")
+    if strategy is not None:
+        if not isinstance(strategy, dict):
+            errors.append("cache_strategy must be an object")
+        else:
+            if strategy.get("mode") not in VALID_CACHE_STRATEGY_MODES:
+                errors.append(f"cache_strategy.mode must be one of {sorted(VALID_CACHE_STRATEGY_MODES)}")
+            if strategy.get("provider_cache_control") not in VALID_PROVIDER_CACHE_CONTROL:
+                errors.append(
+                    f"cache_strategy.provider_cache_control must be one of {sorted(VALID_PROVIDER_CACHE_CONTROL)}"
+                )
+            for key in ("stable_prefix_policy", "prompt_audit_version"):
+                if key in strategy and not isinstance(strategy[key], str):
+                    errors.append(f"cache_strategy.{key} must be a string")
+
+    observations = data.get("cache_observations", [])
+    if observations is None:
+        observations = []
+    if not isinstance(observations, list):
+        errors.append("cache_observations must be a list")
+    else:
+        for index, observation in enumerate(observations):
+            prefix = f"cache_observations[{index}]"
+            if not isinstance(observation, dict):
+                errors.append(f"{prefix} must be an object")
+                continue
+            for key in ("observed_at", "source", "unit", "mode", "model"):
+                if key not in observation or not isinstance(observation.get(key), str):
+                    errors.append(f"{prefix}.{key} must be a string")
+            if _parse_ts(observation.get("observed_at")) is None:
+                errors.append(f"{prefix}.observed_at must be an ISO timestamp")
+            for key in sorted(TOKEN_FIELDS):
+                value = observation.get(key)
+                if value is not None and (not isinstance(value, int) or value < 0):
+                    errors.append(f"{prefix}.{key} must be a non-negative integer or null")
+
+    audit = data.get("prompt_audit")
+    if audit is not None:
+        if not isinstance(audit, dict):
+            errors.append("prompt_audit must be an object")
+        else:
+            if "last_checked_at" in audit and _parse_ts(audit.get("last_checked_at")) is None:
+                errors.append("prompt_audit.last_checked_at must be an ISO timestamp")
+            for key in ("stable_prefix_hashes", "stable_prefix_bytes"):
+                if key in audit and not isinstance(audit.get(key), dict):
+                    errors.append(f"prompt_audit.{key} must be an object")
+            bytes_map = audit.get("stable_prefix_bytes")
+            if isinstance(bytes_map, dict):
+                for name, value in bytes_map.items():
+                    if not isinstance(name, str) or not isinstance(value, int) or value < 0:
+                        errors.append("prompt_audit.stable_prefix_bytes values must be non-negative integers")
+                        break
+            hash_map = audit.get("stable_prefix_hashes")
+            if isinstance(hash_map, dict):
+                for name, value in hash_map.items():
+                    if not isinstance(name, str) or not isinstance(value, str) or not value.strip():
+                        errors.append("prompt_audit.stable_prefix_hashes values must be non-empty strings")
+                        break
+            violations = audit.get("dynamic_marker_violations", [])
+            if not isinstance(violations, list):
+                errors.append("prompt_audit.dynamic_marker_violations must be a list")
+            elif data.get("lifecycle_outcome") == "finished" and violations:
+                errors.append("prompt_audit.dynamic_marker_violations must be empty when lifecycle_outcome is finished")
+
+
+def _validate_graphify_audit(data: dict, errors: list[str]) -> None:
+    audit = data.get("graphify_audit")
+    if audit is None:
+        return
+    if not isinstance(audit, dict):
+        errors.append("graphify_audit must be an object")
+        return
+    if audit.get("schema_version") != "1":
+        errors.append("graphify_audit.schema_version must be 1")
+    for key in ("graphify_present", "update_required"):
+        if key in audit and not isinstance(audit[key], bool):
+            errors.append(f"graphify_audit.{key} must be a boolean")
+    if audit.get("fresh") is not None and not isinstance(audit.get("fresh"), bool):
+        errors.append("graphify_audit.fresh must be a boolean or null")
+    for key in ("warnings", "errors"):
+        if key in audit and not isinstance(audit[key], list):
+            errors.append(f"graphify_audit.{key} must be a list")
+    if data.get("lifecycle_outcome") == "finished" and audit.get("errors"):
+        errors.append("graphify_audit.errors must be empty when lifecycle_outcome is finished")
+
+
+def _validate_dispatch_decisions(data: dict, errors: list[str]) -> None:
+    decisions = data.get("dispatch_decisions", [])
+    if decisions is None:
+        return
+    if not isinstance(decisions, list):
+        errors.append("dispatch_decisions must be a list")
+        return
+    for index, item in enumerate(decisions):
+        prefix = f"dispatch_decisions[{index}]"
+        if not isinstance(item, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        if item.get("decision") not in {"delegate", "local_fallback", "block"}:
+            errors.append(f"{prefix}.decision must be delegate, local_fallback, or block")
+        if not _has_substantive_value(item.get("reason")):
+            errors.append(f"{prefix}.reason must be non-empty")
+        if not isinstance(item.get("failed_prerequisites", []), list):
+            errors.append(f"{prefix}.failed_prerequisites must be a list")
+        if data.get("lifecycle_outcome") == "finished" and item.get("decision") == "block":
+            errors.append(f"{prefix}: block decision cannot remain in finished state")
+
+
 def _is_v220_state(data: dict) -> bool:
     if any(key in data for key in V220_TOP_LEVEL_FIELDS):
         return True
@@ -650,6 +762,9 @@ def validate(data: dict) -> list[str]:
     _validate_tasks(data, errors)
     _validate_subagents(data, errors)
     _validate_command_observations(data, errors)
+    _validate_cache_fields(data, errors)
+    _validate_graphify_audit(data, errors)
+    _validate_dispatch_decisions(data, errors)
     _validate_v220(data, errors)
     return errors
 

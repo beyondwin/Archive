@@ -1,3 +1,11 @@
+<!-- CPE_CACHE_STABLE_PREFIX_START -->
+KWS Codex Plan Executor fresh-session prompt. Follow the invariant execution
+contract first, keep repository edits isolated from orchestration state, apply
+required skills before implementation work, and return the mode-appropriate
+result shape.
+<!-- CPE_CACHE_STABLE_PREFIX_END -->
+<!-- CPE_CACHE_HOT_TAIL_START -->
+
 다음 계획을 새 Codex 세션에서 `/kws-codex-plan-executor`로 실행해.
 
 입력:

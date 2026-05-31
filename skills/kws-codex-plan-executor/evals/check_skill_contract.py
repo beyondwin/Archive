@@ -115,6 +115,35 @@ def main() -> int:
                 "completion_audit.verification_evidence",
             )
         ),
+        "cache_strategy_contract": all(
+            token in runtime
+            for token in (
+                "references/cache-strategy.md",
+                "scripts/audit_prompt_cache.py",
+                "stable prefix",
+                "hot tail",
+                "prompt_audit.dynamic_marker_violations",
+            )
+        ),
+        "graphify_audit_contract": all(
+            token in runtime
+            for token in (
+                "scripts/check_graphify_freshness.py",
+                "graphify_audit",
+                "Built from commit",
+                "graphify update .",
+            )
+        ),
+        "preflight_dispatch_contract": all(
+            token in runtime
+            for token in (
+                "scripts/preflight_dispatch.py",
+                "delegate",
+                "local_fallback",
+                "block",
+                "dispatch_decisions",
+            )
+        ),
         "context_snapshot_contract": all(token in runtime + checklist for token in ("context.json", "context_snapshot_path", "context_basis_hash")),
         "context_health_contract": all(token in runtime + checklist for token in ("context_health", "handoff_ready", "next_action")),
         "completion_audit_contract": all(token in runtime + checklist for token in ("completion_audit", "prompt_to_artifact_checklist", "verification_evidence")),

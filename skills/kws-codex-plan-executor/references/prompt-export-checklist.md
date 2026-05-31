@@ -1,6 +1,8 @@
 # Prompt Export Checklist
 
 - Prompt and handoff modes are export-only.
+- Checked prompt artifacts include stable-prefix and hot-tail cache markers.
+- No dynamic `{{...}}` placeholder appears inside a stable-prefix block.
 - The generated prompt names `~/.codex/worktrees/<run_id>` for code execution.
 - The generated prompt names `~/.codex/orchestrator/<run_id>/state.json` for state.
 - The prompt includes `context.json`, `context_snapshot_path`,

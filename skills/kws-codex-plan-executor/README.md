@@ -46,6 +46,10 @@ python3 evals/check_local_env_preflight.py
 python3 evals/check_invocation_args.py
 python3 evals/check_inspect_runs.py
 python3 evals/check_decisions_register.py
+python3 evals/check_prompt_cache_audit.py
+python3 evals/check_cache_observations.py
+python3 evals/check_graphify_freshness.py
+python3 evals/check_preflight_dispatch.py
 ```
 
 `evals/run.sh` uses deterministic fixture runners for prompt, handoff,
@@ -61,6 +65,11 @@ skill registry/root mapping and do not hard-code root directories. In repos that
 declare graphify instructions, compare `graphify-out/GRAPH_REPORT.md` against
 `git rev-parse HEAD`, run `graphify update .` after code changes, and preserve
 that evidence in the completion audit.
+
+Prompt cache hardening is checked with `scripts/audit_prompt_cache.py`.
+Graphify freshness uses `scripts/check_graphify_freshness.py`, and subagent
+readiness uses `scripts/preflight_dispatch.py`; all emit JSON evidence that
+state validation can reject before a finished outcome.
 
 ## Design Notes
 
