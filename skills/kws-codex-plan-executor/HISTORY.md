@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Added parser support for fenced `yaml waygent-task` and
+  `yaml agentrunway-task` execution contracts, including file claims and
+  dependencies.
 - Added execution guardrails for resolving local skill paths from the active
   registry/root mapping instead of hard-coded roots.
 - Added graphify freshness guidance: compare `GRAPH_REPORT.md` built commit
