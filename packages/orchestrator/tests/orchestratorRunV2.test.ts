@@ -386,7 +386,7 @@ verify:
     });
   });
 
-  test("schedules recovery retry for malformed worker result before completing run", async () => {
+  test("routes malformed worker result with captured patch to salvage review", async () => {
     const workspace = initSourceCheckout("waygent-run-v2-recovery-source-");
     const root = mkdtempSync(join(tmpdir(), "waygent-run-v2-recovery-"));
     const provider = writeRecoveringMalformedProviderScript(root);
@@ -417,12 +417,13 @@ verify:
     const state = readRunStateV2(root, "run_recovery_retry");
     expect(state.recovery.some((record) =>
       record.task_id === "task_retry" &&
-      record.failure_class === "malformed_result" &&
-      record.action === "retry_with_strict_prompt"
+      record.failure_class === "recoverable_patch" &&
+      record.action === "salvage_then_review"
     )).toBe(true);
-    expect(result.events.some((event) => event.event_type === "runway.recovery_scheduled")).toBe(true);
-    expect(state.status).toBe("completed");
-    expect(state.completion_audit?.status).toBe("passed");
+    expect(result.events.some((event) => event.event_type === "runway.patch_salvaged")).toBe(true);
+    expect(state.status).toBe("blocked");
+    expect(state.apply).toEqual({ status: "blocked", reason: "review_evidence_missing" });
+    expect(state.completion_audit?.status).toBe("failed");
   });
 
   test("runs required reviews automatically for high-risk tasks before completion audit", async () => {
