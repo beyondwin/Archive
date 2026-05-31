@@ -36,6 +36,7 @@ import {
 import { createEmptyCostLedger, recordProviderAttemptCost } from "./costLedger";
 import { appendDecisionFromWorker, packetDecisionSummaries, writeDecisionsProjection } from "./decisions";
 import { resolveExecutionProfile, roleProfileFor, type ExecutionProfile, type ProfileOverride, type ProviderName, type WorkerRoleSlot } from "./executionProfile";
+import { classifyFailureEvidence } from "./failureEvidence";
 import { recoverWaygentPlanInput } from "./intakeRecovery";
 import { captureWorktreePatch } from "./patchCapture";
 import { selectRepairAction } from "./recoveryExecutor";
@@ -55,6 +56,7 @@ import { runPlanPreflight, type PlanPreflightMode } from "./planPreflight";
 import { buildRunEvent } from "./runEvents";
 import { createRunExecutionContext, type RunExecutionContext } from "./runExecutionContext";
 import { readRunStateV2 } from "./runState";
+import { recordSalvageArtifact } from "./salvageArtifacts";
 import { classifySourceCheckout } from "./sourceCheckout";
 import { deriveRunId, RUN_ID_COLLISION_MAX_RETRIES } from "./runIdDerivation";
 import { reconcileRunState } from "./stateReconciliation";
@@ -587,6 +589,68 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
             continue;
           }
           // dispatch blocked — fall through to existing recovery path
+        }
+        const capturedPatchRef = typeof priorWorker.evidence?.patch_ref === "string"
+          ? priorWorker.evidence.patch_ref
+          : null;
+        const failureDecision = classifyFailureEvidence({
+          task_id: waveResult.task_id,
+          failure_class: failureClass,
+          worker_result: priorWorker,
+          provider_attempt_ref: waveResult.result.provider_attempt.stdout_ref,
+          captured_patch_ref: capturedPatchRef,
+          changed_files: priorWorker.changed_files,
+          diff_scope_safe: failureClass !== "diff_scope_failed",
+          repair_budget: repairBudget
+        });
+        if (failureDecision.kind === "recoverable_patch" && failureDecision.recommended_action === "salvage_then_review") {
+          const salvage = recordSalvageArtifact({
+            state: context.state,
+            task_id: failureDecision.task_id,
+            attempt_id: waveResult.result.provider_attempt.attempt_id,
+            status: "salvaged_patch",
+            patch_ref: failureDecision.patch_ref,
+            changed_files: failureDecision.changed_files,
+            reason: null,
+            evidence_refs: failureDecision.evidence_refs
+          });
+          if (task) {
+            task.status = "REVIEW";
+            delete task.latest_failure_class;
+          }
+          context.mutateState((state) => {
+            state.artifact_index = salvage.nextState.artifact_index;
+            state.recovery = salvage.nextState.recovery;
+            const stateTask = state.tasks[failureDecision.task_id];
+            if (stateTask) {
+              stateTask.status = "review_pending";
+              stateTask.review_required = true;
+              stateTask.review_status = "pending";
+              stateTask.latest_failure_class = null;
+            }
+            state.current_phase = "review";
+            state.status = "blocked";
+            state.lifecycle_outcome = "blocked";
+            state.apply = { status: "blocked", reason: "review_evidence_missing" };
+          });
+          context.appendEvent((sequence) => buildRunEvent({
+            run_id: runId,
+            sequence,
+            event_type: "runway.patch_salvaged",
+            phase: "recover",
+            outcome: "success",
+            summary: "Waygent recorded a salvage candidate patch that requires review.",
+            payload: {
+              task_id: failureDecision.task_id,
+              failure_class: failureDecision.failure_class,
+              salvage_ref: salvage.artifact.path,
+              patch_ref: failureDecision.patch_ref,
+              changed_files: failureDecision.changed_files
+            },
+            trust_impact: "requires_review"
+          }));
+          context.flushState();
+          continue;
         }
         const recovery = recordTaskRecovery(context, {
           task_id: waveResult.result.task_id,

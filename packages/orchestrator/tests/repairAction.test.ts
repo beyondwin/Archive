@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { selectRepairAction } from "../src/recoveryExecutor";
+import { repairCandidateFromRecoveryRecord } from "../src/runCommands";
 
 const PRIOR_OK = {
   schema: "runway.worker_result.v1" as const,
@@ -60,5 +61,27 @@ describe("selectRepairAction", () => {
       repair_budget: { max_attempts: 2, current: 2 }
     });
     expect(decision).toEqual({ action: "request_decision", attempt_number: 3, max_attempts: 2 });
+  });
+});
+
+test("builds manual repair candidate from salvage recovery record", () => {
+  expect(repairCandidateFromRecoveryRecord({
+    task_id: "task_a",
+    failure_class: "malformed_result",
+    action: "salvage_then_review",
+    result: "scheduled",
+    patch_ref: "artifacts/worker/task_a/attempt_1_patch.diff",
+    salvage_ref: "artifacts/salvage/task_a/attempt_task_a_1.json",
+    evidence_refs: ["artifacts/provider/attempt_task_a_1.stdout.txt"]
+  })).toEqual({
+    task_id: "task_a",
+    failure_class: "malformed_result",
+    patch_ref: "artifacts/worker/task_a/attempt_1_patch.diff",
+    salvage_ref: "artifacts/salvage/task_a/attempt_task_a_1.json",
+    evidence_refs: [
+      "artifacts/provider/attempt_task_a_1.stdout.txt",
+      "artifacts/worker/task_a/attempt_1_patch.diff",
+      "artifacts/salvage/task_a/attempt_task_a_1.json"
+    ]
   });
 });
