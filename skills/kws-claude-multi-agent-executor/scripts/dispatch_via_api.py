@@ -329,6 +329,20 @@ def dispatch(role: str, task_context: dict, model: str, orch_dir, sk_root,
             if not _is_retryable(exc) or attempt >= max_retries:
                 result = _env_blocker(role, model, attempt, last_error)
                 _write_output(output_path, result)
+                # Emit the same event as the success path so observability stays
+                # uniform across outcomes. Token/cache fields are unknown on a
+                # failed dispatch, so they default to clearly-zero values.
+                _emit_agentlens({
+                    "event": "kws-cme.dispatch_via_api",
+                    "role": role,
+                    "model": model,
+                    "input_tokens": 0,
+                    "cache_read_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_hit_ratio": 0.0,
+                    "wall_ms": int((time.monotonic() - start) * 1000),
+                    "retries": attempt,
+                })
                 return result
             time.sleep(2 ** attempt)
             attempt += 1
