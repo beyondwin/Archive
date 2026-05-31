@@ -79,6 +79,30 @@ Experiment record under `docs/experiments/v2.22-dispatch-optimization/`
 (JOURNAL, README, decisions D001–D005 + D007; D006 indexed in
 `docs/decision-log.md`).
 
+**Post-merge follow-ups (recorded at branch-merge time, 2026-05-31).**
+- **Plan Reviewer was SKIPPED during the v2.22.0 headless run** (dispatch
+  conservation on a self-modifying skill plan). Re-dispatched post-hoc against
+  the same plan/spec: result **WARN, 2 issues, 0 BLOCKER** — both advisory:
+  (i) `resource_key_collision` on Wave 4 (Tasks 15/16/17 all carry
+  `Resource Key: evals`; the execution_plan comment claiming "different
+  resource keys" was cosmetically wrong, but the Phase 0 Step 6 partition
+  rule still serialized them correctly); (ii) `naming_drift` between
+  spec §2.B1's `--role` enum and the plan's `dispatch_config` 6 split tokens —
+  on inspection these are two different layers (call-site gate keys vs the
+  dispatcher's `--role` argument), so the runtime is internally consistent
+  and the phase-docs call sites already disambiguate. Recorded in
+  `state.plan_review = {status: WARN, warnings: [...]}` with `post_hoc_run_at`
+  and `post_hoc_result_path` pointers. No code change required.
+- **Live API cache-hit validation pending.** v2.22 paths were unit-tested with
+  injected/fake `anthropic` clients in the headless-run environment (no SDK
+  installed, no `ANTHROPIC_API_KEY`). The first live run against
+  `evals/baselines/v2.22.0.json` will confirm real cache-hit behavior and feed
+  D006 (cache TTL ephemeral vs extended). Tracked as a v2.22.1 deliverable.
+- **D007 follow-on (`dispatch_config.final_sweep` default flip to `"batch"`)**
+  stays deferred to v2.22.1 as planned. The Batches API path is shipped and
+  unit-covered; the default remains `"api"` in v2.22.0 until real-run timing
+  data justifies the SLA tradeoff.
+
 ### v2.21.0 — Slimming & enforcement (2026-05-29)
 
 A structural release with no new runtime feature — it hardens *how* the existing
