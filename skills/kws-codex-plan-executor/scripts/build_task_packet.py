@@ -143,8 +143,8 @@ def build_packet(
         die(f"invalid manifest fallback: {fallback_policy}")
     if max_chars <= 0:
         die("--max-chars must be a positive integer")
-    if not 0 < context_threshold <= 1:
-        die("--context-threshold must be > 0 and <= 1")
+    if context_threshold < 0.05 or context_threshold > 0.95:
+        die("--context-threshold must be in [0.05,0.95]")
 
     task = find_task(plan, task_id)
     section_ids, fallback_used = resolve_sections(task, manifest, fallback_policy)

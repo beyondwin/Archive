@@ -58,15 +58,15 @@ def markdown_sections(text: str) -> list[tuple[str, str]]:
     return sections
 
 
-def budget_status(estimated: int, max_chars: int) -> str:
+def budget_status(estimated: int, max_chars: int, context_threshold: float) -> str:
     if estimated > max_chars:
         return "red"
-    if estimated > int(max_chars * 0.7):
+    if estimated > int(max_chars * context_threshold):
         return "yellow"
     return "green"
 
 
-def build_context_budget(repo_root: Path, sources: list[dict], max_chars: int) -> dict:
+def build_context_budget(repo_root: Path, sources: list[dict], max_chars: int, context_threshold: float) -> dict:
     included_sections: list[dict] = []
     omitted_sections: list[dict] = []
     estimated_chars = 0
@@ -90,7 +90,7 @@ def build_context_budget(repo_root: Path, sources: list[dict], max_chars: int) -
             else:
                 omitted_sections.append(record)
 
-    status = budget_status(estimated_chars, max_chars)
+    status = budget_status(estimated_chars, max_chars, context_threshold)
     if omitted_sections:
         status = "red"
     return {
@@ -98,9 +98,35 @@ def build_context_budget(repo_root: Path, sources: list[dict], max_chars: int) -
         "packet_count": 0,
         "status": status,
         "max_chars": max_chars,
+        "context_threshold": context_threshold,
         "estimated_chars": estimated_chars,
         "included_sections": included_sections,
         "omitted_sections": omitted_sections,
+    }
+
+
+def build_packet_context_budget(task_packet_index: list[dict], max_chars: int, context_threshold: float) -> dict:
+    estimates = [
+        item.get("estimated_chars")
+        for item in task_packet_index
+        if isinstance(item.get("estimated_chars"), int)
+    ]
+    estimated_chars = sum(estimates)
+    max_packet_chars = max(estimates, default=0)
+    if len(estimates) != len(task_packet_index):
+        status = "yellow"
+    else:
+        status = budget_status(max_packet_chars, max_chars, context_threshold)
+    return {
+        "active_strategy": "task_packet",
+        "packet_count": len(task_packet_index),
+        "status": status,
+        "max_chars": max_chars,
+        "context_threshold": context_threshold,
+        "estimated_chars": estimated_chars,
+        "max_packet_chars": max_packet_chars,
+        "included_sections": [],
+        "omitted_sections": [],
     }
 
 
@@ -155,6 +181,7 @@ def build_snapshot(
     spec: str | None,
     docs: list[str],
     max_chars: int,
+    context_threshold: float,
     spec_manifest: str | None = None,
     task_packet_dir: str | None = None,
 ) -> dict:
@@ -189,13 +216,14 @@ def build_snapshot(
         "sources": sources,
         "basis_hash": hashlib.sha256(basis_input.encode("utf-8")).hexdigest(),
     }
-    snapshot["context_budget"] = build_context_budget(repo_root, sources, max_chars)
+    if task_packet_index:
+        snapshot["context_budget"] = build_packet_context_budget(task_packet_index, max_chars, context_threshold)
+    else:
+        snapshot["context_budget"] = build_context_budget(repo_root, sources, max_chars, context_threshold)
     if spec_manifest_summary is not None:
         snapshot["spec_manifest"] = spec_manifest_summary
     if task_packet_index:
         snapshot["task_packet_index"] = task_packet_index
-        snapshot["context_budget"]["active_strategy"] = "task_packet"
-        snapshot["context_budget"]["packet_count"] = len(task_packet_index)
     return snapshot
 
 
@@ -207,6 +235,7 @@ def main() -> int:
     parser.add_argument("--spec")
     parser.add_argument("--docs", default="")
     parser.add_argument("--max-chars", type=int, default=120000)
+    parser.add_argument("--context-threshold", type=float, default=0.70)
     parser.add_argument("--spec-manifest")
     parser.add_argument("--task-packet-dir")
     parser.add_argument("--output", required=True)
@@ -218,6 +247,8 @@ def main() -> int:
     docs = [item.strip() for item in args.docs.split(",") if item.strip()]
     if args.max_chars <= 0:
         die("--max-chars must be a positive integer")
+    if args.context_threshold < 0.05 or args.context_threshold > 0.95:
+        die("--context-threshold must be in [0.05,0.95]")
     snapshot = build_snapshot(
         repo_root,
         args.run_id,
@@ -225,6 +256,7 @@ def main() -> int:
         args.spec,
         docs,
         args.max_chars,
+        args.context_threshold,
         args.spec_manifest,
         args.task_packet_dir,
     )
