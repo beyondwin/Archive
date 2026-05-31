@@ -619,7 +619,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
             delete task.latest_failure_class;
           }
           context.mutateState((state) => {
-            state.artifact_index = salvage.nextState.artifact_index;
+            state.artifact_index = salvage.nextState.artifact_index ?? [];
             state.recovery = salvage.nextState.recovery;
             const stateTask = state.tasks[failureDecision.task_id];
             if (stateTask) {
