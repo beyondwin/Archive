@@ -612,7 +612,7 @@ function recoverableEvidenceFromState(state: WaygentRunStateV2): NonNullable<Ope
 function whyNotApplyReadyFromState(
   state: WaygentRunStateV2,
   applyReadiness: ApplyReadinessProjection
-): OperatorDecisionProjection["why_not_apply_ready"] {
+): NonNullable<OperatorDecisionProjection["why_not_apply_ready"]> | null {
   if (applyReadiness.status === "ready") return null;
   const reason = applyReadiness.reason ?? state.apply.reason ?? applyReadiness.status;
   return {
