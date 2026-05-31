@@ -210,6 +210,33 @@ class RetryTests(unittest.TestCase):
     def tearDown(self):
         dva.time.sleep = self._orig_sleep
 
+    def test_agentlens_emit_called_on_failed_after_retry_env_blocker(self):
+        # The failed-after-retry (ENV_BLOCKER) path must ALSO emit the
+        # kws-cme.dispatch_via_api event so observability stays uniform with the
+        # success path. Inject a client that always raises a retryable error so
+        # retries are exhausted and the ENV_BLOCKER branch is taken.
+        orch = _tmp_orch()
+        out = Path(orch) / "result.json"
+        captured = {}
+
+        def fake_emit(fields):
+            captured.update(fields)
+        orig = dva._emit_agentlens
+        dva._emit_agentlens = fake_emit
+        try:
+            msgs = FakeMessages(raise_seq=[FakeAPIError(429)] * 6)
+            client = FakeClient(messages=msgs)
+            res = dva.dispatch("plan_reviewer", _task_ctx(),
+                               "claude-haiku-4-5-20251001", orch, SK_ROOT,
+                               str(out), client=client, max_retries=3)
+        finally:
+            dva._emit_agentlens = orig
+        self.assertEqual(res["status"], "ESCALATE")
+        self.assertEqual(res["type"], "ENV_BLOCKER")
+        self.assertEqual(captured["event"], "kws-cme.dispatch_via_api")
+        self.assertEqual(captured["role"], "plan_reviewer")
+        self.assertEqual(captured["retries"], res["retries"])
+
     def test_is_retryable_status_codes(self):
         for code in (429, 500, 502, 503, 529):
             self.assertTrue(dva._is_retryable(FakeAPIError(code)))
