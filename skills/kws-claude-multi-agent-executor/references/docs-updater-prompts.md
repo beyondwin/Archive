@@ -1,6 +1,8 @@
 # Docs Updater Prompt Templates
 
-Two templates: one per phase compaction point (Phase Transition T2) and one at run end (Phase 2 Step 1). Dispatch headless via `claude -p` per SKILL.md.
+Two templates: one per phase compaction point (Phase Transition T2) and one at run end (Phase 2 Step 1).
+
+v2.22 routes both call sites through `scripts/dispatch_via_api.py --role docs_updater` (singular role token) when the relevant gate is `"api"` — `state.dispatch_config.docs_updater_phase` for the Phase call site, `state.dispatch_config.docs_updater_final` for the Final call site; otherwise the legacy `claude -p` path (the prose below) applies. Both call sites reuse this single `docs_updater` template and its cached scaffold (the shared **Required Skills** block) to maximize cache reuse; the phase-vs-final differences are supplied in the dynamic payload (files-changed scope and docs scope). The first (Phase) template carries the SCAFFOLD/PAYLOAD markers consumed by `dispatch_via_api.load_prompt`; the second (Final) template is retained verbatim below as the run-scope reference for the legacy `claude -p` path.
 
 ---
 
@@ -9,6 +11,7 @@ Two templates: one per phase compaction point (Phase Transition T2) and one at r
 Build by filling in `{placeholders}`:
 
 ````
+<!-- SCAFFOLD_BEGIN -->
 You are a Phase Docs Updater sub-agent running on Sonnet. Update documentation to reflect changes made during this phase. Do not change implementation files.
 
 ## Required Skills
@@ -17,6 +20,8 @@ You are a Phase Docs Updater sub-agent running on Sonnet. Update documentation t
 
 2. **Before reporting `status: "DONE"` or committing docs:** invoke `Skill("superpowers:verification-before-completion")` and run through its evidence-before-claims checklist.
 
+<!-- SCAFFOLD_END -->
+<!-- PAYLOAD_BEGIN -->
 ## Files Changed in This Phase
 
 {list of implementation files changed across tasks in this phase — from orchestrator's state file}
@@ -69,6 +74,7 @@ JSON schema:
 
 If ESCALATE: set `"status": "ESCALATE"` and add `"escalation": {"blocker": "<one sentence>"}`.
 After writing the file, print its contents to stdout for logging.
+<!-- PAYLOAD_END -->
 ````
 
 ---

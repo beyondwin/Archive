@@ -448,6 +448,66 @@ class TransitionCombinedTests(unittest.TestCase):
         self.assertEqual(written["docs"]["commit"], "abc123")
 
 
+# --------------------------------------------------------------------------- #
+# Docs Updater (T9) — role token "docs_updater" (singular). The Phase and Final
+# call sites BOTH reuse this single role; the distinction is the dispatch_config
+# gate (docs_updater_phase / docs_updater_final), not the role token. The prompt
+# file is `docs-updater-prompts.md` (plural), resolved via PROMPT_FILE_OVERRIDE.
+# Methods are named *docs_updater* so `-k docs_updater` selects exactly them.
+# --------------------------------------------------------------------------- #
+def _docs_updater_ctx():
+    return {
+        "files_changed": "src/foo.py, src/bar.py",
+        "docs_scope": "README.md, CHANGELOG.md",
+        "result_json_path": "/tmp/docs_updater_out.json",
+    }
+
+
+class DocsUpdaterTests(unittest.TestCase):
+    def test_docs_updater_loads_prompt_via_override_split_succeeds(self):
+        scaffold, payload = dva.load_prompt("docs_updater", SK_ROOT)
+        self.assertNotIn("{", scaffold)
+        self.assertIn("Phase Docs Updater sub-agent", scaffold)
+        self.assertIn("## Required Skills", scaffold)
+        self.assertIn("## Files Changed in This Phase", payload)
+
+    def test_docs_updater_build_request_forces_report_docs_updater_and_caches(self):
+        scaffold, payload = dva.load_prompt("docs_updater", SK_ROOT)
+        schema = dva.load_schema("docs_updater", SK_ROOT)
+        req = dva.build_request(
+            scaffold, payload, schema, "docs_updater",
+            "claude-sonnet-4-5-20250929", _docs_updater_ctx())
+        # Single tool forced — NOT routed through the transition two-tool branch.
+        self.assertEqual(req["tool_choice"],
+                         {"type": "tool", "name": "report_docs_updater"})
+        self.assertEqual(len(req["tools"]), 1)
+        self.assertEqual(req["tools"][0]["name"], "report_docs_updater")
+        self.assertIn("input_schema", req["tools"][0])
+        # cache_control ephemeral on the scaffold block
+        self.assertTrue(any(
+            isinstance(b, dict) and b.get("cache_control") == {"type": "ephemeral"}
+            for b in req["system"]))
+
+    def test_docs_updater_dispatch_writes_tool_result_to_output(self):
+        orch = _tmp_orch()
+        out = Path(orch) / "docs_results" / "phase_1.json"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        msgs = FakeMessages(response=FakeResponse(
+            "report_docs_updater",
+            {"status": "DONE", "summary": "docs updated",
+             "files_updated": [{"path": "README.md", "change": "noted phase"}],
+             "commit": "abc123"}))
+        client = FakeClient(messages=msgs)
+        res = dva.dispatch("docs_updater", _docs_updater_ctx(),
+                           "claude-sonnet-4-5-20250929", orch, SK_ROOT, str(out),
+                           client=client, max_retries=3)
+        self.assertEqual(res["status"], "DONE")
+        self.assertTrue(out.is_file())
+        written = json.loads(out.read_text())
+        self.assertEqual(written["status"], "DONE")
+        self.assertEqual(written["commit"], "abc123")
+
+
 class CliTests(unittest.TestCase):
     def test_parser_exposes_role(self):
         parser = dva.build_arg_parser()
@@ -456,6 +516,14 @@ class CliTests(unittest.TestCase):
             "--output", "/o.json", "--model", "claude-haiku-4-5-20251001",
             "--orch-dir", "/orch"])
         self.assertEqual(ns.role, "plan_reviewer")
+
+    def test_parser_accepts_docs_updater_role(self):
+        parser = dva.build_arg_parser()
+        ns = parser.parse_args([
+            "--role", "docs_updater", "--task-context", "/t.json",
+            "--output", "/o.json", "--model", "claude-sonnet-4-5-20250929",
+            "--orch-dir", "/orch"])
+        self.assertEqual(ns.role, "docs_updater")
 
 
 if __name__ == "__main__":

@@ -96,6 +96,8 @@ Build from the **Final Docs Updater Prompt Template** with:
 
 **Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<orch_dir>/docs_prompts/final{_chain | }.txt` and result path matching `{result_json_path}`. Missing/malformed result → ENV_BLOCKER ESCALATE.
 
+**Final Docs Updater dispatch path (v2.22 §2.B2).** When `state.dispatch_config.docs_updater_final == "api"`, dispatch this Final Docs Updater through `scripts/dispatch_via_api.py --role docs_updater` (singular role; structured tool `report_docs_updater`, `tool_choice`-forced; run-wide payload = all files changed during the run across every plan + the final docs scope), and validate its result against `references/_schemas/docs_updater_result.schema.json` before consuming it. When `== "p"`, fall back to the legacy `claude -p` dispatch described above. The gate selects only the dispatch transport; the consumed DONE/ESCALATE shape and the result path are identical either way.
+
 ### Step 1.5: Method Audit Validation (v2.11)
 
 After the Final Docs Updater commit and before generating the Final Summary Report:

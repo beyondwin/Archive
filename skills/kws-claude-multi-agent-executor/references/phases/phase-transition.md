@@ -37,6 +37,8 @@ Build the prompt from the **Combined Transition Prompt Template** (`references/t
 
 **Batch Verifier dispatch path (v2.22 §2.B2).** When `state.dispatch_config.verifier_batch == "api"`, the batch Verifier portion is dispatched through `scripts/dispatch_via_api.py --role verifier` (structured tool `report_verifier`, `tool_choice`-forced), and its `verify` result is validated against `references/_schemas/verifier_result.schema.json` before being consumed below. When `== "p"`, fall back to the legacy `claude -p` dispatch described above. The gate selects only the dispatch transport; the consumed `verify` shape (PASS/FAIL/ESCALATE) is identical either way.
 
+**Phase Docs Updater dispatch path (v2.22 §2.B2).** When `state.dispatch_config.docs_updater_phase == "api"`, the Phase Docs Updater portion is dispatched through `scripts/dispatch_via_api.py --role docs_updater` (singular role; structured tool `report_docs_updater`, `tool_choice`-forced; phase-scope payload = files changed since `last_compaction_after_task` + docs scope), and its `docs` result is validated against `references/_schemas/docs_updater_result.schema.json` before being consumed below. When `== "p"`, fall back to the legacy `claude -p` dispatch described above. The gate selects only the dispatch transport; the consumed `docs` shape (DONE/ESCALATE) is identical either way.
+
 Consume the combined result via `parse_combined_result` → `{verify, docs}`, then:
 
 **`verify` PASS** → clear `low_tasks_pending_verification` in the state file; the `docs` commit stands.
