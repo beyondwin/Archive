@@ -4,10 +4,11 @@
 > `Read` this file when it reaches a compaction point (after Agent Cleanup of the
 > boundary task, before starting the next task).
 >
-> **Scope**: Step T1 batch Verifier for accumulated LOW tasks, Step T2 Phase Docs
-> Updater, and Step T3 state anchor + context drop (including the token-health
-> evaluation and Resume Chain trigger that lets a long run exceed one subprocess
-> context). The Resume Chain *procedure* itself lives in
+> **Scope**: Step T1.2 Combined Transition Dispatch (batch Verifier for
+> accumulated LOW tasks + Phase Docs Updater, merged into one dispatch invoking
+> both tools — v2.22 §2.A2), and Step T3 state anchor + context drop (including
+> the token-health evaluation and Resume Chain trigger that lets a long run
+> exceed one subprocess context). The Resume Chain *procedure* itself lives in
 > `references/phases/phase-minus-1-args-and-spawn.md`.
 >
 > **Why extracted**: Phase Transition fires only at compaction points; keeping it
@@ -19,20 +20,26 @@
 
 Execute at each compaction point, after Agent Cleanup of the boundary task and before starting the next task.
 
-### Step T1: Batch Verifier for LOW Tasks
+### Step T1.2: Combined Transition Dispatch
 
-If `low_tasks_pending_verification` is non-empty: build the Verifier prompt from the **Verifier Prompt Template** with:
+v2.22 §2.A2 merges the former T1 (batch Verifier) and T2 (Phase Docs Updater) — which used to run back-to-back — into ONE dispatch. The sub-agent calls BOTH tools, `verify_low_batch` and `update_phase_docs`, in a single turn. This saves ~50% of compaction wall time. The combined result is a single JSON `{verify:{...}, docs:{...}}` contracted in `references/_schemas/transition_combined_result.schema.json` and written to `<orch_dir>/transition_results/<plan_idx>_<compaction_index>.json` (helper: `scripts/dispatch_transition_combined.py`).
+
+Build the prompt from the **Combined Transition Prompt Template** (`references/transition-prompt.md`) with:
 - Risk level: `LOW (BATCH)`
-- Files changed: all files from all accumulated LOW tasks since the last compaction point
+- Files changed (verify): all files from all accumulated LOW tasks since the last compaction point
+- Files changed (docs): all files from state file tasks since `last_compaction_after_task`
 - Baseline: from Phase 0
 - `{test_command}`: from state.json
-- `{acceptance_criteria}`: "run all test files for changed files combined"
-- `{result_json_path}`: `<orch_dir>/verifier_results/batch_<compaction_index>.json`
+- Docs scope: user-provided or default (`README.md`, `CHANGELOG.md`, `docs/*runbook*`, `docs/*operator*`)
+- `{result_json_path}`: `<orch_dir>/transition_results/<plan_idx>_<compaction_index>.json`
 
-**Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<orch_dir>/verifier_prompts/batch_<compaction_index>.txt` and result path `<orch_dir>/verifier_results/batch_<compaction_index>.json`. Missing/malformed result → ENV_BLOCKER ESCALATE.
+**Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<orch_dir>/transition_prompts/<plan_idx>_<compaction_index>.txt`. Missing/malformed result → ENV_BLOCKER ESCALATE.
 
-**Result: PASS** → clear `low_tasks_pending_verification` in the state file.  
-**Result: FAIL** → apply this recovery algorithm:
+Consume the combined result via `parse_combined_result` → `{verify, docs}`, then:
+
+**`verify` PASS** → clear `low_tasks_pending_verification` in the state file; the `docs` commit stands.
+
+**`verify` FAIL** → **guardrail:** the `docs` result is still consumed, but set `state.transition_blocked = true` and **skip the docs commit** until the verifier is re-dispatched and passes. Then apply this recovery algorithm:
 0. **Pre-filter** (docs-only exclusion): For each task in `<active>.low_tasks_pending_verification`, read its entry under `<active>.tasks.task_N`. The task is docs-only if **either**:
    - `files_test` is present and equals `[]`, **or**
    - `files_test` is missing/null AND every entry in `files` ends with `.md` (heuristic fallback for legacy state.json).
@@ -47,14 +54,9 @@ If `low_tasks_pending_verification` is non-empty: build the Verifier prompt from
 5. If responsibility is ambiguous after mapping: reset ALL tasks in this batch to the first batch task's `pre_task_sha`, then re-run them sequentially with per-task Verifier (treat as MID for this retry).
 6. Apply `verifier_retries` counter per affected task. If any task hits limit: halt.
 
-### Step T2: Phase Docs Updater
+When a verifier re-dispatch later passes, clear `state.transition_blocked` and commit the held docs.
 
-Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Template** with:
-- Files changed in this phase: all files from state file tasks since `last_compaction_after_task`
-- Docs scope: user-provided or default (`README.md`, `CHANGELOG.md`, `docs/*runbook*`, `docs/*operator*`)
-- `{result_json_path}`: `<orch_dir>/docs_results/phase_<compaction_index>.json`
-
-**Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<orch_dir>/docs_prompts/phase_<compaction_index>.txt` and result path `<orch_dir>/docs_results/phase_<compaction_index>.json`. Missing/malformed result → treat as ESCALATE; record `phase_docs_skipped` in state.json. The Final Docs Updater in Phase 2 will recover.
+**`docs` ESCALATE** (missing/malformed docs result) → record `phase_docs_skipped` in state.json. The Final Docs Updater in Phase 2 will recover.
 
 ### Step T3: State Anchor + Context Drop
 
@@ -172,8 +174,8 @@ Build the Phase Docs Updater prompt from the **Phase Docs Updater Prompt Templat
    Then exit (headless child) or halt (interactive). The Monitor watcher will surface the HALTED line on its next loop.
 
 **Phase Transition failure handling:**
-- If T1 batch Verifier FAIL exceeds retries for any task: halt that task, record SKIPPED in state.json, continue Phase Transition.
-- If T2 Phase Docs Updater sends ESCALATE: skip docs for this phase. Record `phase_docs_skipped: [<phase_id>]` in state.json. The Final Docs Updater in Phase 2 will recover.
+- If T1.2 `verify` FAIL exceeds retries for any task: halt that task, record SKIPPED in state.json, continue Phase Transition.
+- If T1.2 `docs` sends ESCALATE: skip docs for this phase. Record `phase_docs_skipped: [<phase_id>]` in state.json. The Final Docs Updater in Phase 2 will recover.
 - If T3 state file write fails (Write tool error or Read-back fails): close the AgentLens run with `outcome=blocked` (best-effort, silent on failure) and then **hard halt immediately** — 'State file write failed at <path>. Risk of state corruption. Manual inspection required.' Do not proceed.
   ```bash
   if [ -n "${ORCH_RUN_ID:-}" ]; then
