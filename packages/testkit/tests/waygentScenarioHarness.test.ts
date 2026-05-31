@@ -15,11 +15,15 @@ describe("waygent scenario harness", () => {
       source_dirty_before_apply: true,
       force_missing_checkpoint: false,
       checkpoint_dry_run_conflict: false,
+      stale_verification_recovered: true,
+      review_evidence_passed: true,
       plan: "```yaml waygent-task\nid: task_demo\ntitle: Demo\ndependencies: []\nfile_claims: []\nrisk: low\nverify:\n  - printf hello\n```",
       expected: {
         run_status: "trusted",
         apply_status: "blocked",
-        event_types: ["platform.run_started"]
+        event_types: ["platform.run_started"],
+        trust_status: "trusted",
+        operator_primary_blocker: null
       }
     }));
 
@@ -29,8 +33,12 @@ describe("waygent scenario harness", () => {
       source_dirty_before_apply: true,
       force_missing_checkpoint: false,
       checkpoint_dry_run_conflict: false,
+      stale_verification_recovered: true,
+      review_evidence_passed: true,
       expected: {
-        apply_status: "blocked"
+        apply_status: "blocked",
+        trust_status: "trusted",
+        operator_primary_blocker: null
       }
     });
   });
@@ -126,7 +134,7 @@ describe("waygent scenario harness", () => {
         status: "completed",
         completion_audit: { status: "failed" },
         apply: { status: "not_applied" },
-        drift: { unrepaired_blockers: [] },
+        drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
         tasks: {
           task_a: {
             checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"]
@@ -140,6 +148,76 @@ describe("waygent scenario harness", () => {
     expect(normalized.apply_status).toBe("not_ready");
     expect(normalized.checkpoints).toEqual(["artifacts/checkpoints/task_a/candidate_task_a.json"]);
     expect(normalized.combined_patch_ref).toBeNull();
+  });
+
+  test("normalizes operator decision evidence from v2 state", () => {
+    const normalized = normalizeWaygentReplay({
+      events: [
+        {
+          event_type: "runway.verification_result",
+          outcome: "success",
+          payload: { task_id: "task_a", verification_id: "verify_task_a_1" }
+        }
+      ],
+      trust_report: { trust_status: "trusted" },
+      summary: { total_events: 1 },
+      projection: { safe_wave: ["task_a"] },
+      run_state_v2: {
+        status: "blocked",
+        lifecycle_outcome: "blocked",
+        current_phase: "review",
+        provider_profile: { provider: "fake" },
+        completion_audit: {
+          status: "failed",
+          residual_risk: ["review_evidence:recovery_attempted"],
+          combined_apply_evidence: {
+            status: "passed",
+            checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"],
+            patch_ref: "artifacts/checkpoints/apply/run_review.patch"
+          }
+        },
+        apply: { status: "blocked", reason: "review_evidence_missing" },
+        drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
+        tasks: {
+          task_a: {
+            id: "task_a",
+            status: "verified",
+            risk: "low",
+            dependencies: [],
+            file_claims: [{ path: "task_a.txt", mode: "owned" }],
+            attempts: [],
+            task_packet_path: null,
+            task_packet_sha256: null,
+            unit_manifest: null,
+            checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"],
+            latest_failure_class: null,
+            decision_packet_ref: null,
+            timing: {}
+          }
+        },
+        provider_attempts: [],
+        reviews: [],
+        verification: [{ verification_id: "verify_task_a_1", task_id: "task_a", status: "passed" }],
+        recovery: [{ task_id: "task_a", failure_class: "verification_failed" }],
+        recovered_failures: [{
+          task_id: "task_a",
+          failure_class: "verification_failed",
+          recovered_at: "2026-05-26T00:01:00.000Z",
+          evidence_refs: ["verification_id:verify_task_a_stale_failure"]
+        }],
+        timestamps: {
+          started_at: "2026-05-26T00:00:00.000Z",
+          updated_at: "2026-05-26T00:02:00.000Z",
+          completed_at: "2026-05-26T00:02:00.000Z"
+        }
+      } as any
+    });
+
+    expect(normalized.trust_status).toBe("needs_review");
+    expect(normalized.apply_status).toBe("blocked");
+    expect(normalized.apply_reason).toBe("review_evidence_missing");
+    expect(normalized.operator_primary_blocker).toBe("review_evidence_missing");
+    expect(normalized.operator_allowed_actions).toContain("run_review");
   });
 
   test("normalizes checkpoint dry-run conflict fixtures as needs_rebase blockers", () => {

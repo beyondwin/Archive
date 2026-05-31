@@ -18,6 +18,7 @@ import "./styles.css";
 const verdictLabels: Record<TrustVerdict, string> = {
   trusted: "Trusted",
   failed: "Failed",
+  needs_review: "Needs review",
   insufficient_evidence: "Insufficient evidence"
 };
 

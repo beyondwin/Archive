@@ -57,10 +57,21 @@ export type FailureClass =
   | "unsafe_apply"
   | "state_drift"
   | "artifact_missing"
+  | "cost_budget_exhausted"
   | "stale_activity"
   | "terminal_rejected";
 
-export type ProviderRole = "implement" | "review" | "fix" | "verify_assist";
+export type ProviderRole =
+  | "coordinator"
+  | "implement"
+  | "implementer"
+  | "review"
+  | "spec_reviewer"
+  | "quality_reviewer"
+  | "repair"
+  | "fix"
+  | "verifier"
+  | "verify_assist";
 export type ProviderLogCategory =
   | "error"
   | "warning"
@@ -71,7 +82,25 @@ export type ProviderLogCategory =
 export type WaygentRunStatusV2 = "initializing" | "running" | "blocked" | "failed" | "completed" | "applying" | "applied";
 export type WaygentLifecycleOutcome = "finished" | "blocked" | "failed" | "aborted" | null;
 export type WaygentCurrentPhase = "preflight" | "dispatch" | "review" | "verify" | "recover" | "apply" | "complete";
-export type WaygentTaskStatusV2 = "pending" | "ready" | "running" | "needs_fix" | "verified" | "blocked" | "failed" | "applied";
+export type WaygentTaskStatusV2 =
+  | "pending"
+  | "ready"
+  | "running"
+  | "needs_fix"
+  | "verified"
+  | "review_required"
+  | "review_pending"
+  | "spec_review_running"
+  | "spec_review_failed"
+  | "spec_review_passed"
+  | "quality_review_running"
+  | "quality_review_failed"
+  | "review_passed"
+  | "review_failed"
+  | "checkpoint_ready"
+  | "blocked"
+  | "failed"
+  | "applied";
 
 export interface WaygentFileClaim {
   path: string;
@@ -121,6 +150,81 @@ export interface ReviewResult {
   summary: string;
 }
 
+export interface TaskVerificationResolution {
+  task_id: string;
+  latest_status: "passed" | "failed" | "missing";
+  latest_verification_ref: string | null;
+  stale_failure_refs: string[];
+}
+
+export interface RecoveredFailureRecord {
+  task_id: string;
+  failure_class: FailureClass | string;
+  recovered_at: string;
+  evidence_refs: string[];
+}
+
+export type TaskReviewStatus = "not_required" | "required" | "pending" | "running" | "passed" | "failed";
+
+export interface TaskReviewArtifact {
+  schema: "waygent.task_review.v1";
+  run_id: string;
+  task_id: string;
+  review_id: string;
+  role: "spec_reviewer" | "quality_reviewer";
+  status: "passed" | "failed" | "needs_fix";
+  verdict: "approved" | "rejected";
+  issues: Array<{
+    severity: "critical" | "important" | "minor";
+    file?: string;
+    line?: number;
+    summary: string;
+    required_fix: string;
+  }>;
+  evidence_refs: string[];
+  reviewed_patch_refs: string[];
+  model?: string;
+  created_at: string;
+}
+
+export interface WaygentReviewPacket {
+  schema: "waygent.review_packet.v1";
+  run_id: string;
+  task_id: string;
+  review_id: string;
+  role: "spec_reviewer" | "quality_reviewer";
+  task_title: string;
+  task_packet_ref: string | null;
+  task_packet_sha256: string | null;
+  plan_excerpt: string;
+  spec_excerpt: string;
+  file_claims: WaygentFileClaim[];
+  allowed_write_globs: string[];
+  forbidden_write_globs: string[];
+  verification_refs: string[];
+  worker_result_refs: string[];
+  prior_review_refs: string[];
+  reviewed_patch_refs: string[];
+  review_instructions: string[];
+  context_budget: {
+    estimated_chars: number;
+    max_chars: number;
+    status: "green" | "yellow" | "red";
+  };
+  sha256: string;
+}
+
+export interface SalvageResult {
+  schema: "waygent.salvage_result.v1";
+  task_id: string;
+  attempt_id: string;
+  status: "salvaged_patch" | "no_patch" | "unsafe_patch";
+  patch_ref: string | null;
+  changed_files: string[];
+  reason: string | null;
+  evidence_refs: string[];
+}
+
 export interface ProviderLogSummary {
   total_lines: number;
   counts: Record<ProviderLogCategory, number>;
@@ -143,6 +247,12 @@ export interface TokenUsage {
   output_tokens: number;
   cached_read_tokens: number;
   cached_write_tokens: number;
+}
+
+export interface CostSummaryProjection {
+  cost_usd: number;
+  dispatches: number;
+  budget_status: "ok" | "warning" | "paused" | "exhausted";
 }
 
 export interface ModelRequest {
@@ -383,6 +493,9 @@ export type OperatorActionId =
   | "rebase_checkpoint"
   | "rerun_verification"
   | "review_patch"
+  | "run_review"
+  | "mark_stale_blocked"
+  | "cleanup_stale_worktree"
   | "apply_run";
 
 export interface OperatorStatusSummary {
@@ -434,6 +547,7 @@ export interface OperatorEvidencePacket {
   verification_refs: string[];
   checkpoint_refs: string[];
   projection_refs: string[];
+  recovered_failure_refs?: string[];
   missing_refs: string[];
   redaction_notes: string[];
 }
@@ -503,6 +617,18 @@ export interface OperatorDecisionProjection {
   confidence: OperatorDecisionConfidence;
   unknown_reasons: string[];
   intake_recovery?: OperatorIntakeRecoverySummary;
+  review_status?: {
+    required: boolean;
+    missing_task_ids: string[];
+    passed_task_ids: string[];
+  };
+  recovered_failures?: Array<{
+    task_id: string;
+    failure_class: string;
+    evidence_refs: string[];
+  }>;
+  cost_summary?: CostSummaryProjection;
+  stale_run_status?: StaleRunStatus;
   source_projection_refs: OperatorSourceProjectionRefs;
 }
 
@@ -590,6 +716,10 @@ export interface WaygentRunStateTaskV2 {
   evidence_policy?: TaskEvidencePolicy;
   hook_retries?: number;
   model_used?: ModelAttestation[];
+  review_required?: boolean;
+  review_refs?: string[];
+  review_status?: TaskReviewStatus;
+  verification_resolution?: TaskVerificationResolution;
 }
 
 export interface WaygentRunStateV2 {
@@ -619,6 +749,10 @@ export interface WaygentRunStateV2 {
   preflight?: WaygentSourcePreflight;
   worktrees?: WaygentWorktreeManifest[];
   artifact_index?: ArtifactIndexEntry[];
+  recovered_failures?: RecoveredFailureRecord[];
+  budget_policy?: Record<string, unknown>;
+  stale_run_status?: StaleRunStatus;
+  verification_resolutions?: Record<string, TaskVerificationResolution>;
   tasks: Record<string, WaygentRunStateTaskV2>;
   safe_waves: Array<{
     wave_id: string;
@@ -628,7 +762,7 @@ export interface WaygentRunStateV2 {
     timing?: { started: string; completed: string; duration_ms: number };
   }>;
   provider_attempts: ProviderAttempt[];
-  reviews: ReviewResult[];
+  reviews: Array<ReviewResult | TaskReviewArtifact>;
   verification: Array<Record<string, unknown>>;
   recovery: Array<Record<string, unknown>>;
   apply: { status: "not_applied" | "not_ready" | "blocked" | "applying" | "applied" | "failed"; reason?: string; checkpoint_ref?: string };
@@ -637,6 +771,19 @@ export interface WaygentRunStateV2 {
   completion_audit: null | Record<string, unknown>;
   timestamps: { started_at: string; updated_at: string; completed_at: string | null };
   repair_budget?: Record<string, { max_attempts: number; current: number }>;
+}
+
+export interface StaleRunStatus {
+  run_id: string;
+  stale: boolean;
+  reason:
+    | "heartbeat_expired"
+    | "provider_process_missing"
+    | "worktree_missing"
+    | "state_event_mismatch"
+    | "manual_pause"
+    | "active";
+  safe_actions: Array<"inspect" | "mark_blocked" | "resume" | "cleanup_worktree">;
 }
 
 export type IntakeRecoveryStatus = "not_needed" | "recovered" | "decision_required" | "failed";
@@ -753,9 +900,11 @@ export interface LensRunwayProjection {
   run_id: string;
   status: RunStatus;
   safe_wave: string[];
-  trust_status: "trusted" | "failed" | "insufficient_evidence";
+  trust_status: TrustStatus;
   event_count: number;
 }
+
+export type TrustStatus = "trusted" | "failed" | "insufficient_evidence" | "needs_review";
 
 export interface ArtifactReference {
   artifact_id?: string;

@@ -20,15 +20,17 @@ import { resolveCheckpointPatch, resolveRunArtifactPath, validateCheckpointManif
 import { buildCompletionAudit, hasApplyReadyCheckpoint } from "./completionAudit";
 import { selectRepairAction, selectResumeAction } from "./recoveryExecutor";
 import { buildRepairPacket, type RepairPacketVerificationInput, type RepairTaskPacket } from "./repairPacket";
+import { reviewRun as runReviewCommand, type ReviewRunResult } from "./reviewRunner";
 import type { WorkerResult } from "@waygent/contracts";
 import { validateMethodEvidenceForApply } from "./evidencePolicy";
-import { deleteResolvedOrphan, scanOrphanRuns } from "./orphanRuns";
+import { cleanupStaleRunWorktree, deleteResolvedOrphan, markBlockedStaleRun, scanOrphanRuns } from "./orphanRuns";
 import { runVerificationCommands, type VerificationRunOutput } from "./verification";
 import { prepareVerificationEnvironment } from "./verificationEnvironment";
 import { watchRun, type WatchRunOptions } from "./watchRun";
 import { reconcileRunState } from "./stateReconciliation";
 import { taskIsReadOnlyOnly, taskRequiresCheckpoint } from "./taskCheckpointPolicy";
 import { evaluateTerminalCompletionInvariant } from "./terminalInvariant";
+import { budgetPolicyFromRunState, projectBudgetPolicy } from "./budgetPolicy";
 
 export interface RunCommandOptions {
   root: string;
@@ -55,6 +57,8 @@ export interface VerifyRunResult {
   failure_class?: FailureClass | string | null;
   failure_summary?: string | null;
 }
+
+export type ReviewRunRole = "spec_reviewer" | "quality_reviewer";
 
 export function resolveRunId(options: RunCommandOptions): string {
   if (options.run) return options.run;
@@ -330,8 +334,9 @@ export function resumeRun(options: RunCommandOptions & { dry_run?: boolean }): {
         dry_run: options.dry_run ?? false
       };
     }
-    const retryCount = Number(v2State.recovery.at(-1)?.retry_count ?? 0);
-    const maxRetries = Number(v2State.recovery.at(-1)?.max_retries ?? 1);
+    const latestRecovery = v2State.recovery.at(-1) as { attempt_number?: unknown; max_attempts?: unknown; retry_count?: unknown; max_retries?: unknown } | undefined;
+    const retryCount = Number(latestRecovery?.attempt_number ?? latestRecovery?.retry_count ?? 0);
+    const maxRetries = Number(latestRecovery?.max_attempts ?? latestRecovery?.max_retries ?? budgetPolicyFromRunState(v2State).max_full_worker_retries_per_task);
     const selection = selectResumeAction({
       failure_class: blockedTask.latest_failure_class,
       retry_count: Number.isFinite(retryCount) ? retryCount : 0,
@@ -506,6 +511,15 @@ export async function verifyRun(options: RunCommandOptions & { task?: string }):
   };
 }
 
+export function reviewRun(options: RunCommandOptions & { task?: string; role?: ReviewRunRole }): ReviewRunResult {
+  return runReviewCommand({
+    root: options.root,
+    run: resolveRunId(options),
+    ...(options.task ? { task: options.task } : {}),
+    ...(options.role ? { role: options.role } : {})
+  });
+}
+
 function readOnlyWorktreeFailureClass(task: WaygentRunStateV2["tasks"][string], cwd: string): FailureClass | null {
   if (!taskIsReadOnlyOnly(task)) return null;
   const status = spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], {
@@ -593,16 +607,16 @@ export async function applyRun(options: RunCommandOptions & { workspace: string;
   const paths = runPaths(options.root, runId);
   if (isDirtySourceCheckout(options.workspace)) {
     const stateResult = readRunStateV2Result(options.root, runId);
-    appendEvent(paths.events, nextRunEvent(paths.events, {
-      run_id: runId,
-      event_type: "runway.apply_blocked",
-      phase: "apply",
-      outcome: "blocked",
-      summary: "Apply blocked by dirty source checkout.",
-      payload: { reason: "dirty_source_checkout" },
-      trust_impact: "requires_review"
-    }));
     if (stateResult.status === "ok") {
+      appendEvent(paths.events, nextRunEvent(paths.events, {
+        run_id: runId,
+        event_type: "runway.apply_blocked",
+        phase: "apply",
+        outcome: "blocked",
+        summary: "Apply blocked by dirty source checkout.",
+        payload: { reason: "dirty_source_checkout" },
+        trust_impact: "requires_review"
+      }));
       writeRunStateV2(options.root, { ...stateResult.state, apply: { status: "blocked", reason: "dirty_source_checkout" } });
     }
     return { command: "apply", run_id: runId, status: "blocked", reason: "dirty_source_checkout" };
@@ -670,7 +684,8 @@ export async function applyRun(options: RunCommandOptions & { workspace: string;
 
   const readiness = projectApplyReadinessFromState(v2State);
   if (readiness.status !== "ready") {
-    const reason = readiness.reason ?? (readiness.status === "applied" ? "already_applied" : "missing_apply_ready_evidence");
+    const projectedReason = readiness.reason ?? (readiness.status === "applied" ? "already_applied" : "missing_apply_ready_evidence");
+    const reason = projectedReason === "combined_apply_evidence_missing" ? "missing_apply_ready_evidence" : projectedReason;
     appendEvent(paths.events, nextRunEvent(paths.events, {
       run_id: runId,
       event_type: "runway.apply_blocked",
@@ -803,15 +818,20 @@ export function costRun(options: RunCommandOptions): {
   cost_ledger: WaygentRunStateV2["cost_ledger"] | null;
   budget_cap_usd: number | null;
   budget_action: WaygentRunStateV2["budget_action"] | null;
+  budget_policy: Record<string, unknown> | null;
+  budget_projection: ReturnType<typeof projectBudgetPolicy>;
 } {
   const runId = resolveRunId(options);
   const state = readRunStateV2Result(options.root, runId);
   if (state.status !== "ok") throw new Error(state.reason);
+  const policy = budgetPolicyFromRunState(state.state);
   return {
     run_id: runId,
     cost_ledger: state.state.cost_ledger ?? null,
     budget_cap_usd: state.state.budget_cap_usd ?? null,
-    budget_action: state.state.budget_action ?? null
+    budget_action: state.state.budget_action ?? null,
+    budget_policy: state.state.budget_policy ?? null,
+    budget_projection: projectBudgetPolicy(policy, state.state.cost_ledger, state.state.provider_attempts)
   };
 }
 
@@ -819,8 +839,16 @@ export function watchRunCommand(options: WatchRunOptions): ReturnType<typeof wat
   return watchRun(options);
 }
 
-export function orphansRun(options: RunCommandOptions & { delete?: string; yes?: boolean }): ReturnType<typeof scanOrphanRuns> | ReturnType<typeof deleteResolvedOrphan> {
-  const advisory = scanOrphanRuns({ root: options.root });
+export function orphansRun(options: RunCommandOptions & {
+  delete?: string;
+  yes?: boolean;
+  stale?: boolean;
+  mark_blocked?: string;
+  cleanup_worktree?: string;
+}): ReturnType<typeof scanOrphanRuns> | ReturnType<typeof deleteResolvedOrphan> | ReturnType<typeof markBlockedStaleRun> | ReturnType<typeof cleanupStaleRunWorktree> {
+  if (options.mark_blocked) return markBlockedStaleRun({ root: options.root, id: options.mark_blocked });
+  if (options.cleanup_worktree) return cleanupStaleRunWorktree({ root: options.root, id: options.cleanup_worktree });
+  const advisory = scanOrphanRuns({ root: options.root, stale: Boolean(options.stale) });
   if (options.delete) return deleteResolvedOrphan({ root: options.root, id: options.delete, yes: Boolean(options.yes), advisory });
   return advisory;
 }
@@ -959,7 +987,8 @@ export async function repairRun(options: RepairRunOptions): Promise<RepairRunRes
     return { command: "repair", run_id: runId, status: "blocked", reason: "no_repairable_task" };
   }
 
-  const budget = v2.repair_budget?.[chosen.task.id] ?? { max_attempts: 2, current: 0 };
+  const policy = budgetPolicyFromRunState(v2);
+  const budget = v2.repair_budget?.[chosen.task.id] ?? { max_attempts: policy.max_repair_retries_per_task, current: 0 };
   const action = selectRepairAction({
     failure_class: "verification_failed",
     prior_worker_result: chosen.worker_result,

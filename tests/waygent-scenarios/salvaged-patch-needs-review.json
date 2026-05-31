@@ -1,0 +1,57 @@
+{
+  "id": "salvaged-patch-needs-review",
+  "title": "Salvaged patch remains blocked until review evidence exists",
+  "provider_fixture": "fake-success",
+  "source_dirty_before_apply": false,
+  "force_missing_checkpoint": false,
+  "salvaged_patch_needs_review": true,
+  "plan": "```yaml waygent-task\nid: task_salvaged_patch\ntitle: Salvaged patch needs review task\ndependencies: []\nfile_claims:\n  - path: salvage.txt\n    mode: owned\nrisk: low\nverify:\n  - printf salvage\n```",
+  "expected": {
+    "run_status": "failed",
+    "apply_status": "blocked",
+    "trust_status": "needs_review",
+    "apply_reason": "review_evidence_missing",
+    "operator_primary_blocker": "review_evidence_missing",
+    "operator_allowed_actions": [
+      "run_review"
+    ],
+    "total_events": 16,
+    "safe_wave": [
+      "task_salvaged_patch"
+    ],
+    "event_types": [
+      "platform.run_started",
+      "platform.intake_extract_completed",
+      "platform.plan_preflight_completed",
+      "runway.plan_loaded",
+      "runway.preflight_result",
+      "runway.safe_wave_selected",
+      "runway.spec_slice_computed",
+      "context.packet_budget_evaluated",
+      "handoff.created",
+      "runway.worker_result",
+      "lens.model_attestation_confirmed",
+      "runway.verification_result",
+      "runway.checkpoint_created",
+      "runway.apply_dry_run_result",
+      "platform.cost_accumulated",
+      "lens.trust_report_updated"
+    ],
+    "checkpoints": [
+      "artifacts/checkpoints/task_salvaged_patch/candidate_task_salvaged_patch.json"
+    ],
+    "blockers": [
+      "review_evidence_missing"
+    ],
+    "combined_patch_ref": "artifacts/checkpoints/apply/scenario_salvaged-patch-needs-review.patch",
+    "provider_attempts": [
+      {
+        "task_id": "task_salvaged_patch",
+        "provider": "fake",
+        "stdout_ref": "artifacts/provider/attempt_task_salvaged_patch_1.stdout.txt",
+        "stderr_ref": "artifacts/provider/attempt_task_salvaged_patch_1.stderr.txt",
+        "worker_result_ref": "artifacts/worker/task_salvaged_patch.json"
+      }
+    ]
+  }
+}

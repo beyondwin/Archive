@@ -1,4 +1,5 @@
 import type { AgentLensEvent, ApplyReadinessProjection, WaygentRunStateV2 } from "@waygent/contracts";
+import { applyReadinessReasonFromState } from "./applyReason";
 
 export interface ApplyProjection {
   status: "not_ready" | "ready" | "blocked" | "applied";
@@ -74,7 +75,7 @@ export function projectApplyReadinessFromState(state: WaygentRunStateV2): ApplyR
 
   return {
     status: state.apply.status === "blocked" ? "blocked" : "not_ready",
-    reason: state.apply.reason || "missing_apply_ready_evidence",
+    reason: applyReadinessReasonFromState(state),
     checkpoint_refs: refs,
     combined_patch_ref: patchRef,
     source: "run_state_v2"

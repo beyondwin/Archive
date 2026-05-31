@@ -228,6 +228,10 @@ git add README.md
       root,
       orphans: expect.any(Array)
     });
+    expect(await runCli(["orphans", "--root", root, "--stale"])).toMatchObject({
+      root,
+      stale_runs: []
+    });
   });
 
   test("run --latest discovers and executes the newest local implementation plan", async () => {

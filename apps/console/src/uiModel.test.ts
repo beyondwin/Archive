@@ -361,6 +361,22 @@ describe("Lens web console UI model", () => {
     });
   });
 
+  test("preserves needs_review trust status in console summaries", () => {
+    const run = realRunSummaryToConsoleRun({
+      run_id: "run_recovered_needs_review",
+      status: "completed",
+      trust_status: "needs_review",
+      apply_status: "blocked",
+      total_events: 9,
+      last_event_type: "runway.verification_result"
+    });
+
+    expect(run.trust).toMatchObject({
+      verdict: "needs_review",
+      score: 0.55
+    });
+  });
+
   test("does not infer apply readiness from successful verification events", () => {
     const run = realRunDetailToConsoleRun({
       run_id: "run_verified_but_blocked",

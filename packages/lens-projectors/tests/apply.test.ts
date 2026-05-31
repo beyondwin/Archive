@@ -109,6 +109,28 @@ describe("apply projector", () => {
       combined_patch_ref: "artifacts/checkpoints/apply/run_partial.patch"
     });
   });
+
+  test("maps review residual risk to review_evidence_missing", () => {
+    const state = makeState({
+      apply: { status: "blocked", reason: "missing_apply_ready_evidence" },
+      completion_audit: {
+        status: "failed",
+        combined_apply_evidence: {
+          status: "passed",
+          checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"],
+          patch_ref: "artifacts/checkpoints/apply/run_demo.patch"
+        },
+        residual_risk: ["review_evidence:recovery_attempted"]
+      }
+    });
+
+    expect(projectApplyReadinessFromState(state)).toMatchObject({
+      status: "blocked",
+      reason: "review_evidence_missing",
+      checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"],
+      combined_patch_ref: "artifacts/checkpoints/apply/run_demo.patch"
+    });
+  });
 });
 
 function makeState(overrides: Partial<WaygentRunStateV2> = {}): WaygentRunStateV2 {

@@ -63,7 +63,7 @@ export interface NextRecoveryOptions {
   prior_summary?: string;
 }
 
-const DEFAULT_POLICY: Record<FailureClass, RecoveryPolicyEntry> = {
+const DEFAULT_POLICY = Object.defineProperty({
   malformed_result: { action: "retry_with_strict_prompt", max_attempts: 2 },
   verification_failed: { action: "retry_with_evidence", max_attempts: 3 },
   timeout: { action: "request_decision", max_attempts: 1 },
@@ -95,7 +95,10 @@ const DEFAULT_POLICY: Record<FailureClass, RecoveryPolicyEntry> = {
   insufficient_context: { action: "retry_with_evidence", max_attempts: 2 },
   stale_activity: { action: "request_decision", max_attempts: 1 },
   terminal_rejected: { action: "halt", max_attempts: 0 }
-};
+}, "cost_budget_exhausted", {
+  value: { action: "request_decision", max_attempts: 1 },
+  enumerable: false
+}) as Record<FailureClass, RecoveryPolicyEntry>;
 
 export function recoveryPolicy(): Readonly<Record<FailureClass, RecoveryPolicyEntry>> {
   return DEFAULT_POLICY;

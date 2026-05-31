@@ -89,9 +89,13 @@ flags and explicit command names higher priority than NL interpretation.
 - "재개해줘" -> `waygent resume --last`
 - "검증 다시 실행해줘" -> `waygent verify --last`
 - "이 태스크만 검증 다시 실행해줘" -> `waygent verify --last --task <task_id>`
+- "리뷰 실행해줘" -> `waygent review --last`
+- "이 태스크 리뷰해줘" -> `waygent review --last --task <task_id>`
 - "검증 통과한 것만 적용해줘" -> `waygent apply --run <run_id>`
 - "고아 런 정리해줘" -> `waygent orphans` (delete via
   `waygent orphans --delete <id> --yes`)
+- "stale run 정리해줘" -> `waygent orphans --stale`
+- "stale run 막힌 상태로 표시해줘" -> `waygent orphans --mark-blocked <run_id>`
 - "실행 가능한 waygent-task 만들어줘" ->
   `waygent scaffold-plan --id <task_id> --title <title> --claim <path:mode> --risk <low|medium|high> --verify <command>`
 - "design 검증해줘" -> `waygent lint-design --path design.md`
@@ -142,6 +146,8 @@ Stop rules:
 - If apply reports `dirty_source_checkout`, report the blocker and do not retry.
 - If verification fails, use `waygent explain --last` before `waygent verify`
   or `waygent resume`.
+- If a run reports `review_evidence_missing`, run or recommend `waygent review`
+  instead of rerunning verification.
 - If `resume` does not report `apply_verified_checkpoint`, do not run `apply`;
   inspect or explain the run first.
 - If apply reports `checkpoint_manifest_missing`, `checkpoint_patch_missing`,

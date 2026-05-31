@@ -33,6 +33,7 @@ describe("waygent scenario golden replays", () => {
 });
 
 function expectReplay(actual: NormalizedWaygentReplay, expected: WaygentScenarioExpectedReplay): void {
+  if (actual.error) throw new Error(actual.error);
   expect(actual.run_status).toBe(expected.run_status);
   expect(actual.apply_status).toBe(expected.apply_status);
   // Assertion mode: scenarios may pin the full event_types list (exact) for stable golden
@@ -51,6 +52,14 @@ function expectReplay(actual: NormalizedWaygentReplay, expected: WaygentScenario
   if (expected.checkpoints !== undefined) expect(actual.checkpoints).toEqual(expected.checkpoints);
   if (expected.blockers !== undefined) expect(actual.blockers).toEqual(expected.blockers);
   if (expected.combined_patch_ref !== undefined) expect(actual.combined_patch_ref).toBe(expected.combined_patch_ref);
+  if (expected.trust_status !== undefined) expect(actual.trust_status).toBe(expected.trust_status);
+  if (expected.apply_reason !== undefined) expect(actual.apply_reason).toBe(expected.apply_reason);
+  if (expected.operator_primary_blocker !== undefined) {
+    expect(actual.operator_primary_blocker).toBe(expected.operator_primary_blocker);
+  }
+  if (expected.operator_allowed_actions !== undefined) {
+    expect(actual.operator_allowed_actions).toEqual(expect.arrayContaining(expected.operator_allowed_actions));
+  }
   if (expected.failure_classes !== undefined) expect(actual.failure_classes).toEqual(expected.failure_classes);
   if (expected.provider_attempts !== undefined) {
     expect(actual.provider_attempts?.length).toBe(expected.provider_attempts.length);

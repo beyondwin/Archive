@@ -50,6 +50,58 @@ describe("run read model projector", () => {
     expect(model.apply_readiness).toBeNull();
     expect(model.state_blocker).toEqual({ status: "missing", reason: "missing_run_state_v2" });
   });
+
+  test("uses v2 verification resolution for recovered trust status", () => {
+    const state = makeState({
+      verification: [
+        {
+          verification_id: "verify_task_a_1",
+          task_id: "task_a",
+          command: "bun test",
+          status: "failed",
+          verified_at: "2026-05-26T00:00:00.000Z"
+        },
+        {
+          verification_id: "verify_task_a_2",
+          task_id: "task_a",
+          command: "bun test",
+          status: "passed",
+          verified_at: "2026-05-26T00:01:00.000Z"
+        }
+      ],
+      recovery: [{ task_id: "task_a", failure_class: "verification_failed" }],
+      completion_audit: {
+        status: "failed",
+        residual_risk: ["review_evidence:recovery_attempted"]
+      }
+    });
+    const model = projectRunReadModel({
+      run_id: state.run_id,
+      state,
+      events: [
+        demoEvent({
+          event_id: "event_failed",
+          sequence: 1,
+          event_type: "runway.verification_result",
+          outcome: "failed",
+          payload: { task_id: "task_a", verification_id: "verify_task_a_1" }
+        }),
+        demoEvent({
+          event_id: "event_passed",
+          sequence: 2,
+          event_type: "runway.verification_result",
+          outcome: "success",
+          payload: { task_id: "task_a", verification_id: "verify_task_a_2" }
+        })
+      ]
+    });
+
+    expect(model.trust_status).toBe("needs_review");
+    expect(model.trust).toMatchObject({
+      active_failure_count: 0,
+      recovered_failure_count: 1
+    });
+  });
 });
 
 function event(eventType: string, outcome: AgentLensEvent["outcome"]): AgentLensEvent {
