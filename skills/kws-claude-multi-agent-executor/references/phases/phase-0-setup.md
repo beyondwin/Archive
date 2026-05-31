@@ -409,6 +409,18 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
 
    **Why this gate exists:** every BLOCKER caught here costs ~30s + 5k tokens; each one missed costs one Implementer dispatch + SPEC_BLOCKER escalation + git reset (~2–3 min + tokens).
 
+6.7. **Scaffold byte-stability lint (v2.22 §2.B1 — MANDATORY when scaffold markers are used):**
+
+   Once the role prompts are prepared (Step 6.5), and before state.json is initialized, the Orchestrator MUST lint every role-prompt file that carries the SCAFFOLD/PAYLOAD markers — i.e. every `references/<role>-prompt.md` consumed by `scripts/dispatch_via_api.py` (`plan_reviewer`, `verifier`, `docs_updater`, `transition_combined` as each role is migrated). The `dispatch_via_api.py` path splits the cacheable SCAFFOLD from the per-dispatch PAYLOAD; if the checked-in scaffold drifts from the SCAFFOLD region, the Anthropic prompt-cache prefix misses silently on every dispatch (no error, just lost savings). This lint is the only thing that catches that drift before a run.
+
+   For each such prompt file:
+   ```bash
+   python3 <skill_dir>/scripts/validate_scaffold_split.py references/<role>-prompt.md
+   ```
+   The linter enforces, byte-exact: all four markers present exactly once in order; the sibling `references/_scaffolds/<role>-scaffold.md` (role underscored) matches the SCAFFOLD region byte-for-byte; the SCAFFOLD region is `{`-free (placeholder-free cache prefix); and stripping only the marker lines reassembles the original.
+
+   **A non-zero exit halts setup as an ENV_BLOCKER** (it is an environment/contract defect, not a plan defect — handle per `references/escalation-playbook.md`). Do NOT proceed to Step 7 with a failing scaffold split: dispatching against a drifted scaffold would burn full input-token cost on every headless role for the entire run. Surface the linter's stderr (`SCAFFOLD_LINT_FAIL:` lines) verbatim so the operator can repair the prompt/scaffold pair and rerun.
+
 7. **Initialize state file:**
    ```bash
    mkdir -p <orch_dir>
