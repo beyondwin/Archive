@@ -1,0 +1,32 @@
+{
+  "id": "malformed-output-salvaged-patch",
+  "title": "Malformed output with salvaged patch requires review",
+  "provider_fixture": "fake-success",
+  "source_dirty_before_apply": false,
+  "force_missing_checkpoint": false,
+  "malformed_output_salvaged_patch": true,
+  "plan": "```yaml waygent-task\nid: task_malformed_salvage\ntitle: Malformed output salvage task\ndependencies: []\nfile_claims:\n  - path: malformed-salvage.txt\n    mode: owned\nrisk: low\nverify:\n  - printf malformed-salvage\n```",
+  "expected": {
+    "run_status": "failed",
+    "apply_status": "blocked",
+    "trust_status": "needs_review",
+    "apply_reason": "review_evidence_missing",
+    "operator_primary_blocker": "review_evidence_missing",
+    "operator_allowed_actions": [
+      "run_review"
+    ],
+    "safe_wave": [
+      "task_malformed_salvage"
+    ],
+    "event_types_must_include": [
+      "platform.run_started",
+      "runway.worker_result",
+      "runway.verification_result",
+      "lens.trust_report_updated"
+    ],
+    "blockers": [
+      "review_evidence_missing"
+    ],
+    "combined_patch_ref": "artifacts/checkpoints/apply/scenario_malformed-output-salvaged-patch.patch"
+  }
+}

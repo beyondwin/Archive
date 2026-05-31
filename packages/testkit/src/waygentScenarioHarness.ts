@@ -54,6 +54,8 @@ export interface WaygentScenario {
   review_evidence_passed?: boolean;
   budget_paused?: boolean;
   salvaged_patch_needs_review?: boolean;
+  malformed_output_salvaged_patch?: boolean;
+  verification_failed_repair_reviewed?: boolean;
   plan: string;
   expected: WaygentScenarioExpectedReplay;
 }
@@ -149,7 +151,9 @@ export function loadWaygentScenario(path: string): WaygentScenario {
     "review_evidence_missing",
     "review_evidence_passed",
     "budget_paused",
-    "salvaged_patch_needs_review"
+    "salvaged_patch_needs_review",
+    "malformed_output_salvaged_patch",
+    "verification_failed_repair_reviewed"
   ] as const) {
     if (raw[flag] !== undefined && typeof raw[flag] !== "boolean") {
       throw new Error(`${raw.id} ${flag} must be boolean when set`);
@@ -327,7 +331,9 @@ function scenarioBlockers(scenario: WaygentScenario): string[] {
   if (scenario.source_dirty_before_apply) blockers.push("source_dirty_before_apply");
   if (scenario.force_missing_checkpoint) blockers.push("force_missing_checkpoint");
   if (scenario.checkpoint_dry_run_conflict) blockers.push("checkpoint_dry_run_conflict");
-  if (scenario.review_evidence_missing || scenario.salvaged_patch_needs_review) blockers.push("review_evidence_missing");
+  if (scenario.review_evidence_missing || scenario.salvaged_patch_needs_review || scenario.malformed_output_salvaged_patch) {
+    blockers.push("review_evidence_missing");
+  }
   if (scenario.budget_paused) blockers.push("budget_paused");
   return blockers;
 }
@@ -447,21 +453,58 @@ function applyScenarioStateFaults(state: WaygentRunStateV2, scenario: WaygentSce
     && !scenario.review_evidence_missing
     && !scenario.review_evidence_passed
     && !scenario.budget_paused
-    && !scenario.salvaged_patch_needs_review) return state;
+    && !scenario.salvaged_patch_needs_review
+    && !scenario.malformed_output_salvaged_patch
+    && !scenario.verification_failed_repair_reviewed) return state;
   const next = structuredClone(state) as WaygentRunStateV2;
   const taskId = Object.keys(next.tasks)[0];
   if (taskId && (scenario.stale_verification_recovered
     || scenario.review_evidence_missing
     || scenario.review_evidence_passed
-    || scenario.salvaged_patch_needs_review)) {
+    || scenario.salvaged_patch_needs_review
+    || scenario.verification_failed_repair_reviewed)) {
     addRecoveredVerificationHistory(next, taskId, scenario.salvaged_patch_needs_review ? "diff_scope_failed" : "verification_failed");
   }
-  if (taskId && scenario.review_evidence_passed) {
+  if (taskId && (scenario.review_evidence_passed || scenario.verification_failed_repair_reviewed)) {
     addPassedReviewEvidence(next, taskId);
   }
-  if (scenario.review_evidence_missing || scenario.salvaged_patch_needs_review) {
+  if (scenario.review_evidence_missing || scenario.salvaged_patch_needs_review || scenario.malformed_output_salvaged_patch) {
     markReviewEvidenceMissing(next);
     if (scenario.salvaged_patch_needs_review && taskId) addRecoveredFailure(next, taskId, "diff_scope_failed");
+  }
+  if (scenario.malformed_output_salvaged_patch && taskId) {
+    addRecoveredFailure(next, taskId, "malformed_result", [`salvage:${taskId}`]);
+    next.recovery = [
+      ...next.recovery,
+      {
+        task_id: taskId,
+        failure_class: "malformed_result",
+        action: "salvage_then_review",
+        result: "scheduled",
+        salvage_ref: `artifacts/salvage/${taskId}/attempt_${taskId}_1.json`,
+        patch_ref: `artifacts/worker/${taskId}/attempt_1_patch.diff`,
+        evidence_refs: [`artifacts/provider/attempt_${taskId}_1.stdout.txt`]
+      }
+    ];
+  }
+  if (scenario.verification_failed_repair_reviewed && taskId) {
+    addRecoveredFailure(next, taskId, "verification_failed", [`repair:${taskId}`]);
+    const task = next.tasks[taskId];
+    if (task) {
+      task.status = "verified";
+      task.latest_failure_class = null;
+      task.review_required = true;
+      task.review_status = "passed";
+    }
+    next.status = "completed";
+    next.lifecycle_outcome = "finished";
+    next.current_phase = "complete";
+    next.apply = { status: "not_ready" };
+    next.completion_audit = {
+      ...(next.completion_audit ?? {}),
+      status: "passed",
+      residual_risk: []
+    };
   }
   if (scenario.budget_paused) {
     markBudgetPaused(next);

@@ -1,0 +1,31 @@
+{
+  "id": "verification-failed-repair-reviewed",
+  "title": "Verification failure recovered by repair and review",
+  "provider_fixture": "fake-success",
+  "source_dirty_before_apply": false,
+  "force_missing_checkpoint": false,
+  "verification_failed_repair_reviewed": true,
+  "plan": "```yaml waygent-task\nid: task_repair_reviewed\ntitle: Verification failure repair reviewed task\ndependencies: []\nfile_claims:\n  - path: repair-reviewed.txt\n    mode: owned\nrisk: low\nverify:\n  - printf repair-reviewed\n```",
+  "expected": {
+    "run_status": "trusted",
+    "apply_status": "ready",
+    "trust_status": "trusted",
+    "apply_reason": null,
+    "operator_primary_blocker": null,
+    "operator_allowed_actions": [
+      "apply_run"
+    ],
+    "safe_wave": [
+      "task_repair_reviewed"
+    ],
+    "event_types_must_include": [
+      "platform.run_started",
+      "runway.worker_result",
+      "runway.verification_result",
+      "runway.checkpoint_created",
+      "runway.apply_dry_run_result",
+      "lens.trust_report_updated"
+    ],
+    "combined_patch_ref": "artifacts/checkpoints/apply/scenario_verification-failed-repair-reviewed.patch"
+  }
+}
