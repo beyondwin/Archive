@@ -248,6 +248,55 @@ describe("Waygent contracts", () => {
     expect(validateContract("waygent.operator_decision.v1", decision)).toEqual(decision);
   });
 
+  test("validates operator recoverable evidence projection additions", () => {
+    const decision = validOperatorDecisionFixture({
+      recoverable_evidence: [
+        {
+          task_id: "task_a",
+          failure_class: "malformed_result",
+          kind: "recoverable_patch",
+          patch_ref: "artifacts/worker/task_a/attempt_1_patch.diff",
+          salvage_ref: "artifacts/salvage/task_a/attempt_task_a_1.json",
+          recommended_action: "salvage_then_review",
+          evidence_refs: [
+            "artifacts/provider/attempt_task_a_1.stdout.txt",
+            "artifacts/worker/task_a/attempt_1_patch.diff"
+          ]
+        }
+      ],
+      why_not_apply_ready: {
+        reason: "review_evidence_missing",
+        missing_contracts: ["review_evidence"],
+        evidence_refs: ["state:/tmp/run/state.json"]
+      }
+    });
+
+    expect(validateContract("waygent.operator_decision.v1", decision)).toEqual(decision);
+  });
+
+  test("rejects malformed recoverable evidence projection additions", () => {
+    const decision = validOperatorDecisionFixture({
+      recoverable_evidence: [
+        {
+          task_id: "task_a",
+          failure_class: "verification_failed",
+          kind: "recoverable_patch",
+          patch_ref: "",
+          salvage_ref: null,
+          recommended_action: "unknown_action",
+          evidence_refs: []
+        }
+      ],
+      why_not_apply_ready: {
+        reason: "",
+        missing_contracts: [],
+        evidence_refs: []
+      }
+    });
+
+    expect(() => validateContract("waygent.operator_decision.v1", decision)).toThrow(ContractValidationError);
+  });
+
   test("validates salvage results", () => {
     const salvageResult = {
       schema: "waygent.salvage_result.v1",

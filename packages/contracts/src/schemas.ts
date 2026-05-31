@@ -1006,6 +1006,34 @@ const costSummaryProjectionSchema = {
   }
 } as const;
 
+const recoverableEvidenceSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["task_id", "failure_class", "kind", "patch_ref", "salvage_ref", "recommended_action", "evidence_refs"],
+  properties: {
+    task_id: { type: "string", pattern: idPattern },
+    failure_class: { type: "string", minLength: 1 },
+    kind: { enum: ["recoverable_patch", "recoverable_worker_result"] },
+    patch_ref: { type: "string", minLength: 1, nullable: true },
+    worker_result_ref: { type: "string", minLength: 1, nullable: true },
+    salvage_ref: { type: "string", minLength: 1, nullable: true },
+    recommended_action: { enum: ["dispatch_repair", "salvage_then_review"] },
+    evidence_refs: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } }
+  }
+} as const;
+
+const whyNotApplyReadySchema = {
+  type: "object",
+  additionalProperties: false,
+  nullable: true,
+  required: ["reason", "missing_contracts", "evidence_refs"],
+  properties: {
+    reason: { type: "string", minLength: 1 },
+    missing_contracts: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+    evidence_refs: { type: "array", items: { type: "string", minLength: 1 } }
+  }
+} as const;
+
 const providerLogSummarySchema = {
   type: "object",
   additionalProperties: false,
@@ -1540,6 +1568,11 @@ export const operatorDecisionProjectionSchema = {
         }
       }
     },
+    recoverable_evidence: {
+      type: "array",
+      items: recoverableEvidenceSchema
+    },
+    why_not_apply_ready: whyNotApplyReadySchema,
     cost_summary: costSummaryProjectionSchema,
     stale_run_status: staleRunStatusSchema,
     source_projection_refs: {
