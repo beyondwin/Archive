@@ -242,6 +242,64 @@ class RetryTests(unittest.TestCase):
         self.assertEqual(len(msgs.calls), 1)
 
 
+# --------------------------------------------------------------------------- #
+# Verifier batch (T1) — role token "verifier" (singular), tool report_verifier
+# --------------------------------------------------------------------------- #
+def _verifier_ctx():
+    return {
+        "test_command": "python3 -m unittest",
+        "acceptance_criteria": "none provided",
+        "result_json_path": "/tmp/verifier_out.json",
+    }
+
+
+class VerifierBatchTests(unittest.TestCase):
+    def test_verifier_batch_scaffold_payload_split_loads(self):
+        scaffold, payload = dva.load_prompt("verifier", SK_ROOT)
+        self.assertNotIn("{", scaffold)
+        self.assertIn("Verifier sub-agent", scaffold)
+        self.assertIn("{test_command}", payload)
+        self.assertIn("## Risk Level", payload)
+
+    def test_verifier_batch_cache_control_on_scaffold_block(self):
+        scaffold, payload = dva.load_prompt("verifier", SK_ROOT)
+        schema = dva.load_schema("verifier", SK_ROOT)
+        req = dva.build_request(
+            scaffold, payload, schema, "verifier", "claude-sonnet-4-5-20250929",
+            _verifier_ctx())
+        self.assertTrue(any(
+            isinstance(b, dict) and b.get("cache_control") == {"type": "ephemeral"}
+            for b in req["system"]))
+
+    def test_verifier_batch_tool_choice_forces_report_verifier(self):
+        scaffold, payload = dva.load_prompt("verifier", SK_ROOT)
+        schema = dva.load_schema("verifier", SK_ROOT)
+        req = dva.build_request(
+            scaffold, payload, schema, "verifier", "claude-sonnet-4-5-20250929",
+            _verifier_ctx())
+        self.assertEqual(req["tool_choice"],
+                         {"type": "tool", "name": "report_verifier"})
+        self.assertEqual(req["tools"][0]["name"], "report_verifier")
+        self.assertIn("input_schema", req["tools"][0])
+
+    def test_verifier_batch_dispatch_writes_tool_input_to_output(self):
+        orch = _tmp_orch()
+        out = Path(orch) / "verifier_result.json"
+        msgs = FakeMessages(response=FakeResponse(
+            "report_verifier",
+            {"status": "PASS", "commands_run": ["python3 -m unittest"],
+             "exit_codes": [0]}))
+        client = FakeClient(messages=msgs)
+        res = dva.dispatch("verifier", _verifier_ctx(),
+                           "claude-sonnet-4-5-20250929", orch, SK_ROOT, str(out),
+                           client=client, max_retries=3)
+        self.assertEqual(res["status"], "PASS")
+        self.assertTrue(out.is_file())
+        written = json.loads(out.read_text())
+        self.assertEqual(written["status"], "PASS")
+        self.assertEqual(written["commands_run"], ["python3 -m unittest"])
+
+
 class CliTests(unittest.TestCase):
     def test_parser_exposes_role(self):
         parser = dva.build_arg_parser()

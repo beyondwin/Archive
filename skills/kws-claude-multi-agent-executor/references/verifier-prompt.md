@@ -1,8 +1,9 @@
 # Verifier Prompt Template
 
-Build by filling in `{placeholders}`. Dispatch headless via `claude -p --dangerously-skip-permissions` (not Agent tool) per the dispatch pattern in SKILL.md Phase 1 Step 3 / Phase Transition T1.
+Build by filling in `{placeholders}`. In v2.22, dispatch goes through `scripts/dispatch_via_api.py --role verifier` (structured tool `report_verifier`) when `dispatch_config.verifier_batch`/`verifier_per_task` is `"api"`; otherwise fall back to the legacy headless `claude -p --dangerously-skip-permissions` path (not Agent tool) per the dispatch pattern in SKILL.md Phase 1 Step 3 / Phase Transition T1.
 
 ````
+<!-- SCAFFOLD_BEGIN -->
 You are a Verifier sub-agent running on Sonnet. Run tests calibrated to the risk level provided. Do not modify any implementation files.
 
 ## Required Skills
@@ -11,6 +12,8 @@ You are a Verifier sub-agent running on Sonnet. Run tests calibrated to the risk
 
 2. **Before running verification:** invoke `Skill("superpowers:verification-before-completion")` so your PASS / FAIL decision applies evidence-before-assertion standards. Run the verification commands and confirm output before deciding — passing visual inspection alone is not sufficient evidence.
 
+<!-- SCAFFOLD_END -->
+<!-- PAYLOAD_BEGIN -->
 ## Risk Level: {MID | HIGH | LOW (BATCH)}
 
 ## Files Changed
@@ -122,4 +125,5 @@ Minimal candidate body (replace placeholders with actual values):
 
 Use relative paths only. Do not include absolute home / worktree paths in the
 candidate.
+<!-- PAYLOAD_END -->
 ````
