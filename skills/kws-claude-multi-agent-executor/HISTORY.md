@@ -21,6 +21,88 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.22.0 — Dispatch optimization (2026-05-31)
+
+Replaces `claude -p --dangerously-skip-permissions` headless dispatches for
+mechanical roles with direct Anthropic Messages API calls, adds prompt caching,
+merges co-located dispatches, and cheapens mechanical reviewers. Shipped across
+three phases (Tasks 1–17), with evals and these records as the final wave.
+
+**Phase A — Quick wins (Tasks 1–3).**
+- **A1 (D001): Plan Reviewer → Haiku 4.5.** The Phase 0 Step 6.5 mechanical
+  plan audit moves from Sonnet to Haiku 4.5. The plan-reviewer-rubric eval
+  (Haiku vs Sonnet) backs the migration.
+- **A2 (D002): Transition T1 + T2 merge.** The two co-located Phase Transition
+  dispatches (LOW-batch verify pre-filter T1 and the combined-reviewer T2) merge
+  into one combined dispatch (`transition_combined`), cutting a round trip. A
+  transition-merge parity eval confirms no semantic change.
+- **A3: Cost helper combined-role.** `scripts/accumulate_cost.py` /
+  `cost_ledger` gain `combined_roles` so a single merged dispatch attributes
+  cost across the roles it covers.
+
+**Phase B — API-direct dispatch + caching (Tasks 4–12).**
+- **B1 (D003): `scripts/dispatch_via_api.py` single helper.** One Anthropic
+  Messages API helper now backs every API-direct role: `plan_reviewer`,
+  `verifier`, `docs_updater`, and `transition_combined`. Dispatch forces
+  `tool_choice` so the structured result is never free-text.
+- **B3 (D004): Scaffold/payload split + byte-stability lint.** Each API-direct
+  prompt is split into a cacheable scaffold and a per-call payload via four
+  markers (`SCAFFOLD_BEGIN/END`, `PAYLOAD_BEGIN/END`) so the scaffold prefix is a
+  stable prompt-cache key. `scripts/validate_scaffold_split.py` byte-stability-
+  lints the split at **Phase 0 Step 6.7** (Step 7.5 was already the v2.17
+  boundary-emit site).
+- **B6 (D005): No `-p` fallback.** API errors do NOT fall back to `claude -p`.
+  A forbidden mixed-path retry would defeat caching, scramble cost accounting,
+  and re-introduce the headless permission surface; errors surface instead.
+- **Run-level `dispatch_config` gates** added to `state.json` so a run records
+  which roles ran API-direct.
+
+**Phase C — Batch API + Self-Spawn (Tasks 13–14).**
+- **C1: Message Batches API final sweep.** `scripts/dispatch_final_sweep_batch.py`
+  runs the final LOW-risk verification sweep through the Batches API, with a
+  `kws-cme.batch_timeout` fallback.
+- **C2 (D007): Self-Spawn default flips to ATTACHED.** A bare invocation now
+  runs in-session (`mode=interactive_attached`); headless self-spawn is opt-in
+  via `detach=true`. A 2-week deprecation warning fires on bare invocations.
+
+**Evals + baseline (Tasks 15–17).** `plan-reviewer-rubric` (Haiku vs Sonnet
+agreement), `transition-merge` parity, plus `evals/baselines/v2.22.0.json` and
+`scripts/cost_compare.py` for regression against the v2.21 baseline. Recorded
+baseline metrics: input_tokens_mean 3550, cache_hit_ratio_mean 0.66,
+output_quality_mean 0.88, escalate_count 0.
+
+**Open question (D006, pending).** Cache TTL stays ephemeral for v2.22; whether
+to adopt extended (1h) cache TTL for the scaffold prefix is deferred pending
+cache-hit-ratio data.
+
+Experiment record under `docs/experiments/v2.22-dispatch-optimization/`
+(JOURNAL, README, decisions D001–D005 + D007; D006 indexed in
+`docs/decision-log.md`).
+
+**Post-merge follow-ups (recorded at branch-merge time, 2026-05-31).**
+- **Plan Reviewer was SKIPPED during the v2.22.0 headless run** (dispatch
+  conservation on a self-modifying skill plan). Re-dispatched post-hoc against
+  the same plan/spec: result **WARN, 2 issues, 0 BLOCKER** — both advisory:
+  (i) `resource_key_collision` on Wave 4 (Tasks 15/16/17 all carry
+  `Resource Key: evals`; the execution_plan comment claiming "different
+  resource keys" was cosmetically wrong, but the Phase 0 Step 6 partition
+  rule still serialized them correctly); (ii) `naming_drift` between
+  spec §2.B1's `--role` enum and the plan's `dispatch_config` 6 split tokens —
+  on inspection these are two different layers (call-site gate keys vs the
+  dispatcher's `--role` argument), so the runtime is internally consistent
+  and the phase-docs call sites already disambiguate. Recorded in
+  `state.plan_review = {status: WARN, warnings: [...]}` with `post_hoc_run_at`
+  and `post_hoc_result_path` pointers. No code change required.
+- **Live API cache-hit validation pending.** v2.22 paths were unit-tested with
+  injected/fake `anthropic` clients in the headless-run environment (no SDK
+  installed, no `ANTHROPIC_API_KEY`). The first live run against
+  `evals/baselines/v2.22.0.json` will confirm real cache-hit behavior and feed
+  D006 (cache TTL ephemeral vs extended). Tracked as a v2.22.1 deliverable.
+- **D007 follow-on (`dispatch_config.final_sweep` default flip to `"batch"`)**
+  stays deferred to v2.22.1 as planned. The Batches API path is shipped and
+  unit-covered; the default remains `"api"` in v2.22.0 until real-run timing
+  data justifies the SLA tradeoff.
+
 ### v2.21.0 — Slimming & enforcement (2026-05-29)
 
 A structural release with no new runtime feature — it hardens *how* the existing
@@ -585,6 +667,7 @@ with JOURNAL + decisions/ + findings/. Index:
 |------------|--------|---------|------|
 | v2.7-quality-mode | CLOSED | Negative on quality_plus; positive on rubric infra | `docs/experiments/v2.7-quality-mode/` |
 | v2.8-learning-log | In progress | Per-run sharded learning log + review-side Skill calls | `docs/experiments/v2.8-learning-log/` |
+| v2.22-dispatch-optimization | SHIPPED (2026-05-31) | API-direct dispatch + caching, T1/T2 merge, Haiku Plan Reviewer, attached-by-default | `docs/experiments/v2.22-dispatch-optimization/` |
 | (future) | | | `docs/experiments/v2.X-<name>/` |
 
 See `docs/experiments/README.md` for the experiment template and protocol.

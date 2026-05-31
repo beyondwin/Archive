@@ -90,6 +90,23 @@
 | [D004 Legacy plan2_state retirement](../docs/experiments/v2.21-slimming-and-enforcement/decisions/D004-legacy-plan2state-retirement.md) | v2.12 `plan2_state` 이중 경로 은퇴 | **결정**: resume 마이그레이션 shim (`migrate_legacy_state.py`) → `plan_chain[]` 변환 후 legacy 분기 제거 |
 | [D005 Split boundary](../docs/experiments/v2.21-slimming-and-enforcement/decisions/D005-split-boundary.md) | SKILL.md 분할 경계 확정 (v2.19 D001 재확인) | **결정**: v2.19 하이브리드 레이아웃 채택 + 헬퍼 와이어링·post-D004 multi-plan·health probe 델타 |
 
+## v2.22 — Dispatch optimization (출하 2026-05-31)
+
+API-direct 디스패치 + 프롬프트 캐싱, T1/T2 병합, Haiku Plan Reviewer, attached-by-default.
+D001–D005 + D007 은 ADR 본체가 있음; D006 은 pending (open question, 본체 없음 — 이 인덱스만).
+
+| ADR | 주제 | Phase | 결과 |
+|-----|------|-------|------|
+| [D001 Haiku Plan Reviewer](../docs/experiments/v2.22-dispatch-optimization/decisions/D001-haiku-plan-reviewer.md) | Plan Reviewer 를 Haiku 4.5 로 이전 | A1 | **shipped** |
+| [D002 Transition merge](../docs/experiments/v2.22-dispatch-optimization/decisions/D002-transition-merge.md) | Transition T1 + T2 를 단일 디스패치로 병합 | A2 | **shipped** |
+| [D003 dispatch_via_api](../docs/experiments/v2.22-dispatch-optimization/decisions/D003-dispatch-via-api.md) | 모든 API-direct 롤의 단일 헬퍼 `dispatch_via_api.py` | B1 | **shipped** |
+| [D004 Scaffold byte-stability](../docs/experiments/v2.22-dispatch-optimization/decisions/D004-scaffold-byte-stability.md) | scaffold/payload 분할을 Phase 0 Step 6.7 에서 byte-stability lint | B3 | **shipped** |
+| [D005 No -p fallback](../docs/experiments/v2.22-dispatch-optimization/decisions/D005-no-p-fallback.md) | API 오류는 `-p` 로 폴백 금지 (forbidden mixed-path retry) | B6 | **shipped** |
+| D006 Cache TTL ephemeral | v2.22 동안 캐시 TTL 은 ephemeral 유지 (open Q2) | — | **pending** |
+| [D007 Self-Spawn attached](../docs/experiments/v2.22-dispatch-optimization/decisions/D007-self-spawn-attached.md) | Self-Spawn 기본값을 attached 로 전환 + deprecation warning | C2 | **shipped** |
+
+**v2.22 메모**: D004 의 lint 위치는 as-shipped Task 5 deviation 에 따라 Phase 0 **Step 6.7** (Step 7.5 는 이미 v2.17 boundary-emit 이 차지). D006 은 cache-hit-ratio 데이터를 기다리는 open question 으로 ADR 본체 없이 이 인덱스에만 기록됨.
+
 ---
 
 ## 가로지르는 결정 (한 실험 아래에 속하지 않음)

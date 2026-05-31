@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "docs_updater_result.schema.json",
+  "title": "Docs Updater dispatch result contract",
+  "description": "v2.22 §2.B2 priority 5 (spec line 132) — single `docs_updater` role shared by the Phase (docs_updater_phase) and Final (docs_updater_final) call sites. Models the report_docs_updater tool result written to the orchestrator's docs result path. Phase-vs-final differences are carried in the dynamic payload, not the schema.",
+  "type": "object",
+  "required": ["status"],
+  "properties": {
+    "status": {"enum": ["DONE", "ESCALATE"]},
+    "summary": {"type": "string"},
+    "files_updated": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string"},
+          "change": {"type": "string"}
+        }
+      }
+    },
+    "commit": {"type": "string"},
+    "escalation": {
+      "type": "object",
+      "properties": {"blocker": {"type": "string"}}
+    }
+  }
+}

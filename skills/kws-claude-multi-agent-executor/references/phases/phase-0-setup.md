@@ -382,7 +382,13 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
    - `{risk_levels_yaml}` — from Step 4 (YAML-formatted `task_N: <risk>`)
    - `{result_json_path}` — `<orch_dir>/plan_review.json`
 
-   **Dispatch headless** via `claude -p --dangerously-skip-permissions` (same pattern as Verifier — Phase 1 Step 3). Prompt path: `<orch_dir>/plan_review_prompt.txt`. Result path: `<orch_dir>/plan_review.json`. Missing/malformed result → log warning and proceed (Plan Reviewer is advisory; absence is NOT a halt).
+   **Dispatch mode (v2.22 §2.B1):** branch on `state.dispatch_config.plan_reviewer` (default `"api"` in v2.22):
+   - `"api"` (default) → dispatch via `scripts/dispatch_via_api.py --role plan_reviewer --task-context <orch_dir>/plan_review_ctx.json --output <orch_dir>/plan_review.json --model <selected-model> --orch-dir <orch_dir>`. Write the placeholder values (`plan_path`, `plan_full_text`, `spec_path`, `spec_full_text`, `risk_levels_yaml`, `spec_manifest_json`, `result_json_path`) into `<orch_dir>/plan_review_ctx.json` first; the helper splits the cached scaffold from the per-invocation payload, forces structured output via the `report_plan_reviewer` tool, accumulates cost, and emits the `kws-cme.dispatch_via_api` AgentLens event. An ENV_BLOCKER ESCALATE result (`status: "ESCALATE"`, `type: "ENV_BLOCKER"`) means the API failed after 3 retries — do NOT silently fall back to `-p`; surface it so the user can rerun with `dispatch_config.plan_reviewer="p"`.
+   - `"p"` → use the legacy path below.
+
+   **Legacy dispatch headless** (`dispatch_config.plan_reviewer == "p"`) via `claude -p --dangerously-skip-permissions` (same pattern as Verifier — Phase 1 Step 3). Prompt path: `<orch_dir>/plan_review_prompt.txt`. Result path: `<orch_dir>/plan_review.json`. Missing/malformed result → log warning and proceed (Plan Reviewer is advisory; absence is NOT a halt).
+
+   **Model selection (forensics):** the Plan Reviewer runs on `claude-haiku-4-5-20251001` by default (mechanical rubric; overridable via `state.dispatch_config.plan_reviewer_model`). The orchestrator records the selected model into `state.plan_review.model_used` (`model_used` token) so later analysis can attribute review decisions to the exact model used. Selection logic lives in `scripts/dispatch_plan_reviewer.py`.
 
    **Parse the result:**
 
@@ -402,6 +408,18 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
        Halt until answered. If user picks auto-apply: edit plan/spec per each `suggested_fix`, re-read both documents, re-dispatch Plan Reviewer (max 2 cycles). If still ISSUES_FOUND after 2 cycles: halt with manual-fix message.
 
    **Why this gate exists:** every BLOCKER caught here costs ~30s + 5k tokens; each one missed costs one Implementer dispatch + SPEC_BLOCKER escalation + git reset (~2–3 min + tokens).
+
+6.7. **Scaffold byte-stability lint (v2.22 §2.B1 — MANDATORY when scaffold markers are used):**
+
+   Once the role prompts are prepared (Step 6.5), and before state.json is initialized, the Orchestrator MUST lint every role-prompt file that carries the SCAFFOLD/PAYLOAD markers — i.e. every `references/<role>-prompt.md` consumed by `scripts/dispatch_via_api.py` (`plan_reviewer`, `verifier`, `docs_updater`, `transition_combined` as each role is migrated). The `dispatch_via_api.py` path splits the cacheable SCAFFOLD from the per-dispatch PAYLOAD; if the checked-in scaffold drifts from the SCAFFOLD region, the Anthropic prompt-cache prefix misses silently on every dispatch (no error, just lost savings). This lint is the only thing that catches that drift before a run.
+
+   For each such prompt file:
+   ```bash
+   python3 <skill_dir>/scripts/validate_scaffold_split.py references/<role>-prompt.md
+   ```
+   The linter enforces, byte-exact: all four markers present exactly once in order; the sibling `references/_scaffolds/<role>-scaffold.md` (role underscored) matches the SCAFFOLD region byte-for-byte; the SCAFFOLD region is `{`-free (placeholder-free cache prefix); and stripping only the marker lines reassembles the original.
+
+   **A non-zero exit halts setup as an ENV_BLOCKER** (it is an environment/contract defect, not a plan defect — handle per `references/escalation-playbook.md`). Do NOT proceed to Step 7 with a failing scaffold split: dispatching against a drifted scaffold would burn full input-token cost on every headless role for the entire run. Surface the linter's stderr (`SCAFFOLD_LINT_FAIL:` lines) verbatim so the operator can repair the prompt/scaffold pair and rerun.
 
 7. **Initialize state file:**
    ```bash

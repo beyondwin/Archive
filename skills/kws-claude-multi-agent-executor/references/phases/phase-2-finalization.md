@@ -70,6 +70,8 @@ Read the active tree's `low_tasks_pending_verification` (resolution rule from Ph
 
 If the list is non-empty (or the short-circuit conditions are not met): dispatch headless batch Verifier (same pattern as Phase Transition T1).
 
+When `state.dispatch_config.final_sweep == "batch"`, this Step 0 sweep dispatches through `scripts/dispatch_final_sweep_batch.py` (Anthropic Message Batches API, one request per LOW task, ~50% cheaper, 24h SLA) instead of synchronous per-task dispatch. The helper submits one batch, polls until it ends, and returns the same PASS/FAIL summary. On timeout (`--timeout`, default 30 min / 1800s) it emits a `kws-cme.batch_timeout` event, WARNs, and falls back to per-task synchronous API dispatch (`dispatch_via_api.dispatch`, `mode == "api_fallback"`). The `dispatch_config.final_sweep` default is `"api"` in v2.22.0; the flip to `"batch"` is planned for v2.22.1.
+
 **Result path:** when `state.plan_chain` is in use, use `batch_final_p<active>.json` (consistent with Phase 2 Step -1 check). For single-plan: `batch_final.json` un-suffixed.
 
 On PASS: clear the active tree's list. On FAIL: apply standard `verifier_retries` per affected task. Only after PASS proceed to Step -1 (Cross-Plan Trigger checks whether to advance to the next plan) or to Step 1 (Final Docs Updater) if no next plan.
@@ -95,6 +97,8 @@ Build from the **Final Docs Updater Prompt Template** with:
 - `{result_json_path}`: per scope rule above
 
 **Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<orch_dir>/docs_prompts/final{_chain | }.txt` and result path matching `{result_json_path}`. Missing/malformed result → ENV_BLOCKER ESCALATE.
+
+**Final Docs Updater dispatch path (v2.22 §2.B2).** When `state.dispatch_config.docs_updater_final == "api"`, dispatch this Final Docs Updater through `scripts/dispatch_via_api.py --role docs_updater` (singular role; structured tool `report_docs_updater`, `tool_choice`-forced; run-wide payload = all files changed during the run across every plan + the final docs scope), and validate its result against `references/_schemas/docs_updater_result.schema.json` before consuming it. When `== "p"`, fall back to the legacy `claude -p` dispatch described above. The gate selects only the dispatch transport; the consumed DONE/ESCALATE shape and the result path are identical either way.
 
 ### Step 1.5: Method Audit Validation (v2.11)
 

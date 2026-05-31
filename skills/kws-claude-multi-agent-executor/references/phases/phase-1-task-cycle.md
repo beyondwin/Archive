@@ -268,6 +268,8 @@ Decision table:
    - If the file exists and is valid JSON: parse `status` field for PASS/FAIL/ESCALATE.
    - If the file is missing or malformed: treat as ESCALATE with `type: ENV_BLOCKER, blocker: "Verifier subprocess produced no result file — check task_<N>.stdout for diagnostics"`.
 
+**Per-task Verifier dispatch path (v2.22 §2.B1).** When `state.dispatch_config.verifier_per_task == "api"`, dispatch this per-task (MID/HIGH) Verifier through `scripts/dispatch_via_api.py --role verifier` instead of the legacy `claude -p` subprocess above (structured tool `report_verifier`, `tool_choice`-forced; the result is validated against `references/_schemas/verifier_result.schema.json`). Write the result to the SAME path the legacy flow uses — `<orch_dir>/verifier_results/task_<N>.json` — so the PASS/FAIL/ESCALATE parsing in step 4 and the result handling below are unchanged. When `verifier_per_task == "p"` (or absent), use the legacy `claude -p` flow described above. The gate selects only the dispatch transport; the role token is `verifier` (singular) and the consumed result shape is identical either way.
+
 **Result: PASS** → stamp `<active>.tasks.task_<N>.timing.verifier_done = <iso8601 now>` via atomic R-M-W (non-fatal warning on failure). Proceed to Step 4.  
 **Result: FAIL** →
 - Increment `verifier_retries`.
