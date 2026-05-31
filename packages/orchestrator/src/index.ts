@@ -27,6 +27,7 @@ export * from "./reviewGate";
 export * from "./runCommands";
 export * from "./runEvents";
 export * from "./runtimeHooks";
+export * from "./salvageArtifacts";
 export * from "./runExecutionContext";
 export * from "./safeWaveExecutor";
 export * from "./runState";
