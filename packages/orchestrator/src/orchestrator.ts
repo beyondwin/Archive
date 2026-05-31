@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentLensEvent, ArtifactIndexEntry, FailureClass, IntakeFinding, ProviderAttempt, ProviderProcessEvidence, ReviewResult, WaygentIntakeRecovery, WaygentRunStateV2, WorkerResult } from "@waygent/contracts";
+import type { AgentLensEvent, ArtifactIndexEntry, FailureClass, IntakeFinding, ProviderAttempt, ProviderProcessEvidence, ReviewResult, TaskReviewArtifact, WaygentIntakeRecovery, WaygentRunStateV2, WorkerResult } from "@waygent/contracts";
 import { planWorktree } from "@waygent/kernel-client";
 import { projectFailureSummary, projectTimeline, projectTrustReport } from "@waygent/lens-projectors";
 import { appendEvent, readEvents, rebuildRunSummary, runPaths, writeArtifact, writeLatestRunId } from "@waygent/lens-store";
@@ -23,7 +23,17 @@ import { applyExecutionDependencyBarriers } from "./executionDependencyBarrier";
 import { artifactIndexEntry, mergeArtifactIndex } from "./artifactIndex";
 import { createCombinedCheckpointPatchArtifact, type CombinedCheckpointPatchResult } from "./checkpointArtifacts";
 import { buildCompletionAudit } from "./completionAudit";
-import { createEmptyCostLedger, recordProviderAttemptCost, shouldPauseForBudget, shouldWarnForBudget, type BudgetPolicy } from "./costLedger";
+import {
+  budgetPolicyFromRunState,
+  budgetPolicyStateRecord,
+  evaluateBudgetPolicy,
+  markBudgetWarningEmitted,
+  projectBudgetPolicy,
+  resolveBudgetPolicy,
+  type BudgetEvaluation,
+  type RunBudgetPolicy
+} from "./budgetPolicy";
+import { createEmptyCostLedger, recordProviderAttemptCost } from "./costLedger";
 import { appendDecisionFromWorker, packetDecisionSummaries, writeDecisionsProjection } from "./decisions";
 import { resolveExecutionProfile, roleProfileFor, type ExecutionProfile, type ProfileOverride, type ProviderName, type WorkerRoleSlot } from "./executionProfile";
 import { recoverWaygentPlanInput } from "./intakeRecovery";
@@ -31,7 +41,10 @@ import { captureWorktreePatch } from "./patchCapture";
 import { selectRepairAction } from "./recoveryExecutor";
 import { prepareRepairWorktree } from "./repairDispatch";
 import { buildRepairPacket, type RepairPacketVerificationInput } from "./repairPacket";
+import { normalizeReviewEvidenceArtifact } from "./reviewArtifacts";
+import { reviewEvidencePolicy } from "./reviewEvidence";
 import { shouldReviewTask } from "./reviewGate";
+import { reviewRun } from "./reviewRunner";
 import { resolvePlanInput, resolveSpecInput } from "./planDiscovery";
 import { normalizeWaygentPlanInput } from "./planNormalizer";
 import { parseWaygentPlan } from "./planParser";
@@ -69,9 +82,13 @@ export interface RunWaygentOptions {
   spec_slice?: "off" | "manifest";
   budget_cap_usd?: number | null;
   budget_action?: "warn" | "pause" | "off";
+  budget_max_provider_minutes?: number | null;
+  budget_max_full_worker_retries_per_task?: number | null;
+  budget_max_repair_retries_per_task?: number | null;
+  budget_max_adapter_crash_retries_per_task?: number | null;
   hook_config?: "off" | "builtin" | string;
   require_method_evidence?: boolean;
-  initial_reviews?: ReviewResult[];
+  initial_reviews?: Array<ReviewResult | TaskReviewArtifact>;
 }
 
 export interface WaygentRunResult {
@@ -104,6 +121,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   const workspace = options.workspace ?? process.cwd();
   const profile = resolveExecutionProfile(options.profile, { provider: "fake" });
   const providerProfile = providerProfileRecord(profile);
+  const budgetPolicy = budgetPolicyFromOptions(options);
   const planInput = resolveRunPlanInput({ ...options, workspace });
   const specInput = resolveSpecInput({
     workspace,
@@ -221,8 +239,9 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     decisions_register: [],
     ...(specManifest ? { spec_manifest: specManifest } : {}),
     cost_ledger: createEmptyCostLedger(),
-    budget_cap_usd: options.budget_cap_usd ?? null,
-    budget_action: options.budget_action ?? "off",
+    budget_cap_usd: budgetPolicy.max_cost_usd,
+    budget_action: budgetPolicy.action === "pause_for_operator" ? "pause" : budgetPolicy.action,
+    budget_policy: budgetPolicyStateRecord(budgetPolicy),
     method_evidence_required: options.require_method_evidence ?? false,
     hook_config: options.hook_config ?? "builtin",
     status: "running",
@@ -260,7 +279,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     completion_audit: null,
     timestamps: { started_at: startedAt, updated_at: startedAt, completed_at: null }
   };
-  const context = createRunExecutionContext({ root: options.root, state: initialState, next_sequence: 1 });
+  let context = createRunExecutionContext({ root: options.root, state: initialState, next_sequence: 1 });
   context.flushState();
 
   context.appendEvent((sequence) => buildRunEvent({
@@ -429,22 +448,12 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
   const codexResumeSessions = new Map<string, string>();
   while (activeSafeWave.length > 0) {
     const waveId = `wave_${waveIndex}`;
-    if (shouldPauseForBudget(context.state.cost_ledger, budgetPolicyFromState(context.state))) {
-      pauseRunForBudget(context, activeSafeWave);
+    const preWaveBudget = evaluateBudgetFromState(context);
+    if (preWaveBudget.action === "pause_for_operator") {
+      pauseRunForBudget(context, activeSafeWave, preWaveBudget);
       break;
     }
-    if (shouldWarnForBudget(context.state.cost_ledger, budgetPolicyFromState(context.state))) {
-      context.appendEvent((sequence) => buildRunEvent({
-        run_id: runId,
-        sequence,
-        event_type: "platform.cost_budget_warning",
-        phase: "cost",
-        outcome: "success",
-        summary: "Cost budget warning threshold exceeded.",
-        payload: { cost_ledger: context.state.cost_ledger, budget_cap_usd: context.state.budget_cap_usd },
-        trust_impact: "requires_review"
-      }));
-    }
+    if (preWaveBudget.action === "warn") emitBudgetWarning(context, preWaveBudget);
     const waveStarted = new Date().toISOString();
     const waveStartMs = performance.now();
     const concurrency = resolveWaveConcurrency({
@@ -546,7 +555,8 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       } else if (task) {
         const failureClass = waveResult.result.latest_failure_class ?? "verification_failed";
         const priorWorker = waveResult.result.worker_result;
-        const repairBudget = context.state.repair_budget?.[waveResult.task_id] ?? { max_attempts: 2, current: 0 };
+        const policy = budgetPolicyFromRunState(context.state);
+        const repairBudget = context.state.repair_budget?.[waveResult.task_id] ?? { max_attempts: policy.max_repair_retries_per_task, current: 0 };
         const repair = selectRepairAction({
           failure_class: failureClass,
           prior_worker_result: priorWorker,
@@ -603,11 +613,13 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       duration_ms: Math.round(performance.now() - waveStartMs)
     });
     context.flushState();
-    if (shouldPauseForBudget(context.state.cost_ledger, budgetPolicyFromState(context.state))) {
-      pauseRunForBudget(context, activeSafeWave);
+    const postWaveBudget = evaluateBudgetFromState(context);
+    if (postWaveBudget.action === "pause_for_operator") {
+      pauseRunForBudget(context, activeSafeWave, postWaveBudget);
       context.flushState();
       break;
     }
+    if (postWaveBudget.action === "warn") emitBudgetWarning(context, postWaveBudget);
     waveIndex += 1;
     const nextProjection = buildDurableProjection(graph);
     activeSafeWave = nextProjection.safe_wave;
@@ -631,7 +643,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     context.flushState();
   }
 
-  recordBootstrapReviewEvidence(context, paths.root);
+  context = dispatchAutomaticReviews(context, options.root);
 
   let completionAuditStatus = "failed";
   writeDecisionsProjection(paths.root, runId, context.state.decisions_register ?? []);
@@ -652,14 +664,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       })
       : undefined;
     state.artifact_index = mergeArtifactIndex(state.artifact_index, combinedApplyArtifactEntries(combinedApplyEvidence));
-    const reviewEvidence = state.reviews.map((review) => ({
-      task_id: review.task_id,
-      attempt_id: review.attempt_id,
-      verdict: review.verdict,
-      spec_score: review.spec_score,
-      quality_score: review.quality_score,
-      residual_risk: review.residual_risk
-    }));
+    const reviewEvidence = state.reviews.filter((review) => normalizeReviewEvidenceArtifact(review) !== null);
     state.completion_audit = buildCompletionAudit({
       state,
       required_checks: parsed.tasks.flatMap((task) => task.verification_commands.length > 0 ? task.verification_commands : ["printf hello"]),
@@ -746,6 +751,7 @@ interface FinalizeIntakeBlockedRunInput {
 function finalizeIntakeBlockedRun(input: FinalizeIntakeBlockedRunInput): WaygentRunResult {
   const { options, paths, runId, workspace, worktreeRoot, planInput, specInput, providerProfile, intakeRecovery } = input;
   const startedAt = new Date().toISOString();
+  const budgetPolicy = budgetPolicyFromOptions(options);
   const extractArtifact = input.extractReport
     ? writeArtifact(
       paths.root,
@@ -776,8 +782,9 @@ function finalizeIntakeBlockedRun(input: FinalizeIntakeBlockedRunInput): Waygent
     intake_recovery: intakeRecovery,
     decisions_register: [],
     cost_ledger: createEmptyCostLedger(),
-    budget_cap_usd: options.budget_cap_usd ?? null,
-    budget_action: options.budget_action ?? "off",
+    budget_cap_usd: budgetPolicy.max_cost_usd,
+    budget_action: budgetPolicy.action === "pause_for_operator" ? "pause" : budgetPolicy.action,
+    budget_policy: budgetPolicyStateRecord(budgetPolicy),
     method_evidence_required: options.require_method_evidence ?? false,
     hook_config: options.hook_config ?? "builtin",
     status: "blocked",
@@ -992,7 +999,12 @@ function recordRuntimeEvidence(context: RunExecutionContext, result: WaygentTask
       attempt_id: result.provider_attempt.attempt_id,
       usage_source: result.provider_attempt.usage_source ?? "unknown",
       usage: result.provider_attempt.usage ?? null,
-      actual_model: result.provider_attempt.actual_model ?? null
+      actual_model: result.provider_attempt.actual_model ?? null,
+      budget_projection: projectBudgetPolicy(
+        budgetPolicyFromRunState(context.state),
+        context.state.cost_ledger,
+        context.state.provider_attempts
+      )
     },
     trust_impact: "neutral"
   }));
@@ -1341,6 +1353,28 @@ async function runRepairAttempt(input: RunRepairAttemptInput): Promise<RunRepair
   context.appendEvent((sequence) => buildRunEvent({
     run_id,
     sequence,
+    event_type: "platform.cost_accumulated",
+    phase: "cost",
+    outcome: "success",
+    summary: "Provider usage cost ledger updated.",
+    payload: {
+      task_id,
+      attempt_id: attemptId,
+      usage_source: providerAttempt.usage_source ?? "unknown",
+      usage: providerAttempt.usage ?? null,
+      actual_model: providerAttempt.actual_model ?? null,
+      budget_projection: projectBudgetPolicy(
+        budgetPolicyFromRunState(context.state),
+        context.state.cost_ledger,
+        context.state.provider_attempts
+      )
+    },
+    trust_impact: "neutral"
+  }));
+
+  context.appendEvent((sequence) => buildRunEvent({
+    run_id,
+    sequence,
     event_type: "runway.repair_result",
     phase: "repair",
     outcome: repairWorker.status === "completed" ? "success" : "failed",
@@ -1427,7 +1461,7 @@ function errorSummary(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function pauseRunForBudget(context: RunExecutionContext, activeTaskIds: string[]): void {
+function pauseRunForBudget(context: RunExecutionContext, activeTaskIds: string[], evaluation: BudgetEvaluation): void {
   context.mutateState((state) => {
     state.status = "blocked";
     state.lifecycle_outcome = "blocked";
@@ -1437,27 +1471,64 @@ function pauseRunForBudget(context: RunExecutionContext, activeTaskIds: string[]
       const task = state.tasks[taskId];
       if (task && task.status !== "verified" && task.status !== "applied") {
         task.status = "blocked";
-        task.latest_failure_class = "needs_infra_fix";
+        task.latest_failure_class = "cost_budget_exhausted";
       }
     }
     state.recovery = [...state.recovery, {
-      failure_class: "budget_paused",
+      failure_class: "cost_budget_exhausted",
       reason: "budget_paused",
       budget_cap_usd: state.budget_cap_usd,
       cost_usd: state.cost_ledger?.totals.cost_usd ?? 0,
+      budget_projection: evaluation.projection,
       recorded_at: new Date().toISOString()
     }];
   });
   context.appendEvent((sequence) => buildRunEvent({
     run_id: context.run_id,
     sequence,
-    event_type: "platform.cost_budget_paused",
+    event_type: "platform.budget_paused",
     phase: "cost",
     outcome: "blocked",
     summary: "Budget cap paused execution at a safe boundary.",
-    payload: { budget_cap_usd: context.state.budget_cap_usd, cost_ledger: context.state.cost_ledger },
+    payload: {
+      reason: evaluation.reason,
+      budget_projection: evaluation.projection,
+      budget_policy: budgetPolicyStateRecord(budgetPolicyFromRunState(context.state))
+    },
     trust_impact: "requires_review"
   }));
+}
+
+function evaluateBudgetFromState(context: RunExecutionContext): BudgetEvaluation {
+  return evaluateBudgetPolicy(
+    budgetPolicyFromRunState(context.state),
+    context.state.cost_ledger,
+    context.state.provider_attempts
+  );
+}
+
+function emitBudgetWarning(context: RunExecutionContext, evaluation: BudgetEvaluation): void {
+  if (evaluation.warning_threshold_usd === null) return;
+  context.appendEvent((sequence) => buildRunEvent({
+    run_id: context.run_id,
+    sequence,
+    event_type: "platform.budget_warning",
+    phase: "cost",
+    outcome: "success",
+    summary: "Cost budget warning threshold exceeded.",
+    payload: {
+      reason: evaluation.reason,
+      warning_threshold_usd: evaluation.warning_threshold_usd,
+      budget_projection: evaluation.projection,
+      budget_policy: budgetPolicyStateRecord(budgetPolicyFromRunState(context.state))
+    },
+    trust_impact: "requires_review"
+  }));
+  context.mutateState((state) => {
+    const nextPolicy = markBudgetWarningEmitted(budgetPolicyFromRunState(state), evaluation.warning_threshold_usd!);
+    state.budget_policy = budgetPolicyStateRecord(nextPolicy);
+  });
+  context.flushState();
 }
 
 function recordWaveTiming(
@@ -1606,6 +1677,69 @@ export function resolveProviderProcesses(
   return result;
 }
 
+function dispatchAutomaticReviews(context: RunExecutionContext, root: string): RunExecutionContext {
+  const policy = reviewEvidencePolicy(context.state);
+  if (!policy.required) return context;
+  const runId = context.run_id;
+  let activeContext = context;
+
+  for (const taskId of policy.required_task_ids) {
+    activeContext = refreshRunExecutionContext(root, runId);
+    const task = activeContext.state.tasks[taskId];
+    if (!task || (task.status !== "verified" && task.status !== "applied")) continue;
+    if (taskHasPassedReviewEvidence(activeContext.state, taskId)) {
+      activeContext.mutateState((state) => {
+        const stateTask = state.tasks[taskId];
+        if (!stateTask) return;
+        stateTask.review_required = true;
+        stateTask.review_status = "passed";
+      });
+      activeContext.flushState();
+      continue;
+    }
+
+    const reviewPendingAt = new Date().toISOString();
+    activeContext.mutateState((state) => {
+      state.current_phase = "review";
+      const stateTask = state.tasks[taskId];
+      if (!stateTask) return;
+      stateTask.review_required = true;
+      stateTask.review_status = "pending";
+      stateTask.timing.review_pending_at = stateTask.timing.review_pending_at ?? reviewPendingAt;
+    });
+    activeContext.flushState();
+
+    const result = reviewRun({ root, run: runId, task: taskId });
+    activeContext = refreshRunExecutionContext(root, runId);
+    if (result.status === "failed" || result.status === "blocked") break;
+  }
+
+  return activeContext;
+}
+
+function refreshRunExecutionContext(root: string, runId: string): RunExecutionContext {
+  return createRunExecutionContext({
+    root,
+    state: readRunStateV2(root, runId),
+    next_sequence: nextEventSequence(root, runId)
+  });
+}
+
+function nextEventSequence(root: string, runId: string): number {
+  return readEvents(runPaths(root, runId).events)
+    .reduce((max, event) => Math.max(max, typeof event.sequence === "number" ? event.sequence : 0), 0) + 1;
+}
+
+function taskHasPassedReviewEvidence(state: WaygentRunStateV2, taskId: string): boolean {
+  const normalized = state.reviews
+    .map(normalizeReviewEvidenceArtifact)
+    .filter((item) => item?.task_id === taskId);
+  const hasCombined = normalized.some((item) => item?.role === "combined" && item.status === "passed" && item.verdict === "approved");
+  const hasSpec = normalized.some((item) => item?.role === "spec_reviewer" && item.status === "passed" && item.verdict === "approved");
+  const hasQuality = normalized.some((item) => item?.role === "quality_reviewer" && item.status === "passed" && item.verdict === "approved");
+  return hasCombined || (hasSpec && hasQuality);
+}
+
 function recordBootstrapReviewEvidence(context: RunExecutionContext, runRoot: string): void {
   const state = context.state;
   const mode = typeof state.provider_profile.execution_mode === "string"
@@ -1717,11 +1851,21 @@ export function defaultRunRoot(): string {
   }
 }
 
-function budgetPolicyFromState(state: WaygentRunStateV2): BudgetPolicy {
-  const policy: BudgetPolicy = {};
-  if (state.budget_cap_usd !== undefined) policy.budget_cap_usd = state.budget_cap_usd;
-  if (state.budget_action !== undefined) policy.budget_action = state.budget_action;
-  return policy;
+function budgetPolicyFromOptions(options: RunWaygentOptions): RunBudgetPolicy {
+  const input: Parameters<typeof resolveBudgetPolicy>[0] = {};
+  if (options.budget_cap_usd !== undefined) input.max_cost_usd = options.budget_cap_usd;
+  if (options.budget_max_provider_minutes !== undefined) input.max_provider_minutes = options.budget_max_provider_minutes;
+  if (options.budget_max_full_worker_retries_per_task !== undefined) {
+    input.max_full_worker_retries_per_task = options.budget_max_full_worker_retries_per_task;
+  }
+  if (options.budget_max_repair_retries_per_task !== undefined) {
+    input.max_repair_retries_per_task = options.budget_max_repair_retries_per_task;
+  }
+  if (options.budget_max_adapter_crash_retries_per_task !== undefined) {
+    input.max_adapter_crash_retries_per_task = options.budget_max_adapter_crash_retries_per_task;
+  }
+  if (options.budget_action !== undefined) input.budget_action = options.budget_action;
+  return resolveBudgetPolicy(input);
 }
 
 function resolveRunPlanInput(options: RunWaygentOptions): { markdown: string; path: string | null } {

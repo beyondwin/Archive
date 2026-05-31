@@ -1,0 +1,58 @@
+{
+  "id": "missing-review-evidence",
+  "title": "Recovered verification requires review evidence before apply",
+  "provider_fixture": "fake-success",
+  "source_dirty_before_apply": false,
+  "force_missing_checkpoint": false,
+  "stale_verification_recovered": true,
+  "review_evidence_missing": true,
+  "plan": "```yaml waygent-task\nid: task_missing_review\ntitle: Missing review evidence task\ndependencies: []\nfile_claims:\n  - path: review.txt\n    mode: owned\nrisk: low\nverify:\n  - printf review\n```",
+  "expected": {
+    "run_status": "failed",
+    "apply_status": "blocked",
+    "trust_status": "needs_review",
+    "apply_reason": "review_evidence_missing",
+    "operator_primary_blocker": "review_evidence_missing",
+    "operator_allowed_actions": [
+      "run_review"
+    ],
+    "total_events": 16,
+    "safe_wave": [
+      "task_missing_review"
+    ],
+    "event_types": [
+      "platform.run_started",
+      "platform.intake_extract_completed",
+      "platform.plan_preflight_completed",
+      "runway.plan_loaded",
+      "runway.preflight_result",
+      "runway.safe_wave_selected",
+      "runway.spec_slice_computed",
+      "context.packet_budget_evaluated",
+      "handoff.created",
+      "runway.worker_result",
+      "lens.model_attestation_confirmed",
+      "runway.verification_result",
+      "runway.checkpoint_created",
+      "runway.apply_dry_run_result",
+      "platform.cost_accumulated",
+      "lens.trust_report_updated"
+    ],
+    "checkpoints": [
+      "artifacts/checkpoints/task_missing_review/candidate_task_missing_review.json"
+    ],
+    "blockers": [
+      "review_evidence_missing"
+    ],
+    "combined_patch_ref": "artifacts/checkpoints/apply/scenario_missing-review-evidence.patch",
+    "provider_attempts": [
+      {
+        "task_id": "task_missing_review",
+        "provider": "fake",
+        "stdout_ref": "artifacts/provider/attempt_task_missing_review_1.stdout.txt",
+        "stderr_ref": "artifacts/provider/attempt_task_missing_review_1.stderr.txt",
+        "worker_result_ref": "artifacts/worker/task_missing_review.json"
+      }
+    ]
+  }
+}

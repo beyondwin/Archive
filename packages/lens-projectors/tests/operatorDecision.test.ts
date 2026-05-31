@@ -292,6 +292,76 @@ describe("operator decision projector", () => {
     );
   });
 
+  test("does not report stale failed verification after later pass", () => {
+    const state = makeState({
+      status: "blocked",
+      lifecycle_outcome: "blocked",
+      current_phase: "complete",
+      tasks: {
+        task_a: task("task_a", {
+          status: "verified",
+          latest_failure_class: null,
+          checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"]
+        })
+      },
+      verification: [
+        {
+          verification_id: "verify_task_a_1",
+          task_id: "task_a",
+          command: "bun test",
+          status: "failed",
+          verified_at: "2026-05-26T00:00:00.000Z"
+        },
+        {
+          verification_id: "verify_task_a_2",
+          task_id: "task_a",
+          command: "bun test",
+          status: "passed",
+          verified_at: "2026-05-26T00:01:00.000Z"
+        }
+      ],
+      completion_audit: {
+        status: "failed",
+        combined_apply_evidence: {
+          status: "passed",
+          checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"],
+          patch_ref: "artifacts/checkpoints/apply/run_demo.patch"
+        },
+        residual_risk: ["review_evidence:recovery_attempted"]
+      },
+      recovery: [{ task_id: "task_a", failure_class: "malformed_result" }],
+      apply: { status: "blocked", reason: "missing_apply_ready_evidence" }
+    });
+
+    const projection = projectOperatorDecisionFromState({
+      state,
+      events: [
+        demoEvent({
+          event_id: "event_failed",
+          sequence: 1,
+          event_type: "runway.verification_result",
+          outcome: "failed",
+          payload: { task_id: "task_a", verification_id: "verify_task_a_1" }
+        }),
+        demoEvent({
+          event_id: "event_passed",
+          sequence: 2,
+          event_type: "runway.verification_result",
+          outcome: "success",
+          payload: { task_id: "task_a", verification_id: "verify_task_a_2" }
+        })
+      ]
+    });
+
+    expect(projection.primary_blocker?.code).toBe("review_evidence_missing");
+    expect(projection.primary_blocker?.code).not.toBe("verification_failed");
+    expect(projection.recovered_failures).toContainEqual(expect.objectContaining({
+      task_id: "task_a",
+      failure_class: "malformed_result"
+    }));
+    expect(projection.evidence_packet.recovered_failure_refs).toContain("event:event_failed");
+  });
+
   test("marks missing evidence as partial confidence", () => {
     const projection = projectOperatorDecisionFromState({
       state: makeState({

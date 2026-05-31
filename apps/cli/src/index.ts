@@ -70,7 +70,7 @@ const commandUsage: Record<string, string> = {
   decisions: "waygent decisions --run <run_id>|--last",
   cost: "waygent cost --run <run_id>|--last",
   watch: "waygent watch --run <run_id>|--last [--json] [--filter all|task_transition|failure|cost]",
-  orphans: "waygent orphans [--root <run_root>] [--delete <id> --yes]",
+  orphans: "waygent orphans [--root <run_root>] [--stale] [--mark-blocked <run_id>] [--cleanup-worktree <run_id>] [--delete <id> --yes]",
   "scaffold-plan": "waygent scaffold-plan --id <task_id> --title <title> --claim <path:mode> --risk <low|medium|high> --verify <command>"
 };
 
@@ -351,9 +351,12 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     const orphanOptions: Parameters<typeof orphansRun>[0] = {
       root: String(parsed.flags.root ?? defaultRunRoot()),
       last: false,
-      yes: Boolean(parsed.flags.yes)
+      yes: Boolean(parsed.flags.yes),
+      stale: Boolean(parsed.flags.stale)
     };
     if (typeof parsed.flags.delete === "string") orphanOptions.delete = parsed.flags.delete;
+    if (typeof parsed.flags["mark-blocked"] === "string") orphanOptions.mark_blocked = parsed.flags["mark-blocked"];
+    if (typeof parsed.flags["cleanup-worktree"] === "string") orphanOptions.cleanup_worktree = parsed.flags["cleanup-worktree"];
     return orphansRun(orphanOptions);
   }
   return { usage };

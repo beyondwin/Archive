@@ -18,6 +18,12 @@ import type {
 import { projectApplyReadinessFromState } from "./apply";
 import { projectFailureBarrierFromState } from "./failureBarrier";
 import { projectOperationalMaturityFromState } from "./operationalMaturity";
+import {
+  hasActiveVerificationFailure,
+  recoveredFailureRecords,
+  resolveTaskVerifications,
+  staleVerificationFailureRefs
+} from "./verificationResolution";
 
 type StateError =
   | { status: "missing"; reason: "missing_run_state_v2" | string }
@@ -123,6 +129,27 @@ const actionDefinitions: Record<OperatorActionId, ActionDefinition> = {
     requiresApproval: false,
     requiresRuntimeRevalidation: false
   },
+  run_review: {
+    label: "Run review",
+    defaultReason: "Review evidence must be regenerated before apply.",
+    command: nullCommand,
+    requiresApproval: false,
+    requiresRuntimeRevalidation: true
+  },
+  mark_stale_blocked: {
+    label: "Mark stale blocked",
+    defaultReason: "Stale runtime state can be marked blocked after inspection.",
+    command: nullCommand,
+    requiresApproval: true,
+    requiresRuntimeRevalidation: true
+  },
+  cleanup_stale_worktree: {
+    label: "Clean up stale worktree",
+    defaultReason: "Stale worktree cleanup requires runtime revalidation.",
+    command: nullCommand,
+    requiresApproval: true,
+    requiresRuntimeRevalidation: true
+  },
   apply_run: {
     label: "Apply run",
     defaultReason: "Apply readiness is ready; the runtime must still revalidate before applying.",
@@ -143,6 +170,7 @@ const blockerPriority: Record<string, number> = {
   needs_user_input: 40,
   needs_approval: 40,
   verification_failed: 50,
+  review_evidence_missing: 50,
   dependency_missing: 50,
   environment_blocker: 50,
   command_not_found: 50,
@@ -209,6 +237,7 @@ export function projectOperatorDecisionFromState(input: OperatorDecisionInput): 
     ai_handoff: aiHandoff,
     confidence,
     unknown_reasons: unknownReasons,
+    recovered_failures: recoveredFailuresFromState(state),
     ...(intakeRecoverySummary ? { intake_recovery: intakeRecoverySummary } : {}),
     source_projection_refs: {
       run_state_v2: stateRef(state),
@@ -311,6 +340,10 @@ function evidencePacketFromState(
   applyReadiness: ApplyReadinessProjection
 ): OperatorEvidencePacket {
   const verificationRefs = verificationRefsFromState(state);
+  const recoveredFailureRefs = unique([
+    ...staleVerificationFailureRefs(state, events),
+    ...recoveredFailureRecords(state).flatMap((record) => record.evidence_refs)
+  ]);
   const checkpointRefs = unique([...checkpointRefsFromTasks(state), ...applyReadiness.checkpoint_refs]);
   const artifactRefs = unique([
     ...artifactRefsFromState(state, applyReadiness),
@@ -325,6 +358,7 @@ function evidencePacketFromState(
     verification_refs: verificationRefs,
     checkpoint_refs: checkpointRefs,
     projection_refs: [...projectionRefs],
+    ...(recoveredFailureRefs.length > 0 ? { recovered_failure_refs: recoveredFailureRefs } : {}),
     missing_refs: missingRefs,
     redaction_notes: []
   };
@@ -352,6 +386,7 @@ function blockersFromState(
   const blockers: OperatorBlocker[] = [];
   const taskFailure = firstTaskFailure(state);
   const applyReason = state.apply.reason ?? applyReadiness.reason ?? null;
+  const activeVerificationFailure = hasActiveVerificationFailure(state, events);
 
   const intakeBlocker = intakeRecoveryBlocker(state.intake_recovery, evidencePacket);
   if (intakeBlocker) blockers.push(intakeBlocker);
@@ -367,15 +402,16 @@ function blockersFromState(
     }));
   }
 
-  if (taskFailure?.failureClass === "verification_failed" || verificationFailed(state, events)) {
-    const taskId = taskFailure?.task.id ?? failedVerificationTaskId(state) ?? eventTaskId(events, "runway.verification_result");
+  if ((taskFailure?.failureClass === "verification_failed" && !taskVerificationRecovered(taskFailure.task, state, events)) ||
+    activeVerificationFailure) {
+    const taskId = taskFailure?.task.id ?? activeVerificationFailure?.task_id ?? null;
     blockers.push(makeBlocker({
       code: "verification_failed",
       title: "Verification failed",
       summary: taskId ? `${taskId} failed verification.` : "Verification failed for the run.",
       severity: "blocking",
       taskId,
-      evidenceRefs: verificationEvidenceRefs(taskId, events, evidencePacket),
+      evidenceRefs: verificationEvidenceRefs(taskId, events, evidencePacket, activeVerificationFailure?.evidence_refs ?? []),
       recommendedActionIds: ["rerun_verification", "open_ai_repair_handoff"]
     }));
   }
@@ -439,6 +475,18 @@ function blockersFromState(
       evidenceRefs: unique([...evidencePacket.state_refs, ...driftEvidenceRefs(state)]),
       missingRefs: ["artifact_refs"],
       recommendedActionIds: ["open_raw_evidence", "open_ai_repair_handoff"]
+    }));
+  }
+
+  if (applyReadiness.status === "blocked" && applyReadiness.reason === "review_evidence_missing") {
+    blockers.push(makeBlocker({
+      code: "review_evidence_missing",
+      title: "Review evidence is missing",
+      summary: "A recovered or high-risk task needs review evidence before apply.",
+      severity: "blocking",
+      evidenceRefs: evidencePacket.state_refs,
+      missingRefs: ["review_refs"],
+      recommendedActionIds: ["run_review", "open_raw_evidence"]
     }));
   }
 
@@ -528,6 +576,10 @@ function intakeRecoverySummaryFromState(state: WaygentRunStateV2): OperatorIntak
   };
 }
 
+function recoveredFailuresFromState(state: WaygentRunStateV2): NonNullable<OperatorDecisionProjection["recovered_failures"]> {
+  return recoveredFailureRecords(state);
+}
+
 function intakeArtifactRefs(intakeRecovery: WaygentIntakeRecovery | undefined): string[] {
   if (!intakeRecovery) return [];
   const refs: string[] = [];
@@ -576,6 +628,8 @@ function allowedActionsFor(input: {
     ids.push("regenerate_checkpoint", "rebase_checkpoint");
   } else if (input.primaryBlocker?.code === "checkpoint_missing") {
     ids.push("regenerate_checkpoint");
+  } else if (input.primaryBlocker?.code === "review_evidence_missing") {
+    ids.push("run_review");
   } else if (input.primaryBlocker?.code === "needs_user_input") {
     ids.push("request_user_input");
   } else if (input.primaryBlocker?.code === "needs_approval") {
@@ -781,31 +835,28 @@ function firstTaskFailure(state: WaygentRunStateV2): { task: WaygentRunStateV2["
   return null;
 }
 
-function verificationFailed(state: WaygentRunStateV2, events: AgentLensEvent[]): boolean {
-  return failedVerificationTaskId(state) !== null ||
-    events.some((event) => event.event_type === "runway.verification_result" && event.outcome === "failed");
-}
-
-function failedVerificationTaskId(state: WaygentRunStateV2): string | null {
-  for (const verification of state.verification) {
-    if (String(verification.status ?? verification.outcome ?? "") === "failed") {
-      return typeof verification.task_id === "string" ? verification.task_id : null;
-    }
-  }
-  return null;
-}
-
 function verificationEvidenceRefs(
   taskId: string | null | undefined,
   events: AgentLensEvent[],
-  evidencePacket: OperatorEvidencePacket
+  evidencePacket: OperatorEvidencePacket,
+  activeEvidenceRefs: string[] = []
 ): string[] {
-  const refs = [...evidencePacket.state_refs];
+  const refs = [...evidencePacket.state_refs, ...activeEvidenceRefs];
   if (taskId) refs.push(`verification:${taskId}`);
   for (const event of events) {
     if (event.event_type === "runway.verification_result") refs.push(`event:${event.event_id}`);
   }
   return unique(refs);
+}
+
+function taskVerificationRecovered(
+  task: WaygentRunStateV2["tasks"][string],
+  state: WaygentRunStateV2,
+  events: AgentLensEvent[]
+): boolean {
+  if (task.status !== "verified") return false;
+  const resolution = resolveTaskVerifications(state, events)[task.id];
+  return resolution?.latest_status === "passed";
 }
 
 function verificationRefsFromState(state: WaygentRunStateV2): string[] {
@@ -877,18 +928,13 @@ function failureClassOf(record: Record<string, unknown>): string | null {
   return typeof failureClass === "string" && failureClass.length > 0 ? failureClass : null;
 }
 
-function eventTaskId(events: AgentLensEvent[], eventType: string): string | null {
-  const event = [...events].reverse().find((candidate) => candidate.event_type === eventType);
-  const taskId = event?.payload.task_id;
-  return typeof taskId === "string" ? taskId : null;
-}
-
 function evidenceRefsForAction(id: OperatorActionId, evidencePacket: OperatorEvidencePacket): string[] {
   if (id === "open_raw_evidence") return unique([...evidencePacket.state_refs, ...evidencePacket.event_refs]);
   if (id === "rerun_verification") return unique([...evidencePacket.state_refs, ...evidencePacket.verification_refs]);
   if (id === "regenerate_checkpoint" || id === "rebase_checkpoint" || id === "review_patch" || id === "apply_run") {
     return unique([...evidencePacket.state_refs, ...evidencePacket.checkpoint_refs, ...evidencePacket.artifact_refs]);
   }
+  if (id === "run_review") return unique([...evidencePacket.state_refs, ...(evidencePacket.recovered_failure_refs ?? [])]);
   if (id === "request_user_input" || id === "approve_recovery") {
     return unique([...evidencePacket.state_refs, ...evidencePacket.artifact_refs]);
   }

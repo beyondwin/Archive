@@ -1,20 +1,17 @@
 import type { WaygentRunStateV2 } from "@waygent/contracts";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { sha256 } from "@waygent/lens-store";
-import {
-  type CombinedCheckpointPatchResult,
-  readCheckpointManifest,
-  resolveRunArtifactPath,
-  validateCheckpointManifest
-} from "./checkpointArtifacts";
-import { reviewEvidenceMissing } from "./reviewEvidence";
+import { isAbsolute, join } from "node:path";
+import type { CombinedCheckpointPatchResult } from "./checkpointArtifacts";
+import { reviewEvidenceReport } from "./reviewEvidence";
+import type { ReviewEvidenceArtifact } from "./reviewArtifacts";
 import { taskRequiresCheckpoint } from "./taskCheckpointPolicy";
 
 export interface CompletionAuditInput {
   state: WaygentRunStateV2;
   required_checks: string[];
   verification_evidence: Array<Record<string, unknown>>;
-  review_evidence: Array<Record<string, unknown>>;
+  review_evidence: ReviewEvidenceArtifact[];
   combined_apply_evidence?: CombinedCheckpointPatchResult;
   prompt_to_artifact_checklist: string[];
 }
@@ -57,19 +54,29 @@ export function buildCompletionAudit(input: CompletionAuditInput): Record<string
   if (!combinedApplyOk) {
     residualRisk.push(`combined_apply:${input.combined_apply_evidence?.reason ?? "missing_verified_checkpoint"}`);
   }
-  const missingReviewReason = reviewEvidenceMissing({
+  const reviewReport = reviewEvidenceReport({
     state: input.state,
     review_evidence: input.review_evidence
   });
-  if (missingReviewReason) {
-    residualRisk.push(`review_evidence:${missingReviewReason}`);
+  if (reviewReport.policy.required && input.review_evidence.length === 0) {
+    residualRisk.push(`review_evidence:${reviewReport.policy.reason ?? "review_required"}`);
+  } else {
+    residualRisk.push(...reviewReport.coverage.residual_risk.map((risk) => `review_evidence:${risk}`));
   }
 
   return {
-    status: failed.length === 0 && taskResults.length > 0 && combinedApplyOk && !missingReviewReason ? "passed" : "failed",
+    status: failed.length === 0 && taskResults.length > 0 && combinedApplyOk && reviewReport.coverage.residual_risk.length === 0 ? "passed" : "failed",
     required_checks: input.required_checks,
     verification_evidence: input.verification_evidence,
     review_evidence: input.review_evidence,
+    review_status: {
+      required: reviewReport.policy.required,
+      reason: reviewReport.policy.reason,
+      required_task_ids: reviewReport.policy.required_task_ids,
+      missing_task_ids: reviewReport.coverage.missing_task_ids,
+      failed_task_ids: reviewReport.coverage.failed_task_ids,
+      passed_task_ids: reviewReport.coverage.passed_task_ids
+    },
     checkpoint_evidence: checkpointEvidence,
     ...(input.combined_apply_evidence ? { combined_apply_evidence: input.combined_apply_evidence } : {}),
     state_reconciliation: { passed: false },
@@ -107,4 +114,42 @@ export function hasApplyReadyCheckpoint(state: WaygentRunStateV2): boolean {
         return readCheckpointManifest(state.run_root, ref).dry_run_status === "passed";
       })
     );
+}
+
+interface CheckpointManifest {
+  patch_ref: string;
+  patch_sha256: string;
+  patch_byte_length: number;
+  dry_run_status: "not_run" | "passed" | "failed";
+  dry_run_evidence_ref: string | null;
+}
+
+function readCheckpointManifest(runRoot: string, checkpointRef: string): CheckpointManifest {
+  return JSON.parse(readFileSync(resolveRunArtifactPath(runRoot, checkpointRef), "utf8")) as CheckpointManifest;
+}
+
+function validateCheckpointManifest(runRoot: string, checkpointRef: string): { ok: boolean; patch_ref?: string; reason?: string } {
+  const manifestPath = resolveRunArtifactPath(runRoot, checkpointRef);
+  if (!existsSync(manifestPath)) return { ok: false, reason: "checkpoint_manifest_missing" };
+  let manifest: CheckpointManifest;
+  try {
+    manifest = readCheckpointManifest(runRoot, checkpointRef);
+  } catch {
+    return { ok: false, reason: "checkpoint_manifest_missing" };
+  }
+  const patchPath = resolveRunArtifactPath(runRoot, manifest.patch_ref);
+  if (!existsSync(patchPath)) return { ok: false, reason: "checkpoint_patch_missing" };
+  const patch = readFileSync(patchPath);
+  if (sha256(patch) !== manifest.patch_sha256 || patch.byteLength !== manifest.patch_byte_length) {
+    return { ok: false, reason: "checkpoint_digest_mismatch" };
+  }
+  return { ok: true, patch_ref: manifest.patch_ref };
+}
+
+function resolveRunArtifactPath(runRoot: string, ref: string): string {
+  return isAbsolute(ref) ? ref : join(runRoot, ref);
+}
+
+function sha256(data: string | Buffer): string {
+  return createHash("sha256").update(data).digest("hex");
 }

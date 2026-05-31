@@ -41,7 +41,7 @@ export interface RunReadModelProjection {
 }
 
 export function projectRunReadModel(input: RunReadModelInput): RunReadModelProjection {
-  const trust = projectTrustReport(input.events);
+  const trust = projectTrustReport(input.events, input.state);
   const failures = projectFailureSummary(input.events);
   const timeline = projectTimeline(input.events);
   const eventApplyState = projectApplyState(input.events);

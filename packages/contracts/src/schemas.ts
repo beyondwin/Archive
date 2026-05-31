@@ -31,15 +31,49 @@ const failureClassValues = [
   "unsafe_apply",
   "state_drift",
   "artifact_missing",
+  "cost_budget_exhausted",
   "stale_activity",
   "terminal_rejected"
 ] as const;
 const riskValues = ["low", "medium", "high"] as const;
-const providerRoleValues = ["implement", "review", "fix", "verify_assist"] as const;
+const providerRoleValues = [
+  "coordinator",
+  "implement",
+  "implementer",
+  "review",
+  "spec_reviewer",
+  "quality_reviewer",
+  "repair",
+  "fix",
+  "verifier",
+  "verify_assist"
+] as const;
 const providerLogCategoryValues = ["error", "warning", "mcp", "plugin_manifest", "skill_loader", "other"] as const;
 const usageSourceValues = ["provider_json", "event_stream", "unknown"] as const;
 const budgetActionValues = ["warn", "pause", "off"] as const;
 const specMappingSourceValues = ["explicit", "heuristic", "fallback"] as const;
+const trustStatusValues = ["trusted", "failed", "insufficient_evidence", "needs_review"] as const;
+const taskReviewStatusValues = ["not_required", "required", "pending", "running", "passed", "failed"] as const;
+const waygentTaskStatusV2Values = [
+  "pending",
+  "ready",
+  "running",
+  "needs_fix",
+  "verified",
+  "review_required",
+  "review_pending",
+  "spec_review_running",
+  "spec_review_failed",
+  "spec_review_passed",
+  "quality_review_running",
+  "quality_review_failed",
+  "review_passed",
+  "review_failed",
+  "checkpoint_ready",
+  "blocked",
+  "failed",
+  "applied"
+] as const;
 const failureBarrierTypeValues = [
   "spec_blocker",
   "env_blocker",
@@ -72,6 +106,9 @@ const operatorActionIdValues = [
   "rebase_checkpoint",
   "rerun_verification",
   "review_patch",
+  "run_review",
+  "mark_stale_blocked",
+  "cleanup_stale_worktree",
   "apply_run"
 ] as const;
 const executionPhaseNameValues = [
@@ -451,7 +488,7 @@ export const lensRunwayProjectionSchema = {
     run_id: { type: "string", pattern: idPattern },
     status: { enum: ["pending", "running", "blocked", "failed", "completed", "applied"] },
     safe_wave: { type: "array", items: { type: "string", pattern: idPattern } },
-    trust_status: { enum: ["trusted", "failed", "insufficient_evidence"] },
+    trust_status: { enum: trustStatusValues },
     event_count: { type: "integer", minimum: 0 }
   }
 } as const;
@@ -790,6 +827,185 @@ export const reviewResultSchema = {
   }
 } as const;
 
+const taskVerificationResolutionSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["task_id", "latest_status", "latest_verification_ref", "stale_failure_refs"],
+  properties: {
+    task_id: { type: "string", pattern: idPattern },
+    latest_status: { enum: ["passed", "failed", "missing"] },
+    latest_verification_ref: { type: "string", nullable: true },
+    stale_failure_refs: { type: "array", items: { type: "string", minLength: 1 } }
+  }
+} as const;
+
+const recoveredFailureRecordSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["task_id", "failure_class", "recovered_at", "evidence_refs"],
+  properties: {
+    task_id: { type: "string", pattern: idPattern },
+    failure_class: { type: "string", minLength: 1 },
+    recovered_at: { type: "string", pattern: isoTimestamp },
+    evidence_refs: { type: "array", items: { type: "string", minLength: 1 } }
+  }
+} as const;
+
+export const taskReviewArtifactSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schema",
+    "run_id",
+    "task_id",
+    "review_id",
+    "role",
+    "status",
+    "verdict",
+    "issues",
+    "evidence_refs",
+    "reviewed_patch_refs",
+    "created_at"
+  ],
+  properties: {
+    schema: { type: "string", const: "waygent.task_review.v1" },
+    run_id: { type: "string", pattern: idPattern },
+    task_id: { type: "string", pattern: idPattern },
+    review_id: { type: "string", pattern: idPattern },
+    role: { enum: ["spec_reviewer", "quality_reviewer"] },
+    status: { enum: ["passed", "failed", "needs_fix"] },
+    verdict: { enum: ["approved", "rejected"] },
+    issues: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["severity", "summary", "required_fix"],
+        properties: {
+          severity: { enum: ["critical", "important", "minor"] },
+          file: { type: "string", nullable: true },
+          line: { type: "integer", minimum: 1, nullable: true },
+          summary: { type: "string", minLength: 1 },
+          required_fix: { type: "string", minLength: 1 }
+        }
+      }
+    },
+    evidence_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    reviewed_patch_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    model: { type: "string" },
+    created_at: { type: "string", pattern: isoTimestamp }
+  }
+} as const;
+
+export const waygentReviewPacketSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: [
+    "schema",
+    "run_id",
+    "task_id",
+    "review_id",
+    "role",
+    "task_title",
+    "task_packet_ref",
+    "task_packet_sha256",
+    "plan_excerpt",
+    "spec_excerpt",
+    "file_claims",
+    "allowed_write_globs",
+    "forbidden_write_globs",
+    "verification_refs",
+    "worker_result_refs",
+    "prior_review_refs",
+    "reviewed_patch_refs",
+    "review_instructions",
+    "context_budget",
+    "sha256"
+  ],
+  properties: {
+    schema: { type: "string", const: "waygent.review_packet.v1" },
+    run_id: { type: "string", pattern: idPattern },
+    task_id: { type: "string", pattern: idPattern },
+    review_id: { type: "string", pattern: idPattern },
+    role: { enum: ["spec_reviewer", "quality_reviewer"] },
+    task_title: { type: "string", minLength: 1 },
+    task_packet_ref: { type: "string", nullable: true },
+    task_packet_sha256: { type: "string", pattern: "^[a-f0-9]{64}$", nullable: true },
+    plan_excerpt: { type: "string" },
+    spec_excerpt: { type: "string" },
+    file_claims: { type: "array", items: fileClaimSchema },
+    allowed_write_globs: { type: "array", items: { type: "string" } },
+    forbidden_write_globs: { type: "array", items: { type: "string" } },
+    verification_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    worker_result_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    prior_review_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    reviewed_patch_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    review_instructions: { type: "array", items: { type: "string", minLength: 1 } },
+    context_budget: {
+      type: "object",
+      additionalProperties: false,
+      required: ["estimated_chars", "max_chars", "status"],
+      properties: {
+        estimated_chars: { type: "integer", minimum: 0 },
+        max_chars: { type: "integer", minimum: 1 },
+        status: { enum: ["green", "yellow", "red"] }
+      }
+    },
+    sha256: { type: "string", pattern: "^[a-f0-9]{64}$" }
+  }
+} as const;
+
+export const salvageResultSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["schema", "task_id", "attempt_id", "status", "patch_ref", "changed_files", "reason", "evidence_refs"],
+  properties: {
+    schema: { type: "string", const: "waygent.salvage_result.v1" },
+    task_id: { type: "string", pattern: idPattern },
+    attempt_id: { type: "string", pattern: idPattern },
+    status: { enum: ["salvaged_patch", "no_patch", "unsafe_patch"] },
+    patch_ref: { type: "string", nullable: true },
+    changed_files: { type: "array", items: { type: "string" } },
+    reason: { type: "string", nullable: true },
+    evidence_refs: { type: "array", items: { type: "string", minLength: 1 } }
+  }
+} as const;
+
+const staleRunStatusSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["run_id", "stale", "reason", "safe_actions"],
+  properties: {
+    run_id: { type: "string", pattern: idPattern },
+    stale: { type: "boolean" },
+    reason: {
+      enum: [
+        "heartbeat_expired",
+        "provider_process_missing",
+        "worktree_missing",
+        "state_event_mismatch",
+        "manual_pause",
+        "active"
+      ]
+    },
+    safe_actions: {
+      type: "array",
+      items: { enum: ["inspect", "mark_blocked", "resume", "cleanup_worktree"] }
+    }
+  }
+} as const;
+
+const costSummaryProjectionSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["cost_usd", "dispatches", "budget_status"],
+  properties: {
+    cost_usd: { type: "number", minimum: 0 },
+    dispatches: { type: "integer", minimum: 0 },
+    budget_status: { enum: ["ok", "warning", "paused", "exhausted"] }
+  }
+} as const;
+
 const providerLogSummarySchema = {
   type: "object",
   additionalProperties: false,
@@ -932,7 +1148,7 @@ const waygentRunStateTaskV2Schema = {
   ],
   properties: {
     id: { type: "string", pattern: idPattern },
-    status: { enum: ["pending", "ready", "running", "needs_fix", "verified", "blocked", "failed", "applied"] },
+    status: { enum: waygentTaskStatusV2Values },
     risk: { enum: riskValues },
     dependencies: { type: "array", items: { type: "string", pattern: idPattern } },
     file_claims: { type: "array", items: fileClaimSchema },
@@ -947,7 +1163,11 @@ const waygentRunStateTaskV2Schema = {
     phase_timings: { type: "array", items: executionPhaseTimingSchema },
     evidence_policy: taskEvidencePolicySchema,
     hook_retries: { type: "integer", minimum: 0 },
-    model_used: { type: "array", items: modelAttestationSchema }
+    model_used: { type: "array", items: modelAttestationSchema },
+    review_required: { type: "boolean" },
+    review_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    review_status: { enum: taskReviewStatusValues },
+    verification_resolution: taskVerificationResolutionSchema
   }
 } as const;
 
@@ -1009,6 +1229,10 @@ export const waygentRunStateV2Schema = {
     preflight: waygentSourcePreflightSchema,
     worktrees: { type: "array", items: waygentWorktreeManifestSchema },
     artifact_index: { type: "array", items: artifactIndexEntrySchema },
+    recovered_failures: { type: "array", items: recoveredFailureRecordSchema },
+    budget_policy: { type: "object", additionalProperties: true },
+    stale_run_status: staleRunStatusSchema,
+    verification_resolutions: { type: "object", additionalProperties: taskVerificationResolutionSchema },
     tasks: { type: "object", additionalProperties: waygentRunStateTaskV2Schema },
     safe_waves: {
       type: "array",
@@ -1048,7 +1272,7 @@ export const waygentRunStateV2Schema = {
       }
     },
     provider_attempts: { type: "array", items: providerAttemptSchema },
-    reviews: { type: "array", items: reviewResultSchema },
+    reviews: { type: "array", items: { anyOf: [reviewResultSchema, taskReviewArtifactSchema] } },
     verification: { type: "array", items: { type: "object", additionalProperties: true } },
     recovery: { type: "array", items: { type: "object", additionalProperties: true } },
     repair_budget: {
@@ -1171,6 +1395,7 @@ const operatorEvidencePacketSchema = {
     verification_refs: { type: "array", items: { type: "string", minLength: 1 } },
     checkpoint_refs: { type: "array", items: { type: "string", minLength: 1 } },
     projection_refs: { type: "array", items: { type: "string", minLength: 1 } },
+    recovered_failure_refs: { type: "array", items: { type: "string", minLength: 1 } },
     missing_refs: { type: "array", items: { type: "string", minLength: 1 } },
     redaction_notes: { type: "array", items: { type: "string", minLength: 1 } }
   }
@@ -1292,6 +1517,31 @@ export const operatorDecisionProjectionSchema = {
         question: { type: "string", nullable: true }
       }
     },
+    review_status: {
+      type: "object",
+      additionalProperties: false,
+      required: ["required", "missing_task_ids", "passed_task_ids"],
+      properties: {
+        required: { type: "boolean" },
+        missing_task_ids: { type: "array", items: { type: "string", pattern: idPattern } },
+        passed_task_ids: { type: "array", items: { type: "string", pattern: idPattern } }
+      }
+    },
+    recovered_failures: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["task_id", "failure_class", "evidence_refs"],
+        properties: {
+          task_id: { type: "string", pattern: idPattern },
+          failure_class: { type: "string", minLength: 1 },
+          evidence_refs: { type: "array", items: { type: "string", minLength: 1 } }
+        }
+      }
+    },
+    cost_summary: costSummaryProjectionSchema,
+    stale_run_status: staleRunStatusSchema,
     source_projection_refs: {
       type: "object",
       additionalProperties: false,
@@ -1317,6 +1567,9 @@ export const schemas = {
   "runway.decision_packet.v1": decisionPacketSchema,
   "waygent.task_packet.v1": waygentTaskPacketSchema,
   "runway.review_result.v1": reviewResultSchema,
+  "waygent.review_packet.v1": waygentReviewPacketSchema,
+  "waygent.task_review.v1": taskReviewArtifactSchema,
+  "waygent.salvage_result.v1": salvageResultSchema,
   "runway.provider_attempt.v1": providerAttemptSchema,
   "waygent.run_state.v2": waygentRunStateV2Schema,
   "waygent.failure_barrier.v1": failureBarrierProjectionSchema,

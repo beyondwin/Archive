@@ -145,6 +145,23 @@ event include `post_apply_verification` diagnostics with the failed command,
 request id, exit code, timeout flag, and short output snippets. Treat that
 payload as the first recovery target before rerunning or applying again.
 
+### Review-required recovered runs
+
+When recovery succeeds but review is required, `waygent explain` reports
+`review_evidence_missing`. The safe next action is:
+
+```bash
+bun run waygent -- review --run <run_id>
+```
+
+After review passes, rerun:
+
+```bash
+bun run waygent -- explain --run <run_id>
+```
+
+The run is apply-ready only when apply readiness is `ready`.
+
 ### Intake Recovery
 
 Waygent attempts strict plan parsing first. If the supplied design or

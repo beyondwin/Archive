@@ -51,6 +51,82 @@ const workerResult: WorkerResult = {
   evidence: { provider: "fake-provider" }
 };
 
+function validOperatorDecisionFixture(overrides: Record<string, unknown> = {}) {
+  return {
+    schema: "waygent.operator_decision.v1",
+    run_id: "run_review",
+    generated_at: "2026-05-26T00:00:00.000Z",
+    status_summary: {
+      display_status: "blocked",
+      runtime_status: "blocked",
+      lifecycle_outcome: "blocked",
+      current_phase: "complete",
+      active_tasks: 0,
+      completed_tasks: 1,
+      blocked_tasks: 0,
+      apply_status: "blocked",
+      summary: "run_review requires review before apply."
+    },
+    primary_blocker: null,
+    secondary_blockers: [],
+    allowed_actions: [
+      {
+        id: "run_review",
+        label: "Run review",
+        reason: "Review evidence is required before apply.",
+        evidence_refs: ["state:/tmp/run/state.json"],
+        requires_approval: false,
+        requires_runtime_revalidation: true,
+        command: "waygent review --run run_review"
+      }
+    ],
+    blocked_actions: [
+      {
+        id: "apply_run",
+        label: "Apply run",
+        reason: "Apply readiness is blocked until review passes.",
+        evidence_refs: ["state:/tmp/run/state.json"],
+        unblocks_when: "Spec and quality review pass."
+      }
+    ],
+    evidence_packet: {
+      state_refs: ["state:/tmp/run/state.json"],
+      event_refs: ["events:/tmp/run/events.jsonl"],
+      artifact_refs: [],
+      verification_refs: ["verification:task_a"],
+      checkpoint_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"],
+      projection_refs: ["waygent.operator_decision.v1"],
+      recovered_failure_refs: ["event:event_run_3"],
+      missing_refs: [],
+      redaction_notes: []
+    },
+    ai_handoff: {
+      purpose: "summarize_blocker",
+      prompt_summary: "Summarize review and cost blockers.",
+      run_id: "run_review",
+      current_status: "blocked",
+      primary_blocker: null,
+      secondary_blockers: [],
+      allowed_action_ids: ["run_review"],
+      blocked_action_ids: ["apply_run"],
+      constraints: ["Do not apply patches.", "Do not override Waygent runtime policy."],
+      evidence_refs: ["state:/tmp/run/state.json"],
+      missing_evidence: [],
+      raw_fallback_refs: ["events:/tmp/run/events.jsonl"],
+      safety_notes: ["Waygent runtime remains apply authority."]
+    },
+    confidence: "deterministic",
+    unknown_reasons: [],
+    source_projection_refs: {
+      run_state_v2: "state:/tmp/run/state.json",
+      apply_readiness: "waygent.apply_readiness",
+      execution_explanation: "waygent.execution_explanation.v1",
+      operational_maturity: "waygent.operational_maturity.v1"
+    },
+    ...overrides
+  };
+}
+
 describe("Waygent contracts", () => {
   test("normalizes shared id primitives", () => {
     expect(assertWaygentId("run_demo")).toBe("run_demo");
@@ -121,6 +197,70 @@ describe("Waygent contracts", () => {
         result_schema: "runway.worker_result.v1"
       })
     ).toBeTruthy();
+  });
+
+  test("validates task review artifacts", () => {
+    const artifact = {
+      schema: "waygent.task_review.v1",
+      run_id: "run_review",
+      task_id: "task_a",
+      review_id: "review_task_a_spec_1",
+      role: "spec_reviewer",
+      status: "passed",
+      verdict: "approved",
+      issues: [],
+      evidence_refs: ["artifacts/checkpoints/task_a/candidate_task_a.json"],
+      reviewed_patch_refs: ["artifacts/checkpoints/task_a/candidate_task_a.patch"],
+      model: "fake-reviewer",
+      created_at: "2026-05-26T00:00:00.000Z"
+    };
+
+    expect(validateContract("waygent.task_review.v1", artifact)).toEqual(artifact);
+  });
+
+  test("validates operator decision review and cost additions", () => {
+    const decision = validOperatorDecisionFixture({
+      review_status: {
+        required: true,
+        missing_task_ids: ["task_a"],
+        passed_task_ids: []
+      },
+      recovered_failures: [
+        {
+          task_id: "task_a",
+          failure_class: "malformed_result",
+          evidence_refs: ["event:event_run_3"]
+        }
+      ],
+      cost_summary: {
+        cost_usd: 57.25,
+        dispatches: 4,
+        budget_status: "warning"
+      },
+      stale_run_status: {
+        run_id: "run_review",
+        stale: true,
+        reason: "heartbeat_expired",
+        safe_actions: ["inspect", "mark_blocked", "resume"]
+      }
+    });
+
+    expect(validateContract("waygent.operator_decision.v1", decision)).toEqual(decision);
+  });
+
+  test("validates salvage results", () => {
+    const salvageResult = {
+      schema: "waygent.salvage_result.v1",
+      task_id: "task_a",
+      attempt_id: "attempt_task_a_1",
+      status: "salvaged_patch",
+      patch_ref: "artifacts/worker/task_a/attempt_1_patch.diff",
+      changed_files: ["packages/orchestrator/src/example.ts"],
+      reason: null,
+      evidence_refs: ["artifacts/provider/attempt_task_a_1.stderr.txt"]
+    };
+
+    expect(validateContract("waygent.salvage_result.v1", salvageResult)).toEqual(salvageResult);
   });
 
   test("task packet context budget can include shrink actions", () => {

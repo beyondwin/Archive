@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { validateContract, type ReviewResult } from "@waygent/contracts";
-import { readLatestRunId } from "@waygent/lens-store";
+import { readEvents, readLatestRunId } from "@waygent/lens-store";
 import { runWaygent } from "../src/orchestrator";
 import { readRunStateV2 } from "../src/runState";
 
@@ -425,7 +425,7 @@ verify:
     expect(state.completion_audit?.status).toBe("passed");
   });
 
-  test("records bootstrap review evidence for high-risk tasks before completion audit", async () => {
+  test("runs required reviews automatically for high-risk tasks before completion audit", async () => {
     const workspace = initSourceCheckout("waygent-run-v2-high-risk-source-");
     const root = mkdtempSync(join(tmpdir(), "waygent-run-v2-high-risk-"));
     const highRiskPlan = `
@@ -445,20 +445,78 @@ verify:
     await runWaygent({
       root,
       workspace,
-      run_id: "run_high_risk_bootstrap_review",
+      run_id: "run_high_risk_auto_review",
       plan: highRiskPlan,
       profile: { provider: "fake", execution_mode: "multi-agent" }
     });
 
-    const state = readRunStateV2(root, "run_high_risk_bootstrap_review");
+    const state = readRunStateV2(root, "run_high_risk_auto_review");
+    const events = readEvents(join(root, "run_high_risk_auto_review", "events.jsonl"));
     expect(state.status).toBe("completed");
     expect(state.completion_audit?.status).toBe("passed");
-    expect(state.reviews).toContainEqual(expect.objectContaining({
+    expect(state.tasks.task_high).toMatchObject({
+      status: "verified",
+      review_required: true,
+      review_status: "passed",
+      review_refs: [
+        expect.stringContaining("reviews/task_high/review_task_high_spec_reviewer_1.json"),
+        expect.stringContaining("reviews/task_high/review_task_high_quality_reviewer_2.json")
+      ]
+    });
+    expect(state.reviews).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        schema: "waygent.task_review.v1",
+        task_id: "task_high",
+        role: "spec_reviewer",
+        status: "passed",
+        verdict: "approved"
+      }),
+      expect.objectContaining({
+        schema: "waygent.task_review.v1",
+        task_id: "task_high",
+        role: "quality_reviewer",
+        status: "passed",
+        verdict: "approved"
+      })
+    ]));
+    expect(state.artifact_index).toContainEqual(expect.objectContaining({
       task_id: "task_high",
-      provider: "waygent-bootstrap-review",
-      verdict: "pass"
+      ref: "artifacts/task_packets/review_task_high_spec_reviewer.json"
     }));
-    expect(state.completion_audit?.review_evidence).toContainEqual(expect.objectContaining({
+    expect(state.completion_audit?.review_evidence).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        task_id: "task_high",
+        role: "spec_reviewer",
+        verdict: "approved"
+      }),
+      expect.objectContaining({
+        task_id: "task_high",
+        role: "quality_reviewer",
+        verdict: "approved"
+      })
+    ]));
+    expect(events.filter((event) => event.event_type === "runway.review_result" && event.payload.task_id === "task_high")).toHaveLength(2);
+    expect(events.find((event) =>
+      event.event_type === "runway.review_result" &&
+      event.payload.task_id === "task_high" &&
+      event.payload.role === "spec_reviewer"
+    )).toMatchObject({
+      phase: "review",
+      outcome: "success",
+      payload: {
+        task_id: "task_high",
+        role: "spec_reviewer",
+        verdict: "approved"
+      }
+    });
+    expect(state.completion_audit?.review_status).toMatchObject({
+      required: true,
+      required_task_ids: ["task_high"],
+      missing_task_ids: [],
+      failed_task_ids: [],
+      passed_task_ids: ["task_high"]
+    });
+    expect(state.completion_audit?.review_evidence).not.toContainEqual(expect.objectContaining({
       task_id: "task_high",
       verdict: "pass"
     }));

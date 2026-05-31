@@ -10,7 +10,7 @@ import type {
   RuntimeCostProjection
 } from "@waygent/contracts";
 
-export type TrustVerdict = "trusted" | "failed" | "insufficient_evidence";
+export type TrustVerdict = "trusted" | "failed" | "insufficient_evidence" | "needs_review";
 export type ApplyState = "ready" | "blocked" | "not_ready" | "applied";
 
 export interface ConsoleEvent {
@@ -747,13 +747,14 @@ function consoleStatus(status: string): ConsoleRun["status"] {
 }
 
 function trustVerdict(value: string): TrustVerdict {
-  if (value === "trusted" || value === "failed" || value === "insufficient_evidence") return value;
+  if (value === "trusted" || value === "failed" || value === "insufficient_evidence" || value === "needs_review") return value;
   return "insufficient_evidence";
 }
 
 function trustScore(value: string): number {
   if (value === "trusted") return 0.9;
   if (value === "failed") return 0.1;
+  if (value === "needs_review") return 0.55;
   return 0.45;
 }
 

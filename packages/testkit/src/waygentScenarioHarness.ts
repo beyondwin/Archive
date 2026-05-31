@@ -2,7 +2,11 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { ApplyReadinessProjection, ProviderAttempt, WaygentRunStateV2 } from "@waygent/contracts";
-import { projectApplyReadinessFromState } from "@waygent/lens-projectors";
+import {
+  projectApplyReadinessFromState,
+  projectOperatorDecisionFromState,
+  projectTrustReport
+} from "@waygent/lens-projectors";
 
 export type WaygentScenarioProviderFixture = "fake-success" | "malformed-provider" | "live-provider";
 export type WaygentScenarioRunStatus = "trusted" | "failed";
@@ -24,6 +28,7 @@ export interface WaygentScenarioExpectedReplay {
   run_status: WaygentScenarioRunStatus;
   apply_status: WaygentScenarioApplyStatus;
   event_types: string[];
+  event_types_must_include?: string[];
   total_events?: number;
   safe_wave?: string[];
   checkpoints?: string[];
@@ -31,6 +36,10 @@ export interface WaygentScenarioExpectedReplay {
   failure_classes?: string[];
   combined_patch_ref?: string | null;
   provider_attempts?: Array<Partial<NormalizedWaygentProviderAttempt>>;
+  trust_status?: string;
+  apply_reason?: string | null;
+  operator_primary_blocker?: string | null;
+  operator_allowed_actions?: string[];
 }
 
 export interface WaygentScenario {
@@ -40,6 +49,11 @@ export interface WaygentScenario {
   source_dirty_before_apply: boolean;
   force_missing_checkpoint: boolean;
   checkpoint_dry_run_conflict?: boolean;
+  stale_verification_recovered?: boolean;
+  review_evidence_missing?: boolean;
+  review_evidence_passed?: boolean;
+  budget_paused?: boolean;
+  salvaged_patch_needs_review?: boolean;
   plan: string;
   expected: WaygentScenarioExpectedReplay;
 }
@@ -55,6 +69,10 @@ export interface NormalizedWaygentReplay {
   failure_classes?: string[];
   combined_patch_ref?: string | null;
   provider_attempts?: NormalizedWaygentProviderAttempt[];
+  trust_status?: string;
+  apply_reason?: string | null;
+  operator_primary_blocker?: string | null;
+  operator_allowed_actions?: string[];
   error?: string;
 }
 
@@ -126,6 +144,17 @@ export function loadWaygentScenario(path: string): WaygentScenario {
   if (raw.checkpoint_dry_run_conflict !== undefined && typeof raw.checkpoint_dry_run_conflict !== "boolean") {
     throw new Error(`${raw.id} checkpoint_dry_run_conflict must be boolean when set`);
   }
+  for (const flag of [
+    "stale_verification_recovered",
+    "review_evidence_missing",
+    "review_evidence_passed",
+    "budget_paused",
+    "salvaged_patch_needs_review"
+  ] as const) {
+    if (raw[flag] !== undefined && typeof raw[flag] !== "boolean") {
+      throw new Error(`${raw.id} ${flag} must be boolean when set`);
+    }
+  }
   if (!raw.plan || typeof raw.plan !== "string") throw new Error(`${raw.id} is missing plan`);
   if (!raw.expected) throw new Error(`${raw.id} is missing expected replay`);
   return raw as WaygentScenario;
@@ -160,6 +189,17 @@ export function normalizeWaygentReplay(
     checkpoints
   };
   if (state) {
+    if (canProjectOperatorEvidence(state)) {
+      const trust = projectTrustReport(events as Parameters<typeof projectTrustReport>[0], state);
+      const operatorDecision = projectOperatorDecisionFromState({
+        state,
+        events: events as Parameters<typeof projectOperatorDecisionFromState>[0]["events"]
+      });
+      normalized.trust_status = trust.trust_status;
+      normalized.apply_reason = applyReadiness?.reason ?? null;
+      normalized.operator_primary_blocker = operatorDecision.primary_blocker?.code ?? null;
+      normalized.operator_allowed_actions = operatorDecision.allowed_actions.map((action) => action.id);
+    }
     normalized.combined_patch_ref = applyReadiness?.combined_patch_ref ?? null;
     normalized.provider_attempts = providerAttemptsFromState(state);
     const failureClasses = failureClassesFromState(state);
@@ -287,6 +327,8 @@ function scenarioBlockers(scenario: WaygentScenario): string[] {
   if (scenario.source_dirty_before_apply) blockers.push("source_dirty_before_apply");
   if (scenario.force_missing_checkpoint) blockers.push("force_missing_checkpoint");
   if (scenario.checkpoint_dry_run_conflict) blockers.push("checkpoint_dry_run_conflict");
+  if (scenario.review_evidence_missing || scenario.salvaged_patch_needs_review) blockers.push("review_evidence_missing");
+  if (scenario.budget_paused) blockers.push("budget_paused");
   return blockers;
 }
 
@@ -398,8 +440,32 @@ function readScenarioRunState(root: string, runId: string | undefined): WaygentR
 }
 
 function applyScenarioStateFaults(state: WaygentRunStateV2, scenario: WaygentScenario): WaygentRunStateV2 {
-  if (!scenario.source_dirty_before_apply && !scenario.force_missing_checkpoint && !scenario.checkpoint_dry_run_conflict) return state;
+  if (!scenario.source_dirty_before_apply
+    && !scenario.force_missing_checkpoint
+    && !scenario.checkpoint_dry_run_conflict
+    && !scenario.stale_verification_recovered
+    && !scenario.review_evidence_missing
+    && !scenario.review_evidence_passed
+    && !scenario.budget_paused
+    && !scenario.salvaged_patch_needs_review) return state;
   const next = structuredClone(state) as WaygentRunStateV2;
+  const taskId = Object.keys(next.tasks)[0];
+  if (taskId && (scenario.stale_verification_recovered
+    || scenario.review_evidence_missing
+    || scenario.review_evidence_passed
+    || scenario.salvaged_patch_needs_review)) {
+    addRecoveredVerificationHistory(next, taskId, scenario.salvaged_patch_needs_review ? "diff_scope_failed" : "verification_failed");
+  }
+  if (taskId && scenario.review_evidence_passed) {
+    addPassedReviewEvidence(next, taskId);
+  }
+  if (scenario.review_evidence_missing || scenario.salvaged_patch_needs_review) {
+    markReviewEvidenceMissing(next);
+    if (scenario.salvaged_patch_needs_review && taskId) addRecoveredFailure(next, taskId, "diff_scope_failed");
+  }
+  if (scenario.budget_paused) {
+    markBudgetPaused(next);
+  }
   if (scenario.source_dirty_before_apply) {
     addDriftBlocker(next, "source_dirty_before_apply");
     next.apply = { status: "blocked", reason: "source_dirty_before_apply" };
@@ -444,6 +510,100 @@ function applyScenarioStateFaults(state: WaygentRunStateV2, scenario: WaygentSce
   return next;
 }
 
+function addRecoveredVerificationHistory(state: WaygentRunStateV2, taskId: string, failureClass: string): void {
+  const task = state.tasks[taskId];
+  if (!task) return;
+  task.status = "verified";
+  task.latest_failure_class = null;
+  const failureRef = `verification_id:verify_${taskId}_stale_failure`;
+  state.verification = [
+    {
+      verification_id: `verify_${taskId}_stale_failure`,
+      task_id: taskId,
+      command: "printf recovered",
+      status: "failed",
+      verified_at: "2026-05-26T00:00:00.000Z",
+      failure_class: failureClass,
+      kernel_result_ref: `artifacts/kernel/${taskId}-stale-failure.json`
+    },
+    ...state.verification
+  ];
+  addRecoveredFailure(state, taskId, failureClass, [failureRef]);
+}
+
+function addRecoveredFailure(
+  state: WaygentRunStateV2,
+  taskId: string,
+  failureClass: string,
+  evidenceRefs: string[] = [`recovery:${taskId}:${failureClass}`]
+): void {
+  state.recovered_failures = [
+    ...(state.recovered_failures ?? []),
+    {
+      task_id: taskId,
+      failure_class: failureClass,
+      recovered_at: "2026-05-26T00:01:00.000Z",
+      evidence_refs: evidenceRefs
+    }
+  ];
+}
+
+function addPassedReviewEvidence(state: WaygentRunStateV2, taskId: string): void {
+  const review = {
+    task_id: taskId,
+    status: "passed",
+    role: "quality_reviewer",
+    review_id: `review_${taskId}_quality_1`,
+    reviewed_patch_refs: state.tasks[taskId]?.checkpoint_refs ?? []
+  };
+  state.reviews = [...state.reviews, review as WaygentRunStateV2["reviews"][number]];
+  state.completion_audit = {
+    ...(state.completion_audit ?? {}),
+    status: "passed",
+    review_evidence: [...reviewEvidenceArray(state), review]
+  };
+  const task = state.tasks[taskId];
+  if (task) {
+    task.review_required = true;
+    task.review_status = "passed";
+  }
+}
+
+function markReviewEvidenceMissing(state: WaygentRunStateV2): void {
+  state.status = "blocked";
+  state.lifecycle_outcome = "blocked";
+  state.current_phase = "review";
+  state.completion_audit = {
+    ...(state.completion_audit ?? {}),
+    status: "failed",
+    review_evidence: [],
+    residual_risk: ["review_evidence:recovery_attempted"]
+  };
+  state.apply = { status: "blocked", reason: "review_evidence_missing" };
+}
+
+function markBudgetPaused(state: WaygentRunStateV2): void {
+  state.status = "blocked";
+  state.lifecycle_outcome = "blocked";
+  state.current_phase = "recover";
+  state.budget_policy = {
+    ...(state.budget_policy ?? {}),
+    action: "pause_for_operator",
+    projection: { budget_status: "paused", reason: "cost_budget_exceeded" }
+  };
+  state.completion_audit = null;
+  state.recovery = [
+    ...state.recovery,
+    {
+      task_id: Object.keys(state.tasks)[0] ?? "task_unknown",
+      failure_class: "budget_paused",
+      action: "request_decision",
+      reason: "budget_paused"
+    }
+  ];
+  state.apply = { status: "blocked", reason: "budget_paused" };
+}
+
 function addDriftBlocker(state: WaygentRunStateV2, reason: string): void {
   state.drift = state.drift ?? { last_checked_at: null, records: [], unrepaired_blockers: [] };
   state.drift.unrepaired_blockers = [
@@ -455,6 +615,24 @@ function addDriftBlocker(state: WaygentRunStateV2, reason: string): void {
 function combinedApplyEvidence(state: WaygentRunStateV2): Record<string, unknown> | undefined {
   const audit = state.completion_audit as { combined_apply_evidence?: Record<string, unknown> } | null;
   return audit?.combined_apply_evidence;
+}
+
+function canProjectOperatorEvidence(state: WaygentRunStateV2): boolean {
+  return Array.isArray(state.verification)
+    && Array.isArray(state.reviews)
+    && Array.isArray(state.recovery)
+    && Array.isArray(state.provider_attempts)
+    && Array.isArray(state.drift?.records)
+    && Array.isArray(state.drift?.unrepaired_blockers)
+    && Boolean(state.provider_profile)
+    && Boolean(state.timestamps);
+}
+
+function reviewEvidenceArray(state: WaygentRunStateV2): Record<string, unknown>[] {
+  const audit = state.completion_audit as { review_evidence?: unknown } | null;
+  return Array.isArray(audit?.review_evidence)
+    ? audit.review_evidence.filter((item): item is Record<string, unknown> => item !== null && typeof item === "object" && !Array.isArray(item))
+    : [];
 }
 
 function stringOrEmpty(value: unknown): string {

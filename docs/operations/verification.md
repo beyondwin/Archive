@@ -26,6 +26,35 @@ as `needs_rebase` with no apply-ready checkpoint refs, not as
 It proves that bad-but-recoverable plan/spec shapes start safely, unsafe input
 asks for a user decision, and provider-output parser regressions remain covered.
 
+## Closure, Review, and Cost Reliability Gate
+
+Use this gate after changes to apply readiness, review evidence, recovery,
+budget policy, or stale-run cleanup:
+
+```bash
+bun run check
+bun run platform:demo
+bun run waygent:scenarios
+bun run waygent:fixture-lab
+bun run waygent:dogfood
+bun run --cwd apps/console build
+git diff --check
+```
+
+This task is not allowed to report "no source changes needed" while these
+documentation sections or skill mappings are absent from the worktree. It must
+produce a checkpointable diff for the docs/skill/Graphify updates, and may also
+include tightly scoped full-gate type fixes from the file claims above.
+
+Expected operator behavior:
+
+- stale verification failures are reported as recovered evidence, not active
+  blockers;
+- recovered tasks without review evidence block as `review_evidence_missing`;
+- review-passed recovered tasks can become apply-ready;
+- budget pauses emit `platform.budget_paused`;
+- stale runs can be marked blocked without mutating source checkouts.
+
 ## Console Gate
 
 ```bash
@@ -73,12 +102,14 @@ changes:
 bun run check
 bun run platform:demo
 bun run waygent:scenarios
+bun run waygent:fixture-lab
 bun run waygent:dogfood
-bun run check:legacy
 bun run --cwd apps/console build
-cd native/kernel && cargo fmt --all -- --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace
 git diff --check
 ```
+
+Add `bun run check:legacy` for legacy compatibility sweeps and the native
+kernel gate when native files changed.
 
 ## Verify Env Worktree-Awareness (SP-2)
 

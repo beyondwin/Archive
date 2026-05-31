@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { appendEvent, readEvents, runPaths } from "@waygent/lens-store";
 import { createCheckpointArtifact, createCombinedCheckpointPatchArtifact, dryRunCheckpointPatch } from "../src/checkpointArtifacts";
-import { applyRun, buildRunEvent, explainRun, inspectRun, resumeRun, verifyRun } from "../src/runCommands";
+import { applyRun, buildRunEvent, costRun, explainRun, inspectRun, resumeRun, verifyRun } from "../src/runCommands";
 import { readRunStateV2, runStatePath, writeRunStateV2 } from "../src/runState";
 
 describe("Waygent run commands v2", () => {
@@ -151,6 +151,95 @@ describe("Waygent run commands v2", () => {
     const explanation = explainRun({ root, run: runId });
     expect(explanation.operator_decision.primary_blocker).toMatchObject({ code: "checkpoint_missing" });
     expect(explanation.summary).toBe(explanation.operator_decision.status_summary.summary);
+  });
+
+  test("cost projects remaining run budget from v2 state", () => {
+    const root = mkdtempSync(join(tmpdir(), "waygent-cost-v2-"));
+    const runId = "run_cost_v2";
+    writeRunStateV2(root, {
+      schema: "waygent.run_state.v2",
+      run_id: runId,
+      workspace: root,
+      source_branch: "main",
+      worktree_root: join(root, "worktrees"),
+      run_root: join(root, runId),
+      artifact_root: join(root, runId, "artifacts"),
+      state_path: runStatePath(root, runId),
+      event_journal_path: join(root, runId, "events.jsonl"),
+      plan_path: null,
+      spec_path: null,
+      provider_profile: { provider: "fake" },
+      cost_ledger: {
+        by_task: {},
+        by_role: {},
+        by_model: {},
+        totals: { input_tokens: 0, output_tokens: 0, cached_read_tokens: 0, cached_write_tokens: 0, cost_usd: 40, dispatches: 1 },
+        price_table_commit: "test"
+      },
+      budget_cap_usd: 50,
+      budget_action: "pause",
+      budget_policy: {
+        max_cost_usd: 50,
+        max_provider_minutes: 45,
+        action: "pause_for_operator",
+        max_full_worker_retries_per_task: 1,
+        max_repair_retries_per_task: 2,
+        max_adapter_crash_retries_per_task: 1,
+        warning_thresholds_usd: [50, 100, 250, 500],
+        emitted_warning_thresholds_usd: []
+      },
+      status: "running",
+      lifecycle_outcome: null,
+      current_phase: "dispatch",
+      safe_waves: [],
+      tasks: {},
+      provider_attempts: [{
+        schema: "runway.provider_attempt.v1",
+        attempt_id: "attempt_task_a_1",
+        run_id: runId,
+        task_id: "task_a",
+        role: "implement",
+        provider: "fake",
+        command: ["fake-provider"],
+        cwd: root,
+        stdin_ref: "provider/in.txt",
+        stdout_ref: "provider/out.txt",
+        stderr_ref: "provider/err.txt",
+        event_stream_ref: null,
+        exit_code: 0,
+        timed_out: false,
+        started_at: "2026-05-22T00:00:00.000Z",
+        completed_at: "2026-05-22T00:05:00.000Z",
+        worker_result_ref: "worker/result.json",
+        failure_class: null,
+        actual_model: { model: "fake", reasoning: null, source: "provider" },
+        usage: null,
+        usage_source: "unknown"
+      }],
+      reviews: [],
+      verification: [],
+      recovery: [],
+      apply: { status: "not_applied" },
+      context: { snapshot_path: null, basis_hash: null },
+      drift: { last_checked_at: null, records: [], unrepaired_blockers: [] },
+      completion_audit: null,
+      timestamps: {
+        started_at: "2026-05-22T00:00:00.000Z",
+        updated_at: "2026-05-22T00:00:00.000Z",
+        completed_at: null
+      }
+    });
+
+    expect(costRun({ root, run: runId })).toMatchObject({
+      run_id: runId,
+      budget_projection: {
+        budget_status: "ok",
+        remaining_cost_usd: 10,
+        provider_minutes: 5,
+        remaining_provider_minutes: 40,
+        reason: "budget_within_policy"
+      }
+    });
   });
 
   test("verify reruns task verification in the existing worktree and persists evidence", async () => {

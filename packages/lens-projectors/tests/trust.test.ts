@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { projectTrustReport } from "../src";
 import * as projectors from "../src";
-import { demoEvent } from "./support";
+import { demoEvent, stateFixture } from "./support";
 
 const historicalRunwayEventType = ["agent", "runway"].join("") + ".worker_started";
 
@@ -51,5 +51,97 @@ describe("trust projector", () => {
     expect(projectRunwayProjection!([demoEvent({ outcome: "blocked" })]).status).toBe("blocked");
     expect(projectRunwayProjection!([demoEvent({ outcome: "failed" })]).status).toBe("failed");
     expect(projectRunwayProjection!([demoEvent({ event_type: "runway.worker_result" })]).status).toBe("running");
+  });
+
+  test("keeps stale verification failures recovered when latest verification passed", () => {
+    const state = stateFixture({
+      verification: [
+        {
+          verification_id: "verify_task_demo_1",
+          task_id: "task_demo",
+          command: "bun test",
+          status: "failed",
+          verified_at: "2026-05-26T00:00:00.000Z"
+        },
+        {
+          verification_id: "verify_task_demo_2",
+          task_id: "task_demo",
+          command: "bun test",
+          status: "passed",
+          verified_at: "2026-05-26T00:01:00.000Z"
+        }
+      ],
+      recovery: [{ task_id: "task_demo", failure_class: "verification_failed" }],
+      completion_audit: {
+        status: "failed",
+        residual_risk: ["review_evidence:recovery_attempted"]
+      }
+    });
+
+    const report = projectTrustReport([
+      demoEvent({
+        event_id: "event_failed",
+        sequence: 1,
+        outcome: "failed",
+        payload: { task_id: "task_demo", verification_id: "verify_task_demo_1" }
+      }),
+      demoEvent({
+        event_id: "event_passed",
+        sequence: 2,
+        outcome: "success",
+        payload: { task_id: "task_demo", verification_id: "verify_task_demo_2" }
+      })
+    ], state);
+
+    expect(report).toMatchObject({
+      trust_status: "needs_review",
+      active_failure_count: 0,
+      recovered_failure_count: 1
+    });
+  });
+
+  test("trusts recovered failure history after review and audit evidence", () => {
+    const state = stateFixture({
+      verification: [{
+        verification_id: "verify_task_demo_2",
+        task_id: "task_demo",
+        command: "bun test",
+        status: "passed",
+        verified_at: "2026-05-26T00:01:00.000Z"
+      }],
+      recovery: [{ task_id: "task_demo", failure_class: "verification_failed" }],
+      reviews: [{
+        schema: "runway.review_result.v1",
+        run_id: "run_demo",
+        task_id: "task_demo",
+        attempt_id: "review_task_demo_1",
+        provider: "codex",
+        verdict: "pass",
+        spec_score: 1,
+        quality_score: 1,
+        findings: [],
+        residual_risk: [],
+        summary: "Review passed."
+      }],
+      completion_audit: {
+        status: "passed",
+        review_evidence: [{ task_id: "task_demo", status: "passed" }]
+      }
+    });
+
+    const report = projectTrustReport([
+      demoEvent({
+        event_id: "event_passed",
+        sequence: 2,
+        outcome: "success",
+        payload: { task_id: "task_demo", verification_id: "verify_task_demo_2" }
+      })
+    ], state);
+
+    expect(report).toMatchObject({
+      trust_status: "trusted",
+      active_failure_count: 0,
+      recovered_failure_count: 1
+    });
   });
 });

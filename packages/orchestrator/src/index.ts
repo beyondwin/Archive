@@ -6,6 +6,7 @@ export * from "./nlLexicon";
 export * from "./applyEngine";
 export * from "./checkpointArtifacts";
 export * from "./completionAudit";
+export * from "./budgetPolicy";
 export * from "./costLedger";
 export * from "./decisions";
 export * from "./evidencePolicy";

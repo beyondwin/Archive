@@ -1,0 +1,56 @@
+{
+  "id": "review-pass-apply-ready",
+  "title": "Review pass clears recovered failure for apply readiness",
+  "provider_fixture": "fake-success",
+  "source_dirty_before_apply": false,
+  "force_missing_checkpoint": false,
+  "stale_verification_recovered": true,
+  "review_evidence_passed": true,
+  "plan": "```yaml waygent-task\nid: task_review_pass\ntitle: Review pass apply-ready task\ndependencies: []\nfile_claims:\n  - path: review-pass.txt\n    mode: owned\nrisk: low\nverify:\n  - printf review-pass\n```",
+  "expected": {
+    "run_status": "trusted",
+    "apply_status": "ready",
+    "trust_status": "trusted",
+    "apply_reason": null,
+    "operator_primary_blocker": null,
+    "operator_allowed_actions": [
+      "review_patch",
+      "apply_run"
+    ],
+    "total_events": 16,
+    "safe_wave": [
+      "task_review_pass"
+    ],
+    "event_types": [
+      "platform.run_started",
+      "platform.intake_extract_completed",
+      "platform.plan_preflight_completed",
+      "runway.plan_loaded",
+      "runway.preflight_result",
+      "runway.safe_wave_selected",
+      "runway.spec_slice_computed",
+      "context.packet_budget_evaluated",
+      "handoff.created",
+      "runway.worker_result",
+      "lens.model_attestation_confirmed",
+      "runway.verification_result",
+      "runway.checkpoint_created",
+      "runway.apply_dry_run_result",
+      "platform.cost_accumulated",
+      "lens.trust_report_updated"
+    ],
+    "checkpoints": [
+      "artifacts/checkpoints/task_review_pass/candidate_task_review_pass.json"
+    ],
+    "combined_patch_ref": "artifacts/checkpoints/apply/scenario_review-pass-apply-ready.patch",
+    "provider_attempts": [
+      {
+        "task_id": "task_review_pass",
+        "provider": "fake",
+        "stdout_ref": "artifacts/provider/attempt_task_review_pass_1.stdout.txt",
+        "stderr_ref": "artifacts/provider/attempt_task_review_pass_1.stderr.txt",
+        "worker_result_ref": "artifacts/worker/task_review_pass.json"
+      }
+    ]
+  }
+}

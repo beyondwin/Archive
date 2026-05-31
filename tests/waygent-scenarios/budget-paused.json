@@ -1,0 +1,57 @@
+{
+  "id": "budget-paused",
+  "title": "Budget pause blocks apply and asks for operator action",
+  "provider_fixture": "fake-success",
+  "source_dirty_before_apply": false,
+  "force_missing_checkpoint": false,
+  "budget_paused": true,
+  "plan": "```yaml waygent-task\nid: task_budget_paused\ntitle: Budget paused task\ndependencies: []\nfile_claims:\n  - path: budget.txt\n    mode: owned\nrisk: low\nverify:\n  - printf budget\n```",
+  "expected": {
+    "run_status": "failed",
+    "apply_status": "blocked",
+    "trust_status": "failed",
+    "apply_reason": "budget_paused",
+    "operator_primary_blocker": "apply_blocked",
+    "operator_allowed_actions": [
+      "open_ai_repair_handoff"
+    ],
+    "total_events": 16,
+    "safe_wave": [
+      "task_budget_paused"
+    ],
+    "event_types": [
+      "platform.run_started",
+      "platform.intake_extract_completed",
+      "platform.plan_preflight_completed",
+      "runway.plan_loaded",
+      "runway.preflight_result",
+      "runway.safe_wave_selected",
+      "runway.spec_slice_computed",
+      "context.packet_budget_evaluated",
+      "handoff.created",
+      "runway.worker_result",
+      "lens.model_attestation_confirmed",
+      "runway.verification_result",
+      "runway.checkpoint_created",
+      "runway.apply_dry_run_result",
+      "platform.cost_accumulated",
+      "lens.trust_report_updated"
+    ],
+    "checkpoints": [
+      "artifacts/checkpoints/task_budget_paused/candidate_task_budget_paused.json"
+    ],
+    "blockers": [
+      "budget_paused"
+    ],
+    "combined_patch_ref": null,
+    "provider_attempts": [
+      {
+        "task_id": "task_budget_paused",
+        "provider": "fake",
+        "stdout_ref": "artifacts/provider/attempt_task_budget_paused_1.stdout.txt",
+        "stderr_ref": "artifacts/provider/attempt_task_budget_paused_1.stderr.txt",
+        "worker_result_ref": "artifacts/worker/task_budget_paused.json"
+      }
+    ]
+  }
+}
