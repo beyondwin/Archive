@@ -1,4 +1,0 @@
-interface:
-  display_name: "KWS Spec Implementation Docs"
-  short_description: "Write tested spec and implementation docs"
-  default_prompt: "Use $kws-spec-implementation-docs to produce a validated spec and implementation document from this repo context."
