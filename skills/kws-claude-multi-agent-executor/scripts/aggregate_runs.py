@@ -15,6 +15,7 @@ strictly cross-run.
 from __future__ import annotations
 
 import os
+from collections import defaultdict
 
 QUALITY_THRESHOLD = 0.75  # P4 QUALITY threshold (not user-configurable).
 
@@ -85,3 +86,19 @@ def summarize_run(run_id, state):
         "started_at": ts.get("started_at"),
         "completed_at": ts.get("completed_at"),
     }
+
+
+def verifier_retry_distribution(task_records):
+    dist = defaultdict(lambda: defaultdict(int))
+    for r in task_records:
+        tier = r.get("risk") or "UNKNOWN"
+        dist[tier][r.get("verifier_retries", 0) or 0] += 1
+    return {tier: dict(counts) for tier, counts in dist.items()}
+
+
+def quality_fail_rate(task_records):
+    scored = [r for r in task_records if r.get("review_tier") is not None]
+    if not scored:
+        return 0.0
+    fails = sum(1 for r in scored if r.get("review_tier") == "FAIL")
+    return fails / len(scored)
