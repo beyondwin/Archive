@@ -105,15 +105,27 @@
 
 ---
 
-## 학습 로그용 집계자 / 리포팅 CLI
+## 학습 로그용 집계자 / 리포팅 CLI — **SHIPPED (v2.24 Phase A, 2026-06-02)**
 
-**제안된 변경**: `~/.claude/learning/kws-claude-multi-agent-executor/runs/**/events.jsonl` 을 읽고 요약 발산하는 작은 CLI (상위 이벤트 타입, 반복 실패 시그니처, 시계열).
+**상태**: 출하 완료. [`scripts/aggregate_runs.py`](../scripts/aggregate_runs.py)
+가 run 산출물(`~/.claude/orchestrator/<run_id>/state.json` + 아카이브된
+`~/.claude/learning/kws-claude-multi-agent-executor/runs/**`)을 가로질러 읽고,
+실행별 요약·위험 등급별 verifier 재시도 분포·품질 fail-rate·반복 ISSUE_KEY
+시그니처·관측성 갭을 발산한다. 사용법은
+[`how-to/aggregate-runs.md`](how-to/aggregate-runs.md) 참조. 관측 전용(G5):
+`state.json` 을 변경하지 않으며 오케스트레이터 제어 흐름에 배선되지 않는다.
+
+이제 이 도구로 **데이터 게이팅된 후보들** — 아래 *컨텍스트 헬스 관측성* 의 능동
+액션, 그리고 Haiku 비용 등급 도입 여부 — 을 추측이 아니라 **실측 분포**에 대고
+평가할 수 있다. v2.24 Phase A 베이스라인은
+[`experiments/v2.24-data-driven-cost-tiering/findings/F001-baseline-telemetry.md`](experiments/v2.24-data-driven-cost-tiering/findings/F001-baseline-telemetry.md)
+참조.
+
+**원래 제안 (보존)**: `events.jsonl` 을 읽고 요약 발산하는 작은 CLI (상위 이벤트 타입, 반복 실패 시그니처, 시계열).
 
 **기원**: v2.8 D001 §Out-of-scope.
 
-**연기 이유**: 실제 이벤트 코퍼스가 먼저 필요. v2.8 런타임 데이터가 현재 sparse (그리고 v2.8.0 의 준수 갭이 더 sparse 하게 만듦).
-
-**재방문 시점**: 준수 수정이 자리잡은 채로 1-2주 정례 사용 후 v2.8.1 사후.
+**원래 연기 이유 (해소됨)**: 실제 이벤트 코퍼스가 먼저 필요했음. v2.8 런타임 데이터가 당시 sparse. → 2026-06-02 기준 35개 실행 코퍼스가 누적되어 출하 정당화.
 
 ---
 
