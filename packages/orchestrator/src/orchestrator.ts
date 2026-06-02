@@ -37,6 +37,7 @@ import { createEmptyCostLedger, recordProviderAttemptCost } from "./costLedger";
 import { appendDecisionFromWorker, packetDecisionSummaries, writeDecisionsProjection } from "./decisions";
 import { resolveExecutionProfile, roleProfileFor, type ExecutionProfile, type ProfileOverride, type ProviderName, type WorkerRoleSlot } from "./executionProfile";
 import { classifyFailureEvidence } from "./failureEvidence";
+import { detectGeneratedOutputs, findMissingGeneratedClaims, type ScopeGapReport } from "./generatedOutputs";
 import { recoverWaygentPlanInput } from "./intakeRecovery";
 import { captureWorktreePatch } from "./patchCapture";
 import { selectRepairAction } from "./recoveryExecutor";
@@ -48,7 +49,7 @@ import { shouldReviewTask } from "./reviewGate";
 import { reviewRun } from "./reviewRunner";
 import { resolvePlanInput, resolveSpecInput } from "./planDiscovery";
 import { normalizeWaygentPlanInput } from "./planNormalizer";
-import { parseWaygentPlan } from "./planParser";
+import { parseWaygentPlan, type ParsedWaygentTask } from "./planParser";
 import { extractSuperpowersPlan } from "./planAdapters/planClaimExtraction";
 import { buildProjectScriptCatalog } from "./planAdapters/projectScriptCatalog";
 import { classifyVerificationCommand } from "./planAdapters/verificationPolicy";
@@ -64,6 +65,7 @@ import { buildTaskGraphFromPlan } from "./taskGraph";
 import { executeBoundedSafeWave, resolveWaveConcurrency } from "./safeWaveExecutor";
 import { appendSchedulerRecovery } from "./taskRecovery";
 import { executeWaygentTask, type WaygentTaskExecutionResult } from "./taskExecutor";
+import type { ScopeFailureKind } from "./diffScope";
 import { taskRequiresCheckpoint } from "./taskCheckpointPolicy";
 import { evaluateTerminalCompletionInvariant } from "./terminalInvariant";
 import { buildSpecManifest, specSliceForTask } from "@waygent/context-packer";
@@ -186,6 +188,10 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     });
   }
   const normalizedPlan = recovered.normalized_plan;
+  const parsedBeforeBarriers = parseWaygentPlan(normalizedPlan.markdown);
+  const barrierResult = applyExecutionDependencyBarriers(parsedBeforeBarriers);
+  const parsed = barrierResult.plan;
+  const scopeGapReports = generatedScopeGapReports(parsed.tasks, runId);
   const planPreflightMode = options.plan_preflight ?? (profile.provider === "fake" ? "deterministic" : "off");
   const planPreflight = runPlanPreflight({
     workspace,
@@ -193,15 +199,12 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
     normalized_plan: normalizedPlan,
     spec_path: specInput.path
   }, planPreflightMode);
-  if (planPreflight.status === "failed") {
+  if (planPreflight.status === "failed" && scopeGapReports.length === 0) {
     throw new Error(`plan_preflight_failed:\n${planPreflight.errors.map((error) => `- ${error}`).join("\n")}`);
   }
   const normalizedPlanArtifact = normalizedPlan.mode === "superpowers"
     ? writeArtifact(paths.root, "plan/normalized-waygent-plan.md", `${normalizedPlan.markdown.trimEnd()}\n`, "text/markdown")
     : null;
-  const parsedBeforeBarriers = parseWaygentPlan(normalizedPlan.markdown);
-  const barrierResult = applyExecutionDependencyBarriers(parsedBeforeBarriers);
-  const parsed = barrierResult.plan;
   const specManifest = options.spec_slice === "off"
     ? undefined
     : buildSpecManifest({
@@ -375,6 +378,100 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
       }
       state.timestamps.completed_at = new Date().toISOString();
     });
+    context.flushState();
+    return finalizeRun(options.root, paths, runId, projection, context.nextSequence());
+  }
+
+  if (scopeGapReports.length > 0) {
+    const now = new Date().toISOString();
+    const scopeGapArtifacts = scopeGapReports.map((report) => ({
+      report,
+      artifact: writeArtifact(
+        paths.root,
+        `scope-gaps/${report.task_id}.json`,
+        `${JSON.stringify(report, null, 2)}\n`,
+        "application/json"
+      )
+    }));
+    context.mutateState((state) => {
+      state.status = "blocked";
+      state.lifecycle_outcome = "blocked";
+      state.current_phase = "recover";
+      state.apply = { status: "blocked", reason: "diff_scope_failed" };
+      state.artifact_index = mergeArtifactIndex(
+        state.artifact_index ?? [],
+        scopeGapArtifacts.map(({ artifact, report }) => artifactIndexEntry({
+          artifact,
+          producer_phase: "decision",
+          task_id: report.task_id
+        }))
+      );
+      for (const { report, artifact } of scopeGapArtifacts) {
+        const task = state.tasks[report.task_id];
+        if (!task) continue;
+        task.status = "blocked";
+        task.latest_failure_class = "diff_scope_failed";
+        task.decision_packet_ref = artifact.path;
+        state.recovery.push({
+          task_id: report.task_id,
+          failure_class: "diff_scope_failed",
+          scope_failure_kind: "generated_artifact_unclaimed",
+          action: "request_decision",
+          attempt_number: 1,
+          max_attempts: 1,
+          automatic: false,
+          prior_summary: "Generated output claims are missing from task writable scope.",
+          result: "blocked",
+          evidence_refs: [artifact.path, ...report.expected_outputs.flatMap((output) => output.evidence_refs)],
+          recommended_scope_amendments: report.missing_claims.map((claim) => ({
+            path: claim.path,
+            mode: claim.mode,
+            reason: claim.reason,
+            evidence_refs: report.expected_outputs
+              .filter((output) => output.path_glob === claim.path)
+              .flatMap((output) => output.evidence_refs)
+          }))
+        });
+      }
+      state.timestamps.updated_at = now;
+      state.timestamps.completed_at = now;
+    });
+    for (const { report, artifact } of scopeGapArtifacts) {
+      context.appendEvent((sequence) => buildRunEvent({
+        run_id: runId,
+        sequence,
+        event_type: "runway.scope_gap_report",
+        phase: "preflight",
+        outcome: "blocked",
+        summary: "Generated output claims are missing from task writable scope.",
+        payload: {
+          ...report,
+          scope_failure_kind: "generated_artifact_unclaimed",
+          report_ref: artifact.path,
+          recommended_scope_amendments: report.missing_claims
+        },
+        trust_impact: "requires_review"
+      }));
+      context.appendEvent((sequence) => buildRunEvent({
+        run_id: runId,
+        sequence,
+        event_type: "runway.recovery_decision_required",
+        phase: "recover",
+        outcome: "blocked",
+        summary: "Scheduler recovery requires an operator decision.",
+        payload: {
+          task_id: report.task_id,
+          failure_class: "diff_scope_failed",
+          scope_failure_kind: "generated_artifact_unclaimed",
+          action: "request_decision",
+          attempt_number: 1,
+          max_attempts: 1,
+          evidence_refs: [artifact.path],
+          recommended_scope_amendments: report.missing_claims
+        },
+        trust_impact: "requires_review"
+      }));
+    }
     context.flushState();
     return finalizeRun(options.root, paths, runId, projection, context.nextSequence());
   }
@@ -657,7 +754,8 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
           task_id: waveResult.result.task_id,
           failure_class: failureClass,
           prior_summary: waveResult.result.worker_result.summary,
-          evidence_refs: taskRecoveryEvidenceRefs(waveResult.result)
+          evidence_refs: taskRecoveryEvidenceRefs(waveResult.result),
+          ...scopeFailureDetailsFromResult(waveResult.result)
         });
         if (isRetryRecoveryAction(recovery.decision.action)) {
           task.status = "READY";
@@ -1462,7 +1560,19 @@ async function runRepairAttempt(input: RunRepairAttemptInput): Promise<RunRepair
 
 function recordTaskRecovery(
   context: RunExecutionContext,
-  input: { task_id: string; failure_class: FailureClass; prior_summary: string; evidence_refs: string[] }
+  input: {
+    task_id: string;
+    failure_class: FailureClass;
+    prior_summary: string;
+    evidence_refs: string[];
+    scope_failure_kind?: ScopeFailureKind;
+    recommended_scope_amendments?: Array<{
+      path: string;
+      mode: "owned";
+      reason: string;
+      evidence_refs: string[];
+    }>;
+  }
 ): ReturnType<typeof appendSchedulerRecovery> {
   let recoveryRef: ReturnType<typeof appendSchedulerRecovery> | null = null;
   context.mutateState((state) => {
@@ -1487,7 +1597,9 @@ function recordTaskRecovery(
       action: recovery.decision.action,
       attempt_number: recovery.decision.attempt_number,
       max_attempts: recovery.decision.max_attempts,
-      evidence_refs: input.evidence_refs
+      evidence_refs: input.evidence_refs,
+      ...(input.scope_failure_kind ? { scope_failure_kind: input.scope_failure_kind } : {}),
+      ...(input.recommended_scope_amendments ? { recommended_scope_amendments: input.recommended_scope_amendments } : {})
     },
     trust_impact: retryable ? "neutral" : "requires_review"
   }));
@@ -1520,6 +1632,73 @@ function taskRecoveryEvidenceRefs(result: WaygentTaskExecutionResult): string[] 
     result.task_packet_path
   ].filter((ref): ref is string => typeof ref === "string" && ref.length > 0);
   return [...new Set(refs)];
+}
+
+function generatedScopeGapReports(tasks: ParsedWaygentTask[], runId: string): ScopeGapReport[] {
+  const reports: ScopeGapReport[] = [];
+  for (const task of tasks) {
+    const detection = detectGeneratedOutputs({
+      task_id: task.id,
+      plan_text: taskPlanText(task),
+      verification_commands: task.verification_commands
+    });
+    const report = findMissingGeneratedClaims({
+      run_id: runId,
+      task_id: task.id,
+      expected_outputs: detection.expected_outputs,
+      existing_allowed_write_globs: task.file_claims
+        .filter((claim) => claim.mode !== "read_only")
+        .map((claim) => claim.path)
+    });
+    if (report) reports.push(report);
+  }
+  return reports;
+}
+
+function taskPlanText(task: ParsedWaygentTask): string {
+  return task.instructions.length > 0 ? [task.title, ...task.instructions].join("\n") : task.title;
+}
+
+function scopeFailureDetailsFromResult(result: WaygentTaskExecutionResult): {
+  scope_failure_kind?: ScopeFailureKind;
+  recommended_scope_amendments?: Array<{
+    path: string;
+    mode: "owned";
+    reason: string;
+    evidence_refs: string[];
+  }>;
+} {
+  const diffScopeEvent = result.events.find((event) => event.event_type === "runway.diff_scope_result");
+  const payload = diffScopeEvent?.payload as Record<string, unknown> | undefined;
+  const scopeFailureKind = payload?.scope_failure_kind;
+  const amendments = payload?.recommended_scope_amendments;
+  return {
+    ...(isScopeFailureKind(scopeFailureKind) ? { scope_failure_kind: scopeFailureKind } : {}),
+    ...(isRecommendedScopeAmendments(amendments) ? { recommended_scope_amendments: amendments } : {})
+  };
+}
+
+function isScopeFailureKind(value: unknown): value is ScopeFailureKind {
+  return value === "generated_artifact_unclaimed" ||
+    value === "provider_overreach" ||
+    value === "provider_claim_gap" ||
+    value === "forbidden_write";
+}
+
+function isRecommendedScopeAmendments(value: unknown): value is Array<{
+  path: string;
+  mode: "owned";
+  reason: string;
+  evidence_refs: string[];
+}> {
+  return Array.isArray(value) && value.every((item) =>
+    item &&
+    typeof item === "object" &&
+    typeof (item as { path?: unknown }).path === "string" &&
+    (item as { mode?: unknown }).mode === "owned" &&
+    typeof (item as { reason?: unknown }).reason === "string" &&
+    Array.isArray((item as { evidence_refs?: unknown }).evidence_refs)
+  );
 }
 
 function errorSummary(error: unknown): string {

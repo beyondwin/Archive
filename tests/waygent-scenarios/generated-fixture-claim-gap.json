@@ -1,0 +1,38 @@
+{
+  "id": "generated-fixture-claim-gap",
+  "title": "Generated fixture claim gap blocks without repeated retry",
+  "provider_fixture": "fake-success",
+  "source_dirty_before_apply": false,
+  "force_missing_checkpoint": false,
+  "plan": "# Generated Fixture Claim Gap\n\n```yaml waygent-task\nid: task_contracts\ntitle: Contract confidence sweep\ndependencies: []\nfile_claims:\n  - path: front/scripts/export-zod-fixtures.ts\n    mode: owned\nrisk: high\nverify:\n  - pnpm --dir front zod:export-fixtures\n  - git diff --exit-code front/tests/unit/__fixtures__/zod-schemas/\n```",
+  "expected": {
+    "run_status": "failed",
+    "apply_status": "blocked",
+    "trust_status": "failed",
+    "apply_reason": "diff_scope_failed",
+    "operator_primary_blocker": "diff_scope_failed",
+    "safe_wave": [
+      "task_contracts"
+    ],
+    "event_types_must_include": [
+      "platform.run_started",
+      "platform.plan_preflight_completed",
+      "runway.scope_gap_report",
+      "runway.recovery_decision_required",
+      "lens.trust_report_updated"
+    ],
+    "absent_event_types": [
+      "runway.worker_result",
+      "runway.recovery_scheduled"
+    ],
+    "checkpoints": [],
+    "combined_patch_ref": null,
+    "failure_classes": [
+      "diff_scope_failed"
+    ],
+    "contains": [
+      "generated_artifact_unclaimed",
+      "front/tests/unit/__fixtures__/zod-schemas/*.json"
+    ]
+  }
+}

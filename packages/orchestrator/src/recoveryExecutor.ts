@@ -1,4 +1,5 @@
 import type { FailureClass, WorkerResult } from "@waygent/contracts";
+import type { ScopeFailureKind } from "./diffScope";
 
 export interface ResumeActionInput {
   failure_class: FailureClass | string;
@@ -61,6 +62,7 @@ export interface RecoveryDecision {
 export interface NextRecoveryOptions {
   max_overrides?: Partial<Record<FailureClass, number>>;
   prior_summary?: string;
+  scope_failure_kind?: ScopeFailureKind;
 }
 
 const DEFAULT_POLICY = Object.defineProperty({
@@ -109,6 +111,24 @@ export function nextRecoveryAction(
   prior_attempts: number,
   options: NextRecoveryOptions = {}
 ): RecoveryDecision {
+  if (failure_class === "diff_scope_failed" && options.scope_failure_kind) {
+    if (
+      options.scope_failure_kind === "generated_artifact_unclaimed" ||
+      options.scope_failure_kind === "forbidden_write" ||
+      options.scope_failure_kind === "provider_claim_gap"
+    ) {
+      return { action: "request_decision", attempt_number: prior_attempts + 1, max_attempts: 1 };
+    }
+
+    if (options.scope_failure_kind === "provider_overreach") {
+      const max_attempts = 1;
+      const attempt_number = prior_attempts + 1;
+      return prior_attempts >= max_attempts
+        ? { action: "request_decision", attempt_number, max_attempts }
+        : { action: "retry_with_evidence", attempt_number, max_attempts };
+    }
+  }
+
   const entry = DEFAULT_POLICY[failure_class as FailureClass];
   if (!entry) {
     return { action: "request_decision", attempt_number: prior_attempts + 1, max_attempts: 1 };

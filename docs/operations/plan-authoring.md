@@ -82,6 +82,25 @@ If the run genuinely needs a regenerated lockfile, add the lockfile to the
 task's `file_claims` with `mode: owned` *and* run the generating command
 inside the implementation, not the verify step.
 
+### Generated Artifacts Must Be Claimed
+
+If a task runs a generator, exporter, codegen command, fixture exporter, or
+snapshot update, the task file claims must include the generated output paths.
+
+```yaml
+verify:
+  - pnpm --dir front zod:export-fixtures
+file_claims:
+  - path: front/scripts/export-zod-fixtures.ts
+    mode: owned
+  - path: front/tests/unit/__fixtures__/zod-schemas/*.json
+    mode: owned
+```
+
+Waygent may detect known generated outputs and block before dispatch with a
+scope-gap report. It does not widen task claims automatically; update the plan
+and rerun with explicit ownership for the generated files.
+
 ### Superpowers Plan Normalization
 
 When a Superpowers-style implementation plan includes task headings, file

@@ -30,6 +30,7 @@ import { createCheckpointArtifact, dryRunCheckpointPatch, resolveCheckpointPatch
 import { evaluateContextBudget, type ContextBudgetDecision } from "./contextBudgetGate";
 import { listActualChangedFiles, validateDiffScope } from "./diffScope";
 import type { ProviderName } from "./executionProfile";
+import { detectGeneratedOutputs } from "./generatedOutputs";
 import type { ParsedWaygentTask } from "./planParser";
 import type { RunEventInput } from "./runEvents";
 import { prepareVerificationEnvironment, type VerificationEnvironmentEvidence } from "./verificationEnvironment";
@@ -458,11 +459,17 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
   let latestFailureClass: FailureClass | null = verificationPassed ? null : verificationFailureClass ?? "verification_failed";
   const checkpointRefs: string[] = [];
   if (verificationPassed) {
+    const generatedOutputDetection = detectGeneratedOutputs({
+      task_id: input.task.id,
+      plan_text: taskPlanExcerpt(input.task),
+      verification_commands: input.task.verification_commands
+    });
     const scopeValidation = validateDiffScope({
       actual_changed_files: listActualChangedFiles(taskWorktree.path),
       claimed_changed_files: worker.changed_files,
       allowed_write_globs: writableClaimPaths(input.task),
-      forbidden_write_globs: [".git/**", "node_modules/**"]
+      forbidden_write_globs: [".git/**", "node_modules/**"],
+      expected_generated_outputs: generatedOutputDetection.expected_outputs
     });
     if (!scopeValidation.ok) {
       latestFailureClass = "diff_scope_failed";
@@ -479,7 +486,9 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
           changed_files: scopeValidation.changed_files,
           violating_files: scopeValidation.violating_files,
           allowed_write_globs: scopeValidation.allowed_write_globs,
-          provider_claimed_changed_files: scopeValidation.provider_claimed_changed_files
+          provider_claimed_changed_files: scopeValidation.provider_claimed_changed_files,
+          scope_failure_kind: scopeValidation.scope_failure_kind,
+          recommended_scope_amendments: scopeValidation.recommended_scope_amendments
         },
         trust_impact: "supports_failure"
       });
