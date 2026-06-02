@@ -14,6 +14,8 @@ strictly cross-run.
 """
 from __future__ import annotations
 
+import os
+
 QUALITY_THRESHOLD = 0.75  # P4 QUALITY threshold (not user-configurable).
 
 
@@ -47,3 +49,39 @@ def flatten_tasks(state):
                 "risk": risk_levels.get(task_id),
             })
     return out
+
+
+def cache_hit_ratio(totals):
+    totals = totals or {}
+    inp = totals.get("input_tokens", 0) or 0
+    cr = totals.get("cached_read_tokens", 0) or 0
+    return (cr / inp) if inp else 0.0
+
+
+def _plan_slug(state):
+    plan_path = state.get("plan") or ""
+    if not plan_path:
+        return None
+    base = os.path.basename(os.path.dirname(plan_path)) or os.path.basename(plan_path)
+    return base or None
+
+
+def summarize_run(run_id, state):
+    totals = (state.get("cost_ledger") or {}).get("totals") or {}
+    ts = state.get("timestamps") or {}
+    tasks = flatten_tasks(state)
+    return {
+        "run_id": run_id,
+        "plan_slug": _plan_slug(state),
+        "tasks_done": sum(1 for t in tasks if t["status"] == "COMPLETE"),
+        "tasks_total": len(tasks),
+        "dispatches": totals.get("dispatches", 0) or 0,
+        "cost_usd": totals.get("cost_usd", 0.0) or 0.0,
+        "input_tokens": totals.get("input_tokens", 0) or 0,
+        "output_tokens": totals.get("output_tokens", 0) or 0,
+        "cached_read_tokens": totals.get("cached_read_tokens", 0) or 0,
+        "cached_write_tokens": totals.get("cached_write_tokens", 0) or 0,
+        "cache_hit_ratio": round(cache_hit_ratio(totals), 4),
+        "started_at": ts.get("started_at"),
+        "completed_at": ts.get("completed_at"),
+    }

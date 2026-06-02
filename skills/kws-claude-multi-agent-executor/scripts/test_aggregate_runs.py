@@ -40,3 +40,28 @@ def test_flatten_tasks_plan_chain():
     assert len(recs) == 2
     assert {r["plan_index"] for r in recs} == {0, 1}
     assert sorted(r["risk"] for r in recs) == ["HIGH", "LOW"]
+
+
+def test_cache_hit_ratio():
+    assert ar.cache_hit_ratio({"input_tokens": 1000, "cached_read_tokens": 250}) == 0.25
+    assert ar.cache_hit_ratio({"input_tokens": 0, "cached_read_tokens": 0}) == 0.0
+
+
+def test_summarize_run():
+    state = {
+        "plan": "/abs/docs/experiments/v2.22-dispatch-optimization/plan.md",
+        "timestamps": {"started_at": "2026-05-31T20:00:00Z",
+                       "completed_at": "2026-05-31T21:00:00Z"},
+        "cost_ledger": {"totals": {"cost_usd": 12.35, "input_tokens": 657788,
+                                   "output_tokens": 1234, "cached_read_tokens": 0,
+                                   "cached_write_tokens": 0, "dispatches": 19}},
+        "tasks": {"task_1": {"status": "COMPLETE"}, "task_2": {"status": "SKIPPED"}},
+        "risk_levels": {},
+    }
+    s = ar.summarize_run("v2-22-...-20260531-201758", state)
+    assert s["plan_slug"] == "v2.22-dispatch-optimization"
+    assert s["dispatches"] == 19
+    assert s["cost_usd"] == 12.35
+    assert s["tasks_done"] == 1
+    assert s["cache_hit_ratio"] == 0.0
+    assert s["started_at"] == "2026-05-31T20:00:00Z"
