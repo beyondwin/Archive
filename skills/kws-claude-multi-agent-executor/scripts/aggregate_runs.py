@@ -14,6 +14,7 @@ strictly cross-run.
 """
 from __future__ import annotations
 
+import argparse
 import glob
 import json
 import os
@@ -275,3 +276,40 @@ def render_md(report):
     if report["skipped"]:
         lines.append(f"## Skipped (unparseable): {report['skipped']}")
     return "\n".join(lines)
+
+
+def _default_orchestrator_root():
+    return os.path.join(os.path.expanduser("~"), ".claude", "orchestrator")
+
+
+def _default_learning_root():
+    return os.path.join(os.path.expanduser("~"), ".claude", "learning",
+                        "kws-claude-multi-agent-executor", "runs")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Cross-run telemetry aggregator (read-only).")
+    parser.add_argument("--orchestrator-root", default=_default_orchestrator_root())
+    parser.add_argument("--learning-root", default=_default_learning_root())
+    parser.add_argument("--since", default=None, help="ISO date; filter runs started on/after.")
+    parser.add_argument("--plan", default=None, help="fnmatch glob over plan slug.")
+    parser.add_argument("--risk", default=None, choices=["low", "mid", "high"])
+    parser.add_argument("--format", default="md", choices=["md", "json"])
+    parser.add_argument("--json", dest="json_out", default=None,
+                        help="also write JSON report to this path.")
+    args = parser.parse_args(argv)
+
+    run_files = discover_run_files(args.orchestrator_root, args.learning_root)
+    report = build_report(run_files, filters={
+        "since": args.since, "plan": args.plan, "risk": args.risk})
+
+    if args.json_out:
+        with open(args.json_out, "w") as fh:
+            fh.write(render_json(report))
+
+    print(render_json(report) if args.format == "json" else render_md(report))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
