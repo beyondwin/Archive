@@ -235,3 +235,31 @@ def test_recurring_issue_signatures_tolerates_list_summaries():
                                 "t2": {"issue_keys": ["a.py:1:naming"]}}}
     out = ar.recurring_issue_signatures([state])
     assert out == {"a.py:1:naming": 1}
+
+
+def test_main_json_format(tmp_path, capsys):
+    orch = tmp_path / "orchestrator"
+    _write(orch / "run-a-20260101-000000" / "state.json", {
+        "plan": "/x/alpha/plan.md",
+        "cost_ledger": {"totals": {"dispatches": 2, "input_tokens": 10, "cost_usd": 0.5}},
+        "tasks": {"t1": {"status": "COMPLETE", "review_tier": "PASS", "verifier_retries": 0}},
+        "risk_levels": {"t1": "LOW"},
+        "quality_trend": [0.9],
+        "timestamps": {"started_at": "t0", "completed_at": "t1"},
+    })
+    rc = ar.main(["--orchestrator-root", str(orch),
+                  "--learning-root", str(tmp_path / "none"),
+                  "--format", "json"])
+    assert rc == 0
+    captured = capsys.readouterr().out
+    parsed = _json.loads(captured)
+    assert parsed["runs"][0]["run_id"] == "run-a-20260101-000000"
+
+
+def test_main_md_default(tmp_path, capsys):
+    orch = tmp_path / "orchestrator"
+    _write(orch / "run-a-20260101-000000" / "state.json", {"plan": "/x/a/plan.md"})
+    rc = ar.main(["--orchestrator-root", str(orch),
+                  "--learning-root", str(tmp_path / "none")])
+    assert rc == 0
+    assert "# Run Telemetry Aggregate" in capsys.readouterr().out
