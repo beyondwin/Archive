@@ -129,7 +129,8 @@ def recurring_issue_signatures(states):
         for _, tree in _plan_trees(state):
             summaries = tree.get("task_summaries") or {}
             for _, summary in summaries.items():
-                for key in (summary or {}).get("issue_keys", []) or []:
+                summary = summary if isinstance(summary, dict) else {}
+                for key in summary.get("issue_keys", []) or []:
                     counter[key] += 1
     return dict(counter.most_common())
 
