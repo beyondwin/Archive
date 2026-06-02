@@ -15,7 +15,7 @@ strictly cross-run.
 from __future__ import annotations
 
 import os
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 QUALITY_THRESHOLD = 0.75  # P4 QUALITY threshold (not user-configurable).
 
@@ -102,3 +102,31 @@ def quality_fail_rate(task_records):
         return 0.0
     fails = sum(1 for r in scored if r.get("review_tier") == "FAIL")
     return fails / len(scored)
+
+
+def _all_quality_scores(state):
+    scores = []
+    for _, tree in _plan_trees(state):
+        qt = tree.get("quality_trend") or []
+        scores.extend(qt)
+    return scores
+
+
+def quality_drift(state):
+    qt = _all_quality_scores(state)
+    if not qt:
+        return 0.0
+    first5 = qt[:5]
+    last5 = qt[-5:]
+    return (sum(last5) / len(last5)) - (sum(first5) / len(first5))
+
+
+def recurring_issue_signatures(states):
+    counter = Counter()
+    for state in states:
+        for _, tree in _plan_trees(state):
+            summaries = tree.get("task_summaries") or {}
+            for _, summary in summaries.items():
+                for key in (summary or {}).get("issue_keys", []) or []:
+                    counter[key] += 1
+    return dict(counter.most_common())

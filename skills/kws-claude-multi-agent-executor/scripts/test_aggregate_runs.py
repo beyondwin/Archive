@@ -88,3 +88,22 @@ def test_quality_fail_rate():
     ]
     assert round(ar.quality_fail_rate(recs), 3) == 0.333
     assert ar.quality_fail_rate([]) == 0.0
+
+
+def test_quality_drift():
+    state = {"quality_trend": [0.6, 0.6, 0.6, 0.6, 0.6, 0.9, 0.9, 0.9, 0.9, 0.9]}
+    assert round(ar.quality_drift(state), 3) == 0.3
+    assert ar.quality_drift({"quality_trend": []}) == 0.0
+
+
+def test_recurring_issue_signatures():
+    states = [
+        {"task_summaries": {"task_1": {"issue_keys": ["a.py:10:naming"]},
+                            "task_2": {"issue_keys": ["a.py:10:naming", "b.py:5:dead"]}}},
+        {"plan_chain": [
+            {"task_summaries": {"task_1": {"issue_keys": ["a.py:10:naming"]}}}]},
+    ]
+    sigs = ar.recurring_issue_signatures(states)
+    assert sigs["a.py:10:naming"] == 3
+    assert sigs["b.py:5:dead"] == 1
+    assert list(sigs.keys())[0] == "a.py:10:naming"
