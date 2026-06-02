@@ -130,3 +130,18 @@ def recurring_issue_signatures(states):
                 for key in (summary or {}).get("issue_keys", []) or []:
                     counter[key] += 1
     return dict(counter.most_common())
+
+
+def detect_observability_gaps(run_id, state):
+    gaps = []
+    totals = (state.get("cost_ledger") or {}).get("totals") or {}
+    if (totals.get("dispatches", 0) or 0) == 0:
+        gaps.append(f"{run_id}: cost_ledger.totals.dispatches=0 (cost helper likely not called)")
+    if not _all_quality_scores(state):
+        gaps.append(f"{run_id}: quality_trend empty (no quality scores recorded)")
+    ts = state.get("timestamps") or {}
+    if not ts.get("started_at"):
+        gaps.append(f"{run_id}: timestamps.started_at null")
+    if not ts.get("completed_at"):
+        gaps.append(f"{run_id}: timestamps.completed_at null")
+    return gaps
