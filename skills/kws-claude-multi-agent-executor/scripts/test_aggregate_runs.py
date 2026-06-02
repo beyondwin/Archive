@@ -154,3 +154,47 @@ def test_discover_run_files_live_and_archived(tmp_path):
 
 def test_discover_run_files_missing_roots(tmp_path):
     assert ar.discover_run_files(str(tmp_path / "nope"), str(tmp_path / "nada")) == []
+
+
+def test_load_state_malformed(tmp_path):
+    good = tmp_path / "good.json"
+    good.write_text('{"a": 1}')
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    assert ar.load_state(str(good)) == {"a": 1}
+    assert ar.load_state(str(bad)) is None
+    assert ar.load_state(str(tmp_path / "missing.json")) is None
+
+
+def test_build_report_aggregates_and_skips(tmp_path):
+    r1 = tmp_path / "r1.json"
+    _write(r1, {
+        "plan": "/x/alpha/plan.md",
+        "cost_ledger": {"totals": {"dispatches": 3, "input_tokens": 100,
+                                   "cached_read_tokens": 50, "cost_usd": 1.0}},
+        "tasks": {"t1": {"status": "COMPLETE", "review_tier": "PASS", "verifier_retries": 0}},
+        "risk_levels": {"t1": "LOW"},
+        "quality_trend": [0.9],
+        "timestamps": {"started_at": "t0", "completed_at": "t1"},
+    })
+    bad = tmp_path / "bad.json"
+    bad.write_text("{broken")
+
+    report = ar.build_report([("r1", str(r1)), ("bad", str(bad))], filters={})
+    assert len(report["runs"]) == 1
+    assert report["runs"][0]["cache_hit_ratio"] == 0.5
+    assert report["verifier_retry_distribution"]["LOW"] == {0: 1}
+    assert report["skipped"] == ["bad"]
+    assert report["gaps"] == []
+
+
+def test_build_report_risk_filter(tmp_path):
+    r1 = tmp_path / "r1.json"
+    _write(r1, {
+        "plan": "/x/alpha/plan.md",
+        "tasks": {"t1": {"status": "COMPLETE", "review_tier": "PASS", "verifier_retries": 0},
+                  "t2": {"status": "COMPLETE", "review_tier": "WARN", "verifier_retries": 2}},
+        "risk_levels": {"t1": "LOW", "t2": "MID"},
+    })
+    report = ar.build_report([("r1", str(r1))], filters={"risk": "low"})
+    assert report["verifier_retry_distribution"] == {"LOW": {0: 1}}

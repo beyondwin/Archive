@@ -15,6 +15,7 @@ strictly cross-run.
 from __future__ import annotations
 
 import glob
+import json
 import os
 from collections import Counter, defaultdict
 
@@ -166,3 +167,56 @@ def discover_run_files(orchestrator_root, learning_root):
     for run_id, path in archived.items():   # archived wins on collision
         merged[run_id] = path
     return sorted(merged.items())
+
+
+def load_state(path):
+    try:
+        with open(path, "r") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def _passes_filters(run_id, state, filters):
+    since = filters.get("since")
+    if since:
+        started = ((state.get("timestamps") or {}).get("started_at") or "")
+        if started and started < since:
+            return False
+    plan_glob = filters.get("plan")
+    if plan_glob:
+        import fnmatch
+        slug = _plan_slug(state) or ""
+        if not fnmatch.fnmatch(slug, plan_glob):
+            return False
+    return True
+
+
+def build_report(run_files, filters):
+    filters = filters or {}
+    risk_filter = (filters.get("risk") or "").upper() or None
+    runs, all_task_recs, states, gaps, skipped = [], [], [], [], []
+
+    for run_id, path in run_files:
+        state = load_state(path)
+        if state is None:
+            skipped.append(run_id)
+            continue
+        if not _passes_filters(run_id, state, filters):
+            continue
+        runs.append(summarize_run(run_id, state))
+        states.append(state)
+        gaps.extend(detect_observability_gaps(run_id, state))
+        recs = flatten_tasks(state)
+        if risk_filter:
+            recs = [r for r in recs if (r.get("risk") or "").upper() == risk_filter]
+        all_task_recs.extend(recs)
+
+    return {
+        "runs": runs,
+        "verifier_retry_distribution": verifier_retry_distribution(all_task_recs),
+        "quality_fail_rate": round(quality_fail_rate(all_task_recs), 4),
+        "recurring_issue_signatures": recurring_issue_signatures(states),
+        "gaps": gaps,
+        "skipped": skipped,
+    }
