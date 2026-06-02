@@ -127,3 +127,30 @@ def test_detect_observability_gaps():
         "timestamps": {"started_at": "t0", "completed_at": "t1"},
     }
     assert ar.detect_observability_gaps("run-y", clean) == []
+
+
+import json as _json
+
+
+def _write(p: Path, obj):
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(_json.dumps(obj))
+
+
+def test_discover_run_files_live_and_archived(tmp_path):
+    orch = tmp_path / "orchestrator"
+    learn = tmp_path / "learning"
+    _write(orch / "run-a-20260101-000000" / "state.json", {"plan": "/p/a/plan.md"})
+    _write(orch / "run-b-20260102-000000" / "state.json", {"plan": "/p/b/plan.md"})
+    _write(learn / "2026-01-02" / "run-b-20260102-000000" / "artifacts" / "state.final.json",
+           {"plan": "/p/b/plan.md", "final": True})
+
+    found = dict((rid, path) for rid, path in
+                 ar.discover_run_files(str(orch), str(learn)))
+    assert "run-a-20260101-000000" in found
+    assert found["run-a-20260101-000000"].endswith("state.json")
+    assert found["run-b-20260102-000000"].endswith("state.final.json")
+
+
+def test_discover_run_files_missing_roots(tmp_path):
+    assert ar.discover_run_files(str(tmp_path / "nope"), str(tmp_path / "nada")) == []
