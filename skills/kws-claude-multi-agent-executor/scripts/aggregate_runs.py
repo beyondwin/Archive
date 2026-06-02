@@ -14,6 +14,7 @@ strictly cross-run.
 """
 from __future__ import annotations
 
+import glob
 import os
 from collections import Counter, defaultdict
 
@@ -145,3 +146,23 @@ def detect_observability_gaps(run_id, state):
     if not ts.get("completed_at"):
         gaps.append(f"{run_id}: timestamps.completed_at null")
     return gaps
+
+
+def discover_run_files(orchestrator_root, learning_root):
+    """Return [(run_id, path)] preferring archived state.final.json over live."""
+    archived = {}
+    for path in glob.glob(os.path.join(learning_root, "*", "*", "artifacts", "state.final.json")):
+        run_id = os.path.basename(os.path.dirname(os.path.dirname(path)))
+        archived[run_id] = path
+
+    live = {}
+    for path in glob.glob(os.path.join(orchestrator_root, "*", "state.json")):
+        run_id = os.path.basename(os.path.dirname(path))
+        live[run_id] = path
+
+    merged = {}
+    for run_id, path in live.items():
+        merged[run_id] = path
+    for run_id, path in archived.items():   # archived wins on collision
+        merged[run_id] = path
+    return sorted(merged.items())
