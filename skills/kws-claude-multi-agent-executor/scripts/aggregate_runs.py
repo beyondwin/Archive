@@ -15,6 +15,7 @@ strictly cross-run.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import glob
 import json
 import os
@@ -187,7 +188,6 @@ def _passes_filters(run_id, state, filters):
             return False
     plan_glob = filters.get("plan")
     if plan_glob:
-        import fnmatch
         slug = _plan_slug(state) or ""
         if not fnmatch.fnmatch(slug, plan_glob):
             return False

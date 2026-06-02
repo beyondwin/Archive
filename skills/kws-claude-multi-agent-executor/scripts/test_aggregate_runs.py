@@ -201,9 +201,13 @@ def test_build_report_risk_filter(tmp_path):
 
 
 def test_render_json_roundtrip():
-    report = {"runs": [], "verifier_retry_distribution": {}, "quality_fail_rate": 0.0,
-              "recurring_issue_signatures": {}, "gaps": [], "skipped": []}
+    # Keys are deliberately out of alphabetical order to prove sort_keys=True.
+    report = {"skipped": [], "gaps": [], "runs": [], "quality_fail_rate": 0.0,
+              "recurring_issue_signatures": {}, "verifier_retry_distribution": {}}
     out = ar.render_json(report)
+    # Emitted text must order keys alphabetically: gaps < runs < skipped.
+    assert out.index('"gaps"') < out.index('"runs"') < out.index('"skipped"')
+    # And it must still round-trip back to the original dict.
     assert _json.loads(out) == report
 
 
@@ -220,7 +224,7 @@ def test_render_md_contains_sections():
         "skipped": ["bad"],
     }
     md = ar.render_md(report)
-    assert "| run_id |" in md or "run_id" in md
+    assert "| run_id |" in md
     assert "alpha" in md
     assert "LOW" in md and "Phase B gate" in md
     assert "a.py:10:naming" in md
@@ -279,3 +283,17 @@ def test_verifier_retry_distribution_normalizes_risk_case():
     assert dist["MID"] == {0: 1}
     assert dist["UNKNOWN"] == {0: 1}
     assert "low" not in dist and "mid" not in dist
+
+
+def test_build_report_plan_filter(tmp_path):
+    a = tmp_path / "a.json"
+    _write(a, {"plan": "/x/v2.24-data-driven-cost-tiering/plan.md",
+               "tasks": {"t1": {"status": "COMPLETE", "review_tier": "PASS", "verifier_retries": 0}},
+               "risk_levels": {"t1": "LOW"}})
+    b = tmp_path / "b.json"
+    _write(b, {"plan": "/x/v2.23-something-else/plan.md",
+               "tasks": {"t1": {"status": "COMPLETE", "review_tier": "PASS", "verifier_retries": 0}},
+               "risk_levels": {"t1": "LOW"}})
+    report = ar.build_report([("a", str(a)), ("b", str(b))], filters={"plan": "v2.24-*"})
+    assert len(report["runs"]) == 1
+    assert report["runs"][0]["run_id"] == "a"
