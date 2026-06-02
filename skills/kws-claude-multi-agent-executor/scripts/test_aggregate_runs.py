@@ -65,3 +65,26 @@ def test_summarize_run():
     assert s["tasks_done"] == 1
     assert s["cache_hit_ratio"] == 0.0
     assert s["started_at"] == "2026-05-31T20:00:00Z"
+
+
+def test_verifier_retry_distribution():
+    recs = [
+        {"risk": "LOW", "verifier_retries": 0, "review_tier": "PASS"},
+        {"risk": "LOW", "verifier_retries": 0, "review_tier": "PASS"},
+        {"risk": "LOW", "verifier_retries": 1, "review_tier": "PASS"},
+        {"risk": "MID", "verifier_retries": 2, "review_tier": "WARN"},
+        {"risk": None,  "verifier_retries": 0, "review_tier": "PASS"},
+    ]
+    dist = ar.verifier_retry_distribution(recs)
+    assert dist["LOW"] == {0: 2, 1: 1}
+    assert dist["MID"] == {2: 1}
+    assert dist["UNKNOWN"] == {0: 1}
+
+
+def test_quality_fail_rate():
+    recs = [
+        {"review_tier": "PASS"}, {"review_tier": "PASS"},
+        {"review_tier": "FAIL"}, {"review_tier": None},
+    ]
+    assert round(ar.quality_fail_rate(recs), 3) == 0.333
+    assert ar.quality_fail_rate([]) == 0.0
