@@ -220,3 +220,57 @@ def build_report(run_files, filters):
         "gaps": gaps,
         "skipped": skipped,
     }
+
+
+def render_json(report):
+    return json.dumps(report, indent=2, sort_keys=True)
+
+
+def render_md(report):
+    lines = ["# Run Telemetry Aggregate", ""]
+    lines.append("## Per-run summary")
+    lines.append("")
+    lines.append("| run_id | plan | done/total | dispatches | cost_usd | cache_hit | started |")
+    lines.append("|--------|------|-----------|-----------|----------|-----------|---------|")
+    for r in report["runs"]:
+        lines.append(
+            f"| {r['run_id']} | {r.get('plan_slug')} | "
+            f"{r['tasks_done']}/{r['tasks_total']} | {r['dispatches']} | "
+            f"{round(r['cost_usd'], 2)} | {r['cache_hit_ratio']} | {r.get('started_at')} |")
+    lines.append("")
+
+    lines.append("## Verifier-retry distribution by risk tier")
+    lines.append("")
+    low = report["verifier_retry_distribution"].get("LOW", {})
+    lines.append(f"- **LOW (Phase B gate input):** {low}")
+    for tier, counts in sorted(report["verifier_retry_distribution"].items()):
+        if tier == "LOW":
+            continue
+        lines.append(f"- {tier}: {counts}")
+    lines.append("")
+
+    lines.append(f"## Quality fail-rate (P4 proxy): {report['quality_fail_rate']}")
+    lines.append("")
+
+    lines.append("## Recurring ISSUE_KEY signatures")
+    lines.append("")
+    sigs = report["recurring_issue_signatures"]
+    if not sigs:
+        lines.append("- (none recorded)")
+    else:
+        for key, count in sigs.items():
+            lines.append(f"- `{key}` × {count}")
+    lines.append("")
+
+    lines.append("## Observability gaps (report-only)")
+    lines.append("")
+    if not report["gaps"]:
+        lines.append("- (none)")
+    else:
+        for g in report["gaps"]:
+            lines.append(f"- {g}")
+    lines.append("")
+
+    if report["skipped"]:
+        lines.append(f"## Skipped (unparseable): {report['skipped']}")
+    return "\n".join(lines)
