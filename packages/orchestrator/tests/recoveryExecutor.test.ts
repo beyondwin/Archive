@@ -99,6 +99,37 @@ describe("nextRecoveryAction — D-10 policy matrix", () => {
     expect(decision.attempt_number).toBe(1);
   });
 
+  test("requests decision for generated artifact scope gaps", () => {
+    expect(nextRecoveryAction("diff_scope_failed", 0, {
+      scope_failure_kind: "generated_artifact_unclaimed",
+      prior_summary: "front/tests/unit/__fixtures__/zod-schemas/current-session.json is outside allowed_write_globs"
+    })).toMatchObject({
+      action: "request_decision",
+      attempt_number: 1,
+      max_attempts: 1
+    });
+  });
+
+  test("allows one retry for ambiguous provider overreach", () => {
+    expect(nextRecoveryAction("diff_scope_failed", 0, {
+      scope_failure_kind: "provider_overreach",
+      prior_summary: "README.md was changed outside allowed scope"
+    })).toMatchObject({
+      action: "retry_with_evidence",
+      attempt_number: 1,
+      max_attempts: 1
+    });
+
+    expect(nextRecoveryAction("diff_scope_failed", 1, {
+      scope_failure_kind: "provider_overreach",
+      prior_summary: "README.md was changed outside allowed scope"
+    })).toMatchObject({
+      action: "request_decision",
+      attempt_number: 2,
+      max_attempts: 1
+    });
+  });
+
   test("max_overrides apply per failure_class", () => {
     const overridden = nextRecoveryAction("malformed_result", 2, { max_overrides: { malformed_result: 3 } });
     expect(overridden.action).toBe("retry_with_strict_prompt");

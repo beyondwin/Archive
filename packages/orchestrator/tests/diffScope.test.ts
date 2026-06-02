@@ -73,6 +73,49 @@ describe("diff scope validation", () => {
     });
   });
 
+  test("classifies unclaimed generated artifacts", () => {
+    expect(validateDiffScope({
+      actual_changed_files: ["front/tests/unit/__fixtures__/zod-schemas/current-session.json"],
+      claimed_changed_files: ["front/tests/unit/__fixtures__/zod-schemas/current-session.json"],
+      allowed_write_globs: ["front/scripts/export-zod-fixtures.ts"],
+      forbidden_write_globs: [".git/**", "node_modules/**"],
+      expected_generated_outputs: [
+        {
+          path_glob: "front/tests/unit/__fixtures__/zod-schemas/*.json",
+          reason: "zod fixture export writes frontend schema fixtures",
+          evidence_refs: ["command:pnpm --dir front zod:export-fixtures"]
+        }
+      ]
+    })).toMatchObject({
+      ok: false,
+      failure_class: "diff_scope_failed",
+      reason: "changed_file_outside_allowed_globs",
+      scope_failure_kind: "generated_artifact_unclaimed",
+      recommended_scope_amendments: [
+        {
+          path: "front/tests/unit/__fixtures__/zod-schemas/current-session.json",
+          mode: "owned",
+          reason: "generated artifact is outside task writable claims",
+          evidence_refs: ["command:pnpm --dir front zod:export-fixtures"]
+        }
+      ]
+    });
+  });
+
+  test("classifies forbidden writes separately", () => {
+    expect(validateDiffScope({
+      actual_changed_files: [".git/config"],
+      claimed_changed_files: [".git/config"],
+      allowed_write_globs: [".git/config"],
+      forbidden_write_globs: [".git/**"],
+      expected_generated_outputs: []
+    })).toMatchObject({
+      ok: false,
+      scope_failure_kind: "forbidden_write",
+      recommended_scope_amendments: []
+    });
+  });
+
   test("accepts read-only tasks with no actual changes", () => {
     expect(validateDiffScope({
       actual_changed_files: [],

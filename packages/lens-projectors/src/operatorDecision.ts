@@ -444,13 +444,23 @@ function blockersFromState(
   }
 
   if (taskFailure && !["verification_failed", "needs_rebase", "unsafe_apply"].includes(taskFailure.failureClass)) {
+    const scopeGap = taskFailure.failureClass === "diff_scope_failed"
+      ? latestGeneratedScopeGapRecovery(state, taskFailure.task.id)
+      : null;
+    const missingClaimRefs = scopeGap?.recommended_scope_amendments.map((claim) => `missing-claim:${claim.path}`) ?? [];
     blockers.push(makeBlocker({
       code: taskFailure.failureClass,
       title: "Task is blocked",
-      summary: `${taskFailure.task.id} is blocked by ${taskFailure.failureClass}.`,
+      summary: scopeGap
+        ? "Task generated files outside its writable claims. Add the recommended claims and rerun."
+        : `${taskFailure.task.id} is blocked by ${taskFailure.failureClass}.`,
       severity: "blocking",
       taskId: taskFailure.task.id,
-      evidenceRefs: evidencePacket.state_refs,
+      evidenceRefs: unique([
+        ...evidencePacket.state_refs,
+        ...(scopeGap?.evidence_refs ?? []),
+        ...missingClaimRefs
+      ]),
       recommendedActionIds: ["rerun_verification", "open_ai_repair_handoff", "open_raw_evidence"]
     }));
   }
@@ -885,6 +895,58 @@ function firstTaskFailure(state: WaygentRunStateV2): { task: WaygentRunStateV2["
     }
   }
   return null;
+}
+
+function latestGeneratedScopeGapRecovery(
+  state: WaygentRunStateV2,
+  taskId: string
+): {
+  evidence_refs: string[];
+  recommended_scope_amendments: Array<{
+    path: string;
+    mode: "owned";
+    reason: string;
+    evidence_refs: string[];
+  }>;
+} | null {
+  for (const record of [...state.recovery].reverse()) {
+    if (
+      record.task_id === taskId &&
+      record.failure_class === "diff_scope_failed" &&
+      record.scope_failure_kind === "generated_artifact_unclaimed" &&
+      Array.isArray(record.recommended_scope_amendments)
+    ) {
+      return {
+        evidence_refs: stringArray(record.evidence_refs),
+        recommended_scope_amendments: scopeAmendments(record.recommended_scope_amendments)
+      };
+    }
+  }
+  return null;
+}
+
+function scopeAmendments(value: unknown): Array<{
+  path: string;
+  mode: "owned";
+  reason: string;
+  evidence_refs: string[];
+}> {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const record = item as Record<string, unknown>;
+    if (typeof record.path !== "string" || record.mode !== "owned" || typeof record.reason !== "string") return [];
+    return [{
+      path: record.path,
+      mode: "owned" as const,
+      reason: record.reason,
+      evidence_refs: stringArray(record.evidence_refs)
+    }];
+  });
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && item.length > 0) : [];
 }
 
 function verificationEvidenceRefs(

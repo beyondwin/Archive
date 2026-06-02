@@ -40,6 +40,8 @@ export interface WaygentScenarioExpectedReplay {
   apply_reason?: string | null;
   operator_primary_blocker?: string | null;
   operator_allowed_actions?: string[];
+  absent_event_types?: string[];
+  contains?: string[];
 }
 
 export interface WaygentScenario {
@@ -235,14 +237,17 @@ export async function runWaygentScenario(
     };
     const result = await runWaygent(runOptions);
     const state = readScenarioRunState(root, runOptions.run_id);
+    const replay = {
+      ...result,
+      run_state_v2: state ? applyScenarioStateFaults(state, scenario) : null
+    };
+    const normalized = normalizeWaygentReplay(replay, {
+      blockers
+    });
+    assertScenarioExpectations(scenario, replay, normalized);
     return {
       scenario,
-      normalized: normalizeWaygentReplay({
-        ...result,
-        run_state_v2: state ? applyScenarioStateFaults(state, scenario) : null
-      }, {
-        blockers
-      })
+      normalized
     };
   } catch (error) {
     return {
@@ -258,6 +263,26 @@ export async function runWaygentScenario(
         error: error instanceof Error ? error.message : String(error)
       }
     };
+  }
+}
+
+function assertScenarioExpectations(
+  scenario: WaygentScenario,
+  replay: ReplayLike,
+  normalized: NormalizedWaygentReplay
+): void {
+  const expected = scenario.expected;
+  for (const eventType of expected.absent_event_types ?? []) {
+    if (normalized.event_types.includes(eventType)) {
+      throw new Error(`${scenario.id} unexpectedly emitted event_type ${eventType}`);
+    }
+  }
+
+  const serialized = JSON.stringify({ state: replay.run_state_v2 ?? null, events: replay.events ?? [], normalized });
+  for (const needle of expected.contains ?? []) {
+    if (!serialized.includes(needle)) {
+      throw new Error(`${scenario.id} output did not contain ${needle}`);
+    }
   }
 }
 

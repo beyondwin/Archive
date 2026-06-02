@@ -105,6 +105,47 @@ describe("operator decision projector", () => {
     expect(projection.allowed_actions.map((action) => action.id)).toContain("rebase_checkpoint");
   });
 
+  test("projects generated artifact claim gap amendments", () => {
+    const projection = projectOperatorDecisionFromState({
+      state: makeState({
+        status: "blocked",
+        lifecycle_outcome: "blocked",
+        current_phase: "recover",
+        tasks: {
+          task_contracts: task("task_contracts", {
+            status: "blocked",
+            latest_failure_class: "diff_scope_failed",
+            checkpoint_refs: []
+          })
+        },
+        recovery: [{
+          task_id: "task_contracts",
+          failure_class: "diff_scope_failed",
+          scope_failure_kind: "generated_artifact_unclaimed",
+          recommended_scope_amendments: [
+            {
+              path: "front/tests/unit/__fixtures__/zod-schemas/current-session.json",
+              mode: "owned",
+              reason: "generated artifact is outside task writable claims",
+              evidence_refs: ["command:pnpm --dir front zod:export-fixtures"]
+            }
+          ],
+          evidence_refs: ["event:diff_scope"]
+        }],
+        apply: { status: "blocked", reason: "diff_scope_failed" }
+      }),
+      events: []
+    });
+
+    expect(projection.primary_blocker).toMatchObject({
+      code: "diff_scope_failed",
+      summary: "Task generated files outside its writable claims. Add the recommended claims and rerun."
+    });
+    expect(JSON.stringify(projection)).toContain("front/tests/unit/__fixtures__/zod-schemas/current-session.json");
+    expect(projection.primary_blocker?.evidence_refs).toContain("missing-claim:front/tests/unit/__fixtures__/zod-schemas/current-session.json");
+    expect(projection.blocked_actions.some((action) => action.id === "apply_run")).toBe(true);
+  });
+
   test("degrades missing state to unknown confidence with raw evidence only", () => {
     const projection = projectOperatorDecisionFromState({
       state: null,

@@ -169,6 +169,48 @@ verify:
     });
   });
 
+  test("blocks generated fixture claim gaps without repeated provider retries", async () => {
+    const workspace = initSourceCheckout("waygent-run-v2-generated-gap-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-run-v2-generated-gap-"));
+    const generatedGapPlan = [
+      "# Fixture Claim Gap",
+      "",
+      "```yaml waygent-task",
+      "id: task_contracts",
+      "title: Contract sweep",
+      "dependencies: []",
+      "file_claims:",
+      "  - path: front/scripts/export-zod-fixtures.ts",
+      "    mode: owned",
+      "risk: high",
+      "verify:",
+      "  - pnpm --dir front zod:export-fixtures",
+      "  - git diff --exit-code front/tests/unit/__fixtures__/zod-schemas/",
+      "```"
+    ].join("\n");
+
+    const result = await runWaygent({
+      root,
+      workspace,
+      run_id: "run_generated_gap",
+      plan: generatedGapPlan,
+      profile: { provider: "fake", execution_mode: "multi-agent" },
+      plan_preflight: "deterministic"
+    });
+
+    const state = readRunStateV2(root, "run_generated_gap");
+    expect(state.status).toBe("blocked");
+    expect(state.tasks.task_contracts).toMatchObject({
+      status: "blocked",
+      latest_failure_class: "diff_scope_failed",
+      checkpoint_refs: []
+    });
+    expect(result.events.some((event) => event.event_type === "runway.worker_result")).toBe(false);
+    expect(result.events.some((event) => event.event_type === "runway.recovery_scheduled")).toBe(false);
+    expect(result.events.some((event) => event.event_type === "runway.recovery_decision_required")).toBe(true);
+    expect(JSON.stringify(result.events)).toContain("front/tests/unit/__fixtures__/zod-schemas/*.json");
+  });
+
   test("refuses to overwrite existing run evidence for a duplicate run id", async () => {
     const workspace = initSourceCheckout("waygent-run-v2-duplicate-source-");
     const root = mkdtempSync(join(tmpdir(), "waygent-run-v2-duplicate-"));

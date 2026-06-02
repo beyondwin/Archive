@@ -36,6 +36,24 @@ Dirty source checkouts block apply. Verification failures require fixing the
 task worktree or escalating to a human decision before runtime state can become
 ready.
 
+## Structural Scope Failures
+
+`diff_scope_failed` is split into retryable and non-retryable kinds.
+
+- `generated_artifact_unclaimed`: a task produced expected generated files that
+  are outside `allowed_write_globs`. Waygent requests an operator decision and
+  lists missing claims.
+- `forbidden_write`: a task touched forbidden paths such as `.git/**` or
+  `node_modules/**`. Waygent requests an operator decision and never retries.
+- `provider_claim_gap`: actual changed files were not reported by the provider.
+  Waygent requests a decision because the worker evidence is inconsistent.
+- `provider_overreach`: a task changed unrelated files. Waygent may retry once
+  with evidence, then requests a decision.
+
+No structural scope failure can produce a checkpoint or release dependent
+tasks. Apply remains blocked until the plan claims are amended and the run is
+rerun with valid scope evidence.
+
 ## Stop Conditions
 
 Stop when the run id is ambiguous, source checkout state is dirty for apply,
