@@ -263,3 +263,19 @@ def test_main_md_default(tmp_path, capsys):
                   "--learning-root", str(tmp_path / "none")])
     assert rc == 0
     assert "# Run Telemetry Aggregate" in capsys.readouterr().out
+
+
+def test_verifier_retry_distribution_normalizes_risk_case():
+    # Real corpus stores risk tiers lowercase; distribution keys must be canonical uppercase
+    # so the render_md "LOW (Phase B gate input)" line populates.
+    records = [
+        {"risk": "low", "verifier_retries": 0},
+        {"risk": "low", "verifier_retries": 1},
+        {"risk": "mid", "verifier_retries": 0},
+        {"risk": None, "verifier_retries": 0},
+    ]
+    dist = ar.verifier_retry_distribution(records)
+    assert dist["LOW"] == {0: 1, 1: 1}
+    assert dist["MID"] == {0: 1}
+    assert dist["UNKNOWN"] == {0: 1}
+    assert "low" not in dist and "mid" not in dist

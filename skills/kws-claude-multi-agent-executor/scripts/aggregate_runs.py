@@ -94,7 +94,7 @@ def summarize_run(run_id, state):
 def verifier_retry_distribution(task_records):
     dist = defaultdict(lambda: defaultdict(int))
     for r in task_records:
-        tier = r.get("risk") or "UNKNOWN"
+        tier = (r.get("risk") or "UNKNOWN").upper()
         dist[tier][r.get("verifier_retries", 0) or 0] += 1
     return {tier: dict(counts) for tier, counts in dist.items()}
 
