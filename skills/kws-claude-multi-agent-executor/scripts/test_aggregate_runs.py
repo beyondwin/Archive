@@ -107,3 +107,23 @@ def test_recurring_issue_signatures():
     assert sigs["a.py:10:naming"] == 3
     assert sigs["b.py:5:dead"] == 1
     assert list(sigs.keys())[0] == "a.py:10:naming"
+
+
+def test_detect_observability_gaps():
+    state = {
+        "cost_ledger": {"totals": {"dispatches": 0}},
+        "quality_trend": [],
+        "timestamps": {"started_at": None, "completed_at": None},
+    }
+    gaps = ar.detect_observability_gaps("run-x", state)
+    joined = " | ".join(gaps)
+    assert "dispatches=0" in joined
+    assert "quality_trend empty" in joined
+    assert "started_at" in joined
+
+    clean = {
+        "cost_ledger": {"totals": {"dispatches": 5}},
+        "quality_trend": [0.9],
+        "timestamps": {"started_at": "t0", "completed_at": "t1"},
+    }
+    assert ar.detect_observability_gaps("run-y", clean) == []
