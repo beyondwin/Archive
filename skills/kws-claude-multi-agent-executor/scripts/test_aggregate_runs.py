@@ -226,3 +226,12 @@ def test_render_md_contains_sections():
     assert "a.py:10:naming" in md
     assert "quality_trend empty" in md
     assert "0.5" in md
+
+
+def test_recurring_issue_signatures_tolerates_list_summaries():
+    # A run whose task_summaries values are lists (not dicts) must not crash.
+    state = {"plan": "/x/a/plan.md",
+             "task_summaries": {"t1": ["not", "a", "dict"],
+                                "t2": {"issue_keys": ["a.py:1:naming"]}}}
+    out = ar.recurring_issue_signatures([state])
+    assert out == {"a.py:1:naming": 1}
