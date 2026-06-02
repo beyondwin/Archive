@@ -198,3 +198,31 @@ def test_build_report_risk_filter(tmp_path):
     })
     report = ar.build_report([("r1", str(r1))], filters={"risk": "low"})
     assert report["verifier_retry_distribution"] == {"LOW": {0: 1}}
+
+
+def test_render_json_roundtrip():
+    report = {"runs": [], "verifier_retry_distribution": {}, "quality_fail_rate": 0.0,
+              "recurring_issue_signatures": {}, "gaps": [], "skipped": []}
+    out = ar.render_json(report)
+    assert _json.loads(out) == report
+
+
+def test_render_md_contains_sections():
+    report = {
+        "runs": [{"run_id": "r1", "plan_slug": "alpha", "tasks_done": 1, "tasks_total": 1,
+                  "dispatches": 3, "cost_usd": 1.0, "input_tokens": 100, "output_tokens": 0,
+                  "cached_read_tokens": 50, "cached_write_tokens": 0, "cache_hit_ratio": 0.5,
+                  "started_at": "t0", "completed_at": "t1"}],
+        "verifier_retry_distribution": {"LOW": {0: 9, 1: 1}, "MID": {0: 2}},
+        "quality_fail_rate": 0.0,
+        "recurring_issue_signatures": {"a.py:10:naming": 3},
+        "gaps": ["r2: quality_trend empty"],
+        "skipped": ["bad"],
+    }
+    md = ar.render_md(report)
+    assert "| run_id |" in md or "run_id" in md
+    assert "alpha" in md
+    assert "LOW" in md and "Phase B gate" in md
+    assert "a.py:10:naming" in md
+    assert "quality_trend empty" in md
+    assert "0.5" in md
