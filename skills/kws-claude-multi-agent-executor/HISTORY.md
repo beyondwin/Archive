@@ -668,6 +668,7 @@ with JOURNAL + decisions/ + findings/. Index:
 | v2.7-quality-mode | CLOSED | Negative on quality_plus; positive on rubric infra | `docs/experiments/v2.7-quality-mode/` |
 | v2.8-learning-log | In progress | Per-run sharded learning log + review-side Skill calls | `docs/experiments/v2.8-learning-log/` |
 | v2.22-dispatch-optimization | SHIPPED (2026-05-31) | API-direct dispatch + caching, T1/T2 merge, Haiku Plan Reviewer, attached-by-default | `docs/experiments/v2.22-dispatch-optimization/` |
+| v2.25-subscription-agent-dispatch | SHIPPED (2026-06-04) | Agent-tool dispatch on subscription pool; all 7 role gates default "agent"; Plan Reviewer → Opus; autonomous failure ladder + gap fields | `docs/experiments/v2.25-subscription-agent-dispatch/` |
 | (future) | | | `docs/experiments/v2.X-<name>/` |
 
 See `docs/experiments/README.md` for the experiment template and protocol.

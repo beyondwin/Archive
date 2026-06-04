@@ -9,6 +9,7 @@
 | 실험 | 상태 | 결과 | 기록 |
 |------|------|------|------|
 | `v2.7-quality-mode` | **CLOSED** (2026-05-13) | `quality_plus` 부정; rubric 인프라 긍정 | [v2.7-quality-mode/](./v2.7-quality-mode/) |
+| v2.25-subscription-agent-dispatch | **SHIPPED** (2026-06-04) | agent-tool dispatch on subscription pool; all 7 role gates default "agent"; Plan Reviewer→Opus | [v2.25-subscription-agent-dispatch/](./v2.25-subscription-agent-dispatch/) |
 | _(미래 실험이 여기 나열)_ | | | |
 
 ## 언제 실험 기록을 시작하나
