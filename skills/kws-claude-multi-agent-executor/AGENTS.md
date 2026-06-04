@@ -130,7 +130,8 @@ The freshness check catches:
 - Version mismatch across SKILL.md / manifest / README
 - Broken internal markdown links
 - HISTORY.md missing an entry for the current SKILL.md version
-- Minor-version bumps without a `docs/snapshots/v<X>.md` snapshot
+- The current (latest) minor version missing its `docs/snapshots/v<X>.md` snapshot
+  (snapshots are milestone cross-sections — intermediate minors are not backfilled)
 - ADRs in `docs/experiments/*/decisions/` not indexed in `docs/decision-log.md`
 - Stale TODO/FIXME/XXX/WIP marker counts (reported, not failed)
 

@@ -30,7 +30,7 @@
 | 알려진 리스크 종결 | docs/risks-and-limitations.md (CLOSED 로 이동) + 출하된 수정이면 HISTORY 항목 | [리스크 종결](#리스크-종결) |
 | 설계 결정 | docs/experiments/<v>/decisions/D###-*.md + decision-log.md 인덱스 행 | [설계 결정](#설계-결정) |
 | 후보 연기 | docs/deferred-candidates.md (재방문 기준과 함께 추가) | [후보 연기](#후보-연기) |
-| 버전 번프 (어떤 버전이든) | SKILL.md frontmatter + README + HISTORY + snapshots/ (minor+) | [버전 번프](#버전-번프) |
+| 버전 번프 (어떤 버전이든) | SKILL.md frontmatter + README + HISTORY + snapshots/ (현재=최신 마이너만, 마일스톤 기반) | [버전 번프](#버전-번프) |
 | 새 실험 | docs/experiments/v<X>-<name>/ + docs/experiments/README.md 인덱스 + HISTORY §3 행 | [새 실험](#새-실험) |
 | 실험 종결 | finalize findings/ + JOURNAL 마감 + HISTORY §3 행 갱신 + 출하 시 decision-log | [실험 종결](#실험-종결) |
 | 메이저 리팩터 / 재구조화 | 위 모든 것 + docs/snapshots/ 의 새 스냅샷 | [메이저 리팩터](#메이저-리팩터) |
@@ -153,7 +153,12 @@
 - [ ] `HISTORY.md` §1 — 새 항목
 
 **마이너+ 번프 (예: 2.8 → 2.9)**:
-- [ ] `docs/snapshots/v<X>.md` — 출하 시점 전체 상태 스냅샷
+- [ ] `docs/snapshots/v<X>.md` — **현재(=최신) 마이너 버전**의 출하 시점 전체 상태 스냅샷.
+  스냅샷은 **마일스톤 단면**이지 모든 마이너의 의무가 아닙니다 — `check_doc_freshness.py` #4는
+  현재 `SKILL.md` 버전의 스냅샷만 요구합니다. SKILL.md frontmatter가 여러 마이너를 건너뛰어
+  번프되면(예: 2.21 → 2.26, 중간 2.22–2.25는 실험 브랜치에서 진행), 출하 시점의 현재
+  버전에만 스냅샷을 만들고 그 "Notable changes since" 섹션에서 중간 버전들을 브리지합니다.
+  중간 마이너의 역소급 스냅샷은 만들지 않습니다 (특히 SKIP/미완결 실험은 스냅샷이 부정확).
 
 **메이저 번프 (예: 2.X → 3.0)**:
 - [ ] 위 모두 + HISTORY.md 에 migration 노트
