@@ -1,6 +1,6 @@
 # v2.25 — Subscription-pool dispatch via in-session Agent tool ("agent" gate)
 
-**Status**: In progress — design approved 2026-06-04, plan pending
+**Status**: SHIPPED 2026-06-04 — implementation + close-out complete
 **Branch**: `feature/v2.25-subscription-agent-dispatch`
 **Production baseline**: v2.24 (data-driven cost tiering) on main
 
@@ -167,9 +167,9 @@ Best judgment includes knowing when guessing is unsafe. Hard-halt is retained
 | Task | Status | Notes |
 |------|--------|-------|
 | Design | DONE | Approved 2026-06-04 |
-| Implementation plan | pending | via superpowers:writing-plans |
-| Implementation | pending | |
-| Close-out | pending | |
+| Implementation plan | DONE | via superpowers:writing-plans |
+| Implementation | DONE | 11 tasks, all LOW, 153 tests green |
+| Close-out | DONE | F01-close-out (SHIP) |
 
 ## Decisions index
 
