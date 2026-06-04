@@ -132,6 +132,8 @@
       <orch_dir>/hooks/scan-debug-artifacts.sh
    cp <skill_dir>/references/hooks/check-implementer-output.sh.template \
       <orch_dir>/hooks/check-implementer-output.sh
+   cp <skill_dir>/references/hooks/finalization-stop-gate.sh.template \
+      <orch_dir>/hooks/finalization-stop-gate.sh
    chmod +x <orch_dir>/hooks/*.sh
    ```
    `<skill_dir>` is the directory containing this SKILL.md. Resolve via `dirname` of the skill path or the absolute path captured when the skill was invoked.
@@ -159,16 +161,23 @@
            "type": "command",
            "command": "<orch_dir>/hooks/check-implementer-output.sh"
          }]
+       }],
+       "Stop": [{
+         "hooks": [{
+           "type": "command",
+           "command": "<orch_dir>/hooks/finalization-stop-gate.sh <orch_dir>/state.json <skill_dir>/scripts"
+         }]
        }]
      }
    }
    ```
-   Substitute `<worktree_path>` with the actual absolute worktree path before writing.
+   Substitute `<worktree_path>`, `<orch_dir>`, and `<skill_dir>` with the actual absolute paths before writing — the `Stop` hook receives `state.json` and the skill `scripts/` dir as positional args (it lives outside the worktree, so it needs them passed explicitly).
 
    **What each hook does:**
    - `PreToolUse` (Bash) blocks `rm -rf /`, force-push to protected branches, and `DROP TABLE/DATABASE/SCHEMA` in sub-agent Bash calls. The hook extracts `.command` from the JSON `$CLAUDE_TOOL_INPUT` via `jq` before grep-matching (raw-JSON matching has too many false positives/negatives due to quoting and escaping). If `jq` is unavailable or extraction fails (no `.command` key), the hook falls back to matching the raw payload — strictly more permissive than the jq path, never less. Does NOT block `git reset --hard` — the orchestrator uses it for verifier-fail recovery.
    - `PostToolUse` (Edit|Write) — `scan-debug-artifacts.sh` — runtime-enforced debug-artifact gate. On detection of `console.log|debugger|TODO|FIXME` in added content (outside string literals and `*.md` paths), exits 2; Claude Code surfaces the failure to the sub-agent which retries the edit. Replaces the prose-only Phase 1 Step 4.1 grep (now removed) — discipline lives in the runtime, not in the loop.
    - `SubagentStop` — `check-implementer-output.sh` — STATUS sanity check on Implementer output. Verifies presence of `STATUS:`, `SUMMARY:`, `FILES_CHANGED:`, `FILES_TEST_CHANGED:` (and `COMMIT:` when STATUS=DONE; ESCALATE fields when STATUS=ESCALATE). Missing field → exit 2 → orchestrator receives failure and re-dispatches.
+   - `Stop` — `finalization-stop-gate.sh` (v2.26) — finalization forcing function. When the session tries to STOP, a cheap single-`jq` pass checks the active tree; while any task is still non-terminal it exits 0 immediately (negligible per-turn cost). Only once **every** task is terminal AND a real end-signal fired (run-level `status: COMPLETE`, or `current_task` cleared with a recorded `last_completed_task`) does it run `finalize_run.py --check` and `validate_state_schema.py`. If either reports a blocking problem → exit 2 with corrective guidance on stderr, blocking the stop until Phase 2 finalization completes. This resolves the two remaining v2.26 risks — a run that **never enters Phase 2** (the source-matching failure) and attached-mode schema improvisation — that the Phase-2-only gates could not catch (D001). Fail-open on hook-internal error (missing args/tools/state, validator exit 2) so a broken hook never traps the session; fail-closed on a detected inconsistency.
 
    **Why this layering matters (P1):** prior versions kept these checks in prose (Orchestrator-driven), so a context drift or malformed reply could silently skip the gate. With hooks they cannot be bypassed.
 
