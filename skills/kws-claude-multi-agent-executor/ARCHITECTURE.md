@@ -168,9 +168,12 @@ Step 4: Agent Cleanup
   "spec_edits": [{"task", "spec_line", "reason", "commit", "ts", "fault"}],
   "plan_review_warnings": [],
   "implementer_model": {"used": "sonnet | opus", "default": "sonnet"},
+  "cost_tracking_waived": false,                // v2.26 — optional; true suppresses the finalize_run cost_dispatches_zero WARN
   "plan_chain": [/* v2.13 — present only when multi-plan; see below */]
 }
 ```
+
+**v2.26 추가 — `cost_tracking_waived`**: 선택적 run-level 불리언 (기본 `false`). `true` 일 때 `scripts/finalize_run.py` 의 `cost_dispatches_zero` WARN (cost_ledger.totals.dispatches == 0) 을 억제합니다. 비용 추적을 의도적으로 끈 run 에서만 설정 — 실제로 `accumulate_cost.py` 가 실행됐어야 하는데 0 인 경우를 가리지 않도록 주의.
 
 **v2.12 추가 — `implementer_model`**: Implementer 서브에이전트의 모델을 선택. `used` 는 이번 실행에서 dispatch에 쓴 모델, `default` 는 스킬이 인자 없을 때 쓰는 contemporaneous 기본값 (현재 항상 `"sonnet"`). 인자는 인터랙티브 부모(Phase -1 step b 또는 mode=interactive 의 Phase 0 Step 7)에서만 파싱되며 — 헤들리스 자식 `claude -p` 는 원래 인자에 접근하지 못하므로 state.json 에서 읽어 보존합니다. Reviewer / Verifier 는 영향 없음 (judge 일정성 — `docs/experiments/v2.12-implementer-opus-vs-sonnet/decisions/D001-...` 참조).
 
@@ -361,6 +364,30 @@ MAE requires sub-agents to invoke `superpowers:test-driven-development`, `superp
 - Orchestrator populator at Phase 1 Step 4 — parses and writes `state.tasks.<id>.method_audit`.
 - SubagentStop hook (`references/hooks/check-implementer-output.sh.template`) — runtime gate on Implementer output shape.
 - Validator script (`scripts/validate_method_audit.py`) — semantic gate at Phase 2 Step 1.5 before close-run.
+
+**v2.26 finalization + schema gates** — two standalone validators with the same
+`--state` / JSON-output / exit-0-1-2 contract, wired into Phase 2 (and the Stop-hook
+forcing function below):
+
+- `scripts/validate_state_schema.py` — canonical-shape gate (Phase 2 Step 1.5, after
+  the method audit). Flags non-canonical state: empty `tasks{}` when tasks are
+  declared (data improvised into `task_summaries{}`), `execution_order` without
+  `execution_plan`, risk values outside `{low, mid, high}`, invalid `mode`, missing
+  run-level `dispatch_config`/`cost_ledger`. Check-only (no `--fix`); a divergent
+  schema means the orchestrator improvised and the run needs human inspection.
+- `scripts/finalize_run.py` — finalization-consistency gate (Phase 2 Step 2). FAILs on
+  null `timestamps.completed_at` (fixable), any task left `verifier == PENDING_BATCH`
+  (unfixable — needs a real LOW batch sweep), non-terminal task status. WARNs on
+  `cost_ledger.totals.dispatches == 0` (suppressed by `cost_tracking_waived`) and
+  missing `timing.started`. `--fix` performs only the one safe write — stamp
+  `completed_at` (atomic temp + `os.replace`); it never clears `PENDING_BATCH`.
+- `<orch_dir>/hooks/finalization-stop-gate.sh` — Stop-hook forcing function
+  (materialized at Phase 0 Step 2.5, wired into `<worktree>/.claude/settings.json`).
+  Cheap short-circuit (exit 0) while any task is still non-terminal; once every task
+  is COMPLETE/SKIPPED it runs both validators and blocks the stop (exit 2) if the run
+  is complete-but-unfinalized or non-canonical. This is the true forcing function for
+  attached mode, where Phase 2 may never be entered — see
+  `docs/experiments/v2.26-finalization-enforcement/decisions/D001`.
 
 Required-methods derivation: executable task → TDD + verification + code-review-pass; docs-only task (`files_test == []` or all `.md` files) → verification only. TDD waiver reasons are restricted to `docs-only-task`, `config-only-task`, `generated-only-task`.
 

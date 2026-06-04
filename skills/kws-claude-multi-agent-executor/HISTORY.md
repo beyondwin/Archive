@@ -21,6 +21,39 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.26.0 — Finalization + schema enforcement (2026-06-04)
+
+Two real 2026-06-04 `interactive_attached` runs
+(`source-matching-refinement-20260604-210431`,
+`readmates-member-reading-experience-20260604-210358`) completed every task but left
+`state.json` unfinalized / non-canonical: null `completed_at` under a top-level
+`status: COMPLETE`, a task stuck at `verifier: PENDING_BATCH`,
+`cost_ledger.totals.dispatches == 0`, and (readmates) an improvised schema — empty
+`tasks{}` with data in `task_summaries{}`, `execution_order` instead of
+`execution_plan`, a `"verify"` risk value. The helpers those fields depend on already
+existed; the gap was enforcement — attached mode has no forcing function, so Phase 2
+finalization was skipped.
+
+- **`scripts/validate_state_schema.py`** (check-only) — canonical-shape gate at Phase 2
+  Step 1.5: empty `tasks{}` when declared, `execution_order` without `execution_plan`,
+  risk ∉ low/mid/high, invalid `mode`, missing run-level `dispatch_config`/`cost_ledger`.
+- **`scripts/finalize_run.py`** (`--check`/`--fix`) — finalization gate at Phase 2
+  Step 2: null `completed_at` (FAIL, fixable), `PENDING_BATCH` (FAIL, unfixable),
+  non-terminal status (FAIL), dispatches 0 + missing `timing.started` (WARN). `--fix`
+  stamps only `completed_at` (atomic); never clears `PENDING_BATCH`.
+- **Stop-hook forcing function** (`<orch_dir>/hooks/finalization-stop-gate.sh`, wired
+  into `<worktree>/.claude/settings.json` at Phase 0 Step 2.5) — resolves the two
+  documented remaining risks. Cheap short-circuit while any task is non-terminal; once
+  all tasks are COMPLETE/SKIPPED it runs both validators and blocks the stop (exit 2)
+  if the run is complete-but-unfinalized or non-canonical. This forces finalization
+  even when Phase 2 is never entered (the source-matching failure mode).
+- New optional run-level field `cost_tracking_waived` suppresses the cost WARN.
+- `evals/check_skill_contract.py` gains `v226_*` helper-exists + wiring checks so the
+  Phase 2 prose wiring cannot silently rot. Regression fixtures derive from the two
+  actual observed bad states.
+
+See `docs/experiments/v2.26-finalization-enforcement/`.
+
 ### v2.22.0 — Dispatch optimization (2026-05-31)
 
 Replaces `claude -p --dangerously-skip-permissions` headless dispatches for
