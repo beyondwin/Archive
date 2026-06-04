@@ -382,13 +382,20 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
    - `{risk_levels_yaml}` — from Step 4 (YAML-formatted `task_N: <risk>`)
    - `{result_json_path}` — `<orch_dir>/plan_review.json`
 
-   **Dispatch mode (v2.22 §2.B1):** branch on `state.dispatch_config.plan_reviewer` (default `"api"` in v2.22):
-   - `"api"` (default) → dispatch via `scripts/dispatch_via_api.py --role plan_reviewer --task-context <orch_dir>/plan_review_ctx.json --output <orch_dir>/plan_review.json --model <selected-model> --orch-dir <orch_dir>`. Write the placeholder values (`plan_path`, `plan_full_text`, `spec_path`, `spec_full_text`, `risk_levels_yaml`, `spec_manifest_json`, `result_json_path`) into `<orch_dir>/plan_review_ctx.json` first; the helper splits the cached scaffold from the per-invocation payload, forces structured output via the `report_plan_reviewer` tool, accumulates cost, and emits the `kws-cme.dispatch_via_api` AgentLens event. An ENV_BLOCKER ESCALATE result (`status: "ESCALATE"`, `type: "ENV_BLOCKER"`) means the API failed after 3 retries — do NOT silently fall back to `-p`; surface it so the user can rerun with `dispatch_config.plan_reviewer="p"`.
+   **Dispatch mode (v2.22 §2.B1):** branch on `state.dispatch_config.plan_reviewer` (default `"agent"` in v2.25; `"api"`/`"p"` remain selectable):
+   - `"agent"` (default, v2.25) → dispatch the Plan Reviewer in-session via the
+     Agent tool per `references/cross-cutting/agent-dispatch.md` with
+     ROLE=plan_reviewer, MODEL=opus (honor `dispatch_config.plan_reviewer_model`),
+     PROMPT_TEMPLATE=`references/plan-reviewer-prompt.md`, RESULT_PATH=
+     `<orch_dir>/plan_review.json`. Read + validate the result exactly as the
+     metered paths do. Plan Reviewer is advisory: a missing/invalid result after
+     the failure ladder's retry+api-fallback logs a warning and proceeds (no halt).
+   - `"api"` → dispatch via `scripts/dispatch_via_api.py --role plan_reviewer --task-context <orch_dir>/plan_review_ctx.json --output <orch_dir>/plan_review.json --model <selected-model> --orch-dir <orch_dir>`. Write the placeholder values (`plan_path`, `plan_full_text`, `spec_path`, `spec_full_text`, `risk_levels_yaml`, `spec_manifest_json`, `result_json_path`) into `<orch_dir>/plan_review_ctx.json` first; the helper splits the cached scaffold from the per-invocation payload, forces structured output via the `report_plan_reviewer` tool, accumulates cost, and emits the `kws-cme.dispatch_via_api` AgentLens event. An ENV_BLOCKER ESCALATE result (`status: "ESCALATE"`, `type: "ENV_BLOCKER"`) means the API failed after 3 retries — do NOT silently fall back to `-p`; surface it so the user can rerun with `dispatch_config.plan_reviewer="p"`.
    - `"p"` → use the legacy path below.
 
    **Legacy dispatch headless** (`dispatch_config.plan_reviewer == "p"`) via `claude -p --dangerously-skip-permissions` (same pattern as Verifier — Phase 1 Step 3). Prompt path: `<orch_dir>/plan_review_prompt.txt`. Result path: `<orch_dir>/plan_review.json`. Missing/malformed result → log warning and proceed (Plan Reviewer is advisory; absence is NOT a halt).
 
-   **Model selection (forensics):** the Plan Reviewer runs on `claude-haiku-4-5-20251001` by default (mechanical rubric; overridable via `state.dispatch_config.plan_reviewer_model`). The orchestrator records the selected model into `state.plan_review.model_used` (`model_used` token) so later analysis can attribute review decisions to the exact model used. Selection logic lives in `scripts/dispatch_plan_reviewer.py`.
+   **Model selection (forensics):** the Plan Reviewer runs on `claude-opus-4-7` by default (v2.25; mechanical rubric but Opus per the executor's Opus-everywhere preference; overridable via `state.dispatch_config.plan_reviewer_model`). The orchestrator records the selected model into `state.plan_review.model_used` (`model_used` token) so later analysis can attribute review decisions to the exact model used. Selection logic lives in `scripts/dispatch_plan_reviewer.py`.
 
    **Parse the result:**
 
@@ -479,6 +486,13 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
      "chain_resume": null,
      "budget_cap_usd": null,
      "budget_action": "warn",
+     "dispatch_config": {
+       "plan_reviewer": "agent", "verifier_batch": "agent", "verifier_per_task": "agent",
+       "transition_combined": "agent", "docs_updater_phase": "agent", "docs_updater_final": "agent",
+       "final_sweep": "agent", "plan_reviewer_model": null
+     },
+     "verification_gaps": [],
+     "docs_gaps": [],
      "cost_ledger": {
        "by_task": {},
        "by_role": {},
@@ -512,6 +526,8 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
    **Run-level `context_budget` (v2.15 — C3):** lives at the TOP of state.json (NOT inside any `plan_chain[i]`), like `cost_ledger`. Defaults: `effective_input_budget=170000`, `threshold_ratio=0.60`, `threshold_tokens=102000`. If the user passed `context_budget=<int>`: overwrite `effective_input_budget`. If `context_threshold=<float>`: overwrite `threshold_ratio`. After either override, recompute `threshold_tokens = round(effective_input_budget * threshold_ratio)`. The chained orchestrator preserves this block on resume.
 
    Fill in the actual values from steps 4–6.
+
+   **Run-level `dispatch_config` + per-plan gap fields (v2.25):** `dispatch_config` is run-level (top of state.json, preserved across plan_chain swap); any gate the user passed explicitly, or any Phase -1 detach reconciliation, is applied before this write and must NOT be overwritten. `verification_gaps`/`docs_gaps` are per-plan (live under `plan_chain[active]` for multi-plan runs).
 
    **Run-level cost/budget/archive fields (v2.14):** the four fields `cost_ledger`, `budget_cap_usd`, `budget_action`, and `archive` are **RUN-LEVEL** — they live at the top of `state.json` and span the entire orchestrator invocation, including every plan in a multi-plan chain. They are NOT per-plan and MUST NOT be duplicated inside `plan_chain[i]`. `cost_ledger.by_task` is keyed `"<plan_index_or_'top'>::<task_id>"` so a single ledger covers the chain. `budget_cap_usd` is a number (USD) or `null` (no cap). `budget_action ∈ {"pause", "warn", "off"}` controls behavior when the cap is crossed. `archive` defaults to `null` and is populated by the post-run forensics archive step (v2.14).
 
