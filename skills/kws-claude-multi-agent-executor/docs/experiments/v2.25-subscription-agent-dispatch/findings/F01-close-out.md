@@ -19,7 +19,7 @@ Reviewer — so a bare invocation runs every role on the Max/Pro subscription wi
   `verifier_batch`, `verifier_per_task`, `transition_combined`,
   `docs_updater_phase`, `docs_updater_final`, `final_sweep`. Metered transports
   (`"api"`, `"p"`) remain available by explicitly setting a gate. (D001)
-- **Plan Reviewer default model flipped Haiku → Opus** (`claude-opus-4-7`),
+- **Plan Reviewer default model flipped Haiku → Opus** (`claude-opus-4-8`),
   matching the Opus-everywhere stance for this executor.
 - **Autonomous failure ladder** (D003): retry once → auto-fallback to `"api"`
   for that single dispatch → on continued failure, record a

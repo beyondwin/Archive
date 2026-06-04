@@ -38,7 +38,7 @@
 
 **왜 중요한가**: 사용자가 비용 이유로 기본을 Sonnet 으로 설정했다면, 문서화된 계약에도 불구하고 오케스트레이터가 조용히 Sonnet 위에서 실행. 위험 등급 주도 TDD 엄격도는 영향 없음(프롬프트 수준)이지만, 어려운 태스크에서 추론 깊이가 예상보다 낮을 수 있음.
 
-**완화**: 아직 없음. v2.8 D001 에 out-of-scope 결정으로 문서화. 후보: Resume Chain + 서브에이전트 디스패치 사이트의 각 `claude -p` 호출에 `--model claude-opus-4-7` 명시 전달.
+**완화**: 아직 없음. v2.8 D001 에 out-of-scope 결정으로 문서화. 후보: Resume Chain + 서브에이전트 디스패치 사이트의 각 `claude -p` 호출에 `--model claude-opus-4-8` 명시 전달.
 
 **추적**: [`deferred-candidates.md`](./deferred-candidates.md) §Headless model flag.
 **참조**: `docs/experiments/v2.8-learning-log/decisions/D001-initial-design.md` §Out-of-scope.

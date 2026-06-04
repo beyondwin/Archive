@@ -1,13 +1,22 @@
 """Frozen pricing — update on Anthropic rate change. Historical runs preserve commit-time rates."""
 
 PRICES = {
-    "claude-opus-4-7": {
+    "claude-opus-4-8": {
         "input_per_mtok": 15.00,
         "output_per_mtok": 75.00,
         "cached_read_per_mtok": 1.50,
         "cached_write_per_mtok": 18.75,
         # API-aligned aliases (Anthropic Messages usage splits cache read vs
         # creation): same rates as cached_read/cached_write above.
+        "cache_read_per_mtok": 1.50,
+        "cache_creation_per_mtok": 18.75,
+    },
+    # Retained for historical-run cost reconstruction (pre-v2.25 opus runs).
+    "claude-opus-4-7": {
+        "input_per_mtok": 15.00,
+        "output_per_mtok": 75.00,
+        "cached_read_per_mtok": 1.50,
+        "cached_write_per_mtok": 18.75,
         "cache_read_per_mtok": 1.50,
         "cache_creation_per_mtok": 18.75,
     },
@@ -31,7 +40,7 @@ PRICES = {
 
 ALIASES = {
     "sonnet": "claude-sonnet-4-6",
-    "opus": "claude-opus-4-7",
+    "opus": "claude-opus-4-8",
     "haiku": "claude-haiku-4-5-20251001",
     "unknown": None,
 }
