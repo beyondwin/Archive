@@ -250,6 +250,32 @@ def main() -> int:
         "SKILL.md Guardrails must carry the v2.26 finalization-gate row",
     )
 
+    # ---- v2.26 Stop-hook forcing function (D001) ----
+    stop_hook_tmpl = skill_dir / "references/hooks/finalization-stop-gate.sh.template"
+    record(
+        "v226_stop_hook_template_exists",
+        stop_hook_tmpl.is_file(),
+        "references/hooks/finalization-stop-gate.sh.template must exist (D001)",
+    )
+    if stop_hook_tmpl.is_file():
+        tmpl_body = stop_hook_tmpl.read_text(encoding="utf-8")
+        record(
+            "v226_stop_hook_template_contract",
+            all(t in tmpl_body for t in
+                ["finalize_run.py", "validate_state_schema.py", "exit 0", "exit 2"]),
+            "Stop-hook template must invoke both validators and fail-open(0)/closed(2)",
+        )
+    record(
+        "v226_stop_hook_wired",
+        "finalization-stop-gate.sh" in corpus and '"Stop"' in corpus,
+        "Phase 0 Step 2.5 must materialize + wire finalization-stop-gate.sh as a Stop hook",
+    )
+    record(
+        "v226_stop_hook_guardrail_row",
+        "Stop hook forces finalization" in corpus,
+        "SKILL.md Guardrails must carry the v2.26 Stop-hook row",
+    )
+
     record(
         "skill_md_tdd_not_size_gated",
         "SMALL skips TDD" not in corpus

@@ -1,0 +1,95 @@
+#!/usr/bin/env bash
+# Stop hook — finalization forcing function (v2.26).
+#
+# Materialized into <orch_dir>/hooks/finalization-stop-gate.sh at Phase 0
+# Step 2.5. Wired in <worktree_path>/.claude/settings.json under hooks.Stop as:
+#   "<orch_dir>/hooks/finalization-stop-gate.sh <orch_dir>/state.json <skill_dir>/scripts"
+#
+# Resolves the two remaining risks of the v2.26 Phase-2-only gates: a run that
+# never enters Phase 2 (the source-matching failure) and attached-mode schema
+# improvisation that Step 1.5 would otherwise never see. This hook fires when
+# the session tries to STOP and blocks the stop if the run is "done but not
+# finalized" or non-canonical.
+#
+# Args:
+#   $1 = absolute path to the orchestrator state.json
+#   $2 = absolute path to this skill's scripts/ dir (holds the two validators)
+#
+# Contract:
+#   - Cheap short-circuit (single jq pass) while the run is mid-flight; only
+#     runs the full validators once the run is at its terminal point. This is
+#     what keeps the per-turn cost negligible.
+#   - Fail-OPEN on any internal error (missing args/tools, unreadable state):
+#     never trap a session because the hook itself broke.
+#   - Fail-CLOSED on a detected inconsistency: exit 2 with findings on stderr so
+#     Claude Code surfaces them and the orchestrator completes Phase 2.
+
+set -u
+
+STATE="${1:-}"
+SCRIPTS_DIR="${2:-}"
+
+# Claude Code passes hook JSON on stdin; we don't need it. Drain it.
+cat >/dev/null 2>&1 || true
+
+# --- Fail-open guards -------------------------------------------------------
+[ -n "$STATE" ] && [ -f "$STATE" ] || exit 0
+[ -n "$SCRIPTS_DIR" ] || exit 0
+command -v jq >/dev/null 2>&1 || exit 0
+command -v python3 >/dev/null 2>&1 || exit 0
+
+# --- Cheap short-circuit: is the run at its terminal point? -----------------
+# Active-tree aware. Per-plan fields (current_task/last_completed_task) resolve
+# under plan_chain[active] when present, falling back to top level. status is
+# run-level. Emits: TOTAL|NONTERM|ROOTSTATUS|CUR(null|set)|LCT(null|set).
+SUMMARY=$(jq -r '
+  (if .plan_chain then .plan_chain[.active_plan] else . end) as $tree
+  | ($tree.tasks // {}) as $tasks
+  | ($tasks | length) as $total
+  | ([$tasks | to_entries[] | .value
+       | select(.status != "COMPLETE" and .status != "SKIPPED")] | length) as $nonterm
+  | (.status // "") as $rootstatus
+  | ($tree.current_task // .current_task // null) as $cur
+  | ($tree.last_completed_task // .last_completed_task // null) as $lct
+  | "\($total)|\($nonterm)|\($rootstatus)|\(if $cur==null then "null" else "set" end)|\(if $lct==null then "null" else "set" end)"
+' "$STATE" 2>/dev/null) || exit 0
+
+[ -n "$SUMMARY" ] || exit 0
+IFS='|' read -r TOTAL NONTERM RSTATUS CUR LCT <<EOF
+$SUMMARY
+EOF
+
+# Any non-terminal task object means the run is still mid-flight -> allow stop.
+[ "${NONTERM:-1}" = "0" ] || exit 0
+
+# Run is "done" only when there are no non-terminal tasks AND a real end-signal
+# fired: top-level status COMPLETE, or current_task cleared with a recorded
+# last_completed_task. A fresh run (no completed work) matches neither.
+DONE=0
+if [ "$RSTATUS" = "COMPLETE" ]; then
+  DONE=1
+elif [ "$CUR" = "null" ] && [ "$LCT" = "set" ]; then
+  DONE=1
+fi
+[ "$DONE" = "1" ] || exit 0
+
+# --- Full gates: the run claims to be done. Verify it actually is. ----------
+FIN_OUT=$(python3 "$SCRIPTS_DIR/finalize_run.py" --state "$STATE" --check 2>&1); FIN_RC=$?
+SCH_OUT=$(python3 "$SCRIPTS_DIR/validate_state_schema.py" --state "$STATE" 2>&1); SCH_RC=$?
+
+# Exit 2 from a validator means the validator itself is broken -> fail open.
+{ [ "$FIN_RC" = "2" ] || [ "$SCH_RC" = "2" ]; } && exit 0
+
+if [ "$FIN_RC" != "0" ] || [ "$SCH_RC" != "0" ]; then
+  {
+    echo "BLOCKED (v2.26 finalization gate): every task is terminal but state.json is"
+    echo "unfinalized or non-canonical. Complete Phase 2 finalization before stopping:"
+    echo "  python3 $SCRIPTS_DIR/finalize_run.py --state $STATE --fix"
+    echo "  python3 $SCRIPTS_DIR/validate_state_schema.py --state $STATE --active-plan auto"
+    if [ "$FIN_RC" != "0" ]; then echo "--- finalize_run --check ---"; echo "$FIN_OUT"; fi
+    if [ "$SCH_RC" != "0" ]; then echo "--- validate_state_schema ---"; echo "$SCH_OUT"; fi
+  } >&2
+  exit 2
+fi
+
+exit 0

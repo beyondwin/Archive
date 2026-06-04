@@ -1,6 +1,6 @@
 # Cross-cutting: worktree safety hooks
 
-Canonical reference for the three Claude Code hooks this skill installs into every
+Canonical reference for the four Claude Code hooks this skill installs into every
 worktree. They are materialized at Phase 0 Step 2.5
 (`references/phases/phase-0-setup.md`); this file documents their contract and the
 key path invariant. The hooks are **runtime-enforced** — they replace prose-only
@@ -19,11 +19,13 @@ under `<orch_dir>/hooks/`** (outside any worktree), so:
   with NO path rewrite. Rewriting the paths is a bug — sub-worktrees would point
   at non-existent paths.
 
-The two helper scripts are copied from templates at Step 2.5:
+The helper scripts are copied from templates at Step 2.5:
 `references/hooks/scan-debug-artifacts.sh.template` →
-`<orch_dir>/hooks/scan-debug-artifacts.sh`, and
+`<orch_dir>/hooks/scan-debug-artifacts.sh`,
 `references/hooks/check-implementer-output.sh.template` →
-`<orch_dir>/hooks/check-implementer-output.sh`.
+`<orch_dir>/hooks/check-implementer-output.sh`, and
+`references/hooks/finalization-stop-gate.sh.template` →
+`<orch_dir>/hooks/finalization-stop-gate.sh` (v2.26).
 
 ## `settings.json` shape
 
@@ -40,14 +42,19 @@ The two helper scripts are copied from templates at Step 2.5:
     }],
     "SubagentStop": [{
       "hooks": [{"type": "command", "command": "<orch_dir>/hooks/check-implementer-output.sh"}]
+    }],
+    "Stop": [{
+      "hooks": [{"type": "command", "command": "<orch_dir>/hooks/finalization-stop-gate.sh <orch_dir>/state.json <skill_dir>/scripts"}]
     }]
   }
 }
 ```
 
-Substitute `<orch_dir>` with the absolute path before writing.
+Substitute `<orch_dir>` and `<skill_dir>` with absolute paths before writing. The
+`Stop` hook is the only one that takes positional args — it lives outside the
+worktree and cannot derive `state.json` / `scripts/` locations on its own.
 
-## The three hooks
+## The four hooks
 
 ### `PreToolUse` (Bash) — dangerous-command guard
 
@@ -81,10 +88,35 @@ missing required fields: `STATUS:`, `SUMMARY:`, `FILES_CHANGED:`,
 when `STATUS=ESCALATE`). The sub-agent auto-retries on exit 2 — no orchestrator
 action needed.
 
+### `Stop` — finalization forcing function (v2.26)
+
+`finalization-stop-gate.sh <state.json> <scripts_dir>` fires when the **session**
+tries to stop. It resolves the two remaining risks of the Phase-2-only finalization
+gates (D001): a run that never enters Phase 2 (the `source-matching` failure) and
+attached-mode schema improvisation that Phase 2 Step 1.5 would otherwise never see.
+
+- **Cheap short-circuit.** A single `jq` pass over the active tree. While any task
+  is still non-terminal (not COMPLETE/SKIPPED), exit 0 immediately — the
+  orchestrator legitimately pauses between turns. Per-turn cost during a run is
+  negligible.
+- **End-signal gate.** Only once **every** task is terminal AND a real end-signal
+  fired (run-level `status: COMPLETE`, or `current_task` cleared with a recorded
+  `last_completed_task`) does it run the full validators. A fresh run matches
+  neither and is allowed to stop.
+- **Full gates.** Runs `finalize_run.py --check` and `validate_state_schema.py`. If
+  either reports a blocking problem, exit 2 with corrective guidance on stderr so
+  Claude Code surfaces it and the orchestrator completes Phase 2 before stopping.
+- **Fail-open vs fail-closed.** Missing args/tools/state, or a validator that
+  itself exits 2 (broken), → exit 0 (never trap a session on a broken hook). A
+  detected inconsistency → exit 2 (block the stop).
+
+Advisory-blocking like the rest of the suite: a determined operator can disable it.
+It is enforcement, not a hard lock.
+
 ## Relationship to guardrails
 
 These hooks back several SKILL.md guardrails: "PreToolUse hooks in worktree",
 "PostToolUse hook is the only debug-artifact gate", "SubagentStop hook validates
-Implementer output structure", and "Sub-worktrees inherit `.claude/settings.json`
-byte-identical". The guardrails table is the load-bearing summary; this file is
-the contract detail.
+Implementer output structure", "Stop hook forces finalization (v2.26)", and
+"Sub-worktrees inherit `.claude/settings.json` byte-identical". The guardrails
+table is the load-bearing summary; this file is the contract detail.

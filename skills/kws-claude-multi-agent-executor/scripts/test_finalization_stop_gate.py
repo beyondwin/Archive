@@ -1,0 +1,173 @@
+"""Tests for the finalization Stop-hook (finalization-stop-gate.sh.template).
+
+The hook is materialized at Phase 0 Step 2.5 into <orch_dir>/hooks/. These tests
+copy the template to an executable temp path and drive it via subprocess against
+crafted state.json fixtures, passing this repo's real scripts/ dir as $2 so the
+two validators resolve. Contract under test:
+
+  - mid-run (any non-terminal task)            -> exit 0 (allow stop)
+  - fresh run (no completed work)              -> exit 0 (allow stop)
+  - all-terminal + clean + finalized           -> exit 0 (allow stop)
+  - all-terminal + unfinalized (source-match)  -> exit 2 (block stop)
+  - all-terminal + non-canonical (readmates)   -> exit 2 (block stop)
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+import pytest
+
+SCRIPTS_DIR = os.path.dirname(os.path.abspath(__file__))
+SKILL_DIR = os.path.dirname(SCRIPTS_DIR)
+TEMPLATE = os.path.join(
+    SKILL_DIR, "references", "hooks", "finalization-stop-gate.sh.template"
+)
+
+pytestmark = pytest.mark.skipif(
+    shutil.which("jq") is None or shutil.which("python3") is None,
+    reason="hook requires jq and python3 on PATH",
+)
+
+
+def _hook(tmp_path):
+    dst = tmp_path / "finalization-stop-gate.sh"
+    shutil.copyfile(TEMPLATE, dst)
+    os.chmod(dst, 0o755)
+    return str(dst)
+
+
+def _state(tmp_path, data):
+    p = tmp_path / "state.json"
+    p.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return str(p)
+
+
+def _run(hook, state):
+    return subprocess.run(
+        [hook, state, SCRIPTS_DIR],
+        input="{}",
+        capture_output=True,
+        text=True,
+    )
+
+
+CLEAN_FINALIZED = {
+    "status": "COMPLETE",
+    "schema_version": "2",
+    "mode": "interactive_attached",
+    "timestamps": {"started_at": "2026-06-04T12:00:00Z",
+                   "completed_at": "2026-06-04T14:00:00Z"},
+    "cost_ledger": {"totals": {"dispatches": 5}},
+    "dispatch_config": {"mode": "interactive_attached"},
+    "risk_levels": {"task_1": "low"},
+    "execution_plan": [["task_1"]],
+    "tasks": {
+        "task_1": {"status": "COMPLETE", "verifier": "PASS",
+                   "timing": {"started": "x", "completed": "y"}},
+    },
+}
+
+MID_RUN = {
+    "status": "RUNNING",
+    "timestamps": {"started_at": "2026-06-04T12:00:00Z", "completed_at": None},
+    "current_task": 2,
+    "risk_levels": {"task_1": "low", "task_2": "mid"},
+    "execution_plan": [["task_1"], ["task_2"]],
+    "tasks": {
+        "task_1": {"status": "COMPLETE", "verifier": "PASS",
+                   "timing": {"started": "x", "completed": "y"}},
+        "task_2": {"status": "IN_PROGRESS"},
+    },
+}
+
+FRESH = {
+    "status": "RUNNING",
+    "timestamps": {"started_at": "2026-06-04T12:00:00Z", "completed_at": None},
+    "current_task": None,
+    "risk_levels": {},
+    "execution_plan": [],
+    "tasks": {},
+}
+
+# status=COMPLETE, all tasks terminal, but task_10 verifier still PENDING_BATCH
+# and completed_at null -> finalize_run blocks.
+SOURCE_MATCHING_BAD = {
+    "status": "COMPLETE",
+    "last_completed_at": "2026-06-04T23:04:22.658323",
+    "timestamps": {"started_at": "2026-06-04T12:06:54Z", "completed_at": None},
+    "cost_ledger": {"totals": {"dispatches": 0}},
+    "dispatch_config": {"mode": "interactive_attached"},
+    "current_task": 10,
+    "last_completed_task": 10,
+    "risk_levels": {"task_9": "low", "task_10": "mid"},
+    "execution_plan": [["task_9"], ["task_10"]],
+    "tasks": {
+        "task_9": {"status": "COMPLETE", "verifier": "PASS",
+                   "timing": {"completed": "z"}},
+        "task_10": {"status": "COMPLETE", "verifier": "PENDING_BATCH",
+                    "timing": {"completed": "z"}},
+    },
+}
+
+# status=null, current_task=null, last_completed_task set, completed_at set, but
+# tasks{} empty while risk_levels declares 12 -> validate_state_schema blocks.
+READMATES_BAD = {
+    "status": None,
+    "current_task": None,
+    "last_completed_task": "task_D2",
+    "timestamps": {"started_at": "2026-06-04T10:00:00Z",
+                   "completed_at": "2026-06-04T11:00:00Z"},
+    "dispatch_config": {"mode": "interactive_attached"},
+    "cost_ledger": {"totals": {"dispatches": 3}},
+    "execution_order": ["task_A1", "task_D2"],
+    "risk_levels": {f"task_{i}": "low" for i in range(12)},
+    "task_summaries": {"task_D2": {"status": "COMPLETE"}},
+    "tasks": {},
+}
+
+
+def test_clean_finalized_allows_stop(tmp_path):
+    r = _run(_hook(tmp_path), _state(tmp_path, CLEAN_FINALIZED))
+    assert r.returncode == 0, r.stderr
+
+
+def test_mid_run_allows_stop(tmp_path):
+    r = _run(_hook(tmp_path), _state(tmp_path, MID_RUN))
+    assert r.returncode == 0, r.stderr
+
+
+def test_fresh_run_allows_stop(tmp_path):
+    r = _run(_hook(tmp_path), _state(tmp_path, FRESH))
+    assert r.returncode == 0, r.stderr
+
+
+def test_source_matching_unfinalized_blocks_stop(tmp_path):
+    r = _run(_hook(tmp_path), _state(tmp_path, SOURCE_MATCHING_BAD))
+    assert r.returncode == 2, r.stdout
+    assert "finalization gate" in r.stderr.lower()
+
+
+def test_readmates_non_canonical_blocks_stop(tmp_path):
+    r = _run(_hook(tmp_path), _state(tmp_path, READMATES_BAD))
+    assert r.returncode == 2, r.stdout
+    assert "finalization gate" in r.stderr.lower()
+
+
+def test_missing_state_fails_open(tmp_path):
+    hook = _hook(tmp_path)
+    r = subprocess.run(
+        [hook, str(tmp_path / "does-not-exist.json"), SCRIPTS_DIR],
+        input="{}", capture_output=True, text=True,
+    )
+    assert r.returncode == 0
+
+
+def test_missing_scripts_arg_fails_open(tmp_path):
+    hook = _hook(tmp_path)
+    r = subprocess.run(
+        [hook, _state(tmp_path, SOURCE_MATCHING_BAD)],
+        input="{}", capture_output=True, text=True,
+    )
+    assert r.returncode == 0
