@@ -107,6 +107,25 @@ D001–D005 + D007 은 ADR 본체가 있음; D006 은 pending (open question, �
 
 **v2.22 메모**: D004 의 lint 위치는 as-shipped Task 5 deviation 에 따라 Phase 0 **Step 6.7** (Step 7.5 는 이미 v2.17 boundary-emit 이 차지). D006 은 cache-hit-ratio 데이터를 기다리는 open question 으로 ADR 본체 없이 이 인덱스에만 기록됨.
 
+## v2.23 — Implementer adversarial self-check (종료 — SKIP, 2026-06-02)
+
+측정 결과 부정 (baseline defect 가 현재 Sonnet 에서 더 이상 재현 안 됨). v2.9 Reviewer Spec Coverage Walk 의 Implementer-side 거울.
+
+| ADR | 주제 | 결과 |
+|-----|------|------|
+| [D001 Metric is prevention](../docs/experiments/v2.23-implementer-adversarial-selfcheck/decisions/D001-metric-is-prevention.md) | 측정 대상은 first-pass + retries 의 예방이지 최종 품질이 아님 | **결정** |
+| [D002 Isolated Implementer measurement](../docs/experiments/v2.23-implementer-adversarial-selfcheck/decisions/D002-isolated-implementer-measurement.md) | Implementer 를 풀 오케스트레이터 실행이 아닌 격리 상태로 측정 | **결정** |
+
+## v2.25 — Subscription-pool agent dispatch (출하 2026-06-04)
+
+`"agent"` 디스패치 transport 추가 → 7개 역할 게이트가 metered `claude -p`/API 대신 구독 풀(Agent 툴)로 in-session 디스패치를 기본값으로 사용. Plan Reviewer 기본 모델 Opus 전환 + D003 자율 실패 래더/gap 리포팅 + D002 detach 정합.
+
+| ADR | 주제 | 결과 |
+|-----|------|------|
+| [D001 Agent gate + subscription default](../docs/experiments/v2.25-subscription-agent-dispatch/decisions/D001-agent-gate-subscription-default.md) | `"agent"` 게이트 값 + 7개 역할 게이트 구독-기본값 | **shipped** |
+| [D002 Detach conflict handling](../docs/experiments/v2.25-subscription-agent-dispatch/decisions/D002-detach-conflict-handling.md) | detach 와 agent-gate 의 상호작용 정합 규칙 | **shipped** |
+| [D003 Autonomous error handling](../docs/experiments/v2.25-subscription-agent-dispatch/decisions/D003-autonomous-error-handling.md) | 자율 오류 처리 + 에스컬레이션 자율 + 정지 경계 | **shipped** |
+
 ---
 
 ## 가로지르는 결정 (한 실험 아래에 속하지 않음)
