@@ -88,6 +88,8 @@ The `budget=<value or "off">` field in the echo line shows the parsed `budget=<U
 
 The user sees this single line and can interrupt if interpretation is wrong. In headless mode (`mode=interactive` not set), the line still prints to the interactive parent's stdout before self-spawn.
 
+**Dispatch-config provenance capture (v2.25).** While parsing, the parser MUST record which `dispatch_config` gates the user set explicitly (via `key=value` pairs or NL tokens) into a `dispatch_config_explicit` set in run state. The Phase -1.1 detach/agent-gate reconciliation step reads this set to distinguish an explicitly chosen `"agent"` gate from one left at the agent default.
+
 ### Phase -1.1: Mode detection
 
 After Phase -1.0 parsing:
@@ -109,6 +111,25 @@ After Phase -1.0 parsing:
 > proceed start-to-finish without occupying your interactive session. No
 > auto-fan-out is added in any mode — sub-agent dispatch stays demand-driven (one
 > per task/role).
+
+**Detach/agent-gate reconciliation (v2.25, per D002).** A detached orchestrator
+is a `claude -p` process, so its Agent sub-agents bill metered against the
+parent — `"agent"` gates save nothing under detach. For each role gate:
+- if the gate is at its **agent default** (not explicitly set by the user):
+  rewrite it to `"api"` in `state.dispatch_config` and accumulate it into a
+  single warning line.
+- if the gate was **explicitly** set to `"agent"` by the user: leave it, and
+  accumulate it into the warning line as "explicit — proceeding".
+Emit ONE warning line to the interactive parent's stdout summarizing the
+rewrites/retained gates, e.g.:
+`DETACH+AGENT: verifier_per_task,docs_updater_phase fell back to api (agent default has no subscription benefit under detach); plan_reviewer kept (explicit).`
+When `mode` is attached, this step is a no-op.
+
+Gate provenance (explicit vs default) is captured during Phase -1.0 parsing:
+the parse pass records a `dispatch_config_explicit` set (the gate names the user
+set explicitly, from `key=value` args or NL tokens) into run state, which this
+reconciliation step reads to distinguish explicit `"agent"` from the agent
+default.
 
 ### Self-Spawn Procedure
 
