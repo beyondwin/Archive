@@ -54,6 +54,58 @@ finalization was skipped.
 
 See `docs/experiments/v2.26-finalization-enforcement/`.
 
+### v2.25.0 — Subscription-pool agent dispatch (2026-06-04)
+
+Adds a third dispatch transport `"agent"` to every `state.dispatch_config` role
+gate, alongside the existing `"p"` (headless) and `"api"` (Messages API) values.
+The `"agent"` transport dispatches a mechanical role **in-session via the Agent
+tool on the subscription pool** — the same path the Implementer and Combined
+Reviewer already use — so a bare invocation runs every role on the Max/Pro
+subscription with `$0` metered spend.
+
+- **All seven role gates default to `"agent"`** — `plan_reviewer`,
+  `verifier_batch`, `verifier_per_task`, `transition_combined`,
+  `docs_updater_phase`, `docs_updater_final`, `final_sweep`. Metered transports
+  (`"api"`, `"p"`) remain available by explicitly setting a gate. (D001)
+- **Plan Reviewer default model flipped Haiku → Opus** (`claude-opus-4-8`),
+  matching the Opus-everywhere stance for this executor (reverses the v2.22 A1
+  Haiku migration).
+- **Autonomous failure ladder** (D003): retry once → auto-fallback to `"api"`
+  for that single dispatch → on continued failure, record a
+  `verification_gap` / `docs_gap` marker and continue the run, surfacing it in
+  the Final Report. Never prompts the user.
+- **New per-plan `verification_gaps` / `docs_gaps` fields** surfaced in the Final
+  Summary Report.
+- **Detach reconciliation** (D002): under `detach=true`, agent-default gates
+  (not explicitly set) are rewritten to `"api"` with a one-line warning so the
+  subscription default never causes surprise metering on a headless parent.
+
+The transport contract lives in `references/cross-cutting/agent-dispatch.md`.
+Verified: `pytest scripts/` 153 passed, scaffold-split lint clean, all 7 gate
+sites carry an `"agent"` branch. Experiment record + close-out under
+`docs/experiments/v2.25-subscription-agent-dispatch/` (D001–D003, F01 SHIP).
+
+### v2.23 / v2.24 — experiment-only, not shipped (no production bump)
+
+Neither version produced a production `SKILL.md` behavior change, so neither has
+a snapshot (a snapshot would misrepresent unshipped work) and the frontmatter
+never bumped through them — the next shipped bump after v2.22.0 was v2.25.0.
+
+- **v2.23 — Implementer adversarial self-check: CLOSED — SKIP** (2026-06-02). The
+  v2.7 F002 baseline defect (~25% first-pass rejection of `30m20m`-class
+  adversarial inputs) **no longer reproduces** on the current Sonnet — control
+  ceilings at 100% across 4 reps, so the intervention has no measurable headroom.
+  The mechanism works as designed (a validated, ready-to-revive lever if a future
+  Sonnet regresses) but shipping would add permanent prompt surface for zero
+  measured benefit — the Goodhart anti-pattern. Intervention reverted (working-
+  tree-only, never committed); experiment record kept as the negative result.
+  `docs/experiments/v2.23-implementer-adversarial-selfcheck/` (F001 SKIP).
+- **v2.24 — Data-driven cost tiering: OPEN (Phase A baseline only).** Captured a
+  35-run corpus telemetry baseline (Σ $269.62, mean cache_hit_ratio 0.0105, cost
+  concentrated in a handful of runs) via `scripts/aggregate_runs.py`. No close-out
+  / ship-skip decision reached — the gate-input data is recorded for a future
+  resumption. `docs/experiments/v2.24-data-driven-cost-tiering/` (F001 baseline).
+
 ### v2.22.0 — Dispatch optimization (2026-05-31)
 
 Replaces `claude -p --dangerously-skip-permissions` headless dispatches for
@@ -701,7 +753,10 @@ with JOURNAL + decisions/ + findings/. Index:
 | v2.7-quality-mode | CLOSED | Negative on quality_plus; positive on rubric infra | `docs/experiments/v2.7-quality-mode/` |
 | v2.8-learning-log | In progress | Per-run sharded learning log + review-side Skill calls | `docs/experiments/v2.8-learning-log/` |
 | v2.22-dispatch-optimization | SHIPPED (2026-05-31) | API-direct dispatch + caching, T1/T2 merge, Haiku Plan Reviewer, attached-by-default | `docs/experiments/v2.22-dispatch-optimization/` |
+| v2.23-implementer-adversarial-selfcheck | CLOSED — SKIP (2026-06-02) | Baseline defect no longer reproduces on current Sonnet; control ceilings, zero headroom; intervention reverted, kept as ready-to-revive lever | `docs/experiments/v2.23-implementer-adversarial-selfcheck/` |
+| v2.24-data-driven-cost-tiering | OPEN (Phase A baseline only) | 35-run corpus telemetry captured; no ship/skip decision reached | `docs/experiments/v2.24-data-driven-cost-tiering/` |
 | v2.25-subscription-agent-dispatch | SHIPPED (2026-06-04) | Agent-tool dispatch on subscription pool; all 7 role gates default "agent"; Plan Reviewer → Opus; autonomous failure ladder + gap fields | `docs/experiments/v2.25-subscription-agent-dispatch/` |
+| v2.26-finalization-enforcement | SHIPPED (2026-06-04) | Schema + finalization validators, Phase 2 gates, Stop-hook forcing function (D001) | `docs/experiments/v2.26-finalization-enforcement/` |
 | (future) | | | `docs/experiments/v2.X-<name>/` |
 
 See `docs/experiments/README.md` for the experiment template and protocol.
