@@ -184,6 +184,20 @@ Parse the JSON output:
 
   Do NOT call `close-run` — the run remains alive for the user's resolution. Standard hard-halt block applies.
 
+**State-schema gate (v2.26):** after the method audit passes, run the canonical-shape validator:
+
+```bash
+python3 <skill_dir>/scripts/validate_state_schema.py \
+  --state <orch_dir>/state.json --active-plan auto
+```
+
+`passed: true` → proceed to Step 2. Exit 1 → HALT with the printed `violations`
+list (the run wrote a non-canonical state — e.g. empty `tasks{}` with records in
+`task_summaries{}`, `execution_order` without `execution_plan`, or a risk value
+outside low/mid/high). Do NOT call `close-run`; the operator inspects and repairs
+state.json, then re-runs Phase 2. Exit 2 → HALT `validate_state_schema broken —
+manual inspection required`.
+
 ### Step 2: Generate Final Summary Report
 
 Before generating the report, invoke `Skill("superpowers:finishing-a-development-branch")` and include its recommendation in Cleanup Status.
@@ -204,6 +218,24 @@ if [ -n "${ORCH_RUN_ID:-}" ]; then
   agentlens run-close --run "$ORCH_RUN_ID" --outcome success 2>/dev/null || true
 fi
 ```
+
+**Finalization gate (v2.26) — between completed_at stamp and report.** After the
+`phase_boundary.py phase-emit --type phase_2_complete` stamp above, run the
+finalization-consistency gate before emitting the Final Summary Report:
+
+```bash
+python3 <skill_dir>/scripts/finalize_run.py --state <orch_dir>/state.json --fix
+```
+
+`--fix` stamps `completed_at` if the boundary helper somehow left it null (safe,
+atomic). Exit 0 → proceed to the report. Exit 1 → a residual **unfixable** FAIL
+remains — almost always a task still at `verifier == PENDING_BATCH` (the Step 0 LOW
+batch sweep did not write back) or a non-terminal task status. HALT with the printed
+`findings`: re-run Step 0's LOW batch sweep for the offending task, then re-run this
+gate. The gate must pass before `run-close --outcome success`; do not declare the
+run COMPLETE with an unfinalized state. `cost_dispatches_zero` and
+`timing_started_missing` are WARN (reported, non-blocking — set
+`state.cost_tracking_waived=true` only when cost tracking was intentionally off).
 
 Idempotency note: `agentlens run-close` is idempotent — a re-entered Phase 2 Step 2 (e.g., chained meta-run where the final child reaches Step 2 after a chain handoff) calling it again is a no-op.
 
