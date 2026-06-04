@@ -13,14 +13,19 @@ from dispatch_plan_reviewer import (  # noqa: E402
 
 
 class SelectPlanReviewerModelTests(unittest.TestCase):
-    def test_default_model_is_haiku_when_no_override(self):
+    def test_default_model_is_opus_when_no_override(self):
         self.assertEqual(
             select_plan_reviewer_model({}),
-            "claude-haiku-4-5-20251001",
+            "claude-opus-4-7",
         )
 
-    def test_default_constant_is_haiku(self):
-        self.assertEqual(DEFAULT_PLAN_REVIEWER_MODEL, "claude-haiku-4-5-20251001")
+    def test_default_constant_is_opus(self):
+        self.assertEqual(DEFAULT_PLAN_REVIEWER_MODEL, "claude-opus-4-7")
+
+    def test_default_is_opus(self):
+        # v2.25: Plan Reviewer defaults to Opus (Opus-everywhere for this executor)
+        state = {"dispatch_config": {}}
+        self.assertEqual(select_plan_reviewer_model(state), "claude-opus-4-7")
 
     def test_override_via_dispatch_config_is_honored(self):
         state = {"dispatch_config": {"plan_reviewer_model": "claude-sonnet-4-6"}}
@@ -30,7 +35,7 @@ class SelectPlanReviewerModelTests(unittest.TestCase):
         state = {"dispatch_config": {}}
         self.assertEqual(
             select_plan_reviewer_model(state),
-            "claude-haiku-4-5-20251001",
+            "claude-opus-4-7",
         )
 
 
@@ -38,8 +43,8 @@ class RecordModelUsedTests(unittest.TestCase):
     def test_writes_model_used_into_plan_review(self):
         state = {}
         selected = record_model_used(state)
-        self.assertEqual(selected, "claude-haiku-4-5-20251001")
-        self.assertEqual(state["plan_review"]["model_used"], "claude-haiku-4-5-20251001")
+        self.assertEqual(selected, "claude-opus-4-7")
+        self.assertEqual(state["plan_review"]["model_used"], "claude-opus-4-7")
 
     def test_records_overridden_model(self):
         state = {"dispatch_config": {"plan_reviewer_model": "claude-sonnet-4-6"}}
@@ -52,7 +57,7 @@ class RecordModelUsedTests(unittest.TestCase):
         record_model_used(state)
         self.assertEqual(state["plan_review"]["status"], "PASS")
         self.assertEqual(state["plan_review"]["warnings"], [])
-        self.assertEqual(state["plan_review"]["model_used"], "claude-haiku-4-5-20251001")
+        self.assertEqual(state["plan_review"]["model_used"], "claude-opus-4-7")
 
 
 if __name__ == "__main__":
