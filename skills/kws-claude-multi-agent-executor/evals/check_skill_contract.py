@@ -216,6 +216,40 @@ def main() -> int:
         "SKILL.md must record the run-level agentlens_healthy health-probe field (v2.21)",
     )
 
+    # ---- v2.26 finalization + schema gate contracts ----
+    V226_HELPERS = {
+        "scripts/validate_state_schema.py": ["--state", "execution_order_without_plan", "risk_value_invalid"],
+        "scripts/finalize_run.py": ["--check", "--fix", "verifier_pending_batch", "completed_at_null"],
+    }
+    for rel_path, tokens in V226_HELPERS.items():
+        full = skill_dir / rel_path
+        if not full.is_file():
+            record(f"v226_helper_exists_{rel_path.replace('/', '_')}", False,
+                   f"{rel_path} must exist (v2.26)")
+            continue
+        body = full.read_text(encoding="utf-8")
+        record(
+            f"v226_helper_contract_{rel_path.replace('/', '_')}",
+            all(t in body for t in tokens),
+            f"{rel_path} must define its CLI/violation-code tokens: {', '.join(tokens)}",
+        )
+
+    record(
+        "v226_schema_gate_wired",
+        "validate_state_schema.py" in corpus,
+        "Phase 2 prose must wire validate_state_schema.py (Step 1.5 schema gate)",
+    )
+    record(
+        "v226_finalize_gate_wired",
+        "finalize_run.py" in corpus,
+        "Phase 2 prose must wire finalize_run.py --fix (Step 2 finalization gate)",
+    )
+    record(
+        "v226_guardrail_row",
+        "Finalization gate is mandatory before close-run" in corpus,
+        "SKILL.md Guardrails must carry the v2.26 finalization-gate row",
+    )
+
     record(
         "skill_md_tdd_not_size_gated",
         "SMALL skips TDD" not in corpus
