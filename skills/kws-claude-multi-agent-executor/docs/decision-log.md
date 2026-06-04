@@ -128,6 +128,16 @@ D001–D005 + D007 은 ADR 본체가 있음; D006 은 pending (open question, �
 
 ---
 
+## v2.26 — Finalization + schema enforcement (출하 2026-06-04)
+
+`interactive_attached` run 2건이 Phase 2 finalization 을 건너뛰어 state.json 이 비정합/비정규(null `completed_at`, `PENDING_BATCH` 잔존, dispatches 0, 빈 `tasks{}`+`execution_order`)로 남은 회귀. 두 standalone validator(`validate_state_schema.py`, `finalize_run.py`)를 Phase 2 게이트로 와이어링 + Stop-hook 강제 함수로 "Phase 2 미진입" 잔여 리스크 해소.
+
+| ADR | 주제 | 결과 |
+|-----|------|------|
+| [D001 Stop-hook forcing function](../docs/experiments/v2.26-finalization-enforcement/decisions/D001-stop-hook-forcing-function.md) | 거절됐던 Stop-hook 재도입 — 모든 태스크 terminal 시에만 validator 실행하는 저비용 short-circuit 으로 skipped-Phase-2 + 스키마 즉흥성 동시 해소 | **shipped** |
+
+---
+
 ## 가로지르는 결정 (한 실험 아래에 속하지 않음)
 
 ### 오케스트레이터-워커 패턴 (vs 단일 세션)
