@@ -72,6 +72,13 @@ If the list is non-empty (or the short-circuit conditions are not met): dispatch
 
 When `state.dispatch_config.final_sweep == "batch"`, this Step 0 sweep dispatches through `scripts/dispatch_final_sweep_batch.py` (Anthropic Message Batches API, one request per LOW task, ~50% cheaper, 24h SLA) instead of synchronous per-task dispatch. The helper submits one batch, polls until it ends, and returns the same PASS/FAIL summary. On timeout (`--timeout`, default 30 min / 1800s) it emits a `kws-cme.batch_timeout` event, WARNs, and falls back to per-task synchronous API dispatch (`dispatch_via_api.dispatch`, `mode == "api_fallback"`). The `dispatch_config.final_sweep` default is `"api"` in v2.22.0; the flip to `"batch"` is planned for v2.22.1.
 
+When `state.dispatch_config.final_sweep == "agent"` (default, v2.25), the Step 0
+LOW sweep dispatches each LOW task's Verifier in-session via the Agent tool per
+`references/cross-cutting/agent-dispatch.md` (ROLE=verifier, MODEL=sonnet,
+RESULT_PATH=`<orch_dir>/verifier_results/<task>.json`). Per-task failure ladder
+applies; tasks that cannot be verified after retry+api-fallback are recorded in
+`verification_gaps` and surfaced in the Final Report (not halted).
+
 **Result path:** when `state.plan_chain` is in use, use `batch_final_p<active>.json` (consistent with Phase 2 Step -1 check). For single-plan: `batch_final.json` un-suffixed.
 
 On PASS: clear the active tree's list. On FAIL: apply standard `verifier_retries` per affected task. Only after PASS proceed to Step -1 (Cross-Plan Trigger checks whether to advance to the next plan) or to Step 1 (Final Docs Updater) if no next plan.
@@ -99,6 +106,13 @@ Build from the **Final Docs Updater Prompt Template** with:
 **Dispatch headless** using the same `claude -p` pattern as Phase 1 Step 3, with prompt path `<orch_dir>/docs_prompts/final{_chain | }.txt` and result path matching `{result_json_path}`. Missing/malformed result → ENV_BLOCKER ESCALATE.
 
 **Final Docs Updater dispatch path (v2.22 §2.B2).** When `state.dispatch_config.docs_updater_final == "api"`, dispatch this Final Docs Updater through `scripts/dispatch_via_api.py --role docs_updater` (singular role; structured tool `report_docs_updater`, `tool_choice`-forced; run-wide payload = all files changed during the run across every plan + the final docs scope), and validate its result against `references/_schemas/docs_updater_result.schema.json` before consuming it. When `== "p"`, fall back to the legacy `claude -p` dispatch described above. The gate selects only the dispatch transport; the consumed DONE/ESCALATE shape and the result path are identical either way.
+
+**Final Docs Updater `"agent"` path (v2.25, default).** When
+`state.dispatch_config.docs_updater_final == "agent"`, dispatch in-session via
+the Agent tool per `references/cross-cutting/agent-dispatch.md` with
+ROLE=docs_updater, MODEL=sonnet, PROMPT_TEMPLATE=`references/docs-updater-prompts.md`
+(Final section), RESULT_PATH matching the existing `{result_json_path}`. Failure
+ladder: retry → api fallback → record `docs_gaps` + `kws-cme.blocker` + proceed.
 
 ### Step 1.5: Method Audit Validation (v2.11)
 
@@ -228,6 +242,16 @@ For each task across every plan's task tree (`<active>.tasks` for each value of 
 - `task_<id>` — spec=<score>, quality=<score> — warnings: <one-line summary from task_summaries.task_N.warnings>
 
 If none: "WARN-tier tasks: 0".
+
+### Dispatch gaps (D003)
+
+If `verification_gaps` or `docs_gaps` are non-empty for any plan (aggregate
+across the chain: iterate `state.plan_chain[*].{verification_gaps,docs_gaps}` for
+multi-plan, top-level for single-plan), list each:
+- **Unverified (agent+api both failed):** `task_<id>` — <reason> (ts)
+- **Undocumented (agent+api both failed):** <scope> — <reason> (ts)
+
+If both arrays are empty across all plans, omit this section entirely.
 
 ### Quality trend (P4)
 
