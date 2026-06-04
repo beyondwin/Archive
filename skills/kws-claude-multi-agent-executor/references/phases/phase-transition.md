@@ -39,6 +39,20 @@ Build the prompt from the **Combined Transition Prompt Template** (`references/t
 
 **Phase Docs Updater dispatch path (v2.22 §2.B2).** When `state.dispatch_config.docs_updater_phase == "api"`, the Phase Docs Updater portion is dispatched through `scripts/dispatch_via_api.py --role docs_updater` (singular role; structured tool `report_docs_updater`, `tool_choice`-forced; phase-scope payload = files changed since `last_compaction_after_task` + docs scope), and its `docs` result is validated against `references/_schemas/docs_updater_result.schema.json` before being consumed below. When `== "p"`, fall back to the legacy `claude -p` dispatch described above. The gate selects only the dispatch transport; the consumed `docs` shape (DONE/ESCALATE) is identical either way.
 
+**Transition `"agent"` path (v2.25, default).** When
+`state.dispatch_config.transition_combined == "agent"` (or, when the gates are
+evaluated independently, `verifier_batch == "agent"` and
+`docs_updater_phase == "agent"`), run the combined transition as a SINGLE
+in-session Agent sub-agent per `references/cross-cutting/agent-dispatch.md` with
+MODEL=sonnet, the existing combined prompt
+(`<orch_dir>/transition_prompts/<plan_idx>_<compaction_index>.txt`), and
+RESULT_PATH=`<orch_dir>/transition_results/<plan_idx>_<compaction_index>.json`.
+The sub-agent writes the combined `{verify, docs}` JSON (do NOT split). Validate
+against `transition_combined_result.schema.json`. Failure ladder: retry once →
+auto-fallback to the api combined dispatch → on continued failure record the LOW
+batch as `verification_gaps` and the phase docs as `docs_gaps`, emit
+`kws-cme.blocker`, proceed.
+
 Consume the combined result via `parse_combined_result` → `{verify, docs}`, then:
 
 **`verify` PASS** → clear `low_tasks_pending_verification` in the state file; the `docs` commit stands.
