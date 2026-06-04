@@ -49,7 +49,7 @@
 
 ## Headless 모델 플래그
 
-**제안된 변경**: SKILL.md 의 6개 `claude -p` 디스패치 사이트 전부에서 `--model claude-opus-4-7` (오케스트레이터) 와 `--model claude-sonnet-4-6` (서브에이전트) 명시 전달.
+**제안된 변경**: SKILL.md 의 6개 `claude -p` 디스패치 사이트 전부에서 `--model claude-opus-4-8` (오케스트레이터) 와 `--model claude-sonnet-4-6` (서브에이전트) 명시 전달.
 
 **기원**: v2.8 설계 감사가 문서화된 모델 할당이 런타임 동작과 일치 안 한다는 걸 발견 (모델이 CLI 기본값에서 상속됨).
 

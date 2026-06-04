@@ -20,6 +20,8 @@ def test_known_model_alias_haiku_cached_read_price():
 
 
 def test_canonical_model_id_lookup():
+    assert abs(get_price("claude-opus-4-8", "input_per_mtok") - 15.00) < 0.001
+    # retained for historical-run pricing
     assert abs(get_price("claude-opus-4-7", "input_per_mtok") - 15.00) < 0.001
 
 
@@ -86,6 +88,7 @@ def test_module_docstring_exact_text():
 
 
 def test_prices_dict_has_required_models():
+    assert "claude-opus-4-8" in PRICES
     assert "claude-opus-4-7" in PRICES
     assert "claude-sonnet-4-6" in PRICES
     assert "claude-haiku-4-5-20251001" in PRICES
@@ -93,7 +96,7 @@ def test_prices_dict_has_required_models():
 
 def test_aliases_dict_has_required_keys():
     assert ALIASES["sonnet"] == "claude-sonnet-4-6"
-    assert ALIASES["opus"] == "claude-opus-4-7"
+    assert ALIASES["opus"] == "claude-opus-4-8"
     assert ALIASES["haiku"] == "claude-haiku-4-5-20251001"
     assert ALIASES["unknown"] is None
 

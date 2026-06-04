@@ -19,7 +19,7 @@
 
 ## Task 1: Plan Reviewer default model → Opus (script + test)
 
-The only executable-code change. Flips `DEFAULT_PLAN_REVIEWER_MODEL` from Haiku to Opus so every transport (agent / api / p) selects Opus for the Plan Reviewer by default (per D-note in README §3; user "Opus-everywhere" preference). Canonical Opus id is `claude-opus-4-7` (`scripts/price_table.py:4,34`).
+The only executable-code change. Flips `DEFAULT_PLAN_REVIEWER_MODEL` from Haiku to Opus so every transport (agent / api / p) selects Opus for the Plan Reviewer by default (per D-note in README §3; user "Opus-everywhere" preference). Canonical Opus id is `claude-opus-4-8` (`scripts/price_table.py`).
 
 **Files:**
 - Modify: `scripts/dispatch_plan_reviewer.py:10` (the `DEFAULT_PLAN_REVIEWER_MODEL` constant + module docstring)
@@ -33,7 +33,7 @@ In `scripts/test_dispatch_plan_reviewer.py`, change the default-model expectatio
     def test_default_is_opus(self):
         # v2.25: Plan Reviewer defaults to Opus (Opus-everywhere for this executor)
         state = {"dispatch_config": {}}
-        self.assertEqual(select_plan_reviewer_model(state), "claude-opus-4-7")
+        self.assertEqual(select_plan_reviewer_model(state), "claude-opus-4-8")
 ```
 
 Also update any existing assertion that still expects `"claude-haiku-4-5-20251001"` as the *default* (override tests that pass an explicit `plan_reviewer_model` stay unchanged).
@@ -41,14 +41,14 @@ Also update any existing assertion that still expects `"claude-haiku-4-5-2025100
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `cd skills/kws-claude-multi-agent-executor && python3 -m pytest scripts/test_dispatch_plan_reviewer.py -v`
-Expected: FAIL — `test_default_is_opus` (and the edited default assertion) expect `claude-opus-4-7` but the code returns `claude-haiku-4-5-20251001`.
+Expected: FAIL — `test_default_is_opus` (and the edited default assertion) expect `claude-opus-4-8` but the code returns `claude-haiku-4-5-20251001`.
 
 - [ ] **Step 3: Change the default constant**
 
 In `scripts/dispatch_plan_reviewer.py` line 10:
 
 ```python
-DEFAULT_PLAN_REVIEWER_MODEL = "claude-opus-4-7"
+DEFAULT_PLAN_REVIEWER_MODEL = "claude-opus-4-8"
 ```
 
 And update the module docstring (lines 3–6) to reflect the change:
@@ -57,7 +57,7 @@ And update the module docstring (lines 3–6) to reflect the change:
 """Plan Reviewer model selection — pure selection logic, no SDK calls.
 
 The Plan Reviewer (Phase 0 Step 6.5) runs a mechanical rubric. As of v2.25 it
-defaults to Opus (claude-opus-4-7): the user's "Opus-everywhere" preference for
+defaults to Opus (claude-opus-4-8): the user's "Opus-everywhere" preference for
 this executor's judging roles. Overridable via
 ``state.dispatch_config.plan_reviewer_model``. The selected model is recorded
 into ``state.plan_review.model_used`` for forensics.
@@ -333,7 +333,7 @@ Update the "default `\"api\"`" annotation on the branch header to "default `\"ag
 
 - [ ] **Step 2: Set the Plan Reviewer model note to Opus**
 
-In the "Model selection (forensics)" paragraph (~line 391), change "runs on `claude-haiku-4-5-20251001` by default" to "runs on `claude-opus-4-7` by default (v2.25; mechanical rubric but Opus per the executor's Opus-everywhere preference; overridable via `state.dispatch_config.plan_reviewer_model`)".
+In the "Model selection (forensics)" paragraph (~line 391), change "runs on `claude-haiku-4-5-20251001` by default" to "runs on `claude-opus-4-8` by default (v2.25; mechanical rubric but Opus per the executor's Opus-everywhere preference; overridable via `state.dispatch_config.plan_reviewer_model`)".
 
 - [ ] **Step 3: Add `dispatch_config` to the state.json init block**
 
@@ -353,7 +353,7 @@ Add a one-line note that `dispatch_config` is run-level (top of state.json, pres
 
 - [ ] **Step 4: Verify**
 
-Run: `cd skills/kws-claude-multi-agent-executor && grep -n '"agent"' references/phases/phase-0-setup.md && grep -n "claude-opus-4-7" references/phases/phase-0-setup.md && grep -n "agent-dispatch.md" references/phases/phase-0-setup.md`
+Run: `cd skills/kws-claude-multi-agent-executor && grep -n '"agent"' references/phases/phase-0-setup.md && grep -n "claude-opus-4-8" references/phases/phase-0-setup.md && grep -n "agent-dispatch.md" references/phases/phase-0-setup.md`
 Expected: all present.
 
 - [ ] **Step 5: Commit**

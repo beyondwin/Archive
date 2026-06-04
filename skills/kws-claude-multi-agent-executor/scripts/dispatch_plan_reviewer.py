@@ -1,14 +1,14 @@
 """Plan Reviewer model selection — pure selection logic, no SDK calls.
 
 The Plan Reviewer (Phase 0 Step 6.5) runs a mechanical rubric. As of v2.25 it
-defaults to Opus (claude-opus-4-7): the user's "Opus-everywhere" preference for
+defaults to Opus (claude-opus-4-8): the user's "Opus-everywhere" preference for
 this executor's judging roles. Overridable via
 ``state.dispatch_config.plan_reviewer_model``. The selected model is recorded
 into ``state.plan_review.model_used`` for forensics.
 """
 import sys
 
-DEFAULT_PLAN_REVIEWER_MODEL = "claude-opus-4-7"
+DEFAULT_PLAN_REVIEWER_MODEL = "claude-opus-4-8"
 
 
 def select_plan_reviewer_model(state: dict) -> str:
