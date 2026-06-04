@@ -75,6 +75,28 @@ options:
 
 4. After resolving: return to Step 1 and re-run all steps in sequence. Do NOT skip Combined Review or Verification.
 
+### Autonomous resolution (v2.25, per D003)
+
+For runtime `AMBIGUITY` (spec unclear) and `SPEC_BLOCKER` (spec
+contradicts/missing) escalations, do NOT mark the task SKIPPED and report.
+Instead:
+1. Adopt the most defensible interpretation of the spec/plan for the task.
+2. Append to `state.spec_edits` a record: `{task, fault, interpretation: "<one
+   sentence>", ts, auto_resolved: true}` (no spec file edit unless the smallest
+   clarifying edit is clearly correct, per the existing spec-edit branch).
+3. Re-dispatch the Implementer with a `## [AUTO-INTERPRETATION]` note carrying
+   the chosen reading. Proceed; do NOT SKIP and do NOT prompt the user.
+4. Surface every `auto_resolved` interpretation in the Final Summary Report.
+
+### Halt boundary (v2.25)
+
+Best-judgment autonomy above applies to runtime ambiguity ONLY. Hard-halt is
+retained ONLY for: (a) data-integrity failures — `state.json` write failure,
+`git reset` failure, worktree missing; and (b) Phase 0 pre-flight
+structural/config errors — out-of-repo paths, missing `Files:` blocks, no task
+headers. These are malformed-input cases where guessing is unsafe; everything
+else self-heals and proceeds.
+
 ### ENV_BLOCKER Triage Playbook
 
 See `references/escalation-playbook.md` (the ENV_BLOCKER Triage section). Read it at the moment an `ENV_BLOCKER` arrives. The same file also contains the canonical orchestrator response procedure and the document-update rules referenced above.
