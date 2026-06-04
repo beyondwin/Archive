@@ -270,6 +270,18 @@ Decision table:
 
 **Per-task Verifier dispatch path (v2.22 §2.B1).** When `state.dispatch_config.verifier_per_task == "api"`, dispatch this per-task (MID/HIGH) Verifier through `scripts/dispatch_via_api.py --role verifier` instead of the legacy `claude -p` subprocess above (structured tool `report_verifier`, `tool_choice`-forced; the result is validated against `references/_schemas/verifier_result.schema.json`). Write the result to the SAME path the legacy flow uses — `<orch_dir>/verifier_results/task_<N>.json` — so the PASS/FAIL/ESCALATE parsing in step 4 and the result handling below are unchanged. When `verifier_per_task == "p"` (or absent), use the legacy `claude -p` flow described above. The gate selects only the dispatch transport; the role token is `verifier` (singular) and the consumed result shape is identical either way.
 
+**Per-task Verifier `"agent"` path (v2.25, default).** When
+`state.dispatch_config.verifier_per_task == "agent"`, dispatch the per-task
+(MID/HIGH) Verifier in-session via the Agent tool per
+`references/cross-cutting/agent-dispatch.md` with ROLE=verifier, MODEL=sonnet,
+PROMPT_TEMPLATE=`references/verifier-prompt.md`, RESULT_PATH=
+`<orch_dir>/verifier_results/task_<N>.json` (same path as the metered paths, so
+step 4 parsing is unchanged). Apply the failure ladder: retry once →
+auto-fallback to the `verifier_per_task="api"` dispatch for this one task → on
+continued failure record `<active>.verification_gaps += [{task: "task_<N>",
+reason, ts}]`, emit `kws-cme.blocker`, and proceed (do NOT halt; surface in the
+Final Report). The consumed PASS/FAIL/ESCALATE shape is identical either way.
+
 **Result: PASS** → stamp `<active>.tasks.task_<N>.timing.verifier_done = <iso8601 now>` via atomic R-M-W (non-fatal warning on failure). Proceed to Step 4.  
 **Result: FAIL** →
 - Increment `verifier_retries`.
@@ -325,7 +337,7 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
 
    **Extract `usage`:**
 
-   - *Agent tool dispatch* (Implementer / Combined Reviewer): the Agent tool result returned to this turn includes a `usage` object with `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`. Normalize to the helper's field names: `cached_read_tokens` ← `cache_read_input_tokens`, `cached_write_tokens` ← `cache_creation_input_tokens`. If the Agent result has no `usage` block (transport error, schema drift): use `{"input_tokens": 0, "output_tokens": 0}` and pass `--model unknown` so cost is recorded as 0 without misattributing tokens. Do NOT skip the helper call — the dispatch count is itself signal.
+   - *Agent tool dispatch* (Implementer / Combined Reviewer / any role dispatched via the `"agent"` transport): the Agent tool result returned to this turn includes a `usage` object with `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`. Normalize to the helper's field names: `cached_read_tokens` ← `cache_read_input_tokens`, `cached_write_tokens` ← `cache_creation_input_tokens`. If the Agent result has no `usage` block (transport error, schema drift): use `{"input_tokens": 0, "output_tokens": 0}` and pass `--model unknown` so cost is recorded as 0 without misattributing tokens. Do NOT skip the helper call — the dispatch count is itself signal.
    - *Headless `claude -p --output-format stream-json` subprocess* (Verifier / Plan Reviewer / Docs Updater): tail the result file `<orch_dir>/{verifier,docs,plan_review}_results/...` OR the matching `.stdout`. The final line of stream-json is `{"type":"result","usage":{...},...}`. Extract `usage`, normalize the same way.
 
    **Invoke the helper:**
