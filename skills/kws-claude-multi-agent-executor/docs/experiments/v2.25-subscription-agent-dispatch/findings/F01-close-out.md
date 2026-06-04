@@ -46,17 +46,34 @@ Reviewer — so a bare invocation runs every role on the Max/Pro subscription wi
 
 ## Caveats
 
-1. **`bun run check:legacy` fails — pre-existing and unrelated.** The failure is
-   limited to `packages/orchestrator/*` Graphify-dependency flags. ZERO of the
-   11 changed files are outside
-   `skills/kws-claude-multi-agent-executor/`, so this failure predates v2.25 and
-   is not caused by it.
-2. **Eval-harness smoke (`./evals/run.sh`) DEFERRED.** It requires live dispatch
-   and credits; to be run in a manual attached session.
+1. **`bun run check:legacy` fails — pre-existing and unrelated (verified).** The
+   failure is limited to 6 `packages/orchestrator/*` Graphify-dependency flags.
+   ZERO changed files are outside `skills/kws-claude-multi-agent-executor/`, and
+   the identical 6 failures reproduce at base commit `e079bbc` (pre-run). This
+   failure predates v2.25 and is not caused by it; resolving it is a separate
+   Graphify-removal effort in an unrelated product tree, out of scope here.
+2. **Eval-harness smoke — deterministic preflight RUN (PASS); live fixture loop
+   DEFERRED.** The free, deterministic portion of `./evals/run.sh` was executed
+   directly and passed: `compare_agentlens_events.py --self-test` (6 cases),
+   `check_skill_contract.py` (all 46 contract checks), and
+   `check_doc_freshness.py` (`passed: true`). Only the metered live-dispatch
+   fixture loop remains deferred (requires credits / a manual attached session).
+
+## Resolved during close-out
+
+- **Stale `final_sweep` default note fixed** (`phase-2-finalization.md`): line 73
+  still claimed the default was `"api"` in v2.22.0, contradicting the v2.25
+  `"agent"` default documented immediately below — the MINOR finding from the
+  Phase 2 batch Verifier. Corrected to state the v2.25 `"agent"` default with
+  `"batch"`/`"api"` as opt-in transports.
+- **decision-log ADR index gap fixed** (`docs/decision-log.md`): the cross index
+  skipped from v2.22 to the cross-cutting section, leaving 5 ADRs unindexed (this
+  run's v2.25 D001/D002/D003 + 2 pre-existing v2.23 ADRs). Added both sections;
+  `check_doc_freshness.py` `decision_log_complete` now passes.
 
 ## Follow-ups
 
 - Run a **live attached session** to validate real subscription-pool dispatch
   (every role in-session on the subscription with `$0` metered spend).
-- Run the **eval baseline** (`./evals/run.sh`) to confirm no regression on the
-  fixtures.
+- Run the **eval baseline** (`./evals/run.sh`) live fixture loop to confirm no
+  regression on the fixtures (deterministic preflight already green).
