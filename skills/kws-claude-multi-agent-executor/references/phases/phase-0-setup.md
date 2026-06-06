@@ -202,6 +202,7 @@
    `task_to_sections` starts empty here; it is populated at Step 6 (Compute task_to_sections — C1, added by Task 2). The Plan Reviewer (Step 6.5) validates downstream references.
 
 4. **Assign risk levels** to each task:
+   **Canonical task keys (v2.28 — D003).** Each task is keyed `task_<N>` (zero- or one-based per the plan's ordering, e.g. `task_0`, `task_1`, ...) — NEVER a bare integer (`"3"`) and NEVER a free-form label (`"riskclose"`). Remediation or otherwise-inserted tasks use the suffixed form `task_<N>_<suffix>` (e.g. `task_7_remediation`). This same key is the one used across `risk_levels`, `execution_plan`, `task_complexity`, `tasks`, and `task_summaries` — assign it once here and reuse it verbatim everywhere. `scripts/validate_state_schema.py` emits a `task_key_noncanonical` WARN if a non-canonical key reaches state.json.
    - `low` — isolated change, single file or module, no shared state, no API surface change
    - `mid` — touches 2+ modules, shared state, moderate coupling, or config changes
    - `high` — cross-cutting change, database/schema/API surface, or explicitly marked high-risk in plan
