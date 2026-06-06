@@ -2,6 +2,7 @@
 import json
 import os
 import sys
+from datetime import datetime  # noqa: E402  (top of file alongside json/os/sys)
 
 import pytest
 
@@ -279,3 +280,58 @@ def test_partial_timing_is_warn_not_fail(tmp_path):
     assert "timing_tracking_absent" not in fails  # not ALL null -> no aggregate FAIL
     assert "timing_started_missing" in warns
     assert result["passed"] is True
+
+
+# --- v2.28 (D003): timing_inverted — physically impossible ordering --------
+
+# run-3 shape: started is a KST wall-clock with a bogus Z, completed is real UTC,
+# so started (21:00Z) > completed (12:02Z) — completed 9h "before" started.
+INVERTED = {
+    "status": "COMPLETE",
+    "timestamps": {"started_at": "a", "completed_at": "b"},
+    "cost_ledger": {"totals": {"dispatches": 4}},
+    "tasks": {
+        "task_1": {"status": "COMPLETE", "verifier": "PASS",
+                   "timing": {"started": "2026-06-06T21:00:00Z",
+                              "completed": "2026-06-06T12:02:06Z"}},
+    },
+}
+
+
+def test_inverted_timing_is_blocking_fail(tmp_path):
+    result = fr.evaluate(INVERTED)
+    fails = {f["code"] for f in result["findings"] if f["level"] == "FAIL"}
+    assert "timing_inverted" in fails
+    assert result["passed"] is False
+
+
+def test_inverted_timing_fails_even_when_waived(tmp_path):
+    # timing_tracking_waived governs ABSENCE, not corruption -> still FAIL.
+    waived = dict(INVERTED, timing_tracking_waived=True, cost_tracking_waived=True)
+    fails = {f["code"] for f in fr.evaluate(waived)["findings"] if f["level"] == "FAIL"}
+    assert "timing_inverted" in fails
+
+
+def test_normal_ordering_no_inverted(tmp_path):
+    ok = {
+        "status": "COMPLETE",
+        "timestamps": {"started_at": "a", "completed_at": "b"},
+        "cost_ledger": {"totals": {"dispatches": 1}},
+        "tasks": {"task_1": {"status": "COMPLETE", "verifier": "PASS",
+                             "timing": {"started": "2026-06-06T12:00:00Z",
+                                        "completed": "2026-06-06T12:02:06Z"}}},
+    }
+    codes = {f["code"] for f in fr.evaluate(ok)["findings"]}
+    assert "timing_inverted" not in codes
+
+
+def test_unparseable_timing_no_inverted_no_crash(tmp_path):
+    garbage = {
+        "status": "COMPLETE",
+        "timestamps": {"started_at": "a", "completed_at": "b"},
+        "cost_ledger": {"totals": {"dispatches": 1}},
+        "tasks": {"task_1": {"status": "COMPLETE", "verifier": "PASS",
+                             "timing": {"started": "not-a-date", "completed": "also-bad"}}},
+    }
+    codes = {f["code"] for f in fr.evaluate(garbage)["findings"]}
+    assert "timing_inverted" not in codes  # falls through to null/absent path

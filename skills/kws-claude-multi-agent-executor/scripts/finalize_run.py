@@ -35,6 +35,24 @@ def _active_trees(state: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     return [("state", state)]
 
 
+def _parse_iso(value: Any) -> "datetime | None":
+    """Tolerant ISO-8601 parse, normalized to naive UTC.
+
+    Returns None on anything non-parseable so corrupt values fall through to the
+    existing null/absence handling rather than crashing. Normalizing to naive UTC
+    lets an aware/naive pair (e.g. a 'Z' value vs. a bare one) still compare.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
 def _worktree_hook_problems(state: dict[str, Any]) -> list[str] | None:
     """Inspect the worktree's .claude/settings.json for missing safety hooks.
 
@@ -104,6 +122,20 @@ def evaluate(state: dict[str, Any]) -> dict[str, Any]:
                 terminal_null_started += 1
                 add("WARN", scope, "timing_started_missing",
                     f"{task_id}: timing.started absent (per-task duration uncomputable)")
+            # v2.28 (D003): physically-impossible ordering. UNCONDITIONAL — not
+            # gated by timing_tracking_waived (that hatch governs *absence* of
+            # timing; an inverted pair is *corruption*, e.g. a hand-typed KST
+            # wall-clock stamped 'Z'). Non-parseable values return None and fall
+            # through to the null/absence handling above without crashing.
+            started = timing.get("started")
+            completed = timing.get("completed")
+            if started and completed:
+                s, c = _parse_iso(started), _parse_iso(completed)
+                if s is not None and c is not None and s > c:
+                    add("FAIL", scope, "timing_inverted",
+                        f"{task_id}: timing.started ({started}) > "
+                        f"timing.completed ({completed}) — impossible ordering "
+                        "(hand-typed / wrong-TZ timestamp)")
 
     # v2.27: systemic timing drift. Every terminal task missing timing.started is
     # an unambiguous skip of phase_boundary.py task-start, not a one-off. Blocking
