@@ -1,6 +1,7 @@
 """Tests for finalize_run.py — finalization-consistency gate + safe --fix."""
 import json
 import os
+import pathlib
 import sys
 from datetime import datetime  # noqa: E402  (top of file alongside json/os/sys)
 
@@ -386,3 +387,63 @@ def test_present_agentlens_run_no_warning(tmp_path):
     state = dict(RUN3_CLEAN, agentlens_orchestration_run="run-y")
     codes = {f["code"] for f in fr.evaluate(state)["findings"]}
     assert "agentlens_run_absent" not in codes
+
+
+# --- v2.28 regression replay against the three REAL captured driving-runs -----
+# scripts/fixtures/v2.28/ holds verbatim post-v2.27 state.json snapshots from
+# three real runs (captured in Task 0). These replay the actual instrumentation
+# defects that motivated v2.28 — no synthetic stand-ins — so the new severities
+# are proven against the exact shapes that slipped through before.
+_FIX = pathlib.Path(__file__).resolve().parent / "fixtures" / "v2.28"
+
+
+def _load(name):
+    return json.loads((_FIX / name).read_text(encoding="utf-8"))
+
+
+def test_replay_run3_session_package(tmp_path):
+    # run-3 (session-package-decomposition): the v2.27 finalize exited 1 ONLY on
+    # cost_dispatches_zero, masking a second, worse corruption — tasks 1-5 carry a
+    # hand-typed KST wall-clock stamped 'Z' for `completed`, making started>completed
+    # (e.g. 21:00:00Z started, 12:02:06Z completed). Simulate C1's Phase-0 cost
+    # auto-waive so the cost FAIL drops out and assert the timing corruption is the
+    # honest blocker that v2.28 now surfaces.
+    state = _load("run3_session_package.json")
+    state["cost_tracking_waived"] = True  # simulate C1's Phase-0 auto-waive
+    result = fr.evaluate(state)
+    fails = {f["code"] for f in result["findings"] if f["level"] == "FAIL"}
+    assert "timing_inverted" in fails             # the honest blocker (D003)
+    assert "cost_dispatches_zero" not in fails    # auto-waived -> no longer masks
+    assert result["passed"] is False
+    # run-3 ALSO drives the coverage WARNs: quality_trend has 12 entries for its
+    # 16 reviewed (review_tier-bearing) tasks, and agentlens run is null.
+    warns = {f["code"] for f in result["findings"] if f["level"] == "WARN"}
+    assert "quality_trend_sparse" in warns        # 12 trend entries / 16 reviewed
+    assert "agentlens_run_absent" in warns
+
+
+def test_replay_run1_target_type_sparse_trend(tmp_path):
+    # run-1 (target-type): pre-v2.28 exited 0 (cost+timing both waived). It carries
+    # an empty quality_trend ([]), a null agentlens run, and non-canonical task keys
+    # ("1".."6","riskclose"). HONEST DEVIATION from the plan's assumed ground truth:
+    # the plan asserted quality_trend_sparse would fire here, but run-1's tasks carry
+    # NO review_tier/review field, so the coverage check counts reviewed==0 and
+    # quality_trend_sparse legitimately does NOT fire (it is gated on reviewed>0 — a
+    # run with zero reviews has nothing to be sparse against). The genuinely-firing
+    # telemetry-coverage WARN on this fixture is agentlens_run_absent; that is what we
+    # assert. (The quality_trend_sparse regression IS exercised — against the fixture
+    # that actually triggers it — by test_replay_run3_session_package above.)
+    result = fr.evaluate(_load("run1_target_type.json"))
+    warns = {f["code"] for f in result["findings"] if f["level"] == "WARN"}
+    assert "agentlens_run_absent" in warns        # null agentlens -> observability dark
+    # Document the honest non-firing: empty trend + zero reviews => no sparse WARN.
+    reviewed = sum(
+        1 for t in (_load("run1_target_type.json").get("tasks") or {}).values()
+        if t.get("status") in ("COMPLETE", "SKIPPED")
+        and (t.get("review_tier") or t.get("review"))
+    )
+    assert reviewed == 0
+    assert "quality_trend_sparse" not in warns
+    # run-1 is fully waived (cost + timing) so finalize itself passes; the residual
+    # signal is WARN-only, which is the honest pre-v2.28 outcome.
+    assert result["passed"] is True
