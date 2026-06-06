@@ -1,0 +1,802 @@
+{
+  "schema_version": "2",
+  "mode": "interactive_attached",
+  "active_plan": "plan1",
+  "plan": "docs/superpowers/plans/2026-06-06-session-package-decomposition-implementation.md",
+  "spec": "docs/superpowers/specs/2026-06-06-session-package-decomposition-detailed-spec.md",
+  "branch": "session-package-decomposition-implementation-20260606-205440",
+  "worktree": "/Users/kws/.claude/worktrees/session-package-decomposition-implementation-20260606-205440",
+  "orchestrator_dir": "/Users/kws/.claude/orchestrator/session-package-decomposition-implementation-20260606-205440",
+  "source_repo": "/Users/kws/source/android/FixThis/.git",
+  "test_command": "./gradlew :fixthis-mcp:test --no-daemon -q",
+  "baseline": {
+    "passing": 801,
+    "failing": 0
+  },
+  "risk_levels": {
+    "task_1": "low",
+    "task_2": "low",
+    "task_3": "mid",
+    "task_4": "mid",
+    "task_5": "mid",
+    "task_6": "high",
+    "task_7": "mid",
+    "task_8": "mid",
+    "task_9": "mid",
+    "task_10": "mid",
+    "task_11": "high",
+    "task_12": "high",
+    "task_13": "mid",
+    "task_14": "low",
+    "task_15": "mid",
+    "task_16": "mid"
+  },
+  "risk_upgrade_notes": {
+    "task_15": "LOW->MID: modifies SessionPackageLayoutTest.kt created by LOW task_2 (file-conflict upgrade rule)"
+  },
+  "compaction_points": [
+    2,
+    6,
+    10,
+    12,
+    13,
+    16
+  ],
+  "execution_plan": [
+    {
+      "wave": 0,
+      "parallel_groups": [
+        [
+          "task_1"
+        ]
+      ]
+    },
+    {
+      "wave": 1,
+      "parallel_groups": [
+        [
+          "task_2"
+        ]
+      ]
+    },
+    {
+      "wave": 2,
+      "parallel_groups": [
+        [
+          "task_3"
+        ]
+      ]
+    },
+    {
+      "wave": 3,
+      "parallel_groups": [
+        [
+          "task_4"
+        ]
+      ]
+    },
+    {
+      "wave": 4,
+      "parallel_groups": [
+        [
+          "task_5"
+        ]
+      ]
+    },
+    {
+      "wave": 5,
+      "parallel_groups": [
+        [
+          "task_6"
+        ]
+      ]
+    },
+    {
+      "wave": 6,
+      "parallel_groups": [
+        [
+          "task_7"
+        ]
+      ]
+    },
+    {
+      "wave": 7,
+      "parallel_groups": [
+        [
+          "task_8"
+        ]
+      ]
+    },
+    {
+      "wave": 8,
+      "parallel_groups": [
+        [
+          "task_9"
+        ]
+      ]
+    },
+    {
+      "wave": 9,
+      "parallel_groups": [
+        [
+          "task_10"
+        ]
+      ]
+    },
+    {
+      "wave": 10,
+      "parallel_groups": [
+        [
+          "task_11"
+        ]
+      ]
+    },
+    {
+      "wave": 11,
+      "parallel_groups": [
+        [
+          "task_12"
+        ]
+      ]
+    },
+    {
+      "wave": 12,
+      "parallel_groups": [
+        [
+          "task_13"
+        ]
+      ]
+    },
+    {
+      "wave": 13,
+      "parallel_groups": [
+        [
+          "task_14"
+        ]
+      ]
+    },
+    {
+      "wave": 14,
+      "parallel_groups": [
+        [
+          "task_15"
+        ]
+      ]
+    },
+    {
+      "wave": 15,
+      "parallel_groups": [
+        [
+          "task_16"
+        ]
+      ]
+    }
+  ],
+  "task_header_prefix": "## ",
+  "global_constraints": {
+    "shared_files": {
+      "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/architecture/ArchitectureHotspotBudgetTest.kt": [
+        "task_7",
+        "task_10",
+        "task_11",
+        "task_12"
+      ]
+    }
+  },
+  "plan_review": {
+    "status": "SKIPPED",
+    "warnings": []
+  },
+  "implementer_model": {
+    "used": "opus",
+    "default": "sonnet"
+  },
+  "task_complexity": {
+    "task_1": "MEDIUM",
+    "task_2": "SMALL",
+    "task_3": "LARGE",
+    "task_4": "LARGE",
+    "task_5": "MEDIUM",
+    "task_6": "LARGE",
+    "task_7": "LARGE",
+    "task_8": "LARGE",
+    "task_9": "LARGE",
+    "task_10": "LARGE",
+    "task_11": "LARGE",
+    "task_12": "LARGE",
+    "task_13": "MEDIUM",
+    "task_14": "SMALL",
+    "task_15": "MEDIUM",
+    "task_16": "MEDIUM"
+  },
+  "quality_trend": [0.82, 1.0, 1.0, 0.95, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+  "tasks": {
+    "task_1": {
+      "status": "COMPLETE",
+      "risk": "low",
+      "complexity": "MEDIUM",
+      "files": [
+        "docs/architecture/adr/0008-session-package-decomposition.md",
+        "docs/architecture/adr/README.md"
+      ],
+      "files_test": [],
+      "commit": "ac806586286ef45a59b13a0efdaa4d44e552034b",
+      "pre_task_sha": "a81da854610249dbc78d8fb583ab58e9bfc9a323",
+      "escalations": 0,
+      "review_retries": 0,
+      "verifier_retries": 0,
+      "spec_clarifications": 0,
+      "spec_score": 0.95,
+      "quality_score": 0.82,
+      "review_tier": "PASS",
+      "method_audit": {
+        "required": [
+          "verification-before-completion"
+        ],
+        "applied": [
+          {
+            "skill": "code-review-pass",
+            "evidence": {
+              "findings_count": 0,
+              "residual_risk": "ADR status/date uses bullet style vs house ## Status section; spec-mandated, non-blocking"
+            }
+          }
+        ],
+        "missing": [],
+        "waived": [],
+        "pending_batch_verification": true
+      },
+      "timing": {
+        "started": "2026-06-06T21:00:00Z",
+        "implementer_done": "2026-06-06T21:01:00Z",
+        "reviewer_done": "2026-06-06T21:02:00Z",
+        "verifier_done": null,
+        "completed": "2026-06-06T12:02:06Z"
+      }
+    },
+    "task_2": {
+      "status": "COMPLETE",
+      "risk": "low",
+      "complexity": "SMALL",
+      "files": [],
+      "files_test": [
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/architecture/SessionPackageLayoutTest.kt"
+      ],
+      "commit": "8226d975",
+      "pre_task_sha": "ac806586286ef45a59b13a0efdaa4d44e552034b",
+      "escalations": 0,
+      "review_retries": 0,
+      "verifier_retries": 0,
+      "spec_clarifications": 0,
+      "spec_score": 1.0,
+      "quality_score": 1.0,
+      "review_tier": "PASS",
+      "method_audit": {
+        "required": [
+          "test-driven-development",
+          "verification-before-completion",
+          "code-review-pass"
+        ],
+        "applied": [
+          {
+            "skill": "test-driven-development",
+            "evidence": {
+              "note": "deferred-green @Ignore guard; RED deferred to Task 15 enabling task (target layout does not exist yet by design)"
+            }
+          },
+          {
+            "skill": "code-review-pass",
+            "evidence": {
+              "findings_count": 0,
+              "residual_risk": "guard is @Ignore'd so cannot regress suite until Task 15 enables it"
+            }
+          }
+        ],
+        "missing": [],
+        "waived": [],
+        "pending_batch_verification": true
+      },
+      "timing": {
+        "started": "2026-06-06T21:05:00Z",
+        "implementer_done": "2026-06-06T21:06:00Z",
+        "reviewer_done": "2026-06-06T21:07:00Z",
+        "verifier_done": null,
+        "completed": "2026-06-06T12:05:54Z"
+      }
+    },
+    "task_3": {
+      "status": "COMPLETE",
+      "risk": "mid",
+      "complexity": "LARGE",
+      "files": [
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/preview/PreviewCaptureService.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/preview/PreviewSnapshotCache.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/preview/PreviewFingerprintPolicy.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/preview/PreviewCacheRetentionPolicy.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/preview/PreviewSaveReservationTracker.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/preview/ScreenshotArtifactPromoter.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/preview/ScreenFingerprintMismatch.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/console/FeedbackItemRoutes.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/EvidenceCoordinator.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/FeedbackDraftService.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/FeedbackSessionService.kt"
+      ],
+      "files_test": [
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/AnnotationWorkflowTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/EvidenceCoordinatorTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/FeedbackDraftServiceMismatchTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/FeedbackDraftServiceTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/FeedbackSessionServiceTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/PreviewCaptureServiceTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/PreviewFingerprintPolicyTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/PreviewSaveReservationTrackerTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/PreviewSnapshotCacheTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/ScreenshotArtifactPromoterTest.kt"
+      ],
+      "commit": "6510d549eda954b6c3f9f139206557b26afecf46",
+      "pre_task_sha": "8226d9752bffd07877b4ebb7d6363087104bf522",
+      "escalations": 0,
+      "review_retries": 0,
+      "verifier_retries": 0,
+      "spec_clarifications": 0,
+      "spec_score": 1.0,
+      "quality_score": 1.0,
+      "review_tier": "PASS",
+      "method_audit": {
+        "required": [
+          "test-driven-development",
+          "verification-before-completion",
+          "code-review-pass"
+        ],
+        "applied": [
+          {
+            "skill": "test-driven-development",
+            "evidence": {
+              "note": "behavior-preserving move; existing suite is the regression guard; green post-move"
+            }
+          },
+          {
+            "skill": "verification-before-completion",
+            "evidence": {
+              "commands_run": [
+                "./gradlew :fixthis-mcp:test --no-daemon -q",
+                "./gradlew :fixthis-mcp:detekt spotlessApply spotlessCheck -q",
+                "git diff --check"
+              ]
+            }
+          },
+          {
+            "skill": "code-review-pass",
+            "evidence": {
+              "findings_count": 0,
+              "residual_risk": "pure package move; no serialized field/contract identifiers in moved files"
+            }
+          }
+        ],
+        "missing": [],
+        "waived": []
+      },
+      "timing": {
+        "started": "2026-06-06T21:10:00Z",
+        "implementer_done": "2026-06-06T21:17:00Z",
+        "reviewer_done": "2026-06-06T21:19:00Z",
+        "verifier_done": "2026-06-06T21:21:00Z",
+        "completed": "2026-06-06T12:20:01Z"
+      }
+    },
+    "task_4": {
+      "status": "COMPLETE",
+      "risk": "mid",
+      "complexity": "LARGE",
+      "files": [
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/source/HostSourcePathResolver.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/source/HostSourceFreshnessProbe.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/source/SourceCandidateStalenessChecker.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/source/SourceIndexRegistry.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/fixture/RuntimeTrustFixtureRunner.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/FeedbackSessionService.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/TargetEvidenceService.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/tools/FixThisToolDispatcher.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/tools/FixThisTools.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/tools/ScreenToolOperations.kt"
+      ],
+      "files_test": [
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/AnnotationWorkflowTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/EvidenceCoordinatorTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/FeedbackDraftServiceMismatchTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/FeedbackDraftServiceTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/PreviewCaptureServiceTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/TargetEvidenceServiceTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/HostSourceFreshnessProbeTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/HostSourcePathResolverTest.kt",
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/SourceCandidateStalenessCheckerTest.kt"
+      ],
+      "commit": "98b13ef3da87172fa34eced85f6290aec679b6a8",
+      "pre_task_sha": "6510d549eda954b6c3f9f139206557b26afecf46",
+      "escalations": 0,
+      "review_retries": 0,
+      "verifier_retries": 0,
+      "spec_clarifications": 0,
+      "spec_score": 1.0,
+      "quality_score": 0.95,
+      "review_tier": "PASS",
+      "method_audit": {
+        "required": [
+          "test-driven-development",
+          "verification-before-completion",
+          "code-review-pass"
+        ],
+        "applied": [
+          {
+            "skill": "test-driven-development",
+            "evidence": {
+              "note": "behavior-preserving move; existing suite is the regression guard; green post-move"
+            }
+          },
+          {
+            "skill": "verification-before-completion",
+            "evidence": {
+              "commands_run": [
+                "./gradlew :fixthis-mcp:test --no-daemon -q",
+                "./gradlew :fixthis-mcp:detekt spotlessApply spotlessCheck -q",
+                "git diff --check"
+              ]
+            }
+          },
+          {
+            "skill": "code-review-pass",
+            "evidence": {
+              "findings_count": 0,
+              "residual_risk": "pure package move; no serialized identifiers in moved files"
+            }
+          }
+        ],
+        "missing": [],
+        "waived": []
+      },
+      "timing": {
+        "started": "2026-06-06T21:25:00Z",
+        "implementer_done": "2026-06-06T21:33:00Z",
+        "reviewer_done": "2026-06-06T21:35:00Z",
+        "verifier_done": "2026-06-06T21:37:00Z",
+        "completed": "2026-06-06T12:29:21Z"
+      }
+    },
+    "task_5": {
+      "status": "COMPLETE",
+      "risk": "mid",
+      "complexity": "MEDIUM",
+      "files": [
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/connection/ConsoleConnectionService.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/FeedbackSessionService.kt"
+      ],
+      "files_test": [
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/session/ConsoleConnectionServiceTest.kt"
+      ],
+      "commit": "ba02577dae482e976a41c447e56bf8bf93356ed6",
+      "pre_task_sha": "98b13ef3da87172fa34eced85f6290aec679b6a8",
+      "escalations": 0,
+      "review_retries": 0,
+      "verifier_retries": 0,
+      "spec_clarifications": 0,
+      "spec_score": 1.0,
+      "quality_score": 1.0,
+      "review_tier": "PASS",
+      "method_audit": {
+        "required": [
+          "test-driven-development",
+          "verification-before-completion",
+          "code-review-pass"
+        ],
+        "applied": [
+          {
+            "skill": "test-driven-development",
+            "evidence": {
+              "note": "behavior-preserving move; existing suite is the regression guard; green post-move"
+            }
+          },
+          {
+            "skill": "verification-before-completion",
+            "evidence": {
+              "commands_run": [
+                "./gradlew :fixthis-mcp:test --no-daemon -q",
+                "./gradlew :fixthis-mcp:detekt spotlessApply spotlessCheck -q",
+                "git diff --check"
+              ]
+            }
+          },
+          {
+            "skill": "code-review-pass",
+            "evidence": {
+              "findings_count": 0,
+              "residual_risk": "trivial single-file move; no serialized identifiers changed"
+            }
+          }
+        ],
+        "missing": [],
+        "waived": []
+      },
+      "timing": {
+        "started": "2026-06-06T21:40:00Z",
+        "implementer_done": "2026-06-06T21:46:00Z",
+        "reviewer_done": "2026-06-06T21:48:00Z",
+        "verifier_done": "2026-06-06T21:50:00Z",
+        "completed": "2026-06-06T12:35:03Z"
+      }
+    },
+    "task_6": {
+      "status": "COMPLETE",
+      "risk": "high",
+      "complexity": "LARGE",
+      "files": [
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/dto/SessionDtoModels.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/dto/SessionDomainMappers.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/session/dto/FeedbackNavigationModels.kt",
+        "fixthis-mcp/src/main/kotlin/io/github/beyondwin/fixthis/mcp/fixture/RuntimeTrustFixtureRunner.kt",
+        "config/detekt/baseline-fixthis-mcp.xml"
+      ],
+      "files_test": [
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/architecture/ArchitectureHotspotBudgetTest.kt"
+      ],
+      "commit": "d15e0481dbed489cbb8c77730844389fa8997282",
+      "pre_task_sha": "ba02577dae482e976a41c447e56bf8bf93356ed6",
+      "escalations": 0,
+      "review_retries": 0,
+      "verifier_retries": 0,
+      "spec_clarifications": 0,
+      "spec_score": 1.0,
+      "quality_score": 1.0,
+      "review_tier": "PASS",
+      "method_audit": {
+        "required": ["test-driven-development", "verification-before-completion", "code-review-pass"],
+        "applied": [
+          {"skill": "test-driven-development", "evidence": {"note": "behavior-preserving DTO move; existing serialization/round-trip suite is the regression guard; green post-move"}},
+          {"skill": "verification-before-completion", "evidence": {"commands_run": ["./gradlew :fixthis-mcp:test --no-daemon -q", "./gradlew :fixthis-mcp:detekt spotlessCheck -q", "git diff --check ba02577d d15e0481"]}},
+          {"skill": "code-review-pass", "evidence": {"findings_count": 0, "residual_risk": "HIGH dto move; rename-paired diff proves zero @SerialName/field/default/enum change; full suite green; side effects all mechanical"}}
+        ],
+        "missing": [],
+        "waived": []
+      },
+      "timing": {
+        "started": "2026-06-06T12:35:16Z",
+        "implementer_done": "2026-06-06T12:46:00Z",
+        "reviewer_done": "2026-06-06T12:48:00Z",
+        "verifier_done": "2026-06-06T12:52:00Z",
+        "completed": "2026-06-06T12:52:30Z"
+      }
+    },
+    "task_7": {
+      "status": "COMPLETE",
+      "risk": "mid",
+      "complexity": "LARGE",
+      "files": ["session/target/ (6 files)", "session/CompactHandoffRenderer.kt", "session/EditIntentAnalyzer.kt", "session/EditSurfaceCandidateService.kt", "session/FeedbackDraftService.kt", "session/FeedbackQueueFormatter.kt", "session/FeedbackSessionService.kt", "session/HandoffQualitySummary.kt", "session/preview/PreviewCaptureService.kt", "fixture/RuntimeTrustFixtureModels.kt"],
+      "files_test": ["architecture/ArchitectureHotspotBudgetTest.kt", "+8 session test files (import-only)"],
+      "commit": "a5d20ce34ec3c9abd96536e3e07f126126829ba4",
+      "pre_task_sha": "d15e0481dbed489cbb8c77730844389fa8997282",
+      "escalations": 0, "review_retries": 0, "verifier_retries": 0, "spec_clarifications": 0,
+      "spec_score": 1.0, "quality_score": 1.0, "review_tier": "PASS",
+      "method_audit": {"required": ["test-driven-development", "verification-before-completion", "code-review-pass"], "applied": [{"skill": "test-driven-development", "evidence": {"note": "behavior-preserving move; existing suite is regression guard; green"}}, {"skill": "verification-before-completion", "evidence": {"commands_run": ["./gradlew :fixthis-mcp:test --no-daemon -q (EXIT 0)", "rename-paired body-delta diff empty"]}}, {"skill": "code-review-pass", "evidence": {"findings_count": 0, "residual_risk": "non-DTO files; no @SerialName; body deltas only package+import; budget key path-only"}}], "missing": [], "waived": []},
+      "timing": {"started": "2026-06-06T12:53:00Z", "completed": "2026-06-06T13:05:00Z"}
+    },
+    "task_8": {
+      "status": "COMPLETE", "risk": "mid", "complexity": "LARGE",
+      "files": ["session/editsurface/ (7 files)", "session/target/TargetEvidenceService.kt"],
+      "files_test": ["+9 session test files (import-only)"],
+      "commit": "8dabea156a541fcabb2b8a65f1099e124505e456",
+      "pre_task_sha": "a5d20ce34ec3c9abd96536e3e07f126126829ba4",
+      "escalations": 0, "review_retries": 0, "verifier_retries": 0, "spec_clarifications": 0,
+      "spec_score": 1.0, "quality_score": 1.0, "review_tier": "PASS",
+      "method_audit": {"required": ["test-driven-development", "verification-before-completion", "code-review-pass"], "applied": [{"skill": "verification-before-completion", "evidence": {"commands_run": ["./gradlew :fixthis-mcp:test --no-daemon -q (EXIT 0)", "rename-paired body-delta diff empty"]}}, {"skill": "code-review-pass", "evidence": {"findings_count": 0, "residual_risk": "intra-module move; DTOs now imported from session.dto; no budget bump; body deltas only package+import"}}], "missing": [], "waived": []},
+      "timing": {"started": "2026-06-06T13:06:00Z", "completed": "2026-06-06T13:18:00Z"}
+    },
+    "task_9": {
+      "status": "COMPLETE", "risk": "mid", "complexity": "LARGE",
+      "files": ["session/handoff/ (8 files incl. FeedbackHandoffModels.kt @Serializable)", "+18 production reference files (import-only/FQN re-qualify)"],
+      "files_test": ["architecture/ArchitectureHotspotBudgetTest.kt (2 test budget bumps)", "+23 test files (import-only)"],
+      "commit": "f3e47ad8f929f2b27575041502f5089517209491",
+      "pre_task_sha": "8dabea156a541fcabb2b8a65f1099e124505e456",
+      "escalations": 0, "review_retries": 0, "verifier_retries": 0, "spec_clarifications": 0,
+      "spec_score": 1.0, "quality_score": 1.0, "review_tier": "PASS",
+      "method_audit": {"required": ["test-driven-development", "verification-before-completion", "code-review-pass"], "applied": [{"skill": "verification-before-completion", "evidence": {"commands_run": ["./gradlew :fixthis-mcp:test --no-daemon -q (EXIT 0)", "rename-paired body-delta diff empty incl FeedbackHandoffModels.kt", "no @SerialName removed"]}}, {"skill": "code-review-pass", "evidence": {"findings_count": 0, "residual_risk": "FeedbackHandoffModels.kt carries @Serializable FeedbackDelivery/FeedbackHandoffBatch; verified zero serialized value/field/default change; 2 test budget bumps mechanical (import lines)"}}], "missing": [], "waived": []},
+      "timing": {"started": "2026-06-06T13:19:00Z", "completed": "2026-06-06T13:33:00Z"}
+    },
+    "task_10": {
+      "status": "COMPLETE", "risk": "mid", "complexity": "LARGE",
+      "files": ["session/draft/ (4 files)", "console/FeedbackItemRoutes.kt", "session/FeedbackSessionService.kt", "session/preview/PreviewFingerprintPolicy.kt"],
+      "files_test": ["architecture/ArchitectureHotspotBudgetTest.kt (budget key path)", "+6 session test files (import-only)"],
+      "commit": "22785e67c3106d1c48c03f519dae56d3161121fa",
+      "pre_task_sha": "f3e47ad8f929f2b27575041502f5089517209491",
+      "escalations": 0, "review_retries": 0, "verifier_retries": 0, "spec_clarifications": 0,
+      "spec_score": 1.0, "quality_score": 1.0, "review_tier": "PASS",
+      "method_audit": {"required": ["test-driven-development", "verification-before-completion", "code-review-pass"], "applied": [{"skill": "verification-before-completion", "evidence": {"commands_run": ["./gradlew :fixthis-mcp:test --no-daemon -q (EXIT 0)", "rename-paired body-delta diff empty"]}}, {"skill": "code-review-pass", "evidence": {"findings_count": 0, "residual_risk": "service/workflow files, no serialization annotations; budget key path-only"}}], "missing": [], "waived": []},
+      "timing": {"started": "2026-06-06T13:34:00Z", "completed": "2026-06-06T13:46:00Z"}
+    },
+    "task_11": {
+      "status": "COMPLETE", "risk": "high", "complexity": "LARGE",
+      "files": ["session/lifecycle/store/ (9 files incl. @Serializable FeedbackSessionPersistence.kt + FeedbackSessionSummary.kt schemaVersion 2.0)", "+22 production reference files (import-only)"],
+      "files_test": ["architecture/ArchitectureHotspotBudgetTest.kt (2 budget key re-path + FeedbackSessionStoreTest 1309->1313)", "+38 test files (import-only)"],
+      "commit": "87e01ea806c9ef0531b6c2f5906913f812b62090",
+      "pre_task_sha": "22785e67c3106d1c48c03f519dae56d3161121fa",
+      "escalations": 0, "review_retries": 0, "verifier_retries": 0, "spec_clarifications": 0,
+      "spec_score": 1.0, "quality_score": 1.0, "review_tier": "PASS",
+      "method_audit": {"required": ["test-driven-development", "verification-before-completion", "code-review-pass"], "applied": [{"skill": "verification-before-completion", "evidence": {"commands_run": ["./gradlew :fixthis-mcp:test --no-daemon -q (EXIT 0, full mcp suite incl. persistence/serialization round-trip)", "rename-paired body-delta diff empty for all 9", "no persisted-constant/serialization line removed"]}}, {"skill": "code-review-pass", "evidence": {"findings_count": 0, "residual_risk": "HIGH persistence store move; verified no file-path constant/JSON key/@SerialName/schemaVersion change; 2 budget keys re-pathed + 1 test budget +4 lines mechanical"}}], "missing": [], "waived": []},
+      "timing": {"started": "2026-06-06T13:47:00Z", "completed": "2026-06-06T14:02:00Z"}
+    },
+    "task_12": {
+      "status": "COMPLETE", "risk": "high", "complexity": "LARGE",
+      "files": ["session/lifecycle/event/ (7 files)", "session/lifecycle/event/eventlog/ (4 files, incl. @Serializable SessionEvent.kt + EventLogCheckpoint.kt)", "session/lifecycle/store/{FeedbackSessionStore,FeedbackSessionStoreDelegate}.kt", "tools/FixThisTools.kt"],
+      "files_test": ["architecture/ArchitectureHotspotBudgetTest.kt (SessionReplayEngine budget re-path)", "+~12 test files (import-only)"],
+      "commit": "bd1aadfbde37cb3e47f1599f0af0f094f957541f",
+      "pre_task_sha": "87e01ea806c9ef0531b6c2f5906913f812b62090",
+      "escalations": 0, "review_retries": 0, "verifier_retries": 0, "spec_clarifications": 0,
+      "spec_score": 1.0, "quality_score": 1.0, "review_tier": "PASS",
+      "method_audit": {"required": ["test-driven-development", "verification-before-completion", "code-review-pass"], "applied": [{"skill": "verification-before-completion", "evidence": {"commands_run": ["./gradlew :fixthis-mcp:test --no-daemon -q (EXIT 0, all event-log replay/compaction tests pass)", "rename-paired body-delta diff empty for all 11", "no serialization/event-constant line removed", "root now holds only FeedbackSessionService.kt"]}}, {"skill": "code-review-pass", "evidence": {"findings_count": 0, "residual_risk": "HIGH event-sourcing move; verified no @SerialName/event-discriminator/field/default/persisted-log constant change; final move task; session root reduced to facade only"}}], "missing": [], "waived": []},
+      "timing": {"started": "2026-06-06T14:03:00Z", "completed": "2026-06-06T14:18:00Z"}
+    },
+    "task_13": {
+      "status": "COMPLETE", "risk": "mid", "complexity": "MEDIUM",
+      "files": ["docs/architecture/adr/0008-session-package-decomposition.md (## Exceptions E1-E4)"],
+      "files_test": ["architecture/SessionPackageBoundaryTest.kt (new, 9 @Test)"],
+      "commit": "7d952b5733d386df9c62b135175bb0ed46bad0b6",
+      "pre_task_sha": "bd1aadfbde37cb3e47f1599f0af0f094f957541f",
+      "escalations": 0, "review_retries": 0, "verifier_retries": 0, "spec_clarifications": 0,
+      "spec_score": 1.0, "quality_score": 0.95, "review_tier": "PASS",
+      "method_audit": {"required": ["test-driven-development", "verification-before-completion", "code-review-pass"], "applied": [{"skill": "test-driven-development", "evidence": {"note": "boundary-rule test; 4 rules failed on genuine pre-existing couplings, relaxed per spec Step 4 with ADR exceptions; 9/9 green"}}, {"skill": "verification-before-completion", "evidence": {"commands_run": ["./gradlew :fixthis-mcp:test -q --tests '*SessionPackageBoundaryTest' (EXIT 0, 9/9)", "confirmed E1-E4 couplings pre-exist at a81da854 (pre-decomposition)"]}}, {"skill": "code-review-pass", "evidence": {"findings_count": 0, "residual_risk": "4 relaxations (preview->store/target, target/event/store->handoff) verified pre-existing domain/shared-helper couplings, not move artifacts; each minimally scoped + ADR-documented; future ADR may lift shared handoff models to dto/domain"}}], "missing": [], "waived": []},
+      "timing": {"started": "2026-06-06T14:19:00Z", "completed": "2026-06-06T14:28:00Z"}
+    },
+    "task_14": {
+      "status": "COMPLETE", "risk": "low", "complexity": "SMALL",
+      "files": ["docs/architecture/overview.md"],
+      "files_test": [],
+      "commit": "0fbd69d0073f2b54c0515de718577f0a6b081497",
+      "pre_task_sha": "7d952b5733d386df9c62b135175bb0ed46bad0b6",
+      "escalations": 0, "review_retries": 0, "verifier_retries": 0, "spec_clarifications": 0,
+      "spec_score": 1.0, "quality_score": 0.9, "review_tier": "PASS",
+      "method_audit": {"required": ["verification-before-completion"], "applied": [{"skill": "code-review-pass", "evidence": {"findings_count": 0, "residual_risk": "docs-only; updated stale session/ paths to sub-packages + edit-surface lift note; only overview.md touched; doc-consistency checker deferred to Task 16 (needs npm install)"}}], "missing": [], "waived": [], "pending_batch_verification": true},
+      "timing": {"started": "2026-06-06T14:29:00Z", "completed": "2026-06-06T14:33:00Z"}
+    },
+    "task_15": {
+      "status": "COMPLETE", "risk": "mid", "complexity": "MEDIUM",
+      "files": [],
+      "files_test": ["fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/architecture/SessionPackageLayoutTest.kt"],
+      "commit": "8c5a9297f4fd34d7a121139214ab773b637eafa0",
+      "pre_task_sha": "0fbd69d0073f2b54c0515de718577f0a6b081497",
+      "escalations": 0, "review_retries": 0, "verifier_retries": 0, "spec_clarifications": 0,
+      "spec_score": 1.0, "quality_score": 1.0, "review_tier": "PASS",
+      "method_audit": {"required": ["test-driven-development", "verification-before-completion", "code-review-pass"], "applied": [{"skill": "test-driven-development", "evidence": {"note": "enabling the deferred-green layout guard from Task 2; guard now active and PASSES (session root == FeedbackSessionService.kt only)"}}, {"skill": "verification-before-completion", "evidence": {"commands_run": ["./gradlew :fixthis-mcp:test --no-daemon -q --tests '*SessionPackageLayoutTest' (EXIT 0)", "./gradlew :fixthis-mcp:detekt spotlessApply spotlessCheck -q (EXIT 0)", "git diff --check clean"]}}, {"skill": "code-review-pass", "evidence": {"findings_count": 0, "residual_risk": "2-line deletion (@Ignore + import); body diff confirmed exactly those 2 lines; MID module-level verification subsumed by Task 16 full matrix"}}], "missing": [], "waived": [],
+      "verifier_note": "MID per-task verification folded into Task 16 full-matrix run (immediately following); :fixthis-mcp:test executes there"},
+      "timing": {"started": "2026-06-06T14:34:00Z", "completed": "2026-06-06T14:40:00Z"}
+    },
+    "task_16": {
+      "status": "COMPLETE", "risk": "mid", "complexity": "MEDIUM",
+      "files": [],
+      "files_test": [],
+      "commit": null,
+      "pre_task_sha": "8c5a9297f4fd34d7a121139214ab773b637eafa0",
+      "escalations": 0, "review_retries": 0, "verifier_retries": 0, "spec_clarifications": 0,
+      "spec_score": 1.0, "quality_score": 1.0, "review_tier": "PASS",
+      "method_audit": {"required": ["verification-before-completion"], "applied": [{"skill": "verification-before-completion", "evidence": {"commands_run": ["full 5-module matrix :fixthis-compose-core:test :fixthis-cli:test :fixthis-mcp:test :fixthis-compose-sidekick:testDebugUnitTest :fixthis-gradle-plugin:test (BUILD SUCCESSFUL)", "./gradlew detekt spotlessCheck (BUILD SUCCESSFUL)", "node scripts/check-doc-consistency.mjs (All rules pass)", "git diff --check (clean)", "git diff main: 174 files, 60 renames; non-session test changes import-only; 0 @SerialName/schemaVersion removed; BridgeProtocol.VERSION unchanged"]}}], "missing": [], "waived": [],
+      "verifier_note": "verification-only task; no commit produced; confirmed zero contract drift across full diff vs main"},
+      "timing": {"started": "2026-06-06T14:41:00Z", "completed": "2026-06-06T14:55:00Z"}
+    }
+  },
+  "task_summaries": {
+    "task_1": {
+      "files": [
+        "docs/architecture/adr/0008-session-package-decomposition.md",
+        "docs/architecture/adr/README.md"
+      ],
+      "exposed_apis": [],
+      "key_decision": "ADR-0008 records package-not-module decomposition; edit-surface lift deferred",
+      "for_next_tasks": "Sub-package layout: lifecycle/{store,event},draft,target,editsurface,handoff,preview,source,connection,dto; session root keeps only FeedbackSessionService facade"
+    },
+    "task_2": {
+      "files": [
+        "fixthis-mcp/src/test/kotlin/io/github/beyondwin/fixthis/mcp/architecture/SessionPackageLayoutTest.kt"
+      ],
+      "exposed_apis": [
+        "SessionPackageLayoutTest"
+      ],
+      "key_decision": "@Ignore layout guard added; enabled in Task 15 once moves complete",
+      "for_next_tasks": "After all moves, only FeedbackSessionService.kt may remain at session/ root (non-recursive); Task 15 removes @Ignore"
+    },
+    "task_3": {
+      "files": [
+        "session/preview/ (7 files)"
+      ],
+      "exposed_apis": [
+        "package io.github.beyondwin.fixthis.mcp.session.preview"
+      ],
+      "key_decision": "preview group moved to session/preview; symbols still referenced via session.* back-imports",
+      "for_next_tasks": "Preview symbols (PreviewCaptureService, PreviewSnapshotCache, PreviewRecord, PreviewSaveSlot, toCapturedScreen, etc.) now in session.preview package; root has 50 .kt files"
+    },
+    "task_4": {
+      "files": [
+        "session/source/ (4 files)"
+      ],
+      "exposed_apis": [
+        "package io.github.beyondwin.fixthis.mcp.session.source"
+      ],
+      "key_decision": "host source freshness group moved to session/source",
+      "for_next_tasks": "Source symbols (HostSourcePathResolver, HostSourceFreshnessProbe, HostSourceFreshnessResult, HostSourcePathResolutionReason, SourceCandidateStalenessChecker, SourceIndexRegistry) now in session.source; root has 46 .kt files"
+    },
+    "task_5": {
+      "files": [
+        "session/connection/ConsoleConnectionService.kt"
+      ],
+      "exposed_apis": [
+        "package io.github.beyondwin.fixthis.mcp.session.connection"
+      ],
+      "key_decision": "ConsoleConnectionService moved to session/connection",
+      "for_next_tasks": "ConsoleConnectionService now in session.connection; root has 45 .kt files"
+    },
+    "task_6": {
+      "files": [
+        "session/dto/ (SessionDtoModels.kt, SessionDomainMappers.kt, FeedbackNavigationModels.kt)"
+      ],
+      "exposed_apis": [
+        "package io.github.beyondwin.fixthis.mcp.session.dto"
+      ],
+      "key_decision": "session DTOs + mappers moved to session/dto; ZERO serialized identifier change (rename-paired diff empty, full suite green)",
+      "for_next_tasks": "All DTO/mapper symbols (SessionDto, SnapshotDto, AnnotationDto, EditSurfaceCandidateDto, FeedbackNavigation*, toDomainSession/toSessionDto, etc.) now in session.dto; FeedbackDelivery/FeedbackHandoffBatch still at session root (back-imported); root has 42 .kt files; detekt baseline + ArchitectureHotspotBudgetTest budgets already re-keyed for dto path"
+    }
+  },
+  "spec_edits": [],
+  "low_tasks_pending_verification": [],
+  "low_tasks_batch_verified": ["task_1", "task_2", "task_14"],
+  "last_compaction_after_task": 16,
+  "last_completed_task": "task_16",
+  "last_completed_at": "2026-06-06T14:55:00Z",
+  "current_task": 16,
+  "current_step_within_task": 3,
+  "current_pre_task_sha": "8c5a9297f4fd34d7a121139214ab773b637eafa0",
+  "current_pre_group_sha": null,
+  "current_review_retries": 0,
+  "current_verifier_retries": 0,
+  "current_escalation_count": 0,
+  "current_previous_issues": [],
+  "phase_summaries": [],
+  "phase_doc_commits": [],
+  "chain_resume": null,
+  "budget_cap_usd": null,
+  "budget_action": "warn",
+  "dispatch_config": {
+    "plan_reviewer": "agent",
+    "verifier_batch": "agent",
+    "verifier_per_task": "agent",
+    "transition_combined": "agent",
+    "docs_updater_phase": "agent",
+    "docs_updater_final": "agent",
+    "final_sweep": "agent",
+    "plan_reviewer_model": null
+  },
+  "verification_gaps": [],
+  "docs_gaps": [],
+  "cost_ledger": {
+    "by_task": {},
+    "by_role": {},
+    "by_model": {},
+    "totals": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cached_read_tokens": 0,
+      "cached_write_tokens": 0,
+      "cost_usd": 0.0,
+      "dispatches": 0
+    }
+  },
+  "archive": null,
+  "agentlens_orchestration_run": null,
+  "agentlens_healthy": false,
+  "context_budget": {
+    "effective_input_budget": 170000,
+    "threshold_ratio": 0.6,
+    "threshold_tokens": 102000,
+    "last_evaluation_at": null,
+    "last_evaluation_tokens": 0
+  },
+  "timestamps": {
+    "started_at": "2026-06-06T11:57:19Z",
+    "completed_at": "2026-06-06T14:58:00Z"
+  }
+}
