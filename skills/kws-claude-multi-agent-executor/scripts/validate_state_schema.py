@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ VALID_MODES = {
     "interactive_session", "interactive_attached", "headless_pending",
     "headless_running", "headless_chained", "plan_chain_running", "plan2_running",
 }
+TASK_KEY_RE = re.compile(r"^task_\d+(_[a-z0-9-]+)?$")  # task_3, task_7_remediation
 
 
 def _active_trees(state: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
@@ -99,6 +101,12 @@ def validate(state: dict[str, Any]) -> dict[str, Any]:
         if tasks and summaries:
             warn(scope, "task_summaries_alongside_tasks",
                  "both tasks{} and task_summaries{} populated (legacy mirror)")
+
+        bad_keys = [k for k in tasks if not TASK_KEY_RE.match(str(k))]
+        if bad_keys:
+            warn(scope, "task_key_noncanonical",
+                 f"non-canonical task keys: {sorted(bad_keys)} "
+                 "(expected task_<N>[_<suffix>])")
 
     return {
         "passed": violations == [],
