@@ -146,6 +146,22 @@ def evaluate(state: dict[str, Any]) -> dict[str, Any]:
             f"all {terminal_total} terminal tasks have null timing.started "
             "(phase_boundary.py task-start never ran); set timing_tracking_waived to opt out")
 
+    # v2.28 (D003): telemetry coverage — WARN only (best-effort per v2.10/v2.17).
+    reviewed = 0
+    trend_len = 0
+    for _, tree in _active_trees(state):
+        trend_len += len(tree.get("quality_trend") or [])
+        for task in (tree.get("tasks") or {}).values():
+            if task.get("status") in ("COMPLETE", "SKIPPED") and (
+                    task.get("review_tier") or task.get("review")):
+                reviewed += 1
+    if reviewed > 0 and trend_len < reviewed:
+        add("WARN", "state", "quality_trend_sparse",
+            f"quality_trend has {trend_len} entries for {reviewed} reviewed tasks")
+    if not state.get("agentlens_orchestration_run"):
+        add("WARN", "state", "agentlens_run_absent",
+            "agentlens_orchestration_run is null — observability pipeline was dark")
+
     # v2.27 (D003): worktree safety hooks must be wired. Backstop for a run that
     # skipped Phase 0 Step 2.5 (so the Stop gate was never installed) yet still
     # reached the Phase 2 finalize call — the residual gap the --check preflight

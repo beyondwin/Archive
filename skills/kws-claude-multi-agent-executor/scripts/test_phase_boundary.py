@@ -85,6 +85,38 @@ def test_task_complete_no_run_id_still_writes_state(tmp_path, _no_real_emit):
     assert _no_real_emit[0][0] is None
 
 
+# --- task-complete: quality_trend writer (v2.28 D003) ----------------------
+
+def test_task_complete_appends_quality_score_to_trend(tmp_path):
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}})
+    pb.cmd_task_complete(p, "task_1", {"status": "COMPLETE", "quality_score": 0.9}, None)
+    assert _read(p)["quality_trend"] == [0.9]
+
+
+def test_task_complete_quality_trend_caps_at_10(tmp_path):
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {},
+                          "quality_trend": [0.1] * 10})
+    pb.cmd_task_complete(p, "task_1", {"status": "COMPLETE", "quality_score": 0.95}, None)
+    qt = _read(p)["quality_trend"]
+    assert len(qt) == 10
+    assert qt[-1] == 0.95 and qt[0] == 0.1  # oldest dropped, newest kept
+
+
+def test_task_complete_no_quality_score_leaves_trend_untouched(tmp_path):
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}, "quality_trend": [0.5]})
+    pb.cmd_task_complete(p, "task_1", {"status": "COMPLETE"}, None)
+    assert _read(p)["quality_trend"] == [0.5]
+
+
+def test_task_complete_quality_trend_in_active_tree(tmp_path):
+    p = _write(tmp_path, {"schema_version": "2", "active_plan": 1,
+                          "plan_chain": [{"tasks": {}}, {"tasks": {}}]})
+    pb.cmd_task_complete(p, "task_0", {"status": "COMPLETE", "quality_score": 0.8}, None)
+    st = _read(p)
+    assert st["plan_chain"][1]["quality_trend"] == [0.8]
+    assert "quality_trend" not in st  # not written top-level
+
+
 # --- phase-emit ------------------------------------------------------------
 
 def test_phase_emit_phase_0_started_setdefaults_started_at(tmp_path, _no_real_emit):

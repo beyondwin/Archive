@@ -197,9 +197,8 @@ Record per-task into the active task tree at **`<active>.tasks.task_N`** (resolv
 "review_tier": "PASS | WARN | FAIL"
 ```
 
-Update the rolling quality-trend buffer (active-tree-aware):
-- Append `quality_score` to `<active>.quality_trend` (max 10, drop oldest). This resolves to `state.plan_chain[state.active_plan].quality_trend` for multi-plan, top-level `state.quality_trend` for single-plan.
-- After append, if length ≥ 5 AND mean of last 5 < mean of first 5 by > 0.10: surface at the NEXT compaction point (T3 message) — `"Quality trending down: last 5 tasks averaged X.XX vs first 5 at Y.YY. Consider manual review of recent tasks."`. Do NOT halt automatically.
+Rolling quality-trend buffer (active-tree-aware): the trend is appended automatically by `phase_boundary.py task-complete` whenever the task result carries `quality_score` — there is exactly one writer (v2.28 D003: max 10, drop oldest, active-tree-aware). Do NOT append it by hand here.
+- After the trend is written, if length ≥ 5 AND mean of last 5 < mean of first 5 by > 0.10: surface at the NEXT compaction point (T3 message) — `"Quality trending down: last 5 tasks averaged X.XX vs first 5 at Y.YY. Consider manual review of recent tasks."`. Do NOT halt automatically.
 
 Then branch on tier:
 
