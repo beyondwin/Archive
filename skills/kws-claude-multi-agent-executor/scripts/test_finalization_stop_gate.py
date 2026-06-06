@@ -233,3 +233,32 @@ def test_unwired_hooks_waived_allows_stop(tmp_path):
                  hooks_wiring_waived=True)
     r = _run(_hook(tmp_path), _state(tmp_path, state))
     assert r.returncode == 0, r.stderr
+
+
+# v2.28 (D002): the run-3 shape — every task terminal, but status:null and
+# current_task still set (Phase 2 never ran). Matches neither prose end-signal;
+# the v2.28 all-terminal trigger must still force the gate -> exit 2.
+RUN3_ALL_TERMINAL_UNFINALIZED = {
+    "status": None,
+    "schema_version": "2",
+    "mode": "interactive_attached",
+    "timestamps": {"started_at": "2026-06-06T11:57:00Z", "completed_at": None},
+    "cost_ledger": {"totals": {"dispatches": 0}},
+    "dispatch_config": {"mode": "interactive_attached"},
+    "current_task": 2,
+    "last_completed_task": None,
+    "risk_levels": {"task_1": "low", "task_2": "low"},
+    "execution_plan": [["task_1"], ["task_2"]],
+    "tasks": {
+        "task_1": {"status": "COMPLETE", "verifier": "PASS",
+                   "timing": {"started": "x", "completed": "y"}},
+        "task_2": {"status": "COMPLETE", "verifier": "PASS",
+                   "timing": {"started": "x", "completed": "y"}},
+    },
+}
+
+
+def test_all_terminal_unfinalized_blocks_stop(tmp_path):
+    r = _run(_hook(tmp_path), _state(tmp_path, RUN3_ALL_TERMINAL_UNFINALIZED))
+    assert r.returncode == 2, r.stdout
+    assert "finalization gate" in r.stderr.lower()

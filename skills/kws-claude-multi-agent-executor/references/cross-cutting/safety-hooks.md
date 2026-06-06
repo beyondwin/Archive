@@ -121,8 +121,13 @@ attached-mode schema improvisation that Phase 2 Step 1.5 would otherwise never s
   negligible.
 - **End-signal gate.** Only once **every** task is terminal AND a real end-signal
   fired (run-level `status: COMPLETE`, or `current_task` cleared with a recorded
-  `last_completed_task`) does it run the full validators. A fresh run matches
-  neither and is allowed to stop.
+  `last_completed_task`, or — v2.28 (D002) — simply **every declared task
+  terminal** at Stop time) does it run the full validators. The all-terminal
+  trigger is structural: the Stop hook fires only when the session is genuinely
+  ending, so an all-terminal run that reaches Stop unfinalized means Phase 2 was
+  skipped (a run about to finalize sets `status: COMPLETE`, caught by the first
+  condition — no false positive). The `TOTAL > 0` guard preserves the fresh-run
+  exemption: a fresh run has no tasks and is allowed to stop.
 - **Full gates.** Runs `finalize_run.py --check` and `validate_state_schema.py`. If
   either reports a blocking problem, exit 2 with corrective guidance on stderr so
   Claude Code surfaces it and the orchestrator completes Phase 2 before stopping.
