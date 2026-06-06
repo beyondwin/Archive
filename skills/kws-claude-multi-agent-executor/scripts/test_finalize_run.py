@@ -1,7 +1,9 @@
 """Tests for finalize_run.py — finalization-consistency gate + safe --fix."""
 import json
 import os
+import pathlib
 import sys
+from datetime import datetime  # noqa: E402  (top of file alongside json/os/sys)
 
 import pytest
 
@@ -278,4 +280,201 @@ def test_partial_timing_is_warn_not_fail(tmp_path):
     warns = {f["code"] for f in result["findings"] if f["level"] == "WARN"}
     assert "timing_tracking_absent" not in fails  # not ALL null -> no aggregate FAIL
     assert "timing_started_missing" in warns
+    assert result["passed"] is True
+
+
+# --- v2.28 (D003): timing_inverted — physically impossible ordering --------
+
+# run-3 shape: started is a KST wall-clock with a bogus Z, completed is real UTC,
+# so started (21:00Z) > completed (12:02Z) — completed 9h "before" started.
+INVERTED = {
+    "status": "COMPLETE",
+    "timestamps": {"started_at": "a", "completed_at": "b"},
+    "cost_ledger": {"totals": {"dispatches": 4}},
+    "tasks": {
+        "task_1": {"status": "COMPLETE", "verifier": "PASS",
+                   "timing": {"started": "2026-06-06T21:00:00Z",
+                              "completed": "2026-06-06T12:02:06Z"}},
+    },
+}
+
+
+def test_inverted_timing_is_blocking_fail(tmp_path):
+    result = fr.evaluate(INVERTED)
+    fails = {f["code"] for f in result["findings"] if f["level"] == "FAIL"}
+    assert "timing_inverted" in fails
+    assert result["passed"] is False
+
+
+def test_inverted_timing_fails_even_when_waived(tmp_path):
+    # timing_tracking_waived governs ABSENCE, not corruption -> still FAIL.
+    waived = dict(INVERTED, timing_tracking_waived=True, cost_tracking_waived=True)
+    fails = {f["code"] for f in fr.evaluate(waived)["findings"] if f["level"] == "FAIL"}
+    assert "timing_inverted" in fails
+
+
+def test_normal_ordering_no_inverted(tmp_path):
+    ok = {
+        "status": "COMPLETE",
+        "timestamps": {"started_at": "a", "completed_at": "b"},
+        "cost_ledger": {"totals": {"dispatches": 1}},
+        "tasks": {"task_1": {"status": "COMPLETE", "verifier": "PASS",
+                             "timing": {"started": "2026-06-06T12:00:00Z",
+                                        "completed": "2026-06-06T12:02:06Z"}}},
+    }
+    codes = {f["code"] for f in fr.evaluate(ok)["findings"]}
+    assert "timing_inverted" not in codes
+
+
+def test_unparseable_timing_no_inverted_no_crash(tmp_path):
+    garbage = {
+        "status": "COMPLETE",
+        "timestamps": {"started_at": "a", "completed_at": "b"},
+        "cost_ledger": {"totals": {"dispatches": 1}},
+        "tasks": {"task_1": {"status": "COMPLETE", "verifier": "PASS",
+                             "timing": {"started": "not-a-date", "completed": "also-bad"}}},
+    }
+    codes = {f["code"] for f in fr.evaluate(garbage)["findings"]}
+    assert "timing_inverted" not in codes  # falls through to null/absent path
+
+
+# MIXED aware+naive pair: started carries a 'Z' (aware), completed is bare
+# (naive). Without _parse_iso's aware->naive UTC normalization the comparison
+# would raise "TypeError: can't compare offset-naive and offset-aware datetimes".
+# Coverage for the recorded task_3 residual.
+
+def test_timing_inverted_mixed_aware_naive_pair_no_typeerror(tmp_path):
+    # started aware (Z), completed naive — normalization must let them compare
+    state = {
+        "status": "COMPLETE", "cost_tracking_waived": True, "timing_tracking_waived": True,
+        "timestamps": {"started_at": "a", "completed_at": "b"},
+        "tasks": {"task_1": {"status": "COMPLETE", "verifier": "PASS", "review_tier": "PASS",
+                             "timing": {"started": "2026-06-07T21:00:00Z",
+                                        "completed": "2026-06-07T12:00:00"}}},
+    }
+    result = fr.evaluate(state)  # must NOT raise
+    fails = {f["code"] for f in result["findings"] if f["level"] == "FAIL"}
+    assert "timing_inverted" in fails
+
+
+def test_timing_ordered_mixed_aware_naive_pair_clean(tmp_path):
+    state = {
+        "status": "COMPLETE", "cost_tracking_waived": True, "timing_tracking_waived": True,
+        "timestamps": {"started_at": "a", "completed_at": "b"},
+        "tasks": {"task_1": {"status": "COMPLETE", "verifier": "PASS", "review_tier": "PASS",
+                             "timing": {"started": "2026-06-07T12:00:00Z",
+                                        "completed": "2026-06-07T21:00:00"}}},
+    }
+    codes = {f["code"] for f in fr.evaluate(state)["findings"]}
+    assert "timing_inverted" not in codes
+
+
+# --- v2.28 (D003): telemetry coverage WARNs (never FAIL) -------------------
+
+def test_sparse_quality_trend_warns_not_fails(tmp_path):
+    sparse = {
+        "status": "COMPLETE",
+        "timestamps": {"started_at": "a", "completed_at": "b"},
+        "cost_ledger": {"totals": {"dispatches": 2}},
+        "agentlens_orchestration_run": "run-x",
+        "quality_trend": [],
+        "tasks": {
+            "task_1": {"status": "COMPLETE", "verifier": "PASS", "review_tier": "PASS",
+                       "timing": {"started": "s", "completed": "c"}},
+            "task_2": {"status": "COMPLETE", "verifier": "PASS", "review_tier": "PASS",
+                       "timing": {"started": "s", "completed": "c"}},
+        },
+    }
+    result = fr.evaluate(sparse)
+    warns = {f["code"] for f in result["findings"] if f["level"] == "WARN"}
+    assert "quality_trend_sparse" in warns
+    assert result["passed"] is True  # WARN never blocks
+
+
+def test_full_quality_trend_no_sparse_warning(tmp_path):
+    full = {
+        "status": "COMPLETE",
+        "timestamps": {"started_at": "a", "completed_at": "b"},
+        "cost_ledger": {"totals": {"dispatches": 2}},
+        "agentlens_orchestration_run": "run-x",
+        "quality_trend": [0.9, 0.8],
+        "tasks": {
+            "task_1": {"status": "COMPLETE", "verifier": "PASS", "review_tier": "PASS",
+                       "timing": {"started": "s", "completed": "c"}},
+            "task_2": {"status": "COMPLETE", "verifier": "PASS", "review_tier": "PASS",
+                       "timing": {"started": "s", "completed": "c"}},
+        },
+    }
+    codes = {f["code"] for f in fr.evaluate(full)["findings"]}
+    assert "quality_trend_sparse" not in codes
+
+
+def test_null_agentlens_run_warns(tmp_path):
+    codes = {f["code"] for f in fr.evaluate(RUN3_CLEAN)["findings"]}
+    assert "agentlens_run_absent" in codes  # RUN3_CLEAN has no agentlens key
+
+
+def test_present_agentlens_run_no_warning(tmp_path):
+    state = dict(RUN3_CLEAN, agentlens_orchestration_run="run-y")
+    codes = {f["code"] for f in fr.evaluate(state)["findings"]}
+    assert "agentlens_run_absent" not in codes
+
+
+# --- v2.28 regression replay against the three REAL captured driving-runs -----
+# scripts/fixtures/v2.28/ holds verbatim post-v2.27 state.json snapshots from
+# three real runs (captured in Task 0). These replay the actual instrumentation
+# defects that motivated v2.28 — no synthetic stand-ins — so the new severities
+# are proven against the exact shapes that slipped through before.
+_FIX = pathlib.Path(__file__).resolve().parent / "fixtures" / "v2.28"
+
+
+def _load(name):
+    return json.loads((_FIX / name).read_text(encoding="utf-8"))
+
+
+def test_replay_run3_session_package(tmp_path):
+    # run-3 (session-package-decomposition): the v2.27 finalize exited 1 ONLY on
+    # cost_dispatches_zero, masking a second, worse corruption — tasks 1-5 carry a
+    # hand-typed KST wall-clock stamped 'Z' for `completed`, making started>completed
+    # (e.g. 21:00:00Z started, 12:02:06Z completed). Simulate C1's Phase-0 cost
+    # auto-waive so the cost FAIL drops out and assert the timing corruption is the
+    # honest blocker that v2.28 now surfaces.
+    state = _load("run3_session_package.json")
+    state["cost_tracking_waived"] = True  # simulate C1's Phase-0 auto-waive
+    result = fr.evaluate(state)
+    fails = {f["code"] for f in result["findings"] if f["level"] == "FAIL"}
+    assert "timing_inverted" in fails             # the honest blocker (D003)
+    assert "cost_dispatches_zero" not in fails    # auto-waived -> no longer masks
+    assert result["passed"] is False
+    # run-3 ALSO drives the coverage WARNs: quality_trend has 12 entries for its
+    # 16 reviewed (review_tier-bearing) tasks, and agentlens run is null.
+    warns = {f["code"] for f in result["findings"] if f["level"] == "WARN"}
+    assert "quality_trend_sparse" in warns        # 12 trend entries / 16 reviewed
+    assert "agentlens_run_absent" in warns
+
+
+def test_replay_run1_target_type_sparse_trend(tmp_path):
+    # run-1 (target-type): pre-v2.28 exited 0 (cost+timing both waived). It carries
+    # an empty quality_trend ([]), a null agentlens run, and non-canonical task keys
+    # ("1".."6","riskclose"). HONEST DEVIATION from the plan's assumed ground truth:
+    # the plan asserted quality_trend_sparse would fire here, but run-1's tasks carry
+    # NO review_tier/review field, so the coverage check counts reviewed==0 and
+    # quality_trend_sparse legitimately does NOT fire (it is gated on reviewed>0 — a
+    # run with zero reviews has nothing to be sparse against). The genuinely-firing
+    # telemetry-coverage WARN on this fixture is agentlens_run_absent; that is what we
+    # assert. (The quality_trend_sparse regression IS exercised — against the fixture
+    # that actually triggers it — by test_replay_run3_session_package above.)
+    result = fr.evaluate(_load("run1_target_type.json"))
+    warns = {f["code"] for f in result["findings"] if f["level"] == "WARN"}
+    assert "agentlens_run_absent" in warns        # null agentlens -> observability dark
+    # Document the honest non-firing: empty trend + zero reviews => no sparse WARN.
+    reviewed = sum(
+        1 for t in (_load("run1_target_type.json").get("tasks") or {}).values()
+        if t.get("status") in ("COMPLETE", "SKIPPED")
+        and (t.get("review_tier") or t.get("review"))
+    )
+    assert reviewed == 0
+    assert "quality_trend_sparse" not in warns
+    # run-1 is fully waived (cost + timing) so finalize itself passes; the residual
+    # signal is WARN-only, which is the honest pre-v2.28 outcome.
     assert result["passed"] is True

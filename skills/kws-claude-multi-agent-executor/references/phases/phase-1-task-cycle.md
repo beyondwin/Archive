@@ -45,6 +45,7 @@ Advance only when the current task (or parallel group) reaches Agent Cleanup suc
     --pre-sha <literal-sha-from-rev-parse>
   ```
   This writes run-level `current_pre_task_sha = <sha>` (the crash-recovery baseline — the Resume Protocol at Phase 0 Step 0 reads it to know where to roll back) and `<active>.tasks.task_<N>.timing.started = <now>` (initializing the task entry if absent). A **non-zero exit is a hard halt** — without `current_pre_task_sha` a resume could cherry-pick onto a corrupted HEAD. (The helper makes the timing write hard-fail too, an intentional strengthening of the old "non-fatal warning" policy: bundling it with the mandatory pre-sha removes the regression at its root.)
+- **NEVER hand-write any `timing.*` value (v2.28 — D003).** The only sanctioned writers are `phase_boundary.py task-start` / `task-complete`, which stamp atomic UTC. A hand-typed stamp produced the run-3 TZ inversion — a KST wall-clock (`21:00:00Z`) written as if UTC, leaving `started` 9h *after* `completed`. `finalize_run.py` now emits an unconditional `timing_inverted` FAIL for any such impossible ordering, so a hand-typed value will block finalization.
 - Update `current_task` in the state file (`state_set.py --field current_task --plan-scope run --value <N>`).
 
 **Per-task counters (reset for each task — all are task-level):**
@@ -196,9 +197,8 @@ Record per-task into the active task tree at **`<active>.tasks.task_N`** (resolv
 "review_tier": "PASS | WARN | FAIL"
 ```
 
-Update the rolling quality-trend buffer (active-tree-aware):
-- Append `quality_score` to `<active>.quality_trend` (max 10, drop oldest). This resolves to `state.plan_chain[state.active_plan].quality_trend` for multi-plan, top-level `state.quality_trend` for single-plan.
-- After append, if length ≥ 5 AND mean of last 5 < mean of first 5 by > 0.10: surface at the NEXT compaction point (T3 message) — `"Quality trending down: last 5 tasks averaged X.XX vs first 5 at Y.YY. Consider manual review of recent tasks."`. Do NOT halt automatically.
+Rolling quality-trend buffer (active-tree-aware): the trend is appended automatically by `phase_boundary.py task-complete` whenever the task result carries `quality_score` — there is exactly one writer (v2.28 D003: max 10, drop oldest, active-tree-aware). Do NOT append it by hand here.
+- After the trend is written, if length ≥ 5 AND mean of last 5 < mean of first 5 by > 0.10: surface at the NEXT compaction point (T3 message) — `"Quality trending down: last 5 tasks averaged X.XX vs first 5 at Y.YY. Consider manual review of recent tasks."`. Do NOT halt automatically.
 
 Then branch on tier:
 
@@ -342,12 +342,12 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
 
 1.5. **Accumulate cost (F2 — v2.16 helper-script enforced):**
 
-   **MANDATORY for every sub-agent dispatch.** Pre-v2.16 runs left `cost_ledger.totals.dispatches=0` across every observed run because this step was prose-only and got silently skipped. Always call `scripts/accumulate_cost.py` — it does the price lookup, R-M-W of state.json under flock, and aggregation for you. The orchestrator's job is reduced to (a) extracting `usage` from the just-completed dispatch, (b) calling the helper.
+   **MANDATORY for every `"api"`/`"p"` (metered) dispatch.** Pre-v2.16 runs left `cost_ledger.totals.dispatches=0` across every observed run because this step was prose-only and got silently skipped. For metered transports, always call `scripts/accumulate_cost.py` — it does the price lookup, R-M-W of state.json under flock, and aggregation for you. The orchestrator's job is reduced to (a) extracting `usage` from the just-completed dispatch, (b) calling the helper.
 
    **Extract `usage`:**
 
-   - *Agent tool dispatch* (Implementer / Combined Reviewer / any role dispatched via the `"agent"` transport): the Agent tool result returned to this turn includes a `usage` object with `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`. Normalize to the helper's field names: `cached_read_tokens` ← `cache_read_input_tokens`, `cached_write_tokens` ← `cache_creation_input_tokens`. If the Agent result has no `usage` block (transport error, schema drift): use `{"input_tokens": 0, "output_tokens": 0}` and pass `--model unknown` so cost is recorded as 0 without misattributing tokens. Do NOT skip the helper call — the dispatch count is itself signal.
-   - *Headless `claude -p --output-format stream-json` subprocess* (Verifier / Plan Reviewer / Docs Updater): tail the result file `<orch_dir>/{verifier,docs,plan_review}_results/...` OR the matching `.stdout`. The final line of stream-json is `{"type":"result","usage":{...},...}`. Extract `usage`, normalize the same way.
+   - *Agent tool dispatch* (Implementer / Combined Reviewer / any role dispatched via the `"agent"` transport): the Agent tool returns only the sub-agent's final message to this turn — there is **no `usage` object** the orchestrator can read. Per-dispatch cost is therefore **not observable** on the `"agent"` transport; this is why an attached, all-`agent` run sets `cost_tracking_waived` at Phase 0 (D001) and skips this step entirely. Do NOT fabricate a `{0,0}` usage call on the agent path — the auto-waive (Phase 0 Step 7) supersedes it. Only the `"api"` / `"p"` transports surface usage; opt a gate into `"api"`/`"p"` to get cost + budget enforcement.
+   - *Headless `claude -p --output-format stream-json` subprocess* (Verifier / Plan Reviewer / Docs Updater on the `"p"` transport, or any `"api"` dispatch): tail the result file `<orch_dir>/{verifier,docs,plan_review}_results/...` OR the matching `.stdout`. The final line of stream-json is `{"type":"result","usage":{...},...}`. Extract `usage`, normalize to the helper's field names: `cached_read_tokens` ← `cache_read_input_tokens`, `cached_write_tokens` ← `cache_creation_input_tokens`.
 
    **Invoke the helper:**
 
@@ -365,12 +365,14 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
 
    **by_task key shape:** `<active_plan>::<task_id>::<role>` so implementer + reviewer + verifier each persist under the same task without overwriting each other. Same-role retries overwrite (latest dispatch wins); by_role / by_model / totals always increment so cumulative spend stays correct across retries.
 
-   **Failure modes:**
-   - Missing `usage` block → call helper with `{"input_tokens":0,"output_tokens":0}` and `--model unknown`. Cost recorded as 0, dispatch count still increments.
+   **Failure modes (metered paths only):**
+   - Missing `usage` block on an `"api"`/`"p"` result (transport error, schema drift) → call helper with `{"input_tokens":0,"output_tokens":0}` and `--model unknown`. Cost recorded as 0, dispatch count still increments.
    - `state.json` write failure inside helper → helper exits 1; orchestrator logs and continues (no halt — this is the F2 budget guardrail's downside vs. the state-file write guardrail; budget tracking is best-effort by design).
    - `price_table` import failure → helper exits 1 at startup; same handling.
 
-   **Budget evaluation** (Phase Transition T3 step 4 and Phase 2 Step 0) is unchanged — it reads `state.cost_ledger.totals.cost_usd` and compares to `state.budget_cap_usd`. The fix here only ensures the ledger is actually populated so the comparison is meaningful.
+   **Agent-default runs (v2.28, D001):** when every role gate is `"agent"` and the run is `interactive_attached`, Phase 0 Step 7 already set `cost_tracking_waived=true` / `cost_tracking_waive_reason="agent-dispatch-no-usage"` — there is no ledger to populate here and budget enforcement is intentionally off (see `references/cross-cutting/agent-dispatch.md`). This step is a no-op on the all-agent path.
+
+   **Budget evaluation** (Phase Transition T3 step 4 and Phase 2 Step 0) reads `state.cost_ledger.totals.cost_usd` and compares to `state.budget_cap_usd`. It is meaningful only when at least one gate is metered (`"api"`/`"p"`); on the all-agent default the ledger stays empty and budget enforcement plus the token-based chain-resume trigger are disabled by design (the accepted cost of the subscription-pool default).
 
 2. **Update state file** — write this task's result into the active task tree.
 
@@ -383,6 +385,8 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
      --run-id "${ORCH_RUN_ID:-}"
    ```
    In one atomic, active-tree-resolved, flock-guarded write the helper: (a) writes the result object under `<active>.tasks.task_<N>`, (b) forces `timing.completed = now`, (c) advances `<active>.last_completed_task` / `last_completed_at`, then (d) emits `kws-cme.task_completed` (best-effort; empty `--run-id` → no emit). A non-zero exit means the state write failed — hard halt. **The fields below are the result object you hand the helper, NOT four independent writes.**
+
+   **NEVER hand-write `timing.completed` (or any `timing.*`) into the result object (v2.28 — D003).** The helper stamps it atomically in UTC at (b) above; the `timing` sub-object you assemble must NOT carry a hand-typed `completed` value. A hand-typed stamp produced the run-3 TZ inversion (a KST `21:00:00Z` written as UTC, landing `started` 9h *after* `completed`), which `finalize_run.py` now catches as an unconditional `timing_inverted` FAIL that blocks finalization.
 
    **Active tree selection (v2.13):** the helper resolves the active tree internally (`state.plan_chain[state.active_plan].tasks.task_N` for multi-plan, `state.tasks.task_N` for single-plan; `state.active_plan` is an **integer** when `plan_chain` is in use). `task_summaries` (step 2.2) and `decisions_register` (step 2.3) are separate writes — use `state_set.py --field` for those, same active-tree rule.
 
@@ -424,6 +428,8 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
      }
    }
    ```
+
+   **Canonical task keys (v2.28 — D003).** The `tasks{}` key is ALWAYS `task_<N>` (e.g. `task_3`) — never a bare integer (`"3"`) and never a free-form label (`"riskclose"`). Remediation or otherwise-inserted tasks use the suffixed form `task_<N>_<suffix>` (e.g. `task_7_remediation`). The same canonical key is used everywhere the task is referenced: `risk_levels`, `execution_plan`, `task_complexity`, and `task_summaries`. `scripts/validate_state_schema.py` emits a `task_key_noncanonical` WARN (run-1 wrote bare-int + ad-hoc keys). `task_summaries` is a legacy read-mirror (step 2.2) — it is still written for backward compatibility, but no NEW consumer should write to it; the result object under `tasks.task_<N>` is the source of truth.
 
    `files_test` comes from the Implementer's `FILES_TEST_CHANGED:` output (empty list if none). `complexity` comes from `<active>.task_complexity.task_N` (set in Phase 0 Step 6 per P5). `spec_score` / `quality_score` / `review_tier` come from Phase 1 Step 2 score parsing — PASS or WARN reached this point; FAIL would have looped back to Step 1.
 

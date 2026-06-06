@@ -253,6 +253,7 @@ Output:
 **State file:** <orch_dir>/state.json
 **Models:** Orchestrator=Opus, Sub-agents=Sonnet
 **Date:** <YYYY-MM-DD>
+**Observability:** AgentLens run=<state.agentlens_orchestration_run, or `dark — agentlens unavailable at run-open`> · quality_trend coverage: <trend_len>/<reviewed> (entries / reviewed tasks; finalize_run.py WARNs `quality_trend_sparse` when sparse and `agentlens_run_absent` when dark)
 
 ### Tasks
 | Task | Status | Risk | Size | Spec | Quality | Tier | Escalations | Review Retries | Verifier Retries | Spec Clarifications | Duration |
@@ -298,6 +299,8 @@ If both arrays are empty across all plans, omit this section entirely.
 - Total wall time: <HH:MM from timestamps.started_at to completed_at>
 - Longest task: Task N (<M> min)
 - Total retries: <review_retries sum> review, <verifier_retries sum> verifier
+- Cost tracking: <"$X.XX (N dispatches)" if cost_ledger.totals.dispatches > 0
+                  else "WAIVED — {cost_tracking_waive_reason}">
 
 ### Changes Made
 - `<file path>`: <one-line description>

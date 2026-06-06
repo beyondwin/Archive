@@ -70,6 +70,13 @@ if [ "$RSTATUS" = "COMPLETE" ]; then
   DONE=1
 elif [ "$CUR" = "null" ] && [ "$LCT" = "set" ]; then
   DONE=1
+elif [ "${TOTAL:-0}" -gt 0 ]; then
+  # v2.28 (D002): every declared task is terminal (NONTERM==0 asserted at the
+  # short-circuit above) and the session is ending. All-terminal-at-Stop means
+  # Phase 2 was skipped — a run about to finalize does not Stop. Structural
+  # trigger independent of the prose-set end-signal (closes the run-3
+  # status:null / current_task-set / last_completed_task-null gap).
+  DONE=1
 fi
 [ "$DONE" = "1" ] || exit 0
 
