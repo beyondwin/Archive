@@ -84,3 +84,19 @@ record pointing at them.
 Contract check after Task 6: `passed: true` with all six `v228_*` checks true. Suite
 unchanged at 219 passed / 0 failed (Task 6 changed no script behavior — only the
 contract checker, which is itself a test, and docs).
+
+- **Task 7** — regression replay of the three driving-run fixtures + Stop-gate
+  integration replays landed (commit `c4d4fde`). Suite 223 / 0. (Live `evals/run.sh`
+  fixture loop is unexercisable in the attached sandbox — its headless dispatch hangs;
+  deterministic preflight — agentlens self-test + contract + doc-freshness — all green.)
+- **Task 8 (remediation, dogfound)** — dogfooding the new finalize gate against this
+  run's own `state.json` surfaced that `phase_boundary.py cmd_task_complete` clobbered
+  the `timing.started` written by task-start (`tasks[task] = result` replaced the whole
+  entry), so `timing.started` was always null at finalize on every real run — making the
+  D003 `timing_inverted` check dead on real runs. Fixed with a prior-start preserve in
+  the task-complete mutate closure (commit `415ec68`, 3 RED→GREEN tests) + 2 mixed
+  aware/naive `_parse_iso` coverage tests closing the Task-3 residual. Suite 223 → **228**
+  / 0; contract `passed: true`. THIS run's already-written entries are unrecoverable →
+  honest `timing_tracking_waived=true` with a reasoned waive; re-dogfooded
+  `finalize_run.py --fix` → `passed: true`. Full write-up in
+  `findings/F02-dogfood-timing-clobber.md`.
