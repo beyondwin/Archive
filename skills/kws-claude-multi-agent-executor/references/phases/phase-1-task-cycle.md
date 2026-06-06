@@ -342,12 +342,12 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
 
 1.5. **Accumulate cost (F2 — v2.16 helper-script enforced):**
 
-   **MANDATORY for every sub-agent dispatch.** Pre-v2.16 runs left `cost_ledger.totals.dispatches=0` across every observed run because this step was prose-only and got silently skipped. Always call `scripts/accumulate_cost.py` — it does the price lookup, R-M-W of state.json under flock, and aggregation for you. The orchestrator's job is reduced to (a) extracting `usage` from the just-completed dispatch, (b) calling the helper.
+   **MANDATORY for every `"api"`/`"p"` (metered) dispatch.** Pre-v2.16 runs left `cost_ledger.totals.dispatches=0` across every observed run because this step was prose-only and got silently skipped. For metered transports, always call `scripts/accumulate_cost.py` — it does the price lookup, R-M-W of state.json under flock, and aggregation for you. The orchestrator's job is reduced to (a) extracting `usage` from the just-completed dispatch, (b) calling the helper.
 
    **Extract `usage`:**
 
-   - *Agent tool dispatch* (Implementer / Combined Reviewer / any role dispatched via the `"agent"` transport): the Agent tool result returned to this turn includes a `usage` object with `input_tokens`, `output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`. Normalize to the helper's field names: `cached_read_tokens` ← `cache_read_input_tokens`, `cached_write_tokens` ← `cache_creation_input_tokens`. If the Agent result has no `usage` block (transport error, schema drift): use `{"input_tokens": 0, "output_tokens": 0}` and pass `--model unknown` so cost is recorded as 0 without misattributing tokens. Do NOT skip the helper call — the dispatch count is itself signal.
-   - *Headless `claude -p --output-format stream-json` subprocess* (Verifier / Plan Reviewer / Docs Updater): tail the result file `<orch_dir>/{verifier,docs,plan_review}_results/...` OR the matching `.stdout`. The final line of stream-json is `{"type":"result","usage":{...},...}`. Extract `usage`, normalize the same way.
+   - *Agent tool dispatch* (Implementer / Combined Reviewer / any role dispatched via the `"agent"` transport): the Agent tool returns only the sub-agent's final message to this turn — there is **no `usage` object** the orchestrator can read. Per-dispatch cost is therefore **not observable** on the `"agent"` transport; this is why an attached, all-`agent` run sets `cost_tracking_waived` at Phase 0 (D001) and skips this step entirely. Do NOT fabricate a `{0,0}` usage call on the agent path — the auto-waive (Phase 0 Step 7) supersedes it. Only the `"api"` / `"p"` transports surface usage; opt a gate into `"api"`/`"p"` to get cost + budget enforcement.
+   - *Headless `claude -p --output-format stream-json` subprocess* (Verifier / Plan Reviewer / Docs Updater on the `"p"` transport, or any `"api"` dispatch): tail the result file `<orch_dir>/{verifier,docs,plan_review}_results/...` OR the matching `.stdout`. The final line of stream-json is `{"type":"result","usage":{...},...}`. Extract `usage`, normalize to the helper's field names: `cached_read_tokens` ← `cache_read_input_tokens`, `cached_write_tokens` ← `cache_creation_input_tokens`.
 
    **Invoke the helper:**
 
@@ -365,12 +365,14 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
 
    **by_task key shape:** `<active_plan>::<task_id>::<role>` so implementer + reviewer + verifier each persist under the same task without overwriting each other. Same-role retries overwrite (latest dispatch wins); by_role / by_model / totals always increment so cumulative spend stays correct across retries.
 
-   **Failure modes:**
-   - Missing `usage` block → call helper with `{"input_tokens":0,"output_tokens":0}` and `--model unknown`. Cost recorded as 0, dispatch count still increments.
+   **Failure modes (metered paths only):**
+   - Missing `usage` block on an `"api"`/`"p"` result (transport error, schema drift) → call helper with `{"input_tokens":0,"output_tokens":0}` and `--model unknown`. Cost recorded as 0, dispatch count still increments.
    - `state.json` write failure inside helper → helper exits 1; orchestrator logs and continues (no halt — this is the F2 budget guardrail's downside vs. the state-file write guardrail; budget tracking is best-effort by design).
    - `price_table` import failure → helper exits 1 at startup; same handling.
 
-   **Budget evaluation** (Phase Transition T3 step 4 and Phase 2 Step 0) is unchanged — it reads `state.cost_ledger.totals.cost_usd` and compares to `state.budget_cap_usd`. The fix here only ensures the ledger is actually populated so the comparison is meaningful.
+   **Agent-default runs (v2.28, D001):** when every role gate is `"agent"` and the run is `interactive_attached`, Phase 0 Step 7 already set `cost_tracking_waived=true` / `cost_tracking_waive_reason="agent-dispatch-no-usage"` — there is no ledger to populate here and budget enforcement is intentionally off (see `references/cross-cutting/agent-dispatch.md`). This step is a no-op on the all-agent path.
+
+   **Budget evaluation** (Phase Transition T3 step 4 and Phase 2 Step 0) reads `state.cost_ledger.totals.cost_usd` and compares to `state.budget_cap_usd`. It is meaningful only when at least one gate is metered (`"api"`/`"p"`); on the all-agent default the ledger stays empty and budget enforcement plus the token-based chain-resume trigger are disabled by design (the accepted cost of the subscription-pool default).
 
 2. **Update state file** — write this task's result into the active task tree.
 

@@ -420,7 +420,7 @@ If both evaluate true, record `trigger_reason = "token_threshold"` (first-observ
 Procedure:
 
 1. Pre-generate a UUID for the resume session: `RESUME_UUID=$(uuidgen)`. Store in state.json `chain_resume.session_id`.
-2. Flush state: set `mode: "headless_chained"`, write `chain_resume: {session_id: $RESUME_UUID, from_task: <N>, parent_pid: <current PID>, chained_at: "<iso8601>"}`. Verify state.json is readable after write (per existing State-file write guardrail). If write fails: hard halt — do NOT spawn child.
+2. Flush state: set `mode: "headless_chained"`, write `chain_resume: {session_id: $RESUME_UUID, from_task: <N>, parent_pid: <current PID>, chained_at: "<iso8601>"}`. Verify state.json is readable after write (per existing State-file write guardrail). If write fails: hard halt — do NOT spawn child. **Run-level cost fields are preserved across this handoff:** `cost_ledger`, `budget_cap_usd`, `budget_action`, and (v2.28, D001) `cost_tracking_waived` / `cost_tracking_waive_reason` are NOT touched by the flush — the child reads them from state.json as-is and never recomputes the waive.
 3. Write the chain prompt file:
    ```bash
    cat > "$ORCH_DIR/headless_chain_<N>_prompt.txt" <<EOF

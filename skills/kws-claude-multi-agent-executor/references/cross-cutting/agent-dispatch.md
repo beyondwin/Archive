@@ -35,11 +35,22 @@ caller supplies `ROLE`, `MODEL`, `PROMPT_TEMPLATE`, and `RESULT_PATH`.
 4. **Read + schema-validate `RESULT_PATH`** exactly as the `-p`/`api` path does
    for `ROLE` (`verifier_result.schema.json`, `docs_updater_result.schema.json`,
    or the `report_plan_reviewer` shape). Downstream consumption is unchanged.
-5. **Accumulate cost** — extract `usage` from the Agent return envelope
-   (`input_tokens`, `output_tokens`, `cache_read_input_tokens`,
-   `cache_creation_input_tokens`), normalize per Phase 1 Step 4 substep 1.5, and
-   call `scripts/accumulate_cost.py --role ROLE --model MODEL ...`. Subscription
-   dispatches still report usage, so the ledger stays populated.
+5. **Cost on the agent path is NOT observable (v2.28, D001).** The Agent tool
+   returns only the sub-agent's final message to this turn — there is **no
+   `usage` object** the orchestrator can read. Per-dispatch cost is therefore
+   **not observable** on the `"agent"` transport; this is why an attached,
+   all-`agent` run sets `cost_tracking_waived` at Phase 0 (D001). Only the
+   `"api"` / `"p"` transports surface usage (from the `dispatch_via_api.py`
+   return / the `stream-json` result line); those gates accumulate via
+   `scripts/accumulate_cost.py --role ROLE --model MODEL ...` (normalize per
+   Phase 1 Step 4 substep 1.5). To get cost + budget enforcement, opt a gate
+   into `"api"` or `"p"`.
+
+   **Honest limitation of the agent default:** auto-waiving cost also disables
+   `budget_cap_usd` enforcement and the token-based chain-resume trigger on the
+   default path, because both read the now-empty ledger. This is the accepted
+   cost of the agent-pool default; users who need budget enforcement opt a gate
+   into `"api"`/`"p"`.
 
 For the **combined transition** (`transition_combined`), a SINGLE Agent
 sub-agent runs the `-p` combined prompt and writes the combined

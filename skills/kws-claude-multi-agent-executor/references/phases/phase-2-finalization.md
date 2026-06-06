@@ -298,6 +298,8 @@ If both arrays are empty across all plans, omit this section entirely.
 - Total wall time: <HH:MM from timestamps.started_at to completed_at>
 - Longest task: Task N (<M> min)
 - Total retries: <review_retries sum> review, <verifier_retries sum> verifier
+- Cost tracking: <"$X.XX (N dispatches)" if cost_ledger.totals.dispatches > 0
+                  else "WAIVED — {cost_tracking_waive_reason}">
 
 ### Changes Made
 - `<file path>`: <one-line description>
