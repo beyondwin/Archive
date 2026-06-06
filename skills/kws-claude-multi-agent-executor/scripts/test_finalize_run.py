@@ -338,6 +338,37 @@ def test_unparseable_timing_no_inverted_no_crash(tmp_path):
     assert "timing_inverted" not in codes  # falls through to null/absent path
 
 
+# MIXED aware+naive pair: started carries a 'Z' (aware), completed is bare
+# (naive). Without _parse_iso's aware->naive UTC normalization the comparison
+# would raise "TypeError: can't compare offset-naive and offset-aware datetimes".
+# Coverage for the recorded task_3 residual.
+
+def test_timing_inverted_mixed_aware_naive_pair_no_typeerror(tmp_path):
+    # started aware (Z), completed naive — normalization must let them compare
+    state = {
+        "status": "COMPLETE", "cost_tracking_waived": True, "timing_tracking_waived": True,
+        "timestamps": {"started_at": "a", "completed_at": "b"},
+        "tasks": {"task_1": {"status": "COMPLETE", "verifier": "PASS", "review_tier": "PASS",
+                             "timing": {"started": "2026-06-07T21:00:00Z",
+                                        "completed": "2026-06-07T12:00:00"}}},
+    }
+    result = fr.evaluate(state)  # must NOT raise
+    fails = {f["code"] for f in result["findings"] if f["level"] == "FAIL"}
+    assert "timing_inverted" in fails
+
+
+def test_timing_ordered_mixed_aware_naive_pair_clean(tmp_path):
+    state = {
+        "status": "COMPLETE", "cost_tracking_waived": True, "timing_tracking_waived": True,
+        "timestamps": {"started_at": "a", "completed_at": "b"},
+        "tasks": {"task_1": {"status": "COMPLETE", "verifier": "PASS", "review_tier": "PASS",
+                             "timing": {"started": "2026-06-07T12:00:00Z",
+                                        "completed": "2026-06-07T21:00:00"}}},
+    }
+    codes = {f["code"] for f in fr.evaluate(state)["findings"]}
+    assert "timing_inverted" not in codes
+
+
 # --- v2.28 (D003): telemetry coverage WARNs (never FAIL) -------------------
 
 def test_sparse_quality_trend_warns_not_fails(tmp_path):
