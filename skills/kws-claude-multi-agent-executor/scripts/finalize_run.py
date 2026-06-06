@@ -21,12 +21,45 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from materialize_worktree_hooks import check_problems as _hook_problems
+except Exception:  # noqa: BLE001 — fail-open if the helper is unavailable
+    _hook_problems = None
+
 
 def _active_trees(state: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
     chain = state.get("plan_chain")
     if isinstance(chain, list):
         return [(f"plan_chain[{i}]", entry) for i, entry in enumerate(chain)]
     return [("state", state)]
+
+
+def _worktree_hook_problems(state: dict[str, Any]) -> list[str] | None:
+    """Inspect the worktree's .claude/settings.json for missing safety hooks.
+
+    Returns a (possibly empty) problem list when the file is present and
+    parseable, or None when the check cannot run — helper unavailable, no
+    `worktree`, file absent/unparseable. None means *skip*, never *fail*: a
+    replayed or cleaned-up worktree must not false-positive. A live run whose
+    settings.json parses but lacks the Stop gate (the run-2 hand-write shape)
+    returns a non-empty list and is caught.
+    """
+    if _hook_problems is None:
+        return None
+    worktree = state.get("worktree")
+    if not worktree:
+        return None
+    path = Path(worktree) / ".claude" / "settings.json"
+    if not path.is_file():
+        return None
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(settings, dict):
+        return None
+    return _hook_problems(settings)
 
 
 def evaluate(state: dict[str, Any]) -> dict[str, Any]:
@@ -42,14 +75,17 @@ def evaluate(state: dict[str, Any]) -> dict[str, Any]:
         add("FAIL", "state", "completed_at_null",
             "timestamps.completed_at is null/absent", fixable=True)
 
-    # Run-level: cost ledger dispatches.
+    # Run-level: cost ledger dispatches. v2.27: blocking unless explicitly waived.
     if not state.get("cost_tracking_waived"):
         dispatches = ((state.get("cost_ledger") or {}).get("totals") or {}).get("dispatches", 0)
         if not dispatches:
-            add("WARN", "state", "cost_dispatches_zero",
-                "cost_ledger.totals.dispatches == 0 (accumulate_cost.py never ran)")
+            add("FAIL", "state", "cost_dispatches_zero",
+                "cost_ledger.totals.dispatches == 0 (accumulate_cost.py never ran); "
+                "set cost_tracking_waived to opt out")
 
     # Per-tree task checks.
+    terminal_total = 0
+    terminal_null_started = 0
     for scope, tree in _active_trees(state):
         tasks = tree.get("tasks")
         tasks = tasks if isinstance(tasks, dict) else {}
@@ -58,13 +94,38 @@ def evaluate(state: dict[str, Any]) -> dict[str, Any]:
             if status not in ("COMPLETE", "SKIPPED"):
                 add("FAIL", scope, "task_not_terminal",
                     f"{task_id}: status={status!r} (expected COMPLETE/SKIPPED)")
+                continue
             if task.get("verifier") == "PENDING_BATCH":
                 add("FAIL", scope, "verifier_pending_batch",
                     f"{task_id}: verifier still PENDING_BATCH (final LOW sweep never wrote back)")
+            terminal_total += 1
             timing = task.get("timing") or {}
             if not timing.get("started"):
+                terminal_null_started += 1
                 add("WARN", scope, "timing_started_missing",
                     f"{task_id}: timing.started absent (per-task duration uncomputable)")
+
+    # v2.27: systemic timing drift. Every terminal task missing timing.started is
+    # an unambiguous skip of phase_boundary.py task-start, not a one-off. Blocking
+    # unless explicitly waived. Partial misses stay per-task WARN above.
+    if (terminal_total > 0 and terminal_null_started == terminal_total
+            and not state.get("timing_tracking_waived")):
+        add("FAIL", "state", "timing_tracking_absent",
+            f"all {terminal_total} terminal tasks have null timing.started "
+            "(phase_boundary.py task-start never ran); set timing_tracking_waived to opt out")
+
+    # v2.27 (D003): worktree safety hooks must be wired. Backstop for a run that
+    # skipped Phase 0 Step 2.5 (so the Stop gate was never installed) yet still
+    # reached the Phase 2 finalize call — the residual gap the --check preflight
+    # alone could not close. Skips silently when settings.json can't be inspected
+    # (replay / cleaned worktree) so it never false-positives off-host.
+    if not state.get("hooks_wiring_waived"):
+        hook_problems = _worktree_hook_problems(state)
+        if hook_problems:
+            add("FAIL", "state", "hooks_not_wired",
+                "worktree .claude/settings.json missing safety hooks ("
+                + "; ".join(hook_problems)
+                + "); re-run Phase 0 Step 2.5 or set hooks_wiring_waived to opt out")
 
     # Run-level consistency: a COMPLETE run must be fully finalized.
     if state.get("status") == "COMPLETE":

@@ -26,6 +26,15 @@ Within a wave, parallel groups run sequentially (not in parallel with each other
 
 Advance only when the current task (or parallel group) reaches Agent Cleanup successfully.
 
+> **Attached-mode hook preflight (v2.27, improvement #3).** Before dispatching the
+> very first task, re-assert the worktree hooks are wired (a cheap belt-and-suspenders
+> for the case where Step 2.5 was skipped or the settings.json was tampered):
+> ```bash
+> python3 <skill_dir>/scripts/materialize_worktree_hooks.py --check --worktree <worktree_path>
+> ```
+> Non-zero exit → hard halt: re-run the Phase 0 Step 2.5 materialize command, then
+> retry. This runs once per run, before Task 1 only.
+
 **Before Step 1 of each task:**
 - Run `git -C <worktree_path> rev-parse HEAD` and **record the literal SHA** (e.g., `Task 3: pre_sha=abc1234`). Use this literal string in all subsequent revert and diff commands — do not use shell variables, which do not persist between Bash calls.
 - **Stamp the pre-sha AND `timing.started` together via `phase_boundary.py task-start` (v2.21 — D002 enforcement):** these two writes were previously two separate prose R-M-W steps, and `timing.started` was the one that silently went null in every v2.11–v2.15 run. The helper bundles both into one atomic, flock-guarded, active-tree-resolved write so neither can be dropped:

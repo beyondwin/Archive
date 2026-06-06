@@ -49,10 +49,11 @@ Anthropic이 정형화한 멀티 에이전트 토폴로지. Opus 오케스트레
 1. 호출 인자 파싱 (`plan=`, `spec=`, `risk=`, `docs_scope=`, 실험적 `mode=`).
 2. 트리가 깨끗한지 확인 (`git status` 비어있음); 아니면 중단.
 3. 작업 격리용 **worktree**를 `<repo>/../worktrees/<branch>` 에 생성. 이후 모든 작업은 여기서 이뤄지고 `main`은 그대로.
-4. **안전 훅**을 `<worktree>/.claude/settings.json` 에 설치:
+4. **안전 훅**을 `<worktree>/.claude/settings.json` 에 설치 — v2.27부터 손으로 쓰지 않고 `scripts/materialize_worktree_hooks.py`가 **deep-merge**로 materialize (레포가 이미 가진 `permissions`/`$schema`/다른 훅 이벤트 보존, 4개 이벤트 주입, Stop 게이트 self-assert; 비정상 종료 = hard halt. `--check` 모드는 Phase 1 Task 1 preflight로 재사용):
    - `PreToolUse` — `rm -rf`, `git push`, 스키마 드롭 차단
    - `PostToolUse` — Edit/Write 시 디버그 아티팩트(`console.log`, `TODO`, `FIXME`, `debugger`) 스캔
    - `SubagentStop` — Implementer 출력 구조 sanity 체크
+   - `Stop` — finalization forcing function (v2.26). v2.27부터 `finalize_run.py`는 `dispatches==0`(unless `cost_tracking_waived`)와 모든 종료 태스크의 `timing.started` null(unless `timing_tracking_waived`)을 WARN이 아닌 blocking FAIL로 처리 → drift된 attached 런이 조용히 green으로 끝나지 못하게 Stop 게이트가 차단.
 5. 계획 + 스펙 읽기. **모호성 게이트** 실행: 누락된 Files 블록, 레포 밖 경로, 모순 검출. 발견 시 사용자 확인 대기.
 6. 태스크별 **위험 등급** 할당 (LOW/MID/HIGH) — §7 참조.
 7. **베이스라인 테스트 상태** 스냅샷 (현재 테스트 스위트의 pass/fail 카운트) — 나중 회귀 비교용.

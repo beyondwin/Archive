@@ -138,40 +138,21 @@
    ```
    `<skill_dir>` is the directory containing this SKILL.md. Resolve via `dirname` of the skill path or the absolute path captured when the skill was invoked.
 
-   **Write `<worktree_path>/.claude/settings.json`**:
-   ```json
-   {
-     "hooks": {
-       "PreToolUse": [{
-         "matcher": "Bash",
-         "hooks": [{
-           "type": "command",
-           "command": "CMD=$(echo \"$CLAUDE_TOOL_INPUT\" | jq -r '.command // empty' 2>/dev/null); if [ -z \"$CMD\" ]; then CMD=\"$CLAUDE_TOOL_INPUT\"; fi; if echo \"$CMD\" | grep -qE 'rm\\s+-rf\\s+/|git\\s+push\\s+--force\\s+(origin\\s+)?(main|master|trunk)|DROP\\s+(TABLE|DATABASE|SCHEMA)\\s'; then echo 'BLOCKED: dangerous command detected' >&2; exit 1; fi"
-         }]
-       }],
-       "PostToolUse": [{
-         "matcher": "Edit|Write",
-         "hooks": [{
-           "type": "command",
-           "command": "<orch_dir>/hooks/scan-debug-artifacts.sh"
-         }]
-       }],
-       "SubagentStop": [{
-         "hooks": [{
-           "type": "command",
-           "command": "<orch_dir>/hooks/check-implementer-output.sh"
-         }]
-       }],
-       "Stop": [{
-         "hooks": [{
-           "type": "command",
-           "command": "<orch_dir>/hooks/finalization-stop-gate.sh <orch_dir>/state.json <skill_dir>/scripts"
-         }]
-       }]
-     }
-   }
+   **Materialize + verify `<worktree_path>/.claude/settings.json`** via the
+   deterministic script (v2.27 — replaces the prior hand-written JSON, which had
+   no merge step and silently dropped hooks when the source repo already shipped a
+   `.claude/settings.json`; see D001):
+   ```bash
+   python3 <skill_dir>/scripts/materialize_worktree_hooks.py \
+     --worktree <worktree_path> --orch-dir <orch_dir> --skill-dir <skill_dir>
    ```
-   Substitute `<worktree_path>`, `<orch_dir>`, and `<skill_dir>` with the actual absolute paths before writing — the `Stop` hook receives `state.json` and the skill `scripts/` dir as positional args (it lives outside the worktree, so it needs them passed explicitly).
+   The script reads any existing `<worktree_path>/.claude/settings.json`,
+   **deep-merges** the four hook events (preserving the repo's `permissions`,
+   `$schema`, and any other hook events), atomic-writes, and self-asserts the four
+   events are present with `Stop` wired to `finalization-stop-gate.sh`. **A
+   non-zero exit is a hard halt** — do not proceed to Phase 1 with unwired hooks.
+   The canonical settings.json shape it emits is documented in
+   `references/cross-cutting/safety-hooks.md`.
 
    **What each hook does:**
    - `PreToolUse` (Bash) blocks `rm -rf /`, force-push to protected branches, and `DROP TABLE/DATABASE/SCHEMA` in sub-agent Bash calls. The hook extracts `.command` from the JSON `$CLAUDE_TOOL_INPUT` via `jq` before grep-matching (raw-JSON matching has too many false positives/negatives due to quoting and escaping). If `jq` is unavailable or extraction fails (no `.command` key), the hook falls back to matching the raw payload — strictly more permissive than the jq path, never less. Does NOT block `git reset --hard` — the orchestrator uses it for verifier-fail recovery.

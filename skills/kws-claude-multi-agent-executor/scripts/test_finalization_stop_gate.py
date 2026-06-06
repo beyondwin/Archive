@@ -171,3 +171,65 @@ def test_missing_scripts_arg_fails_open(tmp_path):
         input="{}", capture_output=True, text=True,
     )
     assert r.returncode == 0
+
+
+# v2.27: canonical + finalized EXCEPT bookkeeping drift (dispatches 0, all tasks
+# null timing.started, not waived). Before the v2.27 finalize severities this
+# finalized green; after them the Stop gate must block it.
+DRIFT_ONLY = {
+    "status": "COMPLETE",
+    "schema_version": "2",
+    "mode": "interactive_attached",
+    "timestamps": {"started_at": "2026-06-06T10:00:00Z",
+                   "completed_at": "2026-06-06T11:00:00Z"},
+    "cost_ledger": {"totals": {"dispatches": 0}},
+    "dispatch_config": {"mode": "interactive_attached"},
+    "risk_levels": {"task_1": "low", "task_2": "low"},
+    "execution_plan": [["task_1"], ["task_2"]],
+    "tasks": {
+        "task_1": {"status": "COMPLETE", "verifier": "PASS", "timing": {"completed": "c"}},
+        "task_2": {"status": "COMPLETE", "verifier": "PASS", "timing": {"completed": "c"}},
+    },
+}
+
+DRIFT_WAIVED = dict(
+    DRIFT_ONLY, cost_tracking_waived=True, timing_tracking_waived=True,
+)
+
+
+def test_drift_only_blocks_stop(tmp_path):
+    r = _run(_hook(tmp_path), _state(tmp_path, DRIFT_ONLY))
+    assert r.returncode == 2, r.stdout
+    assert "finalization gate" in r.stderr.lower()
+
+
+def test_drift_waived_allows_stop(tmp_path):
+    r = _run(_hook(tmp_path), _state(tmp_path, DRIFT_WAIVED))
+    assert r.returncode == 0, r.stderr
+
+
+# v2.27 (D003): canonical + finalized + bookkept run, but the worktree
+# settings.json was never wired with the safety hooks (the run-2 hand-write
+# shape: $schema + permissions, no hooks). The finalize backstop must block the
+# stop; the hooks_wiring_waived hatch must reach back through the gate.
+def _unwired_worktree(tmp_path, *, hooks=False):
+    wt = tmp_path / "wt"
+    (wt / ".claude").mkdir(parents=True)
+    settings = {"$schema": "x", "permissions": {"allow": []}}
+    (wt / ".claude" / "settings.json").write_text(
+        json.dumps(settings), encoding="utf-8")
+    return str(wt)
+
+
+def test_unwired_hooks_blocks_stop(tmp_path):
+    state = dict(CLEAN_FINALIZED, worktree=_unwired_worktree(tmp_path))
+    r = _run(_hook(tmp_path), _state(tmp_path, state))
+    assert r.returncode == 2, r.stdout
+    assert "finalization gate" in r.stderr.lower()
+
+
+def test_unwired_hooks_waived_allows_stop(tmp_path):
+    state = dict(CLEAN_FINALIZED, worktree=_unwired_worktree(tmp_path),
+                 hooks_wiring_waived=True)
+    r = _run(_hook(tmp_path), _state(tmp_path, state))
+    assert r.returncode == 0, r.stderr
