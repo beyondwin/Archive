@@ -45,6 +45,7 @@ Advance only when the current task (or parallel group) reaches Agent Cleanup suc
     --pre-sha <literal-sha-from-rev-parse>
   ```
   This writes run-level `current_pre_task_sha = <sha>` (the crash-recovery baseline — the Resume Protocol at Phase 0 Step 0 reads it to know where to roll back) and `<active>.tasks.task_<N>.timing.started = <now>` (initializing the task entry if absent). A **non-zero exit is a hard halt** — without `current_pre_task_sha` a resume could cherry-pick onto a corrupted HEAD. (The helper makes the timing write hard-fail too, an intentional strengthening of the old "non-fatal warning" policy: bundling it with the mandatory pre-sha removes the regression at its root.)
+- **NEVER hand-write any `timing.*` value (v2.28 — D003).** The only sanctioned writers are `phase_boundary.py task-start` / `task-complete`, which stamp atomic UTC. A hand-typed stamp produced the run-3 TZ inversion — a KST wall-clock (`21:00:00Z`) written as if UTC, leaving `started` 9h *after* `completed`. `finalize_run.py` now emits an unconditional `timing_inverted` FAIL for any such impossible ordering, so a hand-typed value will block finalization.
 - Update `current_task` in the state file (`state_set.py --field current_task --plan-scope run --value <N>`).
 
 **Per-task counters (reset for each task — all are task-level):**
@@ -385,6 +386,8 @@ You (Orchestrator) perform these checks directly — no sub-agent needed:
      --run-id "${ORCH_RUN_ID:-}"
    ```
    In one atomic, active-tree-resolved, flock-guarded write the helper: (a) writes the result object under `<active>.tasks.task_<N>`, (b) forces `timing.completed = now`, (c) advances `<active>.last_completed_task` / `last_completed_at`, then (d) emits `kws-cme.task_completed` (best-effort; empty `--run-id` → no emit). A non-zero exit means the state write failed — hard halt. **The fields below are the result object you hand the helper, NOT four independent writes.**
+
+   **NEVER hand-write `timing.completed` (or any `timing.*`) into the result object (v2.28 — D003).** The helper stamps it atomically in UTC at (b) above; the `timing` sub-object you assemble must NOT carry a hand-typed `completed` value. A hand-typed stamp produced the run-3 TZ inversion (a KST `21:00:00Z` written as UTC, landing `started` 9h *after* `completed`), which `finalize_run.py` now catches as an unconditional `timing_inverted` FAIL that blocks finalization.
 
    **Active tree selection (v2.13):** the helper resolves the active tree internally (`state.plan_chain[state.active_plan].tasks.task_N` for multi-plan, `state.tasks.task_N` for single-plan; `state.active_plan` is an **integer** when `plan_chain` is in use). `task_summaries` (step 2.2) and `decisions_register` (step 2.3) are separate writes — use `state_set.py --field` for those, same active-tree rule.
 
