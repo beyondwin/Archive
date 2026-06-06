@@ -85,6 +85,37 @@ def test_task_complete_no_run_id_still_writes_state(tmp_path, _no_real_emit):
     assert _no_real_emit[0][0] is None
 
 
+# --- task-complete: preserve timing.started (v2.28 instrumentation-integrity) ---
+
+def test_task_complete_preserves_started_from_task_start(tmp_path):
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}})
+    pb.cmd_task_start(p, "task_1", "deadbeef")
+    pb.cmd_task_complete(p, "task_1", {"status": "COMPLETE"}, None)
+    t = _read(p)["tasks"]["task_1"]
+    assert t["timing"]["started"]            # preserved, not clobbered
+    assert t["timing"]["completed"]          # set by task-complete
+    assert t["status"] == "COMPLETE"
+
+
+def test_task_complete_does_not_overwrite_result_started(tmp_path):
+    # if the result itself already carries a started, keep that one (don't lose it)
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}})
+    pb.cmd_task_start(p, "task_1", "deadbeef")
+    pb.cmd_task_complete(p, "task_1",
+                         {"status": "COMPLETE", "timing": {"started": "2020-01-01T00:00:00Z"}}, None)
+    t = _read(p)["tasks"]["task_1"]
+    assert t["timing"]["started"] == "2020-01-01T00:00:00Z"  # explicit result value wins
+
+
+def test_task_complete_no_prior_started_is_fine(tmp_path):
+    # task-complete without a preceding task-start: no started, but no crash, completed set
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}})
+    pb.cmd_task_complete(p, "task_1", {"status": "COMPLETE"}, None)
+    t = _read(p)["tasks"]["task_1"]
+    assert t["timing"].get("started") is None
+    assert t["timing"]["completed"]
+
+
 # --- task-complete: quality_trend writer (v2.28 D003) ----------------------
 
 def test_task_complete_appends_quality_score_to_trend(tmp_path):

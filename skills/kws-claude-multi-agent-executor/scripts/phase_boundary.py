@@ -119,7 +119,13 @@ def cmd_task_complete(
     def mutate(state: dict) -> None:
         active = _active(state)
         tasks = active.setdefault("tasks", {})
+        # Preserve the timing.started that task-start wrote: replacing the whole
+        # task entry below would otherwise discard it, leaving started null at
+        # finalize (defeats the D003 timing_inverted / timing_tracking checks).
+        prior_started = ((tasks.get(task) or {}).get("timing") or {}).get("started")
         timing = result.setdefault("timing", {})
+        if prior_started and not timing.get("started"):
+            timing["started"] = prior_started
         timing["completed"] = ss._utc_now_iso()
         tasks[task] = result
         active["last_completed_task"] = task
