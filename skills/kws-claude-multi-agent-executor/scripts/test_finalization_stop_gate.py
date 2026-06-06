@@ -233,3 +233,76 @@ def test_unwired_hooks_waived_allows_stop(tmp_path):
                  hooks_wiring_waived=True)
     r = _run(_hook(tmp_path), _state(tmp_path, state))
     assert r.returncode == 0, r.stderr
+
+
+# v2.28 (D002): the run-3 shape — every task terminal, but status:null and
+# current_task still set (Phase 2 never ran). Matches neither prose end-signal;
+# the v2.28 all-terminal trigger must still force the gate -> exit 2.
+RUN3_ALL_TERMINAL_UNFINALIZED = {
+    "status": None,
+    "schema_version": "2",
+    "mode": "interactive_attached",
+    "timestamps": {"started_at": "2026-06-06T11:57:00Z", "completed_at": None},
+    "cost_ledger": {"totals": {"dispatches": 0}},
+    "dispatch_config": {"mode": "interactive_attached"},
+    "current_task": 2,
+    "last_completed_task": None,
+    "risk_levels": {"task_1": "low", "task_2": "low"},
+    "execution_plan": [["task_1"], ["task_2"]],
+    "tasks": {
+        "task_1": {"status": "COMPLETE", "verifier": "PASS",
+                   "timing": {"started": "x", "completed": "y"}},
+        "task_2": {"status": "COMPLETE", "verifier": "PASS",
+                   "timing": {"started": "x", "completed": "y"}},
+    },
+}
+
+
+def test_all_terminal_unfinalized_blocks_stop(tmp_path):
+    r = _run(_hook(tmp_path), _state(tmp_path, RUN3_ALL_TERMINAL_UNFINALIZED))
+    assert r.returncode == 2, r.stdout
+    assert "finalization gate" in r.stderr.lower()
+
+
+# --- v2.28 regression replay: drive the gate against the REAL captured runs ----
+# scripts/fixtures/v2.28/ holds verbatim post-v2.27 state.json snapshots. Both
+# run-2 and run-3 are all-terminal; the gate must force finalization on the
+# unfinalized ones. These reuse the same subprocess harness as the synthetic
+# tests above, but point it at the real captured shapes — the strongest possible
+# proof the Stop gate catches what slipped through before.
+_REAL_FIX = os.path.join(SCRIPTS_DIR, "fixtures", "v2.28")
+
+
+def _real(name):
+    with open(os.path.join(_REAL_FIX, name), encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def test_replay_run3_all_terminal_unfinalized_blocks_stop(tmp_path):
+    # run-3 was captured all-terminal but with status:null / current_task still set
+    # and Phase 2 never run — exactly the structural gap D002 closes. It is ALSO
+    # genuinely unfinalized (cost_dispatches_zero + tasks 1-5 timing_inverted), so
+    # finalize_run --check fails. The gate must block the stop. Drive the REAL
+    # fixture verbatim (no edits) — it already exhibits the all-terminal-unfinalized
+    # condition.
+    r = _run(_hook(tmp_path), _state(tmp_path, _real("run3_session_package.json")))
+    assert r.returncode == 2, r.stdout
+    assert "finalization gate" in r.stderr.lower()
+    assert "timing_inverted" in r.stderr  # the honest defect surfaced by the gate
+
+
+def test_replay_run2_all_terminal_unfinalized_blocks_stop(tmp_path):
+    # run-2 (readmates chain) was captured already FINALIZED on its active plan_chain
+    # tree (all tasks terminal, completed_at stamped, cost waived) so the gate would
+    # correctly exit 0 on the verbatim fixture. To replay the all-terminal-UNfinalized
+    # condition the gate is meant to catch, strip the finalization marker honestly
+    # (null out timestamps.completed_at) — mirroring how Task 2's RUN3_ALL_TERMINAL
+    # fixture constructs the same done-but-unfinalized shape. The active tree's tasks
+    # stay all-terminal, so the structural trigger still fires and finalize_run now
+    # flags completed_at_null -> exit 2.
+    state = _real("run2_readmates_chain.json")
+    state.setdefault("timestamps", {})["completed_at"] = None  # strip finalization marker
+    r = _run(_hook(tmp_path), _state(tmp_path, state))
+    assert r.returncode == 2, r.stdout
+    assert "finalization gate" in r.stderr.lower()
+    assert "completed_at_null" in r.stderr  # the stripped marker is the honest blocker

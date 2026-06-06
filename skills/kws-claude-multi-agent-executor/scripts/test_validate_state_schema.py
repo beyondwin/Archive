@@ -44,6 +44,34 @@ READMATES_BAD = {
 }
 
 
+# v2.28 (D003): run-1 used bare-int + ad-hoc keys ("1".."6","riskclose").
+RUN1_BAD_KEYS = {
+    "schema_version": "2",
+    "mode": "interactive_attached",
+    "dispatch_config": {"final_sweep": "agent"},
+    "cost_ledger": {"totals": {"dispatches": 0}},
+    "risk_levels": {"1": "low", "riskclose": "mid"},
+    "execution_plan": [["1"]],
+    "tasks": {"1": {"status": "COMPLETE"}, "riskclose": {"status": "COMPLETE"}},
+}
+
+
+def test_noncanonical_task_keys_warn_not_violation(tmp_path):
+    result = vss.validate(RUN1_BAD_KEYS)
+    warn_codes = {w["code"] for w in result["warnings"]}
+    assert "task_key_noncanonical" in warn_codes
+    assert result["passed"] is True  # WARN does not flip passed
+
+
+def test_canonical_and_suffixed_keys_clean(tmp_path):
+    ok = dict(CANONICAL_SINGLE)
+    ok["tasks"] = {"task_1": {"status": "COMPLETE"},
+                   "task_7_remediation": {"status": "COMPLETE"}}
+    ok["risk_levels"] = {"task_1": "low", "task_7_remediation": "mid"}
+    codes = {w["code"] for w in vss.validate(ok)["warnings"]}
+    assert "task_key_noncanonical" not in codes
+
+
 def test_canonical_single_plan_passes(tmp_path):
     p = _write(tmp_path, CANONICAL_SINGLE)
     result = vss.validate(json.loads(p.read_text()))

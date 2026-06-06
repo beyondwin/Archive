@@ -150,6 +150,18 @@ D001–D005 + D007 은 ADR 본체가 있음; D006 은 pending (open question, �
 
 ---
 
+## v2.28 — Instrumentation integrity (출하 2026-06-07)
+
+v2.27 이후 실행된 `interactive_attached` run 3건이 boundary-only 처방이 안 먹힘을 증명 — 셋 다 cost ledger 가 비어 있음. run3(`session-package`)은 blocking FAIL 에 걸렸지만 waive 안 하고 그냥 wedge(`status:null`, `current_task=16`), `timing.started` 가 `completed` 보다 9시간 늦음(KST 리터럴+가짜 `Z`). run2(`readmates-resilience`)/run1(`target-type`)은 `cost_tracking_waived=true` 를 반사적으로 켜고 진행, run1 은 `"1".."6"`+`"riskclose"` 키 + `quality_trend:[]`, 셋 다 `agentlens_orchestration_run:null`. 근본 원인: 기록돼야 할 값이 attached 오케스트레이터가 손으로 수행하는 prose 로 존재 → 컨텍스트 압박 시 스킵/즉흥. v2.27 은 finalize 경계에서만 잡았고, v2.28 은 기록 사이트에서 잡으며(가능한 경우) 구조적으로 기록 불가능한 한 곳(agent 경로 cost)은 시스템이 정직하게 만든다.
+
+| ADR | 주제 | 결과 |
+|-----|------|------|
+| [D001 Cost auto-waive on the agent path](../docs/experiments/v2.28-instrumentation-integrity/decisions/D001-cost-auto-waive-on-agent-path.md) | Agent-tool 디스패치는 `usage` 미반환 → 모든 gate `"agent"` + attached 면 Phase 0 Step 7 이 `cost_tracking_waived`/`cost_tracking_waive_reason="agent-dispatch-no-usage"` 자동 설정(mandate→honest auto-waive); "subscription dispatches still report usage" 허위 prose 제거; 두 필드 run-level 보존 | **shipped** |
+| [D002 Stop-gate all-terminal trigger](../docs/experiments/v2.28-instrumentation-integrity/decisions/D002-finalize-trigger-all-terminal.md) | v2.26 Stop 게이트의 "done" 판정이 Phase-2-set 신호(`status==COMPLETE`/`current_task==null`)에만 의존 → Phase 2 미실행이 실패 모드. `elif [ "${TOTAL:-0}" -gt 0 ]` DONE=1 분기 추가 — 선언된 모든 태스크 terminal 이면 finalize 강제 | **shipped** |
+| [D003 Timing sanity + coverage + task-key checks](../docs/experiments/v2.28-instrumentation-integrity/decisions/D003-timing-sanity-coverage-keys.md) | `finalize_run.py` 가 `_parse_iso` 로 timing 파싱 후 `completed < started` 시 **면제 불가** blocking `timing_inverted` FAIL; `quality_trend_sparse`/`agentlens_run_absent` WARN; `quality_trend` 는 `phase_boundary.py` task-complete 단일 작성자; `validate_state_schema.py` 가 `TASK_KEY_RE` 로 `task_key_noncanonical` WARN | **shipped** |
+
+---
+
 ## 가로지르는 결정 (한 실험 아래에 속하지 않음)
 
 ### 오케스트레이터-워커 패턴 (vs 단일 세션)

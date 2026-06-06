@@ -122,18 +122,24 @@ new severities and the auto-waive do not over-fire.
 
 ## Findings index
 
-- F01 — Close-out: what shipped + the 3-run regression-replay proof — pending (created at close-out)
+- F01 — Close-out: what shipped + ship decision + carried-forward remaining risks — [link](./findings/F01-close-out.md)
 
 ## Phase status
+
+The canonical detailed docs are the superpowers
+[spec](../../../../../docs/superpowers/specs/2026-06-07-executor-instrumentation-integrity-design.md)
+(design: goals, the five gaps, deliverables A–F, data flow, remaining risks) and
+[plan](../../../../../docs/superpowers/plans/2026-06-07-executor-instrumentation-integrity.md)
+(per-task edits + tests + ordering). This table tracks landing status only.
 
 | Task | Status | Notes |
 |------|--------|-------|
 | Spec + plan (superpowers convention) + D001-D003 | done | spec + plan in `docs/superpowers/`; this record points to them |
-| C1 cost auto-waive + doc corrections + tests | pending | D001 |
-| C2 Stop-gate all-terminal trigger + tests | pending | D002 |
-| C3 timing sanity FAIL + anti-pattern prose + tests | pending | D003 |
-| C4 quality_trend into task-complete + coverage WARNs + tests | pending | D003 |
-| C5 task-key canonicalization WARN + tests | pending | D003 |
-| Regression replay (3 fixtures) + Stop-gate integration | pending | the real proof |
-| Version bump + HISTORY/ARCHITECTURE/decision-log | pending | 2.28.0 |
-| findings/F01 close-out | pending | |
+| C1 cost auto-waive + doc corrections + tests | done | D001 — Phase 0 Step 7 sets `cost_tracking_waived`/`cost_tracking_waive_reason`; false "still report usage" prose removed |
+| C2 Stop-gate all-terminal trigger + tests | done | D002 — `elif [ "${TOTAL:-0}" -gt 0 ]` DONE=1 branch in the Stop-gate template |
+| C3 timing sanity FAIL + anti-pattern prose + tests | done | D003 — un-waivable `timing_inverted` FAIL + `_parse_iso` in `finalize_run.py` |
+| C4 quality_trend into task-complete + coverage WARNs + tests | done | D003 — `quality_trend` single-writer in `phase_boundary.py`; `quality_trend_sparse` + `agentlens_run_absent` WARNs |
+| C5 task-key canonicalization WARN + tests | done | D003 — `TASK_KEY_RE` + `task_key_noncanonical` WARN in `validate_state_schema.py` |
+| Regression replay (3 fixtures) + Stop-gate integration | pending | the real proof — Task 7 |
+| Version bump + HISTORY/ARCHITECTURE/decision-log | done | 2.28.0; `v228_*` contract checks added; see findings/F01 |
+| findings/F01 close-out | done | [findings/F01-close-out.md](./findings/F01-close-out.md) |

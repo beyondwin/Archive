@@ -276,6 +276,31 @@ def main() -> int:
         "SKILL.md Guardrails must carry the v2.26 Stop-hook row",
     )
 
+    # ---- v2.28 instrumentation-integrity contracts ----
+    V228_HELPER_TOKENS = {
+        "scripts/finalize_run.py": ["timing_inverted", "quality_trend_sparse",
+                                    "agentlens_run_absent", "_parse_iso"],
+        "scripts/validate_state_schema.py": ["task_key_noncanonical", "TASK_KEY_RE"],
+        "scripts/phase_boundary.py": ["quality_trend"],
+    }
+    for rel_path, tokens in V228_HELPER_TOKENS.items():
+        full = skill_dir / rel_path
+        body = full.read_text(encoding="utf-8") if full.is_file() else ""
+        record(f"v228_helper_contract_{rel_path.replace('/', '_')}",
+               all(t in body for t in tokens),
+               f"{rel_path} must define v2.28 tokens: {', '.join(tokens)}")
+
+    record("v228_stopgate_all_terminal",
+           'elif [ "${TOTAL:-0}" -gt 0 ]' in
+           (skill_dir / "references/hooks/finalization-stop-gate.sh.template").read_text(encoding="utf-8"),
+           "Stop gate must carry the v2.28 all-terminal DONE=1 branch")
+    record("v228_cost_waive_reason_wired",
+           "cost_tracking_waive_reason" in corpus,
+           "Phase 0 prose must set cost_tracking_waive_reason (D001)")
+    record("v228_no_false_usage_claim",
+           "still report usage" not in corpus,
+           "the false 'subscription dispatches still report usage' claim must be gone")
+
     record(
         "skill_md_tdd_not_size_gated",
         "SMALL skips TDD" not in corpus
@@ -457,7 +482,7 @@ def main() -> int:
         ("## Guardrails", "Method audit must pass before Phase 2 close-run"),
         ("## Guardrails", "Resource-key collisions force serialization in same wave"),
     ]
-    SECTION_WINDOW = 22000  # chars to scan forward from anchor (Guardrails table grew past 15k, then 20k, as new invariants accreted — v2.27 D002/D003 rows pushed it past 20k)
+    SECTION_WINDOW = 25000  # chars to scan forward from anchor (Guardrails table grew past 15k, then 20k, then 22k as new invariants accreted — v2.27 D002/D003 rows pushed it past 20k, v2.28 D001/D003 rows past 22k)
 
     for anchor, substring in REQUIRED_WORDING:
         check_key = f"wording_v211_{anchor[:20].lower().replace(' ', '_').replace('`', '').replace(':', '').replace('#', '').strip()}_{substring[:15].lower().replace(' ', '_').replace('-', '_')}"

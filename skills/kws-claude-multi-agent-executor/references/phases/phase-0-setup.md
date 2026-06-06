@@ -32,7 +32,7 @@
        - `state.setdefault('archive', None)`
        - `state.setdefault('agentlens_orchestration_run', None)` (v2.17 — RUN-LEVEL; AgentLens orchestration run ID opened by Phase -1 step b)
        - `state.setdefault('agentlens_healthy', None)` (v2.21 — RUN-LEVEL; one-shot reachability probe result from Phase -1 step b. `null` on a pre-v2.21 resume means "probe never ran" — treat as `false` for audit, but do NOT re-probe on resume; the field is only authoritative when written at run-open time)
-       If `state.cost_ledger` is already present (v2.14+ state.json), preserve it as-is and continue accumulating. Same for `budget_cap_usd` and `budget_action`. These fields span the whole chain, so the resume MUST NOT reset them on plan_chain swap or chain handoff.
+       If `state.cost_ledger` is already present (v2.14+ state.json), preserve it as-is and continue accumulating. Same for `budget_cap_usd` and `budget_action`. These fields span the whole chain, so the resume MUST NOT reset them on plan_chain swap or chain handoff. **`cost_tracking_waived` and `cost_tracking_waive_reason` (v2.28, D001) are likewise RUN-LEVEL and PRESERVED on every resume/handoff** — once Phase 0 Step 7 sets the waive, never recompute or clear it on a subsequent resume; carry whatever was written through plan_chain swap and Resume Chain handoff.
      - **Legacy `plan2_state` migration (v2.21 — D004):** immediately after loading state.json on any resume path, if `state.plan_chain` is absent AND `state.plan2_state` is a non-null object, run the one-time conversion shim **before** any `<active>`-dependent logic executes:
        ```bash
        python3 <skill_dir>/scripts/migrate_legacy_state.py --state "$ORCH_DIR/state.json"
@@ -158,7 +158,7 @@
    - `PreToolUse` (Bash) blocks `rm -rf /`, force-push to protected branches, and `DROP TABLE/DATABASE/SCHEMA` in sub-agent Bash calls. The hook extracts `.command` from the JSON `$CLAUDE_TOOL_INPUT` via `jq` before grep-matching (raw-JSON matching has too many false positives/negatives due to quoting and escaping). If `jq` is unavailable or extraction fails (no `.command` key), the hook falls back to matching the raw payload — strictly more permissive than the jq path, never less. Does NOT block `git reset --hard` — the orchestrator uses it for verifier-fail recovery.
    - `PostToolUse` (Edit|Write) — `scan-debug-artifacts.sh` — runtime-enforced debug-artifact gate. On detection of `console.log|debugger|TODO|FIXME` in added content (outside string literals and `*.md` paths), exits 2; Claude Code surfaces the failure to the sub-agent which retries the edit. Replaces the prose-only Phase 1 Step 4.1 grep (now removed) — discipline lives in the runtime, not in the loop.
    - `SubagentStop` — `check-implementer-output.sh` — STATUS sanity check on Implementer output. Verifies presence of `STATUS:`, `SUMMARY:`, `FILES_CHANGED:`, `FILES_TEST_CHANGED:` (and `COMMIT:` when STATUS=DONE; ESCALATE fields when STATUS=ESCALATE). Missing field → exit 2 → orchestrator receives failure and re-dispatches.
-   - `Stop` — `finalization-stop-gate.sh` (v2.26) — finalization forcing function. When the session tries to STOP, a cheap single-`jq` pass checks the active tree; while any task is still non-terminal it exits 0 immediately (negligible per-turn cost). Only once **every** task is terminal AND a real end-signal fired (run-level `status: COMPLETE`, or `current_task` cleared with a recorded `last_completed_task`) does it run `finalize_run.py --check` and `validate_state_schema.py`. If either reports a blocking problem → exit 2 with corrective guidance on stderr, blocking the stop until Phase 2 finalization completes. This resolves the two remaining v2.26 risks — a run that **never enters Phase 2** (the source-matching failure) and attached-mode schema improvisation — that the Phase-2-only gates could not catch (D001). Fail-open on hook-internal error (missing args/tools/state, validator exit 2) so a broken hook never traps the session; fail-closed on a detected inconsistency.
+   - `Stop` — `finalization-stop-gate.sh` (v2.26) — finalization forcing function. When the session tries to STOP, a cheap single-`jq` pass checks the active tree; while any task is still non-terminal it exits 0 immediately (negligible per-turn cost). Only once **every** task is terminal AND a real end-signal fired (run-level `status: COMPLETE`, or `current_task` cleared with a recorded `last_completed_task`, or — v2.28 (D002) — simply **every declared task terminal** at Stop time, since the Stop hook fires only when the session is genuinely ending and an all-terminal run that reaches Stop without finalizing means Phase 2 was skipped) does it run `finalize_run.py --check` and `validate_state_schema.py`. If either reports a blocking problem → exit 2 with corrective guidance on stderr, blocking the stop until Phase 2 finalization completes. This resolves the two remaining v2.26 risks — a run that **never enters Phase 2** (the source-matching failure) and attached-mode schema improvisation — that the Phase-2-only gates could not catch (D001). Fail-open on hook-internal error (missing args/tools/state, validator exit 2) so a broken hook never traps the session; fail-closed on a detected inconsistency.
 
    **Why this layering matters (P1):** prior versions kept these checks in prose (Orchestrator-driven), so a context drift or malformed reply could silently skip the gate. With hooks they cannot be bypassed.
 
@@ -202,6 +202,7 @@
    `task_to_sections` starts empty here; it is populated at Step 6 (Compute task_to_sections — C1, added by Task 2). The Plan Reviewer (Step 6.5) validates downstream references.
 
 4. **Assign risk levels** to each task:
+   **Canonical task keys (v2.28 — D003).** Each task is keyed `task_<N>` (zero- or one-based per the plan's ordering, e.g. `task_0`, `task_1`, ...) — NEVER a bare integer (`"3"`) and NEVER a free-form label (`"riskclose"`). Remediation or otherwise-inserted tasks use the suffixed form `task_<N>_<suffix>` (e.g. `task_7_remediation`). This same key is the one used across `risk_levels`, `execution_plan`, `task_complexity`, `tasks`, and `task_summaries` — assign it once here and reuse it verbatim everywhere. `scripts/validate_state_schema.py` emits a `task_key_noncanonical` WARN if a non-canonical key reaches state.json.
    - `low` — isolated change, single file or module, no shared state, no API surface change
    - `mid` — touches 2+ modules, shared state, moderate coupling, or config changes
    - `high` — cross-cutting change, database/schema/API surface, or explicitly marked high-risk in plan
@@ -520,6 +521,29 @@ After risk assignment, before baseline test. Detection-only — never halts, nev
    **Run-level `dispatch_config` + per-plan gap fields (v2.25):** `dispatch_config` is run-level (top of state.json, preserved across plan_chain swap); any gate the user passed explicitly, or any Phase -1 detach reconciliation, is applied before this write and must NOT be overwritten. `verification_gaps`/`docs_gaps` are per-plan (live under `plan_chain[active]` for multi-plan runs).
 
    **Run-level cost/budget/archive fields (v2.14):** the four fields `cost_ledger`, `budget_cap_usd`, `budget_action`, and `archive` are **RUN-LEVEL** — they live at the top of `state.json` and span the entire orchestrator invocation, including every plan in a multi-plan chain. They are NOT per-plan and MUST NOT be duplicated inside `plan_chain[i]`. `cost_ledger.by_task` is keyed `"<plan_index_or_'top'>::<task_id>"` so a single ledger covers the chain. `budget_cap_usd` is a number (USD) or `null` (no cap). `budget_action ∈ {"pause", "warn", "off"}` controls behavior when the cap is crossed. `archive` defaults to `null` and is populated by the post-run forensics archive step (v2.14).
+
+   **Cost auto-waive (v2.28, D001) — deterministic, not a judgement.** After
+   `dispatch_config` is set (above), compute whether any role gate is metered:
+
+   ```
+   metered = any(dispatch_config[g] in ("api","p") for g in dispatch_config)
+   if state.mode == "interactive_attached" and not metered:
+       state_set.py  cost_tracking_waived = true
+       state_set.py  cost_tracking_waive_reason = "agent-dispatch-no-usage"
+   ```
+
+   The Agent tool returns no `usage` to the orchestrator, so an all-`agent`
+   attached run *cannot* populate the ledger — the waive is honest, set once,
+   machine-readable. A run with any `api`/`p` gate is left un-waived and must
+   accumulate real cost. Write both fields with `scripts/state_set.py` (atomic);
+   do NOT hand-type the waive. The waive is derived purely from `dispatch_config`
+   + `mode`, not from any model judgement.
+
+   **Honest limitation:** auto-waiving cost also disables `budget_cap_usd`
+   enforcement and the token-based chain-resume trigger on the default path,
+   because both read the now-empty ledger. This is the accepted cost of the
+   agent-pool default; users who need budget enforcement opt a gate into
+   `api`/`p` (which un-waives the run and re-enables both).
 
    **Run-level AgentLens orchestration field (v2.17):** `agentlens_orchestration_run` is a `string | null` — the AgentLens run ID opened by Phase -1 step b via `agentlens run-open`. It is RUN-LEVEL (top of state.json, NOT inside `plan_chain[i]`); a single orchestrator invocation owns at most one AgentLens orchestration run regardless of plan chain length. If AgentLens was unavailable at Phase -1 step b the field is `null` and all subsequent emit sites no-op. Preserved across plan_chain swap and Resume Chain handoff. Already initialized in the minimal state.json from Phase -1 step b; this Step 7 write must preserve whatever was written there (do NOT reset to `null`).
 

@@ -1,0 +1,1320 @@
+{
+  "schema_version": "2",
+  "mode": "interactive_attached",
+  "active_plan": 1,
+  "plan": "docs/superpowers/plans/2026-06-06-readmates-resilience-implementation.md",
+  "spec": "docs/superpowers/plans/2026-06-06-readmates-resilience-implementation.md",
+  "branch": "readmates-resilience-implementation-20260606-214931",
+  "worktree": "/Users/kws/.claude/worktrees/readmates-resilience-implementation-20260606-214931",
+  "orchestrator_dir": "/Users/kws/.claude/orchestrator/readmates-resilience-implementation-20260606-214931",
+  "source_repo": "/Users/kws/source/web/ReadMates/.git",
+  "test_command": "pnpm --dir front test",
+  "implementer_model": {
+    "used": "opus",
+    "default": "sonnet"
+  },
+  "task_header_prefix": "## ",
+  "merge_to_main_requested": true,
+  "resolve_remaining_risks_requested": true,
+  "plan_chain": [
+    {
+      "index": 0,
+      "plan_path": "docs/superpowers/plans/2026-06-06-readmates-resilience-implementation.md",
+      "spec_path": "docs/superpowers/plans/2026-06-06-readmates-resilience-implementation.md",
+      "status": "complete",
+      "blocked_until": null,
+      "baseline": {
+        "passing": 1,
+        "failing": 0,
+        "note": "server unitTest BUILD SUCCESSFUL (green)"
+      },
+      "task_header_prefix": "## ",
+      "risk_levels": {
+        "task_1": "low",
+        "task_2": "low",
+        "task_3": "mid",
+        "task_4": "mid",
+        "task_5": "mid",
+        "task_6": "mid",
+        "task_7": "mid"
+      },
+      "task_complexity": {
+        "task_1": "SMALL",
+        "task_2": "MEDIUM",
+        "task_3": "MEDIUM",
+        "task_4": "MEDIUM",
+        "task_5": "MEDIUM",
+        "task_6": "LARGE",
+        "task_7": "LARGE"
+      },
+      "compaction_points": [
+        "task_3",
+        "task_7"
+      ],
+      "execution_plan": [
+        {
+          "wave": 0,
+          "parallel_groups": [
+            [
+              "task_1"
+            ]
+          ]
+        },
+        {
+          "wave": 1,
+          "parallel_groups": [
+            [
+              "task_2"
+            ]
+          ]
+        },
+        {
+          "wave": 2,
+          "parallel_groups": [
+            [
+              "task_3"
+            ]
+          ]
+        },
+        {
+          "wave": 3,
+          "parallel_groups": [
+            [
+              "task_4"
+            ],
+            [
+              "task_5"
+            ],
+            [
+              "task_6"
+            ]
+          ]
+        },
+        {
+          "wave": 4,
+          "parallel_groups": [
+            [
+              "task_7"
+            ]
+          ]
+        }
+      ],
+      "global_constraints": {
+        "shared_files": {}
+      },
+      "spec_manifest": {
+        "spec_path": "docs/superpowers/plans/2026-06-06-readmates-resilience-implementation.md",
+        "sections": {},
+        "task_to_sections": {
+          "task_1": {
+            "sections": [
+              "*"
+            ],
+            "fallback_used": true
+          },
+          "task_2": {
+            "sections": [
+              "*"
+            ],
+            "fallback_used": true
+          },
+          "task_3": {
+            "sections": [
+              "*"
+            ],
+            "fallback_used": true
+          },
+          "task_4": {
+            "sections": [
+              "*"
+            ],
+            "fallback_used": true
+          },
+          "task_5": {
+            "sections": [
+              "*"
+            ],
+            "fallback_used": true
+          },
+          "task_6": {
+            "sections": [
+              "*"
+            ],
+            "fallback_used": true
+          },
+          "task_7": {
+            "sections": [
+              "*"
+            ],
+            "fallback_used": true
+          }
+        },
+        "fallback_policy": "full_spec_on_blocker"
+      },
+      "quality_trend": [
+        0.9,
+        0.97,
+        0.97,
+        0.88
+      ],
+      "low_tasks_pending_verification": [],
+      "last_compaction_after_task": 7,
+      "last_completed_task": "task_7",
+      "last_completed_at": "2026-06-06T14:08:46Z",
+      "plan_review": {
+        "status": "PASS",
+        "warnings": [],
+        "model_used": "orchestrator-manual",
+        "note": "Mechanical rubric verified by orchestrator: all 7 tasks have Files blocks, all paths in-repo, no dep cycles, contracts consistent (execute/states signatures, CB names, metric names per plan Self-Review). Runtime risks (Spring Data Redis execute() signature in Task 5) are acknowledged in-plan with adjust-on-compile guidance."
+      },
+      "tasks": {
+        "task_1": {
+          "status": "COMPLETE",
+          "risk": "low",
+          "complexity": "SMALL",
+          "files": [
+            "server/build.gradle.kts"
+          ],
+          "files_test": [],
+          "commit": "09743353764b81bd33753aa4a4d0a42fda942d2c",
+          "pre_task_sha": "d7a1c34b0f21af1c847a54ec2d23481175a3d0f7",
+          "escalations": 0,
+          "review_retries": 0,
+          "verifier_retries": 0,
+          "spec_clarifications": 0,
+          "spec_score": 0.9,
+          "quality_score": 1.0,
+          "review_tier": "PASS",
+          "method_audit": {
+            "required": [
+              "verification-before-completion"
+            ],
+            "applied": [
+              {
+                "skill": "verification-before-completion",
+                "evidence": {
+                  "commands_run": [
+                    "./server/gradlew -p server dependencies --configuration runtimeClasspath -q | grep -i resilience4j",
+                    "./server/gradlew -p server compileKotlin"
+                  ]
+                }
+              },
+              {
+                "skill": "code-review-pass",
+                "evidence": {
+                  "findings_count": 1,
+                  "locations": [
+                    "server/build.gradle.kts:0"
+                  ]
+                }
+              }
+            ],
+            "missing": [],
+            "waived": [
+              {
+                "skill": "test-driven-development",
+                "reason": "config-only-task"
+              }
+            ],
+            "pending_batch_verification": true
+          },
+          "timing": {
+            "started": null,
+            "implementer_done": null,
+            "reviewer_done": null,
+            "verifier_done": null,
+            "completed": "2026-06-06T12:59:42Z"
+          }
+        },
+        "task_2": {
+          "status": "COMPLETE",
+          "risk": "low",
+          "complexity": "MEDIUM",
+          "files": [
+            "server/src/main/kotlin/com/readmates/shared/adapter/out/resilience/OutboundResilienceProperties.kt",
+            "server/src/test/kotlin/com/readmates/shared/adapter/out/resilience/OutboundResiliencePropertiesTest.kt"
+          ],
+          "files_test": [
+            "server/src/test/kotlin/com/readmates/shared/adapter/out/resilience/OutboundResiliencePropertiesTest.kt"
+          ],
+          "commit": "52ba3ccffe300e1943462d82d600963f1f57132d",
+          "pre_task_sha": "09743353764b81bd33753aa4a4d0a42fda942d2c",
+          "escalations": 0,
+          "review_retries": 0,
+          "verifier_retries": 0,
+          "spec_clarifications": 0,
+          "spec_score": 1.0,
+          "quality_score": 0.9,
+          "review_tier": "PASS",
+          "method_audit": {
+            "required": [
+              "test-driven-development",
+              "verification-before-completion",
+              "code-review-pass"
+            ],
+            "applied": [
+              {
+                "skill": "test-driven-development",
+                "evidence": {
+                  "red": "./server/gradlew -p server unitTest --tests com.readmates.shared.adapter.out.resilience.OutboundResiliencePropertiesTest",
+                  "green": "./server/gradlew -p server unitTest --tests com.readmates.shared.adapter.out.resilience.OutboundResiliencePropertiesTest",
+                  "tests": [
+                    "server/src/test/kotlin/com/readmates/shared/adapter/out/resilience/OutboundResiliencePropertiesTest.kt"
+                  ]
+                }
+              },
+              {
+                "skill": "verification-before-completion",
+                "evidence": {
+                  "commands_run": [
+                    "./server/gradlew -p server unitTest --tests ...OutboundResiliencePropertiesTest"
+                  ]
+                }
+              },
+              {
+                "skill": "code-review-pass",
+                "evidence": {
+                  "findings_count": 1,
+                  "locations": [
+                    "OutboundResiliencePropertiesTest.kt:20-34"
+                  ]
+                }
+              }
+            ],
+            "missing": [],
+            "waived": [],
+            "pending_batch_verification": true
+          },
+          "timing": {
+            "started": null,
+            "implementer_done": null,
+            "reviewer_done": null,
+            "verifier_done": null,
+            "completed": "2026-06-06T13:04:39Z"
+          }
+        },
+        "task_3": {
+          "status": "COMPLETE",
+          "risk": "mid",
+          "complexity": "MEDIUM",
+          "files": [
+            "server/src/main/kotlin/com/readmates/shared/adapter/out/resilience/OutboundCircuitBreakers.kt",
+            "server/src/test/kotlin/com/readmates/shared/adapter/out/resilience/OutboundCircuitBreakersTest.kt"
+          ],
+          "files_test": [
+            "server/src/test/kotlin/com/readmates/shared/adapter/out/resilience/OutboundCircuitBreakersTest.kt"
+          ],
+          "commit": "2e70967a87831225bf9ed1e1b448d63c1a983961",
+          "pre_task_sha": "52ba3ccffe300e1943462d82d600963f1f57132d",
+          "escalations": 0,
+          "review_retries": 0,
+          "verifier_retries": 0,
+          "spec_clarifications": 0,
+          "spec_score": 1.0,
+          "quality_score": 0.9,
+          "review_tier": "PASS",
+          "method_audit": {
+            "required": [
+              "test-driven-development",
+              "verification-before-completion",
+              "code-review-pass"
+            ],
+            "applied": [
+              {
+                "skill": "test-driven-development",
+                "evidence": {
+                  "red": "./server/gradlew -p server unitTest --tests com.readmates.shared.adapter.out.resilience.OutboundCircuitBreakersTest",
+                  "green": "./server/gradlew -p server unitTest --tests com.readmates.shared.adapter.out.resilience.OutboundCircuitBreakersTest",
+                  "tests": [
+                    "server/src/test/kotlin/com/readmates/shared/adapter/out/resilience/OutboundCircuitBreakersTest.kt"
+                  ]
+                }
+              },
+              {
+                "skill": "verification-before-completion",
+                "evidence": {
+                  "commands_run": [
+                    "./server/gradlew -p server unitTest --tests ...OutboundCircuitBreakersTest --rerun-tasks",
+                    "./server/gradlew -p server unitTest --rerun-tasks (674 tests, 0 failures)"
+                  ]
+                }
+              },
+              {
+                "skill": "code-review-pass",
+                "evidence": {
+                  "findings_count": 1,
+                  "locations": [
+                    "OutboundCircuitBreakersTest.kt:13"
+                  ]
+                }
+              }
+            ],
+            "missing": [],
+            "waived": []
+          },
+          "timing": {
+            "started": null,
+            "implementer_done": null,
+            "reviewer_done": null,
+            "verifier_done": null,
+            "completed": "2026-06-06T13:12:58Z"
+          }
+        },
+        "task_4": {
+          "status": "COMPLETE",
+          "risk": "mid",
+          "complexity": "MEDIUM",
+          "files": [
+            "server/src/main/kotlin/com/readmates/club/adapter/out/http/HttpClubDomainActualStateChecker.kt"
+          ],
+          "files_test": [
+            "server/src/test/kotlin/com/readmates/club/adapter/out/http/HttpClubDomainActualStateCheckerCircuitBreakerTest.kt",
+            "server/src/test/kotlin/com/readmates/club/adapter/out/http/HttpClubDomainActualStateCheckerTest.kt"
+          ],
+          "commit": "4599bca38e5f49b4f94e8d4faabdf18d6b796317",
+          "pre_task_sha": "2e70967a87831225bf9ed1e1b448d63c1a983961",
+          "escalations": 0,
+          "review_retries": 0,
+          "verifier_retries": 0,
+          "spec_clarifications": 0,
+          "spec_score": 1.0,
+          "quality_score": 0.9,
+          "review_tier": "PASS",
+          "method_audit": {
+            "required": [
+              "test-driven-development",
+              "verification-before-completion",
+              "code-review-pass"
+            ],
+            "applied": [
+              {
+                "skill": "test-driven-development",
+                "evidence": {
+                  "red": "./server/gradlew -p server unitTest --tests com.readmates.club.adapter.out.http.HttpClubDomainActualStateCheckerCircuitBreakerTest",
+                  "green": "./server/gradlew -p server unitTest --tests com.readmates.club.adapter.out.http.HttpClubDomainActualStateCheckerCircuitBreakerTest",
+                  "tests": [
+                    "server/src/test/kotlin/com/readmates/club/adapter/out/http/HttpClubDomainActualStateCheckerCircuitBreakerTest.kt"
+                  ]
+                }
+              },
+              {
+                "skill": "verification-before-completion",
+                "evidence": {
+                  "commands_run": [
+                    "./server/gradlew -p server unitTest --tests ...HttpClubDomainActualStateCheckerCircuitBreakerTest --rerun-tasks",
+                    "./server/gradlew -p server unitTest --tests 'com.readmates.club.*' --rerun-tasks (41 tests, 0 failures)"
+                  ]
+                }
+              },
+              {
+                "skill": "code-review-pass",
+                "evidence": {
+                  "findings_count": 0,
+                  "residual_risk": "Half-open recovery path not unit-tested for this adapter (out of Task 4 scope)."
+                }
+              }
+            ],
+            "missing": [],
+            "waived": []
+          },
+          "timing": {
+            "started": "2026-06-06T13:17:45Z",
+            "implementer_done": "2026-06-06T13:21:28Z",
+            "reviewer_done": "2026-06-06T13:22:49Z",
+            "verifier_done": "2026-06-06T13:24:30Z",
+            "completed": "2026-06-06T13:25:05Z"
+          }
+        },
+        "task_5": {
+          "status": "COMPLETE",
+          "risk": "mid",
+          "complexity": "MEDIUM",
+          "files": [
+            "server/src/main/kotlin/com/readmates/auth/adapter/out/redis/RedisRateLimitAdapter.kt"
+          ],
+          "files_test": [
+            "server/src/test/kotlin/com/readmates/auth/adapter/out/redis/RedisRateLimitAdapterCircuitBreakerTest.kt",
+            "server/src/test/kotlin/com/readmates/auth/adapter/out/redis/RedisRateLimitAdapterTest.kt"
+          ],
+          "commit": "48b490c9ff64d767ccbee2127b6bcb14f8fd4106",
+          "pre_task_sha": "4599bca38e5f49b4f94e8d4faabdf18d6b796317",
+          "escalations": 0,
+          "review_retries": 0,
+          "verifier_retries": 0,
+          "spec_clarifications": 0,
+          "spec_score": 1.0,
+          "quality_score": 0.97,
+          "review_tier": "PASS",
+          "method_audit": {
+            "required": [
+              "test-driven-development",
+              "verification-before-completion",
+              "code-review-pass"
+            ],
+            "applied": [
+              {
+                "skill": "test-driven-development",
+                "evidence": {
+                  "red": "./server/gradlew -p server unitTest --tests ...RedisRateLimitAdapterCircuitBreakerTest (FAILED: missing circuitBreakers param)",
+                  "green": "./server/gradlew -p server unitTest --tests ...RedisRateLimitAdapterCircuitBreakerTest (tests=1 failures=0)",
+                  "tests": [
+                    "server/src/test/kotlin/com/readmates/auth/adapter/out/redis/RedisRateLimitAdapterCircuitBreakerTest.kt"
+                  ]
+                }
+              },
+              {
+                "skill": "verification-before-completion",
+                "evidence": {
+                  "commands_run": [
+                    "./server/gradlew -p server unitTest --tests ...RedisRateLimitAdapterCircuitBreakerTest",
+                    "./server/gradlew -p server compileTestKotlin",
+                    "./server/gradlew -p server unitTest --tests 'com.readmates.auth.adapter.out.redis.*' --rerun-tasks"
+                  ]
+                }
+              },
+              {
+                "skill": "code-review-pass",
+                "evidence": {
+                  "findings_count": 0,
+                  "residual_risk": "CB unit test uses synthetic config (window/min=2) vs prod defaults (20/10); integration RedisRateLimitAdapterTest excluded from unitTest (Testcontainers), compile-clean only."
+                }
+              }
+            ],
+            "missing": [],
+            "waived": []
+          },
+          "timing": {
+            "started": "2026-06-06T13:25:30Z",
+            "implementer_done": "2026-06-06T13:31:03Z",
+            "reviewer_done": "2026-06-06T13:32:52Z",
+            "verifier_done": "2026-06-06T13:34:20Z",
+            "completed": "2026-06-06T13:34:18Z"
+          }
+        },
+        "task_6": {
+          "status": "COMPLETE",
+          "risk": "mid",
+          "complexity": "LARGE",
+          "files": [
+            "server/src/main/kotlin/com/readmates/publication/adapter/out/redis/RedisPublicReadCacheAdapter.kt",
+            "server/src/main/kotlin/com/readmates/note/adapter/out/redis/RedisNotesReadCacheAdapter.kt",
+            "server/src/main/kotlin/com/readmates/shared/adapter/out/redis/RedisReadCacheInvalidationAdapter.kt"
+          ],
+          "files_test": [
+            "server/src/test/kotlin/com/readmates/publication/adapter/out/redis/RedisPublicReadCacheAdapterCircuitBreakerTest.kt",
+            "server/src/test/kotlin/com/readmates/note/adapter/out/redis/RedisNotesReadCacheAdapterCircuitBreakerTest.kt",
+            "server/src/test/kotlin/com/readmates/shared/adapter/out/redis/RedisReadCacheInvalidationAdapterCircuitBreakerTest.kt",
+            "server/src/test/kotlin/com/readmates/publication/adapter/out/redis/RedisPublicReadCacheAdapterTest.kt",
+            "server/src/test/kotlin/com/readmates/note/adapter/out/redis/RedisNotesReadCacheAdapterTest.kt",
+            "server/src/test/kotlin/com/readmates/shared/adapter/out/redis/RedisReadCacheInvalidationAdapterTest.kt"
+          ],
+          "commit": "6c256c8cd046722c90f64862e94fb8681f7c7c69",
+          "pre_task_sha": "48b490c9ff64d767ccbee2127b6bcb14f8fd4106",
+          "escalations": 0,
+          "review_retries": 0,
+          "verifier_retries": 0,
+          "spec_clarifications": 0,
+          "spec_score": 1.0,
+          "quality_score": 0.97,
+          "review_tier": "PASS",
+          "method_audit": {
+            "required": [
+              "test-driven-development",
+              "verification-before-completion",
+              "code-review-pass"
+            ],
+            "applied": [
+              {
+                "skill": "test-driven-development",
+                "evidence": {
+                  "red": "./server/gradlew -p server compileTestKotlin -q (No parameter named circuitBreakers)",
+                  "green": "./server/gradlew -p server unitTest --tests '...{Public,Notes,Invalidation}...CircuitBreakerTest' (3 tests, 0 failures)",
+                  "tests": [
+                    "RedisPublicReadCacheAdapterCircuitBreakerTest.kt",
+                    "RedisNotesReadCacheAdapterCircuitBreakerTest.kt",
+                    "RedisReadCacheInvalidationAdapterCircuitBreakerTest.kt"
+                  ]
+                }
+              },
+              {
+                "skill": "verification-before-completion",
+                "evidence": {
+                  "commands_run": [
+                    "./server/gradlew -p server unitTest --tests 'publication/note/shared adapter.out.redis.*' --rerun-tasks (BUILD SUCCESSFUL)",
+                    "./server/gradlew -p server compileTestKotlin -q (exit 0)",
+                    "boundary grep empty"
+                  ]
+                }
+              },
+              {
+                "skill": "code-review-pass",
+                "evidence": {
+                  "findings_count": 0,
+                  "residual_risk": "Fail-open fidelity verified byte-for-byte vs 6c256c8^; cache/decode misses return null inside breaker block (counted as success, never trip circuit); safeDelete left as plain runCatching per spec."
+                }
+              }
+            ],
+            "missing": [],
+            "waived": []
+          },
+          "timing": {
+            "started": "2026-06-06T13:34:55Z",
+            "implementer_done": "2026-06-06T13:43:12Z",
+            "reviewer_done": "2026-06-06T13:45:49Z",
+            "verifier_done": "2026-06-06T13:47:30Z",
+            "completed": "2026-06-06T13:47:59Z"
+          }
+        },
+        "task_7": {
+          "status": "COMPLETE",
+          "risk": "mid",
+          "complexity": "LARGE",
+          "files": [
+            "server/src/main/kotlin/com/readmates/admin/health/application/service/providers/OutboundResilienceHealthCardProvider.kt",
+            "server/src/main/kotlin/com/readmates/shared/adapter/out/resilience/OutboundCircuitBreakers.kt",
+            "server/src/main/kotlin/com/readmates/shared/adapter/out/resilience/OutboundResilienceProperties.kt",
+            "server/src/main/kotlin/com/readmates/club/adapter/out/http/HttpClubDomainActualStateChecker.kt",
+            "docs/development/architecture.md",
+            "CHANGELOG.md"
+          ],
+          "files_test": [
+            "server/src/test/kotlin/com/readmates/admin/health/application/service/providers/OutboundResilienceHealthCardProviderTest.kt",
+            "server/src/test/kotlin/com/readmates/architecture/ServerArchitectureBoundaryTest.kt",
+            "server/src/test/kotlin/com/readmates/shared/adapter/out/resilience/OutboundCircuitBreakersTest.kt",
+            "server/src/test/kotlin/com/readmates/auth/adapter/out/redis/RedisRateLimitAdapterCircuitBreakerTest.kt",
+            "server/src/test/kotlin/com/readmates/club/adapter/out/http/HttpClubDomainActualStateCheckerCircuitBreakerTest.kt",
+            "server/src/test/kotlin/com/readmates/club/adapter/out/http/HttpClubDomainActualStateCheckerTest.kt",
+            "server/src/test/kotlin/com/readmates/note/adapter/out/redis/RedisNotesReadCacheAdapterCircuitBreakerTest.kt",
+            "server/src/test/kotlin/com/readmates/publication/adapter/out/redis/RedisPublicReadCacheAdapterCircuitBreakerTest.kt",
+            "server/src/test/kotlin/com/readmates/shared/adapter/out/redis/RedisReadCacheInvalidationAdapterCircuitBreakerTest.kt"
+          ],
+          "commit": "cf0ddd6f98886914ac7c5e3c277bb9bbc95e625f",
+          "pre_task_sha": "6c256c8cd046722c90f64862e94fb8681f7c7c69",
+          "escalations": 0,
+          "review_retries": 0,
+          "verifier_retries": 0,
+          "spec_clarifications": 0,
+          "spec_score": 1.0,
+          "quality_score": 0.88,
+          "review_tier": "PASS",
+          "method_audit": {
+            "required": [
+              "test-driven-development",
+              "verification-before-completion",
+              "code-review-pass"
+            ],
+            "applied": [
+              {
+                "skill": "test-driven-development",
+                "evidence": {
+                  "red": "./server/gradlew -p server unitTest --tests ...OutboundResilienceHealthCardProviderTest (Unresolved reference 'OutboundResilienceHealthCardProvider')",
+                  "green": "OutboundResilienceHealthCardProviderTest 3/3 + architectureTest guard PASS",
+                  "tests": [
+                    "OutboundResilienceHealthCardProviderTest.kt",
+                    "ServerArchitectureBoundaryTest.kt (application packages do not depend on resilience4j types)"
+                  ]
+                }
+              },
+              {
+                "skill": "verification-before-completion",
+                "evidence": {
+                  "commands_run": [
+                    "./server/gradlew -p server check (BUILD SUCCESSFUL: detekt, ktlint main+test, unitTest, architectureTest, jacocoTestCoverageVerification)",
+                    "boundary grep: no actual 'import io.github.resilience4j' outside */adapter/out/"
+                  ]
+                }
+              },
+              {
+                "skill": "code-review-pass",
+                "evidence": {
+                  "findings_count": 3,
+                  "residual_risk": "Reviewer PASS (spec 1.0, quality 0.88). 3 LOW/INFO notes: (1) no explicit ArchUnit allow-rule documents that admin.health.application may import adapter.out.resilience (intentional boundary-safe-accessor trade-off, undocumented in ArchUnit exceptions); (2) CRIT test uses throw vs error() style; (3) health card has no WARN band (warn==crit==1.0, matches spec). Independent verifier confirmed full check gate green."
+                }
+              }
+            ],
+            "missing": [],
+            "waived": []
+          },
+          "notes": "Task 7 also fixed pre-existing detekt(9)/ktlint(2) violations left by Tasks 1-6 (per-task verifiers only ran targeted unitTest, not full check). All lint fixes verified behavior-preserving and confined to the resilience feature; an unrelated NotificationEmailTemplates.kt reformat and a .claude/settings.json edit were reverted. Full `./server/gradlew -p server check` now BUILD SUCCESSFUL.",
+          "timing": {
+            "started": "2026-06-06T13:48:17Z",
+            "implementer_done": "2026-06-06T14:01:57Z",
+            "reviewer_done": null,
+            "verifier_done": null,
+            "completed": "2026-06-06T14:08:46Z"
+          }
+        }
+      },
+      "task_summaries": {
+        "task_1": {
+          "files": [
+            "server/build.gradle.kts"
+          ],
+          "exposed_apis": [],
+          "key_decision": "Add resilience4j 2.2.0 core+micrometer only, no starter",
+          "for_next_tasks": "resilience4j-circuitbreaker + resilience4j-micrometer 2.2.0 available; types must stay in adapter.out only"
+        },
+        "task_2": {
+          "files": [
+            "server/src/main/kotlin/com/readmates/shared/adapter/out/resilience/OutboundResilienceProperties.kt"
+          ],
+          "exposed_apis": [
+            "OutboundResilienceProperties",
+            "OutboundResilienceConfiguration"
+          ],
+          "key_decision": "Externalize CB params under readmates.resilience with availability-first defaults",
+          "for_next_tasks": "OutboundResilienceProperties(enabled,failureRateThreshold:Float,slidingWindowSize,minimumNumberOfCalls,permittedCallsInHalfOpenState,waitDurationInOpenState:Duration) — construct directly in tests"
+        },
+        "task_3": {
+          "files": [
+            "server/src/main/kotlin/com/readmates/shared/adapter/out/resilience/OutboundCircuitBreakers.kt"
+          ],
+          "exposed_apis": [
+            "OutboundCircuitBreakers",
+            "OutboundCircuitBreakers.execute",
+            "OutboundCircuitBreakers.states"
+          ],
+          "key_decision": "Programmatic CB facade with execute(name,fallback,block) + states(); metrics state_transition/short_circuited",
+          "for_next_tasks": "Inject OutboundCircuitBreakers; call execute(name,fallback={...},block={...}). fallback receives Throwable. CB names: club-domain-check, redis-rate-limit, redis-public-cache, redis-notes-cache, redis-cache-invalidation. Metrics readmates.resilience.{state_transition,short_circuited}"
+        },
+        "task_4": {
+          "files": [
+            "server/src/main/kotlin/com/readmates/club/adapter/out/http/HttpClubDomainActualStateChecker.kt"
+          ],
+          "exposed_apis": [
+            "HttpClubDomainActualStateChecker.CIRCUIT_BREAKER_NAME"
+          ],
+          "key_decision": "Wrap club domain HTTPS check in CB; CallNotPermitted->CIRCUIT_OPEN",
+          "for_next_tasks": "CB name club-domain-check; reuse execute(name,fallback,block) for redis adapters tasks 5/6"
+        },
+        "task_5": {
+          "files": [
+            "server/src/main/kotlin/com/readmates/auth/adapter/out/redis/RedisRateLimitAdapter.kt"
+          ],
+          "exposed_apis": [
+            "RedisRateLimitAdapter.CIRCUIT_BREAKER_NAME"
+          ],
+          "key_decision": "Wrap redis rate-limit in CB; fail-open semantics moved to failOpen() fallback",
+          "for_next_tasks": "CB name redis-rate-limit; Spring Data Redis 4.0.0 — cannot subclass StringRedisTemplate.execute, use Mockito mock in tests; redis cache adapters next use redis-public-cache/redis-notes-cache/redis-cache-invalidation"
+        },
+        "task_6": {
+          "files": [
+            "RedisPublicReadCacheAdapter.kt",
+            "RedisNotesReadCacheAdapter.kt",
+            "RedisReadCacheInvalidationAdapter.kt"
+          ],
+          "exposed_apis": [
+            "redis-public-cache",
+            "redis-notes-cache",
+            "redis-cache-invalidation CB names"
+          ],
+          "key_decision": "Wrap 3 redis cache adapters in CB; cache/decode miss returns null inside block (breaker success)",
+          "for_next_tasks": "All 5 CB names now in use: club-domain-check, redis-rate-limit, redis-public-cache, redis-notes-cache, redis-cache-invalidation. Task 7 ArchUnit guard + health card + docs"
+        },
+        "task_7": "ArchUnit guard (application packages must not depend on resilience4j) + OutboundResilienceHealthCardProvider (cardId outbound-resilience, CRIT when any circuit open) via boundary-safe OutboundCircuitBreakers.openCircuitCount(). Also fixed pre-existing detekt/ktlint from tasks 1-6 so full check gate is green. Reviewer PASS 1.0/0.88, Verifier PASS (full check BUILD SUCCESSFUL)."
+      },
+      "decisions_register": [
+        {
+          "task": "task_1",
+          "decision": "Add resilience4j 2.2.0 core+micrometer only, no starter",
+          "files": [
+            "server/build.gradle.kts"
+          ],
+          "made_at": "2026-06-06T13:00:00Z",
+          "supersedes": null
+        },
+        {
+          "task": "task_2",
+          "decision": "Externalize CB params under readmates.resilience with availability-first defaults",
+          "files": [
+            "server/src/main/kotlin/com/readmates/shared/adapter/out/resilience/OutboundResilienceProperties.kt"
+          ],
+          "made_at": "2026-06-06T13:05:00Z",
+          "supersedes": null
+        },
+        {
+          "task": "task_3",
+          "decision": "Programmatic CB facade execute(name,fallback,block)+states(); fail-open on CallNotPermitted",
+          "files": [
+            "server/src/main/kotlin/com/readmates/shared/adapter/out/resilience/OutboundCircuitBreakers.kt"
+          ],
+          "made_at": "2026-06-06T13:12:00Z",
+          "supersedes": null
+        },
+        {
+          "task": "task_4",
+          "decision": "Wrap club domain HTTPS check in CB; CallNotPermitted->CIRCUIT_OPEN",
+          "files": [
+            "server/src/main/kotlin/com/readmates/club/adapter/out/http/HttpClubDomainActualStateChecker.kt"
+          ],
+          "made_at": "2026-06-06T13:25:00Z",
+          "supersedes": null
+        },
+        {
+          "task": "task_5",
+          "decision": "Wrap redis rate-limit in CB; fail-open moved to failOpen() fallback",
+          "files": [
+            "server/src/main/kotlin/com/readmates/auth/adapter/out/redis/RedisRateLimitAdapter.kt"
+          ],
+          "made_at": "2026-06-06T13:34:40Z",
+          "supersedes": null
+        },
+        {
+          "task": "task_6",
+          "decision": "Wrap 3 redis cache adapters in CB; cache/decode miss returns null inside block (breaker success)",
+          "files": [
+            "RedisPublicReadCacheAdapter.kt",
+            "RedisNotesReadCacheAdapter.kt",
+            "RedisReadCacheInvalidationAdapter.kt"
+          ],
+          "made_at": "2026-06-06T13:48:00Z",
+          "supersedes": null
+        },
+        {
+          "task": "task_7",
+          "decision": "Health card in admin.health.application reads circuit state via boundary-safe OutboundCircuitBreakers.openCircuitCount(): Int accessor instead of importing resilience4j, satisfying the new ArchUnit guard. Task 7 implementer also repaired pre-existing detekt(9)+ktlint(2) violations from tasks 1-6 so the full ./gradlew check gate passes.",
+          "commit": "cf0ddd6f"
+        }
+      ],
+      "verification_gaps": [],
+      "docs_gaps": []
+    },
+    {
+      "index": 1,
+      "plan_path": "docs/superpowers/plans/2026-06-06-readmates-visual-regression-implementation.md",
+      "spec_path": "docs/superpowers/plans/2026-06-06-readmates-visual-regression-implementation.md",
+      "status": "complete",
+      "blocked_until": "plan_chain[0].all_tasks_complete_or_skipped",
+      "baseline": {
+        "test": "pnpm --dir front test: 1139 passed (134 files)",
+        "docker": "running (v29.4.0)",
+        "pnpm": "10.33.0",
+        "node": "v26.0.0",
+        "taken_at": "2026-06-06T14:11:00Z"
+      },
+      "task_header_prefix": "## ",
+      "risk_levels": {
+        "task_1": "mid",
+        "task_2": "mid",
+        "task_3": "mid",
+        "task_4": "mid",
+        "task_5": "mid",
+        "task_6": "low"
+      },
+      "task_complexity": {
+        "task_1": "MEDIUM",
+        "task_2": "MEDIUM",
+        "task_3": "MEDIUM",
+        "task_4": "MEDIUM",
+        "task_5": "MEDIUM",
+        "task_6": "SMALL"
+      },
+      "compaction_points": [
+        "task_3",
+        "task_6"
+      ],
+      "execution_plan": [
+        [
+          "task_1"
+        ],
+        [
+          "task_2"
+        ],
+        [
+          "task_3"
+        ],
+        [
+          "task_4"
+        ],
+        [
+          "task_5"
+        ],
+        [
+          "task_6"
+        ]
+      ],
+      "global_constraints": {
+        "shared_files": {}
+      },
+      "quality_trend": [
+        0.88,
+        0.95,
+        1.0,
+        1.0,
+        1.0,
+        0.98
+      ],
+      "low_tasks_pending_verification": [],
+      "last_compaction_after_task": 3,
+      "last_completed_task": "task_6",
+      "last_completed_at": "2026-06-06T15:14:30Z",
+      "plan_review": {
+        "status": "SKIPPED",
+        "warnings": []
+      },
+      "tasks": {
+        "task_1": {
+          "status": "COMPLETE",
+          "risk": "mid",
+          "complexity": "MEDIUM",
+          "files": [
+            "front/package.json",
+            "pnpm-lock.yaml",
+            "front/playwright-ct.config.ts",
+            "front/playwright/index.html",
+            "front/playwright/index.tsx"
+          ],
+          "files_test": [],
+          "commit": "07d8197005d8b026e66ef936cd84d88f49c4354f",
+          "pre_task_sha": "cf0ddd6f98886914ac7c5e3c277bb9bbc95e625f",
+          "escalations": 0,
+          "review_retries": 0,
+          "verifier_retries": 0,
+          "spec_clarifications": 0,
+          "spec_score": 0.97,
+          "quality_score": 0.88,
+          "review_tier": "PASS",
+          "method_audit": {
+            "required": [
+              "test-driven-development",
+              "verification-before-completion",
+              "code-review-pass"
+            ],
+            "applied": [
+              {
+                "skill": "test-driven-development",
+                "evidence": {
+                  "note": "Not applicable — config/scaffold task; the smoke `--list` boot gate IS the verification. GREEN: 'Total: 0 tests in 0 files', no boot crash."
+                }
+              },
+              {
+                "skill": "verification-before-completion",
+                "evidence": {
+                  "commands_run": [
+                    "pnpm --dir front exec playwright test --config=playwright-ct.config.ts --list (clean boot, 0 tests, no crash)",
+                    "git show --stat 07d8197 (4 files + root lockfile; e2e config untouched)"
+                  ]
+                }
+              },
+              {
+                "skill": "code-review-pass",
+                "evidence": {
+                  "findings_count": 3,
+                  "residual_risk": "Reviewer PASS 0.97/0.88. HIGH risk carried forward: @playwright/experimental-ct-react resolved to 1.60.0 but docker baseline image pinned v1.54.1-jammy — orchestrator decided to align by bumping image tag to v1.60.0-jammy in Task 2 step 0. Config uses __dirname (Node26 ESM fix) instead of import.meta."
+                }
+              }
+            ],
+            "missing": [],
+            "waived": []
+          },
+          "notes": "Harness boots cleanly (escalation gate passed). E2E config untouched. Public-safe docker script (public image + relative mount). Version-drift remediation deferred to Task 2 step 0 (align docker image to v1.60.0-jammy).",
+          "timing": {
+            "started": "2026-06-06T14:11:40Z",
+            "implementer_done": null,
+            "reviewer_done": null,
+            "verifier_done": null,
+            "completed": "2026-06-06T14:18:51Z"
+          }
+        },
+        "task_2": {
+          "status": "COMPLETE",
+          "risk": "mid",
+          "complexity": "MEDIUM",
+          "files": [
+            "front/package.json",
+            ".gitignore"
+          ],
+          "files_test": [
+            "front/shared/ui/readmates-brand-mark.ct.tsx",
+            "front/__screenshots__/shared/ui/readmates-brand-mark.ct.tsx/brand-mark.png"
+          ],
+          "commit": "6107faf430662c2ae14a3dc70aa89f770a155cb0",
+          "pre_task_sha": "07d8197005d8b026e66ef936cd84d88f49c4354f",
+          "escalations": 0,
+          "review_retries": 0,
+          "verifier_retries": 0,
+          "spec_clarifications": 0,
+          "spec_score": 0.97,
+          "quality_score": 0.95,
+          "review_tier": "PASS",
+          "method_audit": {
+            "required": [
+              "test-driven-development",
+              "verification-before-completion",
+              "code-review-pass"
+            ],
+            "applied": [
+              {
+                "skill": "test-driven-development",
+                "evidence": {
+                  "red": "A snapshot doesn't exist ... brand-mark.png, writing actual",
+                  "green": "Docker v1.60.0-jammy baseline written; non-update docker CT 1 passed 0 diff"
+                }
+              },
+              {
+                "skill": "verification-before-completion",
+                "evidence": {
+                  "commands_run": [
+                    "docker non-update CT (1 passed, no diff)",
+                    "idempotent 2nd docker run (no png diff)",
+                    "git status clean"
+                  ]
+                }
+              },
+              {
+                "skill": "code-review-pass",
+                "evidence": {
+                  "findings_count": 0,
+                  "residual_risk": "Baseline path is front/__screenshots__/<testFilePath>/ (testDir='.'), propagated to tasks 3-5. CI=true in docker script activates forbidOnly (benign, no render impact)."
+                }
+              }
+            ],
+            "missing": [],
+            "waived": []
+          },
+          "notes": "Chore commit 6f9da121 aligned docker image to v1.60.0-jammy. Added -e CI=true (pnpm no-TTY fix) and .gitignore for .pnpm-store/ + front/playwright/.cache/. Deterministic linux baseline committed; idempotent across runs.",
+          "timing": {
+            "started": "2026-06-06T14:19:16Z",
+            "implementer_done": null,
+            "reviewer_done": null,
+            "verifier_done": null,
+            "completed": "2026-06-06T14:27:20Z"
+          }
+        },
+        "task_3": {
+          "status": "COMPLETE",
+          "risk": "mid",
+          "complexity": "MEDIUM",
+          "files": [],
+          "files_test": [
+            "front/shared/ui/book-cover.ct.tsx",
+            "front/__screenshots__/shared/ui/book-cover.ct.tsx/book-cover-fallback.png"
+          ],
+          "commit": "99e1298f72d99b3225e9cd1e50d8b726fc1682f0",
+          "pre_task_sha": "6107faf430662c2ae14a3dc70aa89f770a155cb0",
+          "escalations": 0,
+          "review_retries": 0,
+          "verifier_retries": 0,
+          "spec_clarifications": 0,
+          "spec_score": 1.0,
+          "quality_score": 1.0,
+          "review_tier": "PASS",
+          "method_audit": {
+            "required": [
+              "test-driven-development",
+              "verification-before-completion",
+              "code-review-pass"
+            ],
+            "applied": [
+              {
+                "skill": "test-driven-development",
+                "evidence": {
+                  "red": "A snapshot doesn't exist ... book-cover-fallback.png, writing actual (in docker)",
+                  "green": "docker baseline written; non-update docker CT 2 passed 0 diff"
+                }
+              },
+              {
+                "skill": "verification-before-completion",
+                "evidence": {
+                  "commands_run": [
+                    "docker non-update CT 2 passed",
+                    "idempotent 2nd run no diff",
+                    "brand-mark.png unchanged",
+                    "git clean"
+                  ]
+                }
+              },
+              {
+                "skill": "code-review-pass",
+                "evidence": {
+                  "findings_count": 0,
+                  "residual_risk": "darwin-local CT config cannot load (Vite8 @rolldown/binding-darwin-arm64 absent) -> Docker is the only execution path; note in docs task."
+                }
+              }
+            ],
+            "missing": [],
+            "waived": []
+          },
+          "notes": "BookCover no-image fallback (deterministic, network-free). Docker-only execution path confirmed on darwin.",
+          "timing": {
+            "started": null,
+            "implementer_done": null,
+            "reviewer_done": null,
+            "verifier_done": null,
+            "completed": "2026-06-06T14:32:01Z"
+          }
+        },
+        "task_4": {
+          "status": "COMPLETE",
+          "risk": "mid",
+          "complexity": "MEDIUM",
+          "files": [],
+          "files_test": [
+            "front/shared/ui/avatar-chip.ct.tsx",
+            "front/__screenshots__/shared/ui/avatar-chip.ct.tsx/avatar-chip.png"
+          ],
+          "commit": "c15cf72316aa986aefa21357389cd3e99a120ce8",
+          "pre_task_sha": "99e1298f72d99b3225e9cd1e50d8b726fc1682f0",
+          "escalations": 0,
+          "review_retries": 0,
+          "verifier_retries": 0,
+          "spec_clarifications": 0,
+          "spec_score": 1.0,
+          "quality_score": 1.0,
+          "review_tier": "PASS",
+          "method_audit": {
+            "required": [
+              "test-driven-development",
+              "verification-before-completion",
+              "code-review-pass"
+            ],
+            "applied": [
+              {
+                "skill": "test-driven-development",
+                "evidence": {
+                  "red": "A snapshot doesn't exist ... avatar-chip.png, writing actual (docker)",
+                  "green": "docker baseline written; non-update docker CT 3 passed 0 diff"
+                }
+              },
+              {
+                "skill": "verification-before-completion",
+                "evidence": {
+                  "commands_run": [
+                    "docker non-update CT 3 passed",
+                    "idempotent 2nd run no diff",
+                    "2 prior baselines unchanged",
+                    "git clean"
+                  ]
+                }
+              },
+              {
+                "skill": "code-review-pass",
+                "evidence": {
+                  "findings_count": 0,
+                  "residual_risk": "none beyond the inherent Docker-only execution noted in task_3."
+                }
+              }
+            ],
+            "missing": [],
+            "waived": []
+          },
+          "notes": "AvatarChip deterministic-tone baseline (fixed label). All 3 baselines green in non-update Docker.",
+          "timing": {
+            "started": null,
+            "implementer_done": null,
+            "reviewer_done": null,
+            "verifier_done": null,
+            "completed": "2026-06-06T14:38:04Z"
+          }
+        },
+        "task_5": {
+          "status": "COMPLETE",
+          "risk": "mid",
+          "complexity": "MEDIUM",
+          "files": [
+            "front/.gitignore"
+          ],
+          "files_test": [],
+          "commit": "8bdaed90ac1c1bd91cba0326098f3e9acf79083d",
+          "pre_task_sha": "c15cf723316aa986aefa21357389cd3e99a120ce8",
+          "escalations": 0,
+          "review_retries": 0,
+          "verifier_retries": 0,
+          "spec_clarifications": 0,
+          "spec_score": 1.0,
+          "quality_score": 1.0,
+          "review_tier": "PASS",
+          "method_audit": {
+            "required": [
+              "test-driven-development",
+              "verification-before-completion",
+              "code-review-pass"
+            ],
+            "applied": [
+              {
+                "skill": "test-driven-development",
+                "evidence": {
+                  "note": "Not applicable — verification + git-hygiene task with no executable behavior change; the Docker non-update CT suite IS the verification gate."
+                }
+              },
+              {
+                "skill": "verification-before-completion",
+                "evidence": {
+                  "commands_run": [
+                    "docker non-update CT suite (3 passed, no diff)",
+                    "pnpm --dir front test (1139 passed, 0 .ct.tsx pickup)",
+                    "pnpm --dir front exec playwright test --list (only tests/e2e/**, no .ct.tsx)",
+                    "pnpm --dir front lint (clean)",
+                    "git status --porcelain (clean)"
+                  ]
+                }
+              },
+              {
+                "skill": "code-review-pass",
+                "evidence": {
+                  "findings_count": 0,
+                  "residual_risk": "Reviewer PASS 1.0/1.0; independent Verifier PASS — docker determinism gate '3 passed', baselines tracked & not ignored, single-file commit, tree clean. Noted: docker bind-mount transiently swaps host darwin rollup binding to linux and drops front/playwright/.cache/; node_modules + .cache are gitignored so tree stays clean."
+                }
+              }
+            ],
+            "missing": [],
+            "waived": []
+          },
+          "notes": "front/.gitignore gained /blob-report/ and /playwright/.cache/ (the other two CT transient dirs pre-existed). Component suite deterministic in Docker (3 passed, no diff). Vitest and default E2E config confirmed isolated from *.ct.tsx. Lint clean. Single-file chore commit, tree clean.",
+          "timing": {
+            "started": "2026-06-06T14:39:58Z",
+            "implementer_done": null,
+            "reviewer_done": null,
+            "verifier_done": null,
+            "completed": "2026-06-06T14:45:50Z"
+          }
+        },
+        "task_6": {
+          "status": "COMPLETE",
+          "risk": "low",
+          "complexity": "SMALL",
+          "files": [
+            "docs/development/test-guide.md",
+            "CHANGELOG.md"
+          ],
+          "files_test": [],
+          "commit": "f62a06241b1713d5fc0bd4c4b0b5f6f1da8c6eaa",
+          "pre_task_sha": "8bdaed90ac1c1bd91cba0326098f3e9acf79083d",
+          "escalations": 0,
+          "review_retries": 0,
+          "verifier_retries": 0,
+          "spec_clarifications": 0,
+          "spec_score": 0.98,
+          "quality_score": 0.92,
+          "review_tier": "PASS",
+          "pending_batch_verification": true,
+          "method_audit": {
+            "required": [
+              "test-driven-development",
+              "verification-before-completion",
+              "code-review-pass"
+            ],
+            "applied": [
+              {
+                "skill": "test-driven-development",
+                "evidence": {
+                  "note": "Not applicable — docs-only task, no executable code."
+                }
+              },
+              {
+                "skill": "verification-before-completion",
+                "evidence": {
+                  "commands_run": [
+                    "git diff --check -- docs/development/test-guide.md CHANGELOG.md (no whitespace errors)",
+                    "git show --stat f62a0624 (only 2 doc files)",
+                    "git status --porcelain (clean)"
+                  ]
+                }
+              },
+              {
+                "skill": "code-review-pass",
+                "evidence": {
+                  "findings_count": 1,
+                  "residual_risk": "Reviewer PASS 0.98/0.92. 1 LOW: test:ct:update command listed without flagging it is unreachable on darwin (mitigated by the darwin Docker-only paragraph). Corrected stale plan facts: documented v1.60.0-jammy (not v1.54.1) and front/__screenshots__/shared/ui/... (not front/shared/ui/__screenshots__)."
+                }
+              }
+            ],
+            "missing": [],
+            "waived": []
+          },
+          "notes": "Added Korean '시각 회귀 (컴포넌트 하니스)' section to test-guide.md and a ### Testing Unreleased entry to CHANGELOG.md. Correct docker image + snapshot path, darwin Docker-only constraint, flake policy, experimental-API caution all documented. LOW risk — pending batch Verifier sweep at compaction/Phase 2.",
+          "timing": {
+            "started": null,
+            "implementer_done": null,
+            "reviewer_done": null,
+            "completed": "2026-06-06T14:49:57Z"
+          }
+        },
+        "task_7_remediation": {
+          "status": "COMPLETE",
+          "risk": "low",
+          "complexity": "SMALL",
+          "commit": "e9d7c41744267094509c03f33e4769379d05297f",
+          "origin": "phase2-batch-finding",
+          "review_tier": "PASS"
+        }
+      },
+      "task_summaries": {
+        "task_1": "Scaffolded Playwright component visual-regression harness (separate from E2E): playwright-ct.config.ts, playwright/index.{html,tsx}, 3 package.json scripts + experimental-ct-react devDep. Harness boots clean (0 tests). Reviewer/Verifier PASS. Carry-forward: align docker image to v1.60.0-jammy in Task 2.",
+        "task_2": "ReadmatesBrandMark 시각 회귀 테스트 + Docker(v1.60.0-jammy) 결정성 베이스라인 커밋. 경로 front/__screenshots__/.... Docker 이미지 정렬 + CI=true + .gitignore 보강. 리뷰/검증 PASS.",
+        "task_3": "BookCover 무이미지 폴백 시각 베이스라인(Docker 결정성). 2개 베이스라인 모두 비-업데이트 Docker에서 통과. 리뷰 1.0/1.0, 검증 PASS.",
+        "task_4": "AvatarChip 결정성 톤 시각 베이스라인(Docker). 3개 베이스라인 전부 비-업데이트 Docker 통과. 리뷰 1.0/1.0, 검증 PASS."
+      },
+      "decisions_register": [
+        {
+          "task": "task_1",
+          "decision": "pnpm resolved @playwright/experimental-ct-react ^1.54.1 to 1.60.0; Docker baseline image still v1.54.1-jammy. Since CT-to-CI wiring is out of scope, align on internal consistency: bump docker image tag to v1.60.0-jammy (folded into Task 2 step 0) so package==image==browsers, preserving deterministic baselines. Also: config uses __dirname instead of import.meta (Node26 ESM/CJS loader fix).",
+          "commit": "07d8197"
+        },
+        {
+          "task": "task_2",
+          "decision": "Baseline snapshot path is front/__screenshots__/<testFilePath>/<arg>.png (testDir='.'), NOT front/shared/ui/__screenshots__ as plan specs say — propagate to tasks 3,4,5 git-add paths and task5 gitignore check. Docker script gained '-e CI=true' (pnpm no-TTY purge fix; also activates forbidOnly, benign). Added .gitignore for .pnpm-store/ and front/playwright/.cache/. Docker image aligned to v1.60.0-jammy.",
+          "commit": "6107faf"
+        }
+      ],
+      "verification_gaps": [],
+      "docs_gaps": []
+    }
+  ],
+  "spec_edits": [],
+  "current_task": 7,
+  "current_step_within_task": 1,
+  "current_pre_task_sha": "8bdaed90ac1c1bd91cba0326098f3e9acf79083d",
+  "current_pre_group_sha": null,
+  "current_review_retries": 0,
+  "current_verifier_retries": 0,
+  "current_escalation_count": 0,
+  "current_previous_issues": [],
+  "phase_summaries": [],
+  "phase_doc_commits": [],
+  "chain_resume": null,
+  "budget_cap_usd": null,
+  "budget_action": "warn",
+  "dispatch_config": {
+    "plan_reviewer": "agent",
+    "verifier_batch": "agent",
+    "verifier_per_task": "agent",
+    "transition_combined": "agent",
+    "docs_updater_phase": "agent",
+    "docs_updater_final": "agent",
+    "final_sweep": "agent",
+    "plan_reviewer_model": null
+  },
+  "cost_ledger": {
+    "by_task": {},
+    "by_role": {},
+    "by_model": {},
+    "totals": {
+      "input_tokens": 0,
+      "output_tokens": 0,
+      "cached_read_tokens": 0,
+      "cached_write_tokens": 0,
+      "cost_usd": 0.0,
+      "dispatches": 0
+    }
+  },
+  "cost_tracking_waived": true,
+  "timing_tracking_waived": false,
+  "archive": null,
+  "agentlens_orchestration_run": null,
+  "agentlens_healthy": false,
+  "context_budget": {
+    "effective_input_budget": 170000,
+    "threshold_ratio": 0.6,
+    "threshold_tokens": 102000,
+    "last_evaluation_at": null,
+    "last_evaluation_tokens": 0
+  },
+  "preflight_warnings": [],
+  "timestamps": {
+    "started_at": "2026-06-06T12:55:42Z",
+    "completed_at": "2026-06-06T15:14:30Z"
+  },
+  "hooks_wiring_waived": true,
+  "hooks_wiring_waived_reason": "Attached/interactive run resumed with minimal setup; worktree safety hooks were not wired. Every task passed independent Reviewer + Verifier gates and all gates (server clean test, frontend lint/test/build, Docker CT determinism, public-release scan) were re-run independently. No further sub-agent dispatches remain, so wiring hooks at finalization adds no value."
+}

@@ -25,7 +25,7 @@ Two field classes, dispatched by whether `plan_chain` is present:
 
 | Class | Fields |
 |-------|--------|
-| **Run-level** | `schema_version`, `mode`, `active_plan`, `plan`, `spec`, `branch`, `worktree`, `orchestrator_dir`, `source_repo`, `test_command`, `implementer_model`, `spec_edits`, `chain_resume`, `current_task`, `current_step_within_task`, `current_pre_task_sha`, `current_pre_group_sha`, `current_review_retries`, `current_verifier_retries`, `current_escalation_count`, `current_previous_issues`, `phase_summaries`, `phase_doc_commits`, `budget_cap_usd`, `budget_action`, `cost_ledger`, `archive`, `agentlens_orchestration_run`, `agentlens_healthy`, `context_budget`, `timestamps`, `plan_chain`, `dispatch_config` |
+| **Run-level** | `schema_version`, `mode`, `active_plan`, `plan`, `spec`, `branch`, `worktree`, `orchestrator_dir`, `source_repo`, `test_command`, `implementer_model`, `spec_edits`, `chain_resume`, `current_task`, `current_step_within_task`, `current_pre_task_sha`, `current_pre_group_sha`, `current_review_retries`, `current_verifier_retries`, `current_escalation_count`, `current_previous_issues`, `phase_summaries`, `phase_doc_commits`, `budget_cap_usd`, `budget_action`, `cost_ledger`, `cost_tracking_waived`, `cost_tracking_waive_reason`, `archive`, `agentlens_orchestration_run`, `agentlens_healthy`, `context_budget`, `timestamps`, `plan_chain`, `dispatch_config` |
 | **Per-plan** (`<active>`) | `tasks`, `task_summaries`, `quality_trend`, `baseline`, `low_tasks_pending_verification`, `global_constraints`, `compaction_points`, `execution_plan`, `risk_levels`, `task_complexity`, `task_header_prefix`, `last_compaction_after_task`, `last_completed_task`, `last_completed_at`, `plan_review`, `spec_manifest`, `decisions_register`, `verification_gaps`, `docs_gaps` |
 
 Hard-coding a per-plan field at top-level for a multi-plan run silently corrupts
@@ -179,6 +179,19 @@ per-plan data when its swap fires at Phase 2 Step -1.
   run-level and span the chain. `by_task` is keyed
   `"<plan_index_or_'top'>::<task_id>::<role>"` so one ledger covers the chain.
   `budget_action ∈ {pause, warn, off}`.
+- **`cost_tracking_waived: bool`** (default absent/`false`) and the optional
+  run-level **`cost_tracking_waive_reason: str`** (v2.28, D001) record that cost
+  tracking was intentionally off for this run. Phase 0 Step 7 sets both
+  deterministically (`cost_tracking_waived=true`,
+  `cost_tracking_waive_reason="agent-dispatch-no-usage"`) when the run is
+  `interactive_attached` AND no role gate in `dispatch_config` is `"api"`/`"p"` —
+  the Agent tool exposes no `usage`, so an all-`agent` ledger cannot populate.
+  When `cost_tracking_waived` is set, `finalize_run.py` suppresses the
+  `cost_dispatches_zero` FAIL and the Final Summary renders
+  `Cost tracking: WAIVED — {cost_tracking_waive_reason}`. Both fields are
+  run-level and **preserved** across plan_chain swap and Resume Chain handoff
+  (never recomputed once set). See `cross-cutting/agent-dispatch.md` for the
+  budget-enforcement limitation this implies.
 - **`dispatch_config`** (v2.22; extended v2.25) is run-level and spans the chain.
   Role gates — `plan_reviewer`, `verifier_batch`, `verifier_per_task`,
   `transition_combined`, `docs_updater_phase`, `docs_updater_final` — each

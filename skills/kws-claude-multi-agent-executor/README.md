@@ -2,9 +2,10 @@
 
 구현 계획(plan)과 디자인 스펙(spec)을 입력받아 **자율적으로** 끝까지 실행하는 Claude Code 스킬. Opus **오케스트레이터** 한 명이 새로 생성되는 Sonnet **서브 에이전트**들(Implementer / Reviewer / Verifier / Plan Reviewer / Docs Updater)에게 작업을 분배합니다. 오케스트레이터는 3단계 라이프사이클을 결정론적으로 진행하며, 각 실행은 별도의 git worktree에 격리되고, 모든 태스크는 구조화된 루브릭으로 채점되며, 주요 이벤트는 **AgentLens** (`kws-cme.*` 이벤트 네임스페이스) 에 기록되어 스킬 자체의 개선에 사용됩니다.
 
-**현재 버전**: `2.27.0` (2026-06-06) — 버전 타임라인은 [`HISTORY.md`](./HISTORY.md) 참조.
+**현재 버전**: `2.28.0` (2026-06-07) — 버전 타임라인은 [`HISTORY.md`](./HISTORY.md) 참조.
 
 **최근 변경 (Recent changes)**:
+- **v2.28** — Instrumentation integrity: v2.27 이후 실행된 `interactive_attached` run 3건이 boundary-only 처방 한계 노출(셋 다 cost ledger 비어 있음). agent 경로에서 구조적으로 불가능한 cost 추적은 honest auto-waive 로 (`cost_tracking_waived`/`cost_tracking_waive_reason="agent-dispatch-no-usage"`, D001); Stop 게이트에 all-terminal DONE=1 분기 추가 — Phase 2 미실행 run 강제 마감 (D002); 면제 불가 `timing_inverted` blocking FAIL + `quality_trend_sparse`/`agentlens_run_absent` coverage WARN + `quality_trend` 단일 작성자(`phase_boundary.py`) + `task_key_noncanonical` WARN (D003). `check_skill_contract.py` 에 `v228_*` 체크 추가.
 - **v2.27** — Attached-mode enforcement gaps: 손으로 쓰던 worktree `settings.json` 을 결정론적 `materialize_worktree_hooks.py` (deep-merge + Stop-gate self-assert + `--check` preflight, D001) 로 교체; cost/timing drift 를 blocking finalize FAIL 로 격상 (`cost_tracking_waived`/`timing_tracking_waived` 탈출구, D002); Step 2.5+preflight 둘 다 건너뛴 run 을 위한 finalize-time hooks-wired 백스톱 (`hooks_not_wired` FAIL, D003). 실제 3개 run 으로 회귀 검증.
 - **v2.26** — Finalization + schema enforcement: 두 validator (`validate_state_schema.py` 정규형 검사, `finalize_run.py --fix` 마감 일관성), Phase 2 게이트 와이어링 (Step 1.5/Step 2), 그리고 `Stop` 훅 강제 함수 (`finalization-stop-gate.sh`, D001) — Phase 2를 건너뛰고 종료하는 런(`source-matching` 실패)과 attached-mode 스키마 즉흥 생성을 종료 시점에서 차단. 실제 두 bad run을 회귀 픽스처로 동결.
 - **v2.21** — Slimming & enforcement: SKILL.md를 ~300줄 엔트리포인트 + `references/phases/` & `references/cross-cutting/` 분할 (D005); 경계 헬퍼 강제 (`state_set.py` D001, `phase_boundary.py` D002 — prose-only mandatory step silent skip 회귀를 단일 eval-체크 호출로 구조적 방지); 레거시 `plan2_state` 듀얼패스 은퇴 (D004 — `migrate_legacy_state.py` 1회 변환); `agentlens_healthy` reachability probe; `check_skill_contract.py` 에 emit-site 와이어링 체크 7개 추가.
