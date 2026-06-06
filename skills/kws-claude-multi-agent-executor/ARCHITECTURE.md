@@ -169,12 +169,15 @@ Step 4: Agent Cleanup
   "spec_edits": [{"task", "spec_line", "reason", "commit", "ts", "fault"}],
   "plan_review_warnings": [],
   "implementer_model": {"used": "sonnet | opus", "default": "sonnet"},
-  "cost_tracking_waived": false,                // v2.26 — optional; true suppresses the finalize_run cost_dispatches_zero WARN
+  "cost_tracking_waived": false,                // v2.26 — optional; true suppresses the finalize_run cost_dispatches_zero FAIL
+  "cost_tracking_waive_reason": null,           // v2.28 (D001) — optional; e.g. "agent-dispatch-no-usage"; rendered in Final Summary
   "plan_chain": [/* v2.13 — present only when multi-plan; see below */]
 }
 ```
 
-**v2.26 추가 — `cost_tracking_waived`**: 선택적 run-level 불리언 (기본 `false`). `true` 일 때 `scripts/finalize_run.py` 의 `cost_dispatches_zero` WARN (cost_ledger.totals.dispatches == 0) 을 억제합니다. 비용 추적을 의도적으로 끈 run 에서만 설정 — 실제로 `accumulate_cost.py` 가 실행됐어야 하는데 0 인 경우를 가리지 않도록 주의.
+**v2.26 추가 — `cost_tracking_waived`**: 선택적 run-level 불리언 (기본 `false`). `true` 일 때 `scripts/finalize_run.py` 의 `cost_dispatches_zero` 체크 (cost_ledger.totals.dispatches == 0) 를 억제합니다. v2.27 부터 이 체크는 WARN 이 아닌 blocking FAIL 이므로, 비용 추적을 의도적으로 끈 run 에서만 설정 — 실제로 `accumulate_cost.py` 가 실행됐어야 하는데 0 인 경우를 가리지 않도록 주의.
+
+**v2.28 추가 (D001) — `cost_tracking_waive_reason`**: 선택적 run-level 문자열. `cost_tracking_waived` 가 자동으로 켜진 이유를 기록합니다. 모든 role gate 가 `"agent"` 이고 mode 가 `interactive_attached` 일 때 Phase 0 Step 7 이 `cost_tracking_waived=true` + `cost_tracking_waive_reason="agent-dispatch-no-usage"` 를 자동 설정 — 구독 풀 Agent-tool 디스패치는 `usage` 객체를 반환하지 않아 ledger 를 채울 수 없기 때문 (mandate 가 아니라 honest auto-waive). 두 필드 모두 run-level 이며 resume / plan_chain swap / Resume Chain handoff 를 통해 보존됩니다 — 후속 resume 에서 절대 재계산/클리어하지 않습니다. Final Summary 의 cost 행이 `WAIVED — {cost_tracking_waive_reason}` 로 렌더됩니다. metered `api`/`p` gate 가 하나라도 있으면 auto-waive 는 발동하지 않습니다.
 
 **v2.12 추가 — `implementer_model`**: Implementer 서브에이전트의 모델을 선택. `used` 는 이번 실행에서 dispatch에 쓴 모델, `default` 는 스킬이 인자 없을 때 쓰는 contemporaneous 기본값 (현재 항상 `"sonnet"`). 인자는 인터랙티브 부모(Phase -1 step b 또는 mode=interactive 의 Phase 0 Step 7)에서만 파싱되며 — 헤들리스 자식 `claude -p` 는 원래 인자에 접근하지 못하므로 state.json 에서 읽어 보존합니다. Reviewer / Verifier 는 영향 없음 (judge 일정성 — `docs/experiments/v2.12-implementer-opus-vs-sonnet/decisions/D001-...` 참조).
 
@@ -376,19 +379,40 @@ forcing function below):
   `execution_plan`, risk values outside `{low, mid, high}`, invalid `mode`, missing
   run-level `dispatch_config`/`cost_ledger`. Check-only (no `--fix`); a divergent
   schema means the orchestrator improvised and the run needs human inspection.
+  **v2.28 (D003):** also matches every task key against `TASK_KEY_RE`
+  (`^task_\d+(_[a-z0-9-]+)?$`, e.g. `task_3`, `task_7_remediation`) and emits a
+  non-blocking `task_key_noncanonical` WARN for keys like `"1"`/`"riskclose"` so
+  downstream `to_entries`/sort logic stays robust.
 - `scripts/finalize_run.py` — finalization-consistency gate (Phase 2 Step 2). FAILs on
   null `timestamps.completed_at` (fixable), any task left `verifier == PENDING_BATCH`
-  (unfixable — needs a real LOW batch sweep), non-terminal task status. WARNs on
+  (unfixable — needs a real LOW batch sweep), non-terminal task status. **v2.27:**
   `cost_ledger.totals.dispatches == 0` (suppressed by `cost_tracking_waived`) and
-  missing `timing.started`. `--fix` performs only the one safe write — stamp
+  all-terminal-`timing.started`-null (suppressed by `timing_tracking_waived`) are
+  blocking FAIL, not WARN. **v2.28 (D003):** parses `timing.started`/`completed` via
+  the tolerant `_parse_iso` helper and raises an **un-waivable** blocking
+  `timing_inverted` FAIL when `completed < started` (corruption, not absent data — no
+  escape hatch); plus non-blocking `quality_trend_sparse` (empty/short
+  `<active>.quality_trend` relative to completed reviewed tasks) and
+  `agentlens_run_absent` (`agentlens_orchestration_run` null on a non-degenerate run)
+  WARNs that surface dark telemetry. `--fix` performs only the one safe write — stamp
   `completed_at` (atomic temp + `os.replace`); it never clears `PENDING_BATCH`.
 - `<orch_dir>/hooks/finalization-stop-gate.sh` — Stop-hook forcing function
   (materialized at Phase 0 Step 2.5, wired into `<worktree>/.claude/settings.json`).
   Cheap short-circuit (exit 0) while any task is still non-terminal; once every task
   is COMPLETE/SKIPPED it runs both validators and blocks the stop (exit 2) if the run
-  is complete-but-unfinalized or non-canonical. This is the true forcing function for
-  attached mode, where Phase 2 may never be entered — see
-  `docs/experiments/v2.26-finalization-enforcement/decisions/D001`.
+  is complete-but-unfinalized or non-canonical. **v2.28 (D002):** a third
+  `elif [ "${TOTAL:-0}" -gt 0 ]` DONE=1 branch treats *every declared task terminal*
+  at Stop time as "done" even when `status` is null and `current_task` is still set —
+  forcing finalization for a run that never enters Phase 2 (the run-3 failure mode).
+  This is the true forcing function for attached mode — see
+  `docs/experiments/v2.26-finalization-enforcement/decisions/D001` and
+  `docs/experiments/v2.28-instrumentation-integrity/decisions/`.
+
+**v2.28 single-writer for `quality_trend` (D003):** `<active>.quality_trend` is now
+appended SOLELY by `scripts/phase_boundary.py` task-complete (the inline prose append
+was removed) so the rolling buffer cannot silently stay empty when the attached
+orchestrator skips a hand-written step — `quality_trend_sparse` then catches any
+residual gap at finalize.
 
 Required-methods derivation: executable task → TDD + verification + code-review-pass; docs-only task (`files_test == []` or all `.md` files) → verification only. TDD waiver reasons are restricted to `docs-only-task`, `config-only-task`, `generated-only-task`.
 

@@ -21,6 +21,51 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.28.0 — Instrumentation integrity (2026-06-07)
+
+Three real `interactive_attached` runs executed **after** v2.27 shipped proved the
+v2.27 boundary-only treatment did not hold — all three still produced an empty cost
+ledger. `session-package-decomposition-…205440` (run 3, 16 tasks COMPLETE,
+`status:null`, `current_task=16`) hit the v2.27 blocking cost FAIL, did **not** waive,
+and simply wedged — never finalized; its `task_1..5` also carried `timing.started`
+nine hours *after* `timing.completed` (KST literal + bogus `Z`). `readmates-resilience-…214931`
+(run 2, 2-plan chain) and `target-type-polymorphism-…235331` (run 1) took the other
+branch — set `cost_tracking_waived=true` reflexively and moved on, run 1 also keying
+tasks `"1".."6"`+`"riskclose"` with a `quality_trend:[]` despite 7 reviewed tasks, all
+three leaving `agentlens_orchestration_run:null`. Root cause: a value that must be
+recorded lives as prose the attached orchestrator performs by hand; v2.27 attacked it
+at the finalize boundary only. v2.28 attacks it at the recording site (where feasible)
+and makes the system honest where recording is impossible by construction.
+
+- **D001 — honest cost auto-waive on the agent path.** Subscription-pool Agent-tool
+  dispatches return no `usage` object, so `dispatches:0` is a law of physics on the
+  v2.25 all-`agent` default, not a skip. Phase 0 Step 7 now sets
+  `cost_tracking_waived=true` / `cost_tracking_waive_reason="agent-dispatch-no-usage"`
+  automatically (attached + every gate `"agent"`); both fields are run-level and
+  preserved across resume / plan_chain swap / Resume Chain handoff. The false
+  "subscription dispatches still report usage" claim was removed from `agent-dispatch.md`
+  / `phase-1-task-cycle.md`.
+- **D002 — all-terminal Stop trigger.** The v2.26 Stop gate only treated a run as
+  "done" via `status==COMPLETE` or `current_task==null` (both Phase-2-set) — but the
+  failure mode is Phase 2 never running (run 3). `finalization-stop-gate.sh.template`
+  gains a third `elif [ "${TOTAL:-0}" -gt 0 ]` DONE=1 branch: every declared task
+  terminal at Stop time forces finalization even when Phase 2 never executed.
+- **D003 — value-sanity FAIL + coverage WARNs + task-key WARN.** `finalize_run.py`
+  parses `timing.started`/`completed` via `_parse_iso` and raises an **un-waivable**
+  blocking `timing_inverted` FAIL on `completed < started` (corruption, not absent
+  data); it also emits non-blocking `quality_trend_sparse` and `agentlens_run_absent`
+  WARNs for dark telemetry. `quality_trend` is now written SOLELY by `phase_boundary.py`
+  task-complete (single writer; the inline prose append was removed).
+  `validate_state_schema.py` matches every task key against `TASK_KEY_RE`
+  (`^task_\d+(_[a-z0-9-]+)?$`) and emits a `task_key_noncanonical` WARN for non-conformers.
+
+`evals/check_skill_contract.py` gains `v228_*` helper-token + Stop-gate + cost-waive +
+no-false-usage checks. The clean `interactive_session` baseline and any metered `api`/`p`
+run still pass every gate (`pytest scripts/` 219 passed; `./evals/run.sh` green).
+Spec/plan: [`docs/superpowers/specs/2026-06-07-executor-instrumentation-integrity-design.md`](./docs/superpowers/specs/2026-06-07-executor-instrumentation-integrity-design.md)
++ [`…/plans/2026-06-07-executor-instrumentation-integrity.md`](./docs/superpowers/plans/2026-06-07-executor-instrumentation-integrity.md).
+Experiment: `docs/experiments/v2.28-instrumentation-integrity/`.
+
 ### v2.27.0 — Attached-mode enforcement gaps (2026-06-06)
 
 Two `interactive_attached` runs on 2026-06-06 exposed gaps the v2.26 gates did not
