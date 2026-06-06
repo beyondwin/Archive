@@ -335,3 +335,54 @@ def test_unparseable_timing_no_inverted_no_crash(tmp_path):
     }
     codes = {f["code"] for f in fr.evaluate(garbage)["findings"]}
     assert "timing_inverted" not in codes  # falls through to null/absent path
+
+
+# --- v2.28 (D003): telemetry coverage WARNs (never FAIL) -------------------
+
+def test_sparse_quality_trend_warns_not_fails(tmp_path):
+    sparse = {
+        "status": "COMPLETE",
+        "timestamps": {"started_at": "a", "completed_at": "b"},
+        "cost_ledger": {"totals": {"dispatches": 2}},
+        "agentlens_orchestration_run": "run-x",
+        "quality_trend": [],
+        "tasks": {
+            "task_1": {"status": "COMPLETE", "verifier": "PASS", "review_tier": "PASS",
+                       "timing": {"started": "s", "completed": "c"}},
+            "task_2": {"status": "COMPLETE", "verifier": "PASS", "review_tier": "PASS",
+                       "timing": {"started": "s", "completed": "c"}},
+        },
+    }
+    result = fr.evaluate(sparse)
+    warns = {f["code"] for f in result["findings"] if f["level"] == "WARN"}
+    assert "quality_trend_sparse" in warns
+    assert result["passed"] is True  # WARN never blocks
+
+
+def test_full_quality_trend_no_sparse_warning(tmp_path):
+    full = {
+        "status": "COMPLETE",
+        "timestamps": {"started_at": "a", "completed_at": "b"},
+        "cost_ledger": {"totals": {"dispatches": 2}},
+        "agentlens_orchestration_run": "run-x",
+        "quality_trend": [0.9, 0.8],
+        "tasks": {
+            "task_1": {"status": "COMPLETE", "verifier": "PASS", "review_tier": "PASS",
+                       "timing": {"started": "s", "completed": "c"}},
+            "task_2": {"status": "COMPLETE", "verifier": "PASS", "review_tier": "PASS",
+                       "timing": {"started": "s", "completed": "c"}},
+        },
+    }
+    codes = {f["code"] for f in fr.evaluate(full)["findings"]}
+    assert "quality_trend_sparse" not in codes
+
+
+def test_null_agentlens_run_warns(tmp_path):
+    codes = {f["code"] for f in fr.evaluate(RUN3_CLEAN)["findings"]}
+    assert "agentlens_run_absent" in codes  # RUN3_CLEAN has no agentlens key
+
+
+def test_present_agentlens_run_no_warning(tmp_path):
+    state = dict(RUN3_CLEAN, agentlens_orchestration_run="run-y")
+    codes = {f["code"] for f in fr.evaluate(state)["findings"]}
+    assert "agentlens_run_absent" not in codes

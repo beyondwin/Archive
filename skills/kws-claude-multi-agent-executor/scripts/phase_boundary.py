@@ -124,6 +124,11 @@ def cmd_task_complete(
         tasks[task] = result
         active["last_completed_task"] = task
         active["last_completed_at"] = ss._utc_now_iso()
+        score = result.get("quality_score")
+        if score is not None:  # v2.28 (D003): single unskippable trend writer
+            qt = active.setdefault("quality_trend", [])
+            qt.append(score)
+            del qt[:-10]  # cap at 10, keep newest
     _locked_rmw(state_path, mutate)
 
     # State write succeeded; emit is best-effort.
