@@ -12,6 +12,7 @@
 | v2.25-subscription-agent-dispatch | **SHIPPED** (2026-06-04) | agent-tool dispatch on subscription pool; all 7 role gates default "agent"; Plan Reviewer→Opus | [v2.25-subscription-agent-dispatch/](./v2.25-subscription-agent-dispatch/) |
 | v2.26-finalization-enforcement | **SHIPPED** (2026-06-04) | schema + finalization validators, Phase 2 gates, Stop-hook forcing function | [v2.26-finalization-enforcement/](./v2.26-finalization-enforcement/) |
 | v2.27-attached-mode-enforcement | **SHIPPED** (2026-06-06) | hook-merge script (deep-merge + Stop self-assert + `--check`); cost/timing drift → blocking finalize FAIL w/ waive hatches | [v2.27-attached-mode-enforcement/](./v2.27-attached-mode-enforcement/) |
+| v2.28-instrumentation-integrity | **SHIPPED** (2026-06-07) | honest cost auto-waive on the agent path (D001); all-terminal Stop trigger (D002); un-waivable `timing_inverted` FAIL + telemetry-coverage WARNs + `task_key_noncanonical` WARN (D003) | [v2.28-instrumentation-integrity/](./v2.28-instrumentation-integrity/) |
 | _(미래 실험이 여기 나열)_ | | | |
 
 ## 언제 실험 기록을 시작하나
