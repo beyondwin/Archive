@@ -54,16 +54,17 @@ def test_source_matching_flags_pending_and_completed_at(tmp_path):
     fails = {f["code"] for f in result["findings"] if f["level"] == "FAIL"}
     assert "verifier_pending_batch" in fails
     assert "completed_at_null" in fails
+    assert "cost_dispatches_zero" in fails          # v2.27: WARN -> FAIL
+    assert "timing_tracking_absent" in fails        # v2.27: all tasks null-started
     warns = {f["code"] for f in result["findings"] if f["level"] == "WARN"}
-    assert "cost_dispatches_zero" in warns
-    assert "timing_started_missing" in warns
+    assert "timing_started_missing" in warns        # per-task WARN retained
 
 
 def test_cost_waived_suppresses_dispatch_warning(tmp_path):
     waived = dict(SOURCE_MATCHING_BAD, cost_tracking_waived=True)
     result = fr.evaluate(waived)
-    warns = {f["code"] for f in result["findings"] if f["level"] == "WARN"}
-    assert "cost_dispatches_zero" not in warns
+    codes = {f["code"] for f in result["findings"]}
+    assert "cost_dispatches_zero" not in codes      # suppressed entirely
 
 
 def test_fix_stamps_completed_at_from_last_completed(tmp_path):
@@ -119,3 +120,162 @@ def test_multi_plan_chain_checks_each_tree(tmp_path):
     result = fr.evaluate(multi)
     assert any(f["code"] == "verifier_pending_batch" and f["scope"] == "plan_chain[1]"
                for f in result["findings"])
+
+
+# --- v2.27: cost/timing drift become blocking FAIL (D002) ------------------
+
+# run-2 shape: no cost_ledger, all tasks null timing.started, not waived.
+RUN2_DRIFT = {
+    "status": "COMPLETE",
+    "timestamps": {"started_at": "a", "completed_at": "b"},
+    "tasks": {
+        "task_1": {"status": "COMPLETE", "verifier": "PASS", "timing": {"completed": "c"}},
+        "task_2": {"status": "COMPLETE", "verifier": "PASS", "timing": {"completed": "c"}},
+    },
+}
+
+# run-1 shape: cost waived (dispatches 0 ok), but timing all null -> still FAIL.
+RUN1_DRIFT = {
+    "status": "COMPLETE",
+    "cost_tracking_waived": True,
+    "timestamps": {"started_at": "a", "completed_at": "b"},
+    "cost_ledger": {"totals": {"dispatches": 0}},
+    "tasks": {
+        "task_1": {"status": "COMPLETE", "verifier": "PASS", "timing": {"completed": "c"}},
+    },
+}
+
+# run-3 shape: dispatches + timing populated -> clean (no false positive).
+RUN3_CLEAN = {
+    "status": "COMPLETE",
+    "timestamps": {"started_at": "a", "completed_at": "b"},
+    "cost_ledger": {"totals": {"dispatches": 9}},
+    "tasks": {
+        "task_1": {"status": "COMPLETE", "verifier": "PASS",
+                   "timing": {"started": "s", "completed": "c"}},
+    },
+}
+
+
+def test_run2_drift_fails_on_cost_and_timing(tmp_path):
+    result = fr.evaluate(RUN2_DRIFT)
+    fails = {f["code"] for f in result["findings"] if f["level"] == "FAIL"}
+    assert result["passed"] is False
+    assert "cost_dispatches_zero" in fails
+    assert "timing_tracking_absent" in fails
+
+
+def test_run1_drift_fails_on_timing_only_cost_waived(tmp_path):
+    result = fr.evaluate(RUN1_DRIFT)
+    codes_by_level = {(f["level"], f["code"]) for f in result["findings"]}
+    assert result["passed"] is False
+    assert ("FAIL", "timing_tracking_absent") in codes_by_level
+    assert "cost_dispatches_zero" not in {c for _, c in codes_by_level}  # waived
+
+
+def test_run3_clean_no_false_positive(tmp_path):
+    result = fr.evaluate(RUN3_CLEAN)
+    assert result["passed"] is True
+    assert [f for f in result["findings"] if f["level"] == "FAIL"] == []
+
+
+def test_timing_waived_suppresses_aggregate(tmp_path):
+    waived = dict(RUN2_DRIFT, timing_tracking_waived=True, cost_tracking_waived=True)
+    result = fr.evaluate(waived)
+    codes = {f["code"] for f in result["findings"]}
+    assert "timing_tracking_absent" not in codes
+    assert result["passed"] is True
+
+
+# --- v2.27 (D003): worktree hook-wiring backstop at finalize ----------------
+
+def _worktree_with_settings(tmp_path, settings):
+    wt = tmp_path / "wt"
+    (wt / ".claude").mkdir(parents=True)
+    if settings is not None:
+        (wt / ".claude" / "settings.json").write_text(
+            json.dumps(settings), encoding="utf-8")
+    return str(wt)
+
+
+# A fully-wired settings.json: all four events present, Stop references the gate.
+_WIRED_SETTINGS = {
+    "permissions": {"allow": ["Bash(git status:*)"]},
+    "hooks": {
+        "PreToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "command": "x"}]}],
+        "PostToolUse": [{"matcher": "Edit|Write",
+                         "hooks": [{"type": "command", "command": "x"}]}],
+        "SubagentStop": [{"hooks": [{"type": "command", "command": "x"}]}],
+        "Stop": [{"hooks": [{"type": "command",
+                             "command": "/o/hooks/finalization-stop-gate.sh /o/state.json /s"}]}],
+    },
+}
+
+# run-2's actual on-disk shape: $schema + permissions, NO hooks block.
+_UNWIRED_SETTINGS = {
+    "$schema": "https://json.schemastore.org/claude-code-settings.json",
+    "permissions": {"allow": ["Bash(git status:*)"]},
+}
+
+
+def test_unwired_worktree_hooks_fail(tmp_path):
+    wt = _worktree_with_settings(tmp_path, _UNWIRED_SETTINGS)
+    state = dict(RUN3_CLEAN, worktree=wt)  # otherwise-clean run
+    result = fr.evaluate(state)
+    fails = {f["code"] for f in result["findings"] if f["level"] == "FAIL"}
+    assert "hooks_not_wired" in fails
+    assert result["passed"] is False
+
+
+def test_wired_worktree_hooks_pass(tmp_path):
+    wt = _worktree_with_settings(tmp_path, _WIRED_SETTINGS)
+    state = dict(RUN3_CLEAN, worktree=wt)
+    result = fr.evaluate(state)
+    codes = {f["code"] for f in result["findings"]}
+    assert "hooks_not_wired" not in codes
+    assert result["passed"] is True
+
+
+def test_unwired_hooks_waived_suppresses(tmp_path):
+    wt = _worktree_with_settings(tmp_path, _UNWIRED_SETTINGS)
+    state = dict(RUN3_CLEAN, worktree=wt, hooks_wiring_waived=True)
+    result = fr.evaluate(state)
+    codes = {f["code"] for f in result["findings"]}
+    assert "hooks_not_wired" not in codes
+    assert result["passed"] is True
+
+
+def test_absent_settings_skips_hook_check(tmp_path):
+    wt = _worktree_with_settings(tmp_path, None)  # no settings.json on disk
+    state = dict(RUN3_CLEAN, worktree=wt)
+    result = fr.evaluate(state)
+    codes = {f["code"] for f in result["findings"]}
+    assert "hooks_not_wired" not in codes  # uninspectable -> skip, never fail
+    assert result["passed"] is True
+
+
+def test_no_worktree_key_skips_hook_check(tmp_path):
+    result = fr.evaluate(RUN3_CLEAN)  # no worktree key at all
+    codes = {f["code"] for f in result["findings"]}
+    assert "hooks_not_wired" not in codes
+    assert result["passed"] is True
+
+
+def test_partial_timing_is_warn_not_fail(tmp_path):
+    partial = {
+        "status": "COMPLETE",
+        "timestamps": {"started_at": "a", "completed_at": "b"},
+        "cost_ledger": {"totals": {"dispatches": 4}},
+        "tasks": {
+            "task_1": {"status": "COMPLETE", "verifier": "PASS",
+                       "timing": {"started": "s", "completed": "c"}},
+            "task_2": {"status": "COMPLETE", "verifier": "PASS",
+                       "timing": {"completed": "c"}},  # missing started
+        },
+    }
+    result = fr.evaluate(partial)
+    fails = {f["code"] for f in result["findings"] if f["level"] == "FAIL"}
+    warns = {f["code"] for f in result["findings"] if f["level"] == "WARN"}
+    assert "timing_tracking_absent" not in fails  # not ALL null -> no aggregate FAIL
+    assert "timing_started_missing" in warns
+    assert result["passed"] is True

@@ -54,6 +54,26 @@ Substitute `<orch_dir>` and `<skill_dir>` with absolute paths before writing. Th
 `Stop` hook is the only one that takes positional args — it lives outside the
 worktree and cannot derive `state.json` / `scripts/` locations on its own.
 
+As of v2.27 this file is **not hand-written** — Phase 0 Step 2.5 runs
+`scripts/materialize_worktree_hooks.py`, which deep-merges the four events into any
+pre-existing repo settings.json (preserving `permissions`/`$schema`/other hook
+events) and self-asserts the Stop gate. `--check` re-runs the assertion without
+writing and is reused as the Phase-1 Task-1 preflight. The shape above is exactly
+what the script emits, so this remains the single source of truth for the shape.
+The sub-worktree byte-identical copy (Parallel Sub-Flow P.1) is unchanged — it
+copies the already-materialized file.
+
+Also as of v2.27 (D003), the wired-ness of the result is re-asserted at **finalize
+time**: `finalize_run.py` reuses `materialize_worktree_hooks.check_problems` against
+`<worktree>/.claude/settings.json` and raises a blocking `hooks_not_wired` FAIL when
+the file is present+parseable but missing the four hooks / Stop gate (suppressed by
+`hooks_wiring_waived`). It **skips silently** when the worktree key is absent or the
+settings file is missing/unparseable, so replays and cleaned worktrees never
+false-positive. This is the backstop for a run that skipped Step 2.5 entirely (and
+therefore wired no Stop gate at all): the Step 2.5 write and the Phase-1 `--check`
+preflight are both prose, so the finalize check — riding the distinct Phase 2 Step 2
+`finalize_run.py --fix` site — is the cheapest in-band catch for that bootstrap gap.
+
 ## The four hooks
 
 ### `PreToolUse` (Bash) — dangerous-command guard

@@ -457,7 +457,7 @@ def main() -> int:
         ("## Guardrails", "Method audit must pass before Phase 2 close-run"),
         ("## Guardrails", "Resource-key collisions force serialization in same wave"),
     ]
-    SECTION_WINDOW = 20000  # chars to scan forward from anchor (Guardrails table grew past 15k as new invariants accreted)
+    SECTION_WINDOW = 22000  # chars to scan forward from anchor (Guardrails table grew past 15k, then 20k, as new invariants accreted — v2.27 D002/D003 rows pushed it past 20k)
 
     for anchor, substring in REQUIRED_WORDING:
         check_key = f"wording_v211_{anchor[:20].lower().replace(' ', '_').replace('`', '').replace(':', '').replace('#', '').strip()}_{substring[:15].lower().replace(' ', '_').replace('-', '_')}"

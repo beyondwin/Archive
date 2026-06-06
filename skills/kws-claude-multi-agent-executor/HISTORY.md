@@ -21,6 +21,25 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.27.0 — Attached-mode enforcement gaps (2026-06-06)
+
+Two `interactive_attached` runs on 2026-06-06 exposed gaps the v2.26 gates did not
+close. **(1) Hook-wiring loss:** Phase 0 Step 2.5 hand-wrote settings.json with no
+merge, so `readmates-host-prep-pace-20260606-003707` (repo ships its own
+permissions allowlist) wired *zero* hooks — including the v2.26 Stop gate. Replaced
+with `scripts/materialize_worktree_hooks.py`, a deterministic deep-merge + Stop-gate
+self-assert + `--check` preflight (D001). **(2) Bookkeeping drift:** `dispatches==0`
+and all-null `timing.started` were WARN, so `per-role-confidence-calibration-20260606-005019`
+finished green despite no cost/timing data. Elevated both to blocking finalize FAIL
+with `cost_tracking_waived` / `timing_tracking_waived` escape hatches (D002); the
+Stop gate now blocks drift. **(3) Bootstrap residual:** Step 2.5 and the `--check`
+preflight are both prose — skipping Step 2.5 entirely wires no Stop gate. Added a
+finalize-time backstop: `finalize_run.py` FAILs `hooks_not_wired` when the worktree
+settings.json is present but missing the four hooks (`hooks_wiring_waived` escape
+hatch), skipping silently when uninspectable so replays do not false-positive (D003).
+Real before/after replay against all three runs: run-1/run-2 → `passed:false`,
+run-3 → `passed:true` (no false positive). Experiment: `docs/experiments/v2.27-attached-mode-enforcement/`.
+
 ### v2.26.0 — Finalization + schema enforcement (2026-06-04)
 
 Two real 2026-06-04 `interactive_attached` runs
@@ -757,6 +776,7 @@ with JOURNAL + decisions/ + findings/. Index:
 | v2.24-data-driven-cost-tiering | OPEN (Phase A baseline only) | 35-run corpus telemetry captured; no ship/skip decision reached | `docs/experiments/v2.24-data-driven-cost-tiering/` |
 | v2.25-subscription-agent-dispatch | SHIPPED (2026-06-04) | Agent-tool dispatch on subscription pool; all 7 role gates default "agent"; Plan Reviewer → Opus; autonomous failure ladder + gap fields | `docs/experiments/v2.25-subscription-agent-dispatch/` |
 | v2.26-finalization-enforcement | SHIPPED (2026-06-04) | Schema + finalization validators, Phase 2 gates, Stop-hook forcing function (D001) | `docs/experiments/v2.26-finalization-enforcement/` |
+| v2.27-attached-mode-enforcement | SHIPPED (2026-06-06) | Hook-merge script (deep-merge + Stop-gate self-assert + `--check` preflight); cost/timing drift → blocking finalize FAIL with waive hatches; finalize-time hooks-wired backstop (D001, D002, D003) | `docs/experiments/v2.27-attached-mode-enforcement/` |
 | (future) | | | `docs/experiments/v2.X-<name>/` |
 
 See `docs/experiments/README.md` for the experiment template and protocol.

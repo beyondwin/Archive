@@ -138,6 +138,18 @@ D001–D005 + D007 은 ADR 본체가 있음; D006 은 pending (open question, �
 
 ---
 
+## v2.27 — Attached-mode enforcement gaps (출하 2026-06-06)
+
+`interactive_attached` run 2건이 v2.26 게이트가 못 막은 두 갭 노출: (1) Phase 0 Step 2.5 가 settings.json 을 merge 없이 손으로 써서, 레포가 자체 settings.json 을 가진 ReadMates run 은 훅 4개(Stop 게이트 포함) 전부 미와이어; (2) `dispatches==0` + 모든 태스크 `timing.started` null 이 WARN 이라 drift run 이 조용히 green 으로 finalize. 결정론적 머지 스크립트 + drift severity 격상으로 해소. 잔여 부트스트랩 갭(Step 2.5 자체를 건너뛰면 Stop 게이트가 안 깔림)은 finalize-time hooks-wired 백스톱(D003)으로 축소.
+
+| ADR | 주제 | 결과 |
+|-----|------|------|
+| [D001 Script-materialized settings](../docs/experiments/v2.27-attached-mode-enforcement/decisions/D001-script-materialized-settings.md) | 손으로 쓰던 settings.json 을 `materialize_worktree_hooks.py` 로 — deep-merge(레포 키 보존) + Stop-gate self-assert + `--check` preflight | **shipped** |
+| [D002 Blocking drift severity](../docs/experiments/v2.27-attached-mode-enforcement/decisions/D002-blocking-drift-severity.md) | cost/timing drift 를 WARN→blocking FAIL 로 격상, `cost_tracking_waived`/`timing_tracking_waived` 탈출구; Stop 게이트가 drift 차단 | **shipped** |
+| [D003 Finalize hooks-wired backstop](../docs/experiments/v2.27-attached-mode-enforcement/decisions/D003-finalize-hooks-wired-backstop.md) | Step 2.5+preflight 둘 다 건너뛴 run 을 위해 `finalize_run.py` 가 워크트리 settings.json 의 4개 훅 와이어링 검사 — 미와이어 시 `hooks_not_wired` FAIL(`hooks_wiring_waived` 면제), 검사 불가 시 skip(replay false-positive 방지) | **shipped** |
+
+---
+
 ## 가로지르는 결정 (한 실험 아래에 속하지 않음)
 
 ### 오케스트레이터-워커 패턴 (vs 단일 세션)
