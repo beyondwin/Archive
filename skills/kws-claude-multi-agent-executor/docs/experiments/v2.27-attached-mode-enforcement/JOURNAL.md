@@ -102,6 +102,53 @@ SKILL.md notes synced.
 
 (advisor tool still unavailable — recorded per AGENTS.md.)
 
+### Harness fix — expected-halt fixtures scored as false negatives
+
+The v2.27.0 full eval (8 fixtures) returned 7/8 pass with **`05-ambiguous-spec`
+at 0.0 "captured run incomplete"**. Investigation (run.jsonl of that fixture):
+the skill behaved **correctly** — Step 2.5 materialize ran, then the Phase 0
+Ambiguity Gate (Step 3.5) caught the planted `parse_csv(path)` vs
+`parse_csv(path, delimiter=';')` contract mismatch and halted before dispatching
+any Implementer. Terminal result event: `subtype=success`, `is_error=false`, with
+a final summary naming the mismatch. **Not a v2.27 regression** (the finalize /
+`hooks_not_wired` / cost-timing changes were never reached); a pre-existing harness
+blind spot that would mis-score this "must refuse" fixture under any version.
+
+Root cause: fixture 05 expects a halt (`plan_review_should_flag: true`,
+`commit_count_min: 0`), which produces **empty** task/diff capture — identical in
+shape to a degenerate/aborted run. The judge's hard rule scored any empty capture
+0.0 "captured run incomplete", so a correct refusal and a crash were
+indistinguishable.
+
+Fix (harness only — no skill-behavior change, no version bump):
+- `evals/run.sh` — capture the terminal `result` event (`grep '"type":"result"'`
+  to skip interleaved stderr, then `jq`): `captured_run_outcome`
+  (`subtype`/`is_error`) + `captured_final_result` (the orchestrator's own closing
+  summary, capped 4 KB). This is the discriminator between a deliberate halt and an
+  abort.
+- `evals/judge.md` — new "Expected-halt fixtures" section (keyed off
+  `plan_review_should_flag: true`): success inverts — a clean pre-Phase-1 halt that
+  names the `expected_flag_category` scores 1.0; completed tasks/commits-past-bootstrap
+  score 0.0. Amended the empty-capture hard rule to fall through to this section
+  only when `subtype=success` + non-empty final summary; a missing summary or
+  `is_error=true` / non-success subtype still scores 0.0.
+
+Verified by reconstructing judge inputs from the **real** surviving run artifacts
+and re-running the judge:
+- POSITIVE (real fixture-05 halt): 0.0 → **0.96, passed:true** (names the
+  contract_mismatch).
+- NEGATIVE (same halt fixture, synthetic aborted run — empty summary, `is_error=true`):
+  **0.0, "captured run incomplete"** — abort detection preserved.
+- REGRESSION (real fixture-08 completed run): **1.0, passed:true** — the new
+  section is inert for non-halt fixtures.
+
+`bash -n run.sh`, `check_skill_contract.py`, `check_doc_freshness.py` all clean.
+`baselines/v2.27.0.json` (untracked — produced by the pre-fix full eval) still
+records the old 0.0; left as-is rather than hand-edited. A fresh full-suite run
+under the fixed harness is the way to regenerate a clean baseline (a single-fixture
+`run.sh` invocation would clobber the other 7 entries). (advisor tool unavailable —
+recorded per AGENTS.md.)
+
 ---
 
 ## On close-out

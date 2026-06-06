@@ -45,6 +45,21 @@ Token max:     {cost_budget_tokens}
 {captured_test_output}
 ```
 
+### Run outcome + final summary
+
+The terminal `result` event from the headless run. `captured_run_outcome` is the
+process-level outcome (`subtype=success` + `is_error=false` means the session
+ended cleanly; anything else, or a missing/empty `captured_final_result`, means
+the run aborted). `captured_final_result` is the orchestrator's OWN closing
+summary — for a deliberate halt it states what was wrong and which gate stopped
+the run. These two fields are how you tell a correct refusal apart from a crash
+when task state is empty (see the Expected-halt rule and the Hard rules).
+
+```
+{captured_run_outcome}
+{captured_final_result}
+```
+
 ### Wall-time + tokens
 
 - wall_time_minutes: {wall_time}
@@ -70,6 +85,43 @@ fall back to the diff/test-based estimation below.
 ```diff
 {captured_diff_tail}
 ```
+
+## Expected-halt fixtures (check this BEFORE scoring the axes)
+
+Some fixtures expect the skill to **refuse to run** — to surface a defect in the
+plan/spec and halt before dispatching any Implementer, instead of producing code.
+Detect this from the `Expected outcome` block: it sets `plan_review_should_flag:
+true` (usually with `commit_count_min: 0` and an `expected_flag_category`). For
+these fixtures the success criterion **inverts**: completed tasks are a FAILURE,
+and a clean pre-Phase-1 halt is the pass. Empty task state is the *expected*
+shape, not an incomplete capture.
+
+When the fixture is an expected-halt fixture, score the axes from
+`captured_final_result` instead of the (correctly empty) task/diff capture:
+
+- **correctness**
+  - 1.0 — the run halted (or applied a spec edit) BEFORE dispatching any
+    Implementer (no tasks COMPLETE, no commits past `eval bootstrap`), and the
+    final summary names the specific defect the fixture expected
+    (`expected_flag_category` — e.g. a contract mismatch between a declared
+    `parse_csv(path)` and a `parse_csv(path, delimiter=...)` call). The gate that
+    caught it does not matter (Ambiguity Gate, Plan Reviewer, or a spec edit all
+    count) — surfacing the defect before Phase 1 is what matters.
+  - 0.7 — halted before Phase 1, but the cited reason is vague or doesn't clearly
+    name the expected defect.
+  - 0.4 — halted for an unrelated/incidental reason (stopped, but not because it
+    caught this defect).
+  - 0.0 — ran one or more tasks to completion without surfacing the defect
+    (commits beyond bootstrap or tasks COMPLETE), OR the run aborted with an error
+    / produced no final summary rather than halting deliberately.
+- **spec_compliance** — equal to `correctness` (the spec violation IS the thing
+  under test).
+- **code_quality** — 1.0 if no code was produced (correct — there is nothing to
+  critique) and the halt summary is coherent; otherwise judge whatever diff exists.
+- **cost_efficiency** — scored normally from wall-time/tokens.
+
+If the fixture is NOT an expected-halt fixture, ignore this section and use the
+standard axes below.
 
 ## Score each axis 0.0–1.0 (1-decimal quantized)
 
@@ -124,5 +176,17 @@ fall back to the diff/test-based estimation below.
 
 - DO NOT re-read the worktree. Score only from the provided captured-run context.
 - DO NOT propose fixes. You are a judge, not a reviewer.
-- If captured context is empty or malformed: score 0.0 across all axes; `passed: false`; `notes: "captured run incomplete"`.
+- **Empty task/diff capture — distinguish a deliberate halt from an aborted run.**
+  Before applying the incomplete-capture rule, check `captured_run_outcome` and
+  `captured_final_result`:
+  - If `captured_final_result` is empty/missing, OR `captured_run_outcome` shows
+    `is_error=true` or a `subtype` other than `success` → the run genuinely
+    aborted. Score 0.0 across all axes; `passed: false`; `notes: "captured run
+    incomplete"`.
+  - If `subtype=success` with a non-empty `captured_final_result` describing a
+    deliberate halt AND the fixture is an expected-halt fixture (see above) →
+    this is the SUCCESS path, not an incomplete capture. Score it with the
+    Expected-halt rubric; do NOT mark it incomplete.
+  - Otherwise (non-halt fixture, clean finish, but empty task capture) → still
+    score 0.0; `notes: "captured run incomplete"`.
 ````

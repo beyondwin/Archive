@@ -165,6 +165,23 @@ GI
   local total_tokens
   total_tokens="$(jq -s '[.[] | select(.type=="usage") | (.input_tokens // 0) + (.output_tokens // 0)] | add // 0' "$tmpdir/.harness/run.jsonl" 2>/dev/null || echo 0)"
 
+  # Terminal result event — the orchestrator's own final summary. For a
+  # DELIBERATE halt (e.g. the Phase 0 ambiguity / contract-mismatch gate refusing
+  # to dispatch an Implementer) this explains WHY the run ended with no Phase 1
+  # tasks. It is the only signal that lets the judge tell a correct halt (which
+  # SHOULD score high on a "must refuse" fixture like 05) apart from a degenerate
+  # or API-aborted run (which produces the same empty task state but is a real
+  # failure). grep first because run.jsonl interleaves stderr (claude -p ... 2>&1),
+  # so a whole-file jq parse aborts on the first non-JSON line.
+  local final_result="" run_subtype="" run_is_error=""
+  local last_result_json
+  last_result_json="$(grep '"type":"result"' "$tmpdir/.harness/run.jsonl" 2>/dev/null | tail -1 || true)"
+  if [ -n "$last_result_json" ]; then
+    final_result="$(printf '%s' "$last_result_json" | jq -r '.result // ""' 2>/dev/null | head -c 4000 || true)"
+    run_subtype="$(printf '%s' "$last_result_json" | jq -r '.subtype // ""' 2>/dev/null || true)"
+    run_is_error="$(printf '%s' "$last_result_json" | jq -r '.is_error // empty' 2>/dev/null || true)"
+  fi
+
   # Capture artifacts. v2.18 layout: state lives at
   # ~/.claude/orchestrator/<RUN_ID>/state.json; the worktree is a SIBLING under
   # ~/.claude/worktrees/<RUN_ID> (NOT nested). So the worktree path MUST come
@@ -289,6 +306,8 @@ sys.stdout.write(template)
     printf '\n#### captured_git_log\n%s\n' "$git_log"
     printf '\n#### captured_files_changed\n%s\n' "$files_changed"
     printf '\n#### captured_test_output\n%s\n' "$test_output"
+    printf '\n#### captured_run_outcome\nsubtype=%s is_error=%s\n' "${run_subtype:-(none)}" "${run_is_error:-false}"
+    printf '\n#### captured_final_result (orchestrator final summary — authoritative for deliberate halts)\n%s\n' "${final_result:-(no terminal result event — run aborted before producing a summary)}"
     printf '\n#### captured_diff_tail\n%s\n' "$diff_tail"
   } > "$judge_input"
 
