@@ -100,3 +100,13 @@ check_doc_freshness STRICT green, py_compile clean.
 
 Close-out: findings/F01-close-out.md → SHIP. All 12 items landed additively;
 schema_version unchanged.
+
+### Live fixture eval (adoption gate)
+
+Ran `./evals/run.sh` over all 8 fixtures (real headless dispatch + judge).
+**8/8 PASS, mean 0.925** → baselines/v2.29.0.json. Preflight green. The prose-
+stressing fixtures (03 HIGH-risk, 05 must-refuse halt, 06 retry, 07 LOW+compaction)
+all passed → F01's recommended gate is closed. Findings: findings/F02-live-eval.md.
+Also fixed a pre-existing run.sh judge-JSON extractor bug (printed every `{...}`
+block → duplicate baseline row); now keeps the last object only. Baseline
+re-aggregated to the canonical 8 rows.

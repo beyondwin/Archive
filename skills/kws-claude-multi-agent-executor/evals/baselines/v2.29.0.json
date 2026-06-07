@@ -1,0 +1,102 @@
+{
+  "version": "2.29.0",
+  "date": "2026-06-07T10:18:44Z",
+  "fixtures": [
+    {
+      "fixture": "01-trivial-typo",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 1.0,
+        "code_quality": 1.0,
+        "cost_efficiency": 0.85
+      },
+      "mean": 0.96,
+      "passed": true,
+      "notes": "All 3 SMALL/LOW tasks completed and committed on an isolated worktree; test grep PASS confirms all three exact comment fixes landed. spec_score/quality_score 1.0 per task with clean fix() commits and Plan Reviewer pass. Wall-time 14/15 min holds cost_efficiency at 0.85 (tokens not captured)."
+    },
+    {
+      "fixture": "02-three-file-refactor",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 1.0,
+        "code_quality": 1.0,
+        "cost_efficiency": 0.5
+      },
+      "mean": 0.9,
+      "passed": true,
+      "notes": "All three expected files renamed add_nums→add across producer/consumer/test; pytest green and no add_nums references remain; 3 commits within the 3–6 range with PASS reviews and spec_score 1.0 throughout. Diff tail was empty but every other signal indicates a clean, idiomatic refactor. Cost_efficiency docked to 0.5: wall-time 16min just exceeded the 15min budget (~107%)."
+    },
+    {
+      "fixture": "03-add-new-feature",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 1.0,
+        "code_quality": 0.9,
+        "cost_efficiency": 0.85
+      },
+      "mean": 0.9,
+      "passed": true,
+      "notes": "All 4 expected files modified, full suite 7/7 passing, --upper prints HI, and 5 commits land within the 5-12 range. Clean separation (pure src/transform.to_upper, cli owns glue); only nits are a stray blank line in cli.py and one reviewer false-positive that the orchestrator correctly overrode. Wall-time 24/25min keeps cost at the 60-100% band."
+    },
+    {
+      "fixture": "04-cross-plan-handoff",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 1.0,
+        "code_quality": 0.9,
+        "cost_efficiency": 0.85
+      },
+      "mean": 0.9,
+      "passed": true,
+      "notes": "Both plans ran to completion: all expected files (src/api.py, src/cli2.py, tests/test_cli2.py) touched, 3 commits within the 3–8 range, and the cross-plan handoff worked as specified — Plan 2 imports Greeter without redefining it, baseline re-taken at the 0→1 swap, active_plan flipped. Spec/quality scores 1.0 with PASS review tier and zero findings on both tasks; diff tail was empty so code_quality leans on the structured audit signals. Wall-time 16/20min (~80%) keeps cost_efficiency at 0.85."
+    },
+    {
+      "fixture": "05-ambiguous-spec",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 1.0,
+        "code_quality": 1.0,
+        "cost_efficiency": 1.0
+      },
+      "mean": 1.0,
+      "passed": true,
+      "notes": "Expected-halt fixture: run halted cleanly at the Phase 0 Ambiguity Gate before dispatching any Implementer (no commits, empty task state — the correct shape). The final summary names the exact expected defect: the parse_csv contract mismatch between Task 0's comma-only definition and Task 1's delimiter=';' call. Well under both wall-time and token budgets."
+    },
+    {
+      "fixture": "06-flaky-test-recovery",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 1.0,
+        "code_quality": 0.9,
+        "cost_efficiency": 0.85
+      },
+      "mean": 0.9,
+      "passed": true,
+      "notes": "Healthiest-path outcome: Verifier recognized the AC block (python -c) is independent of the intentionally-broken pytest collection and PASSed the task via AC with verifier_retries=0, never burning retries on the missing-module failure. Task COMPLETE with spec 1.0 / quality 0.9 / review PASS; one commit matches the single-task plan. cost_efficiency capped at 0.85 since wall-time sits at the 12-min budget boundary and tokens were waived (unmeasurable)."
+    },
+    {
+      "fixture": "07-low-batch-heavy",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 1.0,
+        "code_quality": 0.9,
+        "cost_efficiency": 0.85
+      },
+      "mean": 0.9,
+      "passed": true,
+      "notes": "All 6 LOW docs-only tasks completed with MARKER-N appended; test output PASS and 6 commits land within the 6-15 range. The LOW batch-verifier path ran once at the transition and Phase 2 Step 0 short-circuited as expected. Minor code-quality quibble: files 4-6 inserted an extra blank line before the marker while files 2-3 did not, an inconsistency that doesn't fail the tail-exact-match test."
+    },
+    {
+      "fixture": "08-subtle-input-validation",
+      "scores": {
+        "correctness": 1.0,
+        "spec_compliance": 1.0,
+        "code_quality": 0.9,
+        "cost_efficiency": 0.85
+      },
+      "mean": 0.94,
+      "passed": true,
+      "notes": "Rubric is perfect: 20/20 checks pass (10 valid + 10 error), including the subtle repeated-unit, internal-whitespace, and uppercase cases that naive implementations miss. The single-pass regex + per-unit dedupe is clean and idiomatic with a type hint; only quibble is the recorded WARN that \\d accepts non-ASCII Unicode digits (beyond spec, shipped non-blocking). Wall-time 18/25 min puts cost in the under-both-budgets band (tokens uncaptured)."
+    }
+  ]
+}
