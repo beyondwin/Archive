@@ -42,3 +42,4 @@ disturbing the v2.26–v2.28 finalization/instrumentation guardrails.
 ## Findings index
 
 - F01 — close-out — [link](./findings/F01-close-out.md)
+- F02 — live fixture eval (adoption gate, 8/8 PASS) — [link](./findings/F02-live-eval.md)
