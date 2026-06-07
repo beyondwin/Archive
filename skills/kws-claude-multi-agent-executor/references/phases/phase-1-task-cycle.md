@@ -175,6 +175,13 @@ Then branch on tier:
 2. Do NOT retry. WARN exists precisely to avoid burning a retry on borderline work that ships.
 3. The Final Summary Report (Phase 2 Step 2) lists WARN tasks in a dedicated row so the user sees the pattern.
 4. If three consecutive tasks land in WARN: surface at the next compaction point as a quality-trend signal even if the rolling mean rule did not trip.
+5. **Forced-verify boundary policy (v2.29 — I9):** a HIGH-risk task that an Implementer guessed into a low-confidence WARN deserves one extra scrutiny pass before it ships. Apply, bounded and once per task:
+   ```
+   if review_tier == WARN and risk == HIGH and quality_score < 0.70 and not tasks.task_<N>.forced_verify:
+       state_set.py --field tasks.task_<N>.forced_verify --value true
+       → run Step 3 Verifier as a FORCED pass (counts inside the existing verifier_retries cap)
+   ```
+   `forced_verify` (per-plan, bool, default false) is the dedupe guard — it can fire at most once, so a later retry loop never re-forces. HIGH already routes to Step 3; this policy gives that pass an upgrade semantics (see Step 3): on Verifier **PASS** the tier is promoted **WARN → PASS** (the verifier confirmed quality the review score doubted); on **FAIL** it follows the standard `verifier_retries` retry/SKIP path. The condition is narrow (HIGH + score < 0.70) so cost stays bounded (principle §3.1) — MID/low-score and non-HIGH WARN tasks add no extra pass.
 
 **Tier: FAIL** — branch on the Reviewer's `SPEC_FAULT` field (added to the Combined Reviewer output schema; see template). The field is one of:
 
@@ -269,7 +276,7 @@ continued failure record `<active>.verification_gaps += [{task: "task_<N>",
 reason, ts}]`, emit `kws-cme.blocker`, and proceed (do NOT halt; surface in the
 Final Report). The consumed PASS/FAIL/ESCALATE shape is identical either way.
 
-**Result: PASS** → stamp `<active>.tasks.task_<N>.timing.verifier_done = <iso8601 now>` via atomic R-M-W (non-fatal warning on failure). Proceed to Step 4.  
+**Result: PASS** → stamp `<active>.tasks.task_<N>.timing.verifier_done = <iso8601 now>` via atomic R-M-W (non-fatal warning on failure). **Forced-verify promotion (v2.29 — I9):** if `tasks.task_<N>.forced_verify == true` AND the current `review_tier == "WARN"`, promote it to PASS (`state_set.py --field tasks.task_<N>.review_tier --value '"PASS"'`) — the forced Verifier confirmed quality the review score doubted; record `tasks.task_<N>.forced_verify_outcome = "promoted"`. Proceed to Step 4.  
 **Result: FAIL** →
 - Increment `verifier_retries`.
 - If `verifier_retries` ≤ 3:

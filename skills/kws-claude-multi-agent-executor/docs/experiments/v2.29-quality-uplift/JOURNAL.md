@@ -75,3 +75,28 @@ Tests: full scripts suite 268 passed. Contract + freshness green. Decision: the
 structure+derived-field equality (free-form sections — Changes/Verification/Docs/
 Remaining Risks — are derived from state signals, not byte-equal to prose). ADR
 candidate noted for the docs-sync commit.
+
+### P2 (v2.29.2) implemented — I8/I9/I10/I11/I12
+
+- **I8** (doc+schema): run-level `auto_resolved_count` incremented in
+  phase-1-escalation autonomous-resolution; T3.6 surfaces over threshold (5),
+  no halt. validate_state_schema typecheck (WARN).
+- **I9** (doc+schema): WARN+HIGH+score<0.70 → forced Verifier (per-task
+  `forced_verify` guard) + WARN→PASS promotion on PASS. phase-1-task-cycle Step
+  2/3. validate_state_schema typecheck.
+- **I10** (code+test+doc): `state_resume_digest.py` (6 tests); phase-0-setup
+  resume + phase-minus-1 chain handoff boot from digest.
+- **I11** (doc): phase-transition T3 explicit keep_first pin + prior tool-result
+  drop.
+- **I12** (record): D001 ADR — defer Agent SDK context-editing/memory tool.
+
+### Docs-sync + close-out
+
+Version 2.28.0→2.29.0 (SKILL.md + README). HISTORY §1 v2.29.0 entry,
+decision-log v2.29 section (D001), snapshot docs/snapshots/v2.29.0.md, CHANGELOG
+v2.29.0, state-schema.md new fields. validate_state_schema + finalize_run
+additive checks. Final: scripts pytest **280 passed**, check_skill_contract green,
+check_doc_freshness STRICT green, py_compile clean.
+
+Close-out: findings/F01-close-out.md → SHIP. All 12 items landed additively;
+schema_version unchanged.

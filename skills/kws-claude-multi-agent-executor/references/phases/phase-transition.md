@@ -104,7 +104,10 @@ When a verifier re-dispatch later passes, clear `state.transition_blocked` and c
 
 1.5. **Project decisions to DECISIONS.md (C2):** render `<orch_dir>/DECISIONS.md` from `<active>.decisions_register`. Format: a markdown table with columns `[Task, Decision, Files, Made at, Supersedes]`. Sort by `made_at` ascending. Group superseded entries (`supersedes != null`) at the bottom in a separate subsection. Use an atomic write: write to `DECISIONS.md.tmp`, then `mv` over `DECISIONS.md`. The file is included in the archive tarball (F1). Empty register → write a stub file with header `# Decisions register (empty)`. Failure → log warning, continue (best-effort like the register itself).
 
-2. **Actively drop prior task context:** from this point forward, do not reference individual task details from before this compaction point. Work only from your structured task summary (what you have in internal notes from Agent Cleanup steps). If you need details from an earlier task, re-read the state file — do not hold raw sub-agent output in active context.
+2. **Actively drop prior task context — explicit keep_first + tool-result drop (v2.29 — I11):** from this point forward, do not reference individual task details from before this compaction point. Make the discipline concrete (the in-session equivalent of Anthropic's API context-editing, which this Claude Code execution form cannot enable — see I12):
+   1. **keep_first (never compact):** the plan (or its digest) and the `state_resume_digest.py` output are pinned — never summarized, never dropped. They are the minimal high-signal anchor every subsequent task is reconstructed from (OpenHands keep_first equivalent).
+   2. **Drop the prior task's tool-result blocks:** explicitly release the just-finished task's sub-agent raw output, file-read results, and Verifier output from active context. Their durable form already lives in `<active>.tasks` / `task_summaries` / the events.jsonl tee — holding the raw blocks is pure waste.
+   3. **state.json / digest are the source of truth after compaction** (consistent with the SKILL.md "State file is authoritative" guardrail). If you need an earlier task's detail, re-read the specific `<active>` path just-in-time — never hold raw sub-agent output in active context, and never reconstruct state from conversation history.
 
 3. **Emit `context_health` passive snapshot (v2.10, v2.17 cutover):** write a candidate JSON to `<orch_dir>/learning_events/transition_<compaction_index>-orchestrator.json`. The Phase 1 Step 3.5 candidate-drain loop will publish it to AgentLens as `kws-cme.context_health` on the next orchestrator cycle. The event is informational — never alters control flow. Fields per `references/learning-log.md` "`context_health` (v2.10) — passive observation contract". Minimum body:
    ```json
@@ -161,6 +164,21 @@ When a verifier re-dispatch later passes, clear `state.transition_blocked` and c
    ```
 
    Append silently (`|| true`). One event PER Phase Transition T3 regardless of decision — enables post-hoc A/B analysis of token-vs-legacy trigger lift. If `trigger_decision == "chained"`: proceed with the existing Resume Chain procedure (Phase 0 Step 0 Resume Chain section). If `not_chained`: continue execution.
+
+3.6. **Surface run-level `auto_resolved_count` if over threshold (v2.29 — I8):**
+   read `state.auto_resolved_count` (run-level; default 0). If it exceeds the
+   threshold — default **5**, scale up for large runs — emit a high-severity
+   `context_health` warning line alongside the step-3 snapshot and a candidate
+   event, then **continue**. This is an observation signal only (principle §3.1:
+   autonomy preserved) — it NEVER halts and NEVER alters control flow.
+   ```text
+   AUTO-RESOLUTION HIGH: auto_resolved_count=<N> exceeds threshold <T> —
+   many spec ambiguities were silently reinterpreted this run; review the
+   `auto_resolved` rows in the Final Report / run_report.json.
+   ```
+   Write the candidate to `<orch_dir>/learning_events/transition_<compaction_index>-autoresolved.json`
+   (`severity: "high"`, `execution.issue_key: "auto_resolution_high"`) for the
+   Step 3.5 drain. Emit failure is silent. Below threshold: no output.
 
 4. **Evaluate budget (F2):** governed by spec §F2.4. Placement is **after** the state-anchor write (step 1) **and after** the `context_health` snapshot (step 3) — the spec timing supersedes the plan's "step 2.5" label.
 
