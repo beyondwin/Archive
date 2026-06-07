@@ -1,0 +1,19 @@
+{
+  "fixture": "09-spec-intent-uncovered",
+  "workdir": "/private/var/folders/01/pttq8zy57654cfd1zm1ps7jm0000gn/T/mast-probe.XXXXXX.nJDeAjtD1b/09-good",
+  "valid_inputs": {
+    "passed": 3,
+    "total": 3,
+    "failures": []
+  },
+  "error_cases": {
+    "passed": 2,
+    "total": 2,
+    "failures": []
+  },
+  "summary": {
+    "total_passed": 5,
+    "total_checks": 5,
+    "pass_rate": 1.0
+  }
+}

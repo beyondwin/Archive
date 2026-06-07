@@ -1,4 +1,5 @@
 name: 06-flaky-test-recovery
+mast_coverage: [FM-3.2, FM-2.6]   # docs/eval-coverage-mast.md §2 — doc/audit only, ignored by harness
 description: |
   Plan with a Task whose baseline test command is intentionally broken (missing module).
   Tests Verifier ENV_BLOCKER triage playbook — should attempt pip install, retry, then

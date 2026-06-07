@@ -1,0 +1,117 @@
+name: 10-error-propagation
+mast_coverage: [FM-2.3, FM-3.2]   # docs/eval-coverage-mast.md §2 — doc/audit only, ignored by harness
+description: |
+  Error-propagation probe (MAST FM-2.3 task-derailment / FM-3.2 incomplete verification).
+  2-task chain. Task 0 hardens a shared util (to_cents) whose bootstrap version carries a
+  latent float-rounding defect that passes a loose existing test. Task 1 adds total_cents
+  that depends on to_cents. Measures whether a latent Task-0 defect propagates into the
+  final artifact: the per-task Verifier (MID) should catch it before Task 1 builds on it;
+  if not, the final aggregate rubric (302) catches the propagation. Detect-then-fix.
+
+bootstrap: |
+  mkdir -p src tests
+  touch src/__init__.py tests/__init__.py
+  cat > pyproject.toml <<'TOML'
+  [project]
+  name = "eval10"
+  version = "0.0.1"
+  TOML
+  printf 'test:\n\tpython -m pytest -q tests/\n' > Makefile
+  # Latent defect: naive round() inherits binary-float error, so to_cents(1.005)
+  # yields 100 (not the spec-required 101) and to_cents(2.005) yields 200 (not 201).
+  # The loose bootstrap test accepts BOTH 100 and 101, so the defect ships green.
+  cat > src/money.py <<'PY'
+  def to_cents(amount):
+      return round(amount * 100)
+  PY
+  cat > tests/test_money.py <<'PY'
+  from src.money import to_cents
+
+
+  def test_round_loose():
+      # Intentionally loose — does not pin the 0.5-cent boundary.
+      assert to_cents(1.005) in (100, 101)
+  PY
+
+plan: |
+  ### Task 0: Harden to_cents to exact half-up rounding
+
+  **Files:**
+  - src/money.py
+
+  **Risk:** mid
+
+  Make `to_cents(amount)` convert a dollar amount to integer cents with the 0.5-cent
+  boundary rounding UP (not banker's rounding, and without binary-float error). Per
+  spec.md: to_cents(1.005) == 101 and to_cents(2.005) == 201.
+
+  ## Acceptance Criteria
+
+  ```bash
+  python -c "from src.money import to_cents; assert to_cents(1.005) == 101 and to_cents(2.005) == 201; print('OK')"
+  ```
+
+  ### Task 1: Add total_cents summation (depends on Task 0)
+
+  **Files:**
+  - src/money.py
+  - tests/test_money.py
+
+  **Risk:** mid
+
+  Add `total_cents(amounts)` that converts EACH item via `to_cents` and returns the
+  integer sum. Convert-then-sum, never sum-then-convert (no accumulated error). Add a
+  test pinning total_cents([1.005, 2.005]) == 302.
+
+spec: |
+  # Currency conversion spec
+
+  - `to_cents(amount) -> int`: convert a dollar amount to integer cents. The 0.5-cent
+    boundary rounds UP, with no binary-float error. Examples: to_cents(1.005) == 101,
+    to_cents(2.005) == 201, to_cents(1.00) == 100.
+  - `total_cents(amounts) -> int`: convert each item with `to_cents`, then return the
+    integer sum. No accumulated error — convert each item, do not sum-then-convert.
+    Example: total_cents([1.005, 2.005]) == 302 (101 + 201), NOT 301.
+
+invocation: ""
+
+expected:
+  task_count: 2
+  expected_files_changed:
+    - src/money.py
+    - tests/test_money.py
+  commit_count_min: 2
+  commit_count_max: 6
+  plan_review_should_flag: false
+  test_after: |
+    python -m pytest -q tests/
+  rubric:
+    valid_inputs:
+      # The aggregate that breaks if the Task-0 defect propagated into Task 1, OR if
+      # Task 1 sums-then-converts (good(3.01) == 301 != 302).
+      - check: 'python -c "from src.money import total_cents; assert total_cents([1.005, 2.005]) == 302"'
+        desc: total_cents per-item-convert aggregate == 302 (propagation + derailment sensitive)
+      - check: 'python -c "from src.money import total_cents; assert total_cents([1.00, 2.00]) == 300"'
+        desc: total_cents simple whole-dollar sum == 300
+      - check: 'python -c "from src.money import to_cents; assert to_cents(1.00) == 100"'
+        desc: to_cents whole-dollar basic == 100
+    error_cases:
+      # Spec-intent rounding boundaries. Both fail if the latent Task-0 defect
+      # (naive float round OR int truncation) survives — the direct propagation signal.
+      - check: 'python -c "from src.money import to_cents; assert to_cents(1.005) == 101"'
+        desc: to_cents 0.5-cent boundary rounds up (1.005 -> 101)
+      - check: 'python -c "from src.money import to_cents; assert to_cents(2.005) == 201"'
+        desc: to_cents 0.5-cent boundary rounds up (2.005 -> 201)
+  notes: |
+    Probe validity: the bootstrap naive round() gives to_cents(1.005)==100 and
+    to_cents(2.005)==200 (binary-float error), so both error_cases fail AND the
+    propagated aggregate total_cents([1.005,2.005]) becomes 100+200==300 != 302.
+    int() truncation behaves the same (100/200). A correct Task 0 (e.g. decimal.Decimal
+    with ROUND_HALF_UP) yields 101/201 and the chain aggregates to 302. Propagation
+    blocked = Task-0 verify passes + final 302 passes; propagation occurred = final
+    aggregate FAIL caught by this fixture. The 302 aggregate additionally guards against
+    sum-then-convert: good(3.01) == 301 != 302, an FM-2.3 derailment.
+
+cost_budget:
+  wallclock_minutes: 14
+  tokens: 500000
