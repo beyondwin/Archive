@@ -28,9 +28,9 @@ FILES_HEADING_RE = re.compile(
     r"(?:Files|Affected files|Modified files|Changed files|수정 파일|변경 파일|대상 파일|파일)"
     r"[ \t]*:[ \t]*(?:\*\*)?[ \t]*$"
 )
-AC_RE = re.compile(r"(?mi)^\s*(#{2,5}\s*)?(Acceptance Criteria|Verification|검증)\b")
+AC_RE = re.compile(r"(?mi)^\s*(#{2,5}\s*)?(Acceptance Criteria|Verification|검증|Eval)\b")
 COMMAND_FENCE_RE = re.compile(
-    r"(?mis)^\s*(?:#{2,5}\s*)?(?:Acceptance Criteria|Verification|검증)(?:\b|[ \t]*:).*?"
+    r"(?mis)^\s*(?:#{2,5}\s*)?(?:Acceptance Criteria|Verification|검증|Eval)(?:\b|[ \t]*:).*?"
     r"```(?:bash|sh|shell)?\s*\n(?P<body>.*?)\n```"
 )
 DEPENDS_RE = re.compile(
@@ -54,11 +54,15 @@ YAML_DEPENDENCIES_RE = re.compile(r"(?m)^dependencies:\s*\[(?P<value>[^\]]*)\]\s
 YAML_FILE_CLAIM_RE = re.compile(r"-\s*\{path:\s*(?P<path>[^,}]+),\s*mode:\s*(?P<mode>[^}]+)\}")
 YAML_FILE_CLAIM_LINE_RE = re.compile(r"(?m)^\s*-\s+path:\s*(?P<path>.+?)\s*$")
 YAML_VERIFY_RE = re.compile(r"(?m)^(?:verify|acceptance|verification):\s*(?:$|.+)")
-FILE_LINE_RE = re.compile(
-    r"^\s*-\s+"
-    r"(?:(?:Create|Modify|Read|Delete|Move|Update|생성|수정|읽기|삭제|이동|변경|갱신):\s*)?"
-    r"`?([^`\n]+?)`?\s*$"
+FILE_LINE_RE = re.compile(r"^\s*-\s+(?P<value>.+?)\s*$")
+FILE_PREFIX_RE = re.compile(
+    r"^(?:"
+    r"Create|Modify|Read|Delete|Move|Update|Add|New file|"
+    r"생성|수정|읽기|삭제|이동|변경|갱신|새\s*파일(?:\s*또는\s*확장)?|신규"
+    r")\s*:?\s+",
+    re.IGNORECASE,
 )
+BACKTICK_PATH_RE = re.compile(r"`([^`\n]+)`")
 EXECUTION_MODES = {"interactive", "headless"}
 
 
@@ -187,7 +191,9 @@ def _extract_files(body: str, repo_root: Path, body_start_line: int) -> tuple[li
             if files:
                 break
             continue
-        value = item.group(1).strip()
+        raw_value = item.group("value").strip()
+        backtick_path = BACKTICK_PATH_RE.search(raw_value)
+        value = backtick_path.group(1).strip() if backtick_path else FILE_PREFIX_RE.sub("", raw_value).strip()
         if value.lower() in {"n/a", "none"}:
             continue
         repo_path = _repo_relative(value, repo_root)
@@ -228,11 +234,12 @@ def _extract_acceptance_command(body: str) -> str | None:
     match = COMMAND_FENCE_RE.search(body)
     if not match:
         return None
+    commands: list[str] = []
     for line in match.group("body").splitlines():
         command = line.strip()
         if command and not command.startswith("#"):
-            return command
-    return None
+            commands.append(command)
+    return "\n".join(commands) if commands else None
 
 
 def _extract_acceptance_command_after_line(raw_markdown: str, start_line: int, end_line: int) -> str | None:
