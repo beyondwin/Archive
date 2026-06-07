@@ -314,9 +314,13 @@ sys.stdout.write(template)
   local judge_out
   judge_out="$(claude -p --dangerously-skip-permissions "$(cat "$judge_input")" 2>/dev/null || echo '{"fixture":"'"$fixture_name"'","scores":{"correctness":0,"spec_compliance":0,"code_quality":0,"cost_efficiency":0},"mean":0,"passed":false,"notes":"judge invocation failed"}')"
 
-  # Extract JSON object from judge output.
+  # Extract JSON object from judge output. The judge may emit more than one
+  # top-level `{...}` block (e.g. a draft followed by the final verdict); the
+  # sed range prints every block, so slurp them and keep only the LAST object
+  # — the final verdict. Without this, two blocks were appended for one fixture
+  # and the baseline carried a duplicate entry (v2.29 eval finding).
   local judge_json
-  judge_json="$(printf '%s' "$judge_out" | sed -n '/^{/,/^}$/p' | head -200 || echo '{}')"
+  judge_json="$(printf '%s' "$judge_out" | sed -n '/^{/,/^}$/p' | jq -sc 'map(select(type=="object")) | if length>0 then .[-1] else {} end' 2>/dev/null || echo '{}')"
   if ! printf '%s' "$judge_json" | jq -e . >/dev/null 2>&1; then
     judge_json='{"fixture":"'"$fixture_name"'","scores":{"correctness":0,"spec_compliance":0,"code_quality":0,"cost_efficiency":0},"mean":0,"passed":false,"notes":"judge output unparseable"}'
   fi
