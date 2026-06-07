@@ -478,3 +478,54 @@ def test_replay_run1_target_type_sparse_trend(tmp_path):
     # run-1 is fully waived (cost + timing) so finalize itself passes; the residual
     # signal is WARN-only, which is the honest pre-v2.28 outcome.
     assert result["passed"] is True
+
+
+# --- I7: failure_summary_mismatch (read-only WARN against run_report.json) ---
+
+def _gaps_state(vgaps, dgaps=None):
+    return {
+        "status": "COMPLETE",
+        "timestamps": {"started_at": "2026-06-07T12:00:00Z", "completed_at": "2026-06-07T12:30:00Z"},
+        "cost_tracking_waived": True,
+        "agentlens_orchestration_run": "r1",
+        "tasks": {"task_0": {"status": "COMPLETE", "verifier": "PASS",
+                             "timing": {"started": "a", "completed": "b"}, "review_tier": "PASS"}},
+        "quality_trend": [0.9],
+        "verification_gaps": vgaps,
+        "docs_gaps": dgaps or [],
+    }
+
+
+def _report(by_class):
+    return {"failure_summary": {"by_class": by_class}}
+
+
+def test_failure_summary_match_no_warn(tmp_path):
+    p = _write(tmp_path, _gaps_state([{"task": "task_1", "reason": "x"}]))
+    (tmp_path / "run_report.json").write_text(json.dumps(
+        _report({"verification_gap": 1, "docs_gap": 0})), encoding="utf-8")
+    result = fr.evaluate(_read(p), report_dir=tmp_path)
+    codes = [f["code"] for f in result["findings"]]
+    assert "failure_summary_mismatch" not in codes
+
+
+def test_failure_summary_mismatch_warns_not_fail(tmp_path):
+    p = _write(tmp_path, _gaps_state([{"task": "task_1", "reason": "x"}]))  # 1 real gap
+    (tmp_path / "run_report.json").write_text(json.dumps(
+        _report({"verification_gap": 5, "docs_gap": 0})), encoding="utf-8")  # report says 5
+    result = fr.evaluate(_read(p), report_dir=tmp_path)
+    mism = [f for f in result["findings"] if f["code"] == "failure_summary_mismatch"]
+    assert len(mism) == 1 and mism[0]["level"] == "WARN"
+    assert result["passed"] is True  # WARN never fails the gate
+
+
+def test_failure_summary_absent_report_skips(tmp_path):
+    p = _write(tmp_path, _gaps_state([{"task": "task_1", "reason": "x"}]))
+    result = fr.evaluate(_read(p), report_dir=tmp_path)  # no run_report.json written
+    assert "failure_summary_mismatch" not in [f["code"] for f in result["findings"]]
+
+
+def test_failure_summary_no_report_dir_skips(tmp_path):
+    # evaluate without report_dir (existing call sites) must behave as before.
+    result = fr.evaluate(_gaps_state([{"task": "task_1", "reason": "x"}]))
+    assert "failure_summary_mismatch" not in [f["code"] for f in result["findings"]]

@@ -191,3 +191,132 @@ def test_emit_swallows_missing_cli(monkeypatch):
     # Real _emit with a bogus binary name → OSError swallowed, returns None.
     monkeypatch.setattr(pb.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(OSError("no cli")))
     assert pb._emit("r", "compaction", None) is None
+
+
+# --- I2: local events.jsonl tee (orchestrator single writer) ---------------
+
+def _events(tmp_path):
+    f = tmp_path / "events.jsonl"
+    if not f.exists():
+        return []
+    return [json.loads(line) for line in f.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+def test_task_complete_tees_event_to_events_jsonl(tmp_path):
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}})
+    pb.cmd_task_complete(p, "task_1", {"status": "COMPLETE", "commit": "f00"}, "run-x")
+    evs = _events(tmp_path)
+    assert len(evs) == 1
+    assert evs[0]["type"] == "kws-cme.task_completed"
+    assert evs[0]["payload"]["task"] == "task_1"
+    assert evs[0]["ts"].endswith("Z")
+
+
+def test_task_complete_tees_even_when_agentlens_absent(tmp_path):
+    # run_id None means the AgentLens emit no-ops, but the local tee MUST still fire.
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}})
+    pb.cmd_task_complete(p, "task_0", {"status": "COMPLETE"}, None)
+    evs = _events(tmp_path)
+    assert len(evs) == 1 and evs[0]["type"] == "kws-cme.task_completed"
+
+
+def test_phase_emit_tees_timeline_in_order(tmp_path):
+    p = _write(tmp_path, {"schema_version": "2", "timestamps": {}})
+    pb.cmd_phase_emit(p, "phase_0_started", None, '{"task_count":3}')
+    pb.cmd_phase_emit(p, "compaction", None, '{"after":1}')
+    pb.cmd_phase_emit(p, "phase_2_complete", None, None)
+    types = [e["type"] for e in _events(tmp_path)]
+    assert types == ["kws-cme.phase_0_started", "kws-cme.compaction", "kws-cme.phase_2_complete"]
+
+
+def test_emit_subcommand_tees_arbitrary_type(tmp_path, _no_real_emit):
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}})
+    pb.cmd_emit(p, "blocker", "run-x", '{"task":"task_7","reason":"review_retries_exhausted"}')
+    evs = _events(tmp_path)
+    assert evs[0]["type"] == "kws-cme.blocker"
+    assert evs[0]["payload"]["reason"] == "review_retries_exhausted"
+    # still routes the best-effort AgentLens emit
+    assert _no_real_emit == [("run-x", "blocker", '{"task":"task_7","reason":"review_retries_exhausted"}')]
+
+
+def test_emit_subcommand_does_not_touch_state(tmp_path):
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}})
+    before = _read(p)
+    pb.cmd_emit(p, "blocker", None, '{"task":"task_1"}')
+    assert _read(p) == before
+
+
+def test_tee_event_best_effort_on_bad_dir(tmp_path):
+    # A non-writable / nonexistent orch dir must not raise (observability never blocks).
+    bad = tmp_path / "does" / "not" / "exist"
+    pb._tee_event(bad, "compaction", None)  # should silently no-op, not raise
+
+
+def test_tee_event_keeps_non_json_payload_as_raw(tmp_path):
+    pb._tee_event(tmp_path, "compaction", "not-json")
+    assert _events(tmp_path)[0]["payload"] == "not-json"
+
+
+# --- I3: per-task retry_trace[] (append-only audit log) --------------------
+
+def test_retry_trace_appends_entry_single_plan(tmp_path):
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}})
+    pb.cmd_retry_trace(p, "task_3", "review", "spec_unclear", "WARN",
+                       ["src/a.ts:42:logic"], None)
+    tr = _read(p)["tasks"]["task_3"]["retry_trace"]
+    assert len(tr) == 1
+    e = tr[0]
+    assert e["kind"] == "review" and e["fault"] == "spec_unclear"
+    assert e["tier"] == "WARN" and e["recurring_keys"] == ["src/a.ts:42:logic"]
+    assert e["attempt"] == 1 and e["ts"].endswith("Z")
+
+
+def test_retry_trace_is_append_only_and_ordered(tmp_path):
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}})
+    pb.cmd_retry_trace(p, "task_1", "review", "implementer_omitted", "FAIL", None, None)
+    pb.cmd_retry_trace(p, "task_1", "review", "spec_unclear", "FAIL", None, None)
+    tr = _read(p)["tasks"]["task_1"]["retry_trace"]
+    assert [e["attempt"] for e in tr] == [1, 2]  # auto-increment per kind, preserved order
+    assert [e["fault"] for e in tr] == ["implementer_omitted", "spec_unclear"]
+
+
+def test_retry_trace_attempt_increments_per_kind(tmp_path):
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}})
+    pb.cmd_retry_trace(p, "task_1", "review", "f", None, None, None)
+    pb.cmd_retry_trace(p, "task_1", "verify", "test_fail", None, None, None)
+    pb.cmd_retry_trace(p, "task_1", "verify", "test_fail", None, None, None)
+    tr = _read(p)["tasks"]["task_1"]["retry_trace"]
+    by_kind = [(e["kind"], e["attempt"]) for e in tr]
+    assert by_kind == [("review", 1), ("verify", 1), ("verify", 2)]
+
+
+def test_retry_trace_explicit_attempt_honored(tmp_path):
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}})
+    pb.cmd_retry_trace(p, "task_1", "review", "f", "WARN", None, 3)
+    assert _read(p)["tasks"]["task_1"]["retry_trace"][0]["attempt"] == 3
+
+
+def test_retry_trace_recurring_keys_default_empty(tmp_path):
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}})
+    pb.cmd_retry_trace(p, "task_1", "verify", "test_fail", None, None, None)
+    assert _read(p)["tasks"]["task_1"]["retry_trace"][0]["recurring_keys"] == []
+
+
+def test_retry_trace_multi_plan_writes_to_active(tmp_path):
+    p = _write(tmp_path, {"schema_version": "2", "active_plan": 1,
+                          "plan_chain": [{"tasks": {}}, {"tasks": {}}]})
+    pb.cmd_retry_trace(p, "task_0", "review", "f", "WARN", None, None)
+    st = _read(p)
+    assert st["plan_chain"][1]["tasks"]["task_0"]["retry_trace"][0]["kind"] == "review"
+    assert "tasks" in st["plan_chain"][0] and st["plan_chain"][0]["tasks"] == {}
+
+
+def test_retry_trace_preserved_across_task_complete(tmp_path):
+    # task-complete replaces the task entry with the result object; an existing
+    # retry_trace must survive (it is an audit log, not transient).
+    p = _write(tmp_path, {"schema_version": "2", "tasks": {}})
+    pb.cmd_retry_trace(p, "task_1", "review", "f", "FAIL", None, None)
+    pb.cmd_task_complete(p, "task_1", {"status": "COMPLETE", "commit": "c"}, None)
+    t = _read(p)["tasks"]["task_1"]
+    assert t["status"] == "COMPLETE"
+    assert len(t["retry_trace"]) == 1 and t["retry_trace"][0]["fault"] == "f"
