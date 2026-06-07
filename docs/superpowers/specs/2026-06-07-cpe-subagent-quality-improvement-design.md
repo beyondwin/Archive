@@ -2,7 +2,7 @@
 
 작성일: 2026-06-07
 대상: `skills/kws-codex-plan-executor`
-상태: 제안
+상태: 구현 완료
 연결 구현 문서: `docs/superpowers/plans/2026-06-07-cpe-subagent-quality-improvement-implementation.md`
 
 ## 목표
@@ -24,8 +24,31 @@ AgentLens best-effort 이벤트도 이미 있다.
    어떤 지점에서 품질이 낮아졌고 스킬을 어디서 개선해야 하는지 파악할 수
    있게 한다.
 
-이 문서는 런타임 동작을 바꾸지 않는 설계 문서다. 실제 구현은 연결된
-구현 계획 문서를 따른다.
+이 문서는 최초 작성 시점에는 런타임 동작을 바꾸지 않는 설계 문서였고,
+2026-06-07 구현에서 연결된 구현 계획 문서를 따라 CPE 스킬에 반영됐다.
+
+## 구현 결과
+
+2026-06-07 구현은 `skills/kws-codex-plan-executor`에 다음 변경을 반영했다.
+
+- `scripts/build_task_packet.py`와 `scripts/build_spec_manifest.py`가 packet
+  component budget, section signal, spec mapping evidence, decision filtering,
+  acceptance contract, unit manifest를 기록한다.
+- `scripts/preflight_dispatch.py`가 red packet, full spec fallback, missing
+  acceptance, broad write scope, packet hash drift, dirty overlap을
+  delegate/local fallback/block 결정에 반영한다.
+- `scripts/validate_state.py`, `templates/headless-output-schema.json`,
+  `references/headless-result-schema.md`가 structured `current_blocker`,
+  `failure_decision`, recovery attempt, trajectory/progress fields를 검증한다.
+- `scripts/classify_recovery.py`, `scripts/append_trajectory_event.py`,
+  `scripts/update_progress_ledger.py`, `scripts/inspect_runs.py`가 recovery
+  decision, trajectory projection, progress ledger, resume inspection을
+  deterministic helper로 제공한다.
+- 관련 deterministic eval과 CPE README/architecture/user guide/reference docs가
+  함께 갱신됐다.
+
+구현 커밋은 `9a4bb6b Improve CPE subagent quality controls`이며, 이후 로컬
+`main`에 포함됐다.
 
 ## 근거
 
@@ -514,4 +537,3 @@ Magentic-One의 ledger 아이디어를 CPE 방식으로 좁게 가져온다.
    조사할 수 있다.
 7. Deterministic eval이 context packet, dispatch policy, recovery taxonomy,
    state validation, resume checkpoint, trajectory projection을 검증한다.
-

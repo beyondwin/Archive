@@ -3,7 +3,7 @@
 작성일: 2026-06-07
 대상: `skills/kws-codex-plan-executor`
 설계 문서: `docs/superpowers/specs/2026-06-07-cpe-subagent-quality-improvement-design.md`
-상태: 제안
+상태: 구현 완료
 
 ## 목적
 
@@ -36,7 +36,41 @@ cd /Users/kws/source/private/Archive
 git diff --check
 ```
 
-이 문서 작성은 문서-only 제안이므로 위 전체 eval은 구현 단계에서 수행한다.
+이 문서 작성 시점에는 문서-only 제안이었고, 2026-06-07 구현 단계에서 아래
+전체 eval과 hygiene 검증을 수행했다.
+
+## 구현 완료 요약
+
+구현 커밋: `9a4bb6b Improve CPE subagent quality controls`
+
+로컬 병합 상태: `main`에 포함됨
+
+주요 반영 사항:
+
+- Phase 0-3: `Phase N` plan parsing, acceptance command extraction,
+  component-level task packet budget, spec section signal/mapping evidence,
+  decision filtering, unit manifest를 반영했다.
+- Phase 4: `preflight_dispatch.py`가 packet quality, full spec fallback,
+  missing acceptance, broad write scope, packet hash mismatch, dirty overlap을
+  deterministic gate로 판단한다.
+- Phase 5-7: structured blocker/failure state, headless result schema,
+  recovery helper, resume inspection output을 갱신했다.
+- Phase 8-9: append-only trajectory projection helper와 progress ledger helper를
+  추가했다.
+- Phase 10: README, architecture, Korean guide, state/logging, eval/reference
+  문서를 실제 구현과 맞게 갱신했다.
+
+리뷰 후 닫은 리스크:
+
+- skill-relative path literal이 repo-root task path와 매칭되지 않던 문제를
+  suffix/root-aware matching으로 수정했다.
+- state의 packet hash drift를 preflight가 놓칠 수 있던 문제를
+  `task_packet_hash_mismatch` block으로 수정했다.
+- `inspect_runs.py` output에 recovery/blocker summary가 부족하던 문제를
+  `last_completed_task`, `current_blocker_category`, `next_action_kind`,
+  `handoff_ready`, `context_budget_status`로 보강했다.
+- headless blocked/failed JSON schema가 blocker/failure decision을 충분히
+  요구하지 않던 문제를 보강했다.
 
 ## 전체 단계
 
@@ -609,16 +643,25 @@ graphify update .
 `graphify-out/`이 tracked인지 ignored인지 확인한 뒤 commit 포함 여부를
 결정한다.
 
-## 출시 순서
+2026-06-07 완료 시점 검증 결과:
 
-1. Phase 1-4를 먼저 출시한다. "packet and dispatch quality" 개선으로,
-   state lifecycle을 크게 바꾸지 않고 context 낭비와 unsafe delegation을
-   줄인다.
-2. Phase 5-7을 두 번째로 출시한다. state schema와 headless output이 바뀌므로
-   versioning을 신중히 한다.
-3. Phase 8-9를 세 번째로 출시한다. trajectory와 progress ledger는 사후 분석과
-   장기 개선 loop를 담당한다.
-4. Phase 10 문서 통합은 scripts/evals가 안정된 뒤 마지막에 한다.
+- `./evals/run.sh` 통과
+- `python3 -m py_compile scripts/*.py evals/*.py` 통과
+- `bash -n evals/run.sh` 통과
+- `git diff --check` 통과
+- `graphify update .` 실행 후 tracked `graphify-out/` 갱신 포함
+- `scripts/check_graphify_freshness.py --update-ran` 통과
+- `scripts/reconcile_state.py --check` 통과
+- `scripts/validate_state.py <run-state>` 통과
+- 독립 코드 리뷰에서 남은 Critical/Important merge blocker 없음 확인
+
+## 출시 결과
+
+초기 계획은 세 묶음 출시였지만, 구현은 deterministic eval과 review gate를
+통과한 단일 release commit으로 반영됐다. 이후 변경은 이 문서의 Phase 구분을
+유지하되, 실제 동작 기준은 `skills/kws-codex-plan-executor`의 scripts,
+references, evals를 우선한다. Phase 10 문서 통합도 같은 release commit에
+포함됐다.
 
 ## 주요 리스크
 
@@ -633,4 +676,3 @@ graphify update .
   fallback reason을 반드시 남긴다.
 - helper script가 많아지면 유지보수가 어려워진다. 입력/출력이 좁은
   deterministic helper만 추가한다.
-

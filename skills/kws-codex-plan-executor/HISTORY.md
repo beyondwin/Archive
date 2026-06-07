@@ -27,6 +27,14 @@
 - Added graphify freshness guidance: compare `GRAPH_REPORT.md` built commit
   with `git rev-parse HEAD`, run `graphify update .` after code changes, and
   record the evidence in completion audit.
+- Added CPE subagent quality controls: phase-plan acceptance parsing,
+  component-level task packet budgets, spec mapping signals, decision
+  filtering, acceptance/unit manifests, packet-quality preflight gates,
+  structured blocker/failure state, recovery policy classification, trajectory
+  projection, progress ledger updates, and richer run inspection output.
+- Tightened headless result and state validation so blocked/failed runs expose
+  structured blocker or failure decisions and finished runs cannot hide open
+  blockers, open recovery attempts, or unacknowledged unknown observations.
 
 ## 2.20.0 - 2026-05-19
 
