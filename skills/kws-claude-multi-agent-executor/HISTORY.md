@@ -21,6 +21,53 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v2.29.0 — Quality uplift (2026-06-07)
+
+Twelve-item quality catalog (I1–I12) from `docs/improvements/품질개선-{플랜,구현}-ko.md`,
+grouped on three axes the user named: **A** orchestrator context reduction, **B**
+autonomous problem-handling, **C** post-run observability. Shipped additively
+(`schema_version` unchanged) so legacy state.json keeps reading. Executed
+single-session (the plan's heavy shared-file contention + "no added parallelism"
+mandate §3.1 made the multi-agent path the wrong tool — see
+`docs/experiments/v2.29-quality-uplift/`).
+
+- **I1 (B)** — review/verifier retry-cap exhaustion was the last hard stop inside
+  Phase 1; now it SKIPs the task, records a `verification_gaps` entry, emits a
+  `blocker` event, propagates SKIP, and continues (verifier branch resets to
+  `pre_task_sha` first). Aligned with the escalation cap.
+- **I2 (C)** — `phase_boundary._tee_event` writes every boundary emit to
+  `<orch_dir>/events.jsonl` regardless of AgentLens reachability (orchestrator
+  single writer; the all-agent attached default otherwise leaves zero timeline).
+  New generic `emit` subcommand for free-form types (`blocker`).
+- **I3 (C)** — append-only per-task `retry_trace[]` ({attempt, kind, fault,
+  recurring_keys, tier, ts}) via a new `retry-trace` subcommand; `task-complete`
+  preserves it.
+- **I4 (A+C)** — `build_final_report.py` emits the Execution Summary markdown
+  (layout snapshot-locked, multi-plan aware) plus machine-readable
+  `run_report.json` (schema `run_report/1`). Phase 2 Step 2 runs the helper
+  instead of hand-aggregating the report.
+- **I5 (A)** — `build_context_slice.py` ports the ~40-line `{context_slice}`
+  derivation out of phase-1-task-cycle.md Step 1.
+- **I6 (A)** — spec re-read after an edit narrowed to the changed
+  `spec_manifest.sections` (regenerate the manifest on a structural edit).
+- **I7 (C)** — `failure_summary` roll-up in `build_final_report.py`;
+  `finalize_run.py` gains a read-only `failure_summary_mismatch` WARN.
+- **I8 (B)** — run-level `auto_resolved_count`; T3 surfaces a signal over a
+  threshold (default 5). Observation only — never halts.
+- **I9 (B)** — WARN + HIGH + quality_score < 0.70 → one forced Verifier pass
+  (per-task `forced_verify` guard); a PASS promotes WARN→PASS.
+- **I10 (A)** — `state_resume_digest.py` boots a resumed/chained session from a
+  compact digest, not the full state.json.
+- **I11 (A)** — explicit T3 compaction discipline: keep_first pin + prior
+  tool-result drop (in-session equivalent of API context-editing).
+- **I12 (A, record-only)** — D001 defers native Agent SDK context-editing +
+  memory tool (beta header unreachable from this execution form).
+
+New scripts: `build_final_report.py`, `build_context_slice.py`,
+`state_resume_digest.py` (+ paired tests). `phase_boundary.py` gains `emit` +
+`retry-trace`; `finalize_run.py` + `validate_state_schema.py` gain additive-field
+checks. Full scripts suite green; contract + doc-freshness green.
+
 ### v2.28.0 — Instrumentation integrity (2026-06-07)
 
 Three real `interactive_attached` runs executed **after** v2.27 shipped proved the

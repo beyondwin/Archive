@@ -84,6 +84,17 @@ Instead:
 2. Append to `state.spec_edits` a record: `{task, fault, interpretation: "<one
    sentence>", ts, auto_resolved: true}` (no spec file edit unless the smallest
    clarifying edit is clearly correct, per the existing spec-edit branch).
+2.5. **Increment the run-level counter (v2.29 — I8):** every autonomous
+   reinterpretation bumps a run-level tally so silent reinterpretation is
+   observable (D003 reinterpretation was previously unbounded and only visible in
+   the Final Report):
+   ```bash
+   python3 <skill_dir>/scripts/state_set.py --state "$ORCH_DIR/state.json" \
+     --field auto_resolved_count --plan-scope run --inc 1
+   ```
+   `auto_resolved_count` is **run-level** (preserved across plan_chain swap +
+   Resume Chain handoff). Phase Transition T3 surfaces it when it crosses a
+   threshold; the count itself never halts or alters control flow (principle §3.1).
 3. Re-dispatch the Implementer with a `## [AUTO-INTERPRETATION]` note carrying
    the chosen reading. Proceed; do NOT SKIP and do NOT prompt the user.
 4. Surface every `auto_resolved` interpretation in the Final Summary Report.

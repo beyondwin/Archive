@@ -25,8 +25,12 @@ Two field classes, dispatched by whether `plan_chain` is present:
 
 | Class | Fields |
 |-------|--------|
-| **Run-level** | `schema_version`, `mode`, `active_plan`, `plan`, `spec`, `branch`, `worktree`, `orchestrator_dir`, `source_repo`, `test_command`, `implementer_model`, `spec_edits`, `chain_resume`, `current_task`, `current_step_within_task`, `current_pre_task_sha`, `current_pre_group_sha`, `current_review_retries`, `current_verifier_retries`, `current_escalation_count`, `current_previous_issues`, `phase_summaries`, `phase_doc_commits`, `budget_cap_usd`, `budget_action`, `cost_ledger`, `cost_tracking_waived`, `cost_tracking_waive_reason`, `archive`, `agentlens_orchestration_run`, `agentlens_healthy`, `context_budget`, `timestamps`, `plan_chain`, `dispatch_config` |
+| **Run-level** | `schema_version`, `mode`, `active_plan`, `plan`, `spec`, `branch`, `worktree`, `orchestrator_dir`, `source_repo`, `test_command`, `implementer_model`, `spec_edits`, `chain_resume`, `current_task`, `current_step_within_task`, `current_pre_task_sha`, `current_pre_group_sha`, `current_review_retries`, `current_verifier_retries`, `current_escalation_count`, `current_previous_issues`, `phase_summaries`, `phase_doc_commits`, `budget_cap_usd`, `budget_action`, `cost_ledger`, `cost_tracking_waived`, `cost_tracking_waive_reason`, `auto_resolved_count`, `archive`, `agentlens_orchestration_run`, `agentlens_healthy`, `context_budget`, `timestamps`, `plan_chain`, `dispatch_config` |
 | **Per-plan** (`<active>`) | `tasks`, `task_summaries`, `quality_trend`, `baseline`, `low_tasks_pending_verification`, `global_constraints`, `compaction_points`, `execution_plan`, `risk_levels`, `task_complexity`, `task_header_prefix`, `last_compaction_after_task`, `last_completed_task`, `last_completed_at`, `plan_review`, `spec_manifest`, `decisions_register`, `verification_gaps`, `docs_gaps` |
+
+Per-task fields under `<active>.tasks.task_<N>` also carry the v2.29 additions
+`retry_trace` (I3), `forced_verify` / `forced_verify_outcome` (I9), and
+`skip_reason` (I1) — all additive, default-absent.
 
 Hard-coding a per-plan field at top-level for a multi-plan run silently corrupts
 the chain: plan 0's data writes to top-level while plan 1's writes to
@@ -203,7 +207,23 @@ per-plan data when its swap fires at Phase 2 Step -1.
 - **`verification_gaps` / `docs_gaps`** (v2.25) are per-plan arrays, default `[]`.
   They are populated by the agent-dispatch failure ladder (D003) when a
   load-bearing role cannot run after retry+api-fallback; rendered in the Final
-  Summary Report.
+  Summary Report. **v2.29 (I1):** also populated when a task's review/verifier
+  retry cap is exhausted — the task is SKIPPED and a `{task, kind, last_issues,
+  attempts, ts}` entry is appended (instead of the former run halt).
+- **`auto_resolved_count`** (v2.29 — I8) is run-level, int, default 0 (absent on
+  legacy state). Incremented by `state_set.py --inc 1` on every autonomous
+  D003 reinterpretation; preserved across plan_chain swap + Resume Chain handoff
+  like the other run-level fields. Phase Transition T3 surfaces a high-severity
+  signal when it crosses a threshold (default 5) — observation only, never halts.
+- **`tasks.task_<N>.retry_trace`** (v2.29 — I3) is a per-task append-only list,
+  default absent. Each entry `{attempt, kind: review|verify, fault, recurring_keys,
+  tier, ts}` records why a retry happened (the volatile `current_previous_issues`
+  buffer was overwritten each retry). Written ONLY by `phase_boundary.py
+  retry-trace`; `task-complete` preserves it across the result-object replace.
+- **`tasks.task_<N>.forced_verify`** (v2.29 — I9) is a per-task bool, default
+  absent/false — the dedupe guard for the WARN+HIGH+score<0.70 forced Verifier
+  pass (fires at most once). `forced_verify_outcome: "promoted"` records a
+  WARN→PASS promotion when that forced pass succeeded.
 - **`agentlens_orchestration_run` / `agentlens_healthy`** are run-level and
   preserved across swaps/handoffs — see `cross-cutting/agentlens-emit-sites.md`.
 - **`timestamps.started_at`** is stamped at Phase 0 Step 7.5 (setdefault, via

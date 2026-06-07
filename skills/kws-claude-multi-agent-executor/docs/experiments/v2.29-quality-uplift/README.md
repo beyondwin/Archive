@@ -37,8 +37,8 @@ disturbing the v2.26–v2.28 finalization/instrumentation guardrails.
 
 ## Decisions index
 
-(updated as ADRs are written)
+- D001 — Defer native Agent SDK context-editing + memory tool (I12) — [link](./decisions/D001-agent-sdk-context-editing-deferred.md)
 
 ## Findings index
 
-(updated at close-out)
+- F01 — close-out — [link](./findings/F01-close-out.md)
