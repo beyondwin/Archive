@@ -276,7 +276,7 @@ continued failure record `<active>.verification_gaps += [{task: "task_<N>",
 reason, ts}]`, emit `kws-cme.blocker`, and proceed (do NOT halt; surface in the
 Final Report). The consumed PASS/FAIL/ESCALATE shape is identical either way.
 
-**Result: PASS** → stamp `<active>.tasks.task_<N>.timing.verifier_done = <iso8601 now>` via atomic R-M-W (non-fatal warning on failure). **Forced-verify promotion (v2.29 — I9):** if `tasks.task_<N>.forced_verify == true` AND the current `review_tier == "WARN"`, promote it to PASS (`state_set.py --field tasks.task_<N>.review_tier --value '"PASS"'`) — the forced Verifier confirmed quality the review score doubted; record `tasks.task_<N>.forced_verify_outcome = "promoted"`. Proceed to Step 4.  
+**Result: PASS** → stamp `<active>.tasks.task_<N>.timing.verifier_done = <iso8601 now>` via atomic R-M-W (non-fatal warning on failure). **Forced-verify promotion (v2.29 — I9):** if `tasks.task_<N>.forced_verify == true` AND the current `review_tier == "WARN"`, promote it to PASS (`state_set.py --field tasks.task_<N>.review_tier --value '"PASS"'`) — the forced Verifier confirmed quality the review score doubted; record `tasks.task_<N>.forced_verify_outcome = "promoted"`. Proceed to Step 4.
 **Result: FAIL** →
 - Increment `verifier_retries`.
 - If `verifier_retries` ≤ 3:
