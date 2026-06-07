@@ -132,3 +132,60 @@ def test_exit_code_pass_and_fail(tmp_path):
     assert vss.main(["--state", str(good)]) == 0
     bad = _write(tmp_path, READMATES_BAD)
     assert vss.main(["--state", str(bad)]) == 1
+
+
+# --- v2.29 additive-field typechecks (I8/I1/I9 — WARN, never block) ---------
+
+def _base():
+    return {
+        "schema_version": "2", "mode": "interactive_attached",
+        "dispatch_config": {"final_sweep": "agent"},
+        "cost_ledger": {"totals": {"dispatches": 1}},
+        "risk_levels": {"task_0": "low"},
+        "execution_plan": [{"wave": 0, "parallel_groups": [["task_0"]]}],
+        "tasks": {"task_0": {"status": "COMPLETE"}},
+    }
+
+
+def test_auto_resolved_count_valid_no_warn():
+    s = _base(); s["auto_resolved_count"] = 3
+    r = vss.validate(s)
+    assert r["passed"] is True
+    assert "auto_resolved_count_type" not in [w["code"] for w in r["warnings"]]
+
+
+def test_auto_resolved_count_bad_type_warns_not_block():
+    s = _base(); s["auto_resolved_count"] = "lots"
+    r = vss.validate(s)
+    assert r["passed"] is True  # WARN never blocks
+    assert "auto_resolved_count_type" in [w["code"] for w in r["warnings"]]
+
+
+def test_retry_trace_valid_no_warn():
+    s = _base()
+    s["tasks"]["task_0"]["retry_trace"] = [{"attempt": 1, "kind": "review", "fault": "x"}]
+    r = vss.validate(s)
+    assert "retry_trace_malformed" not in [w["code"] for w in r["warnings"]]
+    assert "retry_trace_type" not in [w["code"] for w in r["warnings"]]
+
+
+def test_retry_trace_malformed_warns():
+    s = _base()
+    s["tasks"]["task_0"]["retry_trace"] = [{"kind": "review"}]  # missing attempt
+    r = vss.validate(s)
+    assert r["passed"] is True
+    assert "retry_trace_malformed" in [w["code"] for w in r["warnings"]]
+
+
+def test_forced_verify_bad_type_warns():
+    s = _base()
+    s["tasks"]["task_0"]["forced_verify"] = "yes"
+    r = vss.validate(s)
+    assert r["passed"] is True
+    assert "forced_verify_type" in [w["code"] for w in r["warnings"]]
+
+
+def test_gaps_non_list_warns():
+    s = _base(); s["verification_gaps"] = {"oops": 1}
+    r = vss.validate(s)
+    assert "verification_gaps_type" in [w["code"] for w in r["warnings"]]

@@ -86,50 +86,16 @@ Build the implementer prompt from the **Implementer Prompt Template** below. Fil
 - `{risk level}` — from your Phase 0 assignment
 - `{worktree_path}` — the worktree path
 - `{deps_for_this_task}` — list of task IDs that this task depends on (from Phase 0 Step 6 dependency graph)
-- `{context_slice}` — **v2.19 (T1.2)** pre-resolved upstream context block. Replaces the previous "Read state.json" pattern that forced every Implementer dispatch to round-trip through the Read tool and pull the full state file. Substitution rule:
+- `{context_slice}` — **v2.19 (T1.2); helper-extracted in v2.29 (I5).** Pre-resolved upstream context block that replaces the old "Read state.json" round-trip. The ~40-line derivation is no longer executed in the orchestrator's context — run the helper and inject its stdout verbatim:
+  ```bash
+  python3 <skill_dir>/scripts/build_context_slice.py "$ORCH_DIR/state.json" \
+    --task task_<N> \
+    --deps '<JSON array of upstream task IDs from the Phase 0 dependency graph>' \
+    --files '<JSON array of this task's **Files:** block>' \
+    [--plan-index <N for multi-plan>]
+  Substitute {context_slice} → <helper stdout>
   ```
-  deps = {deps_for_this_task}  (list of upstream task IDs from Phase 0 dependency graph)
-  active_summaries = <active>.task_summaries
-  active_shared    = <active>.global_constraints.shared_files  (may be {} or absent)
-  files_this_task  = task's Files: block list
-
-  lines = ["active_plan_index: " + str(<active_plan_index_or_"single">)]
-  lines.append("deps_for_this_task: " + json.dumps(deps))
-  if deps:
-    lines.append("task_summaries:")
-    for tid in deps:
-      summary = active_summaries.get("task_" + str(tid), {}).get("for_next_tasks", "")
-      lines.append("  task_" + str(tid) + ":")
-      lines.append("    for_next_tasks: |")
-      for line in summary.splitlines() or [""]:
-        lines.append("      " + line)
-  else:
-    lines.append("task_summaries: {}  # no upstream deps")
-
-  # shared_files: filter to entries whose key intersects files_this_task
-  intersecting = {f: other_ids for f, other_ids in active_shared.items() if f in files_this_task}
-  if intersecting:
-    lines.append("shared_files:")
-    for f, other_ids in intersecting.items():
-      lines.append("  " + f + ": " + json.dumps(other_ids))
-      # also inline for_next_tasks of the other tasks so the implementer doesn't need to look further
-      for other_id in other_ids:
-        other_summary = active_summaries.get(other_id, {}).get("for_next_tasks", "")
-        if other_summary:
-          lines.append("  # " + other_id + ".for_next_tasks: " + other_summary.splitlines()[0][:140])
-  else:
-    lines.append("shared_files: {}  # none of files_to_touch are shared with other tasks")
-
-  gc_text = <active>.global_constraints.get("text", "")
-  if gc_text:
-    lines.append("global_constraints: |")
-    for line in gc_text.splitlines():
-      lines.append("  " + line)
-
-  context_slice_text = "\n".join(lines)
-  Substitute {context_slice} → context_slice_text
-  ```
-  If the active task tree has no `task_summaries` yet (first task), `active_summaries` resolves to `{}` and the block degrades gracefully (`task_summaries: {} # no upstream deps`).
+  `--deps` and `--files` are the small lists the orchestrator already holds (dependency graph + Files block it reads for `{files to touch}`); the helper reads `task_summaries` / `global_constraints.shared_files` / `global_constraints.text` from the active tree and assembles the block (degrading gracefully on the first task → `task_summaries: {} # no upstream deps`). The full derivation logic now lives in the helper's module docstring, not here. Equivalence with the prior in-prose output is locked by `scripts/test_build_context_slice.py`.
 
   **Detect fallback usage (v2.19):** parse `CONTEXT_SOURCE: <pre-resolved|fallback-read>` from the Implementer's STATUS output. If `fallback-read` appears: increment `state.metrics.context_fallback_count` (atomic R-M-W, non-fatal on failure) AND emit a `kws-cme.orchestrator_bug` learning_event candidate with `subagent.role=orchestrator`, `summary="Implementer fell back to state.json read — slice injection failed"`, severity=medium. Do NOT halt — the run continues, but the next compaction point should surface this for inspection.
 - `{task_size}` — SMALL / MEDIUM / LARGE from `<active>.task_complexity.task_N` (P5)
@@ -209,6 +175,13 @@ Then branch on tier:
 2. Do NOT retry. WARN exists precisely to avoid burning a retry on borderline work that ships.
 3. The Final Summary Report (Phase 2 Step 2) lists WARN tasks in a dedicated row so the user sees the pattern.
 4. If three consecutive tasks land in WARN: surface at the next compaction point as a quality-trend signal even if the rolling mean rule did not trip.
+5. **Forced-verify boundary policy (v2.29 — I9):** a HIGH-risk task that an Implementer guessed into a low-confidence WARN deserves one extra scrutiny pass before it ships. Apply, bounded and once per task:
+   ```
+   if review_tier == WARN and risk == HIGH and quality_score < 0.70 and not tasks.task_<N>.forced_verify:
+       state_set.py --field tasks.task_<N>.forced_verify --value true
+       → run Step 3 Verifier as a FORCED pass (counts inside the existing verifier_retries cap)
+   ```
+   `forced_verify` (per-plan, bool, default false) is the dedupe guard — it can fire at most once, so a later retry loop never re-forces. HIGH already routes to Step 3; this policy gives that pass an upgrade semantics (see Step 3): on Verifier **PASS** the tier is promoted **WARN → PASS** (the verifier confirmed quality the review score doubted); on **FAIL** it follows the standard `verifier_retries` retry/SKIP path. The condition is narrow (HIGH + score < 0.70) so cost stays bounded (principle §3.1) — MID/low-score and non-HIGH WARN tasks add no extra pass.
 
 **Tier: FAIL** — branch on the Reviewer's `SPEC_FAULT` field (added to the Combined Reviewer output schema; see template). The field is one of:
 
@@ -228,7 +201,7 @@ Decision table:
 **Spec-edit branch (P15):**
 1. **Safety init:** if `state.spec_edits` is missing/null, set it to `[]` before append (handles legacy state.json).
 2. Increment `task.spec_clarifications` (NOT `review_retries`). If `spec_clarifications > 3` for this task: halt this task as SKIPPED with reason "exceeded spec-clarification limit"; record in state.json and continue per SKIPPED propagation.
-3. Orchestrator re-reads the affected spec section, makes the smallest possible edit, then re-reads the full spec.
+3. Orchestrator re-reads the affected spec section, makes the smallest possible edit, then **re-reads only the edited `spec_manifest.sections[<edited_sids>]` range (+ any directly dependent section) — NOT the full spec (v2.29 — I6)**. If the edit changed section boundaries/numbering (i.e. the manifest structure itself), first re-run `build_spec_manifest.py` (step 6.5 below) and re-read only the changed sections from the regenerated manifest. This keeps the post-edit integrity guarantee while removing the full-spec reload on every clarification.
 4. Append to `state.spec_edits`:
    ```json
    {"task": "<id>", "spec_line": <N>, "reason": "<one sentence>", "commit": "<sha>", "ts": "<iso8601>", "fault": "spec_contradicts|unclear"}
@@ -246,9 +219,21 @@ Decision table:
 - Capture ISSUES (both SPEC_ISSUES and QUALITY_ISSUES) as `current_issues`. Increment `review_retries`.
 - If `review_retries` ≤ 3:
   - **Retry-learning:** compare `current_issues` against `previous_issues` by matching ISSUE_KEY (exact match on file:line:category). Mark any issue whose ISSUE_KEY appears in both as `[RECURRING — previous fix did not address this]`.
+  - **Record the attempt to `retry_trace` BEFORE overwriting `previous_issues` (v2.29 — I3):** the per-attempt fault/tier/RECURRING signal is the highest-value debugging input and was previously lost to the `previous_issues` overwrite. Append it append-only via the helper (orchestrator single writer; never hand-write the array):
+    ```bash
+    python3 <skill_dir>/scripts/phase_boundary.py retry-trace \
+      --state "$ORCH_DIR/state.json" --task task_<N> --kind review \
+      --fault "<SPEC_FAULT class>" --tier "<PASS|WARN|FAIL>" \
+      --recurring-json '<JSON array of RECURRING ISSUE_KEYs, or omit>' --attempt <review_retries>
+    ```
   - Set `previous_issues = current_issues`.
   - Re-dispatch Implementer with `## Fix Required\n{issues with RECURRING labels}`. Return to Step 1.
-- If `review_retries` > 3: halt. Report to user: "Task N exceeded review retry limit (3). Manual intervention required."
+- If `review_retries` > 3: **SKIP + continue (v2.29 — I1; aligned with the escalation-cap behavior, NOT a run halt).** The last hard stop inside Phase 1 is removed — an exhausted review retry budget is the same class of bounded-retry exhaustion as the escalation cap (`references/phases/phase-1-escalation.md` lines 41-49), so it self-heals the same way:
+  1. Mark the task SKIPPED: `state_set.py --field tasks.task_<N>.status --value '"SKIPPED"'` and `state_set.py --field tasks.task_<N>.skip_reason --value '"review_retries_exhausted"'`.
+  2. Record the gap: `state_set.py --field verification_gaps --append-json '{"task":"task_<N>","kind":"review","last_issues":<current previous_issues>,"attempts":<review_retries>,"ts":"<iso8601>"}'`. (`verification_gaps` is the existing D003 gap-marker array — no new machinery, reused per the Step 3 `"agent"` path precedent.)
+  3. Emit the blocker (with the I2 local tee): `python3 <skill_dir>/scripts/phase_boundary.py emit --state "$ORCH_DIR/state.json" --run-id "${ORCH_RUN_ID:-}" --type blocker --payload-json '{"task":"task_<N>","reason":"review_retries_exhausted"}'`.
+  4. **SKIPPED propagation:** unstarted tasks that depend on this one follow the Phase 0 Step 6 SKIPPED-propagation rule (same as escalation-cap and Verifier-agent gaps).
+  5. Proceed to the next task. The run does NOT halt — the gap renders in the Final Report / `run_report.json`.
 
 ### Step 3: Verifier (MID/HIGH tasks only)
 
@@ -291,13 +276,24 @@ continued failure record `<active>.verification_gaps += [{task: "task_<N>",
 reason, ts}]`, emit `kws-cme.blocker`, and proceed (do NOT halt; surface in the
 Final Report). The consumed PASS/FAIL/ESCALATE shape is identical either way.
 
-**Result: PASS** → stamp `<active>.tasks.task_<N>.timing.verifier_done = <iso8601 now>` via atomic R-M-W (non-fatal warning on failure). Proceed to Step 4.  
+**Result: PASS** → stamp `<active>.tasks.task_<N>.timing.verifier_done = <iso8601 now>` via atomic R-M-W (non-fatal warning on failure). **Forced-verify promotion (v2.29 — I9):** if `tasks.task_<N>.forced_verify == true` AND the current `review_tier == "WARN"`, promote it to PASS (`state_set.py --field tasks.task_<N>.review_tier --value '"PASS"'`) — the forced Verifier confirmed quality the review score doubted; record `tasks.task_<N>.forced_verify_outcome = "promoted"`. Proceed to Step 4.
 **Result: FAIL** →
 - Increment `verifier_retries`.
 - If `verifier_retries` ≤ 3:
   - Reset to pre-task state: `git -C <worktree_path> reset --hard <pre_task_sha>`
+  - **Record the attempt to `retry_trace` (v2.29 — I3):** append-only, before re-dispatch:
+    ```bash
+    python3 <skill_dir>/scripts/phase_boundary.py retry-trace \
+      --state "$ORCH_DIR/state.json" --task task_<N> --kind verify \
+      --fault "<verifier category>" --attempt <verifier_retries>
+    ```
   - Re-dispatch Implementer with verifier's `issues` from the JSON under `## Fix Required`. Include `receiving-code-review` (per Phase 1 Step 1 re-dispatch rules) — verifier feedback can be wrong (baseline drift, flaky tests), so the skill's "verify before patching" discipline applies. Return to Step 1.
-- If `verifier_retries` > 3: halt. Report to user: "Task N exceeded verifier retry limit (3). Manual intervention required."
+- If `verifier_retries` > 3: **SKIP + continue (v2.29 — I1; same alignment as the review-retry branch above, NOT a run halt).** Before marking SKIPPED, **preserve the reset discipline** so no partial change survives:
+  1. `git -C <worktree_path> reset --hard <pre_task_sha>` — return the working tree to the pre-task state (the SKIP guardrail still requires a clean tree; partial verified-but-failing changes must not persist).
+  2. Mark the task SKIPPED: `state_set.py --field tasks.task_<N>.status --value '"SKIPPED"'` and `state_set.py --field tasks.task_<N>.skip_reason --value '"verifier_retries_exhausted"'`.
+  3. Record the gap: `state_set.py --field verification_gaps --append-json '{"task":"task_<N>","kind":"verify","last_issues":<verifier issues>,"attempts":<verifier_retries>,"ts":"<iso8601>"}'`.
+  4. Emit the blocker (with the I2 local tee): `python3 <skill_dir>/scripts/phase_boundary.py emit --state "$ORCH_DIR/state.json" --run-id "${ORCH_RUN_ID:-}" --type blocker --payload-json '{"task":"task_<N>","reason":"verifier_retries_exhausted"}'`.
+  5. **SKIPPED propagation** per Phase 0 Step 6, then proceed to the next task. The run does NOT halt.
 
 **Result: ESCALATE** → go to **Escalation Protocol**.
 

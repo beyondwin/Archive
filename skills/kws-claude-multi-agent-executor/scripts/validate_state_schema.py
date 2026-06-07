@@ -71,6 +71,13 @@ def validate(state: dict[str, Any]) -> dict[str, Any]:
         if "cost_ledger" not in state:
             viol("state", "missing_cost_ledger", "run-level cost_ledger absent")
 
+    # v2.29 additive run-level field (I8). Absence is fine (default 0); present →
+    # must be a non-negative int. WARN, never block — additive contract (§0.2).
+    arc = state.get("auto_resolved_count")
+    if arc is not None and (not isinstance(arc, int) or isinstance(arc, bool) or arc < 0):
+        warn("state", "auto_resolved_count_type",
+             f"auto_resolved_count={arc!r} (expected non-negative int)")
+
     for scope, tree in trees:
         declared = _declared_count(tree)
         tasks = tree.get("tasks")
@@ -107,6 +114,28 @@ def validate(state: dict[str, Any]) -> dict[str, Any]:
             warn(scope, "task_key_noncanonical",
                  f"non-canonical task keys: {sorted(bad_keys)} "
                  "(expected task_<N>[_<suffix>])")
+
+        # v2.29 additive per-task fields. Absence is fine; present → typecheck (§0.2).
+        for task_id, task in tasks.items():
+            if not isinstance(task, dict):
+                continue
+            rt = task.get("retry_trace")
+            if rt is not None:
+                if not isinstance(rt, list):
+                    warn(scope, "retry_trace_type", f"{task_id}: retry_trace not a list")
+                elif any(not isinstance(e, dict) or "attempt" not in e or "kind" not in e
+                         for e in rt):
+                    warn(scope, "retry_trace_malformed",
+                         f"{task_id}: retry_trace entries missing attempt/kind")
+            fv = task.get("forced_verify")
+            if fv is not None and not isinstance(fv, bool):
+                warn(scope, "forced_verify_type", f"{task_id}: forced_verify={fv!r} (expected bool)")
+
+        # v2.29 (I1/I7): verification_gaps / docs_gaps must be lists when present.
+        for gap_field in ("verification_gaps", "docs_gaps"):
+            gv = tree.get(gap_field)
+            if gv is not None and not isinstance(gv, list):
+                warn(scope, f"{gap_field}_type", f"{gap_field} present but not a list")
 
     return {
         "passed": violations == [],

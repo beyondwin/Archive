@@ -162,6 +162,16 @@ v2.27 이후 실행된 `interactive_attached` run 3건이 boundary-only 처방�
 
 ---
 
+## v2.29 — Quality uplift (출하 2026-06-07)
+
+I1–I12 12개 품질 개선 (축 A 컨텍스트 절감 / B 자율 문제판단 / C 사후 로그). 전부 additive, `schema_version` 불변. 한글 설계/구현 문서(`docs/improvements/품질개선-{플랜,구현}-ko.md`)에서 도출. 단일 세션 실행(플랜의 공유 파일 경합 + "병렬성 미증가" §3.1 → 멀티에이전트 부적합).
+
+| ADR | 주제 | 결과 |
+|-----|------|------|
+| [D001 Agent SDK context-editing deferred](../docs/experiments/v2.29-quality-uplift/decisions/D001-agent-sdk-context-editing-deferred.md) | I12 — 네이티브 context-editing/memory tool 은 API beta 헤더(`context-management-2025-06-27`)가 Claude Code/`claude -p` 실행 형태에서 비활성 → 미적용, 기록만; 근시일 효과는 I11(인세션 등가)로. Agent SDK 포팅 시 재검토 | **decided (record-only)** |
+
+---
+
 ## 가로지르는 결정 (한 실험 아래에 속하지 않음)
 
 ### 오케스트레이터-워커 패턴 (vs 단일 세션)
