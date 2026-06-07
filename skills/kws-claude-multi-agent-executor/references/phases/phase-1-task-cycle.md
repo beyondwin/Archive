@@ -246,9 +246,21 @@ Decision table:
 - Capture ISSUES (both SPEC_ISSUES and QUALITY_ISSUES) as `current_issues`. Increment `review_retries`.
 - If `review_retries` ≤ 3:
   - **Retry-learning:** compare `current_issues` against `previous_issues` by matching ISSUE_KEY (exact match on file:line:category). Mark any issue whose ISSUE_KEY appears in both as `[RECURRING — previous fix did not address this]`.
+  - **Record the attempt to `retry_trace` BEFORE overwriting `previous_issues` (v2.29 — I3):** the per-attempt fault/tier/RECURRING signal is the highest-value debugging input and was previously lost to the `previous_issues` overwrite. Append it append-only via the helper (orchestrator single writer; never hand-write the array):
+    ```bash
+    python3 <skill_dir>/scripts/phase_boundary.py retry-trace \
+      --state "$ORCH_DIR/state.json" --task task_<N> --kind review \
+      --fault "<SPEC_FAULT class>" --tier "<PASS|WARN|FAIL>" \
+      --recurring-json '<JSON array of RECURRING ISSUE_KEYs, or omit>' --attempt <review_retries>
+    ```
   - Set `previous_issues = current_issues`.
   - Re-dispatch Implementer with `## Fix Required\n{issues with RECURRING labels}`. Return to Step 1.
-- If `review_retries` > 3: halt. Report to user: "Task N exceeded review retry limit (3). Manual intervention required."
+- If `review_retries` > 3: **SKIP + continue (v2.29 — I1; aligned with the escalation-cap behavior, NOT a run halt).** The last hard stop inside Phase 1 is removed — an exhausted review retry budget is the same class of bounded-retry exhaustion as the escalation cap (`references/phases/phase-1-escalation.md` lines 41-49), so it self-heals the same way:
+  1. Mark the task SKIPPED: `state_set.py --field tasks.task_<N>.status --value '"SKIPPED"'` and `state_set.py --field tasks.task_<N>.skip_reason --value '"review_retries_exhausted"'`.
+  2. Record the gap: `state_set.py --field verification_gaps --append-json '{"task":"task_<N>","kind":"review","last_issues":<current previous_issues>,"attempts":<review_retries>,"ts":"<iso8601>"}'`. (`verification_gaps` is the existing D003 gap-marker array — no new machinery, reused per the Step 3 `"agent"` path precedent.)
+  3. Emit the blocker (with the I2 local tee): `python3 <skill_dir>/scripts/phase_boundary.py emit --state "$ORCH_DIR/state.json" --run-id "${ORCH_RUN_ID:-}" --type blocker --payload-json '{"task":"task_<N>","reason":"review_retries_exhausted"}'`.
+  4. **SKIPPED propagation:** unstarted tasks that depend on this one follow the Phase 0 Step 6 SKIPPED-propagation rule (same as escalation-cap and Verifier-agent gaps).
+  5. Proceed to the next task. The run does NOT halt — the gap renders in the Final Report / `run_report.json`.
 
 ### Step 3: Verifier (MID/HIGH tasks only)
 
@@ -296,8 +308,19 @@ Final Report). The consumed PASS/FAIL/ESCALATE shape is identical either way.
 - Increment `verifier_retries`.
 - If `verifier_retries` ≤ 3:
   - Reset to pre-task state: `git -C <worktree_path> reset --hard <pre_task_sha>`
+  - **Record the attempt to `retry_trace` (v2.29 — I3):** append-only, before re-dispatch:
+    ```bash
+    python3 <skill_dir>/scripts/phase_boundary.py retry-trace \
+      --state "$ORCH_DIR/state.json" --task task_<N> --kind verify \
+      --fault "<verifier category>" --attempt <verifier_retries>
+    ```
   - Re-dispatch Implementer with verifier's `issues` from the JSON under `## Fix Required`. Include `receiving-code-review` (per Phase 1 Step 1 re-dispatch rules) — verifier feedback can be wrong (baseline drift, flaky tests), so the skill's "verify before patching" discipline applies. Return to Step 1.
-- If `verifier_retries` > 3: halt. Report to user: "Task N exceeded verifier retry limit (3). Manual intervention required."
+- If `verifier_retries` > 3: **SKIP + continue (v2.29 — I1; same alignment as the review-retry branch above, NOT a run halt).** Before marking SKIPPED, **preserve the reset discipline** so no partial change survives:
+  1. `git -C <worktree_path> reset --hard <pre_task_sha>` — return the working tree to the pre-task state (the SKIP guardrail still requires a clean tree; partial verified-but-failing changes must not persist).
+  2. Mark the task SKIPPED: `state_set.py --field tasks.task_<N>.status --value '"SKIPPED"'` and `state_set.py --field tasks.task_<N>.skip_reason --value '"verifier_retries_exhausted"'`.
+  3. Record the gap: `state_set.py --field verification_gaps --append-json '{"task":"task_<N>","kind":"verify","last_issues":<verifier issues>,"attempts":<verifier_retries>,"ts":"<iso8601>"}'`.
+  4. Emit the blocker (with the I2 local tee): `python3 <skill_dir>/scripts/phase_boundary.py emit --state "$ORCH_DIR/state.json" --run-id "${ORCH_RUN_ID:-}" --type blocker --payload-json '{"task":"task_<N>","reason":"verifier_retries_exhausted"}'`.
+  5. **SKIPPED propagation** per Phase 0 Step 6, then proceed to the next task. The run does NOT halt.
 
 **Result: ESCALATE** → go to **Escalation Protocol**.
 

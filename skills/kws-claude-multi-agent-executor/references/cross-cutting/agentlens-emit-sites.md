@@ -58,6 +58,32 @@ independently — the recurring "prose-only mandatory step silently skipped"
 regression (v2.21 D002). `check_skill_contract.py`'s V221 block verifies these
 emit sites are wired into the phase references.
 
+## Local `events.jsonl` tee (v2.29 — I2)
+
+Every emit routed through `phase_boundary.py` — `task-complete`, `phase-emit`,
+and the generic `emit` subcommand (used for `blocker` and any other free-form
+type, e.g. the I1 retry-exhaustion SKIP) — is ALSO appended to
+`<orch_dir>/events.jsonl` by the internal `_tee_event` helper, **independent of
+AgentLens reachability**. Each line is one JSON object `{ts, type, payload}`
+(`type` = `kws-cme.<etype>`, 1:1 with the AgentLens event type; `payload` = the
+parsed `--payload-json`, or the raw string if it was not JSON).
+
+Why it exists: the v2.25 default dispatch path is all-`agent` attached, where the
+`agentlens` CLI is typically absent so every `_emit` no-ops and the run leaves
+**zero** observable timeline. The tee guarantees a replayable, ordered,
+machine-readable timeline on *every* run regardless of AgentLens.
+
+Invariants:
+- **Orchestrator single writer.** Only `phase_boundary.py` (invoked by the
+  orchestrator) writes `events.jsonl`. Sub-agents never write it — same
+  AGENTS.md compliance as the AgentLens single-writer rule. This is a *fallback
+  tee*, NOT the parallel Lens sink removed in v2.17.
+- **Best-effort.** A tee write failure is swallowed (same contract as `_emit`):
+  observability never blocks plan execution.
+- **No worktree pollution.** It lives under `<orch_dir>/` (sibling of the
+  worktree), append-only, line-delimited JSON. `build_final_report.py` (I4) may
+  read it as an optional trajectory source.
+
 ## `kws-cme.dispatch_via_api` (per-dispatch observability, v2.22 §2.B5)
 
 Emitted by `scripts/dispatch_via_api.py` `dispatch()` via the best-effort
