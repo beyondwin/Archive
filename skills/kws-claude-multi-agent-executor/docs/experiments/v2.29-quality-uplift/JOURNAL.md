@@ -49,3 +49,29 @@ then resolve remaining risks and merge to main. All changes additive —
 Tests: scripts/test_phase_boundary.py +14 cases (32 total). Full scripts suite
 242 passed. check_skill_contract + check_doc_freshness green. Version field left
 at 2.28.0 during dev; bumped to 2.29.0 at the docs-sync commit.
+
+### P1 (v2.29.1) implemented — I4/I5/I6/I7
+
+- **I5** (code+test+doc): `build_context_slice.py` ports the ~40-line
+  `{context_slice}` derivation out of phase-1-task-cycle.md Step 1. deps/files
+  passed as args (orchestrator already holds them); task_summaries / shared_files
+  / global_constraints read from the active tree. 10 tests. Step 1 doc replaced
+  the pseudocode block with a helper call (line-count down).
+- **I6** (doc): "re-read full spec after edit" → re-read only changed
+  `spec_manifest.sections[<edited_sids>]` (+ dependent), regen manifest on
+  structural change. SKILL.md guardrail + phase-1-task-cycle.md spec-edit branch
+  + phase-1-escalation.md rule.
+- **I4** (code+test+doc): `build_final_report.py` → Execution Summary markdown
+  (layout-locked by snapshot test, multi-plan aware) + machine-readable
+  `run_report.json` (schema run_report/1, aggregate_runs.py input). phase-2
+  Step 2 replaced manual field aggregation with the helper call. 12 tests.
+- **I7** (code+test+doc): failure_summary roll-up computed inside
+  build_final_report.py (by_class / auto_resolved / escalations / skipped_tasks);
+  finalize_run.py gains read-only `failure_summary_mismatch` WARN comparing
+  run_report.json against live state gaps (never blocks). +4 finalize tests.
+
+Tests: full scripts suite 268 passed. Contract + freshness green. Decision: the
+"snapshot == hand-written prose report" acceptance is interpreted as
+structure+derived-field equality (free-form sections — Changes/Verification/Docs/
+Remaining Risks — are derived from state signals, not byte-equal to prose). ADR
+candidate noted for the docs-sync commit.

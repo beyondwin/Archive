@@ -86,50 +86,16 @@ Build the implementer prompt from the **Implementer Prompt Template** below. Fil
 - `{risk level}` — from your Phase 0 assignment
 - `{worktree_path}` — the worktree path
 - `{deps_for_this_task}` — list of task IDs that this task depends on (from Phase 0 Step 6 dependency graph)
-- `{context_slice}` — **v2.19 (T1.2)** pre-resolved upstream context block. Replaces the previous "Read state.json" pattern that forced every Implementer dispatch to round-trip through the Read tool and pull the full state file. Substitution rule:
+- `{context_slice}` — **v2.19 (T1.2); helper-extracted in v2.29 (I5).** Pre-resolved upstream context block that replaces the old "Read state.json" round-trip. The ~40-line derivation is no longer executed in the orchestrator's context — run the helper and inject its stdout verbatim:
+  ```bash
+  python3 <skill_dir>/scripts/build_context_slice.py "$ORCH_DIR/state.json" \
+    --task task_<N> \
+    --deps '<JSON array of upstream task IDs from the Phase 0 dependency graph>' \
+    --files '<JSON array of this task's **Files:** block>' \
+    [--plan-index <N for multi-plan>]
+  Substitute {context_slice} → <helper stdout>
   ```
-  deps = {deps_for_this_task}  (list of upstream task IDs from Phase 0 dependency graph)
-  active_summaries = <active>.task_summaries
-  active_shared    = <active>.global_constraints.shared_files  (may be {} or absent)
-  files_this_task  = task's Files: block list
-
-  lines = ["active_plan_index: " + str(<active_plan_index_or_"single">)]
-  lines.append("deps_for_this_task: " + json.dumps(deps))
-  if deps:
-    lines.append("task_summaries:")
-    for tid in deps:
-      summary = active_summaries.get("task_" + str(tid), {}).get("for_next_tasks", "")
-      lines.append("  task_" + str(tid) + ":")
-      lines.append("    for_next_tasks: |")
-      for line in summary.splitlines() or [""]:
-        lines.append("      " + line)
-  else:
-    lines.append("task_summaries: {}  # no upstream deps")
-
-  # shared_files: filter to entries whose key intersects files_this_task
-  intersecting = {f: other_ids for f, other_ids in active_shared.items() if f in files_this_task}
-  if intersecting:
-    lines.append("shared_files:")
-    for f, other_ids in intersecting.items():
-      lines.append("  " + f + ": " + json.dumps(other_ids))
-      # also inline for_next_tasks of the other tasks so the implementer doesn't need to look further
-      for other_id in other_ids:
-        other_summary = active_summaries.get(other_id, {}).get("for_next_tasks", "")
-        if other_summary:
-          lines.append("  # " + other_id + ".for_next_tasks: " + other_summary.splitlines()[0][:140])
-  else:
-    lines.append("shared_files: {}  # none of files_to_touch are shared with other tasks")
-
-  gc_text = <active>.global_constraints.get("text", "")
-  if gc_text:
-    lines.append("global_constraints: |")
-    for line in gc_text.splitlines():
-      lines.append("  " + line)
-
-  context_slice_text = "\n".join(lines)
-  Substitute {context_slice} → context_slice_text
-  ```
-  If the active task tree has no `task_summaries` yet (first task), `active_summaries` resolves to `{}` and the block degrades gracefully (`task_summaries: {} # no upstream deps`).
+  `--deps` and `--files` are the small lists the orchestrator already holds (dependency graph + Files block it reads for `{files to touch}`); the helper reads `task_summaries` / `global_constraints.shared_files` / `global_constraints.text` from the active tree and assembles the block (degrading gracefully on the first task → `task_summaries: {} # no upstream deps`). The full derivation logic now lives in the helper's module docstring, not here. Equivalence with the prior in-prose output is locked by `scripts/test_build_context_slice.py`.
 
   **Detect fallback usage (v2.19):** parse `CONTEXT_SOURCE: <pre-resolved|fallback-read>` from the Implementer's STATUS output. If `fallback-read` appears: increment `state.metrics.context_fallback_count` (atomic R-M-W, non-fatal on failure) AND emit a `kws-cme.orchestrator_bug` learning_event candidate with `subagent.role=orchestrator`, `summary="Implementer fell back to state.json read — slice injection failed"`, severity=medium. Do NOT halt — the run continues, but the next compaction point should surface this for inspection.
 - `{task_size}` — SMALL / MEDIUM / LARGE from `<active>.task_complexity.task_N` (P5)
@@ -228,7 +194,7 @@ Decision table:
 **Spec-edit branch (P15):**
 1. **Safety init:** if `state.spec_edits` is missing/null, set it to `[]` before append (handles legacy state.json).
 2. Increment `task.spec_clarifications` (NOT `review_retries`). If `spec_clarifications > 3` for this task: halt this task as SKIPPED with reason "exceeded spec-clarification limit"; record in state.json and continue per SKIPPED propagation.
-3. Orchestrator re-reads the affected spec section, makes the smallest possible edit, then re-reads the full spec.
+3. Orchestrator re-reads the affected spec section, makes the smallest possible edit, then **re-reads only the edited `spec_manifest.sections[<edited_sids>]` range (+ any directly dependent section) — NOT the full spec (v2.29 — I6)**. If the edit changed section boundaries/numbering (i.e. the manifest structure itself), first re-run `build_spec_manifest.py` (step 6.5 below) and re-read only the changed sections from the regenerated manifest. This keeps the post-edit integrity guarantee while removing the full-spec reload on every clarification.
 4. Append to `state.spec_edits`:
    ```json
    {"task": "<id>", "spec_line": <N>, "reason": "<one sentence>", "commit": "<sha>", "ts": "<iso8601>", "fault": "spec_contradicts|unclear"}
