@@ -1,4 +1,5 @@
 name: 05-ambiguous-spec
+mast_coverage: [FM-2.2]   # docs/eval-coverage-mast.md §2 — doc/audit only, ignored by harness
 description: |
   Plan with intentional contract mismatch — Task 0 declares `parse_csv(path: str)`,
   Task 1 calls `parse_csv(path, delimiter)`. P3 Plan Reviewer should flag this BEFORE

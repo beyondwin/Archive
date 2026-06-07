@@ -26,3 +26,21 @@ Otherwise the judge cannot serve as the measurement instrument for the pilot.
 In quality mode the best-of-N judge runs *after* Combined Reviewer has already
 passed each candidate. So tests-pass is the precondition. The discriminating
 signal must come from the diff itself, not from pytest output.
+
+## Regression check after judge bias-guard changes (v2.30 J4)
+
+`judge.md` gained a **Bias guards** section (v2.30 J4) that constrains only the
+subjective `code_quality` axis (verbosity ≠ quality, no position bias, no
+self-preference). The deterministic axes are unchanged.
+
+Whenever `judge.md`'s scoring text changes, re-run this calibration and confirm
+the discrimination acceptance criterion still holds:
+
+- **`score(good_impl) − score(broken_impl) ≥ 0.2`, consistent across 3 reps.**
+
+The specific risk this guards against: the new "verbosity ≠ quality / minimal
+sufficiency is near-perfect" wording must NOT cause the judge to *under*-value
+`good_impl`'s concise-but-complete implementation (which would shrink the delta).
+If the delta drops below 0.2 after a judge edit, the bias guards over-corrected —
+revert or soften the wording, do not ship. This is a paid re-run (`run.py`);
+run it once per judge change, not per commit.

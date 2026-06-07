@@ -123,6 +123,25 @@ When the fixture is an expected-halt fixture, score the axes from
 If the fixture is NOT an expected-halt fixture, ignore this section and use the
 standard axes below.
 
+## Bias guards (read before scoring the subjective axis)
+
+These guards apply to the **subjective** axis (code_quality) only. The
+deterministic axes (correctness / spec_compliance) are derived mechanically from
+`rubric_results` and are unaffected — see the rule restated at the bottom.
+
+- **Verbosity ≠ quality.** A longer diff, more abstraction, or more comments do
+  NOT earn a higher score. A concise implementation that *minimally* satisfies
+  the spec is near the top of code_quality. Over-engineering (needless wrappers,
+  single-use abstractions, speculative generality) scores 0.4 or below.
+- **No position bias.** Do not weight findings by where they sit in the diff
+  (front vs. back, first file vs. last). Evaluate the whole diff evenly.
+- **No self-preference.** Judge against the spec, language idiom, and
+  readability — NOT "the style I would have written it in."
+- **Deterministic axes stay mechanical.** correctness and spec_compliance come
+  from `rubric_results` (`summary.pass_rate` and `error_cases.passed/total`) and
+  MUST NOT be re-estimated from the diff. This restates the rubric rule above;
+  the bias guards never touch these two axes.
+
 ## Score each axis 0.0–1.0 (1-decimal quantized)
 
 **correctness** — fraction of rubric checks the implementation passes.
@@ -141,7 +160,9 @@ standard axes below.
   - 0.4 — visible spec drift on at least one task
   - 0.0 — spec ignored
 
-**code_quality** — judge from the diff tail:
+**code_quality** — judge from the diff tail (apply the Bias guards above):
+- Minimal sufficiency is near-perfect — code volume is independent of score. More
+  code is not more quality.
 - 1.0 — clean, idiomatic, no dead code, names match spec
 - 0.7 — ships; one or two style/structure quibbles
 - 0.4 — over-engineered or under-engineered for the task

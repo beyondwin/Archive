@@ -869,6 +869,7 @@ with JOURNAL + decisions/ + findings/. Index:
 | v2.25-subscription-agent-dispatch | SHIPPED (2026-06-04) | Agent-tool dispatch on subscription pool; all 7 role gates default "agent"; Plan Reviewer → Opus; autonomous failure ladder + gap fields | `docs/experiments/v2.25-subscription-agent-dispatch/` |
 | v2.26-finalization-enforcement | SHIPPED (2026-06-04) | Schema + finalization validators, Phase 2 gates, Stop-hook forcing function (D001) | `docs/experiments/v2.26-finalization-enforcement/` |
 | v2.27-attached-mode-enforcement | SHIPPED (2026-06-06) | Hook-merge script (deep-merge + Stop-gate self-assert + `--check` preflight); cost/timing drift → blocking finalize FAIL with waive hatches; finalize-time hooks-wired backstop (D001, D002, D003) | `docs/experiments/v2.27-attached-mode-enforcement/` |
+| v2.30-failure-taxonomy-coverage | SHIPPED — P0 only (2026-06-08) | MAST 14-mode coverage map + probe fixtures 09 (rubber-stamp FM-3.3) / 10 (error-propagation FM-2.3) + judge bias guards; probe validity proven deterministically (F01); eval-layer only → `metadata.version` unchanged; paid eval re-scoped as the J7/J8 gate (F02); J5–J9 design-records (D004–D008) | `docs/experiments/v2.30-failure-taxonomy-coverage/` |
 | (future) | | | `docs/experiments/v2.X-<name>/` |
 
 See `docs/experiments/README.md` for the experiment template and protocol.

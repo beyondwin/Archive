@@ -172,6 +172,23 @@ I1–I12 12개 품질 개선 (축 A 컨텍스트 절감 / B 자율 문제판단 
 
 ---
 
+## v2.30 — Failure-taxonomy coverage & evidence-gating hardening (진행 중)
+
+MAST 14 실패모드 렌즈로 픽스처 커버리지를 매핑하고 고가치 미커버 클래스(리뷰어 고무도장 FM-3.3, 오류 전파 FM-2.3)에 프로브 픽스처를 추가 + judge 편향 하드닝. **P0(J1–J4) 구현** = eval 레이어 직교(SKILL.md 무변, AGENTS.md). **P1/P2(J5–J9)는 이번 라운드 설계 기록만**(사용자 결정 2026-06-08). 단일 세션 실행(플랜 §3.1 "팬아웃 미증가" + 사용자 수동 디스패치 선호 [[feedback_agent_invocation_style]]). 출하 게이트(과금 eval 1-rep→n=4 + 버전 번프)는 이 세션에서 미수행. 권위 커버리지 맵: [`docs/eval-coverage-mast.md`](./eval-coverage-mast.md).
+
+| ADR | 주제 | 결과 |
+|-----|------|------|
+| [D001 MAST coverage matrix](../docs/experiments/v2.30-failure-taxonomy-coverage/decisions/D001-mast-coverage-matrix.md) | J1 — MAST 매트릭스 권위 문서 + `mast_coverage` 주석(런타임 무영향: run.sh 화이트리스트 제외, rubric.py 미참조) | **implemented** |
+| [D002 Probe-fixture design](../docs/experiments/v2.30-failure-taxonomy-coverage/decisions/D002-probe-fixture-design.md) | J2/J3 — 스펙 YAML→실제 harness 계약 적응(`valid_inputs` dict, bootstrap `\|` 문자열, git-op 제거) + detect-then-fix(expected-halt 아님); 산술 보정(2.675→2.005) | **implemented** |
+| [D003 Judge bias guards](../docs/experiments/v2.30-failure-taxonomy-coverage/decisions/D003-judge-bias-guards.md) | J4 — 편향 가드를 주관 축(code_quality)에만 적용; 결정론 축은 기계적 유지; calibration Δ≥0.2 회귀 체크 | **implemented** |
+| [D004 Shelf-trigger evaluator](../docs/experiments/v2.30-failure-taxonomy-coverage/decisions/D004-shelf-trigger-evaluator.md) | J5 — `analyze_shelf_triggers.py` 읽기전용 설계 + 착수조건(MET/NOT_MET/INSUFFICIENT); Goodhart 가드(제어흐름 무관) | **designed (P1)** |
+| [D005 Haiku LOW-tier deferred](../docs/experiments/v2.30-failure-taxonomy-coverage/decisions/D005-haiku-low-tier-deferred.md) | J6 — Haiku LOW A/B 는 J5=MET 조건부; 그 외 "여전히 skip" 데이터 기록 | **deferred** |
+| [D006 Reflexion retry reflection](../docs/experiments/v2.30-failure-taxonomy-coverage/decisions/D006-reflexion-retry-reflection.md) | J7 — `retry_trace[]`(I3) 누적 맥락 주입 설계; 프롬프트 변경 → fixture-eval 게이팅(반복-fault 픽스처) | **designed (P2)** |
+| [D007 AC cross-check](../docs/experiments/v2.30-failure-taxonomy-coverage/decisions/D007-ac-cross-check.md) | J8 — AC 항목별 SATISFIED/UNCOVERED/VIOLATED 리뷰어 교차검증 설계; fixture 09 로 측정; fixture-eval 게이팅 | **designed (P2)** |
+| [D008 Re-plan deferred](../docs/experiments/v2.30-failure-taxonomy-coverage/decisions/D008-replan-deferred.md) | J9 — SKIP 시 플랜-DAG 재계획은 기록만; 트리거: 코퍼스에 과도-SKIP 사고 표면화 | **deferred (record-only)** |
+
+---
+
 ## 가로지르는 결정 (한 실험 아래에 속하지 않음)
 
 ### 오케스트레이터-워커 패턴 (vs 단일 세션)

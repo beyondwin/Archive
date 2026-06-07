@@ -13,13 +13,22 @@ evals/
 │   ├── 04-cross-plan-handoff.yaml
 │   ├── 05-ambiguous-spec.yaml
 │   ├── 06-flaky-test-recovery.yaml
-│   └── 07-low-batch-heavy.yaml
+│   ├── 07-low-batch-heavy.yaml
+│   ├── 08-subtle-input-validation.yaml
+│   ├── 09-spec-intent-uncovered.yaml   # rubber-stamp probe (FM-3.3)
+│   └── 10-error-propagation.yaml       # error-propagation probe (FM-2.3/3.2)
 ├── judge.md                     # LLM-as-judge prompt template (Sonnet)
 ├── run.sh                       # run + score harness (bash + jq)
 └── baselines/                   # one JSON per version
     ├── v2.4.0.json              # baseline taken before v2.5 changes
     └── ...
 ```
+
+Each fixture's failure-mode coverage is mapped in
+[../docs/eval-coverage-mast.md](../docs/eval-coverage-mast.md) (MAST 14-mode
+matrix + gap list). The optional top-level `mast_coverage:` key in each fixture
+YAML is documentation/audit only — the harness drops it from `_meta.json` and
+`rubric.py` never reads it.
 
 ## Running
 

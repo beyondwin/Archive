@@ -1,4 +1,5 @@
 name: 03-add-new-feature
+mast_coverage: [FM-1.1, FM-3.2]   # docs/eval-coverage-mast.md §2 — doc/audit only, ignored by harness
 description: |
   5-task plan, mixed sizes — add a small CLI feature end to end. Includes one HIGH-risk
   task (CLI argparse change) plus LOW/MEDIUM follow-ups. Primary wall-time benchmark for

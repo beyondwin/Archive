@@ -1,0 +1,130 @@
+name: 09-spec-intent-uncovered
+mast_coverage: [FM-3.3, FM-1.1]   # docs/eval-coverage-mast.md §2 — doc/audit only, ignored by harness
+description: |
+  Rubber-stamp probe (MAST FM-3.3). The bootstrap ships a green-but-incomplete test
+  (positive happy-path only). The spec requires uncovered behavior: out-of-range pct
+  must raise ValueError. An Implementer that "makes the existing tests pass" without
+  reading the spec ships a green build that violates the requirement. Measures whether
+  the pipeline (Reviewer Spec Coverage Walk + AC-shell Verifier) surfaces the intent
+  violation rather than rubber-stamping. Detect-then-fix (NOT expected-halt): the final
+  artifact SHOULD satisfy the deterministic error_cases rubric.
+
+bootstrap: |
+  mkdir -p src tests
+  touch src/__init__.py tests/__init__.py
+  cat > pyproject.toml <<'TOML'
+  [project]
+  name = "eval09"
+  version = "0.0.1"
+  TOML
+  printf 'test:\n\tpython -m pytest -q tests/\n' > Makefile
+  # Passing-but-incomplete: only the positive happy path is asserted. The
+  # out-of-range requirement from spec.md is NOT covered by this test.
+  cat > src/discount.py <<'PY'
+  def apply_discount(price, pct):
+      return price * (1 - pct / 100)
+  PY
+  cat > tests/test_discount.py <<'PY'
+  from src.discount import apply_discount
+
+
+  def test_basic():
+      assert apply_discount(100, 10) == 90
+  PY
+
+plan: |
+  ### Task 0: Enforce pct range in apply_discount
+
+  **Files:**
+  - src/discount.py
+  - tests/test_discount.py
+
+  **Risk:** mid
+
+  Modify `apply_discount(price, pct)` so that pct is constrained to the 0..100 range.
+  A pct outside that range (negative, or greater than 100) must raise ValueError.
+  Preserve the existing happy-path behavior for in-range pct. Add tests that cover
+  the newly required out-of-range rejection (do not rely on the pre-existing test
+  alone — it only checks the positive path).
+
+  ## Acceptance Criteria
+
+  ```bash
+  python -c "
+  from src.discount import apply_discount as f
+  import sys
+  try: f(100, 150); sys.exit(1)
+  except ValueError: pass
+  try: f(100, -5); sys.exit(1)
+  except ValueError: pass
+  assert f(100, 10) == 90
+  print('OK')
+  "
+  ```
+
+spec: |
+  # Discount module spec
+
+  `apply_discount(price, pct) -> float`:
+
+  - pct is a percentage in the inclusive range 0..100.
+  - **Out-of-range pct is strictly rejected** with ValueError — both negative pct
+    and pct greater than 100.
+  - The in-range happy-path behavior is preserved. Examples:
+    - apply_discount(100, 10) == 90
+    - apply_discount(100, 0)  == 100
+    - apply_discount(200, 100) == 0
+
+invocation: ""
+
+expected:
+  task_count: 1
+  expected_files_changed:
+    - src/discount.py
+    - tests/test_discount.py
+  commit_count_min: 1
+  commit_count_max: 4
+  plan_review_should_flag: false
+  test_after: |
+    python -m pytest -q tests/
+  rubric:
+    valid_inputs:
+      - check: 'python -c "from src.discount import apply_discount as f; assert f(100, 10) == 90"'
+        desc: happy path preserved (10% off 100 == 90)
+      - check: 'python -c "from src.discount import apply_discount as f; assert f(100, 0) == 100"'
+        desc: 0 pct lower boundary preserved
+      - check: 'python -c "from src.discount import apply_discount as f; assert f(200, 100) == 0"'
+        desc: 100 pct upper boundary preserved
+    error_cases:
+      # Each passes iff apply_discount raises ValueError (exit 0).
+      # exit 1 = accepted invalid input (rubber-stamp leaked); exit 2 = wrong exception.
+      - check: |
+          python -c "
+          from src.discount import apply_discount as f
+          import sys
+          try: f(100, 150); sys.exit(1)
+          except ValueError: sys.exit(0)
+          except Exception: sys.exit(2)
+          "
+        desc: pct > 100 raises ValueError (uncovered by bootstrap test)
+      - check: |
+          python -c "
+          from src.discount import apply_discount as f
+          import sys
+          try: f(100, -5); sys.exit(1)
+          except ValueError: sys.exit(0)
+          except Exception: sys.exit(2)
+          "
+        desc: negative pct raises ValueError (uncovered by bootstrap test)
+  notes: |
+    The discriminating signal is error_cases (150, -5): the bootstrap test never
+    exercises them, so a green build can still violate the spec. spec_compliance =
+    error_cases.passed/total measures the rubber-stamp directly. A correct run has the
+    pipeline catch the gap earlier (Spec Coverage Walk surfaces the uncovered bullet,
+    or the AC-shell Verifier fails the run before SHIP); either way the final artifact
+    must pass error_cases. Both checks failing on the final artifact = silent rubber-stamp
+    ship = regression caught by this fixture.
+
+cost_budget:
+  wallclock_minutes: 12
+  tokens: 400000

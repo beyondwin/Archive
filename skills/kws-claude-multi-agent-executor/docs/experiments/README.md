@@ -13,6 +13,7 @@
 | v2.26-finalization-enforcement | **SHIPPED** (2026-06-04) | schema + finalization validators, Phase 2 gates, Stop-hook forcing function | [v2.26-finalization-enforcement/](./v2.26-finalization-enforcement/) |
 | v2.27-attached-mode-enforcement | **SHIPPED** (2026-06-06) | hook-merge script (deep-merge + Stop self-assert + `--check`); cost/timing drift → blocking finalize FAIL w/ waive hatches | [v2.27-attached-mode-enforcement/](./v2.27-attached-mode-enforcement/) |
 | v2.28-instrumentation-integrity | **SHIPPED** (2026-06-07) | honest cost auto-waive on the agent path (D001); all-terminal Stop trigger (D002); un-waivable `timing_inverted` FAIL + telemetry-coverage WARNs + `task_key_noncanonical` WARN (D003) | [v2.28-instrumentation-integrity/](./v2.28-instrumentation-integrity/) |
+| v2.30-failure-taxonomy-coverage | **CLOSED — P0 SHIPPED** (2026-06-08) | P0(J1–J4): MAST coverage doc + probe fixtures 09/10 + judge bias guards; probe validity proven deterministically (F01); no version bump (eval-layer orthogonal to runtime); paid eval re-scoped as the J7/J8 gate (F02); P1/P2(J5–J9) design-records only | [v2.30-failure-taxonomy-coverage/](./v2.30-failure-taxonomy-coverage/) |
 | _(미래 실험이 여기 나열)_ | | | |
 
 ## 언제 실험 기록을 시작하나
