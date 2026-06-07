@@ -94,9 +94,9 @@ git diff --check
 
 수정 파일:
 
-- `skills/kws-codex-plan-executor/evals/fixtures/*`
-- `skills/kws-codex-plan-executor/evals/check_eval_harness.py`
-- `skills/kws-codex-plan-executor/docs/verification-log.md`
+- `evals/fixtures/*`
+- `evals/check_eval_harness.py`
+- `docs/verification-log.md`
 
 작업:
 
@@ -115,7 +115,6 @@ git diff --check
 검증:
 
 ```bash
-cd skills/kws-codex-plan-executor
 ./evals/run.sh
 ```
 
@@ -162,7 +161,11 @@ def component(role, source_path, source_ref, text, inclusion_reason, reducible):
    `build_spec_manifest.py` 수준으로 맞춘다. fenced code 내부 heading을
    section으로 오인하지 않아야 한다.
 
-Eval:
+검증:
+
+```bash
+python3 evals/check_task_packet.py
+```
 
 - packet에 `context_components`가 존재한다.
 - component hash가 안정적이다.
@@ -226,7 +229,12 @@ Eval:
 4. `decisions_register`를 현재 task 기준으로 필터링한다.
 5. packet에는 `included`, `omitted_count`, `selection_reason`을 남긴다.
 
-Eval:
+검증:
+
+```bash
+python3 evals/check_spec_manifest.py
+python3 evals/check_task_packet.py
+```
 
 - explicit spec refs는 해당 section만 선택한다.
 - unknown spec ref는 blocker다.
@@ -285,7 +293,12 @@ Eval:
 4. Worker prompt는 packet acceptance를 우선 사용하고, 없을 때만 honest
    substitute를 쓰도록 한다.
 
-Eval:
+검증:
+
+```bash
+python3 evals/check_parse_plan.py --fixture evals/parser-fixtures/phase_plan_acceptance.yaml
+python3 evals/check_task_packet.py
+```
 
 - parser가 acceptance command를 보존한다.
 - packet acceptance command가 null로 남지 않는다.
@@ -329,7 +342,11 @@ dirty_overlap:<files>
 4. `local_fallback`이면 task `subagent_strategy.reason`에 정확한 prerequisite을
    기록한다.
 
-Eval:
+검증:
+
+```bash
+python3 evals/check_preflight_dispatch.py
+```
 
 - red packet은 delegate되지 않는다.
 - full spec fallback은 위험 조건에서 delegate되지 않는다.
@@ -384,7 +401,12 @@ VALID_BLOCKER_CATEGORIES = {
    - `handoff_reason`은 사람이 읽는 요약으로 유지하되 유일한 machine field가
      아니어야 함
 
-Eval:
+검증:
+
+```bash
+python3 evals/check_state_schema.py
+python3 evals/check_headless_result.py
+```
 
 - `blocked`인데 `current_blocker`가 없으면 실패한다.
 - `failed`인데 failure decision이 없으면 실패한다.
@@ -438,7 +460,11 @@ python3 scripts/classify_recovery.py \
 - diff scope gap: block
 - unknown: bounded investigation 후 residual risk 또는 fail
 
-Eval:
+검증:
+
+```bash
+python3 evals/check_recovery_policy.py
+```
 
 - dependency bootstrap은 한 번만 선택된다.
 - 같은 root signature는 retry budget을 소진하면 failed/block으로 간다.
@@ -474,7 +500,11 @@ Eval:
 3. `resume=latest`가 여러 active run을 만나면 이 정보를 보여주고 멈춘다.
 4. inspect는 state를 mutate하지 않는다.
 
-Eval:
+검증:
+
+```bash
+python3 evals/check_inspect_runs.py
+```
 
 - multiple active runs report가 blocker/next action을 포함한다.
 - explicit state path resume은 계속 동작한다.
@@ -511,7 +541,11 @@ Eval:
 5. AgentLens event id가 있으면 연결하되, 로컬 trajectory도 독립적으로 유효해야
    한다.
 
-Eval:
+검증:
+
+```bash
+python3 evals/check_trajectory_projection.py
+```
 
 - JSONL이 valid하다.
 - `seq`가 증가한다.
@@ -564,7 +598,11 @@ Replan 제한:
 - 더 좁은 verification 선택 가능
 - file claim/acceptance 확장은 operator decision 없이는 불가
 
-Eval:
+검증:
+
+```bash
+python3 evals/check_progress_ledger.py
+```
 
 - progress made는 stall count를 reset한다.
 - 같은 root failure는 stall count를 증가시킨다.
@@ -601,7 +639,6 @@ Eval:
 검증:
 
 ```bash
-cd skills/kws-codex-plan-executor
 rg 'current_blocker|recovery_attempts|trajectory|progress_ledger|context_components' SKILL.md README.md ARCHITECTURE.md docs references scripts evals
 ```
 

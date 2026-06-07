@@ -35,6 +35,9 @@
 - Tightened headless result and state validation so blocked/failed runs expose
   structured blocker or failure decisions and finished runs cannot hide open
   blockers, open recovery attempts, or unacknowledged unknown observations.
+- Fixed plan parsing for machine-readable implementation docs that use `Eval:`
+  verification sections, multi-line acceptance command blocks, and Korean
+  `새 파일 ...` file-scope bullets.
 
 ## 2.20.0 - 2026-05-19
 
