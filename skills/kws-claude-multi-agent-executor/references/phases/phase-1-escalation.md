@@ -101,5 +101,5 @@ else self-heals and proceeds.
 
 See `references/escalation-playbook.md` (the ENV_BLOCKER Triage section). Read it at the moment an `ENV_BLOCKER` arrives. The same file also contains the canonical orchestrator response procedure and the document-update rules referenced above.
 
-**Rule (kept here for prominence):** You (Orchestrator) update all documents yourself. Never delegate spec or plan updates to a sub-agent. After updating any document, re-read it fully before building the next sub-agent prompt.
+**Rule (kept here for prominence):** You (Orchestrator) update all documents yourself. Never delegate spec or plan updates to a sub-agent. After updating a document, re-read it before building the next sub-agent prompt — for a **spec** edit, re-read only the changed `spec_manifest.sections[<edited_sids>]` range (+ directly dependent section), regenerating the manifest first if the edit changed section structure (v2.29 — I6); for a **plan** edit, re-read the plan fully (it is the smaller doc and has no manifest index).
 

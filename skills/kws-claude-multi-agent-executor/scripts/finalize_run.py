@@ -80,7 +80,16 @@ def _worktree_hook_problems(state: dict[str, Any]) -> list[str] | None:
     return _hook_problems(settings)
 
 
-def evaluate(state: dict[str, Any]) -> dict[str, Any]:
+def _gap_counts(state: dict[str, Any]) -> tuple[int, int]:
+    """Actual (verification_gaps, docs_gaps) counts aggregated across all trees."""
+    vg = dg = 0
+    for _scope, tree in _active_trees(state):
+        vg += len(tree.get("verification_gaps") or [])
+        dg += len(tree.get("docs_gaps") or [])
+    return vg, dg
+
+
+def evaluate(state: dict[str, Any], report_dir: "Path | None" = None) -> dict[str, Any]:
     findings: list[dict[str, Any]] = []
 
     def add(level: str, scope: str, code: str, detail: str, fixable: bool = False) -> None:
@@ -175,6 +184,28 @@ def evaluate(state: dict[str, Any]) -> dict[str, Any]:
                 + "; ".join(hook_problems)
                 + "); re-run Phase 0 Step 2.5 or set hooks_wiring_waived to opt out")
 
+    # v2.29 (I7): read-only cross-check of run_report.json's failure_summary
+    # against the actual state gap counts. WARN only — run_report.json is a
+    # report artifact, not load-bearing state; a mismatch flags a stale/buggy
+    # report build, never blocks finalization. Skips silently when no report_dir
+    # is supplied or no run_report.json exists (existing call sites unaffected).
+    if report_dir is not None:
+        report_path = Path(report_dir) / "run_report.json"
+        if report_path.is_file():
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                by_class = (report.get("failure_summary") or {}).get("by_class") or {}
+            except (json.JSONDecodeError, OSError):
+                by_class = None
+            if isinstance(by_class, dict):
+                vg, dg = _gap_counts(state)
+                if by_class.get("verification_gap") != vg or by_class.get("docs_gap") != dg:
+                    add("WARN", "state", "failure_summary_mismatch",
+                        f"run_report.json failure_summary by_class "
+                        f"(verification_gap={by_class.get('verification_gap')}, "
+                        f"docs_gap={by_class.get('docs_gap')}) disagrees with state gaps "
+                        f"(verification_gap={vg}, docs_gap={dg}); rebuild build_final_report.py")
+
     # Run-level consistency: a COMPLETE run must be fully finalized.
     if state.get("status") == "COMPLETE":
         if any(f["code"] in ("completed_at_null", "verifier_pending_batch") for f in findings):
@@ -196,7 +227,7 @@ def apply_fix(state_path: Path) -> dict[str, Any]:
         tmp = state_path.with_suffix(state_path.suffix + ".tmp")
         tmp.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, state_path)
-    return evaluate(state)
+    return evaluate(state, report_dir=state_path.parent)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -212,7 +243,7 @@ def main(argv: list[str] | None = None) -> int:
             result = apply_fix(args.state)
         else:
             state = json.loads(args.state.read_text(encoding="utf-8"))
-            result = evaluate(state)
+            result = evaluate(state, report_dir=args.state.parent)
     except Exception as exc:  # noqa: BLE001 — broken state is exit 2 by contract
         print(json.dumps({"passed": False, "error": f"unparseable state.json: {exc}"}))
         return 2

@@ -236,12 +236,30 @@ gate. The gate must pass before `run-close --outcome success`; do not declare th
 run COMPLETE with an unfinalized state. `cost_dispatches_zero` and
 `timing_started_missing` are WARN (reported, non-blocking — set
 `state.cost_tracking_waived=true` only when cost tracking was intentionally off).
+`failure_summary_mismatch` (v2.29 — I7) is also WARN: a read-only cross-check that
+`run_report.json`'s `failure_summary.by_class` gap counts match the live state
+gaps — a mismatch flags a stale/buggy report build (rebuild `build_final_report.py`),
+never blocks finalization. Run `build_final_report.py` (Step 2 above) BEFORE this
+gate so the check has a fresh report to read.
 
 Idempotency note: `agentlens run-close` is idempotent — a re-entered Phase 2 Step 2 (e.g., chained meta-run where the final child reaches Step 2 after a chain handoff) calling it again is a no-op.
 
 The hard-halt branches above (escalation exhaustion, budget pause, T3 state-write failure) similarly emit `kws-cme.blocker` and call `agentlens run-close --outcome aborted|blocked` per the spec §6.2 event taxonomy. v2.17 cutover (Task 11) removed the parallel legacy `append_learning_event.py close-run` calls.
 
-Output:
+**Generate via helper (v2.29 — I4). Do NOT hand-aggregate these fields** — that
+manual roll-up was the largest end-of-run context burst. Run:
+
+```bash
+python3 <skill_dir>/scripts/build_final_report.py "$ORCH_DIR/state.json" \
+  --orch-dir "$ORCH_DIR" --out-md "$ORCH_DIR/final_report.md"
+```
+
+The helper writes `<orch_dir>/run_report.json` (machine-readable; the direct input
+for `aggregate_runs.py`, and carrier of the I7 `failure_summary` roll-up) and
+prints the Execution Summary markdown to stdout. Output the helper's stdout
+verbatim as the report — the orchestrator reads only that stdout, never re-reading
+the full state file. The layout the helper emits (locked by
+`scripts/test_build_final_report.py`, multi-plan aware via the `<active>` rule) is:
 
 ```markdown
 ## Execution Summary

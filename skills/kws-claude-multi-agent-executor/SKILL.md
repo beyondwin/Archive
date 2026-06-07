@@ -212,7 +212,7 @@ These rules are absolute. No exceptions.
 | **Reset before verifier re-dispatch** | Always `git reset --hard <pre_task_sha>` before retrying after Verifier FAIL. |
 | **Risk level set by Orchestrator** | Verifier receives explicit LOW / MID / HIGH. It does not self-assign. |
 | **Document updates are Orchestrator-only** | Never delegate spec or plan updates to a sub-agent. |
-| **Re-read docs after every update** | After modifying spec or plan, re-read the full document before dispatching next sub-agent. |
+| **Re-read changed sections after every update (v2.29 I6)** | After modifying the spec, re-read only the edited `spec_manifest.sections[<edited_sids>]` range (+ any directly dependent section), NOT the whole spec — the manifest is a slice index, so a one-section clarification reloads one section, not the full document. **Exception:** an edit that changes section boundaries/numbering (manifest structure) requires re-running `build_spec_manifest.py` and re-reading only the changed sections from the regenerated manifest. Plan edits (smaller docs) are still re-read fully. The integrity guarantee is unchanged; only the full-spec reload is removed. |
 | **Store summaries, not raw output** | Do not accumulate raw sub-agent output in context. Write structured results to state file and work from those. |
 | **Never auto-delete the worktree** | Report its location. The user decides when to merge or delete. |
 | **LOW tasks must reach batch verification** | LOW tasks skip per-task Verifier but MUST be covered by batch sweep at every compaction point and at Phase 2 Step 0. |
