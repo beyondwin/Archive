@@ -17,6 +17,15 @@ Observation shape:
 }
 ```
 
+New observations may also be passed to `scripts/classify_recovery.py`, which
+returns a bounded next action:
+
+- `bootstrap` for one documented dependency bootstrap attempt.
+- `retry` for flaky or timeout roots within budget.
+- `continue` for source failures that should stay in the RED/GREEN loop.
+- `block` for permission, sandbox, diff-scope, or operator-decision gaps.
+- `failed` when a repeated root signature exhausts its retry budget.
+
 Allowed categories:
 
 - `source_failure`

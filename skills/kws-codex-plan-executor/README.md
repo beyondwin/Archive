@@ -50,6 +50,9 @@ python3 evals/check_prompt_cache_audit.py
 python3 evals/check_cache_observations.py
 python3 evals/check_graphify_freshness.py
 python3 evals/check_preflight_dispatch.py
+python3 evals/check_recovery_policy.py
+python3 evals/check_trajectory_projection.py
+python3 evals/check_progress_ledger.py
 ```
 
 `evals/run.sh` uses deterministic fixture runners for prompt, handoff,
@@ -70,6 +73,13 @@ Prompt cache hardening is checked with `scripts/audit_prompt_cache.py`.
 Graphify freshness uses `scripts/check_graphify_freshness.py`, and subagent
 readiness uses `scripts/preflight_dispatch.py`; all emit JSON evidence that
 state validation can reject before a finished outcome.
+
+Task packets now include `context_components`, component budget breakdown,
+acceptance commands, unit manifests, spec mapping evidence, and filtered
+decisions. Recovery helpers classify command observations into bounded
+`retry`, `bootstrap`, `block`, `fail`, or `continue` actions, and compact
+trajectory/progress helpers make stalled runs inspectable without rereading raw
+transcripts.
 
 ## Design Notes
 

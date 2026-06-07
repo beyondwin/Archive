@@ -13,6 +13,10 @@ from pathlib import Path
 TASK_RE = re.compile(
     r"(?m)^(#{2,4})[ \t]+(?:Task|작업)[ \t]+(\d+(?:\.\d+)*)[ \t]*(?::|-|–|—)[ \t]*(.+?)[ \t]*$"
 )
+PHASE_RE = re.compile(
+    r"(?m)^(#{2,4})[ \t]+Phase[ \t]+(\d+(?:\.\d+)*)[ \t]*(?::|-|–|—)[ \t]*(.+?)[ \t]*$",
+    re.IGNORECASE,
+)
 FENCE_RE = re.compile(r"^(?: {0,3})(?P<marker>`{3,}|~{3,})(?P<suffix>[^\r\n]*)$")
 FENCE_CLOSE_SUFFIX_RE = re.compile(r"^[ \t]*$")
 COMMENT_OPEN = "<!--"
@@ -25,6 +29,10 @@ FILES_HEADING_RE = re.compile(
     r"[ \t]*:[ \t]*(?:\*\*)?[ \t]*$"
 )
 AC_RE = re.compile(r"(?mi)^\s*(#{2,5}\s*)?(Acceptance Criteria|Verification|검증)\b")
+COMMAND_FENCE_RE = re.compile(
+    r"(?mis)^\s*(?:#{2,5}\s*)?(?:Acceptance Criteria|Verification|검증)(?:\b|[ \t]*:).*?"
+    r"```(?:bash|sh|shell)?\s*\n(?P<body>.*?)\n```"
+)
 DEPENDS_RE = re.compile(
     r"(?mi)^[ \t]*(?:\*\*)?"
     r"(?:Depends on|Depends|Dependencies|의존|선행 작업)"
@@ -216,6 +224,22 @@ def _extract_spec_refs(body: str) -> list[str]:
     return list(dict.fromkeys(SPEC_REF_RE.findall(match.group("value"))))
 
 
+def _extract_acceptance_command(body: str) -> str | None:
+    match = COMMAND_FENCE_RE.search(body)
+    if not match:
+        return None
+    for line in match.group("body").splitlines():
+        command = line.strip()
+        if command and not command.startswith("#"):
+            return command
+    return None
+
+
+def _extract_acceptance_command_after_line(raw_markdown: str, start_line: int, end_line: int) -> str | None:
+    raw_section = _slice_lines(raw_markdown, start_line, end_line)
+    return _extract_acceptance_command(raw_section)
+
+
 def _clean_yaml_scalar(value: str) -> str:
     return value.strip().strip("'\"")
 
@@ -322,6 +346,7 @@ def _extract_yaml_task_blocks(raw_markdown: str, repo_root: Path, mode: str) -> 
                 "yaml_task_id": task_id,
                 "_raw_depends_on": _extract_yaml_dependencies(yaml_body),
                 "has_acceptance_criteria": bool(YAML_VERIFY_RE.search(yaml_body)),
+                "acceptance_command": _extract_acceptance_command(yaml_body),
             }
         )
     return tasks
@@ -374,6 +399,9 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
 
     markdown = _visible_markdown(raw_markdown)
     matches = list(TASK_RE.finditer(markdown))
+    phase_matches = list(PHASE_RE.finditer(markdown))
+    if not matches and phase_matches:
+        matches = phase_matches
     if not tasks and not matches:
         _die("plan has no Task N headings")
 
@@ -383,11 +411,9 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
         body_raw = markdown[body_start:body_end]
         body = body_raw.strip()
         body_line_start, body_line_end = _body_line_range(markdown, body_start, body_end)
-        raw_body = _slice_lines(
-            raw_markdown,
-            _line_number(markdown, body_start),
-            _line_number(markdown, body_end),
-        )
+        raw_body_start_line = _line_number(markdown, body_start)
+        raw_body_end_line = _line_number(markdown, body_end)
+        raw_body = _slice_lines(raw_markdown, raw_body_start_line, raw_body_end_line)
         yaml_metadata = _extract_yaml_task_metadata(raw_body, repo_root)
         files, has_files, file_line_numbers = _extract_files(body_raw, repo_root, _line_number(markdown, body_start))
         if not files and yaml_metadata["files"]:
@@ -412,6 +438,11 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
                 "yaml_task_id": yaml_metadata["task_id"],
                 "_raw_depends_on": yaml_metadata["depends_on_raw"],
                 "has_acceptance_criteria": bool(AC_RE.search(body)),
+                "acceptance_command": _extract_acceptance_command_after_line(
+                    raw_markdown,
+                    raw_body_start_line,
+                    raw_body_end_line,
+                ),
             }
         )
     aliases = {task["id"]: task["id"] for task in tasks}

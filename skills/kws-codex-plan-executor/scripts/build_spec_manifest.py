@@ -13,6 +13,9 @@ from pathlib import Path
 
 FALLBACK_POLICIES = {"full_spec_on_blocker", "halt_on_blocker"}
 HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
+BACKTICK_LITERAL_RE = re.compile(r"`([^`\n]+)`")
+CODE_IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?\b")
+TASK_ID_RE = re.compile(r"\btask[_ -]?\d+(?:[_.]\d+)*\b", re.IGNORECASE)
 FENCE_RE = re.compile(r"^(?: {0,3})(?P<marker>`{3,}|~{3,})(?P<suffix>[^\r\n]*)$")
 FENCE_CLOSE_SUFFIX_RE = re.compile(r"^[ \t]*$")
 COMMENT_OPEN = "<!--"
@@ -28,6 +31,34 @@ def die(message: str) -> None:
 
 def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def tokenize(value: str) -> list[str]:
+    return sorted({token for token in re.split(r"[^a-z0-9]+", value.lower()) if token})
+
+
+def section_signals(title: str, text: str) -> dict:
+    path_literals = sorted(
+        {
+            match.group(1).strip()
+            for match in BACKTICK_LITERAL_RE.finditer(text)
+            if "/" in match.group(1)
+        }
+    )
+    code_identifiers = sorted(
+        {
+            item
+            for item in CODE_IDENTIFIER_RE.findall(text)
+            if "_" in item or "." in item or any(char.isupper() for char in item)
+        }
+    )
+    task_ids = sorted({match.group(0).lower().replace(" ", "_").replace("-", "_") for match in TASK_ID_RE.finditer(text)})
+    return {
+        "title_tokens": tokenize(title),
+        "path_literals": path_literals,
+        "code_identifiers": code_identifiers,
+        "task_ids": task_ids,
+    }
 
 
 def _read_fence_marker(line: str) -> tuple[str, int, str] | None:
@@ -146,6 +177,7 @@ def build_manifest(spec_path: Path, fallback_policy: str) -> dict:
             "line_end": total_lines if total_lines else 1,
             "chars": len(section_text),
             "sha256": sha256_text(section_text),
+            "signals": section_signals("document", section_text),
         }
         section_order.append("S0")
     else:
@@ -161,6 +193,7 @@ def build_manifest(spec_path: Path, fallback_policy: str) -> dict:
                 "line_end": line_end,
                 "chars": len(section_text),
                 "sha256": sha256_text(section_text),
+                "signals": section_signals(title, section_text),
             }
             section_order.append(section_id)
 

@@ -383,6 +383,71 @@ def main() -> int:
     if not checks["valid_v220_context_state_passes"]:
         failures.append("valid v2.20 context-intelligence state should pass: " + (valid_v220.stderr or valid_v220.stdout))
 
+    blocked_without_blocker = base_state()
+    blocked_without_blocker["lifecycle_outcome"] = "blocked"
+    blocked_without_blocker["completion_audit"] = None
+    blocked_without_blocker["handoff_reason"] = "Need operator input."
+    blocked_without_blocker["timestamps"]["completed_at"] = None
+    result = run_validator(script, blocked_without_blocker)
+    checks["blocked_requires_current_blocker"] = (
+        result.returncode != 0 and "blocked outcome requires current_blocker" in (result.stderr + result.stdout)
+    )
+    if not checks["blocked_requires_current_blocker"]:
+        failures.append("blocked state should require current_blocker")
+
+    failed_without_decision = base_state()
+    failed_without_decision["lifecycle_outcome"] = "failed"
+    failed_without_decision["completion_audit"] = None
+    failed_without_decision["handoff_reason"] = "Verification cannot recover."
+    failed_without_decision["timestamps"]["completed_at"] = None
+    result = run_validator(script, failed_without_decision)
+    checks["failed_requires_failure_decision"] = (
+        result.returncode != 0 and "failed outcome requires failure_decision" in (result.stderr + result.stdout)
+    )
+    if not checks["failed_requires_failure_decision"]:
+        failures.append("failed state should require failure_decision")
+
+    finished_with_blocker = base_state()
+    finished_with_blocker["current_blocker"] = {
+        "category": "operator_input_required",
+        "summary": "Waiting for approval.",
+        "recoverable": True,
+        "next_action_kind": "block",
+    }
+    result = run_validator(script, finished_with_blocker)
+    checks["finished_with_current_blocker_fails"] = (
+        result.returncode != 0 and "current_blocker must be cleared" in (result.stderr + result.stdout)
+    )
+    if not checks["finished_with_current_blocker_fails"]:
+        failures.append("finished state should not retain current_blocker")
+
+    finished_open_recovery = base_state()
+    finished_open_recovery["recovery_attempts"] = [
+        {"root_signature": "pytest:timeout", "status": "open", "decision": "retry"}
+    ]
+    result = run_validator(script, finished_open_recovery)
+    checks["finished_open_recovery_fails"] = (
+        result.returncode != 0 and "open recovery attempt" in (result.stderr + result.stdout)
+    )
+    if not checks["finished_open_recovery_fails"]:
+        failures.append("finished state should not retain open recovery attempts")
+
+    valid_blocked = base_state()
+    valid_blocked["lifecycle_outcome"] = "blocked"
+    valid_blocked["completion_audit"] = None
+    valid_blocked["handoff_reason"] = "Need operator approval to expand file claims."
+    valid_blocked["timestamps"]["completed_at"] = None
+    valid_blocked["current_blocker"] = {
+        "category": "plan_contract_gap",
+        "summary": "File claim expansion requires operator decision.",
+        "recoverable": True,
+        "next_action_kind": "operator_decision",
+    }
+    result = run_validator(script, valid_blocked)
+    checks["valid_blocked_state_passes"] = result.returncode == 0
+    if not checks["valid_blocked_state_passes"]:
+        failures.append("valid blocked state with structured blocker should pass: " + (result.stderr or result.stdout))
+
     valid_hardening_fields = v220_state()
     valid_hardening_fields["cache_strategy"] = {
         "mode": "interactive-default",

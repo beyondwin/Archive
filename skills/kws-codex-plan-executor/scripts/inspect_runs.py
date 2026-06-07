@@ -61,6 +61,13 @@ def inspect_runs(codex_home: Path, plan: str, include_finished: bool) -> dict:
             if outcome in FINISHED_OUTCOMES and not include_finished:
                 continue
             worktree = Path(str(state.get("worktree") or ""))
+            blocker = state.get("current_blocker") if isinstance(state.get("current_blocker"), dict) else {}
+            health = state.get("context_health") if isinstance(state.get("context_health"), dict) else {}
+            budget = {}
+            context_path = Path(str(state.get("context_snapshot_path") or ""))
+            if context_path.is_file():
+                context = load_state(context_path)
+                budget = context.get("context_budget", {}) if isinstance(context, dict) else {}
             missing_worktree = not worktree.exists()
             records.append(
                 {
@@ -68,7 +75,12 @@ def inspect_runs(codex_home: Path, plan: str, include_finished: bool) -> dict:
                     "state_path": redacted(str(state_path), codex_home),
                     "worktree": redacted(str(worktree), codex_home),
                     "current_task": state.get("current_task"),
+                    "last_completed_task": state.get("last_completed_task"),
                     "lifecycle_outcome": outcome,
+                    "current_blocker_category": blocker.get("category"),
+                    "next_action_kind": blocker.get("next_action_kind") or health.get("next_action"),
+                    "handoff_ready": health.get("handoff_ready"),
+                    "context_budget_status": budget.get("status"),
                     "missing_worktree": missing_worktree,
                     "orphaned_worktree": False,
                     "state_mtime": mtime_iso(state_path),

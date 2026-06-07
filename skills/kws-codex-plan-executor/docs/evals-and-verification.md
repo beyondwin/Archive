@@ -20,6 +20,9 @@ python3 evals/check_prompt_cache_audit.py
 python3 evals/check_cache_observations.py
 python3 evals/check_graphify_freshness.py
 python3 evals/check_preflight_dispatch.py
+python3 evals/check_recovery_policy.py
+python3 evals/check_trajectory_projection.py
+python3 evals/check_progress_ledger.py
 python3 -m py_compile scripts/*.py evals/*.py
 bash -n evals/run.sh
 ```
@@ -32,3 +35,7 @@ validate the generated outputs, state, context snapshots, and forbidden edits.
 The execution-hardening evals cover prompt cache boundaries, optional provider
 cache observations, Graphify freshness evidence, and deterministic subagent
 pre-dispatch decisions.
+
+The quality-loop evals also cover task packet component accounting, filtered
+decision context, structured blocker/failure state, recovery policy decisions,
+trajectory JSONL projection, and progress ledger stall detection.

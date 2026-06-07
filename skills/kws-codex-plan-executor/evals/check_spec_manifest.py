@@ -76,6 +76,15 @@ def main() -> int:
     )
     if not checks["section_metadata_complete"]:
         failures.append("sections must record title, level, line range, chars, and sha256")
+    signals = sections.get("S1", {}).get("signals", {})
+    checks["section_signals_present"] = (
+        "feature" in signals.get("title_tokens", [])
+        and isinstance(signals.get("path_literals"), list)
+        and isinstance(signals.get("code_identifiers"), list)
+        and isinstance(signals.get("task_ids"), list)
+    )
+    if not checks["section_signals_present"]:
+        failures.append("sections should include title/path/code/task mapping signals")
 
     fenced_result, fenced = run_manifest(script, "```md\n# Hidden\n```\n# Visible\n")
     checks["fenced_headings_ignored"] = (
