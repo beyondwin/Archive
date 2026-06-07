@@ -83,6 +83,18 @@ VALID_COMMAND_OBSERVATION_CATEGORIES = {
     "unknown",
 }
 REQUIRED_COMMAND_OBSERVATION_FIELDS = {"command", "status", "category", "evidence", "next_action"}
+VALID_BLOCKER_CATEGORIES = {
+    "operator_input_required",
+    "workspace_precondition",
+    "plan_contract_gap",
+    "diff_scope_gap",
+    "execution_source_failure",
+    "transient_tooling_or_resource",
+    "state_integrity_drift",
+    "subagent_coordination",
+    "observability_degraded",
+}
+VALID_NEXT_ACTION_KINDS = {"continue", "retry", "bootstrap", "local_fallback", "operator_decision", "block", "fail"}
 VALID_CACHE_STRATEGY_MODES = {"interactive-default", "headless-explicit", "prompt-export", "handoff-export"}
 VALID_PROVIDER_CACHE_CONTROL = {"unavailable", "available-unused", "available-enabled", "unknown"}
 TOKEN_FIELDS = {"input_tokens", "cached_read_tokens", "cached_write_tokens", "output_tokens"}
@@ -578,6 +590,85 @@ def _validate_dispatch_decisions(data: dict, errors: list[str]) -> None:
             errors.append(f"{prefix}: block decision cannot remain in finished state")
 
 
+def _validate_failure_state(data: dict, errors: list[str]) -> None:
+    blocker = data.get("current_blocker")
+    outcome = data.get("lifecycle_outcome")
+    if blocker is not None:
+        if not isinstance(blocker, dict):
+            errors.append("current_blocker must be an object")
+        else:
+            if blocker.get("category") not in VALID_BLOCKER_CATEGORIES:
+                errors.append(f"current_blocker.category must be one of {sorted(VALID_BLOCKER_CATEGORIES)}")
+            if not _has_substantive_value(blocker.get("summary")):
+                errors.append("current_blocker.summary must be non-empty")
+            if not isinstance(blocker.get("recoverable"), bool):
+                errors.append("current_blocker.recoverable must be a boolean")
+            if blocker.get("next_action_kind") not in VALID_NEXT_ACTION_KINDS:
+                errors.append(f"current_blocker.next_action_kind must be one of {sorted(VALID_NEXT_ACTION_KINDS)}")
+    if outcome == "finished" and blocker is not None:
+        errors.append("current_blocker must be cleared before lifecycle_outcome=finished")
+    if outcome == "blocked":
+        if not isinstance(blocker, dict):
+            errors.append("blocked outcome requires current_blocker")
+        elif blocker.get("recoverable") is not True:
+            errors.append("blocked outcome requires a recoverable current_blocker")
+
+    failure = data.get("failure_decision")
+    if failure is not None:
+        if not isinstance(failure, dict):
+            errors.append("failure_decision must be an object")
+        else:
+            if failure.get("decision") not in {"failed", "block", "fail"}:
+                errors.append("failure_decision.decision must be failed, block, or fail")
+            if not _has_substantive_value(failure.get("reason")):
+                errors.append("failure_decision.reason must be non-empty")
+    if outcome == "failed" and not isinstance(failure, dict):
+        nonrecoverable = isinstance(blocker, dict) and blocker.get("recoverable") is False
+        if not nonrecoverable:
+            errors.append("failed outcome requires failure_decision or non-recoverable current_blocker")
+
+    attempts = data.get("recovery_attempts", [])
+    if attempts is None:
+        return
+    if not isinstance(attempts, list):
+        errors.append("recovery_attempts must be a list")
+        return
+    for index, attempt in enumerate(attempts):
+        prefix = f"recovery_attempts[{index}]"
+        if not isinstance(attempt, dict):
+            errors.append(f"{prefix} must be an object")
+            continue
+        if not _has_substantive_value(attempt.get("root_signature")):
+            errors.append(f"{prefix}.root_signature must be non-empty")
+        if attempt.get("status") not in {"open", "closed", "abandoned"}:
+            errors.append(f"{prefix}.status must be open, closed, or abandoned")
+        if outcome == "finished" and attempt.get("status") == "open":
+            errors.append(f"{prefix}: open recovery attempt cannot remain in finished state")
+
+
+def _validate_progress_and_trajectory(data: dict, errors: list[str]) -> None:
+    ledger = data.get("progress_ledger", {})
+    if ledger is not None:
+        if not isinstance(ledger, dict):
+            errors.append("progress_ledger must be an object")
+        else:
+            for task_id, entry in ledger.items():
+                if not isinstance(entry, dict):
+                    errors.append(f"progress_ledger[{task_id}] must be an object")
+                    continue
+                for key in ("goal_satisfied", "progress_made", "needs_operator"):
+                    if key in entry and not isinstance(entry[key], bool):
+                        errors.append(f"progress_ledger[{task_id}].{key} must be a boolean")
+                if "stall_count" in entry and (not isinstance(entry["stall_count"], int) or entry["stall_count"] < 0):
+                    errors.append(f"progress_ledger[{task_id}].stall_count must be a non-negative integer")
+    trajectory_path = data.get("trajectory_path")
+    if trajectory_path is not None:
+        if not isinstance(trajectory_path, str) or not trajectory_path.strip():
+            errors.append("trajectory_path must be a non-empty string")
+        elif isinstance(data.get("run_dir"), str) and not _path_is_under(trajectory_path, data["run_dir"]):
+            errors.append("trajectory_path must live under run_dir")
+
+
 def _is_v220_state(data: dict) -> bool:
     if any(key in data for key in V220_TOP_LEVEL_FIELDS):
         return True
@@ -785,6 +876,8 @@ def validate(data: dict) -> list[str]:
     _validate_cache_fields(data, errors)
     _validate_graphify_audit(data, errors)
     _validate_dispatch_decisions(data, errors)
+    _validate_failure_state(data, errors)
+    _validate_progress_and_trajectory(data, errors)
     _validate_v220(data, errors)
     return errors
 

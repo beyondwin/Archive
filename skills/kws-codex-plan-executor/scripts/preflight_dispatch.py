@@ -39,6 +39,11 @@ def decision_payload(task_id: str, decision: str, reason: str, write_scope: list
     }
 
 
+def write_scope_too_broad(pattern: str) -> bool:
+    normalized = pattern.strip().rstrip("/")
+    return normalized in {"", ".", "*", "**", "**/*", "./", "./*", "./**", "./**/*"}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Decide CPE subagent pre-dispatch readiness.")
     parser.add_argument("--state", required=True)
@@ -65,21 +70,46 @@ def main() -> int:
 
     if not state_path.is_file():
         failed.append("state_missing")
+        state = {}
     else:
         state = json.loads(state_path.read_text(encoding="utf-8"))
         if state.get("subagents_requested") is not True:
             failed.append("subagents_not_requested")
+        tasks = state.get("tasks") if isinstance(state.get("tasks"), dict) else {}
+        task_state = tasks.get(args.task_id) if isinstance(tasks.get(args.task_id), dict) else {}
+        expected_hash = task_state.get("task_packet_sha256")
+        actual_hash = packet.get("sha256") if isinstance(packet, dict) else None
+        if expected_hash and actual_hash and expected_hash != actual_hash:
+            failed.append("task_packet_hash_mismatch")
+            decision = "block"
+            reason = "task packet hash does not match state"
 
     policy = packet.get("write_policy") if isinstance(packet, dict) else {}
     allowed = policy.get("allowed_write_globs") if isinstance(policy, dict) else []
     forbidden = policy.get("forbidden_write_globs") if isinstance(policy, dict) else []
     if not allowed:
         failed.append("allowed_write_globs_empty")
+    if any(write_scope_too_broad(str(scope)) for scope in allowed):
+        failed.append("write_scope_too_broad")
+        decision = "block"
+        reason = "write scope is too broad for delegated execution"
     for scope in write_scope:
         if allowed and not matches_any(scope, allowed):
             failed.append("write_scope_outside_allowed")
         if forbidden and matches_any(scope, forbidden):
             failed.append("write_scope_matches_forbidden")
+
+    budget = packet.get("context_budget") if isinstance(packet, dict) else {}
+    if isinstance(budget, dict) and budget.get("status") == "red":
+        failed.append("packet_context_budget_red")
+
+    spec = packet.get("spec") if isinstance(packet, dict) else {}
+    if isinstance(spec, dict) and spec.get("fallback_used") is True and budget.get("status") != "green":
+        failed.append("full_spec_fallback_not_delegable")
+
+    acceptance = packet.get("acceptance") if isinstance(packet, dict) else {}
+    if isinstance(acceptance, dict) and not acceptance.get("command"):
+        failed.append("acceptance_command_missing")
 
     dirty = git_changed(repo)
     dirty_overlap = sorted(path for path in dirty if matches_any(path, write_scope))

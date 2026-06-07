@@ -7,9 +7,15 @@ flowchart TD
   Plan["plan/spec/docs"] --> Parse["parse and validate tasks"]
   Parse --> Worktree["git worktree under ~/.codex/worktrees/<run_id>"]
   Parse --> State["state under ~/.codex/orchestrator/<run_id>"]
+  State --> Packet["spec manifest and task packets"]
+  Packet --> Gate["packet quality and dispatch gate"]
+  Gate --> Worker["subagent or local fallback"]
   Worktree --> Task["task contract, RED, implementation, GREEN"]
   State --> Context["context.json and context_health"]
+  Worker --> Task
   Task --> Verify["diff policy, acceptance, reconcile, validate"]
+  Verify --> Recovery["command observation and recovery policy"]
+  Recovery --> Trajectory["trajectory.jsonl and progress_ledger"]
   Verify --> Done["finished / blocked / failed"]
 ```
 
@@ -39,3 +45,9 @@ are audited by `scripts/audit_prompt_cache.py`.
 Graphify freshness and subagent dispatch readiness are represented as JSON
 evidence. State remains authoritative; helper outputs are accepted only after
 state validation and parent review.
+
+Structured failure state separates machine-readable blockers from human
+handoff summaries. `current_blocker` records recoverable blocked state,
+`failure_decision` records non-success failure decisions, and
+`recovery_attempts` tracks bounded retries by root signature. Finished runs must
+clear active blockers and open recovery attempts.

@@ -9,6 +9,7 @@ Execution artifacts live beside it:
 - `task_packets/task_<N>.json`
 - `DECISIONS.md`
 - `preflight_warnings.json`
+- `trajectory.jsonl`
 - `hooks/`
 - `learning_events/`
 - raw verification evidence
@@ -53,3 +54,20 @@ Finished runs cannot retain Graphify audit errors.
 `dispatch_decisions` stores `scripts/preflight_dispatch.py` output for
 write-capable subagent tasks. Decisions are `delegate`, `local_fallback`, or
 `block`; a finished run cannot retain an unresolved `block` decision.
+
+## Failure, Recovery, And Progress
+
+`current_blocker` is the machine-readable blocked-state record. It includes a
+category, summary, recoverability flag, and next action kind. `blocked` outcomes
+require a recoverable current blocker, while `finished` outcomes must clear it.
+
+`failure_decision` records non-recoverable failure decisions for `failed`
+outcomes. `recovery_attempts` records bounded retry/bootstrap attempts by root
+signature; finished runs cannot retain open recovery attempts.
+
+`trajectory_path` points at an append-only JSONL projection. Events contain
+sequence, event name, timestamp, task id, state ref, summary, evidence refs, and
+redacted context budget metadata. Raw prompts are not stored there.
+
+`progress_ledger` records per-task progress, stall count, last root signature,
+next action, and whether operator input is needed.

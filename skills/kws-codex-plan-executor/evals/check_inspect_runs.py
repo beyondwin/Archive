@@ -22,10 +22,20 @@ def write_state(codex_home: Path, run_id: str, plan: str, outcome: str | None = 
         "worktree": str(worktree),
         "run_dir": str(run_dir),
         "state_path": str(run_dir / "state.json"),
+        "context_snapshot_path": str(run_dir / "context.json"),
         "current_task": "task_2",
+        "last_completed_task": "task_1",
         "lifecycle_outcome": outcome,
+        "current_blocker": {
+            "category": "plan_contract_gap",
+            "summary": "Needs operator decision.",
+            "recoverable": True,
+            "next_action_kind": "operator_decision",
+        },
+        "context_health": {"handoff_ready": True, "next_action": "Resume task_2."},
     }
     (run_dir / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    (run_dir / "context.json").write_text(json.dumps({"context_budget": {"status": "yellow"}}), encoding="utf-8")
 
 
 def inspect(codex_home: Path, plan: str, include_finished: bool = False) -> tuple[subprocess.CompletedProcess[str], dict]:
@@ -61,6 +71,16 @@ def main() -> int:
         )
         if not checks["one_active_run_reported"]:
             failures.append("one active run for same plan should be reported without ambiguity")
+        run = data.get("active_runs", [{}])[0]
+        checks["recovery_fields_reported"] = (
+            run.get("last_completed_task") == "task_1"
+            and run.get("current_blocker_category") == "plan_contract_gap"
+            and run.get("next_action_kind") == "operator_decision"
+            and run.get("handoff_ready") is True
+            and run.get("context_budget_status") == "yellow"
+        )
+        if not checks["recovery_fields_reported"]:
+            failures.append("inspect output should include blocker, next action, handoff, and context budget fields")
 
     with tempfile.TemporaryDirectory(prefix="codex-inspect-runs-") as temp:
         home = Path(temp) / ".codex"

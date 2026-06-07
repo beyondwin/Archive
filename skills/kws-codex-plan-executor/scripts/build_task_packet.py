@@ -33,6 +33,26 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+def component(
+    role: str,
+    source_path: str,
+    source_ref: str,
+    text: str,
+    inclusion_reason: str,
+    reducible: bool,
+) -> dict:
+    return {
+        "role": role,
+        "source_path": source_path,
+        "source_ref": source_ref,
+        "chars": len(text),
+        "estimated_tokens": max(1, len(text) // 4),
+        "sha256": sha256_text(text),
+        "inclusion_reason": inclusion_reason,
+        "reducible": reducible,
+    }
+
+
 def find_task(plan: dict, task_id: str) -> dict:
     for task in plan.get("tasks", []):
         if task.get("id") == task_id:
@@ -61,36 +81,93 @@ def path_tokens(files: list[str]) -> set[str]:
     return tokens
 
 
-def heuristic_sections(task: dict, manifest: dict) -> list[str]:
+def path_literal_matches(path_literal: str, files: list[str]) -> bool:
+    literal = path_literal.strip().strip("/")
+    if not literal:
+        return False
+    for file_path in files:
+        candidate = file_path.strip().strip("/")
+        if candidate == literal or candidate.endswith("/" + literal) or literal.endswith("/" + candidate):
+            return True
+    return False
+
+
+def score_section(task: dict, section_id: str, section: dict) -> tuple[int, list[str]]:
+    files = [item for item in task.get("files", []) if isinstance(item, str)]
+    file_tokens = path_tokens(files)
+    signals = section.get("signals") if isinstance(section.get("signals"), dict) else {}
+    score = 0
+    reasons: list[str] = []
+    for path_literal in signals.get("path_literals", []):
+        if path_literal_matches(str(path_literal), files):
+            score += 8
+            reasons.append("path_literal")
+            break
+    identifiers = set(signals.get("code_identifiers", []))
+    if identifiers and identifiers.intersection(file_tokens):
+        score += 4
+        reasons.append("code_identifier")
+    title_tokens = set(signals.get("title_tokens", [])) or tokenize(str(section.get("title", "")))
+    if title_tokens and title_tokens.issubset(file_tokens):
+        score += 2
+        reasons.append("title_token")
+    task_ids = set(signals.get("task_ids", []))
+    if str(task.get("id", "")).lower() in task_ids:
+        score += 6
+        reasons.append("task_id")
+    return score, reasons
+
+
+def heuristic_sections(task: dict, manifest: dict) -> tuple[list[str], list[dict]]:
     tokens = path_tokens([item for item in task.get("files", []) if isinstance(item, str)])
     if not tokens:
-        return []
+        return [], []
     matched: list[str] = []
+    candidate_scores: list[dict] = []
     sections = manifest.get("sections", {})
     for section_id in manifest.get("section_order", []):
         section = sections.get(section_id, {})
-        title_tokens = tokenize(str(section.get("title", "")))
-        if title_tokens and title_tokens.issubset(tokens):
+        score, signals = score_section(task, section_id, section)
+        if score:
+            candidate_scores.append({"section_id": section_id, "score": score, "signals": signals})
+        if score >= 2:
             matched.append(section_id)
-    return matched
+    candidate_scores.sort(key=lambda item: (-item["score"], item["section_id"]))
+    return matched, candidate_scores
 
 
-def resolve_sections(task: dict, manifest: dict, fallback_policy: str) -> tuple[list[str], bool]:
+def resolve_sections(task: dict, manifest: dict, fallback_policy: str) -> tuple[list[str], bool, dict]:
     sections = manifest.get("sections", {})
     explicit = [item for item in task.get("spec_refs", []) if isinstance(item, str) and item.strip()]
     if explicit:
         for section_id in explicit:
             if section_id not in sections:
                 die(f"unknown spec ref for {task.get('id')}: {section_id}")
-        return explicit, False
+        return explicit, False, {
+            "selected_section_ids": explicit,
+            "candidate_scores": [{"section_id": section_id, "score": 100, "signals": ["explicit_spec_ref"]} for section_id in explicit],
+            "mapping_reason": "Matched explicit Spec Refs.",
+            "requires_parent_mapping": False,
+        }
 
-    matched = heuristic_sections(task, manifest)
+    matched, candidate_scores = heuristic_sections(task, manifest)
     if matched:
-        return matched, False
+        selected = [item["section_id"] for item in candidate_scores if item["section_id"] in matched]
+        return selected, False, {
+            "selected_section_ids": selected,
+            "candidate_scores": candidate_scores,
+            "mapping_reason": "Matched task file or identifier signals.",
+            "requires_parent_mapping": False,
+        }
 
     if fallback_policy == "halt_on_blocker":
         die(f"no spec section mapping for {task.get('id')}")
-    return ["*"], True
+    return ["*"], True, {
+        "selected_section_ids": ["*"],
+        "candidate_scores": candidate_scores,
+        "mapping_reason": "No task-specific spec section matched; using full spec fallback.",
+        "requires_parent_mapping": True,
+    }
 
 
 def spec_context(spec_path: Path, manifest: dict, section_ids: list[str], fallback_used: bool) -> tuple[str, str, str]:
@@ -121,6 +198,33 @@ def load_decisions(path: Path | None) -> list[dict]:
     die(f"decisions file must contain a list: {path}")
 
 
+def decision_relevant(decision: dict, task: dict, section_ids: list[str]) -> bool:
+    task_id = str(task.get("id", ""))
+    task_value = str(decision.get("task", ""))
+    if task_value == task_id:
+        return True
+    if task_value == "global" and not decision.get("superseded_by"):
+        return True
+    decision_task_ids = decision.get("task_ids")
+    if isinstance(decision_task_ids, list) and task_id in decision_task_ids:
+        return True
+    files = {item for item in task.get("files", []) if isinstance(item, str)}
+    decision_files = {item for item in decision.get("files", []) if isinstance(item, str)}
+    if files.intersection(decision_files):
+        return True
+    decision_sections = {item for item in decision.get("spec_section_ids", []) if isinstance(item, str)}
+    return bool(decision_sections.intersection(section_ids))
+
+
+def filter_decisions(decisions: list[dict], task: dict, section_ids: list[str]) -> dict:
+    included = [decision for decision in decisions if isinstance(decision, dict) and decision_relevant(decision, task, section_ids)]
+    return {
+        "included": included,
+        "omitted_count": max(0, len(decisions) - len(included)),
+        "selection_reason": "Matched task id, files, selected spec sections, or active global decisions.",
+    }
+
+
 def budget_status(estimated_chars: int, max_chars: int, threshold: float) -> str:
     if estimated_chars > max_chars:
         return "red"
@@ -147,19 +251,45 @@ def build_packet(
         die("--context-threshold must be in [0.05,0.95]")
 
     task = find_task(plan, task_id)
-    section_ids, fallback_used = resolve_sections(task, manifest, fallback_policy)
+    section_ids, fallback_used, mapping = resolve_sections(task, manifest, fallback_policy)
     spec_mode, section_label, spec_text = spec_context(spec_path, manifest, section_ids, fallback_used)
     files = [item for item in task.get("files", []) if isinstance(item, str)]
+    task_body = task.get("body", "")
+    acceptance_command = task.get("acceptance_command")
+    acceptance_text = acceptance_command or "missing acceptance command"
+    spec_component_role = "spec_full_fallback" if fallback_used else "spec_slice"
+    context_components = [
+        component("task_body", str(plan.get("plan", "")), task_id, task_body, "active task contract", False),
+        component(
+            spec_component_role,
+            str(spec_path),
+            section_label,
+            spec_text,
+            "full spec fallback" if fallback_used else "selected spec section",
+            True,
+        ),
+        component("write_policy", str(plan.get("plan", "")), task_id, "\n".join(files), "task write scope", False),
+        component(
+            "acceptance",
+            str(plan.get("plan", "")),
+            task_id,
+            acceptance_text,
+            "task verification contract" if acceptance_command else "acceptance missing marker",
+            acceptance_command is None,
+        ),
+    ]
     packet_base = {
         "schema_version": "1",
         "task_id": task_id,
         "task_title": task.get("title", ""),
-        "task_body": task.get("body", ""),
+        "task_body": task_body,
         "files": files,
         "depends_on": task.get("depends_on", []),
         "acceptance": {
             "has_acceptance_criteria": bool(task.get("has_acceptance_criteria")),
-            "command": None,
+            "command": acceptance_command,
+            "source": "plan.acceptance" if acceptance_command else "missing",
+            "honest_substitute_allowed": acceptance_command is None,
         },
         "spec": {
             "mode": spec_mode,
@@ -167,18 +297,46 @@ def build_packet(
             "section_label": section_label,
             "fallback_used": fallback_used,
             "text": spec_text,
+            "mapping": mapping,
         },
-        "decisions_register": decisions,
+        "decisions_register": filter_decisions(decisions, task, section_ids),
         "write_policy": {
             "allowed_write_globs": files,
             "forbidden_write_globs": DEFAULT_FORBIDDEN_GLOBS,
         },
+        "unit_manifest": {
+            "unit_type": "execute-task",
+            "context_mode": "focused",
+            "required_skills": ["using-superpowers", "test-driven-development"],
+            "tool_policy": "implementation",
+            "allowed_write_globs": files,
+            "forbidden_write_globs": DEFAULT_FORBIDDEN_GLOBS,
+            "artifact_policy": "inline-summary",
+            "max_context_chars": max_chars,
+        },
+        "context_components": context_components,
     }
     estimated_chars = len(json.dumps(packet_base, ensure_ascii=False, sort_keys=True))
+    component_totals: dict[str, int] = {}
+    for item in context_components:
+        role = item["role"]
+        family = "spec" if role.startswith("spec_") else role
+        component_totals[family] = component_totals.get(family, 0) + int(item["chars"])
+    largest_component = max(
+        context_components,
+        key=lambda item: int(item["chars"]),
+        default={"role": "", "chars": 0, "source_ref": ""},
+    )
     packet_base["context_budget"] = {
         "estimated_chars": estimated_chars,
         "max_chars": max_chars,
         "status": budget_status(estimated_chars, max_chars, context_threshold),
+        "largest_component": {
+            "role": largest_component.get("role"),
+            "chars": largest_component.get("chars"),
+            "source_ref": largest_component.get("source_ref"),
+        },
+        "component_totals": component_totals,
     }
     packet_base["sha256"] = sha256_text(json.dumps(packet_base, ensure_ascii=False, sort_keys=True))
     return packet_base

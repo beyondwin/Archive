@@ -21,3 +21,8 @@ AgentLens payloads.
 
 For resume, persist `agentlens_orchestration_run` and
 `last_agentlens_event_at` in state when available.
+
+Local trajectory projection is stored independently at `trajectory_path`.
+`scripts/append_trajectory_event.py` writes append-only JSONL with monotonically
+increasing `seq`, redacted refs, task id, summary, evidence refs, and compact
+context budget metadata. Do not store raw prompts in trajectory events.

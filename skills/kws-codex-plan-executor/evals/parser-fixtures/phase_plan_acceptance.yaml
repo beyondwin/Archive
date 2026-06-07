@@ -1,0 +1,48 @@
+name: phase_plan_acceptance
+mode: interactive
+plan: |
+  # Implementation
+
+  ## Phase 1: Context Component Accounting
+
+  목표: packet component accounting.
+
+  수정 파일:
+
+  - `scripts/build_task_packet.py`
+  - `evals/check_task_packet.py`
+
+  검증:
+
+  ```bash
+  python3 evals/check_task_packet.py
+  ```
+
+  ## Phase 2: Dispatch Gate
+
+  수정 파일:
+
+  - `scripts/preflight_dispatch.py`
+
+  검증:
+
+  ```bash
+  python3 evals/check_preflight_dispatch.py
+  ```
+expected:
+  files:
+    - scripts/build_task_packet.py
+    - evals/check_task_packet.py
+    - scripts/preflight_dispatch.py
+  acceptance_commands:
+    task_1: python3 evals/check_task_packet.py
+    task_2: python3 evals/check_preflight_dispatch.py
+  tasks:
+    - id: task_1
+      number: 1
+      title: Context Component Accounting
+      has_acceptance_criteria: true
+    - id: task_2
+      number: 2
+      title: Dispatch Gate
+      has_acceptance_criteria: true

@@ -12,3 +12,6 @@
 - Graphify may be unavailable or ignored in a checkout. CPE records
   `scripts/check_graphify_freshness.py` output and treats missing reports as
   warnings, while stale reports require update evidence before a finished run.
+- Recovery classification is intentionally bounded and conservative. Unknown
+  command observations receive only limited investigation/retry budget and must
+  either be tied to residual risk or produce a failed/blocked outcome.

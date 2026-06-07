@@ -21,6 +21,7 @@ def run_packet(
     manifest: dict,
     task_id: str,
     extra_args: list[str] | None = None,
+    decisions_payload: dict | list | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict]:
     script = Path(__file__).resolve().parents[1] / "scripts" / "build_task_packet.py"
     plan_json = root / "plan.json"
@@ -31,7 +32,7 @@ def run_packet(
     write_json(plan_json, plan)
     spec.write_text(spec_text, encoding="utf-8")
     write_json(manifest_path, manifest)
-    write_json(decisions, [])
+    write_json(decisions, [] if decisions_payload is None else decisions_payload)
     command = [
         sys.executable,
         str(script),
@@ -91,6 +92,7 @@ def main() -> int:
             "depends_on": [],
             "spec_refs": ["S1"],
             "has_acceptance_criteria": True,
+            "acceptance_command": "python3 evals/check_feature.py",
         }
         explicit_result, explicit = run_packet(root, plan_for(explicit_task), spec_text, manifest, "task_0")
         checks["explicit_refs_exact"] = (
@@ -102,6 +104,28 @@ def main() -> int:
         )
         if not checks["explicit_refs_exact"]:
             failures.append("explicit spec_refs should map to exact manifest sections")
+        components = explicit.get("context_components", [])
+        checks["context_components_present"] = (
+            explicit_result.returncode == 0
+            and isinstance(components, list)
+            and any(item.get("role") == "task_body" for item in components)
+            and any(item.get("role") == "spec_slice" for item in components)
+            and any(item.get("role") == "acceptance" for item in components)
+            and all(item.get("sha256") for item in components)
+        )
+        if not checks["context_components_present"]:
+            failures.append("packet should include stable context_components for task/spec/acceptance")
+        checks["acceptance_command_preserved"] = explicit.get("acceptance", {}).get("command") == "python3 evals/check_feature.py"
+        if not checks["acceptance_command_preserved"]:
+            failures.append("packet should preserve parsed acceptance command")
+        budget = explicit.get("context_budget", {})
+        checks["component_budget_breakdown"] = (
+            isinstance(budget.get("largest_component"), dict)
+            and isinstance(budget.get("component_totals"), dict)
+            and budget["component_totals"].get("spec", 0) > 0
+        )
+        if not checks["component_budget_breakdown"]:
+            failures.append("context_budget should include largest_component and component_totals")
 
         heuristic_task = {
             "id": "task_1",
@@ -120,6 +144,15 @@ def main() -> int:
         )
         if not checks["file_title_heuristic"]:
             failures.append("file path components should map src/auth/session.py to Auth Session")
+        mapping = heuristic.get("spec", {}).get("mapping", {})
+        checks["mapping_evidence_present"] = (
+            mapping.get("selected_section_ids") == ["S2"]
+            and isinstance(mapping.get("candidate_scores"), list)
+            and mapping.get("mapping_reason")
+            and mapping.get("requires_parent_mapping") is False
+        )
+        if not checks["mapping_evidence_present"]:
+            failures.append("packet should preserve spec mapping evidence")
 
         fallback_task = {
             "id": "task_2",
@@ -140,6 +173,85 @@ def main() -> int:
         )
         if not checks["fallback_full_spec"]:
             failures.append("unmapped task should use full-spec fallback marker")
+        checks["full_spec_fallback_component_role"] = any(
+            item.get("role") == "spec_full_fallback"
+            for item in fallback.get("context_components", [])
+        )
+        if not checks["full_spec_fallback_component_role"]:
+            failures.append("full spec fallback should be visible in context_components")
+
+        decision_task = {
+            "id": "task_3",
+            "title": "Feature decision",
+            "body": "Task body",
+            "files": ["scripts/feature.py"],
+            "depends_on": [],
+            "spec_refs": ["S1"],
+            "has_acceptance_criteria": True,
+            "acceptance_command": "python3 evals/check_feature.py",
+        }
+        decisions_payload = [
+            {"id": "dec_1", "task": "task_3", "decision": "include task decision", "files": []},
+            {"id": "dec_2", "task": "task_9", "decision": "omit unrelated", "files": ["other.py"]},
+            {"id": "dec_3", "task": "global", "decision": "include global", "files": [], "superseded_by": None},
+            {"id": "dec_4", "task": "global", "decision": "omit superseded", "files": [], "superseded_by": "dec_5"},
+        ]
+        decision_result, decision_packet = run_packet(
+            root,
+            plan_for(decision_task),
+            spec_text,
+            manifest,
+            "task_3",
+            decisions_payload=decisions_payload,
+        )
+        decision_context = decision_packet.get("decisions_register", {})
+        included_ids = [item.get("id") for item in decision_context.get("included", [])]
+        checks["decisions_filtered"] = (
+            decision_result.returncode == 0
+            and included_ids == ["dec_1", "dec_3"]
+            and decision_context.get("omitted_count") == 2
+            and bool(decision_context.get("selection_reason"))
+        )
+        if not checks["decisions_filtered"]:
+            failures.append("task packet should include only task-relevant decisions")
+
+        suffix_manifest = {
+            "schema_version": "1",
+            "spec_path": "spec.md",
+            "fallback_policy": "full_spec_on_blocker",
+            "sections": {
+                "S1": {
+                    "id": "S1",
+                    "title": "State Schema",
+                    "level": 1,
+                    "line_start": 1,
+                    "line_end": 3,
+                    "chars": 24,
+                    "sha256": "x",
+                    "signals": {"path_literals": ["scripts/validate_state.py"], "title_tokens": ["state", "schema"], "code_identifiers": [], "task_ids": []},
+                }
+            },
+            "section_order": ["S1"],
+            "task_to_sections": {},
+        }
+        suffix_task = {
+            "id": "task_4",
+            "title": "State schema",
+            "body": "Task body",
+            "files": ["skills/kws-codex-plan-executor/scripts/validate_state.py"],
+            "depends_on": [],
+            "spec_refs": [],
+            "has_acceptance_criteria": True,
+            "acceptance_command": "python3 evals/check_state_schema.py",
+        }
+        suffix_result, suffix_packet = run_packet(root, plan_for(suffix_task), spec_text, suffix_manifest, "task_4")
+        checks["path_literal_suffix_mapping"] = (
+            suffix_result.returncode == 0
+            and suffix_packet.get("spec", {}).get("section_ids") == ["S1"]
+            and suffix_packet.get("spec", {}).get("fallback_used") is False
+        )
+        if not checks["path_literal_suffix_mapping"]:
+            failures.append("spec path literals should match repo-root and skill-relative suffix paths")
 
         invalid_threshold_result, _ = run_packet(
             root,

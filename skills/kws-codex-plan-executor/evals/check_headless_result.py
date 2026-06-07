@@ -21,6 +21,17 @@ REQUIRED = [
 ]
 STATUSES = {"success", "blocked", "failed", "cancelled"}
 VERIFICATION_STATUSES = {"passed", "failed", "skipped"}
+BLOCKER_CATEGORIES = {
+    "operator_input_required",
+    "workspace_precondition",
+    "plan_contract_gap",
+    "diff_scope_gap",
+    "execution_source_failure",
+    "transient_tooling_or_resource",
+    "state_integrity_drift",
+    "subagent_coordination",
+    "observability_degraded",
+}
 
 
 def validate_sample(payload: dict) -> list[str]:
@@ -36,6 +47,18 @@ def validate_sample(payload: dict) -> list[str]:
     for key in ("changed_files", "verification", "open_gaps", "residual_risk"):
         if key in payload and not isinstance(payload[key], list):
             errors.append(f"{key} must be a list")
+    blocker = payload.get("blocker")
+    if payload.get("status") == "blocked":
+        if not isinstance(blocker, dict):
+            errors.append("blocked status requires blocker")
+        elif blocker.get("category") not in BLOCKER_CATEGORIES:
+            errors.append("blocker.category invalid")
+    failure = payload.get("failure_decision")
+    if payload.get("status") == "failed":
+        if not isinstance(failure, dict):
+            errors.append("failed status requires failure_decision")
+        elif not isinstance(failure.get("reason"), str) or not failure.get("reason", "").strip():
+            errors.append("failure_decision.reason must be non-empty")
     if "context_artifacts" in payload:
         artifacts = payload["context_artifacts"]
         if not isinstance(artifacts, dict):
@@ -130,6 +153,35 @@ def main() -> int:
     )
     if not checks["missing_context_artifact_fails"]:
         failures.append("missing context artifact path should fail")
+
+    blocked = valid_payload()
+    blocked["status"] = "blocked"
+    blocked["blocker"] = {
+        "category": "plan_contract_gap",
+        "summary": "Acceptance command is missing.",
+        "recoverable": True,
+        "next_action_kind": "operator_decision",
+    }
+    checks["blocked_payload_requires_blocker"] = not validate_sample(blocked)
+    if not checks["blocked_payload_requires_blocker"]:
+        failures.append("blocked payload with structured blocker should pass")
+    blocked_missing = valid_payload()
+    blocked_missing["status"] = "blocked"
+    checks["blocked_missing_blocker_fails"] = "blocked status requires blocker" in validate_sample(blocked_missing)
+    if not checks["blocked_missing_blocker_fails"]:
+        failures.append("blocked payload should require blocker")
+
+    failed = valid_payload()
+    failed["status"] = "failed"
+    failed["failure_decision"] = {"decision": "failed", "reason": "Retry budget exhausted."}
+    checks["failed_payload_requires_failure_decision"] = not validate_sample(failed)
+    if not checks["failed_payload_requires_failure_decision"]:
+        failures.append("failed payload with failure_decision should pass")
+    failed_missing = valid_payload()
+    failed_missing["status"] = "failed"
+    checks["failed_missing_decision_fails"] = "failed status requires failure_decision" in validate_sample(failed_missing)
+    if not checks["failed_missing_decision_fails"]:
+        failures.append("failed payload should require failure_decision")
 
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, indent=2))

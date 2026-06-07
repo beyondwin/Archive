@@ -77,6 +77,18 @@ def main() -> int:
         if not checks["task_lines_match"]:
             failures.append(f"expected task lines {expected_task_lines}, got {actual_task_lines}")
 
+    expected_acceptance_commands = expected.get("acceptance_commands") or {}
+    if expected_acceptance_commands:
+        actual_acceptance_commands = {
+            task.get("id"): task.get("acceptance_command")
+            for task in parsed.get("tasks", [])
+        }
+        checks["acceptance_commands_match"] = expected_acceptance_commands == actual_acceptance_commands
+        if not checks["acceptance_commands_match"]:
+            failures.append(
+                f"expected acceptance commands {expected_acceptance_commands}, got {actual_acceptance_commands}"
+            )
+
     expected_file_line_numbers = expected.get("file_line_numbers") or {}
     if expected_file_line_numbers:
         actual_file_line_numbers = {}
