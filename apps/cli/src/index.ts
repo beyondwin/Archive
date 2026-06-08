@@ -12,6 +12,7 @@ import {
   parseNaturalLanguageIntent,
   repairRun,
   resumeRun,
+  reviewRun,
   runPlanChain,
   runWaygent,
   runWaygentDemo,
@@ -20,7 +21,7 @@ import {
   verifyRun,
   watchRunCommand
 } from "@waygent/orchestrator";
-import type { RunCommandOptions, WatchRunOptions } from "@waygent/orchestrator";
+import type { ReviewRunRole, RunCommandOptions, WatchRunOptions } from "@waygent/orchestrator";
 import { FakeExtractorProvider, lintDesign, lintPlan } from "@waygent/design-contract";
 import { readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
@@ -54,7 +55,7 @@ export function parseCli(argv: string[]): ParsedCli {
   return { command, flags };
 }
 
-const usage = "waygent run|run-chain|status|events|inspect|explain|resume|verify|apply|repair|decisions|cost|watch|orphans|scaffold-plan|lint-design|lint-plan";
+const usage = "waygent run|run-chain|status|events|inspect|explain|resume|verify|review|apply|repair|decisions|cost|watch|orphans|scaffold-plan|lint-design|lint-plan";
 const commandUsage: Record<string, string> = {
   run: "waygent run --plan <waygent-task.md> [--spec <design.md>] [--run <id>] [--provider codex|claude|fake] [--execution-mode multi-agent|single-agent] [--profile max-quality|balanced|cost-saver] [--main-model <name>] [--main-reasoning medium|high|xhigh] [--subagent-model <name>] [--subagent-reasoning medium|high|xhigh] [--role-model implement=<name>,review=<name>,verify_assist=<name>] [--role-reasoning implement=medium|high|xhigh,...] [--plan-preflight off|deterministic|full]",
   "run-chain": "waygent run-chain --plan <p1> [--spec <s1>] --plan <p2> [--spec <s2>]",
@@ -65,6 +66,7 @@ const commandUsage: Record<string, string> = {
   explain: "waygent explain --run <run_id>|--last",
   resume: "waygent resume --run <run_id>|--last",
   verify: "waygent verify --run <run_id>|--last [--task <task_id>]",
+  review: "waygent review --run <run_id>|--last [--task <task_id>] [--role spec_reviewer|quality_reviewer]",
   apply: "waygent apply --run <run_id>",
   repair: "waygent repair --run <id> [--task <task_id>] [--instruction \"<note>\"] [--evidence <verification_id>[,...]] [--dry-run]",
   decisions: "waygent decisions --run <run_id>|--last",
@@ -295,6 +297,12 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     if (typeof parsed.flags.task === "string") options.task = parsed.flags.task;
     return verifyRun(options);
   }
+  if (parsed.command === "review") {
+    const options: Parameters<typeof reviewRun>[0] = runCommandOptions(parsed);
+    if (typeof parsed.flags.task === "string") options.task = parsed.flags.task;
+    if (isReviewRole(parsed.flags.role)) options.role = parsed.flags.role;
+    return reviewRun(options);
+  }
   if (parsed.command === "apply") {
     return applyRun({
       ...runCommandOptions(parsed),
@@ -379,6 +387,10 @@ function isPlanPreflight(value: unknown): value is "off" | "deterministic" | "fu
 
 function isReasoning(value: unknown): value is "medium" | "high" | "xhigh" {
   return value === "medium" || value === "high" || value === "xhigh";
+}
+
+function isReviewRole(value: unknown): value is ReviewRunRole {
+  return value === "spec_reviewer" || value === "quality_reviewer";
 }
 
 function runCommandOptions(parsed: ParsedCli): RunCommandOptions {
