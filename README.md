@@ -41,7 +41,13 @@ waygent events --last
 waygent inspect --run <run_id> --json
 waygent explain --last
 waygent resume --last
+waygent verify --run <run_id> --last
 waygent apply --run <run_id>
+waygent repair --run <run_id> [--task <task_id>] [--instruction "<note>"]
+waygent decisions --last
+waygent cost --last
+waygent watch --last [--json] [--filter all|task_transition|failure|cost]
+waygent orphans [--stale] [--cleanup-worktree <run_id>]
 waygent lint-design --path <design.md>
 waygent lint-plan --path <waygent-task.md>
 waygent scaffold-plan --id <task_id> --title <title> --claim <path:mode> --risk <low|medium|high> --verify <command>

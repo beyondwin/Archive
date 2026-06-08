@@ -1,6 +1,6 @@
 # History
 
-## Unreleased
+## 2.21.0 - 2026-05-31
 
 - Tightened state validation so finished runs must record a concrete
   `timestamps.completed_at` ISO timestamp.

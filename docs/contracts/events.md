@@ -29,8 +29,8 @@ Representative events seen in current runs include:
 
 - Platform: `platform.run_started`, `platform.plan_preflight_completed`,
   `platform.intake_extract_completed`, `platform.intake_decision_required`,
-  `platform.cost_accumulated`, `platform.cost_budget_warning`,
-  `platform.cost_budget_paused`, `platform.provider_capability_attested`.
+  `platform.cost_accumulated`, `platform.budget_warning`,
+  `platform.budget_paused`, `platform.provider_capability_attested`.
 - Runway: `runway.plan_loaded`, `runway.preflight_result`,
   `runway.execution_profile_selected`, `runway.safe_wave_selected`,
   `runway.wave_barrier_inserted`, `runway.diff_scope_result`,
