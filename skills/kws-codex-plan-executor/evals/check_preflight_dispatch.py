@@ -53,7 +53,9 @@ def write_packet(
     )
 
 
-def run_dispatch(repo: Path, state_path: Path, packet_path: Path) -> tuple[subprocess.CompletedProcess[str], dict]:
+def run_dispatch(
+    repo: Path, state_path: Path, packet_path: Path, *extra: str
+) -> tuple[subprocess.CompletedProcess[str], dict]:
     output = repo / "dispatch.json"
     result = subprocess.run(
         [
@@ -71,6 +73,7 @@ def run_dispatch(repo: Path, state_path: Path, packet_path: Path) -> tuple[subpr
             "docs/example.md",
             "--output",
             str(output),
+            *extra,
         ],
         text=True,
         stdout=subprocess.PIPE,
@@ -102,6 +105,38 @@ def main() -> int:
         checks["clean_task_delegates"] = result.returncode == 0 and data.get("decision") == "delegate"
         if not checks["clean_task_delegates"]:
             failures.append("clean task packet should delegate")
+
+    with tempfile.TemporaryDirectory(prefix="cpe-dispatch-") as temp:
+        repo = Path(temp) / "repo"
+        repo.mkdir()
+        init_repo(repo)
+        state_path = repo / "state.json"
+        packet_path = repo / "task_0.json"
+        write_packet(packet_path, ["docs/example.md"])
+        write_state(state_path)
+        result, data = run_dispatch(
+            repo,
+            state_path,
+            packet_path,
+            "--spawn-policy",
+            "explicit-request-required",
+            "--explicit-delegation-requested",
+            "false",
+            "--requested-subagents",
+            "on",
+            "--requested-source",
+            "default",
+        )
+        checks["spawn_policy_requires_explicit_request_local_fallback"] = (
+            result.returncode == 0
+            and data.get("decision") == "local_fallback"
+            and "spawn_policy_requires_explicit_user_request" in data.get("failed_prerequisites", [])
+            and data.get("delegation_policy", {}).get("effective_mode") == "local_fallback"
+        )
+        if not checks["spawn_policy_requires_explicit_request_local_fallback"]:
+            failures.append(
+                "explicit-request-required spawn policy without explicit delegation intent should local_fallback"
+            )
 
     with tempfile.TemporaryDirectory(prefix="cpe-dispatch-") as temp:
         repo = Path(temp) / "repo"

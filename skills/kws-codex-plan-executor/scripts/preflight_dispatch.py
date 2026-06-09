@@ -20,7 +20,14 @@ def matches_any(path: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
-def decision_payload(task_id: str, decision: str, reason: str, write_scope: list[str], failed: list[str]) -> dict:
+def decision_payload(
+    task_id: str,
+    decision: str,
+    reason: str,
+    write_scope: list[str],
+    failed: list[str],
+    delegation_policy: dict,
+) -> dict:
     mode = "delegated" if decision == "delegate" else "local_fallback"
     return {
         "schema_version": "1",
@@ -29,7 +36,9 @@ def decision_payload(task_id: str, decision: str, reason: str, write_scope: list
         "reason": reason,
         "write_scope": write_scope,
         "failed_prerequisites": failed,
+        "delegation_policy": delegation_policy,
         "state_updates": {
+            "delegation_policy": delegation_policy,
             "subagent_strategy": {
                 "mode": mode,
                 "reason": reason,
@@ -52,6 +61,18 @@ def main() -> int:
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--write-scope", action="append", required=True)
     parser.add_argument("--output")
+    parser.add_argument(
+        "--spawn-policy",
+        choices=["available", "unavailable", "explicit-request-required", "unknown"],
+        default="unknown",
+    )
+    parser.add_argument("--explicit-delegation-requested", choices=["true", "false"], default="false")
+    parser.add_argument("--requested-subagents", choices=["on", "auto", "off"], default="on")
+    parser.add_argument(
+        "--requested-source",
+        choices=["default", "explicit", "natural_language", "resume_state"],
+        default="default",
+    )
     args = parser.parse_args()
 
     repo = Path(args.repo_root).resolve()
@@ -60,6 +81,27 @@ def main() -> int:
     decision = "delegate"
     reason = "all pre-dispatch prerequisites passed"
     write_scope = args.write_scope
+    explicit_requested = args.explicit_delegation_requested == "true"
+    delegation_policy = {
+        "requested_mode": args.requested_subagents,
+        "requested_source": args.requested_source,
+        "explicit_user_delegation_request": explicit_requested,
+        "spawn_policy": args.spawn_policy,
+        "effective_mode": "delegate",
+        "reason": "Delegation prerequisites are still being evaluated.",
+    }
+    if args.requested_subagents == "off":
+        failed.append("subagents_off")
+        decision = "local_fallback"
+        reason = "subagents=off requests local-only execution"
+    elif args.spawn_policy == "unavailable":
+        failed.append("spawn_policy_unavailable")
+        decision = "local_fallback"
+        reason = "spawn_agent tool is unavailable in this session"
+    elif args.spawn_policy == "explicit-request-required" and not explicit_requested:
+        failed.append("spawn_policy_requires_explicit_user_request")
+        decision = "local_fallback"
+        reason = "spawn_agent tool policy requires explicit user delegation intent"
 
     packet_path = Path(args.task_packet)
     packet = {}
@@ -118,11 +160,14 @@ def main() -> int:
         decision = "block"
         reason = "dirty files overlap delegated write scope"
 
-    if failed and decision != "block":
+    if failed and decision == "delegate":
         decision = "local_fallback"
         reason = failed[0]
 
-    payload = decision_payload(args.task_id, decision, reason, write_scope, failed)
+    delegation_policy["effective_mode"] = "delegate" if decision == "delegate" else decision
+    delegation_policy["reason"] = reason
+
+    payload = decision_payload(args.task_id, decision, reason, write_scope, failed, delegation_policy)
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.output:
         Path(args.output).write_text(text, encoding="utf-8")
