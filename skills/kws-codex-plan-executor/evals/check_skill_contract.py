@@ -52,7 +52,7 @@ def main() -> int:
     ]
 
     checks = {
-        "version_2210": 'version: "2.21.0"' in text,
+        "version_2220": 'version: "2.22.0"' in text,
         "resume_argument": "resume=latest|<state-path>" in invocation,
         "subagents_on_default": "subagents=auto|on|off" in invocation and "default `on`" in invocation,
         "subagents_on_is_subagent_first_default": "subagent-first default" in normalized

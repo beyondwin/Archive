@@ -15,3 +15,10 @@
 - Recovery classification is intentionally bounded and conservative. Unknown
   command observations receive only limited investigation/retry budget and must
   either be tied to residual risk or produce a failed/blocked outcome.
+- v2.22 bootstrap plans are suggestions only. CPE does not install
+  dependencies, create Android SDK state, or bootstrap optional CLIs
+  automatically.
+- v2.22 run-quality inspection is read-only. It can identify stale or
+  validation-drifted historical states, but it does not repair or mutate them.
+- Effective delegation policy records why a task fell back locally, but real
+  subagent spawning remains controlled by the active Codex tool policy.

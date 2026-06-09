@@ -132,3 +132,65 @@ When v2.20 fields are present, `decisions_register` and
 `preflight_warnings` must be lists. Finished completed tasks must include
 `timing.started` and `timing.completed`. `last_completed_task` is either null or
 a task id in `tasks`.
+
+v2.22 operational run quality state may add:
+
+```json
+{
+  "source_workspace": "/repo/source",
+  "execution_worktree": "/Users/example/.codex/worktrees/example-plan-20260519-143022",
+  "command_cwd_evidence": [
+    {
+      "command": "python3 scripts/preflight_local_env.py --repo-root \"$WORKTREE_ABS\"",
+      "cwd": "/Users/example/.codex/worktrees/example-plan-20260519-143022",
+      "phase": "preflight",
+      "status": "passed"
+    }
+  ],
+  "delegation_policy": {
+    "requested_mode": "on",
+    "requested_source": "default",
+    "explicit_user_delegation_request": false,
+    "spawn_policy": "explicit-request-required",
+    "effective_mode": "local_fallback",
+    "reason": "spawn_agent tool policy requires explicit user delegation intent"
+  },
+  "preflight_bootstrap": {
+    "schema_version": "1",
+    "warnings": [],
+    "bootstrap_plan": [],
+    "environment_capabilities": {
+      "node": "present",
+      "bun": "present",
+      "pnpm": "present",
+      "gradle_wrapper": "absent",
+      "android_sdk": "unknown",
+      "adb": "absent",
+      "cargo": "absent",
+      "agentlens": "absent"
+    }
+  },
+  "run_quality": {
+    "schema_version": "1",
+    "validation_status": "passed",
+    "terminal_state": "finished",
+    "stale": false,
+    "workspace_matches_execution_worktree": true,
+    "schema_drift": [],
+    "open_followups": [],
+    "summary": "Run finished with validated state."
+  }
+}
+```
+
+`execution_worktree`, when present, must equal `worktree` and end with
+`.codex/worktrees/<run_id>`. `workspace` remains backward compatible; new
+operator guidance should use `execution_worktree` as the command/edit boundary.
+
+`delegation_policy.requested_source` is `default`, `explicit`,
+`natural_language`, or `resume_state`. `spawn_policy` is `available`,
+`unavailable`, `explicit-request-required`, or `unknown`. `effective_mode` is
+`delegate`, `local_fallback`, `off`, or `blocked`.
+
+`preflight_bootstrap.bootstrap_plan` contains suggestions only. CPE must not run
+those commands automatically.

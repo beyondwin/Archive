@@ -26,6 +26,11 @@ The worktree stores repository files only. The orchestrator directory stores
 `state.json`, `context.json`, `hooks/`, `learning_events/`, raw evidence, and
 headless result files.
 
+New state should prefer `execution_worktree` for the actual edit and command
+boundary. `workspace` remains a backward-compatible broad pointer for older
+runs and fixture state. `command_cwd_evidence` records command, cwd, phase, and
+status only; it never stores full logs or secrets.
+
 Subagents are the default implementation path through `subagents=on`, but
 delegation is task-packet scoped rather than raw full-plan scoped.
 `subagents=auto` stays local unless the user explicitly requests delegation or
@@ -34,6 +39,15 @@ worker must have a bounded write scope; finished state cannot retain running or
 unreviewed subagent records. A write-capable task completed locally under
 `subagents=on` records `subagent_strategy.mode = local_fallback` with the
 concrete reason.
+
+`delegation_policy` records the requested mode, request source, active spawn
+policy, explicit user delegation intent, and effective mode. The pre-dispatch
+script owns deterministic fallbacks such as an explicit-request-only spawn
+policy.
+
+`preflight_bootstrap` is detection-only. It suggests dependency or capability
+bootstrap commands and records tool availability, but CPE never executes those
+commands automatically.
 
 AgentLens events provide best-effort replay and learning telemetry. State in
 `~/.codex/orchestrator/<run_id>/state.json` remains the source of truth.
@@ -45,6 +59,10 @@ are audited by `scripts/audit_prompt_cache.py`.
 Graphify freshness and subagent dispatch readiness are represented as JSON
 evidence. State remains authoritative; helper outputs are accepted only after
 state validation and parent review.
+
+`inspect_runs.py` can compute read-only `run_quality` for recent runs across
+all plans, including stale non-terminal state, validation drift, delegation
+counts, and workspace/execution-worktree mismatch.
 
 Structured failure state separates machine-readable blockers from human
 handoff summaries. `current_blocker` records recoverable blocked state,

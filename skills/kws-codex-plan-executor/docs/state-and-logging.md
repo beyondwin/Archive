@@ -55,6 +55,24 @@ Finished runs cannot retain Graphify audit errors.
 write-capable subagent tasks. Decisions are `delegate`, `local_fallback`, or
 `block`; a finished run cannot retain an unresolved `block` decision.
 
+`delegation_policy` stores the effective delegation policy for the run:
+requested mode, request source, explicit user delegation intent, active spawn
+policy, effective mode, and reason. It explains policy-level local fallback
+without relying on prose-only state notes.
+
+`preflight_bootstrap` stores the detection-only local environment report:
+warnings, suggested bootstrap commands with `auto_run=false`, and environment
+capabilities such as Node, Bun, pnpm, Gradle wrapper, Android SDK, adb, Cargo,
+and AgentLens availability.
+
+`command_cwd_evidence` records command provenance as command, cwd, phase, and
+status. It must not store full logs, secrets, or transcripts.
+
+`run_quality` stores or computes a compact quality summary for a run:
+validation status, terminal state, stale flag, workspace/execution-worktree
+match, schema drift, followups, and a short summary. Read-only inspection may
+compute this without writing it back to state.
+
 ## Failure, Recovery, And Progress
 
 `current_blocker` is the machine-readable blocked-state record. It includes a

@@ -53,6 +53,7 @@ python3 evals/check_preflight_dispatch.py
 python3 evals/check_recovery_policy.py
 python3 evals/check_trajectory_projection.py
 python3 evals/check_progress_ledger.py
+python3 evals/check_operational_run_quality.py
 ```
 
 `evals/run.sh` uses deterministic fixture runners for prompt, handoff,
@@ -87,3 +88,9 @@ transcripts.
 - `docs/experiments/v2.20-context-intelligence/IMPLEMENTATION.md`
 - `docs/experiments/v2.21-cache-friendly-execution/PLAN.md`
 - `docs/experiments/v2.21-cache-friendly-execution/IMPLEMENTATION.md`
+- `docs/experiments/v2.22-operational-run-quality/PLAN.md`
+- `docs/experiments/v2.22-operational-run-quality/IMPLEMENTATION.md`
+
+v2.22 records effective delegation policy, bootstrap suggestions, execution
+worktree provenance, and read-only run-quality summaries so operators can trust
+recent runs without reading raw transcripts.
