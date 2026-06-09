@@ -34,6 +34,34 @@ def main() -> int:
     if not checks["default_subagents_on"]:
         failures.append("subagents should default to on")
 
+    checks["default_has_no_explicit_delegation_intent"] = (
+        default_result.returncode == 0
+        and default_payload.get("intent", {}).get("explicit_delegation_request") is False
+        and default_payload.get("intent", {}).get("delegation_hint") is None
+    )
+    if not checks["default_has_no_explicit_delegation_intent"]:
+        failures.append("default subagents=on should not be treated as explicit user delegation intent")
+
+    parallel_result, parallel_payload = run_args("plan=a.md 병렬")
+    checks["nl_parallel_sets_explicit_delegation_intent"] = (
+        parallel_result.returncode == 0
+        and parallel_payload.get("values", {}).get("subagents") == "on"
+        and parallel_payload.get("intent", {}).get("explicit_delegation_request") is True
+        and parallel_payload.get("intent", {}).get("delegation_hint") == "병렬"
+    )
+    if not checks["nl_parallel_sets_explicit_delegation_intent"]:
+        failures.append("NL 병렬 should mark explicit delegation intent")
+
+    explicit_result, explicit_payload = run_args("plan=a.md subagents=on")
+    checks["explicit_subagents_on_sets_delegation_intent"] = (
+        explicit_result.returncode == 0
+        and explicit_payload.get("sources", {}).get("subagents") == "subagents=value"
+        and explicit_payload.get("intent", {}).get("explicit_delegation_request") is True
+        and explicit_payload.get("intent", {}).get("delegation_hint") == "subagents=on"
+    )
+    if not checks["explicit_subagents_on_sets_delegation_intent"]:
+        failures.append("explicit subagents=on should mark explicit delegation intent")
+
     result, payload = run_args("plan=a.md spec=s.md 순차")
     checks["sequential_sets_parallel_off"] = (
         result.returncode == 0
