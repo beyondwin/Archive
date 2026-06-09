@@ -383,6 +383,22 @@ def main() -> int:
     if not checks["valid_v220_context_state_passes"]:
         failures.append("valid v2.20 context-intelligence state should pass: " + (valid_v220.stderr or valid_v220.stdout))
 
+    v222 = v220_state()
+    v222["source_workspace"] = "/tmp/source"
+    v222["execution_worktree"] = v222["worktree"]
+    v222["delegation_policy"] = {
+        "requested_mode": "on",
+        "requested_source": "default",
+        "explicit_user_delegation_request": False,
+        "spawn_policy": "explicit-request-required",
+        "effective_mode": "local_fallback",
+        "reason": "spawn_agent tool policy requires explicit user delegation intent",
+    }
+    result = run_validator(script, v222)
+    checks["v222_optional_fields_pass"] = result.returncode == 0
+    if not checks["v222_optional_fields_pass"]:
+        failures.append("valid v2.22 optional fields should pass: " + (result.stderr or result.stdout))
+
     blocked_without_blocker = base_state()
     blocked_without_blocker["lifecycle_outcome"] = "blocked"
     blocked_without_blocker["completion_audit"] = None
