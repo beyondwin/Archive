@@ -127,6 +127,7 @@ def parse(args_text: str) -> dict:
 
     values: dict[str, object] = dict(DEFAULTS)
     sources: dict[str, str] = {key: "default" for key in DEFAULTS}
+    intent: dict[str, object] = {"explicit_delegation_request": False, "delegation_hint": None}
     explicit: dict[str, object] = {}
     nl: dict[str, tuple[object, str]] = {}
 
@@ -139,6 +140,9 @@ def parse(args_text: str) -> dict:
             if key in explicit and explicit[key] != value:
                 die(f"conflict for {key}: {explicit[key]} vs {value}")
             explicit[key] = value
+            if key == "subagents" and value == "on":
+                intent["explicit_delegation_request"] = True
+                intent["delegation_hint"] = "subagents=on"
             continue
 
         hint = normalize_hint(token)
@@ -150,6 +154,9 @@ def parse(args_text: str) -> dict:
         if key in nl and nl[key][0] != value:
             die(f"conflict for {key}: {nl[key][0]} vs {value}")
         nl[key] = (value, source)
+        if key == "subagents" and value == "on":
+            intent["explicit_delegation_request"] = True
+            intent["delegation_hint"] = token
 
     for key, value in explicit.items():
         if key in nl and nl[key][0] != value:
@@ -174,7 +181,7 @@ def parse(args_text: str) -> dict:
         f"manifest_fallback={values['manifest_fallback']}, "
         f"parallel={values['parallel']}."
     )
-    return {"values": values, "sources": sources, "echo": echo}
+    return {"values": values, "sources": sources, "intent": intent, "echo": echo}
 
 
 def main() -> int:
