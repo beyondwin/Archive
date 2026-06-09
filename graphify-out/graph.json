@@ -5060,7 +5060,7 @@
       "source_location": "L64",
       "_origin": "ast",
       "id": "src_types_providerrole",
-      "community": 412,
+      "community": 961,
       "norm_label": "providerrole"
     },
     {
@@ -20720,7 +20720,7 @@
       "source_location": "L73",
       "_origin": "ast",
       "id": "src_capabilities_providersupportscapabilities",
-      "community": 319,
+      "community": 412,
       "norm_label": "providersupportscapabilities()"
     },
     {
@@ -20850,7 +20850,7 @@
       "source_location": "L16",
       "_origin": "ast",
       "id": "src_claudeadapter_claudeprovideradapter_constructor",
-      "community": 412,
+      "community": 317,
       "norm_label": ".constructor()"
     },
     {
@@ -20900,7 +20900,7 @@
       "source_location": "L13",
       "_origin": "ast",
       "id": "src_codexadapter_codexprovideradapter",
-      "community": 412,
+      "community": 880,
       "norm_label": "codexprovideradapter"
     },
     {
@@ -20910,7 +20910,7 @@
       "source_location": "L16",
       "_origin": "ast",
       "id": "src_codexadapter_codexprovideradapter_constructor",
-      "community": 412,
+      "community": 880,
       "norm_label": ".constructor()"
     },
     {
@@ -20920,7 +20920,7 @@
       "source_location": "L18",
       "_origin": "ast",
       "id": "src_codexadapter_codexprovideradapter_describe",
-      "community": 412,
+      "community": 880,
       "norm_label": ".describe()"
     },
     {
@@ -21590,7 +21590,7 @@
       "source_location": "L988",
       "_origin": "ast",
       "id": "src_processadapters_stripunsupportedoptions",
-      "community": 319,
+      "community": 412,
       "norm_label": "stripunsupportedoptions()"
     },
     {
@@ -21740,7 +21740,7 @@
       "source_location": "L27",
       "_origin": "ast",
       "id": "src_types_providerprocessoptions",
-      "community": 412,
+      "community": 317,
       "norm_label": "providerprocessoptions"
     },
     {
@@ -21800,7 +21800,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "tests_acpadapter_test",
-      "community": 412,
+      "community": 319,
       "norm_label": "acpadapter.test.ts"
     },
     {
@@ -21840,7 +21840,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "tests_codexadapter_test",
-      "community": 412,
+      "community": 880,
       "norm_label": "codexadapter.test.ts"
     },
     {
@@ -34188,7 +34188,7 @@
       "source_location": "L213",
       "_origin": "ast",
       "id": "v2_28_run3_session_package_tasks",
-      "community": 1017,
+      "community": 942,
       "norm_label": "tasks"
     },
     {
@@ -34238,7 +34238,7 @@
       "source_location": "L218",
       "_origin": "ast",
       "id": "v2_28_run3_session_package_task_1_files",
-      "community": 942,
+      "community": 888,
       "norm_label": "files"
     },
     {
@@ -34848,7 +34848,7 @@
       "source_location": "L391",
       "_origin": "ast",
       "id": "v2_28_run3_session_package_task_4_files",
-      "community": 888,
+      "community": 816,
       "norm_label": "files"
     },
     {
@@ -37038,7 +37038,7 @@
       "source_location": "L684",
       "_origin": "ast",
       "id": "v2_28_run3_session_package_task_summaries_task_1",
-      "community": 942,
+      "community": 888,
       "norm_label": "task_1"
     },
     {
@@ -37048,7 +37048,7 @@
       "source_location": "L689",
       "_origin": "ast",
       "id": "v2_28_run3_session_package_task_1_exposed_apis",
-      "community": 942,
+      "community": 888,
       "norm_label": "exposed_apis"
     },
     {
@@ -37058,7 +37058,7 @@
       "source_location": "L690",
       "_origin": "ast",
       "id": "v2_28_run3_session_package_task_1_key_decision",
-      "community": 942,
+      "community": 888,
       "norm_label": "key_decision"
     },
     {
@@ -37068,7 +37068,7 @@
       "source_location": "L691",
       "_origin": "ast",
       "id": "v2_28_run3_session_package_task_1_for_next_tasks",
-      "community": 942,
+      "community": 888,
       "norm_label": "for_next_tasks"
     },
     {
@@ -37158,7 +37158,7 @@
       "source_location": "L713",
       "_origin": "ast",
       "id": "v2_28_run3_session_package_task_summaries_task_4",
-      "community": 888,
+      "community": 816,
       "norm_label": "task_4"
     },
     {
@@ -37168,7 +37168,7 @@
       "source_location": "L717",
       "_origin": "ast",
       "id": "v2_28_run3_session_package_task_4_exposed_apis",
-      "community": 888,
+      "community": 816,
       "norm_label": "exposed_apis"
     },
     {
@@ -37178,7 +37178,7 @@
       "source_location": "L720",
       "_origin": "ast",
       "id": "v2_28_run3_session_package_task_4_key_decision",
-      "community": 888,
+      "community": 816,
       "norm_label": "key_decision"
     },
     {
@@ -37188,7 +37188,7 @@
       "source_location": "L721",
       "_origin": "ast",
       "id": "v2_28_run3_session_package_task_4_for_next_tasks",
-      "community": 888,
+      "community": 816,
       "norm_label": "for_next_tasks"
     },
     {
@@ -46273,7 +46273,7 @@
       "label": "main()",
       "file_type": "code",
       "source_file": "skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py",
-      "source_location": "L107",
+      "source_location": "L109",
       "_origin": "ast",
       "id": "scripts_check_graphify_freshness_main",
       "community": 183,
@@ -48106,7 +48106,7 @@
       "source_location": "L34",
       "_origin": "ast",
       "id": "templates_headless_output_schema_properties_changed_files",
-      "community": 491,
+      "community": 569,
       "norm_label": "changed_files"
     },
     {
@@ -48116,7 +48116,7 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "templates_headless_output_schema_changed_files_type",
-      "community": 491,
+      "community": 569,
       "norm_label": "type"
     },
     {
@@ -48256,7 +48256,7 @@
       "source_location": "L59",
       "_origin": "ast",
       "id": "templates_headless_output_schema_properties_open_gaps",
-      "community": 569,
+      "community": 491,
       "norm_label": "open_gaps"
     },
     {
@@ -48266,7 +48266,7 @@
       "source_location": "L60",
       "_origin": "ast",
       "id": "templates_headless_output_schema_open_gaps_type",
-      "community": 569,
+      "community": 491,
       "norm_label": "type"
     },
     {
@@ -111188,7 +111188,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-24-waygent-full-plan-intake-hardening.md",
       "source_location": "L720",
-      "community": 929,
+      "community": 933,
       "norm_label": "code:ts (function segment()",
       "id": "plans_2026_05_24_waygent_full_plan_intake_hardening_codeblock_33"
     },
@@ -125039,7 +125039,7 @@
       "file_type": "document",
       "source_file": "AGENTS.md",
       "source_location": "L1",
-      "community": 957,
+      "community": 201,
       "norm_label": "agents.md",
       "id": "agents_md"
     },
@@ -128369,7 +128369,7 @@
       "file_type": "document",
       "source_file": "AGENTS.md",
       "source_location": "L53",
-      "community": 201,
+      "community": 1227,
       "norm_label": "active components",
       "id": "archive_agents_active_components"
     },
@@ -128378,7 +128378,7 @@
       "file_type": "document",
       "source_file": "AGENTS.md",
       "source_location": "L55",
-      "community": 201,
+      "community": 1227,
       "norm_label": "lens",
       "id": "archive_agents_lens"
     },
@@ -128387,7 +128387,7 @@
       "file_type": "document",
       "source_file": "AGENTS.md",
       "source_location": "L72",
-      "community": 201,
+      "community": 1227,
       "norm_label": "waygent runtime",
       "id": "archive_agents_waygent_runtime"
     },
@@ -128396,7 +128396,7 @@
       "file_type": "document",
       "source_file": "AGENTS.md",
       "source_location": "L86",
-      "community": 201,
+      "community": 1227,
       "norm_label": "kws executor skills",
       "id": "archive_agents_kws_executor_skills"
     },
@@ -147792,7 +147792,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L74",
-      "community": 173,
+      "community": 1268,
       "norm_label": "acceptance criteria",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_74"
     },
@@ -147801,7 +147801,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L75",
-      "community": 173,
+      "community": 1268,
       "norm_label": "code:bash (cd agentlens)",
       "id": "plan_agentlens_v0_tasks_codeblock_2"
     },
@@ -147927,7 +147927,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L211",
-      "community": 1227,
+      "community": 173,
       "norm_label": "phase 3: m2 evaluator hardening",
       "id": "plan_agentlens_v0_tasks_phase_3_m2_evaluator_hardening"
     },
@@ -147936,7 +147936,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L213",
-      "community": 1227,
+      "community": 173,
       "norm_label": "task 6: m2 failure taxonomy + 12 deterministic checks",
       "id": "plan_agentlens_v0_tasks_task_6_m2_failure_taxonomy_12_deterministic_checks"
     },
@@ -148305,7 +148305,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L543",
-      "community": 1255,
+      "community": 173,
       "norm_label": "acceptance criteria",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_543"
     },
@@ -148314,7 +148314,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L544",
-      "community": 1255,
+      "community": 173,
       "norm_label": "code:bash (cd agentlens)",
       "id": "plan_agentlens_v0_tasks_codeblock_19"
     },
@@ -148395,7 +148395,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L607",
-      "community": 173,
+      "community": 1255,
       "norm_label": "acceptance criteria",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_607"
     },
@@ -148404,7 +148404,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L608",
-      "community": 173,
+      "community": 1255,
       "norm_label": "code:bash (cd agentlens)",
       "id": "plan_agentlens_v0_tasks_codeblock_22"
     },
@@ -153975,7 +153975,7 @@
       "file_type": "document",
       "source_file": "AGENTS.md",
       "source_location": "L47",
-      "community": 201,
+      "community": 1227,
       "norm_label": "agentlens",
       "id": "archive_agents_agentlens"
     },
@@ -242677,9 +242677,9 @@
       "source_file": "skills/kws-claude-multi-agent-executor/docs/experiments/v2.19-token-cost-optimization/scripts/run_ablation.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_run_ablation",
-      "target": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_docs_experiments_v2_19_token_cost_optimization_scripts_run_ablation_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_docs_experiments_v2_19_token_cost_optimization_scripts_run_ablation_sh__entry"
     },
     {
       "relation": "calls",
@@ -242688,9 +242688,9 @@
       "source_location": "L89",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_docs_experiments_v2_19_token_cost_optimization_scripts_run_ablation_sh__entry",
-      "target": "scripts_run_ablation_run_one_fixture",
-      "confidence_score": 1.0
+      "target": "scripts_run_ablation_run_one_fixture"
     },
     {
       "relation": "calls",
@@ -242699,9 +242699,9 @@
       "source_location": "L50",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_docs_experiments_v2_19_token_cost_optimization_scripts_run_ablation_sh__entry",
-      "target": "scripts_run_ablation_usage",
-      "confidence_score": 1.0
+      "target": "scripts_run_ablation_usage"
     },
     {
       "relation": "defines",
@@ -246985,9 +246985,9 @@
       "source_file": "skills/kws-claude-multi-agent-executor/evals/plan-reviewer-rubric/run.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "plan_reviewer_rubric_run",
-      "target": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_evals_plan_reviewer_rubric_run_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_evals_plan_reviewer_rubric_run_sh__entry"
     },
     {
       "relation": "defines",
@@ -247357,9 +247357,9 @@
       "source_file": "skills/kws-claude-multi-agent-executor/evals/run.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_evals_run_sh_evals_run",
-      "target": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_evals_run_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_evals_run_sh__entry"
     },
     {
       "relation": "calls",
@@ -247368,9 +247368,9 @@
       "source_location": "L333",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_evals_run_sh__entry",
-      "target": "evals_run_run_one_fixture",
-      "confidence_score": 1.0
+      "target": "evals_run_run_one_fixture"
     },
     {
       "relation": "defines",
@@ -247513,9 +247513,9 @@
       "source_file": "skills/kws-claude-multi-agent-executor/evals/transition-merge/run.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "transition_merge_run",
-      "target": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_evals_transition_merge_run_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_evals_transition_merge_run_sh__entry"
     },
     {
       "relation": "defines",
@@ -264185,9 +264185,9 @@
       "source_file": "skills/kws-claude-multi-agent-executor/scripts/query_run.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_query_run",
-      "target": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry"
     },
     {
       "relation": "calls",
@@ -264196,9 +264196,9 @@
       "source_location": "L350",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry",
-      "target": "scripts_query_run_cmd_find",
-      "confidence_score": 1.0
+      "target": "scripts_query_run_cmd_find"
     },
     {
       "relation": "calls",
@@ -264207,9 +264207,9 @@
       "source_location": "L347",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry",
-      "target": "scripts_query_run_cmd_last",
-      "confidence_score": 1.0
+      "target": "scripts_query_run_cmd_last"
     },
     {
       "relation": "calls",
@@ -264218,9 +264218,9 @@
       "source_location": "L344",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry",
-      "target": "scripts_query_run_cmd_list_runs",
-      "confidence_score": 1.0
+      "target": "scripts_query_run_cmd_list_runs"
     },
     {
       "relation": "calls",
@@ -264229,9 +264229,9 @@
       "source_location": "L323",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry",
-      "target": "scripts_query_run_outcome_for",
-      "confidence_score": 1.0
+      "target": "scripts_query_run_outcome_for"
     },
     {
       "relation": "calls",
@@ -264240,9 +264240,9 @@
       "source_location": "L330",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry",
-      "target": "scripts_query_run_run_subcmd_on_dir",
-      "confidence_score": 1.0
+      "target": "scripts_query_run_run_subcmd_on_dir"
     },
     {
       "relation": "calls",
@@ -264251,9 +264251,9 @@
       "source_location": "L289",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_run_sh__entry",
-      "target": "scripts_query_run_usage",
-      "confidence_score": 1.0
+      "target": "scripts_query_run_usage"
     },
     {
       "relation": "defines",
@@ -265061,9 +265061,9 @@
       "source_file": "skills/kws-claude-multi-agent-executor/scripts/query_state.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_query_state",
-      "target": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry"
     },
     {
       "relation": "calls",
@@ -265072,9 +265072,9 @@
       "source_location": "L281",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_cost",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_cost"
     },
     {
       "relation": "calls",
@@ -265083,9 +265083,9 @@
       "source_location": "L279",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_current",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_current"
     },
     {
       "relation": "calls",
@@ -265094,9 +265094,9 @@
       "source_location": "L285",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_eta",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_eta"
     },
     {
       "relation": "calls",
@@ -265105,9 +265105,9 @@
       "source_location": "L286",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_failures",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_failures"
     },
     {
       "relation": "calls",
@@ -265116,9 +265116,9 @@
       "source_location": "L280",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_progress",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_progress"
     },
     {
       "relation": "calls",
@@ -265127,9 +265127,9 @@
       "source_location": "L284",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_quality",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_quality"
     },
     {
       "relation": "calls",
@@ -265138,9 +265138,9 @@
       "source_location": "L283",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_tier_dist",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_tier_dist"
     },
     {
       "relation": "calls",
@@ -265149,9 +265149,9 @@
       "source_location": "L282",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_qs_warn",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_qs_warn"
     },
     {
       "relation": "calls",
@@ -265160,9 +265160,9 @@
       "source_location": "L83",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_query_state_sh__entry",
-      "target": "scripts_query_state_usage",
-      "confidence_score": 1.0
+      "target": "scripts_query_state_usage"
     },
     {
       "relation": "defines",
@@ -273661,9 +273661,9 @@
       "source_file": "skills/kws-claude-multi-agent-executor/scripts/test_query_state.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_test_query_state",
-      "target": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_test_query_state_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_test_query_state_sh__entry"
     },
     {
       "relation": "calls",
@@ -273672,9 +273672,9 @@
       "source_location": "L72",
       "weight": 1.0,
       "context": "call",
+      "confidence_score": 1.0,
       "source": "users_kws_source_private_archive_skills_kws_claude_multi_agent_executor_scripts_test_query_state_sh__entry",
-      "target": "scripts_test_query_state_assert_eq",
-      "confidence_score": 1.0
+      "target": "scripts_test_query_state_assert_eq"
     },
     {
       "relation": "defines",
@@ -281826,9 +281826,9 @@
       "source_file": "skills/kws-codex-plan-executor/evals/run.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "skills_kws_codex_plan_executor_evals_run_sh_evals_run",
-      "target": "users_kws_source_private_archive_skills_kws_codex_plan_executor_evals_run_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_source_private_archive_skills_kws_codex_plan_executor_evals_run_sh__entry"
     },
     {
       "relation": "imports_from",
@@ -284828,9 +284828,9 @@
       "source_file": "skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py",
       "source_location": "L33",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_check_graphify_freshness",
-      "target": "scripts_check_graphify_freshness_graph_only_changes_since",
-      "confidence_score": 1.0
+      "target": "scripts_check_graphify_freshness_graph_only_changes_since"
     },
     {
       "relation": "contains",
@@ -284966,9 +284966,9 @@
       "source_file": "skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py",
       "source_location": "L33",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_check_graphify_freshness_graph_only_changes_since",
-      "target": "skills_kws_codex_plan_executor_scripts_check_graphify_freshness_py_path",
-      "confidence_score": 1.0
+      "target": "skills_kws_codex_plan_executor_scripts_check_graphify_freshness_py_path"
     },
     {
       "relation": "references",
@@ -285063,9 +285063,9 @@
       "source_file": "skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py",
       "source_location": "L79",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "scripts_check_graphify_freshness_check",
-      "target": "scripts_check_graphify_freshness_graph_only_changes_since",
-      "confidence_score": 1.0
+      "target": "scripts_check_graphify_freshness_graph_only_changes_since"
     },
     {
       "relation": "references",
@@ -293101,9 +293101,9 @@
       "source_file": "skills/waygent/evals/run.sh",
       "source_location": "L1",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "skills_waygent_evals_run_sh_evals_run",
-      "target": "users_kws_source_private_archive_skills_waygent_evals_run_sh__entry",
-      "confidence_score": 1.0
+      "target": "users_kws_source_private_archive_skills_waygent_evals_run_sh__entry"
     },
     {
       "relation": "contains",
@@ -368512,9 +368512,9 @@
       "source_file": "skills/kws-codex-plan-executor/docs/verification-log.md",
       "source_location": "L90",
       "weight": 1.0,
+      "confidence_score": 1.0,
       "source": "docs_verification_log_verification_log",
-      "target": "docs_verification_log_2026_06_10",
-      "confidence_score": 1.0
+      "target": "docs_verification_log_2026_06_10"
     },
     {
       "relation": "contains",
@@ -407244,5 +407244,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "4cab9bf3983778104bea2b1a73c048d892d96481"
+  "built_at_commit": "e99827825ceb2dd63fed26a2727827e2e40d1cb1"
 }
