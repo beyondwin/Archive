@@ -68,6 +68,22 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="cpe-graphify-") as temp:
         repo = Path(temp)
+        head = init_repo(repo)
+        write_report(repo, head)
+        subprocess.run(["git", "add", "graphify-out/GRAPH_REPORT.md"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "commit graphify output"], cwd=repo, check=True)
+        result, data = run_check(repo, "--update-ran")
+        checks["graph_only_commit_after_update_is_fresh"] = (
+            result.returncode == 0
+            and data.get("fresh") is True
+            and data.get("update_required") is False
+            and data.get("update_evidence", {}).get("graph_only_commit_after_update") is True
+        )
+        if not checks["graph_only_commit_after_update_is_fresh"]:
+            failures.append("graphify-only commits after update should remain fresh for source corpus")
+
+    with tempfile.TemporaryDirectory(prefix="cpe-graphify-") as temp:
+        repo = Path(temp)
         init_repo(repo)
         result, data = run_check(repo)
         checks["missing_report_classified"] = (
