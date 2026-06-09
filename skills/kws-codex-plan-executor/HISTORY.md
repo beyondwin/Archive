@@ -1,5 +1,22 @@
 # History
 
+## 2.22.0 - 2026-06-09
+
+- Added explicit delegation intent parsing so default `subagents=on` is not
+  confused with a user delegation request.
+- Added deterministic dispatch policy fallback evidence for spawn policies that
+  require explicit user delegation intent.
+- Expanded local environment preflight with package-manager bootstrap
+  suggestions and environment capability detection.
+- Added optional v2.22 state validation for `execution_worktree`,
+  `command_cwd_evidence`, `delegation_policy`, `preflight_bootstrap`, and
+  `run_quality`.
+- Extended run inspection with all-plan recent quality reports, stale-run
+  summaries, validation drift, JSONL output, and delegation/local-fallback
+  counters.
+- Updated static execution fixtures and eval coverage to emit operational run
+  quality fields.
+
 ## 2.21.0 - 2026-05-31
 
 - Tightened state validation so finished runs must record a concrete

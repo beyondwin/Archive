@@ -23,6 +23,7 @@ python3 evals/check_preflight_dispatch.py
 python3 evals/check_recovery_policy.py
 python3 evals/check_trajectory_projection.py
 python3 evals/check_progress_ledger.py
+python3 evals/check_operational_run_quality.py
 python3 -m py_compile scripts/*.py evals/*.py
 bash -n evals/run.sh
 ```
@@ -39,3 +40,7 @@ pre-dispatch decisions.
 The quality-loop evals also cover task packet component accounting, filtered
 decision context, structured blocker/failure state, recovery policy decisions,
 trajectory JSONL projection, and progress ledger stall detection.
+
+`check_operational_run_quality.py` covers v2.22 optional state fields,
+delegation policy enums, execution-worktree provenance, static fixture emission
+of run-quality fields, and recent inspection summary behavior.

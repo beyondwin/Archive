@@ -4,7 +4,7 @@
 write-capable task and delegate when every prerequisite passes.
 
 1. Run the deterministic preflight decision:
-   `python3 scripts/preflight_dispatch.py --state "$STATE_PATH" --task-id "$TASK_ID" --task-packet "$CURRENT_TASK_PACKET_PATH" --repo-root "$WORKTREE_ABS" --write-scope "$WRITE_SCOPE" --output "$RUN_DIR/dispatch-$TASK_ID.json"`.
+   `python3 scripts/preflight_dispatch.py --state "$STATE_PATH" --task-id "$TASK_ID" --task-packet "$CURRENT_TASK_PACKET_PATH" --repo-root "$WORKTREE_ABS" --write-scope "$WRITE_SCOPE" --spawn-policy "$SPAWN_POLICY" --explicit-delegation-requested "$EXPLICIT_DELEGATION_REQUESTED" --requested-subagents "$REQUESTED_SUBAGENTS" --requested-source "$REQUESTED_SOURCE" --output "$RUN_DIR/dispatch-$TASK_ID.json"`.
 2. Confirm the resolved invocation has `subagents=on`, or has
    `subagents=auto` plus an explicit user request for subagents, delegation, or
    parallel work.
@@ -27,3 +27,11 @@ recording `subagent_strategy.mode = local_fallback` on the task with the exact
 failed prerequisite or safety reason. If delegation succeeds, record
 `subagent_strategy.mode = delegated` with the accepted `subagent_runs` ids.
 Finished state cannot carry unresolved `dispatch_decisions[].decision = block`.
+
+`--spawn-policy` is `available`, `unavailable`, `explicit-request-required`, or
+`unknown`. `--requested-source` is `default`, `explicit`, `natural_language`, or
+`resume_state`. When the spawn policy is `explicit-request-required` and the
+invocation did not carry explicit delegation intent, the decision is
+`local_fallback` with failed prerequisite
+`spawn_policy_requires_explicit_user_request`. That is a policy fallback, not a
+task failure.

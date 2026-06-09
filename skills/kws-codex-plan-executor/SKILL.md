@@ -2,8 +2,8 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "2.21.0"
-  updated_at: "2026-05-31"
+  version: "2.22.0"
+  updated_at: "2026-06-09"
 ---
 
 # KWS Codex Plan Executor
@@ -143,6 +143,15 @@ post-diff and state review before accepting subagent output.
 - Command observations classify bounded command evidence before root cause is
   assigned. Finished runs with `category=unknown` observations must mention the
   command in `completion_audit.residual_risk`.
+- New execution runs record effective delegation policy in `delegation_policy`;
+  policy fallback is deterministic evidence, not handwritten rationale.
+- Local environment preflight records detection-only `preflight_bootstrap`
+  suggestions and `environment_capabilities`; bootstrap commands are never run
+  automatically.
+- Prefer `execution_worktree` for edit and command provenance when present.
+  `workspace` remains backward-compatible metadata for older state.
+- Read-only run inspection may compute `run_quality` for recent or stale runs
+  without mutating state. Finished v2.22 states may embed the same summary.
 - Prompt-generating artifacts follow `references/cache-strategy.md`. The
   stable prefix role, safety, required-skill, and output-schema content stays before
   the stable-prefix boundary; run-specific paths, task packets, timestamps, git
