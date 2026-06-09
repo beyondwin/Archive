@@ -86,3 +86,35 @@ Result:
 - Graphify update: pass; `graphify-out/GRAPH_REPORT.md` and `graph.json`
   refreshed with `Built from commit: b094e729`.
 - Graphify freshness audit: pass with `fresh=true` and no errors.
+
+## 2026-06-10
+
+Scope:
+
+- v2.22.0 operational run quality: explicit delegation intent, deterministic
+  delegation policy fallback, local bootstrap suggestions, optional v2.22 state
+  validation, recent run-quality inspection, and static fixture state emission.
+
+Commands:
+
+```bash
+bash evals/run.sh
+python3 -m py_compile scripts/*.py evals/*.py
+bash -n evals/run.sh
+python3 scripts/inspect_runs.py --codex-home ~/.codex --all-plans --recent 10 --validate-state --quality-report
+graphify update .
+python3 skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py --repo-root /Users/kws/.codex/worktrees/v2-22-operational-run-quality-20260610-001259 --update-ran --output /Users/kws/.codex/orchestrator/v2-22-operational-run-quality-20260610-001259/graphify_audit_final.json
+git diff --check
+```
+
+Result:
+
+- Full deterministic fixture harness: pass; `evals/baselines/v2.22.0.json`
+  written with all fixtures passed.
+- Python compile and shell syntax: pass.
+- Recent run-quality smoke: pass; `summary.total=10`, `finished=9`,
+  `non_terminal=1`.
+- Graphify update: pass; `graphify-out/GRAPH_REPORT.md` and `graph.json`
+  refreshed with `Built from commit: 52645b58`.
+- Graphify freshness audit: pass with `fresh=true` and no errors.
+- Diff whitespace check: pass.
