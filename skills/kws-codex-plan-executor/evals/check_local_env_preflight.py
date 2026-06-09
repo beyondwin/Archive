@@ -74,6 +74,28 @@ def main() -> int:
             failures.append("package-lock newer than node_modules marker should emit dependencies_likely_stale")
 
     with tempfile.TemporaryDirectory(prefix="codex-preflight-") as temp:
+        repo = Path(temp) / "stale-pnpm"
+        repo.mkdir()
+        init_repo(repo)
+        touch(repo / "package.json", -20)
+        touch(repo / "pnpm-lock.yaml", 20)
+        touch(repo / "node_modules/.modules.yaml", -20)
+        result, data = run_preflight(repo)
+        warnings = data.get("warnings", [])
+        checks["stale_pnpm_dependencies"] = (
+            result.returncode == 0
+            and any(item.get("kind") == "dependencies_likely_stale" and item.get("lockfile") == "pnpm-lock.yaml" for item in warnings)
+            and any(item.get("command") == "pnpm install --frozen-lockfile" for item in data.get("bootstrap_plan", []))
+        )
+        if not checks["stale_pnpm_dependencies"]:
+            failures.append("pnpm-lock newer than node_modules/.modules.yaml should emit pnpm bootstrap plan")
+
+        capabilities = data.get("environment_capabilities", {})
+        checks["capabilities_object_present"] = isinstance(capabilities, dict) and "pnpm" in capabilities and "agentlens" in capabilities
+        if not checks["capabilities_object_present"]:
+            failures.append("preflight should include environment_capabilities with pnpm and agentlens keys")
+
+    with tempfile.TemporaryDirectory(prefix="codex-preflight-") as temp:
         repo = Path(temp) / "clean"
         repo.mkdir()
         init_repo(repo)
