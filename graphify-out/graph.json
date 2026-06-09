@@ -5060,7 +5060,7 @@
       "source_location": "L64",
       "_origin": "ast",
       "id": "src_types_providerrole",
-      "community": 961,
+      "community": 412,
       "norm_label": "providerrole"
     },
     {
@@ -12270,7 +12270,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_executiondependencybarrier",
-      "community": 981,
+      "community": 1018,
       "norm_label": "executiondependencybarrier.ts"
     },
     {
@@ -12280,7 +12280,7 @@
       "source_location": "L3",
       "_origin": "ast",
       "id": "src_executiondependencybarrier_executiondependencybarrier",
-      "community": 981,
+      "community": 1018,
       "norm_label": "executiondependencybarrier"
     },
     {
@@ -12290,7 +12290,7 @@
       "source_location": "L10",
       "_origin": "ast",
       "id": "src_executiondependencybarrier_executiondependencybarrierresult",
-      "community": 981,
+      "community": 1018,
       "norm_label": "executiondependencybarrierresult"
     },
     {
@@ -12300,7 +12300,7 @@
       "source_location": "L15",
       "_origin": "ast",
       "id": "src_executiondependencybarrier_applyexecutiondependencybarriers",
-      "community": 981,
+      "community": 1018,
       "norm_label": "applyexecutiondependencybarriers()"
     },
     {
@@ -12310,7 +12310,7 @@
       "source_location": "L37",
       "_origin": "ast",
       "id": "src_executiondependencybarrier_hasbroadgradleverification",
-      "community": 981,
+      "community": 1018,
       "norm_label": "hasbroadgradleverification()"
     },
     {
@@ -12320,7 +12320,7 @@
       "source_location": "L49",
       "_origin": "ast",
       "id": "src_executiondependencybarrier_claimedmodules",
-      "community": 981,
+      "community": 1018,
       "norm_label": "claimedmodules()"
     },
     {
@@ -15530,7 +15530,7 @@
       "source_location": "L25",
       "_origin": "ast",
       "id": "src_planparser_parsedwaygentplan",
-      "community": 981,
+      "community": 1018,
       "norm_label": "parsedwaygentplan"
     },
     {
@@ -15990,7 +15990,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_repairdispatch",
-      "community": 321,
+      "community": 117,
       "norm_label": "repairdispatch.ts"
     },
     {
@@ -16000,7 +16000,7 @@
       "source_location": "L5",
       "_origin": "ast",
       "id": "src_repairdispatch_preparerepairworktreeinput",
-      "community": 321,
+      "community": 117,
       "norm_label": "preparerepairworktreeinput"
     },
     {
@@ -16010,7 +16010,7 @@
       "source_location": "L12",
       "_origin": "ast",
       "id": "src_repairdispatch_preparerepairworktreeresult",
-      "community": 321,
+      "community": 117,
       "norm_label": "preparerepairworktreeresult"
     },
     {
@@ -19070,7 +19070,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "tests_executiondependencybarrier_test",
-      "community": 981,
+      "community": 1018,
       "norm_label": "executiondependencybarrier.test.ts"
     },
     {
@@ -19080,7 +19080,7 @@
       "source_location": "L5",
       "_origin": "ast",
       "id": "tests_executiondependencybarrier_test_plan",
-      "community": 981,
+      "community": 1018,
       "norm_label": "plan"
     },
     {
@@ -19630,7 +19630,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "tests_repairdispatch_test",
-      "community": 321,
+      "community": 117,
       "norm_label": "repairdispatch.test.ts"
     },
     {
@@ -19640,7 +19640,7 @@
       "source_location": "L8",
       "_origin": "ast",
       "id": "tests_repairdispatch_test_makerepowithpatchartifact",
-      "community": 321,
+      "community": 117,
       "norm_label": "makerepowithpatchartifact()"
     },
     {
@@ -20650,7 +20650,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_capabilities",
-      "community": 412,
+      "community": 321,
       "norm_label": "capabilities.ts"
     },
     {
@@ -20660,7 +20660,7 @@
       "source_location": "L3",
       "_origin": "ast",
       "id": "src_capabilities_providersupports",
-      "community": 412,
+      "community": 321,
       "norm_label": "providersupports"
     },
     {
@@ -20670,7 +20670,7 @@
       "source_location": "L11",
       "_origin": "ast",
       "id": "src_capabilities_providercapabilitymanifest",
-      "community": 412,
+      "community": 321,
       "norm_label": "providercapabilitymanifest"
     },
     {
@@ -20680,7 +20680,7 @@
       "source_location": "L21",
       "_origin": "ast",
       "id": "src_capabilities_fakecapabilitymanifest",
-      "community": 412,
+      "community": 321,
       "norm_label": "fakecapabilitymanifest"
     },
     {
@@ -20690,7 +20690,7 @@
       "source_location": "L34",
       "_origin": "ast",
       "id": "src_capabilities_codexcapabilitymanifest",
-      "community": 412,
+      "community": 321,
       "norm_label": "codexcapabilitymanifest"
     },
     {
@@ -20700,7 +20700,7 @@
       "source_location": "L47",
       "_origin": "ast",
       "id": "src_capabilities_claudecapabilitymanifest",
-      "community": 412,
+      "community": 321,
       "norm_label": "claudecapabilitymanifest"
     },
     {
@@ -20710,7 +20710,7 @@
       "source_location": "L60",
       "_origin": "ast",
       "id": "src_capabilities_acpcapabilitymanifest",
-      "community": 412,
+      "community": 321,
       "norm_label": "acpcapabilitymanifest"
     },
     {
@@ -20720,7 +20720,7 @@
       "source_location": "L73",
       "_origin": "ast",
       "id": "src_capabilities_providersupportscapabilities",
-      "community": 412,
+      "community": 321,
       "norm_label": "providersupportscapabilities()"
     },
     {
@@ -20730,7 +20730,7 @@
       "source_location": "L80",
       "_origin": "ast",
       "id": "src_capabilities_assertcapabilities",
-      "community": 412,
+      "community": 321,
       "norm_label": "assertcapabilities()"
     },
     {
@@ -20850,7 +20850,7 @@
       "source_location": "L16",
       "_origin": "ast",
       "id": "src_claudeadapter_claudeprovideradapter_constructor",
-      "community": 317,
+      "community": 412,
       "norm_label": ".constructor()"
     },
     {
@@ -20900,7 +20900,7 @@
       "source_location": "L13",
       "_origin": "ast",
       "id": "src_codexadapter_codexprovideradapter",
-      "community": 880,
+      "community": 412,
       "norm_label": "codexprovideradapter"
     },
     {
@@ -20910,7 +20910,7 @@
       "source_location": "L16",
       "_origin": "ast",
       "id": "src_codexadapter_codexprovideradapter_constructor",
-      "community": 880,
+      "community": 412,
       "norm_label": ".constructor()"
     },
     {
@@ -20920,7 +20920,7 @@
       "source_location": "L18",
       "_origin": "ast",
       "id": "src_codexadapter_codexprovideradapter_describe",
-      "community": 880,
+      "community": 412,
       "norm_label": ".describe()"
     },
     {
@@ -20940,7 +20940,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "src_fakeprovider",
-      "community": 412,
+      "community": 321,
       "norm_label": "fakeprovider.ts"
     },
     {
@@ -20950,7 +20950,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "src_fakeprovider_fakeprovideradapter",
-      "community": 412,
+      "community": 321,
       "norm_label": "fakeprovideradapter"
     },
     {
@@ -20960,7 +20960,7 @@
       "source_location": "L9",
       "_origin": "ast",
       "id": "src_fakeprovider_fakeprovideradapter_describe",
-      "community": 412,
+      "community": 321,
       "norm_label": ".describe()"
     },
     {
@@ -20980,7 +20980,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_provider_adapters_src_index_ts_src_index",
-      "community": 412,
+      "community": 321,
       "norm_label": "index.ts"
     },
     {
@@ -21590,7 +21590,7 @@
       "source_location": "L988",
       "_origin": "ast",
       "id": "src_processadapters_stripunsupportedoptions",
-      "community": 412,
+      "community": 321,
       "norm_label": "stripunsupportedoptions()"
     },
     {
@@ -21740,7 +21740,7 @@
       "source_location": "L27",
       "_origin": "ast",
       "id": "src_types_providerprocessoptions",
-      "community": 317,
+      "community": 412,
       "norm_label": "providerprocessoptions"
     },
     {
@@ -21800,7 +21800,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "tests_acpadapter_test",
-      "community": 319,
+      "community": 321,
       "norm_label": "acpadapter.test.ts"
     },
     {
@@ -21810,7 +21810,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "tests_capabilities_test",
-      "community": 412,
+      "community": 321,
       "norm_label": "capabilities.test.ts"
     },
     {
@@ -21840,7 +21840,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "tests_codexadapter_test",
-      "community": 880,
+      "community": 412,
       "norm_label": "codexadapter.test.ts"
     },
     {
@@ -21890,7 +21890,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "tests_fakeprovider_test",
-      "community": 412,
+      "community": 321,
       "norm_label": "fakeprovider.test.ts"
     },
     {
@@ -21900,7 +21900,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "tests_manifest_test",
-      "community": 412,
+      "community": 321,
       "norm_label": "manifest.test.ts"
     },
     {
@@ -21920,7 +21920,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "tests_modelattestation_test",
-      "community": 412,
+      "community": 321,
       "norm_label": "modelattestation.test.ts"
     },
     {
@@ -66124,7 +66124,7 @@
       "source_location": "L589",
       "_origin": "ast",
       "id": "specs_2026_05_22_waygent_fixture_lab_detailed_spec_8_m09_runidderivation_ts_new",
-      "community": 772,
+      "community": 1255,
       "norm_label": "8. m09 \u2014 `runidderivation.ts` (new)"
     },
     {
@@ -66134,7 +66134,7 @@
       "source_location": "L591",
       "_origin": "ast",
       "id": "specs_2026_05_22_waygent_fixture_lab_detailed_spec_8_1_public_api",
-      "community": 772,
+      "community": 1255,
       "norm_label": "8.1 public api"
     },
     {
@@ -66144,7 +66144,7 @@
       "source_location": "L632",
       "_origin": "ast",
       "id": "specs_2026_05_22_waygent_fixture_lab_detailed_spec_9_m10_taskexecutor_ts_modified",
-      "community": 1043,
+      "community": 772,
       "norm_label": "9. m10 \u2014 `taskexecutor.ts` (modified)"
     },
     {
@@ -66154,7 +66154,7 @@
       "source_location": "L634",
       "_origin": "ast",
       "id": "specs_2026_05_22_waygent_fixture_lab_detailed_spec_9_1_retry_loop_integration",
-      "community": 1043,
+      "community": 772,
       "norm_label": "9.1 retry-loop integration"
     },
     {
@@ -96511,7 +96511,7 @@
       "label": "Failure, Recovery, And Progress",
       "file_type": "document",
       "source_file": "skills/kws-codex-plan-executor/docs/state-and-logging.md",
-      "source_location": "L79",
+      "source_location": "L81",
       "_origin": "ast",
       "id": "docs_state_and_logging_failure_recovery_and_progress",
       "community": 852,
@@ -111188,7 +111188,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/plans/2026-05-24-waygent-full-plan-intake-hardening.md",
       "source_location": "L720",
-      "community": 933,
+      "community": 929,
       "norm_label": "code:ts (function segment()",
       "id": "plans_2026_05_24_waygent_full_plan_intake_hardening_codeblock_33"
     },
@@ -114914,7 +114914,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-05-22-waygent-fixture-lab-detailed-spec.md",
       "source_location": "L593",
-      "community": 772,
+      "community": 1255,
       "norm_label": "code:ts (/**)",
       "id": "specs_2026_05_22_waygent_fixture_lab_detailed_spec_codeblock_23"
     },
@@ -114923,7 +114923,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-05-22-waygent-fixture-lab-detailed-spec.md",
       "source_location": "L615",
-      "community": 772,
+      "community": 1255,
       "norm_label": "code:block24 ((\"plans/2026-05-20-trustworthy-source-matching-local-fixture)",
       "id": "specs_2026_05_22_waygent_fixture_lab_detailed_spec_codeblock_24"
     },
@@ -114932,7 +114932,7 @@
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-05-22-waygent-fixture-lab-detailed-spec.md",
       "source_location": "L638",
-      "community": 1043,
+      "community": 772,
       "norm_label": "code:block25 (attempts: attemptrecord[] = [])",
       "id": "specs_2026_05_22_waygent_fixture_lab_detailed_spec_codeblock_25"
     },
@@ -121052,7 +121052,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/tests/modelAttestation.test.ts",
       "source_location": "L1",
-      "community": 412,
+      "community": 321,
       "norm_label": "modelattestation.test.ts",
       "id": "packages_provider_adapters_tests_modelattestation_test_ts"
     },
@@ -121061,7 +121061,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/tests/manifest.test.ts",
       "source_location": "L1",
-      "community": 412,
+      "community": 321,
       "norm_label": "manifest.test.ts",
       "id": "packages_provider_adapters_tests_manifest_test_ts"
     },
@@ -121079,7 +121079,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/tests/capabilities.test.ts",
       "source_location": "L1",
-      "community": 412,
+      "community": 321,
       "norm_label": "capabilities.test.ts",
       "id": "packages_provider_adapters_tests_capabilities_test_ts"
     },
@@ -121133,7 +121133,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/tests/fakeProvider.test.ts",
       "source_location": "L1",
-      "community": 412,
+      "community": 321,
       "norm_label": "fakeprovider.test.ts",
       "id": "packages_provider_adapters_tests_fakeprovider_test_ts"
     },
@@ -121205,7 +121205,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/tests/acpAdapter.test.ts",
       "source_location": "L1",
-      "community": 412,
+      "community": 321,
       "norm_label": "acpadapter.test.ts",
       "id": "packages_provider_adapters_tests_acpadapter_test_ts"
     },
@@ -121241,7 +121241,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/src/capabilities.ts",
       "source_location": "L1",
-      "community": 412,
+      "community": 321,
       "norm_label": "capabilities.ts",
       "id": "packages_provider_adapters_src_capabilities_ts"
     },
@@ -121277,7 +121277,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/src/index.ts",
       "source_location": "L1",
-      "community": 412,
+      "community": 321,
       "norm_label": "index.ts",
       "id": "packages_provider_adapters_src_index_ts"
     },
@@ -122447,7 +122447,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/repairDispatch.test.ts",
       "source_location": "L1",
-      "community": 321,
+      "community": 117,
       "norm_label": "repairdispatch.test.ts",
       "id": "packages_orchestrator_tests_repairdispatch_test_ts"
     },
@@ -122510,7 +122510,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/taskExecutor.test.ts",
       "source_location": "L1",
-      "community": 1018,
+      "community": 981,
       "norm_label": "taskexecutor.test.ts",
       "id": "packages_orchestrator_tests_taskexecutor_test_ts"
     },
@@ -122609,7 +122609,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/executionDependencyBarrier.test.ts",
       "source_location": "L1",
-      "community": 981,
+      "community": 1018,
       "norm_label": "executiondependencybarrier.test.ts",
       "id": "packages_orchestrator_tests_executiondependencybarrier_test_ts"
     },
@@ -123122,7 +123122,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/src/repairDispatch.ts",
       "source_location": "L1",
-      "community": 321,
+      "community": 117,
       "norm_label": "repairdispatch.ts",
       "id": "packages_orchestrator_src_repairdispatch_ts"
     },
@@ -123212,7 +123212,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/src/executionDependencyBarrier.ts",
       "source_location": "L1",
-      "community": 981,
+      "community": 1018,
       "norm_label": "executiondependencybarrier.ts",
       "id": "packages_orchestrator_src_executiondependencybarrier_ts"
     },
@@ -130323,7 +130323,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/tests/modelAttestation.test.ts",
       "source_location": "L17",
-      "community": 412,
+      "community": 321,
       "norm_label": "result",
       "id": "tests_modelattestation_test_result"
     },
@@ -130332,7 +130332,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/tests/manifest.test.ts",
       "source_location": "L49",
-      "community": 412,
+      "community": 321,
       "norm_label": "supportskeys",
       "id": "tests_manifest_test_supportskeys"
     },
@@ -130800,7 +130800,7 @@
       "file_type": "code",
       "source_file": "packages/provider-adapters/tests/acpAdapter.test.ts",
       "source_location": "L6",
-      "community": 412,
+      "community": 321,
       "norm_label": "result",
       "id": "tests_acpadapter_test_result"
     },
@@ -132645,7 +132645,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/repairDispatch.test.ts",
       "source_location": "L29",
-      "community": 321,
+      "community": 117,
       "norm_label": "{ root, patchpath }",
       "id": "tests_repairdispatch_test_root_patchpath"
     },
@@ -132654,7 +132654,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/repairDispatch.test.ts",
       "source_location": "L30",
-      "community": 321,
+      "community": 117,
       "norm_label": "dest",
       "id": "tests_repairdispatch_test_dest"
     },
@@ -132663,7 +132663,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/repairDispatch.test.ts",
       "source_location": "L32",
-      "community": 321,
+      "community": 117,
       "norm_label": "result",
       "id": "tests_repairdispatch_test_result"
     },
@@ -132672,7 +132672,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/repairDispatch.test.ts",
       "source_location": "L48",
-      "community": 321,
+      "community": 117,
       "norm_label": "{ root }",
       "id": "tests_repairdispatch_test_root"
     },
@@ -132681,7 +132681,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/repairDispatch.test.ts",
       "source_location": "L50",
-      "community": 321,
+      "community": 117,
       "norm_label": "bogus",
       "id": "tests_repairdispatch_test_bogus"
     },
@@ -132852,7 +132852,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/taskExecutor.test.ts",
       "source_location": "L11",
-      "community": 1018,
+      "community": 981,
       "norm_label": "workspace",
       "id": "tests_taskexecutor_test_workspace"
     },
@@ -132861,7 +132861,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/taskExecutor.test.ts",
       "source_location": "L12",
-      "community": 1018,
+      "community": 981,
       "norm_label": "root",
       "id": "tests_taskexecutor_test_root"
     },
@@ -132870,7 +132870,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/taskExecutor.test.ts",
       "source_location": "L13",
-      "community": 1018,
+      "community": 981,
       "norm_label": "parsed",
       "id": "tests_taskexecutor_test_parsed"
     },
@@ -132879,7 +132879,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/taskExecutor.test.ts",
       "source_location": "L224",
-      "community": 1018,
+      "community": 981,
       "norm_label": "base",
       "id": "tests_taskexecutor_test_base"
     },
@@ -132888,7 +132888,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/taskExecutor.test.ts",
       "source_location": "L239",
-      "community": 1018,
+      "community": 981,
       "norm_label": "dependent",
       "id": "tests_taskexecutor_test_dependent"
     },
@@ -132897,7 +132897,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/taskExecutor.test.ts",
       "source_location": "L268",
-      "community": 1018,
+      "community": 981,
       "norm_label": "patch",
       "id": "tests_taskexecutor_test_patch"
     },
@@ -132906,7 +132906,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/taskExecutor.test.ts",
       "source_location": "L329",
-      "community": 1018,
+      "community": 981,
       "norm_label": "dryrunevent",
       "id": "tests_taskexecutor_test_dryrunevent"
     },
@@ -133077,7 +133077,7 @@
       "file_type": "code",
       "source_file": "packages/orchestrator/tests/executionDependencyBarrier.test.ts",
       "source_location": "L39",
-      "community": 981,
+      "community": 1018,
       "norm_label": "result",
       "id": "tests_executiondependencybarrier_test_result"
     },
@@ -145749,7 +145749,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/2026-05-21-waygent-full-platform-implementation-program.md",
       "source_location": "L1183",
-      "community": 106,
+      "community": 1043,
       "norm_label": "task 9.2: add natural language skill launcher",
       "id": "plan_2026_05_21_waygent_full_platform_implementation_program_task_9_2_add_natural_language_skill_launcher"
     },
@@ -145758,7 +145758,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/2026-05-21-waygent-full-platform-implementation-program.md",
       "source_location": "L1185",
-      "community": 106,
+      "community": 1043,
       "norm_label": "code:yaml (task_id: phase9_task_002)",
       "id": "plan_2026_05_21_waygent_full_platform_implementation_program_codeblock_74"
     },
@@ -145767,7 +145767,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/2026-05-21-waygent-full-platform-implementation-program.md",
       "source_location": "L1216",
-      "community": 106,
+      "community": 1043,
       "norm_label": "code:text (\"\u110e\u116c\u1100\u1173\u11ab \u1109\u1173\u11bc\u110b\u1175\u11ab\u1103\u116c\u11ab \u1111\u1173\u11af\u1105\u1162\u11ab \u1109\u1175\u11af\u1112\u1162\u11bc\u1112\u1162\u110c\u116f\")",
       "id": "plan_2026_05_21_waygent_full_platform_implementation_program_codeblock_75"
     },
@@ -145776,7 +145776,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/2026-05-21-waygent-full-platform-implementation-program.md",
       "source_location": "L1235",
-      "community": 106,
+      "community": 1043,
       "norm_label": "code:bash (test -f skills/waygent/skill.md)",
       "id": "plan_2026_05_21_waygent_full_platform_implementation_program_codeblock_76"
     },
@@ -145785,7 +145785,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/2026-05-21-waygent-full-platform-implementation-program.md",
       "source_location": "L1243",
-      "community": 106,
+      "community": 1043,
       "norm_label": "code:bash (git add skills/waygent packages/orchestrator apps/cli)",
       "id": "plan_2026_05_21_waygent_full_platform_implementation_program_codeblock_77"
     },
@@ -147792,7 +147792,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L74",
-      "community": 1268,
+      "community": 173,
       "norm_label": "acceptance criteria",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_74"
     },
@@ -147801,7 +147801,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L75",
-      "community": 1268,
+      "community": 173,
       "norm_label": "code:bash (cd agentlens)",
       "id": "plan_agentlens_v0_tasks_codeblock_2"
     },
@@ -148143,7 +148143,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L395",
-      "community": 173,
+      "community": 1269,
       "norm_label": "phase 6: m5 process wrapper",
       "id": "plan_agentlens_v0_tasks_phase_6_m5_process_wrapper"
     },
@@ -148152,7 +148152,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L397",
-      "community": 173,
+      "community": 1269,
       "norm_label": "task 13: m5 process wrapper core \u2014 spawn + dual-stream drain + excerpt",
       "id": "plan_agentlens_v0_tasks_task_13_m5_process_wrapper_core_spawn_dual_stream_drain_excerpt"
     },
@@ -148305,7 +148305,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L543",
-      "community": 173,
+      "community": 1268,
       "norm_label": "acceptance criteria",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_543"
     },
@@ -148314,7 +148314,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L544",
-      "community": 173,
+      "community": 1268,
       "norm_label": "code:bash (cd agentlens)",
       "id": "plan_agentlens_v0_tasks_codeblock_19"
     },
@@ -148395,7 +148395,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L607",
-      "community": 1255,
+      "community": 173,
       "norm_label": "acceptance criteria",
       "id": "plan_agentlens_v0_tasks_acceptance_criteria_607"
     },
@@ -148404,7 +148404,7 @@
       "file_type": "document",
       "source_file": "components/agentlens/docs/plan/agentlens_v0_tasks.md",
       "source_location": "L608",
-      "community": 1255,
+      "community": 173,
       "norm_label": "code:bash (cd agentlens)",
       "id": "plan_agentlens_v0_tasks_codeblock_22"
     },
@@ -407244,5 +407244,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "e99827825ceb2dd63fed26a2727827e2e40d1cb1"
+  "built_at_commit": "a77f67a2693d22311ba1e35ccb4924016ca133c8"
 }
