@@ -85,6 +85,22 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="cpe-graphify-") as temp:
         repo = Path(temp)
         init_repo(repo)
+        write_report(repo, "0" * 40)
+        subprocess.run(["git", "add", "graphify-out/GRAPH_REPORT.md"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "commit unchanged graphify output"], cwd=repo, check=True)
+        result, data = run_check(repo, "--update-ran")
+        checks["no_output_change_after_update_is_fresh"] = (
+            result.returncode == 0
+            and data.get("fresh") is True
+            and data.get("update_required") is False
+            and data.get("update_evidence", {}).get("no_output_change_after_update") is True
+        )
+        if not checks["no_output_change_after_update_is_fresh"]:
+            failures.append("successful graphify update with no output changes should be fresh")
+
+    with tempfile.TemporaryDirectory(prefix="cpe-graphify-") as temp:
+        repo = Path(temp)
+        init_repo(repo)
         result, data = run_check(repo)
         checks["missing_report_classified"] = (
             result.returncode == 0 and data.get("graphify_present") is False and data.get("warnings")

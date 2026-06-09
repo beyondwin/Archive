@@ -76,10 +76,11 @@ def check(repo: Path, graph_report: Path, update_ran: bool) -> dict:
     built = match.group(1) if match else None
     if not built:
         errors.append("Built from commit not found")
-    graph_only_commit_after_update = update_ran and graph_only_changes_since(repo, built)
-    fresh = bool(built and (head.startswith(built) or graph_only_commit_after_update))
     ignored = is_ignored(repo, repo / "graphify-out")
     tracked_changed = changed_outputs(repo)
+    no_output_change_after_update = update_ran and not tracked_changed
+    graph_only_commit_after_update = update_ran and graph_only_changes_since(repo, built)
+    fresh = bool(built and (head.startswith(built) or graph_only_commit_after_update or no_output_change_after_update))
     note = "graphify-out is ignored; update evidence is command-only" if ignored and update_ran else ""
     if not fresh and not update_ran:
         errors.append("graphify report is stale and update evidence is missing")
@@ -97,6 +98,7 @@ def check(repo: Path, graph_report: Path, update_ran: bool) -> dict:
             "ran": update_ran,
             "tracked_outputs_changed": tracked_changed,
             "graph_only_commit_after_update": graph_only_commit_after_update,
+            "no_output_change_after_update": no_output_change_after_update,
             "ignored_outputs_note": note,
         },
         "warnings": warnings,
