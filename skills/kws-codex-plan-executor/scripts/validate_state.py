@@ -119,6 +119,10 @@ REQUIRED_DECISION_FIELDS = {
     "reason",
 }
 VALID_PREFLIGHT_WARNING_KINDS = {"missing_local_config", "dependencies_likely_stale"}
+VALID_DELEGATION_REQUESTED_SOURCES = {"default", "explicit", "natural_language", "resume_state"}
+VALID_SPAWN_POLICIES = {"available", "unavailable", "explicit-request-required", "unknown"}
+VALID_DELEGATION_EFFECTIVE_MODES = {"delegate", "local_fallback", "off", "blocked"}
+VALID_RUN_QUALITY_VALIDATION_STATUSES = {"passed", "failed", "unreadable", "not_checked"}
 
 
 def _has_substantive_value(value: object) -> bool:
@@ -669,6 +673,85 @@ def _validate_progress_and_trajectory(data: dict, errors: list[str]) -> None:
             errors.append("trajectory_path must live under run_dir")
 
 
+def _validate_operational_run_quality(data: dict, errors: list[str]) -> None:
+    run_id = data.get("run_id")
+    source_workspace = data.get("source_workspace")
+    if source_workspace is not None and not isinstance(source_workspace, str):
+        errors.append("source_workspace must be a string")
+
+    execution_worktree = data.get("execution_worktree")
+    if execution_worktree is not None:
+        if not isinstance(execution_worktree, str) or not execution_worktree.strip():
+            errors.append("execution_worktree must be a non-empty string")
+        elif isinstance(run_id, str) and not _has_codex_suffix(execution_worktree, "worktrees", run_id):
+            errors.append("execution_worktree must end with .codex/worktrees/<run_id>")
+        if isinstance(data.get("worktree"), str) and execution_worktree != data.get("worktree"):
+            errors.append("execution_worktree must equal worktree when both are present")
+
+    evidence = data.get("command_cwd_evidence", [])
+    if evidence is not None:
+        if not isinstance(evidence, list):
+            errors.append("command_cwd_evidence must be a list")
+        else:
+            for index, item in enumerate(evidence):
+                prefix = f"command_cwd_evidence[{index}]"
+                if not isinstance(item, dict):
+                    errors.append(f"{prefix} must be an object")
+                    continue
+                for key in ("command", "cwd", "phase", "status"):
+                    if not _has_substantive_value(item.get(key)):
+                        errors.append(f"{prefix}.{key} must be non-empty")
+
+    policy = data.get("delegation_policy")
+    if policy is not None:
+        if not isinstance(policy, dict):
+            errors.append("delegation_policy must be an object")
+        else:
+            if policy.get("requested_mode") not in {"on", "auto", "off"}:
+                errors.append("delegation_policy.requested_mode must be on, auto, or off")
+            if policy.get("requested_source") not in VALID_DELEGATION_REQUESTED_SOURCES:
+                errors.append("delegation_policy.requested_source invalid")
+            if not isinstance(policy.get("explicit_user_delegation_request"), bool):
+                errors.append("delegation_policy.explicit_user_delegation_request must be a boolean")
+            if policy.get("spawn_policy") not in VALID_SPAWN_POLICIES:
+                errors.append("delegation_policy.spawn_policy invalid")
+            if policy.get("effective_mode") not in VALID_DELEGATION_EFFECTIVE_MODES:
+                errors.append("delegation_policy.effective_mode invalid")
+            if policy.get("effective_mode") in {"local_fallback", "blocked"} and not _has_substantive_value(
+                policy.get("reason")
+            ):
+                errors.append("delegation_policy.reason must explain local_fallback or blocked mode")
+
+    bootstrap = data.get("preflight_bootstrap")
+    if bootstrap is not None:
+        if not isinstance(bootstrap, dict):
+            errors.append("preflight_bootstrap must be an object")
+        else:
+            if bootstrap.get("schema_version") != "1":
+                errors.append("preflight_bootstrap.schema_version must be 1")
+            for key in ("warnings", "bootstrap_plan"):
+                if not isinstance(bootstrap.get(key, []), list):
+                    errors.append(f"preflight_bootstrap.{key} must be a list")
+            if not isinstance(bootstrap.get("environment_capabilities", {}), dict):
+                errors.append("preflight_bootstrap.environment_capabilities must be an object")
+
+    quality = data.get("run_quality")
+    if quality is not None:
+        if not isinstance(quality, dict):
+            errors.append("run_quality must be an object")
+        else:
+            if quality.get("schema_version") != "1":
+                errors.append("run_quality.schema_version must be 1")
+            if quality.get("validation_status") not in VALID_RUN_QUALITY_VALIDATION_STATUSES:
+                errors.append("run_quality.validation_status invalid")
+            for key in ("stale", "workspace_matches_execution_worktree"):
+                if key in quality and not isinstance(quality[key], bool):
+                    errors.append(f"run_quality.{key} must be a boolean")
+            for key in ("schema_drift", "open_followups"):
+                if key in quality and not isinstance(quality[key], list):
+                    errors.append(f"run_quality.{key} must be a list")
+
+
 def _is_v220_state(data: dict) -> bool:
     if any(key in data for key in V220_TOP_LEVEL_FIELDS):
         return True
@@ -878,6 +961,7 @@ def validate(data: dict) -> list[str]:
     _validate_dispatch_decisions(data, errors)
     _validate_failure_state(data, errors)
     _validate_progress_and_trajectory(data, errors)
+    _validate_operational_run_quality(data, errors)
     _validate_v220(data, errors)
     return errors
 
