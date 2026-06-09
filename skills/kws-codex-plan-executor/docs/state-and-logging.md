@@ -53,6 +53,8 @@ Finished runs cannot retain Graphify audit errors.
 When `graphify-out/` is tracked, a commit that contains only graphify outputs
 after a successful update is still source-fresh; the checker treats that as
 fresh because the indexed source corpus has not changed since the build commit.
+If `graphify update .` reports no output changes, the checker also treats the
+state as fresh when `--update-ran` is supplied.
 
 `dispatch_decisions` stores `scripts/preflight_dispatch.py` output for
 write-capable subagent tasks. Decisions are `delegate`, `local_fallback`, or

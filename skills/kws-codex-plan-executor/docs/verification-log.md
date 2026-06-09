@@ -123,6 +123,8 @@ Follow-up residual risk closure:
 
 - `scripts/check_graphify_freshness.py` now treats a post-update commit that
   changes only tracked `graphify-out/` outputs as source-fresh.
+- It also treats a successful `graphify update .` with no output changes as
+  fresh when `--update-ran` evidence is supplied.
 - This closes the tracked-output loop where committing `GRAPH_REPORT.md` and
   `graph.json` advanced HEAD and made the report appear stale again even
   though no indexed source file changed.
