@@ -58,6 +58,26 @@ def inspect(codex_home: Path, plan: str, include_finished: bool = False) -> tupl
     return result, data
 
 
+def inspect_all(codex_home: Path, *extra: str) -> tuple[subprocess.CompletedProcess[str], dict]:
+    script = Path(__file__).resolve().parents[1] / "scripts" / "inspect_runs.py"
+    output = codex_home / "report.json"
+    cmd = [
+        sys.executable,
+        str(script),
+        "--codex-home",
+        str(codex_home),
+        "--all-plans",
+        "--recent",
+        "10",
+        "--output",
+        str(output),
+        *extra,
+    ]
+    result = subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    data = json.loads(output.read_text(encoding="utf-8")) if output.is_file() else {}
+    return result, data
+
+
 def main() -> int:
     failures: list[str] = []
     checks: dict[str, bool] = {}
@@ -119,6 +139,22 @@ def main() -> int:
         )
         if not checks["finished_ignored_unless_included"]:
             failures.append("finished runs should be ignored unless --include-finished is passed")
+
+    with tempfile.TemporaryDirectory(prefix="codex-inspect-runs-") as temp:
+        home = Path(temp) / ".codex"
+        write_state(home, "active-old", "docs/plan-a.md")
+        write_state(home, "finished-new", "docs/plan-b.md", outcome="finished")
+        result, data = inspect_all(home, "--validate-state", "--quality-report", "--stale-hours", "0")
+        summary = data.get("summary", {})
+        checks["all_plans_quality_summary_reported"] = (
+            result.returncode == 0
+            and summary.get("total") == 2
+            and summary.get("finished") == 1
+            and summary.get("non_terminal") == 1
+            and summary.get("stale_non_terminal") == 1
+        )
+        if not checks["all_plans_quality_summary_reported"]:
+            failures.append("all-plans quality report should summarize finished, non-terminal, and stale runs")
 
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, ensure_ascii=False, indent=2))

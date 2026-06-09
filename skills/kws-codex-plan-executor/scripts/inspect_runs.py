@@ -6,8 +6,15 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
+
+try:
+    import validate_state
+except Exception:
+    validate_state = None
 
 
 FINISHED_OUTCOMES = {"finished", "blocked", "failed", "cancelled"}
@@ -49,7 +56,144 @@ def plan_matches(state_plan: object, requested_plan: str) -> bool:
     return Path(state_plan).as_posix() == Path(requested_plan).as_posix()
 
 
-def inspect_runs(codex_home: Path, plan: str, include_finished: bool) -> dict:
+def validation_result(state: dict[str, Any] | None, enabled: bool) -> tuple[str, list[str]]:
+    if not enabled:
+        return "not_checked", []
+    if state is None:
+        return "unreadable", ["state file is unreadable"]
+    if validate_state is None:
+        return "unreadable", ["validate_state import failed"]
+    try:
+        errors = validate_state.validate(state)
+    except Exception as exc:
+        return "unreadable", [f"validate_state failed: {exc}"]
+    return ("passed" if not errors else "failed", errors)
+
+
+def run_quality(
+    state: dict[str, Any] | None,
+    state_path: Path,
+    stale_hours: float,
+    validate: bool,
+) -> dict[str, Any]:
+    outcome = state.get("lifecycle_outcome") if state else None
+    terminal = outcome in FINISHED_OUTCOMES
+    age_hours = (time.time() - state_path.stat().st_mtime) / 3600
+    validation_status, errors = validation_result(state, validate)
+    workspace = state.get("workspace") if state else None
+    execution_worktree = (state.get("execution_worktree") or state.get("worktree")) if state else None
+    workspace_matches = bool(workspace and execution_worktree and str(workspace) == str(execution_worktree))
+    return {
+        "schema_version": "1",
+        "validation_status": validation_status,
+        "terminal_state": outcome or "none",
+        "stale": (not terminal and age_hours >= stale_hours),
+        "workspace_matches_execution_worktree": workspace_matches,
+        "schema_drift": errors,
+        "open_followups": [],
+        "summary": "terminal" if terminal else "non-terminal",
+    }
+
+
+def task_strategy_count(state: dict[str, Any] | None, mode: str) -> int:
+    if not state:
+        return 0
+    tasks = state.get("tasks")
+    if not isinstance(tasks, dict):
+        return 0
+    count = 0
+    for task in tasks.values():
+        if not isinstance(task, dict):
+            continue
+        strategy = task.get("subagent_strategy")
+        if isinstance(strategy, dict) and strategy.get("mode") == mode:
+            count += 1
+    return count
+
+
+def summary_counters(records: list[dict[str, Any]]) -> dict[str, int]:
+    summary = {
+        "total": len(records),
+        "finished": 0,
+        "non_terminal": 0,
+        "validation_passed": 0,
+        "validation_failed": 0,
+        "stale_non_terminal": 0,
+        "workspace_not_execution_worktree": 0,
+        "delegated_tasks": 0,
+        "local_fallback_tasks": 0,
+    }
+    for record in records:
+        quality = record.get("run_quality") if isinstance(record.get("run_quality"), dict) else {}
+        terminal_state = quality.get("terminal_state") or record.get("lifecycle_outcome")
+        terminal = terminal_state in FINISHED_OUTCOMES
+        if terminal:
+            summary["finished"] += 1
+        else:
+            summary["non_terminal"] += 1
+        if quality.get("validation_status") == "passed":
+            summary["validation_passed"] += 1
+        elif quality.get("validation_status") == "failed":
+            summary["validation_failed"] += 1
+        if quality.get("stale") is True and not terminal:
+            summary["stale_non_terminal"] += 1
+        if quality.get("workspace_matches_execution_worktree") is False:
+            summary["workspace_not_execution_worktree"] += 1
+        summary["delegated_tasks"] += int(record.get("delegated_tasks") or 0)
+        summary["local_fallback_tasks"] += int(record.get("local_fallback_tasks") or 0)
+    return summary
+
+
+def state_record(
+    state: dict[str, Any] | None,
+    state_path: Path,
+    codex_home: Path,
+    *,
+    include_quality: bool,
+    stale_hours: float,
+    validate: bool,
+) -> dict[str, Any]:
+    state = state or {}
+    worktree = Path(str(state.get("worktree") or ""))
+    blocker = state.get("current_blocker") if isinstance(state.get("current_blocker"), dict) else {}
+    health = state.get("context_health") if isinstance(state.get("context_health"), dict) else {}
+    budget = {}
+    context_path = Path(str(state.get("context_snapshot_path") or ""))
+    if context_path.is_file():
+        context = load_state(context_path)
+        budget = context.get("context_budget", {}) if isinstance(context, dict) else {}
+    record = {
+        "run_id": state.get("run_id") or state_path.parent.name,
+        "state_path": redacted(str(state_path), codex_home),
+        "worktree": redacted(str(worktree), codex_home),
+        "current_task": state.get("current_task"),
+        "last_completed_task": state.get("last_completed_task"),
+        "lifecycle_outcome": state.get("lifecycle_outcome"),
+        "current_blocker_category": blocker.get("category"),
+        "next_action_kind": blocker.get("next_action_kind") or health.get("next_action"),
+        "handoff_ready": health.get("handoff_ready"),
+        "context_budget_status": budget.get("status"),
+        "missing_worktree": not worktree.exists(),
+        "orphaned_worktree": False,
+        "state_mtime": mtime_iso(state_path),
+    }
+    if include_quality:
+        record["plan"] = state.get("plan")
+        record["delegated_tasks"] = task_strategy_count(state, "delegated")
+        record["local_fallback_tasks"] = task_strategy_count(state, "local_fallback")
+        record["run_quality"] = run_quality(state if state else None, state_path, stale_hours, validate)
+    return record
+
+
+def inspect_runs(
+    codex_home: Path,
+    plan: str,
+    include_finished: bool,
+    *,
+    quality_report: bool = False,
+    stale_hours: float = 24.0,
+    validate: bool = False,
+) -> dict:
     orchestrator = codex_home / "orchestrator"
     records: list[dict] = []
     if orchestrator.is_dir():
@@ -60,31 +204,15 @@ def inspect_runs(codex_home: Path, plan: str, include_finished: bool) -> dict:
             outcome = state.get("lifecycle_outcome")
             if outcome in FINISHED_OUTCOMES and not include_finished:
                 continue
-            worktree = Path(str(state.get("worktree") or ""))
-            blocker = state.get("current_blocker") if isinstance(state.get("current_blocker"), dict) else {}
-            health = state.get("context_health") if isinstance(state.get("context_health"), dict) else {}
-            budget = {}
-            context_path = Path(str(state.get("context_snapshot_path") or ""))
-            if context_path.is_file():
-                context = load_state(context_path)
-                budget = context.get("context_budget", {}) if isinstance(context, dict) else {}
-            missing_worktree = not worktree.exists()
             records.append(
-                {
-                    "run_id": state.get("run_id") or state_path.parent.name,
-                    "state_path": redacted(str(state_path), codex_home),
-                    "worktree": redacted(str(worktree), codex_home),
-                    "current_task": state.get("current_task"),
-                    "last_completed_task": state.get("last_completed_task"),
-                    "lifecycle_outcome": outcome,
-                    "current_blocker_category": blocker.get("category"),
-                    "next_action_kind": blocker.get("next_action_kind") or health.get("next_action"),
-                    "handoff_ready": health.get("handoff_ready"),
-                    "context_budget_status": budget.get("status"),
-                    "missing_worktree": missing_worktree,
-                    "orphaned_worktree": False,
-                    "state_mtime": mtime_iso(state_path),
-                }
+                state_record(
+                    state,
+                    state_path,
+                    codex_home,
+                    include_quality=quality_report,
+                    stale_hours=stale_hours,
+                    validate=validate,
+                )
             )
     return {
         "schema_version": "1",
@@ -94,17 +222,84 @@ def inspect_runs(codex_home: Path, plan: str, include_finished: bool) -> dict:
     }
 
 
+def inspect_all_runs(
+    codex_home: Path,
+    recent: int | None,
+    quality_report: bool,
+    stale_hours: float,
+    validate: bool,
+) -> dict:
+    orchestrator = codex_home / "orchestrator"
+    state_paths = list(orchestrator.glob("*/state.json")) if orchestrator.is_dir() else []
+    if recent is not None:
+        state_paths = sorted(state_paths, key=lambda path: path.stat().st_mtime, reverse=True)[:recent]
+    else:
+        state_paths = sorted(state_paths)
+    records = [
+        state_record(
+            load_state(state_path),
+            state_path,
+            codex_home,
+            include_quality=quality_report,
+            stale_hours=stale_hours,
+            validate=validate,
+        )
+        for state_path in state_paths
+    ]
+    report: dict[str, Any] = {
+        "schema_version": "1",
+        "all_plans": True,
+        "recent": recent,
+        "runs": records,
+    }
+    if quality_report:
+        report["summary"] = summary_counters(records)
+    return report
+
+
+def render_report(report: dict[str, Any], jsonl: bool) -> str:
+    if not jsonl:
+        return json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    if report.get("all_plans") is True:
+        records = report.get("runs") if isinstance(report.get("runs"), list) else []
+    else:
+        records = report.get("active_runs") if isinstance(report.get("active_runs"), list) else []
+    return "".join(
+        json.dumps(record, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n" for record in records
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--codex-home", required=True)
-    parser.add_argument("--plan", required=True)
+    parser.add_argument("--plan")
+    parser.add_argument("--all-plans", action="store_true")
+    parser.add_argument("--recent", type=int)
+    parser.add_argument("--stale-hours", type=float, default=24.0)
+    parser.add_argument("--validate-state", action="store_true")
+    parser.add_argument("--quality-report", action="store_true")
+    parser.add_argument("--jsonl", action="store_true")
     parser.add_argument("--output")
     parser.add_argument("--include-finished", action="store_true")
     args = parser.parse_args()
+    if not args.all_plans and not args.plan:
+        die("--plan is required unless --all-plans is set")
+    if args.recent is not None and args.recent < 0:
+        die("--recent must be non-negative")
 
     codex_home = Path(args.codex_home).expanduser().resolve()
-    report = inspect_runs(codex_home, args.plan, args.include_finished)
-    text = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    if args.all_plans:
+        report = inspect_all_runs(codex_home, args.recent, args.quality_report, args.stale_hours, args.validate_state)
+    else:
+        report = inspect_runs(
+            codex_home,
+            args.plan,
+            args.include_finished,
+            quality_report=args.quality_report,
+            stale_hours=args.stale_hours,
+            validate=args.validate_state,
+        )
+    text = render_report(report, args.jsonl)
     if args.output:
         output = Path(args.output).expanduser()
         output.parent.mkdir(parents=True, exist_ok=True)
