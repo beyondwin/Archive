@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -12,7 +14,14 @@ from pathlib import Path
 
 
 TEMPLATE_SUFFIXES = (".example", ".template", ".dist")
-NODE_LOCKFILES = ("package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock")
+NODE_MANAGERS = (
+    ("package-lock.json", "node_modules/.package-lock.json", "npm install"),
+    ("npm-shrinkwrap.json", "node_modules/.package-lock.json", "npm install"),
+    ("pnpm-lock.yaml", "node_modules/.modules.yaml", "pnpm install --frozen-lockfile"),
+    ("yarn.lock", "node_modules/.yarn-integrity", "yarn install --frozen-lockfile"),
+    ("bun.lock", "node_modules/.bun-install", "bun install"),
+    ("bun.lockb", "node_modules/.bun-install", "bun install"),
+)
 PY_LOCKFILES = ("poetry.lock", "uv.lock")
 GRADLE_BUILDS = ("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")
 
@@ -102,7 +111,15 @@ def first_existing(root: Path, names: tuple[str, ...]) -> Path | None:
     return None
 
 
-def dependency_warning(manifest: Path, lockfile: Path, marker: Path, suggestion: str, detected_at: str, root: Path) -> dict | None:
+def dependency_warning(
+    manifest: Path,
+    lockfile: Path,
+    marker: Path,
+    suggestion: str,
+    detected_at: str,
+    root: Path,
+    suggested_command: str,
+) -> dict | None:
     if not manifest.exists() or not lockfile.exists() or not newer_than(lockfile, marker):
         return None
     return {
@@ -111,6 +128,7 @@ def dependency_warning(manifest: Path, lockfile: Path, marker: Path, suggestion:
         "lockfile": rel(lockfile, root),
         "marker": rel(marker, root),
         "suggestion": suggestion,
+        "suggested_command": suggested_command,
         "detected_at": detected_at,
     }
 
@@ -118,15 +136,16 @@ def dependency_warning(manifest: Path, lockfile: Path, marker: Path, suggestion:
 def dependency_warnings(root: Path, detected_at: str) -> list[dict]:
     warnings: list[dict] = []
 
-    node_lock = first_existing(root, NODE_LOCKFILES)
-    if node_lock:
+    for lockfile_name, marker_name, command in NODE_MANAGERS:
+        node_lock = root / lockfile_name
         warning = dependency_warning(
             root / "package.json",
             node_lock,
-            root / "node_modules/.package-lock.json",
-            "Run install before baseline, for example `npm install`.",
+            root / marker_name,
+            f"Run install before baseline, for example `{command}`.",
             detected_at,
             root,
+            command,
         )
         if warning:
             warnings.append(warning)
@@ -142,6 +161,7 @@ def dependency_warnings(root: Path, detected_at: str) -> list[dict]:
             "Run the project dependency bootstrap before baseline.",
             detected_at,
             root,
+            "python3 -m venv .venv",
         )
         if warning:
             warnings.append(warning)
@@ -154,6 +174,7 @@ def dependency_warnings(root: Path, detected_at: str) -> list[dict]:
             "Run `cargo build` before baseline.",
             detected_at,
             root,
+            "cargo build",
         )
         if warning:
             warnings.append(warning)
@@ -170,6 +191,7 @@ def dependency_warnings(root: Path, detected_at: str) -> list[dict]:
             "Run the Gradle wrapper before baseline.",
             detected_at,
             root,
+            "./gradlew build",
         )
         if warning:
             warnings.append(warning)
@@ -177,11 +199,53 @@ def dependency_warnings(root: Path, detected_at: str) -> list[dict]:
     return warnings
 
 
+def bootstrap_steps_for_warnings(warnings: list[dict]) -> list[dict]:
+    steps: list[dict] = []
+    seen: set[str] = set()
+    for warning in warnings:
+        command = warning.get("suggested_command")
+        if not isinstance(command, str) or not command or command in seen:
+            continue
+        seen.add(command)
+        steps.append(
+            {
+                "id": command.replace(" ", "-").replace("/", "-"),
+                "command": command,
+                "reason": warning.get("suggestion", warning.get("kind", "")),
+                "auto_run": False,
+            }
+        )
+    return steps
+
+
+def command_presence(name: str) -> str:
+    return "present" if shutil.which(name) else "absent"
+
+
+def environment_capabilities(root: Path) -> dict:
+    android_home = bool(os.environ.get("ANDROID_HOME") or os.environ.get("ANDROID_SDK_ROOT"))
+    return {
+        "node": command_presence("node"),
+        "bun": command_presence("bun"),
+        "pnpm": command_presence("pnpm"),
+        "gradle_wrapper": "present" if (root / "gradlew").exists() else "absent",
+        "android_sdk": "present" if android_home else "unknown",
+        "adb": command_presence("adb"),
+        "cargo": command_presence("cargo"),
+        "agentlens": command_presence("agentlens"),
+    }
+
+
 def build_report(root: Path) -> dict:
     detected_at = now_iso()
     warnings = missing_local_config_warnings(root, detected_at)
     warnings.extend(dependency_warnings(root, detected_at))
-    return {"schema_version": "1", "warnings": warnings}
+    return {
+        "schema_version": "1",
+        "warnings": warnings,
+        "bootstrap_plan": bootstrap_steps_for_warnings(warnings),
+        "environment_capabilities": environment_capabilities(root),
+    }
 
 
 def main() -> int:
