@@ -50,6 +50,9 @@ dynamic-marker violations.
 `scripts/check_graphify_freshness.py`. It records `Built from commit` freshness,
 whether `graphify update .` ran, and whether tracked or ignored outputs changed.
 Finished runs cannot retain Graphify audit errors.
+When `graphify-out/` is tracked, a commit that contains only graphify outputs
+after a successful update is still source-fresh; the checker treats that as
+fresh because the indexed source corpus has not changed since the build commit.
 
 `dispatch_decisions` stores `scripts/preflight_dispatch.py` output for
 write-capable subagent tasks. Decisions are `delegate`, `local_fallback`, or

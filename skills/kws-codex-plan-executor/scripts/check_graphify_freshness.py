@@ -30,6 +30,22 @@ def changed_outputs(repo: Path) -> bool:
     return bool(result.stdout.strip())
 
 
+def graph_only_changes_since(repo: Path, built: str | None) -> bool:
+    if not built:
+        return False
+    result = subprocess.run(
+        ["git", "diff", "--name-only", f"{built}..HEAD"],
+        cwd=repo,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
+    )
+    if result.returncode != 0:
+        return False
+    changed = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    return bool(changed) and all(path == "graphify-out" or path.startswith("graphify-out/") for path in changed)
+
+
 def check(repo: Path, graph_report: Path, update_ran: bool) -> dict:
     warnings: list[str] = []
     errors: list[str] = []
@@ -60,7 +76,8 @@ def check(repo: Path, graph_report: Path, update_ran: bool) -> dict:
     built = match.group(1) if match else None
     if not built:
         errors.append("Built from commit not found")
-    fresh = bool(built and head.startswith(built))
+    graph_only_commit_after_update = update_ran and graph_only_changes_since(repo, built)
+    fresh = bool(built and (head.startswith(built) or graph_only_commit_after_update))
     ignored = is_ignored(repo, repo / "graphify-out")
     tracked_changed = changed_outputs(repo)
     note = "graphify-out is ignored; update evidence is command-only" if ignored and update_ran else ""
@@ -79,6 +96,7 @@ def check(repo: Path, graph_report: Path, update_ran: bool) -> dict:
             "command": "graphify update .",
             "ran": update_ran,
             "tracked_outputs_changed": tracked_changed,
+            "graph_only_commit_after_update": graph_only_commit_after_update,
             "ignored_outputs_note": note,
         },
         "warnings": warnings,

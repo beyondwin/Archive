@@ -118,3 +118,11 @@ Result:
   refreshed with `Built from commit: 52645b58`.
 - Graphify freshness audit: pass with `fresh=true` and no errors.
 - Diff whitespace check: pass.
+
+Follow-up residual risk closure:
+
+- `scripts/check_graphify_freshness.py` now treats a post-update commit that
+  changes only tracked `graphify-out/` outputs as source-fresh.
+- This closes the tracked-output loop where committing `GRAPH_REPORT.md` and
+  `graph.json` advanced HEAD and made the report appear stale again even
+  though no indexed source file changed.
