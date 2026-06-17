@@ -1,5 +1,15 @@
 # History
 
+## 2.23.0 - Unreleased
+
+- Added adaptive dispatch policy evidence so `subagents=on` delegates only when
+  the task is safe and delegation has value.
+- Added local fast path reasons for small docs-only, small-scope, linear, and
+  low-parallel-value tasks while preserving task contract, diff review,
+  acceptance, reconciliation, and state validation gates.
+- Extended state validation and deterministic evals for adaptive local fast
+  path, delegate, and block outcomes.
+
 ## 2.22.0 - 2026-06-09
 
 - Added explicit delegation intent parsing so default `subagents=on` is not

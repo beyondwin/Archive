@@ -37,6 +37,10 @@ The execution-hardening evals cover prompt cache boundaries, optional provider
 cache observations, Graphify freshness evidence, and deterministic subagent
 pre-dispatch decisions.
 
+Adaptive dispatch evals cover docs-only local fast path, multi-file delegation
+when spawn policy is available, dirty overlap blocking, broad write-scope
+blocking, packet hash mismatch blocking, and risky lockfile blocking.
+
 The quality-loop evals also cover task packet component accounting, filtered
 decision context, structured blocker/failure state, recovery policy decisions,
 trajectory JSONL projection, and progress ledger stall detection.

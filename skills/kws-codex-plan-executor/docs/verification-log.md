@@ -1,5 +1,45 @@
 # Verification Log
 
+## 2026-06-18
+
+Scope:
+
+- Adaptive dispatch policy for `subagents=on`.
+- Local fast path as an audited local fallback for small, low-risk, linear
+  tasks.
+- State validation for adaptive local fast path reasons and delegation policy
+  evidence.
+
+Commands:
+
+```bash
+python3 evals/check_preflight_dispatch.py
+python3 evals/check_state_schema.py
+python3 evals/check_skill_contract.py --skill SKILL.md
+./evals/run.sh
+python3 -m py_compile scripts/*.py evals/*.py
+bash -n evals/run.sh
+graphify update . --force
+python3 skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py --repo-root /Users/kws/.codex/worktrees/cpe-adaptive-delegation-implementation-20260618-043354 --update-ran --output /tmp/cpe-adaptive-delegation-graphify-audit.json
+python3 - <<'PY'
+# Actual dispatch probe saved to /tmp/cpe-adaptive-delegation-actual-probe.json.
+PY
+git diff --check
+```
+
+Result:
+
+- Focused adaptive dispatch, state schema, and skill contract evals: pass.
+- Actual dispatch probe: pass; docs-only chose local fast path, multi-file
+  script+eval chose delegate, and risky lockfile chose block with
+  `risk_marker_requires_operator_review`.
+- Full deterministic fixture harness: pass.
+- Python compile and shell syntax: pass.
+- Graphify update: pass with `--force`; tracked `graphify-out/GRAPH_REPORT.md`
+  and `graphify-out/graph.json` changed.
+- Graphify freshness audit: pass with `fresh=true` and no blocking errors.
+- Diff whitespace check: pass.
+
 ## 2026-05-19
 
 Scope:
