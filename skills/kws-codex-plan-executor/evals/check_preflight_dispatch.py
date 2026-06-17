@@ -31,6 +31,10 @@ def write_packet(
     context_status: str = "green",
     acceptance_command: str | None = "python3 evals/check_preflight_dispatch.py",
     fallback_used: bool = False,
+    estimated_chars: int = 10,
+    max_chars: int = 60000,
+    dependencies: list[str] | None = None,
+    risk_markers: list[str] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -39,8 +43,14 @@ def write_packet(
                 "task_id": "task_0",
                 "task_title": "Task",
                 "files": files,
+                "dependencies": dependencies or [],
+                "risk_markers": risk_markers or [],
                 "sha256": "packet-sha",
-                "context_budget": {"status": context_status, "estimated_chars": 10, "max_chars": 60000},
+                "context_budget": {
+                    "status": context_status,
+                    "estimated_chars": estimated_chars,
+                    "max_chars": max_chars,
+                },
                 "acceptance": {"has_acceptance_criteria": acceptance_command is not None, "command": acceptance_command},
                 "spec": {"fallback_used": fallback_used},
                 "write_policy": {
@@ -54,9 +64,16 @@ def write_packet(
 
 
 def run_dispatch(
-    repo: Path, state_path: Path, packet_path: Path, *extra: str
+    repo: Path,
+    state_path: Path,
+    packet_path: Path,
+    *extra: str,
+    write_scope: list[str] | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], dict]:
     output = repo / "dispatch.json"
+    scope_args: list[str] = []
+    for scope in write_scope or ["docs/example.md"]:
+        scope_args.extend(["--write-scope", scope])
     result = subprocess.run(
         [
             sys.executable,
@@ -69,8 +86,7 @@ def run_dispatch(
             str(packet_path),
             "--repo-root",
             str(repo),
-            "--write-scope",
-            "docs/example.md",
+            *scope_args,
             "--output",
             str(output),
             *extra,
@@ -102,9 +118,88 @@ def main() -> int:
         write_packet(packet_path, ["docs/example.md"])
         write_state(state_path)
         result, data = run_dispatch(repo, state_path, packet_path)
-        checks["clean_task_delegates"] = result.returncode == 0 and data.get("decision") == "delegate"
-        if not checks["clean_task_delegates"]:
-            failures.append("clean task packet should delegate")
+        checks["clean_small_task_uses_local_fast_path"] = (
+            result.returncode == 0
+            and data.get("decision") == "local_fallback"
+            and data.get("reason") == "adaptive_policy_local_fast_path_docs_only"
+            and data.get("delegation_policy", {}).get("policy_kind") == "adaptive"
+            and data.get("delegation_policy", {}).get("value_gate") == "local_fast_path"
+            and data.get("state_updates", {}).get("subagent_strategy", {}).get("mode") == "local_fallback"
+        )
+        if not checks["clean_small_task_uses_local_fast_path"]:
+            failures.append("clean small docs task should use adaptive local fast path")
+
+    with tempfile.TemporaryDirectory(prefix="cpe-dispatch-") as temp:
+        repo = Path(temp) / "repo"
+        repo.mkdir()
+        init_repo(repo)
+        (repo / "scripts").mkdir()
+        (repo / "evals").mkdir()
+        (repo / "scripts/tool.py").write_text("print('base')\n", encoding="utf-8")
+        (repo / "evals/check_tool.py").write_text("print('base')\n", encoding="utf-8")
+        subprocess.run(["git", "add", "scripts/tool.py", "evals/check_tool.py"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "add tool"], cwd=repo, check=True)
+        state_path = repo / "state.json"
+        packet_path = repo / "task_0.json"
+        write_packet(
+            packet_path,
+            ["scripts/tool.py", "evals/check_tool.py"],
+            allowed_write_globs=["scripts/*.py", "evals/*.py"],
+            estimated_chars=18000,
+            dependencies=[],
+        )
+        write_state(state_path)
+        result, data = run_dispatch(
+            repo,
+            state_path,
+            packet_path,
+            "--spawn-policy",
+            "available",
+            "--requested-subagents",
+            "on",
+            "--requested-source",
+            "default",
+            write_scope=["scripts/*.py", "evals/*.py"],
+        )
+        checks["multi_file_independent_task_delegates"] = (
+            result.returncode == 0
+            and data.get("decision") == "delegate"
+            and data.get("delegation_policy", {}).get("value_gate") == "delegate"
+        )
+        if not checks["multi_file_independent_task_delegates"]:
+            failures.append("multi-file independent task should delegate when spawn policy is available")
+
+    with tempfile.TemporaryDirectory(prefix="cpe-dispatch-") as temp:
+        repo = Path(temp) / "repo"
+        repo.mkdir()
+        init_repo(repo)
+        (repo / "bun.lock").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "bun.lock"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "add lockfile"], cwd=repo, check=True)
+        state_path = repo / "state.json"
+        packet_path = repo / "task_0.json"
+        write_packet(
+            packet_path,
+            ["bun.lock"],
+            allowed_write_globs=["bun.lock"],
+            risk_markers=["lockfile"],
+        )
+        write_state(state_path)
+        result, data = run_dispatch(
+            repo,
+            state_path,
+            packet_path,
+            "--spawn-policy",
+            "available",
+            write_scope=["bun.lock"],
+        )
+        checks["risky_lockfile_task_blocks"] = (
+            result.returncode != 0
+            and data.get("decision") == "block"
+            and "risk_marker_requires_operator_review" in data.get("failed_prerequisites", [])
+        )
+        if not checks["risky_lockfile_task_blocks"]:
+            failures.append("lockfile risk marker should block adaptive dispatch")
 
     with tempfile.TemporaryDirectory(prefix="cpe-dispatch-") as temp:
         repo = Path(temp) / "repo"
