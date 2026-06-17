@@ -18,11 +18,11 @@ task body, spec slice or full fallback, write policy, and acceptance contract
 hashes. `context_budget` records the largest component and component totals so
 large packets can be reduced deliberately.
 
-With the default `subagents=on`, eligible write-capable tasks are implemented
-through task-packet-scoped subagents first. The parent executor reviews the diff
-and state before acceptance. If pre-dispatch checks make delegation unsafe or
-unavailable, the task records `subagent_strategy.mode = local_fallback` with the
-specific reason.
+With the default `subagents=on`, CPE uses adaptive dispatch. Eligible
+write-capable tasks first pass safety checks, then a value check decides whether
+to delegate or run local fast path. Local fast path skips only the subagent
+spawn/review loop; it keeps task contracts, RED/GREEN evidence when applicable,
+diff policy checks, acceptance commands, reconciliation, and state validation.
 
 Command observations feed a bounded recovery policy. The policy can retry flaky
 or timeout roots, allow one dependency bootstrap, continue source-failure

@@ -30,9 +30,9 @@ Supported arguments:
   runs exist, stop and ask which run/state to resume.
 - `mode=interactive|headless|prompt|handoff` optional, default `interactive`.
 - `subagents=auto|on|off` optional, default `on`; `subagents=on` is the
-  subagent-first default for eligible executable tasks, `subagents=off` forces
-  a local-only run, and `subagents=auto` uses conservative spawning only when
-  the user explicitly requested subagents, delegation, or parallel work.
+  adaptive subagent-first default for eligible executable tasks, `subagents=off`
+  forces a local-only run, and `subagents=auto` uses conservative spawning only
+  when the user explicitly requested subagents, delegation, or parallel work.
 - `headless_sandbox=workspace-write|read-only` optional, default
   `workspace-write`; `read-only` is for preflight/prompt verification and
   blocks edit execution.
@@ -57,11 +57,16 @@ checkout. If a dedicated non-conflicting worktree under `~/.codex/worktrees/`
 cannot be created or selected before task contracts and edits, stop with a
 blocker.
 
-Use `spawn_agent` by default for eligible executable tasks when the resolved
-invocation has `subagents=on`. Use it for `subagents=auto` only when the user
+Use `spawn_agent` for eligible executable tasks when the resolved invocation has
+`subagents=on` and deterministic adaptive dispatch says delegation has value.
+`subagents=on` remains the subagent-first default and means subagents are
+allowed and preferred when the task is parallel-worthy, independently scoped,
+and safe to delegate. Use `spawn_agent` for `subagents=auto` only when the user
 explicitly requested subagents, delegation, or parallel agent work. Do not spawn
-subagents when `subagents=auto` without an explicit user request, or when
-`subagents=off`.
+subagents when `subagents=auto` without an explicit user request, when
+`subagents=auto` lacks explicit delegation intent, when `subagents=off`, or when
+`scripts/preflight_dispatch.py` selects `local_fallback` for an adaptive local
+fast path.
 
 When dispatching subagents, use task packets, not raw full-plan context. Do not
 ask a subagent to infer its write scope from the entire plan.
@@ -140,6 +145,10 @@ post-diff and state review before accepting subagent output.
   write-capable task records `subagent_strategy`. `mode=delegated` must point
   to reviewed completed `subagent_runs`; `mode=local_fallback` must include a
   concrete reason and no delegated run ids.
+- Adaptive local fast path is a quality-preserving local execution decision,
+  not a verification skip. It may choose `local_fallback` for small, low-risk,
+  linear tasks, but the task still requires the task contract, unit manifest,
+  diff-scope review, acceptance evidence, reconciliation, and state validation.
 - Command observations classify bounded command evidence before root cause is
   assigned. Finished runs with `category=unknown` observations must mention the
   command in `completion_audit.residual_risk`.
@@ -164,10 +173,10 @@ post-diff and state review before accepting subagent output.
   audit records whether the command ran and whether tracked or ignored outputs
   changed.
 - Subagent pre-dispatch decisions use `scripts/preflight_dispatch.py` before
-  spawning for eligible write-capable tasks. The decision is one of `delegate`,
-  `local_fallback`, or `block`; `local_fallback` reasons flow into task
-  `subagent_strategy.reason`, and `dispatch_decisions` with `block` cannot be
-  carried into a finished lifecycle outcome.
+  spawning for eligible write-capable tasks. The adaptive decision is one of
+  `delegate`, `local_fallback`, or `block`; adaptive `local_fallback` reasons
+  flow into task `subagent_strategy.reason`, and `dispatch_decisions` with
+  `block` cannot be carried into a finished lifecycle outcome.
 - In interactive and headless execution, feature, bugfix, refactor, or
   behavior-change implementation must invoke `using-superpowers` as the skill
   gate and `test-driven-development` before implementation code. This is not a

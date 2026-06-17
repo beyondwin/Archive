@@ -1,7 +1,10 @@
 # Pre-Dispatch Pipeline
 
-`subagents=on` is subagent-first. Run this pipeline before each eligible
-write-capable task and delegate when every prerequisite passes.
+`subagents=on` is adaptive subagent-first. The executor first checks whether
+delegation is safe, then checks whether delegation has value. Safe but small,
+linear, low-risk tasks may use adaptive local fast path and record
+`subagent_strategy.mode = local_fallback` with an adaptive reason. This is a
+policy decision, not a failed dispatch.
 
 1. Run the deterministic preflight decision:
    `python3 scripts/preflight_dispatch.py --state "$STATE_PATH" --task-id "$TASK_ID" --task-packet "$CURRENT_TASK_PACKET_PATH" --repo-root "$WORKTREE_ABS" --write-scope "$WRITE_SCOPE" --spawn-policy "$SPAWN_POLICY" --explicit-delegation-requested "$EXPLICIT_DELEGATION_REQUESTED" --requested-subagents "$REQUESTED_SUBAGENTS" --requested-source "$REQUESTED_SOURCE" --output "$RUN_DIR/dispatch-$TASK_ID.json"`.
@@ -21,6 +24,13 @@ write-capable task and delegate when every prerequisite passes.
    scope, and verification expectation.
 11. After completion, run `scripts/check_run_diffs.py` and perform post-diff
     and state review before accepting subagent output.
+
+| Decision | Meaning | Required follow-through |
+| --- | --- | --- |
+| `delegate` | Delegation is safe and useful. | Spawn from task packet, then parent reviews diff and state. |
+| `local_fallback` with adaptive reason | Local fast path is safer or cheaper for a small linear task. | Execute locally with task contract, diff check, acceptance, reconcile, and validate. |
+| `local_fallback` with policy/tool reason | Delegation is unavailable or not explicitly allowed. | Execute locally and record the concrete policy reason. |
+| `block` | Safety gate failed. | Do not execute until dirty scope, packet drift, broad write scope, or risky scope is resolved. |
 
 If any prerequisite fails under `subagents=on`, run the task locally only after
 recording `subagent_strategy.mode = local_fallback` on the task with the exact
