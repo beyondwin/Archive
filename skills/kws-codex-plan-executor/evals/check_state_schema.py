@@ -568,6 +568,61 @@ def main() -> int:
     if not checks["finished_v220_local_fallback_with_reason_passes"]:
         failures.append("finished v2.20 local fallback with a reason should pass: " + (result.stderr or result.stdout))
 
+    adaptive_local_fast_path = v220_state()
+    adaptive_local_fast_path["subagent_runs"] = []
+    adaptive_local_fast_path["delegation_policy"] = {
+        "requested_mode": "on",
+        "requested_source": "default",
+        "explicit_user_delegation_request": False,
+        "spawn_policy": "available",
+        "effective_mode": "local_fallback",
+        "reason": "adaptive_policy_local_fast_path_docs_only",
+        "policy_kind": "adaptive",
+        "safety_gate": "passed",
+        "value_gate": "local_fast_path",
+        "signals": {
+            "declared_file_count": 1,
+            "allowed_write_glob_count": 1,
+            "packet_budget_status": "green",
+            "risk_markers": [],
+        },
+    }
+    adaptive_local_fast_path["tasks"]["task_0"]["subagent_strategy"] = {
+        "mode": "local_fallback",
+        "reason": "adaptive_policy_local_fast_path_docs_only",
+        "run_ids": [],
+    }
+    result = run_validator(script, adaptive_local_fast_path)
+    checks["finished_adaptive_local_fast_path_passes"] = result.returncode == 0
+    if not checks["finished_adaptive_local_fast_path_passes"]:
+        failures.append("finished adaptive local fast path should pass: " + (result.stderr or result.stdout))
+
+    bad_adaptive_reason = v220_state()
+    bad_adaptive_reason["subagent_runs"] = []
+    bad_adaptive_reason["delegation_policy"] = {
+        "requested_mode": "on",
+        "requested_source": "default",
+        "explicit_user_delegation_request": False,
+        "spawn_policy": "available",
+        "effective_mode": "local_fallback",
+        "reason": "adaptive_policy_local_fast_path_unlisted",
+        "policy_kind": "adaptive",
+        "safety_gate": "passed",
+        "value_gate": "local_fast_path",
+        "signals": {},
+    }
+    bad_adaptive_reason["tasks"]["task_0"]["subagent_strategy"] = {
+        "mode": "local_fallback",
+        "reason": "adaptive_policy_local_fast_path_unlisted",
+        "run_ids": [],
+    }
+    result = run_validator(script, bad_adaptive_reason)
+    checks["finished_unknown_adaptive_reason_fails"] = (
+        result.returncode != 0 and "known adaptive local fast path reason" in (result.stderr + result.stdout)
+    )
+    if not checks["finished_unknown_adaptive_reason_fails"]:
+        failures.append("unknown adaptive local fast path reason should fail")
+
     delegated_without_run = v220_state()
     delegated_without_run["subagent_runs"] = []
     result = run_validator(script, delegated_without_run)
