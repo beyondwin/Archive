@@ -71,6 +71,16 @@ VALID_SUBAGENT_REVIEW_STATUSES = {"unreviewed", "accepted", "rejected", "changes
 REQUIRED_SUBAGENT_FIELDS = {"id", "owner_task", "mode", "write_scope", "status", "result_summary"}
 COMPLETED_SUBAGENT_FIELDS = {"changed_files", "review_status"}
 VALID_SUBAGENT_STRATEGY_MODES = {"delegated", "local_fallback"}
+VALID_ADAPTIVE_LOCAL_FAST_PATH_REASONS = {
+    "adaptive_policy_local_fast_path_small_scope",
+    "adaptive_policy_local_fast_path_docs_only",
+    "adaptive_policy_local_fast_path_linear_task",
+    "adaptive_policy_local_fast_path_low_parallel_value",
+    "spawn_policy_requires_explicit_user_request",
+}
+VALID_DELEGATION_POLICY_KINDS = {"legacy", "adaptive"}
+VALID_DELEGATION_SAFETY_GATES = {"pending", "passed", "failed"}
+VALID_DELEGATION_VALUE_GATES = {"pending", "delegate", "local_fast_path", "block", "skipped"}
 VALID_COMMAND_OBSERVATION_CATEGORIES = {
     "source_failure",
     "missing_local_env",
@@ -721,6 +731,24 @@ def _validate_operational_run_quality(data: dict, errors: list[str]) -> None:
                 policy.get("reason")
             ):
                 errors.append("delegation_policy.reason must explain local_fallback or blocked mode")
+            policy_kind = policy.get("policy_kind")
+            if policy_kind is not None and policy_kind not in VALID_DELEGATION_POLICY_KINDS:
+                errors.append("delegation_policy.policy_kind must be legacy or adaptive")
+            safety_gate = policy.get("safety_gate")
+            if safety_gate is not None and safety_gate not in VALID_DELEGATION_SAFETY_GATES:
+                errors.append("delegation_policy.safety_gate invalid")
+            value_gate = policy.get("value_gate")
+            if value_gate is not None and value_gate not in VALID_DELEGATION_VALUE_GATES:
+                errors.append("delegation_policy.value_gate invalid")
+            signals = policy.get("signals")
+            if signals is not None and not isinstance(signals, dict):
+                errors.append("delegation_policy.signals must be an object")
+            if (
+                policy.get("effective_mode") == "local_fallback"
+                and policy.get("value_gate") == "local_fast_path"
+                and policy.get("reason") not in VALID_ADAPTIVE_LOCAL_FAST_PATH_REASONS
+            ):
+                errors.append("delegation_policy.reason must be a known adaptive local fast path reason")
 
     bootstrap = data.get("preflight_bootstrap")
     if bootstrap is not None:
@@ -859,6 +887,14 @@ def _validate_subagent_strategy(task_id: str, task: dict, data: dict, errors: li
         errors.append(f"{task_id}: subagent_strategy.mode must be one of {sorted(VALID_SUBAGENT_STRATEGY_MODES)}")
     if not _has_substantive_value(strategy.get("reason")):
         errors.append(f"{task_id}: subagent_strategy.reason must explain the delegation or local fallback")
+    reason = strategy.get("reason")
+    if (
+        mode == "local_fallback"
+        and isinstance(reason, str)
+        and reason.startswith("adaptive_policy_")
+        and reason not in VALID_ADAPTIVE_LOCAL_FAST_PATH_REASONS
+    ):
+        errors.append(f"{task_id}: subagent_strategy.reason must be a known adaptive local fast path reason")
     run_ids = strategy.get("run_ids")
     if run_ids is None:
         run_ids = []
