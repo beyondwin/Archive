@@ -8,6 +8,24 @@ import subprocess
 from pathlib import Path
 
 
+ADAPTIVE_LOCAL_FAST_PATH_DOCS_ONLY = "adaptive_policy_local_fast_path_docs_only"
+ADAPTIVE_LOCAL_FAST_PATH_SMALL_SCOPE = "adaptive_policy_local_fast_path_small_scope"
+ADAPTIVE_LOCAL_FAST_PATH_LINEAR_TASK = "adaptive_policy_local_fast_path_linear_task"
+ADAPTIVE_LOCAL_FAST_PATH_LOW_PARALLEL_VALUE = "adaptive_policy_local_fast_path_low_parallel_value"
+RISK_MARKER_REQUIRES_OPERATOR_REVIEW = "risk_marker_requires_operator_review"
+
+RISKY_PATH_FRAGMENTS = (
+    "migration",
+    "migrations",
+    "auth",
+    "security",
+    "infra",
+    "terraform",
+    "pulumi",
+)
+RISKY_EXACT_FILES = {"bun.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "Cargo.lock"}
+
+
 def git_changed(repo: Path) -> set[str]:
     files: set[str] = set()
     for args in (["diff", "--name-only", "HEAD"], ["ls-files", "--others", "--exclude-standard"]):
@@ -53,6 +71,82 @@ def write_scope_too_broad(pattern: str) -> bool:
     return normalized in {"", ".", "*", "**", "**/*", "./", "./*", "./**", "./**/*"}
 
 
+def packet_list(packet: dict, key: str) -> list[str]:
+    value = packet.get(key)
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, str) and item.strip()]
+
+
+def packet_context_status(packet: dict) -> str:
+    budget = packet.get("context_budget") if isinstance(packet, dict) else {}
+    if not isinstance(budget, dict):
+        return "unknown"
+    status = budget.get("status")
+    return status if isinstance(status, str) and status.strip() else "unknown"
+
+
+def packet_estimated_chars(packet: dict) -> int:
+    budget = packet.get("context_budget") if isinstance(packet, dict) else {}
+    if not isinstance(budget, dict):
+        return 0
+    value = budget.get("estimated_chars", 0)
+    return value if isinstance(value, int) and value >= 0 else 0
+
+
+def path_risk_markers(files: list[str], explicit_markers: list[str]) -> list[str]:
+    markers: set[str] = {marker for marker in explicit_markers if marker}
+    for file_path in files:
+        normalized = file_path.strip().lstrip("./")
+        if normalized in RISKY_EXACT_FILES:
+            markers.add("lockfile")
+        lowered = normalized.lower()
+        for fragment in RISKY_PATH_FRAGMENTS:
+            if fragment in lowered:
+                markers.add(fragment)
+    return sorted(markers)
+
+
+def adaptive_value_decision(packet: dict, write_scope: list[str], explicit_requested: bool) -> tuple[str, str, dict]:
+    files = packet_list(packet, "files")
+    dependencies = packet_list(packet, "dependencies")
+    explicit_risks = packet_list(packet, "risk_markers")
+    allowed = []
+    policy = packet.get("write_policy") if isinstance(packet, dict) else {}
+    if isinstance(policy, dict):
+        allowed = [item for item in policy.get("allowed_write_globs", []) if isinstance(item, str) and item.strip()]
+    context_status = packet_context_status(packet)
+    estimated_chars = packet_estimated_chars(packet)
+    risk_markers = path_risk_markers(files + write_scope, explicit_risks)
+    docs_only = bool(files) and all(path.startswith("docs/") and path.endswith(".md") for path in files)
+    small_file_count = 0 < len(files) <= 3
+    narrow_scope = 0 < len(allowed) <= 3 and 0 < len(write_scope) <= 3
+    low_parallel_value = small_file_count and narrow_scope and len(dependencies) <= 1 and estimated_chars <= 12000
+    signals = {
+        "declared_file_count": len(files),
+        "allowed_write_glob_count": len(allowed),
+        "write_scope_count": len(write_scope),
+        "dependency_count": len(dependencies),
+        "packet_budget_status": context_status,
+        "estimated_chars": estimated_chars,
+        "explicit_user_delegation_request": explicit_requested,
+        "risk_markers": risk_markers,
+        "docs_only": docs_only,
+        "low_parallel_value": low_parallel_value,
+    }
+    if risk_markers:
+        return "block", RISK_MARKER_REQUIRES_OPERATOR_REVIEW, signals
+    if docs_only and context_status in {"green", "yellow"} and narrow_scope:
+        return "local_fast_path", ADAPTIVE_LOCAL_FAST_PATH_DOCS_ONLY, signals
+    if low_parallel_value and context_status in {"green", "yellow"}:
+        if len(dependencies) == 1:
+            return "local_fast_path", ADAPTIVE_LOCAL_FAST_PATH_LINEAR_TASK, signals
+        return "local_fast_path", ADAPTIVE_LOCAL_FAST_PATH_SMALL_SCOPE, signals
+    if not explicit_requested and len(files) <= 1 and estimated_chars <= 20000 and narrow_scope:
+        return "local_fast_path", ADAPTIVE_LOCAL_FAST_PATH_LOW_PARALLEL_VALUE, signals
+    return "delegate", "all pre-dispatch prerequisites passed", signals
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Decide CPE subagent pre-dispatch readiness.")
     parser.add_argument("--state", required=True)
@@ -89,6 +183,10 @@ def main() -> int:
         "spawn_policy": args.spawn_policy,
         "effective_mode": "delegate",
         "reason": "Delegation prerequisites are still being evaluated.",
+        "policy_kind": "adaptive",
+        "safety_gate": "pending",
+        "value_gate": "pending",
+        "signals": {},
     }
     if args.requested_subagents == "off":
         failed.append("subagents_off")
@@ -159,6 +257,25 @@ def main() -> int:
         failed.append("dirty_overlap:" + ",".join(dirty_overlap))
         decision = "block"
         reason = "dirty files overlap delegated write scope"
+
+    if not failed and decision == "delegate":
+        value_gate, value_reason, signals = adaptive_value_decision(packet, write_scope, explicit_requested)
+        delegation_policy["signals"] = signals
+        delegation_policy["value_gate"] = value_gate
+        if value_gate == "local_fast_path":
+            decision = "local_fallback"
+            reason = value_reason
+        elif value_gate == "block":
+            failed.append(value_reason)
+            decision = "block"
+            reason = value_reason
+        else:
+            reason = value_reason
+    else:
+        delegation_policy["signals"] = {}
+        delegation_policy["value_gate"] = "skipped"
+
+    delegation_policy["safety_gate"] = "failed" if failed else "passed"
 
     if failed and decision == "delegate":
         decision = "local_fallback"
