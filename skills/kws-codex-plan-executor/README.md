@@ -23,12 +23,12 @@ before creating the worktree or orchestrator directory.
 - `context_budget=60000`
 - `manifest_fallback=full_spec_on_blocker`
 
-`subagents=on` is the subagent-first default. Eligible write-capable tasks run
-through task-packet-scoped subagents by default, with parent post-diff and state
-review before acceptance. Pass `subagents=auto` for conservative spawning only
-after an explicit delegation or parallel-work request, or `subagents=off` for a
-local-only run. A `subagents=on` local fallback must record the concrete reason
-in task `subagent_strategy`.
+`subagents=on` is the adaptive subagent-first default. CPE delegates when the
+task is safe and delegation has value. Small, low-risk, linear tasks may run
+through local fast path with the same task contract, diff review, acceptance,
+reconciliation, and state validation gates. Pass `subagents=auto` for
+conservative spawning only after explicit delegation intent, or `subagents=off`
+for local-only execution.
 
 ## Validation
 

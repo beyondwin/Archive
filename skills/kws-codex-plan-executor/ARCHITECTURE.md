@@ -31,19 +31,19 @@ boundary. `workspace` remains a backward-compatible broad pointer for older
 runs and fixture state. `command_cwd_evidence` records command, cwd, phase, and
 status only; it never stores full logs or secrets.
 
-Subagents are the default implementation path through `subagents=on`, but
-delegation is task-packet scoped rather than raw full-plan scoped.
-`subagents=auto` stays local unless the user explicitly requests delegation or
-parallel work, and `subagents=off` forces a local-only run. Each delegated
-worker must have a bounded write scope; finished state cannot retain running or
-unreviewed subagent records. A write-capable task completed locally under
-`subagents=on` records `subagent_strategy.mode = local_fallback` with the
-concrete reason.
+Subagents remain available by default through `subagents=on`, but dispatch is
+adaptive. CPE first proves delegation is safe, then checks whether it has value.
+Small, low-risk, linear tasks may use local fast path and record
+`subagent_strategy.mode = local_fallback` with an adaptive reason. Larger
+parallel-worthy tasks still delegate from task packets with disjoint write
+scopes and parent review. Finished state cannot retain running or unreviewed
+subagent records.
 
 `delegation_policy` records the requested mode, request source, active spawn
-policy, explicit user delegation intent, and effective mode. The pre-dispatch
-script owns deterministic fallbacks such as an explicit-request-only spawn
-policy.
+policy, explicit user delegation intent, effective mode, adaptive policy kind,
+safety gate, value gate, and deterministic signals. The pre-dispatch script owns
+deterministic fallbacks such as an explicit-request-only spawn policy and
+adaptive local fast path.
 
 `preflight_bootstrap` is detection-only. It suggests dependency or capability
 bootstrap commands and records tool availability, but CPE never executes those

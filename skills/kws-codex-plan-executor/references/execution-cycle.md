@@ -34,14 +34,13 @@
    invoke `using-superpowers`, invoke `test-driven-development` for code
    changes, capture RED evidence, implement, capture GREEN evidence, then run
    the post-diff policy check.
-12. Dispatch subagents by default for eligible executable tasks when the
-   resolved invocation has `subagents=on`, or when `subagents=auto` and the user
-   explicitly requested subagents, delegation, or parallel agent work. Give each
-   worker a disjoint write scope and review results before marking the task
-   complete. Keep the run local for `subagents=auto` without an explicit
-   request, and always keep it local for `subagents=off`. If a write-capable
-   task runs locally under `subagents=on`, record `subagent_strategy.mode =
-   local_fallback` with the concrete failed prerequisite or reason.
+12. Run `scripts/preflight_dispatch.py` before each eligible write-capable task.
+    Dispatch only when the decision is `delegate`. When the decision is
+    `local_fallback` with an adaptive local fast path reason, run the task
+    locally but keep the same quality gates: task contract, unit manifest,
+    RED/GREEN when applicable, post-diff review, acceptance command,
+    reconciliation, and state validation. When the decision is `block`, stop
+    before editing and record the blocker.
 13. Maintain `context_health` at every semantic boundary.
 14. Before `lifecycle_outcome=finished`, run `scripts/reconcile_state.py` and
     `scripts/validate_state.py`.

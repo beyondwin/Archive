@@ -85,7 +85,8 @@ Required path invariants:
   - `mode=delegated`: `run_ids` references reviewed completed
     `subagent_runs` for the same task.
   - `mode=local_fallback`: `run_ids` is empty and `reason` explains the failed
-    pre-dispatch prerequisite or safety reason.
+    pre-dispatch prerequisite, safety reason, or adaptive local fast path
+    reason.
 - Cache fields are optional for older runs. When present,
   `cache_strategy.mode` is one of `interactive-default`,
   `headless-explicit`, `prompt-export`, or `handoff-export`; provider cache
@@ -191,6 +192,23 @@ operator guidance should use `execution_worktree` as the command/edit boundary.
 `natural_language`, or `resume_state`. `spawn_policy` is `available`,
 `unavailable`, `explicit-request-required`, or `unknown`. `effective_mode` is
 `delegate`, `local_fallback`, `off`, or `blocked`.
+
+Adaptive dispatch may add optional fields to `delegation_policy`:
+
+- `policy_kind`: `adaptive` or `legacy`.
+- `safety_gate`: `pending`, `passed`, or `failed`.
+- `value_gate`: `pending`, `delegate`, `local_fast_path`, `block`, or `skipped`.
+- `signals`: object with deterministic inputs such as declared file count,
+  allowed write glob count, packet budget status, explicit delegation intent,
+  and risk markers.
+
+Known adaptive local fast path reasons are
+`adaptive_policy_local_fast_path_small_scope`,
+`adaptive_policy_local_fast_path_docs_only`,
+`adaptive_policy_local_fast_path_linear_task`, and
+`adaptive_policy_local_fast_path_low_parallel_value`. Finished runs may use
+these reasons only when the task still records unit manifest, diff scope, and
+verification evidence.
 
 `preflight_bootstrap.bootstrap_plan` contains suggestions only. CPE must not run
 those commands automatically.
