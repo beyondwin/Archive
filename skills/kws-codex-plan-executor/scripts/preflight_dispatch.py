@@ -71,6 +71,11 @@ def write_scope_too_broad(pattern: str) -> bool:
     return normalized in {"", ".", "*", "**", "**/*", "./", "./*", "./**", "./**/*"}
 
 
+def write_scope_format_invalid(pattern: str) -> bool:
+    stripped = pattern.strip()
+    return "," in stripped and not any(char in stripped for char in "[]{}")
+
+
 def packet_list(packet: dict, key: str) -> list[str]:
     value = packet.get(key)
     if not isinstance(value, list):
@@ -234,6 +239,9 @@ def main() -> int:
         decision = "block"
         reason = "write scope is too broad for delegated execution"
     for scope in write_scope:
+        if write_scope_format_invalid(scope):
+            failed.append("write_scope_format_invalid")
+            continue
         if allowed and not matches_any(scope, allowed):
             failed.append("write_scope_outside_allowed")
         if forbidden and matches_any(scope, forbidden):

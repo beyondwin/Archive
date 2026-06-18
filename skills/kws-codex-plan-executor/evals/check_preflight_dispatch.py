@@ -287,6 +287,32 @@ def main() -> int:
         init_repo(repo)
         state_path = repo / "state.json"
         packet_path = repo / "task_0.json"
+        write_packet(
+            packet_path,
+            ["docs/example.md"],
+            allowed_write_globs=["docs/example.md", "docs/other.md"],
+        )
+        write_state(state_path)
+        result, data = run_dispatch(
+            repo,
+            state_path,
+            packet_path,
+            write_scope=["docs/example.md,docs/other.md"],
+        )
+        checks["comma_joined_write_scope_is_format_invalid"] = (
+            result.returncode == 0
+            and data.get("decision") == "local_fallback"
+            and "write_scope_format_invalid" in data.get("failed_prerequisites", [])
+        )
+        if not checks["comma_joined_write_scope_is_format_invalid"]:
+            failures.append("comma-joined write scope should be reported as a format issue")
+
+    with tempfile.TemporaryDirectory(prefix="cpe-dispatch-") as temp:
+        repo = Path(temp) / "repo"
+        repo.mkdir()
+        init_repo(repo)
+        state_path = repo / "state.json"
+        packet_path = repo / "task_0.json"
         write_packet(packet_path, ["docs/example.md"], allowed_write_globs=["**"])
         write_state(state_path)
         result, data = run_dispatch(repo, state_path, packet_path)
