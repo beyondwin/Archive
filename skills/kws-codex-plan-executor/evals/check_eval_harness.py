@@ -46,6 +46,41 @@ def main() -> int:
     if not checks["static_prompt_runner"]:
         failures.append("run.sh should use the deterministic static runner for prompt fixtures")
 
+    checks["supports_update_baseline_option"] = "--update-baseline" in run_sh and "update_baseline=0" in run_sh
+    if not checks["supports_update_baseline_option"]:
+        failures.append("run.sh should support an explicit --update-baseline option")
+
+    checks["default_compares_baseline"] = "compare_baseline" in run_sh and "baseline mismatch:" in run_sh
+    if not checks["default_compares_baseline"]:
+        failures.append("run.sh should compare generated results against the tracked baseline by default")
+
+    checks["default_does_not_write_baseline_directly"] = (
+        "generated_baseline=" in run_sh
+        and '>"$BASELINE_FILE"' not in run_sh
+        and '> "$BASELINE_FILE"' not in run_sh
+    )
+    if not checks["default_does_not_write_baseline_directly"]:
+        failures.append("run.sh default path should not write directly to the tracked baseline file")
+
+    checks["mismatch_guides_update_command"] = "./evals/run.sh --update-baseline" in run_sh
+    if not checks["mismatch_guides_update_command"]:
+        failures.append("baseline mismatch output should tell operators to run ./evals/run.sh --update-baseline")
+
+    checks["subset_update_preserves_unexecuted_fixtures"] = (
+        "merge_subset_baseline" in run_sh
+        and "existing_by_fixture" in run_sh
+        and "generated_by_fixture" in run_sh
+    )
+    if not checks["subset_update_preserves_unexecuted_fixtures"]:
+        failures.append("fixture subset baseline updates should preserve unexecuted fixture entries")
+
+    checks["update_refuses_failed_fixture_results"] = (
+        "refusing to update baseline because eval checks failed" in run_sh
+        and 'if [ "$overall_status" -ne 0 ]' in run_sh
+    )
+    if not checks["update_refuses_failed_fixture_results"]:
+        failures.append("--update-baseline should not write baseline output when fixture checks failed")
+
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, indent=2))
     return 0 if not failures else 1
