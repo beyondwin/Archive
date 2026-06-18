@@ -42,6 +42,18 @@ def main() -> int:
         root = Path(temp)
         expected = root / "expected.json"
         actual = root / "actual.json"
+        fixtures = [{"fixture": "a", "passed": True}, {"fixture": "b", "passed": True}]
+        write_json(expected, baseline(fixtures, date="2026-06-18T00:00:00Z"))
+        write_json(actual, baseline(fixtures, date="2026-06-18T01:00:00Z"))
+        result = run_util("compare", "--expected", str(expected), "--actual", str(actual), "--mode", "full")
+        checks["full_compare_accepts_same_fixtures_with_different_date"] = result.returncode == 0
+        if not checks["full_compare_accepts_same_fixtures_with_different_date"]:
+            failures.append("full compare should ignore top-level date when fixture payloads match")
+
+    with tempfile.TemporaryDirectory(prefix="cpe-baseline-utils-") as temp:
+        root = Path(temp)
+        expected = root / "expected.json"
+        actual = root / "actual.json"
         write_json(expected, baseline([{"fixture": "a", "passed": True}, {"fixture": "b", "passed": True}]))
         write_json(actual, baseline([{"fixture": "a", "passed": True}], date="2026-06-18T01:00:00Z"))
         result = run_util("compare", "--expected", str(expected), "--actual", str(actual), "--mode", "subset")
