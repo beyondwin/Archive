@@ -74,6 +74,29 @@ def main() -> int:
     if not checks["subset_update_preserves_unexecuted_fixtures"]:
         failures.append("fixture subset baseline updates should preserve unexecuted fixture entries")
 
+    checks["full_compare_requires_exact_fixture_list"] = (
+        "mode = sys.argv[3]" in run_sh
+        and 'if mode == "full":' in run_sh
+        and "expected_names != actual_names" in run_sh
+    )
+    if not checks["full_compare_requires_exact_fixture_list"]:
+        failures.append("default full runs should require an exact fixture list match before payload comparison")
+
+    checks["subset_compare_only_checks_executed_fixture_subset"] = (
+        'compare_mode="subset"' in run_sh
+        and "subset_expected.append" in run_sh
+    )
+    if not checks["subset_compare_only_checks_executed_fixture_subset"]:
+        failures.append("focused subset runs should compare only the executed fixture subset")
+
+    checks["subset_update_rejects_unknown_fixtures"] = (
+        "refusing subset baseline update for unknown fixture:" in run_sh
+        and "raise SystemExit(1)" in run_sh
+        and "fixture not in existing_by_fixture" in run_sh
+    )
+    if not checks["subset_update_rejects_unknown_fixtures"]:
+        failures.append("focused subset baseline updates should fail when generated fixtures are absent from the tracked baseline")
+
     checks["update_refuses_failed_fixture_results"] = (
         "refusing to update baseline because eval checks failed" in run_sh
         and 'if [ "$overall_status" -ne 0 ]' in run_sh
