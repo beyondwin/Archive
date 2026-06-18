@@ -177,8 +177,15 @@ v2.22 operational run quality state may add:
     "terminal_state": "finished",
     "stale": false,
     "workspace_matches_execution_worktree": true,
+    "score": 92,
+    "grade": "green",
     "schema_drift": [],
     "open_followups": [],
+    "readiness": {"task_count": 1, "fixable_issue_count": 0, "blocking_issue_count": 0},
+    "dispatch_consistency": {"mismatch_count": 0, "override_count": 0},
+    "context_quality": {"full_spec_fallback_count": 0},
+    "verification_quality": {"completion_audit_passed": true},
+    "recommendations": [],
     "summary": "Run finished with validated state."
   }
 }
@@ -201,6 +208,12 @@ Adaptive dispatch may add optional fields to `delegation_policy`:
 - `signals`: object with deterministic inputs such as declared file count,
   allowed write glob count, packet budget status, explicit delegation intent,
   and risk markers.
+
+When a finished task's final `subagent_strategy` differs from the latest
+non-block dispatch decision for that task, the task must include
+`subagent_strategy_override` with `from_reason`, `to_reason`, `changed_at`,
+`evidence`, and `operator_decision`. This is for stale or superseded dispatch
+evidence only; it is not a way to bypass safety gates.
 
 Known adaptive local fast path reasons are
 `adaptive_policy_local_fast_path_small_scope`,

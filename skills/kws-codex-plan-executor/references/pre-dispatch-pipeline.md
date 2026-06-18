@@ -6,6 +6,12 @@ linear, low-risk tasks may use adaptive local fast path and record
 `subagent_strategy.mode = local_fallback` with an adaptive reason. This is a
 policy decision, not a failed dispatch.
 
+Before task contracts and edits, run the aggregate readiness audit over the
+generated task packets. The audit is read-only and reports fixable metadata
+issues such as missing acceptance commands, full-spec fallback, context budget
+pressure, and malformed write scopes. It does not expand allowed write globs or
+weaken safety gates.
+
 1. Run the deterministic preflight decision:
    `python3 scripts/preflight_dispatch.py --state "$STATE_PATH" --task-id "$TASK_ID" --task-packet "$CURRENT_TASK_PACKET_PATH" --repo-root "$WORKTREE_ABS" --write-scope "$WRITE_SCOPE" --spawn-policy "$SPAWN_POLICY" --explicit-delegation-requested "$EXPLICIT_DELEGATION_REQUESTED" --requested-subagents "$REQUESTED_SUBAGENTS" --requested-source "$REQUESTED_SOURCE" --output "$RUN_DIR/dispatch-$TASK_ID.json"`.
 2. Confirm the resolved invocation has `subagents=on`, or has

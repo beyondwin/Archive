@@ -166,8 +166,21 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   automatically.
 - Prefer `execution_worktree` for edit and command provenance when present.
   `workspace` remains backward-compatible metadata for older state.
+- Execution runs produce a read-only run readiness audit after task packet
+  creation and before task contracts or edits. Readiness issues classify
+  missing acceptance commands, full-spec fallback, packet context budget, and
+  write-scope formatting before per-task dispatch.
+- Finished runs with both `dispatch_decisions` and completed write-capable
+  tasks must keep final `subagent_strategy` aligned with the latest dispatch
+  decision for that task. If the operator intentionally overrides a stale or
+  superseded dispatch reason, the task records `subagent_strategy_override`
+  with `from_reason`, `to_reason`, `changed_at`, `evidence`, and
+  `operator_decision`.
 - Read-only run inspection may compute `run_quality` for recent or stale runs
   without mutating state. Finished v2.22 states may embed the same summary.
+- `run_quality` may report yellow operational quality even when
+  `completion_audit.passed=true`; this marks executor efficiency or evidence
+  quality follow-up, not product verification failure.
 - Prompt-generating artifacts follow `references/cache-strategy.md`. The
   stable prefix role, safety, required-skill, and output-schema content stays before
   the stable-prefix boundary; run-specific paths, task packets, timestamps, git
