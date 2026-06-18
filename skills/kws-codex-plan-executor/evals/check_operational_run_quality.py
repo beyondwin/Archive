@@ -55,8 +55,15 @@ def v222_state() -> dict:
         "terminal_state": "finished",
         "stale": False,
         "workspace_matches_execution_worktree": True,
+        "score": 92,
+        "grade": "green",
         "schema_drift": [],
         "open_followups": [],
+        "readiness": {"task_count": 1, "fixable_issue_count": 0, "blocking_issue_count": 0},
+        "dispatch_consistency": {"mismatch_count": 0, "override_count": 0},
+        "context_quality": {"full_spec_fallback_count": 0},
+        "verification_quality": {"completion_audit_passed": True},
+        "recommendations": [],
         "summary": "Run finished with validated state.",
     }
     return state
@@ -136,6 +143,15 @@ def main() -> int:
     )
     if not checks["invalid_execution_worktree_fails"]:
         failures.append("execution_worktree outside .codex/worktrees/<run_id> should fail")
+
+    bad_quality = v222_state()
+    bad_quality["run_quality"]["score"] = 120
+    invalid_quality = run_validator(bad_quality)
+    checks["invalid_run_quality_score_fails"] = (
+        invalid_quality.returncode != 0 and "run_quality.score" in invalid_quality.stderr
+    )
+    if not checks["invalid_run_quality_score_fails"]:
+        failures.append("run_quality.score outside 0..100 should fail")
 
     static_result, static_state = run_static_fixture()
     checks["static_runner_emits_v222_fields"] = (
