@@ -274,13 +274,15 @@ rm -f "$partial"
 compare_baseline() {
   local expected="$1"
   local actual="$2"
-  python3 - "$expected" "$actual" <<'PY'
+  local compare_mode="$3"
+  python3 - "$expected" "$actual" "$compare_mode" <<'PY'
 import json
 import sys
 from pathlib import Path
 
 expected_path = Path(sys.argv[1])
 actual_path = Path(sys.argv[2])
+mode = sys.argv[3]
 if not expected_path.is_file():
     print(f"baseline missing: {expected_path}", file=sys.stderr)
     raise SystemExit(1)
@@ -299,15 +301,29 @@ actual_compare.pop("date", None)
 
 expected_by_fixture = {item.get("fixture"): item for item in expected_compare.get("fixtures", [])}
 actual_fixtures = actual_compare.get("fixtures", [])
-subset_expected = []
-for item in actual_fixtures:
-    fixture = item.get("fixture")
-    if fixture not in expected_by_fixture:
-        print(f"baseline missing fixture: {fixture}", file=sys.stderr)
+if mode == "full":
+    expected_names = [item.get("fixture") for item in expected_compare.get("fixtures", [])]
+    actual_names = [item.get("fixture") for item in actual_fixtures]
+    if expected_names != actual_names:
+        print(
+            "baseline fixture list mismatch: "
+            f"expected {expected_names}, actual {actual_names}",
+            file=sys.stderr,
+        )
         raise SystemExit(1)
-    subset_expected.append(expected_by_fixture[fixture])
+elif mode == "subset":
+    subset_expected = []
+    for item in actual_fixtures:
+        fixture = item.get("fixture")
+        if fixture not in expected_by_fixture:
+            print(f"baseline missing fixture: {fixture}", file=sys.stderr)
+            raise SystemExit(1)
+        subset_expected.append(expected_by_fixture[fixture])
+    expected_compare["fixtures"] = subset_expected
+else:
+    print(f"unknown compare mode: {mode}", file=sys.stderr)
+    raise SystemExit(1)
 
-expected_compare["fixtures"] = subset_expected
 if expected_compare != actual_compare:
     print(f"baseline mismatch: {expected_path}", file=sys.stderr)
     raise SystemExit(1)
@@ -358,9 +374,13 @@ for item in existing_fixtures:
     else:
         merged_fixtures.append(item)
 
-for fixture, item in generated_by_fixture.items():
-    if fixture not in seen and fixture not in existing_by_fixture:
-        merged_fixtures.append(item)
+for fixture in generated_by_fixture:
+    if fixture not in existing_by_fixture:
+        print(
+            f"refusing subset baseline update for unknown fixture: {fixture}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
 
 payload = {
     "version": existing.get("version") or generated.get("version"),
@@ -385,7 +405,11 @@ if [ "$update_baseline" -eq 1 ]; then
   fi
   cat "$BASELINE_FILE"
 else
-  if ! compare_baseline "$BASELINE_FILE" "$generated_baseline"; then
+  compare_mode="full"
+  if [ "${#fixture_args[@]}" -ne 0 ]; then
+    compare_mode="subset"
+  fi
+  if ! compare_baseline "$BASELINE_FILE" "$generated_baseline" "$compare_mode"; then
     echo "Run ./evals/run.sh --update-baseline after reviewing the changed eval output." >&2
     rm -f "$generated_baseline"
     exit 1
