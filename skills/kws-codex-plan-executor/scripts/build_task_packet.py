@@ -256,6 +256,9 @@ def build_packet(
     files = [item for item in task.get("files", []) if isinstance(item, str)]
     task_body = task.get("body", "")
     acceptance_command = task.get("acceptance_command")
+    acceptance_source = task.get("acceptance_source") or (
+        "plan.command_fence_fallback" if acceptance_command else "missing"
+    )
     acceptance_text = acceptance_command or "missing acceptance command"
     spec_component_role = "spec_full_fallback" if fallback_used else "spec_slice"
     context_components = [
@@ -288,7 +291,7 @@ def build_packet(
         "acceptance": {
             "has_acceptance_criteria": bool(task.get("has_acceptance_criteria")),
             "command": acceptance_command,
-            "source": "plan.acceptance" if acceptance_command else "missing",
+            "source": acceptance_source,
             "honest_substitute_allowed": acceptance_command is None,
         },
         "spec": {
