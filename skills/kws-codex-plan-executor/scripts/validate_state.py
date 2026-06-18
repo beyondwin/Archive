@@ -393,6 +393,38 @@ def _reviewed_completed_subagent_run_ids(data: dict, task_id: str) -> set[str]:
     return ids
 
 
+def _latest_dispatch_by_task(data: dict) -> dict[str, dict]:
+    decisions = data.get("dispatch_decisions", [])
+    latest: dict[str, dict] = {}
+    if not isinstance(decisions, list):
+        return latest
+    for item in decisions:
+        if isinstance(item, dict) and isinstance(item.get("task_id"), str):
+            latest[item["task_id"]] = item
+    return latest
+
+
+def _expected_strategy_from_dispatch(decision: dict) -> tuple[str | None, str | None]:
+    raw_decision = decision.get("decision")
+    if raw_decision == "delegate":
+        return "delegated", decision.get("reason")
+    if raw_decision == "local_fallback":
+        return "local_fallback", decision.get("reason")
+    return None, None
+
+
+def _validate_strategy_override(task_id: str, task: dict, errors: list[str]) -> None:
+    override = task.get("subagent_strategy_override")
+    if not isinstance(override, dict):
+        errors.append(f"{task_id}: subagent_strategy_override required when dispatch decision and final strategy differ")
+        return
+    for key in ("from_reason", "to_reason", "changed_at", "evidence", "operator_decision"):
+        if not _has_substantive_value(override.get(key)):
+            errors.append(f"{task_id}: subagent_strategy_override.{key} must be non-empty")
+    if _parse_ts(override.get("changed_at")) is None:
+        errors.append(f"{task_id}: subagent_strategy_override.changed_at must be an ISO timestamp")
+
+
 def _validate_subagents(data: dict, errors: list[str]) -> None:
     requested = data.get("subagents_requested")
     runs = data.get("subagent_runs", [])
@@ -778,6 +810,17 @@ def _validate_operational_run_quality(data: dict, errors: list[str]) -> None:
             for key in ("schema_drift", "open_followups"):
                 if key in quality and not isinstance(quality[key], list):
                     errors.append(f"run_quality.{key} must be a list")
+            score = quality.get("score")
+            if score is not None and (not isinstance(score, int) or score < 0 or score > 100):
+                errors.append("run_quality.score must be an integer from 0 to 100")
+            grade = quality.get("grade")
+            if grade is not None and grade not in {"green", "yellow", "red"}:
+                errors.append("run_quality.grade must be green, yellow, or red")
+            for key in ("readiness", "dispatch_consistency", "context_quality", "verification_quality"):
+                if key in quality and not isinstance(quality[key], dict):
+                    errors.append(f"run_quality.{key} must be an object")
+            if "recommendations" in quality and not isinstance(quality["recommendations"], list):
+                errors.append("run_quality.recommendations must be a list")
 
 
 def _is_v220_state(data: dict) -> bool:
@@ -908,6 +951,12 @@ def _validate_subagent_strategy(task_id: str, task: dict, data: dict, errors: li
             errors.append(f"{task_id}: delegated subagent_strategy requires a reviewed completed subagent_run")
     elif mode == "local_fallback" and run_ids:
         errors.append(f"{task_id}: local_fallback subagent_strategy must not list delegated run_ids")
+
+    latest_dispatch = _latest_dispatch_by_task(data).get(task_id)
+    if isinstance(latest_dispatch, dict) and latest_dispatch.get("decision") != "block":
+        expected_mode, expected_reason = _expected_strategy_from_dispatch(latest_dispatch)
+        if expected_mode and (mode != expected_mode or reason != expected_reason):
+            _validate_strategy_override(task_id, task, errors)
 
 
 def _validate_v220_task(task_id: str, task: dict, data: dict, errors: list[str]) -> None:

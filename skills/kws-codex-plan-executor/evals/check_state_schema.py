@@ -508,6 +508,7 @@ def main() -> int:
             "failed_prerequisites": [],
         }
     ]
+    valid_hardening_fields["tasks"]["task_0"]["subagent_strategy"]["reason"] = "all pre-dispatch prerequisites passed"
     result = run_validator(script, valid_hardening_fields)
     checks["valid_hardening_fields_pass"] = result.returncode == 0
     if not checks["valid_hardening_fields_pass"]:
@@ -596,6 +597,43 @@ def main() -> int:
     checks["finished_adaptive_local_fast_path_passes"] = result.returncode == 0
     if not checks["finished_adaptive_local_fast_path_passes"]:
         failures.append("finished adaptive local fast path should pass: " + (result.stderr or result.stdout))
+
+    mismatch = v220_state()
+    mismatch["subagent_runs"] = []
+    mismatch["dispatch_decisions"] = [
+        {
+            "schema_version": "1",
+            "task_id": "task_0",
+            "decision": "local_fallback",
+            "reason": "acceptance_command_missing",
+            "write_scope": ["docs/example.md"],
+            "failed_prerequisites": ["acceptance_command_missing"],
+        }
+    ]
+    mismatch["tasks"]["task_0"]["subagent_strategy"] = {
+        "mode": "local_fallback",
+        "reason": "adaptive_policy_local_fast_path_docs_only",
+        "run_ids": [],
+    }
+    result = run_validator(script, mismatch)
+    checks["dispatch_strategy_mismatch_without_override_fails"] = (
+        result.returncode != 0 and "subagent_strategy_override" in (result.stderr + result.stdout)
+    )
+    if not checks["dispatch_strategy_mismatch_without_override_fails"]:
+        failures.append("dispatch/strategy mismatch should require override evidence")
+
+    override = mismatch
+    override["tasks"]["task_0"]["subagent_strategy_override"] = {
+        "from_reason": "acceptance_command_missing",
+        "to_reason": "adaptive_policy_local_fast_path_docs_only",
+        "changed_at": "2026-05-19T14:34:30Z",
+        "evidence": "Operator replaced a stale dry-run dispatch reason after acceptance was added before execution.",
+        "operator_decision": "accept override",
+    }
+    result = run_validator(script, override)
+    checks["dispatch_strategy_mismatch_with_override_passes"] = result.returncode == 0
+    if not checks["dispatch_strategy_mismatch_with_override_passes"]:
+        failures.append("dispatch/strategy override evidence should pass: " + (result.stderr or result.stdout))
 
     bad_adaptive_reason = v220_state()
     bad_adaptive_reason["subagent_runs"] = []
