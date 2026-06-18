@@ -28,6 +28,15 @@ python3 -m py_compile scripts/*.py evals/*.py
 bash -n evals/run.sh
 ```
 
+`./evals/run.sh` is the default full harness verification command. It builds a
+temporary generated baseline and compares it with `evals/baselines/v<version>.json`
+while ignoring the top-level `date` field, but it does not update the tracked
+baseline file. When fixture output intentionally changes, review the generated
+output and then run `./evals/run.sh --update-baseline` to update the baseline.
+Focused fixture runs such as `./evals/run.sh fixtures/01-prompt-only.yaml`
+compare only the executed fixture entries; focused update runs replace only
+those fixture entries and preserve unexecuted fixtures.
+
 The fixture harness copies the skill under test into a fixture repository, then
 uses deterministic runners to generate prompt/handoff outputs and execution
 repository/state artifacts. `check_prompt.py` and `check_execution.py` still
