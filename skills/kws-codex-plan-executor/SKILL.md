@@ -3,7 +3,7 @@ name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
   version: "2.22.0"
-  updated_at: "2026-06-09"
+  updated_at: "2026-06-18"
 ---
 
 # KWS Codex Plan Executor
@@ -75,6 +75,12 @@ If an otherwise executable task falls back to local implementation under
 in the task `subagent_strategy`. The main agent remains responsible for
 post-diff and state review before accepting subagent output.
 
+Subagent dispatch maintains three linked state surfaces per
+`references/subagent-run-store.md`: `subagent_runs` for concrete worker records,
+task `subagent_strategy` for the accepted per-task decision, and
+`dispatch_decisions` plus `delegation_policy` for deterministic pre-dispatch
+evidence. Keep these surfaces aligned before any finished lifecycle outcome.
+
 ## Core Invariants
 
 - No edits before a 5-line `TASK EXECUTION CONTRACT` is stated and recorded:
@@ -143,8 +149,9 @@ post-diff and state review before accepting subagent output.
   retain running or unreviewed subagent records.
 - For v2.20+ finished runs with `subagents_requested=true`, every completed
   write-capable task records `subagent_strategy`. `mode=delegated` must point
-  to reviewed completed `subagent_runs`; `mode=local_fallback` must include a
-  concrete reason and no delegated run ids.
+  to reviewed, completed, accepted `subagent_runs` owned by the same task;
+  `mode=local_fallback` must include a concrete reason and no delegated run
+  ids.
 - Adaptive local fast path is a quality-preserving local execution decision,
   not a verification skip. It may choose `local_fallback` for small, low-risk,
   linear tasks, but the task still requires the task contract, unit manifest,
@@ -208,15 +215,19 @@ post-diff and state review before accepting subagent output.
    `references/prompt-export-checklist.md`.
 4. For `interactive`, follow `references/execution-cycle.md`.
 5. For `headless`, follow `references/headless-runner.md`.
-6. Maintain `~/.codex/orchestrator/<run_id>/state.json` using
+6. Before subagent dispatch, review `references/pre-dispatch-pipeline.md` and
+   `references/subagent-run-store.md`; after dispatch, reconcile
+   `subagent_runs`, task `subagent_strategy`, `dispatch_decisions`, and
+   `delegation_policy`.
+7. Maintain `~/.codex/orchestrator/<run_id>/state.json` using
    `references/state-schema.md`; keep repository worktrees free of executor
    runtime artifacts.
-7. Build `context.json` for execution modes before edits, maintain
+8. Build `context.json` for execution modes before edits, maintain
    `context_health`, and record completion proof before reporting a finished
    lifecycle outcome.
-8. For execution modes, record notable-boundary learning events using
+9. For execution modes, record notable-boundary learning events using
    `references/learning-log.md`.
-9. Validate using scripts before claiming completion.
+10. Validate using scripts before claiming completion.
 
 ## Stop Rules
 
