@@ -11,6 +11,7 @@ def main() -> int:
     skill_dir = Path(__file__).resolve().parents[1]
     run_sh = (skill_dir / "evals" / "run.sh").read_text(encoding="utf-8")
     check_execution = (skill_dir / "evals" / "check_execution.py").read_text(encoding="utf-8")
+    baseline_utils = (skill_dir / "evals" / "baseline_utils.py").read_text(encoding="utf-8")
     checks: dict[str, bool] = {}
     failures: list[str] = []
 
@@ -58,7 +59,7 @@ def main() -> int:
     if not checks["focused_run_flag_captures_cli_scope"]:
         failures.append("run.sh should preserve focused_run state immediately after CLI parsing")
 
-    checks["default_compares_baseline"] = "compare_baseline" in run_sh and "baseline mismatch:" in run_sh
+    checks["default_compares_baseline"] = "compare_baseline" in run_sh and "baseline mismatch:" in baseline_utils
     if not checks["default_compares_baseline"]:
         failures.append("run.sh should compare generated results against the tracked baseline by default")
 
@@ -75,24 +76,24 @@ def main() -> int:
         failures.append("baseline mismatch output should tell operators to run ./evals/run.sh --update-baseline")
 
     checks["subset_update_preserves_unexecuted_fixtures"] = (
-        "merge_subset_baseline" in run_sh
-        and "existing_by_fixture" in run_sh
-        and "generated_by_fixture" in run_sh
+        "merge_subset_baseline" in baseline_utils
+        and "existing_by_fixture" in baseline_utils
+        and "generated_by_fixture" in baseline_utils
     )
     if not checks["subset_update_preserves_unexecuted_fixtures"]:
         failures.append("fixture subset baseline updates should preserve unexecuted fixture entries")
 
     checks["full_compare_requires_exact_fixture_list"] = (
-        "mode = sys.argv[3]" in run_sh
-        and 'if mode == "full":' in run_sh
-        and "expected_names != actual_names" in run_sh
+        'choices=["full", "subset"]' in baseline_utils
+        and 'if mode == "full":' in baseline_utils
+        and "expected_names != actual_names" in baseline_utils
     )
     if not checks["full_compare_requires_exact_fixture_list"]:
         failures.append("default full runs should require an exact fixture list match before payload comparison")
 
     checks["subset_compare_only_checks_executed_fixture_subset"] = (
         'compare_mode="subset"' in run_sh
-        and "subset_expected.append" in run_sh
+        and "subset_expected.append" in baseline_utils
     )
     if not checks["subset_compare_only_checks_executed_fixture_subset"]:
         failures.append("focused subset runs should compare only the executed fixture subset")
@@ -105,12 +106,19 @@ def main() -> int:
         failures.append("run.sh compare/update branching should use focused_run instead of mutable fixture_args length")
 
     checks["subset_update_rejects_unknown_fixtures"] = (
-        "refusing subset baseline update for unknown fixture:" in run_sh
-        and "raise SystemExit(1)" in run_sh
-        and "fixture not in existing_by_fixture" in run_sh
+        "refusing subset baseline update for unknown fixture:" in baseline_utils
+        and "return 1" in baseline_utils
+        and "fixture not in existing_by_fixture" in baseline_utils
     )
     if not checks["subset_update_rejects_unknown_fixtures"]:
         failures.append("focused subset baseline updates should fail when generated fixtures are absent from the tracked baseline")
+
+    checks["baseline_utils_has_direct_eval"] = (
+        "check_baseline_utils.py" in run_sh
+        and (skill_dir / "evals" / "check_baseline_utils.py").is_file()
+    )
+    if not checks["baseline_utils_has_direct_eval"]:
+        failures.append("run.sh should execute direct baseline helper eval coverage")
 
     checks["update_refuses_failed_fixture_results"] = (
         "refusing to update baseline because eval checks failed" in run_sh
