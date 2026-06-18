@@ -2,6 +2,12 @@
 
 ## 2.23.0 - Unreleased
 
+- Added run readiness auditing before execution edits.
+- Preserved acceptance source metadata in task packets.
+- Tightened finished-state validation for dispatch and final subagent strategy
+  consistency.
+- Expanded run quality schema for readiness, context quality, dispatch
+  consistency, and verification quality.
 - Added adaptive dispatch policy evidence so `subagents=on` delegates only when
   the task is safe and delegation has value.
 - Added local fast path reasons for small docs-only, small-scope, linear, and
