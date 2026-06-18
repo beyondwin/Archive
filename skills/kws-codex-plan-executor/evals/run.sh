@@ -14,11 +14,24 @@ PY
 )"
 BASELINE_FILE="$EVAL_DIR/baselines/v${SKILL_VERSION}.json"
 
+update_baseline=0
+fixture_args=()
+for arg in "$@"; do
+  case "$arg" in
+    --update-baseline)
+      update_baseline=1
+      ;;
+    *)
+      fixture_args+=("$arg")
+      ;;
+  esac
+done
+
 fixtures=()
-if [ "$#" -eq 0 ]; then
+if [ "${#fixture_args[@]}" -eq 0 ]; then
   while IFS= read -r fixture; do fixtures+=("$fixture"); done < <(find "$EVAL_DIR/fixtures" -name '*.yaml' -type f | sort)
 else
-  for fixture in "$@"; do
+  for fixture in "${fixture_args[@]}"; do
     if [ -f "$fixture" ]; then
       fixtures+=("$(cd "$(dirname "$fixture")" && pwd -P)/$(basename "$fixture")")
     elif [ -f "$EVAL_DIR/$fixture" ]; then
@@ -254,7 +267,131 @@ PY
   unset checker_status
 done
 
-jq -s --arg version "$SKILL_VERSION" '{version: $version, date: now | todate, fixtures: .}' "$partial" > "$BASELINE_FILE"
+generated_baseline="$(mktemp -t "codex-executor-baseline-${SKILL_VERSION}.XXXXXX.json")"
+jq -s --arg version "$SKILL_VERSION" '{version: $version, date: now | todate, fixtures: .}' "$partial" > "$generated_baseline"
 rm -f "$partial"
-cat "$BASELINE_FILE"
+
+compare_baseline() {
+  local expected="$1"
+  local actual="$2"
+  python3 - "$expected" "$actual" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+expected_path = Path(sys.argv[1])
+actual_path = Path(sys.argv[2])
+if not expected_path.is_file():
+    print(f"baseline missing: {expected_path}", file=sys.stderr)
+    raise SystemExit(1)
+
+try:
+    expected = json.loads(expected_path.read_text(encoding="utf-8"))
+    actual = json.loads(actual_path.read_text(encoding="utf-8"))
+except json.JSONDecodeError as exc:
+    print(f"baseline JSON parse failed: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+
+expected_compare = dict(expected)
+actual_compare = dict(actual)
+expected_compare.pop("date", None)
+actual_compare.pop("date", None)
+
+expected_by_fixture = {item.get("fixture"): item for item in expected_compare.get("fixtures", [])}
+actual_fixtures = actual_compare.get("fixtures", [])
+subset_expected = []
+for item in actual_fixtures:
+    fixture = item.get("fixture")
+    if fixture not in expected_by_fixture:
+        print(f"baseline missing fixture: {fixture}", file=sys.stderr)
+        raise SystemExit(1)
+    subset_expected.append(expected_by_fixture[fixture])
+
+expected_compare["fixtures"] = subset_expected
+if expected_compare != actual_compare:
+    print(f"baseline mismatch: {expected_path}", file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+write_full_baseline() {
+  local source="$1"
+  local target="$2"
+  cp "$source" "$target"
+}
+
+merge_subset_baseline() {
+  local existing="$1"
+  local generated="$2"
+  local target="$3"
+  python3 - "$existing" "$generated" "$target" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+existing_path = Path(sys.argv[1])
+generated_path = Path(sys.argv[2])
+target_path = Path(sys.argv[3])
+existing = json.loads(existing_path.read_text(encoding="utf-8")) if existing_path.is_file() else {}
+generated = json.loads(generated_path.read_text(encoding="utf-8"))
+
+existing_fixtures = existing.get("fixtures", [])
+generated_fixtures = generated.get("fixtures", [])
+existing_by_fixture = {
+    item.get("fixture"): item
+    for item in existing_fixtures
+    if isinstance(item, dict) and item.get("fixture")
+}
+generated_by_fixture = {
+    item.get("fixture"): item
+    for item in generated_fixtures
+    if isinstance(item, dict) and item.get("fixture")
+}
+
+merged_fixtures = []
+seen = set()
+for item in existing_fixtures:
+    fixture = item.get("fixture") if isinstance(item, dict) else None
+    if fixture in generated_by_fixture:
+        merged_fixtures.append(generated_by_fixture[fixture])
+        seen.add(fixture)
+    else:
+        merged_fixtures.append(item)
+
+for fixture, item in generated_by_fixture.items():
+    if fixture not in seen and fixture not in existing_by_fixture:
+        merged_fixtures.append(item)
+
+payload = {
+    "version": existing.get("version") or generated.get("version"),
+    "date": generated.get("date"),
+    "fixtures": merged_fixtures,
+}
+target_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+}
+
+if [ "$update_baseline" -eq 1 ]; then
+  if [ "$overall_status" -ne 0 ]; then
+    echo "refusing to update baseline because eval checks failed" >&2
+    cat "$generated_baseline"
+    rm -f "$generated_baseline"
+    exit "$overall_status"
+  fi
+  if [ "${#fixture_args[@]}" -eq 0 ]; then
+    write_full_baseline "$generated_baseline" "$BASELINE_FILE"
+  else
+    merge_subset_baseline "$BASELINE_FILE" "$generated_baseline" "$BASELINE_FILE"
+  fi
+  cat "$BASELINE_FILE"
+else
+  if ! compare_baseline "$BASELINE_FILE" "$generated_baseline"; then
+    echo "Run ./evals/run.sh --update-baseline after reviewing the changed eval output." >&2
+    rm -f "$generated_baseline"
+    exit 1
+  fi
+  cat "$generated_baseline"
+fi
+
+rm -f "$generated_baseline"
 exit "$overall_status"
