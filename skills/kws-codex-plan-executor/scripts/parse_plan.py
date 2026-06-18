@@ -28,10 +28,18 @@ FILES_HEADING_RE = re.compile(
     r"(?:Files|Affected files|Modified files|Changed files|수정 파일|변경 파일|대상 파일|파일)"
     r"[ \t]*:[ \t]*(?:\*\*)?[ \t]*$"
 )
-AC_RE = re.compile(r"(?mi)^\s*(#{2,5}\s*)?(Acceptance Criteria|Verification|검증|Eval)\b")
+AC_RE = re.compile(
+    r"(?mi)^\s*(#{2,5}\s*)?(Acceptance(?: Criteria)?|Verification|Done when|검증|완료 기준|Eval)\b"
+)
 COMMAND_FENCE_RE = re.compile(
-    r"(?mis)^\s*(?:#{2,5}\s*)?(?:Acceptance Criteria|Verification|검증|Eval)(?:\b|[ \t]*:).*?"
+    r"(?mis)^\s*(?:#{2,5}\s*)?(?:Acceptance(?: Criteria)?|Verification|Done when|검증|완료 기준|Eval)(?:\b|[ \t]*:).*?"
     r"```(?:bash|sh|shell)?\s*\n(?P<body>.*?)\n```"
+)
+RUN_COMMAND_FENCE_RE = re.compile(
+    r"(?mis)^[ \t]*(?:Run|실행)[ \t]*:[^\n]*\n\s*```(?:bash|sh|shell)?\s*\n(?P<body>.*?)\n```"
+)
+ANY_COMMAND_FENCE_RE = re.compile(
+    r"(?mis)^[ \t]*```(?:bash|sh|shell)?\s*\n(?P<body>.*?)\n```"
 )
 DEPENDS_RE = re.compile(
     r"(?mi)^[ \t]*(?:\*\*)?"
@@ -54,6 +62,8 @@ YAML_DEPENDENCIES_RE = re.compile(r"(?m)^dependencies:\s*\[(?P<value>[^\]]*)\]\s
 YAML_FILE_CLAIM_RE = re.compile(r"-\s*\{path:\s*(?P<path>[^,}]+),\s*mode:\s*(?P<mode>[^}]+)\}")
 YAML_FILE_CLAIM_LINE_RE = re.compile(r"(?m)^\s*-\s+path:\s*(?P<path>.+?)\s*$")
 YAML_VERIFY_RE = re.compile(r"(?m)^(?:verify|acceptance|verification):\s*(?:$|.+)")
+YAML_ACCEPTANCE_KEY_RE = re.compile(r"^(?:verify|acceptance|verification):\s*(?P<inline>.*)$")
+YAML_TOP_LEVEL_KEY_RE = re.compile(r"^[A-Za-z_][\w-]*:\s*")
 FILE_LINE_RE = re.compile(r"^\s*-\s+(?P<value>.+?)\s*$")
 FILE_PREFIX_RE = re.compile(
     r"^(?:"
@@ -230,21 +240,70 @@ def _extract_spec_refs(body: str) -> list[str]:
     return list(dict.fromkeys(SPEC_REF_RE.findall(match.group("value"))))
 
 
-def _extract_acceptance_command(body: str) -> str | None:
-    match = COMMAND_FENCE_RE.search(body)
-    if not match:
-        return None
+def _commands_from_fence_body(body: str) -> str | None:
     commands: list[str] = []
-    for line in match.group("body").splitlines():
+    for line in body.splitlines():
         command = line.strip()
         if command and not command.startswith("#"):
             commands.append(command)
     return "\n".join(commands) if commands else None
 
 
-def _extract_acceptance_command_after_line(raw_markdown: str, start_line: int, end_line: int) -> str | None:
+def _extract_yaml_acceptance_command(body: str) -> str | None:
+    lines = body.splitlines()
+    for index, line in enumerate(lines):
+        match = YAML_ACCEPTANCE_KEY_RE.match(line)
+        if not match:
+            continue
+        inline = _clean_yaml_scalar(match.group("inline"))
+        if inline:
+            return inline
+        commands: list[str] = []
+        for following in lines[index + 1 :]:
+            stripped = following.strip()
+            if not stripped:
+                continue
+            if YAML_TOP_LEVEL_KEY_RE.match(following):
+                break
+            if stripped.startswith("- "):
+                stripped = stripped[2:].strip()
+            if stripped and not stripped.startswith("#"):
+                commands.append(_clean_yaml_scalar(stripped))
+        return "\n".join(commands) if commands else None
+    return None
+
+
+def _extract_fenced_command(pattern: re.Pattern[str], body: str, last: bool = False) -> str | None:
+    matches = list(pattern.finditer(body)) if last else []
+    match = matches[-1] if matches else pattern.search(body)
+    if not match:
+        return None
+    return _commands_from_fence_body(match.group("body"))
+
+
+def _extract_acceptance(body: str) -> tuple[str | None, str]:
+    yaml_command = _extract_yaml_acceptance_command(body)
+    if yaml_command:
+        return yaml_command, "plan.yaml.verify"
+
+    section_command = _extract_fenced_command(COMMAND_FENCE_RE, body)
+    if section_command:
+        return section_command, "plan.acceptance_section"
+
+    run_command = _extract_fenced_command(RUN_COMMAND_FENCE_RE, body, last=True)
+    if run_command:
+        return run_command, "plan.last_run_block"
+
+    fallback_command = _extract_fenced_command(ANY_COMMAND_FENCE_RE, body)
+    if fallback_command:
+        return fallback_command, "plan.command_fence_fallback"
+
+    return None, "missing"
+
+
+def _extract_acceptance_after_line(raw_markdown: str, start_line: int, end_line: int) -> tuple[str | None, str]:
     raw_section = _slice_lines(raw_markdown, start_line, end_line)
-    return _extract_acceptance_command(raw_section)
+    return _extract_acceptance(raw_section)
 
 
 def _clean_yaml_scalar(value: str) -> str:
@@ -337,6 +396,7 @@ def _extract_yaml_task_blocks(raw_markdown: str, repo_root: Path, mode: str) -> 
         )
         if mode in EXECUTION_MODES and not files:
             _die(f"{task_id} has no file claims")
+        acceptance_command, acceptance_source = _extract_acceptance(yaml_body)
         tasks.append(
             {
                 "id": task_id,
@@ -353,7 +413,8 @@ def _extract_yaml_task_blocks(raw_markdown: str, repo_root: Path, mode: str) -> 
                 "yaml_task_id": task_id,
                 "_raw_depends_on": _extract_yaml_dependencies(yaml_body),
                 "has_acceptance_criteria": bool(YAML_VERIFY_RE.search(yaml_body)),
-                "acceptance_command": _extract_acceptance_command(yaml_body),
+                "acceptance_command": acceptance_command,
+                "acceptance_source": acceptance_source,
             }
         )
     return tasks
@@ -429,6 +490,11 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
         if mode in EXECUTION_MODES and not has_files:
             _die(f"{_task_id_from_number(match.group(2))} has no Files block")
         task_id = yaml_metadata["task_id"] or _task_id_from_number(match.group(2))
+        acceptance_command, acceptance_source = _extract_acceptance_after_line(
+            raw_markdown,
+            raw_body_start_line,
+            raw_body_end_line,
+        )
         tasks.append(
             {
                 "id": task_id,
@@ -445,11 +511,8 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
                 "yaml_task_id": yaml_metadata["task_id"],
                 "_raw_depends_on": yaml_metadata["depends_on_raw"],
                 "has_acceptance_criteria": bool(AC_RE.search(body)),
-                "acceptance_command": _extract_acceptance_command_after_line(
-                    raw_markdown,
-                    raw_body_start_line,
-                    raw_body_end_line,
-                ),
+                "acceptance_command": acceptance_command,
+                "acceptance_source": acceptance_source,
             }
         )
     aliases = {task["id"]: task["id"] for task in tasks}
