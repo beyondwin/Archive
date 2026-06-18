@@ -7,6 +7,7 @@ python3 evals/check_skill_contract.py --skill SKILL.md
 python3 evals/check_state_schema.py
 python3 evals/check_state_reconciliation.py
 python3 evals/check_eval_harness.py
+python3 evals/check_baseline_utils.py
 python3 evals/check_run_diffs.py
 python3 evals/check_context_snapshot.py
 python3 evals/check_headless_result.py
@@ -36,6 +37,8 @@ output and then run `./evals/run.sh --update-baseline` to update the baseline.
 Focused fixture runs such as `./evals/run.sh fixtures/01-prompt-only.yaml`
 compare only the executed fixture entries; focused update runs replace only
 those fixture entries and preserve unexecuted fixtures.
+`evals/baseline_utils.py` owns the baseline compare and subset merge semantics,
+with direct coverage in `evals/check_baseline_utils.py`.
 
 The fixture harness copies the skill under test into a fixture repository, then
 uses deterministic runners to generate prompt/handoff outputs and execution

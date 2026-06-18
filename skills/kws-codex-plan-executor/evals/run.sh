@@ -73,6 +73,7 @@ python3 "$EVAL_DIR/check_trajectory_projection.py" >/dev/null
 python3 "$EVAL_DIR/check_progress_ledger.py" >/dev/null
 python3 "$EVAL_DIR/check_operational_run_quality.py" >/dev/null
 python3 "$EVAL_DIR/check_eval_harness.py" >/dev/null
+python3 "$EVAL_DIR/check_baseline_utils.py" >/dev/null
 while IFS= read -r parser_fixture; do
   python3 "$EVAL_DIR/check_parse_plan.py" --fixture "$parser_fixture" >/dev/null
 done < <(find "$EVAL_DIR/parser-fixtures" -name '*.yaml' -type f | sort)
@@ -279,59 +280,7 @@ compare_baseline() {
   local expected="$1"
   local actual="$2"
   local compare_mode="$3"
-  python3 - "$expected" "$actual" "$compare_mode" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-expected_path = Path(sys.argv[1])
-actual_path = Path(sys.argv[2])
-mode = sys.argv[3]
-if not expected_path.is_file():
-    print(f"baseline missing: {expected_path}", file=sys.stderr)
-    raise SystemExit(1)
-
-try:
-    expected = json.loads(expected_path.read_text(encoding="utf-8"))
-    actual = json.loads(actual_path.read_text(encoding="utf-8"))
-except json.JSONDecodeError as exc:
-    print(f"baseline JSON parse failed: {exc}", file=sys.stderr)
-    raise SystemExit(1)
-
-expected_compare = dict(expected)
-actual_compare = dict(actual)
-expected_compare.pop("date", None)
-actual_compare.pop("date", None)
-
-expected_by_fixture = {item.get("fixture"): item for item in expected_compare.get("fixtures", [])}
-actual_fixtures = actual_compare.get("fixtures", [])
-if mode == "full":
-    expected_names = [item.get("fixture") for item in expected_compare.get("fixtures", [])]
-    actual_names = [item.get("fixture") for item in actual_fixtures]
-    if expected_names != actual_names:
-        print(
-            "baseline fixture list mismatch: "
-            f"expected {expected_names}, actual {actual_names}",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-elif mode == "subset":
-    subset_expected = []
-    for item in actual_fixtures:
-        fixture = item.get("fixture")
-        if fixture not in expected_by_fixture:
-            print(f"baseline missing fixture: {fixture}", file=sys.stderr)
-            raise SystemExit(1)
-        subset_expected.append(expected_by_fixture[fixture])
-    expected_compare["fixtures"] = subset_expected
-else:
-    print(f"unknown compare mode: {mode}", file=sys.stderr)
-    raise SystemExit(1)
-
-if expected_compare != actual_compare:
-    print(f"baseline mismatch: {expected_path}", file=sys.stderr)
-    raise SystemExit(1)
-PY
+  python3 "$EVAL_DIR/baseline_utils.py" compare --expected "$expected" --actual "$actual" --mode "$compare_mode"
 }
 
 write_full_baseline() {
@@ -344,55 +293,7 @@ merge_subset_baseline() {
   local existing="$1"
   local generated="$2"
   local target="$3"
-  python3 - "$existing" "$generated" "$target" <<'PY'
-import json
-import sys
-from pathlib import Path
-
-existing_path = Path(sys.argv[1])
-generated_path = Path(sys.argv[2])
-target_path = Path(sys.argv[3])
-existing = json.loads(existing_path.read_text(encoding="utf-8")) if existing_path.is_file() else {}
-generated = json.loads(generated_path.read_text(encoding="utf-8"))
-
-existing_fixtures = existing.get("fixtures", [])
-generated_fixtures = generated.get("fixtures", [])
-existing_by_fixture = {
-    item.get("fixture"): item
-    for item in existing_fixtures
-    if isinstance(item, dict) and item.get("fixture")
-}
-generated_by_fixture = {
-    item.get("fixture"): item
-    for item in generated_fixtures
-    if isinstance(item, dict) and item.get("fixture")
-}
-
-merged_fixtures = []
-seen = set()
-for item in existing_fixtures:
-    fixture = item.get("fixture") if isinstance(item, dict) else None
-    if fixture in generated_by_fixture:
-        merged_fixtures.append(generated_by_fixture[fixture])
-        seen.add(fixture)
-    else:
-        merged_fixtures.append(item)
-
-for fixture in generated_by_fixture:
-    if fixture not in existing_by_fixture:
-        print(
-            f"refusing subset baseline update for unknown fixture: {fixture}",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
-
-payload = {
-    "version": existing.get("version") or generated.get("version"),
-    "date": generated.get("date"),
-    "fixtures": merged_fixtures,
-}
-target_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-PY
+  python3 "$EVAL_DIR/baseline_utils.py" merge-subset --existing "$existing" --generated "$generated" --target "$target"
 }
 
 if [ "$update_baseline" -eq 1 ]; then

@@ -13,6 +13,8 @@
   baseline without rewriting it; intentional baseline updates now require
   `--update-baseline`, and focused fixture updates preserve unexecuted fixture
   entries.
+- Extracted eval baseline compare and subset merge semantics into a direct
+  helper with deterministic coverage.
 
 ## 2.22.0 - 2026-06-09
 
