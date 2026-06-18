@@ -50,6 +50,14 @@ def main() -> int:
     if not checks["supports_update_baseline_option"]:
         failures.append("run.sh should support an explicit --update-baseline option")
 
+    checks["cli_fixture_args_not_reassigned"] = "fixture_args=\"$(" not in run_sh
+    if not checks["cli_fixture_args_not_reassigned"]:
+        failures.append("run.sh should not reuse fixture_args for per-fixture YAML args after CLI parsing")
+
+    checks["focused_run_flag_captures_cli_scope"] = "focused_run=0" in run_sh and 'focused_run=1' in run_sh
+    if not checks["focused_run_flag_captures_cli_scope"]:
+        failures.append("run.sh should preserve focused_run state immediately after CLI parsing")
+
     checks["default_compares_baseline"] = "compare_baseline" in run_sh and "baseline mismatch:" in run_sh
     if not checks["default_compares_baseline"]:
         failures.append("run.sh should compare generated results against the tracked baseline by default")
@@ -88,6 +96,13 @@ def main() -> int:
     )
     if not checks["subset_compare_only_checks_executed_fixture_subset"]:
         failures.append("focused subset runs should compare only the executed fixture subset")
+
+    checks["compare_update_branches_use_focused_run"] = (
+        'if [ "$focused_run" -eq 0 ]' in run_sh
+        and 'if [ "$focused_run" -ne 0 ]' in run_sh
+    )
+    if not checks["compare_update_branches_use_focused_run"]:
+        failures.append("run.sh compare/update branching should use focused_run instead of mutable fixture_args length")
 
     checks["subset_update_rejects_unknown_fixtures"] = (
         "refusing subset baseline update for unknown fixture:" in run_sh

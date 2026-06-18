@@ -26,6 +26,10 @@ for arg in "$@"; do
       ;;
   esac
 done
+focused_run=0
+if [ "${#fixture_args[@]}" -ne 0 ]; then
+  focused_run=1
+fi
 
 fixtures=()
 if [ "${#fixture_args[@]}" -eq 0 ]; then
@@ -194,7 +198,7 @@ data = yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}
 print(data.get("mode", "interactive"))
 PY
 )"
-  fixture_args="$(python3 - "$fixture_path" <<'PY'
+  fixture_prompt_args="$(python3 - "$fixture_path" <<'PY'
 import sys, yaml
 data = yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}
 print(data.get("args", ""))
@@ -215,7 +219,7 @@ print(value)
 PY
 )"
 
-  prompt="EVAL_RUN: Test the local skill at $skill_copy/SKILL.md. Follow that copied skill as /kws-codex-plan-executor. For mode=prompt or mode=handoff, do not load implementation-only skills; read SKILL.md, the prompt template, the prompt export checklist, plan.md, and spec.md, then return exactly one fenced text block. Before implementation or clarification, load and follow applicable installed skills, especially using-superpowers; use test-driven-development before feature, bugfix, refactor, or behavior-change implementation and record RED evidence before implementation plus GREEN evidence after the fix. This is not a headless-only rule. This process is already the codex exec target; for mode=headless, do not launch another nested codex exec, and instead execute locally while writing the required CODEX_EVAL_HOME/.codex/orchestrator/<run_id>/ headless artifacts, context.json, state.json, and context_health when CODEX_EVAL_HOME is present. When CODEX_EVAL_HOME is present, do not run git worktree add or write git refs; use the current --cd repository as the isolated execution workspace and record any worktree path only as state metadata. Map headless_sandbox=$headless_sandbox to HEADLESS_SANDBOX=$headless_sandbox. For mode=prompt or mode=handoff, export only: do not create worktrees, state, context snapshots, edit files, execute plan tasks, or enter the TDD implementation loop. Successful completion requires context_health.handoff_ready=true, lifecycle_outcome=finished, and completion_audit.passed=true with prompt_to_artifact_checklist and verification_evidence; blocked/failed outcomes require handoff_reason and context_health.next_action. Headless final output must include context_artifacts with spec_manifest_path, task_packet_dir, and decisions_path. Do not ask clarifying questions unless the skill requires a blocker. The harness will run fixture checkers after you finish; do not inspect eval fixture YAML, baseline files, .harness metadata, expected values, or broad copied-skill file trees; open only specific SKILL.md, reference, template, and script paths needed by the copied skill. Do not dump full helper script source; use the copied scripts by running their commands or --help, then finalize immediately after required validation. Use only plan.md, spec.md, repository files, SKILL.md, references, and scripts needed by the copied skill. /kws-codex-plan-executor plan=plan.md spec=spec.md mode=$mode headless_sandbox=$headless_sandbox $fixture_args"
+  prompt="EVAL_RUN: Test the local skill at $skill_copy/SKILL.md. Follow that copied skill as /kws-codex-plan-executor. For mode=prompt or mode=handoff, do not load implementation-only skills; read SKILL.md, the prompt template, the prompt export checklist, plan.md, and spec.md, then return exactly one fenced text block. Before implementation or clarification, load and follow applicable installed skills, especially using-superpowers; use test-driven-development before feature, bugfix, refactor, or behavior-change implementation and record RED evidence before implementation plus GREEN evidence after the fix. This is not a headless-only rule. This process is already the codex exec target; for mode=headless, do not launch another nested codex exec, and instead execute locally while writing the required CODEX_EVAL_HOME/.codex/orchestrator/<run_id>/ headless artifacts, context.json, state.json, and context_health when CODEX_EVAL_HOME is present. When CODEX_EVAL_HOME is present, do not run git worktree add or write git refs; use the current --cd repository as the isolated execution workspace and record any worktree path only as state metadata. Map headless_sandbox=$headless_sandbox to HEADLESS_SANDBOX=$headless_sandbox. For mode=prompt or mode=handoff, export only: do not create worktrees, state, context snapshots, edit files, execute plan tasks, or enter the TDD implementation loop. Successful completion requires context_health.handoff_ready=true, lifecycle_outcome=finished, and completion_audit.passed=true with prompt_to_artifact_checklist and verification_evidence; blocked/failed outcomes require handoff_reason and context_health.next_action. Headless final output must include context_artifacts with spec_manifest_path, task_packet_dir, and decisions_path. Do not ask clarifying questions unless the skill requires a blocker. The harness will run fixture checkers after you finish; do not inspect eval fixture YAML, baseline files, .harness metadata, expected values, or broad copied-skill file trees; open only specific SKILL.md, reference, template, and script paths needed by the copied skill. Do not dump full helper script source; use the copied scripts by running their commands or --help, then finalize immediately after required validation. Use only plan.md, spec.md, repository files, SKILL.md, references, and scripts needed by the copied skill. /kws-codex-plan-executor plan=plan.md spec=spec.md mode=$mode headless_sandbox=$headless_sandbox $fixture_prompt_args"
 
   set +e
   if [ "$mode" != "prompt" ] && [ "$mode" != "handoff" ]; then
@@ -398,7 +402,7 @@ if [ "$update_baseline" -eq 1 ]; then
     rm -f "$generated_baseline"
     exit "$overall_status"
   fi
-  if [ "${#fixture_args[@]}" -eq 0 ]; then
+  if [ "$focused_run" -eq 0 ]; then
     write_full_baseline "$generated_baseline" "$BASELINE_FILE"
   else
     merge_subset_baseline "$BASELINE_FILE" "$generated_baseline" "$BASELINE_FILE"
@@ -406,7 +410,7 @@ if [ "$update_baseline" -eq 1 ]; then
   cat "$BASELINE_FILE"
 else
   compare_mode="full"
-  if [ "${#fixture_args[@]}" -ne 0 ]; then
+  if [ "$focused_run" -ne 0 ]; then
     compare_mode="subset"
   fi
   if ! compare_baseline "$BASELINE_FILE" "$generated_baseline" "$compare_mode"; then
