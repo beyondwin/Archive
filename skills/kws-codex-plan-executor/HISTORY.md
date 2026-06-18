@@ -9,6 +9,10 @@
   acceptance, reconciliation, and state validation gates.
 - Extended state validation and deterministic evals for adaptive local fast
   path, delegate, and block outcomes.
+- Changed `evals/run.sh` so default verification compares against the tracked
+  baseline without rewriting it; intentional baseline updates now require
+  `--update-baseline`, and focused fixture updates preserve unexecuted fixture
+  entries.
 
 ## 2.22.0 - 2026-06-09
 
