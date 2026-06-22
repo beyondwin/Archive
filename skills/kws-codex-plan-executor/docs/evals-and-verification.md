@@ -25,6 +25,7 @@ python3 evals/check_recovery_policy.py
 python3 evals/check_trajectory_projection.py
 python3 evals/check_progress_ledger.py
 python3 evals/check_operational_run_quality.py
+python3 evals/check_superpowers_compatibility.py
 python3 -m py_compile scripts/*.py evals/*.py
 bash -n evals/run.sh
 ```
@@ -60,3 +61,8 @@ trajectory JSONL projection, and progress ledger stall detection.
 `check_operational_run_quality.py` covers v2.22 optional state fields,
 delegation policy enums, execution-worktree provenance, static fixture emission
 of run-quality fields, and recent inspection summary behavior.
+
+`check_superpowers_compatibility.py` covers the current Superpowers contract
+surface and verifies that CPE recommends `thin_stateful_bridge` only when the
+required brainstorming, planning, subagent review, and completion-verification
+contracts are present.
