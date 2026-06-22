@@ -128,6 +128,23 @@ def main() -> int:
 
     with tempfile.TemporaryDirectory(prefix="codex-inspect-runs-") as temp:
         home = Path(temp) / ".codex"
+        write_state(home, "stale-missing-worktree", "docs/plan.md", create_worktree=False)
+        result, data = inspect_all(home, "--quality-report", "--stale-hours", "0")
+        run = (data.get("runs") or [{}])[0]
+        quality = run.get("run_quality", {})
+        followups = quality.get("open_followups", [])
+        checks["quality_followups_explain_stale_missing_worktree"] = (
+            result.returncode == 0
+            and quality.get("stale") is True
+            and "stale_non_terminal_run" in followups
+            and "missing_execution_worktree" in followups
+            and quality.get("summary") == "stale non-terminal; missing execution worktree"
+        )
+        if not checks["quality_followups_explain_stale_missing_worktree"]:
+            failures.append("run_quality should explain stale non-terminal runs with missing worktrees")
+
+    with tempfile.TemporaryDirectory(prefix="codex-inspect-runs-") as temp:
+        home = Path(temp) / ".codex"
         write_state(home, "finished", "docs/plan.md", outcome="finished")
         default_result, default = inspect(home, "docs/plan.md")
         include_result, include = inspect(home, "docs/plan.md", include_finished=True)

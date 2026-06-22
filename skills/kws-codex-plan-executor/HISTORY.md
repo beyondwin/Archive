@@ -9,11 +9,17 @@
   `thin_stateful_bridge`, while CPE retains state, prompt/handoff, headless,
   resume, inspection, and audit ownership.
 - Added run readiness auditing before execution edits.
+- Added deterministic repair hints for comma-joined write scopes in run
+  readiness output.
 - Preserved acceptance source metadata in task packets.
 - Tightened finished-state validation for dispatch and final subagent strategy
   consistency.
+- Tightened finished-state validation so `graphify_audit` must be referenced
+  from `completion_audit.verification_evidence`.
 - Expanded run quality schema for readiness, context quality, dispatch
   consistency, and verification quality.
+- Expanded read-only run inspection quality summaries with actionable
+  follow-ups for stale non-terminal runs and missing execution worktrees.
 - Added adaptive dispatch policy evidence so `subagents=on` delegates only when
   the task is safe and delegation has value.
 - Added local fast path reasons for small docs-only, small-scope, linear, and

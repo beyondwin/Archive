@@ -98,7 +98,8 @@ Required path invariants:
   `prompt_audit.dynamic_marker_violations`.
 - `graphify_audit` records deterministic freshness output from
   `scripts/check_graphify_freshness.py`. Finished runs cannot carry
-  non-empty `graphify_audit.errors`.
+  non-empty `graphify_audit.errors`, and must reference the Graphify evidence
+  from `completion_audit.verification_evidence`.
 - `dispatch_decisions` records output from `scripts/preflight_dispatch.py`.
   Decisions are `delegate`, `local_fallback`, or `block`; finished runs cannot
   retain a `block` decision.
@@ -194,6 +195,9 @@ v2.22 operational run quality state may add:
 `execution_worktree`, when present, must equal `worktree` and end with
 `.codex/worktrees/<run_id>`. `workspace` remains backward compatible; new
 operator guidance should use `execution_worktree` as the command/edit boundary.
+`run_quality.open_followups` may include actionable inspection markers such as
+`stale_non_terminal_run`, `missing_execution_worktree`, and
+`state_schema_drift`.
 
 `delegation_policy.requested_source` is `default`, `explicit`,
 `natural_language`, or `resume_state`. `spawn_policy` is `available`,

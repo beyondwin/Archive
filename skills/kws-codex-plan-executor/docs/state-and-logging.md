@@ -49,7 +49,8 @@ dynamic-marker violations.
 `graphify_audit` stores the output of
 `scripts/check_graphify_freshness.py`. It records `Built from commit` freshness,
 whether `graphify update .` ran, and whether tracked or ignored outputs changed.
-Finished runs cannot retain Graphify audit errors.
+Finished runs cannot retain Graphify audit errors, and must reference Graphify
+audit evidence from `completion_audit.verification_evidence`.
 When `graphify-out/` is tracked, a commit that contains only graphify outputs
 after a successful update is still source-fresh; the checker treats that as
 fresh because the indexed source corpus has not changed since the build commit.
@@ -76,7 +77,8 @@ status. It must not store full logs, secrets, or transcripts.
 `run_quality` stores or computes a compact quality summary for a run:
 validation status, terminal state, stale flag, workspace/execution-worktree
 match, schema drift, followups, and a short summary. Read-only inspection may
-compute this without writing it back to state.
+compute this without writing it back to state. Followups include markers such
+as `stale_non_terminal_run` and `missing_execution_worktree`.
 
 ## Failure, Recovery, And Progress
 

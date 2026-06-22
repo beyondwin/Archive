@@ -21,6 +21,7 @@ python3 evals/check_prompt_cache_audit.py
 python3 evals/check_cache_observations.py
 python3 evals/check_graphify_freshness.py
 python3 evals/check_preflight_dispatch.py
+python3 evals/check_run_readiness.py
 python3 evals/check_recovery_policy.py
 python3 evals/check_trajectory_projection.py
 python3 evals/check_progress_ledger.py
@@ -47,8 +48,9 @@ repository/state artifacts. `check_prompt.py` and `check_execution.py` still
 validate the generated outputs, state, context snapshots, and forbidden edits.
 
 The execution-hardening evals cover prompt cache boundaries, optional provider
-cache observations, Graphify freshness evidence, and deterministic subagent
-pre-dispatch decisions.
+cache observations, Graphify freshness evidence, deterministic subagent
+pre-dispatch decisions, and run-readiness repair hints for malformed write
+scopes.
 
 Adaptive dispatch evals cover docs-only local fast path, multi-file delegation
 when spawn policy is available, dirty overlap blocking, broad write-scope
@@ -60,7 +62,9 @@ trajectory JSONL projection, and progress ledger stall detection.
 
 `check_operational_run_quality.py` covers v2.22 optional state fields,
 delegation policy enums, execution-worktree provenance, static fixture emission
-of run-quality fields, and recent inspection summary behavior.
+of run-quality fields, and recent inspection summary behavior. `check_inspect_runs.py`
+also covers actionable quality followups for stale non-terminal runs and missing
+execution worktrees.
 
 `check_superpowers_compatibility.py` covers the current Superpowers contract
 surface and verifies that CPE recommends `thin_stateful_bridge` only when the
