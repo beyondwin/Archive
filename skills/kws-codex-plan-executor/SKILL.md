@@ -2,8 +2,8 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "2.22.0"
-  updated_at: "2026-06-18"
+  version: "2.23.0"
+  updated_at: "2026-06-23"
 ---
 
 # KWS Codex Plan Executor
@@ -17,6 +17,16 @@ Default behavior is interactive execution in the current Codex session, with
 implementation isolated in a dedicated non-conflicting git worktree under
 `~/.codex/worktrees/`. Runtime state, hooks, learning event payloads, and other
 orchestration-only artifacts live under `~/.codex/orchestrator/`.
+
+When the current Superpowers workflow is available, CPE is a thin stateful
+bridge rather than a competing implementation loop. For approved interactive
+implementation plans, first run
+`scripts/audit_superpowers_compatibility.py` and prefer the current
+Superpowers-native execution loop when it recommends
+`thin_stateful_bridge`. CPE still owns prompt and handoff export, headless
+execution, resume and inspection, state artifacts, task packets, prompt cache
+audits, Graphify evidence, and fallback when required Superpowers contracts are
+not available.
 
 ## Invocation
 
@@ -45,6 +55,29 @@ Supported arguments:
   `full_spec_on_blocker`.
 - Natural-language hints are accepted only after deterministic parser
   resolution; print the parsed echo line before preflight.
+
+## Superpowers Compatibility
+
+Before choosing an interactive execution route for an approved implementation
+plan, run:
+
+```bash
+python3 scripts/audit_superpowers_compatibility.py \
+  --superpowers-root "$SUPERPOWERS_ROOT" \
+  --skill-root "$CPE_SKILL_ROOT"
+```
+
+Use the current installed Superpowers root from the active skill registry or
+session metadata. If the audit passes and recommends `thin_stateful_bridge`,
+use Superpowers `subagent-driven-development` as the implementation loop while
+preserving CPE's run state, task packets, worktree boundary, validation, and
+completion audit evidence. If the audit fails, do not guess at compatibility:
+continue with the existing CPE execution cycle or stop with a blocker when the
+requested mode depends on missing Superpowers contracts.
+
+Prompt, handoff, headless, resume, and inspection remain CPE-owned modes. The
+compatibility audit is read-only and must not create worktrees, mutate state, or
+execute plan tasks.
 
 ## Hard Boundary
 
@@ -224,23 +257,25 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
 1. Resolve and verify paths. Prefer explicit paths; infer only when one
    workspace and one plan are unambiguous.
 2. Select mode. Read `references/mode-contracts.md` if behavior is not obvious.
-3. For `prompt` or `handoff`, use `templates/fresh-session-prompt.txt` and
+3. For interactive implementation with current Superpowers available, run the
+   Superpowers compatibility audit and use the recommended route.
+4. For `prompt` or `handoff`, use `templates/fresh-session-prompt.txt` and
    `references/prompt-export-checklist.md`.
-4. For `interactive`, follow `references/execution-cycle.md`.
-5. For `headless`, follow `references/headless-runner.md`.
-6. Before subagent dispatch, review `references/pre-dispatch-pipeline.md` and
+5. For `interactive`, follow `references/execution-cycle.md`.
+6. For `headless`, follow `references/headless-runner.md`.
+7. Before subagent dispatch, review `references/pre-dispatch-pipeline.md` and
    `references/subagent-run-store.md`; after dispatch, reconcile
    `subagent_runs`, task `subagent_strategy`, `dispatch_decisions`, and
    `delegation_policy`.
-7. Maintain `~/.codex/orchestrator/<run_id>/state.json` using
+8. Maintain `~/.codex/orchestrator/<run_id>/state.json` using
    `references/state-schema.md`; keep repository worktrees free of executor
    runtime artifacts.
-8. Build `context.json` for execution modes before edits, maintain
+9. Build `context.json` for execution modes before edits, maintain
    `context_health`, and record completion proof before reporting a finished
    lifecycle outcome.
-9. For execution modes, record notable-boundary learning events using
+10. For execution modes, record notable-boundary learning events using
    `references/learning-log.md`.
-10. Validate using scripts before claiming completion.
+11. Validate using scripts before claiming completion.
 
 ## Stop Rules
 
@@ -278,7 +313,7 @@ omitting Spark routes.
 
 | Mode | Required checks before completion |
 |------|-----------------------------------|
-| `interactive` | `scripts/parse_plan.py`, `context.json`, `context_health`, changed-project tests or honest substitute, prompt cache audit, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py` |
+| `interactive` | Superpowers compatibility audit when current Superpowers skills are available, `scripts/parse_plan.py`, `context.json`, `context_health`, changed-project tests or honest substitute, prompt cache audit, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py` |
 | `headless` | `scripts/parse_plan.py`, `context.json`, `context_health`, acceptance command or honest substitute, prompt cache audit, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py`, headless JSONL/final artifact review |
 | `prompt` | `evals/check_prompt.py` or the prompt export checklist when no fixture exists |
 | `handoff` | `evals/check_prompt.py` or the prompt export checklist, plus source state/path readability |
@@ -286,8 +321,8 @@ omitting Spark routes.
 ## Maintenance
 
 Use `references/change-protocol.md` before editing this skill. Update
-`HISTORY.md`, `ARCHITECTURE.md`, package metadata, and eval baselines for
-behavior changes.
+`HISTORY.md`, `ARCHITECTURE.md`, package metadata, compatibility docs, and eval
+baselines for behavior changes.
 
 For eval harness runs, the outer harness runs `evals/check_execution.py`. The
 target executor must not inspect fixture YAML, baseline files, `.harness`

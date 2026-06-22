@@ -8,8 +8,9 @@ flowchart TD
   Parse --> Worktree["git worktree under ~/.codex/worktrees/<run_id>"]
   Parse --> State["state under ~/.codex/orchestrator/<run_id>"]
   State --> Packet["spec manifest and task packets"]
-  Packet --> Gate["packet quality and dispatch gate"]
-  Gate --> Worker["subagent or local fallback"]
+  Packet --> Compat["Superpowers compatibility audit"]
+  Compat --> Gate["packet quality and dispatch gate"]
+  Gate --> Worker["Superpowers loop, subagent, or local fallback"]
   Worktree --> Task["task contract, RED, implementation, GREEN"]
   State --> Context["context.json and context_health"]
   Worker --> Task
@@ -26,6 +27,14 @@ The worktree stores repository files only. The orchestrator directory stores
 `state.json`, `context.json`, `hooks/`, `learning_events/`, raw evidence, and
 headless result files.
 
+CPE is a thin stateful bridge when current Superpowers contracts are available.
+`scripts/audit_superpowers_compatibility.py` compares the installed
+Superpowers workflow with CPE's stateful contracts and scores three routes:
+CPE-primary execution, Superpowers-native-only execution, and the thin
+stateful bridge. The bridge wins when Superpowers supplies the implementation
+loop and CPE preserves run state, task packets, worktree isolation, validation,
+prompt/handoff export, headless execution, resume, and inspection.
+
 New state should prefer `execution_worktree` for the actual edit and command
 boundary. `workspace` remains a backward-compatible broad pointer for older
 runs and fixture state. `command_cwd_evidence` records command, cwd, phase, and
@@ -38,6 +47,13 @@ Small, low-risk, linear tasks may use local fast path and record
 parallel-worthy tasks still delegate from task packets with disjoint write
 scopes and parent review. Finished state cannot retain running or unreviewed
 subagent records.
+
+For approved interactive implementation plans, CPE should not duplicate the
+current Superpowers implementation loop when the compatibility audit recommends
+`thin_stateful_bridge`. Instead, Superpowers `subagent-driven-development`
+handles implementer/reviewer flow while CPE records the durable state and audit
+surface. Prompt, handoff, headless, resume, and inspection remain CPE-owned
+because they depend on CPE-specific artifacts.
 
 `delegation_policy` records the requested mode, request source, active spawn
 policy, explicit user delegation intent, effective mode, adaptive policy kind,

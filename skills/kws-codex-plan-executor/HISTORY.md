@@ -2,6 +2,12 @@
 
 ## 2.23.0 - Unreleased
 
+- Added a deterministic Superpowers compatibility audit that scores CPE-primary,
+  Superpowers-native-only, and thin-stateful-bridge routes.
+- Updated interactive routing guidance so approved implementation plans prefer
+  the current Superpowers execution loop when the audit recommends
+  `thin_stateful_bridge`, while CPE retains state, prompt/handoff, headless,
+  resume, inspection, and audit ownership.
 - Added run readiness auditing before execution edits.
 - Preserved acceptance source metadata in task packets.
 - Tightened finished-state validation for dispatch and final subagent strategy

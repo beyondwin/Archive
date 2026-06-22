@@ -3,6 +3,13 @@
 `kws-codex-plan-executor` executes implementation plans or exports fresh-session
 prompts from the same plan inputs.
 
+With current Superpowers installed, CPE acts as a thin stateful bridge. For
+approved interactive implementation plans, run
+`scripts/audit_superpowers_compatibility.py`; when it recommends
+`thin_stateful_bridge`, use the Superpowers-native execution loop while CPE
+preserves worktree isolation, run state, task packets, prompt cache evidence,
+Graphify evidence, resume, and inspection.
+
 ## Runtime Layout
 
 ```text
@@ -30,6 +37,11 @@ reconciliation, and state validation gates. Pass `subagents=auto` for
 conservative spawning only after explicit delegation intent, or `subagents=off`
 for local-only execution.
 
+For interactive implementation work, this subagent policy is now routed through
+the compatibility audit first. Prompt, handoff, headless, resume, and
+inspection stay CPE-owned even when interactive implementation uses the current
+Superpowers loop.
+
 ## Validation
 
 ```bash
@@ -54,6 +66,7 @@ python3 evals/check_recovery_policy.py
 python3 evals/check_trajectory_projection.py
 python3 evals/check_progress_ledger.py
 python3 evals/check_operational_run_quality.py
+python3 evals/check_superpowers_compatibility.py
 ```
 
 `evals/run.sh` uses deterministic fixture runners for prompt, handoff,
@@ -74,6 +87,10 @@ Prompt cache hardening is checked with `scripts/audit_prompt_cache.py`.
 Graphify freshness uses `scripts/check_graphify_freshness.py`, and subagent
 readiness uses `scripts/preflight_dispatch.py`; all emit JSON evidence that
 state validation can reject before a finished outcome.
+Superpowers compatibility is checked with
+`scripts/audit_superpowers_compatibility.py`; it scores CPE-primary,
+Superpowers-native-only, and thin-stateful-bridge routes and fails when required
+current Superpowers contracts are missing.
 
 Task packets now include `context_components`, component budget breakdown,
 acceptance commands, unit manifests, spec mapping evidence, and filtered

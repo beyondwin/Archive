@@ -5,49 +5,56 @@
    run exists and the invocation did not request resume, stop and ask whether to
    resume or start a new run. If multiple active runs exist, stop with the
    stale-run report. Do not mutate stale runs automatically.
-3. Classify dirty files as related or unrelated before editing.
-4. Create `run_id=<plan-slug>-<YYYYMMDD-HHMMSS>`. If the path already exists,
+3. When current Superpowers skills are available for an approved interactive
+   implementation plan, run
+   `scripts/audit_superpowers_compatibility.py`. If it recommends
+   `thin_stateful_bridge`, route implementation through the current
+   Superpowers-native loop while preserving the remaining CPE state and audit
+   steps below. If it fails, continue only with an explicit CPE-owned fallback
+   or stop when compatibility is required.
+4. Classify dirty files as related or unrelated before editing.
+5. Create `run_id=<plan-slug>-<YYYYMMDD-HHMMSS>`. If the path already exists,
    append a short random suffix.
-5. Create a dedicated non-conflicting git worktree under
+6. Create a dedicated non-conflicting git worktree under
    `~/.codex/worktrees/<run_id>` after checking `git worktree list --porcelain`
    and existing branches. If a branch name already exists, append the run_id.
-6. Do not implement from `main`. Do not implement from the caller's original
+7. Do not implement from `main`. Do not implement from the caller's original
    checkout.
-7. Create `~/.codex/orchestrator/<run_id>/` for `state.json`, `context.json`,
+8. Create `~/.codex/orchestrator/<run_id>/` for `state.json`, `context.json`,
    `hooks/`, `learning_events/`, raw command evidence, and headless artifacts.
-8. Build `context.json` before edits and store `context_snapshot_path` plus
+9. Build `context.json` before edits and store `context_snapshot_path` plus
    `context_basis_hash` in state. When `spec_manifest.json` or task packets are
    present, pass `--spec-manifest` and `--task-packet-dir` so the snapshot
    records summaries and packet indexes instead of raw packet text.
-9. Before task execution, run `scripts/audit_run_readiness.py` against
+10. Before task execution, run `scripts/audit_run_readiness.py` against
    `$RUN_DIR/task_packets`. Save the JSON as `$RUN_DIR/run_readiness.json` and
    copy its summary into `run_quality.readiness` when finalizing. If it reports
    blocking issues, stop before edits; if it reports fixable issues, record the
    operator decision before continuing.
-10. Resolve skill paths from the active skill registry/root mapping before
+11. Resolve skill paths from the active skill registry/root mapping before
    reading local skill files. Do not hard-code `.system` or any other root. If a
    read fails, re-check the registry entry and root table first; classify it as
    an operator path-resolution error unless the registry itself is proven stale.
-11. If repo instructions mention graphify, run:
+12. If repo instructions mention graphify, run:
     `python3 scripts/check_graphify_freshness.py --repo-root "$WORKTREE_ABS" --output "$RUN_DIR/graphify_audit.json"`.
     After code changes or meaningful documentation-structure changes, run
     `graphify update .`, then
     `python3 scripts/check_graphify_freshness.py --repo-root "$WORKTREE_ABS" --update-ran --output "$RUN_DIR/graphify_audit.json"`.
     Copy or reference the JSON result in state as `graphify_audit` and in
     `completion_audit.verification_evidence`.
-12. For each task, state the `TASK EXECUTION CONTRACT`, record `unit_manifest`,
+13. For each task, state the `TASK EXECUTION CONTRACT`, record `unit_manifest`,
    invoke `using-superpowers`, invoke `test-driven-development` for code
    changes, capture RED evidence, implement, capture GREEN evidence, then run
    the post-diff policy check.
-13. Run `scripts/preflight_dispatch.py` before each eligible write-capable task.
+14. Run `scripts/preflight_dispatch.py` before each eligible write-capable task.
     Dispatch only when the decision is `delegate`. When the decision is
     `local_fallback` with an adaptive local fast path reason, run the task
     locally but keep the same quality gates: task contract, unit manifest,
     RED/GREEN when applicable, post-diff review, acceptance command,
     reconciliation, and state validation. When the decision is `block`, stop
     before editing and record the blocker.
-14. Maintain `context_health` at every semantic boundary.
-15. Before `lifecycle_outcome=finished`, run `scripts/reconcile_state.py` and
+15. Maintain `context_health` at every semantic boundary.
+16. Before `lifecycle_outcome=finished`, run `scripts/reconcile_state.py` and
     `scripts/validate_state.py`.
 
 AgentLens replay and learning events are best-effort. A failure to emit those

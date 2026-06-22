@@ -1,5 +1,38 @@
 # Verification Log
 
+## 2026-06-23
+
+Scope:
+
+- Superpowers compatibility audit for the current `brainstorming`,
+  `writing-plans`, `subagent-driven-development`, and
+  `verification-before-completion` contracts.
+- Deterministic scoring of three routes: CPE-primary, Superpowers-native-only,
+  and thin stateful bridge.
+- CPE contract update so approved interactive implementation prefers the
+  Superpowers-native loop when the audit recommends `thin_stateful_bridge`,
+  while prompt, handoff, headless, resume, inspection, state, and audit surfaces
+  remain CPE-owned.
+
+Commands:
+
+```bash
+python3 evals/check_superpowers_compatibility.py
+python3 evals/check_skill_contract.py --skill SKILL.md
+./evals/run.sh
+python3 -m py_compile scripts/*.py evals/*.py
+bash -n evals/run.sh
+git diff --check
+```
+
+Result:
+
+- Compatibility audit chooses `thin_stateful_bridge`.
+- Required Superpowers contracts are present.
+- Missing-contract fixture fails as expected.
+- Full deterministic fixture harness, Python compile, shell syntax, and diff
+  whitespace checks pass.
+
 ## 2026-06-18
 
 Scope:

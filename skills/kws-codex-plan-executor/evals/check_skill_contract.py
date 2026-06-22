@@ -52,7 +52,7 @@ def main() -> int:
     ]
 
     checks = {
-        "version_2220": 'version: "2.22.0"' in text,
+        "version_2230": 'version: "2.23.0"' in text,
         "resume_argument": "resume=latest|<state-path>" in invocation,
         "subagents_on_default": "subagents=auto|on|off" in invocation and "default `on`" in invocation,
         "subagents_on_is_subagent_first_default": "subagent-first default" in normalized
@@ -96,6 +96,15 @@ def main() -> int:
         "headless_avoids_nested_exec": "Do not launch another nested `codex exec`" in headless
         and "do not launch another nested codex exec" in eval_run,
         "superpowers_tdd_contract": all(token in runtime for token in ("using-superpowers", "test-driven-development", "RED evidence", "GREEN evidence")),
+        "superpowers_compatibility_contract": all(
+            token in runtime
+            for token in (
+                "scripts/audit_superpowers_compatibility.py",
+                "thin_stateful_bridge",
+                "Superpowers-native execution loop",
+                "Prompt, handoff, headless, resume, and inspection remain CPE-owned modes",
+            )
+        ),
         "tdd_scope_not_headless_only": "not a headless-only rule" in normalized and "interactive and headless" in normalized,
         "skill_path_resolution_guard": all(
             token in normalized

@@ -15,6 +15,14 @@ subagent를 허용하는 보수 모드이고, `subagents=off`는 local-only입�
 `subagents=on`에서 local fallback이 발생하면 task의 `subagent_strategy`에
 구체적인 사유가 기록되어야 합니다.
 
+최신 Superpowers 스킬이 설치된 세션에서는 approved interactive 구현 전에
+`scripts/audit_superpowers_compatibility.py`를 실행합니다. 결과가
+`thin_stateful_bridge`이면 구현/리뷰 루프는 Superpowers
+`subagent-driven-development`를 우선 사용하고, CPE는 worktree, state,
+task packet, 검증 audit, resume/inspection을 보존하는 bridge 역할을
+합니다. `prompt`, `handoff`, `headless`, `resume`, `inspection`은 계속 CPE가
+소유합니다.
+
 실행 시 코드는 `~/.codex/worktrees/<run_id>`에, 상태와 로그는
 `~/.codex/orchestrator/<run_id>`에 생성됩니다.
 
