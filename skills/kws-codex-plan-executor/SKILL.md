@@ -211,6 +211,9 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   `operator_decision`.
 - Read-only run inspection may compute `run_quality` for recent or stale runs
   without mutating state. Finished v2.22 states may embed the same summary.
+- `run_quality.open_followups` records actionable inspection follow-ups such as
+  `stale_non_terminal_run`, `missing_execution_worktree`, and schema drift; do
+  not rely on a bare stale boolean when deciding resume or cleanup work.
 - `run_quality` may report yellow operational quality even when
   `completion_audit.passed=true`; this marks executor efficiency or evidence
   quality follow-up, not product verification failure.
@@ -225,6 +228,9 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   after code or meaningful documentation-structure changes, the completion
   audit records whether the command ran and whether tracked or ignored outputs
   changed.
+- Finished runs with `graphify_audit` must also reference that evidence from
+  `completion_audit.verification_evidence`; a detached Graphify audit JSON is
+  not enough completion proof.
 - Subagent pre-dispatch decisions use `scripts/preflight_dispatch.py` before
   spawning for eligible write-capable tasks. The adaptive decision is one of
   `delegate`, `local_fallback`, or `block`; adaptive `local_fallback` reasons

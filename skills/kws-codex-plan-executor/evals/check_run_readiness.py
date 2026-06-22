@@ -126,6 +126,34 @@ def main() -> int:
         if not checks["clean_packet_passes"]:
             failures.append("clean readiness audit should pass")
 
+    with tempfile.TemporaryDirectory(prefix="cpe-readiness-scope-") as temp:
+        repo = Path(temp) / "repo"
+        repo.mkdir()
+        init_repo(repo)
+        state = check_state_schema.v220_state()
+        state_path = repo / "state.json"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        packet_dir = repo / "task_packets"
+        write_packet(
+            packet_dir / "task_1.json",
+            "task_1",
+            ["docs/example.md,src/app.py"],
+            command="python3 -m pytest",
+        )
+        result, data = run_audit(repo, state_path, packet_dir)
+        issue = next(
+            (item for item in data.get("issues", []) if item.get("kind") == "write_scope_format_invalid"),
+            {},
+        )
+        checks["comma_joined_scope_includes_normalized_fix"] = (
+            result.returncode == 1
+            and issue.get("severity") == "fixable"
+            and issue.get("suggested_write_scopes") == ["docs/example.md", "src/app.py"]
+            and data.get("tasks", [{}])[0].get("normalized_write_globs") == ["docs/example.md", "src/app.py"]
+        )
+        if not checks["comma_joined_scope_includes_normalized_fix"]:
+            failures.append("comma-joined write scope should include deterministic normalized write scopes")
+
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if not failures else 1

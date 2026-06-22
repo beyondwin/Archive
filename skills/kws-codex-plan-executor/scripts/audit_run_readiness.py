@@ -10,13 +10,15 @@ def load_json(path: Path) -> object:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def issue(task_id: str, severity: str, kind: str, message: str) -> dict:
-    return {
+def issue(task_id: str, severity: str, kind: str, message: str, **extra: object) -> dict:
+    payload = {
         "task_id": task_id,
         "severity": severity,
         "kind": kind,
         "message": message,
     }
+    payload.update(extra)
+    return payload
 
 
 def packet_task_id(packet: dict, fallback: str) -> str:
@@ -32,6 +34,16 @@ def list_strings(value: object) -> list[str]:
 
 def malformed_scope(pattern: str) -> bool:
     return "," in pattern and not any(char in pattern for char in "[]{}")
+
+
+def normalized_scopes(patterns: list[str]) -> list[str]:
+    normalized: list[str] = []
+    for pattern in patterns:
+        parts = [item.strip() for item in pattern.split(",")] if malformed_scope(pattern) else [pattern.strip()]
+        for part in parts:
+            if part and part not in normalized:
+                normalized.append(part)
+    return normalized
 
 
 def audit_packet(packet_path: Path) -> tuple[dict, list[dict]]:
@@ -63,12 +75,19 @@ def audit_packet(packet_path: Path) -> tuple[dict, list[dict]]:
 
     policy = packet.get("write_policy") if isinstance(packet.get("write_policy"), dict) else {}
     allowed = list_strings(policy.get("allowed_write_globs"))
+    normalized = normalized_scopes(allowed or files)
     if not allowed:
         issues.append(issue(task_id, "blocking", "allowed_write_globs_empty", "Task packet has no allowed write globs."))
     for pattern in allowed + files:
         if malformed_scope(pattern):
             issues.append(
-                issue(task_id, "fixable", "write_scope_format_invalid", "Write scope appears to contain multiple comma-joined paths.")
+                issue(
+                    task_id,
+                    "fixable",
+                    "write_scope_format_invalid",
+                    "Write scope appears to contain multiple comma-joined paths.",
+                    suggested_write_scopes=normalized_scopes([pattern]),
+                )
             )
             break
 
@@ -82,6 +101,7 @@ def audit_packet(packet_path: Path) -> tuple[dict, list[dict]]:
         "delegate_ready": not has_blocking and not issues,
         "local_fast_path_candidate": len(files) <= 3 and not has_blocking,
         "issue_count": len(issues),
+        "normalized_write_globs": normalized,
     }
     return summary, issues
 

@@ -74,11 +74,13 @@ are audited by `scripts/audit_prompt_cache.py`.
 
 Graphify freshness and subagent dispatch readiness are represented as JSON
 evidence. State remains authoritative; helper outputs are accepted only after
-state validation and parent review.
+state validation and parent review. Finished runs that record `graphify_audit`
+must also include Graphify evidence in `completion_audit.verification_evidence`.
 
 `inspect_runs.py` can compute read-only `run_quality` for recent runs across
 all plans, including stale non-terminal state, validation drift, delegation
-counts, and workspace/execution-worktree mismatch.
+counts, workspace/execution-worktree mismatch, and actionable follow-up markers
+for stale or missing-worktree runs.
 
 Structured failure state separates machine-readable blockers from human
 handoff summaries. `current_blocker` records recoverable blocked state,

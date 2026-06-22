@@ -83,15 +83,33 @@ def run_quality(
     workspace = state.get("workspace") if state else None
     execution_worktree = (state.get("execution_worktree") or state.get("worktree")) if state else None
     workspace_matches = bool(workspace and execution_worktree and str(workspace) == str(execution_worktree))
+    missing_worktree = not (isinstance(execution_worktree, str) and Path(execution_worktree).exists())
+    stale = not terminal and age_hours >= stale_hours
+    open_followups: list[str] = []
+    summary_parts: list[str] = []
+    if stale:
+        open_followups.append("stale_non_terminal_run")
+        summary_parts.append("stale non-terminal")
+    elif not terminal:
+        summary_parts.append("non-terminal")
+    else:
+        summary_parts.append("terminal")
+    if missing_worktree:
+        open_followups.append("missing_execution_worktree")
+        summary_parts.append("missing execution worktree")
+    if workspace and execution_worktree and not workspace_matches:
+        open_followups.append("workspace_execution_worktree_mismatch")
+    if validation_status == "failed":
+        open_followups.append("state_schema_drift")
     return {
         "schema_version": "1",
         "validation_status": validation_status,
         "terminal_state": outcome or "none",
-        "stale": (not terminal and age_hours >= stale_hours),
+        "stale": stale,
         "workspace_matches_execution_worktree": workspace_matches,
         "schema_drift": errors,
-        "open_followups": [],
-        "summary": "terminal" if terminal else "non-terminal",
+        "open_followups": open_followups,
+        "summary": "; ".join(summary_parts),
     }
 
 

@@ -1,6 +1,41 @@
 # Verification Log
 
-## 2026-06-23
+## 2026-06-23 - Runtime Debt Dogfood
+
+Scope:
+
+- Dogfood of the new thin-stateful-bridge route with a small docs-only plan:
+  Superpowers compatibility audit, plan parsing, spec manifest, task packet,
+  context snapshot, run readiness, and preflight dispatch.
+- Runtime debt hardening for comma-joined write scopes, stale non-terminal run
+  inspection, missing execution worktrees, and Graphify completion-audit
+  linkage.
+
+Commands:
+
+```bash
+python3 scripts/audit_superpowers_compatibility.py --superpowers-root /Users/kws/.codex/skills --skill-root /Users/kws/source/private/Archive/skills/kws-codex-plan-executor
+python3 evals/check_run_readiness.py
+python3 evals/check_inspect_runs.py
+python3 evals/check_state_schema.py
+./evals/run.sh
+python3 -m py_compile scripts/*.py evals/*.py
+bash -n evals/run.sh
+git diff --check
+graphify update .
+python3 skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py --repo-root /Users/kws/source/private/Archive --update-ran --output /tmp/cpe-runtime-debt-graphify-audit.json
+```
+
+Result:
+
+- Compatibility audit chooses `thin_stateful_bridge`.
+- Dogfood plan route reaches run readiness and dispatch; docs-only work chooses
+  `local_fallback` with `adaptive_policy_local_fast_path_docs_only`.
+- Focused runtime-debt evals pass after RED/GREEN verification.
+- Full deterministic fixture harness, Python compile, shell syntax, diff
+  whitespace checks, Graphify update, and Graphify freshness audit pass.
+
+## 2026-06-23 - Superpowers Compatibility
 
 Scope:
 

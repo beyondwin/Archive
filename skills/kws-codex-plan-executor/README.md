@@ -87,6 +87,9 @@ Prompt cache hardening is checked with `scripts/audit_prompt_cache.py`.
 Graphify freshness uses `scripts/check_graphify_freshness.py`, and subagent
 readiness uses `scripts/preflight_dispatch.py`; all emit JSON evidence that
 state validation can reject before a finished outcome.
+Run readiness also reports deterministic `normalized_write_globs` and
+`suggested_write_scopes` for comma-joined scope mistakes, so operators can
+retry dispatch without hand-parsing the raw path string.
 Superpowers compatibility is checked with
 `scripts/audit_superpowers_compatibility.py`; it scores CPE-primary,
 Superpowers-native-only, and thin-stateful-bridge routes and fails when required

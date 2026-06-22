@@ -612,6 +612,11 @@ def _validate_graphify_audit(data: dict, errors: list[str]) -> None:
             errors.append(f"graphify_audit.{key} must be a list")
     if data.get("lifecycle_outcome") == "finished" and audit.get("errors"):
         errors.append("graphify_audit.errors must be empty when lifecycle_outcome is finished")
+    if data.get("lifecycle_outcome") == "finished":
+        completion = data.get("completion_audit") if isinstance(data.get("completion_audit"), dict) else {}
+        evidence_text = json.dumps(completion.get("verification_evidence", []), ensure_ascii=False).lower()
+        if "graphify" not in evidence_text:
+            errors.append("graphify_audit must be referenced in completion_audit.verification_evidence")
 
 
 def _validate_dispatch_decisions(data: dict, errors: list[str]) -> None:

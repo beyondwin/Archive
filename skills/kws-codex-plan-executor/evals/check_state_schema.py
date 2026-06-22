@@ -498,6 +498,13 @@ def main() -> int:
         "warnings": [],
         "errors": [],
     }
+    valid_hardening_fields["completion_audit"]["verification_evidence"].append(
+        {
+            "command": "python3 scripts/check_graphify_freshness.py --repo-root $WORKTREE_ABS --update-ran",
+            "status": "passed",
+            "artifact": "graphify_audit",
+        }
+    )
     valid_hardening_fields["dispatch_decisions"] = [
         {
             "schema_version": "1",
@@ -529,6 +536,23 @@ def main() -> int:
     )
     if not checks["finished_graphify_errors_fail"]:
         failures.append("finished state with graphify audit errors should fail")
+
+    graphify_without_completion_evidence = v220_state()
+    graphify_without_completion_evidence["graphify_audit"] = {
+        "schema_version": "1",
+        "graphify_present": True,
+        "fresh": True,
+        "update_required": False,
+        "warnings": [],
+        "errors": [],
+    }
+    result = run_validator(script, graphify_without_completion_evidence)
+    checks["finished_graphify_requires_completion_evidence"] = result.returncode != 0 and (
+        "graphify_audit must be referenced in completion_audit.verification_evidence"
+        in (result.stderr + result.stdout)
+    )
+    if not checks["finished_graphify_requires_completion_evidence"]:
+        failures.append("finished state with graphify_audit should reference it in completion audit evidence")
 
     dispatch_block = v220_state()
     dispatch_block["dispatch_decisions"] = [
