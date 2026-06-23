@@ -107,6 +107,12 @@ flags and explicit command names higher priority than NL interpretation.
 - `balanced`: main=opus/high, subagents=sonnet/medium.
 - `cost-saver`: main=haiku/medium, subagents=sonnet/medium.
 
+The preset model names above are Claude-shaped. In a Codex run, `max-quality`
+is provider-aware: main=`gpt-5.5`/`xhigh`, implement/review/verify/repair
+subagents=`gpt-5.5`/`high`, with full plan preflight, manifest spec slicing,
+builtin hooks, and required method evidence unless explicitly overridden by
+supported CLI flags.
+
 Explicit `--main-model`, `--main-reasoning`, `--subagent-model`, and
 `--subagent-reasoning` override any preset.
 

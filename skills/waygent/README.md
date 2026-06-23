@@ -61,9 +61,12 @@ waygent orphans --delete stale_run_id --yes
 ```
 
 `--profile` presets (`max-quality | balanced | cost-saver`) select main and
-subagent model + reasoning level together. Explicit `--main-model`,
+subagent model + reasoning level together. Presets are provider-aware. In Codex,
+`max-quality` requests `gpt-5.5` with extra-high main reasoning and high
+worker-role reasoning, and it enables full plan preflight, manifest spec
+slicing, builtin hooks, and required method evidence. Explicit `--main-model`,
 `--main-reasoning`, `--subagent-model`, and `--subagent-reasoning` override the
-preset.
+model part of the preset; explicit harness flags override the harness defaults.
 
 When `--run` is omitted, Waygent derives the run id from the plan slug and a
 UTC timestamp and auto-retries with a numeric suffix on collision. Pass

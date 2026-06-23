@@ -22,6 +22,7 @@ import {
   watchRunCommand
 } from "@waygent/orchestrator";
 import type { ReviewRunRole, RunCommandOptions, WatchRunOptions } from "@waygent/orchestrator";
+import type { RunWaygentOptions } from "@waygent/orchestrator";
 import { FakeExtractorProvider, lintDesign, lintPlan } from "@waygent/design-contract";
 import { readFileSync } from "node:fs";
 import { join as joinPath } from "node:path";
@@ -57,7 +58,7 @@ export function parseCli(argv: string[]): ParsedCli {
 
 const usage = "waygent run|run-chain|status|events|inspect|explain|resume|verify|review|apply|repair|decisions|cost|watch|orphans|scaffold-plan|lint-design|lint-plan";
 const commandUsage: Record<string, string> = {
-  run: "waygent run --plan <waygent-task.md> [--spec <design.md>] [--run <id>] [--provider codex|claude|fake] [--execution-mode multi-agent|single-agent] [--profile max-quality|balanced|cost-saver] [--main-model <name>] [--main-reasoning medium|high|xhigh] [--subagent-model <name>] [--subagent-reasoning medium|high|xhigh] [--role-model implement=<name>,review=<name>,verify_assist=<name>] [--role-reasoning implement=medium|high|xhigh,...] [--plan-preflight off|deterministic|full]",
+  run: "waygent run --plan <waygent-task.md> [--spec <design.md>] [--run <id>] [--provider codex|claude|fake] [--execution-mode multi-agent|single-agent] [--profile max-quality|balanced|cost-saver] [--main-model <name>] [--main-reasoning medium|high|xhigh] [--subagent-model <name>] [--subagent-reasoning medium|high|xhigh] [--role-model implement=<name>,review=<name>,verify_assist=<name>,repair=<name>] [--role-reasoning implement=medium|high|xhigh,...] [--plan-preflight off|deterministic|full]",
   "run-chain": "waygent run-chain --plan <p1> [--spec <s1>] --plan <p2> [--spec <s2>]",
   demo: "waygent demo [--provider fake]",
   status: "waygent status --run <run_id>|--last",
@@ -78,8 +79,8 @@ const commandUsage: Record<string, string> = {
 
 export type ProfilePreset = "max-quality" | "balanced" | "cost-saver";
 
-export type WorkerRoleSlot = "implement" | "review" | "verify_assist";
-const WORKER_ROLE_SLOTS: readonly WorkerRoleSlot[] = ["implement", "review", "verify_assist"];
+export type WorkerRoleSlot = "implement" | "review" | "verify_assist" | "repair";
+const WORKER_ROLE_SLOTS: readonly WorkerRoleSlot[] = ["implement", "review", "verify_assist", "repair"];
 
 interface ProfilePresetSpec {
   main_model: string;
@@ -107,6 +108,41 @@ export const PROFILE_PRESETS: Record<ProfilePreset, ProfilePresetSpec> = {
     subagent_reasoning: "medium",
     role_models: { review: "haiku", verify_assist: "haiku" },
     role_reasoning: { review: "medium", verify_assist: "medium" }
+  }
+};
+
+export const CODEX_PROFILE_PRESETS: Record<ProfilePreset, ProfilePresetSpec> = {
+  "max-quality": {
+    main_model: "gpt-5.5",
+    main_reasoning: "xhigh",
+    subagent_model: "gpt-5.5",
+    subagent_reasoning: "high",
+    role_models: {
+      implement: "gpt-5.5",
+      review: "gpt-5.5",
+      verify_assist: "gpt-5.5",
+      repair: "gpt-5.5"
+    },
+    role_reasoning: {
+      implement: "high",
+      review: "high",
+      verify_assist: "high",
+      repair: "high"
+    }
+  },
+  "balanced": {
+    main_model: "gpt-5.5",
+    main_reasoning: "high",
+    subagent_model: "gpt-5.5",
+    subagent_reasoning: "medium",
+    role_reasoning: { implement: "high", review: "medium", verify_assist: "medium", repair: "medium" }
+  },
+  "cost-saver": {
+    main_model: "gpt-5",
+    main_reasoning: "medium",
+    subagent_model: "gpt-5",
+    subagent_reasoning: "medium",
+    role_reasoning: { implement: "medium", review: "medium", verify_assist: "medium", repair: "medium" }
   }
 };
 
@@ -141,7 +177,7 @@ export function resolveCliProfile(
     execution_mode: parsed.flags["execution-mode"] === "single-agent" ? "single-agent" : "multi-agent"
   };
   if (isProfilePreset(parsed.flags.profile)) {
-    const preset = PROFILE_PRESETS[parsed.flags.profile];
+    const preset = profilePresetForProvider(parsed.flags.profile, profile.provider ?? defaultProvider);
     profile.main_model = preset.main_model;
     profile.main_reasoning = preset.main_reasoning;
     profile.subagent_model = preset.subagent_model;
@@ -164,6 +200,45 @@ export function resolveCliProfile(
     profile.role_reasoning = { ...(profile.role_reasoning ?? {}), ...parseRoleReasoningFlag(roleReasoningFlag) };
   }
   return profile;
+}
+
+export type CliRunDefaults = Partial<Pick<
+  RunWaygentOptions,
+  "plan_preflight" | "spec_slice" | "hook_config" | "require_method_evidence"
+>>;
+
+export function resolveCliRunDefaults(
+  parsed: ParsedCli,
+  profile: ReturnType<typeof resolveCliProfile> = resolveCliProfile(parsed)
+): CliRunDefaults {
+  const defaults: CliRunDefaults = {};
+  const codexMaxQuality = parsed.command === "run"
+    && profile.provider === "codex"
+    && parsed.flags.profile === "max-quality";
+  if (codexMaxQuality) {
+    defaults.plan_preflight = "full";
+    defaults.spec_slice = "manifest";
+    defaults.hook_config = "builtin";
+    defaults.require_method_evidence = true;
+  }
+  if (isPlanPreflight(parsed.flags["plan-preflight"])) defaults.plan_preflight = parsed.flags["plan-preflight"];
+  if (parsed.flags["spec-slice"] === "off" || parsed.flags["spec-slice"] === "manifest") defaults.spec_slice = parsed.flags["spec-slice"];
+  if (typeof parsed.flags["hook-config"] === "string") defaults.hook_config = parsed.flags["hook-config"];
+  if (parsed.flags["require-evidence"] || parsed.flags["require-method-evidence"]) defaults.require_method_evidence = true;
+  return defaults;
+}
+
+function profilePresetForProvider(preset: ProfilePreset, provider: string): ProfilePresetSpec {
+  if (provider === "codex") return CODEX_PROFILE_PRESETS[preset];
+  if (provider === "fake") {
+    return {
+      main_model: "fake",
+      main_reasoning: "medium",
+      subagent_model: "fake",
+      subagent_reasoning: "medium"
+    };
+  }
+  return PROFILE_PRESETS[preset];
 }
 
 function stringValueOf(value: FlagValue | undefined): string | null {
@@ -211,7 +286,7 @@ export function parseRoleReasoningFlag(raw: string): Partial<Record<WorkerRoleSl
 }
 
 function isWorkerRoleSlot(value: string): value is WorkerRoleSlot {
-  return value === "implement" || value === "review" || value === "verify_assist";
+  return value === "implement" || value === "review" || value === "verify_assist" || value === "repair";
 }
 
 export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
@@ -235,10 +310,11 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
     };
   }
   if (parsed.command === "run-chain") {
+    const profile = resolveCliProfile({ ...parsed, command: "run" });
     return runPlanChain({
       root: String(parsed.flags.root ?? defaultRunRoot()),
       workspace: String(parsed.flags.workspace ?? process.cwd()),
-      profile: resolveCliProfile({ ...parsed, command: "run" }),
+      profile,
       chain_id: typeof parsed.flags.run === "string" ? parsed.flags.run : "chain_demo",
       plans: stringValues(parsed.flags.plan),
       specs: stringValues(parsed.flags.spec)
@@ -257,21 +333,19 @@ export async function runCli(argv = process.argv.slice(2)): Promise<unknown> {
         specs
       });
     }
+    const profile = resolveCliProfile(parsed);
     const options: Parameters<typeof runWaygentDemo>[0] = {
       root: String(parsed.flags.root ?? defaultRunRoot()),
       workspace: String(parsed.flags.workspace ?? process.cwd()),
-      profile: resolveCliProfile(parsed)
+      profile,
+      ...resolveCliRunDefaults(parsed, profile)
     };
     if (typeof parsed.flags.run === "string") options.run_id = parsed.flags.run;
     if (typeof parsed.flags.plan === "string") options.plan = parsed.flags.plan;
     if (typeof parsed.flags.plan === "string") options.plan_path = parsed.flags.plan;
     if (typeof parsed.flags.spec === "string") options.spec = parsed.flags.spec;
-    if (isPlanPreflight(parsed.flags["plan-preflight"])) options.plan_preflight = parsed.flags["plan-preflight"];
-    if (parsed.flags["spec-slice"] === "off" || parsed.flags["spec-slice"] === "manifest") options.spec_slice = parsed.flags["spec-slice"];
     if (typeof parsed.flags["budget-cap"] === "string") options.budget_cap_usd = Number(parsed.flags["budget-cap"]);
     if (parsed.flags["budget-action"] === "warn" || parsed.flags["budget-action"] === "pause" || parsed.flags["budget-action"] === "off") options.budget_action = parsed.flags["budget-action"];
-    if (typeof parsed.flags["hook-config"] === "string") options.hook_config = parsed.flags["hook-config"];
-    if (parsed.flags["require-evidence"] || parsed.flags["require-method-evidence"]) options.require_method_evidence = true;
     if (parsed.flags["require-cost-data"]) (options as RunCommandOptions & { require_cost_data?: boolean }).require_cost_data = true;
     if (parsed.flags.latest) options.latest = true;
     if (typeof parsed.flags.topic === "string") options.topic = parsed.flags.topic;
