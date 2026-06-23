@@ -77,6 +77,7 @@ export interface ExecuteWaygentTaskInput {
   decisions?: Array<{ decision_id: string; summary: string }>;
   requested_model?: ModelRequest;
   hooks_enabled?: boolean;
+  method_evidence_required?: boolean;
   task_packet_max_chars?: number;
   attempt?: number;
 }
@@ -121,13 +122,14 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     checkpoint_inputs: input.checkpoint_inputs,
     previous_failures: [],
     decisions: input.decisions ?? [],
+    method_evidence_required: input.method_evidence_required ?? false,
     workspace: input.workspace,
     ...(input.task_packet_max_chars ? { max_chars: input.task_packet_max_chars } : {})
   });
   const packetArtifact = writeArtifact(inputRunRoot(input), `task_packets/${input.task.id}.json`, `${JSON.stringify(packet, null, 2)}\n`);
   artifactIndexEntries.push(artifactIndexEntry({ artifact: packetArtifact, producer_phase: "task_packet", task_id: input.task.id }));
   const packetPath = join(inputRunRoot(input), packetArtifact.path);
-  const prompt = buildTaskPrompt(input.task, packetPath);
+  const prompt = buildTaskPrompt(input.task, packetPath, input.method_evidence_required ?? false);
   const attemptId = `attempt_${input.task.id}_1`;
   const attemptStarted = new Date().toISOString();
   const stdinArtifact = writeArtifact(inputRunRoot(input), `provider/${attemptId}.stdin.txt`, prompt, "text/plain");
@@ -214,7 +216,8 @@ export async function executeWaygentTask(input: ExecuteWaygentTaskInput): Promis
     prompt,
     task_packet_path: packetPath,
     cwd: taskWorktree.path,
-    changed_files: writableClaimPaths(input.task)
+    changed_files: writableClaimPaths(input.task),
+    method_evidence_required: input.method_evidence_required ?? false
   }));
   phaseTimings.push(providerTiming);
   const { worker, processEvidence, metadata } = normalizeProviderRunResult(adapterResult);
@@ -1022,11 +1025,21 @@ function runGit(cwd: string, args: string[]): void {
   if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr || result.stdout}`);
 }
 
-function buildTaskPrompt(task: Pick<ParsedWaygentTask, "title" | "instructions" | "verification_commands"> | undefined, taskPacketPath?: string): string {
+function buildTaskPrompt(
+  task: Pick<ParsedWaygentTask, "title" | "instructions" | "verification_commands"> | undefined,
+  taskPacketPath?: string,
+  methodEvidenceRequired = false
+): string {
   if (!task) return "Waygent task";
   return [
     taskPlanExcerpt(task),
     taskPacketPath ? `task_packet_path: ${taskPacketPath}` : null,
+    methodEvidenceRequired ? [
+      "method_evidence_required: true",
+      "Your final runway.worker_result.v1 evidence object must include evidence.method_audit.",
+      "Populate evidence.method_audit.applied with concrete methods used and evidence, including verification-before-completion with commands_run.",
+      "If a method is not applicable, put it in evidence.method_audit.waived with a reason."
+    ].join("\n") : null,
     "Verify:",
     task.verification_commands.join("\n")
   ].filter(Boolean).join("\n\n");

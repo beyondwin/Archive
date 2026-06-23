@@ -37,6 +37,32 @@ describe("executeWaygentTask", () => {
     expect(result.phase_timings.every((timing) => typeof timing.duration_ms === "number")).toBe(true);
   });
 
+  test("passes method evidence requirements into task packet and provider stdin", async () => {
+    const workspace = initSourceCheckout("waygent-task-executor-source-");
+    const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-root-"));
+    const parsed = parseWaygentPlan(oneTaskPlan("task_method_evidence", "method.txt"));
+    const result = await executeWaygentTask({
+      root,
+      run_id: "run_method_evidence_packet",
+      workspace,
+      worktree_root: join(root, "worktrees"),
+      task: parsed.tasks[0]!,
+      checkpoint_inputs: [],
+      spec: null,
+      provider: "fake",
+      provider_processes: {},
+      method_evidence_required: true
+    });
+
+    const packet = JSON.parse(readFileSync(result.task_packet_path, "utf8")) as Record<string, unknown>;
+    const stdinRef = result.provider_attempt.stdin_ref;
+    const stdin = readFileSync(join(root, "run_method_evidence_packet", stdinRef), "utf8");
+
+    expect(packet.method_evidence_required).toBe(true);
+    expect(stdin).toContain("method_evidence_required: true");
+    expect(stdin).toContain("evidence.method_audit");
+  });
+
   test("blocks completed provider work when Waygent verification reports dependency_missing", async () => {
     const workspace = initSourceCheckout("waygent-task-executor-source-");
     const root = mkdtempSync(join(tmpdir(), "waygent-task-executor-root-"));

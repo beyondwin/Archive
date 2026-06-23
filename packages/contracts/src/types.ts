@@ -124,6 +124,7 @@ export interface WaygentTaskPacket {
   acceptance_commands: string[];
   verification_commands: string[];
   allowed_exec_commands?: string[] | null;
+  method_evidence_required?: boolean;
   risk: RiskLevel;
   previous_failures: Array<{ failure_class: FailureClass; evidence_refs: string[]; summary: string }>;
   decisions: Array<{ decision_id: string; summary: string }>;

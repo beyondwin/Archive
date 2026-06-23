@@ -294,8 +294,8 @@ describe("Codex adapter normalization", () => {
     );
     expect(args).toContain("--model");
     expect(args).toContain("gpt-5.5");
-    expect(args).toContain("--reasoning");
-    expect(args).toContain("high");
+    expect(args).toContain("-c");
+    expect(args).toContain('model_reasoning_effort="high"');
     expect(args).toContain("--cd");
     expect(args).toContain("/tmp/work");
   });

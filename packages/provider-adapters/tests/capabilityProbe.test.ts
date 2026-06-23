@@ -5,7 +5,34 @@ import { join } from "node:path";
 import { attestProviderProcessOptions, probeProviderHelp } from "../src/capabilityProbe";
 
 describe("provider capability probe", () => {
-  test("omits unsupported Codex reasoning flags while preserving requested evidence", () => {
+  test("keeps Codex reasoning when config overrides are supported", () => {
+    const attestation = attestProviderProcessOptions("codex", {
+      executable: "codex",
+      args: ["exec", "--json", "-"],
+      model: "gpt-5.5",
+      effort: "high"
+    }, {
+      status: "ready",
+      stdout: "Usage: codex exec [OPTIONS]\n  -c, --config <key=value>\n  --model <MODEL>\n",
+      stderr: "",
+      exit_code: 0
+    });
+
+    expect(attestation.options).toEqual({
+      executable: "codex",
+      args: ["exec", "--json", "-"],
+      model: "gpt-5.5",
+      effort: "high"
+    });
+    expect(attestation.capability).toMatchObject({
+      provider: "codex",
+      requested_reasoning: "high",
+      applied_reasoning: "high",
+      reason: "supported"
+    });
+  });
+
+  test("omits Codex reasoning when neither flag nor config override is supported", () => {
     const attestation = attestProviderProcessOptions("codex", {
       executable: "codex",
       args: ["exec", "--json", "-"],
@@ -24,7 +51,6 @@ describe("provider capability probe", () => {
       model: "gpt-5.5"
     });
     expect(attestation.capability).toMatchObject({
-      provider: "codex",
       requested_reasoning: "high",
       applied_reasoning: null,
       reason: "unsupported_by_cli"

@@ -24,7 +24,7 @@ describe("unsupported provider option warnings (C4)", () => {
     expect(warnings).toContain("unsupported_provider_option: settings_path (codex)");
     expect(warnings).toContain("unsupported_provider_option: mcp_config_path (codex)");
     expect(warnings).toContain("unsupported_provider_option: session_id_first_attempt (codex)");
-    expect(warnings).toContain("unsupported_provider_option: reasoning (codex)");
+    expect(warnings).not.toContain("unsupported_provider_option: reasoning (codex)");
   });
 
   test("session_id_first_attempt is NOT warned when resume_session_id is also set", () => {

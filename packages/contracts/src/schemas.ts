@@ -742,6 +742,7 @@ export const waygentTaskPacketSchema = {
     checkpoint_inputs: { type: "array", items: { type: "string" } },
     acceptance_commands: { type: "array", items: { type: "string", minLength: 1 } },
     verification_commands: { type: "array", items: { type: "string", minLength: 1 } },
+    method_evidence_required: { type: "boolean" },
     risk: { enum: riskValues },
     previous_failures: {
       type: "array",

@@ -63,7 +63,18 @@ function methodAuditForTask(state: WaygentRunStateV2, taskId: string): Record<st
 
 function methodAuditPresent(audit: Record<string, unknown> | null): boolean {
   if (!audit) return false;
-  return Boolean(audit.tdd || audit.review || audit.verification);
+  if (audit.tdd || audit.review || audit.verification) return true;
+  if (!Array.isArray(audit.applied)) return false;
+  return audit.applied.some((entry) => {
+    if (!entry || typeof entry !== "object") return false;
+    const record = entry as Record<string, unknown>;
+    const method = typeof record.method === "string" ? record.method : typeof record.skill === "string" ? record.skill : "";
+    const hasEvidence = typeof record.evidence === "string"
+      ? record.evidence.trim().length > 0
+      : Boolean(record.evidence && typeof record.evidence === "object");
+    const commandsRun = Array.isArray(record.commands_run) && record.commands_run.length > 0;
+    return method.length > 0 && (hasEvidence || commandsRun);
+  });
 }
 
 function docsOrConfigOnly(paths: string[]): boolean {

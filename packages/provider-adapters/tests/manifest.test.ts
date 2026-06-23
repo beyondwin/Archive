@@ -34,7 +34,7 @@ describe("claude capability manifest", () => {
       settings_path: false,
       mcp_config_path: false,
       session_id_first_attempt: false,
-      reasoning: false
+      reasoning: true
     });
   });
 

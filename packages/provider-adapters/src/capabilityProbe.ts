@@ -79,7 +79,7 @@ export function attestProviderProcessOptions(
   }
   if (provider === "codex") {
     const helpText = `${probe.stdout}\n${probe.stderr}`;
-    const supportsReasoning = probe.status === "ready" && helpText.includes("--reasoning");
+    const supportsReasoning = probe.status === "ready" && (helpText.includes("--reasoning") || helpText.includes("--config") || helpText.includes("-c,"));
     const nextOptions: ProviderProcessOptions = { ...options };
     if (options.effort && !supportsReasoning) delete nextOptions.effort;
     return {

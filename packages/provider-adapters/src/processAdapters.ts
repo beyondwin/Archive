@@ -484,8 +484,8 @@ export function providerProcessArgsWithWarnings(
       ];
     }
   }
-  if (isCodexCli && options.effort && !nextArgs.includes("--reasoning")) {
-    nextArgs = ["--reasoning", options.effort, ...nextArgs];
+  if (isCodexCli && options.effort && !hasCodexReasoningOverride(nextArgs)) {
+    nextArgs = ["-c", `model_reasoning_effort=${JSON.stringify(options.effort)}`, ...nextArgs];
   }
   if (isCodexCli && options.model && !nextArgs.includes("--model")) {
     nextArgs = ["--model", options.model, ...nextArgs];
@@ -513,6 +513,16 @@ function insertBeforePromptStdin(args: string[], option: string): string[] {
     return [...args.slice(0, promptStdinIndex), option, ...args.slice(promptStdinIndex)];
   }
   return [...args, option];
+}
+
+function hasCodexReasoningOverride(args: string[]): boolean {
+  if (args.includes("--reasoning")) return true;
+  for (let index = 0; index < args.length - 1; index += 1) {
+    if ((args[index] === "-c" || args[index] === "--config") && args[index + 1]?.startsWith("model_reasoning_effort=")) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function providerProcessArgs(provider: "codex" | "claude", options: ProviderProcessOptions, cwd: string | undefined, request: AdapterRequest): string[] {
@@ -578,9 +588,14 @@ export function buildProviderUserPrompt(provider: "codex" | "claude", request: A
     `task_id: ${request.task_id}`,
     `candidate_id: ${request.candidate_id}`,
     request.task_packet_path ? `task_packet_path: ${request.task_packet_path}` : "task_packet_path: none",
+    request.method_evidence_required ? [
+      "method_evidence_required: true",
+      "Return evidence.method_audit with applied and waived arrays.",
+      "Include verification-before-completion evidence with commands_run after running verification."
+    ].join("\n") : null,
     "Task prompt:",
     request.prompt
-  ].join("\n");
+  ].filter(Boolean).join("\n");
   return retryPrefix ? `${retryPrefix}\n\n${body}` : body;
 }
 
