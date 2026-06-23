@@ -214,6 +214,11 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
 - `run_quality.open_followups` records actionable inspection follow-ups such as
   `stale_non_terminal_run`, `missing_execution_worktree`, and schema drift; do
   not rely on a bare stale boolean when deciding resume or cleanup work.
+- When read-only inspection reports stale non-terminal runs with missing
+  execution worktrees, use `scripts/repair_runs.py` to produce a dry-run repair
+  plan before any operator action. The only safe mutation is explicit
+  `--apply --run-id <id> --action mark-blocked-stale`, which validates before
+  and after the state patch and never deletes files.
 - `run_quality` may report yellow operational quality even when
   `completion_audit.passed=true`; this marks executor efficiency or evidence
   quality follow-up, not product verification failure.

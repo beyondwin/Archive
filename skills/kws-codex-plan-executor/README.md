@@ -57,6 +57,7 @@ python3 evals/check_task_packet.py
 python3 evals/check_local_env_preflight.py
 python3 evals/check_invocation_args.py
 python3 evals/check_inspect_runs.py
+python3 evals/check_repair_runs.py
 python3 evals/check_decisions_register.py
 python3 evals/check_prompt_cache_audit.py
 python3 evals/check_cache_observations.py
@@ -94,6 +95,30 @@ Superpowers compatibility is checked with
 `scripts/audit_superpowers_compatibility.py`; it scores CPE-primary,
 Superpowers-native-only, and thin-stateful-bridge routes and fails when required
 current Superpowers contracts are missing.
+
+Run-state repair is separate from inspection and defaults to dry-run:
+
+```bash
+python3 scripts/repair_runs.py \
+  --codex-home ~/.codex \
+  --recent 20 \
+  --stale-hours 24 \
+  --output /tmp/cpe-repair-plan.json
+```
+
+Apply is intentionally narrow:
+
+```bash
+python3 scripts/repair_runs.py \
+  --codex-home ~/.codex \
+  --run-id <run_id> \
+  --action mark-blocked-stale \
+  --apply
+```
+
+The first repair action only marks one stale non-terminal run as blocked when
+its execution worktree is missing and state validation passes before and after
+the patch. It does not delete worktrees, run directories, or finished states.
 
 Task packets now include `context_components`, component budget breakdown,
 acceptance commands, unit manifests, spec mapping evidence, and filtered

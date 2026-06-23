@@ -18,7 +18,11 @@
 - v2.22 bootstrap plans are suggestions only. CPE does not install
   dependencies, create Android SDK state, or bootstrap optional CLIs
   automatically.
-- v2.22 run-quality inspection is read-only. It can identify stale or
-  validation-drifted historical states, but it does not repair or mutate them.
+- Run-quality inspection remains read-only, but v2.23 adds a separate
+  `scripts/repair_runs.py` operator flow. It can mark exactly one validated
+  stale non-terminal run with a missing execution worktree as blocked after
+  explicit `--apply --run-id <id> --action mark-blocked-stale`. Cleanup,
+  deletion, finished-state rewrites, and arbitrary schema repairs remain
+  deferred.
 - Effective delegation policy records why a task fell back locally, but real
   subagent spawning remains controlled by the active Codex tool policy.
