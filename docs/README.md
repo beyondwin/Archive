@@ -29,6 +29,7 @@ understanding current behavior.
 - [AgentLens architecture](architecture/agentlens.md)
 - [Architecture decisions](architecture/decisions.md)
 - [Operations](operations/waygent.md)
+- [Codex best loop](operations/codex-best-loop.md)
 - [Recovery](operations/recovery.md)
 - [Verification](operations/verification.md)
 - [Plan authoring](operations/plan-authoring.md)

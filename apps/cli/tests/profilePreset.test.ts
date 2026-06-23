@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { PROFILE_PRESETS, parseCli, resolveCliProfile } from "../src/index";
+import { PROFILE_PRESETS, parseCli, resolveCliProfile, resolveCliRunDefaults } from "../src/index";
 
 describe("CLI --profile preset", () => {
   test("max-quality applies opus/opus across main and subagent", () => {
@@ -10,6 +10,60 @@ describe("CLI --profile preset", () => {
       main_reasoning: "high",
       subagent_model: "opus",
       subagent_reasoning: "high"
+    });
+  });
+
+  test("max-quality applies Codex-native GPT-5.5 routing for Codex provider", () => {
+    const profile = resolveCliProfile(parseCli(["run", "--provider", "codex", "--profile", "max-quality"]));
+    expect(profile).toMatchObject({
+      provider: "codex",
+      main_model: "gpt-5.5",
+      main_reasoning: "xhigh",
+      subagent_model: "gpt-5.5",
+      subagent_reasoning: "high",
+      role_models: {
+        implement: "gpt-5.5",
+        review: "gpt-5.5",
+        verify_assist: "gpt-5.5",
+        repair: "gpt-5.5"
+      },
+      role_reasoning: {
+        implement: "high",
+        review: "high",
+        verify_assist: "high",
+        repair: "high"
+      }
+    });
+  });
+
+  test("Codex max-quality turns on the strongest runtime harness defaults", () => {
+    const parsed = parseCli(["run", "--provider", "codex", "--profile", "max-quality"]);
+    const profile = resolveCliProfile(parsed);
+
+    expect(resolveCliRunDefaults(parsed, profile)).toEqual({
+      plan_preflight: "full",
+      spec_slice: "manifest",
+      hook_config: "builtin",
+      require_method_evidence: true
+    });
+  });
+
+  test("explicit run harness flags override Codex max-quality defaults", () => {
+    const parsed = parseCli([
+      "run",
+      "--provider", "codex",
+      "--profile", "max-quality",
+      "--plan-preflight", "off",
+      "--spec-slice", "off",
+      "--hook-config", "off"
+    ]);
+    const profile = resolveCliProfile(parsed);
+
+    expect(resolveCliRunDefaults(parsed, profile)).toEqual({
+      plan_preflight: "off",
+      spec_slice: "off",
+      hook_config: "off",
+      require_method_evidence: true
     });
   });
 

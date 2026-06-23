@@ -54,9 +54,15 @@ UTC timestamp (`<plan-slug>_YYYYMMDD_HHMMSS`) and retries up to
 giving up. Passing an explicit `--run` disables auto-suffix retries.
 
 `--profile <max-quality|balanced|cost-saver>` selects a packaged combination of
-main-agent and subagent model + reasoning level. Individual overrides
+main-agent and subagent model + reasoning level. Presets are provider-aware:
+Claude keeps the Opus/Sonnet-shaped profile family, while Codex uses
+GPT-shaped model requests. For Codex, `--profile max-quality` also enables the
+strongest runtime harness defaults: full plan preflight, manifest spec slicing,
+builtin hooks, and required method evidence. Individual model overrides
 (`--main-model`, `--main-reasoning`, `--subagent-model`, `--subagent-reasoning`)
-take priority over a preset.
+take priority over model values from a preset; explicit harness flags such as
+`--plan-preflight`, `--spec-slice`, and `--hook-config` override the
+max-quality harness defaults. See [Codex best loop](./codex-best-loop.md).
 
 From the Codex app or Codex CLI, `waygent run` defaults to Codex provider and
 `multi-agent` execution. `waygent demo` is offline-only and rejects live
