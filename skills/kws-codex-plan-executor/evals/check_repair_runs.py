@@ -143,6 +143,11 @@ def write_state(
             "forbidden_write_globs": [".codex/**"],
             "max_context_chars": 1000,
         }
+        state["tasks"]["task_0"]["timing"] = {
+            "started": iso(0),
+            "completed": iso(2),
+            "verified": iso(2),
+        }
         state["timestamps"]["completed_at"] = iso(2)
         state["context_health"]["handoff_ready"] = True
         state["context_health"]["next_action"] = "No action."
