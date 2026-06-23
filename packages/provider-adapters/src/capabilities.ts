@@ -41,7 +41,7 @@ export const codexCapabilityManifest: ProviderCapabilityManifest = {
   streaming: true,
   approvals: true,
   result_schema: "runway.worker_result.v1",
-  supports: { settings_path: false, mcp_config_path: false, session_id_first_attempt: false, reasoning: false }
+  supports: { settings_path: false, mcp_config_path: false, session_id_first_attempt: false, reasoning: true }
 };
 
 export const claudeCapabilityManifest: ProviderCapabilityManifest = {

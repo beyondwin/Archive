@@ -21,6 +21,7 @@ export interface BuildTaskPacketInput {
   checkpoint_inputs?: string[];
   previous_failures?: Array<{ failure_class: FailureClass; evidence_refs: string[]; summary: string }>;
   decisions?: Array<{ decision_id: string; summary: string }>;
+  method_evidence_required?: boolean;
   max_chars?: number;
   workspace?: string;
   project_commands?: readonly string[];
@@ -92,6 +93,7 @@ export function buildTaskPacket(input: BuildTaskPacketInput): WaygentTaskPacket 
     acceptance_commands: input.task.verification_commands,
     verification_commands: input.task.verification_commands,
     allowed_exec_commands,
+    method_evidence_required: input.method_evidence_required ?? false,
     risk: input.task.risk,
     previous_failures: input.previous_failures ?? [],
     decisions: input.decisions ?? []

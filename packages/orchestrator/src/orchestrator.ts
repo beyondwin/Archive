@@ -613,6 +613,7 @@ export async function runWaygent(options: RunWaygentOptions): Promise<WaygentRun
           decisions: packetDecisionSummaries(context.state),
           requested_model: requestedModelForProfile(profile, dispatchRole),
           hooks_enabled: options.hook_config !== "off",
+          method_evidence_required: options.require_method_evidence ?? false,
           attempt: (task.retry_count ?? 0) + 1,
           ...(Object.keys(processesWithResume).length > 0 ? { provider_processes: processesWithResume } : {})
         });

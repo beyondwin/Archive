@@ -22,6 +22,7 @@ export interface AdapterRequest {
   cwd?: string;
   changed_files?: string[];
   retry_context?: AdapterRetryContext;
+  method_evidence_required?: boolean;
 }
 
 export interface ProviderProcessOptions {

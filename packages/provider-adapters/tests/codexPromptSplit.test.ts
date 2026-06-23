@@ -74,4 +74,18 @@ describe("codex sentinel prompt split (C2)", () => {
     expect(systemPrompt).toContain("git reset --hard");
     expect(systemPrompt).toContain("ignored dependency or build outputs");
   });
+
+  test("method evidence requirement is explicit in Codex user prompt", () => {
+    const stdin = buildProviderStdinPrompt("codex", {
+      task_id: "task_a",
+      candidate_id: "candidate_task_a",
+      role: "implement",
+      prompt: "Implement feature X",
+      method_evidence_required: true
+    });
+
+    expect(stdin).toContain("method_evidence_required: true");
+    expect(stdin).toContain("evidence.method_audit");
+    expect(stdin).toContain("verification-before-completion");
+  });
 });
