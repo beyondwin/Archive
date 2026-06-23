@@ -63,6 +63,7 @@ python3 "$EVAL_DIR/check_task_packet.py" >/dev/null
 python3 "$EVAL_DIR/check_local_env_preflight.py" >/dev/null
 python3 "$EVAL_DIR/check_invocation_args.py" >/dev/null
 python3 "$EVAL_DIR/check_inspect_runs.py" >/dev/null
+python3 "$EVAL_DIR/check_repair_runs.py" >/dev/null
 python3 "$EVAL_DIR/check_decisions_register.py" >/dev/null
 python3 "$EVAL_DIR/check_prompt_cache_audit.py" >/dev/null
 python3 "$EVAL_DIR/check_cache_observations.py" >/dev/null
