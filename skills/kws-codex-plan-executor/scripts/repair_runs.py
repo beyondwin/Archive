@@ -208,6 +208,151 @@ def write_output(text: str, output: str | None) -> None:
         print(text, end="")
 
 
+def build_blocked_state(state: dict[str, Any], run_id: str, checked_at: str) -> dict[str, Any]:
+    patched = copy.deepcopy(state)
+    timestamps = patched.setdefault("timestamps", {})
+    timestamps["updated_at"] = checked_at
+    if timestamps.get("completed_at") is None:
+        timestamps["completed_at"] = checked_at
+    patched["lifecycle_outcome"] = "blocked"
+    patched["current_phase"] = "recover"
+    patched["handoff_reason"] = f"Run {run_id} is stale and cannot resume because its execution worktree is missing."
+    patched["current_blocker"] = {
+        "category": "state_integrity_drift",
+        "summary": f"Run {run_id} is stale and its execution worktree is missing.",
+        "recoverable": True,
+        "next_action_kind": "operator_decision",
+    }
+    health = patched.setdefault("context_health", {})
+    health["status"] = "yellow"
+    health["last_checked_at"] = checked_at
+    health["handoff_ready"] = True
+    health["next_action"] = "Inspect the blocked state and start a fresh CPE run if implementation should continue."
+    health.setdefault("open_questions", [])
+    health.setdefault("known_assumptions", [])
+    return patched
+
+
+def atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2, sort_keys=True)
+            handle.write("\n")
+        os.replace(temp_name, path)
+    except Exception:
+        try:
+            os.unlink(temp_name)
+        except OSError:
+            pass
+        raise
+
+
+def apply_action(codex_home: Path, run_id: str, action: str, stale_hours: float) -> tuple[int, dict[str, Any]]:
+    if action != "mark-blocked-stale":
+        die(f"unsupported action: {action}")
+    state_path = state_path_for_run(codex_home, run_id)
+    state = inspect_runs.load_state(state_path)
+    if state is None:
+        die(f"state is not readable JSON: {state_path}")
+    safe_path, path_reason = state_path_is_safe(codex_home, run_id, state_path, state)
+    if not safe_path:
+        plan = {
+            "schema_version": "1",
+            "checked_at": now_iso(),
+            "dry_run": False,
+            "summary": {"candidate_count": 1, "apply_safe_count": 0, "manual_review_count": 1},
+            "candidates": [
+                candidate(
+                    run_id=run_id,
+                    state_path=inspect_runs.redacted(str(state_path), codex_home),
+                    followups=[],
+                    action="manual-review-required",
+                    apply_safe=False,
+                    reason=path_reason,
+                )
+            ],
+        }
+        return 1, plan
+    pre_errors = validate_state.validate(state)
+    if pre_errors:
+        plan = {
+            "schema_version": "1",
+            "checked_at": now_iso(),
+            "dry_run": False,
+            "summary": {"candidate_count": 1, "apply_safe_count": 0, "manual_review_count": 1},
+            "candidates": [
+                candidate(
+                    run_id=run_id,
+                    state_path=inspect_runs.redacted(str(state_path), codex_home),
+                    followups=["state_schema_drift"],
+                    action="manual-review-required",
+                    apply_safe=False,
+                    reason="state validation failed before repair",
+                    validation_errors_value=pre_errors,
+                )
+            ],
+        }
+        return 1, plan
+    record = inspect_runs.state_record(
+        state,
+        state_path,
+        codex_home,
+        include_quality=True,
+        stale_hours=stale_hours,
+        validate=True,
+    )
+    classified = classify_record(record, codex_home)
+    if not classified or classified.get("recommended_action") != action or classified.get("apply_safe") is not True:
+        plan = {
+            "schema_version": "1",
+            "checked_at": now_iso(),
+            "dry_run": False,
+            "summary": summarize([classified] if classified else []),
+            "candidates": [classified] if classified else [],
+        }
+        return 1, plan
+    checked_at = now_iso()
+    patched = build_blocked_state(state, run_id, checked_at)
+    post_errors = validate_state.validate(patched)
+    if post_errors:
+        failed = dict(classified)
+        failed["apply_safe"] = False
+        failed["recommended_action"] = "manual-review-required"
+        failed["reason"] = "repaired state failed validation"
+        failed["validation_errors"] = post_errors
+        plan = {
+            "schema_version": "1",
+            "checked_at": checked_at,
+            "dry_run": False,
+            "summary": summarize([failed]),
+            "candidates": [failed],
+        }
+        return 1, plan
+    atomic_write_json(state_path, patched)
+    applied = dict(classified)
+    applied["applied"] = True
+    applied["before"] = {
+        "lifecycle_outcome": state.get("lifecycle_outcome"),
+        "current_phase": state.get("current_phase"),
+        "validation_status": "passed",
+    }
+    applied["after"] = {
+        "lifecycle_outcome": patched.get("lifecycle_outcome"),
+        "current_phase": patched.get("current_phase"),
+        "validation_status": "passed",
+    }
+    plan = {
+        "schema_version": "1",
+        "checked_at": checked_at,
+        "dry_run": False,
+        "summary": summarize([applied]),
+        "candidates": [applied],
+    }
+    return 0, plan
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--codex-home", required=True)
@@ -234,7 +379,18 @@ def main() -> int:
     args = parse_args()
     codex_home = Path(args.codex_home).expanduser().resolve()
     if args.apply:
-        die("apply mode is implemented in Task 3")
+        code, plan = apply_action(codex_home, args.run_id, args.action, args.stale_hours)
+        write_output(render_plan(plan, args.jsonl), args.output)
+        if code == 0:
+            item = (plan.get("candidates") or [{}])[0]
+            print(
+                "applied mark-blocked-stale: "
+                f"{item.get('run_id')} "
+                f"{item.get('before', {}).get('lifecycle_outcome')} -> "
+                f"{item.get('after', {}).get('lifecycle_outcome')}; "
+                f"validation={item.get('after', {}).get('validation_status')}"
+            )
+        return code
     plan = build_plan(codex_home, args.recent, args.stale_hours, dry_run=True)
     write_output(render_plan(plan, args.jsonl), args.output)
     return 0
