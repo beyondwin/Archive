@@ -90,6 +90,13 @@ require a recoverable current blocker, while `finished` outcomes must clear it.
 outcomes. `recovery_attempts` records bounded retry/bootstrap attempts by root
 signature; finished runs cannot retain open recovery attempts.
 
+`scripts/repair_runs.py` is the operator repair path for stale CPE runs. Its
+default mode emits a dry-run plan from recent `run_quality.open_followups`.
+The apply mode requires one `--run-id`, one `--action`, and `--apply`; the only
+mutating action is `mark-blocked-stale`. It rewrites only the selected
+`state.json`, validates before and after the patch, and does not delete
+worktrees or run directories.
+
 `trajectory_path` points at an append-only JSONL projection. Events contain
 sequence, event name, timestamp, task id, state ref, summary, evidence refs, and
 redacted context budget metadata. Raw prompts are not stored there.

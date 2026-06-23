@@ -16,6 +16,7 @@ python3 evals/check_task_packet.py
 python3 evals/check_local_env_preflight.py
 python3 evals/check_invocation_args.py
 python3 evals/check_inspect_runs.py
+python3 evals/check_repair_runs.py
 python3 evals/check_decisions_register.py
 python3 evals/check_prompt_cache_audit.py
 python3 evals/check_cache_observations.py

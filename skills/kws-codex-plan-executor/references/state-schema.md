@@ -199,6 +199,36 @@ operator guidance should use `execution_worktree` as the command/edit boundary.
 `stale_non_terminal_run`, `missing_execution_worktree`, and
 `state_schema_drift`.
 
+## Stale Blocked Repair
+
+`scripts/repair_runs.py --apply --run-id <id> --action mark-blocked-stale`
+may change a validated non-terminal stale run with a missing execution worktree
+into a blocked run. The patch sets:
+
+```json
+{
+  "lifecycle_outcome": "blocked",
+  "current_phase": "recover",
+  "handoff_reason": "Run <id> is stale and cannot resume because its execution worktree is missing.",
+  "current_blocker": {
+    "category": "state_integrity_drift",
+    "summary": "Run <id> is stale and its execution worktree is missing.",
+    "recoverable": true,
+    "next_action_kind": "operator_decision"
+  },
+  "context_health": {
+    "status": "yellow",
+    "handoff_ready": true,
+    "next_action": "Inspect the blocked state and start a fresh CPE run if implementation should continue."
+  }
+}
+```
+
+The repair also refreshes `timestamps.updated_at` and sets
+`timestamps.completed_at` when it is absent. The script validates the original
+state, validates the patched state, and writes only
+`~/.codex/orchestrator/<run_id>/state.json`.
+
 `delegation_policy.requested_source` is `default`, `explicit`,
 `natural_language`, or `resume_state`. `spawn_policy` is `available`,
 `unavailable`, `explicit-request-required`, or `unknown`. `effective_mode` is

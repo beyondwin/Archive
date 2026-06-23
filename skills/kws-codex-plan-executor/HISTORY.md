@@ -2,6 +2,11 @@
 
 ## 2.23.0 - Unreleased
 
+- Added `scripts/repair_runs.py` for dry-run CPE repair planning and explicit
+  single-run `mark-blocked-stale` apply.
+- Added deterministic repair-flow eval coverage in `evals/check_repair_runs.py`.
+- Documented the stale blocked repair state fields and non-deletion safety
+  boundary.
 - Added a deterministic Superpowers compatibility audit that scores CPE-primary,
   Superpowers-native-only, and thin-stateful-bridge routes.
 - Updated interactive routing guidance so approved implementation plans prefer
