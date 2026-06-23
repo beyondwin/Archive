@@ -388,7 +388,8 @@ def main() -> int:
                 f"{item.get('run_id')} "
                 f"{item.get('before', {}).get('lifecycle_outcome')} -> "
                 f"{item.get('after', {}).get('lifecycle_outcome')}; "
-                f"validation={item.get('after', {}).get('validation_status')}"
+                f"validation={item.get('after', {}).get('validation_status')}",
+                file=sys.stderr,
             )
         return code
     plan = build_plan(codex_home, args.recent, args.stale_hours, dry_run=True)

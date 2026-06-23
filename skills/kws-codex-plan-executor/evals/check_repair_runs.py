@@ -202,6 +202,21 @@ def run_repair_jsonl(codex_home: Path, *extra: str) -> tuple[subprocess.Complete
     return result, rows
 
 
+def run_repair_stdout(codex_home: Path, *extra: str) -> subprocess.CompletedProcess[str]:
+    cmd = [
+        sys.executable,
+        str(SCRIPT),
+        "--codex-home",
+        str(codex_home),
+        "--recent",
+        "20",
+        "--stale-hours",
+        "0",
+        *extra,
+    ]
+    return subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
 def main() -> int:
     failures: list[str] = []
     checks: dict[str, bool] = {}
@@ -323,6 +338,29 @@ def main() -> int:
         )
         if not checks["jsonl_output"]:
             failures.append("jsonl output should emit one valid JSON object per candidate line")
+
+    with tempfile.TemporaryDirectory(prefix="cpe-repair-") as temp:
+        home = Path(temp) / ".codex"
+        write_state(home, "jsonl-apply", create_worktree=False)
+        result = run_repair_stdout(home, "--jsonl", "--run-id", "jsonl-apply", "--action", "mark-blocked-stale", "--apply")
+        parsed_stdout = []
+        parse_error = None
+        for line in result.stdout.splitlines():
+            if not line.strip():
+                continue
+            try:
+                parsed_stdout.append(json.loads(line))
+            except json.JSONDecodeError as exc:
+                parse_error = str(exc)
+                break
+        checks["jsonl_apply_stdout_parseable"] = (
+            result.returncode == 0
+            and parse_error is None
+            and len(parsed_stdout) == 1
+            and parsed_stdout[0].get("run_id") == "jsonl-apply"
+        )
+        if not checks["jsonl_apply_stdout_parseable"]:
+            failures.append("jsonl apply stdout should contain only JSON objects, with human summary off stdout")
 
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
