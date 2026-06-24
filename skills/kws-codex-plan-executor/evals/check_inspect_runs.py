@@ -10,7 +10,14 @@ import tempfile
 from pathlib import Path
 
 
-def write_state(codex_home: Path, run_id: str, plan: str, outcome: str | None = None, create_worktree: bool = True) -> None:
+def write_state(
+    codex_home: Path,
+    run_id: str,
+    plan: str,
+    outcome: str | None = None,
+    create_worktree: bool = True,
+    finished_quality: bool = False,
+) -> None:
     run_dir = codex_home / "orchestrator" / run_id
     worktree = codex_home / "worktrees" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -34,6 +41,45 @@ def write_state(codex_home: Path, run_id: str, plan: str, outcome: str | None = 
         },
         "context_health": {"handoff_ready": True, "next_action": "Resume task_2."},
     }
+    if finished_quality:
+        state.update(
+            {
+                "mode": "interactive",
+                "execution_worktree": str(worktree),
+                "completion_audit": {
+                    "passed": True,
+                    "prompt_to_artifact_checklist": ["Task mapped to docs/plan.md"],
+                    "verification_evidence": ["git diff --check: passed"],
+                    "residual_risk": [],
+                },
+                "subagents_requested": True,
+                "dispatch_decisions": [
+                    {
+                        "task_id": "task_1",
+                        "decision": "local_fallback",
+                        "reason": "spawn_agent tool policy requires explicit user delegation intent",
+                        "failed_prerequisites": ["spawn_policy_requires_explicit_user_request"],
+                    }
+                ],
+                "run_quality": {
+                    "schema_version": "1",
+                    "validation_status": "passed",
+                    "terminal_state": "finished",
+                    "stale": False,
+                    "workspace_matches_execution_worktree": True,
+                    "score": 96,
+                    "grade": "green",
+                    "schema_drift": [],
+                    "open_followups": [],
+                    "readiness": {"task_count": 1, "fixable_issue_count": 0, "blocking_issue_count": 0},
+                    "dispatch_consistency": {"mismatch_count": 0, "override_count": 0},
+                    "context_quality": {"full_spec_fallback_count": 0},
+                    "verification_quality": {"completion_audit_passed": True},
+                    "recommendations": [],
+                    "summary": "Run finished with validated state.",
+                },
+            }
+        )
     (run_dir / "state.json").write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
     (run_dir / "context.json").write_text(json.dumps({"context_budget": {"status": "yellow"}}), encoding="utf-8")
 
@@ -172,6 +218,38 @@ def main() -> int:
         )
         if not checks["all_plans_quality_summary_reported"]:
             failures.append("all-plans quality report should summarize finished, non-terminal, and stale runs")
+
+    with tempfile.TemporaryDirectory(prefix="codex-inspect-runs-") as temp:
+        home = Path(temp) / ".codex"
+        write_state(
+            home,
+            "finished-missing-worktree",
+            "docs/plan.md",
+            outcome="finished",
+            create_worktree=False,
+            finished_quality=True,
+        )
+        result, data = inspect_all(home, "--include-finished", "--quality-report", "--stale-hours", "24")
+        run = (data.get("runs") or [{}])[0]
+        quality = run.get("run_quality", {})
+        debt = quality.get("operational_debt", {})
+        followups = quality.get("open_followups", [])
+        checks["finished_missing_worktree_current_quality_reported"] = (
+            result.returncode == 0
+            and quality.get("grade") == "yellow"
+            and quality.get("observed_after_completion") is True
+            and "missing_execution_worktree" in followups
+            and "agentlens_missing" in followups
+            and debt.get("count") == len(debt.get("followups", []))
+        )
+        if not checks["finished_missing_worktree_current_quality_reported"]:
+            failures.append("inspect current quality should report missing worktree and AgentLens followups for finished runs")
+
+        jsonl_result, _ = inspect_all(home, "--include-finished", "--quality-report", "--jsonl")
+        jsonl_lines = [line for line in jsonl_result.stdout.splitlines() if line.strip()]
+        checks["quality_jsonl_stdout_parseable"] = all(json.loads(line).get("run_id") for line in jsonl_lines)
+        if not checks["quality_jsonl_stdout_parseable"]:
+            failures.append("inspect --jsonl --quality-report should keep stdout parseable as JSONL")
 
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, ensure_ascii=False, indent=2))
