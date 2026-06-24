@@ -104,6 +104,10 @@ Required path invariants:
   `scripts/check_graphify_freshness.py`. Finished runs cannot carry
   non-empty `graphify_audit.errors`, and must reference the Graphify evidence
   from `completion_audit.verification_evidence`.
+- `plan_executability_audit` records read-only output from
+  `scripts/audit_plan_executability.py`. When present, `path` must live under
+  `run_dir`, `grade` is `green|yellow|red`, and issue counts are non-negative
+  integers. Finished states cannot retain a red plan executability audit.
 - `dispatch_decisions` records output from `scripts/preflight_dispatch.py`.
   Decisions are `delegate`, `local_fallback`, or `block`; finished runs cannot
   retain a `block` decision.
@@ -198,6 +202,12 @@ v2.22 operational run quality state may add:
     "verification_quality": {"completion_audit_passed": true},
     "recommendations": [],
     "summary": "Run finished with validated state."
+  },
+  "plan_executability_audit": {
+    "path": "/Users/example/.codex/orchestrator/example-plan-20260519-143022/plan_executability_audit.json",
+    "grade": "yellow",
+    "blocking_issue_count": 0,
+    "fixable_issue_count": 1
   }
 }
 ```

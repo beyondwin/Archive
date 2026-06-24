@@ -33,6 +33,8 @@ def main() -> int:
     event_journal = (skill_dir / "references" / "event-journal.md").read_text(encoding="utf-8")
     subagents = (skill_dir / "references" / "subagent-run-store.md").read_text(encoding="utf-8")
     pre_dispatch = (skill_dir / "references" / "pre-dispatch-pipeline.md").read_text(encoding="utf-8")
+    plan_executability = (skill_dir / "scripts" / "audit_plan_executability.py").read_text(encoding="utf-8")
+    user_guide = (skill_dir / "docs" / "user-guide.ko.md").read_text(encoding="utf-8")
     checklist = (skill_dir / "references" / "prompt-export-checklist.md").read_text(encoding="utf-8")
     eval_run = (skill_dir / "evals" / "run.sh").read_text(encoding="utf-8")
     invocation = section(text, "## Invocation", "## Hard Boundary")
@@ -143,6 +145,28 @@ def main() -> int:
                 "graphify update .",
             )
         ),
+        "plan_executability_audit_contract": all(
+            token in runtime
+            for token in (
+                "audit_plan_executability.py",
+                "plan_executability_audit",
+                "thin_stateful_bridge",
+                "before task contracts or edits",
+            )
+        ),
+        "plan_executability_script_reuses_reason_vocabulary": all(
+            token in plan_executability
+            for token in (
+                "adaptive_policy_local_fast_path_docs_only",
+                "adaptive_policy_local_fast_path_small_scope",
+                "adaptive_policy_local_fast_path_linear_task",
+                "adaptive_policy_local_fast_path_low_parallel_value",
+                "risk_marker_requires_operator_review",
+            )
+        ),
+        "plan_executability_eval_in_harness": "check_plan_executability_audit.py" in eval_run,
+        "korean_user_guide_mentions_readiness_summary": "readiness summary" in user_guide
+        and "plan_executability_audit" in user_guide,
         "preflight_dispatch_contract": all(
             token in runtime
             for token in (
