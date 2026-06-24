@@ -251,10 +251,15 @@ def _validate_completion_audit(data: dict, errors: list[str]) -> None:
             return
         if audit.get("passed") is not True:
             errors.append("completion_audit.passed must be true when lifecycle_outcome is finished")
-        if not _has_substantive_value(audit.get("prompt_to_artifact_checklist")):
-            errors.append("completion_audit.prompt_to_artifact_checklist must be non-empty")
-        if not _has_substantive_value(audit.get("verification_evidence")):
-            errors.append("completion_audit.verification_evidence must be non-empty")
+        checklist = audit.get("prompt_to_artifact_checklist")
+        if not isinstance(checklist, list) or not checklist:
+            errors.append("completion_audit.prompt_to_artifact_checklist must be a non-empty list")
+        evidence = audit.get("verification_evidence")
+        if not isinstance(evidence, list) or not evidence:
+            errors.append("completion_audit.verification_evidence must be a non-empty list")
+        residual = audit.get("residual_risk")
+        if not isinstance(residual, list):
+            errors.append("completion_audit.residual_risk must be a list")
     elif outcome in NON_SUCCESS_OUTCOMES and not _has_substantive_value(data.get("handoff_reason")):
         errors.append("handoff_reason must be non-empty for non-success lifecycle_outcome")
 
@@ -801,6 +806,20 @@ def _validate_operational_run_quality(data: dict, errors: list[str]) -> None:
                 errors.append("preflight_bootstrap.environment_capabilities must be an object")
 
     quality = data.get("run_quality")
+    v222_operational = any(
+        key in data
+        for key in (
+            "source_workspace",
+            "execution_worktree",
+            "command_cwd_evidence",
+            "delegation_policy",
+            "preflight_bootstrap",
+            "run_quality",
+        )
+    )
+    if data.get("lifecycle_outcome") == "finished" and v222_operational and quality is None:
+        errors.append("run_quality must be present for finished operational-quality state")
+        return
     if quality is not None:
         if not isinstance(quality, dict):
             errors.append("run_quality must be an object")
@@ -822,7 +841,9 @@ def _validate_operational_run_quality(data: dict, errors: list[str]) -> None:
             if grade is not None and grade not in {"green", "yellow", "red"}:
                 errors.append("run_quality.grade must be green, yellow, or red")
             for key in ("readiness", "dispatch_consistency", "context_quality", "verification_quality"):
-                if key in quality and not isinstance(quality[key], dict):
+                if data.get("lifecycle_outcome") == "finished" and v222_operational and key not in quality:
+                    errors.append(f"run_quality.{key} must be present for finished operational-quality state")
+                elif key in quality and not isinstance(quality[key], dict):
                     errors.append(f"run_quality.{key} must be an object")
             if "recommendations" in quality and not isinstance(quality["recommendations"], list):
                 errors.append("run_quality.recommendations must be a list")

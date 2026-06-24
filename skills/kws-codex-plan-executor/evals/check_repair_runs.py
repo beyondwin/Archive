@@ -131,6 +131,24 @@ def write_state(
             "passed": True,
             "prompt_to_artifact_checklist": ["fixture complete"],
             "verification_evidence": ["fixture evidence"],
+            "residual_risk": [],
+        }
+        state["run_quality"] = {
+            "schema_version": "1",
+            "validation_status": "passed",
+            "terminal_state": "finished",
+            "stale": False,
+            "workspace_matches_execution_worktree": True,
+            "score": 90,
+            "grade": "green",
+            "schema_drift": [],
+            "open_followups": [],
+            "readiness": {"task_count": 1, "fixable_issue_count": 0, "blocking_issue_count": 0},
+            "dispatch_consistency": {"mismatch_count": 0, "override_count": 0},
+            "context_quality": {"full_spec_fallback_count": 0},
+            "verification_quality": {"completion_audit_passed": True, "verification_evidence_count": 1},
+            "recommendations": [],
+            "summary": "Fixture run finished.",
         }
         state["tasks"]["task_0"]["status"] = "completed"
         state["tasks"]["task_0"]["unit_manifest"] = {

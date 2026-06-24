@@ -155,6 +155,26 @@ def valid_warning() -> dict:
     }
 
 
+def valid_run_quality() -> dict:
+    return {
+        "schema_version": "1",
+        "validation_status": "passed",
+        "terminal_state": "finished",
+        "stale": False,
+        "workspace_matches_execution_worktree": True,
+        "score": 92,
+        "grade": "green",
+        "schema_drift": [],
+        "open_followups": [],
+        "readiness": {"task_count": 1, "fixable_issue_count": 0, "blocking_issue_count": 0},
+        "dispatch_consistency": {"mismatch_count": 0, "override_count": 0},
+        "context_quality": {"full_spec_fallback_count": 0},
+        "verification_quality": {"completion_audit_passed": True, "verification_evidence_count": 1},
+        "recommendations": [],
+        "summary": "Run finished with validated state.",
+    }
+
+
 def v220_state() -> dict:
     state = base_state()
     rd = run_dir()
@@ -217,6 +237,25 @@ def main() -> int:
     checks["valid_contract_passes"] = valid.returncode == 0
     if not checks["valid_contract_passes"]:
         failures.append("valid v2.19 state should pass: " + (valid.stderr or valid.stdout))
+
+    bad_residual_risk = base_state()
+    bad_residual_risk["completion_audit"]["residual_risk"] = "This must be a list, not a scalar string."
+    result = run_validator(script, bad_residual_risk)
+    checks["finished_residual_risk_string_fails"] = (
+        result.returncode != 0 and "completion_audit.residual_risk must be a list" in (result.stderr + result.stdout)
+    )
+    if not checks["finished_residual_risk_string_fails"]:
+        failures.append("finished completion_audit.residual_risk should require a list")
+
+    bad_verification_evidence = base_state()
+    bad_verification_evidence["completion_audit"]["verification_evidence"] = "python3 evals/run.sh passed"
+    result = run_validator(script, bad_verification_evidence)
+    checks["finished_verification_evidence_string_fails"] = (
+        result.returncode != 0
+        and "completion_audit.verification_evidence must be a non-empty list" in (result.stderr + result.stdout)
+    )
+    if not checks["finished_verification_evidence_string_fails"]:
+        failures.append("finished completion_audit.verification_evidence should require a non-empty list")
 
     legacy_subagents_on_without_runs = base_state()
     legacy_subagents_on_without_runs["subagents_requested"] = True
@@ -394,6 +433,7 @@ def main() -> int:
         "effective_mode": "local_fallback",
         "reason": "spawn_agent tool policy requires explicit user delegation intent",
     }
+    v222["run_quality"] = valid_run_quality()
     result = run_validator(script, v222)
     checks["v222_optional_fields_pass"] = result.returncode == 0
     if not checks["v222_optional_fields_pass"]:
@@ -612,6 +652,7 @@ def main() -> int:
             "risk_markers": [],
         },
     }
+    adaptive_local_fast_path["run_quality"] = valid_run_quality()
     adaptive_local_fast_path["tasks"]["task_0"]["subagent_strategy"] = {
         "mode": "local_fallback",
         "reason": "adaptive_policy_local_fast_path_docs_only",

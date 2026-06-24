@@ -126,6 +126,24 @@ def main() -> int:
     if not checks["valid_v222_state_passes"]:
         failures.append("valid v2.22 state should pass: " + (valid.stderr or valid.stdout))
 
+    missing_quality = v222_state()
+    missing_quality.pop("run_quality")
+    invalid_missing_quality = run_validator(missing_quality)
+    checks["finished_v222_requires_run_quality"] = (
+        invalid_missing_quality.returncode != 0 and "run_quality must be present" in invalid_missing_quality.stderr
+    )
+    if not checks["finished_v222_requires_run_quality"]:
+        failures.append("finished v2.22 state should require embedded run_quality")
+
+    incomplete_quality = v222_state()
+    incomplete_quality["run_quality"].pop("verification_quality")
+    invalid_incomplete_quality = run_validator(incomplete_quality)
+    checks["finished_run_quality_requires_verification_quality"] = (
+        invalid_incomplete_quality.returncode != 0 and "run_quality.verification_quality" in invalid_incomplete_quality.stderr
+    )
+    if not checks["finished_run_quality_requires_verification_quality"]:
+        failures.append("finished run_quality should include verification_quality")
+
     bad_policy = v222_state()
     bad_policy["delegation_policy"]["effective_mode"] = "maybe"
     invalid = run_validator(bad_policy)
