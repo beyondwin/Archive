@@ -26,3 +26,8 @@
   deferred.
 - Effective delegation policy records why a task fell back locally, but real
   subagent spawning remains controlled by the active Codex tool policy.
+- Plan executability audit is intentionally conservative. Broad write scopes,
+  lockfiles, security/auth/infra paths, and missing file blocks stop execution
+  before edits even when a human could theoretically handle them manually. The
+  operator should narrow the plan or record an explicit review decision instead
+  of weakening the audit.

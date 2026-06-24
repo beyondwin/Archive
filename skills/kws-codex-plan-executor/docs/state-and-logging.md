@@ -78,7 +78,11 @@ status. It must not store full logs, secrets, or transcripts.
 validation status, terminal state, stale flag, workspace/execution-worktree
 match, schema drift, followups, and a short summary. Read-only inspection may
 compute this without writing it back to state. Followups include markers such
-as `stale_non_terminal_run` and `missing_execution_worktree`.
+as `stale_non_terminal_run`, `missing_execution_worktree`,
+`plan_executability_fixable_issues`, and `full_spec_fallback_present`.
+State-intrinsic operational debt is classified by
+`scripts/run_quality_debt.py` so validation, static fixtures, and read-only
+inspection use the same follow-up vocabulary.
 
 ## Failure, Recovery, And Progress
 
@@ -103,3 +107,18 @@ redacted context budget metadata. Raw prompts are not stored there.
 
 `progress_ledger` records per-task progress, stall count, last root signature,
 next action, and whether operator input is needed.
+
+## Plan Executability Audit
+
+`plan_executability_audit` is copied from
+`scripts/audit_plan_executability.py` output before task contracts or edits. It
+keeps the path under `run_dir`, a `green|yellow|red` grade, and non-negative
+blocking/fixable issue counts. The detailed JSON stays at
+`$RUN_DIR/plan_executability_audit.json`; state stores the compact fields that
+validation and run-quality debt need.
+
+The audit is read-only. It classifies task packet readiness, acceptance
+coverage, write-scope safety, risky paths, full-spec fallback, and expected
+dispatch fit. Red audit results block execution before edits. Yellow audit
+results may continue only when the operator records the decision and the
+remaining issue is tracked through `run_quality.open_followups`.

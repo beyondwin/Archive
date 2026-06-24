@@ -32,6 +32,13 @@ to delegate or run local fast path. Local fast path skips only the subagent
 spawn/review loop; it keeps task contracts, RED/GREEN evidence when applicable,
 diff policy checks, acceptance commands, reconciliation, and state validation.
 
+Before task contracts or edits, CPE now runs a read-only plan executability
+audit against the parsed plan JSON and task packets. This audit catches missing
+file scopes, missing or broad write policies, risky lockfile/security paths,
+docs-only acceptance gaps, and full-spec fallback before the operator starts
+editing. Its compact state entry drives later run-quality follow-ups such as
+`plan_executability_fixable_issues`.
+
 When the compatibility audit recommends `thin_stateful_bridge`, the current
 Superpowers `subagent-driven-development` loop owns the implementer/reviewer
 flow for approved interactive plans. CPE still records the durable audit

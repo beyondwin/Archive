@@ -1,16 +1,16 @@
-# Graph Report - superpowers-cpe-task-packet-quality-audit-20260625-081659  (2026-06-25)
+# Graph Report - Archive  (2026-06-25)
 
 ## Corpus Check
-- 889 files · ~820,141 words
+- 890 files · ~823,859 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 13313 nodes · 19017 edges · 1046 communities (988 shown, 58 thin omitted)
+- 13325 nodes · 19026 edges · 1045 communities (989 shown, 56 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 205 edges (avg confidence: 0.8)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `5a0ec1e4`
+- Built from commit: `b9f85826`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -711,7 +711,6 @@
 - [[_COMMUNITY_Community 727|Community 727]]
 - [[_COMMUNITY_Community 728|Community 728]]
 - [[_COMMUNITY_Community 729|Community 729]]
-- [[_COMMUNITY_Community 730|Community 730]]
 - [[_COMMUNITY_Community 731|Community 731]]
 - [[_COMMUNITY_Community 732|Community 732]]
 - [[_COMMUNITY_Community 733|Community 733]]
@@ -726,6 +725,7 @@
 - [[_COMMUNITY_Community 747|Community 747]]
 - [[_COMMUNITY_Community 748|Community 748]]
 - [[_COMMUNITY_Community 749|Community 749]]
+- [[_COMMUNITY_Community 750|Community 750]]
 - [[_COMMUNITY_Community 751|Community 751]]
 - [[_COMMUNITY_Community 752|Community 752]]
 - [[_COMMUNITY_Community 753|Community 753]]
@@ -876,7 +876,6 @@
 - [[_COMMUNITY_Community 1011|Community 1011]]
 - [[_COMMUNITY_Community 1012|Community 1012]]
 - [[_COMMUNITY_Community 1013|Community 1013]]
-- [[_COMMUNITY_Community 1014|Community 1014]]
 - [[_COMMUNITY_Community 1015|Community 1015]]
 - [[_COMMUNITY_Community 1016|Community 1016]]
 - [[_COMMUNITY_Community 1019|Community 1019]]
@@ -1032,15 +1031,15 @@
 ## Import Cycles
 - 1-file cycle: `apps/cli/src/index.ts -> apps/cli/src/index.ts`
 
-## Communities (1046 total, 58 thin omitted)
+## Communities (1045 total, 56 thin omitted)
 
 ### Community 0 - "Community 0"
 Cohesion: 0.04
 Nodes (46): 10. Success Criteria, 11. Open Questions, 12. Next Action, 1.1 Goals, 1.2 Non-Goals, 1. Goals and Non-Goals, 2. Decisions Confirmed in Brainstorming, 3. Architecture (+38 more)
 
 ### Community 1 - "Community 1"
-Cohesion: 0.09
-Nodes (32): FileClaim, FileClaimMode, CheckpointDryRunResult, buildDurableProjection(), explicitApply(), mergeCandidate(), VerifyRunResult, assertAcyclic() (+24 more)
+Cohesion: 0.10
+Nodes (28): FileClaim, FileClaimMode, explicitApply(), mergeCandidate(), assertAcyclic(), canCreateMutableWorktree(), claimsConflict(), computeSafeWave() (+20 more)
 
 ### Community 2 - "Community 2"
 Cohesion: 0.12
@@ -1051,8 +1050,8 @@ Cohesion: 0.05
 Nodes (43): 0. 한눈에 보기 — 두 executor 비교 테이블, 1. 이번 실행에서 새로 재현된 waygent 결함 (P0-P1), 2. 사전 메모리 P0-P3 priority의 재검증, 3. 통합 우선순위 — 최종 권고, 4.5 종합 평가 — 양 executor 강·약점, 4. 실행 결과 (라이브 업데이트), 5. 부록 — kws-CME가 가르쳐줄 수 있는 패턴 (waygent 차용 후보), code:bash ($ waygent run --run X --plan /Users/kws/source/android/FixTh) (+35 more)
 
 ### Community 4 - "Community 4"
-Cohesion: 0.11
-Nodes (19): inferRiskLevel(), RiskInferenceInput, RiskInferenceResult, NormalizedTaskInput, ParsedWaygentTask, ScaffoldWaygentTaskInput, buildTaskPacket(), BuildTaskPacketInput (+11 more)
+Cohesion: 0.18
+Nodes (13): ExtractedPlanTask, inferRiskLevel(), RiskInferenceInput, RiskInferenceResult, NormalizedTaskInput, ParsedWaygentTask, ScaffoldWaygentTaskInput, ExecuteWaygentTaskInput (+5 more)
 
 ### Community 5 - "Community 5"
 Cohesion: 0.14
@@ -1071,12 +1070,12 @@ Cohesion: 0.25
 Nodes (18): apply_op(), _atomic_write_json(), _is_index(), _list_index(), main(), _navigate_create(), Validate `seg` as an in-range index into `container`. List elements are     neve, Descend one path segment into `cur`.      Lists are indexed by an integer segmen (+10 more)
 
 ### Community 9 - "Community 9"
-Cohesion: 0.10
-Nodes (37): activeCheckpointTaskBlocker(), ApplyProjection, checkpointRefsFromCombined(), checkpointRefsFromState(), combinedPatchRef(), projectApplyReadinessFromState(), ApplyReadinessReason, applyReadinessReasonFromState() (+29 more)
+Cohesion: 0.06
+Nodes (35): barrier(), FAILURE_CLASS_TO_BARRIER, projectFailureBarrierFromState(), TimelineEntry, FailureBarrierProjection, state, summary, state (+27 more)
 
 ### Community 10 - "Community 10"
-Cohesion: 0.04
-Nodes (103): sha256(), writeArtifact(), CheckpointManifest, CheckpointValidationResult, classifyPatchDryRunFailure(), createCheckpointArtifact(), CreateCheckpointArtifactInput, createCombinedCheckpointPatchArtifact() (+95 more)
+Cohesion: 0.05
+Nodes (81): sha256(), CheckpointDryRunResult, CheckpointManifest, CheckpointValidationResult, classifyPatchDryRunFailure(), createCheckpointArtifact(), CreateCheckpointArtifactInput, createCombinedCheckpointPatchArtifact() (+73 more)
 
 ### Community 11 - "Community 11"
 Cohesion: 0.12
@@ -1127,16 +1126,16 @@ Cohesion: 0.07
 Nodes (36): code:yaml (id: task_runtime_improvements), code:bash (bun test packages/orchestrator/tests/runtimeHooks.test.ts ap), code:bash (bun test packages/orchestrator/tests/planChain.test.ts apps/), code:bash (cd /Users/kws/source/private/Archive && skills/waygent/evals), code:bash (bun test packages/orchestrator/tests/orphanRuns.test.ts apps), code:bash (git -C /Users/kws/source/private/Archive diff --check -- doc), code:bash (cd /Users/kws/source/private/Archive), code:bash (bun test packages/orchestrator/tests/planNormalizer.test.ts ) (+28 more)
 
 ### Community 23 - "Community 23"
-Cohesion: 0.07
-Nodes (38): applyExecutionDependencyBarriers(), ExecutionDependencyBarrier, ExecutionDependencyBarrierResult, hasBroadGradleVerification(), VerificationPlanCommand, cleanScalar(), missingWaygentTaskBlockMessage(), normalizeClaimMode() (+30 more)
+Cohesion: 0.06
+Nodes (36): extractInstructionLines(), cleanScalar(), missingWaygentTaskBlockMessage(), normalizeClaimMode(), parseInlineClaim(), parseInlineList(), parseTaskBlock(), parseWaygentPlan() (+28 more)
 
 ### Community 24 - "Community 24"
-Cohesion: 0.14
-Nodes (17): artifactHealthFromState(), costHotspotsFromState(), projectExecutionExplanationFromState(), readinessRefKeys, readinessRefsFromCompletionAudit(), recommendations(), statusSummary(), addPhaseTotal() (+9 more)
+Cohesion: 0.17
+Nodes (17): ApplyGuard, ApplyGuardInput, buildApplyGuard(), buildWorktreeBranch(), buildWorktreeManifest(), PlannedWorktree, planWorktree(), validateExplicitApply() (+9 more)
 
 ### Community 25 - "Community 25"
-Cohesion: 0.45
-Nodes (11): _delta(), emit_compare(), emit_single(), _format_delta_row(), _format_row(), _format_tokens(), _ledger(), _load_state() (+3 more)
+Cohesion: 0.10
+Nodes (22): ArtifactProducerPhase, OperationalMaturityInput, OperatorDecisionInput, rebuildRunSummary(), RunSummary, RunExecutionContext, RunExecutionContextInput, RunReadModelInput (+14 more)
 
 ### Community 26 - "Community 26"
 Cohesion: 0.15
@@ -1147,8 +1146,8 @@ Cohesion: 0.13
 Nodes (13): Acceptance Criteria, CPE v2.21 Cache-Friendly Execution Implementation Plan, File Structure, Risk Closure, Scope, Self-Review Checklist, Task 1: Add Cache Strategy Reference, Task 2: Implement Prompt Cache Audit (+5 more)
 
 ### Community 28 - "Community 28"
-Cohesion: 0.06
-Nodes (49): scenario, scenarioDir, scenarioFiles, addDriftBlocker(), addPassedReviewEvidence(), addRecoveredFailure(), addRecoveredVerificationHistory(), applyScenarioStateFaults() (+41 more)
+Cohesion: 0.12
+Nodes (21): assertScenarioExpectations(), initScenarioSourceCheckout(), loadRunWaygent(), NormalizedWaygentProviderAttempt, normalizeProviderAttempt(), providerAttemptsFromEvents(), providerOptions(), ProviderProcessOptionsLike (+13 more)
 
 ### Community 29 - "Community 29"
 Cohesion: 0.14
@@ -1207,8 +1206,8 @@ Cohesion: 0.06
 Nodes (32): code:bash (grep "LEARNING_LOG_INIT:" <run.jsonl-path>), code:bash (ls ~/.claude/learning/kws-claude-multi-agent-executor/runs/<), code:bash (# 1. 실패 시점 상태), code:bash (find ~/.claude/learning/kws-claude-multi-agent-executor/runs), code:bash (python3 ~/.claude/skills/kws-claude-multi-agent-executor/scr), code:bash (python3 evals/check_doc_freshness.py), code:bash (python3 evals/check_skill_contract.py --skill SKILL.md), code:bash (jq '.expected.rubric' evals/fixtures/<fixture>.yaml) (+24 more)
 
 ### Community 43 - "Community 43"
-Cohesion: 0.26
-Nodes (10): main(), next_seq(), now_iso(), redact_home(), audit(), main(), now_iso(), stable_prefix() (+2 more)
+Cohesion: 0.09
+Nodes (34): ProbedProvider, ProviderCapabilityAttestation, ProviderHelpProbeResult, ProviderProcessAttestation, addUsage(), BudgetPolicy, CostRecordInput, estimateCost() (+26 more)
 
 ### Community 44 - "Community 44"
 Cohesion: 0.14
@@ -1224,11 +1223,11 @@ Nodes (32): 0. Decision, 10. Revised Implementation Order, 11. Acceptance Criter
 
 ### Community 47 - "Community 47"
 Cohesion: 0.07
-Nodes (31): 5.10 `schema/validate.py`, 5.12 `redaction/redact.py`, 5.13 `evaluator/failures.py`, 5.14 `evaluator/checks.py`, 5.15 `evaluator/engine.py`, 5.16 `adapters/process.py`, 5.17 `adapters/shims.py`, 5.18 `adapters/claude.py`, `adapters/codex_cli.py`, `adapters/codex_app.py` (+23 more)
+Nodes (31): 5.10 `schema/validate.py`, 5.11 `redaction/patterns.py`, 5.13 `evaluator/failures.py`, 5.14 `evaluator/checks.py`, 5.15 `evaluator/engine.py`, 5.16 `adapters/process.py`, 5.17 `adapters/shims.py`, 5.18 `adapters/claude.py`, `adapters/codex_cli.py`, `adapters/codex_app.py` (+23 more)
 
 ### Community 48 - "Community 48"
-Cohesion: 0.06
-Nodes (53): CombinedCheckpointPatchResult, buildCompletionAudit(), CheckpointManifest, CompletionAuditInput, hasApplyReadyCheckpoint(), readCheckpointManifest(), resolveRunArtifactPath(), sha256() (+45 more)
+Cohesion: 0.05
+Nodes (44): CombinedCheckpointPatchResult, buildCompletionAudit(), CheckpointManifest, CompletionAuditInput, hasApplyReadyCheckpoint(), readCheckpointManifest(), resolveRunArtifactPath(), sha256() (+36 more)
 
 ### Community 49 - "Community 49"
 Cohesion: 0.36
@@ -1243,28 +1242,28 @@ Cohesion: 0.06
 Nodes (38): Auto-merge orchestrator (v2.11+ candidate), code:block1 ("<spec text fragment>" :: <file>:<line>      (satisfied)), Conflict-mailbox event type (v2.10+ candidate), Consequences, Context, D001 — Initial design decisions (per-run shard, helper subcommands, scope), D001 — Spec-Coverage Walk: single-pass enumeration in reviewer-prompt.md, Evidence chain (one inferential hop, made explicit) (+30 more)
 
 ### Community 52 - "Community 52"
-Cohesion: 0.04
-Nodes (46): 0.1 신규/변경 산출물 개요, 0.2 eval-레이어 직교 출하 규칙 (P0 공통), 0. 공통 사항, 4. 롤아웃 순서 & 버전, 5. 리스크 & 완화, 6. 수용 체크리스트 (묶음별 DoD), J1. MAST 커버리지 매트릭스 문서 [P0, 축 D], J2. 리뷰어 고무도장 프로브 픽스처 `09-spec-intent-uncovered.yaml` [P0, 축 D] (+38 more)
+Cohesion: 0.22
+Nodes (9): 0.1 신규/변경 산출물 개요, 0.2 eval-레이어 직교 출하 규칙 (P0 공통), 0. 공통 사항, 4. 롤아웃 순서 & 버전, 5. 리스크 & 완화, 6. 수용 체크리스트 (묶음별 DoD), J6. Haiku LOW-티어 A/B 하니스 [P1, 축 E — J5 조건부], J9. (전략/기록) 플랜-DAG 실패 시 재계획 결정점 [P2, 축 F — 기록만] (+1 more)
 
 ### Community 53 - "Community 53"
 Cohesion: 0.22
 Nodes (8): Decisions index, Execution order (safety-first), Findings index, Goal, Hypothesis, Scope (the 6 approved items), Status / quick links, v2.21 — SKILL.md slimming + runtime enforcement hardening
 
 ### Community 54 - "Community 54"
-Cohesion: 0.07
-Nodes (28): barrier(), FAILURE_CLASS_TO_BARRIER, projectFailureBarrierFromState(), projectTimeline(), TimelineEntry, FailureBarrierProjection, state, summary (+20 more)
+Cohesion: 0.12
+Nodes (14): DiffScopeInput, DiffScopeResult, failed(), globToRegExp(), matchesPattern(), normalizePath(), validateDiffScope(), ExpectedGeneratedOutput (+6 more)
 
 ### Community 55 - "Community 55"
 Cohesion: 0.07
 Nodes (30): AgentLens v1 + kws-Skill Unification Implementation Plan, code:bash (cd AgentLens), code:bash (cd AgentLens && .venv/bin/pytest -q), Create, Delete After Cutover, Engineering Review Findings, Execution Notes, File Structure (+22 more)
 
 ### Community 56 - "Community 56"
-Cohesion: 0.05
-Nodes (51): applyVerifiedCheckpoint(), ApplyVerifiedCheckpointInput, ApplyVerifiedCheckpointOutput, PostApplyVerificationSummary, summarizePostApplyVerification(), RepairTaskPacket, applyRun(), blockedTaskFailure() (+43 more)
+Cohesion: 0.13
+Nodes (17): bound(), buildKernelRequest(), digest(), executeInProcess(), result(), decision(), evaluatePolicy(), modeRank (+9 more)
 
 ### Community 57 - "Community 57"
-Cohesion: 0.12
-Nodes (17): acpCapabilityManifest, assertCapabilities(), claudeCapabilityManifest, codexCapabilityManifest, fakeCapabilityManifest, ProviderCapabilityManifest, ProviderSupports, CLAUDE_DEFAULT_ARGS (+9 more)
+Cohesion: 0.17
+Nodes (17): artifactHealthFromState(), costHotspotsFromState(), projectExecutionExplanationFromState(), readinessRefKeys, readinessRefsFromCompletionAudit(), recommendations(), statusSummary(), addPhaseTotal() (+9 more)
 
 ### Community 58 - "Community 58"
 Cohesion: 0.05
@@ -1307,8 +1306,8 @@ Cohesion: 0.20
 Nodes (10): code:markdown (Graphify is approved as a repository map and documentation-a), code:gitignore (# Runtime and local machine state), code:gitignore (# Generated navigation/search layers), code:bash (git diff --check -- README.md AGENTS.md .graphifyignore .git), code:bash (git status --short --untracked-files=all), code:markdown (# Waygent), code:markdown (Waygent is a local agent runtime for running, inspecting, re), code:bash (WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke) (+2 more)
 
 ### Community 68 - "Community 68"
-Cohesion: 0.04
-Nodes (75): artifactIndexEntry(), mergeArtifactIndex(), DiffScopeInput, DiffScopeResult, failed(), globToRegExp(), listActualChangedFiles(), matchesPattern() (+67 more)
+Cohesion: 0.07
+Nodes (45): ContextBudgetDecision, defaultShrinkActions(), evaluateContextBudget(), listActualChangedFiles(), debugArtifactDenials(), evaluateFinalOutputHooks(), evaluatePreDispatchHooks(), FinalOutputHookInput (+37 more)
 
 ### Community 69 - "Community 69"
 Cohesion: 0.07
@@ -1331,8 +1330,8 @@ Cohesion: 0.08
 Nodes (26): Acceptance Criteria, Artifact Index And Incremental Reconciliation, Design Principles, Error Handling, Goal, Implementation Status, Non-Goals, Parallelism Is A Scheduler Permission (+18 more)
 
 ### Community 74 - "Community 74"
-Cohesion: 0.28
-Nodes (20): _active_tasks(), _arm_of(), ArmStats, build_arm_stats(), _fmt(), load_state(), main(), _mean() (+12 more)
+Cohesion: 0.16
+Nodes (29): _active_tasks(), _arm_of(), ArmStats, build_arm_stats(), _fmt(), load_state(), main(), _mean() (+21 more)
 
 ### Community 75 - "Community 75"
 Cohesion: 0.07
@@ -1367,28 +1366,28 @@ Cohesion: 0.08
 Nodes (25): Active Documentation, Candidate Removals Or Replacements, code:bash (bun run check), code:bash (cd components/agentlens), Contracts And Projections, Current Context, Goal, Legacy Guard (+17 more)
 
 ### Community 83 - "Community 83"
-Cohesion: 0.04
-Nodes (55): ContextBudgetDecision, defaultShrinkActions(), evaluateContextBudget(), ScopeFailureKind, changedFilesFrom(), classifyFailureEvidence(), decisionRequired(), evidenceRefsFor() (+47 more)
+Cohesion: 0.09
+Nodes (29): ScopeFailureKind, buildStrictPromptSuffix(), DEFAULT_POLICY, nextRecoveryAction(), NextRecoveryOptions, RecoveryAction, RecoveryDecision, recoveryPolicy() (+21 more)
 
 ### Community 84 - "Community 84"
-Cohesion: 0.06
-Nodes (46): bound(), buildKernelRequest(), digest(), executeInProcess(), result(), decision(), evaluatePolicy(), modeRank (+38 more)
+Cohesion: 0.15
+Nodes (18): applyVerifiedCheckpoint(), ApplyVerifiedCheckpointInput, ApplyVerifiedCheckpointOutput, PostApplyVerificationSummary, summarizePostApplyVerification(), KernelExecutionResult, classifyVerificationMismatch(), classifyVerificationResult() (+10 more)
 
 ### Community 85 - "Community 85"
 Cohesion: 0.29
 Nodes (6): D002 — Extended Cache (1h TTL) 적용 범위, 결정 (잠정), 노출되지 않은 경우의 대안, 미해결, 선행 조사 (실행 전 확인 필요), 측정 방법
 
 ### Community 86 - "Community 86"
-Cohesion: 0.09
-Nodes (33): ExtractedPlanTask, ExtractedSuperpowersPlan, extractSuperpowersPlan(), maskFencedCodeBlocks(), classifyVerificationCommand(), deterministicRepair(), extractFileClaims(), extractLenientTaskSections() (+25 more)
+Cohesion: 0.12
+Nodes (23): extractSuperpowersPlan(), maskFencedCodeBlocks(), deterministicRepair(), extractFileClaims(), extractLenientTaskSections(), extractVerificationCommands(), inferClaimMode(), instructionLines() (+15 more)
 
 ### Community 87 - "Community 87"
-Cohesion: 0.10
-Nodes (32): addCommand(), buildProjectScriptCatalog(), CatalogSource, collectFromMakefile(), collectFromPackageJson(), collectFromPyproject(), extractTomlTableKeys(), isCommandInCatalog() (+24 more)
+Cohesion: 0.11
+Nodes (27): commandTokens(), ExtractedSuperpowersPlan, ProjectScriptCatalog, blocked(), cdStaysInsideWorkspace(), classifySegment(), classifyVerificationCommand(), ignored() (+19 more)
 
 ### Community 88 - "Community 88"
-Cohesion: 0.17
-Nodes (12): Acceptance Criteria, code:text (Waygent/), code:text (skills/waygent), Contract Migration, Current State, Non-Goals, Objective, Risks And Controls (+4 more)
+Cohesion: 0.08
+Nodes (24): Acceptance Criteria, code:text (Waygent/), code:text (skills/waygent), code:bash (git diff --check), code:bash (bun run check), code:bash (bun test ./packages/runway-control/tests ./packages/orchestr), code:bash (bun test ./packages/contracts/tests ./packages/lens-store/te), code:bash (rg "skills/agent-runway|agentrunway.py") (+16 more)
 
 ### Community 89 - "Community 89"
 Cohesion: 0.03
@@ -1419,8 +1418,8 @@ Cohesion: 0.12
 Nodes (16): Acceptance Criteria, CPE Adaptive Delegation 설계, Evals, Files To Change In Implementation, Non-Goals, `preflight_dispatch.py`, Risks And Mitigations, Self-Review (+8 more)
 
 ### Community 96 - "Community 96"
-Cohesion: 0.10
-Nodes (28): commandSegments(), commandTokens(), logicalCommandLines(), explicitVerificationPaths(), isExplicitPathToken(), verificationClaimCoverageErrors(), verificationClaimCoverageIssues(), VerificationCoverageIssue (+20 more)
+Cohesion: 0.11
+Nodes (24): commandSegments(), explicitVerificationPaths(), isExplicitPathToken(), verificationClaimCoverageErrors(), verificationClaimCoverageIssues(), VerificationCoverageIssue, VerificationCoverageTask, RecoveredWaygentPlan (+16 more)
 
 ### Community 97 - "Community 97"
 Cohesion: 0.05
@@ -1463,8 +1462,8 @@ Cohesion: 0.29
 Nodes (7): Phase Transition, Phase Transition, Phase Transition, Step T1.2: Combined Transition Dispatch, Step T1: Batch Verifier for LOW Tasks, Step T2: Phase Docs Updater, Step T3: State Anchor + Context Drop
 
 ### Community 108 - "Community 108"
-Cohesion: 0.07
-Nodes (60): ActionDefinition, actionDefinitions, aiHandoffFromDecision(), allowedActionsFor(), artifactRefsFromEvents(), artifactRefsFromState(), blockedAction(), blockedActionsFor() (+52 more)
+Cohesion: 0.08
+Nodes (53): ActionDefinition, actionDefinitions, aiHandoffFromDecision(), allowedActionsFor(), artifactRefsFromEvents(), artifactRefsFromState(), blockedAction(), blockedActionsFor() (+45 more)
 
 ### Community 109 - "Community 109"
 Cohesion: 0.09
@@ -1495,16 +1494,16 @@ Cohesion: 0.11
 Nodes (19): 1. Skill And CLI Contract Slice, 2. Durable Executor Core Slice, 3. Provider And Multi-Agent Slice, 4. AgentLens Product Slice, 5. Apply And Recovery Slice, AgentLens Integration, API And Console Contract, code:bash (bun test apps/cli/tests packages/orchestrator/tests) (+11 more)
 
 ### Community 117 - "Community 117"
-Cohesion: 0.04
-Nodes (102): actionField(), BudgetEvaluation, BudgetPolicyAction, budgetPolicyFromRunState(), BudgetPolicyInput, budgetPolicyStateRecord(), BudgetProjection, currentWarningThreshold() (+94 more)
+Cohesion: 0.03
+Nodes (121): artifactIndexEntry(), mergeArtifactIndex(), writeArtifact(), actionField(), BudgetEvaluation, BudgetPolicyAction, budgetPolicyFromRunState(), BudgetPolicyInput (+113 more)
 
 ### Community 118 - "Community 118"
 Cohesion: 0.12
 Nodes (16): Acceptance Criteria, Cache State, Cache Strategy, Completion Gates, CPE Execution Hardening Design, Current Architecture Fit, Goals, Graphify Freshness Audit (+8 more)
 
 ### Community 119 - "Community 119"
-Cohesion: 0.12
-Nodes (17): WaygentRunResult, PlanChainResult, rebuildRunSummary(), RunSummary, readProjectionCache(), rebuildProjectionCache(), AgentLensEvent, KernelExecutionRequest (+9 more)
+Cohesion: 0.11
+Nodes (34): activeCheckpointTaskBlocker(), ApplyProjection, checkpointRefsFromCombined(), checkpointRefsFromState(), combinedPatchRef(), projectApplyReadinessFromState(), ApplyReadinessReason, applyReadinessReasonFromState() (+26 more)
 
 ### Community 120 - "Community 120"
 Cohesion: 0.14
@@ -1519,8 +1518,8 @@ Cohesion: 0.12
 Nodes (18): 3.1 M0 - Contract Freeze, 3.2 M1 - Vertical Slice, 3.3 M2 - Evaluator Hardening, 3.4 M3 - SQLite Index, 3.5 M4 - Query Surface, 3.6 M5 - Process Wrapper, 3.7 M6 - Install / Shim / Doctor, 3.8 M7 - Claude / Codex Adapter (+10 more)
 
 ### Community 124 - "Community 124"
-Cohesion: 0.10
-Nodes (14): compareRunsByOperatorUrgency(), ConsoleApplyStatus, ConsoleDecisionPacket, ConsoleEvent, ConsoleFailure, ConsoleSection, consoleSections, ConsoleTask (+6 more)
+Cohesion: 0.11
+Nodes (32): buildReviewPacket(), BuildReviewPacketInput, nonEmpty(), reviewInstructions(), ReviewRole, stableStringify(), stringArray(), stringValue() (+24 more)
 
 ### Community 125 - "Community 125"
 Cohesion: 0.21
@@ -1555,8 +1554,8 @@ Cohesion: 0.11
 Nodes (18): 0. Honor the doc-update protocol, 1. Don't bypass the experiment protocol, 2. Honor the learning log, 3. Call advisor before substantive work, 4. Tone, scope, and over-engineering — match what's in CLAUDE.md, 5. Risk-aware action, 6. Branch hygiene, Common starting tasks (+10 more)
 
 ### Community 135 - "Community 135"
-Cohesion: 0.31
-Nodes (10): buildReviewPacket(), BuildReviewPacketInput, nonEmpty(), reviewInstructions(), stableStringify(), stringArray(), stringValue(), taskPacketRef() (+2 more)
+Cohesion: 0.29
+Nodes (12): addCommand(), buildProjectScriptCatalog(), CatalogSource, collectFromMakefile(), collectFromPackageJson(), collectFromPyproject(), extractTomlTableKeys(), isCommandInCatalog() (+4 more)
 
 ### Community 136 - "Community 136"
 Cohesion: 0.15
@@ -1568,7 +1567,7 @@ Nodes (15): code:ts (/**), code:bash (cd AgentLens/web && npm run gen-types), co
 
 ### Community 138 - "Community 138"
 Cohesion: 0.10
-Nodes (24): claimModeForVerb(), dedupeClaims(), ExtractedCommandCandidate, ExtractedFenceBlock, extractExplicitFileClaims(), extractFencedCommands(), extractFencedEvidence(), extractProseFileClaims() (+16 more)
+Nodes (24): logicalCommandLines(), claimModeForVerb(), dedupeClaims(), ExtractedCommandCandidate, ExtractedFenceBlock, extractExplicitFileClaims(), extractFencedCommands(), extractFencedEvidence() (+16 more)
 
 ### Community 139 - "Community 139"
 Cohesion: 0.11
@@ -1612,7 +1611,7 @@ Nodes (18): AI slop cleaner post-PASS bounded pass, `check_skill_contract.py` �
 
 ### Community 152 - "Community 152"
 Cohesion: 0.15
-Nodes (12): attempt, initGitWorkspace(), runGit(), scenario, workspace, dogfoodFailedChecks(), initDogfoodSourceCheckout(), loadOrchestratorDogfoodApi() (+4 more)
+Nodes (12): hardBlockerFromState(), nextAction(), projectOperationalMaturityFromState(), safeProject(), OperationalMaturityProjection, dogfoodFailedChecks(), initDogfoodSourceCheckout(), loadOrchestratorDogfoodApi() (+4 more)
 
 ### Community 153 - "Community 153"
 Cohesion: 0.12
@@ -1623,8 +1622,8 @@ Cohesion: 0.10
 Nodes (36): dependencies, @waygent/design-contract, @waygent/lens-projectors, @waygent/lens-store, @waygent/orchestrator, @waygent/provider-adapters, dependencies, @waygent/design-contract (+28 more)
 
 ### Community 155 - "Community 155"
-Cohesion: 0.05
-Nodes (46): appendEvent(), nextSequence(), readEvents(), nextEventSequence(), refreshRunExecutionContext(), runPaths, inspectRun(), readModelStateBlocker() (+38 more)
+Cohesion: 0.11
+Nodes (16): readLatestRunId(), writeLatestRunId(), readRawEvents(), resolveWatchRunId(), terminalState(), WatchFilter, watchRun(), WatchRunResult (+8 more)
 
 ### Community 156 - "Community 156"
 Cohesion: 0.12
@@ -1651,8 +1650,8 @@ Cohesion: 0.12
 Nodes (16): code:block1 (RUN_ID=20260513T130523Z-188042f4-29587), Concrete output (one run), F001 — Shell-level integration smoke, Full-fixture smoke (2026-05-13 evening) — ACTUAL RESULTS, Implications for v2.8.1 (follow-up), Implications for v2.9 measurement, Recommendation, Residual risks (carried forward) (+8 more)
 
 ### Community 163 - "Community 163"
-Cohesion: 0.06
-Nodes (44): code:bash (git add AgentLens/src/agentlens/web/routers/doctor.py AgentL), code:python ("""--demo flag: store points at a temp copy of bundled demo ), code:python ("""Edge cases: partial runs, schema_version mismatch, corrup), code:python (def _run_dir_for(home, run_id: str) -> Path | None:), code:python ("""Boot the FastAPI app via TestClient and hit /healthz."""), code:python ("""Tests for the agentlens.commands.serve Typer command."""), code:python ("""FastAPI application factory (spec §4, §6)."""), code:python ("""``agentlens serve`` — boot the dashboard (spec §4, §9)."") (+36 more)
+Cohesion: 0.08
+Nodes (34): code:bash (git add AgentLens/src/agentlens/web/routers/doctor.py AgentL), code:python ("""--demo flag: store points at a temp copy of bundled demo ), code:bash (git add AgentLens/src/agentlens/commands/serve.py AgentLens/), code:python ("""Edge cases: partial runs, schema_version mismatch, corrup), code:python (def _run_dir_for(home, run_id: str) -> Path | None:), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:python ("""Tests for /api/v1/runs."""), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration) (+26 more)
 
 ### Community 164 - "Community 164"
 Cohesion: 0.11
@@ -1667,12 +1666,12 @@ Cohesion: 0.23
 Nodes (18): build_parser(), _build_synthetic_agentlens(), _build_synthetic_legacy(), compare(), find_agentlens_events_file(), legacy_to_agentlens(), main(), Compare two event streams and return a parity report.      Algorithm:     1. Pro (+10 more)
 
 ### Community 167 - "Community 167"
-Cohesion: 0.17
-Nodes (11): 0. 사용 규칙, 11. 최종 검증 시나리오 (v0 GA smoke), 12. 참조 관계 요약, 1. 시스템 개요, 2. 모듈 책임 매트릭스, 3. 디렉터리 / 파일 트리, AgentLens v0 상세 구현 명세 (Implementation Spec), code:block1 (┌───────────────────────────────────────────────────────────) (+3 more)
+Cohesion: 0.12
+Nodes (16): 0. 사용 규칙, 11. 최종 검증 시나리오 (v0 GA smoke), 12. 참조 관계 요약, 1. 시스템 개요, 2. 모듈 책임 매트릭스, 3. 디렉터리 / 파일 트리, 8.1 기본 비저장 (default), 8.2 Excerpt 정책 (+8 more)
 
 ### Community 168 - "Community 168"
 Cohesion: 0.07
-Nodes (34): extractInstructionLines(), isSafeVerificationCommand(), detectVerifyTheater(), DetectVerifyTheaterInput, TRIVIAL_TOKENS, VerifyTheaterResult, blocksSuperpowersNormalization(), claimModeForVerb() (+26 more)
+Nodes (37): isSafeVerificationCommand(), detectVerifyTheater(), DetectVerifyTheaterInput, TRIVIAL_TOKENS, VerifyTheaterResult, blocksSuperpowersNormalization(), claimModeForVerb(), commandTokens() (+29 more)
 
 ### Community 170 - "Community 170"
 Cohesion: 0.12
@@ -1684,11 +1683,11 @@ Nodes (16): 2026-05-13, 2026-05-13 evening — close-out, code:block1 (~/.claude
 
 ### Community 173 - "Community 173"
 Cohesion: 0.05
-Nodes (45): Acceptance Criteria, Acceptance Criteria, Acceptance Criteria, Acceptance Criteria, AgentLens v0 — Task-Formatted Plan, code:bash (cd AgentLens), code:bash (cd AgentLens), code:block26 (Task 0 (M0 docs) ──┐) (+37 more)
+Nodes (39): Acceptance Criteria, AgentLens v0 — Task-Formatted Plan, code:block26 (Task 0 (M0 docs) ──┐), code:bash (cd AgentLens), Phase 1: M0 Contract Freeze, Phase 2: M1 Vertical Slice, Phase 3: M2 Evaluator Hardening, Phase 4: M3 SQLite Index (+31 more)
 
 ### Community 174 - "Community 174"
-Cohesion: 0.33
-Nodes (6): code:python ("""Tests for /api/v1/failures and /api/v1/risks (global)."""), code:python ("""/api/v1/failures and /api/v1/risks (spec §6)."""), code:python (from agentlens.web.routers import failures as failures_route), code:python (app.include_router(failures_router.router)), code:bash (git add AgentLens/src/agentlens/web/routers/failures.py Agen), Task 13: Global failures/risks router
+Cohesion: 0.08
+Nodes (43): ACTIVE_RUN_STATUSES, BLOCKABLE_TASK_STATUSES, classifyStaleRunState(), cleanupStaleRunWorktree(), CleanupStaleRunWorktreeInput, CleanupStaleRunWorktreeResult, defaultSafeActions(), DeleteOrphanInput (+35 more)
 
 ### Community 175 - "Community 175"
 Cohesion: 0.20
@@ -1703,8 +1702,8 @@ Cohesion: 0.12
 Nodes (15): code:bash (waygent run --latest), code:bash (bun install), Quick Start, code:bash (WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke), Closeout Loop, code:bash (skills/waygent/evals/run.sh), code:bash (git status --short --branch --untracked-files=all), Common Commands (+7 more)
 
 ### Community 178 - "Community 178"
-Cohesion: 0.15
-Nodes (7): CliTests, FakeResponse, FakeToolUse, FakeUsage, Fixture/mock-driven tests for dispatch_via_api (v2.22 §2.B1).  No live API calls, _verifier_per_task_ctx(), VerifierPerTaskTests
+Cohesion: 0.08
+Nodes (27): buildProviderStdinPrompt(), buildProviderSystemPrompt(), buildProviderUserPrompt(), buildRetryPromptPrefix(), allowIdx, args, { args, warnings }, disallowIdx (+19 more)
 
 ### Community 179 - "Community 179"
 Cohesion: 0.17
@@ -1723,28 +1722,28 @@ Cohesion: 0.26
 Nodes (14): init_repo(), main(), run_check(), write_report(), changed_outputs(), check(), git_head(), graph_only_changes_since() (+6 more)
 
 ### Community 184 - "Community 184"
-Cohesion: 0.09
-Nodes (20): initSourceCheckout(), oneTaskPlan(), events, firstWave, root, state, workspace, root (+12 more)
+Cohesion: 0.08
+Nodes (23): initSourceCheckout(), oneTaskPlan(), events, firstWave, root, state, workspace, root (+15 more)
 
 ### Community 185 - "Community 185"
 Cohesion: 0.29
 Nodes (7): code:bash (OD="$ORCH_DIR"   # absolute path to ~/.claude/orchestrator/<), code:bash (ORCH_RUN_ID=$(agentlens run-open \), code:block6 (<<HEADLESS_KWS_ORCHESTRATOR>>), code:bash (WORKTREE_ABS="$(cd <worktree> && pwd -P)"), code:bash (sleep 3), code:block9 (Orchestrator running headless.), Self-Spawn Procedure
 
 ### Community 186 - "Community 186"
-Cohesion: 0.10
-Nodes (21): code:json ("scripts": {), code:ts (} from "../../apps/console/src/uiModel";), code:markdown (- AgentLens Python package: `components/agentlens/src/agentl), code:bash (cd components/agentlens), code:bash (cd AgentLens && python -m pytest -q), code:markdown (The product tree is `apps/`, `packages/`, `native/`, `compon), code:bash (bun run --cwd apps/console build), code:bash (rg -n "AgentLens/|apps/lens-web|cd AgentLens|AgentLens/web" ) (+13 more)
+Cohesion: 0.15
+Nodes (13): code:json ("scripts": {), code:ts (} from "../../apps/console/src/uiModel";), code:markdown (- AgentLens Python package: `components/agentlens/src/agentl), code:bash (cd components/agentlens), code:bash (cd AgentLens && python -m pytest -q), code:markdown (The product tree is `apps/`, `packages/`, `native/`, `compon), code:bash (bun run --cwd apps/console build), code:bash (rg -n "AgentLens/|apps/lens-web|cd AgentLens|AgentLens/web" ) (+5 more)
 
 ### Community 187 - "Community 187"
 Cohesion: 0.04
-Nodes (44): AdjacentContractAuditInput, auditAdjacentContracts(), finding(), AgentProfile, defaultProfiles, ExecutionMode, isWorkerRoleSlot(), mergeProfileOverrides() (+36 more)
+Nodes (56): AdjacentContractAuditInput, auditAdjacentContracts(), finding(), AgentProfile, defaultProfiles, ExecutionMode, ExecutionProfile, isWorkerRoleSlot() (+48 more)
 
 ### Community 188 - "Community 188"
 Cohesion: 0.11
 Nodes (32): FileClaim, FileClaimMode, AckConfidence, AckRequirement, BlockerSeverity, CheckKind, CheckSpec, ContractBlocker (+24 more)
 
 ### Community 189 - "Community 189"
-Cohesion: 0.10
-Nodes (25): code:bash (cd AgentLens/web && npm run build), code:ts (export class ApiError extends Error {), code:ts (import { useInfiniteQuery, useQuery } from "@tanstack/react-), code:ts (import { useQuery } from "@tanstack/react-query";), code:bash (git add AgentLens/web/src/api/), code:tsx (import { Card, CardBody } from "@/components/ui/card";), code:tsx ({ path: "/empty", element: <EmptyRoute /> },), code:tsx (import { EmptyRoute } from "./routes/empty";) (+17 more)
+Cohesion: 0.08
+Nodes (32): code:tsx (export function TopBar({ title, subtitle }: { title: string;), code:tsx (import { Outlet } from "react-router-dom";), code:tsx (import { QueryClient, QueryClientProvider } from "@tanstack/), code:bash (cd AgentLens/web && npm run build), code:bash (git add AgentLens/web/src/components/layout/ AgentLens/web/s), code:tsx (import { Card, CardBody } from "@/components/ui/card";), code:tsx ({ path: "/empty", element: <EmptyRoute /> },), code:tsx (import { EmptyRoute } from "./routes/empty";) (+24 more)
 
 ### Community 190 - "Community 190"
 Cohesion: 0.17
@@ -1759,8 +1758,8 @@ Cohesion: 0.13
 Nodes (15): code:yaml (id: T4), code:ts (test("reports patch dry-run failure before mutation", async ), code:ts (const patchPath = join(input.source, ".waygent-apply.patch")), code:ts (import { hasApplyReadyCheckpoint } from "./completionAudit";), code:ts (if (v2State.status === "completed") {), code:ts (import { resolveCheckpointPatch, validateCheckpointManifest ), code:ts (const checkpointRef = v2State.apply.checkpoint_ref ?? Object), code:ts (expect(selectResumeAction({ failure_class: "missing_checkpoi) (+7 more)
 
 ### Community 194 - "Community 194"
-Cohesion: 0.31
-Nodes (10): _build_prompt(), _extract_json(), _fake_captured(), _invoke_judge(), main(), Call `claude -p` and parse the JSON output., Build a fake 'captured run' for one impl., Substitute placeholders in judge.md template. (+2 more)
+Cohesion: 0.10
+Nodes (19): CODEX_DEFAULT_ARGS, applyClaudeRoleArgs(), hasCodexReasoningOverride(), insertBeforePromptStdin(), isProviderCliExecutable(), providerProcessArgs(), providerProcessArgsWithWarnings(), resolveRole() (+11 more)
 
 ### Community 197 - "Community 197"
 Cohesion: 0.13
@@ -1839,8 +1838,8 @@ Cohesion: 0.25
 Nodes (14): adaptive_value_decision(), decision_payload(), git_changed(), main(), matches_any(), packet_context_status(), packet_estimated_chars(), packet_list() (+6 more)
 
 ### Community 219 - "Community 219"
-Cohesion: 0.12
-Nodes (9): capabilityEvent, eventJournal, leakyProvider, packet, provider, root, runRoot, state (+1 more)
+Cohesion: 0.15
+Nodes (10): scenario, scenarioDir, scenarioFiles, isProviderFixture(), loadWaygentScenario(), NormalizedWaygentReplay, WaygentScenarioExpectedReplay, normalized (+2 more)
 
 ### Community 221 - "Community 221"
 Cohesion: 0.13
@@ -1855,8 +1854,8 @@ Cohesion: 0.25
 Nodes (8): code:ts (test("accepts valid Waygent v2 runtime fixtures", () => {), code:bash (git add packages/contracts tests/fixtures/contracts), code:json ({), code:bash (bun test packages/contracts/tests/fixtures.test.ts), code:ts (export type ProviderRole = "implement" | "review" | "fix" | ), code:ts (| "permission_denied"), code:bash (bun test packages/contracts/tests), Task 1: Add Waygent V2 Runtime Contracts
 
 ### Community 224 - "Community 224"
-Cohesion: 0.22
-Nodes (9): code:block1 (rubric pass_rate: 1.0), D007 — Fixture 08 redesign: realistic underspec, keep full rubric, Decision, Re-run plan, Root cause, What changes, What happened, What stays (+1 more)
+Cohesion: 0.05
+Nodes (55): appendEvent(), nextSequence(), selectResumeAction(), RepairTaskPacket, applyRun(), blockedTaskFailure(), blockedVerifyResult(), changedFilesFromPatch() (+47 more)
 
 ### Community 225 - "Community 225"
 Cohesion: 0.10
@@ -1883,16 +1882,16 @@ Cohesion: 0.17
 Nodes (12): code:py ("agentrunway_projection"), code:py ("waygent_projection"), code:py (("agentrunway_projection.json", "agentrunway_projection")), code:py (("waygent_projection.json", "waygent_projection")), code:py (SCHEMA_AGENTRUNWAY_PROJECTION_V1 = "agentlens.agentrunway_pr), code:py (SCHEMA_WAYGENT_PROJECTION_V1 = "agentlens.waygent_projection), code:py ("waygent_projection": "waygent_projection.v1.schema.json",), code:json ("^(platform|runway|kernel|lens)\\.[a-z][a-z0-9_]*(\\.[a-z][a) (+4 more)
 
 ### Community 231 - "Community 231"
-Cohesion: 0.22
-Nodes (9): A cheaper alternative not pursued, Cost tally, F002 — v2.7 Quality Mode Experiment: Close-out, Per-rep data — final (n=4 including main post-merge smoke), TL;DR, What we built that ships, What we don't ship, What we learned (+1 more)
+Cohesion: 0.15
+Nodes (13): Attached-mode enforcement gaps (v2.27), Component 1 — `scripts/materialize_worktree_hooks.py` (NEW) — closes #1, provides #3, Component 2 — `finalize_run.py` severity changes — closes #2, Component 3 — prose / wiring changes, Component 4 — bookkeeping, Decisions index, Design, Findings index (+5 more)
 
 ### Community 233 - "Community 233"
 Cohesion: 0.22
 Nodes (24): budget_status(), build_packet(), component(), decision_relevant(), die(), filter_decisions(), find_task(), heuristic_sections() (+16 more)
 
 ### Community 234 - "Community 234"
-Cohesion: 0.26
-Nodes (14): artifactIndexItem(), dogfoodRunRef(), eventJournalItem(), explainSummaryItem(), item(), projectDogfoodEvidenceFromState(), providerAttemptsItem(), readinessArtifactRefsItem() (+6 more)
+Cohesion: 0.04
+Nodes (45): Consequences, Context, D001 — Honest auto-waive for cost on the agent-dispatch path, Decision, Honest limitation, Options considered, Consequences, Context (+37 more)
 
 ### Community 237 - "Community 237"
 Cohesion: 0.08
@@ -1935,8 +1934,8 @@ Cohesion: 0.20
 Nodes (10): code:block1 (METHOD_AUDIT: tdd applied red="cmd that failed" green="cmd t), Milestone 1: Method Audit State Contract + Fixtures, Milestone 2: Learning-Log Outcome Coherence, Milestone 3: Method Audit Output + Population, Milestone 4: Method Audit Validation Gate, Milestone 5: ENV_BLOCKER Triage Categories, Milestone 6: Local-Env Preflight, Milestone 7: Resource-Key Serialization (+2 more)
 
 ### Community 249 - "Community 249"
-Cohesion: 0.29
-Nodes (14): Any, _all_dispatches_local_due_to_spawn_policy(), _count_from_quality(), _dispatch_reason_is_spawn_policy(), grade_for(), _has_execution_agentlens_gap(), operational_debt_summary(), _plan_executability_fixable_count() (+6 more)
+Cohesion: 0.07
+Nodes (59): Any, comparable(), compare_baseline(), fixture_names(), load_json(), main(), merge_subset_baseline(), _audit_task() (+51 more)
 
 ### Community 250 - "Community 250"
 Cohesion: 0.07
@@ -1951,8 +1950,8 @@ Cohesion: 0.18
 Nodes (11): code:bash (bun test ./packages/orchestrator/tests/orchestratorRun.test.), code:ts (import { writeLatestRunId } from "@waygent/lens-store";), code:ts ([), code:ts (const DEMO_PLAN = `), code:ts (import { defaultRunRoot, explainRun, intentToCommand, parseN), code:ts (if (parsed.command === "run") {), code:ts (if (parsed.command === "status" || parsed.command === "inspe), code:ts (if (parsed.command === "apply") {) (+3 more)
 
 ### Community 254 - "Community 254"
-Cohesion: 0.23
-Nodes (15): apply_repairs(), detect(), detect_completed_task_missing_unit_manifest(), detect_context_basis_hash_mismatch(), detect_finished_with_open_carried_acceptance(), detect_missing_context_health_timestamp(), main(), now_iso() (+7 more)
+Cohesion: 0.20
+Nodes (10): code:ts (test("validates lens runway projection contract", () => {), code:json ({), code:ts (expect(validateContract("lens.runway_projection.v1", fixture), code:ts (export interface LensRunwayProjection {), code:ts (export const lensRunwayProjectionSchema = {), code:ts ("lens.runway_projection.v1": lensRunwayProjectionSchema), code:ts (import type { LensRunwayProjection, RunStatus } from "@wayge), code:bash (bun test ./packages/contracts/tests ./packages/lens-projecto) (+2 more)
 
 ### Community 255 - "Community 255"
 Cohesion: 0.10
@@ -1979,12 +1978,12 @@ Cohesion: 0.20
 Nodes (10): 3. 제안 — 우선순위별 최적화, T1.1 SKILL.md 슬림화 (최우선), T1.2 서브에이전트 user-msg slice injection, T2.1 Orchestrator 1h Extended Cache, T2.2 서브에이전트 system prompt 정규화, T3.1 Reviewer 디프 인젝션 사이즈 캡, T3.2 Candidate drain emit 묶음 처리, Tier 1 (높은 절감, 무손실) (+2 more)
 
 ### Community 261 - "Community 261"
-Cohesion: 0.25
-Nodes (7): Analysis, Consequences, Context, D002 — Probe-fixture design: harness-contract adaptation + detect-then-fix (J2/J3), Decision, Open questions, Options considered
+Cohesion: 0.09
+Nodes (21): checkpoint, combined, events, explanation, failedEvent, first, firstWorktree, inspected (+13 more)
 
 ### Community 262 - "Community 262"
-Cohesion: 0.27
-Nodes (11): AsRef, digest(), PathBuf, append_event(), ArtifactSeal, digest(), refuses_empty_event_payload(), seal_existing() (+3 more)
+Cohesion: 0.25
+Nodes (8): code:python ("""--auto-port: pick the first free port among port..port+3.), code:python ("""--dev-proxy: when set, GET / is proxied. Smoke-only test ), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/unit/test_s), code:python (import socket), code:python (chosen = _select_port(settings.port, auto=settings.auto_port), code:python (# Static / dev-proxy mount is the *last* route — runs after ), code:python ("""Reverse-proxy mount for the Vite dev server (loopback onl), Task 18: `--auto-port` fallback and `--dev-proxy` mount
 
 ### Community 263 - "Community 263"
 Cohesion: 0.38
@@ -2031,8 +2030,8 @@ Cohesion: 0.15
 Nodes (12): code:block1 ((table filled post-data)), code:block2 (case A:  All 3 reps land at exactly 0.95 missing only "repea), Cost actuals, Decision, F001 — Fixture 08 baseline variance (v2.6.0 balanced, n=3), Interpretation rubric, Method, Per-check consistency (filled when data complete) (+4 more)
 
 ### Community 274 - "Community 274"
-Cohesion: 0.05
-Nodes (39): Consequences, Context, D001 — Script-materialized + deep-merged worktree settings.json, Decision, Options considered, Consequences, Context, D002 — Elevate cost/timing drift from WARN to blocking FAIL (+31 more)
+Cohesion: 0.06
+Nodes (26): Consequences, Context, D001 — Script-materialized + deep-merged worktree settings.json, Decision, Options considered, Consequences, Context, D002 — Elevate cost/timing drift from WARN to blocking FAIL (+18 more)
 
 ### Community 275 - "Community 275"
 Cohesion: 0.20
@@ -2127,16 +2126,16 @@ Cohesion: 0.15
 Nodes (12): Decisions index, Evidence base, Findings index, Goal, Hard prerequisite, Hypothesis, Non-goals (explicit deferrals), Phase status (+4 more)
 
 ### Community 300 - "Community 300"
-Cohesion: 0.09
-Nodes (30): hardBlockerFromState(), nextAction(), OperationalMaturityInput, projectOperationalMaturityFromState(), safeProject(), OperatorDecisionInput, defaultCommandSummary(), latestProviderAttempt() (+22 more)
+Cohesion: 0.28
+Nodes (9): canProjectOperatorEvidence(), failureClassesFromState(), hasFailedWorker(), normalizeApplyStatus(), normalizeRunStatusFromEvents(), normalizeRunStatusFromState(), normalizeWaygentReplay(), providerAttemptsFromState() (+1 more)
 
 ### Community 301 - "Community 301"
 Cohesion: 0.17
 Nodes (11): 0. 문서 목적, 10. 부록 — 마일스톤별 산출물 매핑 (한 눈에 보기), 4. 의존성 그래프 (작업 단위 수준), 6.1 식별된 리스크 (impact × likelihood), 6.2 Escalation 기준, 6. 위험 관리, 8. 커밋 시퀀스 (권장), 9. v0 → v1 진입 기준 (+3 more)
 
 ### Community 302 - "Community 302"
-Cohesion: 0.15
-Nodes (13): applyClaudeRoleArgs(), hasCodexReasoningOverride(), insertBeforePromptStdin(), isProviderCliExecutable(), providerProcessArgs(), providerProcessArgsWithWarnings(), resolveRole(), args (+5 more)
+Cohesion: 0.33
+Nodes (10): defaultCommandSummary(), latestProviderAttempt(), looksAuthRequired(), looksUnavailable(), projection(), projectProviderReadinessFromState(), ProviderReadinessInput, providerReadyRecommendation() (+2 more)
 
 ### Community 303 - "Community 303"
 Cohesion: 0.33
@@ -2151,8 +2150,8 @@ Cohesion: 0.07
 Nodes (27): type, type, type, description, properties, type, items, type (+19 more)
 
 ### Community 306 - "Community 306"
-Cohesion: 0.19
-Nodes (11): buildSpecManifest(), BuildSpecManifestInput, hasExplicitRef(), matchTaskSections(), parseSections(), significantWords(), SpecManifestTaskInput, SpecSlice (+3 more)
+Cohesion: 0.26
+Nodes (16): base_state(), completed_subagent_run(), completed_task_subagent_run(), main(), run_dir(), run_validator(), unit_manifest(), v220_state() (+8 more)
 
 ### Community 307 - "Community 307"
 Cohesion: 0.25
@@ -2167,8 +2166,8 @@ Cohesion: 0.06
 Nodes (32): 0. 한 줄 요약, 10. Phase Transition (압축 지점), 11. 디스패치 전송 방식 (dispatch_config), 12. method_audit (방법론 증거 검증), 13. state.json 구조 (Run-level vs Per-plan), 14. 멀티 플랜 체인 (`plan2=`, `plan3=`), 15. Resume Chain (세션 이어가기), 16. 전 영역을 관통하는 설계 철학 (+24 more)
 
 ### Community 310 - "Community 310"
-Cohesion: 0.17
-Nodes (12): code:tsx (export function TopBar({ title, subtitle }: { title: string;), code:tsx (import { Outlet } from "react-router-dom";), code:tsx (import { QueryClient, QueryClientProvider } from "@tanstack/), code:bash (git add AgentLens/web/src/components/layout/ AgentLens/web/s), code:ts (export function relativeFromNow(iso: string | null | undefin), code:tsx (import { Link } from "react-router-dom";), code:tsx (import { Button } from "@/components/ui/button";), code:tsx ({ path: "/", element: <RunsListRoute /> },) (+4 more)
+Cohesion: 0.15
+Nodes (7): CliTests, FakeResponse, FakeToolUse, FakeUsage, Fixture/mock-driven tests for dispatch_via_api (v2.22 §2.B1).  No live API calls, _verifier_per_task_ctx(), VerifierPerTaskTests
 
 ### Community 311 - "Community 311"
 Cohesion: 0.18
@@ -2179,16 +2178,16 @@ Cohesion: 0.17
 Nodes (11): code:block1 (/kws-claude-multi-agent-executor plan=docs/plans/2026-05-12-), Phase 0 — 셋업 (실행당 1회), Phase 1 — 태스크 사이클 (각 태스크마다 반복), Phase 2 — 마무리 (마지막에 1회, 성공 경로), 동시성, 동작 방식 — 한 번의 실행 시뮬레이션, 등장 인물, 리플레이 — 과거 실행 디버깅 (+3 more)
 
 ### Community 314 - "Community 314"
-Cohesion: 0.26
-Nodes (16): base_state(), completed_subagent_run(), completed_task_subagent_run(), main(), run_dir(), run_validator(), unit_manifest(), v220_state() (+8 more)
+Cohesion: 0.12
+Nodes (15): ApplyState, ApplyStatus, baseTasks, DecisionPacket, demoRunDetails, FailureBarrier, findRun(), listRuns() (+7 more)
 
 ### Community 315 - "Community 315"
 Cohesion: 0.39
 Nodes (15): budget_status(), build_context_budget(), build_packet_context_budget(), build_snapshot(), build_task_packet_index(), die(), load_spec_manifest_summary(), main() (+7 more)
 
 ### Community 316 - "Community 316"
-Cohesion: 0.07
-Nodes (51): init_repo(), main(), run_audit(), task(), write_packet(), write_plan_json(), init_repo(), main() (+43 more)
+Cohesion: 0.05
+Nodes (62): init_repo(), main(), run_preflight(), touch(), init_repo(), main(), run_audit(), task() (+54 more)
 
 ### Community 317 - "Community 317"
 Cohesion: 0.17
@@ -2199,8 +2198,8 @@ Cohesion: 0.32
 Nodes (11): accumulate(), _atomic_write_json(), _empty_aggregate(), _increment(), main(), _normalize_usage(), _resolve_active_plan_key(), _utc_now_iso() (+3 more)
 
 ### Community 319 - "Community 319"
-Cohesion: 0.07
-Nodes (46): actualModelFromEvidence(), buildProviderPrompt(), buildSpawnEnv(), computeToolResultBytes(), detectCodexResumeSessionMissing(), detectResumeSessionMissing(), enrichWorkerEvidence(), failed() (+38 more)
+Cohesion: 0.06
+Nodes (54): ProviderSupports, providerSupportsCapabilities(), actualModelFromEvidence(), buildProviderPrompt(), buildSpawnEnv(), computeToolResultBytes(), detectCodexResumeSessionMissing(), detectResumeSessionMissing() (+46 more)
 
 ### Community 320 - "Community 320"
 Cohesion: 0.21
@@ -2208,7 +2207,7 @@ Nodes (7): Tests for build_context_slice.py (v2.29 — I5).  The helper must rep
 
 ### Community 321 - "Community 321"
 Cohesion: 0.25
-Nodes (7): Decisions index, Final phase status, Goal, Hypothesis, Outcome, Status / quick links, v2.7 Quality Mode Experiment
+Nodes (8): code:bash (git rm -r skills/agent-runway), code:markdown (### Waygent Runtime), code:bash (bun run check), code:markdown (- If a task asks for execution through Waygent, invoke `wayg), code:markdown (| [`waygent`](./waygent/) | 자연어 Waygent 실행, 상태, 설명, 재개, 적용 요), code:bash (rg -n "skills/agent-runway|agentrunway.py|agent-runway last|), code:bash (git add -A -- . ':(exclude)**/.DS_Store'), Task 9: Remove Active AgentRunway Skill Routing
 
 ### Community 322 - "Community 322"
 Cohesion: 0.47
@@ -2223,8 +2222,8 @@ Cohesion: 0.18
 Nodes (11): code:typescript (test("imports existing agentrunway-task fences without depen), code:bash (bun test packages/orchestrator/tests/planParser.test.ts), code:typescript (import { mkdirSync, mkdtempSync, writeFileSync } from "node:), code:bash (bun test packages/orchestrator/tests/planDiscovery.test.ts), code:typescript (const TASK_BLOCK = /```yaml (?:waygent-task|agentrunway-task), code:typescript (if (!scalar.has("id") && scalar.has("task_id")) {), code:typescript (if (line === "acceptance_commands:") {), code:typescript (function parseInlineClaim(line: string): Partial<FileClaim> ) (+3 more)
 
 ### Community 325 - "Community 325"
-Cohesion: 0.17
-Nodes (10): buildRepoMap(), discoverFiles(), ignored, RepoMapEntry, walk(), ContextPacket, selectTaskContext(), map (+2 more)
+Cohesion: 0.09
+Nodes (22): buildRepoMap(), discoverFiles(), ignored, RepoMapEntry, walk(), buildSpecManifest(), BuildSpecManifestInput, hasExplicitRef() (+14 more)
 
 ### Community 326 - "Community 326"
 Cohesion: 0.17
@@ -2239,12 +2238,12 @@ Cohesion: 0.15
 Nodes (13): Basic CLI Flow, code:bash (bun install), code:bash (waygent run --latest), code:bash (graphify update .), code:bash (WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke), Default Local Verification, Demo Run, Getting Started With Waygent (+5 more)
 
 ### Community 329 - "Community 329"
-Cohesion: 0.29
-Nodes (11): _active_trees(), apply_fix(), evaluate(), _gap_counts(), main(), _parse_iso(), Stamp completed_at if null. Atomic. Returns the post-fix evaluation., Tolerant ISO-8601 parse, normalized to naive UTC.      Returns None on anything (+3 more)
+Cohesion: 0.26
+Nodes (14): artifactIndexItem(), dogfoodRunRef(), eventJournalItem(), explainSummaryItem(), item(), projectDogfoodEvidenceFromState(), providerAttemptsItem(), readinessArtifactRefsItem() (+6 more)
 
 ### Community 332 - "Community 332"
-Cohesion: 0.36
-Nodes (10): base_state(), has_record(), main(), payload(), run_reconcile(), unit_manifest(), write_run(), bool (+2 more)
+Cohesion: 0.23
+Nodes (15): apply_repairs(), detect(), detect_completed_task_missing_unit_manifest(), detect_context_basis_hash_mismatch(), detect_finished_with_open_carried_acceptance(), detect_missing_context_health_timestamp(), main(), now_iso() (+7 more)
 
 ### Community 333 - "Community 333"
 Cohesion: 0.11
@@ -2299,8 +2298,8 @@ Cohesion: 0.13
 Nodes (14): dispatch_combined_via_api(), parse_combined_result(), Combined Phase Transition T1.2 dispatch helper — pure parse + write plumbing.  v, Split a two-tool sub-agent output into ``{verify, docs}``.      ``subagent_outpu, Drive the combined transition through the Anthropic Messages API (v2.22).      T, Return the combined-result path for the given plan/compaction indices., Write the combined ``{verify, docs}`` result and return its path.      Creates `, transition_result_path() (+6 more)
 
 ### Community 346 - "Community 346"
-Cohesion: 0.10
-Nodes (21): 0. 한 줄 요약, 1. 분석 방법 (어떻게 도출했나), 2.1 이미 잘 되어 있어 그대로 둘 것 (재작업·재제안 금지), 2.2 MAST 실패-분류 커버리지 매트릭스 (이번 라운드의 핵심 렌즈), 2.3 v2.29 가 새로 연 데이터 (축 E 의 전제), 2. 현재 상태 진단, 3.1 우리 맥락 제약 (반드시 준수, v2.29 §3.1 계승), 3. 설계 원칙 (재설계의 앵커) (+13 more)
+Cohesion: 0.17
+Nodes (12): 0. 한 줄 요약, 1. 분석 방법 (어떻게 도출했나), 3.1 우리 맥락 제약 (반드시 준수, v2.29 §3.1 계승), 3. 설계 원칙 (재설계의 앵커), 4. 개선 항목 카탈로그 (J1–J9), 5. 우선순위 로드맵, 7. 안티패턴 / 주의 (리서치·MAST 학습), 8. 기대 효과 요약 (+4 more)
 
 ### Community 347 - "Community 347"
 Cohesion: 0.15
@@ -2327,8 +2326,8 @@ Cohesion: 0.14
 Nodes (10): code:block2, code:block3, code:block4, code:block5, code:block6, code:block7, Judge Prompt — LLM-as-Judge for the multi-agent executor eval suite, kws-codex-plan-executor Eval Judge (+2 more)
 
 ### Community 353 - "Community 353"
-Cohesion: 0.29
-Nodes (9): BTreeMap, digest(), PermissionDecision, bounded(), bounds_output_and_marks_truncation(), denies_disallowed_prefix(), evaluate(), execute() (+1 more)
+Cohesion: 0.25
+Nodes (7): CPE Run Quality Debt Surfacing Implementation Plan, File Structure, Global Constraints, Task 1: Shared Run Quality Debt Classifier, Task 2: Validator Contract for Embedded Run Quality, Task 3: Inspection Current Quality Output, Task 4: Contract Docs and Full Verification
 
 ### Community 354 - "Community 354"
 Cohesion: 0.07
@@ -2359,16 +2358,16 @@ Cohesion: 0.20
 Nodes (10): code:python (from pathlib import Path), code:bash (git add skills/waygent skills/README.md), code:bash (#!/usr/bin/env bash), code:bash (chmod +x skills/waygent/evals/run.sh), code:markdown (# Waygent), code:markdown (# Waygent Skill), code:block6, code:markdown (# Waygent Modes) (+2 more)
 
 ### Community 361 - "Community 361"
-Cohesion: 0.08
-Nodes (35): CompletedProcess, baseline(), main(), run_util(), write_json(), main(), run_validator(), load_run_quality_debt() (+27 more)
+Cohesion: 0.36
+Nodes (10): base_state(), has_record(), main(), payload(), run_reconcile(), unit_manifest(), write_run(), bool (+2 more)
 
 ### Community 362 - "Community 362"
 Cohesion: 0.12
 Nodes (16): additionalProperties, properties, required, type, enum, type, enum, type (+8 more)
 
 ### Community 363 - "Community 363"
-Cohesion: 0.39
-Nodes (8): _audit_task(), _is_docs_only(), _make_state(), _required_for(), run(), bool, int, str
+Cohesion: 0.18
+Nodes (14): changedFilesFrom(), classifyFailureEvidence(), decisionRequired(), evidenceRefsFor(), FailureEvidenceDecision, FailureEvidenceInput, FailureEvidenceKind, patchRefFromInput() (+6 more)
 
 ### Community 364 - "Community 364"
 Cohesion: 0.13
@@ -2419,8 +2418,8 @@ Cohesion: 0.11
 Nodes (17): Acceptance Criteria, Completion Criteria, CPE v2.22 Operational Run Quality Implementation Plan, Execution Order, File Structure, Review Checklist, Scope, Source Documents (+9 more)
 
 ### Community 376 - "Community 376"
-Cohesion: 0.29
-Nodes (12): Option, CapturePolicy, ExecutionRequest, ExecutionResult, FilesystemPolicy, NetworkPolicy, parses_closed_stdin(), PermissionDecision (+4 more)
+Cohesion: 0.13
+Nodes (25): Box, BTreeMap, Error, digest(), Option, PermissionDecision, bounded(), bounds_output_and_marks_truncation() (+17 more)
 
 ### Community 377 - "Community 377"
 Cohesion: 0.18
@@ -2435,8 +2434,8 @@ Cohesion: 0.11
 Nodes (18): Acceptance Criteria, code:text (task_x blocked by needs_rebase: checkpoint patch dry-run fai), code:bash (waygent status --last), code:bash (bun test packages/orchestrator/tests/checkpointArtifacts.tes), code:bash (WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke), Data Flow, Design Principles, Error Handling And Recovery (+10 more)
 
 ### Community 380 - "Community 380"
-Cohesion: 0.29
-Nodes (7): Analysis, Consequences, Context, D001 — Quality-mode floor level, Decision, Open question to be answered by pilot, Options considered
+Cohesion: 0.22
+Nodes (7): buildTaskPacket(), READ_ONLY_UTILITIES, stableStringify(), packet, body, packet, packet
 
 ### Community 381 - "Community 381"
 Cohesion: 0.20
@@ -2479,20 +2478,20 @@ Cohesion: 0.18
 Nodes (9): code:block1 (docs/experiments/<version>-<name>/), Experiments — kws-claude-multi-agent-executor, 구조 (템플릿 사용), 문서화 프로토콜 (실험 실행 에이전트용), 실험 닫기, 실험을 닫지 않을 때, 언제 실험 기록을 시작하나, 인덱스 (+1 more)
 
 ### Community 391 - "Community 391"
-Cohesion: 0.26
-Nodes (9): docsOrConfigOnly(), inferredWaiver(), methodAuditForTask(), methodAuditPresent(), MethodEvidenceValidationInput, MethodEvidenceValidationResult, validateMethodEvidenceForApply(), WAIVER_REASONS (+1 more)
+Cohesion: 0.21
+Nodes (10): buildRepairPacket(), excerptForRepair(), RepairPacketVerificationInput, RepairTaskPacketFailedVerification, RepairTaskPacketPassedVerification, SCOPE_LOCK, head, out (+2 more)
 
 ### Community 392 - "Community 392"
 Cohesion: 0.30
 Nodes (20): _hook(), Tests for the finalization Stop-hook (finalization-stop-gate.sh.template).  The, _real(), _run(), _state(), test_all_terminal_unfinalized_blocks_stop(), test_clean_finalized_allows_stop(), test_drift_only_blocks_stop() (+12 more)
 
 ### Community 393 - "Community 393"
-Cohesion: 0.12
-Nodes (27): main(), run_snapshot(), run_snapshot_with_packets(), changed_files(), changed_files_for_state(), main(), run(), select_state_path() (+19 more)
+Cohesion: 0.05
+Nodes (64): CompletedProcess, main(), run_validator(), main(), run_snapshot(), run_snapshot_with_packets(), load(), main() (+56 more)
 
 ### Community 394 - "Community 394"
-Cohesion: 0.25
-Nodes (7): Analysis, Consequences, Context, D003 — Judge bias guards scoped to the subjective axis only (J4), Decision, Open questions, Options considered
+Cohesion: 0.42
+Nodes (10): build_state(), build_task_packet(), infer_file_content(), main(), now_iso(), quoted_spec_text(), slug(), write_json() (+2 more)
 
 ### Community 395 - "Community 395"
 Cohesion: 0.18
@@ -2511,8 +2510,8 @@ Cohesion: 0.25
 Nodes (7): Analysis, Consequences, Context, D005 — J6 Haiku LOW-tier A/B harness deferred, conditional on J5=MET (P1), Decision, Open questions, Options considered
 
 ### Community 399 - "Community 399"
-Cohesion: 0.20
-Nodes (10): detail, model, snapshot, verdicts, buildConsoleUiModel(), demoConsoleSnapshot, renderConsoleSnapshot(), model (+2 more)
+Cohesion: 0.25
+Nodes (5): FakeMultiToolResponse, A response carrying several tool_use blocks (combined transition)., _transition_ctx(), _transition_response(), TransitionCombinedTests
 
 ### Community 400 - "Community 400"
 Cohesion: 0.22
@@ -2527,24 +2526,24 @@ Cohesion: 0.20
 Nodes (10): code:ts (import { mkdtempSync, readFileSync } from "node:fs";), code:ts (import { mkdirSync, readFileSync, writeFileSync } from "node), code:ts (export * from "./runIndex";), code:ts (import type { AgentLensEvent, EventOutcome, TrustImpact } fr), code:ts (import type { FailureClass, RunStatus } from "@waygent/contr), code:ts (export * from "./runCommands";), code:bash (bun test ./packages/lens-store/tests/runIndex.test.ts ./pack), code:bash (git add packages/lens-store/src/runIndex.ts packages/lens-st) (+2 more)
 
 ### Community 403 - "Community 403"
-Cohesion: 0.17
-Nodes (12): code:ts (test("preserves provider supplied failure_class", () => {), code:ts (export interface ProviderAdapterRunResult {), code:ts (const providerResult = await provider.run(...);), code:ts ({), code:bash (bun test packages/provider-adapters/tests packages/orchestra), code:bash (git add packages/provider-adapters/src/types.ts packages/pro), code:ts ([), code:ts (expect(report.passed).toBe(false);) (+4 more)
+Cohesion: 0.29
+Nodes (7): applyExecutionDependencyBarriers(), ExecutionDependencyBarrier, ExecutionDependencyBarrierResult, hasBroadGradleVerification(), ParsedWaygentPlan, plan, result
 
 ### Community 404 - "Community 404"
-Cohesion: 0.17
-Nodes (12): code:bash (git diff --check), code:bash (bun run check), code:bash (bun test ./packages/runway-control/tests ./packages/orchestr), code:bash (bun test ./packages/contracts/tests ./packages/lens-store/te), code:bash (rg "skills/agent-runway|agentrunway.py"), Implementation Phases, Phase 0: Preparation, Phase 1: Structure Migration (+4 more)
+Cohesion: 0.20
+Nodes (8): KernelExecutionRequest, decision, event, intake, packet, request, state, workerResult
 
 ### Community 405 - "Community 405"
 Cohesion: 0.20
 Nodes (10): code:`markdown (## V1 Maturity Verification), code:block83, code:block84, code:markdown (waygent run --plan <path> --provider codex --execution-mode ), code:bash (skills/waygent/evals/run.sh), code:bash (cd native/kernel && cargo fmt --all -- --check && cargo clip), code:bash (cd components/agentlens), code:bash (git status --short --branch --untracked-files=all) (+2 more)
 
 ### Community 406 - "Community 406"
-Cohesion: 0.25
-Nodes (7): Analysis, Consequences, Context, D001 — MAST coverage matrix as the authoritative eval-coverage doc (J1), Decision, Open questions, Options considered
+Cohesion: 0.22
+Nodes (10): addDriftBlocker(), addPassedReviewEvidence(), addRecoveredFailure(), addRecoveredVerificationHistory(), applyScenarioStateFaults(), checkpointRefsFromState(), combinedApplyEvidence(), markBudgetPaused() (+2 more)
 
 ### Community 407 - "Community 407"
-Cohesion: 0.30
-Nodes (13): result, description, required, type, accepts_waygent_owned_branch_names(), checkpoint_commit(), create_run_main(), owned_cleanup_path() (+5 more)
+Cohesion: 0.12
+Nodes (29): AsRef, digest(), PathBuf, result, description, required, type, accepts_waygent_owned_branch_names() (+21 more)
 
 ### Community 408 - "Community 408"
 Cohesion: 0.25
@@ -2563,8 +2562,8 @@ Cohesion: 0.25
 Nodes (9): compilerOptions, composite, declaration, outDir, rootDir, exclude, extends, include (+1 more)
 
 ### Community 412 - "Community 412"
-Cohesion: 0.13
-Nodes (17): code:ts (import { normalizeProcessOutput } from "../src/processAdapte), code:ts (function parseWorkerOutput(stdout: string): { unwrapped: unk), code:ts (import { buildProviderSystemPrompt, buildProviderUserPrompt ), code:ts (export function buildProviderSystemPrompt(provider: "codex" ), code:bash (git add packages/provider-adapters/src/processAdapters.ts pa), code:ts (test("Phase 3 — claude args inject --append-system-prompt wi), code:ts (if (!nextArgs.includes("--append-system-prompt")) {), code:ts (const stdinPayload = provider === "claude" && isProviderCliE) (+9 more)
+Cohesion: 0.25
+Nodes (8): code:ts (import { normalizeProcessOutput } from "../src/processAdapte), code:ts (function parseWorkerOutput(stdout: string): { unwrapped: unk), code:bash (git add packages/provider-adapters/src/processAdapters.ts pa), code:ts (test("Phase 3 — claude args inject --append-system-prompt wi), code:ts (if (!nextArgs.includes("--append-system-prompt")) {), code:ts (const stdinPayload = provider === "claude" && isProviderCliE), Step 2.3: First-class `result`-event parsing path, Step 3.2: Wire `--append-system-prompt` and switch Claude stdin to the user prompt
 
 ### Community 413 - "Community 413"
 Cohesion: 0.20
@@ -2643,8 +2642,8 @@ Cohesion: 0.20
 Nodes (9): Decisions index, Design, Findings index, Goal, Hypothesis, Phase status, Skill changes shipped on this branch, Status / quick links (+1 more)
 
 ### Community 433 - "Community 433"
-Cohesion: 0.18
-Nodes (9): 2026-05-16, ADVISOR REVIEW — round 1, ADVISOR REVIEW — round 2, Design — argument parser surface area, JOURNAL — v2.13 Natural-language args + multi-plan auto-chain, On close-out, Open work this session, Schema — minimal disruption (+1 more)
+Cohesion: 0.06
+Nodes (25): Alternatives considered, Consequences, Context, D001 — Natural-language lexicon: start small, additive only, Decision, Alternatives considered, Consequences, Context (+17 more)
 
 ### Community 434 - "Community 434"
 Cohesion: 0.18
@@ -2655,8 +2654,8 @@ Cohesion: 0.17
 Nodes (12): code:block1 (~/.claude/learning/kws-claude-multi-agent-executor/runs/<YYY), code:json ({), F1.1 Trigger points, F1.2 Archive layout, F1.3 Exclude list (tar), F1.4 `archive_meta.json` schema, F1.5 Redaction rules (`scripts/redact_archive.py`), F1.6 Failure handling (+4 more)
 
 ### Community 436 - "Community 436"
-Cohesion: 0.18
-Nodes (10): Apply Readiness, code:bash (bun run check), Control Plane, Default Gates, Execution Kernel, Provider Adapters, Runtime Boundary, Scheduling And Safe Waves (+2 more)
+Cohesion: 0.33
+Nodes (6): attempt, initGitWorkspace(), runGit(), scenario, workspace, WaygentScenario
 
 ### Community 437 - "Community 437"
 Cohesion: 0.38
@@ -2703,8 +2702,8 @@ Cohesion: 0.22
 Nodes (8): code:bash (# AgentLens install self-test (reserved env var). Only honou), Part A — Install Wrapper Safety, Phase 2 — Install integration (serial), Phase 4 — Docs + Part A close-out (serial), Task 10: Part A smoke + sign-off (GATE), Task 3: Plug detection + flag wiring, Task 4: SHIM_TEMPLATE selftest branch, Task 9: Install-safety docs
 
 ### Community 448 - "Community 448"
-Cohesion: 0.08
-Nodes (28): type, type, type, $defs, docs_result, verify_result, description, properties (+20 more)
+Cohesion: 0.22
+Nodes (9): $defs, docs_result, verify_result, description, required, type, description, required (+1 more)
 
 ### Community 449 - "Community 449"
 Cohesion: 0.15
@@ -2720,15 +2719,15 @@ Nodes (8): dependencies, @waygent/contracts, @waygent/runway-control, exports, m
 
 ### Community 452 - "Community 452"
 Cohesion: 0.29
-Nodes (6): Decisions index, Findings index, Goal, Hypothesis, Status / quick links, v2.13 — Natural-language args + multi-plan auto-chain
+Nodes (7): code:ts (export function buildWorktreeBranch(runId: string, taskId: s), code:rust (#[test]), code:rust (pub fn validate_owned_branch(branch: &str) -> io::Result<()>), code:rust (validate_owned_branch(branch)?;), code:bash (bun test ./packages/kernel-client/tests/worktreeClient.test.), code:bash (git add packages/kernel-client/src/worktreeClient.ts package), Task 6: Port Worktree And Explicit Apply Guardrails
 
 ### Community 453 - "Community 453"
 Cohesion: 0.25
 Nodes (8): code:json ({), Context, D003 — Deterministic rubric runner replaces LLM correctness estimation, Decision, Implementation notes, Output format, Trade-offs, Verification
 
 ### Community 454 - "Community 454"
-Cohesion: 0.22
-Nodes (8): baseFixture, bash, calls, fixturePath, read, result, serialized, stdout
+Cohesion: 0.15
+Nodes (8): fixtureDir, result, stdout, fixtureDir, lines, result, stdout, workerBody
 
 ### Community 455 - "Community 455"
 Cohesion: 0.22
@@ -2739,8 +2738,8 @@ Cohesion: 0.06
 Nodes (35): 1.1 Goals, 1.2 Non-Goals, 1. Goals and Non-Goals, 2. Current Failure, 3.1 `verificationPolicy`, 3.2 `planClaimExtraction`, 3.3 `intakeRepairPlanner`, 3.4 `executionDependencyBarrier` (+27 more)
 
 ### Community 457 - "Community 457"
-Cohesion: 0.42
-Nodes (10): build_state(), build_task_packet(), infer_file_content(), main(), now_iso(), quoted_spec_text(), slug(), write_json() (+2 more)
+Cohesion: 0.14
+Nodes (18): datetime, main(), next_seq(), now_iso(), redact_home(), audit(), main(), now_iso() (+10 more)
 
 ### Community 458 - "Community 458"
 Cohesion: 0.20
@@ -2759,12 +2758,12 @@ Cohesion: 0.29
 Nodes (7): code:bash (git status), code:bash (for dir in "$HOME/.claude/orchestrator/"*/; do), code:bash (mkdir -p $HOME/.claude/worktrees $HOME/.claude/orchestrator), code:bash (mkdir -p <worktree_path>/.claude), code:bash (cp <skill_dir>/references/hooks/scan-debug-artifacts.sh.temp), code:json ({"task": "task_<N>", "override": "<level>", "suggested_risk"), Phase 0: Setup
 
 ### Community 462 - "Community 462"
-Cohesion: 0.07
-Nodes (31): code:ts (process?: ProviderProcessEvidence;), code:ts (export function projectApplyReadinessFromState(state: Waygen), code:bash (bun test packages/contracts/tests packages/lens-projectors/t), code:bash (git add packages/contracts/src/types.ts packages/contracts/s), code:ts (test("blocks dispatch when source checkout has dirty related), code:bash (git add packages/orchestrator/src/sourceCheckout.ts packages), code:ts (test("resume does not allow apply when reconciliation drift ), code:bash (bun test packages/orchestrator/tests/runCommandsV2.test.ts p) (+23 more)
+Cohesion: 0.04
+Nodes (48): code:ts (process?: ProviderProcessEvidence;), code:ts (export function projectApplyReadinessFromState(state: Waygen), code:bash (bun test packages/contracts/tests packages/lens-projectors/t), code:bash (git add packages/contracts/src/types.ts packages/contracts/s), code:ts (test("blocks dispatch when source checkout has dirty related), code:bash (git add packages/orchestrator/src/sourceCheckout.ts packages), code:ts (test("preserves provider supplied failure_class", () => {), code:ts (export interface ProviderAdapterRunResult {) (+40 more)
 
 ### Community 463 - "Community 463"
-Cohesion: 0.25
-Nodes (7): Analysis, Consequences, Context, D004 — J5 shelf-trigger evaluator (analyze_shelf_triggers.py): design + start condition (P1), Decision, Open questions, Options considered
+Cohesion: 0.22
+Nodes (6): events, operator, output, root, state, workspace
 
 ### Community 464 - "Community 464"
 Cohesion: 0.22
@@ -2784,7 +2783,7 @@ Nodes (7): code:ts (import { mkdtempSync } from "node:fs";), code:bash (bun test
 
 ### Community 468 - "Community 468"
 Cohesion: 0.15
-Nodes (13): code:ts (import { createHash } from "node:crypto";), code:ts (export * from "./taskPacket";), code:json ("dependencies": {), code:bash (bun test packages/context-packer/tests/taskPacket.test.ts), code:bash (git add packages/context-packer), code:bash (bun test packages/provider-adapters/tests/providerRoles.test), code:ts (import type { ProviderRole } from "@waygent/contracts";), code:ts (export function buildProviderPrompt(provider: "codex" | "cla) (+5 more)
+Nodes (13): code:bash (bun test packages/provider-adapters/tests/providerRoles.test), code:ts (import type { ProviderRole } from "@waygent/contracts";), code:ts (export function buildProviderPrompt(provider: "codex" | "cla), code:bash (bun test packages/provider-adapters/tests), code:bash (git add packages/provider-adapters), code:ts (import { describe, expect, test } from "bun:test";), code:ts (import type { FileClaim, RiskLevel } from "@waygent/runway-c), code:ts (import type { FailureClass } from "@waygent/contracts";) (+5 more)
 
 ### Community 469 - "Community 469"
 Cohesion: 0.25
@@ -2851,16 +2850,16 @@ Cohesion: 0.22
 Nodes (8): apply, events, explain, inspect, resume, run, status, Waygent Modes
 
 ### Community 485 - "Community 485"
-Cohesion: 0.25
-Nodes (5): FakeMultiToolResponse, A response carrying several tool_use blocks (combined transition)., _transition_ctx(), _transition_response(), TransitionCombinedTests
+Cohesion: 0.22
+Nodes (8): consoleDetail, expectedCheckpointRefs, get(), handler, inspected, realHandler, root, state
 
 ### Community 486 - "Community 486"
-Cohesion: 0.24
-Nodes (7): CapturedPatch, CaptureInput, captureWorktreePatch(), markUntrackedFilesForDiff(), big, captured, root
+Cohesion: 0.44
+Nodes (8): coerce_value(), die(), main(), normalize_hint(), parse(), int, object, str
 
 ### Community 487 - "Community 487"
 Cohesion: 0.22
-Nodes (6): events, operator, output, root, state, workspace
+Nodes (9): code:block1 (rubric pass_rate: 1.0), D007 — Fixture 08 redesign: realistic underspec, keep full rubric, Decision, Re-run plan, Root cause, What changes, What happened, What stays (+1 more)
 
 ### Community 488 - "Community 488"
 Cohesion: 0.22
@@ -2899,16 +2898,16 @@ Cohesion: 0.15
 Nodes (13): code:python (def redact_archive(tar_path: Path, meta: dict) -> dict:), code:bash (python3 -m py_compile scripts/redact_archive.py), code:block12 (Usage: archive_run.sh --worktree <abs_path> --run-id <id> [-), code:bash (test -x scripts/archive_run.sh), code:block14 (**Archive run (F1):** call scripts/archive_run.sh with the w), code:block15, code:bash (grep -B 1 -A 5 "Archive run (F1)" SKILL.md | grep -q "archiv), code:bash (grep -q "Archive on close-run is best-effort" SKILL.md) (+5 more)
 
 ### Community 498 - "Community 498"
-Cohesion: 0.44
-Nodes (8): coerce_value(), die(), main(), normalize_hint(), parse(), int, object, str
+Cohesion: 0.22
+Nodes (9): A cheaper alternative not pursued, Cost tally, F002 — v2.7 Quality Mode Experiment: Close-out, Per-rep data — final (n=4 including main post-merge smoke), TL;DR, What we built that ships, What we don't ship, What we learned (+1 more)
 
 ### Community 499 - "Community 499"
 Cohesion: 0.33
 Nodes (6): code:python (current = pre_install_resolution), code:python (# Need to re-scan to get the category/remediation), Phase 3 — Advisory + diagnostics (parallel), Task 6: PATH-conflict warning, Task 7: Existing-test audit, Task 8: Doctor wrapper-chain warning
 
 ### Community 500 - "Community 500"
-Cohesion: 0.11
-Nodes (26): ACTIVE_RUN_STATUSES, BLOCKABLE_TASK_STATUSES, classifyStaleRunState(), cleanupStaleRunWorktree(), CleanupStaleRunWorktreeInput, CleanupStaleRunWorktreeResult, defaultSafeActions(), DeleteOrphanInput (+18 more)
+Cohesion: 0.25
+Nodes (7): Analysis, Consequences, Context, D001 — MAST coverage matrix as the authoritative eval-coverage doc (J1), Decision, Open questions, Options considered
 
 ### Community 501 - "Community 501"
 Cohesion: 0.25
@@ -2931,8 +2930,8 @@ Cohesion: 0.17
 Nodes (13): code:bash (bun run check), code:bash (WAYGENT_LIVE_PROVIDER=codex bun run waygent:live-smoke), code:bash (git add docs/operations/waygent.md \), code:bash (skills/waygent/evals/run.sh), code:bash (cd native/kernel && cargo fmt --all -- --check && cargo clip), Execution Order, Full Verification Checklist, Non-Negotiable Boundaries (+5 more)
 
 ### Community 506 - "Community 506"
-Cohesion: 0.14
-Nodes (14): additionalProperties, description, $ref, $id, properties, docs, verify, required (+6 more)
+Cohesion: 0.22
+Nodes (8): additionalProperties, description, $id, required, $schema, title, tools, type
 
 ### Community 507 - "Community 507"
 Cohesion: 0.12
@@ -2943,8 +2942,8 @@ Cohesion: 0.29
 Nodes (6): Analysis, Consequences, Context, D001 — Plan Reviewer migrates to Haiku 4.5, Decision, Options considered
 
 ### Community 509 - "Community 509"
-Cohesion: 0.09
-Nodes (16): Alternatives considered, Consequences, Context, D001 — Natural-language lexicon: start small, additive only, Decision, Alternatives rejected, Calibration results, Context (+8 more)
+Cohesion: 0.12
+Nodes (12): Alternatives rejected, Calibration results, Context, Cost implication, D002 — Judge model choice (Sonnet vs Opus), Decision, Consequences, Context (+4 more)
 
 ### Community 510 - "Community 510"
 Cohesion: 0.29
@@ -2955,8 +2954,8 @@ Cohesion: 0.25
 Nodes (7): Analysis, Consequences, Context, D### — <Decision topic>, Decision, Open questions, Options considered
 
 ### Community 512 - "Community 512"
-Cohesion: 0.15
-Nodes (13): items, type, items, type, items, type, properties, type (+5 more)
+Cohesion: 0.29
+Nodes (7): items, type, items, type, type, commands_run, exit_codes
 
 ### Community 513 - "Community 513"
 Cohesion: 0.29
@@ -2967,8 +2966,8 @@ Cohesion: 0.25
 Nodes (7): AgentLens Dashboard, code:bash (pipx install agentlens), Default URL, Flags, Install + First Launch, What It Does Not Do, What It Shows
 
 ### Community 515 - "Community 515"
-Cohesion: 0.10
-Nodes (17): Change-To-Docs Map, Documentation Update Protocol, Pre-Final Checklist, Required Habit, Verification Log Rules, Versioning Rule, What Not To Do, 2026-05-19 (+9 more)
+Cohesion: 0.09
+Nodes (18): Change-To-Docs Map, Documentation Update Protocol, Pre-Final Checklist, Required Habit, Verification Log Rules, Versioning Rule, What Not To Do, 2026-05-19 (+10 more)
 
 ### Community 516 - "Community 516"
 Cohesion: 0.29
@@ -2979,8 +2978,8 @@ Cohesion: 0.25
 Nodes (7): Cost actuals, Decision, F### — <Finding topic>, Interpretation, Method, Question, Results
 
 ### Community 518 - "Community 518"
-Cohesion: 0.31
-Nodes (9): ApplyState, consoleStatus(), event(), eventsFromRealDetail(), hasDirtySourceBlock(), realRunDetailToConsoleRun(), realRunSummaryToConsoleRun(), trustScore() (+1 more)
+Cohesion: 0.25
+Nodes (7): Analysis, Consequences, Context, D003 — Judge bias guards scoped to the subjective axis only (J4), Decision, Open questions, Options considered
 
 ### Community 519 - "Community 519"
 Cohesion: 0.33
@@ -2999,8 +2998,8 @@ Cohesion: 0.29
 Nodes (6): Analysis, Consequences, Context, D007 — Self-Spawn default flips to attached, with a deprecation warning, Decision, Options considered
 
 ### Community 523 - "Community 523"
-Cohesion: 0.61
-Nodes (6): dry_run_patch(), escapes_worktree(), normalize(), PatchDiagnostic, PatchDryRun, rejects_paths_outside_worktree()
+Cohesion: 0.25
+Nodes (7): Analysis, Consequences, Context, D004 — J5 shelf-trigger evaluator (analyze_shelf_triggers.py): design + start condition (P1), Decision, Open questions, Options considered
 
 ### Community 524 - "Community 524"
 Cohesion: 0.29
@@ -3011,8 +3010,8 @@ Cohesion: 0.25
 Nodes (7): Decisions index, Findings index, Goal, Hypothesis, Phase status, Status / quick links, v2.8 — Learning Log
 
 ### Community 528 - "Community 528"
-Cohesion: 0.38
-Nodes (5): categories, categorizeProviderLogLine(), summarizeProviderStderr(), withProcessEvidence(), summary
+Cohesion: 0.25
+Nodes (7): Cost actuals, Decision, F01 — Probe validity for fixtures 09 / 10 (deterministic, no LLM), Interpretation, Method, Question, Results
 
 ### Community 529 - "Community 529"
 Cohesion: 0.31
@@ -3036,7 +3035,7 @@ Nodes (8): code:` (You are a Combined Reviewer sub-agent running on Sonnet. Per)
 
 ### Community 534 - "Community 534"
 Cohesion: 0.25
-Nodes (8): buildRunDetailModel(), detailSectionsFor(), isProviderLogSummary(), operatorTimelineFromResponse(), outcomeStripFromDecision(), providerLogSummaryFromAttempts(), rawEvidenceRefsFromDecision(), uniqueStrings()
+Nodes (7): Decisions index, Final phase status, Goal, Hypothesis, Outcome, Status / quick links, v2.7 Quality Mode Experiment
 
 ### Community 535 - "Community 535"
 Cohesion: 0.25
@@ -3096,11 +3095,11 @@ Nodes (21): CPE 서브에이전트 품질 개선 구현 문서, Phase 0: Baselin
 
 ### Community 549 - "Community 549"
 Cohesion: 0.29
-Nodes (6): Consequences, Context, D001 — `scripts/state_set.py`: one helper for active-tree writes, Decision, Open questions, Options considered
+Nodes (7): Analysis, Consequences, Context, D001 — Quality-mode floor level, Decision, Open question to be answered by pilot, Options considered
 
 ### Community 550 - "Community 550"
 Cohesion: 0.29
-Nodes (6): Consequences, Context, D002 — Phase-boundary enforcement: helper script, not hook, Decision, Open questions, Options considered
+Nodes (7): type, type, type, category, issues, options, properties
 
 ### Community 551 - "Community 551"
 Cohesion: 0.25
@@ -3143,8 +3142,8 @@ Cohesion: 0.14
 Nodes (13): code:bash (grep -q "Spec manifest is per-plan" SKILL.md), code:markdown (# v2.14 vs v2.15 — Token cost A/B), code:bash (grep -q 'version: "2.15.0"' SKILL.md), code:block29 (Task 0 (build_spec_manifest.py)           [LOW, SMALL]), Definition of Done, Dependency graph (compaction points marked), Parallelization opportunities, Phase 4 — Documentation + version (+5 more)
 
 ### Community 561 - "Community 561"
-Cohesion: 0.29
-Nodes (7): Analysis (corrected), Context, D003 — headless self-spawn default vs cache-warmth preference, Decision, Follow-up offered to the user (non-blocking), Open questions, Options considered
+Cohesion: 0.70
+Nodes (4): baseline(), main(), run_util(), write_json()
 
 ### Community 562 - "Community 562"
 Cohesion: 0.29
@@ -3179,8 +3178,8 @@ Cohesion: 0.25
 Nodes (8): items, type, type, items, changed_files, residual_risk, items, type
 
 ### Community 570 - "Community 570"
-Cohesion: 0.57
-Nodes (6): comparable(), compare_baseline(), fixture_names(), load_json(), main(), merge_subset_baseline()
+Cohesion: 0.29
+Nodes (7): type, properties, commit, status, summary, enum, type
 
 ### Community 571 - "Community 571"
 Cohesion: 0.25
@@ -3243,8 +3242,8 @@ Cohesion: 0.40
 Nodes (5): code:yaml (id: task_provider_parity_codex_claude_streaming), Conventions, Cross-Path Invariants (CP), File Map, Waygent — Provider Adapter Parity (Codex) + Claude Stream-JSON Activation Implementation Plan
 
 ### Community 586 - "Community 586"
-Cohesion: 0.29
-Nodes (6): Consequences, Context, D004 — Retire v2.12 `plan2_state` dual-path via resume migration shim, Decision, Open questions, Options considered
+Cohesion: 0.33
+Nodes (6): J1. MAST 커버리지 매트릭스 문서 [P0, 축 D], 변경, 수용 기준, 신규: `docs/eval-coverage-mast.md`, 의도, 픽스처 메타 주석 (기계 가독)
 
 ### Community 587 - "Community 587"
 Cohesion: 0.32
@@ -3260,15 +3259,15 @@ Nodes (6): Alternatives considered, code:json ("implementer_model": {), Conseque
 
 ### Community 590 - "Community 590"
 Cohesion: 0.29
-Nodes (7): code:python ("""Tests for /api/v1/meta."""), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/integration), code:python ("""/api/v1/meta — viewer/version/store info (spec §6)."""), code:python (from agentlens.web.routers import meta as meta_router), code:python (app.include_router(meta_router.router)), code:bash (git add AgentLens/src/agentlens/web/routers/meta.py AgentLen), Task 7: `/api/v1/meta` endpoint
+Nodes (6): Consequences, Context, D001 — `scripts/state_set.py`: one helper for active-tree writes, Decision, Open questions, Options considered
 
 ### Community 591 - "Community 591"
 Cohesion: 0.52
 Nodes (5): canonicalModelFamily(), familyAliasExact, familyRules, isFamilyAlias(), modelsMatch()
 
 ### Community 593 - "Community 593"
-Cohesion: 0.36
-Nodes (9): _audit(), _collect_task_trees(), _is_docs_only(), main(), Return a list of (scope_label, tasks_dict) tuples to audit.      v2.13 multi-pla, _required_for(), bool, int (+1 more)
+Cohesion: 0.33
+Nodes (6): J2. 리뷰어 고무도장 프로브 픽스처 `09-spec-intent-uncovered.yaml` [P0, 축 D], 검증 절차 (v2.9 패턴), 무엇을 측정하나, 수용 기준, 의도, 픽스처 설계 (`evals/fixtures/09-spec-intent-uncovered.yaml`)
 
 ### Community 594 - "Community 594"
 Cohesion: 0.13
@@ -3283,16 +3282,16 @@ Cohesion: 0.16
 Nodes (13): isHistoricalDoc(), isTestkitPath(), LegacyCheckResult, result, runLegacyCheck(), walk(), walkActiveRouting(), historicalRuntime (+5 more)
 
 ### Community 598 - "Community 598"
-Cohesion: 0.33
-Nodes (6): code:typescript (test("builds detail sections from a real Waygent run API res), code:bash (bun test apps/console/src/uiModel.test.ts), code:typescript (export interface RealRunDetailResponse {), code:bash (bun test apps/console/src/uiModel.test.ts tests/e2e/lens-con), code:bash (git add apps/console tests/e2e), Task 10: Inspect Real Runs In The Console
+Cohesion: 0.29
+Nodes (7): code:typescript (test("builds detail sections from a real Waygent run API res), code:bash (bun test apps/console/src/uiModel.test.ts), code:typescript (export interface RealRunDetailResponse {), code:bash (bun test apps/console/src/uiModel.test.ts tests/e2e/lens-con), code:bash (git add apps/console tests/e2e), Execution Order, Task 10: Inspect Real Runs In The Console
 
 ### Community 599 - "Community 599"
-Cohesion: 0.29
-Nodes (6): Consequences, Context, D005 — SKILL.md split boundary (reaffirm + extend v2.19 D001), Decision, Deltas v2.21 adds on top of v2.19 D001, Migration order
+Cohesion: 0.33
+Nodes (6): J3. 오류 전파 체인 픽스처 `10-error-propagation.yaml` [P0, 축 D], 검증 절차, 무엇을 측정하나, 수용 기준, 의도, 픽스처 설계 (`evals/fixtures/10-error-propagation.yaml`)
 
 ### Community 600 - "Community 600"
-Cohesion: 0.11
-Nodes (19): code:ts (import { describe, expect, test } from "bun:test";), code:ts (import type { RiskLevel } from "@waygent/contracts";), code:ts (export * from "./planParser";), code:bash (bun test ./packages/orchestrator/tests/planParser.test.ts), code:bash (git add packages/orchestrator/src/planParser.ts packages/orc), code:bash (bun test ./packages/orchestrator/tests/taskGraph.test.ts), code:ts (import { createTaskGraph, type TaskGraph, type TaskNode } fr), code:ts (export * from "./taskGraph";) (+11 more)
+Cohesion: 0.17
+Nodes (12): code:ts (import { describe, expect, test } from "bun:test";), code:ts (import type { RiskLevel } from "@waygent/contracts";), code:ts (export * from "./planParser";), code:bash (bun test ./packages/orchestrator/tests/planParser.test.ts), code:bash (git add packages/orchestrator/src/planParser.ts packages/orc), code:bash (bun test ./packages/orchestrator/tests/taskGraph.test.ts), code:ts (import { createTaskGraph, type TaskGraph, type TaskNode } fr), code:ts (export * from "./taskGraph";) (+4 more)
 
 ### Community 601 - "Community 601"
 Cohesion: 0.29
@@ -3303,8 +3302,8 @@ Cohesion: 0.29
 Nodes (7): code:yaml (id: task_17), code:ts (export interface WaygentDesignContractRef {), code:ts (design_contract?: WaygentDesignContractRef;), code:ts (const designContractRefSchema = {), code:ts (intake_recovery: intakeRecoverySchema,), code:bash (git add packages/contracts/), Task 5.1: Add `design_contract` to run state contracts
 
 ### Community 603 - "Community 603"
-Cohesion: 0.29
-Nodes (7): code:typescript (test("plans isolated worktree paths under a Waygent-owned br), code:typescript (import { join } from "node:path";), code:rust (#[test]), code:bash (bun test packages/kernel-client/tests/worktreeClient.test.ts), code:bash (git add packages/kernel-client native/kernel/crates/git-work), Execution Order, Task 5: Create Isolated Worktrees For Real Runs
+Cohesion: 0.33
+Nodes (6): code:typescript (test("plans isolated worktree paths under a Waygent-owned br), code:typescript (import { join } from "node:path";), code:rust (#[test]), code:bash (bun test packages/kernel-client/tests/worktreeClient.test.ts), code:bash (git add packages/kernel-client native/kernel/crates/git-work), Task 5: Create Isolated Worktrees For Real Runs
 
 ### Community 604 - "Community 604"
 Cohesion: 0.29
@@ -3403,8 +3402,8 @@ Cohesion: 0.13
 Nodes (16): 2.1 `parseJsonText` (modified), 2.2 `enumerateBalancedBraceSpans` (new internal helper), 2.3 `unwrapProviderEnvelope` (modified return type), 2.4 `isWorkerResultCandidate` (modified — tightened), 2.5 `metadataFromParsed` (modified signature), 2.6 `usageFromEnvelope` (new internal), 2.7 `modelFromEnvelope` (new internal), 2.8 `buildProviderPrompt` (modified to surface exec allowlist) (+8 more)
 
 ### Community 628 - "Community 628"
-Cohesion: 0.48
-Nodes (6): init_repo(), main(), run_preflight(), touch(), int, str
+Cohesion: 0.29
+Nodes (6): Consequences, Context, D002 — Phase-boundary enforcement: helper script, not hook, Decision, Open questions, Options considered
 
 ### Community 630 - "Community 630"
 Cohesion: 0.17
@@ -3419,8 +3418,8 @@ Cohesion: 0.20
 Nodes (6): 2026-05-16 — v2.15.0 landing, Discipline notes, Goals — measurement status, Open follow-ups, v2.15 — Context Engineering · Journal, What landed
 
 ### Community 633 - "Community 633"
-Cohesion: 0.40
-Nodes (5): 8.1 기본 비저장 (default), 8.2 Excerpt 정책, 8.3 Shim 보안, 8.4 Retention, 8. 보안 / 프라이버시 구현 디테일
+Cohesion: 0.29
+Nodes (7): Analysis (corrected), Context, D003 — headless self-spawn default vs cache-warmth preference, Decision, Follow-up offered to the user (non-blocking), Open questions, Options considered
 
 ### Community 634 - "Community 634"
 Cohesion: 0.33
@@ -3487,16 +3486,16 @@ Cohesion: 0.40
 Nodes (5): code:ts (const detail = await readJson(handler(new Request("http://lo), code:ts (expect(toRunDetailViewModel({), code:bash (bun test apps/api/tests apps/console/src packages/orchestrat), code:bash (git add packages/orchestrator/src/runCommands.ts \), Task 11: Expose Runtime Cost In Inspect, API, And Console
 
 ### Community 652 - "Community 652"
-Cohesion: 0.43
-Nodes (6): main(), plan_for(), run_packet(), write_json(), int, str
+Cohesion: 0.33
+Nodes (6): code:ts (import { createHash } from "node:crypto";), code:ts (export * from "./taskPacket";), code:json ("dependencies": {), code:bash (bun test packages/context-packer/tests/taskPacket.test.ts), code:bash (git add packages/context-packer), Task 3: Build Task Packet Artifacts
 
 ### Community 653 - "Community 653"
 Cohesion: 0.22
 Nodes (9): code:markdown (# Waygent Documentation), code:markdown (- Reviewers: read the root `README.md`, then `architecture/w), code:markdown (# Getting Started With Waygent), code:bash (bun install), code:markdown (- Documentation index: [docs/README.md](docs/README.md)), code:bash (test -f docs/README.md), code:bash (waygent run --latest), Source Design (+1 more)
 
 ### Community 654 - "Community 654"
-Cohesion: 0.33
-Nodes (6): code:block1 (Δ (quality_plus − balanced) on rubric pass_rate), Context, D006 — Pilot first, not full experiment, Decision, Decision-tree after pilot, Pilot success != ship gate
+Cohesion: 0.29
+Nodes (6): Consequences, Context, D004 — Retire v2.12 `plan2_state` dual-path via resume migration shim, Decision, Open questions, Options considered
 
 ### Community 655 - "Community 655"
 Cohesion: 0.33
@@ -3512,7 +3511,7 @@ Nodes (3): 11.1 Dual-root scan, 11. M12 — `orphanRuns.ts` (modified), code:ts 
 
 ### Community 660 - "Community 660"
 Cohesion: 0.29
-Nodes (6): fixture, graphifyAuditCommand, normalized, parsed, planWithFencedFixture, workspace
+Nodes (6): Consequences, Context, D005 — SKILL.md split boundary (reaffirm + extend v2.19 D001), Decision, Deltas v2.21 adds on top of v2.19 D001, Migration order
 
 ### Community 661 - "Community 661"
 Cohesion: 0.18
@@ -3527,8 +3526,8 @@ Cohesion: 0.10
 Nodes (13): Execution Rules, Final Acceptance, Parallel Execution Map, Source Spec, Waygent Repository Migration Implementation Plan, Records, Waygent Migration History, Current Product Baseline (+5 more)
 
 ### Community 664 - "Community 664"
-Cohesion: 0.10
-Nodes (21): code:bash (git diff -- .gitignore), code:bash (git ls-files -ci --exclude-standard), code:bash (git diff --check), code:bash (git add .gitignore), code:bash (git status --short --branch --untracked-files=all), code:ts (test("validates lens runway projection contract", () => {), code:json ({), code:ts (expect(validateContract("lens.runway_projection.v1", fixture) (+13 more)
+Cohesion: 0.20
+Nodes (11): code:bash (git diff -- .gitignore), code:bash (git ls-files -ci --exclude-standard), code:bash (git diff --check), code:bash (git add .gitignore), code:bash (git status --short --branch --untracked-files=all), code:bash (rg -n "AgentRunway|agentrunway|skills/agent-runway|agentrunw), code:bash (git add AGENTS.md CLAUDE.md GEMINI.md docs skills/README.md), code:bash (find . -maxdepth 3 \( -name node_modules -o -name dist -o -n) (+3 more)
 
 ### Community 666 - "Community 666"
 Cohesion: 0.33
@@ -3543,8 +3542,8 @@ Cohesion: 0.50
 Nodes (4): code:ts (test("WaygentRunStateV2 type accepts optional repair_budget ), code:ts (repair_budget?: Record<string, { max_attempts: number; curre), code:bash (git add packages/contracts/src/types.ts packages/contracts/t), Task 4: Add repair_budget to run state + recovery_action enum entry
 
 ### Community 669 - "Community 669"
-Cohesion: 0.29
-Nodes (5): fixtureDir, lines, result, stdout, workerBody
+Cohesion: 0.33
+Nodes (6): code:python ("""Tests for /api/v1/meta."""), code:python ("""/api/v1/meta — viewer/version/store info (spec §6)."""), code:python (from agentlens.web.routers import meta as meta_router), code:python (app.include_router(meta_router.router)), code:bash (git add AgentLens/src/agentlens/web/routers/meta.py AgentLen), Task 7: `/api/v1/meta` endpoint
 
 ### Community 670 - "Community 670"
 Cohesion: 0.20
@@ -3592,15 +3591,15 @@ Nodes (4): code:bash (git add skills/kws-codex-plan-executor/scripts/build_spec_
 
 ### Community 681 - "Community 681"
 Cohesion: 0.33
-Nodes (6): Consequences, Context, D004 — Pilot scope: balanced vs quality_plus only, Decision, Options, Rationale
+Nodes (6): code:python ("""Tests for /api/v1/workspaces[/{id}]."""), code:python ("""/api/v1/workspaces (spec §6)."""), code:python (from agentlens.web.routers import workspaces as workspaces_r), code:python (app.include_router(workspaces_router.router)), code:bash (git add AgentLens/src/agentlens/web/routers/workspaces.py Ag), Task 12: Workspaces router (list + detail with aggregations)
 
 ### Community 682 - "Community 682"
 Cohesion: 0.40
 Nodes (5): code:bash (python3 skills/kws-codex-plan-executor/evals/check_skill_con), code:markdown (Before delegating work:), code:markdown (When subagents are permitted, dispatch from task packets, no), code:bash (git add skills/kws-codex-plan-executor/SKILL.md \), Task 11: Add Opt-In Subagent Packet Dispatch Contract
 
 ### Community 683 - "Community 683"
-Cohesion: 0.47
-Nodes (5): load(), main(), run(), int, str
+Cohesion: 0.33
+Nodes (6): code:block1 (Δ (quality_plus − balanced) on rubric pass_rate), Context, D006 — Pilot first, not full experiment, Decision, Decision-tree after pilot, Pilot success != ship gate
 
 ### Community 684 - "Community 684"
 Cohesion: 0.40
@@ -3623,8 +3622,8 @@ Cohesion: 0.29
 Nodes (7): 6. M3 - SQLite Index, code:text (missing final           -> incomplete), code:text (runs), code:text (run_id), code:bash (pytest tests/unit/test_sqlite_index.py -v), Task 1.4: Vertical-Slice Evaluator Stub and Show, Task 3.1: Implement Rebuildable Index
 
 ### Community 689 - "Community 689"
-Cohesion: 0.19
-Nodes (19): ProbedProvider, ProviderCapabilityAttestation, ProviderHelpProbeResult, ProviderProcessAttestation, CostRecordInput, ParsedToolCallAccumulator, AdapterRetryContext, ModelAttestation (+11 more)
+Cohesion: 0.10
+Nodes (21): acpCapabilityManifest, assertCapabilities(), claudeCapabilityManifest, codexCapabilityManifest, fakeCapabilityManifest, ProviderCapabilityManifest, CLAUDE_DEFAULT_ARGS, ClaudeProviderAdapter (+13 more)
 
 ### Community 690 - "Community 690"
 Cohesion: 0.40
@@ -3644,15 +3643,15 @@ Nodes (5): code:yaml (task_id: task_007), code:bash (agentlens import agentrunwa
 
 ### Community 694 - "Community 694"
 Cohesion: 0.33
-Nodes (6): code:ts (import type { FileClaim, RiskLevel } from "@waygent/runway-c), code:ts (import type { FailureClass } from "@waygent/contracts";), code:ts (expect(await resumeRun({ root, run: "run_blocked", dry_run: ), code:bash (bun test packages/orchestrator/tests/reviewGate.test.ts pack), code:bash (git add packages/orchestrator packages/runway-control), Task 8: Implement Review Gate, Recovery, And Real Resume
+Nodes (6): code:python ("""Tests for /api/v1/failures and /api/v1/risks (global)."""), code:python ("""/api/v1/failures and /api/v1/risks (spec §6)."""), code:python (from agentlens.web.routers import failures as failures_route), code:python (app.include_router(failures_router.router)), code:bash (git add AgentLens/src/agentlens/web/routers/failures.py Agen), Task 13: Global failures/risks router
 
 ### Community 695 - "Community 695"
 Cohesion: 0.22
 Nodes (7): main(), section(), main(), main(), str, main(), int
 
 ### Community 696 - "Community 696"
-Cohesion: 0.33
-Nodes (6): code:python ("""Tests for /api/v1/workspaces[/{id}]."""), code:python ("""/api/v1/workspaces (spec §6)."""), code:python (from agentlens.web.routers import workspaces as workspaces_r), code:python (app.include_router(workspaces_router.router)), code:bash (git add AgentLens/src/agentlens/web/routers/workspaces.py Ag), Task 12: Workspaces router (list + detail with aggregations)
+Cohesion: 0.40
+Nodes (6): $ref, properties, docs, verify, properties, $ref
 
 ### Community 697 - "Community 697"
 Cohesion: 0.39
@@ -3666,9 +3665,9 @@ Nodes (4): code:block19 (### Step 3: Render HTML run report (F3)), code:block20,
 Cohesion: 0.29
 Nodes (6): Analysis, Consequences, Context, D002 — Transition T1 + T2 merge into a single dispatch, Decision, Options considered
 
-### Community 701 - "Community 701"
-Cohesion: 0.60
-Nodes (5): main(), now_iso(), parse_token(), int, str
+### Community 700 - "Community 700"
+Cohesion: 0.33
+Nodes (6): items, type, properties, change, files_updated, path
 
 ### Community 703 - "Community 703"
 Cohesion: 0.40
@@ -3681,6 +3680,10 @@ Nodes (4): code:text (~/.codex/orchestrator/<run_id>/state.json), code:json ({),
 ### Community 705 - "Community 705"
 Cohesion: 0.33
 Nodes (4): code:` (You are a Verifier sub-agent running on Sonnet. Run tests ca), code:block2, code:block3, Verifier Prompt Template
+
+### Community 706 - "Community 706"
+Cohesion: 0.40
+Nodes (5): J4. `judge.md` 편향 하드닝 [P0, 축 D], 변경: `evals/calibration/README.md`, 변경: `evals/judge.md`, 수용 기준, 의도
 
 ### Community 707 - "Community 707"
 Cohesion: 0.40
@@ -3695,8 +3698,8 @@ Cohesion: 0.40
 Nodes (5): 10.1 명령 목록 (v0), 10.2 출력 규약, 10.3 Help 출력 제외 명령, 10. CLI UX, code:block36 (agentlens install [--yes])
 
 ### Community 710 - "Community 710"
-Cohesion: 0.40
-Nodes (5): code:ts (test("Phase 4 — retry context prepends failure summary into ), code:ts (export interface AdapterRequest {), code:ts (export function buildProviderUserPrompt(request: AdapterRequ), code:ts (const retry_context = priorAttempt), Step 4.4: Retry user-prompt prefix
+Cohesion: 0.20
+Nodes (10): code:ts (describe("Phase 4 — session id / resume", () => {), code:ts (session_id?: string;), code:ts (if (options.resume_session_id && !nextArgs.includes("--resum), code:bash (git add packages/provider-adapters/src/types.ts packages/pro), code:ts (test("Phase 4 — retry context prepends failure summary into ), code:ts (export interface AdapterRequest {), code:ts (export function buildProviderUserPrompt(request: AdapterRequ), code:ts (const retry_context = priorAttempt) (+2 more)
 
 ### Community 711 - "Community 711"
 Cohesion: 0.33
@@ -3711,12 +3714,16 @@ Cohesion: 0.15
 Nodes (13): code:ts (test("builds operational maturity section without changing a), code:bash (bun test apps/console/src/uiModel.test.ts), code:ts (dogfood_evidence?: DogfoodEvidenceProjection | null;), code:ts (dogfood_evidence: DogfoodEvidenceProjection | null;), code:ts (dogfood_evidence: response.dogfood_evidence ?? response.oper), code:ts ({ id: "operational-maturity", label: "Operational maturity" ), code:tsx (function OperationalMaturity({ detail }: { detail: RunDetail), code:tsx (<ExecutionIntelligence detail={detail} />) (+5 more)
 
 ### Community 715 - "Community 715"
-Cohesion: 0.20
-Nodes (7): CODEX_DEFAULT_ARGS, CodexProviderAdapter, alreadyImpl, args, cwd, noChange, result
+Cohesion: 0.40
+Nodes (5): J5. `scripts/analyze_shelf_triggers.py` (트리거 평가기) [P1, 축 E], 수용 기준, 신규: `scripts/analyze_shelf_triggers.py`, 신규 테스트 `scripts/test_analyze_shelf_triggers.py`, 의도
 
 ### Community 716 - "Community 716"
-Cohesion: 0.50
-Nodes (4): code:ts (expect(projectRuntimeCostFromState(state)).toMatchObject({), code:bash (bun test packages/lens-projectors/tests/runtimeCost.test.ts ), code:bash (git add packages/lens-projectors/src/runtimeCost.ts \), Task 10: Add Runtime Cost Projection
+Cohesion: 0.40
+Nodes (5): additionalProperties, required, verification, items, type
+
+### Community 717 - "Community 717"
+Cohesion: 0.40
+Nodes (5): 2026-05-29, Build progress — additive helpers landed (items 2, 3, 4-partial, 5, 6), CHECKPOINT — remaining work needs a paid eval, Opening — problem definition, Plan / sequencing
 
 ### Community 718 - "Community 718"
 Cohesion: 0.50
@@ -3731,8 +3738,8 @@ Cohesion: 0.50
 Nodes (4): 1. Control Plane, 2. Harness Layer, 3. Runtime Environment, Product Boundary
 
 ### Community 722 - "Community 722"
-Cohesion: 0.13
-Nodes (6): Waygent Architecture Decisions, Current Architecture Pages, Operational Maturity Loop, Runtime Parity Surface, V1 Operational Maturity, Waygent Architecture
+Cohesion: 0.08
+Nodes (16): Waygent Architecture Decisions, Apply Readiness, code:bash (bun run check), Control Plane, Default Gates, Execution Kernel, Provider Adapters, Runtime Boundary (+8 more)
 
 ### Community 723 - "Community 723"
 Cohesion: 0.50
@@ -3744,39 +3751,23 @@ Nodes (4): code:text (AgentLens/src/agentlens/schema/jsonschema/event.v3.schema.
 
 ### Community 728 - "Community 728"
 Cohesion: 0.40
-Nodes (5): code:ts (expect(validateDiffScope({), code:ts (export interface WorktreeManifest extends PlannedWorktree {), code:bash (bun test packages/orchestrator/tests/diffScope.test.ts packa), code:bash (git add packages/orchestrator/src/diffScope.ts packages/orch), Task 4: Enforce Worktree Manifests And Diff Scope Before Checkpoint Sealing
+Nodes (5): J8. AC 결바 반-고무도장 리뷰어 교차검증 [P2, 축 F — fixture-eval 게이팅], 게이팅, 변경: `evals/check_skill_contract.py`, 변경: `references/reviewer-prompt.md`, 의도
 
 ### Community 729 - "Community 729"
 Cohesion: 0.47
 Nodes (5): main(), valid_payload(), validate_sample(), int, str
 
-### Community 730 - "Community 730"
-Cohesion: 0.40
-Nodes (4): providerSupportsCapabilities(), gatherUnsupportedOptionWarnings(), stripUnsupportedOptions(), warnings
-
 ### Community 732 - "Community 732"
 Cohesion: 0.29
 Nodes (7): code:ts (export function normalizeWaygentRunForGolden(input: unknown)), code:ts (export * from "./waygentScenarioHarness";), code:ts (import { readdirSync, readFileSync } from "node:fs";), code:json ("waygent:scenarios": "bun test tests/integration/waygent-sce), code:bash (bun test packages/testkit/tests/waygentScenarioHarness.test.), code:bash (git add packages/testkit tests/waygent-scenarios tests/integ), Task 11: Build Waygent Scenario Harness, Golden Replay, And Live Smoke
-
-### Community 733 - "Community 733"
-Cohesion: 0.40
-Nodes (3): fixtureDir, result, stdout
 
 ### Community 734 - "Community 734"
 Cohesion: 0.33
 Nodes (6): Closeout Expectations, Codex Best Loop, External Research Snapshot, Operator Flags, Recommendation, Why This Beats The Alternatives
 
-### Community 735 - "Community 735"
-Cohesion: 0.40
-Nodes (5): 2026-05-29, Build progress — additive helpers landed (items 2, 3, 4-partial, 5, 6), CHECKPOINT — remaining work needs a paid eval, Opening — problem definition, Plan / sequencing
-
 ### Community 736 - "Community 736"
 Cohesion: 0.07
 Nodes (26): Consequences, Context, D001 — Defer native Agent SDK context-editing + memory tool (I12), Decision, Open questions, Options considered, Disposition, F02 — Live fixture eval (adoption gate) (+18 more)
-
-### Community 737 - "Community 737"
-Cohesion: 0.50
-Nodes (3): Box, Error, main()
 
 ### Community 738 - "Community 738"
 Cohesion: 0.50
@@ -3794,6 +3785,10 @@ Nodes (4): 10. Testing Strategy, Explicitly out of scope (v1), Layers, Regressio
 Cohesion: 0.50
 Nodes (4): 7.1 REMOVE, 7.2 ADD / MODIFY, 7.3 KEEP unchanged, 7. kws-codex-plan-executor Changes
 
+### Community 747 - "Community 747"
+Cohesion: 0.40
+Nodes (5): 6.1 그린 베이스라인 (2026-06-08 실측 — 변경 전 기준선), 6.2 항목별 검증, 6.3 실험 기록 (AGENTS.md REQUIRED), 6.4 표준 체크 (루트 CLAUDE.md), 6. 검증 전략
+
 ### Community 748 - "Community 748"
 Cohesion: 0.10
 Nodes (18): Consequences, Context, D001 — Stop-hook forcing function for finalization, Decision, Options considered, 2026-06-04, Gates implemented (TDD), JOURNAL — Finalization + schema enforcement (v2.26) (+10 more)
@@ -3801,6 +3796,10 @@ Nodes (18): Consequences, Context, D001 — Stop-hook forcing function for final
 ### Community 749 - "Community 749"
 Cohesion: 0.33
 Nodes (6): code:yaml (id: task_25), code:markdown (## Design Contract Gate), code:block103, code:block104, code:bash (git add docs/operations/verification.md), Task 6.4: Register design-contract gates
+
+### Community 750 - "Community 750"
+Cohesion: 0.40
+Nodes (5): code:ts (export class ApiError extends Error {), code:ts (import { useInfiniteQuery, useQuery } from "@tanstack/react-), code:ts (import { useQuery } from "@tanstack/react-query";), code:bash (git add AgentLens/web/src/api/), Task 23: `api/client.ts` and per-resource hooks
 
 ### Community 751 - "Community 751"
 Cohesion: 0.67
@@ -3812,19 +3811,27 @@ Nodes (4): parse_duration(), parse_duration — full spec implementation.  Singl
 
 ### Community 753 - "Community 753"
 Cohesion: 0.40
-Nodes (5): additionalProperties, required, verification, items, type
+Nodes (5): type, properties, type, blocker, escalation
 
 ### Community 754 - "Community 754"
 Cohesion: 0.05
-Nodes (68): repoRoot, result, appendFlagValue(), CliRunDefaults, CODEX_PROFILE_PRESETS, commandUsage, detectHost(), FlagValue (+60 more)
+Nodes (69): repoRoot, result, readEvents(), appendFlagValue(), CliRunDefaults, CODEX_PROFILE_PRESETS, commandUsage, detectHost() (+61 more)
+
+### Community 755 - "Community 755"
+Cohesion: 0.50
+Nodes (4): J7. Reflexion 구조화 retry 성찰 [P2, 축 F — fixture-eval 게이팅], 게이팅, 변경: `references/phases/phase-1-task-cycle.md` + `references/implementer-prompt.md`, 의도
+
+### Community 756 - "Community 756"
+Cohesion: 0.50
+Nodes (4): 2.1 이미 잘 되어 있어 그대로 둘 것 (재작업·재제안 금지), 2.2 MAST 실패-분류 커버리지 매트릭스 (이번 라운드의 핵심 렌즈), 2.3 v2.29 가 새로 연 데이터 (축 E 의 전제), 2. 현재 상태 진단
 
 ### Community 757 - "Community 757"
 Cohesion: 0.50
-Nodes (3): fixtures, result, stdout
+Nodes (4): code:ts (expect(projectRuntimeCostFromState(state)).toMatchObject({), code:bash (bun test packages/lens-projectors/tests/runtimeCost.test.ts ), code:bash (git add packages/lens-projectors/src/runtimeCost.ts \), Task 10: Add Runtime Cost Projection
 
-### Community 758 - "Community 758"
-Cohesion: 0.50
-Nodes (3): fixturePath, result, stdout
+### Community 770 - "Community 770"
+Cohesion: 0.14
+Nodes (13): code:text (/kws-codex-plan-executor plan=plans/example.md), Graphify와 로컬 Skill 경로, Run Quality 읽는 법, Subagent 옵션, Superpowers Bridge, 검증 명령, 기본 실행, 사용자 가이드 (+5 more)
 
 ### Community 772 - "Community 772"
 Cohesion: 0.12
@@ -3875,8 +3882,8 @@ Cohesion: 0.29
 Nodes (7): code:ts (export * from "./trust";), code:bash (git add packages/contracts/src/types.ts \), code:yaml (id: task_cli_maturity), code:ts (import type {), code:ts (import { describe, expect, test } from "bun:test";), code:ts (export type DogfoodEvidenceStatus = "complete" | "partial" |), Task 1: Add Operational Maturity Projection Contracts
 
 ### Community 795 - "Community 795"
-Cohesion: 0.08
-Nodes (9): App(), AppProps, EventTimeline(), verdictLabels, root, ConsoleRun, consoleRunToRealDetail(), ConsoleSnapshot (+1 more)
+Cohesion: 0.04
+Nodes (50): detail, model, snapshot, verdicts, App(), AppProps, EventTimeline(), verdictLabels (+42 more)
 
 ### Community 797 - "Community 797"
 Cohesion: 0.20
@@ -3967,8 +3974,8 @@ Cohesion: 0.29
 Nodes (3): Event Families, Runtime Improvement Events, Waygent Event Contracts
 
 ### Community 852 - "Community 852"
-Cohesion: 0.40
-Nodes (4): Cache State, Failure, Recovery, And Progress, Graphify And Dispatch Evidence, State And Logging
+Cohesion: 0.33
+Nodes (5): Cache State, Failure, Recovery, And Progress, Graphify And Dispatch Evidence, Plan Executability Audit, State And Logging
 
 ### Community 856 - "Community 856"
 Cohesion: 0.33
@@ -3976,7 +3983,7 @@ Nodes (6): Current Product Architecture, Docs Router And Getting Started, File S
 
 ### Community 858 - "Community 858"
 Cohesion: 0.06
-Nodes (72): ArtifactProducerPhase, DogfoodEvidenceInput, RunWaygentOptions, RunEventInput, RuntimeCostInput, RecordSalvageArtifactInput, RecordSalvageArtifactResult, WaygentTaskExecutionResult (+64 more)
+Nodes (68): DogfoodEvidenceInput, MethodEvidenceValidationResult, IntakeRepairMergeResult, categories, categorizeProviderLogLine(), summarizeProviderStderr(), withProcessEvidence(), RunEventInput (+60 more)
 
 ### Community 863 - "Community 863"
 Cohesion: 0.33
@@ -4003,8 +4010,8 @@ Cohesion: 0.22
 Nodes (9): code:yaml (id: task_projection_contracts), code:md (## Operational Maturity Loop), code:`md (## Dogfood Evidence Gate), code:block57, code:bash (bun test packages/lens-projectors/tests/operationalMaturity.), code:bash (graphify update .), code:bash (git add docs/operations/waygent.md docs/operations/verificat), Task 6: Document The Loop And Run Final Verification (+1 more)
 
 ### Community 883 - "Community 883"
-Cohesion: 0.06
-Nodes (57): projectApplyState(), ApplyState, ApplyStatus, baseTasks, DecisionPacket, demoRunDetails, FailureBarrier, findRun() (+49 more)
+Cohesion: 0.09
+Nodes (44): projectApplyState(), WaygentRunResult, RunStatusView, listRunIds(), projectRunReadModel(), RunReadModelProjection, RunReadModelStateBlocker, runStatusFromV2() (+36 more)
 
 ### Community 884 - "Community 884"
 Cohesion: 0.14
@@ -4071,8 +4078,8 @@ Cohesion: 0.33
 Nodes (6): Evidence, Normalized Result, Providers, Related Tests, Stderr And Logs, Waygent Provider Result Contract
 
 ### Community 928 - "Community 928"
-Cohesion: 0.20
-Nodes (10): code:ts (...(decision?.intake_recovery?.artifact_refs || [])), code:yaml (id: task_5_fixture_lab_regression_harness), code:`md (# Recoverable Operator Plan), code:block42, code:`md (# Unsafe Operator Plan), code:block44, code:`text (Implementation complete.), code:block46 (+2 more)
+Cohesion: 0.22
+Nodes (9): code:yaml (id: task_5_fixture_lab_regression_harness), code:`md (# Recoverable Operator Plan), code:block42, code:`md (# Unsafe Operator Plan), code:block44, code:`text (Implementation complete.), code:block46, code:block47 (+1 more)
 
 ### Community 930 - "Community 930"
 Cohesion: 0.33
@@ -4270,10 +4277,6 @@ Nodes (10): code:typescript (import { describe, expect, test } from "bun:test";)
 Cohesion: 0.22
 Nodes (8): code:py (required_skill_phrases.extend([), code:bash (bun test packages/contracts/tests/contracts.test.ts), Context, Execution Order, File Structure, Full Verification Checklist, Self-Review Notes, Waygent Operator Workbench Intake Recovery Fixture-Lab Implementation Plan
 
-### Community 1014 - "Community 1014"
-Cohesion: 0.08
-Nodes (27): buildProviderStdinPrompt(), buildProviderSystemPrompt(), buildProviderUserPrompt(), buildRetryPromptPrefix(), allowIdx, args, { args, warnings }, disallowIdx (+19 more)
-
 ### Community 1015 - "Community 1015"
 Cohesion: 0.21
 Nodes (9): DesignContractBlockerKind, DesignNormalized, EnvelopeBlocker, EnvelopeValidationResult, validateWorkerEnvelope(), baseEnv, design, env (+1 more)
@@ -4283,8 +4286,8 @@ Cohesion: 0.25
 Nodes (8): code:yaml (id: task_1_intake_recovery_contracts), code:ts (test("accepts intake recovery state and operator projection ), code:ts (export type IntakeRecoveryStatus = "not_needed" | "recovered), code:ts (export interface OperatorDecisionProjection {), code:ts (const intakeFindingSchema = {), code:ts (intake_recovery: {), code:bash (git add packages/contracts/src/types.ts packages/contracts/s), Task 1: Intake Recovery Contracts
 
 ### Community 1019 - "Community 1019"
-Cohesion: 0.22
-Nodes (9): code:ts (const useInferredRisk = input.infer_risk === true;), code:ts (const normalized = normalizeWaygentPlanInput({), code:bash (git add packages/orchestrator/src/orchestrator.ts packages/o), code:yaml (id: task_4_operator_workbench_intake_surface), code:ts (test("surfaces recovered intake artifacts without blocking e), code:ts (function intakeArtifactRefs(state: WaygentRunStateV2): strin), code:ts (test("renders intake recovery summary in Workbench detail", ), code:bash (git add packages/lens-projectors/src/operatorDecision.ts pac) (+1 more)
+Cohesion: 0.20
+Nodes (10): code:ts (const useInferredRisk = input.infer_risk === true;), code:ts (const normalized = normalizeWaygentPlanInput({), code:bash (git add packages/orchestrator/src/orchestrator.ts packages/o), code:yaml (id: task_4_operator_workbench_intake_surface), code:ts (test("surfaces recovered intake artifacts without blocking e), code:ts (function intakeArtifactRefs(state: WaygentRunStateV2): strin), code:ts (test("renders intake recovery summary in Workbench detail", ), code:ts (...(decision?.intake_recovery?.artifact_refs || [])) (+2 more)
 
 ### Community 1020 - "Community 1020"
 Cohesion: 0.29
@@ -4387,8 +4390,8 @@ Cohesion: 0.50
 Nodes (4): 6.1 Public API, 6.2 Algorithm, 6. M07 — `planAdapters/verifyQuality.ts` (new), code:ts (export const TRIVIAL_TOKENS: ReadonlySet<string> =)
 
 ### Community 1051 - "Community 1051"
-Cohesion: 0.03
-Nodes (56): Consequences, Context, D001 — Honest auto-waive for cost on the agent-dispatch path, Decision, Honest limitation, Options considered, Consequences, Context (+48 more)
+Cohesion: 0.18
+Nodes (11): Executor Instrumentation Integrity Implementation Plan, File Structure, Self-Review, Task 0: Capture regression fixtures (do first; no production code), Task 1: Honest cost auto-waive on the agent path (C1 — gap 1, D001), Task 2: Force finalization on "all tasks terminal" (C2 — gap 2, D002), Task 3: Timing value sanity — `timing_inverted` FAIL (C3 — gap 3, D003), Task 4: Telemetry coverage backstop (C4 — gap 4, D003) (+3 more)
 
 ### Community 1055 - "Community 1055"
 Cohesion: 0.18
@@ -4396,7 +4399,7 @@ Nodes (11): code:yaml (id: task_5_review_command_packet), code:ts (test("parses 
 
 ### Community 1057 - "Community 1057"
 Cohesion: 0.10
-Nodes (22): code:python ("""Tests for agentlens.web.settings.ServeSettings."""), code:bash (git add AgentLens/src/agentlens/commands/serve.py AgentLens/), code:python ("""--auto-port: pick the first free port among port..port+3.), code:python ("""--dev-proxy: when set, GET / is proxied. Smoke-only test ), code:bash (cd AgentLens && .venv/bin/python -m pytest tests/unit/test_s), code:python (import socket), code:python (chosen = _select_port(settings.port, auto=settings.auto_port), code:python (# Static / dev-proxy mount is the *last* route — runs after ) (+14 more)
+Nodes (22): code:python ("""Tests for agentlens.web.settings.ServeSettings."""), code:toml (dependencies = [), code:python ("""Runtime configuration for ``agentlens serve``.), code:bash (git add AgentLens/src/agentlens/web/settings.py AgentLens/te), code:python ("""Boot the FastAPI app via TestClient and hit /healthz."""), code:python ("""Tests for the agentlens.commands.serve Typer command."""), code:python ("""FastAPI application factory (spec §4, §6)."""), code:python ("""``agentlens serve`` — boot the dashboard (spec §4, §9)."") (+14 more)
 
 ### Community 1059 - "Community 1059"
 Cohesion: 0.12
@@ -4504,7 +4507,7 @@ Nodes (4): Context, File Structure, Review, Waygent SP-2 Verify Env Worktree-Awa
 
 ### Community 1098 - "Community 1098"
 Cohesion: 0.22
-Nodes (9): code:ts (test("Phase 3 — settings_path and mcp_config_path pass throu), code:ts (settings_path?: string;), code:ts (if (options.settings_path && !nextArgs.includes("--settings"), code:ts (describe("Phase 4 — session id / resume", () => {), code:ts (session_id?: string;), code:ts (if (options.resume_session_id && !nextArgs.includes("--resum), code:bash (git add packages/provider-adapters/src/types.ts packages/pro), Step 3.3: `--settings` / `--mcp-config` pass-through (+1 more)
+Nodes (9): code:ts (import { buildProviderSystemPrompt, buildProviderUserPrompt ), code:ts (export function buildProviderSystemPrompt(provider: "codex" ), code:ts (test("Phase 3 — settings_path and mcp_config_path pass throu), code:ts (settings_path?: string;), code:ts (if (options.settings_path && !nextArgs.includes("--settings"), Phase 3 — Caching & Prompt 구조화, Step 3.1: Split `buildProviderPrompt` into system + user halves, Step 3.3: `--settings` / `--mcp-config` pass-through (+1 more)
 
 ### Community 1099 - "Community 1099"
 Cohesion: 0.25
@@ -4635,8 +4638,8 @@ Cohesion: 0.29
 Nodes (6): F02 — Dogfood: task-complete clobbered `timing.started` (v2.28), Fix (commit `415ec68`, TDD), Honest residual on THIS run, How it was found, Lesson, Root cause
 
 ### Community 1160 - "Community 1160"
-Cohesion: 0.29
-Nodes (6): code:ts (import { describe, expect, test } from "bun:test";), code:ts (const adapterArgs = providerProcessArgs(provider, options, c), code:ts (export const claudeCapabilityManifest: ProviderCapabilityMan), code:bash (git add packages/provider-adapters/src/capabilities.ts packa), Step 1.1: Split `claudeCapabilityManifest` from `codexCapabilityManifest`, Step 2.2: `event_stream` capture for stream-json args
+Cohesion: 0.18
+Nodes (10): code:ts (import { describe, expect, test } from "bun:test";), code:ts (const adapterArgs = providerProcessArgs(provider, options, c), code:ts (export const claudeCapabilityManifest: ProviderCapabilityMan), code:ts (env: { ...process.env, ...options.env, ...(cwd ? { PWD: cwd ), code:bash (git add packages/provider-adapters/src/capabilities.ts packa), code:ts (env: composeChildEnv(provider, process.env, options.env, cwd), code:ts (const NESTED_CLAUDE_ENV_KEYS = ["CLAUDECODE", "CLAUDE_CODE_E), Step 1.1: Split `claudeCapabilityManifest` from `codexCapabilityManifest` (+2 more)
 
 ### Community 1163 - "Community 1163"
 Cohesion: 0.29
@@ -4752,31 +4755,31 @@ Nodes (3): _active(), build_digest(), main()
 
 ### Community 1236 - "Community 1236"
 Cohesion: 0.04
-Nodes (44): Analysis, Consequences, Context, D006 — J7 Reflexion structured retry reflection: design, fixture-eval gated (P2), Decision, Open questions, Options considered, Analysis (+36 more)
+Nodes (44): Analysis, Consequences, Context, D002 — Probe-fixture design: harness-contract adaptation + detect-then-fix (J2/J3), Decision, Open questions, Options considered, Analysis (+36 more)
 
 ### Community 1248 - "Community 1248"
 Cohesion: 0.25
 Nodes (7): Baseline (v2.14), Notes / Observations, Preliminary observation — 2026-05-16 chain run (v2.14 + v2.15 in one shot), Reproduction recipe, Treatment (v2.15), v2.14 vs v2.15 — Token cost A/B, Verdict
 
 ## Knowledge Gaps
-- **6899 isolated node(s):** `dev`, `test`, `RunStatus`, `TrustVerdict`, `ApplyState` (+6894 more)
+- **6914 isolated node(s):** `dev`, `test`, `RunStatus`, `TrustVerdict`, `ApplyState` (+6909 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **58 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **56 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Waygent Runtime V1 Operational Maturity Implementation Plan` connect `Community 469` to `Community 466`, `Community 467`, `Community 468`, `Community 405`, `Community 694`, `Community 663`, `Community 538`, `Community 667`, `Community 732`, `Community 606`, `Community 223`?**
-  _High betweenness centrality (0.007) - this node is a cross-community bridge._
 - **Why does `KWS Claude Multi-Agent Executor` connect `Community 530` to `Community 842`, `Community 139`, `Community 461`, `Community 562`, `Community 531`, `Community 280`?**
+  _High betweenness centrality (0.007) - this node is a cross-community bridge._
+- **Why does `Waygent Runtime And AgentLens Product Parity Implementation Plan` connect `Community 358` to `Community 598`?**
   _High betweenness centrality (0.005) - this node is a cross-community bridge._
-- **Why does `설계 결정 — kws-claude-multi-agent-executor` connect `Community 62` to `Community 842`?**
-  _High betweenness centrality (0.004) - this node is a cross-community bridge._
+- **Why does `Execution Order` connect `Community 598` to `Community 324`, `Community 535`, `Community 358`, `Community 359`, `Community 360`, `Community 537`, `Community 464`, `Community 567`, `Community 536`, `Community 601`, `Community 603`, `Community 604`?**
+  _High betweenness centrality (0.005) - this node is a cross-community bridge._
 - **Are the 9 inferred relationships involving `runWaygent()` (e.g. with `runCli()` and `writeArtifact()`) actually correct?**
   _`runWaygent()` has 9 INFERRED edges - model-reasoned connections that need verification._
 - **Are the 49 inferred relationships involving `str` (e.g. with `run_snapshot()` and `run_snapshot_with_packets()`) actually correct?**
   _`str` has 49 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `dev`, `test`, `RunStatus` to the rest of the system?**
-  _7013 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _7028 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `Community 0` be split into smaller, more focused modules?**
   _Cohesion score 0.0425531914893617 - nodes in this community are weakly interconnected._

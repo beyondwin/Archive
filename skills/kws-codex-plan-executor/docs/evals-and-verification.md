@@ -23,6 +23,7 @@ python3 evals/check_cache_observations.py
 python3 evals/check_graphify_freshness.py
 python3 evals/check_preflight_dispatch.py
 python3 evals/check_run_readiness.py
+python3 evals/check_plan_executability_audit.py
 python3 evals/check_recovery_policy.py
 python3 evals/check_trajectory_projection.py
 python3 evals/check_progress_ledger.py
@@ -53,6 +54,11 @@ cache observations, Graphify freshness evidence, deterministic subagent
 pre-dispatch decisions, and run-readiness repair hints for malformed write
 scopes.
 
+Plan executability evals cover the read-only audit that runs before task
+contracts or edits. They verify green task packets, yellow docs-only acceptance
+gaps, red missing files, red broad write scopes, lockfile/operator-review risk,
+and thin-stateful-bridge summary counts.
+
 Adaptive dispatch evals cover docs-only local fast path, multi-file delegation
 when spawn policy is available, dirty overlap blocking, broad write-scope
 blocking, packet hash mismatch blocking, and risky lockfile blocking.
@@ -71,3 +77,8 @@ execution worktrees.
 surface and verifies that CPE recommends `thin_stateful_bridge` only when the
 required brainstorming, planning, subagent review, and completion-verification
 contracts are present.
+
+`check_plan_executability_audit.py` covers
+`scripts/audit_plan_executability.py` and is part of `./evals/run.sh`, so the
+full harness rejects plan-audit regressions even when no dynamic model session
+runs.

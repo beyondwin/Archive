@@ -1,5 +1,46 @@
 # Verification Log
 
+## 2026-06-25 - Plan Executability And Run Quality Docs Refresh
+
+Scope:
+
+- Mainline documentation refresh after recent CPE work on run-quality debt and
+  Superpowers plan executability audit.
+- Korean user guide expanded from a short usage note into an operator guide for
+  modes, subagent policy, Superpowers bridge, readiness audits, run quality,
+  stale repair, Graphify, and verification.
+- Plan executability audit coverage documented for missing files, broad write
+  scopes, risky paths, fixable docs-only acceptance gaps, and thin bridge
+  summary evidence.
+
+Commands:
+
+```bash
+python3 evals/check_plan_executability_audit.py
+python3 evals/check_state_schema.py
+python3 evals/check_operational_run_quality.py
+python3 evals/check_skill_contract.py --skill SKILL.md
+python3 evals/check_superpowers_compatibility.py
+python3 evals/check_preflight_dispatch.py
+python3 -m py_compile scripts/*.py evals/*.py
+bash -n evals/run.sh
+./evals/run.sh
+bun run check
+graphify update . --force
+python3 scripts/check_graphify_freshness.py --repo-root /Users/kws/source/private/Archive --update-ran --output /tmp/cpe-doc-refresh-graphify-audit.json
+git diff --check
+```
+
+Result:
+
+- Focused CPE eval bundle passed, including `red_broad_scope` in
+  `check_plan_executability_audit.py`.
+- Full deterministic fixture harness passed with all 8 fixtures.
+- Repo-level `bun run check` passed: 820 pass, 10 skip, 0 fail.
+- Graphify was refreshed for the documentation update with `--force` after the
+  normal update hit Graphify's node-count shrink safety guard; freshness audit
+  reported `fresh=true` with no errors.
+
 ## 2026-06-23 - Runtime Debt Dogfood
 
 Scope:

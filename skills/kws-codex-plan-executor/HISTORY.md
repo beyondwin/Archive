@@ -10,6 +10,8 @@
   operational follow-up remains.
 - Added read-only Superpowers plan executability audit design and runtime
   contract for CPE task packet readiness summaries.
+- Added deterministic plan-audit coverage for broad write scopes so `**/*` and
+  similar scopes become red audit blockers before task contracts or edits.
 
 ## 2.23.0 - Unreleased
 
