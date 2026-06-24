@@ -133,6 +133,16 @@ transcripts.
 
 ## Design Notes
 
+- `docs/user-guide.ko.md` - Korean operator guide for modes, subagent policy,
+  Superpowers bridge, readiness audits, run quality, repair, Graphify, and
+  verification.
+- `docs/how-it-works.md` - execution flow overview.
+- `docs/state-and-logging.md` - state fields, Graphify/dispatch evidence,
+  plan executability audit, run quality, and repair state.
+- `docs/evals-and-verification.md` - deterministic eval and harness guide.
+- `docs/risks-limitations-deferrals.md` - known limits and conservative
+  operator boundaries.
+- `docs/verification-log.md` - compact verification history.
 - `docs/experiments/v2.20-context-intelligence/PLAN.md`
 - `docs/experiments/v2.20-context-intelligence/IMPLEMENTATION.md`
 - `docs/experiments/v2.21-cache-friendly-execution/PLAN.md`
