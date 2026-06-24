@@ -33,11 +33,17 @@
    operator decision before continuing. For comma-joined write scopes, use the
    reported `suggested_write_scopes`/`normalized_write_globs` values when
    re-running dispatch instead of guessing from the raw string.
-11. Resolve skill paths from the active skill registry/root mapping before
+11. Run `scripts/audit_plan_executability.py` against the parsed plan JSON and
+    `$RUN_DIR/task_packets` when packets exist. Save the JSON as
+    `$RUN_DIR/plan_executability_audit.json`, print the short readiness summary,
+    and copy `grade`, `blocking_issue_count`, and `fixable_issue_count` into
+    state as `plan_executability_audit`. Blocking audit issues stop execution
+    before task contracts or edits.
+12. Resolve skill paths from the active skill registry/root mapping before
    reading local skill files. Do not hard-code `.system` or any other root. If a
    read fails, re-check the registry entry and root table first; classify it as
    an operator path-resolution error unless the registry itself is proven stale.
-12. If repo instructions mention graphify, run:
+13. If repo instructions mention graphify, run:
     `python3 scripts/check_graphify_freshness.py --repo-root "$WORKTREE_ABS" --output "$RUN_DIR/graphify_audit.json"`.
     After code changes or meaningful documentation-structure changes, run
     `graphify update .`, then
@@ -45,19 +51,19 @@
     Copy or reference the JSON result in state as `graphify_audit` and in
     `completion_audit.verification_evidence`; finished state validation rejects
     Graphify audit evidence that is not connected to completion evidence.
-13. For each task, state the `TASK EXECUTION CONTRACT`, record `unit_manifest`,
+14. For each task, state the `TASK EXECUTION CONTRACT`, record `unit_manifest`,
    invoke `using-superpowers`, invoke `test-driven-development` for code
    changes, capture RED evidence, implement, capture GREEN evidence, then run
    the post-diff policy check.
-14. Run `scripts/preflight_dispatch.py` before each eligible write-capable task.
+15. Run `scripts/preflight_dispatch.py` before each eligible write-capable task.
     Dispatch only when the decision is `delegate`. When the decision is
     `local_fallback` with an adaptive local fast path reason, run the task
     locally but keep the same quality gates: task contract, unit manifest,
     RED/GREEN when applicable, post-diff review, acceptance command,
     reconciliation, and state validation. When the decision is `block`, stop
     before editing and record the blocker.
-15. Maintain `context_health` at every semantic boundary.
-16. Before `lifecycle_outcome=finished`, run `scripts/reconcile_state.py` and
+16. Maintain `context_health` at every semantic boundary.
+17. Before `lifecycle_outcome=finished`, run `scripts/reconcile_state.py` and
     `scripts/validate_state.py`.
 
 When finalizing `run_quality`, include state-intrinsic operational debt

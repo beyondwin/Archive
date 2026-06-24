@@ -63,6 +63,7 @@ python3 evals/check_prompt_cache_audit.py
 python3 evals/check_cache_observations.py
 python3 evals/check_graphify_freshness.py
 python3 evals/check_preflight_dispatch.py
+python3 evals/check_plan_executability_audit.py
 python3 evals/check_recovery_policy.py
 python3 evals/check_trajectory_projection.py
 python3 evals/check_progress_ledger.py
@@ -95,6 +96,9 @@ Superpowers compatibility is checked with
 `scripts/audit_superpowers_compatibility.py`; it scores CPE-primary,
 Superpowers-native-only, and thin-stateful-bridge routes and fails when required
 current Superpowers contracts are missing.
+Plan executability is checked with `scripts/audit_plan_executability.py`. It
+summarizes whether Superpowers plan tasks are ready for CPE task packets, local
+fast path, delegation, or operator review before task contracts or edits.
 
 Run-state repair is separate from inspection and defaults to dry-run:
 

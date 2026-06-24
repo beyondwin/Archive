@@ -206,6 +206,11 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   creation and before task contracts or edits. Readiness issues classify
   missing acceptance commands, full-spec fallback, packet context budget, and
   write-scope formatting before per-task dispatch.
+- Execution runs produce a read-only plan executability audit before task
+  contracts or edits. The audit records `plan_executability_audit` evidence,
+  summarizes `thin_stateful_bridge` readiness, and classifies task-level
+  `delegate`, `local_fast_path`, `operator_review`, or `block` fit without
+  mutating worktrees, state, or repository files.
 - Finished runs with both `dispatch_decisions` and completed write-capable
   tasks must keep final `subagent_strategy` aligned with the latest dispatch
   decision for that task. If the operator intentionally overrides a stale or
@@ -285,23 +290,27 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
 2. Select mode. Read `references/mode-contracts.md` if behavior is not obvious.
 3. For interactive implementation with current Superpowers available, run the
    Superpowers compatibility audit and use the recommended route.
-4. For `prompt` or `handoff`, use `templates/fresh-session-prompt.txt` and
+4. Before task contracts or edits, run `scripts/audit_plan_executability.py`
+   against parsed plan JSON and generated task packets when present. Store the
+   JSON under the run directory and copy its summary into state as
+   `plan_executability_audit`.
+5. For `prompt` or `handoff`, use `templates/fresh-session-prompt.txt` and
    `references/prompt-export-checklist.md`.
-5. For `interactive`, follow `references/execution-cycle.md`.
-6. For `headless`, follow `references/headless-runner.md`.
-7. Before subagent dispatch, review `references/pre-dispatch-pipeline.md` and
+6. For `interactive`, follow `references/execution-cycle.md`.
+7. For `headless`, follow `references/headless-runner.md`.
+8. Before subagent dispatch, review `references/pre-dispatch-pipeline.md` and
    `references/subagent-run-store.md`; after dispatch, reconcile
    `subagent_runs`, task `subagent_strategy`, `dispatch_decisions`, and
    `delegation_policy`.
-8. Maintain `~/.codex/orchestrator/<run_id>/state.json` using
+9. Maintain `~/.codex/orchestrator/<run_id>/state.json` using
    `references/state-schema.md`; keep repository worktrees free of executor
    runtime artifacts.
-9. Build `context.json` for execution modes before edits, maintain
+10. Build `context.json` for execution modes before edits, maintain
    `context_health`, and record completion proof before reporting a finished
    lifecycle outcome.
-10. For execution modes, record notable-boundary learning events using
+11. For execution modes, record notable-boundary learning events using
    `references/learning-log.md`.
-11. Validate using scripts before claiming completion.
+12. Validate using scripts before claiming completion.
 
 ## Stop Rules
 
@@ -339,7 +348,7 @@ omitting Spark routes.
 
 | Mode | Required checks before completion |
 |------|-----------------------------------|
-| `interactive` | Superpowers compatibility audit when current Superpowers skills are available, `scripts/parse_plan.py`, `context.json`, `context_health`, changed-project tests or honest substitute, prompt cache audit, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py` |
+| `interactive` | Superpowers compatibility audit when current Superpowers skills are available, `scripts/parse_plan.py`, `context.json`, `context_health`, plan executability audit, changed-project tests or honest substitute, prompt cache audit, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py` |
 | `headless` | `scripts/parse_plan.py`, `context.json`, `context_health`, acceptance command or honest substitute, prompt cache audit, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py`, headless JSONL/final artifact review |
 | `prompt` | `evals/check_prompt.py` or the prompt export checklist when no fixture exists |
 | `handoff` | `evals/check_prompt.py` or the prompt export checklist, plus source state/path readability |

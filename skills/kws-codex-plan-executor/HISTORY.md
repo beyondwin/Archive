@@ -8,6 +8,8 @@
 - Clarified that `completion_audit.passed=true` can coexist with
   `run_quality.grade=yellow` when product verification passed but executor
   operational follow-up remains.
+- Added read-only Superpowers plan executability audit design and runtime
+  contract for CPE task packet readiness summaries.
 
 ## 2.23.0 - Unreleased
 

@@ -23,6 +23,11 @@ task packet, 검증 audit, resume/inspection을 보존하는 bridge 역할을
 합니다. `prompt`, `handoff`, `headless`, `resume`, `inspection`은 계속 CPE가
 소유합니다.
 
+Interactive 실행은 task contract 전에 plan executability readiness summary를
+보여줍니다. 이 summary는 `thin_stateful_bridge` route, delegate-ready task 수,
+local-fast-path task 수, fixable issue, blocker, Graphify 같은 증거 요구를 짧게
+요약합니다. 세부 JSON은 `plan_executability_audit`로 run directory에 보존됩니다.
+
 실행 시 코드는 `~/.codex/worktrees/<run_id>`에, 상태와 로그는
 `~/.codex/orchestrator/<run_id>`에 생성됩니다.
 
