@@ -629,6 +629,27 @@ def _validate_graphify_audit(data: dict, errors: list[str]) -> None:
             errors.append("graphify_audit must be referenced in completion_audit.verification_evidence")
 
 
+def _validate_plan_executability_audit(data: dict, errors: list[str]) -> None:
+    audit = data.get("plan_executability_audit")
+    if audit is None:
+        return
+    if not isinstance(audit, dict):
+        errors.append("plan_executability_audit must be an object")
+        return
+    if not _has_substantive_value(audit.get("path")):
+        errors.append("plan_executability_audit.path must be non-empty")
+    elif isinstance(data.get("run_dir"), str) and not _path_is_under(audit["path"], data["run_dir"]):
+        errors.append("plan_executability_audit.path must live under run_dir")
+    if audit.get("grade") not in {"green", "yellow", "red"}:
+        errors.append("plan_executability_audit.grade must be green, yellow, or red")
+    for key in ("blocking_issue_count", "fixable_issue_count"):
+        value = audit.get(key)
+        if not isinstance(value, int) or value < 0:
+            errors.append(f"plan_executability_audit.{key} must be a non-negative integer")
+    if data.get("lifecycle_outcome") == "finished" and audit.get("grade") == "red":
+        errors.append("finished state cannot retain red plan_executability_audit")
+
+
 def _validate_dispatch_decisions(data: dict, errors: list[str]) -> None:
     decisions = data.get("dispatch_decisions", [])
     if decisions is None:
@@ -1101,6 +1122,7 @@ def validate(data: dict) -> list[str]:
     _validate_command_observations(data, errors)
     _validate_cache_fields(data, errors)
     _validate_graphify_audit(data, errors)
+    _validate_plan_executability_audit(data, errors)
     _validate_dispatch_decisions(data, errors)
     _validate_failure_state(data, errors)
     _validate_progress_and_trajectory(data, errors)

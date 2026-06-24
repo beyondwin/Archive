@@ -175,6 +175,15 @@ def valid_run_quality() -> dict:
     }
 
 
+def valid_plan_executability_audit() -> dict:
+    return {
+        "path": f"{run_dir()}/plan_executability_audit.json",
+        "grade": "yellow",
+        "blocking_issue_count": 0,
+        "fixable_issue_count": 1,
+    }
+
+
 def v220_state() -> dict:
     state = base_state()
     rd = run_dir()
@@ -439,6 +448,39 @@ def main() -> int:
     checks["v222_optional_fields_pass"] = result.returncode == 0
     if not checks["v222_optional_fields_pass"]:
         failures.append("valid v2.22 optional fields should pass: " + (result.stderr or result.stdout))
+
+    valid_plan_audit = v220_state()
+    valid_plan_audit["agentlens_orchestration_run"] = "agentlens-run-123"
+    valid_plan_audit["execution_worktree"] = valid_plan_audit["worktree"]
+    valid_plan_audit["run_quality"] = valid_run_quality()
+    valid_plan_audit["run_quality"]["grade"] = "yellow"
+    valid_plan_audit["run_quality"]["open_followups"] = ["plan_executability_fixable_issues"]
+    valid_plan_audit["run_quality"]["readiness"]["plan_executability_fixable_issue_count"] = 1
+    valid_plan_audit["plan_executability_audit"] = valid_plan_executability_audit()
+    result = run_validator(script, valid_plan_audit)
+    checks["valid_plan_executability_audit_passes"] = result.returncode == 0
+    if not checks["valid_plan_executability_audit_passes"]:
+        failures.append("valid plan_executability_audit should pass: " + (result.stderr or result.stdout))
+
+    invalid_plan_audit = v220_state()
+    invalid_plan_audit["plan_executability_audit"] = {
+        "path": "",
+        "grade": "purple",
+        "blocking_issue_count": -1,
+        "fixable_issue_count": "one",
+    }
+    result = run_validator(script, invalid_plan_audit)
+    checks["invalid_plan_executability_audit_fails"] = (
+        result.returncode != 0
+        and "plan_executability_audit.path must be non-empty" in (result.stderr + result.stdout)
+        and "plan_executability_audit.grade must be green, yellow, or red" in (result.stderr + result.stdout)
+        and "plan_executability_audit.blocking_issue_count must be a non-negative integer"
+        in (result.stderr + result.stdout)
+        and "plan_executability_audit.fixable_issue_count must be a non-negative integer"
+        in (result.stderr + result.stdout)
+    )
+    if not checks["invalid_plan_executability_audit_fails"]:
+        failures.append("invalid plan_executability_audit should fail")
 
     blocked_without_blocker = base_state()
     blocked_without_blocker["lifecycle_outcome"] = "blocked"
