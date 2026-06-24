@@ -239,6 +239,33 @@ def main() -> int:
     if not checks["completion_passed_yellow_quality_passes"]:
         failures.append("completion_audit.passed=true with run_quality.grade=yellow should pass: " + valid_yellow.stderr)
 
+    plan_audit_quality = v222_state()
+    plan_audit_quality["plan_executability_audit"] = {
+        "path": f"{check_state_schema.run_dir()}/plan_executability_audit.json",
+        "grade": "yellow",
+        "blocking_issue_count": 0,
+        "fixable_issue_count": 1,
+    }
+    plan_audit_quality["run_quality"]["grade"] = "yellow"
+    plan_audit_quality["run_quality"]["open_followups"] = ["plan_executability_fixable_issues"]
+    plan_audit_quality["run_quality"]["readiness"]["plan_executability_fixable_issue_count"] = 1
+    plan_audit_quality["run_quality"]["operational_debt"] = {
+        "schema_version": "1",
+        "followups": list(plan_audit_quality["run_quality"]["open_followups"]),
+        "count": 1,
+        "blocking": False,
+    }
+    valid_plan_audit_quality = run_validator(plan_audit_quality)
+    checks["plan_executability_fixable_yellow_quality"] = (
+        valid_plan_audit_quality.returncode == 0
+        and debt.stable_followups(plan_audit_quality) == ["plan_executability_fixable_issues"]
+    )
+    if not checks["plan_executability_fixable_yellow_quality"]:
+        failures.append(
+            "plan_executability_audit fixable issues should allow yellow run quality: "
+            + valid_plan_audit_quality.stderr
+        )
+
     missing_followup = v222_state()
     missing_followup["agentlens_orchestration_run"] = None
     missing_followup["run_quality"]["context_quality"]["full_spec_fallback_count"] = 1
