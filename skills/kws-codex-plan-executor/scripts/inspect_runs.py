@@ -16,6 +16,11 @@ try:
 except Exception:
     validate_state = None
 
+try:
+    import run_quality_debt
+except Exception:
+    run_quality_debt = None
+
 
 FINISHED_OUTCOMES = {"finished", "blocked", "failed", "cancelled"}
 
@@ -101,16 +106,51 @@ def run_quality(
         open_followups.append("workspace_execution_worktree_mismatch")
     if validation_status == "failed":
         open_followups.append("state_schema_drift")
-    return {
+    existing_quality = state.get("run_quality") if isinstance(state, dict) and isinstance(state.get("run_quality"), dict) else {}
+    base_followups = (
+        list(existing_quality.get("open_followups", [])) if isinstance(existing_quality.get("open_followups"), list) else []
+    )
+    current_followups = list(base_followups)
+    for item in open_followups:
+        if item not in current_followups:
+            current_followups.append(item)
+
+    if run_quality_debt is not None and state:
+        for item in run_quality_debt.stable_followups(state, missing_execution_worktree=missing_worktree):
+            if item not in current_followups:
+                current_followups.append(item)
+        operational_debt = run_quality_debt.operational_debt_summary(
+            state,
+            missing_execution_worktree=missing_worktree,
+        )
+        grade = run_quality_debt.grade_for(state, current_followups, validation_status)
+    else:
+        operational_debt = {
+            "schema_version": "1",
+            "followups": current_followups,
+            "count": len(current_followups),
+            "blocking": False,
+        }
+        grade = "red" if validation_status == "failed" else ("yellow" if current_followups else "green")
+
+    observed_after_completion = terminal and current_followups != base_followups
+    result = {
         "schema_version": "1",
         "validation_status": validation_status,
         "terminal_state": outcome or "none",
         "stale": stale,
         "workspace_matches_execution_worktree": workspace_matches,
         "schema_drift": errors,
-        "open_followups": open_followups,
+        "open_followups": current_followups,
+        "operational_debt": operational_debt,
+        "grade": grade,
+        "observed_after_completion": observed_after_completion,
         "summary": "; ".join(summary_parts),
     }
+    for key in ("score", "readiness", "dispatch_consistency", "context_quality", "verification_quality", "recommendations"):
+        if key in existing_quality and key not in result:
+            result[key] = existing_quality[key]
+    return result
 
 
 def task_strategy_count(state: dict[str, Any] | None, mode: str) -> int:
@@ -322,7 +362,10 @@ def main() -> int:
         output = Path(args.output).expanduser()
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_text(text, encoding="utf-8")
-        print(output)
+        if args.jsonl:
+            print(text, end="")
+        else:
+            print(output)
     else:
         print(text, end="")
     return 0
