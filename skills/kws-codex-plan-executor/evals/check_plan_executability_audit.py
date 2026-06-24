@@ -152,6 +152,18 @@ def main() -> int:
         if not checks["red_missing_files"]:
             failures.append("missing files should produce red audit")
 
+    with tempfile.TemporaryDirectory(prefix="cpe-exec-audit-broad-scope-") as temp:
+        repo = Path(temp) / "repo"
+        repo.mkdir()
+        init_repo(repo)
+        plan_json = repo / "plan.json"
+        write_plan_json(plan_json, [task("task_1", ["**/*"], title="Broad scope")])
+        result, payload = run_audit(repo, plan_json)
+        blockers = {issue for item in payload.get("tasks", []) for issue in item.get("blocking_issues", [])}
+        checks["red_broad_scope"] = result.returncode == 1 and "write_scope_too_broad" in blockers
+        if not checks["red_broad_scope"]:
+            failures.append("broad write scope should produce red audit")
+
     with tempfile.TemporaryDirectory(prefix="cpe-exec-audit-risk-") as temp:
         repo = Path(temp) / "repo"
         repo.mkdir()
