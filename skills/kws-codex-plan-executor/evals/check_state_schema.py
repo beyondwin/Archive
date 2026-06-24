@@ -423,6 +423,7 @@ def main() -> int:
         failures.append("valid v2.20 context-intelligence state should pass: " + (valid_v220.stderr or valid_v220.stdout))
 
     v222 = v220_state()
+    v222["agentlens_orchestration_run"] = "agentlens-run-123"
     v222["source_workspace"] = "/tmp/source"
     v222["execution_worktree"] = v222["worktree"]
     v222["delegation_policy"] = {
@@ -634,6 +635,7 @@ def main() -> int:
         failures.append("finished v2.20 local fallback with a reason should pass: " + (result.stderr or result.stdout))
 
     adaptive_local_fast_path = v220_state()
+    adaptive_local_fast_path["agentlens_orchestration_run"] = "agentlens-run-123"
     adaptive_local_fast_path["subagent_runs"] = []
     adaptive_local_fast_path["delegation_policy"] = {
         "requested_mode": "on",

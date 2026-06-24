@@ -1,5 +1,14 @@
 # History
 
+## 2.24.0 - 2026-06-25
+
+- Added stable CPE run-quality debt follow-ups for AgentLens gaps, missing
+  execution worktrees, readiness fixable issues, full-spec fallback, and
+  delegation policy local fallback.
+- Clarified that `completion_audit.passed=true` can coexist with
+  `run_quality.grade=yellow` when product verification passed but executor
+  operational follow-up remains.
+
 ## 2.23.0 - Unreleased
 
 - Added `scripts/repair_runs.py` for dry-run CPE repair planning and explicit

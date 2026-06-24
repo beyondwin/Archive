@@ -2,8 +2,8 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "2.23.0"
-  updated_at: "2026-06-23"
+  version: "2.24.0"
+  updated_at: "2026-06-25"
 ---
 
 # KWS Codex Plan Executor
@@ -218,6 +218,13 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
 - `run_quality.open_followups` records actionable inspection follow-ups such as
   `stale_non_terminal_run`, `missing_execution_worktree`, and schema drift; do
   not rely on a bare stale boolean when deciding resume or cleanup work.
+- Finished operational-quality `run_quality.open_followups` records stable
+  non-blocking executor debt signals: `agentlens_missing`,
+  `missing_execution_worktree`, `readiness_fixable_issues`,
+  `full_spec_fallback_present`, and
+  `delegation_policy_prevented_all_delegation`. `completion_audit.passed=true`
+  and `run_quality.grade=yellow` may coexist when product verification passed
+  but executor evidence or efficiency follow-up remains.
 - When read-only inspection reports stale non-terminal runs with missing
   execution worktrees, use `scripts/repair_runs.py` to produce a dry-run repair
   plan before any operator action. The only safe mutation is explicit

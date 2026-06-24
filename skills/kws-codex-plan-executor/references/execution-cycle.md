@@ -60,5 +60,10 @@
 16. Before `lifecycle_outcome=finished`, run `scripts/reconcile_state.py` and
     `scripts/validate_state.py`.
 
+When finalizing `run_quality`, include state-intrinsic operational debt
+follow-ups before running `validate_state.py`. Read-only inspection may add
+current observations such as `missing_execution_worktree` after completion
+without mutating state; those observations use `observed_after_completion=true`.
+
 AgentLens replay and learning events are best-effort. A failure to emit those
 events cannot block implementation.

@@ -82,6 +82,11 @@ all plans, including stale non-terminal state, validation drift, delegation
 counts, workspace/execution-worktree mismatch, and actionable follow-up markers
 for stale or missing-worktree runs.
 
+Run-quality operational debt is classified in
+`scripts/run_quality_debt.py` so state validation and read-only inspection use
+the same stable follow-up strings while keeping filesystem observations such as
+missing execution worktrees out of finished-state hard validation.
+
 Structured failure state separates machine-readable blockers from human
 handoff summaries. `current_blocker` records recoverable blocked state,
 `failure_decision` records non-success failure decisions, and
