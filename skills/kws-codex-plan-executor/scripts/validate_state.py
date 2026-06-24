@@ -10,6 +10,11 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    import run_quality_debt
+except Exception:
+    run_quality_debt = None
+
 
 REQUIRED_TOP_LEVEL = {
     "schema_version",
@@ -834,6 +839,18 @@ def _validate_operational_run_quality(data: dict, errors: list[str]) -> None:
             for key in ("schema_drift", "open_followups"):
                 if key in quality and not isinstance(quality[key], list):
                     errors.append(f"run_quality.{key} must be a list")
+            followups = quality.get("open_followups")
+            if isinstance(followups, list):
+                if quality.get("grade") == "green" and followups:
+                    errors.append("run_quality.grade must be yellow or red when open_followups is non-empty")
+                if quality.get("grade") == "yellow" and not followups:
+                    errors.append("run_quality.grade yellow requires at least one open_followup")
+
+                if run_quality_debt is not None and data.get("lifecycle_outcome") == "finished" and v222_operational:
+                    required_followups = run_quality_debt.stable_followups(data, missing_execution_worktree=False)
+                    for item in required_followups:
+                        if item not in followups:
+                            errors.append(f"run_quality.open_followups missing required followup: {item}")
             score = quality.get("score")
             if score is not None and (not isinstance(score, int) or score < 0 or score > 100):
                 errors.append("run_quality.score must be an integer from 0 to 100")
@@ -847,6 +864,21 @@ def _validate_operational_run_quality(data: dict, errors: list[str]) -> None:
                     errors.append(f"run_quality.{key} must be an object")
             if "recommendations" in quality and not isinstance(quality["recommendations"], list):
                 errors.append("run_quality.recommendations must be a list")
+            if "operational_debt" in quality:
+                debt = quality.get("operational_debt")
+                if not isinstance(debt, dict):
+                    errors.append("run_quality.operational_debt must be an object")
+                else:
+                    if debt.get("schema_version") != "1":
+                        errors.append("run_quality.operational_debt.schema_version must be 1")
+                    debt_followups = debt.get("followups")
+                    if not isinstance(debt_followups, list):
+                        errors.append("run_quality.operational_debt.followups must be a list")
+                    count = debt.get("count")
+                    if not isinstance(count, int) or count < 0:
+                        errors.append("run_quality.operational_debt.count must be a non-negative integer")
+                    if not isinstance(debt.get("blocking"), bool):
+                        errors.append("run_quality.operational_debt.blocking must be a boolean")
 
 
 def _is_v220_state(data: dict) -> bool:
