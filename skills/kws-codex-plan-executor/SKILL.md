@@ -168,7 +168,10 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   `status=green|yellow|red`, `next_action`, and `handoff_ready`.
 - Successful terminal runs set `lifecycle_outcome=finished` and include a
   passing `completion_audit` with `prompt_to_artifact_checklist` and
-  `verification_evidence`.
+  `verification_evidence`. Finished `completion_audit` fields are structured:
+  `prompt_to_artifact_checklist`, `verification_evidence`, and
+  `residual_risk` are lists so downstream inspection never treats scalar text as
+  character-level evidence.
 - Before terminal `lifecycle_outcome=finished`, run drift reconciliation with
   `scripts/reconcile_state.py --check`; use `--repair-safe` only when a safe
   repair should be persisted. Unresolved blocking drift prevents a finished
@@ -210,7 +213,8 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   with `from_reason`, `to_reason`, `changed_at`, `evidence`, and
   `operator_decision`.
 - Read-only run inspection may compute `run_quality` for recent or stale runs
-  without mutating state. Finished v2.22 states may embed the same summary.
+  without mutating state. Finished operational-quality states with v2.22 fields
+  embed the same summary before validation.
 - `run_quality.open_followups` records actionable inspection follow-ups such as
   `stale_non_terminal_run`, `missing_execution_worktree`, and schema drift; do
   not rely on a bare stale boolean when deciding resume or cleanup work.
@@ -222,6 +226,10 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
 - `run_quality` may report yellow operational quality even when
   `completion_audit.passed=true`; this marks executor efficiency or evidence
   quality follow-up, not product verification failure.
+- Finished operational-quality `run_quality` includes `readiness`,
+  `dispatch_consistency`, `context_quality`, and `verification_quality` so
+  full-spec fallback, dispatch overrides, and completion evidence quality remain
+  inspectable after the execution worktree is gone.
 - Prompt-generating artifacts follow `references/cache-strategy.md`. The
   stable prefix role, safety, required-skill, and output-schema content stays before
   the stable-prefix boundary; run-specific paths, task packets, timestamps, git

@@ -25,6 +25,11 @@
   consistency, and verification quality.
 - Expanded read-only run inspection quality summaries with actionable
   follow-ups for stale non-terminal runs and missing execution worktrees.
+- Tightened finished completion audits so checklist, verification evidence, and
+  residual risk remain list-shaped for downstream inspection.
+- Required finished operational-quality states to embed `run_quality` with
+  readiness, dispatch consistency, context quality, and verification quality
+  summaries.
 - Added adaptive dispatch policy evidence so `subagents=on` delegates only when
   the task is safe and delegation has value.
 - Added local fast path reasons for small docs-only, small-scope, linear, and

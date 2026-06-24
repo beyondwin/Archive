@@ -96,6 +96,10 @@ Required path invariants:
   are recorded as `null`, not zero.
 - Finished runs cannot carry non-empty
   `prompt_audit.dynamic_marker_violations`.
+- Finished `completion_audit.prompt_to_artifact_checklist`,
+  `completion_audit.verification_evidence`, and
+  `completion_audit.residual_risk` are lists. Use an empty `residual_risk` list
+  when there is no known residual risk; do not store scalar strings.
 - `graphify_audit` records deterministic freshness output from
   `scripts/check_graphify_freshness.py`. Finished runs cannot carry
   non-empty `graphify_audit.errors`, and must reference the Graphify evidence
@@ -197,7 +201,11 @@ v2.22 operational run quality state may add:
 operator guidance should use `execution_worktree` as the command/edit boundary.
 `run_quality.open_followups` may include actionable inspection markers such as
 `stale_non_terminal_run`, `missing_execution_worktree`, and
-`state_schema_drift`.
+`state_schema_drift`. Finished states that use v2.22 operational fields such as
+`execution_worktree`, `delegation_policy`, or `preflight_bootstrap` must embed
+`run_quality` with `readiness`, `dispatch_consistency`, `context_quality`, and
+`verification_quality`; this keeps completion quality inspectable even after
+the execution worktree is removed.
 
 ## Stale Blocked Repair
 
