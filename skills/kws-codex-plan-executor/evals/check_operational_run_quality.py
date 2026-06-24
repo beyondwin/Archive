@@ -10,6 +10,15 @@ from pathlib import Path
 import check_state_schema
 
 
+def load_run_quality_debt():
+    script_dir = Path(__file__).resolve().parents[1] / "scripts"
+    if str(script_dir) not in sys.path:
+        sys.path.insert(0, str(script_dir))
+    import run_quality_debt
+
+    return run_quality_debt
+
+
 def run_validator(payload: dict) -> subprocess.CompletedProcess[str]:
     script = Path(__file__).resolve().parents[1] / "scripts" / "validate_state.py"
     with tempfile.TemporaryDirectory(prefix="cpe-run-quality-") as temp:
@@ -170,6 +179,43 @@ def main() -> int:
     )
     if not checks["invalid_run_quality_score_fails"]:
         failures.append("run_quality.score outside 0..100 should fail")
+
+    debt = load_run_quality_debt()
+
+    yellow_state = v222_state()
+    yellow_state["agentlens_orchestration_run"] = None
+    yellow_state["run_quality"]["readiness"]["fixable_issue_count"] = 2
+    yellow_state["run_quality"]["context_quality"]["full_spec_fallback_count"] = 1
+    yellow_state["dispatch_decisions"] = [
+        {
+            "task_id": "task_0",
+            "decision": "local_fallback",
+            "reason": "spawn_agent tool policy requires explicit user delegation intent",
+            "failed_prerequisites": ["spawn_policy_requires_explicit_user_request"],
+        }
+    ]
+    checks["debt_helper_reports_stable_followups"] = debt.stable_followups(yellow_state) == [
+        "agentlens_missing",
+        "readiness_fixable_issues",
+        "full_spec_fallback_present",
+        "delegation_policy_prevented_all_delegation",
+    ]
+    if not checks["debt_helper_reports_stable_followups"]:
+        failures.append("run_quality_debt.stable_followups should report state-intrinsic debt in stable order")
+
+    checks["debt_helper_reports_yellow_grade"] = debt.grade_for(
+        yellow_state,
+        debt.stable_followups(yellow_state),
+        "passed",
+    ) == "yellow"
+    if not checks["debt_helper_reports_yellow_grade"]:
+        failures.append("run_quality_debt.grade_for should return yellow for passed completion with followups")
+
+    checks["debt_helper_reports_current_missing_worktree"] = (
+        "missing_execution_worktree" in debt.stable_followups(yellow_state, missing_execution_worktree=True)
+    )
+    if not checks["debt_helper_reports_current_missing_worktree"]:
+        failures.append("run_quality_debt.stable_followups should include current missing worktree observations")
 
     static_result, static_state = run_static_fixture()
     checks["static_runner_emits_v222_fields"] = (
