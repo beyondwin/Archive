@@ -34,6 +34,7 @@ def run_validator(payload: dict) -> subprocess.CompletedProcess[str]:
 
 def v222_state() -> dict:
     state = check_state_schema.v220_state()
+    state["agentlens_orchestration_run"] = "agentlens-run-123"
     state["source_workspace"] = "/tmp/source"
     state["execution_worktree"] = state["worktree"]
     state["command_cwd_evidence"] = [
@@ -216,6 +217,52 @@ def main() -> int:
     )
     if not checks["debt_helper_reports_current_missing_worktree"]:
         failures.append("run_quality_debt.stable_followups should include current missing worktree observations")
+
+    yellow_quality = v222_state()
+    yellow_quality["agentlens_orchestration_run"] = None
+    yellow_quality["run_quality"]["grade"] = "yellow"
+    yellow_quality["run_quality"]["readiness"]["fixable_issue_count"] = 1
+    yellow_quality["run_quality"]["context_quality"]["full_spec_fallback_count"] = 1
+    yellow_quality["run_quality"]["open_followups"] = [
+        "agentlens_missing",
+        "readiness_fixable_issues",
+        "full_spec_fallback_present",
+    ]
+    yellow_quality["run_quality"]["operational_debt"] = {
+        "schema_version": "1",
+        "followups": list(yellow_quality["run_quality"]["open_followups"]),
+        "count": 3,
+        "blocking": False,
+    }
+    valid_yellow = run_validator(yellow_quality)
+    checks["completion_passed_yellow_quality_passes"] = valid_yellow.returncode == 0
+    if not checks["completion_passed_yellow_quality_passes"]:
+        failures.append("completion_audit.passed=true with run_quality.grade=yellow should pass: " + valid_yellow.stderr)
+
+    missing_followup = v222_state()
+    missing_followup["agentlens_orchestration_run"] = None
+    missing_followup["run_quality"]["context_quality"]["full_spec_fallback_count"] = 1
+    missing_followup["run_quality"]["open_followups"] = []
+    invalid_missing_followup = run_validator(missing_followup)
+    checks["invalid_missing_required_followup_fails"] = (
+        invalid_missing_followup.returncode != 0
+        and "run_quality.open_followups missing required followup: agentlens_missing" in invalid_missing_followup.stderr
+        and "run_quality.open_followups missing required followup: full_spec_fallback_present"
+        in invalid_missing_followup.stderr
+    )
+    if not checks["invalid_missing_required_followup_fails"]:
+        failures.append("validator should reject finished quality missing required open_followups")
+
+    green_with_followup = v222_state()
+    green_with_followup["agentlens_orchestration_run"] = None
+    green_with_followup["run_quality"]["open_followups"] = ["agentlens_missing"]
+    invalid_green = run_validator(green_with_followup)
+    checks["green_with_open_followups_fails"] = (
+        invalid_green.returncode != 0
+        and "run_quality.grade must be yellow or red when open_followups is non-empty" in invalid_green.stderr
+    )
+    if not checks["green_with_open_followups_fails"]:
+        failures.append("validator should reject green run_quality with open followups")
 
     static_result, static_state = run_static_fixture()
     checks["static_runner_emits_v222_fields"] = (
