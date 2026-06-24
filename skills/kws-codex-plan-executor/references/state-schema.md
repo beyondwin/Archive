@@ -183,9 +183,15 @@ v2.22 operational run quality state may add:
     "stale": false,
     "workspace_matches_execution_worktree": true,
     "score": 92,
-    "grade": "green",
+    "grade": "yellow",
     "schema_drift": [],
-    "open_followups": [],
+    "open_followups": ["agentlens_missing"],
+    "operational_debt": {
+      "schema_version": "1",
+      "followups": ["agentlens_missing"],
+      "count": 1,
+      "blocking": false
+    },
     "readiness": {"task_count": 1, "fixable_issue_count": 0, "blocking_issue_count": 0},
     "dispatch_consistency": {"mismatch_count": 0, "override_count": 0},
     "context_quality": {"full_spec_fallback_count": 0},
@@ -206,6 +212,11 @@ operator guidance should use `execution_worktree` as the command/edit boundary.
 `run_quality` with `readiness`, `dispatch_consistency`, `context_quality`, and
 `verification_quality`; this keeps completion quality inspectable even after
 the execution worktree is removed.
+
+`run_quality.grade` is an operational quality grade, not a replacement for
+`completion_audit.passed`. A finished run may have
+`completion_audit.passed=true` and `run_quality.grade=yellow` when
+implementation verification passed but non-blocking executor follow-up remains.
 
 ## Stale Blocked Repair
 

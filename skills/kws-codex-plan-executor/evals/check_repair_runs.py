@@ -125,6 +125,7 @@ def write_state(
             "next_action_kind": "operator_decision",
         }
     if outcome == "finished":
+        state["agentlens_orchestration_run"] = "agentlens-run-123"
         state["current_phase"] = "complete"
         state["handoff_reason"] = ""
         state["completion_audit"] = {

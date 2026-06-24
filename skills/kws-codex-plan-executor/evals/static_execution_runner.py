@@ -13,10 +13,17 @@ import hashlib
 import json
 import os
 import re
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 import yaml
+
+SCRIPT_DIR = Path(__file__).resolve().parents[1] / "scripts"
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+import run_quality_debt
 
 
 def now_iso() -> str:
@@ -255,6 +262,17 @@ def build_state(
         },
         "timestamps": {"started_at": now, "updated_at": now, "completed_at": now},
     }
+    followups = run_quality_debt.stable_followups(state, missing_execution_worktree=False)
+    state["run_quality"]["open_followups"] = followups
+    state["run_quality"]["operational_debt"] = run_quality_debt.operational_debt_summary(
+        state,
+        missing_execution_worktree=False,
+    )
+    state["run_quality"]["grade"] = run_quality_debt.grade_for(
+        state,
+        followups,
+        state["run_quality"]["validation_status"],
+    )
     if fixture.get("initial_state", {}).get("resume_marker"):
         state["resume_marker"] = fixture["initial_state"]["resume_marker"]
     write_json(run_dir / "state.json", state)
