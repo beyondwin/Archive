@@ -138,6 +138,15 @@ VALID_DELEGATION_REQUESTED_SOURCES = {"default", "explicit", "natural_language",
 VALID_SPAWN_POLICIES = {"available", "unavailable", "explicit-request-required", "unknown"}
 VALID_DELEGATION_EFFECTIVE_MODES = {"delegate", "local_fallback", "off", "blocked"}
 VALID_RUN_QUALITY_VALIDATION_STATUSES = {"passed", "failed", "unreadable", "not_checked"}
+VALID_RESIDUAL_RISK_OWNERS = {"executor", "operator", "product", "environment"}
+VALID_RESIDUAL_RISK_CLASSES = {
+    "external_credentials",
+    "deployment",
+    "monitoring",
+    "executor_evidence",
+    "environment_unavailable",
+    "product_followup",
+}
 
 
 def _has_substantive_value(value: object) -> bool:
@@ -265,8 +274,40 @@ def _validate_completion_audit(data: dict, errors: list[str]) -> None:
         residual = audit.get("residual_risk")
         if not isinstance(residual, list):
             errors.append("completion_audit.residual_risk must be a list")
+        else:
+            _validate_residual_risk_items(data, residual, errors)
     elif outcome in NON_SUCCESS_OUTCOMES and not _has_substantive_value(data.get("handoff_reason")):
         errors.append("handoff_reason must be non-empty for non-success lifecycle_outcome")
+
+
+def _validate_residual_risk_items(data: dict, residual: list[object], errors: list[str]) -> None:
+    audit = data.get("completion_audit") if isinstance(data.get("completion_audit"), dict) else {}
+    for index, item in enumerate(residual):
+        prefix = f"completion_audit.residual_risk[{index}]"
+        if isinstance(item, str):
+            if not item.strip():
+                errors.append(f"{prefix} string must be non-empty")
+            continue
+        if not isinstance(item, dict):
+            errors.append(f"{prefix} must be a string or object")
+            continue
+        for key in ("owner", "class", "summary", "blocks_release"):
+            if key not in item:
+                errors.append(f"{prefix}.{key} is required")
+        if item.get("owner") not in VALID_RESIDUAL_RISK_OWNERS:
+            errors.append(f"{prefix}.owner invalid")
+        if item.get("class") not in VALID_RESIDUAL_RISK_CLASSES:
+            errors.append(f"{prefix}.class invalid")
+        if not _has_substantive_value(item.get("summary")):
+            errors.append(f"{prefix}.summary must be non-empty")
+        if not isinstance(item.get("blocks_release"), bool):
+            errors.append(f"{prefix}.blocks_release must be a boolean")
+        if (
+            item.get("blocks_release") is True
+            and data.get("lifecycle_outcome") == "finished"
+            and audit.get("passed") is True
+        ):
+            errors.append("completion_audit.residual_risk blocks_release=true cannot coexist with finished passed completion")
 
 
 def _validate_timestamps(data: dict, errors: list[str]) -> None:
@@ -642,10 +683,43 @@ def _validate_plan_executability_audit(data: dict, errors: list[str]) -> None:
         errors.append("plan_executability_audit.path must live under run_dir")
     if audit.get("grade") not in {"green", "yellow", "red"}:
         errors.append("plan_executability_audit.grade must be green, yellow, or red")
+    if "raw_grade" in audit and audit.get("raw_grade") not in {"green", "yellow", "red"}:
+        errors.append("plan_executability_audit.raw_grade must be green, yellow, or red")
     for key in ("blocking_issue_count", "fixable_issue_count"):
         value = audit.get(key)
         if not isinstance(value, int) or value < 0:
             errors.append(f"plan_executability_audit.{key} must be a non-negative integer")
+    for key in ("raw_blocking_issue_count", "raw_fixable_issue_count"):
+        if key in audit:
+            value = audit.get(key)
+            if not isinstance(value, int) or value < 0:
+                errors.append(f"plan_executability_audit.{key} must be a non-negative integer")
+    raw_blocking = audit.get("raw_blocking_issue_count")
+    effective_blocking = audit.get("blocking_issue_count")
+    if isinstance(raw_blocking, int) and isinstance(effective_blocking, int) and effective_blocking < raw_blocking:
+        if not audit.get("operator_reviewed_blocking_issues") or not audit.get("operator_decision"):
+            errors.append("plan_executability_audit reduced blocking count requires operator review evidence")
+    quality = data.get("run_quality") if isinstance(data.get("run_quality"), dict) else {}
+    readiness = quality.get("readiness") if isinstance(quality.get("readiness"), dict) else {}
+    expected = audit.get("fixable_issue_count")
+    observed = readiness.get("plan_executability_fixable_issue_count")
+    if expected is not None and observed is not None and expected != observed:
+        errors.append("plan_executability_audit fixable count must match run_quality readiness")
+    if isinstance(audit.get("path"), str) and Path(audit["path"]).is_file():
+        try:
+            artifact = json.loads(Path(audit["path"]).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            if data.get("lifecycle_outcome") == "finished":
+                errors.append(f"plan_executability_audit artifact is not readable JSON: {exc}")
+            artifact = {}
+        summary = artifact.get("summary") if isinstance(artifact.get("summary"), dict) else artifact
+        if isinstance(summary, dict):
+            artifact_blocking = summary.get("blocking_issue_count")
+            artifact_fixable = summary.get("fixable_issue_count")
+            if isinstance(audit.get("raw_blocking_issue_count"), int) and artifact_blocking != audit.get("raw_blocking_issue_count"):
+                errors.append("plan_executability_audit raw blocking count must match artifact")
+            if isinstance(audit.get("raw_fixable_issue_count"), int) and artifact_fixable != audit.get("raw_fixable_issue_count"):
+                errors.append("plan_executability_audit raw fixable count must match artifact")
     if data.get("lifecycle_outcome") == "finished" and audit.get("grade") == "red":
         errors.append("finished state cannot retain red plan_executability_audit")
 

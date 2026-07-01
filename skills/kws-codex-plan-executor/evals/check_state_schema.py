@@ -184,6 +184,17 @@ def valid_plan_executability_audit() -> dict:
     }
 
 
+def valid_dispatch_decision(reason: str = "Default subagent-first execution for an eligible task packet.") -> dict:
+    return {
+        "schema_version": "1",
+        "task_id": "task_0",
+        "decision": "delegate",
+        "reason": reason,
+        "write_scope": ["docs/example.md"],
+        "failed_prerequisites": [],
+    }
+
+
 def v220_state() -> dict:
     state = base_state()
     rd = run_dir()
@@ -255,6 +266,35 @@ def main() -> int:
     )
     if not checks["finished_residual_risk_string_fails"]:
         failures.append("finished completion_audit.residual_risk should require a list")
+
+    structured_residual_risk = base_state()
+    structured_residual_risk["completion_audit"]["residual_risk"] = [
+        {
+            "owner": "operator",
+            "class": "external_credentials",
+            "summary": "Production deploy requires VM_PUBLIC_IP.",
+            "blocks_release": False,
+            "unblocks_when": "Operator provides credentials and reruns deploy smoke.",
+            "evidence_ref": "completion_audit.verification_evidence[0]",
+        }
+    ]
+    result = run_validator(script, structured_residual_risk)
+    checks["structured_residual_risk_passes"] = result.returncode == 0
+    if not checks["structured_residual_risk_passes"]:
+        failures.append("valid structured residual risk should pass: " + (result.stderr or result.stdout))
+
+    blocking_residual_risk = base_state()
+    blocking_residual_risk["completion_audit"]["residual_risk"] = [
+        {"owner": "operator", "class": "deployment", "summary": "Blocks release", "blocks_release": True}
+    ]
+    result = run_validator(script, blocking_residual_risk)
+    checks["blocking_residual_risk_with_passed_completion_fails"] = (
+        result.returncode != 0
+        and "completion_audit.residual_risk blocks_release=true cannot coexist with finished passed completion"
+        in (result.stderr + result.stdout)
+    )
+    if not checks["blocking_residual_risk_with_passed_completion_fails"]:
+        failures.append("release-blocking residual risk should not coexist with passed finished completion")
 
     bad_verification_evidence = base_state()
     bad_verification_evidence["completion_audit"]["verification_evidence"] = "python3 evals/run.sh passed"
@@ -443,6 +483,7 @@ def main() -> int:
         "effective_mode": "local_fallback",
         "reason": "spawn_agent tool policy requires explicit user delegation intent",
     }
+    v222["dispatch_decisions"] = [valid_dispatch_decision()]
     v222["run_quality"] = valid_run_quality()
     result = run_validator(script, v222)
     checks["v222_optional_fields_pass"] = result.returncode == 0
@@ -453,6 +494,7 @@ def main() -> int:
     valid_plan_audit["agentlens_orchestration_run"] = "agentlens-run-123"
     valid_plan_audit["execution_worktree"] = valid_plan_audit["worktree"]
     valid_plan_audit["run_quality"] = valid_run_quality()
+    valid_plan_audit["dispatch_decisions"] = [valid_dispatch_decision()]
     valid_plan_audit["run_quality"]["grade"] = "yellow"
     valid_plan_audit["run_quality"]["open_followups"] = ["plan_executability_fixable_issues"]
     valid_plan_audit["run_quality"]["readiness"]["plan_executability_fixable_issue_count"] = 1
@@ -461,6 +503,50 @@ def main() -> int:
     checks["valid_plan_executability_audit_passes"] = result.returncode == 0
     if not checks["valid_plan_executability_audit_passes"]:
         failures.append("valid plan_executability_audit should pass: " + (result.stderr or result.stdout))
+
+    plan_audit_mismatch = valid_plan_audit
+    plan_audit_mismatch["run_quality"]["readiness"]["plan_executability_fixable_issue_count"] = 2
+    result = run_validator(script, plan_audit_mismatch)
+    checks["plan_executability_summary_mismatch_fails"] = (
+        result.returncode != 0
+        and "plan_executability_audit fixable count must match run_quality readiness"
+        in (result.stderr + result.stdout)
+    )
+    if not checks["plan_executability_summary_mismatch_fails"]:
+        failures.append("plan executability summary mismatch should fail")
+
+    reduced_without_operator = v220_state()
+    reduced_without_operator["agentlens_orchestration_run"] = "agentlens-run-123"
+    reduced_without_operator["execution_worktree"] = reduced_without_operator["worktree"]
+    reduced_without_operator["run_quality"] = valid_run_quality()
+    reduced_without_operator["dispatch_decisions"] = [valid_dispatch_decision()]
+    reduced_without_operator["plan_executability_audit"] = {
+        "path": f"{run_dir()}/plan_executability_audit.json",
+        "grade": "yellow",
+        "raw_grade": "red",
+        "blocking_issue_count": 0,
+        "raw_blocking_issue_count": 2,
+        "fixable_issue_count": 0,
+        "raw_fixable_issue_count": 0,
+    }
+    result = run_validator(script, reduced_without_operator)
+    checks["reduced_raw_blockers_require_operator_evidence"] = (
+        result.returncode != 0
+        and "plan_executability_audit reduced blocking count requires operator review evidence"
+        in (result.stderr + result.stdout)
+    )
+    if not checks["reduced_raw_blockers_require_operator_evidence"]:
+        failures.append("reduced raw blocker count should require operator review evidence")
+
+    reduced_with_operator = reduced_without_operator
+    reduced_with_operator["plan_executability_audit"]["operator_reviewed_blocking_issues"] = [
+        "task_1:risk_marker_requires_operator_review"
+    ]
+    reduced_with_operator["plan_executability_audit"]["operator_decision"] = "Proceed after operator review."
+    result = run_validator(script, reduced_with_operator)
+    checks["reduced_raw_blockers_with_operator_evidence_passes"] = result.returncode == 0
+    if not checks["reduced_raw_blockers_with_operator_evidence_passes"]:
+        failures.append("reduced raw blocker count with operator review evidence should pass: " + (result.stderr or result.stdout))
 
     invalid_plan_audit = v220_state()
     invalid_plan_audit["plan_executability_audit"] = {
@@ -697,6 +783,16 @@ def main() -> int:
         },
     }
     adaptive_local_fast_path["run_quality"] = valid_run_quality()
+    adaptive_local_fast_path["dispatch_decisions"] = [
+        {
+            "schema_version": "1",
+            "task_id": "task_0",
+            "decision": "local_fallback",
+            "reason": "adaptive_policy_local_fast_path_docs_only",
+            "write_scope": ["docs/example.md"],
+            "failed_prerequisites": [],
+        }
+    ]
     adaptive_local_fast_path["tasks"]["task_0"]["subagent_strategy"] = {
         "mode": "local_fallback",
         "reason": "adaptive_policy_local_fast_path_docs_only",
