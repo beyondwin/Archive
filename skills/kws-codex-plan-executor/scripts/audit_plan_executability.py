@@ -6,58 +6,23 @@ import json
 from pathlib import Path
 from typing import Any
 
-
-ADAPTIVE_LOCAL_FAST_PATH_DOCS_ONLY = "adaptive_policy_local_fast_path_docs_only"
-ADAPTIVE_LOCAL_FAST_PATH_SMALL_SCOPE = "adaptive_policy_local_fast_path_small_scope"
-ADAPTIVE_LOCAL_FAST_PATH_LINEAR_TASK = "adaptive_policy_local_fast_path_linear_task"
-ADAPTIVE_LOCAL_FAST_PATH_LOW_PARALLEL_VALUE = "adaptive_policy_local_fast_path_low_parallel_value"
-RISK_MARKER_REQUIRES_OPERATOR_REVIEW = "risk_marker_requires_operator_review"
-
-RISKY_PATH_FRAGMENTS = ("migration", "migrations", "auth", "security", "infra", "terraform", "pulumi")
-RISKY_EXACT_FILES = {"bun.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "Cargo.lock"}
-BROAD_SCOPES = {"", ".", "*", "**", "**/*", "./", "./*", "./**", "./**/*"}
+from cpe_audit_common import (
+    ADAPTIVE_LOCAL_FAST_PATH_DOCS_ONLY,
+    ADAPTIVE_LOCAL_FAST_PATH_LINEAR_TASK,
+    ADAPTIVE_LOCAL_FAST_PATH_SMALL_SCOPE,
+    RISK_MARKER_REQUIRES_OPERATOR_REVIEW,
+    dependency_list,
+    docs_only,
+    list_strings,
+    malformed_scope,
+    normalized_scopes,
+    path_risk_markers,
+    write_scope_too_broad,
+)
 
 
 def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def list_strings(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, str) and item.strip()]
-
-
-def write_scope_too_broad(pattern: str) -> bool:
-    return pattern.strip().rstrip("/") in BROAD_SCOPES
-
-
-def malformed_scope(pattern: str) -> bool:
-    stripped = pattern.strip()
-    return "," in stripped and not any(char in stripped for char in "[]{}")
-
-
-def normalized_scopes(patterns: list[str]) -> list[str]:
-    result: list[str] = []
-    for pattern in patterns:
-        parts = [item.strip() for item in pattern.split(",")] if malformed_scope(pattern) else [pattern.strip()]
-        for part in parts:
-            if part and part not in result:
-                result.append(part)
-    return result
-
-
-def path_risk_markers(paths: list[str], explicit: list[str] | None = None) -> list[str]:
-    markers = {item for item in (explicit or []) if item}
-    for path in paths:
-        normalized = path.strip().lstrip("./")
-        if normalized in RISKY_EXACT_FILES:
-            markers.add("lockfile")
-        lowered = normalized.lower()
-        for fragment in RISKY_PATH_FRAGMENTS:
-            if fragment in lowered:
-                markers.add(fragment)
-    return sorted(markers)
 
 
 def files_exist_or_are_declared(files: list[str], repo_root: Path) -> bool:
@@ -86,10 +51,9 @@ def load_packets(packet_dir: Path | None) -> dict[str, dict[str, Any]]:
 
 
 def subagent_fit(files: list[str], depends_on: list[str], acceptance_missing: bool, risks: list[str]) -> tuple[str, str]:
-    docs_only = bool(files) and all(path.startswith("docs/") and path.endswith(".md") for path in files)
     if risks:
         return "block", RISK_MARKER_REQUIRES_OPERATOR_REVIEW
-    if docs_only:
+    if docs_only(files):
         return "local_fast_path", ADAPTIVE_LOCAL_FAST_PATH_DOCS_ONLY
     if 0 < len(files) <= 2 and len(depends_on) <= 1:
         reason = ADAPTIVE_LOCAL_FAST_PATH_SMALL_SCOPE if not depends_on else ADAPTIVE_LOCAL_FAST_PATH_LINEAR_TASK
@@ -102,7 +66,7 @@ def subagent_fit(files: list[str], depends_on: list[str], acceptance_missing: bo
 def audit_task(task: dict[str, Any], packet: dict[str, Any] | None, repo_root: Path) -> dict[str, Any]:
     task_id = str(task.get("id") or task.get("task_id") or "unknown_task")
     files = list_strings(task.get("files"))
-    depends_on = list_strings(task.get("depends_on"))
+    depends_on = dependency_list(task)
     packet_policy = packet.get("write_policy") if isinstance(packet, dict) and isinstance(packet.get("write_policy"), dict) else {}
     allowed = list_strings(packet_policy.get("allowed_write_globs")) if packet_policy else files
     packet_acceptance = packet.get("acceptance") if isinstance(packet, dict) and isinstance(packet.get("acceptance"), dict) else {}
@@ -123,8 +87,7 @@ def audit_task(task: dict[str, Any], packet: dict[str, Any] | None, repo_root: P
     if any(malformed_scope(scope) for scope in allowed + files):
         fixable.append("write_scope_format_invalid")
     if acceptance_missing:
-        docs_only = bool(files) and all(path.startswith("docs/") and path.endswith(".md") for path in files)
-        if docs_only:
+        if docs_only(files):
             fixable.append("acceptance_command_missing")
         else:
             blocking.append("acceptance_command_missing")

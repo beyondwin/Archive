@@ -7,23 +7,19 @@ import json
 import subprocess
 from pathlib import Path
 
-
-ADAPTIVE_LOCAL_FAST_PATH_DOCS_ONLY = "adaptive_policy_local_fast_path_docs_only"
-ADAPTIVE_LOCAL_FAST_PATH_SMALL_SCOPE = "adaptive_policy_local_fast_path_small_scope"
-ADAPTIVE_LOCAL_FAST_PATH_LINEAR_TASK = "adaptive_policy_local_fast_path_linear_task"
-ADAPTIVE_LOCAL_FAST_PATH_LOW_PARALLEL_VALUE = "adaptive_policy_local_fast_path_low_parallel_value"
-RISK_MARKER_REQUIRES_OPERATOR_REVIEW = "risk_marker_requires_operator_review"
-
-RISKY_PATH_FRAGMENTS = (
-    "migration",
-    "migrations",
-    "auth",
-    "security",
-    "infra",
-    "terraform",
-    "pulumi",
+from cpe_audit_common import (
+    ADAPTIVE_LOCAL_FAST_PATH_DOCS_ONLY,
+    ADAPTIVE_LOCAL_FAST_PATH_LINEAR_TASK,
+    ADAPTIVE_LOCAL_FAST_PATH_LOW_PARALLEL_VALUE,
+    ADAPTIVE_LOCAL_FAST_PATH_SMALL_SCOPE,
+    RISK_MARKER_REQUIRES_OPERATOR_REVIEW,
+    dependency_list,
+    docs_only,
+    list_strings,
+    malformed_scope,
+    path_risk_markers,
+    write_scope_too_broad,
 )
-RISKY_EXACT_FILES = {"bun.lock", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "Cargo.lock"}
 
 
 def git_changed(repo: Path) -> set[str]:
@@ -66,21 +62,8 @@ def decision_payload(
     }
 
 
-def write_scope_too_broad(pattern: str) -> bool:
-    normalized = pattern.strip().rstrip("/")
-    return normalized in {"", ".", "*", "**", "**/*", "./", "./*", "./**", "./**/*"}
-
-
 def write_scope_format_invalid(pattern: str) -> bool:
-    stripped = pattern.strip()
-    return "," in stripped and not any(char in stripped for char in "[]{}")
-
-
-def packet_list(packet: dict, key: str) -> list[str]:
-    value = packet.get(key)
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, str) and item.strip()]
+    return malformed_scope(pattern)
 
 
 def packet_context_status(packet: dict) -> str:
@@ -99,31 +82,18 @@ def packet_estimated_chars(packet: dict) -> int:
     return value if isinstance(value, int) and value >= 0 else 0
 
 
-def path_risk_markers(files: list[str], explicit_markers: list[str]) -> list[str]:
-    markers: set[str] = {marker for marker in explicit_markers if marker}
-    for file_path in files:
-        normalized = file_path.strip().lstrip("./")
-        if normalized in RISKY_EXACT_FILES:
-            markers.add("lockfile")
-        lowered = normalized.lower()
-        for fragment in RISKY_PATH_FRAGMENTS:
-            if fragment in lowered:
-                markers.add(fragment)
-    return sorted(markers)
-
-
 def adaptive_value_decision(packet: dict, write_scope: list[str], explicit_requested: bool) -> tuple[str, str, dict]:
-    files = packet_list(packet, "files")
-    dependencies = packet_list(packet, "dependencies")
-    explicit_risks = packet_list(packet, "risk_markers")
+    files = list_strings(packet.get("files"))
+    dependencies = dependency_list(packet)
+    explicit_risks = list_strings(packet.get("risk_markers"))
     allowed = []
     policy = packet.get("write_policy") if isinstance(packet, dict) else {}
     if isinstance(policy, dict):
-        allowed = [item for item in policy.get("allowed_write_globs", []) if isinstance(item, str) and item.strip()]
+        allowed = list_strings(policy.get("allowed_write_globs"))
     context_status = packet_context_status(packet)
     estimated_chars = packet_estimated_chars(packet)
     risk_markers = path_risk_markers(files + write_scope, explicit_risks)
-    docs_only = bool(files) and all(path.startswith("docs/") and path.endswith(".md") for path in files)
+    docs_only_value = docs_only(files)
     small_file_count = 0 < len(files) <= 3
     narrow_scope = 0 < len(allowed) <= 3 and 0 < len(write_scope) <= 3
     low_parallel_value = small_file_count and narrow_scope and len(dependencies) <= 1 and estimated_chars <= 12000
@@ -136,12 +106,12 @@ def adaptive_value_decision(packet: dict, write_scope: list[str], explicit_reque
         "estimated_chars": estimated_chars,
         "explicit_user_delegation_request": explicit_requested,
         "risk_markers": risk_markers,
-        "docs_only": docs_only,
+        "docs_only": docs_only_value,
         "low_parallel_value": low_parallel_value,
     }
     if risk_markers:
         return "block", RISK_MARKER_REQUIRES_OPERATOR_REVIEW, signals
-    if docs_only and context_status in {"green", "yellow"} and narrow_scope:
+    if docs_only_value and context_status in {"green", "yellow"} and narrow_scope:
         return "local_fast_path", ADAPTIVE_LOCAL_FAST_PATH_DOCS_ONLY, signals
     if low_parallel_value and context_status in {"green", "yellow"}:
         if len(dependencies) == 1:
