@@ -34,6 +34,7 @@ def write_packet(
     estimated_chars: int = 10,
     max_chars: int = 60000,
     dependencies: list[str] | None = None,
+    depends_on: list[str] | None = None,
     risk_markers: list[str] | None = None,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -44,6 +45,7 @@ def write_packet(
                 "task_title": "Task",
                 "files": files,
                 "dependencies": dependencies or [],
+                "depends_on": depends_on or [],
                 "risk_markers": risk_markers or [],
                 "sha256": "packet-sha",
                 "context_budget": {
@@ -340,6 +342,38 @@ def main() -> int:
         )
         if not checks["task_packet_hash_mismatch_blocks"]:
             failures.append("task packet hash mismatch should block dispatch")
+
+    with tempfile.TemporaryDirectory(prefix="cpe-dispatch-") as temp:
+        repo = Path(temp) / "repo"
+        repo.mkdir()
+        init_repo(repo)
+        state_path = repo / "state.json"
+        packet_path = repo / "task_0.json"
+        write_packet(
+            packet_path,
+            ["docs/example.md"],
+            dependencies=[],
+            depends_on=["task_before"],
+            estimated_chars=18000,
+        )
+        write_state(state_path)
+        result, data = run_dispatch(
+            repo,
+            state_path,
+            packet_path,
+            "--spawn-policy",
+            "available",
+            "--requested-subagents",
+            "on",
+            "--requested-source",
+            "default",
+        )
+        checks["packet_depends_on_counts_as_dependency"] = (
+            result.returncode == 0
+            and data.get("delegation_policy", {}).get("signals", {}).get("dependency_count") == 1
+        )
+        if not checks["packet_depends_on_counts_as_dependency"]:
+            failures.append("depends_on should count as dependency when dependencies alias is absent")
 
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, ensure_ascii=False, indent=2))

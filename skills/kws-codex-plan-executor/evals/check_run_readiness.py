@@ -154,6 +154,34 @@ def main() -> int:
         if not checks["comma_joined_scope_includes_normalized_fix"]:
             failures.append("comma-joined write scope should include deterministic normalized write scopes")
 
+    with tempfile.TemporaryDirectory(prefix="cpe-readiness-newline-scope-") as temp:
+        repo = Path(temp) / "repo"
+        repo.mkdir()
+        init_repo(repo)
+        state = check_state_schema.v220_state()
+        state_path = repo / "state.json"
+        state_path.write_text(json.dumps(state), encoding="utf-8")
+        packet_dir = repo / "task_packets"
+        write_packet(
+            packet_dir / "task_1.json",
+            "task_1",
+            ["src/a.py\nsrc/b.py"],
+            command="python3 -m pytest",
+        )
+        result, data = run_audit(repo, state_path, packet_dir)
+        issue = next(
+            (item for item in data.get("issues", []) if item.get("kind") == "write_scope_format_invalid"),
+            {},
+        )
+        checks["newline_joined_scope_includes_normalized_fix"] = (
+            result.returncode == 1
+            and issue.get("severity") == "fixable"
+            and issue.get("suggested_write_scopes") == ["src/a.py", "src/b.py"]
+            and data.get("tasks", [{}])[0].get("normalized_write_globs") == ["src/a.py", "src/b.py"]
+        )
+        if not checks["newline_joined_scope_includes_normalized_fix"]:
+            failures.append("newline-joined write scope should include deterministic normalized write scopes")
+
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if not failures else 1

@@ -5,6 +5,8 @@ import argparse
 import json
 from pathlib import Path
 
+from cpe_audit_common import list_strings, malformed_scope, normalized_scopes
+
 
 def load_json(path: Path) -> object:
     return json.loads(path.read_text(encoding="utf-8"))
@@ -24,26 +26,6 @@ def issue(task_id: str, severity: str, kind: str, message: str, **extra: object)
 def packet_task_id(packet: dict, fallback: str) -> str:
     value = packet.get("task_id")
     return value if isinstance(value, str) and value.strip() else fallback
-
-
-def list_strings(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, str) and item.strip()]
-
-
-def malformed_scope(pattern: str) -> bool:
-    return "," in pattern and not any(char in pattern for char in "[]{}")
-
-
-def normalized_scopes(patterns: list[str]) -> list[str]:
-    normalized: list[str] = []
-    for pattern in patterns:
-        parts = [item.strip() for item in pattern.split(",")] if malformed_scope(pattern) else [pattern.strip()]
-        for part in parts:
-            if part and part not in normalized:
-                normalized.append(part)
-    return normalized
 
 
 def audit_packet(packet_path: Path) -> tuple[dict, list[dict]]:
@@ -85,7 +67,7 @@ def audit_packet(packet_path: Path) -> tuple[dict, list[dict]]:
                     task_id,
                     "fixable",
                     "write_scope_format_invalid",
-                    "Write scope appears to contain multiple comma-joined paths.",
+                    "Write scope appears to contain multiple joined paths.",
                     suggested_write_scopes=normalized_scopes([pattern]),
                 )
             )
