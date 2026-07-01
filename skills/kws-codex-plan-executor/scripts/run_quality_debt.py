@@ -9,7 +9,9 @@ MISSING_EXECUTION_WORKTREE = "missing_execution_worktree"
 READINESS_FIXABLE_ISSUES = "readiness_fixable_issues"
 PLAN_EXECUTABILITY_FIXABLE_ISSUES = "plan_executability_fixable_issues"
 FULL_SPEC_FALLBACK_PRESENT = "full_spec_fallback_present"
+DELEGATION_POLICY_EXPECTED_LOCAL_FALLBACK = "delegation_policy_expected_local_fallback"
 DELEGATION_POLICY_PREVENTED_ALL_DELEGATION = "delegation_policy_prevented_all_delegation"
+DELEGATION_POLICY_MISSING_DISPATCH_EVIDENCE = "delegation_policy_missing_dispatch_evidence"
 
 STABLE_FOLLOWUP_ORDER = [
     AGENTLENS_MISSING,
@@ -17,7 +19,9 @@ STABLE_FOLLOWUP_ORDER = [
     READINESS_FIXABLE_ISSUES,
     PLAN_EXECUTABILITY_FIXABLE_ISSUES,
     FULL_SPEC_FALLBACK_PRESENT,
+    DELEGATION_POLICY_EXPECTED_LOCAL_FALLBACK,
     DELEGATION_POLICY_PREVENTED_ALL_DELEGATION,
+    DELEGATION_POLICY_MISSING_DISPATCH_EVIDENCE,
 ]
 
 EXECUTION_MODES = {"interactive", "headless"}
@@ -85,6 +89,41 @@ def _all_dispatches_local_due_to_spawn_policy(state: dict[str, Any]) -> bool:
     return saw_local
 
 
+def _write_capable_task_ids(state: dict[str, Any]) -> list[str]:
+    tasks = state.get("tasks")
+    if not isinstance(tasks, dict):
+        return []
+    result: list[str] = []
+    for task_id, task in tasks.items():
+        if not isinstance(task, dict):
+            continue
+        manifest = task.get("unit_manifest") if isinstance(task.get("unit_manifest"), dict) else {}
+        if manifest.get("write_capable") is False:
+            continue
+        if manifest.get("tool_policy") in {None, "implementation", "docs"}:
+            result.append(str(task_id))
+    return result
+
+
+def delegation_followup(state: dict[str, Any]) -> str | None:
+    dispatches = [item for item in state.get("dispatch_decisions", []) if isinstance(item, dict)]
+    if state.get("lifecycle_outcome") == "finished" and _write_capable_task_ids(state) and not dispatches:
+        return DELEGATION_POLICY_MISSING_DISPATCH_EVIDENCE
+
+    policy = state.get("delegation_policy") if isinstance(state.get("delegation_policy"), dict) else {}
+    if (
+        _all_dispatches_local_due_to_spawn_policy(state)
+        and policy.get("spawn_policy") == "explicit-request-required"
+        and policy.get("explicit_user_delegation_request") is False
+    ):
+        return DELEGATION_POLICY_EXPECTED_LOCAL_FALLBACK
+
+    if _all_dispatches_local_due_to_spawn_policy(state):
+        return DELEGATION_POLICY_PREVENTED_ALL_DELEGATION
+
+    return None
+
+
 def stable_followups(
     state: dict[str, Any],
     *,
@@ -101,8 +140,9 @@ def stable_followups(
         found.add(PLAN_EXECUTABILITY_FIXABLE_ISSUES)
     if _count_from_quality(state, "context_quality", "full_spec_fallback_count") > 0:
         found.add(FULL_SPEC_FALLBACK_PRESENT)
-    if _all_dispatches_local_due_to_spawn_policy(state):
-        found.add(DELEGATION_POLICY_PREVENTED_ALL_DELEGATION)
+    delegation = delegation_followup(state)
+    if delegation:
+        found.add(delegation)
     return [item for item in STABLE_FOLLOWUP_ORDER if item in found]
 
 

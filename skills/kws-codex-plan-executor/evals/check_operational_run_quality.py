@@ -76,6 +76,16 @@ def v222_state() -> dict:
         "recommendations": [],
         "summary": "Run finished with validated state.",
     }
+    state["dispatch_decisions"] = [
+        {
+            "schema_version": "1",
+            "task_id": "task_0",
+            "decision": "delegate",
+            "reason": "Default subagent-first execution for an eligible task packet.",
+            "write_scope": ["docs/example.md"],
+            "failed_prerequisites": [],
+        }
+    ]
     return state
 
 
@@ -199,7 +209,7 @@ def main() -> int:
         "agentlens_missing",
         "readiness_fixable_issues",
         "full_spec_fallback_present",
-        "delegation_policy_prevented_all_delegation",
+        "delegation_policy_expected_local_fallback",
     ]
     if not checks["debt_helper_reports_stable_followups"]:
         failures.append("run_quality_debt.stable_followups should report state-intrinsic debt in stable order")
@@ -217,6 +227,33 @@ def main() -> int:
     )
     if not checks["debt_helper_reports_current_missing_worktree"]:
         failures.append("run_quality_debt.stable_followups should include current missing worktree observations")
+
+    explicit_delegation_state = v222_state()
+    explicit_delegation_state["delegation_policy"]["explicit_user_delegation_request"] = True
+    explicit_delegation_state["delegation_policy"]["requested_source"] = "explicit"
+    explicit_delegation_state["dispatch_decisions"] = [
+        {
+            "task_id": "task_0",
+            "decision": "local_fallback",
+            "reason": "spawn_agent tool policy requires explicit user delegation intent",
+            "failed_prerequisites": ["spawn_policy_requires_explicit_user_request"],
+        }
+    ]
+    explicit_followups = debt.stable_followups(explicit_delegation_state)
+    checks["explicit_delegation_all_policy_fallback_reports_debt"] = (
+        "delegation_policy_prevented_all_delegation" in explicit_followups
+    )
+    if not checks["explicit_delegation_all_policy_fallback_reports_debt"]:
+        failures.append("explicit delegation request with all-policy fallback should report prevented delegation debt")
+
+    missing_dispatch_state = v222_state()
+    missing_dispatch_state["dispatch_decisions"] = []
+    missing_dispatch_followups = debt.stable_followups(missing_dispatch_state)
+    checks["write_capable_task_without_dispatch_reports_missing_evidence"] = (
+        "delegation_policy_missing_dispatch_evidence" in missing_dispatch_followups
+    )
+    if not checks["write_capable_task_without_dispatch_reports_missing_evidence"]:
+        failures.append("write-capable finished tasks without dispatch evidence should report missing evidence")
 
     yellow_quality = v222_state()
     yellow_quality["agentlens_orchestration_run"] = None
