@@ -99,7 +99,10 @@ Required path invariants:
 - Finished `completion_audit.prompt_to_artifact_checklist`,
   `completion_audit.verification_evidence`, and
   `completion_audit.residual_risk` are lists. Use an empty `residual_risk` list
-  when there is no known residual risk; do not store scalar strings.
+  when there is no known residual risk; do not store scalar strings. Residual
+  risk items may be strings or structured residual risk objects. Structured
+  objects require `owner`, `class`, `summary`, and `blocks_release`; a
+  `blocks_release=true` item cannot coexist with passed finished completion.
 - `graphify_audit` records deterministic freshness output from
   `scripts/check_graphify_freshness.py`. Finished runs cannot carry
   non-empty `graphify_audit.errors`, and must reference the Graphify evidence
@@ -107,7 +110,11 @@ Required path invariants:
 - `plan_executability_audit` records read-only output from
   `scripts/audit_plan_executability.py`. When present, `path` must live under
   `run_dir`, `grade` is `green|yellow|red`, and issue counts are non-negative
-  integers. Finished states cannot retain a red plan executability audit.
+  integers. Finished states cannot retain a red plan executability audit. Raw
+  fields such as `raw_blocking_issue_count` and `raw_fixable_issue_count` are
+  optional for older state but must match the readable artifact when present.
+  If effective blocker counts are lower than raw blocker counts, the state
+  records `operator_reviewed_blocking_issues` and `operator_decision`.
 - `dispatch_decisions` records output from `scripts/preflight_dispatch.py`.
   Decisions are `delegate`, `local_fallback`, or `block`; finished runs cannot
   retain a `block` decision.
@@ -206,8 +213,13 @@ v2.22 operational run quality state may add:
   "plan_executability_audit": {
     "path": "/Users/example/.codex/orchestrator/example-plan-20260519-143022/plan_executability_audit.json",
     "grade": "yellow",
+    "raw_grade": "red",
     "blocking_issue_count": 0,
-    "fixable_issue_count": 1
+    "raw_blocking_issue_count": 2,
+    "fixable_issue_count": 1,
+    "raw_fixable_issue_count": 1,
+    "operator_reviewed_blocking_issues": ["task_1:risk_marker_requires_operator_review"],
+    "operator_decision": "Proceed locally after operator review."
   }
 }
 ```
@@ -217,11 +229,28 @@ v2.22 operational run quality state may add:
 operator guidance should use `execution_worktree` as the command/edit boundary.
 `run_quality.open_followups` may include actionable inspection markers such as
 `stale_non_terminal_run`, `missing_execution_worktree`, and
-`state_schema_drift`. Finished states that use v2.22 operational fields such as
+`state_schema_drift`, plus stable debt markers such as
+`delegation_policy_expected_local_fallback`,
+`delegation_policy_prevented_all_delegation`, and
+`delegation_policy_missing_dispatch_evidence`. Finished states that use v2.22
+operational fields such as
 `execution_worktree`, `delegation_policy`, or `preflight_bootstrap` must embed
 `run_quality` with `readiness`, `dispatch_consistency`, `context_quality`, and
 `verification_quality`; this keeps completion quality inspectable even after
 the execution worktree is removed.
+
+Structured residual risk object example:
+
+```json
+{
+  "owner": "operator",
+  "class": "external_credentials",
+  "summary": "Production deploy requires VM_PUBLIC_IP.",
+  "blocks_release": false,
+  "unblocks_when": "Operator provides credentials and reruns deploy smoke.",
+  "evidence_ref": "completion_audit.verification_evidence[0]"
+}
+```
 
 `run_quality.grade` is an operational quality grade, not a replacement for
 `completion_audit.passed`. A finished run may have

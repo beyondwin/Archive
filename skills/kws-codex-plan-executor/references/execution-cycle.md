@@ -36,9 +36,11 @@
 11. Run `scripts/audit_plan_executability.py` against the parsed plan JSON and
     `$RUN_DIR/task_packets` when packets exist. Save the JSON as
     `$RUN_DIR/plan_executability_audit.json`, print the short readiness summary,
-    and copy `grade`, `blocking_issue_count`, and `fixable_issue_count` into
-    state as `plan_executability_audit`. Blocking audit issues stop execution
-    before task contracts or edits.
+    and copy `grade`, `blocking_issue_count`, `fixable_issue_count`, and raw
+    count fields when operator review changes effective counts into state as
+    `plan_executability_audit`. Blocking audit issues stop execution before
+    task contracts or edits unless an explicit operator review records
+    `operator_reviewed_blocking_issues` and `operator_decision`.
 12. Resolve skill paths from the active skill registry/root mapping before
    reading local skill files. Do not hard-code `.system` or any other root. If a
    read fails, re-check the registry entry and root table first; classify it as
@@ -65,6 +67,9 @@
 16. Maintain `context_health` at every semantic boundary.
 17. Before `lifecycle_outcome=finished`, run `scripts/reconcile_state.py` and
     `scripts/validate_state.py`.
+18. When replay behavior, residual risk, run-quality debt, or audit parity
+    changes, run `scripts/normalize_cpe_run.py` through
+    `evals/check_cpe_replay.py` and reference that deterministic evidence.
 
 When finalizing `run_quality`, include state-intrinsic operational debt
 follow-ups before running `validate_state.py`. Read-only inspection may add

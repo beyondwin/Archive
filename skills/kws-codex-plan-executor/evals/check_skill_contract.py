@@ -34,7 +34,11 @@ def main() -> int:
     subagents = (skill_dir / "references" / "subagent-run-store.md").read_text(encoding="utf-8")
     pre_dispatch = (skill_dir / "references" / "pre-dispatch-pipeline.md").read_text(encoding="utf-8")
     plan_executability = (skill_dir / "scripts" / "audit_plan_executability.py").read_text(encoding="utf-8")
+    audit_common = (skill_dir / "scripts" / "cpe_audit_common.py").read_text(encoding="utf-8")
+    replay = (skill_dir / "scripts" / "normalize_cpe_run.py").read_text(encoding="utf-8")
     user_guide = (skill_dir / "docs" / "user-guide.ko.md").read_text(encoding="utf-8")
+    state_logging = (skill_dir / "docs" / "state-and-logging.md").read_text(encoding="utf-8")
+    eval_coverage = (skill_dir / "docs" / "eval-coverage-cpe.md").read_text(encoding="utf-8")
     checklist = (skill_dir / "references" / "prompt-export-checklist.md").read_text(encoding="utf-8")
     eval_run = (skill_dir / "evals" / "run.sh").read_text(encoding="utf-8")
     invocation = section(text, "## Invocation", "## Hard Boundary")
@@ -155,7 +159,7 @@ def main() -> int:
             )
         ),
         "plan_executability_script_reuses_reason_vocabulary": all(
-            token in plan_executability
+            token in plan_executability + audit_common
             for token in (
                 "adaptive_policy_local_fast_path_docs_only",
                 "adaptive_policy_local_fast_path_small_scope",
@@ -165,6 +169,20 @@ def main() -> int:
             )
         ),
         "plan_executability_eval_in_harness": "check_plan_executability_audit.py" in eval_run,
+        "run_quality_cleanup_contract": all(
+            token in runtime + user_guide + state_logging
+            for token in (
+                "delegation_policy_expected_local_fallback",
+                "delegation_policy_missing_dispatch_evidence",
+                "raw_blocking_issue_count",
+                "structured residual risk",
+                "normalize_cpe_run.py",
+                "eval-coverage-cpe.md",
+            )
+        ),
+        "cpe_replay_eval_in_harness": "check_cpe_replay.py" in eval_run
+        and "forbidden_patterns" in replay
+        and "Normalized replay forbidden patterns" in eval_coverage,
         "korean_user_guide_mentions_readiness_summary": "readiness summary" in user_guide
         and "plan_executability_audit" in user_guide,
         "preflight_dispatch_contract": all(

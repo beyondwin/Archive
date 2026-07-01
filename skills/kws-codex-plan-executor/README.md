@@ -64,6 +64,7 @@ python3 evals/check_cache_observations.py
 python3 evals/check_graphify_freshness.py
 python3 evals/check_preflight_dispatch.py
 python3 evals/check_plan_executability_audit.py
+python3 evals/check_cpe_replay.py
 python3 evals/check_recovery_policy.py
 python3 evals/check_trajectory_projection.py
 python3 evals/check_progress_ledger.py
@@ -99,6 +100,13 @@ current Superpowers contracts are missing.
 Plan executability is checked with `scripts/audit_plan_executability.py`. It
 summarizes whether Superpowers plan tasks are ready for CPE task packets, local
 fast path, delegation, or operator review before task contracts or edits.
+The compact state summary may preserve both raw audit counts and
+operator-reviewed effective counts with `raw_blocking_issue_count`,
+`raw_fixable_issue_count`, `operator_reviewed_blocking_issues`, and
+`operator_decision`.
+Normalized replay evidence is generated with `scripts/normalize_cpe_run.py`
+and covered by `check_cpe_replay.py`; it records stable summaries and forbidden
+pattern flags without raw prompts or transcripts.
 
 Run-state repair is separate from inspection and defaults to dry-run:
 
@@ -140,6 +148,8 @@ transcripts.
 - `docs/state-and-logging.md` - state fields, Graphify/dispatch evidence,
   plan executability audit, run quality, and repair state.
 - `docs/evals-and-verification.md` - deterministic eval and harness guide.
+- `docs/eval-coverage-cpe.md` - deterministic coverage map for run-quality
+  cleanup failure modes.
 - `docs/risks-limitations-deferrals.md` - known limits and conservative
   operator boundaries.
 - `docs/verification-log.md` - compact verification history.
@@ -153,3 +163,8 @@ transcripts.
 v2.22 records effective delegation policy, bootstrap suggestions, execution
 worktree provenance, and read-only run-quality summaries so operators can trust
 recent runs without reading raw transcripts.
+Current run-quality debt distinguishes
+`delegation_policy_expected_local_fallback` from
+`delegation_policy_prevented_all_delegation` and reports
+`delegation_policy_missing_dispatch_evidence` when a finished write-capable
+task lacks dispatch evidence.

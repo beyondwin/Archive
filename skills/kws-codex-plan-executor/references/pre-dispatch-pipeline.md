@@ -50,4 +50,9 @@ Finished state cannot carry unresolved `dispatch_decisions[].decision = block`.
 invocation did not carry explicit delegation intent, the decision is
 `local_fallback` with failed prerequisite
 `spawn_policy_requires_explicit_user_request`. That is a policy fallback, not a
-task failure.
+task failure. Finished run-quality debt records this as
+`delegation_policy_expected_local_fallback` when it was the expected resolved
+policy before execution. `delegation_policy_prevented_all_delegation` is
+reserved for explicit delegation requests that still fell back everywhere, and
+`delegation_policy_missing_dispatch_evidence` means a finished write-capable
+task has no dispatch decision evidence.

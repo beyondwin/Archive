@@ -107,7 +107,12 @@ def _write_capable_task_ids(state: dict[str, Any]) -> list[str]:
 
 def delegation_followup(state: dict[str, Any]) -> str | None:
     dispatches = [item for item in state.get("dispatch_decisions", []) if isinstance(item, dict)]
-    if state.get("lifecycle_outcome") == "finished" and _write_capable_task_ids(state) and not dispatches:
+    if (
+        state.get("lifecycle_outcome") == "finished"
+        and state.get("subagents_requested") is True
+        and _write_capable_task_ids(state)
+        and not dispatches
+    ):
         return DELEGATION_POLICY_MISSING_DISPATCH_EVIDENCE
 
     policy = state.get("delegation_policy") if isinstance(state.get("delegation_policy"), dict) else {}

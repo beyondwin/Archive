@@ -1,5 +1,18 @@
 # History
 
+## 2.25.0 - Unreleased
+
+- Added shared CPE audit semantics for dependency aliases and write-scope
+  formatting.
+- Improved task packet spec mapping with YAML `spec_refs`, manifest task
+  mappings, and dependency aliases.
+- Split expected local fallback from prevented delegation in run-quality debt,
+  and added missing dispatch evidence follow-up.
+- Added structured residual risk object validation and raw/effective plan audit
+  count parity checks.
+- Added normalized CPE replay deterministic eval coverage and
+  `docs/eval-coverage-cpe.md`.
+
 ## 2.24.0 - 2026-06-25
 
 - Added stable CPE run-quality debt follow-ups for AgentLens gaps, missing

@@ -171,7 +171,9 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   `verification_evidence`. Finished `completion_audit` fields are structured:
   `prompt_to_artifact_checklist`, `verification_evidence`, and
   `residual_risk` are lists so downstream inspection never treats scalar text as
-  character-level evidence.
+  character-level evidence. `residual_risk` items may be strings or structured
+  residual risk objects with `owner`, `class`, `summary`, and `blocks_release`;
+  a release-blocking object cannot coexist with a passed finished completion.
 - Before terminal `lifecycle_outcome=finished`, run drift reconciliation with
   `scripts/reconcile_state.py --check`; use `--repair-safe` only when a safe
   repair should be persisted. Unresolved blocking drift prevents a finished
@@ -210,7 +212,10 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   contracts or edits. The audit records `plan_executability_audit` evidence,
   summarizes `thin_stateful_bridge` readiness, and classifies task-level
   `delegate`, `local_fast_path`, `operator_review`, or `block` fit without
-  mutating worktrees, state, or repository files.
+  mutating worktrees, state, or repository files. Finished operational-quality
+  states may distinguish raw plan audit counts from operator-reviewed effective
+  counts. If effective blocker counts are lower than raw counts, the state
+  records `operator_reviewed_blocking_issues` and `operator_decision`.
 - Finished runs with both `dispatch_decisions` and completed write-capable
   tasks must keep final `subagent_strategy` aligned with the latest dispatch
   decision for that task. If the operator intentionally overrides a stale or
@@ -226,10 +231,15 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
 - Finished operational-quality `run_quality.open_followups` records stable
   non-blocking executor debt signals: `agentlens_missing`,
   `missing_execution_worktree`, `readiness_fixable_issues`,
-  `full_spec_fallback_present`, and
-  `delegation_policy_prevented_all_delegation`. `completion_audit.passed=true`
-  and `run_quality.grade=yellow` may coexist when product verification passed
-  but executor evidence or efficiency follow-up remains.
+  `full_spec_fallback_present`, `delegation_policy_expected_local_fallback`,
+  `delegation_policy_prevented_all_delegation`, and
+  `delegation_policy_missing_dispatch_evidence`. Expected local fallback caused
+  by an explicit-request-required spawn policy is recorded separately from
+  prevented delegation. Do not report
+  `delegation_policy_prevented_all_delegation` when local fallback was the
+  resolved policy before execution. `completion_audit.passed=true` and
+  `run_quality.grade=yellow` may coexist when product verification passed but
+  executor evidence or efficiency follow-up remains.
 - When read-only inspection reports stale non-terminal runs with missing
   execution worktrees, use `scripts/repair_runs.py` to produce a dry-run repair
   plan before any operator action. The only safe mutation is explicit
@@ -242,6 +252,10 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   `dispatch_consistency`, `context_quality`, and `verification_quality` so
   full-spec fallback, dispatch overrides, and completion evidence quality remain
   inspectable after the execution worktree is gone.
+- Normalized CPE replay checks are deterministic eval evidence from
+  `scripts/normalize_cpe_run.py`. They summarize state, audits, dispatch
+  decisions, residual risk classes, and forbidden durable-log patterns without
+  storing raw transcripts or full prompts.
 - Prompt-generating artifacts follow `references/cache-strategy.md`. The
   stable prefix role, safety, required-skill, and output-schema content stays before
   the stable-prefix boundary; run-specific paths, task packets, timestamps, git
@@ -348,7 +362,7 @@ omitting Spark routes.
 
 | Mode | Required checks before completion |
 |------|-----------------------------------|
-| `interactive` | Superpowers compatibility audit when current Superpowers skills are available, `scripts/parse_plan.py`, `context.json`, `context_health`, plan executability audit, changed-project tests or honest substitute, prompt cache audit, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py` |
+| `interactive` | Superpowers compatibility audit when current Superpowers skills are available, `scripts/parse_plan.py`, `context.json`, `context_health`, plan executability audit, changed-project tests or honest substitute, prompt cache audit, normalized CPE replay eval when replay behavior changed, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py` |
 | `headless` | `scripts/parse_plan.py`, `context.json`, `context_health`, acceptance command or honest substitute, prompt cache audit, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py`, headless JSONL/final artifact review |
 | `prompt` | `evals/check_prompt.py` or the prompt export checklist when no fixture exists |
 | `handoff` | `evals/check_prompt.py` or the prompt export checklist, plus source state/path readability |

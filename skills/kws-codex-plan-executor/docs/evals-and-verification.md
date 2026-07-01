@@ -28,6 +28,7 @@ python3 evals/check_recovery_policy.py
 python3 evals/check_trajectory_projection.py
 python3 evals/check_progress_ledger.py
 python3 evals/check_operational_run_quality.py
+python3 evals/check_cpe_replay.py
 python3 evals/check_superpowers_compatibility.py
 python3 -m py_compile scripts/*.py evals/*.py
 bash -n evals/run.sh
@@ -72,6 +73,12 @@ delegation policy enums, execution-worktree provenance, static fixture emission
 of run-quality fields, and recent inspection summary behavior. `check_inspect_runs.py`
 also covers actionable quality followups for stale non-terminal runs and missing
 execution worktrees.
+
+`check_cpe_replay.py` covers `scripts/normalize_cpe_run.py`, including
+completion status, run-quality grade, plan-audit count summary,
+dispatch-decision reason counts, structured residual risk classes, and
+forbidden durable-output patterns. `docs/eval-coverage-cpe.md` maps these
+checks to the CPE run-quality cleanup failure modes.
 
 `check_superpowers_compatibility.py` covers the current Superpowers contract
 surface and verifies that CPE recommends `thin_stateful_bridge` only when the
