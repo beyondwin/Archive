@@ -83,6 +83,12 @@ as `stale_non_terminal_run`, `missing_execution_worktree`,
 State-intrinsic operational debt is classified by
 `scripts/run_quality_debt.py` so validation, static fixtures, and read-only
 inspection use the same follow-up vocabulary.
+Expected local fallback from an explicit-request-required spawn policy is
+reported as `delegation_policy_expected_local_fallback`, not as prevented
+delegation. `delegation_policy_prevented_all_delegation` is reserved for
+explicit delegation requests that still fall back everywhere, and
+`delegation_policy_missing_dispatch_evidence` flags finished write-capable
+tasks without dispatch evidence.
 
 ## Failure, Recovery, And Progress
 
@@ -117,8 +123,45 @@ blocking/fixable issue counts. The detailed JSON stays at
 `$RUN_DIR/plan_executability_audit.json`; state stores the compact fields that
 validation and run-quality debt need.
 
+When operator review reduces blockers, state keeps both raw and effective
+counts:
+
+```json
+{
+  "plan_executability_audit": {
+    "grade": "yellow",
+    "raw_grade": "red",
+    "blocking_issue_count": 0,
+    "raw_blocking_issue_count": 2,
+    "fixable_issue_count": 3,
+    "raw_fixable_issue_count": 3,
+    "operator_reviewed_blocking_issues": ["task_1:risk_marker_requires_operator_review"],
+    "operator_decision": "Proceed locally after operator review."
+  }
+}
+```
+
 The audit is read-only. It classifies task packet readiness, acceptance
 coverage, write-scope safety, risky paths, full-spec fallback, and expected
 dispatch fit. Red audit results block execution before edits. Yellow audit
 results may continue only when the operator records the decision and the
 remaining issue is tracked through `run_quality.open_followups`.
+
+## Structured Residual Risk And Replay
+
+`completion_audit.residual_risk` remains list-shaped. Items may be strings or
+structured residual risk objects with `owner`, `class`, `summary`,
+`blocks_release`, optional `unblocks_when`, and optional `evidence_ref`. Valid
+owners are `executor`, `operator`, `product`, and `environment`; valid classes
+include `external_credentials`, `deployment`, `monitoring`,
+`executor_evidence`, `environment_unavailable`, and `product_followup`. A
+structured item with `blocks_release=true` cannot coexist with a passed
+finished completion.
+
+`scripts/normalize_cpe_run.py` emits compact replay JSON for deterministic
+checks and handoffs. It summarizes terminal state, completion status,
+run-quality grade, open followups, full-spec fallback count, dispatch reason
+counts, plan audit counts, residual risk classes, prompt/Graphify summaries,
+and forbidden durable-output patterns without storing raw transcripts or full
+prompts. `eval-coverage-cpe.md` maps this replay check and adjacent CPE quality
+evals to the failure modes they protect.

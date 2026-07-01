@@ -60,7 +60,9 @@ because they depend on CPE-specific artifacts.
 policy, explicit user delegation intent, effective mode, adaptive policy kind,
 safety gate, value gate, and deterministic signals. The pre-dispatch script owns
 deterministic fallbacks such as an explicit-request-only spawn policy and
-adaptive local fast path.
+adaptive local fast path. Run-quality debt distinguishes expected local
+fallback from prevented delegation, and separately reports missing dispatch
+evidence for finished write-capable tasks.
 
 `preflight_bootstrap` is detection-only. It suggests dependency or capability
 bootstrap commands and records tool availability, but CPE never executes those
@@ -87,6 +89,15 @@ Run-quality operational debt is classified in
 `scripts/run_quality_debt.py` so state validation and read-only inspection use
 the same stable follow-up strings while keeping filesystem observations such as
 missing execution worktrees out of finished-state hard validation.
+Plan executability state keeps raw audit counts separate from
+operator-reviewed effective counts, so a reviewed blocker reduction remains
+auditable after finalization.
+
+`scripts/normalize_cpe_run.py` turns a run state into deterministic replay JSON:
+terminal outcome, completion status, run-quality grade, open followups,
+dispatch decision reason counts, plan audit counts, residual risk classes, and
+forbidden-pattern markers. It intentionally avoids raw transcripts and full
+prompts.
 
 Structured failure state separates machine-readable blockers from human
 handoff summaries. `current_blocker` records recoverable blocked state,

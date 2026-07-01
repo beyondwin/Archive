@@ -118,8 +118,10 @@ audit를 거칩니다.
 local-fast-path 수, fixable issue 수, blocker 수가 들어갑니다. 세부 JSON은
 `$RUN_DIR/plan_executability_audit.json`에 저장되고, state에는
 `plan_executability_audit.grade`, `blocking_issue_count`,
-`fixable_issue_count`가 기록됩니다. finished state는 red audit를 남길 수
-없습니다.
+`fixable_issue_count`가 기록됩니다. operator review로 blocker를 낮춘 경우에는
+`raw_blocking_issue_count`, `raw_fixable_issue_count`,
+`operator_reviewed_blocking_issues`, `operator_decision`도 함께 남겨 원본 audit와
+effective count를 구분합니다. finished state는 red audit를 남길 수 없습니다.
 
 ## 상태와 파일 위치
 
@@ -157,7 +159,25 @@ local-fast-path 수, fixable issue 수, blocker 수가 들어갑니다. 세부 J
 | `readiness_fixable_issues` | run readiness의 수정 가능 이슈가 남음 |
 | `plan_executability_fixable_issues` | plan executability audit의 yellow 이슈가 남음 |
 | `full_spec_fallback_present` | task packet이 spec slice 대신 full spec fallback을 사용 |
-| `delegation_policy_prevented_all_delegation` | tool policy 때문에 모든 dispatch가 local fallback |
+| `delegation_policy_expected_local_fallback` | explicit request가 필요한 spawn policy 때문에 예상대로 local fallback |
+| `delegation_policy_prevented_all_delegation` | 명시적 delegation 요청이 있었지만 모든 dispatch가 policy fallback |
+| `delegation_policy_missing_dispatch_evidence` | finished write-capable task의 dispatch evidence가 없음 |
+
+`completion_audit.residual_risk`는 문자열 또는 structured residual risk 객체를
+담을 수 있습니다. 객체는 `owner`, `class`, `summary`, `blocks_release`를
+포함하며, `blocks_release=true`인 항목은 passed finished completion 뒤에 숨길 수
+없습니다.
+
+정규화된 replay는 raw transcript 없이 상태를 비교할 때 사용합니다.
+
+```bash
+python3 scripts/normalize_cpe_run.py \
+  --state "$RUN_DIR/state.json" \
+  --output "$RUN_DIR/replay.json"
+```
+
+출력에는 run-quality grade, open followups, plan audit count, dispatch reason,
+residual risk class, forbidden pattern 결과가 들어갑니다.
 
 최근 실행을 확인하려면:
 
@@ -220,6 +240,7 @@ skill 변경 후 기본 검증:
 python3 evals/check_skill_contract.py --skill SKILL.md
 python3 evals/check_state_schema.py
 python3 evals/check_operational_run_quality.py
+python3 evals/check_cpe_replay.py
 python3 evals/check_superpowers_compatibility.py
 python3 evals/check_plan_executability_audit.py
 ./evals/run.sh
