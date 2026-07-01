@@ -22,7 +22,7 @@ verify:
 
 function initSourceCheckout(prefix: string): string {
   const workspace = mkdtempSync(join(tmpdir(), prefix));
-  Bun.spawnSync(["git", "init", "-q"], { cwd: workspace });
+  Bun.spawnSync(["git", "init", "-q", "-b", "main"], { cwd: workspace });
   Bun.spawnSync(["git", "config", "user.email", "test@example.com"], { cwd: workspace });
   Bun.spawnSync(["git", "config", "user.name", "Test"], { cwd: workspace });
   writeFileSync(join(workspace, "README.md"), "before\n");
