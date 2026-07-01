@@ -148,6 +148,28 @@ def resolve_sections(task: dict, manifest: dict, fallback_policy: str) -> tuple[
             "candidate_scores": [{"section_id": section_id, "score": 100, "signals": ["explicit_spec_ref"]} for section_id in explicit],
             "mapping_reason": "Matched explicit Spec Refs.",
             "requires_parent_mapping": False,
+            "source": "explicit",
+        }
+
+    task_to_sections = manifest.get("task_to_sections") if isinstance(manifest.get("task_to_sections"), dict) else {}
+    manifest_refs = [
+        item.strip()
+        for item in task_to_sections.get(str(task.get("id", "")), [])
+        if isinstance(item, str) and item.strip()
+    ]
+    if manifest_refs:
+        for section_id in manifest_refs:
+            if section_id not in sections:
+                die(f"unknown manifest section for {task.get('id')}: {section_id}")
+        return manifest_refs, False, {
+            "selected_section_ids": manifest_refs,
+            "candidate_scores": [
+                {"section_id": section_id, "score": 90, "signals": ["manifest_task_to_sections"]}
+                for section_id in manifest_refs
+            ],
+            "mapping_reason": "Matched spec manifest task_to_sections.",
+            "requires_parent_mapping": False,
+            "source": "manifest",
         }
 
     matched, candidate_scores = heuristic_sections(task, manifest)
@@ -158,6 +180,7 @@ def resolve_sections(task: dict, manifest: dict, fallback_policy: str) -> tuple[
             "candidate_scores": candidate_scores,
             "mapping_reason": "Matched task file or identifier signals.",
             "requires_parent_mapping": False,
+            "source": "heuristic",
         }
 
     if fallback_policy == "halt_on_blocker":
@@ -167,6 +190,7 @@ def resolve_sections(task: dict, manifest: dict, fallback_policy: str) -> tuple[
         "candidate_scores": candidate_scores,
         "mapping_reason": "No task-specific spec section matched; using full spec fallback.",
         "requires_parent_mapping": True,
+        "source": "fallback",
     }
 
 
@@ -254,6 +278,7 @@ def build_packet(
     section_ids, fallback_used, mapping = resolve_sections(task, manifest, fallback_policy)
     spec_mode, section_label, spec_text = spec_context(spec_path, manifest, section_ids, fallback_used)
     files = [item for item in task.get("files", []) if isinstance(item, str)]
+    depends_on = [item for item in task.get("depends_on", []) if isinstance(item, str)]
     task_body = task.get("body", "")
     acceptance_command = task.get("acceptance_command")
     acceptance_source = task.get("acceptance_source") or (
@@ -287,7 +312,8 @@ def build_packet(
         "task_title": task.get("title", ""),
         "task_body": task_body,
         "files": files,
-        "depends_on": task.get("depends_on", []),
+        "depends_on": depends_on,
+        "dependencies": depends_on,
         "acceptance": {
             "has_acceptance_criteria": bool(task.get("has_acceptance_criteria")),
             "command": acceptance_command,
