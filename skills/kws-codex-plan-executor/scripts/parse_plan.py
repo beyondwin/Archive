@@ -59,8 +59,10 @@ YAML_TASK_RE = re.compile(r"```yaml\s+(?:agentrunway|waygent)-task\s*\n(?P<body>
 YAML_TASK_ID_RE = re.compile(r"(?m)^(?:task_id|id):\s*(?P<value>\S+)\s*$")
 YAML_TITLE_RE = re.compile(r"(?m)^title:\s*(?P<value>.+?)\s*$")
 YAML_DEPENDENCIES_RE = re.compile(r"(?m)^dependencies:\s*\[(?P<value>[^\]]*)\]\s*$")
+YAML_SPEC_REFS_RE = re.compile(r"(?m)^spec_refs:\s*\[(?P<value>[^\]]*)\]\s*$")
 YAML_FILE_CLAIM_RE = re.compile(r"-\s*\{path:\s*(?P<path>[^,}]+),\s*mode:\s*(?P<mode>[^}]+)\}")
 YAML_FILE_CLAIM_LINE_RE = re.compile(r"(?m)^\s*-\s+path:\s*(?P<path>.+?)\s*$")
+YAML_FILE_CLAIM_SCALAR_RE = re.compile(r"^\s*-\s+(?P<path>.+?)\s*$")
 YAML_VERIFY_RE = re.compile(r"(?m)^(?:verify|acceptance|verification):\s*(?:$|.+)")
 YAML_ACCEPTANCE_KEY_RE = re.compile(r"^(?:verify|acceptance|verification):\s*(?P<inline>.*)$")
 YAML_TOP_LEVEL_KEY_RE = re.compile(r"^[A-Za-z_][\w-]*:\s*")
@@ -341,6 +343,17 @@ def _extract_yaml_dependencies(yaml_body: str) -> list[str]:
     ]
 
 
+def _extract_yaml_spec_refs(yaml_body: str) -> list[str]:
+    spec_refs_match = YAML_SPEC_REFS_RE.search(yaml_body)
+    if not spec_refs_match:
+        return _extract_spec_refs(yaml_body)
+    return [
+        _clean_yaml_scalar(item)
+        for item in spec_refs_match.group("value").split(",")
+        if item.strip()
+    ]
+
+
 def _extract_yaml_file_claims(
     yaml_body: str,
     repo_root: Path,
@@ -361,6 +374,25 @@ def _extract_yaml_file_claims(
         files.append(repo_path)
         if source_markdown is not None:
             locations.setdefault(repo_path, _line_number(source_markdown, body_offset + item.start("path")))
+
+    in_file_claims = False
+    offset = 0
+    for line in yaml_body.splitlines(keepends=True):
+        stripped = line.strip()
+        if YAML_TOP_LEVEL_KEY_RE.match(line):
+            in_file_claims = stripped.startswith("file_claims:")
+            offset += len(line)
+            continue
+        if in_file_claims:
+            item = YAML_FILE_CLAIM_SCALAR_RE.match(line)
+            if item:
+                value = _clean_yaml_scalar(item.group("path"))
+                if value and not value.startswith("{") and not value.startswith("path:"):
+                    repo_path = _repo_relative(value, repo_root)
+                    files.append(repo_path)
+                    if source_markdown is not None:
+                        locations.setdefault(repo_path, _line_number(source_markdown, body_offset + offset + item.start("path")))
+        offset += len(line)
 
     return sorted(dict.fromkeys(files)), locations
 
@@ -408,7 +440,7 @@ def _extract_yaml_task_blocks(raw_markdown: str, repo_root: Path, mode: str) -> 
                 "body_line_end": _line_number(raw_markdown, match.end("body")),
                 "files": files,
                 "file_line_numbers": file_line_numbers,
-                "spec_refs": _extract_spec_refs(yaml_body),
+                "spec_refs": _extract_yaml_spec_refs(yaml_body),
                 "depends_on": [],
                 "yaml_task_id": task_id,
                 "_raw_depends_on": _extract_yaml_dependencies(yaml_body),

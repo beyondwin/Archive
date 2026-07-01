@@ -150,6 +150,7 @@ def main() -> int:
             and isinstance(mapping.get("candidate_scores"), list)
             and mapping.get("mapping_reason")
             and mapping.get("requires_parent_mapping") is False
+            and mapping.get("source") == "heuristic"
         )
         if not checks["mapping_evidence_present"]:
             failures.append("packet should preserve spec mapping evidence")
@@ -267,6 +268,65 @@ def main() -> int:
         )
         if not checks["context_threshold_range_matches_invocation_parser"]:
             failures.append("task packet context_threshold should reject values outside [0.05,0.95]")
+
+        manifest_mapping = {
+            "schema_version": "1",
+            "spec_path": "spec.md",
+            "fallback_policy": "full_spec_on_blocker",
+            "sections": {
+                "S1": {
+                    "id": "S1",
+                    "title": "Feature",
+                    "level": 1,
+                    "line_start": 1,
+                    "line_end": 3,
+                    "chars": 24,
+                    "sha256": "x",
+                },
+                "S2": {
+                    "id": "S2",
+                    "title": "Auth Session",
+                    "level": 1,
+                    "line_start": 4,
+                    "line_end": 6,
+                    "chars": 31,
+                    "sha256": "y",
+                },
+            },
+            "section_order": ["S1", "S2"],
+            "task_to_sections": {"task_manifest": ["S2"]},
+        }
+        manifest_task = {
+            "id": "task_manifest",
+            "title": "Unmatched title",
+            "body": "Task body",
+            "files": ["src/billing/invoice.py"],
+            "depends_on": ["task_0"],
+            "spec_refs": [],
+            "has_acceptance_criteria": True,
+            "acceptance_command": "python3 evals/check_task_packet.py",
+        }
+        manifest_result, manifest_packet = run_packet(
+            root,
+            plan_for(manifest_task),
+            spec_text,
+            manifest_mapping,
+            "task_manifest",
+        )
+        checks["manifest_task_to_sections_precedes_full_spec_fallback"] = (
+            manifest_result.returncode == 0
+            and manifest_packet.get("spec", {}).get("fallback_used") is False
+            and manifest_packet.get("spec", {}).get("section_ids") == ["S2"]
+            and manifest_packet.get("spec", {}).get("mapping", {}).get("source") == "manifest"
+        )
+        if not checks["manifest_task_to_sections_precedes_full_spec_fallback"]:
+            failures.append("manifest task_to_sections should precede full spec fallback")
+        checks["packet_emits_dependencies_alias_for_dispatch"] = (
+            manifest_packet.get("depends_on") == ["task_0"]
+            and manifest_packet.get("dependencies") == ["task_0"]
+        )
+        if not checks["packet_emits_dependencies_alias_for_dispatch"]:
+            failures.append("packet should emit dependencies alias matching depends_on")
 
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, ensure_ascii=False, indent=2))
