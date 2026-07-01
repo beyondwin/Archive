@@ -120,6 +120,14 @@ def main() -> int:
     if not checks["baseline_utils_has_direct_eval"]:
         failures.append("run.sh should execute direct baseline helper eval coverage")
 
+    checks["cpe_replay_eval_in_harness"] = (
+        "check_cpe_replay.py" in run_sh
+        and (skill_dir / "evals" / "check_cpe_replay.py").is_file()
+        and (skill_dir / "scripts" / "normalize_cpe_run.py").is_file()
+    )
+    if not checks["cpe_replay_eval_in_harness"]:
+        failures.append("run.sh should execute normalized CPE replay eval coverage")
+
     checks["update_refuses_failed_fixture_results"] = (
         "refusing to update baseline because eval checks failed" in run_sh
         and 'if [ "$overall_status" -ne 0 ]' in run_sh
