@@ -75,6 +75,7 @@ python3 "$EVAL_DIR/check_recovery_policy.py" >/dev/null
 python3 "$EVAL_DIR/check_trajectory_projection.py" >/dev/null
 python3 "$EVAL_DIR/check_progress_ledger.py" >/dev/null
 python3 "$EVAL_DIR/check_operational_run_quality.py" >/dev/null
+python3 "$EVAL_DIR/check_cpe_replay.py" >/dev/null
 python3 "$EVAL_DIR/check_eval_harness.py" >/dev/null
 python3 "$EVAL_DIR/check_baseline_utils.py" >/dev/null
 python3 "$EVAL_DIR/check_superpowers_compatibility.py" >/dev/null
