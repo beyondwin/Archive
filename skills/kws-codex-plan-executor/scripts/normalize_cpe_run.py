@@ -31,6 +31,43 @@ def residual_risk_classes(audit: dict[str, Any]) -> list[str]:
     return result
 
 
+def verification_evidence_classes(audit: dict[str, Any]) -> list[str]:
+    result: list[str] = []
+    for item in audit.get("verification_evidence", []):
+        if isinstance(item, dict) and isinstance(item.get("class"), str) and item["class"] not in result:
+            result.append(item["class"])
+    return result
+
+
+def verification_bundle_names(audit: dict[str, Any]) -> list[str]:
+    result: list[str] = []
+    for item in audit.get("verification_evidence", []):
+        if (
+            isinstance(item, dict)
+            and item.get("class") == "verification_bundle"
+            and isinstance(item.get("name"), str)
+            and item["name"] not in result
+        ):
+            result.append(item["name"])
+    return result
+
+
+def task_summary_count(tasks: dict[str, Any]) -> int:
+    return sum(
+        1
+        for task in tasks.values()
+        if isinstance(task, dict) and isinstance(task.get("next_task_summary"), str) and task["next_task_summary"].strip()
+    )
+
+
+def hot_tail_summary_count(state: dict[str, Any]) -> int:
+    health = state.get("context_health") if isinstance(state.get("context_health"), dict) else {}
+    summaries = health.get("hot_tail_summaries")
+    if not isinstance(summaries, list):
+        return 0
+    return sum(1 for item in summaries if isinstance(item, dict) and isinstance(item.get("summary"), str) and item["summary"].strip())
+
+
 def forbidden_patterns(texts: list[str]) -> list[str]:
     markers: list[str] = []
     joined = "\n".join(texts)
@@ -113,6 +150,10 @@ def normalize(state: dict[str, Any], *, context_text: str = "", final_output_tex
         "prompt_audit_passed": prompt_audit.get("passed") is True or prompt_audit.get("dynamic_marker_violations") == [],
         "graphify_fresh": graphify.get("fresh") is True,
         "residual_risk_classes": residual_risk_classes(completion),
+        "verification_evidence_classes": verification_evidence_classes(completion),
+        "verification_bundle_names": verification_bundle_names(completion),
+        "task_summary_count": task_summary_count(tasks),
+        "hot_tail_summary_count": hot_tail_summary_count(state),
         "forbidden_patterns_found": forbidden_patterns([context_text, final_output_text]),
     }
 

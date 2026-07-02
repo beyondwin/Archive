@@ -22,7 +22,16 @@ def finished_state(run_dir: Path) -> dict:
         "completion_audit": {
             "passed": True,
             "prompt_to_artifact_checklist": ["implemented requested files"],
-            "verification_evidence": ["python3 evals/check_task_packet.py"],
+            "verification_evidence": [
+                "python3 evals/check_task_packet.py",
+                {
+                    "class": "verification_bundle",
+                    "name": "cpe_skill_change",
+                    "commands": ["./evals/run.sh"],
+                    "status": "passed",
+                    "required": False,
+                },
+            ],
             "residual_risk": [
                 {
                     "owner": "operator",
@@ -39,7 +48,10 @@ def finished_state(run_dir: Path) -> dict:
             "context_quality": {"full_spec_fallback_count": 1},
             "verification_quality": {"completion_audit_passed": True},
         },
-        "tasks": {"task_1": {"fallback_spec_used": True}},
+        "context_health": {
+            "hot_tail_summaries": [{"task_id": "task_1", "summary": "Rendered task packet view."}]
+        },
+        "tasks": {"task_1": {"fallback_spec_used": True, "next_task_summary": "Rendered task packet view."}},
         "dispatch_decisions": [
             {
                 "task_id": "task_1",
@@ -88,6 +100,10 @@ def main() -> int:
             and replay.get("full_spec_fallback_count") == 1
             and replay.get("residual_risk_classes") == ["external_credentials"]
             and replay.get("plan_executability", {}).get("fixable_issue_count") == 1
+            and replay.get("verification_evidence_classes") == ["verification_bundle"]
+            and replay.get("verification_bundle_names") == ["cpe_skill_change"]
+            and replay.get("task_summary_count") == 1
+            and replay.get("hot_tail_summary_count") == 1
         )
         if not checks["finished_yellow_replay_normalizes"]:
             failures.append("finished yellow state should normalize into stable replay fields")

@@ -4,6 +4,13 @@
 
 - Added shared CPE audit semantics for dependency aliases and write-scope
   formatting.
+- Added generated task packet markdown views for handoff, prompt, and subagent
+  readability.
+- Added optional one-line completed-task summaries for hot-tail context.
+- Added markdown golden-case evals for operator-readable policy regressions.
+- Added structured verification bundle evidence and advisory residual risk
+  classes.
+- Extended normalized replay to summarize bundle classes and summary counts.
 - Improved task packet spec mapping with YAML `spec_refs`, manifest task
   mappings, and dependency aliases.
 - Split expected local fallback from prevented delegation in run-quality debt,

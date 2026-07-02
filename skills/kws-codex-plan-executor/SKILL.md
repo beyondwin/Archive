@@ -166,6 +166,12 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   after context snapshot creation, after each task, after blocker/error events,
   before handoff/resume, and before final completion. It must include
   `status=green|yellow|red`, `next_action`, and `handoff_ready`.
+- Task packet human views are generated derivatives of task packet JSON. They
+  may be included in handoff, prompt hot-tail, and subagent task context, but
+  the JSON packet and state remain authoritative.
+- Completed tasks may record `next_task_summary` as a one-line hot-tail hint.
+  This summary never replaces structured task status, verification evidence,
+  dispatch decisions, or completion audit state.
 - Successful terminal runs set `lifecycle_outcome=finished` and include a
   passing `completion_audit` with `prompt_to_artifact_checklist` and
   `verification_evidence`. Finished `completion_audit` fields are structured:
@@ -174,6 +180,12 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   character-level evidence. `residual_risk` items may be strings or structured
   residual risk objects with `owner`, `class`, `summary`, and `blocks_release`;
   a release-blocking object cannot coexist with a passed finished completion.
+- Completion audit verification evidence may include structured
+  `class=verification_bundle` entries for project-level command bundles. These
+  entries classify evidence and do not replace per-task acceptance commands.
+- Structured residual risk classes are advisory readability metadata. They
+  cannot override `completion_audit.passed`, state validation, or release
+  blocker rules.
 - Before terminal `lifecycle_outcome=finished`, run drift reconciliation with
   `scripts/reconcile_state.py --check`; use `--repair-safe` only when a safe
   repair should be persisted. Unresolved blocking drift prevents a finished
@@ -362,8 +374,8 @@ omitting Spark routes.
 
 | Mode | Required checks before completion |
 |------|-----------------------------------|
-| `interactive` | Superpowers compatibility audit when current Superpowers skills are available, `scripts/parse_plan.py`, `context.json`, `context_health`, plan executability audit, changed-project tests or honest substitute, prompt cache audit, normalized CPE replay eval when replay behavior changed, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py` |
-| `headless` | `scripts/parse_plan.py`, `context.json`, `context_health`, acceptance command or honest substitute, prompt cache audit, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py`, headless JSONL/final artifact review |
+| `interactive` | Superpowers compatibility audit when current Superpowers skills are available, `scripts/parse_plan.py`, `context.json`, `context_health`, plan executability audit, task packet human view evidence when generated, markdown golden-case evals when policy cases change, verification bundle evidence when project-level bundles are used, changed-project tests or honest substitute, prompt cache audit, normalized CPE replay eval when replay behavior changed, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py` |
+| `headless` | `scripts/parse_plan.py`, `context.json`, `context_health`, task packet human view evidence when generated, markdown golden-case evals when policy cases change, verification bundle evidence when project-level bundles are used, acceptance command or honest substitute, prompt cache audit, Graphify audit when applicable, dispatch decision evidence for write-capable subagent tasks, passing `completion_audit` for `lifecycle_outcome=finished`, `scripts/validate_state.py`, headless JSONL/final artifact review |
 | `prompt` | `evals/check_prompt.py` or the prompt export checklist when no fixture exists |
 | `handoff` | `evals/check_prompt.py` or the prompt export checklist, plus source state/path readability |
 

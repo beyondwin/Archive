@@ -306,6 +306,14 @@ def main() -> int:
     if not checks["finished_verification_evidence_string_fails"]:
         failures.append("finished completion_audit.verification_evidence should require a non-empty list")
 
+    task_view_fields = base_state()
+    task_view_fields["tasks"]["task_0"]["task_packet_view_path"] = f"{task_view_fields['run_dir']}/task_packets/task_0.md"
+    task_view_fields["tasks"]["task_0"]["task_packet_view_sha256"] = "a" * 64
+    result = run_validator(script, task_view_fields)
+    checks["task_packet_view_fields_pass"] = result.returncode == 0
+    if not checks["task_packet_view_fields_pass"]:
+        failures.append("valid task packet view path/hash fields should pass: " + (result.stderr or result.stdout))
+
     legacy_subagents_on_without_runs = base_state()
     legacy_subagents_on_without_runs["subagents_requested"] = True
     legacy_subagents_on_without_runs["subagent_runs"] = []
