@@ -82,7 +82,9 @@ python3 "$EVAL_DIR/check_operational_run_quality.py" >/dev/null
 python3 "$EVAL_DIR/check_cpe_replay.py" >/dev/null
 python3 "$EVAL_DIR/check_eval_harness.py" >/dev/null
 python3 "$EVAL_DIR/check_baseline_utils.py" >/dev/null
-python3 "$EVAL_DIR/check_release_contract.py" >/dev/null
+if [ "$update_baseline" -eq 0 ]; then
+  python3 "$EVAL_DIR/check_release_contract.py" >/dev/null
+fi
 python3 "$EVAL_DIR/check_superpowers_compatibility.py" >/dev/null
 while IFS= read -r parser_fixture; do
   python3 "$EVAL_DIR/check_parse_plan.py" --fixture "$parser_fixture" >/dev/null
@@ -318,6 +320,7 @@ if [ "$update_baseline" -eq 1 ]; then
   else
     merge_subset_baseline "$BASELINE_FILE" "$generated_baseline" "$BASELINE_FILE"
   fi
+  python3 "$EVAL_DIR/check_release_contract.py" >/dev/null
   cat "$BASELINE_FILE"
 else
   compare_mode="full"

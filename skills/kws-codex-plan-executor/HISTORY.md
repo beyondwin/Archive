@@ -1,7 +1,11 @@
 # History
 
-## 2.25.0 - Unreleased
+## 2.25.0 - 2026-07-03
 
+- Added release-process documentation and deterministic release-contract eval
+  coverage for version, history, baseline, and maintainer-doc alignment.
+- Fixed release baseline update ordering so `./evals/run.sh --update-baseline`
+  can create the first baseline for a newly bumped version.
 - Added shared CPE audit semantics for dependency aliases and write-scope
   formatting.
 - Added generated task packet markdown views for handoff, prompt, and subagent

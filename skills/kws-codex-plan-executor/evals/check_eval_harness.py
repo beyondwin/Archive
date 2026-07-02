@@ -127,6 +127,17 @@ def main() -> int:
     if not checks["release_contract_eval_in_harness"]:
         failures.append("run.sh should execute release contract eval coverage")
 
+    checks["release_contract_allows_new_version_baseline_update"] = (
+        'if [ "$update_baseline" -eq 0 ]; then\n'
+        '  python3 "$EVAL_DIR/check_release_contract.py" >/dev/null\n'
+        "fi" in run_sh
+        and 'write_full_baseline "$generated_baseline" "$BASELINE_FILE"' in run_sh
+        and 'python3 "$EVAL_DIR/check_release_contract.py" >/dev/null\n'
+        '  cat "$BASELINE_FILE"' in run_sh
+    )
+    if not checks["release_contract_allows_new_version_baseline_update"]:
+        failures.append("run.sh should not block --update-baseline before a new version baseline exists")
+
     checks["cpe_replay_eval_in_harness"] = (
         "check_cpe_replay.py" in run_sh
         and (skill_dir / "evals" / "check_cpe_replay.py").is_file()
