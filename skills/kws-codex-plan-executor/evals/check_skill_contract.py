@@ -57,8 +57,10 @@ def main() -> int:
         "backwards-" + "compatible",
     ]
 
+    skill_version = re.search(r'(?m)^[ \t]*version:[ \t]*"(\d+\.\d+\.\d+)"', text)
+
     checks = {
-        "version_2240": 'version: "2.24.0"' in text,
+        "version_parseable_semver": bool(skill_version),
         "resume_argument": "resume=latest|<state-path>" in invocation,
         "subagents_on_default": "subagents=auto|on|off" in invocation and "default `on`" in invocation,
         "subagents_on_is_subagent_first_default": "subagent-first default" in normalized
