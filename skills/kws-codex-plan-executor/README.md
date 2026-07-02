@@ -165,6 +165,9 @@ closeout contract. `SKILL.md` metadata is the official version source of truth;
 - `docs/user-guide.ko.md` - Korean operator guide for modes, subagent policy,
   Superpowers bridge, readiness audits, run quality, repair, Graphify, and
   verification.
+- `docs/mental-model.ko.md` - Korean junior-friendly mental model with
+  flowcharts, UI-style run panels, and a glossary for understanding how CPE
+  executes plans safely.
 - `docs/how-it-works.md` - execution flow overview.
 - `docs/human-readable-harness-flow.ko.md` - Korean before/after explanation
   of the human-readable harness flow and junior-friendly diagrams.
