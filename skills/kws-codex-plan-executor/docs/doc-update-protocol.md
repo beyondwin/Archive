@@ -4,6 +4,11 @@ Use this protocol before finalizing any change to `kws-codex-plan-executor`.
 Its purpose is to keep runtime docs, maintainer docs, eval notes, and
 verification history aligned with the actual implementation.
 
+For version bump rules, baseline handling, release closeout, and verification
+history requirements, follow [release-process.md](release-process.md). This
+document maps changed surfaces to docs; it does not replace the release
+process.
+
 ## Required Habit
 
 Every update must include a documentation impact check. The result can be:

@@ -8,6 +8,7 @@ python3 evals/check_state_schema.py
 python3 evals/check_state_reconciliation.py
 python3 evals/check_eval_harness.py
 python3 evals/check_baseline_utils.py
+python3 evals/check_release_contract.py
 python3 evals/check_run_diffs.py
 python3 evals/check_context_snapshot.py
 python3 evals/check_headless_result.py
@@ -48,6 +49,11 @@ compare only the executed fixture entries; focused update runs replace only
 those fixture entries and preserve unexecuted fixtures.
 `evals/baseline_utils.py` owns the baseline compare and subset merge semantics,
 with direct coverage in `evals/check_baseline_utils.py`.
+
+`check_release_contract.py` verifies CPE release metadata and docs alignment:
+`SKILL.md` semantic version, matching baseline file, matching baseline version,
+current `HISTORY.md` section, release-process docs, and maintainer cross-links.
+The check is read-only and never updates baselines.
 
 The fixture harness copies the skill under test into a fixture repository, then
 uses deterministic runners to generate prompt/handoff outputs and execution

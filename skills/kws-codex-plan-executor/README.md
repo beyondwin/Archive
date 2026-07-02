@@ -148,6 +148,13 @@ handoff recipients, and subagents. The JSON packet remains the source of truth;
 the markdown view must preserve files, task body, AC, verification, forbidden
 globs, context budget, and full-spec fallback warnings.
 
+## Release Contract
+
+`docs/release-process.md` defines the CPE package versioning and release
+closeout contract. `SKILL.md` metadata is the official version source of truth;
+`HISTORY.md`, `evals/baselines/v<version>.json`, and
+`docs/verification-log.md` must stay aligned with it when a release is closed.
+
 ## Design Notes
 
 - `docs/user-guide.ko.md` - Korean operator guide for modes, subagent policy,

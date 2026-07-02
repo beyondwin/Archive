@@ -381,9 +381,9 @@ omitting Spark routes.
 
 ## Maintenance
 
-Use `references/change-protocol.md` before editing this skill. Update
-`HISTORY.md`, `ARCHITECTURE.md`, package metadata, compatibility docs, and eval
-baselines for behavior changes.
+Use `docs/release-process.md` and `docs/doc-update-protocol.md` before editing
+this skill. Update `HISTORY.md`, `ARCHITECTURE.md`, package metadata,
+compatibility docs, and eval baselines for behavior changes.
 
 For eval harness runs, the outer harness runs `evals/check_execution.py`. The
 target executor must not inspect fixture YAML, baseline files, `.harness`
