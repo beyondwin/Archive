@@ -120,6 +120,13 @@ def main() -> int:
     if not checks["baseline_utils_has_direct_eval"]:
         failures.append("run.sh should execute direct baseline helper eval coverage")
 
+    checks["release_contract_eval_in_harness"] = (
+        "check_release_contract.py" in run_sh
+        and (skill_dir / "evals" / "check_release_contract.py").is_file()
+    )
+    if not checks["release_contract_eval_in_harness"]:
+        failures.append("run.sh should execute release contract eval coverage")
+
     checks["cpe_replay_eval_in_harness"] = (
         "check_cpe_replay.py" in run_sh
         and (skill_dir / "evals" / "check_cpe_replay.py").is_file()
