@@ -392,3 +392,29 @@ Follow-up residual risk closure:
 - This closes the tracked-output loop where committing `GRAPH_REPORT.md` and
   `graph.json` advanced HEAD and made the report appear stale again even
   though no indexed source file changed.
+
+## 2026-07-03
+
+Scope:
+
+- Docs-only Korean junior onboarding document for the CPE mental model,
+  flowcharts, UI-style run panel, state-reading guide, and README discoverability.
+
+Commands:
+
+```bash
+git diff --check
+python3 evals/check_skill_contract.py --skill SKILL.md
+graphify update .
+python3 skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py --repo-root /Users/kws/source/private/Archive --update-ran --output /tmp/cpe-graphify-audit-doc-mental-model.json
+```
+
+Result:
+
+- Diff whitespace check: pass.
+- Skill contract check: pass with `passed=true`.
+- Graphify update: pass; `graphify-out/GRAPH_REPORT.md` and `graph.json`
+  refreshed after adding `docs/mental-model.ko.md`.
+- Graphify freshness audit: pass with `fresh=true` and no errors.
+- Full CPE fixture harness skipped because this change is docs-only and does
+  not alter runtime behavior, prompt templates, scripts, evals, or state schema.
