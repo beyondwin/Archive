@@ -114,6 +114,14 @@ audit를 거칩니다.
    - `files_missing`, `allowed_write_globs_empty`, `write_scope_too_broad`,
      risky path, lockfile 같은 차단 사유를 task contract 전에 잡습니다.
 
+이 audit는 현재 Superpowers-compatible plan만 실행 대상으로 봅니다. Superpowers는
+외부 계약이므로 CPE가 `/Users/kws/.codex/skills` 아래 스킬을 수정하지 않습니다.
+오래된 header, 누락된 `Files` block, 파서 계약 밖 task 구조는
+`blocked_unsupported_plan_shape`로 차단되며 legacy plan auto-support is not
+provided. lockfile, security, infra, migration 같은 위험 신호는 legacy가 아니라
+`operator_review_required`로 분리됩니다. `block` 결과의 `subagent_reason`은 항상
+실제 blocking issue에서 와야 하며 local fast path reason으로 덮이지 않습니다.
+
 짧은 readiness summary에는 route, task 수, delegate-ready 수,
 local-fast-path 수, fixable issue 수, blocker 수가 들어갑니다. 세부 JSON은
 `$RUN_DIR/plan_executability_audit.json`에 저장되고, state에는

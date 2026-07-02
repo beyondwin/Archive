@@ -44,6 +44,11 @@
     `plan_executability_audit`. Blocking audit issues stop execution before
     task contracts or edits unless an explicit operator review records
     `operator_reviewed_blocking_issues` and `operator_decision`.
+    If the audit reports `blocked_unsupported_plan_shape`, stop before task
+    contracts or edits and ask for a current Superpowers-compatible plan. Do not
+    auto-normalize a legacy plan. If it reports `operator_review_required`, keep
+    it separate from unsupported shape and require explicit operator review
+    before continuing.
 12. Resolve skill paths from the active skill registry/root mapping before
    reading local skill files. Do not hard-code `.system` or any other root. If a
    read fails, re-check the registry entry and root table first; classify it as

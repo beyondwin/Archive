@@ -171,6 +171,34 @@ def main() -> int:
             )
         ),
         "plan_executability_eval_in_harness": "check_plan_executability_audit.py" in eval_run,
+        "current_superpowers_plan_gate_contract": all(
+            token in runtime + user_guide + state_logging
+            for token in (
+                "external Superpowers contract",
+                "current Superpowers-compatible plan",
+                "blocked_unsupported_plan_shape",
+                "legacy plan auto-support is not provided",
+                "before task contracts or edits",
+            )
+        ),
+        "plan_executability_block_reason_contract": all(
+            token in plan_executability + runtime
+            for token in (
+                "BLOCKING_REASON_PRIORITY",
+                "primary_blocking_reason",
+                "subagent_reason",
+                "real blocking issue",
+            )
+        ),
+        "plan_support_classification_contract": all(
+            token in plan_executability + runtime + user_guide
+            for token in (
+                "current_superpowers_compatible",
+                "cpe_fixable_metadata",
+                "operator_review_required",
+                "blocked_unsupported_plan_shape",
+            )
+        ),
         "run_quality_cleanup_contract": all(
             token in runtime + user_guide + state_logging
             for token in (

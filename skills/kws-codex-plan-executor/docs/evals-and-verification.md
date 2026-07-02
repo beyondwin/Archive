@@ -66,9 +66,12 @@ pre-dispatch decisions, and run-readiness repair hints for malformed write
 scopes.
 
 Plan executability evals cover the read-only audit that runs before task
-contracts or edits. They verify green task packets, yellow docs-only acceptance
-gaps, red missing files, red broad write scopes, lockfile/operator-review risk,
-and thin-stateful-bridge summary counts.
+contracts or edits. They verify green current Superpowers-compatible task
+packets, yellow docs-only acceptance gaps, red missing files as
+`blocked_unsupported_plan_shape`, red broad write scopes, non-docs missing
+acceptance with `subagent_reason=acceptance_command_missing`,
+lockfile/operator-review risk as `operator_review_required`, legacy header
+blocking without auto-support, and thin-stateful-bridge summary counts.
 
 Adaptive dispatch evals cover docs-only local fast path, multi-file delegation
 when spawn policy is available, dirty overlap blocking, broad write-scope
