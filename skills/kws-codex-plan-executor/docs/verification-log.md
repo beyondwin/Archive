@@ -1,5 +1,26 @@
 # Verification Log
 
+## 2026-07-03 Asia/Seoul - CPE current Superpowers plan gate
+
+- Branch/commit: `codex/cpe-current-superpowers-plan-gate-20260703-070629`;
+  pre-release-log verification commit `b917a9b`.
+- Scope: fixed plan executability blocker reason priority, added current
+  Superpowers plan support classification, documented no legacy plan
+  auto-support, and released CPE `2.25.1`.
+- Commands:
+  - `./evals/run.sh --update-baseline` - PASS, wrote
+    `evals/baselines/v2.25.1.json` with 8 passing fixtures.
+  - `./evals/run.sh` - PASS with 8 passing fixtures.
+  - `python3 -m py_compile scripts/*.py evals/*.py` - PASS.
+  - `bash -n evals/run.sh` - PASS.
+  - `python3 scripts/audit_superpowers_compatibility.py --superpowers-root /Users/kws/.codex/skills --skill-root /Users/kws/.codex/worktrees/cpe-current-superpowers-plan-gate-20260703-070629/skills/kws-codex-plan-executor` - PASS, `thin_stateful_bridge`.
+  - `graphify update .` - PASS; refreshed tracked `graphify-out/` outputs with
+    `Built from commit: b917a9be`.
+  - `python3 skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py --repo-root /Users/kws/.codex/worktrees/cpe-current-superpowers-plan-gate-20260703-070629 --update-ran --output /Users/kws/.codex/orchestrator/cpe-current-superpowers-plan-gate-20260703-070629/graphify_audit_final.json` - PASS, `fresh=true`.
+  - `git diff --check` - PASS.
+- Residual risk: legacy Superpowers plan shapes are intentionally unsupported
+  and require regeneration with current `writing-plans`.
+
 ## 2026-07-03 - Release Contract And 2.25.0 Closeout
 
 Branch/commit:

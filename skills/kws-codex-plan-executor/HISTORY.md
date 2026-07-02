@@ -1,5 +1,15 @@
 # History
 
+## 2.25.1 - 2026-07-03
+
+- Fixed plan executability audit blocker reasons so blocked tasks report the
+  real blocking issue instead of stale adaptive local-fast-path reasons.
+- Added current Superpowers plan support classification:
+  `current_superpowers_compatible`, `cpe_fixable_metadata`,
+  `operator_review_required`, and `blocked_unsupported_plan_shape`.
+- Documented that CPE treats Superpowers as an external contract and does not
+  provide legacy plan auto-support.
+
 ## 2.25.0 - 2026-07-03
 
 - Added release-process documentation and deterministic release-contract eval
