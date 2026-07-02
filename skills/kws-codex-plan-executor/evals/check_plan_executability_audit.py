@@ -11,9 +11,54 @@ from pathlib import Path
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "audit_plan_executability.py"
 
 
-def write_plan_json(path: Path, tasks: list[dict]) -> None:
+CURRENT_PLAN_MARKDOWN = """# Fixture Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Exercise the CPE plan executability audit.
+
+**Architecture:** The fixture keeps raw plan text current enough for the CPE gate while parsed JSON drives the individual task cases.
+
+**Tech Stack:** Python 3 standard library.
+
+## Global Constraints
+
+- Keep fixture edits scoped to the temporary repository.
+
+---
+
+### Task 1: Fixture Task
+
+**Files:**
+- Modify: `src/app.py`
+
+```bash
+python3 -m pytest
+```
+"""
+
+
+def legacy_plan_markdown() -> str:
+    return """# Legacy Fixture Plan
+
+> **For agentic workers:** Implement task-by-task. Keep edits scoped.
+
+### Task 1: Legacy Task
+
+**Files:**
+- Modify: `src/app.py`
+
+```bash
+python3 -m pytest
+```
+"""
+
+
+def write_plan_json(path: Path, tasks: list[dict], *, plan_markdown: str | None = None) -> None:
+    markdown_path = path.with_suffix(".md")
+    markdown_path.write_text(plan_markdown if plan_markdown is not None else CURRENT_PLAN_MARKDOWN, encoding="utf-8")
     path.write_text(
-        json.dumps({"plan": str(path.with_suffix(".md")), "mode": "interactive", "tasks": tasks}, indent=2),
+        json.dumps({"plan": str(markdown_path), "mode": "interactive", "tasks": tasks}, indent=2),
         encoding="utf-8",
     )
 
@@ -135,8 +180,12 @@ def main() -> int:
         write_plan_json(plan_json, [task("task_1", ["docs/example.md"], acceptance_command=None, title="Polish docs")])
         result, payload = run_audit(repo, plan_json)
         kinds = {issue for item in payload.get("tasks", []) for issue in item.get("fixable_issues", [])}
+        task_audit = payload.get("tasks", [{}])[0]
         checks["yellow_fixable_acceptance"] = (
-            result.returncode == 0 and payload.get("grade") == "yellow" and "acceptance_command_missing" in kinds
+            result.returncode == 0
+            and payload.get("grade") == "yellow"
+            and task_audit.get("plan_support") == "cpe_fixable_metadata"
+            and "acceptance_command_missing" in kinds
         )
         if not checks["yellow_fixable_acceptance"]:
             failures.append("docs-only task without acceptance should be yellow and fixable")
@@ -148,7 +197,13 @@ def main() -> int:
         plan_json = repo / "plan.json"
         write_plan_json(plan_json, [task("task_1", [], title="Missing files")])
         result, payload = run_audit(repo, plan_json)
-        checks["red_missing_files"] = result.returncode == 1 and payload.get("grade") == "red"
+        task_audit = payload.get("tasks", [{}])[0]
+        checks["red_missing_files"] = (
+            result.returncode == 1
+            and payload.get("grade") == "red"
+            and task_audit.get("plan_support") == "blocked_unsupported_plan_shape"
+            and task_audit.get("subagent_reason") == "blocked_unsupported_plan_shape"
+        )
         if not checks["red_missing_files"]:
             failures.append("missing files should produce red audit")
 
@@ -164,6 +219,51 @@ def main() -> int:
         if not checks["red_broad_scope"]:
             failures.append("broad write scope should produce red audit")
 
+    with tempfile.TemporaryDirectory(prefix="cpe-exec-audit-acceptance-block-") as temp:
+        repo = Path(temp) / "repo"
+        repo.mkdir()
+        init_repo(repo)
+        plan_json = repo / "plan.json"
+        write_plan_json(
+            plan_json,
+            [task("task_1", ["src/app.py"], acceptance_command=None, title="App change without acceptance")],
+        )
+        result, payload = run_audit(repo, plan_json)
+        task_audit = payload.get("tasks", [{}])[0]
+        checks["block_reason_prioritizes_acceptance_missing"] = (
+            result.returncode == 1
+            and payload.get("grade") == "red"
+            and task_audit.get("plan_support") == "current_superpowers_compatible"
+            and task_audit.get("subagent_fit") == "block"
+            and task_audit.get("subagent_reason") == "acceptance_command_missing"
+            and "acceptance_command_missing" in task_audit.get("blocking_issues", [])
+        )
+        if not checks["block_reason_prioritizes_acceptance_missing"]:
+            failures.append("non-docs missing acceptance should block with acceptance_command_missing reason")
+
+    with tempfile.TemporaryDirectory(prefix="cpe-exec-audit-unsupported-header-") as temp:
+        repo = Path(temp) / "repo"
+        repo.mkdir()
+        init_repo(repo)
+        plan_json = repo / "plan.json"
+        write_plan_json(
+            plan_json,
+            [task("task_1", ["src/app.py"], title="Legacy header shape")],
+            plan_markdown=legacy_plan_markdown(),
+        )
+        result, payload = run_audit(repo, plan_json)
+        task_audit = payload.get("tasks", [{}])[0]
+        checks["unsupported_plan_shape_missing_required_header"] = (
+            result.returncode == 1
+            and payload.get("plan_support") == "blocked_unsupported_plan_shape"
+            and task_audit.get("plan_support") == "blocked_unsupported_plan_shape"
+            and task_audit.get("subagent_fit") == "block"
+            and task_audit.get("subagent_reason") == "blocked_unsupported_plan_shape"
+            and "blocked_unsupported_plan_shape" in task_audit.get("blocking_issues", [])
+        )
+        if not checks["unsupported_plan_shape_missing_required_header"]:
+            failures.append("legacy header should be blocked as unsupported current Superpowers/CPE plan shape")
+
     with tempfile.TemporaryDirectory(prefix="cpe-exec-audit-risk-") as temp:
         repo = Path(temp) / "repo"
         repo.mkdir()
@@ -172,7 +272,13 @@ def main() -> int:
         write_plan_json(plan_json, [task("task_1", ["bun.lock"], title="Update lockfile")])
         result, payload = run_audit(repo, plan_json)
         blockers = {issue for item in payload.get("tasks", []) for issue in item.get("blocking_issues", [])}
-        checks["risk_marker_operator_review"] = result.returncode == 1 and "risk_marker_requires_operator_review" in blockers
+        task_audit = payload.get("tasks", [{}])[0]
+        checks["risk_marker_operator_review"] = (
+            result.returncode == 1
+            and "risk_marker_requires_operator_review" in blockers
+            and task_audit.get("plan_support") == "operator_review_required"
+            and task_audit.get("subagent_reason") == "risk_marker_requires_operator_review"
+        )
         if not checks["risk_marker_operator_review"]:
             failures.append("lockfile path should require operator review")
 
