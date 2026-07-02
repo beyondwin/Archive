@@ -119,6 +119,12 @@ Required path invariants:
   optional for older state but must match the readable artifact when present.
   If effective blocker counts are lower than raw blocker counts, the state
   records `operator_reviewed_blocking_issues` and `operator_decision`.
+  The audit may include `plan_support` as
+  `current_superpowers_compatible`, `cpe_fixable_metadata`,
+  `operator_review_required`, or `blocked_unsupported_plan_shape`. A finished
+  state cannot retain `blocked_unsupported_plan_shape`; operator-reviewed risk
+  must remain auditable through raw/effective counts and operator decision
+  fields.
 - `dispatch_decisions` records output from `scripts/preflight_dispatch.py`.
   Decisions are `delegate`, `local_fallback`, or `block`; finished runs cannot
   retain a `block` decision.

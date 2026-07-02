@@ -228,6 +228,18 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   states may distinguish raw plan audit counts from operator-reviewed effective
   counts. If effective blocker counts are lower than raw counts, the state
   records `operator_reviewed_blocking_issues` and `operator_decision`.
+- CPE treats Superpowers as an external Superpowers contract: it reads and
+  audits installed Superpowers skill contracts but does not modify them.
+  Interactive execution supports only current Superpowers-compatible plan
+  shapes; legacy plan auto-support is not provided. Plans missing the current
+  `REQUIRED SUB-SKILL` header, task file scope, or other required execution
+  shape are classified as `blocked_unsupported_plan_shape` and stop before task
+  contracts or edits. Operator-review risks such as lockfiles, security, infra,
+  and migration paths are classified separately as `operator_review_required`.
+- Plan executability `subagent_reason` for `block` results must come from a
+  real blocking issue using deterministic blocker priority; adaptive local fast
+  path reasons must not mask `acceptance_command_missing`, missing files, broad
+  write scope, unsupported plan shape, or operator-review risk.
 - Finished runs with both `dispatch_decisions` and completed write-capable
   tasks must keep final `subagent_strategy` aligned with the latest dispatch
   decision for that task. If the operator intentionally overrides a stale or
@@ -319,7 +331,9 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
 4. Before task contracts or edits, run `scripts/audit_plan_executability.py`
    against parsed plan JSON and generated task packets when present. Store the
    JSON under the run directory and copy its summary into state as
-   `plan_executability_audit`.
+   `plan_executability_audit`. If `parse_plan.py` fails in execution mode, treat
+   the plan as `blocked_unsupported_plan_shape`; do not infer missing task
+   files or legacy shape from raw prose.
 5. For `prompt` or `handoff`, use `templates/fresh-session-prompt.txt` and
    `references/prompt-export-checklist.md`.
 6. For `interactive`, follow `references/execution-cycle.md`.

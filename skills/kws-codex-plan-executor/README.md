@@ -102,8 +102,13 @@ Superpowers compatibility is checked with
 Superpowers-native-only, and thin-stateful-bridge routes and fails when required
 current Superpowers contracts are missing.
 Plan executability is checked with `scripts/audit_plan_executability.py`. It
-summarizes whether Superpowers plan tasks are ready for CPE task packets, local
-fast path, delegation, or operator review before task contracts or edits.
+summarizes whether the parsed plan is a current Superpowers-compatible plan,
+which tasks are ready for CPE task packets, local fast path, delegation,
+operator review, or blocking before task contracts or edits. CPE treats
+Superpowers as an external contract and does not modify installed Superpowers
+skills. Legacy plan auto-support is not provided: plans missing the current
+`REQUIRED SUB-SKILL` header, task file scope, or other required execution shape
+are classified as `blocked_unsupported_plan_shape`.
 The compact state summary may preserve both raw audit counts and
 operator-reviewed effective counts with `raw_blocking_issue_count`,
 `raw_fixable_issue_count`, `operator_reviewed_blocking_issues`, and
