@@ -1,5 +1,57 @@
 # Verification Log
 
+## 2026-07-03 - Release Contract And 2.25.0 Closeout
+
+Branch/commit:
+
+- `codex/2026-07-03-cpe-release-contract-20260703-054623`
+- Pre-log verification commit: `43a6ff9`
+
+Scope:
+
+- Added CPE release process documentation.
+- Added deterministic release-contract eval coverage.
+- Wired release-contract coverage into the full eval harness.
+- Closed CPE `2.25.0` as the current official `SKILL.md` version.
+- Added matching `evals/baselines/v2.25.0.json`.
+- Preserved `./evals/run.sh --update-baseline` bootstrap for newly bumped
+  versions before their first baseline exists.
+- Refreshed tracked Graphify outputs after the release-contract change.
+
+Commands:
+
+```bash
+python3 evals/check_release_contract.py
+./evals/run.sh --update-baseline
+./evals/run.sh
+python3 evals/check_skill_contract.py --skill SKILL.md
+python3 evals/check_eval_harness.py
+python3 -m py_compile scripts/*.py evals/*.py
+bash -n evals/run.sh
+python3 scripts/audit_prompt_cache.py --skill-root skills/kws-codex-plan-executor --output ~/.codex/orchestrator/2026-07-03-cpe-release-contract-20260703-054623/prompt_cache_audit.json
+git diff --check
+graphify update .
+python3 skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py --repo-root ~/.codex/worktrees/2026-07-03-cpe-release-contract-20260703-054623 --update-ran --output ~/.codex/orchestrator/2026-07-03-cpe-release-contract-20260703-054623/graphify_audit.json
+```
+
+Result:
+
+- Release contract eval: pass with version `2.25.0`.
+- Baseline update: pass; missing-baseline bootstrap generated `v2.25.0`
+  without a temporary stub, with 8 passing fixtures.
+- Full deterministic fixture harness: pass with all 8 fixtures.
+- Skill contract eval and eval harness self-check: pass.
+- Python compile, shell syntax, prompt cache audit, and diff whitespace checks:
+  pass.
+- Graphify update: pass; tracked `graphify-out/GRAPH_REPORT.md` and
+  `graphify-out/graph.json` refreshed with `Built from commit: 43a6ff9a`.
+- Graphify freshness audit: pass with `fresh=true` and no errors.
+
+Residual risk:
+
+- Git-date verification-log freshness is intentionally not enforced by the
+  first release-contract eval to avoid false positives.
+
 ## 2026-07-03 - Human-Readable Harness Surfaces
 
 Scope:
