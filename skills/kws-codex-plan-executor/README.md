@@ -154,6 +154,8 @@ globs, context budget, and full-spec fallback warnings.
   Superpowers bridge, readiness audits, run quality, repair, Graphify, and
   verification.
 - `docs/how-it-works.md` - execution flow overview.
+- `docs/human-readable-harness-flow.ko.md` - Korean before/after explanation
+  of the human-readable harness flow and junior-friendly diagrams.
 - `docs/state-and-logging.md` - state fields, Graphify/dispatch evidence,
   plan executability audit, run quality, and repair state.
 - `docs/evals-and-verification.md` - deterministic eval and harness guide.
