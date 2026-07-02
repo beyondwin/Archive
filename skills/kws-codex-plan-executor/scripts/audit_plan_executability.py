@@ -21,8 +21,74 @@ from cpe_audit_common import (
 )
 
 
+CURRENT_SUPERPOWERS_PLAN_MARKERS = (
+    "REQUIRED SUB-SKILL",
+    "subagent-driven-development",
+    "executing-plans",
+)
+
+CURRENT_SUPERPOWERS_COMPATIBLE = "current_superpowers_compatible"
+CPE_FIXABLE_METADATA = "cpe_fixable_metadata"
+OPERATOR_REVIEW_REQUIRED = "operator_review_required"
+BLOCKED_UNSUPPORTED_PLAN_SHAPE = "blocked_unsupported_plan_shape"
+
+BLOCKING_REASON_PRIORITY = (
+    BLOCKED_UNSUPPORTED_PLAN_SHAPE,
+    "acceptance_command_missing",
+    "files_missing",
+    "allowed_write_globs_empty",
+    "write_scope_too_broad",
+    RISK_MARKER_REQUIRES_OPERATOR_REVIEW,
+)
+
+
 def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def read_plan_text(plan: dict[str, Any], plan_json: Path) -> str:
+    raw_plan_path = plan.get("plan")
+    if not isinstance(raw_plan_path, str) or not raw_plan_path.strip():
+        return ""
+    plan_path = Path(raw_plan_path).expanduser()
+    if not plan_path.is_absolute():
+        plan_path = (plan_json.parent / plan_path).resolve(strict=False)
+    try:
+        return plan_path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def current_superpowers_header_present(plan_text: str) -> bool:
+    return all(marker in plan_text for marker in CURRENT_SUPERPOWERS_PLAN_MARKERS)
+
+
+def primary_blocking_reason(blocking: list[str]) -> str:
+    unique = list(dict.fromkeys(blocking))
+    for reason in BLOCKING_REASON_PRIORITY:
+        if reason in unique:
+            return reason
+    return unique[0] if unique else "all pre-dispatch prerequisites passed"
+
+
+def support_classification(blocking: list[str], fixable: list[str], risks: list[str]) -> str:
+    if BLOCKED_UNSUPPORTED_PLAN_SHAPE in blocking:
+        return BLOCKED_UNSUPPORTED_PLAN_SHAPE
+    if risks or RISK_MARKER_REQUIRES_OPERATOR_REVIEW in blocking:
+        return OPERATOR_REVIEW_REQUIRED
+    if fixable:
+        return CPE_FIXABLE_METADATA
+    return CURRENT_SUPERPOWERS_COMPATIBLE
+
+
+def strongest_plan_support(tasks: list[dict[str, Any]], global_blocking: list[str]) -> str:
+    if global_blocking:
+        return BLOCKED_UNSUPPORTED_PLAN_SHAPE
+    supports = [item.get("plan_support") for item in tasks]
+    for candidate in (BLOCKED_UNSUPPORTED_PLAN_SHAPE, OPERATOR_REVIEW_REQUIRED, CPE_FIXABLE_METADATA):
+        if candidate in supports:
+            return candidate
+    return CURRENT_SUPERPOWERS_COMPATIBLE
 
 
 def files_exist_or_are_declared(files: list[str], repo_root: Path) -> bool:
@@ -53,17 +119,22 @@ def load_packets(packet_dir: Path | None) -> dict[str, dict[str, Any]]:
 def subagent_fit(files: list[str], depends_on: list[str], acceptance_missing: bool, risks: list[str]) -> tuple[str, str]:
     if risks:
         return "block", RISK_MARKER_REQUIRES_OPERATOR_REVIEW
+    if acceptance_missing and not docs_only(files):
+        return "block", "acceptance_command_missing"
     if docs_only(files):
         return "local_fast_path", ADAPTIVE_LOCAL_FAST_PATH_DOCS_ONLY
     if 0 < len(files) <= 2 and len(depends_on) <= 1:
         reason = ADAPTIVE_LOCAL_FAST_PATH_SMALL_SCOPE if not depends_on else ADAPTIVE_LOCAL_FAST_PATH_LINEAR_TASK
         return "local_fast_path", reason
-    if acceptance_missing:
-        return "local_only", "acceptance_command_missing"
     return "delegate", "all pre-dispatch prerequisites passed"
 
 
-def audit_task(task: dict[str, Any], packet: dict[str, Any] | None, repo_root: Path) -> dict[str, Any]:
+def audit_task(
+    task: dict[str, Any],
+    packet: dict[str, Any] | None,
+    repo_root: Path,
+    plan_shape_blocking: list[str],
+) -> dict[str, Any]:
     task_id = str(task.get("id") or task.get("task_id") or "unknown_task")
     files = list_strings(task.get("files"))
     depends_on = dependency_list(task)
@@ -75,11 +146,12 @@ def audit_task(task: dict[str, Any], packet: dict[str, Any] | None, repo_root: P
     risks = path_risk_markers(files + allowed, list_strings(task.get("risk_markers")))
 
     fixable: list[str] = []
-    blocking: list[str] = []
+    blocking: list[str] = list(plan_shape_blocking)
     suggested = normalized_scopes(allowed or files)
 
     if not files_exist_or_are_declared(files, repo_root):
         blocking.append("files_missing")
+        blocking.append(BLOCKED_UNSUPPORTED_PLAN_SHAPE)
     if not allowed:
         blocking.append("allowed_write_globs_empty")
     if any(write_scope_too_broad(scope) for scope in allowed):
@@ -99,6 +171,8 @@ def audit_task(task: dict[str, Any], packet: dict[str, Any] | None, repo_root: P
     fit, reason = subagent_fit(files, depends_on, acceptance_missing, risks)
     if blocking:
         fit = "block"
+        reason = primary_blocking_reason(blocking)
+    plan_support = support_classification(blocking, fixable, risks)
 
     return {
         "task_id": task_id,
@@ -110,6 +184,7 @@ def audit_task(task: dict[str, Any], packet: dict[str, Any] | None, repo_root: P
         if any(item in blocking for item in ("allowed_write_globs_empty", "write_scope_too_broad"))
         else ("yellow" if "write_scope_format_invalid" in fixable else "green"),
         "spec_mapping_status": "yellow" if "full_spec_fallback" in fixable else "green",
+        "plan_support": plan_support,
         "subagent_fit": fit,
         "subagent_reason": reason,
         "risk_markers": risks,
@@ -123,19 +198,38 @@ def build_payload(plan_json: Path, repo_root: Path, packet_dir: Path | None) -> 
     plan = load_json(plan_json)
     if not isinstance(plan, dict):
         raise ValueError("plan JSON must be an object")
+    plan_text = read_plan_text(plan, plan_json)
+    plan_shape_blocking = [] if current_superpowers_header_present(plan_text) else [BLOCKED_UNSUPPORTED_PLAN_SHAPE]
     packets = load_packets(packet_dir)
     tasks = []
     for task in plan.get("tasks", []):
         if not isinstance(task, dict):
             continue
         task_id = str(task.get("id") or task.get("task_id") or "")
-        tasks.append(audit_task(task, packets.get(task_id), repo_root))
+        tasks.append(audit_task(task, packets.get(task_id), repo_root, plan_shape_blocking))
 
-    blocking_count = sum(len(item["blocking_issues"]) for item in tasks)
+    global_blocking = []
+    if not tasks:
+        global_blocking.append(BLOCKED_UNSUPPORTED_PLAN_SHAPE)
+    blocking_count = len(global_blocking) + sum(len(item["blocking_issues"]) for item in tasks)
     fixable_count = sum(len(item["fixable_issues"]) for item in tasks)
     grade = "red" if blocking_count else ("yellow" if fixable_count else "green")
+    plan_support = strongest_plan_support(tasks, global_blocking)
+    support_counts = {
+        CURRENT_SUPERPOWERS_COMPATIBLE: sum(
+            1 for item in tasks if item.get("plan_support") == CURRENT_SUPERPOWERS_COMPATIBLE
+        ),
+        CPE_FIXABLE_METADATA: sum(1 for item in tasks if item.get("plan_support") == CPE_FIXABLE_METADATA),
+        OPERATOR_REVIEW_REQUIRED: sum(1 for item in tasks if item.get("plan_support") == OPERATOR_REVIEW_REQUIRED),
+        BLOCKED_UNSUPPORTED_PLAN_SHAPE: sum(
+            1 for item in tasks if item.get("plan_support") == BLOCKED_UNSUPPORTED_PLAN_SHAPE
+        )
+        + len(global_blocking),
+    }
     summary = {
         "route": "thin_stateful_bridge",
+        "plan_support": plan_support,
+        "plan_support_counts": support_counts,
         "task_count": len(tasks),
         "delegate_ready_count": sum(1 for item in tasks if item["subagent_fit"] == "delegate"),
         "local_fast_path_count": sum(1 for item in tasks if item["subagent_fit"] == "local_fast_path"),
@@ -146,9 +240,10 @@ def build_payload(plan_json: Path, repo_root: Path, packet_dir: Path | None) -> 
         "schema_version": "1",
         "passed": blocking_count == 0,
         "grade": grade,
+        "plan_support": plan_support,
         "summary": summary,
         "tasks": tasks,
-        "global_followups": [],
+        "global_followups": sorted(dict.fromkeys(global_blocking)),
     }
 
 
