@@ -54,6 +54,10 @@ python3 evals/check_context_snapshot.py
 python3 evals/check_headless_result.py
 python3 evals/check_spec_manifest.py
 python3 evals/check_task_packet.py
+python3 evals/check_task_packet_view.py
+python3 evals/check_context_summary.py
+python3 evals/check_markdown_golden_cases.py
+python3 evals/check_verification_bundle.py
 python3 evals/check_local_env_preflight.py
 python3 evals/check_invocation_args.py
 python3 evals/check_inspect_runs.py
@@ -138,6 +142,11 @@ decisions. Recovery helpers classify command observations into bounded
 `retry`, `bootstrap`, `block`, `fail`, or `continue` actions, and compact
 trajectory/progress helpers make stalled runs inspectable without rereading raw
 transcripts.
+
+Task packet human views are generated markdown derivatives for operators,
+handoff recipients, and subagents. The JSON packet remains the source of truth;
+the markdown view must preserve files, task body, AC, verification, forbidden
+globs, context budget, and full-spec fallback warnings.
 
 ## Design Notes
 

@@ -13,6 +13,8 @@ python3 evals/check_context_snapshot.py
 python3 evals/check_headless_result.py
 python3 evals/check_spec_manifest.py
 python3 evals/check_task_packet.py
+python3 evals/check_task_packet_view.py
+python3 evals/check_context_summary.py
 python3 evals/check_local_env_preflight.py
 python3 evals/check_invocation_args.py
 python3 evals/check_inspect_runs.py
@@ -24,6 +26,8 @@ python3 evals/check_graphify_freshness.py
 python3 evals/check_preflight_dispatch.py
 python3 evals/check_run_readiness.py
 python3 evals/check_plan_executability_audit.py
+python3 evals/check_markdown_golden_cases.py
+python3 evals/check_verification_bundle.py
 python3 evals/check_recovery_policy.py
 python3 evals/check_trajectory_projection.py
 python3 evals/check_progress_ledger.py
@@ -68,6 +72,12 @@ The quality-loop evals also cover task packet component accounting, filtered
 decision context, structured blocker/failure state, recovery policy decisions,
 trajectory JSONL projection, and progress ledger stall detection.
 
+Human-readable harness evals cover generated task packet markdown views,
+one-line hot-tail summaries, markdown policy golden cases, and structured
+verification bundle evidence. The initial markdown cases cover dirty related
+worktrees, ambiguous resume selection, unsafe verification substitutes,
+subagent local fallback, and task packet human-view parity.
+
 `check_operational_run_quality.py` covers v2.22 optional state fields,
 delegation policy enums, execution-worktree provenance, static fixture emission
 of run-quality fields, and recent inspection summary behavior. `check_inspect_runs.py`
@@ -76,9 +86,11 @@ execution worktrees.
 
 `check_cpe_replay.py` covers `scripts/normalize_cpe_run.py`, including
 completion status, run-quality grade, plan-audit count summary,
-dispatch-decision reason counts, structured residual risk classes, and
-forbidden durable-output patterns. `docs/eval-coverage-cpe.md` maps these
-checks to the CPE run-quality cleanup failure modes.
+dispatch-decision reason counts, structured residual risk classes,
+verification evidence classes, verification bundle names, task summary counts,
+hot-tail summary counts, and forbidden durable-output patterns.
+`docs/eval-coverage-cpe.md` maps these checks to the CPE run-quality cleanup
+failure modes.
 
 `check_superpowers_compatibility.py` covers the current Superpowers contract
 surface and verifies that CPE recommends `thin_stateful_bridge` only when the

@@ -54,12 +54,14 @@ overall_status=0
 
 python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md" >/dev/null
 python3 "$EVAL_DIR/check_state_schema.py" >/dev/null
+python3 "$EVAL_DIR/check_context_summary.py" >/dev/null
 python3 "$EVAL_DIR/check_run_diffs.py" >/dev/null
 python3 "$EVAL_DIR/check_state_reconciliation.py" >/dev/null
 python3 "$EVAL_DIR/check_context_snapshot.py" >/dev/null
 python3 "$EVAL_DIR/check_headless_result.py" >/dev/null
 python3 "$EVAL_DIR/check_spec_manifest.py" >/dev/null
 python3 "$EVAL_DIR/check_task_packet.py" >/dev/null
+python3 "$EVAL_DIR/check_task_packet_view.py" >/dev/null
 python3 "$EVAL_DIR/check_local_env_preflight.py" >/dev/null
 python3 "$EVAL_DIR/check_invocation_args.py" >/dev/null
 python3 "$EVAL_DIR/check_inspect_runs.py" >/dev/null
@@ -71,6 +73,8 @@ python3 "$EVAL_DIR/check_graphify_freshness.py" >/dev/null
 python3 "$EVAL_DIR/check_preflight_dispatch.py" >/dev/null
 python3 "$EVAL_DIR/check_run_readiness.py" >/dev/null
 python3 "$EVAL_DIR/check_plan_executability_audit.py" >/dev/null
+python3 "$EVAL_DIR/check_markdown_golden_cases.py" >/dev/null
+python3 "$EVAL_DIR/check_verification_bundle.py" >/dev/null
 python3 "$EVAL_DIR/check_recovery_policy.py" >/dev/null
 python3 "$EVAL_DIR/check_trajectory_projection.py" >/dev/null
 python3 "$EVAL_DIR/check_progress_ledger.py" >/dev/null

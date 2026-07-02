@@ -7,6 +7,7 @@ Execution artifacts live beside it:
 - `context.json`
 - `spec_manifest.json`
 - `task_packets/task_<N>.json`
+- `task_packets/task_<N>.md`
 - `DECISIONS.md`
 - `preflight_warnings.json`
 - `trajectory.jsonl`
@@ -114,6 +115,19 @@ redacted context budget metadata. Raw prompts are not stored there.
 `progress_ledger` records per-task progress, stall count, last root signature,
 next action, and whether operator input is needed.
 
+## Human-Readable Task Surfaces
+
+`task_packets/task_<N>.md` is generated from `task_packets/task_<N>.json` for
+operator, handoff, prompt hot-tail, and subagent readability. It must preserve
+files, task body, AC, verification, forbidden globs, context budget, decisions
+count, and full-spec fallback warnings. The markdown view is never the source
+of truth.
+
+Completed tasks may record `next_task_summary`; `context_health` may carry
+`hot_tail_summaries`. These are one-line hints for the next task and cannot
+replace task status, dispatch strategy, acceptance evidence, verification
+bundle evidence, or completion audit state.
+
 ## Plan Executability Audit
 
 `plan_executability_audit` is copied from
@@ -154,9 +168,16 @@ structured residual risk objects with `owner`, `class`, `summary`,
 `blocks_release`, optional `unblocks_when`, and optional `evidence_ref`. Valid
 owners are `executor`, `operator`, `product`, and `environment`; valid classes
 include `external_credentials`, `deployment`, `monitoring`,
-`executor_evidence`, `environment_unavailable`, and `product_followup`. A
-structured item with `blocks_release=true` cannot coexist with a passed
-finished completion.
+`executor_evidence`, `environment_unavailable`, `product_followup`,
+`environment_gap`, `test_scope_gap`, `third_party_drift`,
+`manual_review_needed`, and `known_executor_debt`. A structured item with
+`blocks_release=true` cannot coexist with a passed finished completion.
+
+`completion_audit.verification_evidence` may also contain
+`class=verification_bundle` objects. They record project-level command bundles
+such as full eval, compile, shell syntax, and repository checks. Bundle
+evidence is classified completion evidence; it does not replace the per-task
+acceptance command.
 
 `scripts/normalize_cpe_run.py` emits compact replay JSON for deterministic
 checks and handoffs. It summarizes terminal state, completion status,

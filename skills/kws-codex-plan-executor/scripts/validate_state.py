@@ -141,11 +141,21 @@ VALID_RUN_QUALITY_VALIDATION_STATUSES = {"passed", "failed", "unreadable", "not_
 VALID_RESIDUAL_RISK_OWNERS = {"executor", "operator", "product", "environment"}
 VALID_RESIDUAL_RISK_CLASSES = {
     "external_credentials",
+    "environment_gap",
     "deployment",
     "monitoring",
     "executor_evidence",
     "environment_unavailable",
+    "known_executor_debt",
+    "manual_review_needed",
     "product_followup",
+    "test_scope_gap",
+    "third_party_drift",
+}
+FORBIDDEN_DURABLE_OUTPUT_PATTERNS = {
+    "sk-": "sk-",
+    "absolute_home_path": "/Users/",
+    "full_prompt": "BEGIN FULL PROMPT",
 }
 
 
@@ -155,6 +165,27 @@ def _has_substantive_value(value: object) -> bool:
     if isinstance(value, (list, dict)):
         return len(value) > 0
     return value is True
+
+
+def _forbidden_durable_patterns(value: str) -> list[str]:
+    return [
+        name
+        for name, needle in FORBIDDEN_DURABLE_OUTPUT_PATTERNS.items()
+        if needle in value
+    ]
+
+
+def _validate_one_line_summary(field: str, value: object, errors: list[str]) -> None:
+    if value is None:
+        return
+    if not isinstance(value, str) or not value.strip():
+        errors.append(f"{field} must be a non-empty string when present")
+        return
+    if "\n" in value or "\r" in value:
+        errors.append(f"{field} must be one line")
+    markers = _forbidden_durable_patterns(value)
+    if markers:
+        errors.append(f"{field} contains forbidden durable-output pattern(s): {', '.join(markers)}")
 
 
 def _parse_ts(value: object) -> datetime | None:
@@ -235,6 +266,21 @@ def _validate_context_health(data: dict, errors: list[str]) -> None:
     for key in ("open_questions", "known_assumptions"):
         if key in health and not isinstance(health[key], list):
             errors.append(f"context_health.{key} must be a list")
+    hot_tail = health.get("hot_tail_summaries")
+    if hot_tail is not None:
+        if not isinstance(hot_tail, list):
+            errors.append("context_health.hot_tail_summaries must be a list when present")
+        else:
+            tasks = data.get("tasks") if isinstance(data.get("tasks"), dict) else {}
+            for index, item in enumerate(hot_tail):
+                prefix = f"context_health.hot_tail_summaries[{index}]"
+                if not isinstance(item, dict):
+                    errors.append(f"{prefix} must be an object")
+                    continue
+                task_id = item.get("task_id")
+                if task_id not in tasks:
+                    errors.append(f"{prefix}.task_id must reference a known task")
+                _validate_one_line_summary(f"{prefix}.summary", item.get("summary"), errors)
     if data.get("context_snapshot_path") is not None and health.get("context_snapshot_present") is not True:
         errors.append("context_health.context_snapshot_present must be true when context_snapshot_path is present")
     if data.get("context_basis_hash") is not None and health.get("context_basis_hash_recorded") is not True:
@@ -271,6 +317,8 @@ def _validate_completion_audit(data: dict, errors: list[str]) -> None:
         evidence = audit.get("verification_evidence")
         if not isinstance(evidence, list) or not evidence:
             errors.append("completion_audit.verification_evidence must be a non-empty list")
+        else:
+            _validate_verification_evidence_items(evidence, errors)
         residual = audit.get("residual_risk")
         if not isinstance(residual, list):
             errors.append("completion_audit.residual_risk must be a list")
@@ -308,6 +356,34 @@ def _validate_residual_risk_items(data: dict, residual: list[object], errors: li
             and audit.get("passed") is True
         ):
             errors.append("completion_audit.residual_risk blocks_release=true cannot coexist with finished passed completion")
+
+
+def _validate_verification_evidence_items(evidence: list[object], errors: list[str]) -> None:
+    for index, item in enumerate(evidence):
+        prefix = f"completion_audit.verification_evidence[{index}]"
+        if isinstance(item, str):
+            if not item.strip():
+                errors.append(f"{prefix} string must be non-empty")
+            continue
+        if not isinstance(item, dict):
+            errors.append(f"{prefix} must be a string or object")
+            continue
+        evidence_class = item.get("class")
+        if evidence_class is not None and not isinstance(evidence_class, str):
+            errors.append(f"{prefix}.class must be a string when present")
+        status = item.get("status")
+        if status is not None and status not in {"passed", "failed", "skipped", "blocked"}:
+            errors.append(f"{prefix}.status invalid")
+        if evidence_class == "verification_bundle":
+            if not _has_substantive_value(item.get("name")):
+                errors.append(f"{prefix}.verification_bundle.name is required")
+            commands = item.get("commands")
+            if not isinstance(commands, list) or not any(isinstance(command, str) and command.strip() for command in commands):
+                errors.append(f"{prefix}.verification_bundle.commands must contain at least one command")
+            if item.get("status") not in {"passed", "failed", "skipped", "blocked"}:
+                errors.append(f"{prefix}.verification_bundle.status is required")
+            if "required" in item and not isinstance(item.get("required"), bool):
+                errors.append(f"{prefix}.verification_bundle.required must be a boolean when present")
 
 
 def _validate_timestamps(data: dict, errors: list[str]) -> None:
@@ -392,6 +468,17 @@ def _validate_tasks(data: dict, errors: list[str]) -> None:
                 errors.append(f"{task_id}: task missing field {key}")
         if "files_declared" in task and not isinstance(task["files_declared"], list):
             errors.append(f"{task_id}: files_declared must be a list")
+        _validate_one_line_summary(f"{task_id}: next_task_summary", task.get("next_task_summary"), errors)
+        view_path = task.get("task_packet_view_path")
+        if view_path is not None:
+            if not isinstance(view_path, str) or not view_path.strip():
+                errors.append(f"{task_id}: task_packet_view_path must be a non-empty string when present")
+            elif "/.codex/orchestrator/" not in view_path:
+                errors.append(f"{task_id}: task_packet_view_path must live under .codex/orchestrator")
+        view_hash = task.get("task_packet_view_sha256")
+        if view_hash is not None:
+            if not isinstance(view_hash, str) or len(view_hash) != 64:
+                errors.append(f"{task_id}: task_packet_view_sha256 must be a 64-character sha256 string")
         _validate_contract(task_id, task.get("contract"), errors)
         _validate_unit_manifest(task_id, task, outcome, errors)
         carried = task.get("carried_acceptance")

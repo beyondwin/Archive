@@ -1,5 +1,47 @@
 # Verification Log
 
+## 2026-07-03 - Human-Readable Harness Surfaces
+
+Scope:
+
+- Added generated task packet markdown views.
+- Added one-line task summaries and hot-tail summary validation.
+- Added markdown golden-case evals for operator-readable policy regressions.
+- Added structured verification bundle evidence and advisory residual risk
+  classes.
+- Extended normalized replay with verification evidence classes, bundle names,
+  task summary count, and hot-tail summary count.
+
+Commands:
+
+```bash
+python3 evals/check_task_packet_view.py
+python3 evals/check_context_summary.py
+python3 evals/check_markdown_golden_cases.py
+python3 evals/check_verification_bundle.py
+python3 evals/check_cpe_replay.py
+python3 evals/check_state_schema.py
+./evals/run.sh
+python3 -m py_compile scripts/*.py evals/*.py
+bash -n evals/run.sh
+bun install --frozen-lockfile
+bun run check
+graphify update .
+python3 skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py --repo-root /Users/kws/.codex/worktrees/cpe-human-readable-harness-20260703-051300 --update-ran --output /tmp/cpe-human-harness-graphify-after.json
+```
+
+Result:
+
+- Focused human-readable harness evals: pass.
+- Full deterministic fixture harness: pass with all 8 fixtures passing.
+- Python compile and shell syntax: pass.
+- `bun install --frozen-lockfile`: pass; restored local TypeScript tooling
+  without lockfile changes.
+- `bun run check`: pass; 820 pass, 10 skip, 0 fail.
+- Graphify update: pass; `graphify-out/GRAPH_REPORT.md` and `graph.json`
+  refreshed with `Built from commit: 5d571903`.
+- Graphify freshness audit: pass with `fresh=true` and no errors.
+
 ## 2026-06-25 - Plan Executability And Run Quality Docs Refresh
 
 Scope:

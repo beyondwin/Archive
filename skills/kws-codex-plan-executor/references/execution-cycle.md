@@ -26,6 +26,9 @@
    `context_basis_hash` in state. When `spec_manifest.json` or task packets are
    present, pass `--spec-manifest` and `--task-packet-dir` so the snapshot
    records summaries and packet indexes instead of raw packet text.
+   When task packets are present, generate task packet human views under
+   `$RUN_DIR/task_packets/*.md` before prompt, handoff, or subagent context uses
+   them. Treat these views as derived readability artifacts only.
 10. Before task execution, run `scripts/audit_run_readiness.py` against
    `$RUN_DIR/task_packets`. Save the JSON as `$RUN_DIR/run_readiness.json` and
    copy its summary into `run_quality.readiness` when finalizing. If it reports
@@ -67,6 +70,9 @@
 16. Maintain `context_health` at every semantic boundary.
 17. Before `lifecycle_outcome=finished`, run `scripts/reconcile_state.py` and
     `scripts/validate_state.py`.
+    When using project-level verification bundles, record them as structured
+    `completion_audit.verification_evidence` objects with
+    `class=verification_bundle`; keep acceptance command evidence separate.
 18. When replay behavior, residual risk, run-quality debt, or audit parity
     changes, run `scripts/normalize_cpe_run.py` through
     `evals/check_cpe_replay.py` and reference that deterministic evidence.

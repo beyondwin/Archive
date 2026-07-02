@@ -75,6 +75,11 @@ Prompt construction uses a stable prefix/hot tail split. The stable prefix
 contains invariant execution rules; task/run payloads live in the hot tail and
 are audited by `scripts/audit_prompt_cache.py`.
 
+Human-readable task views are generated from task packet JSON and stored with
+orchestration artifacts. They improve operator and subagent readability but do
+not participate as source-of-truth state. State validation only trusts the JSON
+packet, task state, and completion audit fields.
+
 Graphify freshness and subagent dispatch readiness are represented as JSON
 evidence. State remains authoritative; helper outputs are accepted only after
 state validation and parent review. Finished runs that record `graphify_audit`

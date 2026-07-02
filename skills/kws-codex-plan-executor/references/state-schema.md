@@ -103,6 +103,10 @@ Required path invariants:
   risk items may be strings or structured residual risk objects. Structured
   objects require `owner`, `class`, `summary`, and `blocks_release`; a
   `blocks_release=true` item cannot coexist with passed finished completion.
+- `completion_audit.verification_evidence` may include
+  `class=verification_bundle` objects with `name`, `commands`, `status`, and
+  optional `required`. These classify project-level verification evidence and
+  do not replace task acceptance commands.
 - `graphify_audit` records deterministic freshness output from
   `scripts/check_graphify_freshness.py`. Finished runs cannot carry
   non-empty `graphify_audit.errors`, and must reference the Graphify evidence
@@ -129,8 +133,11 @@ v2.20 context-intelligence state may add per-task fields:
   "task_0": {
     "task_packet_path": "<run_dir>/task_packets/task_0.json",
     "task_packet_sha256": "<sha256>",
+    "task_packet_view_path": "<run_dir>/task_packets/task_0.md",
+    "task_packet_view_sha256": "<sha256>",
     "spec_section_ids": ["S1"],
     "fallback_spec_used": false,
+    "next_task_summary": "Implemented human packet view rendering.",
     "subagent_strategy": {
       "mode": "delegated",
       "run_ids": ["agent_123"],
@@ -149,6 +156,25 @@ When v2.20 fields are present, `decisions_register` and
 `preflight_warnings` must be lists. Finished completed tasks must include
 `timing.started` and `timing.completed`. `last_completed_task` is either null or
 a task id in `tasks`.
+
+`task_packet_view_path` and `task_packet_view_sha256` are optional claims about
+generated markdown views. The markdown is a derived readability artifact; the
+JSON task packet and state remain authoritative. `next_task_summary` is an
+optional one-line hot-tail hint and must not contain raw secrets, absolute home
+paths, full prompts, transcripts, or newline characters.
+
+`context_health.hot_tail_summaries` may mirror one-line task summaries for the
+next prompt or handoff tail:
+
+```json
+{
+  "context_health": {
+    "hot_tail_summaries": [
+      {"task_id": "task_0", "summary": "Implemented human packet view rendering."}
+    ]
+  }
+}
+```
 
 v2.22 operational run quality state may add:
 
@@ -256,6 +282,12 @@ Structured residual risk object example:
 `completion_audit.passed`. A finished run may have
 `completion_audit.passed=true` and `run_quality.grade=yellow` when
 implementation verification passed but non-blocking executor follow-up remains.
+
+Valid advisory residual-risk classes include `external_credentials`,
+`environment_gap`, `test_scope_gap`, `third_party_drift`,
+`manual_review_needed`, and `known_executor_debt`, plus the legacy deployment,
+monitoring, executor-evidence, environment-unavailable, and product follow-up
+classes. These classes are readability metadata only.
 
 ## Stale Blocked Repair
 
