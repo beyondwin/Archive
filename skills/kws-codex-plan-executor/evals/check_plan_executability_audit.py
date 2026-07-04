@@ -97,6 +97,7 @@ def write_packet(
     *,
     command: str | None = "python3 -m pytest",
     fallback_used: bool = False,
+    fallback_mapping: dict | None = None,
 ) -> None:
     packet_dir.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -111,7 +112,7 @@ def write_packet(
             "command": command,
             "source": "plan.acceptance_section" if command else "missing",
         },
-        "spec": {"fallback_used": fallback_used},
+        "spec": {"fallback_used": fallback_used, "mapping": fallback_mapping or {}},
         "context_budget": {"status": "green", "estimated_chars": 1000, "max_chars": 60000},
         "write_policy": {"allowed_write_globs": files, "forbidden_write_globs": [".git/**", "graphify-out/**"]},
     }
@@ -305,6 +306,30 @@ def main() -> int:
         )
         if not checks["thin_bridge_summary_counts"]:
             failures.append("summary should include thin bridge route and task counts")
+
+    with tempfile.TemporaryDirectory(prefix="cpe-exec-audit-reviewed-fallback-") as temp:
+        repo = Path(temp) / "repo"
+        repo.mkdir()
+        init_repo(repo)
+        plan_json = repo / "plan.json"
+        write_plan_json(plan_json, [task("task_1", ["src/app.py"], title="Reviewed fallback")])
+        packet_dir = repo / "task_packets"
+        write_packet(
+            packet_dir,
+            "task_1",
+            ["src/app.py"],
+            fallback_used=True,
+            fallback_mapping={"fallback_reason": "intentional_operator_reviewed", "operator_reviewed": True},
+        )
+        result, payload = run_audit(repo, plan_json, packet_dir=packet_dir)
+        task_audit = payload.get("tasks", [{}])[0]
+        checks["operator_reviewed_full_spec_fallback_is_not_fixable"] = (
+            result.returncode == 0
+            and payload.get("grade") == "green"
+            and "full_spec_fallback" not in task_audit.get("fixable_issues", [])
+        )
+        if not checks["operator_reviewed_full_spec_fallback_is_not_fixable"]:
+            failures.append("operator-reviewed full spec fallback should not count as fixable plan audit debt")
 
     output = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(output, ensure_ascii=False, indent=2, sort_keys=True))

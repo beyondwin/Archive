@@ -25,7 +25,15 @@ def init_repo(repo: Path) -> None:
     subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
 
 
-def write_packet(path: Path, task_id: str, files: list[str], *, command: str | None, fallback_used: bool = False) -> None:
+def write_packet(
+    path: Path,
+    task_id: str,
+    files: list[str],
+    *,
+    command: str | None,
+    fallback_used: bool = False,
+    fallback_mapping: dict | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema_version": "1",
@@ -39,7 +47,7 @@ def write_packet(path: Path, task_id: str, files: list[str], *, command: str | N
             "source": "plan.acceptance_section" if command else "missing",
             "honest_substitute_allowed": command is None,
         },
-        "spec": {"fallback_used": fallback_used},
+        "spec": {"fallback_used": fallback_used, "mapping": fallback_mapping or {}},
         "context_budget": {"status": "green", "estimated_chars": 1000, "max_chars": 60000},
         "write_policy": {
             "allowed_write_globs": files,
@@ -92,7 +100,18 @@ def main() -> int:
         state_path = repo / "state.json"
         state_path.write_text(json.dumps(state), encoding="utf-8")
         packet_dir = repo / "task_packets"
-        write_packet(packet_dir / "task_1.json", "task_1", ["docs/example.md"], command=None, fallback_used=True)
+        write_packet(
+            packet_dir / "task_1.json",
+            "task_1",
+            ["docs/example.md"],
+            command=None,
+            fallback_used=True,
+            fallback_mapping={
+                "fallback_reason": "missing_spec_refs",
+                "suggested_spec_refs": ["problem", "goals"],
+                "operator_reviewed": False,
+            },
+        )
         write_packet(packet_dir / "task_2.json", "task_2", ["src/app.py"], command="python3 -m pytest")
         result, data = run_audit(repo, state_path, packet_dir)
         issue_kinds = {issue.get("kind") for issue in data.get("issues", [])}
@@ -107,6 +126,13 @@ def main() -> int:
         checks["full_spec_fallback_is_reported"] = "full_spec_fallback" in issue_kinds
         if not checks["full_spec_fallback_is_reported"]:
             failures.append("readiness audit should report full spec fallback")
+        fallback_issue = next(item for item in data.get("issues", []) if item.get("kind") == "full_spec_fallback")
+        checks["full_spec_fallback_has_reason"] = (
+            fallback_issue.get("fallback_reason") == "missing_spec_refs"
+            and fallback_issue.get("suggested_spec_refs") == ["problem", "goals"]
+        )
+        if not checks["full_spec_fallback_has_reason"]:
+            failures.append("readiness audit should include full-spec fallback reason and suggestions")
 
     with tempfile.TemporaryDirectory(prefix="cpe-readiness-clean-") as temp:
         repo = Path(temp) / "repo"
