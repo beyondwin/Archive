@@ -80,6 +80,7 @@ python3 "$EVAL_DIR/check_trajectory_projection.py" >/dev/null
 python3 "$EVAL_DIR/check_progress_ledger.py" >/dev/null
 python3 "$EVAL_DIR/check_operational_run_quality.py" >/dev/null
 python3 "$EVAL_DIR/check_cpe_replay.py" >/dev/null
+python3 "$EVAL_DIR/check_recent_run_rubric.py" >/dev/null
 python3 "$EVAL_DIR/check_eval_harness.py" >/dev/null
 python3 "$EVAL_DIR/check_baseline_utils.py" >/dev/null
 if [ "$update_baseline" -eq 0 ]; then
