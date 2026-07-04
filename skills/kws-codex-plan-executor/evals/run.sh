@@ -73,6 +73,7 @@ python3 "$EVAL_DIR/check_graphify_freshness.py" >/dev/null
 python3 "$EVAL_DIR/check_preflight_dispatch.py" >/dev/null
 python3 "$EVAL_DIR/check_run_readiness.py" >/dev/null
 python3 "$EVAL_DIR/check_plan_executability_audit.py" >/dev/null
+python3 "$EVAL_DIR/check_validate_state_modular_parity.py" >/dev/null
 python3 "$EVAL_DIR/check_markdown_golden_cases.py" >/dev/null
 python3 "$EVAL_DIR/check_verification_bundle.py" >/dev/null
 python3 "$EVAL_DIR/check_recovery_policy.py" >/dev/null
