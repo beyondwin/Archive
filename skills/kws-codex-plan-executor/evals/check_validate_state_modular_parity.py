@@ -99,6 +99,94 @@ def main() -> int:
         checks["invalid_finished_completion_fails"] = (
             result.returncode != 0 and "completion_audit.passed" in (result.stderr + result.stdout)
         )
+        graphify_invalid = base_state(run_dir / "graphify-invalid")
+        graphify_invalid["graphify_audit"] = {
+            "schema_version": "1",
+            "graphify_present": True,
+            "update_required": False,
+            "fresh": True,
+            "errors": ["boom"],
+            "warnings": [],
+        }
+        result = run_validator(graphify_invalid, run_dir / "graphify-invalid" / "state.json")
+        checks["graphify_errors_fail_finished_state"] = (
+            result.returncode != 0 and "graphify_audit.errors" in (result.stderr + result.stdout)
+        )
+        prompt_invalid = base_state(run_dir / "prompt-invalid")
+        prompt_invalid["prompt_audit"] = {"schema_version": "1", "dynamic_marker_violations": ["timestamp"]}
+        result = run_validator(prompt_invalid, run_dir / "prompt-invalid" / "state.json")
+        checks["prompt_dynamic_markers_fail_finished_state"] = (
+            result.returncode != 0 and "dynamic_marker_violations" in (result.stderr + result.stdout)
+        )
+        plan_invalid = base_state(run_dir / "plan-invalid")
+        plan_invalid["plan_executability_audit"] = {
+            "path": str(run_dir / "plan-invalid" / "plan_executability_audit.json"),
+            "grade": "red",
+            "blocking_issue_count": 1,
+            "fixable_issue_count": 0,
+        }
+        result = run_validator(plan_invalid, run_dir / "plan-invalid" / "state.json")
+        checks["red_plan_audit_fails_finished_state"] = (
+            result.returncode != 0 and "plan_executability_audit" in (result.stderr + result.stdout)
+        )
+        quality_invalid = base_state(run_dir / "quality-invalid")
+        quality_invalid["run_quality"]["open_followups"] = ["agentlens_missing"]
+        result = run_validator(quality_invalid, run_dir / "quality-invalid" / "state.json")
+        checks["green_run_quality_with_followups_fails"] = (
+            result.returncode != 0 and "run_quality.grade" in (result.stderr + result.stdout)
+        )
+        delegation_invalid = base_state(run_dir / "delegation-invalid")
+        delegation_invalid["delegation_policy"] = {"requested_mode": "invalid"}
+        result = run_validator(delegation_invalid, run_dir / "delegation-invalid" / "state.json")
+        checks["invalid_delegation_policy_fails"] = (
+            result.returncode != 0 and "delegation_policy" in (result.stderr + result.stdout)
+        )
+        task_invalid = base_state(run_dir / "task-invalid")
+        task_invalid["subagents_requested"] = True
+        task_invalid["tasks"] = {
+            "task_1": {
+                "status": "completed",
+                "risk": "medium",
+                "files_declared": ["src/app.py"],
+                "contract": {
+                    "scope": "write",
+                    "files_to_inspect": ["src/app.py"],
+                    "allowed_edits": ["src/app.py"],
+                    "forbidden_edits": [".git/**"],
+                    "acceptance_command_or_honest_substitute": "python3 -m pytest",
+                },
+                "unit_manifest": {
+                    "unit_type": "execute-task",
+                    "context_mode": "focused",
+                    "required_skills": ["using-superpowers", "test-driven-development"],
+                    "tool_policy": "implementation",
+                    "allowed_write_globs": ["src/app.py"],
+                    "forbidden_write_globs": [".git/**"],
+                    "artifact_policy": "inline-summary",
+                    "max_context_chars": 60000,
+                },
+                "review_retries": 0,
+                "verifier_retries": 0,
+                "timing": {
+                    "started": "2026-07-04T00:00:00Z",
+                    "completed": "2026-07-04T00:01:00Z",
+                    "verified": "2026-07-04T00:01:00Z",
+                },
+            }
+        }
+        task_invalid["current_task"] = "task_1"
+        task_invalid["run_quality"]["grade"] = "yellow"
+        task_invalid["run_quality"]["open_followups"] = ["delegation_policy_missing_dispatch_evidence"]
+        task_invalid["run_quality"]["operational_debt"] = {
+            "schema_version": "1",
+            "followups": ["delegation_policy_missing_dispatch_evidence"],
+            "count": 1,
+            "blocking": False,
+        }
+        result = run_validator(task_invalid, run_dir / "task-invalid" / "state.json")
+        checks["completed_write_task_requires_strategy"] = (
+            result.returncode != 0 and "subagent_strategy" in (result.stderr + result.stdout)
+        )
     for name, passed in checks.items():
         if not passed:
             failures.append(name)
