@@ -72,6 +72,9 @@
     RED/GREEN when applicable, post-diff review, acceptance command,
     reconciliation, and state validation. When the decision is `block`, stop
     before editing and record the blocker.
+    Record run-level delegation capability before per-task dispatch when spawn
+    policy prevents all task spawning. This changes only operational-debt
+    accounting; task-local gates still run.
 16. Maintain `context_health` at every semantic boundary.
 17. Before `lifecycle_outcome=finished`, run `scripts/reconcile_state.py` and
     `scripts/validate_state.py`.
@@ -89,3 +92,7 @@ without mutating state; those observations use `observed_after_completion=true`.
 
 AgentLens replay and learning events are best-effort. A failure to emit those
 events cannot block implementation.
+
+Recent-run rubric reports are inspection-only. They aggregate finished state
+with `scripts/analyze_recent_runs.py` and never replace per-run state,
+completion audit, or task acceptance evidence.

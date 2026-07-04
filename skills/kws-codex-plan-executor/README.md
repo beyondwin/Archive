@@ -68,6 +68,8 @@ python3 evals/check_cache_observations.py
 python3 evals/check_graphify_freshness.py
 python3 evals/check_preflight_dispatch.py
 python3 evals/check_plan_executability_audit.py
+python3 evals/check_validate_state_modular_parity.py
+python3 evals/check_recent_run_rubric.py
 python3 evals/check_cpe_replay.py
 python3 evals/check_recovery_policy.py
 python3 evals/check_trajectory_projection.py
@@ -116,6 +118,9 @@ operator-reviewed effective counts with `raw_blocking_issue_count`,
 Normalized replay evidence is generated with `scripts/normalize_cpe_run.py`
 and covered by `check_cpe_replay.py`; it records stable summaries and forbidden
 pattern flags without raw prompts or transcripts.
+Recent-run rubric reports are generated with `scripts/analyze_recent_runs.py`;
+they read recent `state.json` files and summarize operational quality without
+raw transcripts.
 
 Run-state repair is separate from inspection and defaults to dry-run:
 

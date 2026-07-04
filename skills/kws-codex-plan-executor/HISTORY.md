@@ -1,5 +1,18 @@
 # History
 
+## 2.26.0 - 2026-07-04
+
+- Added recent-run operational-quality rubric reporting with
+  `scripts/analyze_recent_runs.py`.
+- Added full-spec fallback diagnosis fields for task packets, readiness audits,
+  and plan executability audits.
+- Added run-level delegation capability evidence and AgentLens status
+  classification.
+- Extended normalized replay and deterministic eval coverage for prompt,
+  Graphify, AgentLens, and delegation capability status.
+- Added validator modular parity coverage and routed the public state validator
+  through `cpe_state_validation` domain modules while preserving CLI behavior.
+
 ## 2.25.1 - 2026-07-03
 
 - Fixed plan executability audit blocker reasons so blocked tasks report the

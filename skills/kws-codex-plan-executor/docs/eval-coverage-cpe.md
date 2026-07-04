@@ -7,6 +7,10 @@
 | Write-scope formatting | `check_run_readiness.py` | `check_preflight_dispatch.py` |
 | Plan audit/state parity | `check_state_schema.py` | `check_operational_run_quality.py` |
 | Expected local fallback vs prevented delegation | `check_operational_run_quality.py` | `check_preflight_dispatch.py` |
+| Run-level delegation capability | `check_preflight_dispatch.py` | `check_operational_run_quality.py` |
+| Recent-run rubric aggregation | `check_recent_run_rubric.py` | `check_cpe_replay.py` |
+| Validator module parity | `check_validate_state_modular_parity.py` | `check_state_schema.py` |
+| Full-spec fallback diagnosis | `check_task_packet.py` | `check_run_readiness.py`, `check_plan_executability_audit.py` |
 | Structured residual risk | `check_state_schema.py` | `check_cpe_replay.py` |
 | Normalized replay forbidden patterns | `check_cpe_replay.py` | `check_eval_harness.py` |
 | Human task packet view parity | `check_task_packet_view.py` | `check_markdown_golden_cases.py` |

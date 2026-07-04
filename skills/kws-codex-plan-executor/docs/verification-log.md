@@ -418,3 +418,49 @@ Result:
 - Graphify freshness audit: pass with `fresh=true` and no errors.
 - Full CPE fixture harness skipped because this change is docs-only and does
   not alter runtime behavior, prompt templates, scripts, evals, or state schema.
+
+## 2026-07-04
+
+Scope:
+
+- v2.26.0 CPE operational quality umbrella: recent-run rubric, fallback
+  diagnosis, run-level delegation capability, AgentLens status recording,
+  validator modular parity, release docs, baseline, and Graphify evidence.
+
+Commands:
+
+```bash
+cd skills/kws-codex-plan-executor
+./evals/run.sh --update-baseline
+./evals/run.sh
+python3 -m py_compile scripts/*.py scripts/cpe_state_validation/*.py evals/*.py
+bash -n evals/run.sh
+cd /Users/kws/.codex/worktrees/cpe-operational-quality-umbrella-20260704-163729
+git diff --check
+bun install --frozen-lockfile
+bun run check
+graphify update .
+python3 skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py --repo-root . --update-ran --output /tmp/cpe-operational-quality-graphify.json
+python3 skills/kws-codex-plan-executor/scripts/audit_prompt_cache.py --skill-root skills/kws-codex-plan-executor --output /tmp/cpe-operational-quality-prompt-audit.json
+python3 skills/kws-codex-plan-executor/scripts/analyze_recent_runs.py --codex-home ~/.codex --recent 5 --include-finished --output /tmp/cpe-recent-run-rubric.json
+python3 skills/kws-codex-plan-executor/scripts/reconcile_state.py --state /Users/kws/.codex/orchestrator/cpe-operational-quality-umbrella-20260704-163729/state.json --check
+python3 skills/kws-codex-plan-executor/scripts/validate_state.py /Users/kws/.codex/orchestrator/cpe-operational-quality-umbrella-20260704-163729/state.json
+```
+
+Result:
+
+- Full deterministic eval harness: pass; `evals/baselines/v2.26.0.json`
+  written.
+- Python compile and shell syntax: pass, including the new
+  `scripts/cpe_state_validation/` package.
+- Diff whitespace check: pass.
+- `bun run check`: pass after `bun install --frozen-lockfile` restored local
+  dependencies; result was 820 pass, 10 skip, 0 fail across 149 files.
+- Graphify update: pass; `graphify-out/GRAPH_REPORT.md` and `graph.json`
+  refreshed.
+- Graphify freshness audit: pass with `fresh=true` and no errors.
+- Prompt cache audit: pass with no dynamic marker violations.
+- Recent-run rubric smoke: pass; the active run was still incomplete at first
+  and correctly appeared as a red/yellow evidence gap before final state close.
+- State reconciliation and validation: pass for
+  `cpe-operational-quality-umbrella-20260704-163729`.

@@ -67,6 +67,15 @@ requested mode, request source, explicit user delegation intent, active spawn
 policy, effective mode, and reason. It explains policy-level local fallback
 without relying on prose-only state notes.
 
+`delegation_capability` may summarize run-level spawn capability before
+per-task dispatch. When an explicit-request-required spawn policy prevents all
+task spawning, run quality records expected local fallback once instead of
+requiring the same task-level reason to be repeated everywhere.
+
+`agentlens_status` classifies AgentLens as recorded, unavailable, emit-failed,
+or not-applicable. AgentLens remains best-effort and never replaces state,
+completion audit, or verification evidence.
+
 `preflight_bootstrap` stores the detection-only local environment report:
 warnings, suggested bootstrap commands with `auto_run=false`, and environment
 capabilities such as Node, Bun, pnpm, Gradle wrapper, Android SDK, adb, Cargo,
@@ -182,7 +191,16 @@ acceptance command.
 `scripts/normalize_cpe_run.py` emits compact replay JSON for deterministic
 checks and handoffs. It summarizes terminal state, completion status,
 run-quality grade, open followups, full-spec fallback count, dispatch reason
-counts, plan audit counts, residual risk classes, prompt/Graphify summaries,
-and forbidden durable-output patterns without storing raw transcripts or full
-prompts. `eval-coverage-cpe.md` maps this replay check and adjacent CPE quality
-evals to the failure modes they protect.
+counts, plan audit counts, residual risk classes, prompt/Graphify/AgentLens
+status summaries, and forbidden durable-output patterns without storing raw
+transcripts or full prompts. `eval-coverage-cpe.md` maps this replay check and
+adjacent CPE quality evals to the failure modes they protect.
+
+`scripts/analyze_recent_runs.py` aggregates recent `state.json` files into a
+derived rubric report. The report is inspection evidence only; it never
+replaces the per-run state, task packet JSON, or `completion_audit`.
+
+`validate_state.py` remains the public CLI. The validator package under
+`scripts/cpe_state_validation/` provides domain modules for completion,
+Graphify, plan audit, prompt cache, run quality, delegation, tasks, context,
+and recovery validation while preserving public CLI parity.
