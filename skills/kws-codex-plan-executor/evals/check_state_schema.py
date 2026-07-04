@@ -491,8 +491,28 @@ def main() -> int:
         "effective_mode": "local_fallback",
         "reason": "spawn_agent tool policy requires explicit user delegation intent",
     }
+    v222["delegation_capability"] = {
+        "schema_version": "1",
+        "spawn_policy": "explicit-request-required",
+        "explicit_user_delegation_request": False,
+        "run_level_effective_mode": "local_fallback",
+        "reason": "spawn_agent tool policy requires explicit user delegation intent",
+    }
+    v222["agentlens_status"] = {
+        "schema_version": "1",
+        "status": "agentlens_unavailable",
+        "blocking": False,
+    }
     v222["dispatch_decisions"] = [valid_dispatch_decision()]
     v222["run_quality"] = valid_run_quality()
+    v222["run_quality"]["grade"] = "yellow"
+    v222["run_quality"]["open_followups"] = ["delegation_policy_expected_local_fallback"]
+    v222["run_quality"]["operational_debt"] = {
+        "schema_version": "1",
+        "followups": ["delegation_policy_expected_local_fallback"],
+        "count": 1,
+        "blocking": False,
+    }
     result = run_validator(script, v222)
     checks["v222_optional_fields_pass"] = result.returncode == 0
     if not checks["v222_optional_fields_pass"]:

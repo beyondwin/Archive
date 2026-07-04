@@ -234,6 +234,13 @@ def main() -> int:
             failures.append(
                 "explicit-request-required spawn policy without explicit delegation intent should local_fallback"
             )
+        capability = data.get("state_updates", {}).get("delegation_capability", {})
+        checks["run_level_delegation_capability_emitted"] = (
+            capability.get("run_level_effective_mode") == "local_fallback"
+            and capability.get("reason") == "spawn_agent tool policy requires explicit user delegation intent"
+        )
+        if not checks["run_level_delegation_capability_emitted"]:
+            failures.append("preflight dispatch should emit run-level delegation capability state update")
 
     with tempfile.TemporaryDirectory(prefix="cpe-dispatch-") as temp:
         repo = Path(temp) / "repo"

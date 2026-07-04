@@ -214,6 +214,21 @@ def main() -> int:
     if not checks["debt_helper_reports_stable_followups"]:
         failures.append("run_quality_debt.stable_followups should report state-intrinsic debt in stable order")
 
+    capability_state = v222_state()
+    capability_state["dispatch_decisions"] = []
+    capability_state["delegation_capability"] = {
+        "schema_version": "1",
+        "spawn_policy": "explicit-request-required",
+        "explicit_user_delegation_request": False,
+        "run_level_effective_mode": "local_fallback",
+        "reason": "spawn_agent tool policy requires explicit user delegation intent",
+    }
+    checks["run_level_capability_reports_expected_local_fallback"] = (
+        debt.stable_followups(capability_state) == ["delegation_policy_expected_local_fallback"]
+    )
+    if not checks["run_level_capability_reports_expected_local_fallback"]:
+        failures.append("run-level delegation capability should report expected local fallback once")
+
     checks["debt_helper_reports_yellow_grade"] = debt.grade_for(
         yellow_state,
         debt.stable_followups(yellow_state),

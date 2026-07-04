@@ -137,6 +137,12 @@ VALID_PREFLIGHT_WARNING_KINDS = {"missing_local_config", "dependencies_likely_st
 VALID_DELEGATION_REQUESTED_SOURCES = {"default", "explicit", "natural_language", "resume_state"}
 VALID_SPAWN_POLICIES = {"available", "unavailable", "explicit-request-required", "unknown"}
 VALID_DELEGATION_EFFECTIVE_MODES = {"delegate", "local_fallback", "off", "blocked"}
+VALID_AGENTLENS_STATUSES = {
+    "agentlens_unavailable",
+    "agentlens_emit_failed",
+    "agentlens_not_applicable",
+    "agentlens_recorded",
+}
 VALID_RUN_QUALITY_VALIDATION_STATUSES = {"passed", "failed", "unreadable", "not_checked"}
 VALID_RESIDUAL_RISK_OWNERS = {"executor", "operator", "product", "environment"}
 VALID_RESIDUAL_RISK_CLASSES = {
@@ -978,6 +984,34 @@ def _validate_operational_run_quality(data: dict, errors: list[str]) -> None:
                 and policy.get("reason") not in VALID_ADAPTIVE_LOCAL_FAST_PATH_REASONS
             ):
                 errors.append("delegation_policy.reason must be a known adaptive local fast path reason")
+
+    capability = data.get("delegation_capability")
+    if capability is not None:
+        if not isinstance(capability, dict):
+            errors.append("delegation_capability must be an object")
+        else:
+            if capability.get("schema_version") != "1":
+                errors.append("delegation_capability.schema_version must be 1")
+            if capability.get("spawn_policy") not in VALID_SPAWN_POLICIES:
+                errors.append("delegation_capability.spawn_policy invalid")
+            if not isinstance(capability.get("explicit_user_delegation_request"), bool):
+                errors.append("delegation_capability.explicit_user_delegation_request must be a boolean")
+            if capability.get("run_level_effective_mode") not in VALID_DELEGATION_EFFECTIVE_MODES:
+                errors.append("delegation_capability.run_level_effective_mode invalid")
+            if not _has_substantive_value(capability.get("reason")):
+                errors.append("delegation_capability.reason must be non-empty")
+
+    agentlens_status = data.get("agentlens_status")
+    if agentlens_status is not None:
+        if not isinstance(agentlens_status, dict):
+            errors.append("agentlens_status must be an object")
+        else:
+            if agentlens_status.get("schema_version") != "1":
+                errors.append("agentlens_status.schema_version must be 1")
+            if agentlens_status.get("status") not in VALID_AGENTLENS_STATUSES:
+                errors.append("agentlens_status.status invalid")
+            if not isinstance(agentlens_status.get("blocking"), bool):
+                errors.append("agentlens_status.blocking must be a boolean")
 
     bootstrap = data.get("preflight_bootstrap")
     if bootstrap is not None:

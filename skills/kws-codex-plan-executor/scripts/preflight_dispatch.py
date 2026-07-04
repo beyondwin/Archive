@@ -41,6 +41,7 @@ def decision_payload(
     write_scope: list[str],
     failed: list[str],
     delegation_policy: dict,
+    delegation_capability: dict,
 ) -> dict:
     mode = "delegated" if decision == "delegate" else "local_fallback"
     return {
@@ -53,12 +54,24 @@ def decision_payload(
         "delegation_policy": delegation_policy,
         "state_updates": {
             "delegation_policy": delegation_policy,
+            "delegation_capability": delegation_capability,
             "subagent_strategy": {
                 "mode": mode,
                 "reason": reason,
                 "run_ids": [],
             }
         },
+    }
+
+
+def delegation_capability_payload(args: argparse.Namespace, reason: str, decision: str) -> dict:
+    effective = "delegate" if decision == "delegate" else decision
+    return {
+        "schema_version": "1",
+        "spawn_policy": args.spawn_policy,
+        "explicit_user_delegation_request": args.explicit_delegation_requested == "true",
+        "run_level_effective_mode": effective,
+        "reason": reason,
     }
 
 
@@ -262,7 +275,8 @@ def main() -> int:
     delegation_policy["effective_mode"] = "delegate" if decision == "delegate" else decision
     delegation_policy["reason"] = reason
 
-    payload = decision_payload(args.task_id, decision, reason, write_scope, failed, delegation_policy)
+    capability = delegation_capability_payload(args, reason, decision)
+    payload = decision_payload(args.task_id, decision, reason, write_scope, failed, delegation_policy, capability)
     text = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.output:
         Path(args.output).write_text(text, encoding="utf-8")
