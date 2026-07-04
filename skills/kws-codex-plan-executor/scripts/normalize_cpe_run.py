@@ -136,6 +136,9 @@ def normalize(state: dict[str, Any], *, context_text: str = "", final_output_tex
     prompt_audit = state.get("prompt_audit") if isinstance(state.get("prompt_audit"), dict) else {}
     graphify = state.get("graphify_audit") if isinstance(state.get("graphify_audit"), dict) else {}
     tasks = state.get("tasks") if isinstance(state.get("tasks"), dict) else {}
+    delegation_capability = (
+        state.get("delegation_capability") if isinstance(state.get("delegation_capability"), dict) else {}
+    )
     return {
         "schema_version": "1",
         "run_id": state.get("run_id"),
@@ -148,7 +151,15 @@ def normalize(state: dict[str, Any], *, context_text: str = "", final_output_tex
         "dispatch_decision_reasons": count_dispatch_reasons(state),
         "plan_executability": plan_executability_summary(state),
         "prompt_audit_passed": prompt_audit.get("passed") is True or prompt_audit.get("dynamic_marker_violations") == [],
+        "prompt_audit_status": "passed"
+        if prompt_audit.get("passed") is True or prompt_audit.get("dynamic_marker_violations") == []
+        else ("missing" if not prompt_audit else "failed"),
         "graphify_fresh": graphify.get("fresh") is True,
+        "graphify_status": "fresh" if graphify.get("fresh") is True else ("missing" if not graphify else "stale"),
+        "agentlens_status": "recorded"
+        if state.get("agentlens_orchestration_run")
+        else ("not_applicable" if state.get("mode") in {"prompt", "handoff"} else "unavailable"),
+        "delegation_capability_effective_mode": delegation_capability.get("run_level_effective_mode"),
         "residual_risk_classes": residual_risk_classes(completion),
         "verification_evidence_classes": verification_evidence_classes(completion),
         "verification_bundle_names": verification_bundle_names(completion),

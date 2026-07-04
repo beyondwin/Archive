@@ -104,9 +104,23 @@ def main() -> int:
             and replay.get("verification_bundle_names") == ["cpe_skill_change"]
             and replay.get("task_summary_count") == 1
             and replay.get("hot_tail_summary_count") == 1
+            and replay.get("agentlens_status") == "unavailable"
+            and replay.get("prompt_audit_status") == "passed"
+            and replay.get("graphify_status") == "fresh"
         )
         if not checks["finished_yellow_replay_normalizes"]:
             failures.append("finished yellow state should normalize into stable replay fields")
+
+        prompt_state = dict(state)
+        prompt_state["mode"] = "prompt"
+        prompt_state_path = run_dir / "prompt-state.json"
+        prompt_state_path.write_text(json.dumps(prompt_state), encoding="utf-8")
+        result, replay = run_replay(prompt_state_path)
+        checks["prompt_mode_agentlens_not_applicable"] = (
+            result.returncode == 0 and replay.get("agentlens_status") == "not_applicable"
+        )
+        if not checks["prompt_mode_agentlens_not_applicable"]:
+            failures.append("prompt-mode replay should mark AgentLens as not applicable")
 
         final_output = run_dir / "final.md"
         final_output.write_text("token sk-test and /Users/example and BEGIN FULL PROMPT", encoding="utf-8")
