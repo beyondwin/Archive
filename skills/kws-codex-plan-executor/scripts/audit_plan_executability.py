@@ -164,7 +164,9 @@ def audit_task(
         else:
             blocking.append("acceptance_command_missing")
     if packet and isinstance(packet.get("spec"), dict) and packet["spec"].get("fallback_used") is True:
-        fixable.append("full_spec_fallback")
+        mapping = packet["spec"].get("mapping") if isinstance(packet["spec"].get("mapping"), dict) else {}
+        if mapping.get("operator_reviewed") is not True:
+            fixable.append("full_spec_fallback")
     if risks:
         blocking.append(RISK_MARKER_REQUIRES_OPERATOR_REVIEW)
 

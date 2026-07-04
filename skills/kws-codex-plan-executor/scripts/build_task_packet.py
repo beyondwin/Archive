@@ -136,6 +136,25 @@ def heuristic_sections(task: dict, manifest: dict) -> tuple[list[str], list[dict
     return matched, candidate_scores
 
 
+def fallback_reason(task: dict, candidate_scores: list[dict]) -> str:
+    explicit = [item for item in task.get("spec_refs", []) if isinstance(item, str) and item.strip()]
+    files = [item for item in task.get("files", []) if isinstance(item, str) and item.strip()]
+    if candidate_scores or files:
+        return "weak_heuristic_match"
+    if not explicit:
+        return "missing_spec_refs"
+    return "manifest_gap"
+
+
+def suggested_spec_refs(candidate_scores: list[dict]) -> list[str]:
+    result: list[str] = []
+    for item in candidate_scores[:3]:
+        section_id = item.get("section_id")
+        if isinstance(section_id, str) and section_id not in result:
+            result.append(section_id)
+    return result
+
+
 def resolve_sections(task: dict, manifest: dict, fallback_policy: str) -> tuple[list[str], bool, dict]:
     sections = manifest.get("sections", {})
     explicit = [item for item in task.get("spec_refs", []) if isinstance(item, str) and item.strip()]
@@ -185,12 +204,16 @@ def resolve_sections(task: dict, manifest: dict, fallback_policy: str) -> tuple[
 
     if fallback_policy == "halt_on_blocker":
         die(f"no spec section mapping for {task.get('id')}")
+    reason = fallback_reason(task, candidate_scores)
     return ["*"], True, {
         "selected_section_ids": ["*"],
         "candidate_scores": candidate_scores,
         "mapping_reason": "No task-specific spec section matched; using full spec fallback.",
         "requires_parent_mapping": True,
         "source": "fallback",
+        "fallback_reason": reason,
+        "suggested_spec_refs": suggested_spec_refs(candidate_scores),
+        "operator_reviewed": False,
     }
 
 

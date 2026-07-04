@@ -46,12 +46,17 @@ def audit_packet(packet_path: Path) -> tuple[dict, list[dict]]:
 
     spec = packet.get("spec") if isinstance(packet.get("spec"), dict) else {}
     if spec.get("fallback_used") is True:
+        mapping = spec.get("mapping") if isinstance(spec.get("mapping"), dict) else {}
+        reviewed = mapping.get("operator_reviewed") is True
         issues.append(
             issue(
                 task_id,
-                "fixable",
+                "info" if reviewed else "fixable",
                 "full_spec_fallback",
                 "Task packet uses full spec fallback instead of task-specific spec sections.",
+                fallback_reason=mapping.get("fallback_reason") or "unknown",
+                suggested_spec_refs=list_strings(mapping.get("suggested_spec_refs")),
+                operator_reviewed=reviewed,
             )
         )
 
@@ -78,9 +83,10 @@ def audit_packet(packet_path: Path) -> tuple[dict, list[dict]]:
         issues.append(issue(task_id, "fixable", "packet_context_budget_red", "Task packet context budget is red before execution."))
 
     has_blocking = any(item["severity"] == "blocking" for item in issues)
+    has_actionable = any(item["severity"] in {"blocking", "fixable"} for item in issues)
     summary = {
         "task_id": task_id,
-        "delegate_ready": not has_blocking and not issues,
+        "delegate_ready": not has_blocking and not has_actionable,
         "local_fast_path_candidate": len(files) <= 3 and not has_blocking,
         "issue_count": len(issues),
         "normalized_write_globs": normalized,
