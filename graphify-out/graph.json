@@ -17490,7 +17490,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_orchestrator_src_strategydecider",
-      "community": 139,
+      "community": 285,
       "norm_label": "strategydecider.ts"
     },
     {
@@ -17510,7 +17510,7 @@
       "source_location": "L3",
       "_origin": "ast",
       "id": "packages_orchestrator_src_strategydecider_strategydecision",
-      "community": 139,
+      "community": 285,
       "norm_label": "strategydecision"
     },
     {
@@ -17520,7 +17520,7 @@
       "source_location": "L8",
       "_origin": "ast",
       "id": "packages_orchestrator_src_strategydecider_deciderinput",
-      "community": 139,
+      "community": 285,
       "norm_label": "deciderinput"
     },
     {
@@ -17530,7 +17530,7 @@
       "source_location": "L15",
       "_origin": "ast",
       "id": "packages_orchestrator_src_strategydecider_lockfile_paths",
-      "community": 139,
+      "community": 285,
       "norm_label": "lockfile_paths"
     },
     {
@@ -17540,7 +17540,7 @@
       "source_location": "L17",
       "_origin": "ast",
       "id": "packages_orchestrator_src_strategydecider_decideverificationstrategy",
-      "community": 139,
+      "community": 285,
       "norm_label": "decideverificationstrategy()"
     },
     {
@@ -17550,7 +17550,7 @@
       "source_location": "L50",
       "_origin": "ast",
       "id": "packages_orchestrator_src_strategydecider_isdependencyinstallcommand",
-      "community": 139,
+      "community": 285,
       "norm_label": "isdependencyinstallcommand()"
     },
     {
@@ -17560,7 +17560,7 @@
       "source_location": "L54",
       "_origin": "ast",
       "id": "packages_orchestrator_src_strategydecider_extractpath",
-      "community": 139,
+      "community": 285,
       "norm_label": "extractpath()"
     },
     {
@@ -19840,7 +19840,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_orchestrator_tests_strategydecider_test",
-      "community": 139,
+      "community": 285,
       "norm_label": "strategydecider.test.ts"
     },
     {
@@ -26761,7 +26761,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs",
-      "community": 17,
+      "community": 252,
       "norm_label": "aggregate_runs.py"
     },
     {
@@ -26771,7 +26771,7 @@
       "source_location": "L27",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_plan_trees",
-      "community": 17,
+      "community": 252,
       "norm_label": "_plan_trees()"
     },
     {
@@ -26781,7 +26781,7 @@
       "source_location": "L37",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_flatten_tasks",
-      "community": 17,
+      "community": 252,
       "norm_label": "flatten_tasks()"
     },
     {
@@ -26791,7 +26791,7 @@
       "source_location": "L59",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_cache_hit_ratio",
-      "community": 17,
+      "community": 252,
       "norm_label": "cache_hit_ratio()"
     },
     {
@@ -26801,7 +26801,7 @@
       "source_location": "L66",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_plan_slug",
-      "community": 17,
+      "community": 252,
       "norm_label": "_plan_slug()"
     },
     {
@@ -26811,7 +26811,7 @@
       "source_location": "L74",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_summarize_run",
-      "community": 17,
+      "community": 252,
       "norm_label": "summarize_run()"
     },
     {
@@ -26821,7 +26821,7 @@
       "source_location": "L95",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_verifier_retry_distribution",
-      "community": 17,
+      "community": 252,
       "norm_label": "verifier_retry_distribution()"
     },
     {
@@ -26831,7 +26831,7 @@
       "source_location": "L103",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_quality_fail_rate",
-      "community": 17,
+      "community": 252,
       "norm_label": "quality_fail_rate()"
     },
     {
@@ -26841,7 +26841,7 @@
       "source_location": "L111",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_all_quality_scores",
-      "community": 17,
+      "community": 252,
       "norm_label": "_all_quality_scores()"
     },
     {
@@ -26851,7 +26851,7 @@
       "source_location": "L119",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_quality_drift",
-      "community": 17,
+      "community": 252,
       "norm_label": "quality_drift()"
     },
     {
@@ -26861,7 +26861,7 @@
       "source_location": "L128",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_recurring_issue_signatures",
-      "community": 17,
+      "community": 252,
       "norm_label": "recurring_issue_signatures()"
     },
     {
@@ -26871,7 +26871,7 @@
       "source_location": "L140",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_detect_observability_gaps",
-      "community": 17,
+      "community": 252,
       "norm_label": "detect_observability_gaps()"
     },
     {
@@ -26881,7 +26881,7 @@
       "source_location": "L155",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_discover_run_files",
-      "community": 17,
+      "community": 252,
       "norm_label": "discover_run_files()"
     },
     {
@@ -26891,7 +26891,7 @@
       "source_location": "L175",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_load_state",
-      "community": 17,
+      "community": 252,
       "norm_label": "load_state()"
     },
     {
@@ -26901,7 +26901,7 @@
       "source_location": "L183",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_passes_filters",
-      "community": 17,
+      "community": 252,
       "norm_label": "_passes_filters()"
     },
     {
@@ -26911,7 +26911,7 @@
       "source_location": "L197",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_build_report",
-      "community": 17,
+      "community": 252,
       "norm_label": "build_report()"
     },
     {
@@ -26921,7 +26921,7 @@
       "source_location": "L227",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_render_json",
-      "community": 17,
+      "community": 252,
       "norm_label": "render_json()"
     },
     {
@@ -26931,7 +26931,7 @@
       "source_location": "L231",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_render_md",
-      "community": 17,
+      "community": 252,
       "norm_label": "render_md()"
     },
     {
@@ -26941,7 +26941,7 @@
       "source_location": "L281",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_default_orchestrator_root",
-      "community": 17,
+      "community": 252,
       "norm_label": "_default_orchestrator_root()"
     },
     {
@@ -26951,7 +26951,7 @@
       "source_location": "L285",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_default_learning_root",
-      "community": 17,
+      "community": 252,
       "norm_label": "_default_learning_root()"
     },
     {
@@ -26961,7 +26961,7 @@
       "source_location": "L290",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_main",
-      "community": 17,
+      "community": 252,
       "norm_label": "main()"
     },
     {
@@ -26971,7 +26971,7 @@
       "source_location": "L28",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_rationale_28",
-      "community": 17,
+      "community": 252,
       "norm_label": "yield (plan_index, per_plan_tree) for single-plan or plan_chain shapes."
     },
     {
@@ -26981,7 +26981,7 @@
       "source_location": "L38",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_rationale_38",
-      "community": 17,
+      "community": 252,
       "norm_label": "flatten all tasks across plan trees into a list of records."
     },
     {
@@ -26991,7 +26991,7 @@
       "source_location": "L156",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs_rationale_156",
-      "community": 17,
+      "community": 252,
       "norm_label": "return [(run_id, path)] preferring archived state.final.json over live."
     },
     {
@@ -65239,7 +65239,7 @@
       "source_location": "L299",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_architecture_14_\ud559\uc2b5_\uc774\ubca4\ud2b8_\ub85c\uadf8_\uacc4\uc57d_v2_8_v2_17_agentlens_\ucef7\uc624\ubc84",
-      "community": 252,
+      "community": 58,
       "norm_label": "14. \u1112\u1161\u11a8\u1109\u1173\u11b8/\u110b\u1175\u1107\u1166\u11ab\u1110\u1173 \u1105\u1169\u1100\u1173 \u1100\u1168\u110b\u1163\u11a8 (v2.8 \u2192 v2.17 agentlens \u110f\u1165\u11ba\u110b\u1169\u1107\u1165)"
     },
     {
@@ -65249,7 +65249,7 @@
       "source_location": "L305",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_architecture_\uc800\uc7a5\uc18c_\ub808\uc774\uc544\uc6c3",
-      "community": 252,
+      "community": 58,
       "norm_label": "\u110c\u1165\u110c\u1161\u11bc\u1109\u1169 \u1105\u1166\u110b\u1175\u110b\u1161\u110b\u116e\u11ba"
     },
     {
@@ -65259,7 +65259,7 @@
       "source_location": "L317",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_architecture_\ub2e8\uc77c_\uc791\uc131\uc790_\uacc4\uc57d_cutover_\ud6c4_\uadf8\ub300\ub85c_\uc720\uc9c0",
-      "community": 252,
+      "community": 58,
       "norm_label": "\u1103\u1161\u11ab\u110b\u1175\u11af \u110c\u1161\u11a8\u1109\u1165\u11bc\u110c\u1161 \u1100\u1168\u110b\u1163\u11a8 (cutover \u1112\u116e \u1100\u1173\u1103\u1162\u1105\u1169 \u110b\u1172\u110c\u1175)"
     },
     {
@@ -65269,7 +65269,7 @@
       "source_location": "L321",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_architecture_\uc624\ucf00\uc2a4\ud2b8\ub808\uc774\ud130_\uc9c1\uc811_emit_\uc0ac\uc774\ud2b8_4\uac1c",
-      "community": 252,
+      "community": 58,
       "norm_label": "\u110b\u1169\u110f\u1166\u1109\u1173\u1110\u1173\u1105\u1166\u110b\u1175\u1110\u1165 \u110c\u1175\u11a8\u110c\u1165\u11b8 emit \u1109\u1161\u110b\u1175\u1110\u1173 (4\u1100\u1162)"
     },
     {
@@ -65279,7 +65279,7 @@
       "source_location": "L332",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_architecture_10\uac1c_\uc774\ubca4\ud2b8_\ud0c0\uc785_\ub124\uc784\uc2a4\ud398\uc774\uc2a4_kws_cme_event_type",
-      "community": 252,
+      "community": 58,
       "norm_label": "10\u1100\u1162 \u110b\u1175\u1107\u1166\u11ab\u1110\u1173 \u1110\u1161\u110b\u1175\u11b8 (\u1102\u1166\u110b\u1175\u11b7\u1109\u1173\u1111\u1166\u110b\u1175\u1109\u1173: `kws-cme.<event_type>`)"
     },
     {
@@ -65289,7 +65289,7 @@
       "source_location": "L345",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_architecture_\uc0b4\uade0_\uac00\ub4dc",
-      "community": 252,
+      "community": 58,
       "norm_label": "\u1109\u1161\u11af\u1100\u1172\u11ab \u1100\u1161\u1103\u1173"
     },
     {
@@ -65299,7 +65299,7 @@
       "source_location": "L349",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_architecture_\uc2e4\ud328_\uaca9\ub9ac",
-      "community": 252,
+      "community": 58,
       "norm_label": "\u1109\u1175\u11af\u1111\u1162 \u1100\u1167\u11a8\u1105\u1175"
     },
     {
@@ -65309,7 +65309,7 @@
       "source_location": "L353",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_architecture_state_json_\uacfc\uc758_\uad00\uacc4",
-      "community": 252,
+      "community": 58,
       "norm_label": "`state.json` \u1100\u116a\u110b\u1174 \u1100\u116a\u11ab\u1100\u1168"
     },
     {
@@ -65319,7 +65319,7 @@
       "source_location": "L357",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_architecture_\ud328\ub9ac\ud2f0_\uac80\uc99d",
-      "community": 252,
+      "community": 58,
       "norm_label": "\u1111\u1162\u1105\u1175\u1110\u1175 \u1100\u1165\u11b7\u110c\u1173\u11bc"
     },
     {
@@ -66159,7 +66159,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_decision_log",
-      "community": 447,
+      "community": 27,
       "norm_label": "decision-log.md"
     },
     {
@@ -66669,7 +66669,7 @@
       "source_location": "L52",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_design_decisions_2_\ud575\uc2ec_\uad6c\uc870_\uacb0\uc815",
-      "community": 59,
+      "community": 265,
       "norm_label": "2. \u1112\u1162\u11a8\u1109\u1175\u11b7 \u1100\u116e\u110c\u1169 \u1100\u1167\u11af\u110c\u1165\u11bc"
     },
     {
@@ -66679,7 +66679,7 @@
       "source_location": "L54",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_design_decisions_2_1_\uc65c_git_worktree\uc778\uac00_\ube0c\ub79c\uce58\ub9cc_\uc544\ub2c8\ub77c",
-      "community": 59,
+      "community": 265,
       "norm_label": "2.1. \u110b\u116b git worktree\u110b\u1175\u11ab\u1100\u1161 (\u1107\u1173\u1105\u1162\u11ab\u110e\u1175\u1106\u1161\u11ab \u110b\u1161\u1102\u1175\u1105\u1161)"
     },
     {
@@ -66689,7 +66689,7 @@
       "source_location": "L68",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_design_decisions_2_2_\uc65c_state_json_\uc678\ubd80_\uba54\ubaa8\ub9ac_\uc778\uac00",
-      "community": 59,
+      "community": 265,
       "norm_label": "2.2. \u110b\u116b state.json (\u110b\u116c\u1107\u116e \u1106\u1166\u1106\u1169\u1105\u1175)\u110b\u1175\u11ab\u1100\u1161"
     },
     {
@@ -66699,7 +66699,7 @@
       "source_location": "L83",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_design_decisions_2_3_\uc65c_fresh_\uc11c\ube0c\uc5d0\uc774\uc804\ud2b8\uc778\uac00_\ub300\ud654_\ucee8\ud14d\uc2a4\ud2b8_\uacf5\uc720_x",
-      "community": 59,
+      "community": 265,
       "norm_label": "2.3. \u110b\u116b fresh \u1109\u1165\u1107\u1173\u110b\u1166\u110b\u1175\u110c\u1165\u11ab\u1110\u1173\u110b\u1175\u11ab\u1100\u1161 (\u1103\u1162\u1112\u116a \u110f\u1165\u11ab\u1110\u1166\u11a8\u1109\u1173\u1110\u1173 \u1100\u1169\u11bc\u110b\u1172 x)"
     },
     {
@@ -66709,7 +66709,7 @@
       "source_location": "L96",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_design_decisions_2_4_\uc65c_agent_\ud234_headless_claude_p_\ud63c\ud569\uc778\uac00",
-      "community": 59,
+      "community": 265,
       "norm_label": "2.4. \u110b\u116b agent \u1110\u116e\u11af + headless `claude -p` \u1112\u1169\u11ab\u1112\u1161\u11b8\u110b\u1175\u11ab\u1100\u1161"
     },
     {
@@ -66719,7 +66719,7 @@
       "source_location": "L108",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_design_decisions_2_5_\uc65c_\uc704\ud5d8_\ub4f1\uae09_low_mid_high_\uc778\uac00",
-      "community": 59,
+      "community": 265,
       "norm_label": "2.5. \u110b\u116b \u110b\u1171\u1112\u1165\u11b7 \u1103\u1173\u11bc\u1100\u1173\u11b8 (low/mid/high) \u110b\u1175\u11ab\u1100\u1161"
     },
     {
@@ -66729,7 +66729,7 @@
       "source_location": "L120",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_design_decisions_2_6_\uc65c_warn_\ub4f1\uae09_pass_fail_\ub9cc_\uc544\ub2c8\ub77c",
-      "community": 59,
+      "community": 265,
       "norm_label": "2.6. \u110b\u116b warn \u1103\u1173\u11bc\u1100\u1173\u11b8 (pass/fail \u1106\u1161\u11ab \u110b\u1161\u1102\u1175\u1105\u1161)"
     },
     {
@@ -66739,7 +66739,7 @@
       "source_location": "L135",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_design_decisions_2_7_\uc65c_spec_fault_\ubd84\uae30_p15",
-      "community": 59,
+      "community": 265,
       "norm_label": "2.7. \u110b\u116b spec_fault \u1107\u116e\u11ab\u1100\u1175 (p15)"
     },
     {
@@ -66749,7 +66749,7 @@
       "source_location": "L148",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_design_decisions_2_8_\uc65c_\ud5e4\ub4dc\ub9ac\uc2a4_\uc790\uac00_\uc2a4\ud3f0_phase_1",
-      "community": 59,
+      "community": 265,
       "norm_label": "2.8. \u110b\u116b \u1112\u1166\u1103\u1173\u1105\u1175\u1109\u1173 \u110c\u1161\u1100\u1161 \u1109\u1173\u1111\u1169\u11ab (phase -1)"
     },
     {
@@ -66759,7 +66759,7 @@
       "source_location": "L167",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_design_decisions_2_9_\uc65c_resume_chain",
-      "community": 59,
+      "community": 265,
       "norm_label": "2.9. \u110b\u116b resume chain"
     },
     {
@@ -66769,7 +66769,7 @@
       "source_location": "L177",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_design_decisions_2_10_\uc65c_p2_\ubcd1\ub82c_\uc2e4\ud589_sub_worktree",
-      "community": 59,
+      "community": 265,
       "norm_label": "2.10. \u110b\u116b p2 \u1107\u1167\u11bc\u1105\u1167\u11af \u1109\u1175\u11af\u1112\u1162\u11bc (sub-worktree)"
     },
     {
@@ -69259,7 +69259,7 @@
       "source_location": "L172",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_5_validation_governs_task_4_high_risk",
-      "community": 196,
+      "community": 433,
       "norm_label": "\u00a75 validation (governs task 4 \u2014 high risk)"
     },
     {
@@ -69269,7 +69269,7 @@
       "source_location": "L178",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_validationerror_exception",
-      "community": 196,
+      "community": 433,
       "norm_label": "`validationerror(exception)`"
     },
     {
@@ -69279,7 +69279,7 @@
       "source_location": "L182",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_validate_registry_flagregistry_parsed_dict_str_object_dict_str_object",
-      "community": 196,
+      "community": 433,
       "norm_label": "`validate(registry: flagregistry, parsed: dict[str, object]) -> dict[str, object]`"
     },
     {
@@ -69289,7 +69289,7 @@
       "source_location": "L192",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_acceptance_for_task_4",
-      "community": 196,
+      "community": 433,
       "norm_label": "acceptance for task 4"
     },
     {
@@ -69299,7 +69299,7 @@
       "source_location": "L207",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_6_cli_integration_governs_task_5_high_risk",
-      "community": 589,
+      "community": 196,
       "norm_label": "\u00a76 cli integration (governs task 5 \u2014 high risk)"
     },
     {
@@ -69309,7 +69309,7 @@
       "source_location": "L213",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_init_py_re_exports_added_in_this_task",
-      "community": 589,
+      "community": 196,
       "norm_label": "`__init__.py` re-exports (added in this task)"
     },
     {
@@ -69319,7 +69319,7 @@
       "source_location": "L225",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_cli_in_src_flagset_cli_py",
-      "community": 589,
+      "community": 196,
       "norm_label": "`cli` (in `src/flagset/cli.py`)"
     },
     {
@@ -69329,7 +69329,7 @@
       "source_location": "L254",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_acceptance_for_task_5",
-      "community": 589,
+      "community": 196,
       "norm_label": "acceptance for task 5"
     },
     {
@@ -72709,7 +72709,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_journal",
-      "community": 593,
+      "community": 377,
       "norm_label": "journal.md"
     },
     {
@@ -72729,7 +72729,7 @@
       "source_location": "L7",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_journal_2026_05_29",
-      "community": 555,
+      "community": 376,
       "norm_label": "2026-05-29"
     },
     {
@@ -72739,7 +72739,7 @@
       "source_location": "L9",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_journal_opening_problem_definition",
-      "community": 555,
+      "community": 376,
       "norm_label": "opening \u2014 problem definition"
     },
     {
@@ -72749,7 +72749,7 @@
       "source_location": "L29",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_journal_plan_sequencing",
-      "community": 555,
+      "community": 376,
       "norm_label": "plan / sequencing"
     },
     {
@@ -72759,7 +72759,7 @@
       "source_location": "L42",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_journal_build_progress_additive_helpers_landed_items_2_3_4_partial_5_6",
-      "community": 555,
+      "community": 376,
       "norm_label": "build progress \u2014 additive helpers landed (items 2, 3, 4-partial, 5, 6)"
     },
     {
@@ -72769,7 +72769,7 @@
       "source_location": "L104",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_journal_checkpoint_remaining_work_needs_a_paid_eval",
-      "community": 555,
+      "community": 376,
       "norm_label": "checkpoint \u2014 remaining work needs a paid eval"
     },
     {
@@ -72849,7 +72849,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_readme",
-      "community": 593,
+      "community": 377,
       "norm_label": "readme.md"
     },
     {
@@ -72859,7 +72859,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_readme_v2_21_skill_md_slimming_runtime_enforcement_hardening",
-      "community": 378,
+      "community": 377,
       "norm_label": "v2.21 \u2014 skill.md slimming + runtime enforcement hardening"
     },
     {
@@ -72869,7 +72869,7 @@
       "source_location": "L7",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_readme_goal",
-      "community": 378,
+      "community": 377,
       "norm_label": "goal"
     },
     {
@@ -72879,7 +72879,7 @@
       "source_location": "L29",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_readme_hypothesis",
-      "community": 378,
+      "community": 377,
       "norm_label": "hypothesis"
     },
     {
@@ -72889,7 +72889,7 @@
       "source_location": "L45",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_readme_scope_the_6_approved_items",
-      "community": 378,
+      "community": 377,
       "norm_label": "scope (the 6 approved items)"
     },
     {
@@ -72899,7 +72899,7 @@
       "source_location": "L56",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_readme_execution_order_safety_first",
-      "community": 378,
+      "community": 377,
       "norm_label": "execution order (safety-first)"
     },
     {
@@ -72909,7 +72909,7 @@
       "source_location": "L69",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_readme_status_quick_links",
-      "community": 378,
+      "community": 377,
       "norm_label": "status / quick links"
     },
     {
@@ -72919,7 +72919,7 @@
       "source_location": "L76",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_readme_decisions_index",
-      "community": 378,
+      "community": 377,
       "norm_label": "decisions index"
     },
     {
@@ -72929,7 +72929,7 @@
       "source_location": "L84",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_readme_findings_index",
-      "community": 378,
+      "community": 377,
       "norm_label": "findings index"
     },
     {
@@ -73009,7 +73009,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d002_phase_boundary_helper",
-      "community": 441,
+      "community": 377,
       "norm_label": "d002-phase-boundary-helper.md"
     },
     {
@@ -73019,7 +73019,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d002_phase_boundary_helper_d002_phase_boundary_enforcement_helper_script_not_hook",
-      "community": 441,
+      "community": 377,
       "norm_label": "d002 \u2014 phase-boundary enforcement: helper script, not hook"
     },
     {
@@ -73029,7 +73029,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d002_phase_boundary_helper_context",
-      "community": 441,
+      "community": 377,
       "norm_label": "context"
     },
     {
@@ -73039,7 +73039,7 @@
       "source_location": "L23",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d002_phase_boundary_helper_options_considered",
-      "community": 441,
+      "community": 377,
       "norm_label": "options considered"
     },
     {
@@ -73049,7 +73049,7 @@
       "source_location": "L40",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d002_phase_boundary_helper_decision",
-      "community": 441,
+      "community": 377,
       "norm_label": "decision"
     },
     {
@@ -73059,7 +73059,7 @@
       "source_location": "L67",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d002_phase_boundary_helper_consequences",
-      "community": 441,
+      "community": 377,
       "norm_label": "consequences"
     },
     {
@@ -73069,7 +73069,7 @@
       "source_location": "L76",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d002_phase_boundary_helper_open_questions",
-      "community": 441,
+      "community": 377,
       "norm_label": "open questions"
     },
     {
@@ -73079,7 +73079,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d003_headless_default_vs_cache",
-      "community": 593,
+      "community": 377,
       "norm_label": "d003-headless-default-vs-cache.md"
     },
     {
@@ -73089,7 +73089,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d003_headless_default_vs_cache_d003_headless_self_spawn_default_vs_cache_warmth_preference",
-      "community": 442,
+      "community": 377,
       "norm_label": "d003 \u2014 headless self-spawn default vs cache-warmth preference"
     },
     {
@@ -73099,7 +73099,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d003_headless_default_vs_cache_context",
-      "community": 442,
+      "community": 377,
       "norm_label": "context"
     },
     {
@@ -73109,7 +73109,7 @@
       "source_location": "L23",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d003_headless_default_vs_cache_options_considered",
-      "community": 442,
+      "community": 377,
       "norm_label": "options considered"
     },
     {
@@ -73119,7 +73119,7 @@
       "source_location": "L31",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d003_headless_default_vs_cache_analysis_corrected",
-      "community": 442,
+      "community": 377,
       "norm_label": "analysis (corrected)"
     },
     {
@@ -73129,7 +73129,7 @@
       "source_location": "L58",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d003_headless_default_vs_cache_decision",
-      "community": 442,
+      "community": 377,
       "norm_label": "decision"
     },
     {
@@ -73139,7 +73139,7 @@
       "source_location": "L77",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d003_headless_default_vs_cache_follow_up_offered_to_the_user_non_blocking",
-      "community": 442,
+      "community": 377,
       "norm_label": "follow-up offered to the user (non-blocking)"
     },
     {
@@ -73149,7 +73149,7 @@
       "source_location": "L83",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d003_headless_default_vs_cache_open_questions",
-      "community": 442,
+      "community": 377,
       "norm_label": "open questions"
     },
     {
@@ -73159,7 +73159,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d004_legacy_plan2state_retirement",
-      "community": 443,
+      "community": 377,
       "norm_label": "d004-legacy-plan2state-retirement.md"
     },
     {
@@ -73169,7 +73169,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d004_legacy_plan2state_retirement_d004_retire_v2_12_plan2_state_dual_path_via_resume_migration_shim",
-      "community": 443,
+      "community": 377,
       "norm_label": "d004 \u2014 retire v2.12 `plan2_state` dual-path via resume migration shim"
     },
     {
@@ -73179,7 +73179,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d004_legacy_plan2state_retirement_context",
-      "community": 443,
+      "community": 377,
       "norm_label": "context"
     },
     {
@@ -73189,7 +73189,7 @@
       "source_location": "L18",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d004_legacy_plan2state_retirement_options_considered",
-      "community": 443,
+      "community": 377,
       "norm_label": "options considered"
     },
     {
@@ -73199,7 +73199,7 @@
       "source_location": "L30",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d004_legacy_plan2state_retirement_decision",
-      "community": 443,
+      "community": 377,
       "norm_label": "decision"
     },
     {
@@ -73209,7 +73209,7 @@
       "source_location": "L41",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d004_legacy_plan2state_retirement_consequences",
-      "community": 443,
+      "community": 377,
       "norm_label": "consequences"
     },
     {
@@ -73219,7 +73219,7 @@
       "source_location": "L50",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_decisions_d004_legacy_plan2state_retirement_open_questions",
-      "community": 443,
+      "community": 377,
       "norm_label": "open questions"
     },
     {
@@ -73299,7 +73299,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_21_slimming_and_enforcement_plan",
-      "community": 593,
+      "community": 377,
       "norm_label": "plan.md"
     },
     {
@@ -75409,7 +75409,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_readme",
-      "community": 447,
+      "community": 226,
       "norm_label": "readme.md"
     },
     {
@@ -75579,7 +75579,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d001_agent_gate_subscription_default",
-      "community": 447,
+      "community": 226,
       "norm_label": "d001-agent-gate-subscription-default.md"
     },
     {
@@ -75589,7 +75589,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d001_agent_gate_subscription_default_d001_agent_gate_value_subscription_by_default",
-      "community": 452,
+      "community": 226,
       "norm_label": "d001 \u2014 agent gate value + subscription-by-default"
     },
     {
@@ -75599,7 +75599,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d001_agent_gate_subscription_default_context",
-      "community": 452,
+      "community": 226,
       "norm_label": "context"
     },
     {
@@ -75609,7 +75609,7 @@
       "source_location": "L14",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d001_agent_gate_subscription_default_options_considered",
-      "community": 452,
+      "community": 226,
       "norm_label": "options considered"
     },
     {
@@ -75619,7 +75619,7 @@
       "source_location": "L21",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d001_agent_gate_subscription_default_analysis",
-      "community": 452,
+      "community": 226,
       "norm_label": "analysis"
     },
     {
@@ -75629,7 +75629,7 @@
       "source_location": "L31",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d001_agent_gate_subscription_default_decision",
-      "community": 452,
+      "community": 226,
       "norm_label": "decision"
     },
     {
@@ -75639,7 +75639,7 @@
       "source_location": "L37",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d001_agent_gate_subscription_default_consequences",
-      "community": 452,
+      "community": 226,
       "norm_label": "consequences"
     },
     {
@@ -75649,7 +75649,7 @@
       "source_location": "L46",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d001_agent_gate_subscription_default_open_questions",
-      "community": 452,
+      "community": 226,
       "norm_label": "open questions"
     },
     {
@@ -75659,7 +75659,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d002_detach_conflict_handling",
-      "community": 447,
+      "community": 226,
       "norm_label": "d002-detach-conflict-handling.md"
     },
     {
@@ -75669,7 +75669,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d002_detach_conflict_handling_d002_detach_conflict_handling",
-      "community": 453,
+      "community": 226,
       "norm_label": "d002 \u2014 detach conflict handling"
     },
     {
@@ -75679,7 +75679,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d002_detach_conflict_handling_context",
-      "community": 453,
+      "community": 226,
       "norm_label": "context"
     },
     {
@@ -75689,7 +75689,7 @@
       "source_location": "L15",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d002_detach_conflict_handling_options_considered",
-      "community": 453,
+      "community": 226,
       "norm_label": "options considered"
     },
     {
@@ -75699,7 +75699,7 @@
       "source_location": "L21",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d002_detach_conflict_handling_analysis",
-      "community": 453,
+      "community": 226,
       "norm_label": "analysis"
     },
     {
@@ -75709,7 +75709,7 @@
       "source_location": "L32",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d002_detach_conflict_handling_decision",
-      "community": 453,
+      "community": 226,
       "norm_label": "decision"
     },
     {
@@ -75719,7 +75719,7 @@
       "source_location": "L42",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d002_detach_conflict_handling_consequences",
-      "community": 453,
+      "community": 226,
       "norm_label": "consequences"
     },
     {
@@ -75729,7 +75729,7 @@
       "source_location": "L49",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d002_detach_conflict_handling_open_questions",
-      "community": 453,
+      "community": 226,
       "norm_label": "open questions"
     },
     {
@@ -75739,7 +75739,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d003_autonomous_error_handling",
-      "community": 447,
+      "community": 226,
       "norm_label": "d003-autonomous-error-handling.md"
     },
     {
@@ -75749,7 +75749,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d003_autonomous_error_handling_d003_autonomous_error_handling_escalation_autonomy_halt_boundary",
-      "community": 454,
+      "community": 226,
       "norm_label": "d003 \u2014 autonomous error handling + escalation autonomy + halt boundary"
     },
     {
@@ -75759,7 +75759,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d003_autonomous_error_handling_context",
-      "community": 454,
+      "community": 226,
       "norm_label": "context"
     },
     {
@@ -75769,7 +75769,7 @@
       "source_location": "L17",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d003_autonomous_error_handling_options_considered",
-      "community": 454,
+      "community": 226,
       "norm_label": "options considered"
     },
     {
@@ -75779,7 +75779,7 @@
       "source_location": "L26",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d003_autonomous_error_handling_analysis",
-      "community": 454,
+      "community": 226,
       "norm_label": "analysis"
     },
     {
@@ -75789,7 +75789,7 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d003_autonomous_error_handling_decision",
-      "community": 454,
+      "community": 226,
       "norm_label": "decision"
     },
     {
@@ -75799,7 +75799,7 @@
       "source_location": "L56",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d003_autonomous_error_handling_consequences",
-      "community": 454,
+      "community": 226,
       "norm_label": "consequences"
     },
     {
@@ -75809,7 +75809,7 @@
       "source_location": "L67",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_decisions_d003_autonomous_error_handling_open_questions",
-      "community": 454,
+      "community": 226,
       "norm_label": "open questions"
     },
     {
@@ -75889,7 +75889,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_25_subscription_agent_dispatch_plan",
-      "community": 447,
+      "community": 226,
       "norm_label": "plan.md"
     },
     {
@@ -76389,7 +76389,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_journal",
-      "community": 456,
+      "community": 441,
       "norm_label": "journal.md"
     },
     {
@@ -76479,7 +76479,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_readme",
-      "community": 456,
+      "community": 441,
       "norm_label": "readme.md"
     },
     {
@@ -76519,7 +76519,7 @@
       "source_location": "L66",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_readme_design",
-      "community": 386,
+      "community": 417,
       "norm_label": "design"
     },
     {
@@ -76529,7 +76529,7 @@
       "source_location": "L68",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_readme_component_1_scripts_materialize_worktree_hooks_py_new_closes_1_provides_3",
-      "community": 386,
+      "community": 417,
       "norm_label": "component 1 \u2014 `scripts/materialize_worktree_hooks.py` (new) \u2014 closes #1, provides #3"
     },
     {
@@ -76539,7 +76539,7 @@
       "source_location": "L92",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_readme_component_2_finalize_run_py_severity_changes_closes_2",
-      "community": 386,
+      "community": 417,
       "norm_label": "component 2 \u2014 `finalize_run.py` severity changes \u2014 closes #2"
     },
     {
@@ -76549,7 +76549,7 @@
       "source_location": "L109",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_readme_component_3_prose_wiring_changes",
-      "community": 386,
+      "community": 417,
       "norm_label": "component 3 \u2014 prose / wiring changes"
     },
     {
@@ -76559,7 +76559,7 @@
       "source_location": "L124",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_readme_component_4_bookkeeping",
-      "community": 386,
+      "community": 417,
       "norm_label": "component 4 \u2014 bookkeeping"
     },
     {
@@ -76619,7 +76619,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d001_script_materialized_settings",
-      "community": 456,
+      "community": 391,
       "norm_label": "d001-script-materialized-settings.md"
     },
     {
@@ -76629,7 +76629,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d001_script_materialized_settings_d001_script_materialized_deep_merged_worktree_settings_json",
-      "community": 456,
+      "community": 391,
       "norm_label": "d001 \u2014 script-materialized + deep-merged worktree settings.json"
     },
     {
@@ -76639,7 +76639,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d001_script_materialized_settings_context",
-      "community": 456,
+      "community": 391,
       "norm_label": "context"
     },
     {
@@ -76649,7 +76649,7 @@
       "source_location": "L19",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d001_script_materialized_settings_options_considered",
-      "community": 456,
+      "community": 391,
       "norm_label": "options considered"
     },
     {
@@ -76659,7 +76659,7 @@
       "source_location": "L32",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d001_script_materialized_settings_decision",
-      "community": 456,
+      "community": 391,
       "norm_label": "decision"
     },
     {
@@ -76669,7 +76669,7 @@
       "source_location": "L45",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d001_script_materialized_settings_consequences",
-      "community": 456,
+      "community": 391,
       "norm_label": "consequences"
     },
     {
@@ -76679,7 +76679,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d002_blocking_drift_severity",
-      "community": 456,
+      "community": 378,
       "norm_label": "d002-blocking-drift-severity.md"
     },
     {
@@ -76689,7 +76689,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d002_blocking_drift_severity_d002_elevate_cost_timing_drift_from_warn_to_blocking_fail",
-      "community": 456,
+      "community": 378,
       "norm_label": "d002 \u2014 elevate cost/timing drift from warn to blocking fail"
     },
     {
@@ -76699,7 +76699,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d002_blocking_drift_severity_context",
-      "community": 456,
+      "community": 378,
       "norm_label": "context"
     },
     {
@@ -76709,7 +76709,7 @@
       "source_location": "L21",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d002_blocking_drift_severity_options_considered",
-      "community": 456,
+      "community": 378,
       "norm_label": "options considered"
     },
     {
@@ -76719,7 +76719,7 @@
       "source_location": "L36",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d002_blocking_drift_severity_decision",
-      "community": 456,
+      "community": 378,
       "norm_label": "decision"
     },
     {
@@ -76729,7 +76729,7 @@
       "source_location": "L49",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d002_blocking_drift_severity_honest_limitation",
-      "community": 456,
+      "community": 378,
       "norm_label": "honest limitation"
     },
     {
@@ -76739,7 +76739,7 @@
       "source_location": "L57",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d002_blocking_drift_severity_consequences",
-      "community": 456,
+      "community": 378,
       "norm_label": "consequences"
     },
     {
@@ -76749,7 +76749,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d003_finalize_hooks_wired_backstop",
-      "community": 456,
+      "community": 441,
       "norm_label": "d003-finalize-hooks-wired-backstop.md"
     },
     {
@@ -76759,7 +76759,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d003_finalize_hooks_wired_backstop_d003_finalize_time_hooks_wired_backstop",
-      "community": 456,
+      "community": 384,
       "norm_label": "d003 \u2014 finalize-time hooks-wired backstop"
     },
     {
@@ -76769,7 +76769,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d003_finalize_hooks_wired_backstop_context",
-      "community": 456,
+      "community": 384,
       "norm_label": "context"
     },
     {
@@ -76779,7 +76779,7 @@
       "source_location": "L24",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d003_finalize_hooks_wired_backstop_options_considered",
-      "community": 456,
+      "community": 384,
       "norm_label": "options considered"
     },
     {
@@ -76789,7 +76789,7 @@
       "source_location": "L39",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d003_finalize_hooks_wired_backstop_decision",
-      "community": 456,
+      "community": 384,
       "norm_label": "decision"
     },
     {
@@ -76799,7 +76799,7 @@
       "source_location": "L56",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d003_finalize_hooks_wired_backstop_why_skip_on_uninspectable_not_fail",
-      "community": 456,
+      "community": 384,
       "norm_label": "why skip-on-uninspectable (not fail)"
     },
     {
@@ -76809,7 +76809,7 @@
       "source_location": "L64",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d003_finalize_hooks_wired_backstop_consequences",
-      "community": 456,
+      "community": 384,
       "norm_label": "consequences"
     },
     {
@@ -76819,7 +76819,7 @@
       "source_location": "L77",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_decisions_d003_finalize_hooks_wired_backstop_honest_limitation",
-      "community": 456,
+      "community": 384,
       "norm_label": "honest limitation"
     },
     {
@@ -76829,7 +76829,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_findings_f01_close_out",
-      "community": 456,
+      "community": 441,
       "norm_label": "f01-close-out.md"
     },
     {
@@ -76839,7 +76839,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_findings_f01_close_out_f01_close_out_attached_mode_enforcement_gaps_v2_27",
-      "community": 456,
+      "community": 393,
       "norm_label": "f01 \u2014 close-out: attached-mode enforcement gaps (v2.27)"
     },
     {
@@ -76849,7 +76849,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_findings_f01_close_out_what_shipped",
-      "community": 456,
+      "community": 393,
       "norm_label": "what shipped"
     },
     {
@@ -76859,7 +76859,7 @@
       "source_location": "L27",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_findings_f01_close_out_proof_real_before_after_replay",
-      "community": 456,
+      "community": 393,
       "norm_label": "proof \u2014 real before/after replay"
     },
     {
@@ -76869,7 +76869,7 @@
       "source_location": "L51",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_findings_f01_close_out_test_summary",
-      "community": 456,
+      "community": 393,
       "norm_label": "test summary"
     },
     {
@@ -76879,7 +76879,7 @@
       "source_location": "L64",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_findings_f01_close_out_remaining_risk",
-      "community": 456,
+      "community": 393,
       "norm_label": "remaining risk"
     },
     {
@@ -76889,7 +76889,7 @@
       "source_location": "L94",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_27_attached_mode_enforcement_findings_f01_close_out_advisor",
-      "community": 456,
+      "community": 393,
       "norm_label": "advisor"
     },
     {
@@ -78049,7 +78049,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design",
-      "community": 335,
+      "community": 287,
       "norm_label": "d002-probe-fixture-design.md"
     },
     {
@@ -78059,7 +78059,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design_d002_probe_fixture_design_harness_contract_adaptation_detect_then_fix_j2_j3",
-      "community": 335,
+      "community": 287,
       "norm_label": "d002 \u2014 probe-fixture design: harness-contract adaptation + detect-then-fix (j2/j3)"
     },
     {
@@ -78069,7 +78069,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design_context",
-      "community": 335,
+      "community": 287,
       "norm_label": "context"
     },
     {
@@ -78079,7 +78079,7 @@
       "source_location": "L16",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design_options_considered",
-      "community": 335,
+      "community": 287,
       "norm_label": "options considered"
     },
     {
@@ -78089,7 +78089,7 @@
       "source_location": "L24",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design_analysis",
-      "community": 335,
+      "community": 287,
       "norm_label": "analysis"
     },
     {
@@ -78099,7 +78099,7 @@
       "source_location": "L54",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design_decision",
-      "community": 335,
+      "community": 287,
       "norm_label": "decision"
     },
     {
@@ -78109,7 +78109,7 @@
       "source_location": "L61",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design_consequences",
-      "community": 335,
+      "community": 287,
       "norm_label": "consequences"
     },
     {
@@ -78119,7 +78119,7 @@
       "source_location": "L70",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design_open_questions",
-      "community": 335,
+      "community": 287,
       "norm_label": "open questions"
     },
     {
@@ -78209,7 +78209,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d004_shelf_trigger_evaluator",
-      "community": 433,
+      "community": 335,
       "norm_label": "d004-shelf-trigger-evaluator.md"
     },
     {
@@ -78219,7 +78219,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d004_shelf_trigger_evaluator_d004_j5_shelf_trigger_evaluator_analyze_shelf_triggers_py_design_start_condition_p1",
-      "community": 433,
+      "community": 335,
       "norm_label": "d004 \u2014 j5 shelf-trigger evaluator (analyze_shelf_triggers.py): design + start condition (p1)"
     },
     {
@@ -78229,7 +78229,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d004_shelf_trigger_evaluator_context",
-      "community": 433,
+      "community": 335,
       "norm_label": "context"
     },
     {
@@ -78239,7 +78239,7 @@
       "source_location": "L16",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d004_shelf_trigger_evaluator_options_considered",
-      "community": 433,
+      "community": 335,
       "norm_label": "options considered"
     },
     {
@@ -78249,7 +78249,7 @@
       "source_location": "L28",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d004_shelf_trigger_evaluator_analysis",
-      "community": 433,
+      "community": 335,
       "norm_label": "analysis"
     },
     {
@@ -78259,7 +78259,7 @@
       "source_location": "L51",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d004_shelf_trigger_evaluator_decision",
-      "community": 433,
+      "community": 335,
       "norm_label": "decision"
     },
     {
@@ -78269,7 +78269,7 @@
       "source_location": "L58",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d004_shelf_trigger_evaluator_consequences",
-      "community": 433,
+      "community": 335,
       "norm_label": "consequences"
     },
     {
@@ -78279,7 +78279,7 @@
       "source_location": "L63",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d004_shelf_trigger_evaluator_open_questions",
-      "community": 433,
+      "community": 335,
       "norm_label": "open questions"
     },
     {
@@ -78289,7 +78289,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred",
-      "community": 391,
+      "community": 335,
       "norm_label": "d005-haiku-low-tier-deferred.md"
     },
     {
@@ -78299,7 +78299,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred_d005_j6_haiku_low_tier_a_b_harness_deferred_conditional_on_j5_met_p1",
-      "community": 391,
+      "community": 335,
       "norm_label": "d005 \u2014 j6 haiku low-tier a/b harness deferred, conditional on j5=met (p1)"
     },
     {
@@ -78309,7 +78309,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred_context",
-      "community": 391,
+      "community": 335,
       "norm_label": "context"
     },
     {
@@ -78319,7 +78319,7 @@
       "source_location": "L13",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred_options_considered",
-      "community": 391,
+      "community": 335,
       "norm_label": "options considered"
     },
     {
@@ -78329,7 +78329,7 @@
       "source_location": "L24",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred_analysis",
-      "community": 391,
+      "community": 335,
       "norm_label": "analysis"
     },
     {
@@ -78339,7 +78339,7 @@
       "source_location": "L33",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred_decision",
-      "community": 391,
+      "community": 335,
       "norm_label": "decision"
     },
     {
@@ -78349,7 +78349,7 @@
       "source_location": "L40",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred_consequences",
-      "community": 391,
+      "community": 335,
       "norm_label": "consequences"
     },
     {
@@ -78359,7 +78359,7 @@
       "source_location": "L45",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred_open_questions",
-      "community": 391,
+      "community": 335,
       "norm_label": "open questions"
     },
     {
@@ -78449,7 +78449,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d007_ac_cross_check",
-      "community": 335,
+      "community": 320,
       "norm_label": "d007-ac-cross-check.md"
     },
     {
@@ -78459,7 +78459,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d007_ac_cross_check_d007_j8_ac_anti_rubber_stamp_reviewer_cross_check_design_fixture_eval_gated_p2",
-      "community": 335,
+      "community": 320,
       "norm_label": "d007 \u2014 j8 ac anti-rubber-stamp reviewer cross-check: design, fixture-eval gated (p2)"
     },
     {
@@ -78469,7 +78469,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d007_ac_cross_check_context",
-      "community": 335,
+      "community": 320,
       "norm_label": "context"
     },
     {
@@ -78479,7 +78479,7 @@
       "source_location": "L14",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d007_ac_cross_check_options_considered",
-      "community": 335,
+      "community": 320,
       "norm_label": "options considered"
     },
     {
@@ -78489,7 +78489,7 @@
       "source_location": "L25",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d007_ac_cross_check_analysis",
-      "community": 335,
+      "community": 320,
       "norm_label": "analysis"
     },
     {
@@ -78499,7 +78499,7 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d007_ac_cross_check_decision",
-      "community": 335,
+      "community": 320,
       "norm_label": "decision"
     },
     {
@@ -78509,7 +78509,7 @@
       "source_location": "L42",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d007_ac_cross_check_consequences",
-      "community": 335,
+      "community": 320,
       "norm_label": "consequences"
     },
     {
@@ -78519,7 +78519,7 @@
       "source_location": "L48",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d007_ac_cross_check_open_questions",
-      "community": 335,
+      "community": 320,
       "norm_label": "open questions"
     },
     {
@@ -78789,7 +78789,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_journal_journal_v2_7_quality_mode_experiment",
-      "community": 27,
+      "community": 61,
       "norm_label": "journal \u2014 v2.7 quality mode experiment"
     },
     {
@@ -79099,7 +79099,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_readme_v2_7_quality_mode_experiment",
-      "community": 27,
+      "community": 385,
       "norm_label": "v2.7 quality mode experiment"
     },
     {
@@ -79109,7 +79109,7 @@
       "source_location": "L7",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_readme_outcome",
-      "community": 27,
+      "community": 385,
       "norm_label": "outcome"
     },
     {
@@ -79119,7 +79119,7 @@
       "source_location": "L17",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_readme_goal",
-      "community": 27,
+      "community": 385,
       "norm_label": "goal"
     },
     {
@@ -79129,7 +79129,7 @@
       "source_location": "L27",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_readme_hypothesis",
-      "community": 27,
+      "community": 385,
       "norm_label": "hypothesis"
     },
     {
@@ -79139,7 +79139,7 @@
       "source_location": "L33",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_readme_status_quick_links",
-      "community": 27,
+      "community": 385,
       "norm_label": "status / quick links"
     },
     {
@@ -79149,7 +79149,7 @@
       "source_location": "L39",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_readme_final_phase_status",
-      "community": 27,
+      "community": 385,
       "norm_label": "final phase status"
     },
     {
@@ -79159,7 +79159,7 @@
       "source_location": "L52",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_readme_decisions_index",
-      "community": 27,
+      "community": 385,
       "norm_label": "decisions index"
     },
     {
@@ -79259,7 +79259,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d002_judge_model_d002_judge_model_choice_sonnet_vs_opus",
-      "community": 27,
+      "community": 397,
       "norm_label": "d002 \u2014 judge model choice (sonnet vs opus)"
     },
     {
@@ -79269,7 +79269,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d002_judge_model_context",
-      "community": 27,
+      "community": 397,
       "norm_label": "context"
     },
     {
@@ -79279,7 +79279,7 @@
       "source_location": "L12",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d002_judge_model_calibration_results",
-      "community": 27,
+      "community": 397,
       "norm_label": "calibration results"
     },
     {
@@ -79289,7 +79289,7 @@
       "source_location": "L32",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d002_judge_model_decision",
-      "community": 27,
+      "community": 397,
       "norm_label": "decision"
     },
     {
@@ -79299,7 +79299,7 @@
       "source_location": "L41",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d002_judge_model_cost_implication",
-      "community": 27,
+      "community": 397,
       "norm_label": "cost implication"
     },
     {
@@ -79309,7 +79309,7 @@
       "source_location": "L47",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d002_judge_model_alternatives_rejected",
-      "community": 27,
+      "community": 397,
       "norm_label": "alternatives rejected"
     },
     {
@@ -79409,7 +79409,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d004_pilot_scope_d004_pilot_scope_balanced_vs_quality_plus_only",
-      "community": 27,
+      "community": 414,
       "norm_label": "d004 \u2014 pilot scope: balanced vs quality_plus only"
     },
     {
@@ -79419,7 +79419,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d004_pilot_scope_context",
-      "community": 27,
+      "community": 414,
       "norm_label": "context"
     },
     {
@@ -79429,7 +79429,7 @@
       "source_location": "L16",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d004_pilot_scope_options",
-      "community": 27,
+      "community": 414,
       "norm_label": "options"
     },
     {
@@ -79439,7 +79439,7 @@
       "source_location": "L29",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d004_pilot_scope_decision",
-      "community": 27,
+      "community": 414,
       "norm_label": "decision"
     },
     {
@@ -79449,7 +79449,7 @@
       "source_location": "L33",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d004_pilot_scope_rationale",
-      "community": 27,
+      "community": 414,
       "norm_label": "rationale"
     },
     {
@@ -79459,7 +79459,7 @@
       "source_location": "L48",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d004_pilot_scope_consequences",
-      "community": 27,
+      "community": 414,
       "norm_label": "consequences"
     },
     {
@@ -79479,7 +79479,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d005_experimental_branch_d005_experimental_branch_no_production_skill_md_edits",
-      "community": 27,
+      "community": 416,
       "norm_label": "d005 \u2014 experimental branch; no production skill.md edits"
     },
     {
@@ -79489,7 +79489,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d005_experimental_branch_context",
-      "community": 27,
+      "community": 416,
       "norm_label": "context"
     },
     {
@@ -79499,7 +79499,7 @@
       "source_location": "L12",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d005_experimental_branch_decision",
-      "community": 27,
+      "community": 416,
       "norm_label": "decision"
     },
     {
@@ -79509,7 +79509,7 @@
       "source_location": "L17",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d005_experimental_branch_branch_model",
-      "community": 27,
+      "community": 416,
       "norm_label": "branch model"
     },
     {
@@ -79519,7 +79519,7 @@
       "source_location": "L31",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d005_experimental_branch_merge_gate",
-      "community": 27,
+      "community": 416,
       "norm_label": "merge gate"
     },
     {
@@ -79529,7 +79529,7 @@
       "source_location": "L41",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d005_experimental_branch_what_lives_where",
-      "community": 27,
+      "community": 416,
       "norm_label": "what lives where"
     },
     {
@@ -79549,7 +79549,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d006_pilot_first_d006_pilot_first_not_full_experiment",
-      "community": 680,
+      "community": 27,
       "norm_label": "d006 \u2014 pilot first, not full experiment"
     },
     {
@@ -79559,7 +79559,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d006_pilot_first_context",
-      "community": 680,
+      "community": 27,
       "norm_label": "context"
     },
     {
@@ -79569,7 +79569,7 @@
       "source_location": "L18",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d006_pilot_first_decision",
-      "community": 680,
+      "community": 27,
       "norm_label": "decision"
     },
     {
@@ -79579,7 +79579,7 @@
       "source_location": "L29",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d006_pilot_first_decision_tree_after_pilot",
-      "community": 680,
+      "community": 27,
       "norm_label": "decision-tree after pilot"
     },
     {
@@ -79589,7 +79589,7 @@
       "source_location": "L52",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d006_pilot_first_pilot_success_ship_gate",
-      "community": 680,
+      "community": 27,
       "norm_label": "pilot success != ship gate"
     },
     {
@@ -79609,7 +79609,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d007_fixture_realistic_spec_d007_fixture_08_redesign_realistic_underspec_keep_full_rubric",
-      "community": 27,
+      "community": 366,
       "norm_label": "d007 \u2014 fixture 08 redesign: realistic underspec, keep full rubric"
     },
     {
@@ -79619,7 +79619,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d007_fixture_realistic_spec_what_happened",
-      "community": 27,
+      "community": 366,
       "norm_label": "what happened"
     },
     {
@@ -79629,7 +79629,7 @@
       "source_location": "L18",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d007_fixture_realistic_spec_root_cause",
-      "community": 27,
+      "community": 366,
       "norm_label": "root cause"
     },
     {
@@ -79639,7 +79639,7 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d007_fixture_realistic_spec_decision",
-      "community": 27,
+      "community": 366,
       "norm_label": "decision"
     },
     {
@@ -79649,7 +79649,7 @@
       "source_location": "L46",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d007_fixture_realistic_spec_why_this_isn_t_gaming_the_experiment",
-      "community": 27,
+      "community": 366,
       "norm_label": "why this isn't gaming the experiment"
     },
     {
@@ -79659,7 +79659,7 @@
       "source_location": "L67",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d007_fixture_realistic_spec_what_stays",
-      "community": 27,
+      "community": 366,
       "norm_label": "what stays"
     },
     {
@@ -79669,7 +79669,7 @@
       "source_location": "L74",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d007_fixture_realistic_spec_what_changes",
-      "community": 27,
+      "community": 366,
       "norm_label": "what changes"
     },
     {
@@ -79679,7 +79679,7 @@
       "source_location": "L79",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d007_fixture_realistic_spec_re_run_plan",
-      "community": 27,
+      "community": 366,
       "norm_label": "re-run plan"
     },
     {
@@ -79689,7 +79689,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d008_quality_plus_skill_changes",
-      "community": 227,
+      "community": 27,
       "norm_label": "d008-quality-plus-skill-changes.md"
     },
     {
@@ -79929,7 +79929,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_findings_f002_close_out",
-      "community": 121,
+      "community": 27,
       "norm_label": "f002-close-out.md"
     },
     {
@@ -79939,7 +79939,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_findings_f002_close_out_f002_v2_7_quality_mode_experiment_close_out",
-      "community": 121,
+      "community": 269,
       "norm_label": "f002 \u2014 v2.7 quality mode experiment: close-out"
     },
     {
@@ -79949,7 +79949,7 @@
       "source_location": "L7",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_findings_f002_close_out_tl_dr",
-      "community": 121,
+      "community": 269,
       "norm_label": "tl;dr"
     },
     {
@@ -79959,7 +79959,7 @@
       "source_location": "L28",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_findings_f002_close_out_what_we_built_that_ships",
-      "community": 121,
+      "community": 269,
       "norm_label": "what we built that ships"
     },
     {
@@ -79969,7 +79969,7 @@
       "source_location": "L41",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_findings_f002_close_out_what_we_don_t_ship",
-      "community": 121,
+      "community": 269,
       "norm_label": "what we don't ship"
     },
     {
@@ -79979,7 +79979,7 @@
       "source_location": "L49",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_findings_f002_close_out_what_we_learned",
-      "community": 121,
+      "community": 269,
       "norm_label": "what we learned"
     },
     {
@@ -79989,7 +79989,7 @@
       "source_location": "L74",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_findings_f002_close_out_per_rep_data_final_n_4_including_main_post_merge_smoke",
-      "community": 121,
+      "community": 269,
       "norm_label": "per-rep data \u2014 final (n=4 including main post-merge smoke)"
     },
     {
@@ -79999,7 +79999,7 @@
       "source_location": "L94",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_findings_f002_close_out_a_cheaper_alternative_not_pursued",
-      "community": 121,
+      "community": 269,
       "norm_label": "a cheaper alternative not pursued"
     },
     {
@@ -80009,7 +80009,7 @@
       "source_location": "L107",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_findings_f002_close_out_when_to_revisit",
-      "community": 121,
+      "community": 269,
       "norm_label": "when to revisit"
     },
     {
@@ -80019,7 +80019,7 @@
       "source_location": "L118",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_findings_f002_close_out_cost_tally",
-      "community": 121,
+      "community": 269,
       "norm_label": "cost tally"
     },
     {
@@ -80189,7 +80189,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_8_learning_log_readme",
-      "community": 156,
+      "community": 27,
       "norm_label": "readme.md"
     },
     {
@@ -80199,7 +80199,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_8_learning_log_readme_v2_8_learning_log",
-      "community": 156,
+      "community": 389,
       "norm_label": "v2.8 \u2014 learning log"
     },
     {
@@ -80209,7 +80209,7 @@
       "source_location": "L8",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_8_learning_log_readme_goal",
-      "community": 156,
+      "community": 389,
       "norm_label": "goal"
     },
     {
@@ -80219,7 +80219,7 @@
       "source_location": "L21",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_8_learning_log_readme_hypothesis",
-      "community": 156,
+      "community": 389,
       "norm_label": "hypothesis"
     },
     {
@@ -80229,7 +80229,7 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_8_learning_log_readme_status_quick_links",
-      "community": 156,
+      "community": 389,
       "norm_label": "status / quick links"
     },
     {
@@ -80239,7 +80239,7 @@
       "source_location": "L41",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_8_learning_log_readme_phase_status",
-      "community": 156,
+      "community": 389,
       "norm_label": "phase status"
     },
     {
@@ -80249,7 +80249,7 @@
       "source_location": "L55",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_8_learning_log_readme_decisions_index",
-      "community": 156,
+      "community": 389,
       "norm_label": "decisions index"
     },
     {
@@ -80259,7 +80259,7 @@
       "source_location": "L59",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_8_learning_log_readme_findings_index",
-      "community": 156,
+      "community": 389,
       "norm_label": "findings index"
     },
     {
@@ -80269,7 +80269,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_8_learning_log_decisions_d001_initial_design",
-      "community": 156,
+      "community": 27,
       "norm_label": "d001-initial-design.md"
     },
     {
@@ -80449,7 +80449,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_8_learning_log_findings_f001_smoke",
-      "community": 447,
+      "community": 27,
       "norm_label": "f001-smoke.md"
     },
     {
@@ -80809,7 +80809,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_9_reviewer_spec_coverage_readme",
-      "community": 447,
+      "community": 27,
       "norm_label": "readme.md"
     },
     {
@@ -80939,7 +80939,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_9_reviewer_spec_coverage_decisions_d001_initial_design",
-      "community": 447,
+      "community": 27,
       "norm_label": "d001-initial-design.md"
     },
     {
@@ -81109,7 +81109,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_9_reviewer_spec_coverage_findings_f001_t4_5_dry_run",
-      "community": 447,
+      "community": 27,
       "norm_label": "f001-t4.5-dry-run.md"
     },
     {
@@ -81249,7 +81249,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_9_reviewer_spec_coverage_findings_f002_t5_n4_results",
-      "community": 447,
+      "community": 27,
       "norm_label": "f002-t5-n4-results.md"
     },
     {
@@ -81709,7 +81709,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_how_to_aggregate_runs",
-      "community": 560,
+      "community": 17,
       "norm_label": "aggregate-runs.md"
     },
     {
@@ -81719,7 +81719,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_how_to_aggregate_runs_\uc2e4\ud589_\ud154\ub808\uba54\ud2b8\ub9ac_\uc9d1\uacc4\ud558\ub294_\ubc95",
-      "community": 560,
+      "community": 17,
       "norm_label": "\u1109\u1175\u11af\u1112\u1162\u11bc \u1110\u1166\u11af\u1105\u1166\u1106\u1166\u1110\u1173\u1105\u1175 \u110c\u1175\u11b8\u1100\u1168\u1112\u1161\u1102\u1173\u11ab \u1107\u1165\u11b8"
     },
     {
@@ -81729,7 +81729,7 @@
       "source_location": "L13",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_how_to_aggregate_runs_\ud638\ucd9c",
-      "community": 560,
+      "community": 17,
       "norm_label": "\u1112\u1169\u110e\u116e\u11af"
     },
     {
@@ -81739,7 +81739,7 @@
       "source_location": "L37",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_how_to_aggregate_runs_\ub9ac\ud3ec\ud2b8_\uc139\uc158",
-      "community": 560,
+      "community": 17,
       "norm_label": "\u1105\u1175\u1111\u1169\u1110\u1173 \u1109\u1166\u11a8\u1109\u1167\u11ab"
     },
     {
@@ -81749,7 +81749,7 @@
       "source_location": "L47",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_how_to_aggregate_runs_observation_only_g5",
-      "community": 560,
+      "community": 17,
       "norm_label": "observation-only (g5)"
     },
     {
@@ -85909,7 +85909,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_references_escalation_playbook",
-      "community": 119,
+      "community": 399,
       "norm_label": "escalation-playbook.md"
     },
     {
@@ -152154,17 +152154,6 @@
       "confidence_score": 1.0
     },
     {
-      "relation": "imports",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-claude-multi-agent-executor/scripts/test_aggregate_runs.py",
-      "source_location": "L5",
-      "weight": 1.0,
-      "source": "skills_kws_claude_multi_agent_executor_scripts_test_aggregate_runs",
-      "target": "skills_kws_claude_multi_agent_executor_scripts_aggregate_runs",
-      "confidence_score": 1.0
-    },
-    {
       "relation": "calls",
       "context": "call",
       "confidence": "EXTRACTED",
@@ -157653,6 +157642,17 @@
       "weight": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_scripts_test_accumulate_cost_combinedroletests",
       "target": "skills_kws_claude_multi_agent_executor_scripts_test_accumulate_cost_combinedroletests_test_combined_roles_tag_recorded_on_ledger_row",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-claude-multi-agent-executor/scripts/test_aggregate_runs.py",
+      "source_location": "L5",
+      "weight": 1.0,
+      "source": "skills_kws_claude_multi_agent_executor_scripts_test_aggregate_runs",
+      "target": "skills_kws_claude_multi_agent_executor_docs_how_to_aggregate_runs",
       "confidence_score": 1.0
     },
     {
@@ -229147,5 +229147,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "ecc567f28d1f89fc1e129aa6c05194e1545f1d70"
+  "built_at_commit": "650dad9ca42fa3bb1060ed5363fd0d6a3f89ab00"
 }
