@@ -15,6 +15,8 @@ try:
 except Exception:
     run_quality_debt = None
 
+from cpe_state_validation import validate as validate_state_domains
+
 
 REQUIRED_TOP_LEVEL = {
     "schema_version",
@@ -1298,7 +1300,7 @@ def _validate_v220(data: dict, errors: list[str]) -> None:
             _validate_v220_task(task_id, task, data, errors)
 
 
-def validate(data: dict) -> list[str]:
+def _validate_legacy(data: dict) -> list[str]:
     errors: list[str] = []
     for key in sorted(REQUIRED_TOP_LEVEL):
         if key not in data:
@@ -1324,6 +1326,10 @@ def validate(data: dict) -> list[str]:
     _validate_operational_run_quality(data, errors)
     _validate_v220(data, errors)
     return errors
+
+
+def validate(data: dict) -> list[str]:
+    return validate_state_domains(data, legacy_validate=_validate_legacy)
 
 
 def main() -> int:
