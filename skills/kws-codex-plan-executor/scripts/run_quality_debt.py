@@ -107,6 +107,16 @@ def _write_capable_task_ids(state: dict[str, Any]) -> list[str]:
 
 def delegation_followup(state: dict[str, Any]) -> str | None:
     dispatches = [item for item in state.get("dispatch_decisions", []) if isinstance(item, dict)]
+    capability = state.get("delegation_capability") if isinstance(state.get("delegation_capability"), dict) else {}
+    if (
+        state.get("lifecycle_outcome") == "finished"
+        and state.get("subagents_requested") is True
+        and capability.get("spawn_policy") == "explicit-request-required"
+        and capability.get("explicit_user_delegation_request") is False
+        and capability.get("run_level_effective_mode") == "local_fallback"
+    ):
+        return DELEGATION_POLICY_EXPECTED_LOCAL_FALLBACK
+
     if (
         state.get("lifecycle_outcome") == "finished"
         and state.get("subagents_requested") is True
