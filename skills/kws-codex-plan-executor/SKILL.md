@@ -2,7 +2,7 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "2.25.1"
+  version: "2.26.0"
   updated_at: "2026-07-03"
 ---
 
@@ -249,6 +249,9 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
 - Read-only run inspection may compute `run_quality` for recent or stale runs
   without mutating state. Finished operational-quality states with v2.22 fields
   embed the same summary before validation.
+- Recent-run inspection may aggregate finished states with
+  `scripts/analyze_recent_runs.py`; rubric reports are derived evidence and
+  never replace `state.json` or `completion_audit`.
 - `run_quality.open_followups` records actionable inspection follow-ups such as
   `stale_non_terminal_run`, `missing_execution_worktree`, and schema drift; do
   not rely on a bare stale boolean when deciding resume or cleanup work.
@@ -276,6 +279,18 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   `dispatch_consistency`, `context_quality`, and `verification_quality` so
   full-spec fallback, dispatch overrides, and completion evidence quality remain
   inspectable after the execution worktree is gone.
+- Full-spec fallback records a structured mapping reason and suggested
+  `spec_refs`; unreviewed fallback remains operational-quality debt, while
+  explicitly reviewed fallback may be context-green when the context budget is
+  not red.
+- Delegation capability may be recorded at run level when spawn policy prevents
+  all task spawning; this only changes operational-debt accounting and does not
+  skip local task gates.
+- AgentLens status is best-effort and classified as recorded, unavailable,
+  emit-failed, or not-applicable; AgentLens failure cannot block product
+  verification.
+- `validate_state.py` remains the public validation CLI even when validation
+  logic is split across domain modules.
 - Normalized CPE replay checks are deterministic eval evidence from
   `scripts/normalize_cpe_run.py`. They summarize state, audits, dispatch
   decisions, residual risk classes, and forbidden durable-log patterns without

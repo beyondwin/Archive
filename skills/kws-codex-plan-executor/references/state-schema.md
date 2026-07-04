@@ -259,6 +259,29 @@ v2.22 operational run quality state may add:
 `execution_worktree`, when present, must equal `worktree` and end with
 `.codex/worktrees/<run_id>`. `workspace` remains backward compatible; new
 operator guidance should use `execution_worktree` as the command/edit boundary.
+
+### delegation_capability
+
+Optional object with `schema_version`, `spawn_policy`,
+`explicit_user_delegation_request`, `run_level_effective_mode`, and `reason`.
+It summarizes run-level spawn capability before per-task dispatch. A
+`local_fallback` capability caused by `explicit-request-required` policy is
+expected local fallback debt, not proof that task safety gates were skipped.
+
+### agentlens_status
+
+Optional object with `schema_version`, `status`, and `blocking`. Valid statuses
+are `agentlens_recorded`, `agentlens_unavailable`, `agentlens_emit_failed`, and
+`agentlens_not_applicable`. AgentLens remains best-effort; state and completion
+audit evidence remain authoritative.
+
+### spec.mapping fallback diagnosis
+
+Task packets may include `fallback_reason`, `suggested_spec_refs`, and
+`operator_reviewed` inside `spec.mapping`. Unreviewed fallback remains
+operational-quality debt. Explicitly reviewed fallback may be context-green
+when the context budget is not red.
+
 `run_quality.open_followups` may include actionable inspection markers such as
 `stale_non_terminal_run`, `missing_execution_worktree`, and
 `state_schema_drift`, plus stable debt markers such as

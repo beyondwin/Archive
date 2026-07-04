@@ -27,6 +27,7 @@ python3 evals/check_graphify_freshness.py
 python3 evals/check_preflight_dispatch.py
 python3 evals/check_run_readiness.py
 python3 evals/check_plan_executability_audit.py
+python3 evals/check_validate_state_modular_parity.py
 python3 evals/check_markdown_golden_cases.py
 python3 evals/check_verification_bundle.py
 python3 evals/check_recovery_policy.py
@@ -34,6 +35,7 @@ python3 evals/check_trajectory_projection.py
 python3 evals/check_progress_ledger.py
 python3 evals/check_operational_run_quality.py
 python3 evals/check_cpe_replay.py
+python3 evals/check_recent_run_rubric.py
 python3 evals/check_superpowers_compatibility.py
 python3 -m py_compile scripts/*.py evals/*.py
 bash -n evals/run.sh
@@ -81,6 +83,15 @@ The quality-loop evals also cover task packet component accounting, filtered
 decision context, structured blocker/failure state, recovery policy decisions,
 trajectory JSONL projection, and progress ledger stall detection.
 
+`check_recent_run_rubric.py` covers `scripts/analyze_recent_runs.py` and
+synthetic green/yellow/red recent-run aggregation. It verifies full-spec
+fallback and expected local fallback counts without reading raw transcripts.
+
+`check_validate_state_modular_parity.py` covers the public `validate_state.py`
+CLI while validation logic is routed through `cpe_state_validation` domain
+modules. It keeps representative valid and invalid states stable across
+validator refactors.
+
 Human-readable harness evals cover generated task packet markdown views,
 one-line hot-tail summaries, markdown policy golden cases, and structured
 verification bundle evidence. The initial markdown cases cover dirty related
@@ -97,7 +108,8 @@ execution worktrees.
 completion status, run-quality grade, plan-audit count summary,
 dispatch-decision reason counts, structured residual risk classes,
 verification evidence classes, verification bundle names, task summary counts,
-hot-tail summary counts, and forbidden durable-output patterns.
+hot-tail summary counts, AgentLens status, prompt/Graphify status, and
+forbidden durable-output patterns.
 `docs/eval-coverage-cpe.md` maps these checks to the CPE run-quality cleanup
 failure modes.
 

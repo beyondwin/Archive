@@ -104,6 +104,10 @@ dispatch decision reason counts, plan audit counts, residual risk classes, and
 forbidden-pattern markers. It intentionally avoids raw transcripts and full
 prompts.
 
+Recent-run rubric reports sit beside inspection and normalized replay. They
+aggregate state-derived evidence across runs so operator debt can be improved
+without weakening per-run completion gates.
+
 Structured failure state separates machine-readable blockers from human
 handoff summaries. `current_blocker` records recoverable blocked state,
 `failure_decision` records non-success failure decisions, and
