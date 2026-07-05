@@ -212,7 +212,7 @@ def followup_taxonomy(
         }:
             actionable.append(item)
         else:
-            informational.append(item)
+            actionable.append(item)
     return {
         "schema_version": "1",
         "actionable_followups": actionable,

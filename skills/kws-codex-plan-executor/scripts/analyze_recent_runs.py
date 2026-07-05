@@ -122,8 +122,7 @@ def main() -> int:
     parser.add_argument("--output")
     args = parser.parse_args()
     paths = state_paths(Path(args.codex_home).expanduser(), include_finished=args.include_finished)
-    if not args.include_finished:
-        paths = paths[: args.recent]
+    paths = paths[: args.recent]
     report = build_report([path.parent for path in paths])
     text = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.output:

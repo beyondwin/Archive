@@ -120,15 +120,15 @@ def main() -> int:
         summary = report.get("summary", {})
         rubric = report.get("rubric", {})
         checks["script_succeeds"] = result.returncode == 0
-        checks["counts_runs"] = summary.get("finished_passed_count") == 3 and summary.get("run_count") == 4
+        checks["counts_runs"] = summary.get("finished_passed_count") == 2 and summary.get("run_count") == 3
         checks["counts_grades"] = (
-            summary.get("green_count") == 1
+            summary.get("green_count") == 0
             and summary.get("green_with_info_count") == 1
             and summary.get("yellow_count") == 1
             and summary.get("red_count") == 1
         )
         checks["counts_taxonomy"] = (
-            summary.get("actionable_followup_count") == 1 and summary.get("informational_followup_count") == 4
+            summary.get("actionable_followup_count") == 2 and summary.get("informational_followup_count") == 3
         )
         checks["rubric_uses_info_class"] = (
             rubric.get("delegation_efficiency") == "green-with-info"

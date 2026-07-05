@@ -246,6 +246,17 @@ def main() -> int:
     if not checks["taxonomy_treats_agentlens_emit_failed_actionable"]:
         failures.append("agentlens emit failure should be actionable even when non-blocking")
 
+    unknown_state = v222_state()
+    unknown_followups = ["mystery_followup_token"]
+    unknown_taxonomy = debt.followup_taxonomy(unknown_state, unknown_followups)
+    checks["taxonomy_defaults_unknown_followups_actionable"] = (
+        unknown_taxonomy.get("actionable_followups") == ["mystery_followup_token"]
+        and unknown_taxonomy.get("informational_followups") == []
+        and debt.report_class_for(unknown_state, unknown_followups, unknown_taxonomy, "passed") == "yellow"
+    )
+    if not checks["taxonomy_defaults_unknown_followups_actionable"]:
+        failures.append("unknown followups should default to actionable and keep the report yellow")
+
     yellow_state = v222_state()
     yellow_state["agentlens_orchestration_run"] = None
     yellow_state["run_quality"]["readiness"]["fixable_issue_count"] = 2
