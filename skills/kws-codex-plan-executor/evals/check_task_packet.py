@@ -73,7 +73,7 @@ def main() -> int:
     failures: list[str] = []
     checks: dict[str, bool] = {}
 
-    spec_text = "# Feature\n\nfeature text\n# Auth Session\n\nauth session text\n"
+    spec_text = "# Feature\n\nfeature text\n# Auth Session\n\nauth session text\n# Billing Workflow\n\nbilling workflow text\n"
     manifest = {
         "schema_version": "1",
         "spec_path": "spec.md",
@@ -81,8 +81,18 @@ def main() -> int:
         "sections": {
             "S1": {"id": "S1", "title": "Feature", "level": 1, "line_start": 1, "line_end": 3, "chars": 24, "sha256": "x"},
             "S2": {"id": "S2", "title": "Auth Session", "level": 1, "line_start": 4, "line_end": 6, "chars": 31, "sha256": "y"},
+            "S3": {
+                "id": "S3",
+                "title": "Billing Workflow",
+                "level": 1,
+                "line_start": 7,
+                "line_end": 9,
+                "chars": 32,
+                "sha256": "z",
+                "signals": {"title_tokens": ["billing", "workflow"]},
+            },
         },
-        "section_order": ["S1", "S2"],
+        "section_order": ["S1", "S2", "S3"],
         "task_to_sections": {},
     }
 
@@ -187,12 +197,21 @@ def main() -> int:
         fallback_mapping = fallback.get("spec", {}).get("mapping", {})
         checks["fallback_mapping_reason_and_suggestions"] = (
             fallback_mapping.get("fallback_reason") == "weak_heuristic_match"
-            and isinstance(fallback_mapping.get("suggested_spec_refs"), list)
-            and fallback_mapping.get("next_action") == "Add or correct section ids in the spec and plan pair."
+            and fallback_mapping.get("suggested_spec_refs") == ["S3"]
+            and fallback_mapping.get("suggested_plan_patch") == 'spec_refs: ["S3"]'
+            and fallback_mapping.get("next_action") == "Add explicit spec_refs to the plan task using one of: S3"
             and fallback_mapping.get("operator_reviewed") is False
         )
         if not checks["fallback_mapping_reason_and_suggestions"]:
             failures.append("full-spec fallback should explain reason and suggested spec refs")
+        checks["fallback_preview_is_bounded"] = (
+            isinstance(fallback_mapping.get("fallback_preview"), dict)
+            and fallback_mapping["fallback_preview"].get("source_ref") == "*"
+            and isinstance(fallback_mapping["fallback_preview"].get("chars"), int)
+            and fallback_mapping["fallback_preview"].get("chars") <= 1200
+        )
+        if not checks["fallback_preview_is_bounded"]:
+            failures.append("fallback mapping should include bounded preview metadata")
 
         checks["fallback_next_action_helper_uses_literal_refs"] = (
             (refs := build_task_packet.suggested_spec_refs([{"section_id": "S1", "score": 11}])) == ["S1"]
