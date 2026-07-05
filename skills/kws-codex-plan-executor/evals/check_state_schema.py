@@ -840,7 +840,7 @@ def main() -> int:
         "effective_mode": "local_fallback",
         "reason": "spawn_agent tool policy requires explicit user delegation intent",
         "policy_kind": "adaptive",
-        "safety_gate": "passed",
+        "safety_gate": "failed",
         "value_gate": "skipped_by_spawn_policy",
         "signals": {},
         "would_have_decision": "delegate",
@@ -872,6 +872,36 @@ def main() -> int:
     checks["delegation_policy_allows_would_have_fields"] = result.returncode == 0
     if not checks["delegation_policy_allows_would_have_fields"]:
         failures.append("delegation_policy should allow optional would-have advisory fields")
+
+    malformed_would_have_decision = advisory_fields.copy()
+    malformed_would_have_decision["delegation_policy"] = dict(advisory_fields["delegation_policy"])
+    malformed_would_have_decision["delegation_policy"]["would_have_decision"] = "maybe"
+    result = run_validator(script, malformed_would_have_decision)
+    checks["delegation_policy_rejects_malformed_would_have_decision"] = (
+        result.returncode != 0 and "delegation_policy.would_have_decision invalid" in (result.stderr + result.stdout)
+    )
+    if not checks["delegation_policy_rejects_malformed_would_have_decision"]:
+        failures.append("delegation_policy.would_have_decision should reject malformed values")
+
+    malformed_would_have_value_gate = advisory_fields.copy()
+    malformed_would_have_value_gate["delegation_policy"] = dict(advisory_fields["delegation_policy"])
+    malformed_would_have_value_gate["delegation_policy"]["would_have_value_gate"] = "fastest"
+    result = run_validator(script, malformed_would_have_value_gate)
+    checks["delegation_policy_rejects_malformed_would_have_value_gate"] = (
+        result.returncode != 0 and "delegation_policy.would_have_value_gate invalid" in (result.stderr + result.stdout)
+    )
+    if not checks["delegation_policy_rejects_malformed_would_have_value_gate"]:
+        failures.append("delegation_policy.would_have_value_gate should reject malformed values")
+
+    empty_would_have_reason = advisory_fields.copy()
+    empty_would_have_reason["delegation_policy"] = dict(advisory_fields["delegation_policy"])
+    empty_would_have_reason["delegation_policy"]["would_have_reason"] = "   "
+    result = run_validator(script, empty_would_have_reason)
+    checks["delegation_policy_rejects_empty_would_have_reason"] = (
+        result.returncode != 0 and "delegation_policy.would_have_reason must be non-empty" in (result.stderr + result.stdout)
+    )
+    if not checks["delegation_policy_rejects_empty_would_have_reason"]:
+        failures.append("delegation_policy.would_have_reason should reject empty values")
 
     mismatch = v220_state()
     mismatch["subagent_runs"] = []

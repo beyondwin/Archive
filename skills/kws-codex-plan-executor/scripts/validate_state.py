@@ -88,6 +88,8 @@ VALID_ADAPTIVE_LOCAL_FAST_PATH_REASONS = {
 VALID_DELEGATION_POLICY_KINDS = {"legacy", "adaptive"}
 VALID_DELEGATION_SAFETY_GATES = {"pending", "passed", "failed"}
 VALID_DELEGATION_VALUE_GATES = {"pending", "delegate", "local_fast_path", "block", "skipped", "skipped_by_spawn_policy"}
+VALID_WOULD_HAVE_DECISIONS = {"delegate", "local_fallback", "block"}
+VALID_WOULD_HAVE_VALUE_GATES = {"delegate", "local_fast_path", "block"}
 VALID_COMMAND_OBSERVATION_CATEGORIES = {
     "source_failure",
     "missing_local_env",
@@ -980,6 +982,17 @@ def _validate_operational_run_quality(data: dict, errors: list[str]) -> None:
             signals = policy.get("signals")
             if signals is not None and not isinstance(signals, dict):
                 errors.append("delegation_policy.signals must be an object")
+            would_have_decision = policy.get("would_have_decision")
+            if "would_have_decision" in policy and would_have_decision not in VALID_WOULD_HAVE_DECISIONS:
+                errors.append("delegation_policy.would_have_decision invalid")
+            would_have_value_gate = policy.get("would_have_value_gate")
+            if "would_have_value_gate" in policy and would_have_value_gate not in VALID_WOULD_HAVE_VALUE_GATES:
+                errors.append("delegation_policy.would_have_value_gate invalid")
+            if any(
+                key in policy
+                for key in ("would_have_decision", "would_have_reason", "would_have_value_gate")
+            ) and not _has_substantive_value(policy.get("would_have_reason")):
+                errors.append("delegation_policy.would_have_reason must be non-empty")
             if (
                 policy.get("effective_mode") == "local_fallback"
                 and policy.get("value_gate") == "local_fast_path"
