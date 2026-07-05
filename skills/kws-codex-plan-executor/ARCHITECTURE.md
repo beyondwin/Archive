@@ -108,6 +108,17 @@ Recent-run rubric reports sit beside inspection and normalized replay. They
 aggregate state-derived evidence across runs so operator debt can be improved
 without weakening per-run completion gates.
 
+Operational quality signal ownership:
+
+- `run_quality_debt.py` classifies stable followups and report-only display
+  classes.
+- `analyze_recent_runs.py` aggregates recent state into operator-facing rubric
+  JSON.
+- `preflight_dispatch.py` owns final dispatch decisions and advisory
+  would-have evidence.
+- Task packet and readiness scripts own full-spec fallback diagnosis and
+  packet-owned next actions.
+
 Structured failure state separates machine-readable blockers from human
 handoff summaries. `current_blocker` records recoverable blocked state,
 `failure_decision` records non-success failure decisions, and

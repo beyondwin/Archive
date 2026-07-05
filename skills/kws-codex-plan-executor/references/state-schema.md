@@ -277,10 +277,23 @@ audit evidence remain authoritative.
 
 ### spec.mapping fallback diagnosis
 
-Task packets may include `fallback_reason`, `suggested_spec_refs`, and
-`operator_reviewed` inside `spec.mapping`. Unreviewed fallback remains
-operational-quality debt. Explicitly reviewed fallback may be context-green
-when the context budget is not red.
+Task packets may include `fallback_reason`, `suggested_spec_refs`,
+`next_action`, and `operator_reviewed` inside `spec.mapping`. Unreviewed
+fallback remains operational-quality debt. Explicitly reviewed fallback may be
+context-green when the context budget is not red. Readiness audits surface the
+packet-owned `next_action`; they do not synthesize a replacement that hides a
+missing task-packet field.
+
+### run_quality.followup_taxonomy
+
+Optional object with `schema_version=1`, `actionable_followups`,
+`informational_followups`, and `release_blocking_followups`. The taxonomy is
+derived from `open_followups`; it does not replace `completion_audit`,
+validation, or residual-risk rules.
+
+`green-with-info` is allowed only in read-only reports such as
+`analyze_recent_runs.py`. Durable `run_quality.grade` remains `green`,
+`yellow`, or `red`.
 
 `run_quality.open_followups` may include actionable inspection markers such as
 `stale_non_terminal_run`, `missing_execution_worktree`, and
@@ -361,6 +374,13 @@ Adaptive dispatch may add optional fields to `delegation_policy`:
 - `signals`: object with deterministic inputs such as declared file count,
   allowed write glob count, packet budget status, explicit delegation intent,
   and risk markers.
+- `would_have_decision`: optional advisory `delegate`, `local_fallback`, or
+  `block` when spawn policy prevents actual delegation.
+- `would_have_reason`: optional non-empty advisory reason paired with
+  `would_have_decision`.
+- `would_have_value_gate`: optional advisory `delegate`, `local_fast_path`, or
+  `block`. Final execution still follows `decision`, `reason`,
+  `failed_prerequisites`, and task `subagent_strategy`.
 
 When a finished task's final `subagent_strategy` differs from the latest
 non-block dispatch decision for that task, the task must include

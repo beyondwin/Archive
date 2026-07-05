@@ -100,9 +100,13 @@ subagent local fallback, and task packet human-view parity.
 
 `check_operational_run_quality.py` covers v2.22 optional state fields,
 delegation policy enums, execution-worktree provenance, static fixture emission
-of run-quality fields, and recent inspection summary behavior. `check_inspect_runs.py`
-also covers actionable quality followups for stale non-terminal runs and missing
-execution worktrees.
+of run-quality fields, followup taxonomy, state-grade compatibility, and recent
+inspection summary behavior. `check_recent_run_rubric.py` covers report-level
+`green-with-info` and aggregate actionable/informational followup counts.
+`check_preflight_dispatch.py` covers advisory would-have dispatch evidence.
+`check_task_packet.py` and `check_run_readiness.py` cover packet-owned
+full-spec fallback next actions. `check_inspect_runs.py` also covers actionable
+quality followups for stale non-terminal runs and missing execution worktrees.
 
 `check_cpe_replay.py` covers `scripts/normalize_cpe_run.py`, including
 completion status, run-quality grade, plan-audit count summary,

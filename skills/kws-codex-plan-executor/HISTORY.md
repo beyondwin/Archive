@@ -1,5 +1,17 @@
 # History
 
+## 2.27.0 - 2026-07-05
+
+- Split recent-run operational-quality followups into actionable and
+  informational taxonomy while keeping durable state grades limited to
+  `green`, `yellow`, and `red`.
+- Added report-level `green-with-info` for completion-passed runs that only
+  have informational followups.
+- Recorded advisory would-have dispatch evidence when spawn policy prevents
+  actual delegation, without changing final dispatch decisions.
+- Added deterministic packet-owned next-action guidance for full-spec fallback
+  context debt.
+
 ## 2.26.0 - 2026-07-04
 
 - Added recent-run operational-quality rubric reporting with
