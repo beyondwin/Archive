@@ -69,6 +69,25 @@ def expected_local_fallback_count(item: dict[str, Any]) -> int:
     return int(reasons.get(EXPECTED_LOCAL_FALLBACK_REASON, 0) > 0)
 
 
+def inspection_observation_count(item: dict[str, Any]) -> int:
+    observations = item.get("inspection_observations")
+    if not isinstance(observations, dict):
+        return 0
+    return int(any(value is True for key, value in observations.items() if key != "observed_after_completion"))
+
+
+def finished_missing_worktree_info_count(item: dict[str, Any]) -> int:
+    observations = item.get("inspection_observations")
+    if not isinstance(observations, dict):
+        return 0
+    return int(
+        item.get("terminal_state") == "finished"
+        and observations.get("missing_execution_worktree") is True
+        and observations.get("observed_after_completion") is True
+        and observations.get("display_class") == "green-with-info"
+    )
+
+
 def worst_grade(values: list[str]) -> str:
     if "red" in values:
         return "red"
@@ -85,6 +104,8 @@ def build_report(run_dirs: list[Path]) -> dict[str, Any]:
         item["state_path"] = str(run_dir / "state.json")
         runs.append(item)
     counts = grade_counts(runs)
+    actionable_followup_count = sum(taxonomy_count(item, "actionable_followups") for item in runs)
+    informational_followup_count = sum(taxonomy_count(item, "informational_followups") for item in runs)
     summary = {
         "run_count": len(runs),
         "finished_passed_count": sum(
@@ -93,8 +114,11 @@ def build_report(run_dirs: list[Path]) -> dict[str, Any]:
         **counts,
         "full_spec_fallback_count": sum(int(item.get("full_spec_fallback_count") or 0) for item in runs),
         "expected_local_fallback_count": sum(expected_local_fallback_count(item) for item in runs),
-        "actionable_followup_count": sum(taxonomy_count(item, "actionable_followups") for item in runs),
-        "informational_followup_count": sum(taxonomy_count(item, "informational_followups") for item in runs),
+        "actionable_followup_count": actionable_followup_count,
+        "informational_followup_count": informational_followup_count,
+        "durable_actionable_followup_count": actionable_followup_count,
+        "inspection_observation_count": sum(inspection_observation_count(item) for item in runs),
+        "finished_missing_worktree_info_count": sum(finished_missing_worktree_info_count(item) for item in runs),
     }
     rubric = {
         "safety": "red" if counts["red_count"] else "green",

@@ -244,6 +244,15 @@ def main() -> int:
         )
         if not checks["finished_missing_worktree_current_quality_reported"]:
             failures.append("inspect current quality should report missing worktree and AgentLens followups for finished runs")
+        observations = quality.get("inspection_observations", {})
+        checks["finished_missing_worktree_is_observation"] = (
+            observations.get("observed_after_completion") is True
+            and observations.get("missing_execution_worktree") is True
+            and observations.get("display_class") == "green-with-info"
+            and "missing_execution_worktree" not in debt.get("followups", [])
+        )
+        if not checks["finished_missing_worktree_is_observation"]:
+            failures.append("finished missing worktree should be an inspection observation, not durable debt")
 
         jsonl_result, _ = inspect_all(home, "--include-finished", "--quality-report", "--jsonl")
         jsonl_lines = [line for line in jsonl_result.stdout.splitlines() if line.strip()]
