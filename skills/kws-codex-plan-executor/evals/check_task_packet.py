@@ -181,9 +181,16 @@ def main() -> int:
         if not checks["full_spec_fallback_component_role"]:
             failures.append("full spec fallback should be visible in context_components")
         fallback_mapping = fallback.get("spec", {}).get("mapping", {})
+        fallback_refs = [item for item in fallback_mapping.get("suggested_spec_refs", []) if isinstance(item, str) and item.strip()]
+        expected_next_action = (
+            "Add explicit spec_refs to the plan task using one of: " + ", ".join(fallback_refs)
+            if fallback_refs
+            else "Add or correct section ids in the spec and plan pair."
+        )
         checks["fallback_mapping_reason_and_suggestions"] = (
             fallback_mapping.get("fallback_reason") == "weak_heuristic_match"
             and isinstance(fallback_mapping.get("suggested_spec_refs"), list)
+            and fallback_mapping.get("next_action") == expected_next_action
             and fallback_mapping.get("operator_reviewed") is False
         )
         if not checks["fallback_mapping_reason_and_suggestions"]:
