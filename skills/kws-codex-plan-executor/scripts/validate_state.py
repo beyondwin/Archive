@@ -87,7 +87,7 @@ VALID_ADAPTIVE_LOCAL_FAST_PATH_REASONS = {
 }
 VALID_DELEGATION_POLICY_KINDS = {"legacy", "adaptive"}
 VALID_DELEGATION_SAFETY_GATES = {"pending", "passed", "failed"}
-VALID_DELEGATION_VALUE_GATES = {"pending", "delegate", "local_fast_path", "block", "skipped"}
+VALID_DELEGATION_VALUE_GATES = {"pending", "delegate", "local_fast_path", "block", "skipped", "skipped_by_spawn_policy"}
 VALID_COMMAND_OBSERVATION_CATEGORIES = {
     "source_failure",
     "missing_local_env",

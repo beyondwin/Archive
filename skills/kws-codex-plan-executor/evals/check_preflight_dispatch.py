@@ -224,11 +224,17 @@ def main() -> int:
             "--requested-source",
             "default",
         )
+        policy = data.get("delegation_policy", {})
         checks["spawn_policy_requires_explicit_request_local_fallback"] = (
             result.returncode == 0
             and data.get("decision") == "local_fallback"
             and "spawn_policy_requires_explicit_user_request" in data.get("failed_prerequisites", [])
-            and data.get("delegation_policy", {}).get("effective_mode") == "local_fallback"
+            and policy.get("effective_mode") == "local_fallback"
+            and policy.get("value_gate") == "skipped_by_spawn_policy"
+            and policy.get("would_have_decision") == "local_fallback"
+            and policy.get("would_have_value_gate") == "local_fast_path"
+            and policy.get("would_have_reason") == "adaptive_policy_local_fast_path_docs_only"
+            and policy.get("signals", {}).get("declared_file_count") == 1
         )
         if not checks["spawn_policy_requires_explicit_request_local_fallback"]:
             failures.append(
@@ -241,6 +247,52 @@ def main() -> int:
         )
         if not checks["run_level_delegation_capability_emitted"]:
             failures.append("preflight dispatch should emit run-level delegation capability state update")
+
+    with tempfile.TemporaryDirectory(prefix="cpe-dispatch-") as temp:
+        repo = Path(temp) / "repo"
+        repo.mkdir()
+        init_repo(repo)
+        (repo / "scripts").mkdir()
+        (repo / "evals").mkdir()
+        (repo / "scripts/tool.py").write_text("print('base')\n", encoding="utf-8")
+        (repo / "evals/check_tool.py").write_text("print('base')\n", encoding="utf-8")
+        subprocess.run(["git", "add", "scripts/tool.py", "evals/check_tool.py"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "add tool"], cwd=repo, check=True)
+        state_path = repo / "state.json"
+        packet_path = repo / "task_0.json"
+        write_packet(
+            packet_path,
+            ["scripts/tool.py", "evals/check_tool.py"],
+            allowed_write_globs=["scripts/*.py", "evals/*.py"],
+            estimated_chars=18000,
+            dependencies=[],
+        )
+        write_state(state_path)
+        result, data = run_dispatch(
+            repo,
+            state_path,
+            packet_path,
+            "--spawn-policy",
+            "explicit-request-required",
+            "--explicit-delegation-requested",
+            "false",
+            "--requested-subagents",
+            "on",
+            "--requested-source",
+            "default",
+            write_scope=["scripts/*.py", "evals/*.py"],
+        )
+        policy = data.get("delegation_policy", {})
+        checks["spawn_policy_records_would_have_delegate"] = (
+            result.returncode == 0
+            and data.get("decision") == "local_fallback"
+            and policy.get("value_gate") == "skipped_by_spawn_policy"
+            and policy.get("would_have_decision") == "delegate"
+            and policy.get("would_have_value_gate") == "delegate"
+            and policy.get("would_have_reason") == "all pre-dispatch prerequisites passed"
+        )
+        if not checks["spawn_policy_records_would_have_delegate"]:
+            failures.append("explicit-request policy should record whether the task would have delegated")
 
     with tempfile.TemporaryDirectory(prefix="cpe-dispatch-") as temp:
         repo = Path(temp) / "repo"

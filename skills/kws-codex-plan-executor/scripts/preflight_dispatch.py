@@ -135,6 +135,15 @@ def adaptive_value_decision(packet: dict, write_scope: list[str], explicit_reque
     return "delegate", "all pre-dispatch prerequisites passed", signals
 
 
+def advisory_value_decision(packet: dict, write_scope: list[str], explicit_requested: bool) -> tuple[str, str, dict]:
+    value_gate, value_reason, signals = adaptive_value_decision(packet, write_scope, explicit_requested)
+    if value_gate == "local_fast_path":
+        return "local_fallback", value_reason, signals
+    if value_gate == "block":
+        return "block", value_reason, signals
+    return "delegate", value_reason, signals
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Decide CPE subagent pre-dispatch readiness.")
     parser.add_argument("--state", required=True)
@@ -249,7 +258,17 @@ def main() -> int:
         decision = "block"
         reason = "dirty files overlap delegated write scope"
 
-    if not failed and decision == "delegate":
+    spawn_policy_failed_only = failed == ["spawn_policy_requires_explicit_user_request"]
+    if spawn_policy_failed_only and decision == "local_fallback":
+        would_decision, would_reason, signals = advisory_value_decision(packet, write_scope, explicit_requested)
+        delegation_policy["signals"] = signals
+        delegation_policy["value_gate"] = "skipped_by_spawn_policy"
+        delegation_policy["would_have_decision"] = would_decision
+        delegation_policy["would_have_reason"] = would_reason
+        delegation_policy["would_have_value_gate"] = (
+            "delegate" if would_decision == "delegate" else ("block" if would_decision == "block" else "local_fast_path")
+        )
+    elif not failed and decision == "delegate":
         value_gate, value_reason, signals = adaptive_value_decision(packet, write_scope, explicit_requested)
         delegation_policy["signals"] = signals
         delegation_policy["value_gate"] = value_gate

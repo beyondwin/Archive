@@ -831,6 +831,48 @@ def main() -> int:
     if not checks["finished_adaptive_local_fast_path_passes"]:
         failures.append("finished adaptive local fast path should pass: " + (result.stderr or result.stdout))
 
+    advisory_fields = v220_state()
+    advisory_fields["delegation_policy"] = {
+        "requested_mode": "on",
+        "requested_source": "default",
+        "explicit_user_delegation_request": False,
+        "spawn_policy": "explicit-request-required",
+        "effective_mode": "local_fallback",
+        "reason": "spawn_agent tool policy requires explicit user delegation intent",
+        "policy_kind": "adaptive",
+        "safety_gate": "passed",
+        "value_gate": "skipped_by_spawn_policy",
+        "signals": {},
+        "would_have_decision": "delegate",
+        "would_have_reason": "all pre-dispatch prerequisites passed",
+        "would_have_value_gate": "delegate",
+    }
+    advisory_fields["agentlens_orchestration_run"] = "agentlens-run-123"
+    advisory_fields["execution_worktree"] = advisory_fields["worktree"]
+    advisory_fields["run_quality"] = valid_run_quality()
+    advisory_fields["run_quality"]["grade"] = "yellow"
+    advisory_fields["run_quality"]["open_followups"] = ["delegation_policy_expected_local_fallback"]
+    advisory_fields["subagent_runs"] = []
+    advisory_fields["dispatch_decisions"] = [
+        {
+            "schema_version": "1",
+            "task_id": "task_0",
+            "decision": "local_fallback",
+            "reason": "spawn_agent tool policy requires explicit user delegation intent",
+            "write_scope": ["docs/example.md"],
+            "failed_prerequisites": ["spawn_policy_requires_explicit_user_request"],
+        }
+    ]
+    advisory_fields["tasks"]["task_0"]["subagent_strategy"] = {
+        "mode": "local_fallback",
+        "reason": "spawn_agent tool policy requires explicit user delegation intent",
+        "run_ids": [],
+    }
+    result = run_validator(script, advisory_fields)
+    checks["delegation_policy_allows_would_have_fields"] = result.returncode == 0
+    if not checks["delegation_policy_allows_would_have_fields"]:
+        failures.append("delegation_policy should allow optional would-have advisory fields")
+
     mismatch = v220_state()
     mismatch["subagent_runs"] = []
     mismatch["dispatch_decisions"] = [
