@@ -56,3 +56,10 @@ policy before execution. `delegation_policy_prevented_all_delegation` is
 reserved for explicit delegation requests that still fell back everywhere, and
 `delegation_policy_missing_dispatch_evidence` means a finished write-capable
 task has no dispatch decision evidence.
+
+The final dispatch decision and advisory would-have decision are different
+surfaces. If spawn policy requires explicit delegation intent and the user did
+not provide it, the final decision remains `local_fallback`. CPE may still
+evaluate safety/value signals and record what would have happened if spawning
+were allowed. This evidence is for operator analysis only and must not trigger
+a subagent run.

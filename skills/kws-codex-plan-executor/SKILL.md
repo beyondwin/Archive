@@ -2,8 +2,8 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "2.26.0"
-  updated_at: "2026-07-03"
+  version: "2.27.0"
+  updated_at: "2026-07-05"
 ---
 
 # KWS Codex Plan Executor
@@ -267,6 +267,12 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   resolved policy before execution. `completion_audit.passed=true` and
   `run_quality.grade=yellow` may coexist when product verification passed but
   executor evidence or efficiency follow-up remains.
+- Recent-run analysis separates actionable followups from informational
+  followups. `green-with-info` is report-only display metadata; durable
+  `state.json` run quality grades remain `green`, `yellow`, or `red`.
+- Expected local fallback caused by `spawn_policy=explicit-request-required`
+  and no explicit delegation request is informational policy evidence, not
+  proof that task safety gates were skipped.
 - When read-only inspection reports stale non-terminal runs with missing
   execution worktrees, use `scripts/repair_runs.py` to produce a dry-run repair
   plan before any operator action. The only safe mutation is explicit
@@ -283,6 +289,10 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   `spec_refs`; unreviewed fallback remains operational-quality debt, while
   explicitly reviewed fallback may be context-green when the context budget is
   not red.
+- Full-spec fallback evidence includes deterministic `next_action` in task
+  packet mapping so plan/spec authors know how to reduce context debt in the
+  next run; readiness surfaces that packet-owned field and does not replace
+  task packet JSON as source of truth.
 - Delegation capability may be recorded at run level when spawn policy prevents
   all task spawning; this only changes operational-debt accounting and does not
   skip local task gates.
@@ -314,6 +324,10 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   `delegate`, `local_fallback`, or `block`; adaptive `local_fallback` reasons
   flow into task `subagent_strategy.reason`, and `dispatch_decisions` with
   `block` cannot be carried into a finished lifecycle outcome.
+- When spawn policy prevents actual delegation, pre-dispatch may record
+  advisory `would_have_decision`, `would_have_reason`, and
+  `would_have_value_gate` under `delegation_policy`; these fields never
+  authorize spawning and never replace the final `decision`.
 - In interactive and headless execution, feature, bugfix, refactor, or
   behavior-change implementation must invoke `using-superpowers` as the skill
   gate and `test-driven-development` before implementation code. This is not a
