@@ -31,6 +31,11 @@ weaken safety gates.
 11. After completion, run `scripts/check_run_diffs.py` and perform post-diff
     and state review before accepting subagent output.
 
+Parent acceptance is separate from pre-dispatch. A `delegate` decision only
+authorizes spawning. Before accepting worker output, the parent records boundary
+attestation, runs the diff-scope check from the execution worktree, and confirms
+the source workspace did not receive unexpected commits or dirty files.
+
 | Decision | Meaning | Required follow-through |
 | --- | --- | --- |
 | `delegate` | Delegation is safe and useful. | Spawn from task packet, then parent reviews diff and state. |

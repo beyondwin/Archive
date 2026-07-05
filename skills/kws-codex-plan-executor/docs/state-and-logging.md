@@ -93,6 +93,10 @@ as `stale_non_terminal_run`, `missing_execution_worktree`,
 State-intrinsic operational debt is classified by
 `scripts/run_quality_debt.py` so validation, static fixtures, and read-only
 inspection use the same follow-up vocabulary.
+`inspection_observations` are read-only inspection facts. They explain current
+filesystem observations such as a removed execution worktree after a finished
+run. They do not replace durable `state.json`, `completion_audit`, or task
+acceptance evidence.
 Expected local fallback from an explicit-request-required spawn policy is
 reported as `delegation_policy_expected_local_fallback`, not as prevented
 delegation. `delegation_policy_prevented_all_delegation` is reserved for
@@ -191,8 +195,9 @@ acceptance command.
 `scripts/normalize_cpe_run.py` emits compact replay JSON for deterministic
 checks and handoffs. It summarizes terminal state, completion status,
 run-quality grade, open followups, full-spec fallback count, dispatch reason
-counts, plan audit counts, residual risk classes, prompt/Graphify/AgentLens
-status summaries, and forbidden durable-output patterns without storing raw
+counts, inspection observations, duplicate-final-attempt count, plan audit
+counts, residual risk classes, prompt/Graphify/AgentLens status summaries, and
+forbidden durable-output patterns without storing raw
 transcripts or full prompts. `eval-coverage-cpe.md` maps this replay check and
 adjacent CPE quality evals to the failure modes they protect.
 

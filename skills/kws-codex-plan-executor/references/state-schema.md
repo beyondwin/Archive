@@ -264,7 +264,15 @@ operator guidance should use `execution_worktree` as the command/edit boundary.
 boundary validation. Older finished states without the marker remain readable.
 When present, every accepted completed subagent run must carry
 `boundary_attestation`, and the attested worker git root must match
-`execution_worktree`.
+`execution_worktree`. The attestation also records source workspace before/after
+HEADs, `source_workspace_unchanged`, and `dirty_scope_after`; source workspace
+drift requires an explicit operator override before acceptance.
+
+Accepted final attempt lineage is grouped by `attempt_group` when present, or
+by owner task plus write scope otherwise. Finished state may retain rejected or
+superseded attempts for audit history, but a group can have only one completed,
+accepted final attempt. Superseded attempts use `review_status=rejected` with
+`superseded_by` pointing at the accepted replacement.
 
 ### delegation_capability
 
@@ -284,11 +292,12 @@ audit evidence remain authoritative.
 ### spec.mapping fallback diagnosis
 
 Task packets may include `fallback_reason`, `suggested_spec_refs`,
-`next_action`, and `operator_reviewed` inside `spec.mapping`. Unreviewed
-fallback remains operational-quality debt. Explicitly reviewed fallback may be
-context-green when the context budget is not red. Readiness audits surface the
-packet-owned `next_action`; they do not synthesize a replacement that hides a
-missing task-packet field.
+`suggested_plan_patch`, `next_action`, and `operator_reviewed` inside
+`spec.mapping`. Unreviewed fallback remains operational-quality debt.
+Explicitly reviewed fallback may be context-green when the context budget is
+not red. Readiness audits surface the packet-owned `next_action` and suggested
+plan patch; they do not synthesize replacements that hide missing task-packet
+fields.
 
 ### run_quality.followup_taxonomy
 
@@ -312,6 +321,12 @@ operational fields such as
 `run_quality` with `readiness`, `dispatch_consistency`, `context_quality`, and
 `verification_quality`; this keeps completion quality inspectable even after
 the execution worktree is removed.
+
+Read-only inspection may attach `run_quality.inspection_observations` with
+`schema_version=1`, `missing_execution_worktree`, `observed_after_completion`,
+and `display_class`. These fields describe the current inspection environment;
+they do not mutate durable completion evidence or convert a finished missing
+worktree into product-verification failure.
 
 Structured residual risk object example:
 
