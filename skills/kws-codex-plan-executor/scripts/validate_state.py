@@ -637,6 +637,38 @@ def _validate_boundary_attestation(data: dict, run: dict, prefix: str, errors: l
             errors.append(f"{prefix}.boundary_attestation.{sha_key} must be a 40-character lowercase hex git sha")
 
 
+def _attempt_group_for(run: dict) -> str:
+    value = run.get("attempt_group")
+    if isinstance(value, str) and value.strip():
+        return value
+    owner = str(run.get("owner_task") or "")
+    scope = ",".join(item for item in run.get("write_scope", []) if isinstance(item, str))
+    return f"{owner}:{scope}"
+
+
+def _validate_attempt_lineage(runs: list[dict], errors: list[str]) -> None:
+    final_by_group: dict[str, list[str]] = {}
+    ids = {str(run.get("id")) for run in runs if isinstance(run, dict) and _has_substantive_value(run.get("id"))}
+    for index, run in enumerate(runs):
+        if not isinstance(run, dict):
+            continue
+        prefix = f"subagent_runs[{index}]"
+        accepted_as_final = run.get("accepted_as_final")
+        if accepted_as_final is not None and not isinstance(accepted_as_final, bool):
+            errors.append(f"{prefix}.accepted_as_final must be a boolean")
+        attempt_index = run.get("attempt_index")
+        if attempt_index is not None and (not isinstance(attempt_index, int) or attempt_index < 1):
+            errors.append(f"{prefix}.attempt_index must be a positive integer")
+        superseded_by = run.get("superseded_by")
+        if superseded_by is not None and str(superseded_by) not in ids:
+            errors.append(f"{prefix}.superseded_by must reference another subagent run id")
+        if run.get("review_status") == "accepted" and accepted_as_final is not False:
+            final_by_group.setdefault(_attempt_group_for(run), []).append(str(run.get("id")))
+    for group, run_ids in final_by_group.items():
+        if len(run_ids) > 1:
+            errors.append(f"multiple final accepted subagent attempts for {group}: {', '.join(run_ids)}")
+
+
 def _validate_subagents(data: dict, errors: list[str]) -> None:
     requested = data.get("subagents_requested")
     runs = data.get("subagent_runs", [])
@@ -710,6 +742,7 @@ def _validate_subagents(data: dict, errors: list[str]) -> None:
                 errors.append(
                     f"subagent_runs[{index}] and subagent_runs[{other_index}]: active subagent write_scope overlap requires overlap_rationale"
                 )
+    _validate_attempt_lineage([run for run in runs if isinstance(run, dict)], errors)
 
 
 def _validate_command_observations(data: dict, errors: list[str]) -> None:

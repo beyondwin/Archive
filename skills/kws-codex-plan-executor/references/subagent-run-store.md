@@ -74,6 +74,13 @@ proving the worker operated inside `execution_worktree` without dirtying the
 source workspace. Parent review must reject accepted output when this
 attestation does not match the run state.
 
+When multiple attempts target the same task and write scope, records should
+share `attempt_group` and increment `attempt_index`. Finished state can keep
+rejected or superseded attempts for audit history, but only one completed
+accepted record per attempt group may be final. This plan uses the existing
+`review_status=rejected` plus `superseded_by` for superseded attempts; it does
+not introduce a new review status enum.
+
 ## State Rules
 
 - `subagent_runs` requires `subagents_requested=true`, which is the default for

@@ -12,6 +12,7 @@ FULL_SPEC_FALLBACK_PRESENT = "full_spec_fallback_present"
 DELEGATION_POLICY_EXPECTED_LOCAL_FALLBACK = "delegation_policy_expected_local_fallback"
 DELEGATION_POLICY_PREVENTED_ALL_DELEGATION = "delegation_policy_prevented_all_delegation"
 DELEGATION_POLICY_MISSING_DISPATCH_EVIDENCE = "delegation_policy_missing_dispatch_evidence"
+DUPLICATE_FINAL_SUBAGENT_ATTEMPTS = "duplicate_final_subagent_attempts"
 
 STABLE_FOLLOWUP_ORDER = [
     AGENTLENS_MISSING,
@@ -22,6 +23,7 @@ STABLE_FOLLOWUP_ORDER = [
     DELEGATION_POLICY_EXPECTED_LOCAL_FALLBACK,
     DELEGATION_POLICY_PREVENTED_ALL_DELEGATION,
     DELEGATION_POLICY_MISSING_DISPATCH_EVIDENCE,
+    DUPLICATE_FINAL_SUBAGENT_ATTEMPTS,
 ]
 
 EXECUTION_MODES = {"interactive", "headless"}
@@ -139,6 +141,25 @@ def delegation_followup(state: dict[str, Any]) -> str | None:
     return None
 
 
+def duplicate_final_attempt_count(state: dict[str, Any]) -> int:
+    runs = state.get("subagent_runs")
+    if not isinstance(runs, list):
+        return 0
+    groups: dict[str, int] = {}
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        if run.get("status") != "completed" or run.get("review_status") != "accepted":
+            continue
+        if run.get("accepted_as_final") is False:
+            continue
+        owner = str(run.get("owner_task") or "")
+        scope = ",".join(item for item in run.get("write_scope", []) if isinstance(item, str))
+        group = str(run.get("attempt_group") or f"{owner}:{scope}")
+        groups[group] = groups.get(group, 0) + 1
+    return sum(count - 1 for count in groups.values() if count > 1)
+
+
 def stable_followups(
     state: dict[str, Any],
     *,
@@ -158,6 +179,8 @@ def stable_followups(
     delegation = delegation_followup(state)
     if delegation:
         found.add(delegation)
+    if duplicate_final_attempt_count(state) > 0:
+        found.add(DUPLICATE_FINAL_SUBAGENT_ATTEMPTS)
     return [item for item in STABLE_FOLLOWUP_ORDER if item in found]
 
 
@@ -209,6 +232,7 @@ def followup_taxonomy(
             FULL_SPEC_FALLBACK_PRESENT,
             DELEGATION_POLICY_PREVENTED_ALL_DELEGATION,
             DELEGATION_POLICY_MISSING_DISPATCH_EVIDENCE,
+            DUPLICATE_FINAL_SUBAGENT_ATTEMPTS,
         }:
             actionable.append(item)
         else:

@@ -161,6 +161,22 @@ def boundary_state() -> dict:
     return state
 
 
+def duplicate_final_attempt_state() -> dict:
+    state = boundary_state()
+    first = dict(state["subagent_runs"][0])
+    first["id"] = "agent_attempt_1"
+    first["attempt_group"] = "task_0:docs/example.md"
+    first["attempt_index"] = 1
+    first["accepted_as_final"] = True
+    first["boundary_attestation"] = boundary_attestation()
+    second = dict(first)
+    second["id"] = "agent_attempt_2"
+    second["attempt_index"] = 2
+    state["subagent_runs"] = [first, second]
+    state["tasks"]["task_0"]["subagent_strategy"]["run_ids"] = ["agent_attempt_1", "agent_attempt_2"]
+    return state
+
+
 def valid_command_observation() -> dict:
     return {
         "command": "pnpm test",
@@ -432,6 +448,25 @@ def main() -> int:
     )
     if not checks["source_workspace_drift_requires_override"]:
         failures.append("source workspace drift should fail without operator override")
+
+    duplicate_final = duplicate_final_attempt_state()
+    duplicate_final_result = run_validator(script, duplicate_final)
+    checks["duplicate_final_attempts_fail"] = (
+        duplicate_final_result.returncode != 0
+        and "multiple final accepted subagent attempts" in (duplicate_final_result.stderr + duplicate_final_result.stdout)
+    )
+    if not checks["duplicate_final_attempts_fail"]:
+        failures.append("multiple final accepted attempts for one attempt_group should fail")
+
+    superseded_attempt = duplicate_final_attempt_state()
+    superseded_attempt["subagent_runs"][0]["review_status"] = "rejected"
+    superseded_attempt["subagent_runs"][0]["accepted_as_final"] = False
+    superseded_attempt["subagent_runs"][0]["superseded_by"] = "agent_attempt_2"
+    superseded_attempt["tasks"]["task_0"]["subagent_strategy"]["run_ids"] = ["agent_attempt_2"]
+    superseded_result = run_validator(script, superseded_attempt)
+    checks["superseded_attempt_lineage_passes"] = superseded_result.returncode == 0
+    if not checks["superseded_attempt_lineage_passes"]:
+        failures.append("rejected superseded attempt plus one final accepted run should pass")
 
     changed_outside_scope = base_state()
     run = completed_subagent_run()

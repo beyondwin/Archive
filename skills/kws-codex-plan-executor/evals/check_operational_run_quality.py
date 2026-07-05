@@ -334,6 +334,23 @@ def main() -> int:
     if not checks["write_capable_task_without_dispatch_reports_missing_evidence"]:
         failures.append("write-capable finished tasks without dispatch evidence should report missing evidence")
 
+    duplicate_final_state = v222_state()
+    first = dict(duplicate_final_state["subagent_runs"][0])
+    first["id"] = "agent_attempt_1"
+    first["attempt_group"] = "task_0:docs/example.md"
+    first["accepted_as_final"] = True
+    second = dict(first)
+    second["id"] = "agent_attempt_2"
+    duplicate_final_state["subagent_runs"] = [first, second]
+    duplicate_final_followups = debt.stable_followups(duplicate_final_state)
+    checks["duplicate_final_attempts_report_actionable_debt"] = (
+        "duplicate_final_subagent_attempts" in duplicate_final_followups
+        and "duplicate_final_subagent_attempts"
+        in debt.followup_taxonomy(duplicate_final_state, duplicate_final_followups).get("actionable_followups", [])
+    )
+    if not checks["duplicate_final_attempts_report_actionable_debt"]:
+        failures.append("duplicate final accepted attempts should report actionable run-quality debt")
+
     yellow_quality = v222_state()
     yellow_quality["agentlens_orchestration_run"] = None
     yellow_quality["run_quality"]["grade"] = "yellow"
