@@ -842,10 +842,21 @@ def main() -> int:
         "policy_kind": "adaptive",
         "safety_gate": "failed",
         "value_gate": "skipped_by_spawn_policy",
-        "signals": {},
-        "would_have_decision": "delegate",
-        "would_have_reason": "all pre-dispatch prerequisites passed",
-        "would_have_value_gate": "delegate",
+        "signals": {
+            "declared_file_count": 1,
+            "allowed_write_glob_count": 1,
+            "write_scope_count": 1,
+            "dependency_count": 0,
+            "packet_budget_status": "green",
+            "estimated_chars": 10,
+            "explicit_user_delegation_request": False,
+            "risk_markers": [],
+            "docs_only": True,
+            "low_parallel_value": True,
+        },
+        "would_have_decision": "local_fallback",
+        "would_have_reason": "adaptive_policy_local_fast_path_docs_only",
+        "would_have_value_gate": "local_fast_path",
     }
     advisory_fields["agentlens_orchestration_run"] = "agentlens-run-123"
     advisory_fields["execution_worktree"] = advisory_fields["worktree"]
@@ -869,6 +880,25 @@ def main() -> int:
         "run_ids": [],
     }
     result = run_validator(script, advisory_fields)
+    signals = advisory_fields["delegation_policy"]["signals"]
+    checks["delegation_policy_models_explicit_request_fallback_shape"] = (
+        result.returncode == 0
+        and advisory_fields["delegation_policy"]["would_have_decision"] == "local_fallback"
+        and advisory_fields["delegation_policy"]["would_have_value_gate"] == "local_fast_path"
+        and advisory_fields["delegation_policy"]["would_have_reason"] == "adaptive_policy_local_fast_path_docs_only"
+        and advisory_fields["delegation_policy"]["value_gate"] == "skipped_by_spawn_policy"
+        and advisory_fields["delegation_policy"]["safety_gate"] == "failed"
+        and signals.get("declared_file_count") == 1
+        and signals.get("allowed_write_glob_count") == 1
+        and signals.get("write_scope_count") == 1
+        and signals.get("dependency_count") == 0
+        and signals.get("packet_budget_status") == "green"
+        and signals.get("estimated_chars") == 10
+        and signals.get("docs_only") is True
+        and signals.get("low_parallel_value") is True
+    )
+    if not checks["delegation_policy_models_explicit_request_fallback_shape"]:
+        failures.append("delegation_policy should model the docs-only explicit-request fallback runtime shape")
     checks["delegation_policy_allows_would_have_fields"] = result.returncode == 0
     if not checks["delegation_policy_allows_would_have_fields"]:
         failures.append("delegation_policy should allow optional would-have advisory fields")
