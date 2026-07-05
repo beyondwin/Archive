@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -77,6 +78,21 @@ VALID_SUBAGENT_STATUSES = {"queued", "running", "completed", "failed", "cancelle
 VALID_SUBAGENT_REVIEW_STATUSES = {"unreviewed", "accepted", "rejected", "changes_requested"}
 REQUIRED_SUBAGENT_FIELDS = {"id", "owner_task", "mode", "write_scope", "status", "result_summary"}
 COMPLETED_SUBAGENT_FIELDS = {"changed_files", "review_status"}
+REQUIRED_BOUNDARY_ATTESTATION_FIELDS = {
+    "schema_version",
+    "execution_worktree",
+    "worker_cwd",
+    "worker_git_root",
+    "worker_head_before",
+    "worker_head_after",
+    "source_workspace",
+    "source_workspace_head_before",
+    "source_workspace_head_after",
+    "execution_worktree_match",
+    "source_workspace_unchanged",
+    "dirty_scope_after",
+}
+HEX_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 VALID_SUBAGENT_STRATEGY_MODES = {"delegated", "local_fallback"}
 VALID_ADAPTIVE_LOCAL_FAST_PATH_REASONS = {
     "adaptive_policy_local_fast_path_small_scope",
@@ -573,6 +589,54 @@ def _validate_strategy_override(task_id: str, task: dict, errors: list[str]) -> 
         errors.append(f"{task_id}: subagent_strategy_override.changed_at must be an ISO timestamp")
 
 
+def _normalize_path_text(value: object) -> str:
+    if not isinstance(value, str):
+        return ""
+    return value.rstrip("/")
+
+
+def _validate_boundary_attestation(data: dict, run: dict, prefix: str, errors: list[str]) -> None:
+    strict = data.get("subagent_boundary_schema_version") == "1"
+    if not strict:
+        return
+    if run.get("status") != "completed" or run.get("review_status") != "accepted":
+        return
+    attestation = run.get("boundary_attestation")
+    if not isinstance(attestation, dict):
+        errors.append(f"{prefix}.boundary_attestation required for accepted delegated run")
+        return
+    for key in sorted(REQUIRED_BOUNDARY_ATTESTATION_FIELDS):
+        if key not in attestation:
+            errors.append(f"{prefix}.boundary_attestation missing field {key}")
+    if attestation.get("schema_version") != "1":
+        errors.append(f"{prefix}.boundary_attestation.schema_version must be 1")
+    execution_worktree = _normalize_path_text(data.get("execution_worktree") or data.get("worktree"))
+    worker_git_root = _normalize_path_text(attestation.get("worker_git_root"))
+    if execution_worktree and worker_git_root != execution_worktree:
+        errors.append(f"{prefix}.boundary_attestation.worker_git_root must match execution_worktree")
+    worker_cwd = _normalize_path_text(attestation.get("worker_cwd"))
+    if execution_worktree and worker_cwd and not worker_cwd.startswith(execution_worktree):
+        errors.append(f"{prefix}.boundary_attestation.worker_cwd must be inside execution_worktree")
+    if attestation.get("execution_worktree_match") is not True:
+        errors.append(f"{prefix}.boundary_attestation.execution_worktree_match must be true")
+    if attestation.get("source_workspace_unchanged") is not True and not isinstance(
+        run.get("operator_boundary_override"), dict
+    ):
+        errors.append(f"{prefix}.boundary_attestation.source_workspace_unchanged requires operator_boundary_override")
+    dirty_scope_after = attestation.get("dirty_scope_after")
+    if not isinstance(dirty_scope_after, list):
+        errors.append(f"{prefix}.boundary_attestation.dirty_scope_after must be a list")
+    for sha_key in (
+        "worker_head_before",
+        "worker_head_after",
+        "source_workspace_head_before",
+        "source_workspace_head_after",
+    ):
+        sha = attestation.get(sha_key)
+        if not isinstance(sha, str) or HEX_SHA_RE.match(sha) is None:
+            errors.append(f"{prefix}.boundary_attestation.{sha_key} must be a 40-character lowercase hex git sha")
+
+
 def _validate_subagents(data: dict, errors: list[str]) -> None:
     requested = data.get("subagents_requested")
     runs = data.get("subagent_runs", [])
@@ -627,6 +691,7 @@ def _validate_subagents(data: dict, errors: list[str]) -> None:
             for changed_file in changed:
                 if isinstance(changed_file, str) and changed_file.strip() and not _matches_any(changed_file, write_scope):
                     errors.append(f"{prefix}.changed_files must match write_scope: {changed_file}")
+            _validate_boundary_attestation(data, run, prefix, errors)
         if outcome == "finished" and run.get("status") in {"queued", "running"}:
             errors.append(f"{prefix}: running subagent cannot remain in finished state")
         if outcome == "finished" and run.get("review_status") == "unreviewed":
@@ -923,6 +988,10 @@ def _validate_progress_and_trajectory(data: dict, errors: list[str]) -> None:
 
 
 def _validate_operational_run_quality(data: dict, errors: list[str]) -> None:
+    boundary_schema = data.get("subagent_boundary_schema_version")
+    if boundary_schema is not None and boundary_schema != "1":
+        errors.append("subagent_boundary_schema_version must be 1 when present")
+
     run_id = data.get("run_id")
     source_workspace = data.get("source_workspace")
     if source_workspace is not None and not isinstance(source_workspace, str):

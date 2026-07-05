@@ -260,6 +260,12 @@ v2.22 operational run quality state may add:
 `.codex/worktrees/<run_id>`. `workspace` remains backward compatible; new
 operator guidance should use `execution_worktree` as the command/edit boundary.
 
+`subagent_boundary_schema_version=1` opts a run into strict accepted-subagent
+boundary validation. Older finished states without the marker remain readable.
+When present, every accepted completed subagent run must carry
+`boundary_attestation`, and the attested worker git root must match
+`execution_worktree`.
+
 ### delegation_capability
 
 Optional object with `schema_version`, `spawn_policy`,
