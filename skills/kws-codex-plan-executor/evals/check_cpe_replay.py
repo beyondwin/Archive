@@ -111,6 +111,45 @@ def main() -> int:
         if not checks["finished_yellow_replay_normalizes"]:
             failures.append("finished yellow state should normalize into stable replay fields")
 
+        duplicate_state = finished_state(run_dir)
+        duplicate_state["subagent_runs"] = [
+            {
+                "id": "agent_attempt_1",
+                "owner_task": "task_1",
+                "mode": "fork_context",
+                "write_scope": ["docs/example.md"],
+                "status": "completed",
+                "result_summary": "First accepted attempt.",
+                "changed_files": ["docs/example.md"],
+                "review_status": "accepted",
+                "attempt_group": "task_1:docs/example.md",
+                "accepted_as_final": True,
+            },
+            {
+                "id": "agent_attempt_2",
+                "owner_task": "task_1",
+                "mode": "fork_context",
+                "write_scope": ["docs/example.md"],
+                "status": "completed",
+                "result_summary": "Second accepted attempt.",
+                "changed_files": ["docs/example.md"],
+                "review_status": "accepted",
+                "attempt_group": "task_1:docs/example.md",
+                "accepted_as_final": True,
+            },
+        ]
+        duplicate_state["run_quality"]["open_followups"] = []
+        duplicate_state_path = run_dir / "duplicate-state.json"
+        duplicate_state_path.write_text(json.dumps(duplicate_state), encoding="utf-8")
+        result, replay = run_replay(duplicate_state_path)
+        checks["duplicate_final_attempt_replay_fields"] = (
+            result.returncode == 0
+            and replay.get("duplicate_final_subagent_attempt_count") == 1
+            and "duplicate_final_subagent_attempts" in replay.get("open_followups", [])
+        )
+        if not checks["duplicate_final_attempt_replay_fields"]:
+            failures.append("normalized replay should expose duplicate final attempt count and followup")
+
         prompt_state = dict(state)
         prompt_state["mode"] = "prompt"
         prompt_state_path = run_dir / "prompt-state.json"

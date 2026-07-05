@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from run_quality_debt import followup_taxonomy, report_class_for  # noqa: E402
+from run_quality_debt import duplicate_final_attempt_count, followup_taxonomy, report_class_for, stable_followups  # noqa: E402
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -142,6 +142,9 @@ def normalize(state: dict[str, Any], *, context_text: str = "", final_output_tex
         state.get("delegation_capability") if isinstance(state.get("delegation_capability"), dict) else {}
     )
     open_followups = list_strings(quality.get("open_followups"))
+    for item in stable_followups(state):
+        if item not in open_followups:
+            open_followups.append(item)
     taxonomy = followup_taxonomy(state, open_followups)
     report_class = report_class_for(state, open_followups, taxonomy, quality.get("validation_status"))
     return {
@@ -155,6 +158,7 @@ def normalize(state: dict[str, Any], *, context_text: str = "", final_output_tex
         "run_quality_report_class": report_class,
         "task_count": len(tasks),
         "full_spec_fallback_count": full_spec_fallback_count(state),
+        "duplicate_final_subagent_attempt_count": duplicate_final_attempt_count(state),
         "dispatch_decision_reasons": count_dispatch_reasons(state),
         "plan_executability": plan_executability_summary(state),
         "prompt_audit_passed": prompt_audit.get("passed") is True or prompt_audit.get("dynamic_marker_violations") == [],
