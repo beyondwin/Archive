@@ -155,6 +155,20 @@ def suggested_spec_refs(candidate_scores: list[dict]) -> list[str]:
     return result
 
 
+def fallback_next_action(reason: str, refs: list[str]) -> str:
+    if refs:
+        return "Add explicit spec_refs to the plan task using one of: " + ", ".join(refs)
+    if reason == "missing_spec_refs":
+        return "Add explicit spec_refs to the plan task."
+    if reason == "manifest_gap":
+        return "Update spec_manifest task_to_sections or section ids for this task."
+    if reason == "weak_heuristic_match":
+        return "Add or correct section ids in the spec and plan pair."
+    if reason == "intentional_operator_reviewed":
+        return "Record operator_decision and keep context budget evidence."
+    return "Review spec mapping evidence and add task-specific spec_refs."
+
+
 def resolve_sections(task: dict, manifest: dict, fallback_policy: str) -> tuple[list[str], bool, dict]:
     sections = manifest.get("sections", {})
     explicit = [item for item in task.get("spec_refs", []) if isinstance(item, str) and item.strip()]
@@ -205,6 +219,7 @@ def resolve_sections(task: dict, manifest: dict, fallback_policy: str) -> tuple[
     if fallback_policy == "halt_on_blocker":
         die(f"no spec section mapping for {task.get('id')}")
     reason = fallback_reason(task, candidate_scores)
+    refs = suggested_spec_refs(candidate_scores)
     return ["*"], True, {
         "selected_section_ids": ["*"],
         "candidate_scores": candidate_scores,
@@ -212,7 +227,8 @@ def resolve_sections(task: dict, manifest: dict, fallback_policy: str) -> tuple[
         "requires_parent_mapping": True,
         "source": "fallback",
         "fallback_reason": reason,
-        "suggested_spec_refs": suggested_spec_refs(candidate_scores),
+        "suggested_spec_refs": refs,
+        "next_action": fallback_next_action(reason, refs),
         "operator_reviewed": False,
     }
 

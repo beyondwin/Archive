@@ -130,6 +130,7 @@ def main() -> int:
         checks["full_spec_fallback_has_reason"] = (
             fallback_issue.get("fallback_reason") == "missing_spec_refs"
             and fallback_issue.get("suggested_spec_refs") == ["problem", "goals"]
+            and fallback_issue.get("next_action") == "Add explicit spec_refs to the plan task using one of: problem, goals"
         )
         if not checks["full_spec_fallback_has_reason"]:
             failures.append("readiness audit should include full-spec fallback reason and suggestions")
