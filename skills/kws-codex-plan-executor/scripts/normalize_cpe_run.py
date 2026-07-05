@@ -141,11 +141,21 @@ def normalize(state: dict[str, Any], *, context_text: str = "", final_output_tex
     delegation_capability = (
         state.get("delegation_capability") if isinstance(state.get("delegation_capability"), dict) else {}
     )
+    observations = (
+        quality.get("inspection_observations") if isinstance(quality.get("inspection_observations"), dict) else {}
+    )
     open_followups = list_strings(quality.get("open_followups"))
     for item in stable_followups(state):
         if item not in open_followups:
             open_followups.append(item)
-    taxonomy = followup_taxonomy(state, open_followups)
+    taxonomy = followup_taxonomy(
+        state,
+        open_followups,
+        missing_execution_worktree=(
+            observations.get("missing_execution_worktree") is True
+            and observations.get("observed_after_completion") is True
+        ),
+    )
     report_class = report_class_for(state, open_followups, taxonomy, quality.get("validation_status"))
     return {
         "schema_version": "1",
@@ -154,6 +164,7 @@ def normalize(state: dict[str, Any], *, context_text: str = "", final_output_tex
         "completion_passed": completion.get("passed") is True,
         "run_quality_grade": quality.get("grade"),
         "open_followups": open_followups,
+        "inspection_observations": observations,
         "followup_taxonomy": taxonomy,
         "run_quality_report_class": report_class,
         "task_count": len(tasks),

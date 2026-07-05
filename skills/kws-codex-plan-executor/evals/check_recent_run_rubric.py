@@ -35,6 +35,12 @@ def write_state(run_dir: Path, run_id: str, *, grade: str, followups: list[str],
             "grade": grade,
             "validation_status": "passed" if completion else "failed",
             "open_followups": followups,
+            "inspection_observations": {
+                "schema_version": "1",
+                "missing_execution_worktree": "missing_execution_worktree" in followups,
+                "observed_after_completion": "missing_execution_worktree" in followups,
+                "display_class": "green-with-info" if "missing_execution_worktree" in followups else "green",
+            },
             "readiness": {"fixable_issue_count": 0, "plan_executability_fixable_issue_count": 0},
             "dispatch_consistency": {},
             "context_quality": {"full_spec_fallback_count": 1 if "full_spec_fallback_present" in followups else 0},
@@ -90,7 +96,7 @@ def main() -> int:
             orch / "info-run",
             "info-run",
             grade="yellow",
-            followups=["agentlens_missing", "delegation_policy_expected_local_fallback"],
+            followups=["agentlens_missing", "missing_execution_worktree", "delegation_policy_expected_local_fallback"],
         )
         write_state(
             orch / "yellow-run",
@@ -128,7 +134,12 @@ def main() -> int:
             and summary.get("red_count") == 1
         )
         checks["counts_taxonomy"] = (
-            summary.get("actionable_followup_count") == 2 and summary.get("informational_followup_count") == 3
+            summary.get("actionable_followup_count") == 2 and summary.get("informational_followup_count") == 7
+        )
+        checks["separates_inspection_observations"] = (
+            summary.get("inspection_observation_count") == 1
+            and summary.get("finished_missing_worktree_info_count") == 1
+            and summary.get("durable_actionable_followup_count") == summary.get("actionable_followup_count")
         )
         checks["rubric_uses_info_class"] = (
             rubric.get("delegation_efficiency") == "green-with-info"

@@ -75,6 +75,20 @@ def validation_result(state: dict[str, Any] | None, enabled: bool) -> tuple[str,
     return ("passed" if not errors else "failed", errors)
 
 
+def inspection_observations(*, terminal: bool, missing_worktree: bool, observed_after_completion: bool) -> dict[str, Any]:
+    display_class = "green"
+    if missing_worktree and terminal and observed_after_completion:
+        display_class = "green-with-info"
+    elif missing_worktree:
+        display_class = "yellow"
+    return {
+        "schema_version": "1",
+        "missing_execution_worktree": missing_worktree,
+        "observed_after_completion": observed_after_completion,
+        "display_class": display_class,
+    }
+
+
 def run_quality(
     state: dict[str, Any] | None,
     state_path: Path,
@@ -115,13 +129,14 @@ def run_quality(
         if item not in current_followups:
             current_followups.append(item)
 
+    durable_missing_worktree = missing_worktree and not terminal
     if run_quality_debt is not None and state:
-        for item in run_quality_debt.stable_followups(state, missing_execution_worktree=missing_worktree):
+        for item in run_quality_debt.stable_followups(state, missing_execution_worktree=durable_missing_worktree):
             if item not in current_followups:
                 current_followups.append(item)
         operational_debt = run_quality_debt.operational_debt_summary(
             state,
-            missing_execution_worktree=missing_worktree,
+            missing_execution_worktree=durable_missing_worktree,
         )
         grade = run_quality_debt.grade_for(state, current_followups, validation_status)
     else:
@@ -134,6 +149,11 @@ def run_quality(
         grade = "red" if validation_status == "failed" else ("yellow" if current_followups else "green")
 
     observed_after_completion = terminal and current_followups != base_followups
+    observations = inspection_observations(
+        terminal=terminal,
+        missing_worktree=missing_worktree,
+        observed_after_completion=observed_after_completion,
+    )
     result = {
         "schema_version": "1",
         "validation_status": validation_status,
@@ -145,6 +165,7 @@ def run_quality(
         "operational_debt": operational_debt,
         "grade": grade,
         "observed_after_completion": observed_after_completion,
+        "inspection_observations": observations,
         "summary": "; ".join(summary_parts),
     }
     for key in ("score", "readiness", "dispatch_consistency", "context_quality", "verification_quality", "recommendations"):
