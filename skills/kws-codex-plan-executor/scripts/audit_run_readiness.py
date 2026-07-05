@@ -61,6 +61,7 @@ def audit_packet(packet_path: Path) -> tuple[dict, list[dict]]:
                 "Task packet uses full spec fallback instead of task-specific spec sections.",
                 fallback_reason=mapping.get("fallback_reason") or "unknown",
                 suggested_spec_refs=list_strings(mapping.get("suggested_spec_refs")),
+                suggested_plan_patch=mapping.get("suggested_plan_patch") or "",
                 next_action=next_action,
                 operator_reviewed=reviewed,
             )

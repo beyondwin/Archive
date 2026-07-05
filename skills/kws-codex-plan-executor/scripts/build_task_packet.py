@@ -81,6 +81,15 @@ def path_tokens(files: list[str]) -> set[str]:
     return tokens
 
 
+def task_search_tokens(task: dict) -> set[str]:
+    tokens = path_tokens([item for item in task.get("files", []) if isinstance(item, str)])
+    for key in ("title", "body", "acceptance_command"):
+        value = task.get(key)
+        if isinstance(value, str):
+            tokens.update(tokenize(value))
+    return tokens
+
+
 def path_literal_matches(path_literal: str, files: list[str]) -> bool:
     literal = path_literal.strip().strip("/")
     if not literal:
@@ -94,7 +103,7 @@ def path_literal_matches(path_literal: str, files: list[str]) -> bool:
 
 def score_section(task: dict, section_id: str, section: dict) -> tuple[int, list[str]]:
     files = [item for item in task.get("files", []) if isinstance(item, str)]
-    file_tokens = path_tokens(files)
+    search_tokens = task_search_tokens(task)
     signals = section.get("signals") if isinstance(section.get("signals"), dict) else {}
     score = 0
     reasons: list[str] = []
@@ -104,13 +113,17 @@ def score_section(task: dict, section_id: str, section: dict) -> tuple[int, list
             reasons.append("path_literal")
             break
     identifiers = set(signals.get("code_identifiers", []))
-    if identifiers and identifiers.intersection(file_tokens):
+    if identifiers and identifiers.intersection(search_tokens):
         score += 4
         reasons.append("code_identifier")
     title_tokens = set(signals.get("title_tokens", [])) or tokenize(str(section.get("title", "")))
-    if title_tokens and title_tokens.issubset(file_tokens):
+    overlap = title_tokens.intersection(search_tokens)
+    if title_tokens and title_tokens.issubset(search_tokens):
         score += 2
         reasons.append("title_token")
+    elif overlap:
+        score += 1
+        reasons.append("partial_title_token")
     task_ids = set(signals.get("task_ids", []))
     if str(task.get("id", "")).lower() in task_ids:
         score += 6
@@ -153,6 +166,17 @@ def suggested_spec_refs(candidate_scores: list[dict]) -> list[str]:
         if isinstance(section_id, str) and section_id not in result:
             result.append(section_id)
     return result
+
+
+def suggested_plan_patch(refs: list[str]) -> str:
+    escaped = ", ".join(json.dumps(ref, ensure_ascii=False) for ref in refs)
+    return f"spec_refs: [{escaped}]"
+
+
+def bounded_preview(text: str, *, max_chars: int = 1200) -> str:
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars].rstrip() + "\n[truncated]"
 
 
 def fallback_next_action(reason: str, refs: list[str]) -> str:
@@ -220,6 +244,7 @@ def resolve_sections(task: dict, manifest: dict, fallback_policy: str) -> tuple[
         die(f"no spec section mapping for {task.get('id')}")
     reason = fallback_reason(task, candidate_scores)
     refs = suggested_spec_refs(candidate_scores)
+    patch = suggested_plan_patch(refs) if refs else ""
     return ["*"], True, {
         "selected_section_ids": ["*"],
         "candidate_scores": candidate_scores,
@@ -228,6 +253,7 @@ def resolve_sections(task: dict, manifest: dict, fallback_policy: str) -> tuple[
         "source": "fallback",
         "fallback_reason": reason,
         "suggested_spec_refs": refs,
+        "suggested_plan_patch": patch,
         "next_action": fallback_next_action(reason, refs),
         "operator_reviewed": False,
     }
@@ -316,6 +342,13 @@ def build_packet(
     task = find_task(plan, task_id)
     section_ids, fallback_used, mapping = resolve_sections(task, manifest, fallback_policy)
     spec_mode, section_label, spec_text = spec_context(spec_path, manifest, section_ids, fallback_used)
+    if fallback_used:
+        mapping["fallback_preview"] = {
+            "source_ref": "*",
+            "chars": min(len(spec_text), 1200),
+            "sha256": sha256_text(spec_text),
+            "text": bounded_preview(spec_text),
+        }
     files = [item for item in task.get("files", []) if isinstance(item, str)]
     depends_on = [item for item in task.get("depends_on", []) if isinstance(item, str)]
     task_body = task.get("body", "")

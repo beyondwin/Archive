@@ -89,7 +89,11 @@ def render_packet_view(packet: dict[str, Any]) -> str:
             forbidden.append(item)
     ac_lines, verification_lines = acceptance_lines(acceptance)
     section_ids = list_strings(spec.get("section_ids"))
-    fallback_note = "- warning: full spec fallback" if spec.get("fallback_used") is True else "- warning: none"
+    fallback_notes = ["- warning: full spec fallback"] if spec.get("fallback_used") is True else ["- warning: none"]
+    mapping = spec.get("mapping") if isinstance(spec.get("mapping"), dict) else {}
+    suggested_patch = mapping.get("suggested_plan_patch")
+    if isinstance(suggested_patch, str) and suggested_patch.strip():
+        fallback_notes.append(f"- Suggested plan patch: `{suggested_patch}`")
     included_decisions = decisions.get("included") if isinstance(decisions.get("included"), list) else []
 
     lines = [
@@ -114,7 +118,7 @@ def render_packet_view(packet: dict[str, Any]) -> str:
         f"- spec sections: {', '.join(section_ids) if section_ids else 'missing'}",
         f"- context budget: {budget.get('status', 'unknown')}, {budget.get('estimated_chars', 'unknown')}/{budget.get('max_chars', 'unknown')}",
         f"- decisions included: {len(included_decisions)}",
-        fallback_note,
+        *fallback_notes,
         "",
     ]
     return "\n".join(lines)
