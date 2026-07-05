@@ -188,6 +188,7 @@ def main() -> int:
         checks["fallback_mapping_reason_and_suggestions"] = (
             fallback_mapping.get("fallback_reason") == "weak_heuristic_match"
             and isinstance(fallback_mapping.get("suggested_spec_refs"), list)
+            and fallback_mapping.get("next_action") == "Add or correct section ids in the spec and plan pair."
             and fallback_mapping.get("operator_reviewed") is False
         )
         if not checks["fallback_mapping_reason_and_suggestions"]:
