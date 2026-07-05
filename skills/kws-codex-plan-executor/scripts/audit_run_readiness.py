@@ -23,20 +23,6 @@ def issue(task_id: str, severity: str, kind: str, message: str, **extra: object)
     return payload
 
 
-def fallback_next_action(reason: str, refs: list[str]) -> str:
-    if refs:
-        return "Add explicit spec_refs to the plan task using one of: " + ", ".join(refs)
-    if reason == "missing_spec_refs":
-        return "Add explicit spec_refs to the plan task."
-    if reason == "manifest_gap":
-        return "Update spec_manifest task_to_sections or section ids for this task."
-    if reason == "weak_heuristic_match":
-        return "Add or correct section ids in the spec and plan pair."
-    if reason == "intentional_operator_reviewed":
-        return "Record operator_decision and keep context budget evidence."
-    return "Review spec mapping evidence and add task-specific spec_refs."
-
-
 def packet_task_id(packet: dict, fallback: str) -> str:
     value = packet.get("task_id")
     return value if isinstance(value, str) and value.strip() else fallback
@@ -62,17 +48,20 @@ def audit_packet(packet_path: Path) -> tuple[dict, list[dict]]:
     if spec.get("fallback_used") is True:
         mapping = spec.get("mapping") if isinstance(spec.get("mapping"), dict) else {}
         reviewed = mapping.get("operator_reviewed") is True
-        suggested_spec_refs = list_strings(mapping.get("suggested_spec_refs"))
-        reason = mapping.get("fallback_reason") or "unknown"
+        next_action = (
+            mapping.get("next_action")
+            if isinstance(mapping.get("next_action"), str) and mapping.get("next_action").strip()
+            else "next_action missing from packet mapping"
+        )
         issues.append(
             issue(
                 task_id,
                 "info" if reviewed else "fixable",
                 "full_spec_fallback",
                 "Task packet uses full spec fallback instead of task-specific spec sections.",
-                fallback_reason=reason,
-                suggested_spec_refs=suggested_spec_refs,
-                next_action=mapping.get("next_action") or fallback_next_action(reason, suggested_spec_refs),
+                fallback_reason=mapping.get("fallback_reason") or "unknown",
+                suggested_spec_refs=list_strings(mapping.get("suggested_spec_refs")),
+                next_action=next_action,
                 operator_reviewed=reviewed,
             )
         )
