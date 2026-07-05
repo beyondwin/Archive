@@ -161,6 +161,84 @@ def stable_followups(
     return [item for item in STABLE_FOLLOWUP_ORDER if item in found]
 
 
+def _agentlens_followup_is_actionable(state: dict[str, Any]) -> bool:
+    status = state.get("agentlens_status")
+    if isinstance(status, dict):
+        return status.get("status") == "agentlens_emit_failed"
+    return False
+
+
+def _expected_local_fallback_is_informational(state: dict[str, Any]) -> bool:
+    capability = state.get("delegation_capability") if isinstance(state.get("delegation_capability"), dict) else {}
+    policy = state.get("delegation_policy") if isinstance(state.get("delegation_policy"), dict) else {}
+    evidence = capability or policy
+    return evidence.get("spawn_policy") == "explicit-request-required" and evidence.get(
+        "explicit_user_delegation_request"
+    ) is False
+
+
+def followup_taxonomy(
+    state: dict[str, Any],
+    followups: list[str],
+    *,
+    missing_execution_worktree: bool | None = None,
+) -> dict[str, object]:
+    actionable: list[str] = []
+    informational: list[str] = []
+    release_blocking: list[str] = []
+    terminal = state.get("lifecycle_outcome")
+    for item in followups:
+        if item == AGENTLENS_MISSING:
+            if _agentlens_followup_is_actionable(state):
+                actionable.append(item)
+            else:
+                informational.append(item)
+        elif item == DELEGATION_POLICY_EXPECTED_LOCAL_FALLBACK:
+            if _expected_local_fallback_is_informational(state):
+                informational.append(item)
+            else:
+                actionable.append(item)
+        elif item == MISSING_EXECUTION_WORKTREE:
+            if terminal == "finished" and missing_execution_worktree is True:
+                informational.append(item)
+            else:
+                actionable.append(item)
+        elif item in {
+            READINESS_FIXABLE_ISSUES,
+            PLAN_EXECUTABILITY_FIXABLE_ISSUES,
+            FULL_SPEC_FALLBACK_PRESENT,
+            DELEGATION_POLICY_PREVENTED_ALL_DELEGATION,
+            DELEGATION_POLICY_MISSING_DISPATCH_EVIDENCE,
+        }:
+            actionable.append(item)
+        else:
+            informational.append(item)
+    return {
+        "schema_version": "1",
+        "actionable_followups": actionable,
+        "informational_followups": informational,
+        "release_blocking_followups": release_blocking,
+    }
+
+
+def report_class_for(
+    state: dict[str, Any],
+    followups: list[str],
+    taxonomy: dict[str, object],
+    validation_status: str | None = None,
+) -> str:
+    state_grade = grade_for(state, followups, validation_status)
+    if state_grade == "red":
+        return "red"
+    actionable = taxonomy.get("actionable_followups")
+    informational = taxonomy.get("informational_followups")
+    if isinstance(actionable, list) and actionable:
+        return "yellow"
+    if isinstance(informational, list) and informational:
+        return "green-with-info"
+    return "green"
+
+
 def operational_debt_summary(
     state: dict[str, Any],
     *,

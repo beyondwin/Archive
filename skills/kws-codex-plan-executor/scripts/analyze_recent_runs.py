@@ -40,12 +40,23 @@ def state_paths(codex_home: Path, include_finished: bool) -> list[Path]:
 
 def grade_counts(normalized: list[dict[str, Any]]) -> dict[str, int]:
     return {
-        "green_count": sum(1 for item in normalized if item.get("run_quality_grade") == "green"),
-        "yellow_count": sum(1 for item in normalized if item.get("run_quality_grade") == "yellow"),
+        "green_count": sum(1 for item in normalized if item.get("run_quality_report_class") == "green"),
+        "green_with_info_count": sum(1 for item in normalized if item.get("run_quality_report_class") == "green-with-info"),
+        "yellow_count": sum(1 for item in normalized if item.get("run_quality_report_class") == "yellow"),
         "red_count": sum(
-            1 for item in normalized if item.get("run_quality_grade") == "red" or item.get("completion_passed") is False
+            1
+            for item in normalized
+            if item.get("run_quality_report_class") == "red" or item.get("completion_passed") is False
         ),
     }
+
+
+def taxonomy_count(item: dict[str, Any], key: str) -> int:
+    taxonomy = item.get("followup_taxonomy")
+    if not isinstance(taxonomy, dict):
+        return 0
+    value = taxonomy.get(key)
+    return len(value) if isinstance(value, list) else 0
 
 
 def expected_local_fallback_count(item: dict[str, Any]) -> int:
@@ -82,13 +93,23 @@ def build_report(run_dirs: list[Path]) -> dict[str, Any]:
         **counts,
         "full_spec_fallback_count": sum(int(item.get("full_spec_fallback_count") or 0) for item in runs),
         "expected_local_fallback_count": sum(expected_local_fallback_count(item) for item in runs),
+        "actionable_followup_count": sum(taxonomy_count(item, "actionable_followups") for item in runs),
+        "informational_followup_count": sum(taxonomy_count(item, "informational_followups") for item in runs),
     }
     rubric = {
         "safety": "red" if counts["red_count"] else "green",
         "context": "yellow" if summary["full_spec_fallback_count"] else "green",
-        "delegation_efficiency": "yellow" if summary["expected_local_fallback_count"] else "green",
+        "delegation_efficiency": (
+            "yellow"
+            if any(
+                "delegation_policy_prevented_all_delegation"
+                in (item.get("followup_taxonomy", {}).get("actionable_followups") or [])
+                for item in runs
+            )
+            else ("green-with-info" if summary["expected_local_fallback_count"] else "green")
+        ),
         "evidence": worst_grade(["yellow" if not item.get("verification_evidence_classes") else "green" for item in runs]),
-        "validator_maintainability": "yellow",
+        "validator_maintainability": "green",
     }
     return {"schema_version": "1", "summary": summary, "rubric": rubric, "runs": runs}
 
@@ -100,7 +121,9 @@ def main() -> int:
     parser.add_argument("--include-finished", action="store_true")
     parser.add_argument("--output")
     args = parser.parse_args()
-    paths = state_paths(Path(args.codex_home).expanduser(), include_finished=args.include_finished)[: args.recent]
+    paths = state_paths(Path(args.codex_home).expanduser(), include_finished=args.include_finished)
+    if not args.include_finished:
+        paths = paths[: args.recent]
     report = build_report([path.parent for path in paths])
     text = json.dumps(report, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.output:
