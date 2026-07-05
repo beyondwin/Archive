@@ -122,6 +122,45 @@ def completed_task_subagent_run() -> dict:
     return run
 
 
+def boundary_attestation(*, match: bool = True, source_unchanged: bool = True) -> dict:
+    root = worktree() if match else "/tmp/codex-home/source/Archive"
+    return {
+        "schema_version": "1",
+        "execution_worktree": worktree(),
+        "worker_cwd": root,
+        "worker_git_root": root,
+        "worker_head_before": "a" * 40,
+        "worker_head_after": "b" * 40,
+        "source_workspace": "/tmp/codex-home/source/Archive",
+        "source_workspace_head_before": "c" * 40,
+        "source_workspace_head_after": "c" * 40 if source_unchanged else "d" * 40,
+        "execution_worktree_match": match,
+        "source_workspace_unchanged": source_unchanged,
+        "dirty_scope_after": [],
+    }
+
+
+def boundary_state() -> dict:
+    state = v220_state()
+    state["subagent_boundary_schema_version"] = "1"
+    state["source_workspace"] = "/tmp/codex-home/source/Archive"
+    state["execution_worktree"] = state["worktree"]
+    state["agentlens_orchestration_run"] = "agentlens-run-boundary"
+    state["dispatch_decisions"] = [valid_dispatch_decision("all pre-dispatch prerequisites passed")]
+    state["run_quality"] = valid_run_quality()
+    run = completed_task_subagent_run()
+    run["id"] = "agent_boundary"
+    run["boundary_attestation"] = boundary_attestation()
+    run["accepted_as_final"] = True
+    state["subagent_runs"] = [run]
+    state["tasks"]["task_0"]["subagent_strategy"] = {
+        "mode": "delegated",
+        "reason": "all pre-dispatch prerequisites passed",
+        "run_ids": ["agent_boundary"],
+    }
+    return state
+
+
 def valid_command_observation() -> dict:
     return {
         "command": "pnpm test",
@@ -358,6 +397,41 @@ def main() -> int:
     )
     if not checks["subagent_empty_write_scope_fails"]:
         failures.append("subagent write_scope should be non-empty")
+
+    boundary_valid = run_validator(script, boundary_state())
+    checks["boundary_attestation_valid_passes"] = boundary_valid.returncode == 0
+    if not checks["boundary_attestation_valid_passes"]:
+        failures.append("valid boundary attestation should pass")
+
+    missing_boundary = boundary_state()
+    del missing_boundary["subagent_runs"][0]["boundary_attestation"]
+    missing_boundary_result = run_validator(script, missing_boundary)
+    checks["accepted_subagent_requires_boundary_attestation"] = (
+        missing_boundary_result.returncode != 0
+        and "boundary_attestation required" in (missing_boundary_result.stderr + missing_boundary_result.stdout)
+    )
+    if not checks["accepted_subagent_requires_boundary_attestation"]:
+        failures.append("accepted subagent should require boundary attestation in boundary schema states")
+
+    mismatch_boundary = boundary_state()
+    mismatch_boundary["subagent_runs"][0]["boundary_attestation"] = boundary_attestation(match=False)
+    mismatch_result = run_validator(script, mismatch_boundary)
+    checks["boundary_mismatch_fails"] = (
+        mismatch_result.returncode != 0
+        and "worker_git_root must match execution_worktree" in (mismatch_result.stderr + mismatch_result.stdout)
+    )
+    if not checks["boundary_mismatch_fails"]:
+        failures.append("worker git root outside execution worktree should fail")
+
+    source_drift = boundary_state()
+    source_drift["subagent_runs"][0]["boundary_attestation"] = boundary_attestation(source_unchanged=False)
+    source_drift_result = run_validator(script, source_drift)
+    checks["source_workspace_drift_requires_override"] = (
+        source_drift_result.returncode != 0
+        and "source_workspace_unchanged" in (source_drift_result.stderr + source_drift_result.stdout)
+    )
+    if not checks["source_workspace_drift_requires_override"]:
+        failures.append("source workspace drift should fail without operator override")
 
     changed_outside_scope = base_state()
     run = completed_subagent_run()

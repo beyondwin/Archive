@@ -67,6 +67,13 @@ Optional but important fields:
   or running overlapping active subagents.
 - `merged_at`: timestamp for parent-accepted merge/reconciliation.
 
+Accepted delegated records in states that set `subagent_boundary_schema_version=1`
+also require `boundary_attestation`. It records `worker_cwd`, `worker_git_root`,
+worker head before/after, source workspace head before/after, and booleans
+proving the worker operated inside `execution_worktree` without dirtying the
+source workspace. Parent review must reject accepted output when this
+attestation does not match the run state.
+
 ## State Rules
 
 - `subagent_runs` requires `subagents_requested=true`, which is the default for
