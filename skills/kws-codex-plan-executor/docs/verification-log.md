@@ -2,8 +2,8 @@
 
 ## 2026-07-05 Asia/Seoul - CPE operational quality signal taxonomy
 
-- Branch/commit: `codex/cpe-operational-quality-signal`; pre-closeout
-  verification commit `438451a`.
+- Branch/commit: `codex/cpe-operational-quality-signal`; closeout Graphify
+  verification commit `deecd93`.
 - Scope: split actionable/informational run-quality followups, added
   report-level `green-with-info`, recorded advisory would-have dispatch
   evidence, and added packet-owned full-spec fallback next actions.
@@ -18,7 +18,7 @@
   - `./evals/run.sh` - PASS with 8 passing fixtures.
   - `python3 scripts/audit_prompt_cache.py --skill-root . --output ~/.codex/orchestrator/2026-07-05-cpe-operational-quality-signal-20260705-143128/prompt_cache_audit.json` - PASS.
   - `graphify update .` - PASS; refreshed tracked `graphify-out/` outputs with
-    `Built from commit: 438451ae`.
+    `Built from commit: deecd93d`.
   - `python3 skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py --repo-root ~/.codex/worktrees/2026-07-05-cpe-operational-quality-signal-20260705-143128 --update-ran --output ~/.codex/orchestrator/2026-07-05-cpe-operational-quality-signal-20260705-143128/graphify_audit_final.json` - PASS, `fresh=true`.
   - `bun install --frozen-lockfile` - PASS, installed worktree-local dependencies.
   - `bun run check` - PASS, `820 pass`, `10 skip`, `0 fail`.
