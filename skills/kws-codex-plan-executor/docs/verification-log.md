@@ -1,5 +1,33 @@
 # Verification Log
 
+## 2026-07-05 Asia/Seoul - CPE execution boundary and context optimization
+
+- Branch/commit: `codex/2026-07-05-cpe-execution-boundary-and-context-optimization-20260705-162913`;
+  pre-log verification commit `d9def3a`.
+- Scope: added accepted-subagent boundary attestation, final-attempt lineage
+  validation, bounded full-spec fallback guidance, and inspection-only
+  observation reporting.
+- Commands:
+  - Focused eval bundle for state schema, operational run quality, replay, task
+    packet mapping, run readiness, packet views, inspection, recent-run rubric,
+    `py_compile`, and `bash -n evals/run.sh` - PASS.
+  - `python3 evals/check_release_contract.py` - PASS for `2.27.0`.
+  - `python3 evals/check_skill_contract.py --skill SKILL.md` - PASS.
+  - `python3 scripts/audit_superpowers_compatibility.py --superpowers-root /Users/kws/.codex/skills --skill-root ~/.codex/worktrees/2026-07-05-cpe-execution-boundary-and-context-optimization-20260705-162913/skills/kws-codex-plan-executor` - PASS, recommended `thin_stateful_bridge`.
+  - `./evals/run.sh` - PASS with 8 passing fixtures.
+  - `python3 scripts/audit_prompt_cache.py --skill-root ~/.codex/worktrees/2026-07-05-cpe-execution-boundary-and-context-optimization-20260705-162913/skills/kws-codex-plan-executor --output ~/.codex/orchestrator/2026-07-05-cpe-execution-boundary-and-context-optimization-20260705-162913/prompt_cache_audit.json` - PASS.
+  - `graphify update .` - PASS; refreshed tracked `graphify-out/` outputs.
+  - `python3 skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py --repo-root ~/.codex/worktrees/2026-07-05-cpe-execution-boundary-and-context-optimization-20260705-162913 --update-ran --output /tmp/cpe-boundary-graphify-audit.json` - PASS, `fresh=true`.
+  - Initial `bun run check` - FAIL because worktree dependencies were not
+    installed and `tsc` was unavailable.
+  - `bun install` - PASS, installed worktree-local dependencies without tracked
+    lockfile changes.
+  - `bun run check` - PASS, `820 pass`, `10 skip`, `0 fail`.
+  - `git diff --check` - PASS.
+- Residual risk: actual subagent spawning remained unavailable under the active
+  Codex tool policy without explicit user delegation intent; all tasks recorded
+  local fallback.
+
 ## 2026-07-05 Asia/Seoul - CPE operational quality signal taxonomy
 
 - Branch/commit: `codex/cpe-operational-quality-signal`; closeout Graphify

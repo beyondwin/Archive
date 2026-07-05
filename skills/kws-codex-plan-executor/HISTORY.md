@@ -1,5 +1,14 @@
 # History
 
+## Unreleased
+
+- Added schema-aware subagent boundary attestation for accepted delegated runs.
+- Added attempt-lineage validation so finished state has at most one final
+  accepted attempt per task/write scope.
+- Improved full-spec fallback guidance with candidate spec refs and suggested
+  plan patches.
+- Split read-only inspection observations from durable run-quality debt.
+
 ## 2.27.0 - 2026-07-05
 
 - Split recent-run operational-quality followups into actionable and

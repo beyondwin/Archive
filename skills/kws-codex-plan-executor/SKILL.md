@@ -246,9 +246,18 @@ evidence. Keep these surfaces aligned before any finished lifecycle outcome.
   superseded dispatch reason, the task records `subagent_strategy_override`
   with `from_reason`, `to_reason`, `changed_at`, `evidence`, and
   `operator_decision`.
+- Finished states that opt into `subagent_boundary_schema_version=1` require
+  accepted delegated `subagent_runs` to carry `boundary_attestation` proving the
+  worker operated inside `execution_worktree` and did not dirty the source
+  workspace unless an explicit operator override is recorded.
+- Finished states cannot present multiple final accepted subagent attempts for
+  the same task/write scope; superseded attempts remain inspectable as rejected
+  records with `superseded_by`.
 - Read-only run inspection may compute `run_quality` for recent or stale runs
   without mutating state. Finished operational-quality states with v2.22 fields
   embed the same summary before validation.
+- Read-only inspection may attach `inspection_observations` such as a finished
+  missing execution worktree without rewriting durable run quality state.
 - Recent-run inspection may aggregate finished states with
   `scripts/analyze_recent_runs.py`; rubric reports are derived evidence and
   never replace `state.json` or `completion_audit`.

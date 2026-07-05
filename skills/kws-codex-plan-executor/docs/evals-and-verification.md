@@ -108,6 +108,17 @@ inspection summary behavior. `check_recent_run_rubric.py` covers report-level
 full-spec fallback next actions. `check_inspect_runs.py` also covers actionable
 quality followups for stale non-terminal runs and missing execution worktrees.
 
+Boundary and lineage coverage:
+
+- `check_state_schema.py` rejects accepted delegated runs without boundary
+  attestation when `subagent_boundary_schema_version=1`.
+- `check_state_schema.py` rejects worker git roots outside the execution
+  worktree and source workspace drift without operator override.
+- `check_operational_run_quality.py` and `check_cpe_replay.py` keep duplicate
+  final subagent attempts visible as actionable operational debt.
+- `check_inspect_runs.py` keeps finished missing worktrees as inspection
+  observations rather than durable product-verification failures.
+
 `check_cpe_replay.py` covers `scripts/normalize_cpe_run.py`, including
 completion status, run-quality grade, plan-audit count summary,
 dispatch-decision reason counts, structured residual risk classes,

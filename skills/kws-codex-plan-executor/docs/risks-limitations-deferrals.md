@@ -26,6 +26,10 @@
   deferred.
 - Effective delegation policy records why a task fell back locally, but real
   subagent spawning remains controlled by the active Codex tool policy.
+- Boundary attestation proves parent-accepted worker output was reviewed
+  against the expected execution worktree. It does not install or manage the
+  external subagent runtime. AgentLens remains best-effort, and old finished
+  states remain readable even when they predate boundary attestation.
 - Plan executability audit is intentionally conservative. Broad write scopes,
   lockfiles, security/auth/infra paths, and missing file blocks stop execution
   before edits even when a human could theoretically handle them manually. The

@@ -49,6 +49,13 @@ parallel-worthy tasks still delegate from task packets with disjoint write
 scopes and parent review. Finished state cannot retain running or unreviewed
 subagent records.
 
+Parent acceptance is a separate boundary from pre-dispatch. Accepted delegated
+records that opt into `subagent_boundary_schema_version=1` must prove worker
+cwd/git root matched `execution_worktree` and that the source workspace did not
+drift without operator override. Attempt lineage keeps rejected and superseded
+worker attempts inspectable while allowing only one final accepted record per
+task/write-scope group.
+
 For approved interactive implementation plans, CPE should not duplicate the
 current Superpowers implementation loop when the compatibility audit recommends
 `thin_stateful_bridge`. Instead, Superpowers `subagent-driven-development`
@@ -88,7 +95,9 @@ must also include Graphify evidence in `completion_audit.verification_evidence`.
 `inspect_runs.py` can compute read-only `run_quality` for recent runs across
 all plans, including stale non-terminal state, validation drift, delegation
 counts, workspace/execution-worktree mismatch, and actionable follow-up markers
-for stale or missing-worktree runs.
+for stale or missing-worktree runs. Finished missing execution worktrees are
+reported through `inspection_observations` so reports can explain current
+filesystem state without rewriting durable completion quality.
 
 Run-quality operational debt is classified in
 `scripts/run_quality_debt.py` so state validation and read-only inspection use
@@ -100,7 +109,8 @@ auditable after finalization.
 
 `scripts/normalize_cpe_run.py` turns a run state into deterministic replay JSON:
 terminal outcome, completion status, run-quality grade, open followups,
-dispatch decision reason counts, plan audit counts, residual risk classes, and
+inspection observations, duplicate final subagent attempt count, dispatch
+decision reason counts, plan audit counts, residual risk classes, and
 forbidden-pattern markers. It intentionally avoids raw transcripts and full
 prompts.
 
