@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from run_quality_debt import followup_taxonomy, report_class_for  # noqa: E402
+
 
 def load_json(path: Path) -> dict[str, Any]:
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -139,13 +141,18 @@ def normalize(state: dict[str, Any], *, context_text: str = "", final_output_tex
     delegation_capability = (
         state.get("delegation_capability") if isinstance(state.get("delegation_capability"), dict) else {}
     )
+    open_followups = list_strings(quality.get("open_followups"))
+    taxonomy = followup_taxonomy(state, open_followups)
+    report_class = report_class_for(state, open_followups, taxonomy, quality.get("validation_status"))
     return {
         "schema_version": "1",
         "run_id": state.get("run_id"),
         "terminal_state": state.get("lifecycle_outcome"),
         "completion_passed": completion.get("passed") is True,
         "run_quality_grade": quality.get("grade"),
-        "open_followups": list_strings(quality.get("open_followups")),
+        "open_followups": open_followups,
+        "followup_taxonomy": taxonomy,
+        "run_quality_report_class": report_class,
         "task_count": len(tasks),
         "full_spec_fallback_count": full_spec_fallback_count(state),
         "dispatch_decision_reasons": count_dispatch_reasons(state),

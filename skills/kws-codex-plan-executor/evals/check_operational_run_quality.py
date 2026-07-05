@@ -193,6 +193,59 @@ def main() -> int:
 
     debt = load_run_quality_debt()
 
+    info_state = v222_state()
+    info_state["agentlens_orchestration_run"] = None
+    info_state["agentlens_status"] = {
+        "schema_version": "1",
+        "status": "agentlens_unavailable",
+        "blocking": False,
+    }
+    info_state["delegation_capability"] = {
+        "schema_version": "1",
+        "spawn_policy": "explicit-request-required",
+        "explicit_user_delegation_request": False,
+        "run_level_effective_mode": "local_fallback",
+        "reason": "spawn_agent tool policy requires explicit user delegation intent",
+    }
+    info_state["dispatch_decisions"] = []
+    info_followups = debt.stable_followups(info_state)
+    info_taxonomy = debt.followup_taxonomy(info_state, info_followups)
+    checks["taxonomy_splits_informational_followups"] = (
+        info_taxonomy.get("actionable_followups") == []
+        and info_taxonomy.get("informational_followups")
+        == ["agentlens_missing", "delegation_policy_expected_local_fallback"]
+        and debt.report_class_for(info_state, info_followups, info_taxonomy, "passed") == "green-with-info"
+        and debt.grade_for(info_state, info_followups, "passed") == "yellow"
+    )
+    if not checks["taxonomy_splits_informational_followups"]:
+        failures.append("taxonomy should keep state grade yellow but report info-only debt as green-with-info")
+
+    actionable_state = v222_state()
+    actionable_state["run_quality"]["context_quality"]["full_spec_fallback_count"] = 1
+    actionable_followups = debt.stable_followups(actionable_state)
+    actionable_taxonomy = debt.followup_taxonomy(actionable_state, actionable_followups)
+    checks["taxonomy_keeps_full_spec_actionable"] = (
+        "full_spec_fallback_present" in actionable_taxonomy.get("actionable_followups", [])
+        and debt.report_class_for(actionable_state, actionable_followups, actionable_taxonomy, "passed") == "yellow"
+    )
+    if not checks["taxonomy_keeps_full_spec_actionable"]:
+        failures.append("full-spec fallback should remain actionable and report yellow")
+
+    emit_failed_state = v222_state()
+    emit_failed_state["agentlens_orchestration_run"] = None
+    emit_failed_state["agentlens_status"] = {
+        "schema_version": "1",
+        "status": "agentlens_emit_failed",
+        "blocking": False,
+    }
+    emit_followups = debt.stable_followups(emit_failed_state)
+    emit_taxonomy = debt.followup_taxonomy(emit_failed_state, emit_followups)
+    checks["taxonomy_treats_agentlens_emit_failed_actionable"] = (
+        "agentlens_missing" in emit_taxonomy.get("actionable_followups", [])
+    )
+    if not checks["taxonomy_treats_agentlens_emit_failed_actionable"]:
+        failures.append("agentlens emit failure should be actionable even when non-blocking")
+
     yellow_state = v222_state()
     yellow_state["agentlens_orchestration_run"] = None
     yellow_state["run_quality"]["readiness"]["fixable_issue_count"] = 2

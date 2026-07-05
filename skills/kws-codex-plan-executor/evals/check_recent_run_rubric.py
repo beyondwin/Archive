@@ -87,6 +87,12 @@ def main() -> int:
         orch = home / ".codex" / "orchestrator"
         write_state(orch / "green-run", "green-run", grade="green", followups=[])
         write_state(
+            orch / "info-run",
+            "info-run",
+            grade="yellow",
+            followups=["agentlens_missing", "delegation_policy_expected_local_fallback"],
+        )
+        write_state(
             orch / "yellow-run",
             "yellow-run",
             grade="yellow",
@@ -114,20 +120,20 @@ def main() -> int:
         summary = report.get("summary", {})
         rubric = report.get("rubric", {})
         checks["script_succeeds"] = result.returncode == 0
-        checks["counts_runs"] = summary.get("finished_passed_count") == 2 and summary.get("run_count") == 3
+        checks["counts_runs"] = summary.get("finished_passed_count") == 3 and summary.get("run_count") == 4
         checks["counts_grades"] = (
-            summary.get("green_count") == 1 and summary.get("yellow_count") == 1 and summary.get("red_count") == 1
+            summary.get("green_count") == 1
+            and summary.get("green_with_info_count") == 1
+            and summary.get("yellow_count") == 1
+            and summary.get("red_count") == 1
         )
-        checks["counts_debt"] = (
-            summary.get("full_spec_fallback_count") == 1 and summary.get("expected_local_fallback_count") == 1
+        checks["counts_taxonomy"] = (
+            summary.get("actionable_followup_count") == 1 and summary.get("informational_followup_count") == 4
         )
-        checks["rubric_dimensions"] = set(rubric) == {
-            "safety",
-            "context",
-            "delegation_efficiency",
-            "evidence",
-            "validator_maintainability",
-        }
+        checks["rubric_uses_info_class"] = (
+            rubric.get("delegation_efficiency") == "green-with-info"
+            and rubric.get("validator_maintainability") in {"green", "green-with-info"}
+        )
         for name, passed in checks.items():
             if not passed:
                 failures.append(name)
