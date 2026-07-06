@@ -6,8 +6,21 @@ import argparse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+import initcmd as _initcmd
+
+
 def handle_init(args):
-    return {"error": "not_implemented"}
+    home = os.environ.get("CME_HOME", os.path.expanduser("~"))
+    repo_root = args.repo_root or os.getcwd()
+    raw_args = args.args or ""
+    dry_run = bool(args.dry_run)
+    result = _initcmd.run_init(
+        raw_args=raw_args,
+        home=home,
+        repo_root=repo_root,
+        dry_run=dry_run,
+    )
+    return result
 
 def handle_next(args):
     return {"error": "not_implemented"}
@@ -30,6 +43,11 @@ def main():
 
     # init: no --state required
     parser_init = subparsers.add_parser("init", help="Initialize kernel")
+    parser_init.add_argument("--args", default="", help="CME args string (plan=... spec=...)")
+    parser_init.add_argument("--dry-run", action="store_true",
+                             help="Plan only; no filesystem changes")
+    parser_init.add_argument("--repo-root", default=None,
+                             help="Source repo root (defaults to cwd)")
 
     # next: requires --state
     parser_next = subparsers.add_parser("next", help="Next transition")
@@ -68,11 +86,14 @@ def main():
         sys.exit(3)
 
     result = handlers[args.command](args)
-    print(json.dumps(result, ensure_ascii=False))
+    print(json.dumps(result, ensure_ascii=False, indent=2))
 
-    # Exit with code 3 if result contains error
+    # Exit with code 3 if result contains an error (not a halt)
     if "error" in result:
         sys.exit(3)
+    # Exit code 2 for a halt (e.g. dirty_worktree)
+    if "halt" in result:
+        sys.exit(2)
 
 if __name__ == "__main__":
     main()
