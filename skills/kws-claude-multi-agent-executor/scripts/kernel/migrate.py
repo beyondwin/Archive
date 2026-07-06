@@ -10,7 +10,6 @@ Do NOT import migrate_legacy_state — rules are reproduced here.
 from __future__ import annotations
 
 import json
-import copy
 
 # ---------------------------------------------------------------------------
 # Known v3 top-level field names.
