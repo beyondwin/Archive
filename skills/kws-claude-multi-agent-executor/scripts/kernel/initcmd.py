@@ -12,9 +12,13 @@ Reference: skills/kws-claude-multi-agent-executor/references/phases/phase-minus-
 
 import os
 import re
+import json
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
+
+import statefile
+import migrate
 
 
 # ---------------------------------------------------------------------------
@@ -532,23 +536,22 @@ def run_init(raw_args: str, home: str, repo_root: str,
         }
 
     # --- Step 3: capture source_repo + git worktree add ---
-    # Resolve the canonical source repo path
+    # Resolve the source repo ROOT (later tasks — drift, finalize — consume
+    # source_repo as the repo root, not the .git dir).
     src_proc = subprocess.run(
-        ["git", "rev-parse", "--git-common-dir"],
+        ["git", "rev-parse", "--show-toplevel"],
         cwd=repo_root,
         capture_output=True,
         text=True,
     )
     source_repo = None
     if src_proc.returncode == 0:
-        git_common = src_proc.stdout.strip()
-        # Resolve to absolute path (may be relative to repo_root)
-        if not os.path.isabs(git_common):
-            git_common = os.path.join(repo_root, git_common)
-        try:
-            source_repo = str(Path(git_common).resolve())
-        except Exception:
-            source_repo = git_common
+        toplevel = src_proc.stdout.strip()
+        if toplevel:
+            try:
+                source_repo = str(Path(toplevel).resolve())
+            except Exception:
+                source_repo = toplevel
 
     # Get current branch name
     branch_proc = subprocess.run(
@@ -602,10 +605,6 @@ def run_init(raw_args: str, home: str, repo_root: str,
         Path(os.path.join(orch_dir, subdir)).mkdir(parents=True, exist_ok=True)
 
     # --- Step 6: write state v3 ---
-    import sys as _sys
-    _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import statefile
-
     started_at = now.isoformat()
     state: dict = {
         "schema_version": 3,
@@ -655,8 +654,6 @@ def run_init(raw_args: str, home: str, repo_root: str,
 
     # If multi-plan, build plan_chain using PER_PLAN_DEFAULTS from migrate.py
     if len(config["plans"]) > 1:
-        import json as _json
-        import migrate as _migrate
         chain = []
         for i, p in enumerate(config["plans"]):
             entry: dict = {
@@ -667,8 +664,8 @@ def run_init(raw_args: str, home: str, repo_root: str,
                 "blocked_until": None,
             }
             # Fill all per-plan fields with their defaults (deep-copied)
-            for field, default in _migrate.PER_PLAN_DEFAULTS.items():
-                entry[field] = _json.loads(_json.dumps(default))
+            for field, default in migrate.PER_PLAN_DEFAULTS.items():
+                entry[field] = json.loads(json.dumps(default))
             chain.append(entry)
         state["plan_chain"] = chain
         state["active_plan"] = 0
