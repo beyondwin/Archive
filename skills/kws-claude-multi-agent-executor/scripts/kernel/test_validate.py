@@ -66,6 +66,36 @@ def test_missing_status():
     assert any("status" in e for e in errors), f"Expected 'status' required error, got: {errors}"
 
 
+# ── root error-path format contract: no leading dot, no ": " prefix ──────────
+
+def test_root_error_path_format():
+    schema = _implementer_schema()
+    instance = {
+        "summary": "No status here",
+        "files_changed": [],
+        "files_test_changed": [],
+    }
+    errors = validate.check(instance, schema)
+    status_errs = [e for e in errors if "required field missing" in e and "status" in e]
+    assert status_errs, f"Expected a root-level status required error, got: {errors}"
+    err = status_errs[0]
+    assert err.startswith("status:"), f"Root required error must be 'status:...', got: {err!r}"
+    # Contract: no error string starts with '.' or ': '
+    for e in errors:
+        assert not e.startswith("."), f"No error may start with '.', got: {e!r}"
+        assert not e.startswith(": "), f"No error may start with ': ', got: {e!r}"
+
+
+def test_root_enum_error_path_format():
+    # A root instance that IS an enum node (no field name) must not yield ": ..."
+    schema = {"enum": ["A", "B"]}
+    errors = validate.check("C", schema)
+    assert errors, "Expected an enum error"
+    for e in errors:
+        assert not e.startswith(": "), f"Root enum error must not start with ': ', got: {e!r}"
+        assert e.startswith("<root>:"), f"Expected '<root>:' label, got: {e!r}"
+
+
 # ── (c) unknown field + additionalProperties:false ──────────────────────────
 
 def test_additional_properties():
@@ -192,6 +222,8 @@ def test_plan_reviewer_invalid_item():
 if __name__ == "__main__":
     test_valid_implementer_done()
     test_missing_status()
+    test_root_error_path_format()
+    test_root_enum_error_path_format()
     test_additional_properties()
     test_enum_violation_nested()
     test_verifier_schema_compat()
