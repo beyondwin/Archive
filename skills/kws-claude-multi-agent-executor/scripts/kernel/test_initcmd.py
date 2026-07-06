@@ -49,12 +49,22 @@ def test_particle_stripping():
 
 
 def test_echo_line_smoke():
-    """echo_line returns a non-empty string and doesn't crash on None risk."""
+    """echo_line returns a non-empty string and renders unset risk as per-task."""
     c = initcmd.parse_args("plan=a.md spec=s.md")
     line = initcmd.echo_line(c)
     assert isinstance(line, str) and len(line) > 0
     assert "sonnet" in line
     assert "plan" in line.lower() or "1" in line
+    assert "risk=per-task" in line
+
+
+def test_single_plan_missing_spec_halts():
+    """A plan= with no matching spec= raises ConflictHalt."""
+    try:
+        initcmd.parse_args("plan=a.md")
+        assert False, "expected ConflictHalt"
+    except initcmd.ConflictHalt:
+        pass
 
 
 def test_mode_detach_preserved():
@@ -72,5 +82,6 @@ if __name__ == "__main__":
     test_run_id()
     test_particle_stripping()
     test_echo_line_smoke()
+    test_single_plan_missing_spec_halts()
     test_mode_detach_preserved()
     print("OK")

@@ -320,7 +320,6 @@ def parse_args(raw: str) -> dict:
     else:
         s = str(detach_raw).lower()
         detach = s in ("true", "on", "yes", "1")
-    sources["detach"] = sources.get("detach", "default")
 
     # transport_default — constant default, no NL rule
     transport_default = kv_explicit.get("transport_default", "p")
@@ -400,7 +399,7 @@ def echo_line(config: dict) -> str:
     Format:
       Parsed: <N> plan(s) [<slug0>→<slug1>→...], implementer_model=<val> [from <src>],
               parallel=<val> [from <src>], transport=<val> [from <src>],
-              mode=<val> [from <src>], risk=<val or "none"> [from <src>]
+              mode=<val> [from <src>], risk=<val or "per-task"> [from <src>]
     """
     plans = config["plans"]
     n = len(plans)
@@ -424,7 +423,7 @@ def echo_line(config: dict) -> str:
         f"parallel={parallel} [from {_src('parallel')}]",
         f"transport={transport} [from {_src('transport_default')}]",
         f"mode={mode} [from {_src('mode')}]",
-        f"risk={risk if risk is not None else 'none'} [from {_src('risk')}]",
+        f"risk={risk if risk is not None else 'per-task'} [from {_src('risk')}]",
     ]
     return ", ".join(parts)
 
