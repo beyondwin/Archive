@@ -60,7 +60,7 @@ def _resolve_ref(ref: str, root_schema: dict) -> dict:
     """Resolve a local JSON-Schema $ref of the form '#/$defs/<Name>'."""
     if not ref.startswith("#/"):
         raise ValueError(f"Only local $ref supported, got: {ref!r}")
-    parts = ref.lstrip("#/").split("/")
+    parts = ref.removeprefix("#/").split("/")
     node = root_schema
     for part in parts:
         if not isinstance(node, dict) or part not in node:
@@ -84,9 +84,13 @@ def _validate(instance: Any, schema: dict, path: str, root: dict) -> list[str]:
         # so we return early to avoid double-processing.
         return errors
 
+    # Label for errors about *this* node itself (not a child): the path when
+    # nested, else "<root>" so no error string starts with ": ".
+    here = path if path else "<root>"
+
     # type
     if "type" in schema:
-        type_errors = _check_type(instance, schema["type"], path)
+        type_errors = _check_type(instance, schema["type"], here)
         if type_errors:
             errors.extend(type_errors)
             # Can't meaningfully continue if the type is wrong
@@ -96,7 +100,7 @@ def _validate(instance: Any, schema: dict, path: str, root: dict) -> list[str]:
     if "enum" in schema:
         if instance not in schema["enum"]:
             errors.append(
-                f"{path}: value {instance!r} not in enum {schema['enum']!r}"
+                f"{here}: value {instance!r} not in enum {schema['enum']!r}"
             )
 
     # Properties + required + additionalProperties (object-specific)
@@ -104,7 +108,8 @@ def _validate(instance: Any, schema: dict, path: str, root: dict) -> list[str]:
         # required
         for req in schema.get("required", []):
             if req not in instance:
-                errors.append(f"{path}.{req}: required field missing")
+                child_path = f"{path}.{req}" if path else req
+                errors.append(f"{child_path}: required field missing")
 
         # properties — recurse into declared properties
         props = schema.get("properties", {})
