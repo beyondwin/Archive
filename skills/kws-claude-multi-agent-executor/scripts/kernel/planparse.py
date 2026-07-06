@@ -26,6 +26,7 @@ Public interface::
 
 from __future__ import annotations
 
+import posixpath
 import re
 from pathlib import PurePosixPath
 
@@ -176,7 +177,8 @@ def _check_path(raw: str) -> tuple[str | None, str | None]:
     """Return (normalized_posix, error_suffix) where error_suffix is set on rejection.
 
     Strips backticks, comments (#), and rename arrows (a -> b) from raw.
-    Rejects absolute paths and paths that escape the repo root via '..'.
+    Rejects absolute paths and paths that escape the repo root via '..' after
+    normalization (posixpath.normpath collapses mid-path escapes like a/../../x).
     Returns (None, error_suffix) on rejection — the path is NOT added to files.
     """
     candidate = raw.strip()
@@ -195,19 +197,14 @@ def _check_path(raw: str) -> tuple[str | None, str | None]:
     if candidate.startswith("/"):
         return None, candidate
 
-    # lexical normalisation: collapse . and .. segments
+    # lexical normalization: posixpath.normpath correctly collapses mid-path .. segments
+    # e.g. "a/../../escape.py" → "../escape.py" → rejected
     try:
-        normalized = PurePosixPath(candidate)
-        parts = normalized.parts
+        clean = posixpath.normpath(candidate)
     except Exception:
         return None, candidate
 
-    # check for leading .. after normalisation
-    if parts and parts[0] == "..":
-        return None, candidate
-
-    # re-build the normalized string (removes redundant . etc.)
-    clean = str(normalized)
+    # check for leading .. after normalization
     if clean.startswith(".."):
         return None, candidate
 
@@ -472,8 +469,16 @@ def parse(text: str) -> dict:
 
         # Slice raw body from ORIGINAL text using line numbers from visible markdown.
         # _visible_markdown preserves line endings, so line numbers agree with original text.
+        # body_start is the offset just after the task header line's newline.
+        # raw_body_start_line is therefore the first line of the body (not the header).
+        # body_end is the offset of the next header's first character (or end of text).
+        # Subtract 1 from raw_body_end_line so the next header line is excluded from body.
         raw_body_start_line = _line_number(markdown, body_start)
-        raw_body_end_line = _line_number(markdown, body_end)
+        if index + 1 < len(matches):
+            next_header_line = _line_number(markdown, matches[index + 1].start())
+            raw_body_end_line = next_header_line - 1
+        else:
+            raw_body_end_line = _line_number(markdown, len(markdown))
         raw_body = _slice_lines(text, raw_body_start_line, raw_body_end_line)
 
         task_num_str = match.group(2)
