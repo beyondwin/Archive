@@ -252,30 +252,7 @@ def parse_args(raw: str) -> dict:
     # ------------------------------------------------------------------ Resolve config
     sources: dict = {}
 
-    def _resolve(key, default, explicit_source="explicit", nl_source="nl"):
-        """Resolve a config key from kv_explicit or default."""
-        if key in kv_explicit:
-            if key in nl_matches and nl_matches[key][0] == _normalize_value(key, kv_explicit[key]):
-                # NL agreed with explicit; record as explicit (Pass 1 wins).
-                sources[key] = explicit_source
-            else:
-                # Check if it was set via NL (i.e., not in original explicit before Pass 3).
-                # We detect this by checking if the key appeared as an NL match and
-                # was not in the original kv_explicit before we added NL values.
-                sources[key] = explicit_source
-            return kv_explicit[key]
-        sources[key] = "default"
-        return default
-
-    # Track which keys were set by NL (by checking nl_matches).
-    _nl_set_keys = set()
-    for nl_key, (nl_value, _) in nl_matches.items():
-        # Only "nl" source if it wasn't already an explicit from Pass 1.
-        # Since we merged NL into kv_explicit above only when NOT already there,
-        # if nl_key is in nl_matches and the value came purely from NL, it counts as "nl".
-        pass
-
-    # Re-track the original explicit keys (before NL merge).
+    # Track the original explicit keys (before NL merge).
     # We need to distinguish "was in Pass 1" from "was added by NL".
     # Re-parse Pass 1 only to get original explicit set.
     _original_explicit_keys: set = set()
