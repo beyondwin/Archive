@@ -378,9 +378,8 @@ def _extract_depends_on(body: str) -> list[int]:
     values: list[int] = []
     for item in re.split(r"[, \[\]]+", match.group("value").strip()):
         normalized = item.strip().removeprefix("task_").replace("_", ".")
-        if re.fullmatch(r"\d+(?:\.\d+)*", normalized) and normalized.isdigit():
-            values.append(int(normalized))
-        elif re.fullmatch(r"\d+", normalized):
+        # Plain integers only; dotted sub-task ids like "1.1" are excluded.
+        if re.fullmatch(r"\d+", normalized):
             values.append(int(normalized))
     seen: set[int] = set()
     result: list[int] = []
@@ -469,11 +468,12 @@ def parse(text: str) -> dict:
 
         # Slice raw body from ORIGINAL text using line numbers from visible markdown.
         # _visible_markdown preserves line endings, so line numbers agree with original text.
-        # body_start is the offset just after the task header line's newline.
-        # raw_body_start_line is therefore the first line of the body (not the header).
+        # body_start = match.end() points AT the header line's trailing "\n", so it counts
+        # 0 newlines before it and _line_number returns the HEADER's own line number.
+        # Add 1 so the body starts on the FIRST line AFTER the header (spec: "헤더 이후 원문").
         # body_end is the offset of the next header's first character (or end of text).
         # Subtract 1 from raw_body_end_line so the next header line is excluded from body.
-        raw_body_start_line = _line_number(markdown, body_start)
+        raw_body_start_line = _line_number(markdown, body_start) + 1
         if index + 1 < len(matches):
             next_header_line = _line_number(markdown, matches[index + 1].start())
             raw_body_end_line = next_header_line - 1
