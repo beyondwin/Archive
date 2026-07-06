@@ -430,6 +430,10 @@ def test_fixture_l_body_no_header_bleed():
     assert "### Task 2" not in t1["body"], (
         f"task 1 body bleeds into task 2 header: {repr(t1['body'])}"
     )
+    # Task 1's body must NOT include its OWN header line (spec: "헤더 이후 원문")
+    assert not t1["body"].lstrip().startswith("### Task 1"), (
+        f"task 1 body includes its own header: {repr(t1['body'])}"
+    )
     # Task 1's body should contain its own content
     assert "task 1 body text" in t1["body"], f"task 1 body missing content: {repr(t1['body'])}"
     # Task 2's body should contain its own content
@@ -437,6 +441,47 @@ def test_fixture_l_body_no_header_bleed():
     # Task 2's body must NOT include the Task 1 header
     assert "### Task 1" not in t2["body"], (
         f"task 2 body bleeds into task 1 header: {repr(t2['body'])}"
+    )
+    # Task 2's body must NOT include its OWN header line
+    assert not t2["body"].lstrip().startswith("### Task 2"), (
+        f"task 2 body includes its own header: {repr(t2['body'])}"
+    )
+    # The LAST task's body must still extend to end-of-plan (its Files line survives)
+    assert "src/y.py" in t2["body"], (
+        f"last task body truncated before end-of-plan: {repr(t2['body'])}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fixture (m): English 'Affected files' alias must be recognized
+# ---------------------------------------------------------------------------
+
+FIXTURE_M = """\
+### Task 1: English alias
+
+**Affected files:**
+- `src/affected.py`
+
+### Task 2: Another English alias
+
+**Modified files:**
+- `src/modified.py`
+"""
+
+
+def test_fixture_m_english_alias():
+    from scripts.kernel import planparse  # type: ignore
+
+    result = planparse.parse(FIXTURE_M)
+
+    assert result["errors"] == [], f"unexpected errors: {result['errors']}"
+    t1 = result["tasks"][0]
+    assert "src/affected.py" in t1["files"], (
+        f"'Affected files' alias not recognized: {t1['files']}"
+    )
+    t2 = result["tasks"][1]
+    assert "src/modified.py" in t2["files"], (
+        f"'Modified files' alias not recognized: {t2['files']}"
     )
 
 
@@ -458,6 +503,7 @@ if __name__ == "__main__":
         ("fixture_j: absolute path → out_of_repo error", test_fixture_j_absolute_path_out_of_repo),
         ("fixture_k: mid-path escape → out_of_repo error", test_fixture_k_mid_path_escape),
         ("fixture_l: body field does not include task headers", test_fixture_l_body_no_header_bleed),
+        ("fixture_m: English Affected/Modified files aliases", test_fixture_m_english_alias),
     ]
 
     passed = 0
