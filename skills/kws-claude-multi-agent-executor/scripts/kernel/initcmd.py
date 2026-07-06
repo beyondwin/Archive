@@ -12,7 +12,9 @@ Reference: skills/kws-claude-multi-agent-executor/references/phases/phase-minus-
 
 import os
 import re
-from datetime import datetime
+import subprocess
+from datetime import datetime, timezone
+from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
@@ -436,3 +438,247 @@ def _plan_slug(plan_path: str) -> str:
     dashed = re.sub(r"[^a-z0-9]+", "-", lower)
     collapsed = re.sub(r"-{2,}", "-", dashed)
     return collapsed.strip("-")
+
+
+# ---------------------------------------------------------------------------
+# run_init
+# ---------------------------------------------------------------------------
+
+class HooksMaterializationError(Exception):
+    """Raised when materialize_worktree_hooks.py exits non-zero."""
+    pass
+
+
+def run_init(raw_args: str, home: str, repo_root: str,
+             dry_run: bool = False, now: datetime = None,
+             skill_dir: str = None) -> dict:
+    """Initialize a CME v3 run: worktree, hooks, state v3.
+
+    Order:
+      1. dirty-tree check  (git status --porcelain in repo_root)
+      2. derive run_id + paths
+      3. [skip if dry_run] git worktree add
+      4. [skip if dry_run] materialize_worktree_hooks.py
+      5. [skip if dry_run] create <orch_dir>/{packets,prompts,results,hooks}
+      6. [skip if dry_run] write state v3 via statefile.write_state
+      7. return {"state_path", "run_id", "echo_line", "worktree", "orchestrator_dir"}
+
+    When dry_run=True: still performs the dirty-tree check; returns the plan
+    (paths + run_id + echo_line) without any filesystem changes.
+
+    Parameters
+    ----------
+    raw_args : str
+        The raw CME args string (same as parse_args receives).
+    home : str
+        User home root. Worktree and orch_dir are placed under <home>/.claude/.
+    repo_root : str
+        Absolute path of the source git repo (for dirty-tree check + worktree add).
+    dry_run : bool
+        When True, perform no filesystem changes; return plan dict only.
+    now : datetime, optional
+        Inject a fixed timestamp (for deterministic tests). Defaults to real now.
+    skill_dir : str, optional
+        Absolute path to the skill root (parent of scripts/). Auto-detected from
+        this file's location when omitted.
+    """
+    # --- Resolve defaults ---
+    if now is None:
+        now = datetime.now()
+    if skill_dir is None:
+        # This file lives in <skill_dir>/scripts/kernel/initcmd.py
+        skill_dir = str(Path(__file__).resolve().parents[2])
+
+    # --- Step 1: dirty-tree check ---
+    proc = subprocess.run(
+        ["git", "status", "--porcelain"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        return {
+            "halt": "dirty_worktree",
+            "reason": f"git status failed: {proc.stderr.strip()}",
+        }
+    if proc.stdout.strip():
+        return {
+            "halt": "dirty_worktree",
+            "reason": "working tree has uncommitted changes",
+            "details": proc.stdout.strip(),
+        }
+
+    # --- Step 2: derive run_id + paths ---
+    config = parse_args(raw_args)
+    plan_path = config["plans"][0]["plan"]
+    spec_path = config["plans"][0]["spec"]
+
+    run_id = derive_run_id(plan_path, now)
+
+    worktree_path = os.path.join(home, ".claude", "worktrees", run_id)
+    orch_dir = os.path.join(home, ".claude", "orchestrator", run_id)
+    state_path = os.path.join(orch_dir, "state.json")
+
+    el = echo_line(config)
+
+    # --- dry_run: return plan without filesystem changes ---
+    if dry_run:
+        return {
+            "run_id": run_id,
+            "state_path": state_path,
+            "worktree": worktree_path,
+            "orchestrator_dir": orch_dir,
+            "echo_line": el,
+        }
+
+    # --- Step 3: capture source_repo + git worktree add ---
+    # Resolve the canonical source repo path
+    src_proc = subprocess.run(
+        ["git", "rev-parse", "--git-common-dir"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    source_repo = None
+    if src_proc.returncode == 0:
+        git_common = src_proc.stdout.strip()
+        # Resolve to absolute path (may be relative to repo_root)
+        if not os.path.isabs(git_common):
+            git_common = os.path.join(repo_root, git_common)
+        try:
+            source_repo = str(Path(git_common).resolve())
+        except Exception:
+            source_repo = git_common
+
+    # Get current branch name
+    branch_proc = subprocess.run(
+        ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    branch = branch_proc.stdout.strip() if branch_proc.returncode == 0 else "main"
+
+    # Create parent dirs and add worktree
+    Path(worktree_path).parent.mkdir(parents=True, exist_ok=True)
+    wt_branch = run_id  # deterministic branch name matches run_id
+    wt_proc = subprocess.run(
+        ["git", "worktree", "add", "-b", wt_branch, worktree_path],
+        cwd=repo_root,
+        capture_output=True,
+        text=True,
+    )
+    if wt_proc.returncode != 0:
+        return {
+            "halt": "worktree_add_failed",
+            "reason": wt_proc.stderr.strip(),
+        }
+
+    # --- Step 4: materialize_worktree_hooks.py ---
+    scripts_dir = os.path.join(skill_dir, "scripts")
+    hooks_script = os.path.join(scripts_dir, "materialize_worktree_hooks.py")
+
+    # Create orch_dir first (hooks script writes into orch_dir)
+    Path(orch_dir).mkdir(parents=True, exist_ok=True)
+
+    hooks_proc = subprocess.run(
+        [
+            "python3", hooks_script,
+            "--worktree", worktree_path,
+            "--orch-dir", orch_dir,
+            "--skill-dir", skill_dir,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if hooks_proc.returncode != 0:
+        return {
+            "halt": "hooks_materialization_failed",
+            "reason": hooks_proc.stderr.strip(),
+        }
+
+    # --- Step 5: create orch_dir subdirectories ---
+    for subdir in ("packets", "prompts", "results", "hooks"):
+        Path(os.path.join(orch_dir, subdir)).mkdir(parents=True, exist_ok=True)
+
+    # --- Step 6: write state v3 ---
+    import sys as _sys
+    _sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import statefile
+
+    started_at = now.isoformat()
+    state: dict = {
+        "schema_version": 3,
+        "run_id": run_id,
+        "source_repo": source_repo,
+        "branch": branch,
+        "worktree": worktree_path,
+        "orchestrator_dir": orch_dir,
+        "mode": config.get("mode", "kernel"),
+        "transport_default": config.get("transport_default", "p"),
+        "implementer_model": {
+            "used": config.get("implementer_model", "sonnet"),
+            "default": config.get("implementer_model", "sonnet"),
+        },
+        "parallel": config.get("parallel", True),
+        "dispatch_config": {},
+        "timestamps": {
+            "started_at": started_at,
+            "completed_at": None,
+        },
+        "cost_ledger": {
+            "totals": {
+                "dispatches": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cost_usd": 0.0,
+            },
+            "by_task": {},
+        },
+        "plan": plan_path,
+        "spec": spec_path,
+        "tasks": {},
+        "task_summaries": {},
+        "quality_trend": [],
+        "execution_plan": [],
+        "risk_levels": {},
+        "task_complexity": {},
+        "spec_manifest": None,
+        "decisions_register": [],
+        "run_quality": None,
+        "completion_audit": None,
+        "drift": None,
+        "status": "SETUP",
+        "current_task": None,
+        "last_completed_task": None,
+    }
+
+    # If multi-plan, build plan_chain using PER_PLAN_DEFAULTS from migrate.py
+    if len(config["plans"]) > 1:
+        import json as _json
+        import migrate as _migrate
+        chain = []
+        for i, p in enumerate(config["plans"]):
+            entry: dict = {
+                "index": i,
+                "plan_path": p["plan"],
+                "spec_path": p["spec"],
+                "status": "running" if i == 0 else "queued",
+                "blocked_until": None,
+            }
+            # Fill all per-plan fields with their defaults (deep-copied)
+            for field, default in _migrate.PER_PLAN_DEFAULTS.items():
+                entry[field] = _json.loads(_json.dumps(default))
+            chain.append(entry)
+        state["plan_chain"] = chain
+        state["active_plan"] = 0
+
+    statefile.write_state(state_path, state)
+
+    return {
+        "run_id": run_id,
+        "state_path": state_path,
+        "worktree": worktree_path,
+        "orchestrator_dir": orch_dir,
+        "echo_line": el,
+    }
