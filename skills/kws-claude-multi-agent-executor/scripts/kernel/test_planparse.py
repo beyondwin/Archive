@@ -366,6 +366,81 @@ def test_fixture_j_absolute_path_out_of_repo():
 
 
 # ---------------------------------------------------------------------------
+# Fixture (k): mid-path escape (a/../../escape.py) → out_of_repo error
+# ---------------------------------------------------------------------------
+
+FIXTURE_K = """\
+### Task 1: Mid-path escape
+
+**Files:**
+- `a/../../escape.py`
+- `src/ok.py`
+"""
+
+
+def test_fixture_k_mid_path_escape():
+    from scripts.kernel import planparse  # type: ignore
+
+    result = planparse.parse(FIXTURE_K)
+
+    out_of_repo_errors = [e for e in result["errors"] if "out_of_repo_path" in e]
+    assert out_of_repo_errors, (
+        f"expected out_of_repo_path error for mid-path escape, got {result['errors']}"
+    )
+    t1 = result["tasks"][0]
+    # The escaping path must NOT appear in files
+    assert not any(".." in f for f in t1["files"]), (
+        f"mid-path escape leaked into files: {t1['files']}"
+    )
+    # The legitimate path must still be present
+    assert "src/ok.py" in t1["files"], f"legit file missing: {t1['files']}"
+
+
+# ---------------------------------------------------------------------------
+# Fixture (l): body field does not include task headers
+# ---------------------------------------------------------------------------
+
+FIXTURE_L = """\
+### Task 1: First task
+
+This is task 1 body text.
+
+**Files:**
+- `src/x.py`
+
+### Task 2: Second task
+
+This is task 2 body text.
+
+**Files:**
+- `src/y.py`
+"""
+
+
+def test_fixture_l_body_no_header_bleed():
+    from scripts.kernel import planparse  # type: ignore
+
+    result = planparse.parse(FIXTURE_L)
+
+    assert result["errors"] == [], f"unexpected errors: {result['errors']}"
+    t1 = result["tasks"][0]
+    t2 = result["tasks"][1]
+
+    # Task 1's body must NOT include the Task 2 header
+    assert "### Task 2" not in t1["body"], (
+        f"task 1 body bleeds into task 2 header: {repr(t1['body'])}"
+    )
+    # Task 1's body should contain its own content
+    assert "task 1 body text" in t1["body"], f"task 1 body missing content: {repr(t1['body'])}"
+    # Task 2's body should contain its own content
+    assert "task 2 body text" in t2["body"], f"task 2 body missing content: {repr(t2['body'])}"
+    # Task 2's body must NOT include the Task 1 header
+    assert "### Task 1" not in t2["body"], (
+        f"task 2 body bleeds into task 1 header: {repr(t2['body'])}"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main: run all test functions
 # ---------------------------------------------------------------------------
 
@@ -381,6 +456,8 @@ if __name__ == "__main__":
         ("fixture_h: dependencies are ints", test_fixture_h_dependencies_are_ints),
         ("fixture_i: acceptance criteria shell block", test_fixture_i_acceptance_criteria),
         ("fixture_j: absolute path → out_of_repo error", test_fixture_j_absolute_path_out_of_repo),
+        ("fixture_k: mid-path escape → out_of_repo error", test_fixture_k_mid_path_escape),
+        ("fixture_l: body field does not include task headers", test_fixture_l_body_no_header_bleed),
     ]
 
     passed = 0
