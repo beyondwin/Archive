@@ -212,12 +212,16 @@ def test_spec_fault_budget_non_burning():
          "issues": [],
          "spec_fault": "spec_contradicts"},
     )
-    # State records pending escalation
-    assert s2["tasks"]["task_1"].get("escalate_to_user") is True or \
-           s2.get("pending_escalation") is not None or \
-           s2["tasks"]["task_1"]["status"] == "SKIPPED", (
-        "After spec_clarifications>3, state must signal escalate_to_user or SKIP"
+    # State records pending escalation AND marks the task SKIPPED (both, per the
+    # apply_result contract) — assert both so a regression dropping either fails.
+    assert s2.get("pending_escalation") is not None, (
+        "After spec_clarifications>3, state must record pending_escalation"
     )
+    assert s2["pending_escalation"].get("task_id") == "task_1"
+    assert s2["tasks"]["task_1"]["status"] == "SKIPPED", (
+        "After spec_clarifications>3, task must be SKIPPED"
+    )
+    assert s2["tasks"]["task_1"].get("skip_reason") == "spec_clarifications_exhausted"
     print("TEST 8 PASS: SPEC_FAULT non-burning budget; >3 → escalation signal")
 
 
