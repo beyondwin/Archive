@@ -43,3 +43,15 @@ recorded here (advisor: controller owns JOURNAL for these):
 Also: tightened test_spec_fault_budget_non_burning (Test 8) from an either-or assertion to assert
 both `pending_escalation` and SKIPPED status — the either-or form could have masked a regression,
 which is exactly the silent-green class this experiment targets.
+
+### 19:10 — Cross-task fix during T9: reviewer score scale (0–10 → 0.0–1.0)
+
+T9's implementer flagged a score-scale discrepancy. Traced it: the reviewer PROMPT
+(references/reviewer-prompt.md) and the kernel tier thresholds (transitions.py: 0.85/0.75/0.70/0.60)
+both use a 0.0–1.0 scale, but reviewer_result.schema.json's spec_score/quality_score DESCRIPTIONS
+said "0–10". Since that schema is the --json-schema contract handed to the live reviewer subagent,
+"0–10" could induce an 8.5-style emission that silently defeats the gate (8.5 ≥ 0.85 always PASS).
+The stdlib validator does not enforce min/max, so the description is the only scale signal.
+Fix (controller, mechanical): corrected both descriptions to "0.0–1.0 ... (PASS threshold 0.85/0.75)".
+This is the writing-plans "types consistent across tasks" class — a T5 artifact bug surfaced only
+when T9 wired the real cycle. Committed with T9.
