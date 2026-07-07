@@ -26,9 +26,20 @@ import gate
 
 def _task(task_id: str, files=None, depends_on=None, serial=False,
           resource_key=None, acceptance=None, body="", title="Task"):
-    """Build a minimal planparse-style task dict."""
+    """Build a minimal planparse-style task dict.
+
+    number is derived from the task_id (e.g. "task_3" → number=3).
+    partition_waves resolves depends_on through task.number, so providing
+    number here makes dependency tests exercise the real code path.
+    """
+    # Derive number from task_id ("task_1" → 1, "task_2" → 2, etc.)
+    try:
+        number = int(task_id.split("_")[-1])
+    except (ValueError, IndexError):
+        number = 0
     return {
         "id": task_id,
+        "number": number,
         "files": files or [],
         "dependencies": depends_on or [],
         "serial": serial,
@@ -62,31 +73,41 @@ def test_assign_risk_basic():
 # ── TEST 2: shared-file LOW task promotion ────────────────────────────────────
 
 def test_shared_file_low_promotion():
-    """Two LOW tasks sharing a file: later one must be promoted to MID (or higher)."""
+    """Two LOW tasks sharing a file: later one must be promoted to MID (or higher).
+
+    Each task has exactly ONE file so the len(files)>=2 rule stays quiet and both
+    initially compute LOW. The shared-file LOW→MID promotion rule must then fire for
+    task_2 because task_1 already claimed shared.py.
+    """
     tasks = [
-        _task("task_1", files=["shared.py", "only1.py"]),
-        _task("task_2", files=["shared.py", "only2.py"]),
+        _task("task_1", files=["shared.py"]),   # single file → LOW before promotion
+        _task("task_2", files=["shared.py"]),   # same single file → should be promoted
     ]
-    # Both look low-risk (single shared file, no other signals)
-    # The gate should promote task_2 because task_1 already claims shared.py
     risk = gate.assign_risk(tasks, override=None)
-    # task_1 may stay low; task_2 must be promoted
-    assert risk.get("task_1") in ("low", "mid", "high"), "task_1 must have a valid risk"
-    # After LOW promotion rule: the LATER task touching a shared file must be >= mid
-    if risk.get("task_1") == "low":
-        assert risk.get("task_2") in ("mid", "high"), (
-            f"task_2 shares file with LOW task_1; must be promoted, got {risk.get('task_2')!r}"
-        )
+    # task_1 is the first task — it claims shared.py and stays LOW
+    assert risk.get("task_1") == "low", (
+        f"task_1 must start LOW (single non-risky file); got {risk.get('task_1')!r}"
+    )
+    # task_2 sees shared.py already claimed by the earlier LOW task → promoted to MID
+    assert risk.get("task_2") in ("mid", "high"), (
+        f"task_2 shares file with LOW task_1; must be promoted, got {risk.get('task_2')!r}"
+    )
     print("TEST 2 PASS: shared-file LOW task → later task promoted to MID+")
 
 
 # ── TEST 3: partition_waves — simple dependency ordering ─────────────────────
 
 def test_partition_waves_dependency_order():
-    """partition_waves must return list[list[str]] respecting deps (task_2 depends on task_1)."""
+    """partition_waves must put task_2 (which depends on task_1) in a SEPARATE, LATER group.
+
+    The tasks have DISJOINT files (a.py vs b.py) so WITHOUT dependency resolution
+    they would be eligible to merge into the same parallel group.  If the test
+    passes with a single group the dependency logic is broken — so asserting
+    len(result)==2 is the discriminating check.
+    """
     tasks = [
-        _task("task_1", files=["a.py"]),
-        _task("task_2", files=["b.py"], depends_on=[1]),
+        _task("task_1", files=["a.py"]),               # number=1
+        _task("task_2", files=["b.py"], depends_on=[1]),  # number=2, depends on task_1
     ]
     risk = {"task_1": "mid", "task_2": "mid"}
     result = gate.partition_waves(tasks, risk, parallel=True)
@@ -96,13 +117,17 @@ def test_partition_waves_dependency_order():
         assert isinstance(group, list), f"Each item must be a list, got {type(group)}"
         for tid in group:
             assert isinstance(tid, str), f"Each task_id must be str, got {type(tid)}"
-    # Ordering: task_2 must appear AFTER task_1 in the flat sequence
+    # Discriminating assertion: deps must force separate groups, not a merged [t1,t2]
+    assert len(result) >= 2, (
+        f"task_2 depends on task_1; they must be in separate waves (len>=2); got {result}"
+    )
+    # task_2 must appear AFTER task_1 in the flat sequence
     flat = [tid for group in result for tid in group]
     assert "task_1" in flat and "task_2" in flat
     assert flat.index("task_1") < flat.index("task_2"), (
         f"task_1 must precede task_2 in execution order; got {flat}"
     )
-    print("TEST 3 PASS: partition_waves returns list[list[str]] with dep ordering")
+    print(f"TEST 3 PASS: partition_waves separates dep tasks into {len(result)} waves: {result}")
 
 
 # ── TEST 4: partition_waves — serial flag forces singleton ───────────────────
