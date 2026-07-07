@@ -591,6 +591,81 @@ def test_halt_on_3_consecutive_violations():
     print("TEST 7 PASS: halt_pending on 3rd consecutive violation")
 
 
+def test_resolve_escalation():
+    """resolve-escalation clears pending_escalation via the single-writer path.
+
+    Regression-defense for the T15 review finding: the ONLY way to unblock decide()'s
+    escalate_to_user loop must be a kernel subcommand — never an LLM hand-edit. Asserts:
+      - a state WITH pending_escalation → resolved:true, flag cleared, audit recorded,
+        next_hint no longer 'escalate_to_user';
+      - a state WITHOUT pending_escalation → error:no_pending_escalation, exit 3.
+    """
+    with tempfile.TemporaryDirectory() as orch_dir:
+        state_path = os.path.join(orch_dir, "state.json")
+        state = _make_state(orch_dir)
+        # Seed a pending escalation (as transitions.apply_result would).
+        state["pending_escalation"] = {
+            "reason": "spec_clarifications exceeded budget for task_1",
+            "questions": ["Please clarify the spec contradiction for task_1."],
+            "task_id": "task_1",
+        }
+        # Make task_1 terminal so decide() would NOT re-dispatch it after resolve
+        # (isolates the escalate-loop assertion).
+        state["tasks"]["task_1"]["status"] = "SKIPPED"
+        with open(state_path, "w") as f:
+            json.dump(state, f, indent=2)
+
+        # decide() BEFORE resolve → escalate_to_user (loop confirmed).
+        rc, action, raw = _run_kernel("next", "--state", state_path)
+        assert rc == 0, f"next failed: {raw!r}"
+        assert action.get("action") == "escalate_to_user", (
+            f"pre-resolve decide should escalate, got: {action!r}"
+        )
+
+        # Resolve through the kernel.
+        rc, res, raw = _run_kernel(
+            "resolve-escalation", "--state", state_path, "--answer", "Use interpretation B."
+        )
+        assert rc == 0, f"resolve-escalation failed: {raw!r}"
+        assert res.get("resolved") is True, f"expected resolved:true, got: {res!r}"
+        assert res.get("next_hint") != "escalate_to_user", (
+            f"next_hint should no longer escalate after resolve, got: {res!r}"
+        )
+
+        # State: flag cleared + audit recorded.
+        with open(state_path) as f:
+            st = json.load(f)
+        assert st.get("pending_escalation") in (None, {}), (
+            f"pending_escalation must be cleared, got: {st.get('pending_escalation')!r}"
+        )
+        resolved = st.get("escalations_resolved", [])
+        assert len(resolved) == 1 and resolved[0]["task_id"] == "task_1", (
+            f"escalations_resolved audit missing/wrong: {resolved!r}"
+        )
+        assert resolved[0]["answer"] == "Use interpretation B.", resolved[0]
+        # decisions_register append-only audit trail.
+        dr = st.get("decisions_register", [])
+        assert any(e.get("kind") == "escalation_resolved" for e in dr), (
+            f"decisions_register should record the resolution, got: {dr!r}"
+        )
+
+        # decide() AFTER resolve → NOT escalate_to_user (loop broken).
+        rc, action2, raw = _run_kernel("next", "--state", state_path)
+        assert rc == 0, f"post-resolve next failed: {raw!r}"
+        assert action2.get("action") != "escalate_to_user", (
+            f"escalate loop not broken; decide still escalates: {action2!r}"
+        )
+
+        # No pending escalation → error + exit 3.
+        rc, err, raw = _run_kernel("resolve-escalation", "--state", state_path)
+        assert rc == 3, f"expected exit 3 when nothing pending, got rc={rc}; {raw!r}"
+        assert err.get("error") == "no_pending_escalation", (
+            f"expected no_pending_escalation error, got: {err!r}"
+        )
+
+    print("TEST 8 PASS: resolve-escalation clears via single-writer path + errors when nothing pending")
+
+
 # ── runner ────────────────────────────────────────────────────────────────────
 
 _TESTS = [
@@ -602,6 +677,7 @@ _TESTS = [
     test_check_stop_pending_batch_not_finalize_pending,
     test_check_stop_finalized,
     test_halt_on_3_consecutive_violations,
+    test_resolve_escalation,
 ]
 
 if __name__ == "__main__":
