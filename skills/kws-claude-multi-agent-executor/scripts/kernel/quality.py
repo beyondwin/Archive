@@ -313,6 +313,7 @@ def _compute_grade(
     readiness: dict,
     verification_quality: dict,
     open_followups: list[str],
+    completion_audit: dict | None = None,
 ) -> str:
     """Compute overall grade.
 
@@ -322,8 +323,17 @@ def _compute_grade(
     - Both clean → green
 
     Product failures are checked FIRST and always override executor grade.
+
+    completion_audit is consulted to enforce the invariant that a passing grade
+    cannot mask an incorrect product (e.g. SKIPPED tasks with blocks_release=True
+    will have passed=False, which MUST yield grade=red).
     """
-    # Product correctness check
+    # Product correctness check via completion_audit (most authoritative)
+    if completion_audit is not None:
+        if completion_audit.get("passed") is False:
+            return "red"
+
+    # Product correctness check via task statuses
     tasks = _all_tasks(state)
     total_tasks = len(tasks)
     if total_tasks == 0:
@@ -372,6 +382,11 @@ def build_run_quality(state: dict, orch_dir: str) -> dict:
     """
     state = copy.deepcopy(state)
 
+    # Build completion_audit FIRST so grade can consult product correctness.
+    # This enforces the critical separation: completion_audit.passed=False (e.g.
+    # SKIPPED task with blocks_release=True) must yield grade=red, not green.
+    completion_audit = build_completion_audit(state)
+
     readiness = _build_readiness(state)
     dispatch_consistency = _build_dispatch_consistency(state)
     context_quality = _build_context_quality(state)
@@ -379,7 +394,9 @@ def build_run_quality(state: dict, orch_dir: str) -> dict:
     open_followups = _compute_open_followups(
         state, readiness, dispatch_consistency, context_quality, verification_quality
     )
-    grade = _compute_grade(state, readiness, verification_quality, open_followups)
+    grade = _compute_grade(
+        state, readiness, verification_quality, open_followups, completion_audit
+    )
 
     return {
         "readiness": readiness,
