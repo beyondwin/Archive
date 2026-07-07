@@ -131,6 +131,22 @@ def assign_risk(tasks: list[dict], override: str | None) -> dict[str, str]:
         override_level = override.strip().lower()
         if override_level not in ("low", "mid", "high"):
             override_level = "mid"
+        # Phase-0 Step 4: warn when a risk override silently downgrades a task whose
+        # body/title contains high-risk keywords (e.g. "database", "schema migration",
+        # "breaking change").  The warning is emitted here to stdout so the orchestrator
+        # log captures it.  The orchestrator layer (SKILL.md Step 4 escalate_to_user)
+        # is responsible for surfacing this to the operator when running interactively.
+        # T15 seam: in headless -p mode there is no escalate channel; the WARN line
+        # is the only signal until T15 wires the interactive review path.
+        if override_level in ("low", "mid"):
+            for t in tasks:
+                body_text = (_task_body(t) + " " + (t.get("title") or "")).lower()
+                if _contains_high_risk_keyword(body_text):
+                    print(
+                        f"WARN: assign_risk override={override_level!r} applied to task "
+                        f"{_task_id(t)!r} which contains high-risk keywords; "
+                        f"do not silently downgrade dangerous tasks"
+                    )
         return {_task_id(t): override_level for t in tasks}
 
     risk: dict[str, str] = {}
