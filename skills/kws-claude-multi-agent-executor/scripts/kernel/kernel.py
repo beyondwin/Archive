@@ -232,12 +232,25 @@ def handle_submit(args):
 def handle_check_stop(args):
     """Check stop condition.
 
-    Exit 2 (+reason) if all tasks terminal, ZERO PENDING_BATCH, AND finalize
-    not done. If any PENDING_BATCH tasks linger, exit 0 (batch drain still due;
-    finalize is NOT pending — mirrors decide()). Exit 0 otherwise.
+    BLOCKS the stop (exit 2, via a "halt" key) whenever OUTSTANDING WORK remains:
+      - all_terminal + ≥1 PENDING_BATCH → halt "batch_drain_pending" (batch
+        verifier must run, then finalize) — mirrors decide(), which returns a
+        batch-verify dispatch here.
+      - all_terminal + ZERO PENDING_BATCH + not finalized → halt
+        "all_tasks_terminal_finalize_pending" (finalize is the next action).
+    Both block the stop; they differ only in reason/next_action.
+
+    ALLOWS the stop (exit 0) only when there is genuinely nothing to block:
+      - already FINALIZED.
+      - tasks still in progress ("not_ready") — a different loop drives them.
+
+    CRITICAL (T14b wedge): batch_drain_pending is outstanding work. Returning a
+    dict WITHOUT "halt" here → main() exits 0 → the Stop hook lets the agent stop
+    with LOW tasks undrained → batch verifier + finalize never run → LOW tasks
+    ship UNVERIFIED (silent green). It MUST carry "halt" so the stop is blocked.
 
     NOTE: We use a "halt" key in the returned dict to trigger main()'s exit 2
-    path. This does NOT signal an error — it signals "stop requested".
+    path. This does NOT signal an error — it signals "stop requested/blocked".
     T14 adds the quality gate here.
     """
     state = statefile.read_state(args.state)
@@ -254,24 +267,31 @@ def handle_check_stop(args):
         t.get("status") in terminal_statuses for t in tasks.values()
     )
 
-    # Mirror decide() exactly: finalize is only "pending" when there are ZERO
-    # PENDING_BATCH tasks. If any linger, decide() returns a batch-verify
-    # dispatch (work remains) — check-stop must NOT signal finalize, or the Stop
-    # hook finalizes with an outstanding batch drain and fails red opaquely (T14b).
+    # Mirror decide() exactly: when ≥1 PENDING_BATCH task lingers, decide()
+    # returns a batch-verify dispatch — OUTSTANDING WORK. That must BLOCK the
+    # stop, not allow it. finalize is "pending" (its own halt) only when zero
+    # PENDING_BATCH tasks remain.
     pending_batch = any(
         t.get("status") == "PENDING_BATCH" for t in tasks.values()
     )
 
     if all_terminal and pending_batch:
-        # Batch drain still due → do not stop, do not signal finalize.
-        return {"check_stop": "batch_drain_pending", "stop": False}
+        # Batch drain still due → BLOCK the stop (exit 2 via "halt"), with a
+        # DISTINCT reason/next_action from finalize-pending. Omitting "halt"
+        # here would let the agent stop with LOW tasks unverified (T14b wedge).
+        return {
+            "halt": "batch_drain_pending",
+            "reason": "LOW tasks await batch verification.",
+            "next_action": "run `kernel.py next` to dispatch the batch verifier, then finalize",
+        }
 
     if all_terminal:
-        # All terminal, zero PENDING_BATCH, finalize not done → signal stop.
+        # All terminal, zero PENDING_BATCH, finalize not done → BLOCK the stop.
         # Use "halt" key to trigger exit(2) in main().
         return {
             "halt": "all_tasks_terminal_finalize_pending",
             "reason": "All tasks have reached terminal status. Finalize step required.",
+            "next_action": "run `kernel.py finalize`",
         }
 
     return {"check_stop": "not_ready", "stop": False}
