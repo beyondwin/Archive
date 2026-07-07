@@ -97,9 +97,32 @@ The three-way split is:
 | Write scope too broad | block | block | Safety gate — unchanged |
 | Packet context budget red | block | block | Safety gate — unchanged |
 
-**Contention triggers** are detected via `state["serialization_reason"]` set by the
-orchestrator from `gate.partition_waves()` wave metadata, or via
-`state["parallel_file_claims"]` for cross-task collision within a parallel group.
+**Contention triggers — actual detection path (as of T11).** There are two distinct
+mechanisms, and only one is wired today:
+
+- *Cross-task file-claim collision within a parallel group* is detected via
+  `state["parallel_file_claims"]` — this IS produced/consumed and is live.
+- *Same-wave serialization* (file overlap / shared resource_key / `serial: true`) is
+  meant to flow through `state["serialization_reason"]`. **This is NOT wired today.**
+  `gate.partition_waves()` returns a bare `list[list[str]]` with no wave metadata, and
+  no orchestrator step writes `serialization_reason` into per-task state. The explicit
+  `serialization_reason`-driven branch in `preflight()` is therefore **dead code — a
+  T15 seam** awaiting an orchestrator producer that annotates the `execution_plan`
+  (per phase-0-setup.md Step 6, `"serialization_reason": "resource_key=<key>"`) and
+  threads it into state.
+
+  Until T15 wires that producer, same-wave contention tasks safely fall through to
+  `preflight()`'s **DEFAULT `delegate_serial`** — the conservative floor. This is
+  correct: a contention task that cannot be proven parallel-safe is serialized, which
+  is exactly the intended behavior. The dead branch is an optimization/observability
+  hook (it stamps a specific `serialized_by_<reason>` on the decision), not a
+  correctness requirement.
+
+  **Accepted `serialization_reason` vocabulary** (when T15 wires it): the bare category
+  (`"file_contention"`, `"resource_key"`, `"serial_flag"`) OR the documented keyed form
+  `"resource_key=<slug>"` (e.g. `"resource_key=db-port-5432"`, phase-0-setup.md Step 6).
+  `preflight()` normalizes by taking the substring before the first `=` so a future
+  producer emitting the keyed form does not silently miss the branch.
 
 **Trust/risk triggers** are detected from packet fields: `packet["risk_markers"]`
 (non-empty list) or `packet["spec"]["fallback_used"] == True` with

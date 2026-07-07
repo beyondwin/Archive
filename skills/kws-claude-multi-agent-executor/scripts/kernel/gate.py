@@ -38,14 +38,16 @@ CME rule oracle
 from __future__ import annotations
 
 import fnmatch
+from datetime import datetime, timezone
 from typing import Any
 
 
 # ── constants ─────────────────────────────────────────────────────────────────
 
-# Risk keywords (phase-0-setup.md Step 4)
-_HIGH_RISK_KEYWORDS = frozenset(
-    ["high-risk", "schema migration", "database", "api surface", "breaking change"]
+# Risk keywords (phase-0-setup.md Step 4).
+# Ordered tuple so matched_keywords in risk_override_warnings is deterministic.
+_HIGH_RISK_KEYWORDS = (
+    "high-risk", "schema migration", "database", "api surface", "breaking change",
 )
 
 # Write-scope patterns that are "too broad" (port from CPE audit_common)
@@ -59,6 +61,16 @@ _TOO_BROAD_PATTERNS = ("**", "**/*", "**/*.py", "**/*.ts", "**/*.js", "**/*.go",
 def _contains_high_risk_keyword(text: str) -> bool:
     lower = text.lower()
     return any(kw in lower for kw in _HIGH_RISK_KEYWORDS)
+
+
+def _matched_high_risk_keywords(text: str) -> list[str]:
+    """Return the specific high-risk keywords present in text (in canonical order).
+
+    Used to populate risk_override_warnings[].matched_keywords per
+    phase-0-setup.md Step 4 (line 214).
+    """
+    lower = text.lower()
+    return [kw for kw in _HIGH_RISK_KEYWORDS if kw in lower]
 
 
 def _write_scope_too_broad(pattern: str) -> bool:
@@ -111,7 +123,11 @@ def _task_body(task: dict) -> str:
 
 # ── assign_risk ───────────────────────────────────────────────────────────────
 
-def assign_risk(tasks: list[dict], override: str | None) -> dict[str, str]:
+def assign_risk(
+    tasks: list[dict],
+    override: str | None,
+    warnings_sink: list | None = None,
+) -> dict[str, str]:
     """Assign per-task risk levels.
 
     Rules (phase-0-setup.md Step 4):
@@ -125,28 +141,48 @@ def assign_risk(tasks: list[dict], override: str | None) -> dict[str, str]:
 
     If override is set: apply it to all tasks (override wins).
 
+    warnings_sink (optional): if a list is provided, structured
+    risk_override_warnings[] entries are appended to it when a DOWNGRADE override
+    (low/mid) is applied over a task whose body/title contains high-risk keywords.
+    Each entry: {"task", "override", "suggested_risk": "high", "matched_keywords",
+    "ts"} per phase-0-setup.md Step 4 (line 214). Callers that don't pass a sink are
+    unaffected (return type is unchanged).
+
+    The sink IS the honest seam: gate.py has no state access. The orchestrator layer
+    reads the sink and writes <active>.risk_override_warnings[] into state.json; the
+    Final Summary Report (Phase 2 Step 2) surfaces it retrospectively.
+
     Returns dict[task_id → "low"|"mid"|"high"].
     """
     if override is not None:
         override_level = override.strip().lower()
         if override_level not in ("low", "mid", "high"):
             override_level = "mid"
-        # Phase-0 Step 4: warn when a risk override silently downgrades a task whose
-        # body/title contains high-risk keywords (e.g. "database", "schema migration",
-        # "breaking change").  The warning is emitted here to stdout so the orchestrator
-        # log captures it.  The orchestrator layer (SKILL.md Step 4 escalate_to_user)
-        # is responsible for surfacing this to the operator when running interactively.
-        # T15 seam: in headless -p mode there is no escalate channel; the WARN line
-        # is the only signal until T15 wires the interactive review path.
+        # Phase-0 Step 4: an override=high is not a downgrade — no warning. Only
+        # low/mid overrides can silently downgrade a dangerous task.
         if override_level in ("low", "mid"):
             for t in tasks:
-                body_text = (_task_body(t) + " " + (t.get("title") or "")).lower()
-                if _contains_high_risk_keyword(body_text):
+                body_text = _task_body(t) + " " + (t.get("title") or "")
+                matched = _matched_high_risk_keywords(body_text)
+                if matched:
+                    tid = _task_id(t)
+                    # (a) one-line WARN to stdout (interactive parent captures it)
                     print(
-                        f"WARN: assign_risk override={override_level!r} applied to task "
-                        f"{_task_id(t)!r} which contains high-risk keywords; "
-                        f"do not silently downgrade dangerous tasks"
+                        f"WARN: risk={override_level} override applied to {tid}, "
+                        f"but task description suggests HIGH risk. "
+                        f"Proceeding with override as instructed."
                     )
+                    # (b) structured entry for <active>.risk_override_warnings[].
+                    # Appended to the caller-provided sink; the orchestrator writes it
+                    # to state.json. Do not silently downgrade dangerous tasks.
+                    if warnings_sink is not None:
+                        warnings_sink.append({
+                            "task": tid,
+                            "override": override_level,
+                            "suggested_risk": "high",
+                            "matched_keywords": matched,
+                            "ts": datetime.now(timezone.utc).isoformat(),
+                        })
         return {_task_id(t): override_level for t in tasks}
 
     risk: dict[str, str] = {}
@@ -432,15 +468,31 @@ def preflight(task: dict, packet: dict, state: dict) -> dict:
     # ── Contention triggers (D001: delegate_serial) ───────────────────────────
     # These are the faithful substitute for CPE's local_fallback on contention:
     # still a subagent, just serialized within the wave.
-
-    # 6. Explicit serialization_reason from orchestrator (wave partitioning injected)
+    #
+    # T15 seam: state["serialization_reason"] is NOT produced by anything in the
+    # cycle today. partition_waves returns bare list[list[str]] with no wave
+    # metadata, and no orchestrator step writes serialization_reason into state.
+    # This explicit branch is therefore DEAD until T15 wires an orchestrator
+    # producer that annotates the execution_plan (per phase-0-setup.md Step 6,
+    # "serialization_reason": "resource_key=<key>") and threads it into per-task
+    # state. Until then, contention tasks safely fall through to the DEFAULT
+    # delegate_serial below — the correct conservative floor (D001).
+    #
+    # 6. Explicit serialization_reason from orchestrator (wave partitioning injected).
+    # Accepted vocabulary (phase-0-setup.md Step 6 / SKILL.md): the bare category
+    # ("file_contention", "resource_key", "serial_flag") OR the documented
+    # keyed form "resource_key=<slug>" (e.g. "resource_key=db-port-5432").
+    # Normalize by taking the substring before the first "=" so a future wiring
+    # that emits the keyed form does not silently miss this branch.
     serialization_reason = state.get("serialization_reason")
-    if serialization_reason in ("file_contention", "resource_key", "serial_flag"):
-        return {
-            "decision": "delegate_serial",
-            "reason": f"serialized_by_{serialization_reason}",
-            "would_have": {"decision": "delegate_parallel", "reason": "all_prerequisites_passed"},
-        }
+    if isinstance(serialization_reason, str):
+        category = serialization_reason.split("=", 1)[0].strip().lower()
+        if category in ("file_contention", "resource_key", "serial_flag"):
+            return {
+                "decision": "delegate_serial",
+                "reason": f"serialized_by_{serialization_reason}",
+                "would_have": {"decision": "delegate_parallel", "reason": "all_prerequisites_passed"},
+            }
 
     # ── Determine parallel vs serial based on group context ──────────────────
     # T15 seam: delegate_parallel — the LLM orchestrator launches parallel sub-worktrees
