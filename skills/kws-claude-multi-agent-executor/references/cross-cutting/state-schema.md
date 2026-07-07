@@ -1,5 +1,15 @@
 # Cross-cutting: `state.json` schema
 
+> **v3.0 cutover note (T15).** In v3 the deterministic kernel (`scripts/kernel/`)
+> owns every state write: `kernel.py init` writes the initial `schema_version: 3`
+> state, SETUP (`references/phases/phase-0-setup.md`) assembles tasks/execution_plan/
+> risk_levels, and `kernel.py submit`/`finalize` write all downstream fields
+> (timing via `transitions.record_timing`, `quality_trend` via
+> `transitions.apply_result`, cost via `ledger.record`, boundary emits via
+> `events.emit`). The v2 helper names below (`phase_boundary.py`, `state_set.py`)
+> are the mechanisms the kernel replaced — `phase_boundary.py` was deleted in v3;
+> read those lines as field provenance, not live invocation contracts.
+
 Canonical reference for the orchestrator state file written to
 `<orch_dir>/state.json`. This is the single source of truth for the run; after
 each compaction the orchestrator drops raw task detail from context and re-reads

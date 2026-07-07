@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# DEPRECATED (v3.0 T15 cutover): the CME v3 kernel writes a canonical schema_version:3
+# state.json directly (scripts/kernel/statefile.py + initcmd.py); shape validation is
+# the kernel's own concern. The kernel orchestrator does NOT call this script. NOT
+# deleted because it is still referenced by the v2 Stop-gate template/test and
+# evals/check_skill_contract.py (v2 contract eval). Retire with those v2 orphans (T16).
 """Validate the canonical shape of a kws-claude-multi-agent-executor state.json.
 
 Catches the non-canonical / improvised schemas observed in attached-mode runs

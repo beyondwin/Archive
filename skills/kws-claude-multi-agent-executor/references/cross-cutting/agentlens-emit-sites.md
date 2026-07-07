@@ -36,6 +36,15 @@ become silent no-ops when no run is open.
 
 ## Emit-site catalog
 
+> **v3.0 cutover note (T15).** The v2 `scripts/phase_boundary.py` boundary helper
+> was DELETED in v3 — the deterministic kernel is now the sole writer of boundary
+> emits and `quality_trend`. Emits route through `scripts/kernel/events.py`
+> (`events.emit`, called by `kernel.py submit`/`finalize`, with the same
+> `events.jsonl` tee semantics described below); `quality_trend` is appended solely
+> by `transitions.apply_result` on verifier PASS. The `phase_boundary.py` names in
+> the tables below are the v2 mechanism they replaced — read them as the historical
+> emit-site catalog, not a live invocation contract.
+
 | Phase / step | Event | Helper / mechanism |
 |--------------|-------|--------------------|
 | Phase -1 step b | run open | `agentlens run-open` (+ health probe) |

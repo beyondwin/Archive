@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# DEPRECATED (v3.0 T15 cutover): the CME v3 kernel reimplements this migration in
+# scripts/kernel/migrate.py (rules reproduced, not imported). The kernel orchestrator
+# does NOT call this script. NOT deleted because it is still referenced by
+# evals/check_skill_contract.py and references/cross-cutting/{state-schema,multi-plan-chain}.md
+# (v2 docs/eval). Also imports state_set (itself deprecated). Retire with those v2 orphans (T16).
 """One-time resume shim: convert a v2.12 `plan2_state` state.json to `plan_chain`.
 
 v2.13 made `plan_chain[]` the multi-plan source of truth but kept the v2.12
