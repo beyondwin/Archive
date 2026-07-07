@@ -36,9 +36,10 @@ action verbatim, call `kernel.py submit`, repeat.
   `check-stop` · `finalize` · `inspect` · `resolve-escalation`. Single JSON object
   to stdout per call; exit 0/2/3. The `Stop` hook now calls `kernel.py check-stop`
   (replacing the v2.26 `finalization-stop-gate.sh` prose gate).
-- **11 kernel modules** (all importable, no CLI): `statefile`, `planparse`, `gate`,
-  `packets`, `transitions`, `dispatch`, `ledger`, `events`, `recovery`, `drift`,
-  `quality`. Single-writer atomic state I/O via `statefile.py` (flock + temp + rename).
+- **14 kernel modules** (11 core + 3 auxiliary; all importable, no CLI): `statefile`,
+  `planparse`, `gate`, `packets`, `transitions`, `dispatch`, `ledger`, `events`,
+  `recovery`, `drift`, `quality`; plus `initcmd`, `migrate`, `validate`. Single-writer
+  atomic state I/O via `statefile.py` (flock + temp + rename).
 - **State schema v3** (`schema_version: 3`): `status:"SETUP"/"RUNNING"/"FINALIZED"`,
   `execution_plan` as `list[list[str]]` (the exact shape `decide()` iterates),
   `cost_ledger` per-dispatch, `run_quality` + `completion_audit` on finalize.
