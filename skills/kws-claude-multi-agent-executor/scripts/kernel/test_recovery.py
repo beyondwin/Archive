@@ -319,6 +319,103 @@ def test_apply_result_with_recovery_is_immutable():
     print("TEST 10 PASS: apply_result with recovery is immutable")
 
 
+# ── TEST 11: end-to-end classify() → decide_recovery() pipeline ───────────────
+
+def test_classify_to_decide_pipeline():
+    """
+    Feed raw output_tail through classify() to GET the category (NOT hardcoded),
+    then route the resulting observation through decide_recovery() and assert.
+
+    This closes the gap left by the hardcoded-category tests: it exercises the
+    real classify()→routing path and would have caught the "changed"→hang and
+    "memory"→resource_oom substring collisions.
+    """
+    # (a) A real source failure in output mentioning git/assert noise.
+    #     "3 files changed" must NOT trigger timeout_or_hang; the assert/error
+    #     line must classify as source_failure → implementer_retry (budget burns).
+    out_a = "3 files changed\nassert x == y\nAssertionError: boom"
+    cls_a = recovery.classify("pytest", 1, out_a)
+    assert cls_a["category"] == "source_failure", (
+        f"'3 files changed ... AssertionError' must classify source_failure, "
+        f"got {cls_a['category']!r}"
+    )
+    obs_a = {
+        "command": "pytest",
+        "exit_code": 1,
+        "category": cls_a["category"],
+        "evidence": cls_a["evidence"],
+    }
+    state_a = _base_state(verifier_retries=0)
+    dec_a = recovery.decide_recovery(state_a, "task_1", obs_a)
+    assert dec_a["action"] == "implementer_retry", (
+        f"source_failure must route to implementer_retry, got {dec_a['action']!r}"
+    )
+    # Confirm budget burns through transitions.
+    s2 = transitions.apply_result(
+        state_a, "task_1", "verifier",
+        {"status": "FAIL", "issues": [], "command_observation": obs_a},
+    )
+    assert s2["tasks"]["task_1"].get("verifier_retries", 0) == 1, (
+        "pipeline source_failure must burn verifier_retries"
+    )
+
+    # (b) A genuine env failure: ModuleNotFoundError → missing_local_env →
+    #     first-occurrence bootstrap (no burn).
+    out_b = "ModuleNotFoundError: No module named 'foo'"
+    cls_b = recovery.classify("pytest", 1, out_b)
+    assert cls_b["category"] == "missing_local_env", (
+        f"ModuleNotFoundError must classify missing_local_env, got {cls_b['category']!r}"
+    )
+    obs_b = {
+        "command": "pytest",
+        "exit_code": 1,
+        "category": cls_b["category"],
+        "evidence": cls_b["evidence"],
+    }
+    state_b = _base_state(verifier_retries=0)
+    dec_b = recovery.decide_recovery(state_b, "task_1", obs_b)
+    assert dec_b["action"] == "bootstrap", (
+        f"missing_local_env 1st occurrence must route to bootstrap, got {dec_b['action']!r}"
+    )
+    s3 = transitions.apply_result(
+        state_b, "task_1", "verifier",
+        {"status": "FAIL", "issues": [], "command_observation": obs_b},
+    )
+    assert s3["tasks"]["task_1"].get("verifier_retries", 0) == 0, (
+        "pipeline env first-occurrence must NOT burn verifier_retries"
+    )
+    print("TEST 11 PASS: classify()->decide_recovery() pipeline (source burns, env bootstraps)")
+
+
+# ── TEST 12: classify anti-collision — git/assert output not misrouted to env ─
+
+def test_classify_no_env_false_positives():
+    """
+    Regression guard for the UNANCHORED-substring bug: ordinary git/pytest
+    output and source assertions must NEVER classify as an env category.
+    """
+    cases = [
+        ("3 files changed, 5 insertions(+)", 0),        # "changed" contains "hang"
+        ("AssertionError: memory not freed", 1),        # bare "memory"
+        ("assert cache_memory == 0", 1),                 # bare "memory"
+        ("heap-allocated object leak\nMemoryError", 1),  # bare "heap"
+    ]
+    env_family = {
+        "missing_local_env", "dependency_bootstrap", "resource_oom",
+        "timeout_or_hang", "permission_or_sandbox", "flaky_test", "tooling_bug",
+    }
+    for out, code in cases:
+        cat = recovery.classify("cmd", code, out)["category"]
+        assert cat not in env_family, (
+            f"{out!r} misrouted to env category {cat!r} (should be source_failure/unknown)"
+        )
+    # Positive control: real env signals STILL classify as env.
+    assert recovery.classify("cmd", 1, "process killed: out of memory")["category"] == "resource_oom"
+    assert recovery.classify("cmd", 1, "test timed out after 60s")["category"] == "timeout_or_hang"
+    assert recovery.classify("cmd", 1, "ModuleNotFoundError: x")["category"] == "missing_local_env"
+    print("TEST 12 PASS: no env false positives; real env signals still detected")
+
+
 # ── main: run ALL test functions ─────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -333,6 +430,8 @@ if __name__ == "__main__":
         test_unknown_category_records_residual_risk,
         test_dependency_bootstrap_first_occurrence,
         test_apply_result_with_recovery_is_immutable,
+        test_classify_to_decide_pipeline,
+        test_classify_no_env_false_positives,
     ]
 
     failed = []

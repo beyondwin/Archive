@@ -61,15 +61,29 @@ _ENV_FAMILY = frozenset({
 
 # ── Pattern table for classify() ─────────────────────────────────────────────
 # Each entry: (regex_pattern, category, evidence_template).
-# First match wins (most specific patterns first).
+# First match wins, so ORDER IS LOAD-BEARING:
+#
+#   1. ENV import errors (ModuleNotFoundError / ImportError) — these are *Error
+#      names but they mean "environment isn't set up", so they MUST win before
+#      the generic source-exception catch below.
+#   2. Source exceptions — explicit assert/FAILED lines plus a generic `\w+Error`
+#      catch (AssertionError, MemoryError, KeyError, ...). This wins over the
+#      loose env keyword patterns so a real code bug ("AssertionError: memory
+#      not freed", "3 files changed") is NOT misrouted to an env category.
+#   3. dependency_bootstrap / resource_oom / timeout / permission / tooling —
+#      WORD-ANCHORED env signals only. Bare substrings like "memory", "heap",
+#      "hang", "killed" are deliberately NOT used: they collide with normal
+#      git/pytest output ("3 files changed" contains "hang"; assertions mention
+#      "memory") and would invert this module's purpose (skip budget burn +
+#      reset on a genuine source failure).
 
 _PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
-    # missing_local_env — import errors, command not found, module missing
-    (re.compile(r"ModuleNotFoundError", re.IGNORECASE),
+    # ── 1. ENV import errors — must win before the generic *Error catch ──────
+    (re.compile(r"\bModuleNotFoundError\b"),
      "missing_local_env",
      "ModuleNotFoundError in output"),
 
-    (re.compile(r"ImportError", re.IGNORECASE),
+    (re.compile(r"\bImportError\b"),
      "missing_local_env",
      "ImportError in output"),
 
@@ -81,7 +95,23 @@ _PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
      "missing_local_env",
      "No such file or directory in output"),
 
-    # dependency_bootstrap — package manager / install hints
+    # ── 2. Source failures — win over loose env keyword patterns below ───────
+    # Explicit assertion / test-failure lines.
+    (re.compile(r"(\bAssertionError\b|\bFAILED\b|"
+                r"\bassert\b.*(==|!=)|raise AssertionError|\bassert False\b)",
+                re.IGNORECASE),
+     "source_failure",
+     "Assertion / test failure in output"),
+
+    # Generic Python source exception: any CamelCase *Error token.
+    # ModuleNotFoundError/ImportError already handled above, so anything left
+    # (MemoryError, KeyError, RecursionError, ZeroDivisionError, IndexError,
+    # ValueError, ...) is a source bug, not an env problem.
+    (re.compile(r"\b\w+Error\b"),
+     "source_failure",
+     "Python source exception in output"),
+
+    # ── 3. dependency_bootstrap — package manager / install hints ────────────
     (re.compile(r"node_modules", re.IGNORECASE),
      "dependency_bootstrap",
      "node_modules reference in output — run npm/yarn install"),
@@ -90,40 +120,34 @@ _PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
      "dependency_bootstrap",
      "install-hint pattern in output"),
 
-    # resource_oom
-    (re.compile(r"(out of memory|oom kill|heap|memory|killed)", re.IGNORECASE),
+    # ── resource_oom — specific OOM signals only (no bare memory/heap/killed) ─
+    (re.compile(r"\b(out of memory|oom[- ]?kill(?:er|ed)?|OOM)\b", re.IGNORECASE),
      "resource_oom",
-     "OOM/resource-kill signal in output"),
+     "OOM signal in output"),
 
-    # timeout_or_hang
-    (re.compile(r"(timed? ?out|timeout|SIGKILL|hung|hang)", re.IGNORECASE),
+    (re.compile(r"Cannot allocate memory|JavaScript heap out of memory",
+                re.IGNORECASE),
+     "resource_oom",
+     "Memory-exhaustion signal in output"),
+
+    # ── timeout_or_hang — word-anchored timeout signals (no bare hang/hung) ───
+    (re.compile(r"\b(timed? ?out|timeout|SIGKILL|deadline exceeded)\b",
+                re.IGNORECASE),
      "timeout_or_hang",
-     "Timeout/hang signal in output"),
+     "Timeout signal in output"),
 
-    # permission_or_sandbox
-    (re.compile(r"(permission denied|Operation not permitted|sandbox|EPERM|EACCES)",
+    # ── permission_or_sandbox ────────────────────────────────────────────────
+    (re.compile(r"(permission denied|Operation not permitted|sandbox|"
+                r"\bEPERM\b|\bEACCES\b)",
                 re.IGNORECASE),
      "permission_or_sandbox",
      "Permission/sandbox block in output"),
 
-    # tooling_bug — tool internal errors
-    (re.compile(r"(internal error|segmentation fault|core dumped|SIGSEGV)",
+    # ── tooling_bug — tool internal errors / crashes ─────────────────────────
+    (re.compile(r"(internal error|segmentation fault|core dumped|\bSIGSEGV\b)",
                 re.IGNORECASE),
      "tooling_bug",
      "Tooling internal error / crash in output"),
-
-    # source_failure — test assertion failures, FAILED test lines
-    (re.compile(r"(AssertionError|FAILED |assert .* ==|assert .* !=|"
-                r"raise AssertionError|assert False)",
-                re.IGNORECASE),
-     "source_failure",
-     "Assertion / test failure in output"),
-
-    (re.compile(r"(SyntaxError|NameError|TypeError|AttributeError|"
-                r"ValueError|RuntimeError|NotImplementedError)",
-                re.IGNORECASE),
-     "source_failure",
-     "Python source exception in output"),
 ]
 
 
