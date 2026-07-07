@@ -10,11 +10,12 @@ build(state, action, skill_dir, orch_dir) -> dict
     Assemble the role-specific prompt, write it to disk, and return the dispatch
     dict with command (or agent_instruction) + all related paths.
 
-T10 seam
---------
-Currently uses state["tasks"][task_id]["body"] for task body and a spec stub for
-spec content.  T10 will inject packet paths and richer context; the insertion
-points are marked with:  # <<T10: inject packet paths here>>
+T10 packet integration
+----------------------
+When a packet JSON exists at <orch_dir>/packets/<task_id>.json, _build_subs()
+uses the packet's task_body and spec_sections (joined) to fill the prompt instead
+of the temporary spec-excerpt stubs.  If no packet is found, the prior fallback
+behavior is preserved so test_dispatch.py still passes unchanged.
 """
 
 from __future__ import annotations
@@ -24,6 +25,15 @@ import re
 import shlex
 from pathlib import Path
 from typing import Any
+
+# T10: packets module for context-budget-aware spec sections
+try:
+    from . import packets as _packets_mod
+except ImportError:
+    try:
+        import packets as _packets_mod  # type: ignore[no-redef]
+    except ImportError:
+        _packets_mod = None  # type: ignore[assignment]
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -129,33 +139,70 @@ def _extract_backtick_fence(text: str) -> str | None:
 
 # ── Placeholder substitution ──────────────────────────────────────────────────
 
+def _load_packet_for_task(orch_dir: str, task_id: str) -> dict | None:
+    """Load a T10 packet from <orch_dir>/packets/<task_id>.json if it exists."""
+    if _packets_mod is None:
+        return None
+    try:
+        return _packets_mod.load_packet(orch_dir, task_id)
+    except Exception:
+        return None
+
+
 def _build_subs(state: dict, action: dict, skill_dir: str, orch_dir: str) -> dict[str, str]:
     """Build the substitution map for template placeholders.
 
-    T10 seam: packet paths (context_slice, diff, etc.) will be injected here
-    from the T10 packet directory once T10 is implemented.
+    T10: When a packet JSON exists at <orch_dir>/packets/<task_id>.json, uses
+    the packet's task_body and spec_sections in place of the prior stubs.
+    Falls back to prior behavior when no packet is present.
     """
     task_id = action["task_id"]
     role = action["role"]
     active_tasks = state.get("tasks", {})
     task = active_tasks.get(task_id, {})
 
-    # Task body (from planparse result stored on the task)  # <<T10: inject packet paths here>>
-    task_body = task.get("body", f"[Task body for {task_id} — T10 packet injection pending]")
+    # T10: try to load a pre-built packet for richer context
+    packet = _load_packet_for_task(orch_dir, task_id)
+
+    if packet is not None:
+        # Packet path: use packet's task_body and spec_sections
+        task_body = packet.get("task_body") or task.get("body", f"[Task body for {task_id}]")
+        files_list = packet.get("files") or task.get("files", [])
+        # Build spec excerpt from packet's spec_sections
+        spec_sections = packet.get("spec_sections", [])
+        if spec_sections:
+            section_ids = [s["id"] for s in spec_sections]
+            spec_section_label = ", ".join(section_ids)
+            spec_excerpt = "\n\n".join(s["text"] for s in spec_sections if s.get("text"))
+        else:
+            spec_section_label = task.get("spec_section_label", "all")
+            spec_excerpt = task.get(
+                "spec_excerpt",
+                "[Spec excerpt — no sections in packet. Refer to the spec file.]"
+            )
+        # context_slice: combine task body + spec sections as a focused context
+        context_slice = f"## Task\n\n{task_body}\n\n## Spec Sections ({spec_section_label})\n\n{spec_excerpt}"
+    else:
+        # No-packet fallback: prior behavior preserved (test_dispatch.py passes unchanged)
+        task_body = task.get("body", f"[Task body for {task_id} — T10 packet injection pending]")
+        files_list = task.get("files", [])
+        spec_excerpt = task.get(
+            "spec_excerpt",
+            "[Spec excerpt — T10 packet injection pending. Refer to the spec file for now.]"
+        )
+        spec_section_label = task.get("spec_section_label", "all")
+        context_slice = task.get(
+            "context_slice",
+            "[Context slice — T10 pre-resolved context injection pending.]"
+        )
+
     task_title = task.get("title", task_id)
-    files_list = task.get("files", [])
     files_str = "\n".join(f"- {f}" for f in files_list) if files_list else "(none listed)"
 
     # Model name for template substitution
     model_key = state.get("implementer_model", DEFAULT_MODEL_KEY)
     model_name = MODEL_MAP.get(model_key, MODEL_MAP[DEFAULT_MODEL_KEY])
 
-    # Spec excerpt  # <<T10: pull from spec manifest + packet>>
-    spec_excerpt = task.get(
-        "spec_excerpt",
-        "[Spec excerpt — T10 packet injection pending. Refer to the spec file for now.]"
-    )
-    spec_section_label = task.get("spec_section_label", "all")
     task_size = task.get("task_size", "MEDIUM")
     risk_level = state.get("risk_levels", {}).get(task_id, "mid").upper()
 
@@ -163,12 +210,6 @@ def _build_subs(state: dict, action: dict, skill_dir: str, orch_dir: str) -> dic
         "SMALL — complete in one focused session. Minimal tool calls.\n"
         "MEDIUM — thorough but scoped. Use TDD and verification.\n"
         "LARGE — multi-step. Plan before code; verify each major piece."
-    )
-
-    # Context slice  # <<T10: inject from pre-resolved context>>
-    context_slice = task.get(
-        "context_slice",
-        "[Context slice — T10 pre-resolved context injection pending.]"
     )
 
     # Decisions register (empty for now)
