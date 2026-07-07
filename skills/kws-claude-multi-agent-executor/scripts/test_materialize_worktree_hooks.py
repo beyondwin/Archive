@@ -42,9 +42,11 @@ def test_build_hooks_has_four_events_and_stop_gate():
     hooks = mwh.build_hooks(ORCH, SKILL)
     assert set(hooks) == set(REQUIRED)
     stop_cmd = hooks["Stop"][0]["hooks"][0]["command"]
-    assert "finalization-stop-gate.sh" in stop_cmd
+    # v3.0 (T15): Stop hook drives the deterministic kernel, not the v2 shell gate.
+    assert "kernel.py" in stop_cmd
+    assert "check-stop" in stop_cmd
     assert f"{ORCH}/state.json" in stop_cmd
-    assert f"{SKILL}/scripts" in stop_cmd
+    assert f"{SKILL}/scripts/kernel/kernel.py" in stop_cmd
     assert hooks["PostToolUse"][0]["hooks"][0]["command"].endswith(
         "scan-debug-artifacts.sh")
     assert hooks["SubagentStop"][0]["hooks"][0]["command"].endswith(
@@ -104,7 +106,7 @@ def test_check_problems_flags_stop_without_gate():
     hooks = mwh.build_hooks(ORCH, SKILL)
     hooks["Stop"] = [{"hooks": [{"type": "command", "command": "echo hi"}]}]
     problems = mwh.check_problems({"hooks": hooks})
-    assert any("finalization-stop-gate.sh" in p for p in problems)
+    assert any("kernel.py check-stop" in p for p in problems)
 
 
 # --- CLI write mode --------------------------------------------------------

@@ -74,3 +74,52 @@ transitions.decide (return batch-verify when only PENDING_BATCH remain, before f
 SKIPPED) + the e2e (drive the drain — the hand-authored 2-task fixture skipped it, a keystone coverage hole).
 Routed through implementer→reviewer (load-bearing). PENDING_BATCH stays terminal for the per-task cycle
 (no global _all_tasks_terminal redefinition) — targeted guard only.
+
+### T15 — CUTOVER: SKILL.md v3.0.0, Stop-hook switch, v2 script deletion
+
+Two-commit structure (A wiring, B cleanup). Orientation surfaced findings that
+made the brief's action inventory require correction (verified against decide()
+`return` statements + kernel.py handlers, NOT the prose brief):
+
+1. **decide() never returns `done`.** The docstring lists `{"action":"done"}` but
+   no `return` produces it, and decide() does NOT check `status==FINALIZED` — so
+   after finalize it re-emits `finalize`. SKILL.md loop-exit MUST be "finalize
+   returned status=finalized" (or check-stop already_finalized), NOT "decide
+   returned done". A "wait for done" prose loop would spin finalize forever.
+
+2. **init→next assembly gap.** `kernel.py init` writes empty tasks/execution_plan/
+   risk_levels/compaction_points/spec_manifest. decide() on that state halts
+   (no_dispatchable_task). planparse/gate/packets are LIBRARY-ONLY (no CLI, called
+   only by their own tests). There is NO kernel subcommand that runs plan→state
+   assembly. Therefore a SETUP step (parse plan → assign_risk → partition_waves →
+   build packets → write execution_plan/risk_levels/tasks/compaction_points into
+   state.json) MUST run between init and the first `next`. phase-0-setup.md is KEPT
+   (reduced) as the assembly guide — it is the producer decide() depends on.
+
+3. **run_command purposes:** decide() emits only purpose="reset" (verifier-FAIL git
+   reset). "baseline" and "acceptance" are NOT decide() outputs — baseline is a
+   setup-time command; acceptance runs INSIDE the verifier dispatch (AC-shell
+   guardrail). §3 table states this honestly rather than listing them as kernel
+   actions.
+
+4. **compaction_points has no kernel producer** (T14 JOURNAL confirms): decide()'s
+   `compact` action only fires if the orchestrator wrote compaction_points during
+   setup. Documented as a setup responsibility.
+
+5. **Stop-hook stderr contract.** Claude Code surfaces stderr (not stdout) to the
+   model on exit 2. kernel.py check-stop prints its reason JSON to stdout. Switching
+   the Stop hook to call check-stop directly would block silently (no corrective
+   guidance). Fix: kernel.py main() echoes the halt reason/next_action to STDERR on
+   the exit-2 path (additive; no test asserts stderr empty). Preserves the wedge
+   invariant WITH visible guidance.
+
+6. **check_problems() lockstep.** materialize_worktree_hooks.check_problems() asserts
+   the Stop command references "finalization-stop-gate.sh"; do_write() calls it and
+   init() halts on failure. Switching build_hooks() to emit kernel.py check-stop
+   REQUIRES updating check_problems()'s expected substring + the 3 test assertions
+   in lockstep, else init self-assert fails.
+
+Seams forward-wired per D001/brief: delegate_parallel (orchestrator launches
+parallel -p waves at setup — NOT a decide() action), operator-review via
+escalate_to_user, serialization_reason NOT wired (default delegate_serial — stated
+honestly). phase_boundary.py MUST be deleted (kernel = sole quality_trend writer).

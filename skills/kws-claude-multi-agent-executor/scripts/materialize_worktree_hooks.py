@@ -9,13 +9,19 @@ deep-merges instead: every existing top-level key is preserved, and the four hoo
 events we own are injected (winning over any repo entry under those keys, while
 other repo-defined hook events survive).
 
+v3.0 (T15 cutover): the Stop hook now invokes the deterministic kernel
+(`kernel.py check-stop`) instead of the v2 `finalization-stop-gate.sh`. check-stop
+exits 2 (blocking the stop) whenever outstanding work remains — a finalize-pending
+all-terminal run or a lingering PENDING_BATCH batch-drain. The corrective guidance
+is echoed to stderr by kernel.py so Claude Code surfaces it to the orchestrator.
+
 Modes:
   (write)  --worktree <p> --orch-dir <p> --skill-dir <p>
            Read <worktree>/.claude/settings.json (absent -> {}), deep-merge our
            hooks, atomic-write, then self-assert (same checks as --check).
   --check  --worktree <p>
            Assert the four events are present and Stop references
-           finalization-stop-gate.sh. No write. Reused as the Phase-1 Task-1
+           kernel.py check-stop. No write. Reused as the Phase-1 Task-1
            preflight (improvement #3).
 
 Exit codes:
@@ -67,8 +73,8 @@ def build_hooks(orch_dir: str, skill_dir: str) -> dict[str, Any]:
         }],
         "Stop": [{
             "hooks": [{"type": "command",
-                       "command": (f"{orch_dir}/hooks/finalization-stop-gate.sh "
-                                   f"{orch_dir}/state.json {skill_dir}/scripts")}],
+                       "command": (f"python3 {skill_dir}/scripts/kernel/kernel.py "
+                                   f"check-stop --state {orch_dir}/state.json")}],
         }],
     }
 
@@ -102,8 +108,8 @@ def check_problems(settings: dict[str, Any]) -> list[str]:
             for h in (entry.get("hooks") or [])
             if isinstance(h, dict)
         )
-        if "finalization-stop-gate.sh" not in cmds:
-            problems.append("Stop hook does not reference finalization-stop-gate.sh")
+        if "kernel.py" not in cmds or "check-stop" not in cmds:
+            problems.append("Stop hook does not reference kernel.py check-stop")
     return problems
 
 

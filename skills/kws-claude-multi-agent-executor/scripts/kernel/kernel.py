@@ -482,6 +482,17 @@ def main():
         sys.exit(3)
     # Exit code 2 for halt (check-stop all-terminal, dirty_worktree, etc.)
     if "halt" in result:
+        # Claude Code surfaces STDERR (not stdout) to the model on a Stop-hook
+        # exit 2. The JSON above went to stdout, so echo the corrective guidance
+        # to stderr too — otherwise the blocked orchestrator learns nothing about
+        # what to do next (run finalize / dispatch the batch verifier). This is
+        # the wedge invariant WITH visible guidance.
+        reason = result.get("reason", result.get("halt", ""))
+        next_action = result.get("next_action", "")
+        msg = f"[kernel.py {args.command}] BLOCKED: {result.get('halt')} — {reason}"
+        if next_action:
+            msg += f"\nNext: {next_action}"
+        print(msg, file=sys.stderr)
         sys.exit(2)
 
 
