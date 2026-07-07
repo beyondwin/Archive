@@ -1,6 +1,6 @@
 """test_dispatch.py — TDD suite for dispatch.py (CME v3.0 T7).
 
-Minimum 9 test functions; __main__ runs ALL of them.
+Minimum 10 test functions; __main__ runs ALL of them.
 Each test raises AssertionError on failure; the runner catches and reports.
 """
 
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 import sys
 import tempfile
 from pathlib import Path
@@ -328,6 +329,62 @@ def test_cwd_from_worktree():
         print("TEST (h) PASS: cwd == state['worktree']")
 
 
+# ── TEST (j): orch_dir with a space → command paths are shell-quoted ─────────────
+
+def test_command_paths_quoted_with_spaces():
+    """(j) orch_dir containing a space → prompt/schema/result paths are shlex-quoted
+    in the command so the shell does not word-split them."""
+    with tempfile.TemporaryDirectory() as base:
+        orch_dir = os.path.join(base, "orch dir", "run_1")
+        os.makedirs(orch_dir, exist_ok=True)
+        state = _base_state()
+        action = _action(role="implementer", task_id="task_3", attempt=1)
+        result = dispatch.build(state, action, SKILL_DIR, orch_dir)
+
+        cmd = result["command"]
+
+        # The three path interpolations must appear in their shlex-quoted form.
+        quoted_prompt = shlex.quote(result["prompt_path"])
+        quoted_schema = shlex.quote(result["schema_path"])
+        quoted_result = shlex.quote(result["result_path"])
+
+        assert quoted_prompt in cmd, (
+            f"prompt_path not shlex-quoted in command.\nExpected substring: {quoted_prompt}\nCommand: {cmd}"
+        )
+        assert quoted_schema in cmd, (
+            f"schema_path not shlex-quoted in command.\nExpected substring: {quoted_schema}\nCommand: {cmd}"
+        )
+        assert quoted_result in cmd, (
+            f"result_path not shlex-quoted in command.\nExpected substring: {quoted_result}\nCommand: {cmd}"
+        )
+
+        # There must be no bare (unquoted) 'orch dir/run_1' path fragment — that
+        # would mean the shell word-splits on the space.
+        bare_fragment = os.path.join("orch dir", "run_1")
+        # shlex.quote wraps the whole path in single quotes; the bare fragment
+        # (without surrounding quote) must not appear as an unquoted token.
+        # Strip out all quoted spans, then confirm 'orch dir' is gone.
+        without_quoted = cmd
+        for q in (quoted_prompt, quoted_schema, quoted_result):
+            without_quoted = without_quoted.replace(q, "")
+        assert bare_fragment not in without_quoted, (
+            f"Unquoted path fragment '{bare_fragment}' would word-split in the shell.\nCommand: {cmd}"
+        )
+
+        # model_name stays unquoted (from controlled MODEL_MAP literals)
+        assert "--model claude-sonnet-4-6" in cmd, (
+            f"model flag should remain unquoted literal: {cmd}"
+        )
+
+        # Flag set + redirect unchanged
+        assert "--output-format json" in cmd
+        assert "--json-schema" in cmd
+        assert "--dangerously-skip-permissions" in cmd
+        assert ">" in cmd
+
+        print("TEST (j) PASS: command paths shlex-quoted; no word-split on space in orch_dir")
+
+
 # ── runner ────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -341,6 +398,7 @@ if __name__ == "__main__":
         test_plan_reviewer_role,
         test_cwd_from_worktree,
         test_implementer_redispatch_no_leftover,
+        test_command_paths_quoted_with_spaces,
     ]
 
     print(f"Running {len(tests)} tests...\n")
