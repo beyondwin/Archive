@@ -1,4 +1,9 @@
-"""Tests for the finalization Stop-hook (finalization-stop-gate.sh.template).
+"""DEPRECATED (v3.0 T16): This test file tests the v2.26 finalization-stop-gate.sh.template
+which is no longer installed by v3.0. The Stop hook now calls `kernel.py check-stop`.
+These tests reference scripts/finalize_run.py and scripts/validate_state_schema.py which
+are themselves deprecated in v3.0. Kept for reference; not run in the eval preflight.
+
+Tests for the finalization Stop-hook (finalization-stop-gate.sh.template).
 
 The hook is materialized at Phase 0 Step 2.5 into <orch_dir>/hooks/. These tests
 copy the template to an executable temp path and drive it via subprocess against

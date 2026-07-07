@@ -21,6 +21,47 @@ Update protocol: see `AGENTS.md` ("Experiment & history record-keeping").
 
 ## §1 Version timeline
 
+### v3.0.0 — Deterministic kernel (2026-07-07)
+
+Complete architectural pivot: the prose transition-decision logic that lived in SKILL.md
+across v2.x (retry accounting, review tier computation, quality_trend appends,
+`<active>` bookkeeping) is replaced by a deterministic Python kernel in
+`scripts/kernel/`. The kernel owns EVERY judgment and record-keeping operation.
+The orchestrator's job is reduced to: run `kernel.py next`, perform the returned
+action verbatim, call `kernel.py submit`, repeat.
+
+**What shipped (16 tasks, 16/16 kernel unit test files green):**
+
+- **Kernel CLI** (`scripts/kernel/kernel.py`): `init` · `next` · `submit` ·
+  `check-stop` · `finalize` · `inspect` · `resolve-escalation`. Single JSON object
+  to stdout per call; exit 0/2/3. The `Stop` hook now calls `kernel.py check-stop`
+  (replacing the v2.26 `finalization-stop-gate.sh` prose gate).
+- **11 kernel modules** (all importable, no CLI): `statefile`, `planparse`, `gate`,
+  `packets`, `transitions`, `dispatch`, `ledger`, `events`, `recovery`, `drift`,
+  `quality`. Single-writer atomic state I/O via `statefile.py` (flock + temp + rename).
+- **State schema v3** (`schema_version: 3`): `status:"SETUP"/"RUNNING"/"FINALIZED"`,
+  `execution_plan` as `list[list[str]]` (the exact shape `decide()` iterates),
+  `cost_ledger` per-dispatch, `run_quality` + `completion_audit` on finalize.
+  Migration bridge (`migrate.py`) handles v2→v3 state transparently.
+- **Headless-first dispatch** (`dispatch.py`): `transport:"p"` (headless `claude -p`)
+  is the default; `transport:"agent"` is opt-in. `command` field is pre-shlex-quoted
+  and run verbatim; no manual prompt assembly.
+- **Deterministic transitions** (`transitions.py`): `decide()` + `apply_result()` are
+  pure functions over state. Review tier computed from `spec_score`/`quality_score`
+  (not LLM self-report). `quality_trend` appended by `apply_result` only
+  (v2 `phase_boundary.py` writer removed). `git reset --hard` issued as
+  `run_command purpose=reset` action (never as prose).
+- **SKILL.md cutover**: SKILL.md shrunk to 6 keyed sections (①–⑥ + ④·b Guardrails +
+  Forward-wired seams). All prose transition logic removed. v2 helper scripts
+  retired (3 deleted, 6 deprecation-commented). Contract eval rewritten for v3 structure.
+
+**Motivation:** The v2.x skill carried the freeze-skip regression class — orchestrator
+sessions that read the transition prose and skipped a step, duplicated a retry, or
+missed a record-keeping emit, leaving state.json silently wrong. Moving the judgment
+layer to a kernel that the LLM executes but does not interpret eliminates this class.
+
+Experiment: `docs/experiments/v3.0-deterministic-kernel/`.
+
 ### v2.29.0 — Quality uplift (2026-06-07)
 
 Twelve-item quality catalog (I1–I12) from `docs/improvements/품질개선-{플랜,구현}-ko.md`,
@@ -870,7 +911,8 @@ with JOURNAL + decisions/ + findings/. Index:
 | v2.26-finalization-enforcement | SHIPPED (2026-06-04) | Schema + finalization validators, Phase 2 gates, Stop-hook forcing function (D001) | `docs/experiments/v2.26-finalization-enforcement/` |
 | v2.27-attached-mode-enforcement | SHIPPED (2026-06-06) | Hook-merge script (deep-merge + Stop-gate self-assert + `--check` preflight); cost/timing drift → blocking finalize FAIL with waive hatches; finalize-time hooks-wired backstop (D001, D002, D003) | `docs/experiments/v2.27-attached-mode-enforcement/` |
 | v2.30-failure-taxonomy-coverage | SHIPPED — P0 only (2026-06-08) | MAST 14-mode coverage map + probe fixtures 09 (rubber-stamp FM-3.3) / 10 (error-propagation FM-2.3) + judge bias guards; probe validity proven deterministically (F01); eval-layer only → `metadata.version` unchanged; paid eval re-scoped as the J7/J8 gate (F02); J5–J9 design-records (D004–D008) | `docs/experiments/v2.30-failure-taxonomy-coverage/` |
-| (future) | | | `docs/experiments/v2.X-<name>/` |
+| v3.0-deterministic-kernel | SHIPPED (2026-07-07) | Prose transition-decision logic → deterministic Python kernel (`scripts/kernel/`); 16/16 unit-test files green; SKILL.md shrunk to 6 sections; v2 scripts retired/deprecated; Stop hook → `kernel.py check-stop`; `schema_version` → 3. Live-CLI smoke pending. | `docs/experiments/v3.0-deterministic-kernel/` |
+| (future) | | | `docs/experiments/v3.X-<name>/` |
 
 See `docs/experiments/README.md` for the experiment template and protocol.
 

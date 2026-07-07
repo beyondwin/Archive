@@ -129,11 +129,13 @@ Step 4: Agent Cleanup
 
 `<orch_dir>/state.json` 은 **유일한 진실의 출처**입니다. 모든 오케스트레이터 결정: state.json 읽기 → 계산 → 변경 → 쓰기.
 
-주요 필드 (전체 스키마는 `SKILL.md` Phase 0 Step 6):
+주요 필드 (전체 스키마는 `SKILL.md` ② 및 `references/cross-cutting/state-schema.md`):
+
+**v3.0 (schema_version: 3)** — `status`가 `"SETUP"/"RUNNING"/"FINALIZED"`, `execution_plan`이 `list[list[str]]` (dict 아님), `cost_ledger` per-dispatch 누적, `run_quality`+`completion_audit` finalize 시 기록. 마이그레이션: `scripts/kernel/migrate.py` (v2→v3 자동 변환).
 
 ```json
 {
-  "schema_version": "2",
+  "schema_version": "3",
   "branch": "...",
   "worktree": "...",
   "mode": "interactive_session | headless_pending | headless_running | ...",
@@ -437,6 +439,75 @@ A task may declare `**Resource Key:** <slug>` in its plan body. Phase 0 Step 6 p
 
 Plan Reviewer (Phase 0 Step 6.5) emits WARN issues for same-wave collisions so the plan author sees the reduced parallelism. WARN, not BLOCKER — runtime correctness is automatic.
 
+## 15. 커널 아키텍처 (v3.0)
+
+v3.0은 SKILL.md의 산문 전환 결정 로직을 결정론적 Python 커널(`scripts/kernel/`)로 이관합니다. 오케스트레이터는 `kernel.py next → 액션 수행 → submit` 루프만 구동하고, 모든 판단·기록은 커널이 소유합니다.
+
+### init→next→submit 사이클
+
+```
+kernel.py init          → RUN_ID, worktree, state.json (schema_version:3, status:SETUP) 초기화
+                           (dirty-tree 체크, worktree+branch 생성, 4개 hooks materialize)
+[SETUP step]            → phase-0-setup.md 가 커널 라이브러리를 구동해 tasks/execution_plan/
+                           risk_levels/packets/compaction_points 등을 state.json에 조립
+                           status: SETUP → RUNNING
+loop:
+  kernel.py next        → decide(state) → 다음 액션 JSON 반환 (dispatch/escalate/compact/finalize/halt 등)
+  [오케스트레이터가 액션 수행 — 코드 작성 금지]
+  kernel.py submit      → apply_result(state, task, role, result) → tier 계산, 비용 기록, 이벤트 emit
+  until finalize returns {"status":"finalized"}
+```
+
+### 11개 커널 모듈
+
+| 모듈 | 책임 |
+|------|------|
+| `statefile.py` | 원자적 상태 I/O (flock + temp + rename). 단일 작성자 계약. |
+| `planparse.py` | `parse(plan_text)` → tasks list + 구조 검증 오류 (Files 블록 누락, 레포 밖 경로 → halt). |
+| `gate.py` | `assign_risk`, `partition_waves`, `preflight` — 태스크별 디스패치 결정의 단일 소스. |
+| `packets.py` | `build_packet` → `<orch_dir>/packets/<task_id>.json` 에 태스크당 프롬프트 패킷 저장. |
+| `transitions.py` | `decide(state)` + `apply_result(state, task, role, result)` — 순수 함수. tier는 spec_score/quality_score에서 커널이 계산 (LLM 자기 보고 무시). |
+| `dispatch.py` | `build(state, action)` → 전체 디스패치 자재 (command, prompt_path, schema_path, result_path, transport, model). |
+| `ledger.py` | `record(state, task, role, usage)` + `extract_payload(text)` — 비용/사용량 누적. |
+| `events.py` | `emit(orch_dir, event_type, payload)` → `<orch_dir>/events.jsonl` (append-only). |
+| `recovery.py` | 에스컬레이션 해소, reset 지시, drift-repair 안내. |
+| `drift.py` | `check(state)` → blocking/non-blocking drift 신호 (finalize 게이트). |
+| `quality.py` | `build_run_quality(state)` + `build_completion_audit(state)` (finalize 출력). |
+
+### 단일 작성자 상태 계약
+
+- **`state.json`은 커널만 씁니다.** `init` / `next` / `submit` / `finalize` / `resolve-escalation` 이 유일한 write path입니다.
+- **`quality_trend`는 `transitions.apply_result`만 append합니다** (verifier PASS시 rolling max 10). v2의 `phase_boundary.py` 작성자는 v3에서 제거됨.
+- **`timing.started`는 `next`가 set-if-absent로 스탬프합니다.** `timing.completed`는 terminal 전환시 `submit`이 스탬프합니다.
+- **비용은 `ledger.record`가 `submit` 내부에서 누적합니다.** 수동 `accumulate_cost.py` 호출 없음.
+
+### Stop 훅 — kernel.py check-stop
+
+`<worktree>/.claude/settings.json`의 Stop 훅이 `kernel.py check-stop`을 실행합니다 (v2.26 `finalization-stop-gate.sh` 대체):
+
+| 신호 | exit | 의미 |
+|------|------|------|
+| `all_tasks_terminal_finalize_pending` | 2 (BLOCK) | `kernel.py finalize` 실행 |
+| `batch_drain_pending` | 2 (BLOCK) | `kernel.py next` (batch verifier) 후 finalize |
+| `already_finalized` | 0 (ALLOW) | 차단 없음 |
+| `not_ready` | 0 (ALLOW) | 아직 태스크 진행 중 (mid-run pause 허용) |
+
+### v3.0에서 제거/deprecation된 v2 스크립트
+
+| 스크립트 | v3에서 |
+|----------|--------|
+| `scripts/phase_boundary.py` | **삭제** — quality_trend/timing은 커널이 소유 |
+| `scripts/build_context_slice.py` | **삭제** — 커널 packet 빌딩이 대체 |
+| `scripts/state_resume_digest.py` | **삭제** — `kernel.py inspect`가 대체 |
+| `scripts/finalize_run.py` | **deprecated** — `kernel.py finalize`가 대체 |
+| `scripts/validate_state_schema.py` | **deprecated** — `kernel/validate.py`가 대체 |
+| `scripts/materialize_worktree_hooks.py` | **deprecated** — `kernel.py init`이 hooks materialize |
+| `scripts/migrate_legacy_state.py` | **deprecated** — `kernel/migrate.py`가 대체 |
+| `scripts/accumulate_cost.py` | **deprecated** — `ledger.record`가 submit 내부에서 누적 |
+| `scripts/dispatch_transition_combined.py` | **deprecated** — `dispatch.py`가 대체 |
+
+---
+
 ## 13. 갱신 프로토콜
 
 다음 중 하나를 변경하면 **이 파일을 갱신하세요**:
@@ -444,13 +515,14 @@ Plan Reviewer (Phase 0 Step 6.5) emits WARN issues for same-wave collisions so t
 | 이 문서의 주제 | 갱신 트리거 |
 |----------------|-------------|
 | 서브에이전트 카탈로그 (§4) | 새 역할 추가, 역할 제거, 모델 매핑 변경 |
-| state.json 스키마 (§5) | 새 필드, 필드 의미 변경 |
+| state.json 스키마 (§5) | 새 필드, 필드 의미 변경, schema_version 변경 |
 | 격리 메커니즘 (§6) | 새 훅, 새 worktree 패턴, 새 안전 경계 |
 | 위험 등급 (§7) | 기준 변경, 승격 규칙 변경, 모드 기반 오버라이드 추가 |
 | 품질 채점 (§8) | 임계값 변경, 등급 변경, 추세 규칙 변경 |
 | Eval 하네스 (§10) | 새 픽스처 타입, 새 측정 계층, 새 캘리브레이션 도구 |
 | 실패 모드 (§12) | 새 ESCALATE 카테고리, 새 재시도 규칙 |
 | 학습 로그 (§14) | 새 이벤트 타입, 새 헬퍼 서브커맨드, 스키마 변경, 새 살균 규칙, 후보 파일 경로 변경 |
+| 커널 아키텍처 (§15) | 커널 모듈 추가/제거, init→next→submit 사이클 변경, Stop 훅 신호 변경, v2 스크립트 retirement 추가 |
 
 **갱신하지 말 것**:
 - 새 픽스처 추가 (`evals/` 의 일)

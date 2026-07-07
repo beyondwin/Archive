@@ -1,6 +1,6 @@
 # v3.0-deterministic-kernel
 
-**Status**: In progress
+**Status**: COMPLETE — SHIP recommended (live-smoke pending; see findings/F01-close-out.md)
 **Branch**: `experiment/cme-v3-deterministic-kernel`
 **Production baseline**: main
 
@@ -17,7 +17,7 @@ Rebuild the kws-claude-multi-agent-executor skill around a deterministic Python 
 ## Status / quick links
 
 - [JOURNAL.md](./JOURNAL.md) — chronological log of work
-- [Spec: 2026-07-06-cme-v3-deterministic-kernel-design.md](../../../docs/superpowers/specs/2026-07-06-cme-v3-deterministic-kernel-design.md)
+- [Spec: 2026-07-06-cme-v3-deterministic-kernel-design.md](../../../../../docs/superpowers/specs/2026-07-06-cme-v3-deterministic-kernel-design.md)
 - [decisions/](./decisions/) — ADRs per major decision
 - [findings/](./findings/) — data and analysis
 
@@ -25,13 +25,31 @@ Rebuild the kws-claude-multi-agent-executor skill around a deterministic Python 
 
 | Task | Status | Notes |
 |------|--------|-------|
-| T1: Kernel scaffold + atomic state I/O | In progress | |
-| T2-T16 | Pending | |
+| T1: Kernel scaffold + atomic state I/O | COMPLETE | |
+| T2: State schema v3 + init module | COMPLETE | |
+| T3: Migration bridge | COMPLETE | |
+| T4: Plan parser | COMPLETE | |
+| T5: Validator + schemas | COMPLETE | |
+| T6: Transitions module | COMPLETE | |
+| T7: Dispatch module (headless-first) | COMPLETE | |
+| T8: Ledger + events modules | COMPLETE | |
+| T9: kernel.py CLI (init/next/submit/check-stop/finalize/inspect/resolve-escalation) | COMPLETE | |
+| T10: Packets module | COMPLETE | |
+| T11: Gate module | COMPLETE | |
+| T12: Recovery module | COMPLETE | |
+| T13: Drift module | COMPLETE | |
+| T14: Quality module + Stop hook cutover | COMPLETE | |
+| T15: SKILL.md cutover to v3.0 | COMPLETE | |
+| T16: Eval rebaseline + docs sync + close-out | COMPLETE | |
 
 ## Decisions index
 
-(One line per ADR. Update as you write them.)
+| ADR | Subject | Status |
+|-----|---------|--------|
+| [D001-local-fallback-adaptation.md](./decisions/D001-local-fallback-adaptation.md) | Local fallback for operator-review escalation vs full-context orchestrator implements | Shipped |
 
 ## Findings index
 
-(One line per finding doc.)
+| Finding | Subject |
+|---------|---------|
+| [F01-close-out.md](./findings/F01-close-out.md) | v3.0 close-out: SHIP/SKIP recommendation + Success Criteria evidence |

@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# DEPRECATED (v3.0 T16): This template is NOT installed by v3.0. The Stop hook
+# now calls `kernel.py check-stop` (see SKILL.md ④·b and scripts/kernel/kernel.py).
+# Kept for reference / git history only. DO NOT USE for new runs.
+#
 # Stop hook — finalization forcing function (v2.26).
 #
 # Materialized into <orch_dir>/hooks/finalization-stop-gate.sh at Phase 0

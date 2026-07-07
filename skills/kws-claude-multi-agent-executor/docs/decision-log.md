@@ -189,6 +189,16 @@ MAST 14 실패모드 렌즈로 픽스처 커버리지를 매핑하고 고가치 
 
 ---
 
+## v3.0 — Deterministic kernel (출하 2026-07-07)
+
+v2.x 전체의 freeze-skip 회귀 클래스 근본 해소: 오케스트레이터가 산문 전환 규칙을 읽고 판정하는 구조 → 결정론적 Python 커널(`scripts/kernel/`)이 모든 판단·기록을 소유. 오케스트레이터는 `kernel.py next` 실행 후 반환된 액션을 그대로 수행하고 `kernel.py submit`만 호출. 16개 태스크, 16/16 커널 단위 테스트 파일 green.
+
+| ADR | 주제 | 결과 |
+|-----|------|------|
+| [D001-local-fallback-adaptation](./experiments/v3.0-deterministic-kernel/decisions/D001-local-fallback-adaptation.md) | CPE의 `local_fallback` 모드(메인 에이전트 직접 구현)를 CME로 이식하지 않는 이유 — CME 핵심 가드레일("오케스트레이터는 코드를 쓰지 않음")과 충돌; 대신 trust/risk block → `escalate_to_user`로 라우팅 | **decided (shipped)** |
+
+---
+
 ## 가로지르는 결정 (한 실험 아래에 속하지 않음)
 
 ### 오케스트레이터-워커 패턴 (vs 단일 세션)
