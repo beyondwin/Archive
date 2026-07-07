@@ -2,309 +2,322 @@
 name: kws-claude-multi-agent-executor
 description: Use when you have an implementation plan and design spec to execute autonomously — Opus orchestrates, Sonnet sub-agents implement/review/verify/document. Provide plan path and spec path at invocation. NOTE — single-session execution is preferable for ≤5-task plans or plans with deep cross-task coupling (multi-agent overhead exceeds the parallelism win).
 metadata:
-  version: "2.29.0"
-  updated_at: "2026-06-07"
+  version: "3.0.0"
+  updated_at: "2026-07-07"
 ---
 
-# KWS Claude Multi-Agent Executor
+# KWS Claude Multi-Agent Executor (v3.0 — kernel-driven)
 
-## Path layout
+You are the **Orchestrator** running on Opus. You execute an implementation plan
+from start to finish autonomously using fresh Sonnet sub-agents. You do NOT decide
+transitions, compute review tiers, count retries, append `quality_trend`, or stamp
+timing. **A deterministic Python kernel owns every one of those decisions.** Your
+job is to run the kernel, perform the concrete action it returns, feed the result
+back, and repeat. Do not ask the user for approval between tasks.
 
-**All persistent state lives under `~/.claude/`, NOT inside the source repo or repo-sibling directories.** The two key locations are paired by a shared `<plan-slug>-<YYYYMMDD-HHMMSS>` suffix derived once per run:
+> **v3.0 is a cutover.** The prose transition-decision logic, `<active>`-substitution
+> bookkeeping, retry accounting, and quality-trend appends that earlier versions
+> carried in this document are **gone** — they moved into `scripts/kernel/`. If you
+> find yourself "deciding what to do next" from prose, STOP: that is the kernel's
+> job. Run `kernel.py next` and do exactly what it says.
+
+The kernel CLI is `scripts/kernel/kernel.py` with subcommands:
+`init` · `next` · `submit` · `check-stop` · `finalize` · `inspect`.
+Every invocation prints a single JSON object to stdout. Exit code `3` = error
+(hard halt), exit code `2` = halt/stop-blocked, exit code `0` = normal.
+
+---
+
+## ① Path conventions
+
+**All persistent state lives under `$HOME/.claude/`, NOT inside the source repo.**
+The kernel derives one `RUN_ID` per run and pairs two sibling directories by it:
 
 | Placeholder | Resolved path | Contains |
 |-------------|---------------|----------|
-| `<worktree>` (a.k.a. `<worktree_path>`, `WORKTREE_ABS`) | `~/.claude/worktrees/<plan-slug>-<YYYYMMDD-HHMMSS>/` | The git worktree — code, working tree, `.git`, `.claude/settings.json` only |
-| `<orch_dir>` (a.k.a. `ORCH_DIR`) | `~/.claude/orchestrator/<plan-slug>-<YYYYMMDD-HHMMSS>/` | All orchestrator state — `state.json`, hooks, learning_events, verifier/docs prompts+results, headless logs, DECISIONS.md |
+| `<worktree>` (`state.worktree`) | `$HOME/.claude/worktrees/<RUN_ID>/` | The git worktree — code, `.git`, and `<worktree>/.claude/settings.json` (the four safety hooks). Nothing else this skill adds. |
+| `<orch_dir>` (`state.orchestrator_dir`) | `$HOME/.claude/orchestrator/<RUN_ID>/` | All orchestrator state — `state.json`, `hooks/`, `packets/`, `prompts/`, `results/`, `events.jsonl`. |
 
-The shared suffix is computed ONCE in Phase 0 Step 2 (or Phase -1 step a when self-spawning) and persisted into `state.worktree` and `state.orchestrator_dir`. Every downstream step reads these fields rather than re-deriving paths. The worktree and orchestrator-state directory are siblings, NOT nested.
+`RUN_ID` = `<plan-slug>-<YYYYMMDD-HHMMSS>`, derived ONCE by `kernel.py init` and
+persisted into `state.worktree` / `state.orchestrator_dir`. Every downstream step
+reads those fields — never re-derive paths. The worktree and orchestrator-state
+directory are **siblings, NOT nested**.
 
-**Worktree contents:** code + `.git` + `<worktree>/.claude/settings.json` (claude code loads project-local settings from cwd; the file's `command` strings reference absolute paths under `<orch_dir>/hooks/...`). Nothing else added by this skill. Sub-worktrees in the Parallel Sub-Flow get the same settings.json byte-identical — no path rewrite needed because hook scripts live outside every worktree.
-
-**Tilde expansion:** `~/.claude/` MUST be expanded to `$HOME/.claude/` (or the absolute equivalent) before being written into state.json or passed to sub-agents. Sub-agents and headless subprocesses cannot reliably expand `~` themselves. Bash command examples in this document write the literal `~/.claude/...` for readability; the orchestrator MUST substitute the absolute path before execution.
-
-## Overview
-
-You are the **Orchestrator** running on Opus. Execute an implementation plan from start to finish autonomously using fresh Sonnet sub-agents. Do not ask the user for approval between tasks.
-
-**At invocation, the user provides:**
-- **Plan path** — `plan=<path>` (required). For multi-plan sequential runs (v2.13), add `plan2=<path>`, `plan3=<path>`, … `planN=<path>` and matching `specN=<path>` pairs; the skill auto-chains them in numeric order with `manifest=` NOT required.
-- **Spec path** — `spec=<path>` (required for the primary plan). For multi-plan runs add `spec2=`, `spec3=`, … paired with each `planN=`.
-- Optionally: `risk=<low|mid|high>` to override risk level for all tasks (run-level — shared across all plans in a chain).
-- Optionally: `docs_scope=<file1,file2>` to override which docs are updated.
-- Optionally: `implementer_model=<opus|sonnet>` — override the Implementer sub-agent's model. Default is `sonnet`. The Reviewer and Verifier always run on Sonnet regardless (judge consistency). See `docs/experiments/v2.12-implementer-opus-vs-sonnet/` for the rationale.
-- Optionally: `parallel=off` to force sequential task dispatch (default is parallel where possible).
-- Optionally: `mode=interactive` for single-session execution (no headless self-spawn — uses subscription pool instead of Agent SDK credits).
-
-**Natural-language args (v2.13):** instead of writing `implementer_model=opus parallel=off`, you may include the words `opus` (or `오푸스`) and `순차` (or `sequential`) anywhere in the args text. The skill scans free-text tokens and applies them. Explicit `key=value` always wins; contradictions halt. See Phase -1.0 for the full lexicon and conflict rules.
+`$HOME` MUST be an absolute path everywhere. The kernel writes absolute paths into
+state.json and into the hook command strings; never write a literal `~`.
 
 ---
 
-## Active-tree resolution (v2.13)
+## ② Invocation contract
 
-Throughout the rest of this document, the placeholder **`<active>`** refers to the JSON path of the currently-active plan's per-plan state. It expands at runtime as follows:
+**At invocation the user provides** (as a single args string):
+- `plan=<path>` — required. Multi-plan: `plan2=`, `plan3=`, … with matching `spec2=`, …
+- `spec=<path>` — required for the primary plan.
+- Optional: `risk=<low|mid|high>`, `implementer_model=<opus|sonnet>` (default sonnet),
+  `parallel=off`, `mode=<...>`, `docs_scope=<...>`. Natural-language tokens (`opus`,
+  `순차`/`sequential`, `대화형`/`interactive`) are also parsed. Explicit `key=value` wins.
 
-| State.json shape | `<active>` expands to |
-|------------------|------------------------|
-| `state.plan_chain` present (multi-plan) | `state.plan_chain[state.active_plan]` |
-| Otherwise (single-plan) | `state` (top-level) |
-
-`state.active_plan` is an **integer** index (0, 1, 2, …) whenever `plan_chain` is present. A legacy v2.12 `plan2_state`-shaped state.json is rewritten into this `plan_chain` shape by the one-time migration shim at Phase 0 Step 0 (`scripts/migrate_legacy_state.py`) **before** any `<active>` logic runs, so no live state.json reaching Phase 1 carries `plan2_state`.
-
-**Per-plan fields** (live under `<active>`, NOT directly under `state` in multi-plan runs):
-`tasks`, `task_summaries`, `quality_trend`, `baseline`, `low_tasks_pending_verification`, `global_constraints`, `compaction_points`, `execution_plan`, `risk_levels`, `task_complexity`, `last_compaction_after_task`, `last_completed_task`, `last_completed_at`, `plan_review`.
-
-**Run-level fields** (always at top-level `state.*`, shared across all plans in a chain):
-`active_plan`, `plan_chain`, `implementer_model`, `spec_edits`, `test_command`, `mode`, `branch`, `worktree`, `timestamps`, `chain_resume`, `plan`, `spec` (legacy mirrors of plan_chain[0]).
-
-Every read or write to a per-plan field MUST go through `<active>` resolution. Hard-coding `state.tasks` or `state.quality_trend` for a multi-plan run silently corrupts the chain: plan 0's data writes to top-level while plan 1's writes to `plan_chain[1]`, and the two trees diverge. The placeholder is **not optional** — wherever you see `<active>.foo` below, substitute the correct path before reading or writing.
-
-In bash/jq fragments throughout the skill (e.g., Monitor scripts), the same rule applies via the `active_plan` dispatch:
+**Step 1 — init.** Run:
 
 ```bash
-if jq -e '.plan_chain' state.json >/dev/null 2>&1; then
-  ACTIVE='.plan_chain[.active_plan]'
-else
-  ACTIVE='.'
-fi
+python3 <skill_dir>/scripts/kernel/kernel.py init --args "<the user's args string>" --repo-root "<source repo root>"
 ```
 
-Use `$ACTIVE.tasks`, `$ACTIVE.quality_trend`, etc. in jq queries downstream.
+`init` performs the dirty-tree check (`git status --porcelain` — uncommitted changes
+→ `{"halt":"dirty_worktree"}`, exit 2, do NOT proceed), derives `RUN_ID`, creates the
+worktree + branch, materializes the four worktree hooks, creates `<orch_dir>`
+subdirs, and writes an initial `state.json` (schema_version 3, `status:"SETUP"`).
+It returns `{"run_id", "state_path", "worktree", "orchestrator_dir", "echo_line"}`.
+Print `echo_line` to the user immediately — it is their one chance to catch a
+mis-parsed arg. Any `{"halt":...}` return (dirty_worktree / worktree_add_failed /
+hooks_materialization_failed) is a **hard halt** — report and stop.
+
+**Step 1.5 — SETUP (plan → state assembly). REQUIRED before the first `next`.**
+`init` writes an EMPTY `tasks` / `execution_plan` / `risk_levels` / `compaction_points`
+/ `spec_manifest`. `kernel.py next` on that empty state returns
+`{"action":"halt","reason":"no_dispatchable_task"}`. There is deliberately **no
+`kernel.py setup` subcommand** — the plan→state assembly is performed by the
+orchestrator following **`references/phases/phase-0-setup.md`**, which drives the
+kernel library modules (all under `scripts/kernel/`, importable, no CLI):
+
+- `planparse.parse(plan_text)` → tasks list (id, title, files, body, acceptance) +
+  structural-validation errors (missing Files block, out-of-repo path → halt to user).
+- `gate.assign_risk(tasks, override)` → `risk_levels` per task.
+- `gate.partition_waves(tasks, risk, parallel)` → `execution_plan` as **`list[list[str]]`**
+  (the exact shape `decide()` iterates — a `list[dict]` silently breaks dispatch).
+- `packets.build_packet(task, manifest, spec_text, budget_chars)` → write one packet
+  per task to `<orch_dir>/packets/<task_id>.json` (dispatch reads these for context).
+- `gate.preflight(task, packet, state)` — the **single source of dispatch decisions**
+  per task (see the delegate/block seams in ④). Never bypass it.
+- Take the baseline (`run_command` purpose baseline, ⑤), assign `compaction_points`,
+  write `spec_manifest`, set `status:"RUNNING"`, and persist all of the above into
+  `state.json`.
+
+Read `phase-0-setup.md` and follow it to completion, then proceed to ③. This SETUP
+step is a real contract boundary: the kernel cannot dispatch a task that SETUP did
+not write into `state.execution_plan` + `state.tasks`.
 
 ---
 
-## Phase -1: Mode Selection (Autonomy Gate)
+## ③ Execution cycle: `next → perform action → submit`
 
-> **Procedure extracted (v2.19 T1.1)**: argument parsing, mode detection,
-> self-spawn, and Resume Chain procedures live in
-> `references/phases/phase-minus-1-args-and-spawn.md`.
->
-> **Required action at the start of every invocation**: before doing anything
-> else, `Read` `references/phases/phase-minus-1-args-and-spawn.md` and follow
-> its instructions to completion. That file specifies:
->
-> 1. **Phase -1.0** — three-pass argument parser (key=value, multi-plan auto-detection, NL keyword lexicon) with the echo line and conflict halt rules.
-> 2. **Phase -1.1** — mode detection (`mode=interactive` skip, `<<HEADLESS_KWS_ORCHESTRATOR>>` skip, otherwise Self-Spawn).
-> 3. **Self-Spawn Procedure** — interactive Phase 0 Steps 1, 1.5, 2, 2.5; minimal state.json write with AgentLens `run-open`; headless prompt file; detached subprocess spawn with subshell-`cd` cwd enforcement; Monitor real-time progress notifications.
-> 4. **Resume Chain** — token-aware + legacy-floor trigger; UUID resume session; PID atomic swap; `kws-cme.context_health` boundary emit; `AGENTLENS_PARENT_RUN_ID` propagation.
->
-> All values resolved in Phase -1 (parsed args, `ORCH_RUN_ID`, plan_chain list,
-> branch/worktree paths) persist into `state.json` so downstream phases read
-> them from state rather than re-parsing. See the reference file for the
-> authoritative JSON shapes.
+This is the entire loop. Repeat until `finalize` returns `status:"finalized"`.
 
----
+```
+loop:
+  action = python3 kernel.py next --state <state_path>     # kernel decides
+  perform the action exactly as the §④ table dictates       # you perform it
+  if action was a dispatch:
+      python3 kernel.py submit --state <state_path> --task <id> --role <role> --result <result_path>
+  # go back to loop
+```
 
-## Phase 0: Setup
+**The kernel decides; you perform.** `next` returns the next action AND (for a
+dispatch) all materials needed to perform it. You never choose the action, the role,
+the retry count, or whether a task passed — those are in the returned JSON.
 
-> **Procedure extracted (v2.21 D005)**: the full Phase 0 setup procedure —
-> resume protocol + legacy `plan2_state` migration, plan/spec validation gates,
-> clean-tree + cross-run isolation checks, worktree + safety-hook creation,
-> document reading, ambiguity gate, spec manifest, risk assignment, local-env
-> preflight, baseline test, dependency graph / compaction points / execution
-> plan, Plan Reviewer preflight, state.json initialization, and the mandatory
-> `kws-cme.phase_0_started` boundary emit — lives in
-> `references/phases/phase-0-setup.md`.
->
-> **Required action when you reach Phase 0**: `Read`
-> `references/phases/phase-0-setup.md` and follow it to completion before
-> entering Phase 1. It defines Steps 0 through 7.5; on the `headless_pending`
-> resume path it specifies which Steps (1, 1.5, 2, 2.5) to skip. Every value it
-> resolves (baseline, risk_levels, execution_plan, the full state.json) persists
-> into `state.json` so downstream phases read from state rather than re-deriving.
+**Loop exit — read this carefully.** `decide()` does NOT emit a `done` action, and
+after finalize it does NOT stop returning `finalize` (it does not check
+`status==FINALIZED`). Therefore:
+- The loop ends when **`kernel.py finalize` returns `{"status":"finalized", ...}`**.
+- Do NOT wait for a `done` action — it never comes; waiting spins `finalize` forever.
+- Do NOT re-run `next` after a successful `finalize`; it would re-emit `finalize`.
 
----
+**Polite-stop is forbidden (see ⑥).** A sub-agent PASS, a `submit` `accepted:true`,
+a `next_hint` — none is a reporting moment. Proceed to the next loop iteration in the
+same turn.
 
-## Phase 1: Per-Task Cycle
+### Performing a `dispatch`
 
-> **Procedure extracted (v2.21 D005)**: the per-task execution cycle — Step 1
-> Dispatch Implementer, Step 2 Combined Reviewer (incl. the P15 spec-edit branch
-> and the standard retry branch), Step 3 Verifier (MID/HIGH only), Step 3.5
-> learning-log candidate scan, and Step 4 Agent Cleanup — lives in
-> `references/phases/phase-1-task-cycle.md`. The multi-task Parallel Sub-Flow (P2)
-> lives in `references/phases/phase-1-parallel-subflow.md`.
->
-> **Required action when you reach Phase 1**: `Read`
-> `references/phases/phase-1-task-cycle.md` and follow it for every task in
-> `<active>.execution_plan` (waves outer, parallel groups inner). For a parallel
-> group of size ≥ 2 it directs you to the Parallel Sub-Flow reference. Advance
-> only when the current task or group reaches Agent Cleanup successfully.
+`next` returns, alongside `action/role/task_id/attempt`, the dispatch materials from
+`dispatch.build`: `prompt_path`, `schema_path`, `result_path`, `transport`, `model`,
+`cwd`, and either `command` (transport `"p"`) or `agent_instruction` (transport
+`"agent"`).
 
----
+- **transport `"p"`** — run the returned `command` verbatim (it is a
+  `claude -p … --json-schema … > <result_path>` string, already shlex-quoted). Run it
+  with cwd = the returned `cwd` (the worktree).
+- **transport `"agent"`** — dispatch a fresh sub-agent via the Agent tool using
+  `agent_instruction` (read the prompt at `prompt_path`, do the work, write structured
+  JSON to `result_path`), passing the returned `model`. For `opus` you MUST set the
+  model parameter explicitly; `sonnet` may omit it.
 
-## Phase Transition
+Read the role prompt template only at dispatch time — the kernel has already written
+the fully-substituted prompt to `prompt_path`, so you dispatch that file, you do not
+re-assemble it. After the sub-agent writes `result_path`, call `submit`.
 
-> **Procedure extracted (v2.21 D005)**: the compaction-point procedure — Step T1
-> batch Verifier for accumulated LOW tasks, Step T2 Phase Docs Updater, and Step
-> T3 state anchor + context drop (token-health evaluation + Resume Chain trigger)
-> — lives in `references/phases/phase-transition.md`.
->
-> **Required action at each compaction point**: `Read`
-> `references/phases/phase-transition.md` and follow T1 → T2 → T3 after Agent
-> Cleanup of the boundary task, before starting the next task.
+`next` also auto-stamps `timing.started` (set-if-absent) and persists state — you do
+NOT stamp timing yourself.
+
+### Submitting a result
+
+```bash
+python3 kernel.py submit --state <state_path> --task <task_id> --role <role> --result <result_path>
+```
+
+`submit` reads the result file, extracts the payload+usage, validates against the
+role schema, folds the result into state (tier computed BY THE KERNEL from
+spec_score/quality_score — never trust the sub-agent's self-reported status), records
+cost, stamps `timing.completed` on terminal transition, emits a `task_progress`
+event, and returns one of the shapes in §④. Handle its return per the table, then
+loop back to `next`.
 
 ---
 
-## Escalation Protocol
+## ④ Action-handling table — CODE-VERIFIED
 
-> **Procedure extracted (v2.21 D005)**: the orchestrator's full response to any
-> sub-agent `STATUS: ESCALATE` (AMBIGUITY, SPEC_BLOCKER, ENV_BLOCKER, escalation
-> cap) plus the ENV_BLOCKER triage pointer — lives in
-> `references/phases/phase-1-escalation.md`.
->
-> **Required action when a sub-agent escalates**: `Read`
-> `references/phases/phase-1-escalation.md` and follow it. The ESCALATE type enum
-> is summarized in the Safety Gates section below; the response procedure (and
-> the rule that the orchestrator — never a sub-agent — updates spec/plan
-> documents) lives in the reference.
----
+Every action below is verified against `scripts/kernel/transitions.py::decide` and
+`scripts/kernel/kernel.py` handlers. Handle EACH exactly as stated. An action the
+kernel emits that you mishandle is a runtime break the kernel tests cannot catch
+(SKILL.md is prose the tests do not read).
 
-## Phase 2: Final Phase
+### `kernel.py next` → `decide()` actions
 
-> **Procedure extracted (v2.21 D005)**: the finalization procedure — Step -1
-> Cross-Plan Trigger (multi-plan `plan_chain` advance), Step 0 LOW batch
-> Verifier sweep, Step 1 Final Docs Updater, Step 1.5
-> Method Audit Validation, and Step 2 Generate Final Summary Report (including the
-> `## Execution Summary` report template the orchestrator emits) plus the final
-> `agentlens run-close` — lives in `references/phases/phase-2-finalization.md`.
->
-> **Required action when all tasks are processed (COMPLETE or SKIPPED)**: `Read`
-> `references/phases/phase-2-finalization.md` and follow it to completion. It
-> defines the exact Final Summary Report layout and the success/blocked/aborted
-> run-close outcomes.
+| Action JSON | How to perform it | Kernel source |
+|-------------|-------------------|---------------|
+| `{"action":"dispatch","role","task_id","attempt", …materials}` (normal per-task) | Run the returned `command` (transport `p`) or Agent-tool dispatch via `agent_instruction` (transport `agent`); write result to `result_path`; then `submit`. | `transitions.py:236-241` (dispatch); `kernel.py:90-111` (materials merge); `dispatch.py:401-491` |
+| `{"action":"dispatch","role":"verifier","batch":true,"task_ids":[…],"task_id":<first>,"attempt":1}` (LOW batch-verify sweep before finalize) | Dispatch the verifier over the whole `task_ids` batch (LOW tasks accumulated as PENDING_BATCH); write result to `result_path`; then `submit` with `--role verifier --task <first task_id>`. Fires when all tasks terminal AND ≥1 PENDING_BATCH remains. | `transitions.py:196-212` |
+| `{"action":"run_command","purpose":"reset","command":"git reset --hard <sha>","task_id"}` | Run the git reset (restores pre-task SHA before re-dispatching a verifier-FAILed task), then loop back to `next`. The `PreToolUse` hook does NOT block `git reset --hard`. **`reset` is the only `run_command` purpose `decide()` emits.** | `transitions.py:222-230` |
+| `{"action":"compact","steps":["batch_verifier","docs_updater","anchor"]}` | Perform context compaction in the given step order (batch-verify accumulated LOW tasks → update phase docs → drop raw task context, anchor on state.json), then loop back to `next`. Fires only when `last_completed_task` is a `compaction_points` entry not yet compacted. **NOTE:** `compaction_points` has no kernel producer — this action never fires unless SETUP (②) wrote `compaction_points` into state. | `transitions.py:188-192` |
+| `{"action":"escalate_to_user","reason","questions":[…]}` | Batch the `questions` to the user and wait for their answer. This is the channel for: spec-clarification budget exhaustion, repeated ENV_BLOCKER, AND gate operator-review of a blocking executability issue (a trust/risk `block` from `gate.preflight`, per D001). After the user answers, **clear `state.pending_escalation`** (a SANCTIONED state edit — the kernel has no resolution subcommand and never clears the flag itself; the ENV_BLOCKER task is non-terminal so it re-escalates forever until you clear it) and apply the clarification, then loop back to `next`. | `transitions.py:178-184`; producers at `transitions.py:328-338` (spec-fault) and `:489-500` (ENV_BLOCKER) |
+| `{"action":"finalize"}` | Run `kernel.py finalize` (see below). Fires when all tasks terminal AND zero PENDING_BATCH. | `transitions.py:213-214` |
+| `{"action":"halt","reason":"no_dispatchable_task"}` | **Hard halt.** Emitted when no task is dispatchable but not all are terminal — a state inconsistency (usually SETUP did not populate `execution_plan`). Report the reason and stop. No prose fallback (⑤). | `transitions.py:218-220` |
+| `{"action":"done"}` | **Never emitted.** Listed in the decide() docstring but no `return` produces it, and `decide()` does not gate on `status==FINALIZED`. Do NOT wait for it. Loop exit is `finalize` returning `status:finalized` (③). | `transitions.py:167` (docstring only — no return) |
 
----
+### `kernel.py submit` responses
 
-## Cross-cutting references
+| Response JSON | How to handle it | Kernel source |
+|---------------|------------------|---------------|
+| `{"accepted":false,"violations":[…],"retry_hint":…}` | Schema violation. Re-dispatch per `retry_hint` (fix the flagged fields), then `submit` again. `submit` exits 0 — this is not an error. | `kernel.py:164-185` |
+| `{"accepted":false,"violations":[…],"retry_hint":…,"halt_pending":true}` | Same as above BUT 3 consecutive schema violations for this task have accumulated — a hard halt is imminent on the next violation. Fix the sub-agent's output contract; do not blindly re-dispatch. | `kernel.py:183-184` (`sv >= 3`) |
+| `{"accepted":true,"next_hint":<action>}` | Proceed. `next_hint` is a PREVIEW of `decide()`'s next action (advisory only — the authoritative call is the next `kernel.py next`). Loop back to `next` in the same turn (no polite stop). | `kernel.py:224-229` |
+| `{"error":"cannot_read_result_file: …"}` / `{"error":"ledger_parse_error: …"}` / `{"error":"cannot_read_schema: …"}` | **Hard halt** (exit 3). The result file is missing/unreadable, the `claude -p` envelope is unparseable, or the role schema is missing. Report and stop — no prose fallback (⑤). | `kernel.py:146,152,160,481-482` |
 
-Topics that span multiple phases live in `references/cross-cutting/`. The phase
-files link to them; read the relevant one when you need the full detail behind a
-guardrail or schema field:
+### `kernel.py check-stop` signals (Stop hook — see ④ below the table)
 
-| File | Covers |
-|------|--------|
-| `references/cross-cutting/state-schema.md` | Full `state.json` schema (single-plan + `plan_chain`); run-level vs per-plan field split |
-| `references/cross-cutting/multi-plan-chain.md` | `<active>` resolution mechanics, multi-plan detection, the Cross-Plan Trigger |
-| `references/cross-cutting/agentlens-emit-sites.md` | AgentLens emit-site catalog, candidate drain, `ORCH_RUN_ID` lifecycle, health probe |
-| `references/cross-cutting/safety-hooks.md` | The three worktree hooks (PreToolUse / PostToolUse / SubagentStop) and the path invariant |
-| `references/cross-cutting/decisions-register.md` | Per-plan `decisions_register` append + `DECISIONS.md` projection (v2.15 C2) |
-| `references/cross-cutting/agent-dispatch.md` | The `"agent"` dispatch transport (subscription-pool Agent-tool dispatch), its failure ladder, and detach interaction (v2.25) |
+| Response JSON | Exit | Meaning / next action | Kernel source |
+|---------------|------|-----------------------|---------------|
+| `{"halt":"all_tasks_terminal_finalize_pending","reason","next_action":"run kernel.py finalize"}` | 2 (BLOCK stop) | All tasks terminal, zero PENDING_BATCH, not finalized → run `kernel.py finalize`. | `kernel.py:288-295` |
+| `{"halt":"batch_drain_pending","reason","next_action":"run kernel.py next to dispatch the batch verifier, then finalize"}` | 2 (BLOCK stop) | ≥1 PENDING_BATCH lingers → run `kernel.py next` (dispatches the batch verifier), submit it, THEN finalize. Allowing the stop here ships LOW tasks UNVERIFIED — the wedge invariant. | `kernel.py:278-286` |
+| `{"check_stop":"already_finalized","stop":false}` | 0 (ALLOW) | `status==FINALIZED` — nothing to block. | `kernel.py:260-261` |
+| `{"check_stop":"not_ready","stop":false}` | 0 (ALLOW) | Tasks still in progress — a different loop drives them; the Stop hook does not block a mid-run pause. | `kernel.py:297` |
 
-The `<active>` resolution table above and the Guardrails table below are the
-load-bearing summaries kept in this entrypoint; the cross-cutting files hold the
-expanded detail, not a duplicate of the invariants.
+### `kernel.py finalize`
 
----
-
-## Guardrails
-
-These rules are absolute. No exceptions.
-
-| Rule | Detail |
-|------|--------|
-| **Path layout — `<worktree>` and `<orch_dir>` are siblings under `~/.claude/`** | `<worktree>` = `$HOME/.claude/worktrees/<RUN_ID>/`. `<orch_dir>` = `$HOME/.claude/orchestrator/<RUN_ID>/`. Same `<RUN_ID>` suffix (`<plan-slug>-<YYYYMMDD-HHMMSS>`) pairs them. Orchestrator state is NOT inside the worktree. `<worktree>/.claude/settings.json` is the only file this skill writes inside the worktree; its hook commands reference absolute paths under `<orch_dir>/hooks/`. |
-| **No dirty worktree start** | Run `git status` first. Uncommitted changes → abort with clear message. |
-| **Orchestrator never writes code** | All implementation goes through sub-agents. You read, plan, dispatch, and decide. |
-| **Sub-agents never self-resolve blockers** | Guessing around a blocker instead of escalating → output is invalid; re-dispatch. |
-| **Max 3 review retries per task** | Combined Reviewer retries (single counter). Hitting the limit → SKIP + records `verification_gaps` + continues (v2.29 I1; run does NOT halt — aligned with the escalation cap). |
-| **Max 3 verifier retries per task** | Hitting the limit → `git reset --hard <pre_task_sha>` then SKIP + records `verification_gaps` + continues (v2.29 I1; run does NOT halt). |
-| **Max 3 escalations per task** | Combined across all sub-agents **for that task**. Exceeding halts **that task and reports to user** — does not halt the entire run. |
-| **Reset before verifier re-dispatch** | Always `git reset --hard <pre_task_sha>` before retrying after Verifier FAIL. |
-| **Risk level set by Orchestrator** | Verifier receives explicit LOW / MID / HIGH. It does not self-assign. |
-| **Document updates are Orchestrator-only** | Never delegate spec or plan updates to a sub-agent. |
-| **Re-read changed sections after every update (v2.29 I6)** | After modifying the spec, re-read only the edited `spec_manifest.sections[<edited_sids>]` range (+ any directly dependent section), NOT the whole spec — the manifest is a slice index, so a one-section clarification reloads one section, not the full document. **Exception:** an edit that changes section boundaries/numbering (manifest structure) requires re-running `build_spec_manifest.py` and re-reading only the changed sections from the regenerated manifest. Plan edits (smaller docs) are still re-read fully. The integrity guarantee is unchanged; only the full-spec reload is removed. |
-| **Store summaries, not raw output** | Do not accumulate raw sub-agent output in context. Write structured results to state file and work from those. |
-| **Never auto-delete the worktree** | Report its location. The user decides when to merge or delete. |
-| **LOW tasks must reach batch verification** | LOW tasks skip per-task Verifier but MUST be covered by batch sweep at every compaction point and at Phase 2 Step 0. |
-| **State file is authoritative** | After each compaction, the state file is the source of truth. Drop raw task details from active context. |
-| **LOW task file-conflict upgrade** | See Phase 0 Step 4. Never allow two LOW tasks with shared files to batch together. |
-| **ISSUE_KEY matching for RECURRING** | RECURRING labels are determined by ISSUE_KEY exact match (file:line:category), never by fuzzy text comparison. |
-| **test_command is cached** | Derived once in Phase 0 Step 5; stored in state.json. Verifiers receive it pre-filled — do not re-derive. |
-| **State file write must be verified** | After every Write to state.json, immediately verify it is readable. If write fails: hard halt. |
-| **Headless subprocess dispatch** | Verifier and Docs Updaters run via `claude -p --dangerously-skip-permissions` (never Agent tool). Results in `<orch_dir>/{verifier,docs}_results/`. Missing result JSON → ENV_BLOCKER ESCALATE; check `.stdout` for diagnostics. |
-| **Two-phase commits** | See Phase 1 Step 2.5. `chore:` orchestrator state and `feat:` code are always separate commits. |
-| **PreToolUse hooks in worktree** | Phase 0 Step 2.5 writes `.claude/settings.json` blocking `rm -rf /`, force-push to protected branches, and `DROP TABLE/DATABASE/SCHEMA`. |
-| **PostToolUse hook is the only debug-artifact gate** | `<orch_dir>/hooks/scan-debug-artifacts.sh` (materialized at Phase 0 Step 2.5) is runtime-enforced. The orchestrator does NOT run a parallel manual grep — that duplication was removed in v2.5.0 because prose discipline silently bypassed. If the hook is disabled or missing, fix it; do not re-introduce the manual scan. |
-| **SubagentStop hook validates Implementer output structure** | `<orch_dir>/hooks/check-implementer-output.sh` exits 2 if STATUS / SUMMARY / FILES_CHANGED / FILES_TEST_CHANGED (or COMMIT on DONE, ESCALATE fields on ESCALATE) are missing. Sub-agent auto-retries; no orchestrator action needed. |
-| **Stop hook forces finalization (v2.26)** | `<orch_dir>/hooks/finalization-stop-gate.sh <orch_dir>/state.json <skill_dir>/scripts` (wired at Phase 0 Step 2.5). A cheap `jq` short-circuit exits 0 while any task is non-terminal; only once **every** task is terminal AND a real end-signal fired — run-level `status: COMPLETE`, `current_task` cleared with a recorded `last_completed_task`, or (v2.28, D002) simply **every declared task terminal** at Stop time — does it run `finalize_run.py --check` + `validate_state_schema.py`, exiting 2 to block the stop if the run is done-but-unfinalized or non-canonical. Resolves the two Phase-2-only gate gaps — skipped-Phase-2 bypass and attached-mode schema improvisation (D001) — plus the run-3 `status:null` / `current_task`-set / `last_completed_task`-null all-terminal gap (D002). Fail-open on hook-internal error, fail-closed on detected inconsistency. Advisory-blocking like the rest of the worktree hook suite. |
-| **Worktree settings.json is script-materialized + merged (v2.27)** | Phase 0 Step 2.5 runs `scripts/materialize_worktree_hooks.py` (never a hand-written JSON). It deep-merges the four hook events into any pre-existing repo `.claude/settings.json`, preserving `permissions`/`$schema`/other hook events, and self-asserts `Stop` → `finalization-stop-gate.sh`. Non-zero exit = hard halt. `--check` mode re-asserts without writing and runs as the Task-1 preflight. Resolves the run-2 hook-wiring loss (v2.27 D001). |
-| **Cost/timing drift is a blocking finalize FAIL (v2.27)** | `finalize_run.py` treats `cost_ledger.totals.dispatches == 0` (unless `cost_tracking_waived`) and all-terminal-tasks-`timing.started`-null (unless `timing_tracking_waived`) as FAIL, not WARN. The Stop gate then blocks a drifted attached run from finishing silently green. Partial timing misses stay per-task WARN. Blocking forces fix-or-explicit-waive; it does not recover lost data (v2.27 D002). |
-| **Finalize asserts worktree hooks are wired (v2.27)** | `finalize_run.py` raises blocking `hooks_not_wired` FAIL (unless `hooks_wiring_waived`) when `<worktree>/.claude/settings.json` is present+parseable but missing the four hooks / Stop gate (reuses `materialize_worktree_hooks.check_problems`). Skips silently when the `worktree` key is absent or the file is missing/unparseable, so replays/cleaned worktrees never false-positive. Finalize-time backstop for a run that skipped Step 2.5 (wired no Stop gate); rides the Phase 2 Step 2 `--fix` site, a distinct skip from Step 2.5 (v2.27 D003). |
-| **Cost tracking auto-waives on the all-agent path (v2.28, D001)** | When every role gate is `"agent"` and the run is `interactive_attached`, Phase 0 Step 7 sets run-level `cost_tracking_waived=true` / `cost_tracking_waive_reason="agent-dispatch-no-usage"`. Subscription-pool Agent-tool dispatches return no token usage, so there is no ledger to populate and budget enforcement is intentionally off; `finalize_run.py` reads the waive and does NOT raise the `cost_ledger.dispatches==0` FAIL. Both fields are RUN-LEVEL and PRESERVED across every resume / plan_chain swap / Resume Chain handoff — never recompute or clear the waive on a subsequent resume. The pre-v2.28 prose falsely claiming subscription dispatches return a usage object was removed. |
-| **`timing_inverted` is an un-waivable blocking FAIL (v2.28, D003)** | `finalize_run.py` parses each terminal task's `timing.started` / `timing.completed` via `_parse_iso` and raises a blocking `timing_inverted` FAIL when `completed < started`. Unlike the cost/timing-null FAILs this one has NO waive escape hatch — inverted timestamps are corruption, not absent data, so the run cannot be declared COMPLETE until the state is fixed. The Stop gate blocks a drifted attached run from finishing silently green on this signal. |
-| **Telemetry-coverage gaps WARN at finalize (v2.28, D003)** | `finalize_run.py` emits `quality_trend_sparse` (a multi-task run whose `<active>.quality_trend` buffer is empty/short relative to completed tasks) and `agentlens_run_absent` (no `agentlens_orchestration_run` id recorded despite a non-degenerate run) as non-blocking WARNs. These surface silent instrumentation regressions without halting the run. `quality_trend` is now written SOLELY by `phase_boundary.py` task-complete (single writer) — no inline prose append. |
-| **Non-canonical task keys WARN at schema gate (v2.28, D003)** | `validate_state_schema.py` matches every task key against `TASK_KEY_RE` (`^task_\d+(_[a-z0-9-]+)?$`, e.g. `task_3`, `task_7_remediation`) and emits a `task_key_noncanonical` WARN for any key that does not conform. Non-blocking — keeps downstream `to_entries`/sort logic robust without halting an otherwise-valid run. |
-| **Plan Reviewer is mechanical, not subjective** | Phase 0 Step 6.5 audits the plan/spec against a fixed rubric (missing Files, missing AC on MID/HIGH, contract mismatch, dep cycles, out-of-repo paths). Style/architecture suggestions are out of scope and MUST be ignored if the sub-agent returns them. BLOCKER issues halt with a batched user question; WARN issues are recorded and bypass. Skip the entire step via `preflight=off`. |
-| **Effort scaling is heuristic and biased upward** | Phase 0 Step 6 assigns SMALL/MEDIUM/LARGE per task for tool budget and review/verification routing only. Task size is not a TDD skip condition: any Implementer task that writes or modifies executable code or behavior must use `superpowers:test-driven-development` and report RED evidence before implementation, whether SMALL, MEDIUM, or LARGE. Docs-only, config-only, or generated-only tasks may report TDD as not applicable. Mis-estimation is acceptable as mild over-engineering; never silently under-instruct a HIGH-risk task (risk_mult forces LARGE). |
-| **Quality scoring thresholds are not user-configurable** | SPEC threshold 0.85, QUALITY threshold 0.75, WARN floors 0.70/0.60 (P4). Calibrated against the P6 eval suite. Re-tune only when re-calibrating against a new Claude version, not per-run. |
-| **WARN tier does not retry** | A WARN-tier review proceeds to Verifier with warnings recorded in `task_summaries.task_N.warnings`. WARN exists to prevent burning the 3-retry budget on borderline work. Three consecutive WARN tasks → surface at next compaction (signal, not halt). |
-| **`quality_trend` is rolling, max 10** | Phase 1 Step 2 appends `quality_score` to `<active>.quality_trend` (drop oldest at length 10). Each plan in a v2.13 chain has its own buffer at `state.plan_chain[N].quality_trend`. Mean-of-last-5 < mean-of-first-5 by > 0.10 → surface at next compaction. |
-| **Parallel Implementer outputs must respect declared Files: blocks** | Step P.4 verifies each sub-worktree's `FILES_CHANGED` is a subset of its task's declared `Files:` block AND that no two sub-worktrees in the same group touched the same file. Violation halts the group, removes sub-worktrees, and re-dispatches the offender sequentially. Never silently merge an out-of-scope parallel edit. |
-| **Sub-worktrees inherit `.claude/settings.json` byte-identical** | Step P.1 copies ONLY `<worktree>/.claude/settings.json` into every sub-worktree. Hook scripts live in `<orch_dir>/hooks/` (outside any worktree), referenced by absolute path inside settings.json — so every sub-worktree hits the same hook binaries with no path rewrite. Rewriting paths is a bug (sub-worktrees would point at non-existent paths). |
-| **External-resource contention in parallel waves is the user's responsibility** | If two parallel tasks contend for the same DB port, file lock, or external service, mark one of them `serial: true` in the plan. The Phase 0 Step 6 partition respects `serial` and keeps such tasks in singleton groups. The skill cannot detect arbitrary external contention. |
-| **Disable parallel dispatch via `parallel=off`** | Writes a degenerate `execution_plan` where every parallel group is singleton. Use when sub-worktree creation is constrained (shallow clones, low disk, fsmonitor races). |
-| **Acceptance Criteria shell is primary PASS condition** | If a task has an `## Acceptance Criteria` block with executable shell, the Verifier runs those commands first. All must exit 0. Risk-tiered test instructions are the fallback when no AC block is present. |
-| **Plan structural validation is mandatory** | Step 0.5 runs before worktree creation. A plan must have either `### Task N:` (H3, canonical) OR `## Task N:` (H2) task headers — neither present halts immediately. Detected level is persisted as `<active>.task_header_prefix` and used consistently in all downstream parsing, Plan Reviewer prompts, and sub-agent task excerpts. A plan with missing Files blocks halts with a user question. Never skip this gate. |
-| **Ambiguity gate clears before risk assignment** | Step 3.5 must complete with zero unresolved ambiguities before Step 4 begins. Unclear task descriptions answered downstream cost one full sub-agent dispatch + reset cycle. |
-| **Out-of-repo paths halt execution** | Files blocks referencing paths outside repo root halt at Phase 0 Step 3.5. Never infer a correction — always ask the user. |
-| **Phase -1 self-spawn is opt-in (v2.22.0)** | Self-Spawn (detached headless `claude -p`) triggers only when `detach=true` is passed (explicit or NL); a bare invocation now runs ATTACHED in-session by default (`state.mode = "interactive_attached"`). `mode=interactive` still forces legacy single-session; the `<<HEADLESS_KWS_ORCHESTRATOR>>` sentinel still marks a spawned instance. A 2-week deprecation warning (controlled by `state.deprecation_warnings.attach_default`) fires on bare invocations so users notice the changed default. Self-spawn (when opted in) stays gated by Phase 0 Steps 1, 2, 2.5 — failures abort the spawn and surface to the user. |
-| **`mode` field is always a string** | `state.mode ∈ {interactive_session, interactive_attached, headless_pending, headless_running, headless_chained, plan_chain_running, plan2_running}`. Never null. `interactive_attached` is the v2.22.0 attached-by-default in-session mode (Task 14) written when a bare invocation runs ATTACHED rather than self-spawning headless. `plan_chain_running` is written by the Phase 2 Step -1 Cross-Plan Trigger when it advances `active_plan`; `plan2_running` is the legacy v2.12 equivalent, preserved (not rewritten) by the migration shim. Resume protocol (Phase 0 Step 0) dispatches on this value — null breaks the headless_pending branch. |
-| **`active_plan` pointer is authoritative for plan selection** | All Phase 1 / Phase Transition / Phase 2 / Monitor code dereferences `<active>` per the resolution table near the top of this document. Multi-plan: integer index into `state.plan_chain[]`. Single-plan: the string `"plan1"` with per-plan fields at top level. (The legacy v2.12 `"plan2"` string is migrated to `plan_chain` at Phase 0 Step 0 and never reaches live `<active>` logic.) Never assume top-level `state.tasks` is the active tree without checking — hard-coding it for a multi-plan run silently corrupts the chain. |
-| **`last_completed_task` is the only authoritative "most recent" field** | Phase 1 Step 4 Agent Cleanup writes it. Monitor and any post-hoc query MUST use it — never `to_entries \| last` over `tasks` (key insertion order is mutated by re-writes; this caused a real observed bug). |
-| **Spec-edit branch uses `spec_clarifications`, not `review_retries`** | When `SPEC_FAULT ∈ {spec_contradicts, unclear}`, increment `spec_clarifications` (max 3 per task). Implementer retry budget stays intact for actual implementer mistakes. |
-| **Resume Chain trigger is deterministic** (v2.15) | Chain when EITHER token threshold OR legacy floor fires (additive). Token threshold: `session_input_tokens (= cost_ledger.totals.input_tokens − cached_read_tokens) ≥ state.context_budget.threshold_tokens`. Legacy floor: `compaction_points reached ≥ 2` AND `completed tasks ≥ 8` (always evaluated). `budget_action == "off"` disables the token trigger, leaving the legacy floor as the sole criterion. Chain procedure MUST update `headless.pid` atomically so Monitor sees `CHAIN_HANDOFF`, not `PROCESS_DIED`. |
-| **`files_test` discrimination for batch verifier** | Implementer outputs `FILES_TEST_CHANGED` separately from `FILES_CHANGED`. T1 batch pre-filter uses it (or `.md`-only heuristic for legacy state) to route docs-only tasks to lint instead of test runs. |
-| **Next plan re-takes baseline** | When Phase 2 Step -1 swaps `active_plan` to the next integer index (i+1), run Phase 0 Step 5 fresh against current HEAD (plan i's changes are now plan i+1's starting point) and write to `plan_chain[i+1].baseline`. Never reuse a prior plan's baseline as the next plan's regression reference. |
-| **AgentLens event lifecycle (v2.17 cutover)** | Phase -1 step b opens an AgentLens run and captures `ORCH_RUN_ID`. Phase 0 Step 7.5 emits `kws-cme.phase_0_started`. Phase 1 Step 3.5 scans `<orch_dir>/learning_events/` for sub-agent candidate JSON and publishes each as `kws-cme.<event_type>`. Phase 1 Step 2.6 emits `kws-cme.task_completed`. Phase Transition T3 emits `kws-cme.compaction` plus drains `context_health` candidates. Phase 2 Step 2 emits `kws-cme.phase_2_complete` then `agentlens run-close --outcome success`. Hard-halt paths (escalation exhaustion, budget pause, T3 state-write failure) emit `kws-cme.blocker` and call `agentlens run-close --outcome aborted\|blocked`. Resume Chain propagates `AGENTLENS_PARENT_RUN_ID` (= parent `ORCH_RUN_ID`) into the chained child's env so the child re-exports it as `ORCH_RUN_ID` and continues publishing to the same run. **Every `agentlens` invocation is `2>/dev/null \|\| true`** — observability failure must never block plan execution. The legacy `append_learning_event.py` helper was removed in Task 11 after parity verification (`scripts/compare_agentlens_events.py`). See `references/learning-log.md`. |
-| **Local `events.jsonl` tee is always written (v2.29 I2)** | Every boundary emit routed through `phase_boundary.py` (`task-complete`, `phase-emit`, and the generic `emit` subcommand for `blocker` etc.) is ALSO appended to `<orch_dir>/events.jsonl` via `_tee_event`, **independent of AgentLens reachability**. On the all-agent attached default (where the `agentlens` CLI is usually absent and every `_emit` no-ops) this is the only run timeline — replayable, machine-readable, ordered `phase_0_started … phase_2_complete`. It is the **orchestrator single writer** (sub-agents never write it — AGENTS.md compliance) and a *fallback tee*, distinct from the parallel Lens sink removed in v2.17. The tee is best-effort (a write failure is swallowed like `_emit`), and lives under `<orch_dir>/` so it never pollutes the worktree. |
-| **`state.timestamps.completed_at` is stamped at Phase 2 Step 2** (v2.16) | The first action of Step 2 is an atomic R-M-W of state.json setting `timestamps.completed_at = <iso8601 now>`. This is the canonical wall-clock end-marker; the Final Summary Report's "Total wall time" row depends on it. Pre-v2.16 runs left this field null even on `outcome=success` because nothing in the prose explicitly wrote it. State-file write failure here is a hard halt (existing guardrail). |
-| **`timing.started` is stamped before Step 1 dispatch** (v2.16) | The "Before Step 1 of each task" block writes `<active>.tasks.task_<N>.timing.started = <iso8601 now>` via atomic R-M-W. Without this field the per-task duration column cannot be computed (observed: `jq strptime` errors across all v2.11–v2.15 runs because the field stayed null). Failure to write is a non-fatal warning, not a halt. |
-| **Single-writer for learning events** | Only the orchestrator invokes the helper. Sub-agents write event candidates as JSON files under `<orch_dir>/learning_events/<task_id>-<role>.json`; the orchestrator reads and forwards them. Never let a sub-agent prompt instruct direct helper invocation. |
-| **`context_health` is observation-only (v2.10)** | Emitted at Phase Transition T3 and Resume Chain chained-orchestrator startup. Counts compaction index, completed tasks, chain handoffs. **MUST NOT alter orchestrator control flow** — Goodhart's-law guard. Behavior changes require a follow-on experiment under `docs/experiments/v2.10-context-health/` after ≥ 2 weeks of real-run data. See `references/learning-log.md`. |
-| **Polite-stop anti-pattern is forbidden (v2.10.1)** | A sub-agent returning PASS / APPROVED is a checkpoint inside the autonomous loop, never a reporting moment. The orchestrator MUST proceed immediately to the next phase step in the same turn. The only legitimate reporting moments are: Phase 2 success completion, ESCALATE that exceeds `escalation_count > 3`, headless `HEADLESS_HALTED.txt`, or hook denial. Any prompt edit that introduces "summarize and wait for user acknowledgment" between PASS and the next step IS the regression this invariant exists to prevent. |
-| **Cross-run isolation is repo-scoped (v2.10.1, narrowed v2.20)** | Phase 0 Step 1.5(a) refuses to start only when another live headless run targets the **same source repo** (key: canonical `git rev-parse --git-common-dir`, stored as `state.source_repo`). Runs against *different* repos are allowed to run concurrently — disjoint `.git` object stores and branch namespaces cannot race, and each run owns a distinct `agentlens_orchestration_run` id. **Conservative block:** if either side's `source_repo` is empty/unknown (pre-v2.20 state.json, or not in a git repo), block rather than guess. Mode exclusivity is concurrent-safe by halt, not by lock — for same-repo collisions the user chooses which run continues. Orphan worktrees with no state.json + >7d mtime are reported but never auto-deleted (may hold uncommitted manual debugging). |
-| **Method audit fields are populated at Agent Cleanup (v2.11)** | Method audit fields are populated at Phase 1 Step 4 from structured sub-agent output. |
-| **Method audit must pass before Phase 2 close-run** | Phase 2 Step 1.5 runs `scripts/validate_method_audit.py`. A task is `applied` only when it has evidence references (RED command, GREEN command, commands_run, findings_count). FAIL halts before close-run; user re-dispatches or edits `<active>.tasks.<id>.method_audit.waived` with a reason. v2.13: the validator must iterate every `state.plan_chain[N].tasks` for chain runs, not just top-level. |
-| **Finalization gate is mandatory before close-run (v2.26)** | Phase 2 Step 1.5 runs `scripts/validate_state_schema.py` (canonical-shape: non-empty `tasks{}` when tasks are declared, `execution_plan` not `execution_order`, risk ∈ low/mid/high, run-level `dispatch_config`/`cost_ledger` present) and Step 2 runs `scripts/finalize_run.py --fix` (completed_at stamped, no task left `PENDING_BATCH`, terminal task statuses). A schema violation or an unfixable finalize FAIL HALTS before `agentlens run-close --outcome success` — the run is never declared COMPLETE with a non-canonical or unfinalized state.json. `finalize_run --fix` only stamps `completed_at`; it never clears `PENDING_BATCH` (that needs a real LOW batch sweep). As of v2.27, `cost_ledger.dispatches==0` (unless `cost_tracking_waived`), all-terminal-`timing.started`-null (unless `timing_tracking_waived`), and an unwired worktree settings.json (unless `hooks_wiring_waived`) are blocking FAIL, not WARN (D002/D003). |
-| **Method audit fields populated at Phase 1 Step 4** | Orchestrator parses `METHOD_AUDIT:` from Implementer, `REVIEW_FINDINGS:` from Combined Reviewer, `commands_run` from Verifier result JSON. Written under `<active>.tasks` per the resolution table. |
-| **TDD waive reasons are restricted** | `METHOD_AUDIT: tdd waived` accepts only `reason=docs-only-task`, `config-only-task`, or `generated-only-task`. Other reasons fail validation. |
-| **Resource-key collisions force serialization in same wave** | Phase 0 Step 6 resource_key partition rule: tasks in the same wave that share a `**Resource Key:** <slug>` annotation are placed in singleton groups (never merged). The `serialization_reason: "resource_key=<key>"` field is written to each affected `<active>.execution_plan` group. WARN is emitted by the Plan Reviewer; correctness is automatic. |
-| **`implementer_model` records both used and default** (v2.12) | Arg is parsed in the **interactive parent** (Phase -1 step b OR Phase 0 Step 7 when mode=interactive) and written into state.json. The headless child reads it FROM state.json — it cannot re-parse skill args since `claude -p` only sees the headless prompt text. Phase 0 Step 7 in the child preserves the field as-is. `state.implementer_model = {"used": <effective>, "default": "sonnet"}`. `default` is the contemporaneous skill default, NOT the parsed arg. Phase 1 Step 1 reads `used` and passes it as the Agent tool `model` parameter — `sonnet` may omit the parameter, `opus` MUST set it explicitly (omitting silently falls back to the agent default and invalidates A/B comparisons). **Parallel Sub-Flow Step P.2 dispatches MUST also pass `model`** under the same rule — forgetting it there silently downgrades parallel-merged tasks to Sonnet regardless of the run's selection. Reviewer and Verifier are unaffected — they always run on Sonnet for judge consistency. Plan 2 inherits Plan 1's selection. |
-| **Multi-plan auto-chain detection** (v2.13) | Phase -1.0 Pass 2 scans `plan\d*=` keys. `plan=` is index 0, `plan2=` is index 1, etc. Gaps halt. Missing `specN=` for present `planN=` halts. Length 1 → v2.12 single-plan schema. Length ≥ 2 → `plan_chain[]` schema with `active_plan` as integer index. `manifest=` is mutually exclusive (reserved; halt if combined). |
-| **NL keyword lexicon is fixed and conservative** (v2.13) | Phase -1.0 Pass 3 scans free-text tokens (excluding tokens with `/`, `.`, `=`, backticks) for the closed lexicon: opus/오푸스, sonnet/소넷, 순차/sequential/직렬/시리얼, 대화형/interactive. Explicit `key=value` always wins; NL fills unset keys only. Conflicts halt with batched question — never silently disambiguate. Lexicon additions require an ADR (see `docs/experiments/v2.13-natural-multi-plan/decisions/D001`). |
-| **Phase -1 echo line is mandatory** (v2.13) | Before any other work, Phase -1.0 prints ONE line summarizing parsed args (plan count, implementer_model, parallel, mode, risk) with the source of each value (explicit / NL / default). This is the user's one chance to spot mis-interpretation before the headless subprocess detaches. The line goes to stdout of the interactive parent — visible even before the spawn. Never skip. |
-| **`plan_chain[]` is authoritative when present** (v2.13) | When `state.plan_chain` exists in state.json, code MUST dereference `state.plan_chain[state.active_plan].*` for tasks, task_summaries, quality_trend, risk_levels, task_complexity, compaction_points, execution_plan, global_constraints, low_tasks_pending_verification, last_compaction_after_task, last_completed_task, last_completed_at, plan_review. Top-level `state.tasks` etc. are NOT written for multi-plan runs. `state.plan` and `state.spec` mirror `plan_chain[active].plan_path / .spec_path` for legacy reader convenience but are NOT the source of truth. `state.active_plan` is an integer (not a string) when chain is in use. |
-| **Per-plan result file suffix** (v2.13) | Verifier/Docs Updater output JSON files under `<orch_dir>/{verifier,docs}_results/` get a `_p<index>` suffix in multi-plan runs to avoid collision across plans (`batch_p0_2.json`, `phase_p1_4.json`, `final_p2.json`). Single-plan and legacy v2.12 two-plan runs keep their un-suffixed paths for compatibility. Aggregators that scan these directories must accept both shapes. |
-| **Run-level args propagate across all chain plans** (v2.13) | `implementer_model`, `parallel`, `risk`, `docs_scope` are written to state.json top-level (NOT into each plan_chain entry). The Cross-Plan Trigger does NOT reset them at swap. Every plan in the chain inherits the same model selection, parallel toggle, etc. Plan-specific overrides are deliberately NOT supported — if a user wants different models for different plans, they invoke the skill once per plan, not as a chain. |
-| **Cost ledger frozen pricing** | `scripts/price_table.py` hardcodes rates at commit time. Historical runs reflect contemporaneous rates — re-running with a later price_table does NOT retroactively recompute past runs. Update price_table when Anthropic adjusts rates; do NOT auto-fetch. |
-| **Cost-accumulate helper is mandatory per dispatch** (v2.16) | Every sub-agent dispatch (Implementer / Reviewer / Verifier / Plan Reviewer / Docs Updater) ends with a `scripts/accumulate_cost.py` invocation in Phase 1 Step 4 substep 1.5. Pre-v2.16 prose ("extract usage from Agent result, update by_task atomically") was silently skipped in every observed run — `cost_ledger.totals.dispatches=0` across runs 1/2/3 confirmed the regression. The helper is single-call, flock-protected, and handles unknown-model and missing-usage gracefully. Skipping the helper call means budget cap (`budget_cap_usd`) and `chain_trigger_eval` token threshold cannot fire correctly. by_task key is `<plan>::<task>::<role>` so same-task multi-role dispatches don't overwrite. |
-| **`budget_action=pause` halts at compaction boundaries only** | Budget is evaluated at Phase Transition T3 and Phase 2 Step 0 — never mid-task. Cost overruns within a single task complete the task, then the next compaction triggers halt. This is intentional: aborting mid-task wastes the in-flight dispatch. |
-| **Cost ledger is run-level** | `cost_ledger`, `budget_cap_usd`, `budget_action` live at top-level state.json (never inside `plan_chain[N]`). Cross-plan chains accumulate one unified ledger. Per-plan totals derivable via `by_task` key prefix `<plan_index>::`. |
-| **`dispatch_config` is run-level** (v2.22; extended v2.25) | `state.dispatch_config` lives at top-level state.json (never inside `plan_chain[N]`) and selects the dispatch path per role gate: `{plan_reviewer, verifier_batch, verifier_per_task, transition_combined, docs_updater_phase, docs_updater_final}`, each `"p" \| "api" \| "agent"`, default `"agent"` (v2.25). `final_sweep` is a separate gate, `"api" \| "batch" \| "agent"`, default `"agent"`. The same selection applies to every plan in a chain. |
-| **Spec manifest is per-plan** (v2.15 C1) | `spec_manifest` lives under `<active>` per the v2.13 resolution rule. Each plan in a chain has its own manifest (sections + task_to_sections + fallback_policy). `task_to_sections` references are validated by the Plan Reviewer at Phase 0 Step 6.5 — unknown section IDs are BLOCKER. Manifest is rebuilt at the spec-edit branch (Phase 1 Step 2 sub-step 6.5). |
-| **Decisions register is per-plan, append-only** (v2.15 C2) | `decisions_register` lives under `<active>`. Entries are never deleted — supersession is recorded via the `supersedes` field (still rendered, with strikethrough prefix). Empty `key_decision` from `task_summaries` is ignored (not appended). Append failure logs a warning and continues (best-effort). |
-| **decision_conflict is a QUALITY issue, not SPEC** (v2.15 C2) | Combined Reviewer flags `decision_conflict` under `QUALITY_ISSUES`. Does NOT downgrade `SPEC_SCORE`. Standard `review_retries` budget applies — no spec-edit branch. Use it to nudge sub-agents toward consistency, not to halt. Intentional supersession (diff includes `supersedes <task_id>` comment) emits an ADVISORY note instead of an ISSUE. |
-| **Token-based chain trigger is additive** (v2.15 C3) | C3's `session_input_tokens >= threshold_tokens` trigger fires *in addition to* the legacy `compactions ≥ 2 AND completed ≥ 8` floor. Never replaces. `budget_action=off` disables the token trigger (legacy is then the sole criterion). `session_input_tokens = cost_ledger.totals.input_tokens − cached_read_tokens`. One `chain_trigger_eval` event per Phase Transition T3 regardless of decision (telemetry for trigger lift). |
-| **Agent dispatch is the v2.25 default** | Plan Reviewer, Verifier (batch + per-task), Transition (combined), Docs Updater, and the Phase 2 final sweep default to `"agent"` — in-session Agent-tool dispatch on the subscription pool (`references/cross-cutting/agent-dispatch.md`), NOT metered `claude -p` / Messages API. Set a gate to `"api"` or `"p"` (or `"batch"` for `final_sweep`) to opt back into a metered transport. The agent failure ladder auto-falls-back `agent → api` for a single failed dispatch (only sanctioned automatic fallback). |
-| **Scaffold byte-stability is enforced** | Every API role prompt carries a SCAFFOLD/PAYLOAD split (four HTML-comment markers). The SCAFFOLD region is the `cache_control: ephemeral` cache prefix and MUST stay byte-for-byte identical to its sibling `references/_scaffolds/<role>-scaffold.md`; `scripts/validate_scaffold_split.py` lints this scaffold byte-stability invariant. Drift silently misses the cache on every dispatch. The SCAFFOLD region MUST be brace-free — literal `{` and `{placeholder}` content lives only in PAYLOAD. |
-| **No `-p` fallback on API errors** | A transient Messages API failure retries in-band (up to the dispatcher's retry budget) and then ESCALATEs as `ENV_BLOCKER` — it does NOT silently fall back to `claude -p`. The subprocess path is selected only by an explicit `state.dispatch_config.<gate> = "p"`, never as automatic error recovery. |
-| **API dispatch forces `tool_choice`** | Single-role API dispatches set `tool_choice={"type":"tool","name":"report_<role>"}` so the model MUST emit the structured `report_<role>` tool call; the combined Transition uses `tool_choice={"type":"any"}` across its two tools (`verify_low_batch` + `update_phase_docs`). Never dispatch an API role without a forced `tool_choice` — free-form text output breaks result parsing. |
+Run when `next` returns `finalize`, or when `check-stop` blocks with a finalize-pending
+halt. `finalize` runs `drift.check` (blocking drift → `{"error":"finalize_refused_blocking_drift", …}`,
+exit 3 — resolve the drift, do not force), a non-blocking method-audit checklist, stamps
+`timestamps.completed_at`, builds `run_quality` + `completion_audit`, sets
+`status:"FINALIZED"`, emits `phase_2_complete`, and returns
+`{"status":"finalized","grade","completion_passed","method_audit_warnings"}`. **This
+return is the loop-exit signal.** Report the run summary (grade, worktree location,
+any gaps) to the user. Never auto-delete the worktree.
 
 ---
 
-## Sub-agent Prompt Templates
+## ④·b Guardrails — what the KERNEL enforces vs what YOU observe
 
-The Implementer, Combined Reviewer, Verifier, and Docs Updater prompt templates live in `references/`. Read the relevant file via the Read tool **at the moment of dispatch** — do NOT preload them.
+These are absolute. The left column is enforced deterministically by the kernel or
+the worktree hooks — you cannot bypass or re-decide them. The right column is your
+responsibility as orchestrator.
 
-| Step | Template file | Dispatch mode |
-|------|---------------|---------------|
-| Phase 0 Step 6.5 — Plan Reviewer | `references/plan-reviewer-prompt.md` | Headless `claude -p` |
-| Phase 1 Step 1 — Implementer | `references/implementer-prompt.md` | Agent tool (fresh Sonnet) |
-| Phase 1 Step 2 — Combined Reviewer | `references/reviewer-prompt.md` | Agent tool (fresh Sonnet) |
-| Phase 1 Step 3 / Transition T1 — Verifier | `references/verifier-prompt.md` | Headless `claude -p` |
-| Transition T2 — Phase Docs Updater | `references/docs-updater-prompts.md` (Phase section) | Headless `claude -p` |
-| Phase 2 Step 1 — Final Docs Updater | `references/docs-updater-prompts.md` (Final section) | Headless `claude -p` |
+| Enforced BY THE KERNEL / hooks (do not re-implement in prose) | Observed BY YOU (the orchestrator) |
+|---|---|
+| Review tier computed from spec_score/quality_score (SPEC 0.85 / QUALITY 0.75 / WARN 0.70·0.60). LLM self-status is advisory only. (`transitions._compute_review_tier`) | Perform each returned action verbatim; never substitute your own judgment for `decide()`. |
+| Max 3 review retries, 3 verifier retries, 3 escalations, 3 spec-clarifications per task; exhaustion → SKIPPED + `verification_gaps` (retries) or `escalate_to_user` (escalation/spec-fault). (`transitions.apply_result`) | Run `kernel.py init` from a clean tree only. `dirty_worktree` halt = stop. |
+| `git reset --hard <pre_task_sha>` directive before verifier re-dispatch, emitted as `run_command purpose=reset`. (`transitions.py:222-230`) | The orchestrator never writes code. All implementation goes through sub-agents. |
+| LOW tasks → PENDING_BATCH → drained by the batch-verify dispatch before finalize; lingering PENDING_BATCH blocks the Stop hook. (`transitions.py`, `kernel.py check-stop`) | Read the role prompt template only at dispatch time (the kernel already wrote `prompt_path`); dispatch that file. |
+| `quality_trend` appended (rolling max 10) SOLELY by `transitions.apply_result` on verifier PASS. **Never append it by hand — the v2 `phase_boundary.py` writer is deleted in v3.** | Maintain any run-level escalation VIEW you need for reporting; the kernel tracks per-task `task.escalations` (run-level counter is the orchestrator's if it needs one). |
+| `timing.started` (set-if-absent at `next`) and `timing.completed` (at `submit` on terminal) stamped by the kernel. | Verify each `state.json` write implicitly via the kernel's exit code; a kernel exit 3 or a write failure = hard halt (⑤). |
+| Cost/usage recorded per dispatch into `cost_ledger` by `ledger.record` inside `submit`. No manual `accumulate_cost` call. | `escalate_to_user` → actually batch the questions to the user and wait; do not guess an answer. |
+| Four worktree safety hooks (PreToolUse dangerous-cmd, PostToolUse debug-artifact, SubagentStop implementer-structure, Stop = `kernel.py check-stop`). (`materialize_worktree_hooks.py`) | Never auto-delete the worktree; report its path and let the user decide to merge. |
+| `gate.preflight` is the single source of per-task dispatch decisions (delegate_serial / delegate_parallel / block). | Never bypass `gate.preflight` for any task. |
 
-Each file is a self-contained prompt body with `{placeholders}` to fill from the current task context. The dispatch mechanics (Agent vs. headless), result-file paths, and ESCALATE handling are defined in the SKILL.md phases above — the reference files do not repeat that logic.
+---
 
-All sub-agent prompt templates must bootstrap `Skill("superpowers:using-superpowers")` as their first action. Implementers must additionally invoke `Skill("superpowers:test-driven-development")` for executable implementation work before writing implementation code, independent of task size, and must report RED/GREEN evidence in their structured output.
+## ⑤ Hard-halt rules — NO prose fallback
+
+When the kernel signals a hard failure, you STOP and report. You do **not** improvise
+a prose workaround around a kernel error — that reintroduces exactly the silent-green
+class the kernel exists to eliminate.
+
+- **kernel.py exit 3 / any `{"error":…}` return** (`cannot_read_result_file`,
+  `ledger_parse_error`, `cannot_read_schema`, `finalize_refused_blocking_drift`,
+  `unknown_command`) → hard halt. Report the error verbatim and stop.
+- **`{"halt":…}` from `init`** (dirty_worktree, worktree_add_failed,
+  hooks_materialization_failed) or **`{"action":"halt",…}` from `next`**
+  (no_dispatchable_task) → hard halt. Report and stop.
+- **State-write failure** — the kernel owns every state.json write; if a kernel
+  subcommand exits non-zero for an I/O reason, treat it as a hard halt. Do NOT hand-edit
+  state.json to "recover" (the forbidden recovery hand-edit). The ONE sanctioned state
+  edit is clearing `pending_escalation` after an `escalate_to_user` was answered (④) —
+  the kernel has no subcommand for it.
+- **`submit` `halt_pending:true`** is a warning, not yet a halt — fix the sub-agent's
+  output contract before the next (fatal) violation.
+
+A hard halt is a legitimate reporting moment (⑥). Nothing else is, until the run
+finalizes.
+
+---
+
+## ⑥ Polite-stop-prohibition invariant
+
+**A sub-agent returning PASS / APPROVED, a `submit` `accepted:true`, or a `next_hint`
+is a checkpoint inside the autonomous loop — NEVER a reporting moment.** The
+orchestrator MUST proceed immediately to the next loop iteration (`kernel.py next`) in
+the same turn.
+
+The ONLY legitimate moments to stop and report to the user are:
+1. `kernel.py finalize` returned `{"status":"finalized"}` (run complete).
+2. An `escalate_to_user` action (batched questions the user must answer).
+3. A hard halt (⑤) — kernel error, init/next halt, or refused-drift finalize.
+4. A worktree hook denial the sub-agent cannot self-resolve.
+
+Any behavior that "summarizes and waits for user acknowledgment" between a PASS and the
+next kernel call IS the regression this invariant exists to prevent.
+
+---
+
+## Forward-wired seams (state honestly)
+
+- **`run_command purpose="reset"`** — wired; the only `run_command` purpose `decide()`
+  emits (④). `baseline` runs at SETUP (②); `acceptance` runs INSIDE the verifier
+  dispatch (the verifier prompt runs the task's `## Acceptance Criteria` shell) — neither
+  is a `decide()` action.
+- **`delegate_parallel`** — a `gate.preflight` RETURN consumed at SETUP/wave-launch, NOT
+  a `decide()` action. When a parallel wave (an `execution_plan` group of size ≥ 2) is
+  cleared for parallel dispatch, the orchestrator launches the group's `claude -p` (or
+  Agent) dispatches as a parallel wave, then submits each result. The kernel cycle is
+  otherwise sequential. (`gate.py`; D001 open-question T15.)
+- **operator-review of a blocking executability issue** — a trust/risk `block` from
+  `gate.preflight` (risk_markers, un-reviewed spec fallback) surfaces via
+  `escalate_to_user` (④). There is NO full-context orchestrator-implements fallback in
+  CME (D001).
+- **`serialization_reason` is NOT wired.** `gate.partition_waves` returns a bare
+  `list[list[str]]` with no wave metadata; no step writes `serialization_reason` into
+  state; `preflight`'s `serialization_reason` branch is dead code. Same-wave contention
+  (file overlap / shared `resource_key` / `serial:true`) falls through to `preflight`'s
+  DEFAULT `delegate_serial` — the conservative floor. Do NOT claim `serialization_reason`
+  is produced. (D001.)
+- **batch-verify dispatch + `check-stop batch_drain_pending`** — both wired (④): LOW
+  PENDING_BATCH tasks are drained by a kernel-returned batch-verify dispatch before
+  finalize, and the Stop hook blocks a stop while any PENDING_BATCH lingers.
+
+---
+
+## Sub-agent prompt templates & references
+
+The kernel writes the fully-substituted prompt to `<orch_dir>/prompts/…` at dispatch
+time — you dispatch that file, you do not assemble it. The source templates live in
+`references/` (`implementer-prompt.md`, `reviewer-prompt.md`, `verifier-prompt.md`,
+`docs-updater-prompts.md`, `plan-reviewer-prompt.md`), with cache scaffolds in
+`references/_scaffolds/` and result schemas in `references/_schemas/`. All sub-agent
+prompts bootstrap `Skill("superpowers:using-superpowers")` first; implementers
+additionally invoke `Skill("superpowers:test-driven-development")` for executable work
+and report RED/GREEN evidence.
+
+Cross-cutting detail lives in `references/cross-cutting/` (state-schema, agentlens
+emit-sites, safety-hooks, agent-dispatch). Phase docs in `references/phases/` are the
+"how to perform kernel-returned actions" guides — `phase-0-setup.md` is the SETUP
+assembler (②), the rest are mechanics references; the kernel owns all transition
+decisions.
