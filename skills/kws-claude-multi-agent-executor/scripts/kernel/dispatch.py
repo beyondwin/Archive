@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 from pathlib import Path
 from typing import Any
 
@@ -436,10 +437,13 @@ def build(
         }
     else:
         # headless -p command
+        # Paths are shlex-quoted so a space in orch_dir/skill_dir does not
+        # word-split in the shell.  model_name is a controlled MODEL_MAP literal
+        # and stays unquoted.
         cmd = (
-            f'claude -p "$(cat {prompt_path})" --output-format json '
-            f"--json-schema {schema_path} --model {model_name} "
-            f"--dangerously-skip-permissions > {result_path}"
+            f'claude -p "$(cat {shlex.quote(prompt_path)})" --output-format json '
+            f"--json-schema {shlex.quote(schema_path)} --model {model_name} "
+            f"--dangerously-skip-permissions > {shlex.quote(result_path)}"
         )
         base["command"] = cmd
 
