@@ -480,19 +480,48 @@ def test_check_stop_not_done():
 
 
 def test_check_stop_all_terminal():
-    """check-stop exits 2 when all tasks are terminal and finalize not done."""
+    """check-stop exits 2 when all tasks COMPLETE (zero PENDING_BATCH) and finalize not done."""
     with tempfile.TemporaryDirectory() as orch_dir:
         state_path = os.path.join(orch_dir, "state.json")
         state = _make_state(orch_dir)
-        # Force both tasks terminal
+        # Force both tasks terminal with ZERO PENDING_BATCH → finalize truly pending.
+        state["tasks"]["task_1"]["status"] = "COMPLETE"
+        state["tasks"]["task_2"]["status"] = "COMPLETE"
+        with open(state_path, "w") as f:
+            json.dump(state, f, indent=2)
+
+        rc, result, raw = _run_kernel("check-stop", "--state", state_path)
+        assert rc == 2, f"check-stop returned {rc} (expected 2); stdout={raw!r}"
+    print("TEST 5 PASS: check-stop exits 2 when all terminal (no PENDING_BATCH) + finalize pending")
+
+
+def test_check_stop_pending_batch_not_finalize_pending():
+    """check-stop exits 0 (batch drain still due) when a PENDING_BATCH task lingers.
+
+    T14b: decide() would return a batch-verify DISPATCH here, not finalize —
+    so check-stop must NOT signal finalize (exit 2). Work remains.
+    """
+    with tempfile.TemporaryDirectory() as orch_dir:
+        state_path = os.path.join(orch_dir, "state.json")
+        state = _make_state(orch_dir)
+        # All "terminal" but a batch drain is still due.
         state["tasks"]["task_1"]["status"] = "COMPLETE"
         state["tasks"]["task_2"]["status"] = "PENDING_BATCH"
         with open(state_path, "w") as f:
             json.dump(state, f, indent=2)
 
         rc, result, raw = _run_kernel("check-stop", "--state", state_path)
-        assert rc == 2, f"check-stop returned {rc} (expected 2); stdout={raw!r}"
-    print("TEST 5 PASS: check-stop exits 2 when all terminal + finalize pending")
+        assert rc == 0, (
+            f"check-stop returned {rc} (expected 0: batch drain still due, "
+            f"finalize NOT pending); stdout={raw!r}"
+        )
+        assert result.get("check_stop") == "batch_drain_pending", (
+            f"expected check_stop=batch_drain_pending, got: {result!r}"
+        )
+        assert "halt" not in result, (
+            f"check-stop must NOT signal finalize while PENDING_BATCH lingers: {result!r}"
+        )
+    print("TEST 5b PASS: check-stop exits 0 (batch_drain_pending) when PENDING_BATCH lingers")
 
 
 def test_check_stop_finalized():
@@ -567,6 +596,7 @@ _TESTS = [
     test_run_command_reset_passthrough,
     test_check_stop_not_done,
     test_check_stop_all_terminal,
+    test_check_stop_pending_batch_not_finalize_pending,
     test_check_stop_finalized,
     test_halt_on_3_consecutive_violations,
 ]

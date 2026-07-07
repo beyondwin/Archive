@@ -474,6 +474,11 @@ def test_decide_batch_verify_when_only_pending_batch():
     assert action.get("role") == "verifier", (
         f"Expected role=verifier for batch-verify, got {action.get('role')!r}"
     )
+    # Singular task_id must be present — dispatch.build reads it; a missing key
+    # would KeyError at runtime. Pin it explicitly.
+    assert action.get("task_id") == "task_2", (
+        f"Expected singular task_id=task_2 in batch-verify action, got {action!r}"
+    )
     print("TEST 19 PASS: decide returns batch-verify dispatch when only PENDING_BATCH remains")
 
 
