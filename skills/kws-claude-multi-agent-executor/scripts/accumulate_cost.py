@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# DEPRECATED (v3.0 T15 cutover): the CME v3 kernel records per-dispatch cost via
+# scripts/kernel/ledger.py (ledger.record, inside kernel.py submit) — the kernel
+# orchestrator does NOT call this script. NOT deleted because
+# scripts/dispatch_via_api.py still imports `accumulate` from this module (a live
+# import by a kept file). Retire with the v2 metered-API dispatch path.
 """Accumulate a single sub-agent dispatch's usage into state.cost_ledger.
 
 Designed to be called from the orchestrator in Phase 1 Step 4 substep 1.5

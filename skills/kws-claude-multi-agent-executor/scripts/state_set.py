@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# DEPRECATED (v3.0 T15 cutover): the CME v3 kernel owns every state.json write via
+# scripts/kernel/statefile.py; the orchestrator no longer calls this helper. NOT
+# deleted because scripts/materialize_worktree_hooks.py (a KEPT file invoked by
+# kernel.py init) imports `_atomic_write_json` from this module (a live import by a
+# kept file). Retire once that import is inlined or moved.
 """Set a field in state.json, resolving the active-plan tree, under an flock.
 
 One helper for every Phase 1 / Transition / Phase 2 state write. The orchestrator

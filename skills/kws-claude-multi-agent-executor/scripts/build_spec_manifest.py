@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# DEPRECATED (v3.0 T15 cutover): the CME v3 kernel builds spec manifests/packets via
+# scripts/kernel/packets.py (build_manifest/build_packet, ported from this script's
+# regexes). SETUP (phase-0-setup.md) uses the kernel module; the orchestrator does NOT
+# call this script. NOT deleted because it is still referenced by active planning docs
+# under docs/improvements/ (as a call-convention pattern) and the v2.15 experiment
+# record. Retire once those references are updated (T16).
 """Build a spec manifest (sections shape) from a Markdown spec file.
 
 Stdlib-only. Emits JSON to stdout matching `spec_manifest.sections`:

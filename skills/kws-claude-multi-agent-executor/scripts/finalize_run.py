@@ -1,4 +1,10 @@
 #!/usr/bin/env python3
+# DEPRECATED (v3.0 T15 cutover): the CME v3 kernel owns finalization via
+# scripts/kernel/kernel.py finalize (drift.check + quality.build_run_quality +
+# completion_audit). The kernel orchestrator does NOT call this script. NOT deleted
+# because it is still referenced by the v2 Stop-gate template/test
+# (references/hooks/finalization-stop-gate.sh.template, test_finalization_stop_gate.py)
+# and evals/check_skill_contract.py (a v2 contract eval). Retire with those v2 orphans (T16).
 """Finalization-consistency gate for a kws-claude-multi-agent-executor run.
 
 Checks that a run that claims to be finished is actually finalized:
