@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""kernel.py — CME v3.0 Deterministic Kernel CLI (T9).
+"""kernel.py — CME v3.0 Deterministic Kernel CLI (T9/T14).
 
 Subcommands:
   init        — initialise a new run (T1)
   next        — decide and prepare the next action (T9)
   submit      — accept/reject a sub-agent result (T9)
-  check-stop  — check stop condition (T9)
-  finalize    — finalise execution (stub — T14)
-  inspect     — inspect state (stub)
+  check-stop  — check stop condition (T9/T14)
+  finalize    — finalise execution (T14)
+  inspect     — inspect state (T14, read-only)
 """
 import sys
 import os
@@ -25,6 +25,8 @@ import dispatch as _dispatch
 import ledger as _ledger
 import validate as _validate
 import events as _events
+import drift as _drift
+import quality as _quality
 
 
 # ── path helpers ──────────────────────────────────────────────────────────────
@@ -160,11 +162,13 @@ def handle_submit(args):
     # Validate payload against schema
     violations = _validate.check(payload, schema)
     if violations:
-        # Increment schema_violations counter
+        # Increment schema_violations counter (consecutive halt guard)
         active = statefile.active(state)
         task = active["tasks"][task_id]
         task["schema_violations"] = task.get("schema_violations", 0) + 1
         sv = task["schema_violations"]
+        # Increment cumulative total (durable, never reset — used by quality.py)
+        task["total_schema_violations"] = task.get("total_schema_violations", 0) + 1
 
         statefile.write_state(args.state, state)
 
@@ -257,11 +261,127 @@ def handle_check_stop(args):
 
 
 def handle_finalize(args):
-    return {"error": "not_implemented"}
+    """Finalize execution.
+
+    Order (strict):
+    1. Load state.
+    2. drift.check → REFUSE with error if blocking non-empty.
+    3. Method audit validation (checklist item, not hard-refuse).
+    4. Stamp timestamps.completed_at (set-if-absent).
+    5. Build completion_audit + run_quality into state.
+    6. Set state.status = "FINALIZED".
+    7. events.emit("kws-cme.phase_2_complete", ...).
+    8. Best-effort run-close (no hard fail on close errors).
+    9. Save state.
+    """
+    state = statefile.read_state(args.state)
+    orch_dir = state.get("orchestrator_dir", os.path.dirname(args.state))
+
+    # ── Step 2: drift.check — REFUSE if blocking ──────────────────────────────
+    drift_result = _drift.check(state, orch_dir)
+    blocking = drift_result.get("blocking", [])
+    if blocking:
+        return {
+            "error": "finalize_refused_blocking_drift",
+            "blocking_drift": blocking,
+            "reason": (
+                f"finalize refused: {len(blocking)} blocking drift item(s) detected. "
+                "Resolve drift before finalizing: "
+                + "; ".join(item.get("kind", "?") for item in blocking[:3])
+            ),
+        }
+
+    # ── Step 3: Method audit (absorb validate_method_audit check logic) ───────
+    # Build a checklist; non-blocking (no hard refuse here — executor debt only)
+    method_audit_warnings: list[str] = []
+    active = statefile.active(state)
+    tasks = active.get("tasks") or {}
+    for task_id, task in tasks.items():
+        if not isinstance(task, dict):
+            continue
+        if task.get("status") != "COMPLETE":
+            continue
+        audit = task.get("method_audit") or {}
+        # Check required methods (docs-only vs executable)
+        files_test = task.get("files_test")
+        files = task.get("files", [])
+        is_docs_only = (
+            files_test == []
+            or (files_test is None and files and all(str(f).endswith(".md") for f in files))
+        )
+        if is_docs_only:
+            required = {"verification-before-completion"}
+        else:
+            required = {"test-driven-development", "verification-before-completion", "code-review-pass"}
+        applied = {e.get("skill") for e in (audit.get("applied") or []) if isinstance(e, dict)}
+        waived = {e.get("skill") for e in (audit.get("waived") or []) if isinstance(e, dict)}
+        missing = sorted(required - applied - waived)
+        if missing:
+            method_audit_warnings.append(
+                f"{task_id}: method_audit missing {missing}"
+            )
+
+    # ── Step 4: Stamp completed_at (set-if-absent) ────────────────────────────
+    now = _utc_now_iso()
+    timestamps = state.setdefault("timestamps", {})
+    if not timestamps.get("completed_at"):
+        timestamps["completed_at"] = now
+
+    # ── Step 5: Build run_quality + completion_audit ──────────────────────────
+    run_quality = _quality.build_run_quality(state, orch_dir)
+    state["run_quality"] = run_quality
+    completion_audit = _quality.build_completion_audit(state)
+    state["completion_audit"] = completion_audit
+
+    # ── Step 6: Set status = FINALIZED ────────────────────────────────────────
+    state["status"] = "FINALIZED"
+
+    # ── Step 7: Emit phase_2_complete event ───────────────────────────────────
+    agentlens_run_id = state.get("agentlens_run_id")
+    _events.emit(
+        orch_dir,
+        "kws-cme.phase_2_complete",
+        {
+            "grade": run_quality.get("grade"),
+            "completion_passed": completion_audit.get("passed"),
+            "method_audit_warnings": method_audit_warnings,
+        },
+        agentlens_run_id,
+    )
+
+    # ── Step 8: Best-effort run-close (no hard fail) ──────────────────────────
+    # (placeholder for any close hooks; currently no-op)
+
+    # ── Step 9: Save state ────────────────────────────────────────────────────
+    statefile.write_state(args.state, state)
+
+    return {
+        "status": "finalized",
+        "grade": run_quality.get("grade"),
+        "completion_passed": completion_audit.get("passed"),
+        "method_audit_warnings": method_audit_warnings,
+    }
 
 
 def handle_inspect(args):
-    return {"error": "not_implemented"}
+    """Inspect state — read-only: print run_quality + normalize summary; NO state mutation."""
+    state = statefile.read_state(args.state)
+    orch_dir = state.get("orchestrator_dir", os.path.dirname(args.state))
+
+    # Get run_quality from state (if finalized) or compute on-the-fly
+    run_quality = state.get("run_quality")
+    if not isinstance(run_quality, dict):
+        run_quality = _quality.build_run_quality(state, orch_dir)
+
+    # Compute normalize summary (read-only, no mutation)
+    normalize_summary = _quality.normalize_run(state)
+
+    return {
+        "run_quality": run_quality,
+        "normalize": normalize_summary,
+        "grade": run_quality.get("grade"),
+        "completion_passed": state.get("completion_audit", {}).get("passed"),
+    }
 
 
 # ── CLI wiring ────────────────────────────────────────────────────────────────
