@@ -27,8 +27,6 @@ def _make_state(plan: str = "my_plan") -> dict:
         "active_plan": plan,
         "cost_ledger": {
             "by_task": {},
-            "by_role": {},
-            "by_model": {},
             "totals": {
                 "input_tokens": 0,
                 "output_tokens": 0,
@@ -153,15 +151,9 @@ def test_record_retry_overwrites_by_task_but_increments_totals():
 
     totals = s2["cost_ledger"]["totals"]
     assert totals["dispatches"] == 2, f"Totals should increment: {totals['dispatches']}"
-    assert totals["cost_usd"] == pytest_approx_or_close(0.02, 1e-9), \
+    assert abs(totals["cost_usd"] - 0.02) < 1e-9, \
         f"Totals cost_usd should accumulate: {totals['cost_usd']}"
     print("  [PASS] test_record_retry_overwrites_by_task_but_increments_totals")
-
-
-def pytest_approx_or_close(expected: float, tol: float) -> float:
-    """Return expected; used inline as a simple check wrapper."""
-    # This is just the expected value — the assertion does the actual comparison
-    return expected
 
 
 def test_record_plan_chain_state():
@@ -171,8 +163,6 @@ def test_record_plan_chain_state():
         "active_plan": 1,  # integer index → resolves to "1"
         "cost_ledger": {
             "by_task": {},
-            "by_role": {},
-            "by_model": {},
             "totals": {
                 "input_tokens": 0, "output_tokens": 0,
                 "cached_read_tokens": 0, "cached_write_tokens": 0,

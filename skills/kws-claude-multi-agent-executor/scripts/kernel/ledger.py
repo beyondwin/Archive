@@ -232,12 +232,11 @@ def record(state: dict, task_id: str, role: str, usage: dict) -> dict:
     """
     s = copy.deepcopy(state)
 
-    # Ensure cost_ledger structure exists
+    # Ensure cost_ledger structure exists (brief scopes ledger to by_task + totals)
     ledger = s.setdefault("cost_ledger", {
-        "by_task": {}, "by_role": {}, "by_model": {}, "totals": _empty_aggregate(),
+        "by_task": {}, "totals": _empty_aggregate(),
     })
-    for sect in ("by_task", "by_role", "by_model"):
-        ledger.setdefault(sect, {})
+    ledger.setdefault("by_task", {})
     ledger.setdefault("totals", _empty_aggregate())
 
     # Normalize usage fields
