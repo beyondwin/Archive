@@ -29,11 +29,22 @@ python3 "$SKILL_DIR/scripts/compare_agentlens_events.py" --self-test >/dev/null 
   python3 "$SKILL_DIR/scripts/compare_agentlens_events.py" --self-test >&2
   exit 1
 }
-python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md" >/dev/null || {
-  echo "FATAL: check_skill_contract.py failed; see output above" >&2
-  python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md" >&2
-  exit 1
-}
+# v3.0 cutover (T16): check_skill_contract.py checked v2 structure (phase_boundary wiring,
+# v2.26 guardrail rows, v2.17 agentlens anchors) that no longer exists in the v3.0 SKILL.md.
+# It is retired from the preflight and replaced by the kernel unit test loop below.
+# A v3-aware rewrite is tracked as a deferred follow-up in docs/experiments/v3.0-deterministic-kernel/findings/F01-close-out.md.
+
+# v3.0: Kernel unit test suite — all 16 test files must exit 0.
+echo "--- Kernel unit tests ---"
+for _kernel_test in "$SKILL_DIR/scripts/kernel/test_"*.py; do
+  python3 "$_kernel_test" >/dev/null || {
+    echo "FATAL: kernel test failed: $_kernel_test" >&2
+    python3 "$_kernel_test" >&2
+    exit 1
+  }
+done
+echo "  kernel unit tests: all passed"
+
 # Doc freshness check — non-blocking by default. Set DOC_FRESHNESS_STRICT=1
 # to fail the preflight on any drift. See docs/doc-update-protocol.md.
 echo "--- Doc freshness (non-blocking by default) ---"

@@ -99,11 +99,37 @@
 이들은 골격을 떠받치는 규칙입니다. 위반하면 한참 뒤에 표면화되는 방식으로 스킬이 깨집니다.
 
 1. **오케스트레이터 1개, worktree 1개, `state.json` 1개.** worktree당 계획 실행은 순차적입니다. 동시 실행은 별도 worktree (공유 상태 없음). [`ARCHITECTURE.md`](./ARCHITECTURE.md) §5-§6 참조.
-2. **서브 에이전트는 학습 로그 헬퍼를 절대 직접 호출하지 않습니다.** 후보 JSON을 `<orch_dir>/learning_events/<task_id>-<role>.json` 에 쓰고, 오케스트레이터(단일 작성자)가 `append`를 호출합니다. [`references/learning-log.md`](./references/learning-log.md) 참조.
-3. **Step 7.5 `init-run`은 필수입니다** (v2.8.1). 건너뛰면 실행 전체의 관측성이 깨집니다 (meta.json 없음, events.jsonl 없음). `run.jsonl`의 `LEARNING_LOG_INIT:` 마커가 사후 감사 신호입니다.
+2. **v3.0: 오케스트레이터는 판정하지 않습니다.** 전환 결정·retry 회계·tier 계산·quality_trend append는 전부 `scripts/kernel/`의 결정론적 커널이 소유합니다. 오케스트레이터는 `kernel.py next → 액션 수행 → submit` 루프만 구동합니다. 커널을 우회하거나 산문 fallback을 임시 적용하지 마세요 — 그것이 v2.x 동결-스킵 회귀 클래스의 재도입입니다. [`SKILL.md`](./SKILL.md) ⑤ 참조.
+3. **서브 에이전트는 학습 로그 헬퍼를 절대 직접 호출하지 않습니다.** 후보 JSON을 `<orch_dir>/learning_events/<task_id>-<role>.json` 에 쓰고, 오케스트레이터(단일 작성자)가 `append`를 호출합니다. [`references/learning-log.md`](./references/learning-log.md) 참조.
 4. **`close-run`은 모든 종료 경로에서 호출됩니다**: `outcome=success` (Phase 2 정상 종료), `outcome=blocked` (state 쓰기 실패, 에스컬레이션 소진), `outcome=aborted` (사용자/훅 중단). 하드 크래시는 `outcome=unknown` (정직).
 5. **위험 등급은 TDD 엄격도를 결정합니다 — 모델 선택이 아닙니다.** 모델 선택은 Orchestrator=Opus / Sub-agents=Sonnet으로 문서화되어 있지만, 아직 `--model` 플래그가 `claude -p` 서브프로세스에 전달되지 않습니다 ([`docs/risks-and-limitations.md`](./docs/risks-and-limitations.md) §Headless model gap).
 6. **Reviewer는 채점 전에 `SPEC_COVERAGE_WALK:`를 발산합니다** (v2.9.0). 두 단계: A) 명시된 요구사항 열거, B) 메타 규칙 기반 적대적 생성. [`references/reviewer-prompt.md`](./references/reviewer-prompt.md) 참조.
+
+## v3.0 커널 빠른 참조
+
+v3.0부터 모든 실행은 커널 CLI를 통합니다. 자세한 사용법은 [`SKILL.md`](./SKILL.md) 참조.
+
+```bash
+# 초기화 (dirty-tree 체크, worktree+branch 생성, 4개 훅 materialize, state.json 초기화)
+python3 scripts/kernel/kernel.py init --args "plan=plan.md spec=spec.md" --repo-root "$(git rev-parse --show-toplevel)"
+
+# 커널 루프 (SETUP 완료 후)
+python3 scripts/kernel/kernel.py next --state <state_path>      # 다음 액션 결정
+python3 scripts/kernel/kernel.py submit --state <state_path> --task <id> --role <role> --result <path>
+python3 scripts/kernel/kernel.py finalize --state <state_path>  # 종료 신호시
+
+# 진단
+python3 scripts/kernel/kernel.py inspect --state <state_path>
+python3 scripts/kernel/kernel.py check-stop --state <state_path>  # Stop 훅 진입점
+```
+
+| 서브커맨드 | exit 0 | exit 2 | exit 3 |
+|-----------|--------|--------|--------|
+| init | ok | halt (dirty_worktree 등) | error |
+| next | ok | — | error |
+| submit | ok (accepted or rejected) | — | error (missing result/schema) |
+| check-stop | allow stop | block stop | — |
+| finalize | finalized | — | blocking drift |
 
 ## 레포 레이아웃
 
