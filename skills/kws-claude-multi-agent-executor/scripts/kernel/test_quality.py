@@ -513,6 +513,54 @@ def test_g_skipped_grade_red():
     print("TEST (g) PASS: SKIPPED task → grade=red AND passed=False (critical separation verified)")
 
 
+# ── TEST: PENDING_BATCH at finalize → pending_batch_unverified + passed=false ──
+
+def test_pending_batch_blocks_release():
+    """A PENDING_BATCH task at completion-audit time must produce a
+    pending_batch_unverified residual_risk item with blocks_release=True,
+    which forces passed=False and grade=red (defense-in-depth).
+
+    This is symmetric with the SKIPPED task case. A correctly-driven run
+    (with the T14b drain) will never reach finalize with PENDING_BATCH, but
+    if it does the gate must hold.
+    """
+    with tempfile.TemporaryDirectory() as orch_dir:
+        state = _make_complete_state(orch_dir)
+        # Override task_2 to PENDING_BATCH (simulating a missed drain)
+        state["tasks"]["task_2"]["status"] = "PENDING_BATCH"
+        # Remove timing "completed" since PENDING_BATCH is terminal but unverified
+        state["tasks"]["task_2"]["timing"]["completed"] = None
+
+        ca = quality.build_completion_audit(state)
+
+        # Must have a pending_batch_unverified residual_risk item
+        classes = [r.get("class") for r in ca.get("residual_risk", []) if isinstance(r, dict)]
+        assert "pending_batch_unverified" in classes, (
+            f"Expected pending_batch_unverified in residual_risk classes; got {classes!r}"
+        )
+
+        # blocks_release=True must be present on that item
+        for r in ca.get("residual_risk", []):
+            if isinstance(r, dict) and r.get("class") == "pending_batch_unverified":
+                assert r.get("blocks_release") is True, (
+                    f"pending_batch_unverified must have blocks_release=True; got {r!r}"
+                )
+                break
+
+        # The invariant: blocks_release=True → passed=False
+        assert ca["passed"] is False, (
+            f"PENDING_BATCH at finalize must force passed=False; got {ca['passed']!r}"
+        )
+
+        # And grade must be red via build_run_quality
+        rq = quality.build_run_quality(state, orch_dir)
+        assert rq["grade"] == "red", (
+            f"PENDING_BATCH at finalize must yield grade=red; got {rq['grade']!r}"
+        )
+
+    print("TEST pending_batch_blocks_release PASS: PENDING_BATCH at finalize → passed=False + grade=red")
+
+
 # ── TEST: normalize_run structure correctness ──────────────────────────────────
 
 def test_normalize_structure():
@@ -657,6 +705,7 @@ _TESTS = [
     test_build_run_quality_fields,
     test_finalize_happy_path,
     test_inspect_readonly,
+    test_pending_batch_blocks_release,
 ]
 
 if __name__ == "__main__":

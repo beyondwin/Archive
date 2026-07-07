@@ -191,8 +191,26 @@ def decide(state: dict) -> dict:
             "steps": list(COMPACT_STEPS),
         }
 
-    # 3. All tasks terminal → finalize (SKILL.md: Phase 2 entry).
+    # 3. All tasks terminal → check for lingering PENDING_BATCH before finalize.
+    #    Phase-2-finalization.md Step 0: run LOW Batch Verifier Sweep first.
     if _all_tasks_terminal(active):
+        pending_batch_ids = [
+            tid for tid, t in active.get("tasks", {}).items()
+            if t.get("status") == "PENDING_BATCH"
+        ]
+        if pending_batch_ids:
+            # No in-progress tasks remain but ≥1 PENDING_BATCH → dispatch batch verifier.
+            # task_ids is authoritative; task_id (singular) is set to first for
+            # compatibility with dispatch.build() which expects a task_id key.
+            return {
+                "action": "dispatch",
+                "role": "verifier",
+                "batch": True,
+                "task_ids": pending_batch_ids,
+                "task_id": pending_batch_ids[0],
+                "attempt": 1,
+            }
+        # Zero PENDING_BATCH → safe to finalize.
         return {"action": "finalize"}
 
     # 4. Find the next task needing work.
@@ -405,6 +423,10 @@ def _apply_verifier(
     """
     status = payload.get("status")
 
+    # ── Batch drain path (PENDING_BATCH tasks, T14b) ─────────────────────────
+    # PENDING_BATCH → verifier PASS/FAIL is the batch sweep; no per-task retry.
+    is_batch_drain = task.get("status") == "PENDING_BATCH"
+
     if status == "PASS":
         task["status"] = "COMPLETE"
         # Clear any pending reset
@@ -422,7 +444,19 @@ def _apply_verifier(
             if len(trend) > QUALITY_TREND_MAX:
                 active["quality_trend"] = trend[-QUALITY_TREND_MAX:]
 
-    else:  # FAIL (or unknown)
+    elif is_batch_drain:
+        # FAIL on a PENDING_BATCH task: LOW tasks get no per-task retry budget
+        # in batch verification. A failed batch check is a verification gap;
+        # the run continues (phase-2-finalization.md Step 0 FAIL contract).
+        task["status"] = "SKIPPED"
+        task["skip_reason"] = "batch_verification_failed"
+        s.setdefault("verification_gaps", []).append({
+            "task": task_id,
+            "kind": "batch_verify",
+            "attempts": 1,
+        })
+
+    else:  # FAIL (or unknown) on normal (non-PENDING_BATCH) task
         # ── T12: recovery pre-classification ──────────────────────────────────
         # Check for a command_observation in the payload.  This is the ONLY gate:
         # no command_observation → skip recovery and fall through to original path.

@@ -484,6 +484,20 @@ def build_completion_audit(state: dict) -> dict:
                 "blocks_release": True,  # SKIPPED tasks block release
             })
 
+    # ── Residual risk: PENDING_BATCH tasks (batch verification not drained) ─────
+    # Defense-in-depth: a correctly-driven run (with T14b drain) will never reach
+    # finalize with PENDING_BATCH tasks, but if it does they block release.
+    # Symmetric with SKIPPED: blocks_release=true → passed=false → grade=red.
+    for task_id, task in tasks.items():
+        if not isinstance(task, dict):
+            continue
+        if task.get("status") == "PENDING_BATCH":
+            residual_risk.append({
+                "class": "pending_batch_unverified",
+                "summary": f"{task_id}: batch verification not drained",
+                "blocks_release": True,
+            })
+
     # ── Residual risk: tasks with verification_gap or verifier_failed ─────────
     for task_id, task in tasks.items():
         if not isinstance(task, dict):

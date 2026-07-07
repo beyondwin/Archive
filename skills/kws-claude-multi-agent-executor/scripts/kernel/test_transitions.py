@@ -417,6 +417,215 @@ def test_review_fail_increments_retry_under_budget():
     print("TEST 18 PASS: review FAIL under budget → increments retry, no SKIP")
 
 
+# ── TEST 19: decide returns batch-verify when only PENDING_BATCH tasks remain ──
+
+def test_decide_batch_verify_when_only_pending_batch():
+    """decide returns batch-verify action when all non-PENDING_BATCH tasks are
+    terminal and ≥1 PENDING_BATCH task remains.
+
+    A state with task_1=COMPLETE and task_2=PENDING_BATCH should return a
+    dispatch action with batch=True and task_ids=[task_2], NOT finalize.
+    """
+    s = {
+        "schema_version": 3,
+        "status": "RUNNING",
+        "current_task": "task_2",
+        "current_pre_task_sha": "abc1234",
+        "risk_levels": {"task_1": "mid", "task_2": "low"},
+        "execution_plan": [["task_1"], ["task_2"]],
+        "tasks": {
+            "task_1": {
+                "status": "COMPLETE",
+                "phase": None,
+                "review_retries": 0,
+                "verifier_retries": 0,
+                "escalations": 0,
+                "timing": {},
+            },
+            "task_2": {
+                "status": "PENDING_BATCH",
+                "phase": None,
+                "review_retries": 0,
+                "verifier_retries": 0,
+                "escalations": 0,
+                "timing": {},
+            },
+        },
+        "task_summaries": {},
+        "quality_trend": [],
+        "cost_ledger": {"totals": {"dispatches": 0}, "by_task": {}},
+        "compaction_points": [],
+        "last_compaction_after_task": None,
+        "last_completed_task": "task_1",
+    }
+    action = transitions.decide(s)
+    assert action.get("action") == "dispatch", (
+        f"Expected action=dispatch for batch-verify, got {action!r}"
+    )
+    assert action.get("batch") is True, (
+        f"Expected batch=True in batch-verify action, got {action!r}"
+    )
+    assert "task_ids" in action, (
+        f"Expected task_ids in batch-verify action, got {action!r}"
+    )
+    assert "task_2" in action["task_ids"], (
+        f"Expected task_2 in task_ids, got {action['task_ids']!r}"
+    )
+    assert action.get("role") == "verifier", (
+        f"Expected role=verifier for batch-verify, got {action.get('role')!r}"
+    )
+    print("TEST 19 PASS: decide returns batch-verify dispatch when only PENDING_BATCH remains")
+
+
+# ── TEST 20: decide returns finalize only when zero PENDING_BATCH remain ──────
+
+def test_decide_finalize_only_when_no_pending_batch():
+    """decide returns finalize ONLY when all tasks are COMPLETE or SKIPPED (no
+    PENDING_BATCH). A state with all tasks COMPLETE and no PENDING_BATCH must
+    return finalize.
+    """
+    s = {
+        "schema_version": 3,
+        "status": "RUNNING",
+        "current_task": None,
+        "current_pre_task_sha": "abc1234",
+        "risk_levels": {"task_1": "mid", "task_2": "low"},
+        "execution_plan": [["task_1"], ["task_2"]],
+        "tasks": {
+            "task_1": {
+                "status": "COMPLETE",
+                "phase": None,
+                "review_retries": 0,
+                "verifier_retries": 0,
+                "escalations": 0,
+                "timing": {},
+            },
+            "task_2": {
+                "status": "COMPLETE",
+                "phase": None,
+                "review_retries": 0,
+                "verifier_retries": 0,
+                "escalations": 0,
+                "timing": {},
+            },
+        },
+        "task_summaries": {},
+        "quality_trend": [],
+        "cost_ledger": {"totals": {"dispatches": 0}, "by_task": {}},
+        "compaction_points": [],
+        "last_compaction_after_task": None,
+        "last_completed_task": "task_2",
+    }
+    action = transitions.decide(s)
+    assert action.get("action") == "finalize", (
+        f"Expected finalize when no PENDING_BATCH tasks remain, got {action!r}"
+    )
+    print("TEST 20 PASS: decide returns finalize only when zero PENDING_BATCH remain")
+
+
+# ── TEST 21: apply_result batch PASS → PENDING_BATCH → COMPLETE + quality_trend ─
+
+def test_apply_result_batch_pass_completes_task():
+    """apply_result with role=verifier on a PENDING_BATCH task with PASS status
+    drives that task PENDING_BATCH → COMPLETE, updates last_completed_task, and
+    appends to quality_trend.
+    """
+    s = {
+        "schema_version": 3,
+        "status": "RUNNING",
+        "current_task": "task_1",
+        "current_pre_task_sha": "abc1234",
+        "risk_levels": {"task_1": "low"},
+        "execution_plan": [["task_1"]],
+        "tasks": {
+            "task_1": {
+                "status": "PENDING_BATCH",
+                "phase": None,
+                "review_retries": 0,
+                "verifier_retries": 0,
+                "escalations": 0,
+                "quality_score": 0.88,  # set by reviewer step earlier
+                "timing": {},
+            },
+        },
+        "task_summaries": {},
+        "quality_trend": [],
+        "cost_ledger": {"totals": {"dispatches": 0}, "by_task": {}},
+        "compaction_points": [],
+        "last_compaction_after_task": None,
+        "last_completed_task": None,
+    }
+    s2 = transitions.apply_result(
+        s, "task_1", "verifier",
+        {"status": "PASS", "commands_run": ["pytest"], "exit_codes": [0]},
+    )
+    assert s2["tasks"]["task_1"]["status"] == "COMPLETE", (
+        f"Expected PENDING_BATCH → COMPLETE on batch PASS, got "
+        f"{s2['tasks']['task_1']['status']!r}"
+    )
+    assert s2.get("last_completed_task") == "task_1", (
+        f"Expected last_completed_task='task_1', got {s2.get('last_completed_task')!r}"
+    )
+    trend = s2.get("quality_trend", [])
+    assert len(trend) == 1, f"Expected quality_trend length 1, got {len(trend)}"
+    assert trend[0] == 0.88, f"Expected quality_trend[0]=0.88, got {trend[0]}"
+    print("TEST 21 PASS: apply_result batch PASS drives PENDING_BATCH → COMPLETE + quality_trend")
+
+
+# ── TEST 22: apply_result batch FAIL → PENDING_BATCH → SKIPPED + verification_gaps
+
+def test_apply_result_batch_fail_skips_task():
+    """apply_result with role=verifier on a PENDING_BATCH task with FAIL status
+    drives that task → SKIPPED and appends to verification_gaps. LOW tasks get
+    no per-task retry here (batch verification failure is a gap, run continues).
+    """
+    s = {
+        "schema_version": 3,
+        "status": "RUNNING",
+        "current_task": "task_1",
+        "current_pre_task_sha": "abc1234",
+        "risk_levels": {"task_1": "low"},
+        "execution_plan": [["task_1"]],
+        "tasks": {
+            "task_1": {
+                "status": "PENDING_BATCH",
+                "phase": None,
+                "review_retries": 0,
+                "verifier_retries": 0,
+                "escalations": 0,
+                "quality_score": 0.75,
+                "timing": {},
+            },
+        },
+        "task_summaries": {},
+        "quality_trend": [],
+        "cost_ledger": {"totals": {"dispatches": 0}, "by_task": {}},
+        "compaction_points": [],
+        "last_compaction_after_task": None,
+        "last_completed_task": None,
+    }
+    s2 = transitions.apply_result(
+        s, "task_1", "verifier",
+        {"status": "FAIL", "issues": [{"description": "batch test failed"}]},
+    )
+    assert s2["tasks"]["task_1"]["status"] == "SKIPPED", (
+        f"Expected PENDING_BATCH → SKIPPED on batch FAIL, got "
+        f"{s2['tasks']['task_1']['status']!r}"
+    )
+    gaps = s2.get("verification_gaps", [])
+    assert len(gaps) >= 1, f"Expected at least 1 verification_gap on batch FAIL, got {gaps!r}"
+    gap = gaps[0]
+    assert gap.get("task") == "task_1", f"Expected gap task=task_1, got {gap!r}"
+    assert gap.get("kind") == "batch_verify", (
+        f"Expected gap kind=batch_verify for LOW batch failure, got {gap.get('kind')!r}"
+    )
+    # Immutability: original state unchanged
+    assert s["tasks"]["task_1"]["status"] == "PENDING_BATCH", (
+        "apply_result must not mutate original state"
+    )
+    print("TEST 22 PASS: apply_result batch FAIL drives PENDING_BATCH → SKIPPED + verification_gaps")
+
+
 # ── main: run ALL test functions ─────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -439,6 +648,10 @@ if __name__ == "__main__":
         test_apply_result_immutable,
         test_record_timing,
         test_review_fail_increments_retry_under_budget,
+        test_decide_batch_verify_when_only_pending_batch,
+        test_decide_finalize_only_when_no_pending_batch,
+        test_apply_result_batch_pass_completes_task,
+        test_apply_result_batch_fail_skips_task,
     ]
 
     failed = []

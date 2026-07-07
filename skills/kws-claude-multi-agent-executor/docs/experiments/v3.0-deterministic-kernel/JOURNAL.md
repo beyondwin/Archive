@@ -55,3 +55,22 @@ The stdlib validator does not enforce min/max, so the description is the only sc
 Fix (controller, mechanical): corrected both descriptions to "0.0–1.0 ... (PASS threshold 0.85/0.75)".
 This is the writing-plans "types consistent across tasks" class — a T5 artifact bug surfaced only
 when T9 wired the real cycle. Committed with T9.
+
+### T14 review — CORE FLOW GAP found: LOW batch verification never drained
+
+T14's reviewer (release-gate focus) caught that lingering PENDING_BATCH finalizes green+passed.
+Tracing it (advisor-guided) revealed a deeper gap spanning T6/T11/T14: the kernel NEVER drains
+LOW-risk PENDING_BATCH tasks. Confirmed by trace:
+- `compaction_points` is READ by transitions._compaction_due but WRITTEN by nothing (gate/init/transitions
+  all lack a producer) → decide()'s compact path never fires.
+- apply_result has no batch-verifier drain: reviewer sets LOW → PENDING_BATCH (transitions.py:369) but no
+  path drives PENDING_BATCH → COMPLETE.
+Net: LOW tasks route to PENDING_BATCH and decide() finalizes them UNVERIFIED. Phase-2-finalization.md
+Step 0 mandates a LOW Batch Verifier Sweep before finalize; lingering PENDING_BATCH is an explicit HALT.
+Decision (controller, advisor-endorsed): batch-drain-before-finalize MUST be a kernel-returned action
+(deferring to prose SKILL.md would reintroduce the prose-decision the kernel exists to kill). Fix spans
+transitions.decide (return batch-verify when only PENDING_BATCH remain, before finalize) + apply_result
+(batch drain path) + quality.completion_audit (lingering PENDING_BATCH = blocks_release, symmetric with
+SKIPPED) + the e2e (drive the drain — the hand-authored 2-task fixture skipped it, a keystone coverage hole).
+Routed through implementer→reviewer (load-bearing). PENDING_BATCH stays terminal for the per-task cycle
+(no global _all_tasks_terminal redefinition) — targeted guard only.
