@@ -232,8 +232,9 @@ def handle_submit(args):
 def handle_check_stop(args):
     """Check stop condition.
 
-    Exit 2 (+reason) if all tasks terminal AND finalize not done.
-    Exit 0 otherwise.
+    Exit 2 (+reason) if all tasks terminal, ZERO PENDING_BATCH, AND finalize
+    not done. If any PENDING_BATCH tasks linger, exit 0 (batch drain still due;
+    finalize is NOT pending — mirrors decide()). Exit 0 otherwise.
 
     NOTE: We use a "halt" key in the returned dict to trigger main()'s exit 2
     path. This does NOT signal an error — it signals "stop requested".
@@ -249,9 +250,25 @@ def handle_check_stop(args):
     # Check if all tasks terminal
     tasks = active.get("tasks", {})
     terminal_statuses = {"COMPLETE", "SKIPPED", "PENDING_BATCH"}
-    if tasks and all(t.get("status") in terminal_statuses for t in tasks.values()):
-        # All terminal and finalize not done → signal stop
-        # Use "halt" key to trigger exit(2) in main()
+    all_terminal = bool(tasks) and all(
+        t.get("status") in terminal_statuses for t in tasks.values()
+    )
+
+    # Mirror decide() exactly: finalize is only "pending" when there are ZERO
+    # PENDING_BATCH tasks. If any linger, decide() returns a batch-verify
+    # dispatch (work remains) — check-stop must NOT signal finalize, or the Stop
+    # hook finalizes with an outstanding batch drain and fails red opaquely (T14b).
+    pending_batch = any(
+        t.get("status") == "PENDING_BATCH" for t in tasks.values()
+    )
+
+    if all_terminal and pending_batch:
+        # Batch drain still due → do not stop, do not signal finalize.
+        return {"check_stop": "batch_drain_pending", "stop": False}
+
+    if all_terminal:
+        # All terminal, zero PENDING_BATCH, finalize not done → signal stop.
+        # Use "halt" key to trigger exit(2) in main().
         return {
             "halt": "all_tasks_terminal_finalize_pending",
             "reason": "All tasks have reached terminal status. Finalize step required.",
