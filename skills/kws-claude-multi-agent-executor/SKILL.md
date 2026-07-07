@@ -22,7 +22,7 @@ back, and repeat. Do not ask the user for approval between tasks.
 > job. Run `kernel.py next` and do exactly what it says.
 
 The kernel CLI is `scripts/kernel/kernel.py` with subcommands:
-`init` · `next` · `submit` · `check-stop` · `finalize` · `inspect`.
+`init` · `next` · `submit` · `check-stop` · `finalize` · `inspect` · `resolve-escalation`.
 Every invocation prints a single JSON object to stdout. Exit code `3` = error
 (hard halt), exit code `2` = halt/stop-blocked, exit code `0` = normal.
 
@@ -179,7 +179,7 @@ kernel emits that you mishandle is a runtime break the kernel tests cannot catch
 | `{"action":"dispatch","role":"verifier","batch":true,"task_ids":[…],"task_id":<first>,"attempt":1}` (LOW batch-verify sweep before finalize) | Dispatch the verifier over the whole `task_ids` batch (LOW tasks accumulated as PENDING_BATCH); write result to `result_path`; then `submit` with `--role verifier --task <first task_id>`. Fires when all tasks terminal AND ≥1 PENDING_BATCH remains. | `transitions.py:196-212` |
 | `{"action":"run_command","purpose":"reset","command":"git reset --hard <sha>","task_id"}` | Run the git reset (restores pre-task SHA before re-dispatching a verifier-FAILed task), then loop back to `next`. The `PreToolUse` hook does NOT block `git reset --hard`. **`reset` is the only `run_command` purpose `decide()` emits.** | `transitions.py:222-230` |
 | `{"action":"compact","steps":["batch_verifier","docs_updater","anchor"]}` | Perform context compaction in the given step order (batch-verify accumulated LOW tasks → update phase docs → drop raw task context, anchor on state.json), then loop back to `next`. Fires only when `last_completed_task` is a `compaction_points` entry not yet compacted. **NOTE:** `compaction_points` has no kernel producer — this action never fires unless SETUP (②) wrote `compaction_points` into state. | `transitions.py:188-192` |
-| `{"action":"escalate_to_user","reason","questions":[…]}` | Batch the `questions` to the user and wait for their answer. This is the channel for: spec-clarification budget exhaustion, repeated ENV_BLOCKER, AND gate operator-review of a blocking executability issue (a trust/risk `block` from `gate.preflight`, per D001). After the user answers, **clear `state.pending_escalation`** (a SANCTIONED state edit — the kernel has no resolution subcommand and never clears the flag itself; the ENV_BLOCKER task is non-terminal so it re-escalates forever until you clear it) and apply the clarification, then loop back to `next`. | `transitions.py:178-184`; producers at `transitions.py:328-338` (spec-fault) and `:489-500` (ENV_BLOCKER) |
+| `{"action":"escalate_to_user","reason","questions":[…]}` | Batch the `questions` to the user and wait for their answer. This is the channel for: spec-clarification budget exhaustion, repeated ENV_BLOCKER, AND gate operator-review of a blocking executability issue (a trust/risk `block` from `gate.preflight`, per D001). After the user answers, **clear the escalation THROUGH THE KERNEL** — run `python3 kernel.py resolve-escalation --state <state_path> --answer "<the user's answer>"`. That is the ONLY sanctioned way to unblock this loop: `decide()` returns `escalate_to_user` while `pending_escalation` is truthy and clears it for nothing (the ENV_BLOCKER task is non-terminal, so it re-escalates forever otherwise). `resolve-escalation` clears the flag, records the answer to `escalations_resolved` + `decisions_register` (audit), and writes via the single-writer atomic path. **Never hand-edit `state.json`** to clear it. Then apply any spec/plan clarification and loop back to `next`. | `transitions.py:178-184` (producer branches `:328-338` spec-fault / `:489-500` ENV_BLOCKER); resolver `kernel.py::handle_resolve_escalation` |
 | `{"action":"finalize"}` | Run `kernel.py finalize` (see below). Fires when all tasks terminal AND zero PENDING_BATCH. | `transitions.py:213-214` |
 | `{"action":"halt","reason":"no_dispatchable_task"}` | **Hard halt.** Emitted when no task is dispatchable but not all are terminal — a state inconsistency (usually SETUP did not populate `execution_plan`). Report the reason and stop. No prose fallback (⑤). | `transitions.py:218-220` |
 | `{"action":"done"}` | **Never emitted.** Listed in the decide() docstring but no `return` produces it, and `decide()` does not gate on `status==FINALIZED`. Do NOT wait for it. Loop exit is `finalize` returning `status:finalized` (③). | `transitions.py:167` (docstring only — no return) |
@@ -248,10 +248,11 @@ class the kernel exists to eliminate.
   hooks_materialization_failed) or **`{"action":"halt",…}` from `next`**
   (no_dispatchable_task) → hard halt. Report and stop.
 - **State-write failure** — the kernel owns every state.json write; if a kernel
-  subcommand exits non-zero for an I/O reason, treat it as a hard halt. Do NOT hand-edit
-  state.json to "recover" (the forbidden recovery hand-edit). The ONE sanctioned state
-  edit is clearing `pending_escalation` after an `escalate_to_user` was answered (④) —
-  the kernel has no subcommand for it.
+  subcommand exits non-zero for an I/O reason, treat it as a hard halt. **The LLM
+  NEVER writes `state.json` directly — the kernel is the sole state writer, via
+  `init` / `next` / `submit` / `finalize` / `resolve-escalation`.** There is no
+  sanctioned hand-edit, not even to clear a `pending_escalation` (use
+  `resolve-escalation`, ④). Hand-editing state.json to "recover" is forbidden.
 - **`submit` `halt_pending:true`** is a warning, not yet a halt — fix the sub-agent's
   output contract before the next (fatal) violation.
 

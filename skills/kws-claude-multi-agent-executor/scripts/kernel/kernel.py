@@ -8,6 +8,7 @@ Subcommands:
   check-stop  — check stop condition (T9/T14)
   finalize    — finalise execution (T14)
   inspect     — inspect state (T14, read-only)
+  resolve-escalation — clear a pending escalation via the single-writer path (T15)
 """
 import sys
 import os
@@ -400,6 +401,68 @@ def handle_finalize(args):
     }
 
 
+def handle_resolve_escalation(args):
+    """Resolve a pending escalation THROUGH THE KERNEL (single-writer invariant).
+
+    `decide()` returns `escalate_to_user` whenever `state["pending_escalation"]` is
+    truthy and clears it for nothing — so an uncleared escalation loops forever. The
+    ONLY sanctioned way to clear it is this subcommand; the LLM never writes state.json
+    directly. Order:
+
+    1. Load state.
+    2. If no pending_escalation → {"error":"no_pending_escalation"} (exit 3).
+    3. Clear pending_escalation (set to None); append an audit entry to
+       state["escalations_resolved"] (task_id + questions + answer + ts) AND to the
+       active plan's decisions_register (append-only audit trail) so the resolution
+       survives.
+    4. Write via statefile.write_state (atomic single-writer path).
+    5. Return {"resolved": true, "next_hint": decide(state)["action"]}.
+    """
+    import copy
+    state = statefile.read_state(args.state)
+    pending = state.get("pending_escalation")
+    if not pending:
+        return {"error": "no_pending_escalation"}
+
+    state = copy.deepcopy(state)
+    answer = args.answer or ""
+    now = _utc_now_iso()
+    task_id = pending.get("task_id")
+
+    resolution = {
+        "task_id": task_id,
+        "reason": pending.get("reason", ""),
+        "questions": pending.get("questions", []),
+        "answer": answer,
+        "resolved_at": now,
+    }
+
+    # Run-level audit trail.
+    state.setdefault("escalations_resolved", []).append(resolution)
+
+    # Append-only decisions_register on the active plan (survives compaction).
+    active = statefile.active(state)
+    active.setdefault("decisions_register", []).append({
+        "kind": "escalation_resolved",
+        "task_id": task_id,
+        "answer": answer,
+        "ts": now,
+    })
+
+    # Clear the escalation — the sole action that unblocks decide()'s first branch.
+    state["pending_escalation"] = None
+
+    # Persist via the single-writer atomic path.
+    statefile.write_state(args.state, state)
+
+    next_action = transitions.decide(state)
+    return {
+        "resolved": True,
+        "task_id": task_id,
+        "next_hint": next_action.get("action"),
+    }
+
+
 def handle_inspect(args):
     """Inspect state — read-only: print run_quality + normalize summary; NO state mutation."""
     state = statefile.read_state(args.state)
@@ -458,6 +521,14 @@ def main():
     parser_inspect = subparsers.add_parser("inspect", help="Inspect state")
     parser_inspect.add_argument("--state", required=True, help="State file path")
 
+    # resolve-escalation: requires --state, optional --answer
+    parser_resolve = subparsers.add_parser(
+        "resolve-escalation",
+        help="Clear a pending escalation (the ONLY sanctioned way to unblock decide()'s escalate_to_user loop)")
+    parser_resolve.add_argument("--state", required=True, help="State file path")
+    parser_resolve.add_argument("--answer", default="",
+                                help="The user's answer to the escalation questions (recorded for audit)")
+
     args = parser.parse_args()
 
     handlers = {
@@ -467,6 +538,7 @@ def main():
         "check-stop": handle_check_stop,
         "finalize": handle_finalize,
         "inspect": handle_inspect,
+        "resolve-escalation": handle_resolve_escalation,
     }
 
     if args.command not in handlers:
