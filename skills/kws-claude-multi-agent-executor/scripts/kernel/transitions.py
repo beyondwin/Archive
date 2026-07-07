@@ -39,6 +39,7 @@ import copy
 from typing import Any
 
 import statefile
+import recovery
 
 
 # ── Fixed constants (SKILL.md: "Quality scoring thresholds are not user-
@@ -383,6 +384,24 @@ def _apply_verifier(
     - PASS → COMPLETE + last_completed_task + quality_trend (rolling 10).
     - FAIL → verifier_retries +1; set reset_pending.
         >3 → reset_pending + SKIPPED + verification_gaps.
+
+    Recovery pre-classification (T12):
+    When the payload carries a ``command_observation`` dict, the recovery module
+    is consulted FIRST.
+
+    - ENV-family (missing_local_env, dependency_bootstrap, resource_oom,
+      timeout_or_hang, permission_or_sandbox, flaky_test, tooling_bug) on 1st
+      occurrence: action=bootstrap/retry — verifier_retries is NOT incremented;
+      the attempt is recorded in state.recovery_attempts[] for signature tracking.
+    - ENV-family on 2nd+ occurrence (same root_signature): action=escalate —
+      still does NOT burn verifier budget; records ENV_BLOCKER signal.
+    - source_failure: action=implementer_retry — falls through to the existing
+      FAIL path (verifier_retries++, reset_pending).
+    - unknown: treated as ENV-family (no budget burn) AND appends the command to
+      state.residual_risk_commands[] for T14 completion_audit.
+
+    When no ``command_observation`` is present, the original FAIL path runs
+    unchanged (regression guard for test_transitions.py TEST 11/12).
     """
     status = payload.get("status")
 
@@ -404,6 +423,51 @@ def _apply_verifier(
                 active["quality_trend"] = trend[-QUALITY_TREND_MAX:]
 
     else:  # FAIL (or unknown)
+        # ── T12: recovery pre-classification ──────────────────────────────────
+        # Check for a command_observation in the payload.  This is the ONLY gate:
+        # no command_observation → skip recovery and fall through to original path.
+        cmd_obs = payload.get("command_observation")
+        if cmd_obs is not None:
+            decision = recovery.decide_recovery(s, task_id, cmd_obs)
+            sig = decision["root_signature"]
+            action = decision["action"]
+            category = cmd_obs.get("category", "unknown")
+
+            # Record this attempt for signature-tracking (2nd-occurrence detection).
+            s.setdefault("recovery_attempts", []).append({
+                "root_signature": sig,
+                "task_id": task_id,
+                "category": category,
+                "action": action,
+            })
+
+            # T14 seam: unknown category → residual_risk_commands
+            if category == "unknown":
+                s.setdefault("residual_risk_commands", []).append(
+                    str(cmd_obs.get("command", ""))
+                )
+
+            if action != "implementer_retry":
+                # ENV-family (bootstrap/retry/escalate): do NOT burn verifier budget.
+                # Reset_pending is NOT set so the kernel doesn't roll back on a
+                # transient env failure.
+                # Escalate records an ENV_BLOCKER signal in pending_escalation.
+                if action == "escalate":
+                    s["pending_escalation"] = {
+                        "reason": f"ENV_BLOCKER: repeated env failure for {task_id} "
+                                  f"(signature {sig})",
+                        "questions": [
+                            f"Task {task_id} hit the same env failure twice "
+                            f"(root_signature={sig}, category={category}). "
+                            "Please resolve the environment issue before retrying."
+                        ],
+                        "task_id": task_id,
+                        "root_signature": sig,
+                    }
+                return  # Exit WITHOUT touching verifier_retries / reset_pending
+            # else: source_failure → fall through to standard FAIL path below
+
+        # ── Original FAIL path ────────────────────────────────────────────────
         # CYCLE line 281: "Increment verifier_retries"
         task["verifier_retries"] = task.get("verifier_retries", 0) + 1
 
