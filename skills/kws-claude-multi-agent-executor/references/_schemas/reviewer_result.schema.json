@@ -13,11 +13,11 @@
     },
     "spec_score": {
       "type": "number",
-      "description": "0–10 spec-compliance score."
+      "description": "0.0–1.0 spec-compliance score, quantized to 1 decimal (PASS threshold 0.85). Matches the reviewer-prompt scale and the kernel tier thresholds."
     },
     "quality_score": {
       "type": "number",
-      "description": "0–10 implementation quality score."
+      "description": "0.0–1.0 implementation quality score, quantized to 1 decimal (PASS threshold 0.75). Matches the reviewer-prompt scale and the kernel tier thresholds."
     },
     "issues": {
       "type": "array",
