@@ -481,6 +481,38 @@ def test_negative_product_broken_red():
     print("TEST (negative) PASS: anti-vacuous guard confirmed — broken state → red + passed=false")
 
 
+# ── TEST (g): SKIPPED task → grade=red AND passed=false (both must hold) ─────
+
+def test_g_skipped_grade_red():
+    """SKIPPED task must produce grade=red AND passed=False simultaneously.
+
+    This is the critical-separation anti-regression: a SKIPPED task is terminal
+    (so all_terminal=True), which previously allowed grade=green. But SKIPPED
+    produces blocks_release=True in residual_risk → passed=False → grade MUST
+    be red. Both conditions are asserted together; neither alone is sufficient.
+    """
+    with tempfile.TemporaryDirectory() as orch_dir:
+        state = _make_complete_state(orch_dir)
+        # Make task_1 SKIPPED (escalation exhausted)
+        state["tasks"]["task_1"]["status"] = "SKIPPED"
+        state["tasks"]["task_1"]["escalations"] = 4
+        # task_2 remains COMPLETE — so all_terminal is True
+
+        rq = quality.build_run_quality(state, orch_dir)
+        ca = quality.build_completion_audit(state)
+
+        # Both conditions MUST hold together — neither alone is sufficient
+        assert rq["grade"] == "red", (
+            f"SKIPPED task must produce grade=red (not green/yellow); got {rq['grade']!r}. "
+            f"This means build_run_quality is not consulting completion_audit.passed."
+        )
+        assert ca["passed"] is False, (
+            f"SKIPPED task must produce passed=False; got {ca['passed']!r}"
+        )
+
+    print("TEST (g) PASS: SKIPPED task → grade=red AND passed=False (critical separation verified)")
+
+
 # ── TEST: normalize_run structure correctness ──────────────────────────────────
 
 def test_normalize_structure():
@@ -619,6 +651,7 @@ _TESTS = [
     test_d_finalize_refused_on_blocking_drift,
     test_e_normalize_no_forbidden_patterns,
     test_f_check_stop_all_terminal_not_finalized,
+    test_g_skipped_grade_red,
     test_negative_product_broken_red,
     test_normalize_structure,
     test_build_run_quality_fields,
