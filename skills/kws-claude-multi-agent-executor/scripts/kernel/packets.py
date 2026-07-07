@@ -235,22 +235,14 @@ def build_manifest(spec_text: str) -> dict:
     else:
         assigned = _assign_section_ids(headings)
         for idx, (sid, line_start, level, title) in enumerate(assigned):
-            # Section ends one line before next sibling-or-parent heading
-            # (same level or higher), or at end of file.
-            if idx + 1 < len(assigned):
-                _, next_start, next_level, _ = assigned[idx + 1]
-                # Find end: walk forward from current section to find the next
-                # heading at same or higher level.
-                end_line = next_start - 1
-                for _, ns, nl, _ in assigned[idx + 1:]:
-                    if nl <= level:
-                        end_line = ns - 1
-                        break
-                # But we always include up to (and not past) the next heading
-                # at ANY level — use the nearest next heading's line - 1.
-                end_line = assigned[idx + 1][1] - 1
-            else:
-                end_line = total_lines
+            # Section spans to the next SAME-OR-HIGHER-level heading (CPE
+            # section_end_line semantics), so a parent section INCLUDES its
+            # subsections' text.  Default to EOF for the last such section.
+            end_line = total_lines
+            for _, ns, nl, _ in assigned[idx + 1:]:
+                if nl <= level:
+                    end_line = ns - 1
+                    break
 
             section_text = "".join(lines[line_start - 1 : end_line])
             sections[sid] = {
@@ -328,7 +320,14 @@ def _score_section(task: dict, section: dict) -> tuple[int, list[str]]:
 
 
 def _heuristic_sections(task: dict, manifest: dict) -> list[str]:
-    """Return list of section_ids with score >= 2 (file/title/task_id signal match)."""
+    """Return list of section_ids with score >= 2 (file/title/task_id signal match).
+
+    CPE early-exit guard: if the task yields no path tokens (no files / no useful
+    tokens), return [] rather than false-matching sections on generic title-word
+    overlap (e.g. a task titled "Overview" matching any "overview" section).
+    """
+    if not _path_tokens([f for f in task.get("files", []) if isinstance(f, str)]):
+        return []
     sections = manifest.get("sections", {})
     matched: list[str] = []
     for sid in manifest.get("section_order", []):

@@ -290,7 +290,63 @@ def test_dispatch_uses_packet_when_present():
             f"Prompt excerpt: {prompt_text[:500]!r}"
         )
 
-    print("TEST (f) PASS: dispatch reads packet from disk and uses its spec sections in prompt")
+        # Anti-silent-green: the no-packet fallback stub text must NOT appear,
+        # proving the packet path was actually taken (not a coincidental match).
+        assert "T10 packet injection pending" not in prompt_text, (
+            "Fallback stub text present — packet path was NOT taken:\n"
+            f"{prompt_text[:500]!r}"
+        )
+
+    print("TEST (f) PASS: dispatch reads packet from disk, uses its spec sections, no fallback stub")
+
+
+# ---------------------------------------------------------------------------
+# TEST (m): hierarchical spec — parent section spans its subsections
+# ---------------------------------------------------------------------------
+
+def test_hierarchical_parent_spanning():
+    """(m) A parent heading's section text INCLUDES its child subsections' text,
+    up to the next same-or-higher-level heading (CPE section_end_line semantics)."""
+    hierarchical = """\
+# S1 Parent
+
+Parent preamble text.
+
+## S1 Child One
+
+Child one content ALPHA.
+
+## S1 Child Two
+
+Child two content BRAVO.
+
+# S2 Sibling
+
+Sibling content CHARLIE.
+"""
+    manifest = packets.build_manifest(hierarchical)
+    order = manifest["section_order"]
+    # First section is the top-level parent (S1)
+    parent_id = order[0]
+    parent = manifest["sections"][parent_id]
+
+    assert parent["level"] == 1, f"Expected parent at level 1, got {parent['level']}"
+    parent_text = parent["text"]
+
+    # Parent section must include BOTH children's content (spanning works)
+    assert "Parent preamble text." in parent_text, "Parent preamble missing"
+    assert "Child one content ALPHA." in parent_text, (
+        f"Parent section truncated — child one content missing:\n{parent_text!r}"
+    )
+    assert "Child two content BRAVO." in parent_text, (
+        f"Parent section truncated — child two content missing:\n{parent_text!r}"
+    )
+    # But must NOT bleed into the sibling top-level section
+    assert "Sibling content CHARLIE." not in parent_text, (
+        f"Parent section over-spans into sibling S2:\n{parent_text!r}"
+    )
+
+    print("TEST (m) PASS: parent section spans its subsections, stops at same-level sibling")
 
 
 # ---------------------------------------------------------------------------
@@ -473,6 +529,7 @@ if __name__ == "__main__":
         test_heuristic_file_match,
         test_manifest_headingless_spec,
         test_packet_shape,
+        test_hierarchical_parent_spanning,
     ]
 
     print(f"Running {len(tests)} tests...\n")
