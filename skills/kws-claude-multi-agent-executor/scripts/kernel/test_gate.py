@@ -298,11 +298,14 @@ def test_preflight_contention_trigger_delegate_serial():
             "forbidden_write_globs": [],
         },
     }
-    # State indicates serialized_reason is resource_key or file-contention
-    # (the task was moved to a singleton by partition_waves due to contention)
+    # serialization_reason is injected directly here for this UNIT test.
+    # T15 seam: no producer exists in the cycle today — partition_waves returns
+    # bare list[list[str]] and no orchestrator step writes serialization_reason
+    # into state. T15 wires that producer; until then contention safely falls
+    # through to the default delegate_serial (TEST 7 covers the default path).
     state = {
         "risk_levels": {"task_1": "mid"},
-        "serialization_reason": "file_contention",  # injected by orchestrator from wave data
+        "serialization_reason": "file_contention",  # T15 seam: directly injected for this unit test
     }
     result = gate.preflight(task, packet, state)
     # Contention trigger → delegate_serial (still a subagent, just serialized)
@@ -310,6 +313,36 @@ def test_preflight_contention_trigger_delegate_serial():
         f"Contention trigger must → delegate_serial; got {result['decision']!r}: {result['reason']}"
     )
     print("TEST 11 PASS: contention trigger (D001) → delegate_serial")
+
+
+# ── TEST 11b (D001 fix #2): keyed resource_key=<slug> serialization_reason ────
+
+def test_preflight_serialization_reason_keyed_form():
+    """serialization_reason='resource_key=db-port-5432' (documented keyed form) → delegate_serial.
+
+    phase-0-setup.md Step 6 annotates execution_plan groups with
+    "serialization_reason": "resource_key=<key>". The preflight normalizer must
+    match the keyed form, not only the bare category, so a future orchestrator
+    wiring does not silently miss this branch.
+    """
+    task = _task("task_1", files=["utils.py"], acceptance="pytest tests/")
+    packet = {
+        "budget": {"status": "green"},
+        "fallback_used": False,
+        "files": ["utils.py"],
+        "write_policy": {"allowed_write_globs": ["utils.py"], "forbidden_write_globs": []},
+    }
+    state = {
+        "risk_levels": {"task_1": "mid"},
+        # T15 seam: directly injected; the documented keyed form from phase-0 Step 6.
+        "serialization_reason": "resource_key=db-port-5432",
+    }
+    result = gate.preflight(task, packet, state)
+    assert result["decision"] == "delegate_serial", (
+        f"Keyed serialization_reason must normalize and → delegate_serial; "
+        f"got {result['decision']!r}: {result['reason']}"
+    )
+    print("TEST 11b PASS: keyed 'resource_key=<slug>' serialization_reason → delegate_serial")
 
 
 # ── TEST 12 (D001): trust/risk trigger → block ────────────────────────────────
@@ -503,7 +536,68 @@ def test_assign_risk_override():
     risk = gate.assign_risk(tasks, override="high")
     for tid, level in risk.items():
         assert level == "high", f"Override 'high' must apply to {tid}; got {level!r}"
+    # Return type must stay a plain dict (warnings_sink is optional, non-breaking)
+    assert isinstance(risk, dict), f"assign_risk must return a dict; got {type(risk)}"
     print("TEST 17 PASS: assign_risk override applies to all tasks")
+
+
+# ── TEST 17b (fix #3): downgrade override on dangerous task → structured warning ─
+
+def test_assign_risk_override_captures_structured_warning():
+    """(fix #3) A DOWNGRADE override over a task with high-risk keywords appends a
+    structured risk_override_warnings[] entry to the caller-provided sink.
+
+    phase-0-setup.md Step 4 (line 214): entry has task, override, suggested_risk,
+    matched_keywords, ts. The sink IS the honest seam — gate.py has no state
+    access; the orchestrator reads the sink and writes state.json.
+    """
+    tasks = [
+        _task("task_1", files=["db/migrate.py"],
+              body="Perform the database schema migration for the users table"),
+    ]
+    sink: list = []
+    risk = gate.assign_risk(tasks, override="low", warnings_sink=sink)
+    # Override still wins (dangerous task is NOT silently blocked, just warned)
+    assert risk["task_1"] == "low", f"Override must still apply; got {risk['task_1']!r}"
+    # One structured entry captured
+    assert len(sink) == 1, f"Expected exactly 1 structured warning; got {sink}"
+    entry = sink[0]
+    assert entry["task"] == "task_1", f"entry.task wrong: {entry}"
+    assert entry["override"] == "low", f"entry.override wrong: {entry}"
+    assert entry["suggested_risk"] == "high", f"entry.suggested_risk must be 'high': {entry}"
+    # matched_keywords must contain the actual words that hit (not just be non-empty)
+    assert "database" in entry["matched_keywords"], (
+        f"matched_keywords must include 'database'; got {entry['matched_keywords']}"
+    )
+    assert "schema migration" in entry["matched_keywords"], (
+        f"matched_keywords must include 'schema migration'; got {entry['matched_keywords']}"
+    )
+    # ts present (do NOT pin exact value)
+    assert "ts" in entry and isinstance(entry["ts"], str) and entry["ts"], (
+        f"entry must carry a non-empty ts string; got {entry.get('ts')!r}"
+    )
+    print(f"TEST 17b PASS: downgrade override on dangerous task → structured warning {entry['matched_keywords']}")
+
+
+# ── TEST 17c (fix #3 negative): safe task downgrade → NO warning ─────────────
+
+def test_assign_risk_override_safe_task_no_warning():
+    """(fix #3 negative) Downgrading a SAFE task (no high-risk keywords) appends
+    nothing to the sink. Discriminates the matcher from an unconditional append.
+    """
+    tasks = [
+        _task("task_1", files=["ui/button.py"], body="Rename a local variable in the button widget"),
+    ]
+    sink: list = []
+    risk = gate.assign_risk(tasks, override="low", warnings_sink=sink)
+    assert risk["task_1"] == "low"
+    assert sink == [], f"Safe task must produce NO structured warning; got {sink}"
+    # And an override=high (not a downgrade) on a dangerous task also warns nothing
+    dangerous = [_task("task_2", files=["db.py"], body="database schema migration")]
+    sink2: list = []
+    gate.assign_risk(dangerous, override="high", warnings_sink=sink2)
+    assert sink2 == [], f"override=high is not a downgrade; must not warn; got {sink2}"
+    print("TEST 17c PASS: safe-task downgrade and override=high produce no structured warning")
 
 
 # ── TEST 18: partition_waves — list[list[str]] shape invariant ───────────────
@@ -590,12 +684,15 @@ _TESTS = [
     test_preflight_packet_red_blocks,
     test_preflight_write_scope_too_broad_blocks,
     test_preflight_contention_trigger_delegate_serial,
+    test_preflight_serialization_reason_keyed_form,
     test_preflight_trust_risk_trigger_block,
     test_preflight_delegate_parallel_seam,
     test_executability_audit_high_no_ac_blocking,
     test_executability_audit_operator_review_reduces_count,
     test_executability_audit_structure,
     test_assign_risk_override,
+    test_assign_risk_override_captures_structured_warning,
+    test_assign_risk_override_safe_task_no_warning,
     test_partition_waves_shape_invariant,
     test_partition_waves_file_overlap_stays_separate,
     test_preflight_would_have_populated,
