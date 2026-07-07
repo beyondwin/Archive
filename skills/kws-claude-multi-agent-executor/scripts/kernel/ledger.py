@@ -143,6 +143,10 @@ def extract_payload(result_file_text: str) -> tuple[dict, dict]:
     LedgerParseError — envelope is not valid JSON, or NEITHER a payload source
                        NOR a usage dict is present.
     """
+    # T16 SEAM: envelope key names — update _and_ verify this function against
+    # real `claude -p --output-format json` output in T16. Keys parsed:
+    #   structured_output (preferred payload), result (fallback payload),
+    #   usage (token counts), total_cost_usd (folded into returned usage).
     try:
         envelope = json.loads(result_file_text)
     except json.JSONDecodeError as exc:
@@ -201,8 +205,11 @@ def extract_payload(result_file_text: str) -> tuple[dict, dict]:
         # Usage present but no payload — return empty dict so callers don't crash
         payload = {}
 
-    usage = _normalize_usage(raw_usage)
-    return payload, usage
+    # T16 SEAM: return raw_usage verbatim (preserving all CLI-provided keys such
+    # as cache_creation_input_tokens, service_tier, etc.) so T16 can verify the
+    # real `claude -p` envelope against this assumption.  Do NOT normalize here —
+    # record() pulls only the fields it needs via usage.get(...).
+    return payload, raw_usage
 
 
 def record(state: dict, task_id: str, role: str, usage: dict) -> dict:
