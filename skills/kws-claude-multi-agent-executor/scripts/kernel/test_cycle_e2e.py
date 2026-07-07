@@ -496,10 +496,12 @@ def test_check_stop_all_terminal():
 
 
 def test_check_stop_pending_batch_not_finalize_pending():
-    """check-stop exits 0 (batch drain still due) when a PENDING_BATCH task lingers.
+    """check-stop BLOCKS the stop (exit 2) when a PENDING_BATCH task lingers.
 
-    T14b: decide() would return a batch-verify DISPATCH here, not finalize —
-    so check-stop must NOT signal finalize (exit 2). Work remains.
+    T14b: decide() returns a batch-verify DISPATCH here — OUTSTANDING WORK. The
+    Stop hook must be BLOCKED (exit 2) so the batch verifier + finalize still
+    run; allowing the stop (exit 0) would ship LOW tasks UNVERIFIED (the wedge).
+    It still distinguishes this state from finalize-pending via the halt reason.
     """
     with tempfile.TemporaryDirectory() as orch_dir:
         state_path = os.path.join(orch_dir, "state.json")
@@ -511,17 +513,18 @@ def test_check_stop_pending_batch_not_finalize_pending():
             json.dump(state, f, indent=2)
 
         rc, result, raw = _run_kernel("check-stop", "--state", state_path)
-        assert rc == 0, (
-            f"check-stop returned {rc} (expected 0: batch drain still due, "
-            f"finalize NOT pending); stdout={raw!r}"
+        assert rc == 2, (
+            f"check-stop returned {rc} (expected 2: batch drain is outstanding "
+            f"work, stop must be BLOCKED); stdout={raw!r}"
         )
-        assert result.get("check_stop") == "batch_drain_pending", (
-            f"expected check_stop=batch_drain_pending, got: {result!r}"
+        assert result.get("halt") == "batch_drain_pending", (
+            f"expected halt=batch_drain_pending (distinct from finalize-pending), "
+            f"got: {result!r}"
         )
-        assert "halt" not in result, (
-            f"check-stop must NOT signal finalize while PENDING_BATCH lingers: {result!r}"
+        assert result.get("halt") != "all_tasks_terminal_finalize_pending", (
+            f"batch drain must NOT masquerade as finalize-pending: {result!r}"
         )
-    print("TEST 5b PASS: check-stop exits 0 (batch_drain_pending) when PENDING_BATCH lingers")
+    print("TEST 5b PASS: check-stop exits 2 (halt=batch_drain_pending) when PENDING_BATCH lingers")
 
 
 def test_check_stop_finalized():
