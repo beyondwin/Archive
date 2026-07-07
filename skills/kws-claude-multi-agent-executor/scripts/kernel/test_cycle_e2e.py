@@ -159,14 +159,16 @@ def _write_result_file(path: str, payload: dict) -> None:
 # ── Test 1: happy-path full cycle ─────────────────────────────────────────────
 
 def test_full_cycle():
-    """Drive implementer→reviewer→verifier(MID), LOW→PENDING_BATCH, finalize.
+    """Drive implementer→reviewer→verifier(MID), LOW→PENDING_BATCH→batch_drain→COMPLETE, finalize.
 
     Regression assertions:
     1. Cycle progresses through all roles in order.
-    2. Final next returns finalize.
+    2. Final next returns finalize (ONLY after batch drain is complete).
+    2b: LOW-risk task_2 is drained: PENDING_BATCH → COMPLETE via batch verifier.
     3. timing.started AND timing.completed are non-null for ALL tasks.
     4. cost_ledger.totals.dispatches >= 5.
     5. events.jsonl exists and has lines.
+    6. finalize succeeds with grade=green and no pending_batch_unverified residual risk.
     """
     with tempfile.TemporaryDirectory() as orch_dir:
         state_path = os.path.join(orch_dir, "state.json")
@@ -177,7 +179,7 @@ def test_full_cycle():
         dispatch_sequence = []  # track (role, task_id) order
 
         # Run until action is finalize (or too many iterations)
-        for iteration in range(20):
+        for iteration in range(25):
             rc, action, raw = _run_kernel("next", "--state", state_path)
             assert rc == 0, f"iter {iteration}: next exited {rc}; stdout={raw!r}"
             assert action is not None, f"iter {iteration}: next returned no JSON; stdout={raw!r}"
@@ -198,8 +200,15 @@ def test_full_cycle():
             result_path = action.get("result_path")
             assert result_path, f"iter {iteration}: dispatch has no result_path: {action}"
 
-            dispatch_sequence.append((role, task_id))
-            print(f"  iter {iteration}: dispatching {role} for {task_id}")
+            # For batch verifier dispatches, record each task_id in task_ids
+            is_batch = action.get("batch") is True
+            if is_batch:
+                for tid in action.get("task_ids", [task_id]):
+                    dispatch_sequence.append((role, tid))
+                print(f"  iter {iteration}: batch-verifier dispatch for task_ids={action.get('task_ids')}")
+            else:
+                dispatch_sequence.append((role, task_id))
+                print(f"  iter {iteration}: dispatching {role} for {task_id}")
 
             # Write valid result for this role
             if role == "implementer":
@@ -226,21 +235,24 @@ def test_full_cycle():
                 f"iter {iteration}: submit not accepted: {sub_result}"
             )
         else:
-            raise AssertionError("Cycle did not reach finalize within 20 iterations")
+            raise AssertionError("Cycle did not reach finalize within 25 iterations")
 
         # Assertion 1: dispatch sequence correctness
-        # Expected: implementer/task_1, reviewer/task_1, verifier/task_1, implementer/task_2, reviewer/task_2
+        # Expected: implementer/task_1, reviewer/task_1, verifier/task_1,
+        #           implementer/task_2, reviewer/task_2,
+        #           verifier/task_2 (batch drain — LOW task completes verification)
         expected = [
             ("implementer", "task_1"),
             ("reviewer", "task_1"),
             ("verifier", "task_1"),
             ("implementer", "task_2"),
             ("reviewer", "task_2"),
+            ("verifier", "task_2"),  # batch drain
         ]
         assert dispatch_sequence == expected, (
             f"Wrong dispatch sequence.\nExpected: {expected}\nGot:      {dispatch_sequence}"
         )
-        print("  ASSERT 1 PASS: dispatch sequence correct")
+        print("  ASSERT 1 PASS: dispatch sequence correct (includes batch drain)")
 
         # Read final state
         with open(state_path) as f:
@@ -249,12 +261,12 @@ def test_full_cycle():
         # Assertion 2: final next returns finalize (already asserted in loop above)
         print("  ASSERT 2 PASS: final next returned finalize")
 
-        # Assertion 2b: LOW-risk task_2 routed through PENDING_BATCH (not COMPLETE)
-        assert final_state["tasks"]["task_2"]["status"] == "PENDING_BATCH", (
-            f"LOW task_2 should be PENDING_BATCH, got "
+        # Assertion 2b: LOW-risk task_2 was drained through batch verifier → COMPLETE
+        assert final_state["tasks"]["task_2"]["status"] == "COMPLETE", (
+            f"LOW task_2 should be COMPLETE after batch drain, got "
             f"{final_state['tasks']['task_2']['status']!r}"
         )
-        print("  ASSERT 2b PASS: LOW task_2 status == PENDING_BATCH")
+        print("  ASSERT 2b PASS: LOW task_2 status == COMPLETE (batch drain succeeded)")
 
         # Assertion 3: timing.started AND timing.completed non-null for ALL tasks
         tasks = final_state["tasks"]
@@ -285,7 +297,31 @@ def test_full_cycle():
             assert "event_type" in rec, f"events.jsonl line missing event_type: {ln!r}"
         print(f"  ASSERT 5 PASS: events.jsonl has {len(lines)} lines")
 
-    print("TEST 1 PASS: full cycle")
+        # Assertion 6: finalize succeeds green with no pending_batch_unverified risk
+        rc, fin_result, fin_raw = _run_kernel("finalize", "--state", state_path)
+        assert rc == 0, f"finalize failed: rc={rc}, stdout={fin_raw!r}"
+        assert fin_result is not None, f"finalize returned no JSON: {fin_raw!r}"
+        assert "error" not in fin_result, f"finalize returned error: {fin_result}"
+        assert fin_result.get("completion_passed") is True, (
+            f"Expected completion_passed=True after full drain, got {fin_result!r}"
+        )
+        assert fin_result.get("grade") == "green", (
+            f"Expected grade=green after full drain, got grade={fin_result.get('grade')!r}"
+        )
+        # Verify no pending_batch_unverified residual risk in state
+        with open(state_path) as f:
+            fin_state = json.load(f)
+        residual_classes = [
+            r.get("class")
+            for r in fin_state.get("completion_audit", {}).get("residual_risk", [])
+            if isinstance(r, dict)
+        ]
+        assert "pending_batch_unverified" not in residual_classes, (
+            f"Expected no pending_batch_unverified after drain; got residual_risk={residual_classes}"
+        )
+        print(f"  ASSERT 6 PASS: finalize green + no pending_batch_unverified")
+
+    print("TEST 1 PASS: full cycle (including batch drain)")
 
 
 # ── Test 2: schema-invalid result rejection ───────────────────────────────────
