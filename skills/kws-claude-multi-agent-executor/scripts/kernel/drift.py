@@ -24,13 +24,27 @@ Blocking (un-waivable):
                                  always increments dispatches before marking
                                  complete; zero = state was written outside the
                                  kernel path (import / manual edit).
+  worktree_missing             — state.worktree path is set, the run has started
+                                 (a task past SETUP), but os.path.isdir is False.
+                                 A lost worktree means the run cannot continue and
+                                 cannot be auto-repaired → blocking.
 
-Repairable (safe, no data destroyed):
+Repairable (safe / recorded, no data destroyed):
   missing_timing               — terminal task (COMPLETE/SKIPPED) whose
                                  timing is null or missing started/completed.
                                  Cannot occur on the normal kernel path (T6
                                  record_timing stamps before dispatch) but
-                                 defends migrated legacy runs.
+                                 defends migrated legacy runs. Auto-fixable by
+                                 stamping synthetic timestamps.
+  complete_missing_result      — COMPLETE task with no result file matching
+                                 *<task_id>*.json under <orch_dir>/results/.
+                                 GUARDED: only evaluated when results/ exists as a
+                                 directory. Classified repairable (integrity
+                                 signal): repair_safe RECORDS it without mutating
+                                 — a missing result file cannot be synthesized, so
+                                 there is nothing to fabricate, but it is not
+                                 severe enough to hard-block a run whose state
+                                 otherwise says the task passed.
 
 Dead CPE detectors (no v3 analog, not ported):
   missing-context-health-timestamp — CPE tracks context_health / timestamps.
@@ -38,11 +52,6 @@ Dead CPE detectors (no v3 analog, not ported):
   finished-with-open-carried-acceptance — CPE-specific lifecycle field.
   completed-task-missing-unit-manifest  — CPE-specific per-task manifest.
   context-basis-hash-mismatch           — CPE context snapshot hash check.
-  worktree_missing                      — Noted but not hard-blocking: worktree
-                                 path from state may be a historic path on a
-                                 migrated run. Treated as advisory only rather
-                                 than blocking to avoid false positives on
-                                 completed runs where the worktree was cleaned.
 
 Public API
 ----------
@@ -179,6 +188,79 @@ def _detect_residual_pending_batch(state: dict, active: dict) -> list[dict]:
     return items
 
 
+def _detect_worktree_missing(state: dict, active: dict) -> list[dict]:
+    """Detect a lost execution worktree on a started run (blocking, un-repairable).
+
+    Conditions (all must hold to avoid false positives):
+    - state["worktree"] is a non-empty string, AND
+    - the run has started (at least one task NOT in SETUP), AND
+    - os.path.isdir(worktree) is False.
+
+    A lost worktree means the run cannot continue and cannot be auto-repaired.
+    """
+    worktree = state.get("worktree")
+    if not isinstance(worktree, str) or not worktree.strip():
+        return []
+    tasks = active.get("tasks", {})
+    if not isinstance(tasks, dict):
+        return []
+    # Run has started iff at least one task is past SETUP.
+    started = any(
+        isinstance(t, dict) and t.get("status") not in (None, "SETUP", "PENDING")
+        for t in tasks.values()
+    )
+    if not started:
+        return []
+    if os.path.isdir(worktree):
+        return []
+    return [_item(
+        "worktree_missing",
+        f"worktree {worktree!r} does not exist on disk but the run has started "
+        "(run cannot continue; not auto-repairable)",
+    )]
+
+
+def _detect_complete_missing_result(state: dict, active: dict, orch_dir: str) -> list[dict]:
+    """Detect COMPLETE tasks with no result file (integrity signal, repairable).
+
+    GUARDED against false positives: only evaluated when
+    <orch_dir>/results/ exists as a directory. A fresh/migrated run with no
+    results dir must NOT flag every task.
+
+    For each COMPLETE task, if no file matching *<task_id>*.json exists in
+    <orch_dir>/results/, emit a drift item.
+    """
+    if not isinstance(orch_dir, str) or not orch_dir:
+        return []
+    results_dir = os.path.join(orch_dir, "results")
+    if not os.path.isdir(results_dir):
+        return []  # false-positive guard: no results dir → skip entirely
+
+    try:
+        result_files = os.listdir(results_dir)
+    except OSError:
+        return []
+
+    items: list[dict] = []
+    tasks = active.get("tasks", {})
+    if not isinstance(tasks, dict):
+        return items
+    for task_id, task in tasks.items():
+        if not isinstance(task, dict) or task.get("status") != "COMPLETE":
+            continue
+        has_result = any(
+            task_id in fname and fname.endswith(".json")
+            for fname in result_files
+        )
+        if not has_result:
+            items.append(_item(
+                "complete_missing_result",
+                f"{task_id}: status=COMPLETE but no result file matching "
+                f"*{task_id}*.json in {results_dir!r} (integrity gap)",
+            ))
+    return items
+
+
 def _detect_zero_dispatches_with_completed_tasks(active: dict, state: dict) -> list[dict]:
     """Detect dispatches==0 when completed tasks exist (non-waivable)."""
     # Navigate cost_ledger from full state (not active sub-plan, since ledger is global)
@@ -220,11 +302,8 @@ def check(state: dict, orch_dir: str) -> dict[str, list[dict]]:
             "repairable": [{"kind": str, "detail": str}, ...],
         }
 
-    *orch_dir* is accepted for future result-file checks but is not required
-    for the current detectors. The COMPLETE-task-missing-result-file check
-    was assessed as CPE-specific (CPE writes result JSON to orch_dir/results/;
-    CME does the same but the drift check during a live run vs. at rest differs
-    semantically). Noted here for future wiring.
+    *orch_dir* is used by the complete_missing_result detector (guarded on
+    <orch_dir>/results/ existing) and reserved for future result-file checks.
     """
     active = _active(state)
 
@@ -235,21 +314,32 @@ def check(state: dict, orch_dir: str) -> dict[str, list[dict]]:
     blocking.extend(_detect_timing_inverted(active))
     blocking.extend(_detect_residual_pending_batch(state, active))
     blocking.extend(_detect_zero_dispatches_with_completed_tasks(active, state))
+    blocking.extend(_detect_worktree_missing(state, active))
 
     # ── repairable detectors ──────────────────────────────────────────────────
-    # Only add missing_timing if timing_inverted is NOT already blocking for the
-    # same task (avoid double-counting). timing_inverted implies timing IS present
-    # but wrong; missing_timing means timing is absent — they are mutually exclusive
-    # in practice, but we guard anyway.
+    # missing_timing: exclude tasks already flagged blocking for the same task by
+    # timing_inverted (timing present-but-wrong) or residual_pending_batch — a
+    # task must never appear in both lists.
     inverted_task_ids = {
         item["detail"].split(":")[0]
         for item in blocking
         if item["kind"] == "timing_inverted"
     }
+    pending_batch_task_ids = {
+        item["detail"].split(":")[0]
+        for item in blocking
+        if item["kind"] == "residual_pending_batch"
+    }
+    excluded_task_ids = inverted_task_ids | pending_batch_task_ids
     for item in _detect_missing_timing(active):
         task_id = item["detail"].split(":")[0]
-        if task_id not in inverted_task_ids:
+        if task_id not in excluded_task_ids:
             repairable.append(item)
+
+    # complete_missing_result: integrity signal, repairable (see report/module
+    # note). Guarded on <orch_dir>/results/ existing to avoid flagging every
+    # task on a fresh/migrated run with no results dir.
+    repairable.extend(_detect_complete_missing_result(state, active, orch_dir))
 
     return {"blocking": blocking, "repairable": repairable}
 
@@ -267,9 +357,12 @@ def repair_safe(state: dict, orch_dir: str) -> dict:
     - Append repair history to state["drift"]["records"].
     - Return the updated state.
 
-    Currently repaired:
-      missing_timing → stamp timing.started = timing.completed = now_iso()
-                       (conservative: identical timestamps flag the repair visually)
+    Currently handled:
+      missing_timing          → stamp timing.started = timing.completed = now_iso()
+                                (conservative: identical timestamps flag the repair)
+      complete_missing_result → RECORD only, no mutation. A missing result file
+                                cannot be synthesized, so there is nothing to
+                                fabricate; the record surfaces the integrity gap.
     """
     s = copy.deepcopy(state)
     active = _active(s)
@@ -312,6 +405,15 @@ def repair_safe(state: dict, orch_dir: str) -> dict:
                     "repaired_at": now,
                     "repair": f"stamped {task_id}.timing.started and .completed = {now!r}",
                 })
+        elif kind == "complete_missing_result":
+            # Integrity signal — RECORD only, never mutate state. There is no
+            # safe synthetic fix for a missing result file.
+            records.append({
+                "kind": kind,
+                "detail": item["detail"],
+                "recorded_at": now,
+                "repair": "recorded only (missing result file cannot be synthesized)",
+            })
 
     # Write repair history into drift section
     drift_section = s.setdefault("drift", {})

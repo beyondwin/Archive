@@ -31,7 +31,7 @@ def _base_state(
     task_status: str = "COMPLETE",
     timing: dict | None = None,
     dispatches: int = 1,
-    worktree: str | None = "/some/worktree",
+    worktree: str | None = None,
 ) -> dict:
     """Minimal CME v3 state with one completed task."""
     task: dict = {
@@ -301,6 +301,114 @@ def test_repair_stale_run_apply_marks_blocked_stale():
         print("TEST (i) PASS: repair_stale_run(apply=True) marks lifecycle:blocked_stale")
 
 
+# ── TEST (j): worktree_missing → blocking; existing worktree → no item ───────
+
+def test_worktree_missing_is_blocking():
+    """state.worktree pointing at a nonexistent dir on a started run → blocking."""
+    state = _base_state(
+        task_status="COMPLETE",
+        timing={"started": "2025-01-01T10:00:00Z", "completed": "2025-01-01T11:00:00Z"},
+        worktree="/definitely/does/not/exist/worktree-xyz",
+    )
+    result = drift.check(state, "/some/orch")
+    kinds = [item["kind"] for item in result["blocking"]]
+    assert "worktree_missing" in kinds, (
+        f"Expected 'worktree_missing' in blocking; got {result['blocking']!r}"
+    )
+    print("TEST (j) PASS: worktree_missing → blocking")
+
+
+def test_worktree_exists_no_item():
+    """A state whose worktree dir EXISTS produces no worktree_missing item (negative guard)."""
+    with tempfile.TemporaryDirectory() as wt:
+        state = _base_state(
+            task_status="COMPLETE",
+            timing={"started": "2025-01-01T10:00:00Z", "completed": "2025-01-01T11:00:00Z"},
+            worktree=wt,  # exists
+        )
+        result = drift.check(state, "/some/orch")
+        kinds = [item["kind"] for item in result["blocking"]]
+        assert "worktree_missing" not in kinds, (
+            f"Existing worktree must NOT produce worktree_missing; got {result['blocking']!r}"
+        )
+        print("TEST (j-neg) PASS: existing worktree → no worktree_missing item")
+
+
+# ── TEST (k): complete_missing_result → repairable; matching file → no item ──
+
+def test_complete_missing_result_is_repairable():
+    """COMPLETE task, results/ dir present, no matching result file → repairable item."""
+    with tempfile.TemporaryDirectory() as orch:
+        os.makedirs(os.path.join(orch, "results"))  # results dir exists, but empty
+        state = _base_state(
+            task_status="COMPLETE",
+            timing={"started": "2025-01-01T10:00:00Z", "completed": "2025-01-01T11:00:00Z"},
+            worktree=orch,  # exists → no worktree_missing false positive
+        )
+        result = drift.check(state, orch)
+        kinds = [item["kind"] for item in result["repairable"]]
+        assert "complete_missing_result" in kinds, (
+            f"Expected 'complete_missing_result' in repairable; got {result['repairable']!r}"
+        )
+        print("TEST (k) PASS: complete task with no result file → repairable")
+
+
+def test_complete_with_result_file_no_item():
+    """COMPLETE task WITH a matching result file → no complete_missing_result item."""
+    orch, tmp = _orch_dir_with_result("task_1")
+    try:
+        state = _base_state(
+            task_status="COMPLETE",
+            timing={"started": "2025-01-01T10:00:00Z", "completed": "2025-01-01T11:00:00Z"},
+            worktree=orch,  # exists
+        )
+        result = drift.check(state, orch)
+        kinds = [item["kind"] for item in result["repairable"]]
+        assert "complete_missing_result" not in kinds, (
+            f"Matching result file must NOT produce complete_missing_result; got {result['repairable']!r}"
+        )
+        print("TEST (k-neg) PASS: complete task with result file → no item")
+    finally:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_complete_missing_result_guard_no_results_dir():
+    """No <orch_dir>/results/ dir → complete_missing_result NOT flagged (false-positive guard)."""
+    with tempfile.TemporaryDirectory() as orch:
+        # deliberately do NOT create results/ dir
+        state = _base_state(
+            task_status="COMPLETE",
+            timing={"started": "2025-01-01T10:00:00Z", "completed": "2025-01-01T11:00:00Z"},
+            worktree=orch,
+        )
+        result = drift.check(state, orch)
+        kinds = [item["kind"] for item in result["repairable"]]
+        assert "complete_missing_result" not in kinds, (
+            f"No results dir must suppress complete_missing_result; got {result['repairable']!r}"
+        )
+        print("TEST (k-guard) PASS: no results dir → complete_missing_result suppressed")
+
+
+# ── TEST (l): PENDING_BATCH task not double-reported ──────────────────────────
+
+def test_pending_batch_not_double_reported():
+    """A residual PENDING_BATCH task with null timing appears ONLY in blocking, not repairable."""
+    state = _base_state(task_status="PENDING_BATCH", timing=None)
+    state["tasks"]["task_1"]["timing"] = None  # would otherwise trigger missing_timing
+    state["status"] = "COMPLETE"  # triggers residual_pending_batch (blocking)
+    result = drift.check(state, "/some/orch")
+    blocking_kinds = [item["kind"] for item in result["blocking"]]
+    repairable_kinds = [item["kind"] for item in result["repairable"]]
+    assert "residual_pending_batch" in blocking_kinds, (
+        f"Expected residual_pending_batch in blocking; got {result['blocking']!r}"
+    )
+    assert "missing_timing" not in repairable_kinds, (
+        f"PENDING_BATCH task must NOT also appear as missing_timing; got {result['repairable']!r}"
+    )
+    print("TEST (l) PASS: PENDING_BATCH task not double-reported")
+
+
 # ── main: run ALL test functions ─────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -315,6 +423,12 @@ if __name__ == "__main__":
         test_repair_safe_immutability,
         test_repair_safe_never_touches_blocking,
         test_repair_stale_run_apply_marks_blocked_stale,
+        test_worktree_missing_is_blocking,
+        test_worktree_exists_no_item,
+        test_complete_missing_result_is_repairable,
+        test_complete_with_result_file_no_item,
+        test_complete_missing_result_guard_no_results_dir,
+        test_pending_batch_not_double_reported,
     ]
 
     failed = []
