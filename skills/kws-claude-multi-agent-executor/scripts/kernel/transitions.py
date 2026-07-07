@@ -458,6 +458,11 @@ def _apply_verifier(
 
     else:  # FAIL (or unknown) on normal (non-PENDING_BATCH) task
         # ── T12: recovery pre-classification ──────────────────────────────────
+        # SEAM (follow-up): command_observation is not yet produced by any verifier —
+        # this recovery pre-classification branch is DORMANT on the live path.
+        # Env failures fall through to the source-failure path below (bounded/safe).
+        # Wiring the producer (verifier schema+prompt) is tracked in F01 §6.
+        #
         # Check for a command_observation in the payload.  This is the ONLY gate:
         # no command_observation → skip recovery and fall through to original path.
         cmd_obs = payload.get("command_observation")

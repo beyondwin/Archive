@@ -690,6 +690,62 @@ def test_inspect_readonly():
     print("TEST inspect_readonly PASS")
 
 
+# ── TEST: verification_gaps state entry surfaces via SKIPPED task_skipped path ──
+
+def test_verification_gap_surfaces_via_skipped():
+    """A top-level state.verification_gaps entry (written by transitions.py when a task
+    exhausts its retry budget) MUST surface in completion_audit residual_risk.
+
+    Reality check: transitions.py writes ONLY to state["verification_gaps"] (top-level
+    list) — it NEVER sets per-task task["verification_gap"] or task["verifier_failed"].
+    All three append sites also set task["status"] = "SKIPPED". Therefore the
+    task_skipped residual_risk path (blocks_release=True) already covers the gap.
+    The dead per-task branches (task.get("verification_gap") / task.get("verifier_failed"))
+    were deleted in the Fix 2 cleanup.
+
+    This test constructs state the way transitions.py actually writes it — a task that is
+    SKIPPED with a matching top-level verification_gaps entry — and asserts that:
+    1. A task_skipped residual_risk item with blocks_release=True is present.
+    2. passed=False.
+    3. A clean (no gap) state produces NO such item (non-vacuous direction).
+    """
+    with tempfile.TemporaryDirectory() as orch_dir:
+        # ── positive: verification gap present ──────────────────────────────
+        state = _make_complete_state(orch_dir)
+        # Simulate transitions._apply_verifier exhausting verifier budget:
+        # task["status"] = "SKIPPED" AND a top-level verification_gaps entry.
+        state["tasks"]["task_1"]["status"] = "SKIPPED"
+        state["tasks"]["task_1"]["skip_reason"] = "verifier_retries_exhausted"
+        state["tasks"]["task_1"]["verifier_retries"] = 4
+        # Mirror exactly what transitions.py writes
+        state["verification_gaps"] = [{"task": "task_1", "kind": "verify", "attempts": 4}]
+
+        ca = quality.build_completion_audit(state)
+
+        classes = [r.get("class") for r in ca.get("residual_risk", []) if isinstance(r, dict)]
+        assert "task_skipped" in classes, (
+            f"Expected task_skipped in residual_risk when a verification_gaps entry exists "
+            f"(covered via SKIPPED status); got classes={classes!r}"
+        )
+        assert ca["passed"] is False, (
+            f"A verification gap (SKIPPED task) must force passed=False; got {ca['passed']!r}"
+        )
+
+        # ── negative: clean state → no task_skipped item ─────────────────────
+        state_clean = _make_complete_state(orch_dir)
+        ca_clean = quality.build_completion_audit(state_clean)
+        classes_clean = [r.get("class") for r in ca_clean.get("residual_risk", []) if isinstance(r, dict)]
+        assert "task_skipped" not in classes_clean, (
+            f"Clean state must NOT produce task_skipped; got classes={classes_clean!r}"
+        )
+        assert ca_clean["passed"] is True, (
+            f"Clean state must have passed=True; got {ca_clean['passed']!r}"
+        )
+
+    print("TEST test_verification_gap_surfaces_via_skipped PASS: "
+          "verification_gaps entry → task_skipped blocks_release → passed=False (non-vacuous)")
+
+
 # ── runner ────────────────────────────────────────────────────────────────────
 
 _TESTS = [
@@ -706,6 +762,7 @@ _TESTS = [
     test_finalize_happy_path,
     test_inspect_readonly,
     test_pending_batch_blocks_release,
+    test_verification_gap_surfaces_via_skipped,
 ]
 
 if __name__ == "__main__":

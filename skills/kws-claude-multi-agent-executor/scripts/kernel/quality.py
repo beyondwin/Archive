@@ -252,9 +252,6 @@ def _build_verification_quality(state: dict) -> dict[str, Any]:
         elif status == "PENDING_BATCH":
             pending_batch_count += 1
 
-        if task.get("verification_gap") is True or task.get("verifier_failed") is True:
-            verification_gap_count += 1
-
     total_tasks = len(tasks)
     all_terminal = total_tasks > 0 and all(
         t.get("status") in _TERMINAL_STATUSES
@@ -495,17 +492,6 @@ def build_completion_audit(state: dict) -> dict:
             residual_risk.append({
                 "class": "pending_batch_unverified",
                 "summary": f"{task_id}: batch verification not drained",
-                "blocks_release": True,
-            })
-
-    # ── Residual risk: tasks with verification_gap or verifier_failed ─────────
-    for task_id, task in tasks.items():
-        if not isinstance(task, dict):
-            continue
-        if task.get("verification_gap") is True or task.get("verifier_failed") is True:
-            residual_risk.append({
-                "class": "verification_gap",
-                "summary": f"{task_id}: verification gap detected",
                 "blocks_release": True,
             })
 
