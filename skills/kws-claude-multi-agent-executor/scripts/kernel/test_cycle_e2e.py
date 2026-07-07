@@ -121,11 +121,14 @@ def _valid_implementer_payload() -> dict:
 
 
 def _valid_reviewer_payload() -> dict:
-    # spec_score=9.0, quality_score=9.0 → PASS tier (both >> 0.85)
+    # 0.0-1.0 scale (per reviewer_result.schema.json): 0.9 >= 0.85 PASS threshold.
+    # Deliberately NOT 9.0 — a 0-10 value would trivially clear the 0.85 gate and
+    # silently defeat it, meaning the test would pass even if the 0.0-1.0 schema
+    # contract were reverted. 0.9/0.9 exercises the real contract.
     return {
         "status": "PASS",
-        "spec_score": 9.0,
-        "quality_score": 9.0,
+        "spec_score": 0.9,
+        "quality_score": 0.9,
         "issues": [],
     }
 
@@ -246,6 +249,13 @@ def test_full_cycle():
         # Assertion 2: final next returns finalize (already asserted in loop above)
         print("  ASSERT 2 PASS: final next returned finalize")
 
+        # Assertion 2b: LOW-risk task_2 routed through PENDING_BATCH (not COMPLETE)
+        assert final_state["tasks"]["task_2"]["status"] == "PENDING_BATCH", (
+            f"LOW task_2 should be PENDING_BATCH, got "
+            f"{final_state['tasks']['task_2']['status']!r}"
+        )
+        print("  ASSERT 2b PASS: LOW task_2 status == PENDING_BATCH")
+
         # Assertion 3: timing.started AND timing.completed non-null for ALL tasks
         tasks = final_state["tasks"]
         for tid, task in tasks.items():
@@ -309,6 +319,7 @@ def test_schema_violation_rejection():
 
         pre_task_status = pre_state["tasks"][task_id]["status"]
         pre_task_phase = pre_state["tasks"][task_id]["phase"]
+        pre_dispatches = pre_state["cost_ledger"]["totals"]["dispatches"]
 
         # Write an INVALID payload (missing required fields for implementer)
         invalid_payload = {
@@ -354,6 +365,36 @@ def test_schema_violation_rejection():
             f"schema_violations counter not incremented: {violations_count}"
         )
         print(f"  ASSERT 6c PASS: schema_violations={violations_count}")
+
+        # ASSERT 6d: a rejected submit must NOT record cost (dispatches unchanged)
+        post_dispatches = post_state["cost_ledger"]["totals"]["dispatches"]
+        assert post_dispatches == pre_dispatches, (
+            f"Rejected submit recorded cost: dispatches {pre_dispatches} → {post_dispatches}"
+        )
+        print(f"  ASSERT 6d PASS: dispatches unchanged on rejection ({post_dispatches})")
+
+        # ASSERT 6e: a subsequent VALID submit for the same task resets
+        # schema_violations to 0 (the "consecutive" guarantee, named in the brief).
+        valid_payload = _valid_implementer_payload()
+        _write_result_file(result_path, valid_payload)
+        rc, sub_result, raw = _run_kernel(
+            "submit",
+            "--state", state_path,
+            "--task", task_id,
+            "--role", role,
+            "--result", result_path,
+        )
+        assert rc == 0, f"valid submit after rejection exited {rc}; stdout={raw!r}"
+        assert sub_result.get("accepted") is True, (
+            f"Expected accepted:true on valid resubmit, got: {sub_result}"
+        )
+        with open(state_path) as f:
+            reset_state = json.load(f)
+        reset_count = reset_state["tasks"][task_id].get("schema_violations", None)
+        assert reset_count == 0, (
+            f"schema_violations not reset to 0 after valid submit: {reset_count}"
+        )
+        print("  ASSERT 6e PASS: schema_violations reset to 0 after valid submit")
 
     print("TEST 2 PASS: schema violation rejection")
 
