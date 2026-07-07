@@ -458,7 +458,9 @@ loop:
   until finalize returns {"status":"finalized"}
 ```
 
-### 11개 커널 모듈
+### 커널 모듈 (14개)
+
+11개 핵심 실행·전환 모듈 + 3개 보조 모듈 (CLI 진입점 `kernel.py` 제외):
 
 | 모듈 | 책임 |
 |------|------|
@@ -473,6 +475,9 @@ loop:
 | `recovery.py` | 에스컬레이션 해소, reset 지시, drift-repair 안내. |
 | `drift.py` | `check(state)` → blocking/non-blocking drift 신호 (finalize 게이트). |
 | `quality.py` | `build_run_quality(state)` + `build_completion_audit(state)` (finalize 출력). |
+| `initcmd.py` | `kernel.py init` 구현 — args 파싱, worktree+branch 생성, 4개 hooks materialize, state.json 초기화. |
+| `migrate.py` | v2→v3 상태 자동 변환 (schema_version:2 → 3). plan_chain multi-plan 상태·per-task 필드 보존. |
+| `validate.py` | `kernel.py submit` 결과 스키마 검증 + v3 상태 정규형 체크 (v2 `validate_state_schema.py` 대체). |
 
 ### 단일 작성자 상태 계약
 

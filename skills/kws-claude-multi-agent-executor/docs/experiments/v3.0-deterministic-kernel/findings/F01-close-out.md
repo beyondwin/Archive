@@ -94,12 +94,12 @@ All 16 test files run standalone (`python3 <file>`) and exit 0:
 }
 ```
 
-**`ledger.extract_payload` verification**: The function correctly handles this envelope:
-- Payload: `envelope["result"]` → `"OK"` (string, not a dict → no usable structured payload for this minimal test; real dispatches use `--output-format json` with `--json-schema` which produces `structured_output`).
-- Usage: `envelope["usage"]` dict + `envelope["total_cost_usd"]` folded in.
-- T16 seam markers at `ledger.py:125-148` document the exact key names. No corrections needed.
+**`ledger.extract_payload` verification scope**: This minimal test exercised the `result` (plain string) branch and the top-level/usage key path:
+- Payload fallback: `envelope["result"]` → `"OK"` (string). `structured_output` was absent → payload returned nothing. The `structured_output` key path (what real `--json-schema` role dispatches produce) was **not** exercised here — it remains code-verified only.
+- Usage/cost: `envelope["usage"]` dict present + `envelope["total_cost_usd"]` correctly foldable per seam contract. Verified against real key names.
+- T16 seam markers at `ledger.py:125-148` match the real envelope keys. No corrections needed to the usage/cost path.
 
-The envelope keys match `ledger.py`'s T16 SEAM comments. No update to `extract_payload` required.
+Top-level key set and usage/cost folding verified against real output. `structured_output` payload extraction is code-verified only; full verification folds into the pending live plan smoke (§5).
 
 ---
 

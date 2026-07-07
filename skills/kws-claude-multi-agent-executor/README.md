@@ -136,7 +136,7 @@ python3 scripts/kernel/kernel.py check-stop --state <state_path>  # Stop 훅 진
 ```
 skills/kws-claude-multi-agent-executor/
 ├── README.md                       ← 현재 위치 (한글, 사람용 진입점)
-├── SKILL.md                        ← 실행 가능한 스킬 (v2.9.0, 영어, 에이전트 전용)
+├── SKILL.md                        ← 실행 가능한 스킬 (v3.0.0, 영어, 에이전트 전용)
 ├── ARCHITECTURE.md                 ← 시스템 설계 (한글, 14개 섹션)
 ├── AGENTS.md                       ← AI 기여자 운영 프로토콜 (영어, 에이전트 전용)
 ├── HISTORY.md                      ← 버전 타임라인 + 개선 영역 + 실험 인덱스
@@ -209,6 +209,6 @@ skills/kws-claude-multi-agent-executor/
 
 - **문서 갱신 프로토콜** ([`docs/doc-update-protocol.md`](./docs/doc-update-protocol.md)) — 변경 종류별 (스킬 동작 / 새 이벤트 / 새 픽스처 / 위험 등) "어떤 문서를 어떻게 건드릴지" 체크리스트.
 - **신선도 eval** (`evals/check_doc_freshness.py`) — 가장 회귀되기 쉬운 드리프트를 결정론적으로 검사: SKILL.md/README 버전 일치, 문서 트리의 내부 markdown 링크 깨짐, 오래된 TODO/FIXME 마커. 다른 두 계약 eval과 같은 사전 점검 단계에서 실행.
-- **스냅샷** ([`docs/snapshots/`](./docs/snapshots/)) — 메이저 버전마다 전체 상태 캡처. 현재: `v2.9.0.md`. 마이너 버전 번프마다 추가.
+- **스냅샷** ([`docs/snapshots/`](./docs/snapshots/)) — 메이저 버전마다 전체 상태 캡처. 현재: `v3.0.0.md`. 마이너 버전 번프마다 추가.
 
 신선도 eval은 **기본적으로 비차단**입니다 (드리프트를 보고하지만 하네스를 실패시키진 않음). 경고를 자꾸 무시하게 되면 차단으로 승격하세요.
