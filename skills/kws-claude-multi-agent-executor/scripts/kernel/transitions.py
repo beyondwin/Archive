@@ -164,6 +164,12 @@ def decide(state: dict) -> dict:
       {"action": "finalize"}
       {"action": "halt", "reason": str}
       {"action": "done"}
+
+    Shape contract (T11 gate.partition_waves):
+      state["execution_plan"] MUST be list[list[str]] — e.g. [["task_1"],["task_2","task_3"]].
+      This is the EXACT shape gate.partition_waves() produces (v3.0 T11).
+      _next_dispatch_task iterates: for group in execution_plan: for task_id in group.
+      A shape mismatch (e.g. list[dict]) silently breaks task dispatch.
     """
     active = _active(state)
 
