@@ -15,7 +15,7 @@ observable independent Codex plan executor. Preserve its core execution,
 validation, reconciliation, repair, resume, and inspection capabilities while
 replacing the accumulated v2 state contract with a clean v3 contract.
 
-The default model policy is quality-first:
+The runtime model policy is fixed and quality-first:
 
 - `gpt-5.6-sol` with reasoning effort `high` for coordination,
   implementation, review, verification judgment, repair, analysis, and
@@ -53,6 +53,9 @@ criteria:
    actual model and reasoning effort for every core attempt.
 8. Static contract tests remain required, but the GPT-5.6 migration also needs
    representative live model comparisons before the 3.0.0 release is closed.
+9. The active runtime model surface contains exactly two fixed routes. CPE v3
+   exposes no per-run model, reasoning, profile, alias, or fallback
+   configuration.
 
 ## Current Evidence
 
@@ -65,6 +68,10 @@ problems:
 - `gpt-5.5 high` is primarily declared in the fresh-session prompt and prompt
   fixtures; a prompt declaration does not prove the executing agent actually
   used that model.
+- Legacy model choices are scattered across the skill contract, prompt
+  templates, natural-language invocation parsing, fixtures, static runners, and
+  prompt checkers. Leaving those branches present but disabled would preserve
+  ambiguity and make accidental routing regressions possible.
 - The full deterministic eval command currently fails in this environment
   because `PyYAML` is imported without a declared or preflighted runtime
   dependency. The failure is initially silent because the harness exits before
@@ -101,6 +108,10 @@ compatible optional v2 fields.
 - Make eval failures explain themselves and make dependencies reproducible.
 - Measure task success, retries, tokens, caching, latency, and cost per
   successful task.
+- Make the runtime model policy a closed two-route contract rather than a
+  general model configuration system.
+- Remove inactive model options and their parser, prompt, fixture, baseline,
+  and documentation branches from active package surfaces.
 
 ## Non-Goals
 
@@ -108,7 +119,10 @@ compatible optional v2 fields.
 - Deleting existing v2 run directories.
 - Replacing CPE with Waygent or making either runtime depend on the other.
 - Rewriting CPE in TypeScript or Rust.
-- Using Luna as a default route.
+- Supporting Luna, Spark, GPT-5.5, `xhigh`, `max`, or Pro mode as active runtime
+  routes.
+- Supporting per-run model, reasoning, profile, alias, or fallback overrides.
+- Maintaining a general-purpose model registry inside CPE.
 - Silently falling back to GPT-5.5, Terra, or another model when Sol is
   unavailable.
 - Automatically installing dependencies or mutating operator environments
@@ -132,10 +146,11 @@ User request
 
 ### Invocation
 
-Parse `plan`, `spec`, `docs`, mode, subagent policy, context policy, and model
-policy into one structured invocation. Natural-language hints are resolved
-after explicit arguments, conflicts are rejected, and this phase performs no
-worktree or run-state mutation.
+Parse `plan`, `spec`, `docs`, mode, subagent policy, and context policy into one
+structured invocation. The model policy is derived from the compiled two-route
+runtime contract rather than parsed from user input. Natural-language hints are
+resolved after explicit arguments, conflicts are rejected, and this phase
+performs no worktree or run-state mutation.
 
 ### Deterministic Preflight
 
@@ -251,19 +266,23 @@ The manifest contains data that must not change during a run:
   "plan": {"ref": "...", "sha256": "..."},
   "spec": {"ref": "...", "sha256": "..."},
   "model_policy": {
+    "version": "cpe.model-policy.v1",
     "core": {"model": "gpt-5.6-sol", "reasoning": "high"},
-    "scout": {"model": "gpt-5.6-terra", "reasoning": "high"},
-    "silent_fallback": false
+    "scout": {"model": "gpt-5.6-terra", "reasoning": "high"}
   },
   "plan_graph_hash": "...",
-  "policy_hash": "...",
-  "model_catalog_hash": "..."
+  "model_policy_hash": "...",
+  "pricing_snapshot_hash": "..."
 }
 ```
 
-A versioned `model-catalog.json` records supported model IDs, reasoning levels,
-activation status, and pricing. The manifest pins its hash so cost calculations
-remain reproducible after future catalog updates.
+The core and scout routes are a versioned runtime constant, not an operator
+setup file or user-editable profile system. The contract contains no aliases,
+inactive models, fallback list, or optional reasoning levels. The manifest
+copies the resolved constant and pins its canonical hash. A separate two-model
+`pricing-snapshot.json` records the effective Sol and Terra prices. The
+manifest pins its hash so cost remains reproducible after a future release
+changes pricing.
 
 ### Event Envelope
 
@@ -442,8 +461,8 @@ Terra/high is allowed only when all of the following are true:
 - uncertainty causes a handoff to Sol;
 - Sol reopens critical sources before acting.
 
-The old Spark scout route is removed from the v3 default and is not a
-compatibility surface.
+The old Spark scout route is removed from the active v3 runtime policy and is
+not a compatibility surface.
 
 ### Actual Model Control
 
@@ -462,10 +481,52 @@ must record requested and actual model attestation. An unavailable model,
 missing attestation, or mismatch blocks completion. There is no silent fallback
 to GPT-5.5 or Terra.
 
+CPE v3 does not accept `model=`, `reasoning=`, `implementer_model=`, model
+profiles, or natural-language model-selection hints. A request for a different
+model is an unsupported invocation, not a reason to mutate the fixed runtime
+policy.
+
+CPE also does not write model defaults into the operator's global
+`~/.codex/config.toml` or the target repository's `.codex/config.toml`.
+Enforcement is per process through explicit launcher arguments, so running CPE
+does not leave unrelated persistent model settings behind.
+
+### Model Configuration Minimization
+
+The v3 implementation removes these active v2 surfaces rather than carrying
+them as disabled configuration:
+
+- `gpt-5.5 only` and related prompt-export branches;
+- the `gpt-5.3-codex-spark` route and
+  `templates/spark-scout-bullets.ko.txt`;
+- `implementer_model=opus` and its Korean/English natural-language aliases;
+- generic model and reasoning overrides;
+- Luna, `xhigh`, `max`, and Pro-mode configuration;
+- Spark-presence fixtures, `no-spark` fixtures, and prompt assertions;
+- v2 model-routing baseline files from the active eval lookup path;
+- repeated model-routing prose in worker prompts.
+
+Model choice lives in the runtime launcher and manifest, not in worker prompt
+instructions. Prompt and handoff exports include the exact Sol/high launcher
+command plus the prompt body. Copying only the prompt body cannot enforce or
+attest a model and must not be presented as equivalent to launching the
+exported command.
+
+`requested_model`, `actual_model`, reasoning, token, latency, and cost fields
+remain because they are execution evidence, not configurable routing options.
+GPT-5.5 remains only in a dedicated migration-eval input and its captured
+comparison report. `HISTORY.md`, committed historical design records, and
+migration evidence may retain old names. A narrowly scoped negative allowlist
+test may also name removed routes so it can prevent their reintroduction.
+Active runtime choices, parser branches, prompt templates, positive fixtures,
+and current-contract documentation may not expose them as selectable behavior.
+
 ## Context And Prompt Optimization
 
 - Keep stable prefixes limited to durable safety, permission, model, evidence,
   and output contracts.
+- Keep model IDs out of worker prompt prose when the launcher already supplies
+  the enforced route.
 - Give workers the current task packet, not the full plan and spec.
 - Require explicit task-to-spec mapping; remove automatic full-spec fallback.
 - Carry previous decisions, changed files, and evidence references instead of
@@ -589,8 +650,9 @@ repair planning, and completion rules.
 ### Contract And Golden Evals
 
 Cover current Superpowers plan shape, missing spec mapping, dirty scope, path
-escape, export-only modes, Sol attempt output, Terra scout output, and parity
-between validator, reconciler, and inspector.
+escape, export-only modes, the Sol launcher, Sol attempt output, Terra scout
+output, rejected model overrides, fixed two-route policy, and parity between
+validator, reconciler, and inspector.
 
 ### Process Integration Evals
 
@@ -620,6 +682,9 @@ Model-only and prompt changes are evaluated separately. Cases cover single-file
 implementation, cross-package work, root-cause repair, defect review, failed
 test interpretation, security or migration blocking, resume and state repair,
 and large read-only exploration.
+
+The GPT-5.5 row is migration evidence only. It is stored outside the runtime
+policy and active model configuration, and is not selectable by CPE v3.
 
 Measure task completion, first-pass success, review accuracy, evidence
 completeness, repair attempts, post-completion regressions, tokens, cache use,
@@ -652,6 +717,12 @@ credentials and budget. They are required evidence for closing the GPT-5.6
 - Never hide the first failing command behind `set -e` and redirected output.
 - Keep baseline updates explicit and reviewable.
 - Do not update a baseline to hide an unexplained failure.
+- Add an active-surface allowlist audit that permits only `gpt-5.6-sol/high`
+  and `gpt-5.6-terra/high` as selectable routes. Historical records and the
+  dedicated GPT-5.5 migration comparison are explicit exclusions, not runtime
+  inputs. Actual-model evidence may contain an unexpected value only so the
+  validator can record and block an attestation mismatch; that value never
+  becomes selectable configuration.
 
 ## Security And Privacy
 
@@ -677,6 +748,9 @@ Implementation must update the CPE package's:
 - model, mode, state, execution, reconciliation, repair, inspection, context,
   and eval references;
 - prompt and handoff templates;
+- invocation parsing and model-policy data;
+- removal of the Spark template, no-Spark fixture, model-selection aliases,
+  and active v2 model-routing baselines;
 - operator and maintainer documentation;
 - history, release notes, eval baseline, and verification log;
 - Graphify output after structural changes.
@@ -694,26 +768,33 @@ inspection capabilities.
 3. Manifest, hash-chained events, immutable evidence, and replayable snapshot
    form the documented and tested authority model.
 4. Models cannot directly edit durable state.
-5. Core roles use attested `gpt-5.6-sol/high`; Terra/high is confined to the
-   read-only scout contract.
-6. No core task completes with missing or mismatched model attestation.
-7. Write-capable tasks are sequential; only independent read-only scouts may
+5. The active runtime policy contains exactly `gpt-5.6-sol/high` for core and
+   `gpt-5.6-terra/high` for scout, with no third model or reasoning option.
+6. CPE exposes no runtime model, reasoning, profile, alias, or fallback
+   override, and no active prompt branch can reintroduce one.
+7. No core task completes with missing or mismatched model attestation.
+8. Write-capable tasks are sequential; only independent read-only scouts may
    run concurrently.
-8. Full-spec fallback is removed and missing task-to-spec mapping blocks before
+9. Full-spec fallback is removed and missing task-to-spec mapping blocks before
    edits.
-9. Validator, reconciler, repair planner, inspector, and completion gate agree
+10. Validator, reconciler, repair planner, inspector, and completion gate agree
    on replayed state and evidence.
-10. The eval harness reports missing dependencies and the first failing check
+11. The eval harness reports missing dependencies and the first failing check
     clearly.
-11. Deterministic, integration, fault-injection, and required live migration
+12. Deterministic, integration, fault-injection, and required live migration
     evidence pass before release closeout.
-12. Sol v3 meets the GPT-5.5 task-success baseline with zero critical
+13. Sol v3 meets the GPT-5.5 task-success baseline with zero critical
     regressions and at least 25% context-token reduction on the accepted
     representative suite.
-13. Prompt and handoff modes remain export-only and create no run artifacts.
-14. Source checkout isolation and file-claim enforcement have zero accepted
+14. Prompt and handoff modes remain export-only, include the enforced launcher,
+    and create no run artifacts.
+15. Active-surface model audits reject GPT-5.5, Spark, Luna, `xhigh`, `max`,
+    Pro, and `implementer_model` as selectable behavior. Only history,
+    migration evidence, and narrowly scoped negative allowlist tests may retain
+    those tokens.
+16. Source checkout isolation and file-claim enforcement have zero accepted
     violations in the release suite.
-15. Documentation, release metadata, verification evidence, and Graphify output
+17. Documentation, release metadata, verification evidence, and Graphify output
     match the shipped 3.0.0 contract.
 
 ## Risks And Mitigations
@@ -723,6 +804,7 @@ inspection capabilities.
 | Event sourcing adds implementation complexity | Keep a small event vocabulary, pure projector, replay tests, and atomic snapshot replacement |
 | Sol is unavailable in an operator account | Block before edits and provide an explicit relaunch or capability action; never silently downgrade |
 | Mandatory attestation is unavailable from a host | Treat the host as unsupported for core execution until a verifiable provider route is available |
+| A fixed policy limits ad hoc model experimentation | Keep experiments in the migration eval harness and change production routing only through a reviewed CPE release |
 | Sequential writes increase wall-clock time | Parallelize bounded Terra scouting and optimize context, caching, and evidence loading without parallel write risk |
 | Prompt trimming removes useful behavior | Compare model-only and prompt-change treatments separately and restore only instructions tied to measured failures |
 | Live eval cost grows | Use a bounded representative release suite with an explicit budget cap and keep routine CI deterministic |
