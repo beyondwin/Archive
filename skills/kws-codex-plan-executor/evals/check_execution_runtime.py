@@ -220,6 +220,37 @@ def main() -> int:
                     lambda request=request: worker.run(replace(request, read_only=False)),
                 )
 
+        review_request = make_packet_request(
+            run_dir,
+            manifest,
+            "T1",
+            "T1.task_review.contradiction",
+            "task_review",
+            "check contradictory output",
+            worktree,
+        )
+        critical_result = result_for("task_review", review_request.worktree_revision)
+        critical_result["findings"] = [
+            {"severity": "critical", "summary": "top-level contradiction"}
+        ]
+        expect_worker_error(
+            "worker result findings do not match verdict",
+            lambda: Worker(provider=lambda _request, _argv: critical_result).run(review_request),
+        )
+        missing_result = result_for("verification", review_request.worktree_revision)
+        missing_result["missing_evidence"] = ["required acceptance output"]
+        verification_request = replace(
+            review_request,
+            attempt_id="T1.verification.contradiction",
+            attempt_kind="verification",
+        )
+        expect_worker_error(
+            "worker result missing_evidence does not match verdict",
+            lambda: Worker(provider=lambda _request, _argv: missing_result).run(
+                verification_request
+            ),
+        )
+
         result = run_tasks(tasks, worker, run_dir)
         assert result == {
             "completed": ["T1", "T2"],

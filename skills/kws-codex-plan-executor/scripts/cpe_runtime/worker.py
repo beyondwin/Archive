@@ -82,7 +82,12 @@ def _validate_result(payload: object, *, role: str, revision: int) -> dict[str, 
         raise WorkerError("scout output attempted write or verdict evidence")
     verdict = payload.get("verdict")
     if policy.verdict_capable:
-        payload["verdict"] = validate_verdict(verdict, normalized_role, revision)
+        normalized_verdict = validate_verdict(verdict, normalized_role, revision)
+        if payload["findings"] != normalized_verdict["findings"]:
+            raise WorkerError("worker result findings do not match verdict")
+        if payload["missing_evidence"] != normalized_verdict["missing_evidence"]:
+            raise WorkerError("worker result missing_evidence does not match verdict")
+        payload["verdict"] = normalized_verdict
     elif verdict is not None:
         raise WorkerError(f"role {normalized_role} cannot issue a verdict")
     return payload

@@ -9,7 +9,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from cpe_runtime.attempt_controller import validate_verdict
-from cpe_runtime.worker import WorkerError
+from cpe_runtime.worker import Worker, WorkerError, WorkerRequest
 
 
 def rejected(message: str, fn) -> bool:
@@ -20,13 +20,58 @@ def rejected(message: str, fn) -> bool:
     return False
 
 
+def worker_rejects_result(message: str, payload: dict[str, object]) -> bool:
+    request = WorkerRequest(
+        attempt_id="T1.task_review.fault",
+        attempt_kind="task_review",
+        prompt="{}",
+        worktree=Path("/tmp/cpe-verdict-fault-worktree"),
+        read_only=True,
+        verdict_capable=True,
+        task_id="T1",
+        packet_path="artifacts/task-packets/T1.json",
+        packet_sha256="a" * 64,
+        worktree_revision=7,
+    )
+    provider_payload = {
+        **payload,
+        "_provider_metadata": {
+            "model": "gpt-5.6-sol",
+            "reasoning": "high",
+            "trusted_source": "fault-fixture",
+        },
+    }
+    return rejected(message, lambda: Worker(provider=lambda _request, _argv: provider_payload).run(request))
+
+
 def verdict_cases() -> dict[str, bool]:
     base = {
         "findings": [],
         "missing_evidence": [],
         "worktree_revision": 7,
     }
+    passed_worker_result = {
+        "status": "completed",
+        "summary": "contradictory review",
+        "changed_files": [],
+        "findings": [],
+        "evidence_refs": [],
+        "missing_evidence": [],
+        "verification": [],
+        "verdict": {**base, "status": "passed"},
+    }
     return {
+        "worker_top_level_critical_mismatch_rejected": worker_rejects_result(
+            "worker result findings do not match verdict",
+            {
+                **passed_worker_result,
+                "findings": [{"severity": "critical", "summary": "hidden contradiction"}],
+            },
+        ),
+        "worker_top_level_missing_evidence_mismatch_rejected": worker_rejects_result(
+            "worker result missing_evidence does not match verdict",
+            {**passed_worker_result, "missing_evidence": ["required acceptance output"]},
+        ),
         "critical_passed_rejected": rejected(
             "passed verdict conflicts with critical findings",
             lambda: validate_verdict(
