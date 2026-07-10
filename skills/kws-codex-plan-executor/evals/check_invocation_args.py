@@ -73,12 +73,14 @@ def main() -> int:
     if not checks["sequential_sets_parallel_off"]:
         failures.append("순차 should resolve parallel=off while preserving explicit plan/spec and default subagents=on")
 
-    opus_result, opus = run_args("오푸스로")
-    checks["korean_particle_stripped_opus"] = (
-        opus_result.returncode == 0 and opus.get("values", {}).get("implementer_model") == "opus"
+    forbidden_inputs = ["model=gpt-5.6-sol", "reasoning=xhigh", "implementer_model=opus", "오푸스로", "gpt-5.5 only"]
+    checks["model_overrides_rejected"] = all(
+        run_args(item)[0].returncode != 0
+        and "fixed to Sol/high" in run_args(item)[0].stderr
+        for item in forbidden_inputs
     )
-    if not checks["korean_particle_stripped_opus"]:
-        failures.append("오푸스로 should resolve implementer_model=opus after particle stripping")
+    if not checks["model_overrides_rejected"]:
+        failures.append("model overrides and natural-language model hints must be rejected")
 
     conflict_result, _ = run_args("subagents=off 병렬")
     checks["explicit_nl_conflict_halts"] = (

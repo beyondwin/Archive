@@ -40,5 +40,3 @@ result shape.
 - 계획에 적힌 acceptance command 또는 honest substitute
 
 {{HANDOFF_SECTION}}
-
-모델 라우팅 기본값은 `gpt-5.5 high`다. Spark scout route는 사용자가 명시적으로 요청한 경우에만 추가해.

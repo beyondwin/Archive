@@ -19,6 +19,9 @@ DEFAULTS = {
     "manifest_fallback": "full_spec_on_blocker",
     "parallel": "auto",
 }
+FORBIDDEN_MODEL_KEYS = {"model", "reasoning", "profile", "implementer_model", "fallback_model"}
+FORBIDDEN_MODEL_HINTS = {"spark", "luna", "opus", "오푸스", "xhigh", "max", "pro", "gpt-5.5", "gpt-5.3-codex-spark"}
+
 RECOGNIZED_KEYS = {
     "plan",
     "spec",
@@ -33,7 +36,6 @@ RECOGNIZED_KEYS = {
     "context_threshold",
     "manifest_fallback",
     "parallel",
-    "implementer_model",
 }
 CHOICES = {
     "mode": {"interactive", "headless", "prompt", "handoff"},
@@ -42,7 +44,6 @@ CHOICES = {
     "context_mode": {"auto", "sliced", "full"},
     "manifest_fallback": {"full_spec_on_blocker", "halt_on_blocker"},
     "parallel": {"auto", "off"},
-    "implementer_model": {"opus"},
 }
 NL_HINTS = {
     "대화형": ("mode", "interactive"),
@@ -66,8 +67,6 @@ NL_HINTS = {
     "sliced": ("context_mode", "sliced"),
     "전체": ("context_mode", "full"),
     "full": ("context_mode", "full"),
-    "오푸스": ("implementer_model", "opus"),
-    "opus": ("implementer_model", "opus"),
 }
 KOREAN_PARTICLES = ("에서", "으로", "에게", "부터", "까지", "로", "은", "는", "이", "가", "을", "를", "에", "와", "과", "도", "만")
 
@@ -94,6 +93,16 @@ def normalize_hint(token: str) -> str | None:
             lowered_stripped = stripped.lower()
             if lowered_stripped in NL_HINTS:
                 return lowered_stripped
+    return None
+
+
+def forbidden_model_hint(token: str) -> str | None:
+    raw = token.strip().strip(".,;:!?()[]{}\"'").lower()
+    if raw in FORBIDDEN_MODEL_HINTS:
+        return raw
+    for particle in KOREAN_PARTICLES:
+        if raw.endswith(particle) and raw[:-len(particle)] in FORBIDDEN_MODEL_HINTS:
+            return raw[:-len(particle)]
     return None
 
 
@@ -134,6 +143,8 @@ def parse(args_text: str) -> dict:
     for token in tokens:
         if "=" in token:
             key, raw_value = token.split("=", 1)
+            if key in FORBIDDEN_MODEL_KEYS:
+                die("CPE v3 model policy is fixed to Sol/high core and Terra/high scout")
             if key not in RECOGNIZED_KEYS:
                 die(f"unknown argument key: {key}")
             value = coerce_value(key, raw_value)
@@ -145,6 +156,8 @@ def parse(args_text: str) -> dict:
                 intent["delegation_hint"] = "subagents=on"
             continue
 
+        if forbidden_model_hint(token) is not None:
+            die("CPE v3 model policy is fixed to Sol/high core and Terra/high scout")
         hint = normalize_hint(token)
         if hint is None:
             continue
