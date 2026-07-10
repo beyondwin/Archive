@@ -1580,6 +1580,8 @@ acceptance:
     expected: four treatments and bounded case commands are emitted without model calls
 risks:
   - Live evaluation consumes credentials and budget; dry-run is automatic but paid execution requires explicit approval.
+operator_reviewed: true
+operator_decision: Approved for deterministic fault checks and the dry-run $50 cap plan only; paid provider execution still requires separate same-session approval.
 ```
 
 **Interfaces:**
