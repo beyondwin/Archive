@@ -163,10 +163,10 @@ def audit_task(
             fixable.append("acceptance_command_missing")
         else:
             blocking.append("acceptance_command_missing")
-    if packet and isinstance(packet.get("spec"), dict) and packet["spec"].get("fallback_used") is True:
-        mapping = packet["spec"].get("mapping") if isinstance(packet["spec"].get("mapping"), dict) else {}
-        if mapping.get("operator_reviewed") is not True:
-            fixable.append("full_spec_fallback")
+    if packet and isinstance(packet.get("spec"), dict) and (
+        not isinstance(packet["spec"].get("section_ids"), list) or not packet["spec"].get("section_ids")
+    ):
+        blocking.append("missing_explicit_spec_mapping")
     if risks:
         blocking.append(RISK_MARKER_REQUIRES_OPERATOR_REVIEW)
 
@@ -185,7 +185,7 @@ def audit_task(
         "write_policy_status": "red"
         if any(item in blocking for item in ("allowed_write_globs_empty", "write_scope_too_broad"))
         else ("yellow" if "write_scope_format_invalid" in fixable else "green"),
-        "spec_mapping_status": "yellow" if "full_spec_fallback" in fixable else "green",
+        "spec_mapping_status": "red" if "missing_explicit_spec_mapping" in blocking else "green",
         "plan_support": plan_support,
         "subagent_fit": fit,
         "subagent_reason": reason,

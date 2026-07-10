@@ -16,7 +16,6 @@ DEFAULTS = {
     "context_mode": "auto",
     "context_budget": 60000,
     "context_threshold": 0.70,
-    "manifest_fallback": "full_spec_on_blocker",
     "parallel": "auto",
 }
 FORBIDDEN_MODEL_KEYS = {"model", "reasoning", "profile", "implementer_model", "fallback_model"}
@@ -34,7 +33,6 @@ RECOGNIZED_KEYS = {
     "context_mode",
     "context_budget",
     "context_threshold",
-    "manifest_fallback",
     "parallel",
 }
 CHOICES = {
@@ -42,7 +40,6 @@ CHOICES = {
     "subagents": {"auto", "on", "off"},
     "headless_sandbox": {"workspace-write", "read-only"},
     "context_mode": {"auto", "sliced", "full"},
-    "manifest_fallback": {"full_spec_on_blocker", "halt_on_blocker"},
     "parallel": {"auto", "off"},
 }
 NL_HINTS = {
@@ -191,7 +188,6 @@ def parse(args_text: str) -> dict:
         f"subagents={values['subagents']} [from {sources['subagents']}], "
         f"context_mode={values['context_mode']} [from {sources['context_mode']}], "
         f"context_budget={values['context_budget']}, "
-        f"manifest_fallback={values['manifest_fallback']}, "
         f"parallel={values['parallel']}."
     )
     return {"values": values, "sources": sources, "intent": intent, "echo": echo}
