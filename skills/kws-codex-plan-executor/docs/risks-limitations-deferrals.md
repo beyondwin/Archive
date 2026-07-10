@@ -1,6 +1,7 @@
 # Risks, Limitations, And Deferrals
 
-- Release status is **deterministic-ready; paid-live-pending**. The credentialed
+- Release status is **integrity-closure-pending; paid-live-pending**. Audited
+  deterministic integrity gaps must close before deterministic readiness. The credentialed
   four-treatment, eight-case migration matrix has not run. No live quality,
   regression, or context-reduction release claim is approved yet.
 - The v3 deterministic harness currently disables the legacy static YAML

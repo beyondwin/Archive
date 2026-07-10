@@ -10,4 +10,4 @@
 | Spec context | Explicit task section mapping is required when a spec is supplied |
 | Compatibility | Older schemas are preserved and reported as `unsupported_schema` |
 | Repair | Dry-run first; exact allowlisted action for apply; no fabricated success |
-| Release | 3.0.0 remains deterministic-ready and paid-live-pending until a passing live report |
+| Release | 3.0.0 remains integrity-closure-pending and paid-live-pending until audited deterministic gaps close; paid evidence remains separate |

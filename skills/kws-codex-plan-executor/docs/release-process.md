@@ -15,13 +15,18 @@ was actually produced.
 
 ## CPE v3 Closeout States
 
+`integrity-closure-pending` means the current release candidate has audited
+fail-closed gaps that are not yet covered by current deterministic evidence.
+It preserves the v3 architecture while preventing a stronger readiness claim.
+
 `deterministic-ready` means the current deterministic checks, syntax checks,
-patch hygiene, current v3 baseline, and documentation contract pass. It does
-not mean a credentialed model comparison ran.
+patch hygiene, current v3 baseline, and documentation contract pass after the
+integrity closure. It does not mean a credentialed model comparison ran.
 
 `paid-live-pending` means the approved live migration matrix has not produced a
-successful current report. The `3.0.0` version may remain visible as a release
-candidate, but paid release closeout must not be claimed.
+successful current report. The `3.0.0` version remains visible as an
+integrity-closure-pending release candidate, but deterministic or paid release
+closeout must not be claimed.
 
 Paid closeout requires all of the following:
 

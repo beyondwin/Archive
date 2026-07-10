@@ -10,6 +10,7 @@ from pathlib import Path
 
 SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 SKILL_VERSION_RE = re.compile(r'(?m)^[ \t]*version:[ \t]*"([^"]+)"')
+RELEASE_STATUS_RE = re.compile(r'(?m)^[ \t]*release_status:[ \t]*"([^"]+)"')
 HISTORY_VERSION_RE = re.compile(r"^## (\d+\.\d+\.\d+)(?:\s+-\s+(.+))?$", re.MULTILINE)
 
 
@@ -30,6 +31,8 @@ def main() -> int:
     skill_text = read(skill_path)
     match = SKILL_VERSION_RE.search(skill_text)
     version = match.group(1) if match else ""
+    release_match = RELEASE_STATUS_RE.search(skill_text)
+    release_status = release_match.group(1) if release_match else ""
     baseline_path = skill_dir / "evals" / "baselines" / f"v{version}.json"
 
     checks: dict[str, bool] = {}
@@ -145,15 +148,23 @@ def main() -> int:
     checks["live_evidence_status_is_truthful"] = (
         live_status.get("schema_version") == "1"
         and live_status.get("version") == version
-        and live_status.get("deterministic_evidence", {}).get("status") == "passed"
         and (
             (
                 live_status.get("status") == "released"
+                and live_status.get("deterministic_evidence", {}).get("status") == "passed"
                 and live_status.get("paid_live_evidence", {}).get("status") == "passed"
                 and live_status.get("release_ready") is True
             )
             or (
                 live_status.get("status") == "deterministic_ready_paid_pending"
+                and live_status.get("deterministic_evidence", {}).get("status") == "passed"
+                and live_status.get("paid_live_evidence", {}).get("status") == "pending"
+                and live_status.get("release_ready") is False
+            )
+            or (
+                version == "3.0.0"
+                and live_status.get("status") == "integrity_closure_pending_paid_pending"
+                and live_status.get("deterministic_evidence", {}).get("status") == "pending"
                 and live_status.get("paid_live_evidence", {}).get("status") == "pending"
                 and live_status.get("release_ready") is False
             )
@@ -162,8 +173,21 @@ def main() -> int:
     if not checks["live_evidence_status_is_truthful"]:
         failures.append(
             "evals/live-migration/release-status.json must truthfully record either released/paid-passed "
-            "or deterministic-ready/paid-pending"
+            "or deterministic-ready/paid-pending or integrity-closure/paid-pending"
         )
+
+    if version == "3.0.0":
+        expected_status = "integrity-closure-pending; paid-live-pending"
+        checks["integrity_closure_is_pending"] = release_status == expected_status
+        checks["release_ready_is_false"] = live_status.get("release_ready") is False
+        checks["paid_live_is_pending"] = live_status.get("paid_live_status") == "pending"
+        for check_name in (
+            "integrity_closure_is_pending",
+            "release_ready_is_false",
+            "paid_live_is_pending",
+        ):
+            if not checks[check_name]:
+                failures.append(f"3.0.0 pending release contract failed: {check_name}")
 
     payload = {
         "version": version,

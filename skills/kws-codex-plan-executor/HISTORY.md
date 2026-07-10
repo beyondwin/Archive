@@ -2,7 +2,12 @@
 
 ## Unreleased
 
-## 3.0.0 - 2026-07-10 (deterministic-ready; paid-live-pending)
+- 2026-07-10: Corrected the 3.0.0 release claim to
+  `integrity-closure-pending; paid-live-pending`. This is an evidence
+  correction while audited fail-closed gaps are closed, not an architectural
+  rollback from the event-sourced v3 runtime.
+
+## 3.0.0 - 2026-07-10 (integrity-closure-pending; paid-live-pending)
 
 - Replaced mutable v2 execution surfaces with v3 manifest, evidence, event,
   projection, validation, reconciliation, repair, inspection, and fixed model routing.
