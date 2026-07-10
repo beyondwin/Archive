@@ -85,16 +85,9 @@ def main() -> int:
         fallback["spec"]["fallback_used"] = True
         fallback["spec"]["mapping"] = {"suggested_plan_patch": 'spec_refs: ["S3"]'}
         result, text = run_renderer(root, fallback)
-        checks["full_spec_fallback_visible"] = result.returncode == 0 and "full spec fallback" in text
-        if not checks["full_spec_fallback_visible"]:
-            failures.append("full-spec fallback should be visible in the markdown view")
-        checks["full_spec_fallback_view_has_patch"] = (
-            result.returncode == 0
-            and "Suggested plan patch" in text
-            and text.count("full spec fallback") == 1
-        )
-        if not checks["full_spec_fallback_view_has_patch"]:
-            failures.append("task packet view should show suggested plan patch without repeating full spec body")
+        checks["full_spec_fallback_rejected"] = result.returncode != 0 and "unsupported legacy spec mapping" in result.stderr
+        if not checks["full_spec_fallback_rejected"]:
+            failures.append("task packet view must reject legacy full-spec fallback packets")
 
         malformed = base_packet()
         del malformed["write_policy"]

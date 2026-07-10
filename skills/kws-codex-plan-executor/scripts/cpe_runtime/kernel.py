@@ -82,16 +82,32 @@ def _completion_ready(run_dir: Path, manifest: dict, state: dict) -> bool:
     if validate_manifest(manifest):
         return False
     snapshot = run_dir / "state.json"
-    if snapshot.is_file():
-        try:
-            if json.loads(snapshot.read_text(encoding="utf-8")) != state:
-                return False
-        except (OSError, json.JSONDecodeError):
+    if not snapshot.is_file():
+        return False
+    try:
+        if json.loads(snapshot.read_text(encoding="utf-8")) != state:
             return False
+    except (OSError, json.JSONDecodeError):
+        return False
     for item in state.get("artifact_index", []):
         ref = item.get("ref")
         if not isinstance(ref, dict) or verify_ref(run_dir, ref):
             return False
+    audit_evidence = audit.get("verification_evidence") if isinstance(audit, dict) else None
+    indexed_refs = {
+        json.dumps(item.get("ref"), sort_keys=True)
+        for item in state.get("artifact_index", [])
+        if isinstance(item.get("ref"), dict)
+    }
+    if not isinstance(audit_evidence, list) or not audit_evidence:
+        return False
+    audit_refs = set()
+    for ref in audit_evidence:
+        if not isinstance(ref, dict) or json.dumps(ref, sort_keys=True) not in indexed_refs or verify_ref(run_dir, ref):
+            return False
+        audit_refs.add(json.dumps(ref, sort_keys=True))
+    if audit_refs != indexed_refs:
+        return False
     try:
         worktree = resolve_ref(str(manifest["execution_worktree_ref"]))
         result = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=worktree, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -101,6 +117,11 @@ def _completion_ready(run_dir: Path, manifest: dict, state: dict) -> bool:
         claims = {str(path) for task in manifest.get("task_graph", []) for path in task.get("file_claims", [])}
         if not changed.issubset(claims):
             return False
+        expected_head = ((manifest.get("source_git") or {}).get("head"))
+        if expected_head:
+            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            if head.returncode or head.stdout.strip() != expected_head:
+                return False
     except (OSError, KeyError, ValueError):
         return False
     return bool(

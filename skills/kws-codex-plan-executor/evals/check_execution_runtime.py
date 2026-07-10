@@ -4,7 +4,7 @@ import json, tempfile, subprocess
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-from cpe_runtime.worker import Worker, WorkerRequest
+from cpe_runtime.worker import Worker, WorkerError, WorkerRequest
 from cpe_runtime.scheduler import run_tasks
 from cpe_runtime.model_policy import CORE_ROUTE
 from cpe_runtime.manifest import create_manifest, write_manifest
@@ -26,5 +26,13 @@ def main() -> int:
         worker = Worker(provider=provider)
         result = run_tasks(task_graph, worker, run_dir)
         assert result["completed"] == ["T1", "T2"]
+
+        failed_dir = root / "failed-run"
+        failed_manifest = create_manifest("failed", "interactive", root, worktree, plan, None, task_graph[:1], pricing)
+        write_manifest(failed_dir / "run_manifest.json", failed_manifest)
+        def failing_provider(_request, _argv):
+            raise WorkerError("fixture_failure")
+        failed = run_tasks(task_graph[:1], Worker(provider=failing_provider), failed_dir)
+        assert failed["status"] == "blocked" and failed["blocked"] == "T1"
     print('{"passed": true}'); return 0
 if __name__ == "__main__": raise SystemExit(main())

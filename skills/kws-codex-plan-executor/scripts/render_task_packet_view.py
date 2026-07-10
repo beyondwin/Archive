@@ -89,7 +89,9 @@ def render_packet_view(packet: dict[str, Any]) -> str:
             forbidden.append(item)
     ac_lines, verification_lines = acceptance_lines(acceptance)
     section_ids = list_strings(spec.get("section_ids"))
-    fallback_notes = ["- warning: full spec fallback"] if spec.get("fallback_used") is True else ["- warning: none"]
+    if spec.get("fallback_used") is True:
+        die("unsupported legacy spec mapping; add explicit spec_refs")
+    fallback_notes = ["- warning: none"]
     mapping = spec.get("mapping") if isinstance(spec.get("mapping"), dict) else {}
     suggested_patch = mapping.get("suggested_plan_patch")
     if isinstance(suggested_patch, str) and suggested_patch.strip():

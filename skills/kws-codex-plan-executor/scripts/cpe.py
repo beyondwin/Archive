@@ -23,6 +23,7 @@ from cpe_runtime.manifest import create_manifest, load_verified_manifest, write_
 from cpe_runtime.projector import project
 from cpe_runtime.prompt_export import render_export_bundle
 from cpe_runtime.scheduler import run_tasks
+from cpe_runtime.validation import validate_run
 from cpe_runtime.worker import Worker
 
 
@@ -217,6 +218,10 @@ def resume_run(run_id: str) -> int:
         return 2
     state = project(manifest, events)
     if state["lifecycle"] == "completed":
+        validation = validate_run(run_dir)
+        if not validation.passed:
+            print(json.dumps({"classification": "completed_run_invalid", "run_id": run_id, "errors": validation.errors}), file=sys.stderr)
+            return 2
         print(json.dumps({"run_id": run_id, "status": "completed"}))
         return 0
     if state["lifecycle"] == "blocked":

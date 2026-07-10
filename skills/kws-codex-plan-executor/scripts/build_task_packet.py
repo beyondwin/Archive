@@ -232,14 +232,11 @@ def resolve_sections(task: dict, manifest: dict, fallback_policy: str | None = N
     die(f"missing_explicit_spec_mapping: {task.get('id', 'unknown')}")
 
 
-def spec_context(spec_path: Path, manifest: dict, section_ids: list[str], fallback_used: bool) -> tuple[str, str, str]:
+def spec_context(spec_path: Path, manifest: dict, section_ids: list[str]) -> tuple[str, str, str]:
     try:
         spec_text = spec_path.read_text(encoding="utf-8")
     except OSError as exc:
         die(f"spec is not readable: {spec_path}: {exc}")
-
-    if fallback_used:
-        return "full", "*", "## Spec context (full spec fallback)\n\n" + spec_text
 
     sections = manifest.get("sections", {})
     bodies = [section_text(spec_text, sections[section_id]) for section_id in section_ids]
@@ -314,14 +311,9 @@ def build_packet(
 
     task = find_task(plan, task_id)
     section_ids, fallback_used, mapping = resolve_sections(task, manifest, fallback_policy)
-    spec_mode, section_label, spec_text = spec_context(spec_path, manifest, section_ids, fallback_used)
+    spec_mode, section_label, spec_text = spec_context(spec_path, manifest, section_ids)
     if fallback_used:
-        mapping["fallback_preview"] = {
-            "source_ref": "*",
-            "chars": min(len(spec_text), 1200),
-            "sha256": sha256_text(spec_text),
-            "text": bounded_preview(spec_text),
-        }
+        die("unsupported legacy spec mapping")
     files = [item for item in task.get("files", []) if isinstance(item, str)]
     depends_on = [item for item in task.get("depends_on", []) if isinstance(item, str)]
     task_body = task.get("body", "")
@@ -330,7 +322,7 @@ def build_packet(
         "plan.command_fence_fallback" if acceptance_command else "missing"
     )
     acceptance_text = acceptance_command or "missing acceptance command"
-    spec_component_role = "spec_full_fallback" if fallback_used else "spec_slice"
+    spec_component_role = "spec_slice"
     context_components = [
         component("task_body", str(plan.get("plan", "")), task_id, task_body, "active task contract", False),
         component(
@@ -338,7 +330,7 @@ def build_packet(
             str(spec_path),
             section_label,
             spec_text,
-            "full spec fallback" if fallback_used else "selected spec section",
+            "selected spec section",
             True,
         ),
         component("write_policy", str(plan.get("plan", "")), task_id, "\n".join(files), "task write scope", False),

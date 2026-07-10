@@ -9,7 +9,7 @@ A generated task packet view is included in handoff or subagent hot-tail context
 
 ## Must
 - preserve files, task body, AC, verification, and forbidden globs
-- show full-spec fallback when packet.spec.fallback_used=true
+- reject packets with packet.spec.fallback_used=true and require explicit spec mapping
 
 ## Must Not
 - treat markdown view as source of truth
