@@ -175,6 +175,7 @@ risks: [The current public parser rejects the approved v3 plan shape and preflig
 - Modify: `skills/kws-codex-plan-executor/scripts/audit_superpowers_compatibility.py`
 - Modify: `skills/kws-codex-plan-executor/evals/check_plan_executability_audit.py`
 - Modify: `skills/kws-codex-plan-executor/evals/check_run_readiness.py`
+- Modify: `skills/kws-codex-plan-executor/evals/check_parse_plan.py`
 - Create: `skills/kws-codex-plan-executor/evals/parser-fixtures/18-integrity-closure-plan.yaml`
 - Create: `skills/kws-codex-plan-executor/evals/parser-fixtures/19-v3-quality-plan.yaml`
 
