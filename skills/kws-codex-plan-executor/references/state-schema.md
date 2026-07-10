@@ -22,9 +22,11 @@ Each event has a monotonic `seq`, unique `event_id`, UTC timestamp, runtime
 actor, type, payload, optional task/attempt IDs, `previous_hash`, and `hash`.
 The hash is SHA-256 over canonical event JSON without the `hash` field.
 
-The active projector consumes run status, task status, attempt, evidence,
-context, completion, and repair events. Unknown or invalid transitions are not
-accepted as successful state changes.
+The active projector consumes run and task status, typed attempt and verdict,
+worktree revision, blocker lifecycle, retry, evidence, context, completion,
+and repair events. Historical `attempt.recorded` remains readable but is not a
+writable event. Unknown or invalid transitions are not accepted as successful
+state changes.
 
 ## Projection
 
@@ -32,9 +34,17 @@ accepted as successful state changes.
 
 - `schema_version`, `run_id`, and run lifecycle;
 - current task and projected task statuses;
-- projected attempt summaries and evidence index;
-- blockers, context health, repairs, and completion audit when emitted;
+- `worktree_revision` and `worktree_patch_sha256` for the current real delta;
+- projected attempt summaries, verdicts, and evidence index;
+- `active_blockers`, `blocker_history`, and the explicit `retry_queue`;
+- context health, repairs, and completion audit when emitted;
 - the last applied event sequence and hash.
+
+Blockers are projected by stable ID. Open and update events change both the
+active record and its history record. Resolution removes the blocker from
+`active_blockers` while retaining the resolved record and evidence in
+`blocker_history`. A retry phase moves a blocked task to that phase's entry
+state; blocked tasks do not have a generic transition back to ready.
 
 No agent writes this file. The transition kernel replays the manifest and event
 stream and atomically replaces the projection. Validation compares stored bytes

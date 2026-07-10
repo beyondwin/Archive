@@ -11,12 +11,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .events import EVENT_TYPES, append_event, read_events, validate_chain
+from .events import WRITABLE_EVENT_TYPES, append_event, read_events, validate_chain
 from .evidence import verify_ref
 from .manifest import load_verified_manifest, resolve_ref, validate_manifest
 from .model_policy import CORE_ROUTE
 from .packets import PacketDraft, verify_packet
-from .projector import RUN_TRANSITIONS, TASK_TRANSITIONS, project
+from .projector import RETRY_PHASE_STATES, RUN_TRANSITIONS, TASK_TRANSITIONS, project
 
 
 @dataclass(frozen=True)
@@ -72,7 +72,7 @@ def _attempt_kinds(state: dict, task_id: str | None) -> set[str]:
 def _completion_ready(run_dir: Path, manifest: dict, state: dict) -> bool:
     if not state.get("tasks") or any(item.get("status") != "completed" for item in state["tasks"].values()):
         return False
-    if state.get("blockers"):
+    if state.get("active_blockers", state.get("blockers", [])):
         return False
     for task_id in state["tasks"]:
         if not {"implementation", "review", "verification"}.issubset(_attempt_kinds(state, task_id)):
@@ -142,7 +142,7 @@ def _completion_ready(run_dir: Path, manifest: dict, state: dict) -> bool:
 
 
 def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Transition) -> None:
-    if command.event_type not in EVENT_TYPES:
+    if command.event_type not in WRITABLE_EVENT_TYPES:
         raise ValueError("unknown event type")
     payload = command.payload
     if not isinstance(payload, dict):
@@ -174,10 +174,107 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
         return
     if command.task_id is not None and command.task_id not in state["tasks"]:
         raise ValueError("unknown task")
-    if command.event_type == "attempt.recorded":
-        required = {"kind", "status", "attestation", "usage", "latency_ms"}
-        if not required.issubset(payload) or not command.attempt_id:
+    if command.event_type == "task.retry_scheduled":
+        phase = payload.get("phase")
+        revision = payload.get("worktree_revision")
+        if phase not in RETRY_PHASE_STATES:
+            raise ValueError("invalid retry phase")
+        if (
+            state["tasks"][command.task_id]["status"] != "blocked"
+            or not isinstance(payload.get("root_cause_key"), str)
+            or not payload["root_cause_key"]
+            or not isinstance(revision, int)
+            or isinstance(revision, bool)
+            or revision != state.get("worktree_revision", 0)
+        ):
+            raise ValueError("invalid retry payload")
+    elif command.event_type == "attempt.started":
+        if (
+            not command.attempt_id
+            or not isinstance(payload.get("kind"), str)
+            or not payload["kind"]
+            or any(item.get("attempt_id") == command.attempt_id for item in state.get("attempts", []))
+        ):
             raise ValueError("invalid attempt payload")
+    elif command.event_type == "attempt.completed":
+        matches = [item for item in state.get("attempts", []) if item.get("attempt_id") == command.attempt_id]
+        if (
+            not command.attempt_id
+            or len(matches) != 1
+            or payload.get("status") not in {"completed", "failed", "interrupted"}
+        ):
+            raise ValueError("invalid attempt payload")
+    elif command.event_type == "verdict.recorded":
+        if payload.get("status") not in {"passed", "changes_requested", "blocked", "inconclusive"}:
+            raise ValueError("invalid verdict payload")
+    elif command.event_type == "worktree.revision_recorded":
+        source = payload.get("from")
+        target = payload.get("to")
+        digest = payload.get("patch_sha256")
+        valid_digest = (
+            isinstance(digest, str)
+            and len(digest) == 64
+            and all(character in "0123456789abcdef" for character in digest)
+        )
+        if (
+            not isinstance(source, int)
+            or isinstance(source, bool)
+            or not isinstance(target, int)
+            or isinstance(target, bool)
+            or source != state.get("worktree_revision", 0)
+            or target != source + 1
+            or not valid_digest
+        ):
+            raise ValueError("invalid worktree revision payload")
+        changed_files = payload.get("changed_files")
+        if changed_files is not None and (
+            not isinstance(changed_files, list)
+            or any(not isinstance(path, str) or not path for path in changed_files)
+        ):
+            raise ValueError("invalid worktree revision payload")
+        payload_attempt_id = payload.get("attempt_id")
+        if payload_attempt_id is not None and (
+            not isinstance(payload_attempt_id, str) or not payload_attempt_id
+        ):
+            raise ValueError("invalid worktree revision payload")
+    elif command.event_type == "blocker.opened":
+        required = ("blocker_id", "category", "owner", "resume_condition")
+        if (
+            any(not isinstance(payload.get(key), str) or not payload[key] for key in required)
+            or any(
+                item.get("blocker_id") == payload.get("blocker_id")
+                for item in state.get("blocker_history", [])
+            )
+        ):
+            raise ValueError("invalid blocker payload")
+        root_cause_key = payload.get("root_cause_key")
+        if root_cause_key is not None and (
+            not isinstance(root_cause_key, str) or not root_cause_key
+        ):
+            raise ValueError("invalid blocker payload")
+    elif command.event_type == "blocker.updated":
+        blocker_id = payload.get("blocker_id")
+        matches = [
+            item for item in state.get("active_blockers", [])
+            if item.get("blocker_id") == blocker_id
+        ]
+        if not isinstance(blocker_id, str) or len(matches) != 1 or len(payload) < 2:
+            raise ValueError("invalid blocker update payload")
+    elif command.event_type == "blocker.resolved":
+        blocker_id = payload.get("blocker_id")
+        matches = [
+            item for item in state.get("active_blockers", [])
+            if item.get("blocker_id") == blocker_id
+        ]
+        evidence_refs = payload.get("evidence_refs")
+        if (
+            not isinstance(blocker_id, str)
+            or len(matches) != 1
+            or not isinstance(evidence_refs, list)
+            or not evidence_refs
+            or any(not isinstance(ref, dict) for ref in evidence_refs)
+        ):
+            raise ValueError("invalid blocker resolution payload")
     elif command.event_type == "evidence.attached":
         if not isinstance(payload.get("ref"), dict) or not payload.get("kind"):
             raise ValueError("invalid evidence payload")
