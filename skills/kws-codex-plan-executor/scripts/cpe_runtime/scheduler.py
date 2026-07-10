@@ -108,6 +108,30 @@ def _trusted(result: WorkerResult) -> bool:
     )
 
 
+def _unexpected_worker_failure(error: Exception) -> WorkerResult:
+    message = f"{type(error).__name__}: {error}"[:2000]
+    payload = {
+        "status": "failed",
+        "summary": message,
+        "changed_files": [],
+        "findings": [],
+        "evidence_refs": [],
+        "missing_evidence": [message],
+        "verification": [],
+        "verdict": None,
+        "failure_category": "unexpected_worker_error",
+    }
+    return WorkerResult(
+        "failed",
+        payload,
+        {"verified": False, "error": message},
+        {},
+        0,
+        hashlib.sha256(message.encode()).hexdigest(),
+        message,
+    )
+
+
 def _start_attempt(kernel: Kernel, task_id: str | None, kind: str, attempt_id: str) -> None:
     revision = project(
         load_verified_manifest(kernel.run_dir / "run_manifest.json"),
@@ -230,7 +254,14 @@ def _worker_attempt(
             forbidden=[str(path) for path in forbidden],
             operation=invoke,
         )
-        result = write_outcome.result
+        if write_outcome.error is not None:
+            result = _unexpected_worker_failure(write_outcome.error)
+        elif write_outcome.result is None:
+            result = _unexpected_worker_failure(
+                RuntimeError("write attempt returned no worker result")
+            )
+        else:
+            result = write_outcome.result
     else:
         result = invoke()
     _complete_attempt(kernel, task_id, kind, result, attempt_id)

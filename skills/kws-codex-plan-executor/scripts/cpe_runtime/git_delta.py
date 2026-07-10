@@ -79,13 +79,27 @@ def _content_record(worktree: Path, relative: str) -> tuple[str, bytes]:
 
 
 def _listed_paths(worktree: Path) -> tuple[str, ...]:
-    raw = b"\0".join(
-        (
-            _git(worktree, ["ls-files", "-z", "--cached"]).rstrip(b"\0"),
-            _git(worktree, ["ls-files", "-z", "--others", "--exclude-standard"]).rstrip(b"\0"),
-        )
-    )
-    return tuple(sorted({os.fsdecode(item) for item in raw.split(b"\0") if item}))
+    tracked = {
+        os.fsdecode(item)
+        for item in _git(worktree, ["ls-files", "-z", "--cached"]).split(b"\0")
+        if item
+    }
+    filesystem: set[str] = set()
+
+    def walk(directory: bytes, prefix: bytes = b"") -> None:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                name = entry.name
+                if name == b".git":
+                    continue
+                relative = name if not prefix else prefix + b"/" + name
+                if entry.is_dir(follow_symlinks=False):
+                    walk(entry.path, relative)
+                else:
+                    filesystem.add(os.fsdecode(relative))
+
+    walk(os.fsencode(worktree))
+    return tuple(sorted(tracked | filesystem))
 
 
 def _snapshot_bytes(head: str, files: tuple[tuple[str, str], ...]) -> bytes:
