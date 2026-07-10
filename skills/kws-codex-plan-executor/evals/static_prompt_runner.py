@@ -8,6 +8,10 @@ from pathlib import Path
 
 import yaml
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+from cpe_runtime.prompt_export import render_export_bundle
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -19,7 +23,6 @@ def main() -> int:
     fixture = yaml.safe_load(Path(args.fixture).read_text(encoding="utf-8")) or {}
     mode = fixture.get("mode", "prompt")
     lines = [
-        "Model: gpt-5.5 high",
         "Plan: plan.md",
         "State: ~/.codex/orchestrator/<run_id>/state.json",
         "context_health: record status, next_action, and handoff_ready before exit",
@@ -27,7 +30,7 @@ def main() -> int:
     ]
     if mode == "handoff":
         lines.insert(0, "HANDOFF CHECKPOINT")
-    text = "```text\n" + "\n".join(lines) + "\n```\n"
+    text = render_export_bundle("\n".join(lines), Path(".").resolve())
     Path(args.output).write_text(text, encoding="utf-8")
     Path(args.run_log).write_text(
         '{"type":"item.completed","item":{"type":"agent_message","text":"Deterministic prompt fixture exported."}}\n',

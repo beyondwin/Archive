@@ -63,14 +63,20 @@ def main() -> int:
     checks["must_not_include"] = not present_forbidden
     failures.extend(f"forbidden text present: {item}" for item in present_forbidden)
 
-    if "spark" in expected:
-        wants_spark = bool(expected["spark"])
-        has_spark = "gpt-5.3-codex-spark" in text
-        checks["model_routing"] = has_spark if wants_spark else not has_spark
-        if not checks["model_routing"]:
-            failures.append("Spark routing presence does not match fixture expectation")
-    else:
-        checks["model_routing"] = True
+    checks["fixed_launcher"] = (
+        "codex exec --json --model gpt-5.6-sol" in text
+        and 'model_reasoning_effort="high"' in text
+        and "<<'CPE_PROMPT'" in text
+    )
+    if not checks["fixed_launcher"]:
+        failures.append("export must include the fixed Sol/high launcher")
+    try:
+        prompt_body = text.split("<<'CPE_PROMPT'\n", 1)[1].rsplit("\nCPE_PROMPT", 1)[0]
+    except IndexError:
+        prompt_body = text
+    checks["model_not_in_prompt_body"] = "gpt-5.6-" not in prompt_body
+    if not checks["model_not_in_prompt_body"]:
+        failures.append("model IDs must remain in the launcher, not prompt body")
 
     checks["no_implementation_started_language"] = IMPLEMENTATION_STARTED_RE.search(text) is None
     if not checks["no_implementation_started_language"]:

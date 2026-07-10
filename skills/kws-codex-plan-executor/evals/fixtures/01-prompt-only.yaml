@@ -16,14 +16,13 @@ spec: |
   Create docs/example.md.
 expected:
   prompt_only: true
-  spark: false
   must_include:
-    - "gpt-5.5 high"
+    - "codex exec --json --model gpt-5.6-sol"
+    - "model_reasoning_effort=\"high\""
     - "~/.codex/orchestrator/<run_id>/state.json"
     - "context_health"
   must_not_include:
     - "{{PLAN_PATH}}"
     - "{{OPTIONAL_DOCUMENT_BULLETS}}"
-    - "{{OPTIONAL_SPARK_SCOUT_BULLETS}}"
-    - "gpt-5.3-codex-spark"
+    - "gpt-5.6-terra"
     - "session.json"
