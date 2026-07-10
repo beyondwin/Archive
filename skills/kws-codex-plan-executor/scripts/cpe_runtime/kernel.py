@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import fcntl
+import hashlib
 import json
 import os
+import secrets
+import shutil
 import tempfile
 import subprocess
 from dataclasses import dataclass
@@ -12,6 +15,7 @@ from .events import EVENT_TYPES, append_event, read_events, validate_chain
 from .evidence import verify_ref
 from .manifest import load_verified_manifest, resolve_ref, validate_manifest
 from .model_policy import CORE_ROUTE
+from .packets import PacketDraft, verify_packet
 from .projector import RUN_TRANSITIONS, TASK_TRANSITIONS, project
 
 
@@ -80,6 +84,11 @@ def _completion_ready(run_dir: Path, manifest: dict, state: dict) -> bool:
         return False
     audit = state.get("completion_audit")
     if validate_manifest(manifest):
+        return False
+    try:
+        for task_id in state["tasks"]:
+            verify_packet(run_dir, manifest, task_id)
+    except ValueError:
         return False
     snapshot = run_dir / "state.json"
     if not snapshot.is_file():
@@ -218,6 +227,71 @@ class Kernel:
 
     def transition(self, command: Transition) -> dict:
         return transition_run(self.run_dir, command, snapshot_writer=self._snapshot_writer)
+
+
+def _write_packet_exclusive(root: Path, draft: PacketDraft) -> None:
+    path = root / draft.relative_path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb", closefd=False) as handle:
+            handle.write(draft.content)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        os.close(descriptor)
+    _fsync_dir(path.parent)
+
+
+class RunKernel(Kernel):
+    @classmethod
+    def initialize(cls, run_dir: Path, manifest: dict, packet_drafts: list[PacketDraft]) -> "RunKernel":
+        run_dir = run_dir.expanduser().resolve()
+        if run_dir.exists():
+            raise FileExistsError(run_dir)
+        task_ids = [str(task.get("id")) for task in manifest.get("task_graph", []) if isinstance(task, dict)]
+        draft_ids = [draft.task_id for draft in packet_drafts]
+        if len(draft_ids) != len(set(draft_ids)) or set(draft_ids) != set(task_ids):
+            raise ValueError("packet_index_incomplete")
+        for draft in packet_drafts:
+            if hashlib.sha256(draft.content).hexdigest() != draft.sha256:
+                raise ValueError("packet_digest_mismatch")
+        initialized_manifest = dict(manifest)
+        initialized_manifest["task_packets"] = [
+            {
+                "task_id": draft.task_id,
+                "path": draft.relative_path,
+                "media_type": draft.media_type,
+                "sha256": draft.sha256,
+            }
+            for draft in packet_drafts
+        ]
+        errors = validate_manifest(initialized_manifest)
+        if errors:
+            raise ValueError(errors[0])
+        run_dir.parent.mkdir(parents=True, exist_ok=True)
+        stage = run_dir.parent / f".{run_dir.name}.initialize-{secrets.token_hex(6)}"
+        stage.mkdir(mode=0o700)
+        published = False
+        try:
+            for draft in packet_drafts:
+                _write_packet_exclusive(stage, draft)
+            write_path = stage / "run_manifest.json"
+            from .manifest import write_manifest
+
+            write_manifest(write_path, initialized_manifest)
+            staged_manifest = load_verified_manifest(write_path)
+            for draft in packet_drafts:
+                if verify_packet(stage, staged_manifest, draft.task_id) != draft:
+                    raise ValueError("packet_digest_mismatch")
+            os.replace(stage, run_dir)
+            _fsync_dir(run_dir.parent)
+            published = True
+        finally:
+            if not published:
+                shutil.rmtree(stage, ignore_errors=True)
+        return cls(run_dir)
 
 
 def rebuild_snapshot(run_dir: Path) -> dict:
