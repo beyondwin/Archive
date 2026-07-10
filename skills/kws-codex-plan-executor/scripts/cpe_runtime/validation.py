@@ -10,7 +10,7 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 
 from .events import read_events, validate_chain
-from .evidence import verify_ref
+from .evidence import KIND_RE, verify_ref
 from .git_delta import GitDelta, capture_snapshot, scope_errors
 from .manifest import load_manifest, resolve_ref, validate_manifest
 from .model_policy import CORE_ROUTE, SCOUT_ROUTE
@@ -212,6 +212,51 @@ def _parse_canonical_patch(raw: bytes) -> _ParsedPatch:
         after.append(_decode_ascii(bodies[index + 2][1]))
     if paths != sorted(set(paths)):
         raise ValueError("non-canonical patch paths")
+    content = fields[-1][1]
+    content_magic = b"CPE-GIT-CONTENT-V1\0"
+    if not content.startswith(content_magic):
+        raise ValueError("invalid patch content magic")
+    content_cursor = len(content_magic)
+    content_fields: list[tuple[bytes, bytes]] = []
+    while content_cursor < len(content):
+        if content_cursor + 9 > len(content):
+            raise ValueError("truncated patch content field")
+        label = content[content_cursor : content_cursor + 1]
+        size = int.from_bytes(content[content_cursor + 1 : content_cursor + 9], "big")
+        content_cursor += 9
+        if size > len(content) - content_cursor:
+            raise ValueError("truncated patch content value")
+        content_fields.append(
+            (label, content[content_cursor : content_cursor + size])
+        )
+        content_cursor += size
+    if len(content_fields) != len(paths) * 3:
+        raise ValueError("patch content path count mismatch")
+    content_paths: list[str] = []
+    for index in range(0, len(content_fields), 3):
+        triple = content_fields[index : index + 3]
+        if [label for label, _ in triple] != [b"P", b"F", b"C"]:
+            raise ValueError("invalid patch content record")
+        raw_path, raw_fingerprint, raw_content = (value for _, value in triple)
+        if b"\0" in raw_path:
+            raise ValueError("invalid patch content path")
+        content_path = os.fsdecode(raw_path)
+        content_paths.append(content_path)
+        fingerprint = _decode_ascii(raw_fingerprint)
+        expected = "deleted" if after[index // 3] == "absent" else after[index // 3]
+        if fingerprint != expected:
+            raise ValueError("patch content fingerprint mismatch")
+        if fingerprint == "deleted":
+            if raw_content:
+                raise ValueError("deleted patch content is non-empty")
+        else:
+            parts = fingerprint.split(":")
+            if len(parts) < 3 or len(parts[-1]) != 64:
+                raise ValueError("invalid patch content fingerprint")
+            if hashlib.sha256(raw_content).hexdigest() != parts[-1]:
+                raise ValueError("patch content digest mismatch")
+    if tuple(content_paths) != tuple(paths):
+        raise ValueError("patch content paths mismatch")
     header = [_decode_ascii(value) for _, value in fields[:6]]
     digests = header[2:6]
     if any(len(value) != 64 or any(char not in "0123456789abcdef" for char in value) for value in digests):
@@ -236,6 +281,12 @@ def _load_patch(run_dir: Path, payload: dict) -> tuple[_ParsedPatch | None, str 
     digest = payload.get("patch_sha256")
     if not isinstance(ref, dict):
         return None, "revision_patch_evidence_missing"
+    if (
+        not isinstance(digest, str)
+        or len(digest) != 64
+        or any(char not in "0123456789abcdef" for char in digest)
+    ):
+        return None, "revision_patch_evidence_invalid"
     expected_path = f"artifacts/patches/{digest}.patch"
     if (
         ref.get("kind") != "patch"
@@ -244,17 +295,27 @@ def _load_patch(run_dir: Path, payload: dict) -> tuple[_ParsedPatch | None, str 
         or ref.get("media_type") != "application/octet-stream"
     ):
         return None, "revision_patch_evidence_invalid"
-    target = run_dir / expected_path
+    artifacts_root = run_dir / "artifacts"
+    patch_root = artifacts_root / "patches"
+    for ancestor in (artifacts_root, patch_root):
+        try:
+            ancestor_metadata = ancestor.lstat()
+        except OSError:
+            return None, "revision_patch_evidence_missing"
+        if stat.S_ISLNK(ancestor_metadata.st_mode) or not stat.S_ISDIR(
+            ancestor_metadata.st_mode
+        ):
+            return None, "revision_patch_evidence_invalid"
+    target = patch_root / f"{digest}.patch"
     try:
         metadata = target.lstat()
     except OSError:
         return None, "revision_patch_evidence_missing"
-    expected_root = (run_dir / "artifacts" / "patches").resolve()
     if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
         return None, "revision_patch_evidence_invalid"
     try:
         resolved = target.resolve()
-        if resolved.parent != expected_root:
+        if resolved.parent != patch_root or target.parent != patch_root:
             return None, "revision_patch_evidence_invalid"
         raw = target.read_bytes()
     except OSError:
@@ -289,8 +350,74 @@ def _revision_validation(context: dict[str, object]) -> dict[str, object]:
         if state.get("worktree_revision") != 0 or state.get("worktree_patch_sha256") is not None:
             result["errors"].append("revision_patch_chain_invalid")
         else:
-            result["zero_unverified"] = True
-            result["warnings"].append("revision_zero_baseline_unverified")
+            write_in_progress = any(
+                attempt.get("kind") in {"implementation", "repair"}
+                and attempt.get("status") in {"started", "failed", "interrupted"}
+                for attempt in state.get("attempts") or []
+            )
+            if write_in_progress:
+                result["errors"].append("revision_zero_write_attempt_unrecorded")
+            try:
+                worktree = resolve_ref(str(manifest["execution_worktree_ref"]))
+                changed, git_error = _git_status(worktree)
+                branch = subprocess.run(
+                    ["git", "symbolic-ref", "-q", "HEAD"],
+                    cwd=worktree,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                worktree_diff = subprocess.run(
+                    ["git", "diff", "--quiet"],
+                    cwd=worktree,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                index_diff = subprocess.run(
+                    ["git", "diff", "--cached", "--quiet"],
+                    cwd=worktree,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                index_flags = subprocess.run(
+                    ["git", "ls-files", "-v", "-z"],
+                    cwd=worktree,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                )
+                expected_branch = f"refs/heads/codex/{manifest['run_id']}"
+            except (KeyError, OSError, ValueError):
+                changed, git_error = [], "worktree_identity_mismatch"
+                branch = None
+                worktree_diff = None
+                index_diff = None
+                index_flags = None
+                expected_branch = ""
+            flags_clean = (
+                index_flags is not None
+                and index_flags.returncode == 0
+                and all(
+                    record.startswith(b"H ")
+                    for record in index_flags.stdout.split(b"\0")
+                    if record
+                )
+            )
+            if (
+                git_error
+                or changed
+                or branch is None
+                or branch.returncode
+                or branch.stdout.strip() != expected_branch
+                or worktree_diff is None
+                or worktree_diff.returncode
+                or index_diff is None
+                or index_diff.returncode
+                or not flags_clean
+            ):
+                result["errors"].append("revision_zero_worktree_dirty")
+            if not result["errors"]:
+                result["zero_unverified"] = True
+                result["warnings"].append("revision_zero_baseline_unverified")
         return result
     previous_after: str | None = None
     previous_head: str | None = None
@@ -405,12 +532,44 @@ def _check_snapshot_replay(context: dict[str, object]) -> tuple[list[str], list[
 
 
 def _read_ref_payload(run_dir: Path, ref: object) -> object | None:
-    if not isinstance(ref, dict) or verify_ref(run_dir, ref):
+    if not isinstance(ref, dict) or _verify_evidence_ref(run_dir, ref):
         return None
     try:
         return json.loads((run_dir / str(ref["path"])).read_text(encoding="utf-8"))
     except (OSError, KeyError, json.JSONDecodeError, UnicodeDecodeError):
         return None
+
+
+def _verify_evidence_ref(run_dir: Path, ref: object) -> list[str]:
+    if not isinstance(ref, dict):
+        return ["evidence path escapes run root"]
+    kind = ref.get("kind")
+    digest = ref.get("sha256")
+    if (
+        not isinstance(kind, str)
+        or not KIND_RE.fullmatch(kind)
+        or not isinstance(digest, str)
+        or len(digest) != 64
+        or any(char not in "0123456789abcdef" for char in digest)
+        or ref.get("media_type") != "application/json"
+        or ref.get("path")
+        != f"artifacts/evidence/{kind}/{digest}.json"
+    ):
+        return ["evidence path escapes run root"]
+    artifacts_root = run_dir / "artifacts"
+    evidence_root = artifacts_root / "evidence"
+    kind_root = evidence_root / kind
+    for ancestor in (artifacts_root, evidence_root, kind_root):
+        try:
+            metadata = ancestor.lstat()
+        except OSError:
+            return ["evidence missing"]
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+            return ["evidence path escapes run root"]
+    target = kind_root / f"{digest}.json"
+    if target.parent != kind_root:
+        return ["evidence path escapes run root"]
+    return verify_ref(run_dir, ref)
 
 
 def _artifact_payloads(context: dict[str, object]) -> dict[int, object | None]:
@@ -463,6 +622,9 @@ def _check_artifacts(context: dict[str, object]) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
     payloads = _artifact_payloads(context)
+    attempts = {
+        item.get("attempt_id"): item for item in state.get("attempts") or []
+    }
     canonical_refs = [
         _canonical_ref(artifact.get("ref"))
         for artifact in state.get("artifact_index") or []
@@ -473,7 +635,7 @@ def _check_artifacts(context: dict[str, object]) -> tuple[list[str], list[str]]:
     for index, artifact in enumerate(state.get("artifact_index") or []):
         ref = artifact.get("ref")
         kind = artifact.get("kind")
-        problems = verify_ref(context["run_dir"], ref) if isinstance(ref, dict) else ["evidence missing"]
+        problems = _verify_evidence_ref(context["run_dir"], ref)
         for problem in problems:
             errors.append(
                 {
@@ -502,7 +664,30 @@ def _check_artifacts(context: dict[str, object]) -> tuple[list[str], list[str]]:
             )
             if not _bound_to_current(payload, state, _packet_sha(context, packet_task)):
                 warnings.append("stale_revision_evidence")
-    attempts = {item.get("attempt_id"): item for item in state.get("attempts") or []}
+            artifact_task = artifact.get("task_id")
+            if (
+                not isinstance(payload, dict)
+                or not isinstance(artifact_task, str)
+                or artifact_task not in (state.get("tasks") or {})
+                or payload.get("task_id") != artifact_task
+                or (
+                    kind == "final_review"
+                    and payload.get("packet_task_id") != artifact_task
+                )
+            ):
+                errors.append("artifact_task_mismatch")
+            if kind in {"task_review", "verification", "final_review"}:
+                attempt = attempts.get(artifact.get("attempt_id"))
+                if (
+                    not isinstance(attempt, dict)
+                    or attempt.get("kind") != kind
+                    or (
+                        kind != "final_review"
+                        and attempt.get("task_id") != artifact_task
+                    )
+                    or (kind == "final_review" and attempt.get("task_id") is not None)
+                ):
+                    errors.append("artifact_attempt_mismatch")
     for verdict in state.get("verdicts") or []:
         attempt = attempts.get(verdict.get("attempt_id")) or {}
         packet_task = str(verdict.get("packet_task_id") or verdict.get("task_id") or attempt.get("task_id") or "")
@@ -738,6 +923,14 @@ def _payload_passed(payload: object) -> bool:
     )
 
 
+def _payload_claims_pass(payload: object) -> bool:
+    return isinstance(payload, dict) and (
+        payload.get("passed") is True
+        or payload.get("status") == "passed"
+        or payload.get("returncode") == 0
+    )
+
+
 def _check_current_revision_acceptance(context: dict[str, object]) -> tuple[list[str], list[str]]:
     state = context.get("state")
     if not isinstance(state, dict):
@@ -747,12 +940,12 @@ def _check_current_revision_acceptance(context: dict[str, object]) -> tuple[list
         errors.append("current_revision_patch_unverifiable")
     for task_id in state.get("tasks") or {}:
         packet_sha = _packet_sha(context, str(task_id))
-        current = [
+        history = [
             payload
             for _, payload in _task_artifacts(context, str(task_id), {"acceptance"})
-            if _bound_to_current(payload, state, packet_sha)
         ]
-        if not any(_payload_passed(payload) for payload in current):
+        latest = history[-1] if history else None
+        if not _bound_to_current(latest, state, packet_sha) or not _payload_passed(latest):
             errors.append("current_revision_acceptance_not_passed")
     return _dedupe(errors), []
 
@@ -769,6 +962,17 @@ def _safe_passed_verdict(verdict: object) -> bool:
     )
 
 
+def _verdict_evidence_matches(verdict: object, evidence: object) -> bool:
+    return (
+        isinstance(verdict, dict)
+        and isinstance(evidence, dict)
+        and all(
+            evidence.get(key) == verdict.get(key)
+            for key in ("status", "findings", "missing_evidence")
+        )
+    )
+
+
 def _check_current_revision_verdicts(context: dict[str, object]) -> tuple[list[str], list[str]]:
     state = context.get("state")
     if not isinstance(state, dict):
@@ -781,43 +985,49 @@ def _check_current_revision_verdicts(context: dict[str, object]) -> tuple[list[s
             ("task_review", "current_revision_task_review_not_passed"),
             ("verification", "current_revision_verification_not_passed"),
         ):
-            candidates = [
+            history = [
                 verdict
                 for verdict in state.get("verdicts") or []
                 if verdict.get("task_id") == task_id
                 and (attempts.get(verdict.get("attempt_id")) or {}).get("kind") == kind
-                and _bound_to_current(verdict, state, packet_sha)
             ]
+            latest = history[-1] if history else None
             evidence = [
                 payload
                 for artifact, payload in _task_artifacts(context, str(task_id), {kind})
-                if artifact.get("attempt_id") in {
-                    verdict.get("attempt_id") for verdict in candidates
-                }
-                and _bound_to_current(payload, state, packet_sha)
+                if isinstance(latest, dict)
+                and artifact.get("attempt_id") == latest.get("attempt_id")
             ]
-            if not any(_safe_passed_verdict(verdict) for verdict in candidates) or not any(
-                _payload_passed(payload) for payload in evidence
+            latest_evidence = evidence[-1] if evidence else None
+            if (
+                not _bound_to_current(latest, state, packet_sha)
+                or not _safe_passed_verdict(latest)
+                or not _bound_to_current(latest_evidence, state, packet_sha)
+                or not _payload_passed(latest_evidence)
+                or not _verdict_evidence_matches(latest, latest_evidence)
             ):
                 errors.append(code)
-        final_candidates = [
+        final_history = [
             verdict
             for verdict in state.get("verdicts") or []
             if verdict.get("task_id") is None
             and (attempts.get(verdict.get("attempt_id")) or {}).get("kind") == "final_review"
             and verdict.get("packet_task_id") == task_id
-            and _bound_to_current(verdict, state, packet_sha)
         ]
+        latest_final = final_history[-1] if final_history else None
         final_evidence = [
             payload
             for artifact, payload in _task_artifacts(context, str(task_id), {"final_review"})
-            if artifact.get("attempt_id") in {
-                verdict.get("attempt_id") for verdict in final_candidates
-            }
-            and _bound_to_current(payload, state, packet_sha)
+            if isinstance(latest_final, dict)
+            and artifact.get("attempt_id") == latest_final.get("attempt_id")
         ]
-        if not any(_safe_passed_verdict(verdict) for verdict in final_candidates) or not any(
-            _payload_passed(payload) for payload in final_evidence
+        latest_final_evidence = final_evidence[-1] if final_evidence else None
+        if (
+            not _bound_to_current(latest_final, state, packet_sha)
+            or not _safe_passed_verdict(latest_final)
+            or not _bound_to_current(latest_final_evidence, state, packet_sha)
+            or not _payload_passed(latest_final_evidence)
+            or not _verdict_evidence_matches(latest_final, latest_final_evidence)
         ):
             errors.append("current_revision_final_review_not_passed")
     return _dedupe(errors), []
@@ -829,12 +1039,12 @@ def _check_repository_checks(context: dict[str, object]) -> tuple[list[str], lis
         return [], []
     for task_id in state.get("tasks") or {}:
         packet_sha = _packet_sha(context, str(task_id))
-        current = [
+        history = [
             payload
             for _, payload in _task_artifacts(context, str(task_id), {"repository_check", "repository_checks"})
-            if _bound_to_current(payload, state, packet_sha)
         ]
-        if not any(_payload_passed(payload) for payload in current):
+        latest = history[-1] if history else None
+        if not _bound_to_current(latest, state, packet_sha) or not _payload_passed(latest):
             return ["current_revision_repository_check_missing"], []
     return [], []
 
@@ -900,7 +1110,7 @@ def _check_completion_audit(context: dict[str, object]) -> tuple[list[str], list
             unbound = True
         else:
             stale_keys.add(evidence_key)
-        if isinstance(item.get("ref"), dict) and verify_ref(context["run_dir"], item["ref"]):
+        if isinstance(item.get("ref"), dict) and _verify_evidence_ref(context["run_dir"], item["ref"]):
             return ["completion_evidence_invalid"], []
     if unbound:
         return ["unbound_completion_evidence"], []
@@ -916,9 +1126,9 @@ def _check_completion_audit(context: dict[str, object]) -> tuple[list[str], list
     if audit.get("prompt_to_artifact_checklist") != expected_checklist:
         return ["completion_checklist_incomplete"], []
     for ref, (_item, payload) in zip(refs, required_records):
-        if verify_ref(context["run_dir"], ref):
+        if _verify_evidence_ref(context["run_dir"], ref):
             return ["completion_evidence_invalid"], []
-        if not _payload_passed(payload):
+        if _payload_claims_pass(payload) and not _payload_passed(payload):
             return ["completion_evidence_not_passed"], []
     return [], []
 
