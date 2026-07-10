@@ -110,6 +110,16 @@ def main() -> int:
             == len(stale_history["completion_audit"]["verification_evidence"]) + 1
         )
 
+        negative_history_run, _ = make_v3_run(
+            root / "negative-history",
+            false_completion=False,
+            terminal=False,
+            include_current_negative_history=True,
+        )
+        checks["latest_pass_is_not_poisoned_by_earlier_negative_history"] = (
+            validate_completion(negative_history_run).passed
+        )
+
         missing_repository = deepcopy(prospective)
         missing_repository_refs = [
             ref
