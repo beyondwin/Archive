@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import re
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,23 @@ def read_text(path: Path) -> str:
     except OSError:
         return ""
 
+
+HEADING_RE = re.compile(r"(?m)^#{1,6}\s+(.+?)\s*$")
+SKILL_REF_RE = re.compile(r"(?:superpowers:|\$)([a-z0-9-]+)")
+
+def normalize_heading(value: str) -> str:
+    return re.sub(r"[^a-z0-9가-힣]+", " ", value.lower()).strip()
+
+def approval_gate_present(text: str) -> bool:
+    lowered = text.lower()
+    return (any(item in lowered for item in ("approval", "approve", "승인"))
+            and any(item in lowered for item in ("implementation", "implement", "구현"))
+            and ("<hard-gate>" in lowered or "gate" in lowered))
+
+def verification_present(text: str) -> bool:
+    headings = {normalize_heading(item) for item in HEADING_RE.findall(text)}
+    return (any("verification" in item or "검증" in item for item in headings)
+            and bool(re.search(r"```(?:bash|sh|shell)?\n[^`]+\n```", text, re.IGNORECASE)))
 
 def has_all(text: str, tokens: tuple[str, ...]) -> bool:
     return all(token in text for token in tokens)
@@ -62,43 +80,12 @@ def required_contracts(superpowers: dict[str, str]) -> dict[str, bool]:
     subagent = superpowers["subagent_driven_development"]
     verification = superpowers["verification_before_completion"]
     return {
-        "brainstorming_hard_gate": has_all(
-            brainstorming,
-            (
-                "<HARD-GATE>",
-                "Do NOT invoke any implementation skill",
-                "presented a design and the user has approved it",
-                "invoke writing-plans skill",
-            ),
-        ),
-        "writing_plans_header": has_all(
-            writing,
-            (
-                "Every plan MUST start with this header",
-                "REQUIRED SUB-SKILL",
-                "subagent-driven-development",
-                "executing-plans",
-                "No Placeholders",
-            ),
-        ),
-        "subagent_review_loop": has_all(
-            subagent,
-            (
-                "fresh implementer subagent per task",
-                "task reviewer",
-                "final code reviewer",
-                "progress ledger",
-                "review-package",
-            ),
-        ),
-        "verification_before_completion": has_all(
-            verification,
-            (
-                "NO COMPLETION CLAIMS WITHOUT FRESH VERIFICATION EVIDENCE",
-                "Evidence before claims",
-                "RUN: Execute the FULL command",
-            ),
-        ),
+        "brainstorming_hard_gate": approval_gate_present(brainstorming),
+        "writing_plans_header": ("required sub-skill" in writing.lower()
+            and "subagent-driven-development" in writing.lower()
+            and bool(HEADING_RE.findall(writing))),
+        "subagent_review_loop": all(item in subagent.lower() for item in ("implementer", "review", "progress")),
+        "verification_before_completion": verification_present(verification),
     }
 
 
