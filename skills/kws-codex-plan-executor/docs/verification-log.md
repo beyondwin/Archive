@@ -1,5 +1,27 @@
 # Verification Log
 
+## 2026-07-10 Asia/Seoul - CPE v3 documentation truth sweep
+
+- Branch: `codex/cpe-v3-quality-model-routing`.
+- Scope: aligned active skill, architecture, state, operator, maintainer, and
+  release docs with event-authoritative v3 behavior; added a stale-path and
+  paid-closeout documentation contract check.
+- Commands and results:
+  - `python3 evals/check_docs_contract.py` - PASS.
+  - markdown link existence check across rewritten docs - PASS.
+  - `python3 -m py_compile evals/check_docs_contract.py` - PASS.
+  - `git diff --check` - PASS.
+  - `python3 evals/check_release_contract.py` - PASS after a concurrent harness
+    removed its temporary current-baseline partial; reports
+    `release_ready=false` and paid live evidence pending.
+  - `python3 evals/check_skill_contract.py --skill SKILL.md` - FAIL because the
+    pre-v3 checker still requires deleted mutable-state and routing prose; final
+    integration must replace those assertions with the v3 contract.
+- Skipped: credentialed live migration matrix; it requires explicit cost
+  approval and remains `paid-live-pending`.
+- Residual risk: deterministic checks do not establish live model quality or
+  the migration context-reduction target.
+
 ## 2026-07-05 Asia/Seoul - CPE execution boundary and context optimization
 
 - Branch/commit: `codex/2026-07-05-cpe-execution-boundary-and-context-optimization-20260705-162913`;
@@ -517,3 +539,33 @@ Result:
   and correctly appeared as a red/yellow evidence gap before final state close.
 - State reconciliation and validation: pass for
   `cpe-operational-quality-umbrella-20260704-163729`.
+
+## 2026-07-10 Asia/Seoul
+
+Branch and basis: `codex/cpe-v3-quality-model-routing` at `7a11dbc` before the
+uncommitted release-risk corrections.
+
+Scope: cost-free CPE v3 live-migration planning and injected aggregation,
+release-contract baseline cleanup, and explicit live-evidence readiness state.
+
+Commands and results:
+
+- `python3 evals/check_live_model_migration.py`: exit 0; exact 4-treatment,
+  8-case plan, `$50.00` cap, injected pass/fail aggregation, attestation,
+  isolation, drift, and 30% token-reduction evidence passed.
+- `python3 evals/live_model_migration.py --dry-run --budget-usd 50 --output /tmp/cpe-v3-live-plan.json`:
+  exit 0; 32 bounded plan entries and zero provider calls.
+- `python3 evals/check_release_contract.py`: exit 0; one active v3 baseline,
+  non-empty passing fixture evidence, and truthful live status passed.
+- `python3 -m py_compile evals/live_model_migration.py evals/check_live_model_migration.py evals/check_release_contract.py`:
+  exit 0.
+- `git diff --check`: exit 0.
+- `./evals/run.sh`: exit 1 at `check_skill_contract`; concurrent v3 public
+  contract rewrites still had legacy checker assertions and the harness stopped
+  before later checks. This failure is outside the live/release-only edit scope
+  and must be reconciled before merge.
+
+Skipped: paid live execution was not run because explicit cost approval and
+external live result evidence were not provided. Residual risk: release remains
+`deterministic_ready_paid_pending` with `release_ready=false` until the paid
+quality matrix passes under the `$50.00` hard cap.

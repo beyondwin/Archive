@@ -1,12 +1,14 @@
 # Common Mistakes
 
-- Implementing from `main` or the caller's original checkout.
-- Writing executor state into the repository worktree.
-- Treating prompt or handoff export as an execution mode.
-- Treating `subagents=auto` as permission to spawn without an explicit user
-  request.
-- Treating `subagents=on` as permission-only; eligible write-capable tasks are
-  subagent-first and local fallback requires a task `subagent_strategy` reason.
-- Marking a run finished while subagent work is still running or unreviewed.
-- Reporting success without `completion_audit`, `context_health`, and
-  verification evidence.
+- Editing before task file claims, acceptance commands, and explicit spec refs
+  pass preflight.
+- Running implementation from the caller's checkout instead of the isolated
+  worktree.
+- Treating prompt text as model enforcement instead of checking launcher
+  arguments and actual-model attestation.
+- Letting a read-only scout write files or issue a quality verdict.
+- Running two write-capable attempts concurrently.
+- Editing a manifest, event, evidence object, or state projection by hand.
+- Trusting a stored projection without event replay and digest checks.
+- Applying repair without first reviewing a dry-run plan and exact action.
+- Treating deterministic checks or a migration dry run as paid live closeout.

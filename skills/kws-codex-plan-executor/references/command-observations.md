@@ -1,52 +1,14 @@
 # Command Observations
 
-Command observations record what happened before assigning root cause. They are
-stored in state under top-level `command_observations`. They are useful for
-long-running verification where failures may be environmental, resource-related,
-or genuinely caused by source changes.
+Record each acceptance or verification command as bounded evidence with the
+command, cwd, phase, exit status, duration, failure category, short diagnostic,
+and evidence digest. Do not store secrets or unbounded output.
 
-Observation shape:
+The scheduler and repair policy use a stable root-cause key to bound retries.
+Environment and dependency failures return actionable preparation guidance;
+product failures return to a Sol/high repair attempt and fresh verification;
+policy or integrity failures block. Repeating the same failing command without
+new evidence is not a new diagnosis.
 
-```json
-{
-  "command": "pnpm test",
-  "status": "failed",
-  "category": "dependency_bootstrap",
-  "evidence": "node_modules missing; install command not yet run",
-  "next_action": "Run pnpm install before retrying tests"
-}
-```
-
-New observations may also be passed to `scripts/classify_recovery.py`, which
-returns a bounded next action:
-
-- `bootstrap` for one documented dependency bootstrap attempt.
-- `retry` for flaky or timeout roots within budget.
-- `continue` for source failures that should stay in the RED/GREEN loop.
-- `block` for permission, sandbox, diff-scope, or operator-decision gaps.
-- `failed` when a repeated root signature exhausts its retry budget.
-
-Allowed categories:
-
-- `source_failure`
-- `missing_local_env`
-- `dependency_bootstrap`
-- `resource_oom`
-- `timeout_or_hang`
-- `flaky_test`
-- `permission_or_sandbox`
-- `tooling_bug`
-- `unknown`
-
-Use `unknown` only when the executor has captured bounded evidence and the
-completion audit records the residual risk. Do not use observations as a
-substitute for fixing reproducible source failures.
-
-Validation rules:
-
-- `command_observations` is optional, but when present it must be a list.
-- Each observation requires non-empty `command`, `status`, `category`,
-  `evidence`, and `next_action`.
-- `category` must be one of the allowed categories above.
-- For `lifecycle_outcome=finished`, every `category=unknown` observation must
-  be mentioned in `completion_audit.residual_risk` by command.
+The kernel attaches accepted observations to the event history. A model cannot
+edit the projected state directly or relabel a failed observation as success.

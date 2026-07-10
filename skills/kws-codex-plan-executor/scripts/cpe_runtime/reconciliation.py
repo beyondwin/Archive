@@ -1,16 +1,58 @@
 from __future__ import annotations
-from dataclasses import dataclass
+
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from .events import read_events, validate_chain
-from .manifest import load_manifest
+
+from .validation import validate_run
+
+
+@dataclass(frozen=True)
+class ReconciliationFinding:
+    code: str
+    severity: str
+    message: str
+    repair_action: str | None = None
+
+
 @dataclass(frozen=True)
 class ReconciliationReport:
-    classification: str; findings: list[dict]
+    classification: str
+    findings: list[dict[str, object]]
+
+    def as_dict(self) -> dict[str, object]:
+        return {"classification": self.classification, "findings": self.findings}
+
+
+REPAIRABLE = {
+    "snapshot_missing": "rebuild_snapshot",
+    "snapshot_replay_mismatch": "rebuild_snapshot",
+}
+
+
 def reconcile(run_dir: Path) -> ReconciliationReport:
-    try: load_manifest(run_dir / "run_manifest.json")
-    except ValueError: return ReconciliationReport("blocking_drift", [{"code": "unsupported_schema"}])
-    except OSError: return ReconciliationReport("blocking_drift", [{"code": "manifest_missing"}])
-    errors = validate_chain(read_events(run_dir / "events.jsonl"))
-    if errors: return ReconciliationReport("blocking_drift", [{"code": "event_chain_invalid", "message": item} for item in errors])
-    if not (run_dir / "state.json").exists(): return ReconciliationReport("repairable", [{"code": "snapshot_missing", "repair_action": "rebuild_snapshot"}])
-    return ReconciliationReport("clean", [])
+    report = validate_run(run_dir)
+    if report.classification == "unsupported_schema":
+        return ReconciliationReport(
+            "blocking_drift",
+            [asdict(ReconciliationFinding("unsupported_schema", "blocking", "v2 state is unsupported and immutable"))],
+        )
+    findings: list[dict[str, object]] = []
+    for code in report.errors:
+        action = REPAIRABLE.get(code)
+        findings.append(
+            asdict(
+                ReconciliationFinding(
+                    code,
+                    "repairable" if action else "blocking",
+                    code.replace("_", " "),
+                    action,
+                )
+            )
+        )
+    if not findings:
+        classification = "clean"
+    elif all(item["severity"] == "repairable" for item in findings):
+        classification = "repairable"
+    else:
+        classification = "blocking_drift"
+    return ReconciliationReport(classification, findings)

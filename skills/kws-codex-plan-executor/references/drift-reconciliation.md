@@ -1,21 +1,16 @@
-# Drift Reconciliation
+# Drift, Reconciliation, And Repair
 
-Run before reporting `lifecycle_outcome=finished`:
+Reconciliation checks, in order: manifest and source hashes, event sequence and
+hash chain, fresh projection, stored projection, git identity and diff, task
+file claims, evidence digests, attempt terminal state and route attestation,
+then verification/completion links.
 
-```bash
-python3 scripts/reconcile_state.py --state "$STATE_PATH" --check
-python3 scripts/reconcile_state.py --state "$STATE_PATH" --repair-safe
-```
+Results are `clean`, `repairable`, or `blocking_drift`. Check and repair-plan
+modes are read-only. Apply requires an exact run ID, an allowlisted action, and
+explicit `--apply`.
 
-`--check` reports drift without modifying `state.json`. `--repair-safe`
-persists the narrow safe repairs and records drift metadata in state.
-
-Safe repair is intentionally narrow:
-
-| type | repair |
-| --- | --- |
-| `missing-context-health-timestamp` | copy `timestamps.updated_at` into `context_health.last_checked_at` |
-
-Blocking drift remains unresolved until the executor fixes the source of truth.
-Typical blockers include finished tasks without manifests, open carried
-acceptance, and `context.json` basis hash mismatch.
+Safe actions rebuild a projection from valid history, regenerate derived
+reports, mark a provably stale attempt interrupted with a compensating event,
+or reconnect an already present hash-valid evidence object. Repair cannot edit
+product files, change source hashes, invent attestation or success, rewrite a
+damaged event chain, or mutate an unsupported schema.

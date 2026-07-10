@@ -24,6 +24,8 @@ def main() -> int:
     release_path = skill_dir / "docs" / "release-process.md"
     doc_update_path = skill_dir / "docs" / "doc-update-protocol.md"
     future_agent_path = skill_dir / "docs" / "future-agent-guide.md"
+    verification_log_path = skill_dir / "docs" / "verification-log.md"
+    live_status_path = skill_dir / "evals" / "live-migration" / "release-status.json"
 
     skill_text = read(skill_path)
     match = SKILL_VERSION_RE.search(skill_text)
@@ -53,6 +55,38 @@ def main() -> int:
             f"baseline version mismatch: {baseline_path.relative_to(skill_dir)} has "
             f"{baseline_payload.get('version')!r}, SKILL.md has {version!r}"
         )
+
+    active_baselines = sorted(
+        path.name for path in (skill_dir / "evals" / "baselines").glob("v*.json")
+    )
+    partial_baselines = sorted(
+        path.name for path in (skill_dir / "evals" / "baselines").glob("v*.json.partial")
+    )
+    checks["exactly_one_active_v3_baseline"] = (
+        version.startswith("3.")
+        and active_baselines == [f"v{version}.json"]
+        and not partial_baselines
+    )
+    if not checks["exactly_one_active_v3_baseline"]:
+        failures.append(
+            "active baseline directory must contain exactly the current v3 baseline and no partials: "
+            f"json={active_baselines}, partial={partial_baselines}"
+        )
+
+    fixtures = baseline_payload.get("fixtures")
+    checks["baseline_has_nonempty_passing_fixtures"] = (
+        isinstance(fixtures, list)
+        and bool(fixtures)
+        and all(
+            isinstance(item, dict)
+            and isinstance(item.get("fixture"), str)
+            and bool(item["fixture"])
+            and item.get("passed") is True
+            for item in fixtures
+        )
+    )
+    if baseline_path.is_file() and not checks["baseline_has_nonempty_passing_fixtures"]:
+        failures.append("current v3 baseline must contain at least one named passing fixture")
 
     history_text = read(history_path)
     history_versions = [item[0] for item in HISTORY_VERSION_RE.findall(history_text)]
@@ -92,7 +126,53 @@ def main() -> int:
     if not checks["maintenance_links_release_and_doc_protocol"]:
         failures.append("SKILL.md Maintenance must mention docs/release-process.md and docs/doc-update-protocol.md")
 
-    payload = {"version": version, "passed": not failures, "checks": checks, "failures": failures}
+    verification_log_text = read(verification_log_path) if verification_log_path.is_file() else ""
+    checks["verification_log_has_2026_07_10_asia_seoul_entry"] = (
+        "## 2026-07-10 Asia/Seoul" in verification_log_text
+        and "live" in verification_log_text[verification_log_text.find("## 2026-07-10 Asia/Seoul") :].lower()
+    )
+    if not checks["verification_log_has_2026_07_10_asia_seoul_entry"]:
+        failures.append(
+            "docs/verification-log.md must contain a 2026-07-10 Asia/Seoul entry with live evidence status"
+        )
+
+    live_status: dict = {}
+    if live_status_path.is_file():
+        try:
+            live_status = json.loads(read(live_status_path))
+        except json.JSONDecodeError as exc:
+            failures.append(f"live release status JSON is invalid: {exc}")
+    checks["live_evidence_status_is_truthful"] = (
+        live_status.get("schema_version") == "1"
+        and live_status.get("version") == version
+        and live_status.get("deterministic_evidence", {}).get("status") == "passed"
+        and (
+            (
+                live_status.get("status") == "released"
+                and live_status.get("paid_live_evidence", {}).get("status") == "passed"
+                and live_status.get("release_ready") is True
+            )
+            or (
+                live_status.get("status") == "deterministic_ready_paid_pending"
+                and live_status.get("paid_live_evidence", {}).get("status") == "pending"
+                and live_status.get("release_ready") is False
+            )
+        )
+    )
+    if not checks["live_evidence_status_is_truthful"]:
+        failures.append(
+            "evals/live-migration/release-status.json must truthfully record either released/paid-passed "
+            "or deterministic-ready/paid-pending"
+        )
+
+    payload = {
+        "version": version,
+        "passed": not failures,
+        "release_ready": live_status.get("release_ready", False),
+        "live_evidence_status": live_status.get("status", "missing"),
+        "checks": checks,
+        "failures": failures,
+    }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if not failures else 1
 

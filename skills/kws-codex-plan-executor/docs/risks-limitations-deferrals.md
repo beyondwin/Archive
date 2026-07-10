@@ -1,37 +1,19 @@
-# Risks, Limitations, Deferrals
+# Risks, Limitations, And Deferrals
 
-- Dynamic evals invoke real `codex exec` and can be slow.
-- The harness copies the skill under test into a fixture repository to avoid
-  source package mutation by target agents.
-- AgentLens failures are ignored by design; state validation remains the hard
-  completion gate.
-- Default subagent execution is bounded by task packets and disjoint write
-  scopes. When a task cannot be safely delegated, the remaining risk is closed
-  by requiring an explicit `subagent_strategy.mode = local_fallback` reason in
-  finished state.
-- Graphify may be unavailable or ignored in a checkout. CPE records
-  `scripts/check_graphify_freshness.py` output and treats missing reports as
-  warnings, while stale reports require update evidence before a finished run.
-- Recovery classification is intentionally bounded and conservative. Unknown
-  command observations receive only limited investigation/retry budget and must
-  either be tied to residual risk or produce a failed/blocked outcome.
-- v2.22 bootstrap plans are suggestions only. CPE does not install
-  dependencies, create Android SDK state, or bootstrap optional CLIs
-  automatically.
-- Run-quality inspection remains read-only, but v2.23 adds a separate
-  `scripts/repair_runs.py` operator flow. It can mark exactly one validated
-  stale non-terminal run with a missing execution worktree as blocked after
-  explicit `--apply --run-id <id> --action mark-blocked-stale`. Cleanup,
-  deletion, finished-state rewrites, and arbitrary schema repairs remain
-  deferred.
-- Effective delegation policy records why a task fell back locally, but real
-  subagent spawning remains controlled by the active Codex tool policy.
-- Boundary attestation proves parent-accepted worker output was reviewed
-  against the expected execution worktree. It does not install or manage the
-  external subagent runtime. AgentLens remains best-effort, and old finished
-  states remain readable even when they predate boundary attestation.
-- Plan executability audit is intentionally conservative. Broad write scopes,
-  lockfiles, security/auth/infra paths, and missing file blocks stop execution
-  before edits even when a human could theoretically handle them manually. The
-  operator should narrow the plan or record an explicit review decision instead
-  of weakening the audit.
+- Release status is **deterministic-ready; paid-live-pending**. The credentialed
+  four-treatment, eight-case migration matrix has not run. No live quality,
+  regression, or context-reduction release claim is approved yet.
+- The v3 deterministic harness currently disables the legacy static YAML
+  execution-fixture loop. Production confidence therefore depends on the active
+  module/integration checks and the still-pending live matrix.
+- V2 runs cannot resume or migrate. Consumers preserve them and return
+  `unsupported_schema`; operators must start a new v3 run.
+- Sol/high unavailability or missing actual-model attestation blocks core work;
+  there is no downgrade route.
+- Terra/high scouts are advisory read-only evidence collectors. Sol must reopen
+  critical evidence before implementation or a verdict.
+- Safe repair is deliberately narrow. Invalid event history, changed source
+  identity, evidence corruption, or diff-scope violations require operator
+  resolution rather than automatic rewriting.
+- Dependency preflight reports preparation commands but does not install or
+  mutate operator environments.

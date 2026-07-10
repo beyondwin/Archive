@@ -1,52 +1,21 @@
-# How It Works
+# How CPE v3 Works
 
-The executor parses a plan, creates an isolated git worktree under
-`~/.codex/worktrees/<run_id>`, and writes orchestration state under
-`~/.codex/orchestrator/<run_id>`.
+CPE resolves a plan, optional spec/docs, workspace, and execution mode. It
+preflights task scope and acceptance criteria, creates an isolated worktree,
+freezes an immutable manifest, then records all durable transitions in
+`events.jsonl`.
 
-With current Superpowers installed, CPE first checks whether interactive
-implementation should be routed through the Superpowers-native loop. The
-read-only `scripts/audit_superpowers_compatibility.py` script scores three
-directions: CPE-primary execution, Superpowers-native-only execution, and a thin
-stateful bridge. The bridge is preferred when Superpowers supplies the current
-implementation/review workflow and CPE keeps state, task packets, validation,
-prompt/handoff export, headless execution, resume, and inspection.
+Each task receives only its packet: dependencies, allowed files, explicit spec
+sections, acceptance commands, and evidence requirements. Write tasks execute
+sequentially. Core attempts use Sol/high. A bounded read-only scout may use
+Terra/high, but cannot edit or issue a verdict.
 
-Implementation follows a task contract, RED/GREEN verification, drift
-reconciliation, and final state validation. Prompt and handoff modes only export
-text.
+The transition kernel appends events and projects `state.json`. Models never
+edit durable executor artifacts. Completion replays the run and checks event
+integrity, evidence digests, git scope, task and final reviews, verification,
+model attestation, blockers, and repository-specific gates.
 
-For v2.20+ runs, the executor also builds spec manifests and task packets so
-the active task sees only the plan slice, spec slice, decisions, and write scope
-it needs. Compaction points write durable state anchors and make prior raw task
-context disposable.
-
-Task packets describe why context was included. `context_components` records
-task body, spec slice or full fallback, write policy, and acceptance contract
-hashes. `context_budget` records the largest component and component totals so
-large packets can be reduced deliberately.
-
-With the default `subagents=on`, CPE uses adaptive dispatch. Eligible
-write-capable tasks first pass safety checks, then a value check decides whether
-to delegate or run local fast path. Local fast path skips only the subagent
-spawn/review loop; it keeps task contracts, RED/GREEN evidence when applicable,
-diff policy checks, acceptance commands, reconciliation, and state validation.
-
-Before task contracts or edits, CPE now runs a read-only plan executability
-audit against the parsed plan JSON and task packets. This audit catches missing
-file scopes, missing or broad write policies, risky lockfile/security paths,
-docs-only acceptance gaps, and full-spec fallback before the operator starts
-editing. Its compact state entry drives later run-quality follow-ups such as
-`plan_executability_fixable_issues`.
-
-When the compatibility audit recommends `thin_stateful_bridge`, the current
-Superpowers `subagent-driven-development` loop owns the implementer/reviewer
-flow for approved interactive plans. CPE still records the durable audit
-surface and remains the owner for prompt, handoff, headless, resume, and
-inspection modes.
-
-Command observations feed a bounded recovery policy. The policy can retry flaky
-or timeout roots, allow one dependency bootstrap, continue source-failure
-implementation loops, block permission or diff-scope gaps, or fail after retry
-budget exhaustion. Trajectory and progress ledger records make those choices
-auditable without full transcript replay.
+Prompt and handoff export stop after rendering one launcher bundle and create
+no run artifacts. Resume, validation, reconciliation, repair, and inspection
+accept v3 runs only. An older schema is preserved and reported as
+`unsupported_schema`.

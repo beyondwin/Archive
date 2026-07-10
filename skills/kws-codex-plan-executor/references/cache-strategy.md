@@ -1,35 +1,15 @@
-# Cache Strategy
+# Context And Cache Strategy
 
-CPE treats prompt caching as a prefix-stability problem. The executor does not
-assume a provider-specific cache-control API is available.
+Keep stable method, safety, permission, and structured-output instructions in a
+reusable prefix. Keep run paths, task packets, git status, diffs, decisions, and
+fresh verification evidence in the dynamic tail.
 
-## Terms
+Workers receive the current task packet and explicit spec sections. Prior work
+is summarized as changed files, decisions, and evidence refs rather than raw
+conversation history. Large immutable evidence is loaded by digest only when a
+consumer needs it.
 
-- Stable prefix: role instructions, safety boundaries, required skills, output
-  schemas, and invariant checklists.
-- Hot tail: plan paths, run ids, state paths, timestamps, git status, task
-  packets, changed files, diffs, decisions, verification output, and retry
-  context.
-- Cache-hostile drift: dynamic material inserted before stable prompt content.
-
-## Rules
-
-1. Keep `mode=interactive` as the default.
-2. Put stable prefix before hot tail.
-3. Do not put run ids, state paths, task packet paths, timestamps, git status,
-   diffs, decisions, or absolute home paths in stable prefix blocks.
-4. Put task/run payloads in the hot tail.
-5. Treat provider cache-token counters as optional telemetry.
-
-## Markers
-
-Checked prompt artifacts use:
-
-```text
-<!-- CPE_CACHE_STABLE_PREFIX_START -->
-<!-- CPE_CACHE_STABLE_PREFIX_END -->
-<!-- CPE_CACHE_HOT_TAIL_START -->
-```
-
-All dynamic `{{...}}` placeholders belong after the stable-prefix end marker
-unless they are explicitly allowlisted by `scripts/audit_prompt_cache.py`.
+Provider usage, including cached input when available, is attempt evidence
+written through the kernel. Cache telemetry is advisory; absent counters never
+justify weakening evidence or completion gates. Prompts and raw transcripts are
+not durable cache artifacts.
