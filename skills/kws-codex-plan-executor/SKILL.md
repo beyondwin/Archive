@@ -61,9 +61,15 @@ explicit `spec_refs`; a missing or conflicting mapping blocks before edits. Writ
 tasks execute sequentially. Independent read-only scouts may run concurrently.
 Models never edit the manifest, events, evidence index, or state projection.
 
+Implementation starts only in the isolated worktree after the
+`using-superpowers` and `test-driven-development` gates; the source checkout
+and `main` branch are never used as the edit target.
+
 Completion requires a valid manifest and event chain, snapshot replay parity,
 all task and whole-diff reviews, in-scope git evidence, acceptance evidence,
 fixed-route attestations, resolved blockers, and repository-specific checks.
+The resulting projection records a structured `completion_audit`; missing
+completion evidence is a blocker.
 
 ## References
 

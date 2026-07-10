@@ -93,15 +93,15 @@ def cpe_contracts(cpe_text: str) -> dict[str, bool]:
     return {
         "stateful_runs": has_all(
             cpe_text,
-            ("~/.codex/orchestrator/<run_id>/state.json", "context_health", "completion_audit"),
+            ("run_manifest.json", "events.jsonl", "state.json", "completion_audit"),
         ),
-        "mode_coverage": has_all(cpe_text, ("interactive", "headless", "prompt", "handoff", "resume=latest")),
-        "task_packets": has_all(cpe_text, ("task packet", "current_task_packet_path", "subagent_strategy")),
+        "mode_coverage": has_all(cpe_text, ("interactive", "headless", "prompt", "handoff", "resume")),
+        "task_packets": has_all(cpe_text, ("task", "spec_refs", "file claims")),
         "safety_gates": has_all(
             cpe_text,
-            ("Do not implement from `main`", "TASK EXECUTION CONTRACT", "test-driven-development"),
+            ("source checkout", "test-driven-development", "unsupported_schema"),
         ),
-        "audit_tools": has_all(cpe_text, ("prompt_audit", "graphify_audit", "validate_state.py")),
+        "audit_tools": has_all(cpe_text, ("validate_state.py", "reconcile", "inspect")),
     }
 
 

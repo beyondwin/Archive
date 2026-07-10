@@ -11,7 +11,6 @@ import sys
 from pathlib import Path
 
 
-FALLBACK_POLICIES = {"full_spec_on_blocker", "halt_on_blocker"}
 HEADING_RE = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 BACKTICK_LITERAL_RE = re.compile(r"`([^`\n]+)`")
 CODE_IDENTIFIER_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?\b")

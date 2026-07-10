@@ -78,7 +78,8 @@ def main() -> int:
         checks["fixed_attestation"] = bool(state.get("attempts")) and all(
             (item.get("attestation") or {}).get("verified") is True for item in state.get("attempts", [])
         )
-        checks["source_checkout_isolated"] = not (git_changes(workdir) - {".harness/final.md", ".harness/run.jsonl"})
+        allowed_source_changes = {".harness/final.md", ".harness/run.jsonl"} | set(expected.get("allowed_extra_files") or [])
+        checks["source_checkout_isolated"] = not (git_changes(workdir) - allowed_source_changes)
         for key, value in checks.items():
             if not value:
                 failures.append(f"failed {key}")
