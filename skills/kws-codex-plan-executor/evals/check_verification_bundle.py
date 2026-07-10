@@ -6,68 +6,138 @@ import tempfile
 from copy import deepcopy
 from pathlib import Path
 
-from check_validation_consumer_parity import make_v3_run
+from check_validation_consumer_parity import make_v3_run, record_revision
 
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from cpe_runtime.validation import validate_completion
-from cpe_runtime.evidence import put_json
+from cpe_runtime.events import append_event
+from cpe_runtime.kernel import rebuild_snapshot
 
 
 def main() -> int:
     checks: dict[str, bool] = {}
     with tempfile.TemporaryDirectory(prefix="cpe-v3-verification-bundle-") as raw:
-        run_dir, healthy = make_v3_run(Path(raw), false_completion=False, terminal=False)
+        root = Path(raw)
+        prospective_run, prospective = make_v3_run(
+            root / "prospective",
+            false_completion=False,
+            terminal=False,
+            record_audit=False,
+        )
+        prospective_refs = [item["ref"] for item in prospective["artifact_index"]]
+        prospective_checklist = [
+            {
+                "kind": item["kind"],
+                "task_id": item.get("task_id"),
+                "ref": item["ref"],
+            }
+            for item in prospective["artifact_index"]
+        ]
+        duplicate_audit = deepcopy(prospective)
+        duplicate_audit["completion_audit"] = {
+            "passed": True,
+            "prompt_to_artifact_checklist": prospective_checklist,
+            "verification_evidence": prospective_refs + [prospective_refs[0]],
+            "residual_risk": [],
+        }
+        checks["audit_rejects_duplicate_refs"] = (
+            "completion_evidence_duplicate" in validate_completion(
+                prospective_run, candidate_state=duplicate_audit
+            ).errors
+        )
+        checklist_gap = deepcopy(prospective)
+        checklist_gap["completion_audit"] = {
+            "passed": True,
+            "prompt_to_artifact_checklist": prospective_checklist[:-1],
+            "verification_evidence": prospective_refs,
+            "residual_risk": [],
+        }
+        checks["audit_rejects_structured_checklist_gap"] = (
+            "completion_checklist_incomplete" in validate_completion(
+                prospective_run, candidate_state=checklist_gap
+            ).errors
+        )
+        forged = deepcopy(prospective)
+        forged["tasks"]["T1"]["status"] = "pending"
+        checks["candidate_rejects_forged_projection"] = (
+            validate_completion(prospective_run, candidate_state=forged).errors[0]
+            == "candidate_state_invalid"
+        )
+        blocked_run, pre_blocker = make_v3_run(
+            root / "pre-blocker",
+            false_completion=False,
+            terminal=False,
+            record_audit=False,
+        )
+        append_event(
+            blocked_run / "events.jsonl",
+            {
+                "type": "blocker.opened",
+                "task_id": "T1",
+                "payload": {
+                    "blocker_id": "B-late",
+                    "category": "state_integrity",
+                    "owner": "cpe",
+                    "resume_condition": "repair current evidence",
+                },
+            },
+        )
+        rebuild_snapshot(blocked_run)
+        checks["candidate_cannot_replace_post_blocker_projection"] = (
+            validate_completion(blocked_run, candidate_state=pre_blocker).errors[0]
+            == "candidate_state_invalid"
+        )
+
+        run_dir, healthy = make_v3_run(root / "healthy", false_completion=False, terminal=False)
         checks["current_v3_bundle_passes"] = validate_completion(
             run_dir, candidate_state=healthy
         ).passed
 
-        stale_history = deepcopy(healthy)
-        task_id = "T1"
-        packet_sha = next(
-            item["packet_sha256"]
-            for item in stale_history["verdicts"]
-            if item.get("task_id") == task_id
+        stale_history_run, stale_history = make_v3_run(
+            root / "stale-history",
+            false_completion=False,
+            terminal=False,
+            include_stale_history=True,
         )
-        stale_ref = put_json(
-            run_dir,
-            "acceptance",
-            {
-                "task_id": task_id,
-                "passed": True,
-                "worktree_revision": 0,
-                "worktree_patch_sha256": None,
-                "packet_sha256": packet_sha,
-            },
-        ).as_dict()
-        stale_history["artifact_index"].insert(
-            0,
-            {"task_id": task_id, "attempt_id": "T1.acceptance.old", "kind": "acceptance", "ref": stale_ref},
-        )
-        stale_history_report = validate_completion(run_dir, candidate_state=stale_history)
+        stale_history_report = validate_completion(stale_history_run)
         checks["audit_excludes_stale_history"] = (
             stale_history_report.passed
             and "stale_revision_evidence" in stale_history_report.warnings
-            and stale_ref not in stale_history["completion_audit"]["verification_evidence"]
+            and len(stale_history["artifact_index"])
+            == len(stale_history["completion_audit"]["verification_evidence"]) + 1
         )
 
-        missing_repository = deepcopy(healthy)
-        missing_repository["completion_audit"]["verification_evidence"] = [
+        missing_repository = deepcopy(prospective)
+        missing_repository_refs = [
             ref
-            for ref in missing_repository["completion_audit"]["verification_evidence"]
+            for ref in prospective_refs
             if ref.get("kind") != "repository_check"
         ]
+        missing_repository_checklist = [
+            item
+            for item in prospective_checklist
+            if item["kind"] != "repository_check"
+        ]
+        missing_repository["completion_audit"] = {
+            "passed": True,
+            "prompt_to_artifact_checklist": missing_repository_checklist,
+            "verification_evidence": missing_repository_refs,
+            "residual_risk": [],
+        }
         checks["audit_must_index_repository_bundle"] = (
-            validate_completion(run_dir, candidate_state=missing_repository).errors
-            == ["completion_evidence_incomplete"]
+            "completion_evidence_incomplete" in validate_completion(
+                prospective_run, candidate_state=missing_repository
+            ).errors
         )
 
-        stale = deepcopy(healthy)
-        stale["worktree_revision"] += 1
-        stale["worktree_patch_sha256"] = "c" * 64
-        report = validate_completion(run_dir, candidate_state=stale)
+        stale_run, _ = make_v3_run(
+            root / "stale-revision", false_completion=False, terminal=False
+        )
+        record_revision(stale_run, "T1", b"revision two\n")
+        report = validate_completion(stale_run)
         checks["stale_bundle_fails_closed"] = (
             "current_revision_acceptance_not_passed" in report.errors
             and "current_revision_task_review_not_passed" in report.errors
@@ -76,9 +146,12 @@ def main() -> int:
             and "stale_completion_evidence" in report.errors
         )
 
-        tampered_ref = healthy["completion_audit"]["verification_evidence"][0]
-        (run_dir / tampered_ref["path"]).write_text("{}\n", encoding="utf-8")
-        report = validate_completion(run_dir, candidate_state=healthy)
+        tampered_run, tampered = make_v3_run(
+            root / "tampered", false_completion=False, terminal=False
+        )
+        tampered_ref = tampered["completion_audit"]["verification_evidence"][0]
+        (tampered_run / tampered_ref["path"]).write_text("{}\n", encoding="utf-8")
+        report = validate_completion(tampered_run)
         checks["tampered_bundle_fails_digest_check"] = (
             "evidence_digest_mismatch" in report.errors
             and "completion_evidence_invalid" in report.errors

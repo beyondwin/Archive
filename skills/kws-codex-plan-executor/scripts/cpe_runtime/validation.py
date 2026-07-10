@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
+import stat
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -8,6 +11,7 @@ from typing import Callable
 
 from .events import read_events, validate_chain
 from .evidence import verify_ref
+from .git_delta import GitDelta, capture_snapshot, scope_errors
 from .manifest import load_manifest, resolve_ref, validate_manifest
 from .model_policy import CORE_ROUTE, SCOUT_ROUTE
 from .packets import packet_entry, verify_packet
@@ -32,6 +36,9 @@ COMPLETION_CHECKS = INTEGRITY_CHECKS + (
     "repository_checks",
     "active_blockers",
     "completion_audit",
+)
+COMPLETION_EVIDENCE_KINDS = frozenset(
+    {"acceptance", "task_review", "verification", "repository_check", "final_review"}
 )
 
 
@@ -76,7 +83,9 @@ def _context(run_dir: Path, candidate_state: dict | None) -> dict[str, object]:
         "replay_state": None,
         "projection_error": None,
         "state": candidate_state,
+        "candidate_error": None,
         "artifact_payloads": {},
+        "revision_validation": None,
     }
     try:
         manifest = load_manifest(run_dir / "run_manifest.json")
@@ -99,8 +108,33 @@ def _context(run_dir: Path, candidate_state: dict | None) -> dict[str, object]:
         context["projection_error"] = "event_projection_invalid"
         return context
     context["replay_state"] = replay_state
-    if candidate_state is None:
-        context["state"] = replay_state
+    context["state"] = replay_state
+    if candidate_state is not None:
+        allowed_audit_keys = {
+            "passed",
+            "prompt_to_artifact_checklist",
+            "verification_evidence",
+            "residual_risk",
+        }
+        candidate_valid = isinstance(candidate_state, dict)
+        if candidate_valid:
+            base_without_audit = dict(replay_state)
+            candidate_without_audit = dict(candidate_state)
+            base_audit = base_without_audit.pop("completion_audit", None)
+            candidate_audit = candidate_without_audit.pop("completion_audit", None)
+            prospective_audit = (
+                base_audit is None
+                and isinstance(candidate_audit, dict)
+                and set(candidate_audit) == allowed_audit_keys
+            )
+            candidate_valid = (
+                candidate_without_audit == base_without_audit
+                and (candidate_audit == base_audit or prospective_audit)
+            )
+        if candidate_valid:
+            context["state"] = candidate_state
+        else:
+            context["candidate_error"] = "candidate_state_invalid"
     return context
 
 
@@ -109,6 +143,8 @@ def _dedupe(values: list[str]) -> list[str]:
 
 
 def _check_schema(context: dict[str, object]) -> tuple[list[str], list[str]]:
+    if context.get("candidate_error"):
+        return [str(context["candidate_error"])], []
     marker = _schema_marker(context["run_dir"])
     if marker is not None and marker != "3":
         return ["unsupported_schema"], []
@@ -116,6 +152,199 @@ def _check_schema(context: dict[str, object]) -> tuple[list[str], list[str]]:
     if isinstance(state, dict) and state.get("schema_version") != "3":
         return ["state_schema_invalid"], []
     return [], []
+
+
+@dataclass(frozen=True)
+class _ParsedPatch:
+    raw: bytes
+    sha256: str
+    before_head: str
+    after_head: str
+    before_snapshot: str
+    after_snapshot: str
+    before_identity: str
+    after_identity: str
+    paths: tuple[str, ...]
+    before_fingerprints: tuple[str, ...]
+    after_fingerprints: tuple[str, ...]
+
+
+def _decode_ascii(value: bytes) -> str:
+    return value.decode("ascii")
+
+
+def _parse_canonical_patch(raw: bytes) -> _ParsedPatch:
+    magic = b"CPE-GIT-DELTA-V1\0"
+    if not raw.startswith(magic):
+        raise ValueError("invalid patch magic")
+    cursor = len(magic)
+    fields: list[tuple[bytes, bytes]] = []
+    while cursor < len(raw):
+        if cursor + 9 > len(raw):
+            raise ValueError("truncated patch field")
+        label = raw[cursor : cursor + 1]
+        size = int.from_bytes(raw[cursor + 1 : cursor + 9], "big")
+        cursor += 9
+        if size > len(raw) - cursor:
+            raise ValueError("truncated patch value")
+        fields.append((label, raw[cursor : cursor + size]))
+        cursor += size
+    if len(fields) < 7 or [label for label, _ in fields[:6]] != [b"B", b"A", b"S", b"T", b"I", b"J"]:
+        raise ValueError("invalid patch header")
+    if fields[-1][0] != b"D" or (len(fields) - 7) % 3:
+        raise ValueError("invalid patch body")
+    bodies = fields[6:-1]
+    paths: list[str] = []
+    before: list[str] = []
+    after: list[str] = []
+    for index in range(0, len(bodies), 3):
+        if [label for label, _ in bodies[index : index + 3]] != [b"P", b"B", b"A"]:
+            raise ValueError("invalid patch path record")
+        raw_path = bodies[index][1]
+        if b"\0" in raw_path:
+            raise ValueError("invalid patch path")
+        path = os.fsdecode(raw_path)
+        safe = PurePosixPath(path)
+        if safe.is_absolute() or not safe.parts or ".." in safe.parts:
+            raise ValueError("unsafe patch path")
+        paths.append(path)
+        before.append(_decode_ascii(bodies[index + 1][1]))
+        after.append(_decode_ascii(bodies[index + 2][1]))
+    if paths != sorted(set(paths)):
+        raise ValueError("non-canonical patch paths")
+    header = [_decode_ascii(value) for _, value in fields[:6]]
+    digests = header[2:6]
+    if any(len(value) != 64 or any(char not in "0123456789abcdef" for char in value) for value in digests):
+        raise ValueError("invalid patch digest")
+    return _ParsedPatch(
+        raw,
+        hashlib.sha256(raw).hexdigest(),
+        header[0],
+        header[1],
+        header[2],
+        header[3],
+        header[4],
+        header[5],
+        tuple(paths),
+        tuple(before),
+        tuple(after),
+    )
+
+
+def _load_patch(run_dir: Path, payload: dict) -> tuple[_ParsedPatch | None, str | None]:
+    ref = payload.get("patch_ref")
+    digest = payload.get("patch_sha256")
+    if not isinstance(ref, dict):
+        return None, "revision_patch_evidence_missing"
+    expected_path = f"artifacts/patches/{digest}.patch"
+    if (
+        ref.get("kind") != "patch"
+        or ref.get("path") != expected_path
+        or ref.get("sha256") != digest
+        or ref.get("media_type") != "application/octet-stream"
+    ):
+        return None, "revision_patch_evidence_invalid"
+    target = run_dir / expected_path
+    try:
+        metadata = target.lstat()
+    except OSError:
+        return None, "revision_patch_evidence_missing"
+    expected_root = (run_dir / "artifacts" / "patches").resolve()
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        return None, "revision_patch_evidence_invalid"
+    try:
+        resolved = target.resolve()
+        if resolved.parent != expected_root:
+            return None, "revision_patch_evidence_invalid"
+        raw = target.read_bytes()
+    except OSError:
+        return None, "revision_patch_evidence_invalid"
+    if not isinstance(digest, str) or hashlib.sha256(raw).hexdigest() != digest:
+        return None, "revision_patch_evidence_invalid"
+    try:
+        parsed = _parse_canonical_patch(raw)
+    except (UnicodeDecodeError, ValueError):
+        return None, "revision_patch_evidence_invalid"
+    return parsed, None
+
+
+def _revision_validation(context: dict[str, object]) -> dict[str, object]:
+    cached = context.get("revision_validation")
+    if isinstance(cached, dict):
+        return cached
+    result: dict[str, object] = {
+        "errors": [],
+        "warnings": [],
+        "records": [],
+        "zero_unverified": False,
+    }
+    context["revision_validation"] = result
+    manifest = context.get("manifest")
+    state = context.get("state")
+    events = context.get("events")
+    if not isinstance(manifest, dict) or not isinstance(state, dict) or not isinstance(events, list):
+        return result
+    revisions = [event for event in events if event.get("type") == "worktree.revision_recorded"]
+    if not revisions:
+        if state.get("worktree_revision") != 0 or state.get("worktree_patch_sha256") is not None:
+            result["errors"].append("revision_patch_chain_invalid")
+        else:
+            result["zero_unverified"] = True
+            result["warnings"].append("revision_zero_baseline_unverified")
+        return result
+    previous_after: str | None = None
+    previous_head: str | None = None
+    previous_identity: str | None = None
+    expected_revision = 0
+    for event in revisions:
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            result["errors"].append("revision_patch_evidence_invalid")
+            continue
+        parsed, error = _load_patch(context["run_dir"], payload)
+        if error:
+            result["errors"].append(error)
+            continue
+        assert parsed is not None
+        source = payload.get("from")
+        target = payload.get("to")
+        changed_files = payload.get("changed_files")
+        if (
+            source != expected_revision
+            or target != expected_revision + 1
+            or payload.get("patch_sha256") != parsed.sha256
+            or not isinstance(changed_files, list)
+            or tuple(changed_files) != parsed.paths
+            or (previous_after is not None and parsed.before_snapshot != previous_after)
+            or (previous_head is not None and parsed.before_head != previous_head)
+            or (previous_identity is not None and parsed.before_identity != previous_identity)
+        ):
+            result["errors"].append("revision_patch_chain_invalid")
+        expected_source_head = (manifest.get("source_git") or {}).get("head")
+        if expected_revision == 0 and expected_source_head and parsed.before_head != expected_source_head:
+            result["errors"].append("revision_patch_chain_invalid")
+        previous_after = parsed.after_snapshot
+        previous_head = parsed.after_head
+        previous_identity = parsed.after_identity
+        expected_revision += 1
+        result["records"].append((event, parsed))
+    if (
+        state.get("worktree_revision") != expected_revision
+        or state.get("worktree_patch_sha256") != revisions[-1].get("payload", {}).get("patch_sha256")
+    ):
+        result["errors"].append("revision_patch_chain_invalid")
+    if previous_after is not None:
+        try:
+            worktree = resolve_ref(str(manifest["execution_worktree_ref"]))
+            current = capture_snapshot(worktree)
+        except (KeyError, OSError, RuntimeError, ValueError):
+            result["errors"].append("current_revision_worktree_mismatch")
+        else:
+            if current.cumulative_patch_sha256 != previous_after:
+                result["errors"].append("current_revision_worktree_mismatch")
+    result["errors"] = _dedupe(result["errors"])
+    result["warnings"] = _dedupe(result["warnings"])
+    return result
 
 
 def _check_manifest(context: dict[str, object]) -> tuple[list[str], list[str]]:
@@ -206,17 +435,25 @@ def _packet_sha(context: dict[str, object], task_id: str) -> str | None:
         return None
 
 
-def _bound_to_current(record: object, state: dict, packet_sha256: str | None) -> bool:
-    return (
-        isinstance(record, dict)
-        and "worktree_revision" in record
-        and "worktree_patch_sha256" in record
-        and "packet_sha256" in record
-        and record.get("worktree_revision") == state.get("worktree_revision")
+def _binding_status(record: object, state: dict, packet_sha256: str | None) -> str:
+    if not isinstance(record, dict) or not {
+        "worktree_revision",
+        "worktree_patch_sha256",
+        "packet_sha256",
+    }.issubset(record):
+        return "unbound"
+    if (
+        record.get("worktree_revision") == state.get("worktree_revision")
         and record.get("worktree_patch_sha256") == state.get("worktree_patch_sha256")
         and packet_sha256 is not None
         and record.get("packet_sha256") == packet_sha256
-    )
+    ):
+        return "current"
+    return "stale"
+
+
+def _bound_to_current(record: object, state: dict, packet_sha256: str | None) -> bool:
+    return _binding_status(record, state, packet_sha256) == "current"
 
 
 def _check_artifacts(context: dict[str, object]) -> tuple[list[str], list[str]]:
@@ -226,8 +463,16 @@ def _check_artifacts(context: dict[str, object]) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
     payloads = _artifact_payloads(context)
+    canonical_refs = [
+        _canonical_ref(artifact.get("ref"))
+        for artifact in state.get("artifact_index") or []
+    ]
+    real_refs = [ref for ref in canonical_refs if ref is not None]
+    if len(real_refs) != len(set(real_refs)):
+        errors.append("duplicate_artifact_ref")
     for index, artifact in enumerate(state.get("artifact_index") or []):
         ref = artifact.get("ref")
+        kind = artifact.get("kind")
         problems = verify_ref(context["run_dir"], ref) if isinstance(ref, dict) else ["evidence missing"]
         for problem in problems:
             errors.append(
@@ -239,12 +484,22 @@ def _check_artifacts(context: dict[str, object]) -> tuple[list[str], list[str]]:
             )
         payload = payloads.get(index)
         task_id = artifact.get("task_id")
-        if isinstance(payload, dict) and {
-            "worktree_revision",
-            "worktree_patch_sha256",
-            "packet_sha256",
-        }.issubset(payload):
-            packet_task = str(payload.get("packet_task_id") or task_id or payload.get("task_id") or "")
+        semantic_kind = payload.get("kind") if isinstance(payload, dict) else None
+        if (
+            not isinstance(kind, str)
+            or not isinstance(ref, dict)
+            or ref.get("kind") != kind
+            or (semantic_kind is not None and semantic_kind != kind)
+            or (kind in COMPLETION_EVIDENCE_KINDS and semantic_kind != kind)
+        ):
+            errors.append("artifact_kind_mismatch")
+        if kind in COMPLETION_EVIDENCE_KINDS:
+            packet_task = str(
+                (payload.get("packet_task_id") if isinstance(payload, dict) else None)
+                or task_id
+                or (payload.get("task_id") if isinstance(payload, dict) else None)
+                or ""
+            )
             if not _bound_to_current(payload, state, _packet_sha(context, packet_task)):
                 warnings.append("stale_revision_evidence")
     attempts = {item.get("attempt_id"): item for item in state.get("attempts") or []}
@@ -260,15 +515,30 @@ def _git_status(worktree: Path) -> tuple[list[str], str | None]:
     if not worktree.is_dir():
         return [], "worktree_missing"
     result = subprocess.run(
-        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        ["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"],
         cwd=worktree,
-        text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
     if result.returncode:
         return [], "worktree_identity_mismatch"
-    return [line[3:].split(" -> ")[-1] for line in result.stdout.splitlines() if len(line) >= 4], None
+    entries = result.stdout.split(b"\0")
+    changed: list[str] = []
+    index = 0
+    while index < len(entries):
+        entry = entries[index]
+        index += 1
+        if not entry:
+            continue
+        if len(entry) < 4 or entry[2:3] != b" ":
+            return [], "worktree_identity_mismatch"
+        status_code = entry[:2]
+        changed.append(os.fsdecode(entry[3:]))
+        if b"R" in status_code or b"C" in status_code:
+            if index >= len(entries) or not entries[index]:
+                return [], "worktree_identity_mismatch"
+            index += 1
+    return changed, None
 
 
 def _check_worktree_identity(context: dict[str, object]) -> tuple[list[str], list[str]]:
@@ -280,8 +550,11 @@ def _check_worktree_identity(context: dict[str, object]) -> tuple[list[str], lis
     except (KeyError, ValueError):
         return ["worktree_identity_mismatch"], []
     _, error = _git_status(worktree)
+    revision = _revision_validation(context)
+    revision_errors = list(revision["errors"])
+    revision_warnings = list(revision["warnings"])
     if error:
-        return [error], []
+        return _dedupe([error, *revision_errors]), revision_warnings
     expected_head = (manifest.get("source_git") or {}).get("head")
     if expected_head:
         result = subprocess.run(
@@ -292,8 +565,8 @@ def _check_worktree_identity(context: dict[str, object]) -> tuple[list[str], lis
             stderr=subprocess.PIPE,
         )
         if result.returncode or result.stdout.strip() != expected_head:
-            return ["worktree_identity_mismatch"], []
-    return [], []
+            return _dedupe(["worktree_identity_mismatch", *revision_errors]), revision_warnings
+    return revision_errors, revision_warnings
 
 
 def _check_attempt_structure(context: dict[str, object]) -> tuple[list[str], list[str]]:
@@ -376,8 +649,50 @@ def _check_git_scope(context: dict[str, object]) -> tuple[list[str], list[str]]:
             for pattern in patterns
         )
 
+    errors: list[str] = []
     violated = any(matches(path, forbidden) or not matches(path, allowed) for path in changed)
-    return (["diff_scope_violation"] if violated else []), []
+    if violated:
+        errors.append("diff_scope_violation")
+
+    tasks = {
+        str(task.get("id")): task
+        for task in manifest.get("task_graph", [])
+        if isinstance(task, dict)
+    }
+    for event, parsed in _revision_validation(context)["records"]:
+        task = tasks.get(str(event.get("task_id")))
+        if not isinstance(task, dict):
+            errors.append("revision_scope_violation")
+            continue
+        contract = task.get("execution_contract")
+        if not isinstance(contract, dict):
+            contract = {}
+        task_allowed = [
+            str(path)
+            for path in (contract.get("allowed_paths") or task.get("file_claims") or [])
+        ]
+        task_forbidden = [str(path) for path in (contract.get("forbidden_paths") or [])]
+        structural = tuple(
+            path
+            for path, before, after in zip(
+                parsed.paths,
+                parsed.before_fingerprints,
+                parsed.after_fingerprints,
+            )
+            if (before == "absent") != (after == "absent")
+            and (before.startswith("directory:") or after.startswith("directory:"))
+        )
+        delta = GitDelta(
+            parsed.paths,
+            parsed.sha256,
+            parsed.raw,
+            parsed.before_head != parsed.after_head
+            or parsed.before_identity != parsed.after_identity,
+            structural,
+        )
+        if scope_errors(delta, task_allowed, task_forbidden):
+            errors.append("revision_scope_violation")
+    return _dedupe(errors), []
 
 
 def _check_task_states(context: dict[str, object]) -> tuple[list[str], list[str]]:
@@ -398,10 +713,28 @@ def _task_artifacts(context: dict[str, object], task_id: str, kinds: set[str]) -
 
 
 def _payload_passed(payload: object) -> bool:
-    return isinstance(payload, dict) and (
-        payload.get("passed") is True
-        or payload.get("status") == "passed"
-        or (payload.get("returncode") == 0 and payload.get("passed") is not False)
+    if not isinstance(payload, dict):
+        return False
+    signals: list[bool] = []
+    if "passed" in payload:
+        signals.append(payload.get("passed") is True)
+    if "status" in payload:
+        signals.append(payload.get("status") == "passed")
+    if "returncode" in payload:
+        signals.append(payload.get("returncode") == 0)
+    if not signals or not all(signals):
+        return False
+    findings = payload.get("findings", [])
+    missing = payload.get("missing_evidence", [])
+    if not isinstance(findings, list) or not all(isinstance(item, dict) for item in findings):
+        return False
+    if not isinstance(missing, list):
+        return False
+    if missing:
+        return False
+    return not any(
+        isinstance(item, dict) and str(item.get("severity", "")).lower() == "critical"
+        for item in findings
     )
 
 
@@ -410,6 +743,8 @@ def _check_current_revision_acceptance(context: dict[str, object]) -> tuple[list
     if not isinstance(state, dict):
         return [], []
     errors: list[str] = []
+    if _revision_validation(context)["zero_unverified"]:
+        errors.append("current_revision_patch_unverifiable")
     for task_id in state.get("tasks") or {}:
         packet_sha = _packet_sha(context, str(task_id))
         current = [
@@ -453,7 +788,17 @@ def _check_current_revision_verdicts(context: dict[str, object]) -> tuple[list[s
                 and (attempts.get(verdict.get("attempt_id")) or {}).get("kind") == kind
                 and _bound_to_current(verdict, state, packet_sha)
             ]
-            if not any(_safe_passed_verdict(verdict) for verdict in candidates):
+            evidence = [
+                payload
+                for artifact, payload in _task_artifacts(context, str(task_id), {kind})
+                if artifact.get("attempt_id") in {
+                    verdict.get("attempt_id") for verdict in candidates
+                }
+                and _bound_to_current(payload, state, packet_sha)
+            ]
+            if not any(_safe_passed_verdict(verdict) for verdict in candidates) or not any(
+                _payload_passed(payload) for payload in evidence
+            ):
                 errors.append(code)
         final_candidates = [
             verdict
@@ -463,7 +808,17 @@ def _check_current_revision_verdicts(context: dict[str, object]) -> tuple[list[s
             and verdict.get("packet_task_id") == task_id
             and _bound_to_current(verdict, state, packet_sha)
         ]
-        if not any(_safe_passed_verdict(verdict) for verdict in final_candidates):
+        final_evidence = [
+            payload
+            for artifact, payload in _task_artifacts(context, str(task_id), {"final_review"})
+            if artifact.get("attempt_id") in {
+                verdict.get("attempt_id") for verdict in final_candidates
+            }
+            and _bound_to_current(payload, state, packet_sha)
+        ]
+        if not any(_safe_passed_verdict(verdict) for verdict in final_candidates) or not any(
+            _payload_passed(payload) for payload in final_evidence
+        ):
             errors.append("current_revision_final_review_not_passed")
     return _dedupe(errors), []
 
@@ -498,40 +853,73 @@ def _check_completion_audit(context: dict[str, object]) -> tuple[list[str], list
     if not isinstance(state, dict):
         return [], []
     audit = state.get("completion_audit")
+    expected_audit_keys = {
+        "passed",
+        "prompt_to_artifact_checklist",
+        "verification_evidence",
+        "residual_risk",
+    }
     if not isinstance(audit, dict) or audit.get("passed") is not True:
         return ["completion_audit_missing"], []
-    if not audit.get("prompt_to_artifact_checklist"):
+    if set(audit) != expected_audit_keys or not isinstance(audit.get("residual_risk"), list):
         return ["completion_audit_incomplete"], []
     refs = audit.get("verification_evidence")
     if not isinstance(refs, list) or not refs:
         return ["completion_evidence_incomplete"], []
+    canonical_supplied = [_canonical_ref(ref) for ref in refs]
+    if None in canonical_supplied:
+        return ["completion_evidence_incomplete"], []
+    if len(canonical_supplied) != len(set(canonical_supplied)):
+        return ["completion_evidence_duplicate"], []
     indexed = {
         _canonical_ref(item.get("ref")): item
         for item in state.get("artifact_index") or []
         if _canonical_ref(item.get("ref")) is not None
     }
     payloads = _artifact_payloads(context)
-    required = {
-        _canonical_ref(item.get("ref"))
-        for index, item in enumerate(state.get("artifact_index") or [])
-        if item.get("kind") in {"acceptance", "repository_check", "repository_checks"}
-        and _bound_to_current(
-            payloads.get(index),
-            state,
-            _packet_sha(context, str(item.get("task_id") or "")),
+    required_records: list[tuple[dict, object]] = []
+    unbound = False
+    stale_keys: set[tuple[object, str]] = set()
+    current_keys: set[tuple[object, str]] = set()
+    for index, item in enumerate(state.get("artifact_index") or []):
+        if item.get("kind") not in COMPLETION_EVIDENCE_KINDS:
+            continue
+        payload = payloads.get(index)
+        packet_task = str(
+            (payload.get("packet_task_id") if isinstance(payload, dict) else None)
+            or item.get("task_id")
+            or (payload.get("task_id") if isinstance(payload, dict) else None)
+            or ""
         )
-    }
-    supplied = {_canonical_ref(ref) for ref in refs}
-    if None in supplied or not supplied.issubset(indexed) or not required.issubset(supplied):
+        binding = _binding_status(payload, state, _packet_sha(context, packet_task))
+        evidence_key = (item.get("kind"), packet_task)
+        if binding == "current":
+            required_records.append((item, payload))
+            current_keys.add(evidence_key)
+        elif binding == "unbound":
+            unbound = True
+        else:
+            stale_keys.add(evidence_key)
+        if isinstance(item.get("ref"), dict) and verify_ref(context["run_dir"], item["ref"]):
+            return ["completion_evidence_invalid"], []
+    if unbound:
+        return ["unbound_completion_evidence"], []
+    if stale_keys - current_keys:
+        return ["stale_completion_evidence"], []
+    required_refs = [_canonical_ref(item.get("ref")) for item, _ in required_records]
+    if canonical_supplied != required_refs or any(ref not in indexed for ref in canonical_supplied):
         return ["completion_evidence_incomplete"], []
-    for ref in refs:
+    expected_checklist = [
+        {"kind": item.get("kind"), "task_id": item.get("task_id"), "ref": item.get("ref")}
+        for item, _ in required_records
+    ]
+    if audit.get("prompt_to_artifact_checklist") != expected_checklist:
+        return ["completion_checklist_incomplete"], []
+    for ref, (_item, payload) in zip(refs, required_records):
         if verify_ref(context["run_dir"], ref):
             return ["completion_evidence_invalid"], []
-        artifact = indexed[_canonical_ref(ref)]
-        payload = _read_ref_payload(context["run_dir"], ref)
-        task_id = str(artifact.get("task_id") or (payload.get("task_id") if isinstance(payload, dict) else "") or "")
-        if not _bound_to_current(payload, state, _packet_sha(context, task_id)):
-            return ["stale_completion_evidence"], []
+        if not _payload_passed(payload):
+            return ["completion_evidence_not_passed"], []
     return [], []
 
 
