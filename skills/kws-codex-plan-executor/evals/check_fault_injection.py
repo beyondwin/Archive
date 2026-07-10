@@ -14,13 +14,19 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from cpe_runtime.attempt_controller import validate_verdict
 from cpe_runtime.events import read_events
-from cpe_runtime.kernel import RunKernel
+from cpe_runtime.kernel import RunKernel, Transition
 from cpe_runtime.manifest import create_manifest, load_verified_manifest
 from cpe_runtime.model_policy import CORE_ROUTE
 from cpe_runtime.packets import build_packet
 from cpe_runtime.projector import project
 from cpe_runtime.scheduler import run_tasks
 from cpe_runtime.worker import Worker, WorkerError, WorkerRequest
+from cpe_runtime.validation import validate_completion, validate_integrity
+
+from check_validation_consumer_parity import (
+    EXPECTED_FALSE_COMPLETION_CODES,
+    make_v3_run,
+)
 
 
 def rejected(message: str, fn) -> bool:
@@ -413,11 +419,21 @@ def _allowed_parent_directory_fault(allowed_pattern: str) -> dict[str, bool]:
                 changed = ["newdir/owned.txt"]
             return _scope_result(request.attempt_kind, request.worktree_revision, changed)
 
-        result = run_tasks(tasks, Worker(provider=provider), kernel)
+        try:
+            result = run_tasks(tasks, Worker(provider=provider), kernel)
+        except ValueError as exc:
+            if not str(exc).startswith("completion gate failed: "):
+                raise
+            # Task 7 deliberately makes the old scheduler producer fail closed.
+            # Reaching this gate still proves the Task 6 scope controller allowed
+            # the structural parent; Task 8 supplies revision-bound completion
+            # evidence and restores end-to-end completion.
+            result = {"status": "completion_gate_pending"}
         manifest = load_verified_manifest(run_dir / "run_manifest.json")
         state = project(manifest, read_events(run_dir / "events.jsonl"))
         return {
-            "completed_without_scope_blocker": result.get("status") == "completed"
+            "reached_completion_gate_without_scope_blocker": result.get("status")
+            in {"completed", "completion_gate_pending"}
             and not state["active_blockers"],
             "single_revision_recorded": state["worktree_revision"] == 1,
             "downstream_roles_ran": "task_review" in launched
@@ -583,6 +599,85 @@ def verdict_cases() -> dict[str, bool]:
     }
 
 
+def completion_cases() -> dict[str, bool]:
+    with tempfile.TemporaryDirectory(prefix="cpe-completion-fault-") as raw:
+        root = Path(raw)
+        false_run, before = make_v3_run(
+            root / "false", false_completion=True, terminal=False
+        )
+        integrity = validate_integrity(false_run)
+        completion = validate_completion(false_run)
+        try:
+            RunKernel(false_run).transition(
+                Transition("run.status_changed", {"from": "running", "to": "completed"})
+            )
+        except ValueError as exc:
+            rejection_codes = str(exc).partition(": ")[2].split(",")
+        else:
+            rejection_codes = []
+        false_manifest = load_verified_manifest(false_run / "run_manifest.json")
+        after = project(false_manifest, read_events(false_run / "events.jsonl"))
+
+        healthy_run, healthy_before_audit = make_v3_run(
+            root / "healthy",
+            false_completion=False,
+            terminal=False,
+            record_audit=False,
+        )
+        evidence_refs = [
+            item["ref"] for item in healthy_before_audit["artifact_index"]
+        ]
+        with_audit = RunKernel(healthy_run).transition(
+            Transition(
+                "completion.recorded",
+                {
+                    "passed": True,
+                    "prompt_to_artifact_checklist": [
+                        "T1 acceptance",
+                        "repository checks",
+                    ],
+                    "verification_evidence": evidence_refs,
+                    "residual_risk": [],
+                },
+            )
+        )
+        completed = RunKernel(healthy_run).transition(
+            Transition("run.status_changed", {"from": "running", "to": "completed"})
+        )
+        healthy_report = validate_completion(healthy_run)
+
+        stale_run, stale_state = make_v3_run(
+            root / "stale", false_completion=False, terminal=False
+        )
+        stale_state = dict(stale_state)
+        stale_state["worktree_revision"] = 2
+        stale_state["worktree_patch_sha256"] = "d" * 64
+        stale_report = validate_completion(stale_run, candidate_state=stale_state)
+
+        return {
+            "healthy_running_integrity_passes": integrity.passed,
+            "false_completion_has_exact_codes": completion.errors
+            == EXPECTED_FALSE_COMPLETION_CODES,
+            "kernel_rejects_same_false_completion_codes": rejection_codes
+            == EXPECTED_FALSE_COMPLETION_CODES,
+            "rejected_completion_is_non_mutating": after == before,
+            "completion_record_authorized_by_canonical_profile": isinstance(
+                with_audit.get("completion_audit"), dict
+            ),
+            "healthy_current_evidence_can_complete": completed.get("lifecycle")
+            == "completed"
+            and healthy_report.passed,
+            "later_revision_invalidates_all_success": (
+                "current_revision_acceptance_not_passed" in stale_report.errors
+                and "current_revision_task_review_not_passed" in stale_report.errors
+                and "current_revision_verification_not_passed" in stale_report.errors
+                and "current_revision_final_review_not_passed" in stale_report.errors
+                and "current_revision_repository_check_missing" in stale_report.errors
+                and "stale_completion_evidence" in stale_report.errors
+            ),
+        }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--case", choices=("verdicts", "scope", "completion"))
@@ -593,12 +688,12 @@ def main() -> int:
     elif args.case == "scope":
         checks = scope_cases()
     elif args.case == "completion":
-        checks = {"completion_fault_cases_pending_task_7": False}
+        checks = completion_cases()
     else:
         checks = {
             **verdict_cases(),
             **scope_cases(),
-            "completion_fault_cases_pending_task_7": False,
+            **completion_cases(),
         }
     failures = [name for name, passed in checks.items() if not passed]
     print(json.dumps({"passed": not failures, "checks": checks, "failures": failures}, indent=2))

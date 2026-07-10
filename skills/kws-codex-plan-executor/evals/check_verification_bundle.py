@@ -2,82 +2,90 @@
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
 import tempfile
+from copy import deepcopy
 from pathlib import Path
 
-from check_state_schema import base_state
+from check_validation_consumer_parity import make_v3_run
 
+import sys
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "validate_state.py"
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-
-def run_validator(state: dict) -> subprocess.CompletedProcess[str]:
-    with tempfile.TemporaryDirectory(prefix="cpe-bundle-") as temp:
-        path = Path(temp) / "state.json"
-        path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        return subprocess.run([sys.executable, str(SCRIPT), str(path)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-
-def bundle() -> dict:
-    return {
-        "class": "verification_bundle",
-        "name": "cpe_skill_change",
-        "commands": ["./evals/run.sh", "python3 -m py_compile scripts/*.py evals/*.py", "bash -n evals/run.sh"],
-        "status": "passed",
-        "required": False,
-    }
+from cpe_runtime.validation import validate_completion
+from cpe_runtime.evidence import put_json
 
 
 def main() -> int:
-    failures: list[str] = []
     checks: dict[str, bool] = {}
+    with tempfile.TemporaryDirectory(prefix="cpe-v3-verification-bundle-") as raw:
+        run_dir, healthy = make_v3_run(Path(raw), false_completion=False, terminal=False)
+        checks["current_v3_bundle_passes"] = validate_completion(
+            run_dir, candidate_state=healthy
+        ).passed
 
-    valid = base_state()
-    valid["completion_audit"]["verification_evidence"].append(bundle())
-    result = run_validator(valid)
-    checks["valid_bundle_passes"] = result.returncode == 0
-    if not checks["valid_bundle_passes"]:
-        failures.append("valid verification bundle should pass: " + (result.stderr or result.stdout))
+        stale_history = deepcopy(healthy)
+        task_id = "T1"
+        packet_sha = next(
+            item["packet_sha256"]
+            for item in stale_history["verdicts"]
+            if item.get("task_id") == task_id
+        )
+        stale_ref = put_json(
+            run_dir,
+            "acceptance",
+            {
+                "task_id": task_id,
+                "passed": True,
+                "worktree_revision": 0,
+                "worktree_patch_sha256": None,
+                "packet_sha256": packet_sha,
+            },
+        ).as_dict()
+        stale_history["artifact_index"].insert(
+            0,
+            {"task_id": task_id, "attempt_id": "T1.acceptance.old", "kind": "acceptance", "ref": stale_ref},
+        )
+        stale_history_report = validate_completion(run_dir, candidate_state=stale_history)
+        checks["audit_excludes_stale_history"] = (
+            stale_history_report.passed
+            and "stale_revision_evidence" in stale_history_report.warnings
+            and stale_ref not in stale_history["completion_audit"]["verification_evidence"]
+        )
 
-    missing_name = base_state()
-    bad = bundle()
-    del bad["name"]
-    missing_name["completion_audit"]["verification_evidence"].append(bad)
-    result = run_validator(missing_name)
-    checks["bundle_missing_name_fails"] = result.returncode != 0 and "verification_bundle.name" in (
-        result.stderr + result.stdout
-    )
-    if not checks["bundle_missing_name_fails"]:
-        failures.append("verification bundle missing name should fail")
+        missing_repository = deepcopy(healthy)
+        missing_repository["completion_audit"]["verification_evidence"] = [
+            ref
+            for ref in missing_repository["completion_audit"]["verification_evidence"]
+            if ref.get("kind") != "repository_check"
+        ]
+        checks["audit_must_index_repository_bundle"] = (
+            validate_completion(run_dir, candidate_state=missing_repository).errors
+            == ["completion_evidence_incomplete"]
+        )
 
-    empty_commands = base_state()
-    bad = bundle()
-    bad["commands"] = []
-    empty_commands["completion_audit"]["verification_evidence"].append(bad)
-    result = run_validator(empty_commands)
-    checks["bundle_empty_commands_fails"] = result.returncode != 0 and "verification_bundle.commands" in (
-        result.stderr + result.stdout
-    )
-    if not checks["bundle_empty_commands_fails"]:
-        failures.append("verification bundle with empty commands should fail")
+        stale = deepcopy(healthy)
+        stale["worktree_revision"] += 1
+        stale["worktree_patch_sha256"] = "c" * 64
+        report = validate_completion(run_dir, candidate_state=stale)
+        checks["stale_bundle_fails_closed"] = (
+            "current_revision_acceptance_not_passed" in report.errors
+            and "current_revision_task_review_not_passed" in report.errors
+            and "current_revision_verification_not_passed" in report.errors
+            and "current_revision_repository_check_missing" in report.errors
+            and "stale_completion_evidence" in report.errors
+        )
 
-    advisory_risk = base_state()
-    advisory_risk["completion_audit"]["residual_risk"] = [
-        {
-            "owner": "operator",
-            "class": "test_scope_gap",
-            "summary": "No API-key LLM judge was run; deterministic parser and policy checks passed.",
-            "blocks_release": False,
-        }
-    ]
-    result = run_validator(advisory_risk)
-    checks["new_advisory_risk_class_passes"] = result.returncode == 0
-    if not checks["new_advisory_risk_class_passes"]:
-        failures.append("new advisory residual risk class should pass: " + (result.stderr or result.stdout))
+        tampered_ref = healthy["completion_audit"]["verification_evidence"][0]
+        (run_dir / tampered_ref["path"]).write_text("{}\n", encoding="utf-8")
+        report = validate_completion(run_dir, candidate_state=healthy)
+        checks["tampered_bundle_fails_digest_check"] = (
+            "evidence_digest_mismatch" in report.errors
+            and "completion_evidence_invalid" in report.errors
+        )
 
-    print(json.dumps({"passed": not failures, "checks": checks, "failures": failures}, ensure_ascii=False, indent=2))
+    failures = [name for name, passed in checks.items() if not passed]
+    print(json.dumps({"passed": not failures, "checks": checks, "failures": failures}, indent=2))
     return 0 if not failures else 1
 
 

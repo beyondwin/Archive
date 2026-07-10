@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .validation import validate_run
+from .validation import validate_completion, validate_run
 
 
 @dataclass(frozen=True)
@@ -29,8 +29,13 @@ REPAIRABLE = {
 }
 
 
-def reconcile(run_dir: Path) -> ReconciliationReport:
-    report = validate_run(run_dir)
+def reconcile(run_dir: Path, *, completion: bool = False) -> ReconciliationReport:
+    """Classify canonical findings without treating healthy incompletion as drift.
+
+    Recovery planning uses the default lifecycle adapter. Completion callers may
+    request the strict profile before a terminal event exists.
+    """
+    report = validate_completion(run_dir) if completion else validate_run(run_dir)
     if report.classification == "unsupported_schema":
         return ReconciliationReport(
             "blocking_drift",

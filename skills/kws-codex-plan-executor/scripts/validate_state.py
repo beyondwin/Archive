@@ -7,16 +7,27 @@ import argparse
 import json
 from pathlib import Path
 
-from cpe_runtime.validation import validate_run
+from cpe_runtime.validation import validate_completion, validate_integrity, validate_run
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("path", help="run directory or state/manifest path")
+    parser.add_argument(
+        "--profile",
+        choices=("auto", "integrity", "completion"),
+        default="auto",
+        help="validation profile; auto selects completion only for completed lifecycle",
+    )
     args = parser.parse_args()
     path = Path(args.path).expanduser().resolve()
     run_dir = path if path.is_dir() else path.parent
-    report = validate_run(run_dir)
+    validator = {
+        "auto": validate_run,
+        "integrity": validate_integrity,
+        "completion": validate_completion,
+    }[args.profile]
+    report = validator(run_dir)
     print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
     if report.classification == "unsupported_schema":
         return 2
