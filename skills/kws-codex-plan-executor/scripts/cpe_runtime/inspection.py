@@ -7,7 +7,7 @@ from .events import read_events
 from .manifest import load_verified_manifest, resolve_ref
 from .projector import project
 from .reconciliation import reconcile
-from .validation import validate_run
+from .validation import validate_completion, validate_run
 
 
 def _cost(attempts: list[dict], manifest: dict) -> dict[str, object]:
@@ -46,9 +46,9 @@ def _cost(attempts: list[dict], manifest: dict) -> dict[str, object]:
     }
 
 
-def inspect_run(run_dir: Path) -> dict[str, object]:
+def inspect_run(run_dir: Path, *, completion: bool = False) -> dict[str, object]:
     run_dir = run_dir.expanduser().resolve()
-    validation = validate_run(run_dir)
+    validation = validate_completion(run_dir) if completion else validate_run(run_dir)
     if validation.classification == "unsupported_schema":
         return {"run_id": run_dir.name, "classification": "unsupported_schema", "passed": False}
     try:
@@ -67,7 +67,7 @@ def inspect_run(run_dir: Path) -> dict[str, object]:
     repairs = [item for item in attempts if item.get("kind") == "repair"]
     usage = state.get("usage_totals") or {}
     lifecycle = state.get("lifecycle")
-    reconciliation = reconcile(run_dir)
+    reconciliation = reconcile(run_dir, completion=completion)
     result: dict[str, object] = {
         "run_id": manifest["run_id"],
         "classification": validation.classification,
@@ -87,6 +87,8 @@ def inspect_run(run_dir: Path) -> dict[str, object]:
         "drift_count": int(reconciliation.classification != "clean"),
         "missing_evidence_count": sum(1 for code in validation.errors if code == "evidence_missing"),
         "errors": validation.errors,
+        "warnings": validation.warnings,
+        "validation_checks": validation.checks or {},
         "reconciliation": reconciliation.as_dict(),
     }
     result.update(_cost(attempts, manifest))

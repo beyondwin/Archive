@@ -7,13 +7,11 @@ import os
 import secrets
 import shutil
 import tempfile
-import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from .events import WRITABLE_EVENT_TYPES, append_event, read_events, validate_chain
-from .evidence import verify_ref
-from .manifest import load_verified_manifest, resolve_ref, validate_manifest
+from .manifest import load_verified_manifest, validate_manifest
 from .model_policy import CORE_ROUTE
 from .packets import PacketDraft, verify_packet
 from .projector import (
@@ -26,6 +24,7 @@ from .projector import (
     valid_evidence_refs,
     valid_verdict,
 )
+from .validation import validate_completion
 
 
 TASK_COMPLETION_ATTEMPT_KINDS = frozenset({"implementation", "task_review", "verification"})
@@ -81,78 +80,6 @@ def _attempt_kinds(state: dict, task_id: str | None) -> set[str]:
     }
 
 
-def _completion_ready(run_dir: Path, manifest: dict, state: dict) -> bool:
-    if not state.get("tasks") or any(item.get("status") != "completed" for item in state["tasks"].values()):
-        return False
-    if state.get("active_blockers", state.get("blockers", [])):
-        return False
-    for task_id in state["tasks"]:
-        if not TASK_COMPLETION_ATTEMPT_KINDS.issubset(_attempt_kinds(state, task_id)):
-            return False
-        kinds = {item.get("kind") for item in state.get("artifact_index", []) if item.get("task_id") == task_id}
-        if not {"acceptance", "verification"}.issubset(kinds):
-            return False
-    if "final_review" not in _attempt_kinds(state, None):
-        return False
-    audit = state.get("completion_audit")
-    if validate_manifest(manifest):
-        return False
-    try:
-        for task_id in state["tasks"]:
-            verify_packet(run_dir, manifest, task_id)
-    except ValueError:
-        return False
-    snapshot = run_dir / "state.json"
-    if not snapshot.is_file():
-        return False
-    try:
-        if json.loads(snapshot.read_text(encoding="utf-8")) != state:
-            return False
-    except (OSError, json.JSONDecodeError):
-        return False
-    for item in state.get("artifact_index", []):
-        ref = item.get("ref")
-        if not isinstance(ref, dict) or verify_ref(run_dir, ref):
-            return False
-    audit_evidence = audit.get("verification_evidence") if isinstance(audit, dict) else None
-    indexed_refs = {
-        json.dumps(item.get("ref"), sort_keys=True)
-        for item in state.get("artifact_index", [])
-        if isinstance(item.get("ref"), dict)
-    }
-    if not isinstance(audit_evidence, list) or not audit_evidence:
-        return False
-    audit_refs = set()
-    for ref in audit_evidence:
-        if not isinstance(ref, dict) or json.dumps(ref, sort_keys=True) not in indexed_refs or verify_ref(run_dir, ref):
-            return False
-        audit_refs.add(json.dumps(ref, sort_keys=True))
-    if audit_refs != indexed_refs:
-        return False
-    try:
-        worktree = resolve_ref(str(manifest["execution_worktree_ref"]))
-        result = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=worktree, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if result.returncode:
-            return False
-        changed = {line[3:].split(" -> ")[-1] for line in result.stdout.splitlines() if len(line) >= 4}
-        claims = {str(path) for task in manifest.get("task_graph", []) for path in task.get("file_claims", [])}
-        if not changed.issubset(claims):
-            return False
-        expected_head = ((manifest.get("source_git") or {}).get("head"))
-        if expected_head:
-            head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if head.returncode or head.stdout.strip() != expected_head:
-                return False
-    except (OSError, KeyError, ValueError):
-        return False
-    return bool(
-        isinstance(audit, dict)
-        and audit.get("passed") is True
-        and audit.get("verification_evidence")
-        and audit.get("prompt_to_artifact_checklist")
-    )
-
-
 def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Transition) -> None:
     if command.event_type not in WRITABLE_EVENT_TYPES:
         raise ValueError("unknown event type")
@@ -167,8 +94,10 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
         target = payload.get("to")
         if target not in RUN_TRANSITIONS.get(state["lifecycle"], set()):
             raise ValueError("invalid run transition")
-        if target == "completed" and not _completion_ready(run_dir, manifest, state):
-            raise ValueError("completion gate failed")
+        if target == "completed":
+            report = validate_completion(run_dir, candidate_state=state)
+            if not report.passed:
+                raise ValueError(f"completion gate failed: {','.join(report.errors)}")
         return
     if command.event_type == "task.status_changed":
         if command.task_id not in state["tasks"]:
@@ -285,6 +214,10 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
     elif command.event_type == "completion.recorded":
         if payload.get("passed") is not True:
             raise ValueError("completion evidence must pass")
+        candidate = {**state, "completion_audit": dict(payload)}
+        report = validate_completion(run_dir, candidate_state=candidate)
+        if not report.passed:
+            raise ValueError(f"completion gate failed: {','.join(report.errors)}")
     elif command.event_type == "context.updated":
         if payload.get("status") not in {"green", "yellow", "red"}:
             raise ValueError("invalid context payload")
