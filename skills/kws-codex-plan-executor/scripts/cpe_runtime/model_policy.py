@@ -21,7 +21,7 @@ POLICY_VERSION = "cpe.model-policy.v1"
 CORE_ROUTE = Route("core", "gpt-5.6-sol", "high")
 SCOUT_ROUTE = Route("scout", "gpt-5.6-terra", "high")
 CORE_ATTEMPT_KINDS = frozenset({
-    "coordination", "implementation", "review", "verification", "recovery",
+    "coordination", "implementation", "task_review", "verification", "recovery",
     "repair", "analysis", "completion", "prompt_validation", "final_review",
 })
 
@@ -40,14 +40,13 @@ def policy_hash() -> str:
 
 
 def route_for(attempt_kind: str, *, read_only: bool, verdict_capable: bool) -> Route:
+    attempt_kind = "task_review" if attempt_kind == "review" else attempt_kind
     if attempt_kind == "scout":
         if not read_only or verdict_capable:
             raise PolicyError("Terra scout requires read_only=true and verdict_capable=false")
         return SCOUT_ROUTE
     if attempt_kind not in CORE_ATTEMPT_KINDS:
         raise PolicyError(f"unknown attempt kind: {attempt_kind}")
-    if read_only and attempt_kind not in {"analysis", "prompt_validation"}:
-        raise PolicyError(f"core attempt {attempt_kind} requires write-capable policy")
     return CORE_ROUTE
 
 
@@ -59,9 +58,10 @@ def launcher_argv(
     output_schema: Path | None = None,
     output_last_message: Path | None = None,
 ) -> list[str]:
-    expected_sandbox = "read-only" if route == SCOUT_ROUTE else "workspace-write"
-    if sandbox != expected_sandbox:
-        raise PolicyError(f"{route.role} requires sandbox={expected_sandbox}")
+    if sandbox not in {"read-only", "workspace-write"}:
+        raise PolicyError(f"invalid sandbox: {sandbox}")
+    if route == SCOUT_ROUTE and sandbox != "read-only":
+        raise PolicyError("scout requires sandbox=read-only")
     argv = [
         "codex", "exec", "--json", "--model", route.model,
         "-c", f'model_reasoning_effort="{route.reasoning}"',

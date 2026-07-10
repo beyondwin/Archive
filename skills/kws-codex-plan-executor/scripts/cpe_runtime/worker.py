@@ -26,6 +26,10 @@ class WorkerRequest:
     worktree: Path
     read_only: bool
     verdict_capable: bool
+    task_id: str = ""
+    packet_path: str = ""
+    packet_sha256: str = ""
+    worktree_revision: int = 0
 
 
 @dataclass(frozen=True)
@@ -41,7 +45,7 @@ class WorkerResult:
 
 REQUIRED_RESULT_FIELDS = {
     "status", "summary", "changed_files", "findings", "evidence_refs",
-    "missing_evidence", "verification",
+    "missing_evidence", "verification", "verdict",
 }
 ALLOWED_RESULT_FIELDS = REQUIRED_RESULT_FIELDS | {"root_cause_key", "failure_category"}
 DOCUMENTED_EVENT_TYPES = {
@@ -56,7 +60,9 @@ def _bounded(value: str, limit: int = 4000) -> str:
     return text[-limit:]
 
 
-def _validate_result(payload: object, *, scout: bool) -> dict[str, object]:
+def _validate_result(payload: object, *, role: str, revision: int) -> dict[str, object]:
+    from .attempt_controller import ROLE_POLICIES, canonical_role, validate_verdict
+
     if not isinstance(payload, dict):
         raise WorkerError("worker result must be an object")
     missing = REQUIRED_RESULT_FIELDS - payload.keys()
@@ -70,8 +76,15 @@ def _validate_result(payload: object, *, scout: bool) -> dict[str, object]:
     for key in ("changed_files", "findings", "evidence_refs", "missing_evidence", "verification"):
         if not isinstance(payload.get(key), list):
             raise WorkerError(f"worker result {key} must be a list")
-    if scout and (payload["changed_files"] or payload["verification"]):
+    normalized_role = canonical_role(role)
+    policy = ROLE_POLICIES[normalized_role]
+    if normalized_role == "scout" and (payload["changed_files"] or payload["verification"]):
         raise WorkerError("scout output attempted write or verdict evidence")
+    verdict = payload.get("verdict")
+    if policy.verdict_capable:
+        payload["verdict"] = validate_verdict(verdict, normalized_role, revision)
+    elif verdict is not None:
+        raise WorkerError(f"role {normalized_role} cannot issue a verdict")
     return payload
 
 
@@ -114,12 +127,13 @@ class Worker:
         self,
         request: WorkerRequest,
         route,
+        sandbox: str,
         last_message: Path,
     ) -> tuple[dict, dict, dict, str, str]:
         argv = launcher_argv(
             route,
             request.worktree,
-            sandbox="read-only" if request.read_only else "workspace-write",
+            sandbox=sandbox,
             output_schema=self.schema_path,
             output_last_message=last_message,
         )
@@ -177,11 +191,15 @@ class Worker:
         return payload, metadata, usage, json.dumps(events, ensure_ascii=False, sort_keys=True), diagnostics
 
     def run(self, request: WorkerRequest) -> WorkerResult:
+        from .attempt_controller import validate_role_request
+
+        policy = validate_role_request(request.attempt_kind, request)
         route = route_for(
             request.attempt_kind,
-            read_only=request.read_only,
-            verdict_capable=request.verdict_capable,
+            read_only=policy.read_only,
+            verdict_capable=policy.verdict_capable,
         )
+        sandbox = "read-only" if policy.read_only else "workspace-write"
         started = time.monotonic()
         last_error: WorkerError | None = None
         for attempt in range(self.max_transient_retries + 1):
@@ -190,7 +208,7 @@ class Worker:
                 argv = launcher_argv(
                     route,
                     request.worktree,
-                    sandbox="read-only" if request.read_only else "workspace-write",
+                    sandbox=sandbox,
                     output_schema=self.schema_path,
                     output_last_message=last_message,
                 )
@@ -199,8 +217,14 @@ class Worker:
                     if self.provider is not None:
                         payload, metadata, usage, raw_events = self._provider_once(request, argv)
                     else:
-                        payload, metadata, usage, raw_events, diagnostics = self._subprocess_once(request, route, last_message)
-                    payload = _validate_result(payload, scout=request.attempt_kind == "scout")
+                        payload, metadata, usage, raw_events, diagnostics = self._subprocess_once(
+                            request, route, sandbox, last_message
+                        )
+                    payload = _validate_result(
+                        payload,
+                        role=request.attempt_kind,
+                        revision=request.worktree_revision,
+                    )
                     attestation = attest_launcher(
                         route,
                         argv,

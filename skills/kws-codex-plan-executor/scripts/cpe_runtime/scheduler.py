@@ -1,27 +1,20 @@
 from __future__ import annotations
 
-import subprocess
 import hashlib
+import json
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from pathlib import Path
 
+from .attempt_controller import ROLE_POLICIES, canonical_role, validate_verdict
 from .evidence import put_json
 from .kernel import Kernel, Transition
 from .manifest import load_verified_manifest, resolve_ref
 from .model_policy import CORE_ROUTE
-from .packets import PACKET_ROLE_POLICY, packet_entry, verify_packet
+from .packets import packet_entry, verify_packet
 from .projector import project
 from .events import read_events
 from .worker import Worker, WorkerError, WorkerRequest, WorkerResult
-
-
-@dataclass(frozen=True)
-class PacketBoundWorkerRequest(WorkerRequest):
-    task_id: str
-    packet_path: str
-    packet_sha256: str
-
 
 def make_packet_request(
     run_dir: Path,
@@ -29,29 +22,40 @@ def make_packet_request(
     task_id: str,
     attempt_id: str,
     attempt_kind: str,
-    prompt: str,
+    instruction: str,
     worktree: Path,
-) -> PacketBoundWorkerRequest:
+) -> WorkerRequest:
     verify_packet(run_dir, manifest, task_id)
     entry = packet_entry(manifest, task_id)
-    packet_prompt = (
-        f"{prompt}\n\n"
-        "VERIFIED TASK PACKET (immutable runtime input)\n"
-        f"task_id={task_id}\n"
-        f"packet_path={entry['path']}\n"
-        f"packet_sha256={entry['sha256']}"
+    revision = project(manifest, read_events(run_dir / "events.jsonl"))["worktree_revision"]
+    role = canonical_role(attempt_kind)
+    policy = ROLE_POLICIES[role]
+    request = WorkerRequest(
+        attempt_id=attempt_id,
+        attempt_kind=role,
+        prompt="",
+        worktree=worktree,
+        read_only=policy.read_only,
+        verdict_capable=policy.verdict_capable,
+        task_id=task_id,
+        packet_path=entry["path"],
+        packet_sha256=entry["sha256"],
+        worktree_revision=int(revision),
     )
-    role = PACKET_ROLE_POLICY[attempt_kind]
-    return PacketBoundWorkerRequest(
-        attempt_id,
-        attempt_kind,
-        packet_prompt,
-        worktree,
-        role["read_only"],
-        role["verdict_capable"],
-        task_id,
-        entry["path"],
-        entry["sha256"],
+    return WorkerRequest(**{**request.__dict__, "prompt": packet_prompt(request, instruction)})
+
+
+def packet_prompt(request: WorkerRequest, instruction: str) -> str:
+    return json.dumps(
+        {
+            "task_id": request.task_id,
+            "packet_path": request.packet_path,
+            "packet_sha256": request.packet_sha256,
+            "worktree_revision": request.worktree_revision,
+            "instruction": instruction,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
     )
 
 
@@ -66,7 +70,7 @@ def run_scouts(requests: list[WorkerRequest], worker: Worker) -> list[WorkerResu
             return worker.run(request)
         except WorkerError as exc:
             digest = hashlib.sha256(str(exc).encode()).hexdigest()
-            return WorkerResult("failed", {"status": "failed", "summary": str(exc), "changed_files": [], "findings": [], "evidence_refs": [], "missing_evidence": [str(exc)], "verification": [], "failure_category": "transient"}, {"verified": False, "error": str(exc)}, {}, 0, digest, str(exc))
+            return WorkerResult("failed", {"status": "failed", "summary": str(exc), "changed_files": [], "findings": [], "evidence_refs": [], "missing_evidence": [str(exc)], "verification": [], "verdict": None, "failure_category": "transient"}, {"verified": False, "error": str(exc)}, {}, 0, digest, str(exc))
     with ThreadPoolExecutor(max_workers=min(4, len(requests)), thread_name_prefix="cpe-scout") as pool:
         return list(pool.map(run_one, requests))
 
@@ -98,27 +102,65 @@ def _trusted(result: WorkerResult) -> bool:
     )
 
 
-def _record_attempt(kernel: Kernel, task_id: str | None, kind: str, result: WorkerResult, attempt_id: str) -> None:
+def _start_attempt(kernel: Kernel, task_id: str | None, kind: str, attempt_id: str) -> None:
+    revision = project(
+        load_verified_manifest(kernel.run_dir / "run_manifest.json"),
+        read_events(kernel.run_dir / "events.jsonl"),
+    )["worktree_revision"]
     kernel.transition(
         Transition(
-            "attempt.recorded",
+            "attempt.started",
+            {"kind": canonical_role(kind), "worktree_revision": revision},
+            task_id=task_id,
+            attempt_id=attempt_id,
+        )
+    )
+
+
+def _complete_attempt(
+    kernel: Kernel,
+    task_id: str | None,
+    kind: str,
+    result: WorkerResult,
+    attempt_id: str,
+) -> None:
+    result_ref = _attach(kernel, task_id, attempt_id, "worker_result", result.payload)
+    completion_status = "completed" if result.status == "completed" else "failed"
+    revision = project(
+        load_verified_manifest(kernel.run_dir / "run_manifest.json"),
+        read_events(kernel.run_dir / "events.jsonl"),
+    )["worktree_revision"]
+    kernel.transition(
+        Transition(
+            "attempt.completed",
             {
-                "kind": kind,
-                "status": result.status,
+                "status": completion_status,
                 "attestation": result.attestation,
                 "usage": result.usage,
                 "latency_ms": result.latency_ms,
-                "read_only": kind == "scout",
-                "verdict_capable": kind != "scout",
+                "evidence_refs": [result_ref],
                 "raw_event_digest": result.raw_event_digest,
                 "summary": result.payload.get("summary", ""),
                 "failure_category": result.payload.get("failure_category"),
                 "root_cause_key": result.payload.get("root_cause_key"),
+                "changed_files": list(result.payload.get("changed_files") or []),
+                "worktree_revision": revision,
             },
             task_id=task_id,
             attempt_id=attempt_id,
         )
     )
+    verdict = result.payload.get("verdict")
+    if isinstance(verdict, dict):
+        normalized = validate_verdict(verdict, kind, int(revision))
+        kernel.transition(
+            Transition(
+                "verdict.recorded",
+                normalized,
+                task_id=task_id,
+                attempt_id=attempt_id,
+            )
+        )
 
 
 def _attach(kernel: Kernel, task_id: str | None, attempt_id: str, kind: str, payload: object) -> dict:
@@ -151,6 +193,7 @@ def _worker_attempt(
     request_task_id = packet_task_id or task_id or str(
         (manifest.get("task_graph") or [{}])[0].get("id") or ""
     )
+    _start_attempt(kernel, task_id, kind, attempt_id)
     try:
         request = make_packet_request(
             kernel.run_dir,
@@ -163,10 +206,9 @@ def _worker_attempt(
         )
         result = worker.run(request)
     except WorkerError as exc:
-        payload = {"status": "failed", "summary": str(exc), "changed_files": [], "findings": [], "evidence_refs": [], "missing_evidence": [str(exc)], "verification": [], "failure_category": "transient"}
+        payload = {"status": "failed", "summary": str(exc), "changed_files": [], "findings": [], "evidence_refs": [], "missing_evidence": [str(exc)], "verification": [], "verdict": None, "failure_category": "transient"}
         result = WorkerResult("failed", payload, {"verified": False, "error": str(exc)}, {}, 0, hashlib.sha256(str(exc).encode()).hexdigest(), str(exc))
-    _record_attempt(kernel, task_id, kind, result, attempt_id)
-    _attach(kernel, task_id, attempt_id, "worker_result", result.payload)
+    _complete_attempt(kernel, task_id, kind, result, attempt_id)
     return result
 
 
@@ -268,9 +310,10 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
                 )
                 for index, prompt in enumerate(scouts, 1)
             ]
+            for index in range(1, len(requests) + 1):
+                _start_attempt(kernel, task_id, "scout", f"{task_id}.scout.{index}")
             for index, result in enumerate(run_scouts(requests, worker), 1):
-                _record_attempt(kernel, task_id, "scout", result, f"{task_id}.scout.{index}")
-                _attach(kernel, task_id, f"{task_id}.scout.{index}", "scout", result.payload)
+                _complete_attempt(kernel, task_id, "scout", result, f"{task_id}.scout.{index}")
                 if result.status != "completed" or not result.attestation.get("verified"):
                     return _block(kernel, task_id, "scouting", "scout_failed_or_unattested")
             kernel.transition(Transition("task.status_changed", {"from": "scouting", "to": "implementing"}, task_id=task_id))
@@ -284,7 +327,7 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
             worktree,
             "implementation",
             1,
-            str(task.get("prompt") or task.get("packet") or task_id),
+            f"Implement task {task_id} using only its verified packet and current revision.",
         )
         changed = set(implementation.payload.get("changed_files") or [])
         claims = set(task.get("file_claims") or [])
@@ -296,7 +339,13 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
         cycle = 1
         while True:
             review = _worker_attempt(worker, kernel, task, worktree, "task_review", cycle, f"Review task {task_id} against its packet and diff.")
-            if review.status == "completed" and _trusted(review):
+            review_verdict = review.payload.get("verdict")
+            if (
+                review.status == "completed"
+                and _trusted(review)
+                and isinstance(review_verdict, dict)
+                and review_verdict.get("status") == "passed"
+            ):
                 kernel.transition(Transition("task.status_changed", {"from": "reviewing", "to": "verifying"}, task_id=task_id))
                 acceptance_ok, acceptance_payload = _acceptance(task, worktree, kernel, cycle)
                 verification = _worker_attempt(
@@ -315,15 +364,56 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
                     "verification",
                     {"accepted": acceptance_ok and verification.status == "completed", "worker": verification.payload},
                 )
-                if acceptance_ok and verification.status == "completed" and _trusted(verification):
+                verification_verdict = verification.payload.get("verdict")
+                if (
+                    acceptance_ok
+                    and verification.status == "completed"
+                    and _trusted(verification)
+                    and isinstance(verification_verdict, dict)
+                    and verification_verdict.get("status") == "passed"
+                ):
                     kernel.transition(Transition("task.status_changed", {"from": "verifying", "to": "completed"}, task_id=task_id))
                     completed.append(task_id)
                     break
+                if (
+                    isinstance(verification_verdict, dict)
+                    and verification_verdict.get("status") in {"blocked", "inconclusive"}
+                ):
+                    return _block(
+                        kernel,
+                        task_id,
+                        "verifying",
+                        f"verification_verdict:{verification_verdict['status']}",
+                    )
                 phase = "verifying"
-                root_key = str(verification.payload.get("root_cause_key") or f"acceptance:{acceptance_payload['returncode']}")
+                root_key = str(
+                    verification.payload.get("root_cause_key")
+                    or (
+                        f"verification:{verification_verdict.get('status')}"
+                        if isinstance(verification_verdict, dict)
+                        else f"acceptance:{acceptance_payload['returncode']}"
+                    )
+                )
             else:
+                if (
+                    isinstance(review_verdict, dict)
+                    and review_verdict.get("status") in {"blocked", "inconclusive"}
+                ):
+                    return _block(
+                        kernel,
+                        task_id,
+                        "reviewing",
+                        f"review_verdict:{review_verdict['status']}",
+                    )
                 phase = "reviewing"
-                root_key = str(review.payload.get("root_cause_key") or "review_failed")
+                root_key = str(
+                    review.payload.get("root_cause_key")
+                    or (
+                        f"review:{review_verdict.get('status')}"
+                        if isinstance(review_verdict, dict)
+                        else "review_failed"
+                    )
+                )
             repair_counts[root_key] = repair_counts.get(root_key, 0) + 1
             if repair_counts[root_key] > 2:
                 return _block(kernel, task_id, phase, f"repair_limit_exhausted:{root_key}")
@@ -343,7 +433,13 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
             cycle += 1
 
     final_reviews = run_final_reviews(tasks, worker, kernel, worktree)
-    if any(result.status != "completed" or not _trusted(result) for result in final_reviews):
+    if any(
+        result.status != "completed"
+        or not _trusted(result)
+        or not isinstance(result.payload.get("verdict"), dict)
+        or result.payload["verdict"].get("status") != "passed"
+        for result in final_reviews
+    ):
         state = project(manifest, read_events(kernel.run_dir / "events.jsonl"))
         kernel.transition(Transition("run.status_changed", {"from": state["lifecycle"], "to": "blocked", "reason": "final_review_failed"}))
         return {"completed": completed, "blocked": "final_review"}
