@@ -305,6 +305,59 @@ def main() -> int:
             }
         )
 
+    with tempfile.TemporaryDirectory(prefix="cpe-filesystem-delta-") as raw:
+        repo = Path(raw)
+        run(["git", "init", "-q"], repo).check_returncode()
+        run(["git", "config", "user.email", "eval@example.com"], repo).check_returncode()
+        run(["git", "config", "user.name", "Eval"], repo).check_returncode()
+        (repo / "baseline.txt").write_text("baseline\n", encoding="utf-8")
+        run(["git", "add", "baseline.txt"], repo).check_returncode()
+        run(["git", "commit", "-q", "-m", "baseline"], repo).check_returncode()
+        before_filesystem = capture_snapshot(repo)
+        (repo / "hidden").mkdir()
+        (repo / "hidden" / ".git").write_bytes(b"nested content")
+        (repo / "empty-unclaimed").mkdir()
+        after_filesystem = capture_snapshot(repo)
+        filesystem_delta = diff_snapshots(before_filesystem, after_filesystem, repo)
+        checks.update(
+            {
+                "nested_git_and_empty_directory_are_content": filesystem_delta.changed_files
+                == ("empty-unclaimed", "hidden", "hidden/.git"),
+                "only_root_git_metadata_is_excluded": "hidden/.git"
+                in dict(after_filesystem.files),
+            }
+        )
+
+        before_unreadable = after_filesystem
+        sealed = repo / "sealed.bin"
+        sealed.write_bytes(b"sealed\x00content")
+        sealed.chmod(0)
+        try:
+            try:
+                tolerant = capture_snapshot(repo, tolerate_invalid_git=True)
+                unreadable_delta = diff_snapshots(before_unreadable, tolerant, repo)
+                tolerant_ok = (
+                    "sealed.bin" in unreadable_delta.changed_files
+                    and not tolerant._filesystem_valid
+                )
+            except (OSError, RuntimeError):
+                tolerant_ok = False
+        finally:
+            sealed.chmod(0o600)
+        checks["tolerant_unreadable_content_is_measurable"] = tolerant_ok
+
+        sealed.chmod(0)
+        try:
+            try:
+                capture_snapshot(repo)
+            except (OSError, RuntimeError):
+                strict_rejected = True
+            else:
+                strict_rejected = False
+        finally:
+            sealed.chmod(0o600)
+        checks["strict_unreadable_baseline_fails_closed"] = strict_rejected
+
     with tempfile.TemporaryDirectory(prefix="cpe-patch-kernel-") as raw:
         run_dir = Path(raw) / "run"
         run_dir.mkdir()

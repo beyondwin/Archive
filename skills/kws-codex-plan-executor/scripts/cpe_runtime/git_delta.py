@@ -22,6 +22,7 @@ class GitSnapshot:
     cumulative_patch_sha256: str
     _git_identity_sha256: str = field(default="", repr=False)
     _git_metadata_valid: bool = field(default=True, repr=False)
+    _filesystem_valid: bool = field(default=True, repr=False)
 
 
 @dataclass(frozen=True)
@@ -33,12 +34,16 @@ class GitDelta:
 
 
 def _git_result(worktree: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]:
-    return subprocess.run(
-        ["git", *args],
-        cwd=worktree,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    argv = ["git", *args]
+    try:
+        return subprocess.run(
+            argv,
+            cwd=worktree,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError:
+        return subprocess.CompletedProcess(argv, 127, b"", b"")
 
 
 def _field(label: bytes, value: bytes) -> bytes:
@@ -65,30 +70,85 @@ def _read_file_no_follow(path: Path) -> bytes:
         os.close(descriptor)
 
 
-def _content_record(worktree: Path, relative: str) -> tuple[str, bytes]:
+def _error_code(error: OSError) -> str:
+    if isinstance(error, PermissionError):
+        return "permission_denied"
+    if isinstance(error, FileNotFoundError):
+        return "disappeared"
+    if isinstance(error, NotADirectoryError):
+        return "not_a_directory"
+    return f"oserror_{error.errno}" if error.errno is not None else "oserror_unknown"
+
+
+def _error_record(kind: str, mode: int, code: str) -> tuple[str, bytes, bool]:
+    marker = f"{kind}:{mode:o}:{code}".encode("ascii")
+    digest = hashlib.sha256(marker).hexdigest()
+    return f"error:{kind}:{mode:o}:{code}:{digest}", marker, False
+
+
+def _content_record(
+    worktree: Path,
+    relative: str,
+    *,
+    tolerate_errors: bool,
+    observed: bool,
+    scan_error: str | None = None,
+) -> tuple[str, bytes, bool]:
     parts = _safe_path(relative).parts
     path = worktree.joinpath(*parts)
     try:
         metadata = path.lstat()
-    except FileNotFoundError:
-        return "deleted", b""
+    except FileNotFoundError as exc:
+        if not observed:
+            return "deleted", b"", True
+        if tolerate_errors:
+            return _error_record("path", 0, _error_code(exc))
+        raise RuntimeError("filesystem snapshot failed: observed path disappeared") from None
+    except OSError as exc:
+        if tolerate_errors:
+            return _error_record("path", 0, _error_code(exc))
+        raise RuntimeError("filesystem snapshot failed: path metadata unreadable") from None
     mode = stat.S_IMODE(metadata.st_mode)
+    if stat.S_ISDIR(metadata.st_mode):
+        access_error = scan_error
+        if mode & 0o444 == 0 or mode & 0o111 == 0:
+            access_error = access_error or "mode_unreadable"
+        if access_error:
+            if tolerate_errors:
+                return _error_record("directory", mode, access_error)
+            raise RuntimeError("filesystem snapshot failed: directory unreadable")
+        marker = f"directory:{mode:o}".encode("ascii")
+        return f"directory:{mode:o}:{hashlib.sha256(marker).hexdigest()}", marker, True
     if stat.S_ISLNK(metadata.st_mode):
-        target = os.readlink(os.fsencode(path))
+        try:
+            target = os.readlink(os.fsencode(path))
+        except OSError as exc:
+            if tolerate_errors:
+                return _error_record("symlink", mode, _error_code(exc))
+            raise RuntimeError("filesystem snapshot failed: symlink unreadable") from None
         raw = target if isinstance(target, bytes) else os.fsencode(target)
-        return f"symlink:{mode:o}:{hashlib.sha256(raw).hexdigest()}", raw
+        return f"symlink:{mode:o}:{hashlib.sha256(raw).hexdigest()}", raw, True
     if stat.S_ISREG(metadata.st_mode):
-        raw = _read_file_no_follow(path)
-        return f"file:{mode:o}:{hashlib.sha256(raw).hexdigest()}", raw
+        if mode & 0o444 == 0:
+            if tolerate_errors:
+                return _error_record("file", mode, "mode_unreadable")
+            raise RuntimeError("filesystem snapshot failed: file unreadable")
+        try:
+            raw = _read_file_no_follow(path)
+        except OSError as exc:
+            if tolerate_errors:
+                return _error_record("file", mode, _error_code(exc))
+            raise RuntimeError("filesystem snapshot failed: file unreadable") from None
+        return f"file:{mode:o}:{hashlib.sha256(raw).hexdigest()}", raw, True
     marker = f"other:{metadata.st_mode:o}".encode("ascii")
-    return f"other:{mode:o}:{hashlib.sha256(marker).hexdigest()}", marker
+    return f"other:{mode:o}:{hashlib.sha256(marker).hexdigest()}", marker, True
 
 
 def _listed_paths(
     worktree: Path,
     *,
     tolerate_invalid_git: bool,
-) -> tuple[tuple[str, ...], bool]:
+) -> tuple[tuple[str, ...], bool, frozenset[str], dict[str, str]]:
     tracked_result = _git_result(worktree, ["ls-files", "-z", "--cached"])
     if tracked_result.returncode:
         if not tolerate_invalid_git:
@@ -103,21 +163,41 @@ def _listed_paths(
         }
         git_valid = True
     filesystem: set[str] = set()
+    scan_errors: dict[str, str] = {}
 
     def walk(directory: bytes, prefix: bytes = b"") -> None:
-        with os.scandir(directory) as entries:
+        try:
+            entries_context = os.scandir(directory)
+        except OSError as exc:
+            if not tolerate_invalid_git:
+                raise RuntimeError("filesystem snapshot failed: directory unreadable") from None
+            scan_errors[os.fsdecode(prefix)] = _error_code(exc)
+            return
+        with entries_context as entries:
             for entry in entries:
                 name = entry.name
-                if name == b".git":
+                if not prefix and name == b".git":
                     continue
                 relative = name if not prefix else prefix + b"/" + name
-                if entry.is_dir(follow_symlinks=False):
+                relative_text = os.fsdecode(relative)
+                filesystem.add(relative_text)
+                try:
+                    is_directory = entry.is_dir(follow_symlinks=False)
+                except OSError as exc:
+                    if not tolerate_invalid_git:
+                        raise RuntimeError("filesystem snapshot failed: path type unreadable") from None
+                    scan_errors[relative_text] = _error_code(exc)
+                    continue
+                if is_directory:
                     walk(entry.path, relative)
-                else:
-                    filesystem.add(os.fsdecode(relative))
 
     walk(os.fsencode(worktree))
-    return tuple(sorted(tracked | filesystem)), git_valid
+    return (
+        tuple(sorted(tracked | filesystem)),
+        git_valid,
+        frozenset(filesystem),
+        scan_errors,
+    )
 
 
 def _capture_head(worktree: Path, *, tolerate_invalid_git: bool) -> tuple[str, bool]:
@@ -226,7 +306,7 @@ def capture_snapshot(
     head, head_valid = _capture_head(
         worktree, tolerate_invalid_git=tolerate_invalid_git
     )
-    listed, index_valid = _listed_paths(
+    listed, index_valid, observed, scan_errors = _listed_paths(
         worktree, tolerate_invalid_git=tolerate_invalid_git
     )
     git_identity, identity_valid = _capture_git_identity(
@@ -236,7 +316,19 @@ def capture_snapshot(
     )
     if not head_valid:
         head = INVALID_GIT_HEAD
-    files = tuple((path, _content_record(worktree, path)[0]) for path in listed)
+    records: list[tuple[str, str]] = []
+    filesystem_valid = "" not in scan_errors
+    for path in listed:
+        fingerprint, _raw, valid = _content_record(
+            worktree,
+            path,
+            tolerate_errors=tolerate_invalid_git,
+            observed=path in observed,
+            scan_error=scan_errors.get(path),
+        )
+        records.append((path, fingerprint))
+        filesystem_valid = filesystem_valid and valid
+    files = tuple(records)
     digest = hashlib.sha256(_snapshot_bytes(head, files, git_identity)).hexdigest()
     return GitSnapshot(
         head,
@@ -244,6 +336,7 @@ def capture_snapshot(
         digest,
         git_identity,
         head_valid and index_valid and identity_valid,
+        filesystem_valid,
     )
 
 
@@ -251,7 +344,12 @@ def capture_binary_patch(worktree: Path, changed_files: tuple[str, ...] | list[s
     worktree = worktree.expanduser().resolve()
     payload = bytearray(b"CPE-GIT-CONTENT-V1\0")
     for path in sorted(set(changed_files)):
-        fingerprint, raw = _content_record(worktree, path)
+        fingerprint, raw, _valid = _content_record(
+            worktree,
+            path,
+            tolerate_errors=True,
+            observed=False,
+        )
         payload.extend(_field(b"P", _path_bytes(path)))
         payload.extend(_field(b"F", fingerprint.encode("ascii")))
         payload.extend(_field(b"C", raw))

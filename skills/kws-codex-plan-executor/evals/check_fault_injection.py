@@ -151,6 +151,10 @@ def _scope_fault(
     delete_index: bool = False,
     stage_allowed: bool = False,
     switch_same_commit: bool = False,
+    nested_git_file: bool = False,
+    empty_directory: bool = False,
+    chmod_file: bool = False,
+    chmod_directory: bool = False,
 ) -> dict[str, bool]:
     with tempfile.TemporaryDirectory(prefix="cpe-scope-fault-") as raw:
         forbidden_paths = [ignored_path] if ignored_path and ignored_forbidden else []
@@ -173,6 +177,19 @@ def _scope_fault(
                     reported = ["owned-a.txt"]
                 elif switch_same_commit:
                     _run(["git", "switch", "-q", "same-commit-branch"], worktree).check_returncode()
+                elif nested_git_file:
+                    (worktree / "hidden").mkdir()
+                    (worktree / "hidden" / ".git").write_bytes(b"nested git name")
+                elif empty_directory:
+                    (worktree / "empty-unclaimed").mkdir()
+                elif chmod_file:
+                    sealed_file = worktree / "sealed-unclaimed.bin"
+                    sealed_file.write_bytes(b"sealed\x00file")
+                    sealed_file.chmod(0)
+                elif chmod_directory:
+                    sealed_directory = worktree / "sealed-unclaimed-dir"
+                    sealed_directory.mkdir()
+                    sealed_directory.chmod(0)
                 elif ignored_path:
                     (worktree / ignored_path).write_bytes(b"\x00ignored write")
                 elif commit_head:
@@ -198,7 +215,21 @@ def _scope_fault(
         state = project(manifest, events)
         revision_indexes = [index for index, event in enumerate(events) if event["type"] == "worktree.revision_recorded"]
         blocker_indexes = [index for index, event in enumerate(events) if event["type"] == "blocker.opened"]
-        changed_path = "owned-a.txt" if stage_allowed else ignored_path or "owned-b.txt"
+        if stage_allowed:
+            expected_changed_files = ["owned-a.txt"]
+        elif nested_git_file:
+            expected_changed_files = ["hidden", "hidden/.git"]
+        elif empty_directory:
+            expected_changed_files = ["empty-unclaimed"]
+        elif chmod_file:
+            expected_changed_files = ["sealed-unclaimed.bin"]
+        elif chmod_directory:
+            expected_changed_files = ["sealed-unclaimed-dir"]
+        elif delete_git or delete_index or commit_head or switch_same_commit:
+            expected_changed_files = []
+        else:
+            expected_changed_files = [ignored_path or "owned-b.txt"]
+        changed_path = expected_changed_files[0] if expected_changed_files else "owned-b.txt"
         expected_root = (
             "worktree_head_changed"
             if commit_head
@@ -208,16 +239,19 @@ def _scope_fault(
             or switch_same_commit
             else f"task_scope:T1:{changed_path}"
         )
-        expected_scope_error = (
-            f"forbidden_write:{changed_path}"
-            if ignored_forbidden
-            else f"unclaimed_write:{changed_path}"
-        )
+        expected_scope_errors = [
+            (
+                f"forbidden_write:{path}"
+                if ignored_forbidden
+                else f"unclaimed_write:{path}"
+            )
+            for path in expected_changed_files
+        ]
         blocker = state["active_blockers"][0] if state["active_blockers"] else {}
         completed_attempts = [
             event for event in events if event["type"] == "attempt.completed"
         ]
-        return {
+        checks = {
             "blocked_before_downstream": result.get("status") == "blocked"
             and result.get("failure_category") == "policy_violation"
             and "task_review" not in launched
@@ -230,7 +264,7 @@ def _scope_fault(
             or delete_index
             or stage_allowed
             or switch_same_commit
-            or blocker.get("scope_errors") == [expected_scope_error],
+            or blocker.get("scope_errors") == expected_scope_errors,
             "revision_precedes_blocker": bool(revision_indexes and blocker_indexes)
             and revision_indexes[0] < blocker_indexes[0],
             "worker_report_is_diagnostic_only": commit_head
@@ -239,11 +273,11 @@ def _scope_fault(
             or switch_same_commit
             or any(
                 event["type"] == "worktree.revision_recorded"
-                and event["payload"].get("changed_files") == [changed_path]
+                and event["payload"].get("changed_files") == expected_changed_files
                 for event in events
             ),
             "unexpected_exception_is_failed_attempt": not (
-                unexpected_exception or delete_git
+                unexpected_exception or delete_git or chmod_file or chmod_directory
             )
             or (
                 len(completed_attempts) == 1
@@ -258,6 +292,11 @@ def _scope_fault(
                 and state["lifecycle"] == "blocked"
             ),
         }
+        if chmod_file:
+            (worktree / "sealed-unclaimed.bin").chmod(0o600)
+        if chmod_directory:
+            (worktree / "sealed-unclaimed-dir").chmod(0o700)
+        return checks
 
 
 def _initial_invalid_git_fault() -> dict[str, bool]:
@@ -291,6 +330,66 @@ def _initial_invalid_git_fault() -> dict[str, bool]:
         }
 
 
+def _root_unreadable_fault() -> dict[str, bool]:
+    with tempfile.TemporaryDirectory(prefix="cpe-root-unreadable-") as raw:
+        worktree, run_dir, tasks, kernel = _scope_fixture(Path(raw))
+        launched: list[str] = []
+
+        def provider(request, _argv):
+            launched.append(request.attempt_kind)
+            if request.attempt_kind == "implementation" and request.task_id == "T1":
+                worktree.chmod(0)
+            return _scope_result(request.attempt_kind, request.worktree_revision, [])
+
+        try:
+            try:
+                result = run_tasks(tasks, Worker(provider=provider), kernel)
+            except Exception as exc:
+                result = {"status": "error", "reason": str(exc)}
+        finally:
+            worktree.chmod(0o700)
+        manifest = load_verified_manifest(run_dir / "run_manifest.json")
+        events = read_events(run_dir / "events.jsonl")
+        state = project(manifest, events)
+        revision_indexes = [
+            index
+            for index, event in enumerate(events)
+            if event["type"] == "worktree.revision_recorded"
+        ]
+        blocker_indexes = [
+            index
+            for index, event in enumerate(events)
+            if event["type"] == "blocker.opened"
+        ]
+        completed_attempts = [
+            event for event in events if event["type"] == "attempt.completed"
+        ]
+        blocker = state["active_blockers"][0] if state["active_blockers"] else {}
+        revision_paths = next(
+            (
+                event["payload"].get("changed_files")
+                for event in events
+                if event["type"] == "worktree.revision_recorded"
+            ),
+            [],
+        )
+        return {
+            "blocked_before_downstream": result.get("status") == "blocked"
+            and "task_review" not in launched
+            and "verification" not in launched,
+            "revision_captures_baseline_union": state["worktree_revision"] == 1
+            and ".gitignore" in revision_paths
+            and "owned-b.txt" in revision_paths,
+            "failed_attempt_recorded": len(completed_attempts) == 1
+            and completed_attempts[0]["payload"].get("status") == "failed"
+            and bool(completed_attempts[0]["payload"].get("evidence_refs")),
+            "typed_policy_blocker": blocker.get("category") == "policy_violation",
+            "revision_precedes_blocker": bool(revision_indexes and blocker_indexes)
+            and revision_indexes[0] < blocker_indexes[0],
+            "run_is_blocked": state["lifecycle"] == "blocked",
+        }
+
+
 def scope_cases() -> dict[str, bool]:
     cross_task = _scope_fault(False)
     head_change = _scope_fault(True)
@@ -309,7 +408,12 @@ def scope_cases() -> dict[str, bool]:
     deleted_index = _scope_fault(False, delete_index=True)
     staged_index = _scope_fault(False, stage_allowed=True)
     same_commit_branch = _scope_fault(False, switch_same_commit=True)
+    nested_git = _scope_fault(False, nested_git_file=True)
+    empty_dir = _scope_fault(False, empty_directory=True)
+    sealed_file = _scope_fault(False, chmod_file=True)
+    sealed_dir = _scope_fault(False, chmod_directory=True)
     initial_invalid_git = _initial_invalid_git_fault()
+    root_unreadable = _root_unreadable_fault()
     return {
         **{f"cross_task_{name}": passed for name, passed in cross_task.items()},
         **{f"head_change_{name}": passed for name, passed in head_change.items()},
@@ -321,7 +425,12 @@ def scope_cases() -> dict[str, bool]:
         **{f"deleted_index_{name}": passed for name, passed in deleted_index.items()},
         **{f"staged_index_{name}": passed for name, passed in staged_index.items()},
         **{f"same_commit_branch_{name}": passed for name, passed in same_commit_branch.items()},
+        **{f"nested_git_{name}": passed for name, passed in nested_git.items()},
+        **{f"empty_dir_{name}": passed for name, passed in empty_dir.items()},
+        **{f"sealed_file_{name}": passed for name, passed in sealed_file.items()},
+        **{f"sealed_dir_{name}": passed for name, passed in sealed_dir.items()},
         **{f"initial_invalid_git_{name}": passed for name, passed in initial_invalid_git.items()},
+        **{f"root_unreadable_{name}": passed for name, passed in root_unreadable.items()},
     }
 
 
