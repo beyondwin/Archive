@@ -246,22 +246,26 @@ def _worker_attempt(
         contract = task.get("execution_contract") if task and isinstance(task.get("execution_contract"), dict) else {}
         allowed = list(contract.get("allowed_paths") or (task.get("file_claims") if task else []) or [])
         forbidden = list(contract.get("forbidden_paths") or [])
-        write_outcome = AttemptController(kernel, worktree).run_write_attempt(
-            task_id=str(task_id),
-            attempt_id=attempt_id,
-            role=kind,
-            allowed=[str(path) for path in allowed],
-            forbidden=[str(path) for path in forbidden],
-            operation=invoke,
-        )
-        if write_outcome.error is not None:
-            result = _unexpected_worker_failure(write_outcome.error)
-        elif write_outcome.result is None:
-            result = _unexpected_worker_failure(
-                RuntimeError("write attempt returned no worker result")
+        try:
+            write_outcome = AttemptController(kernel, worktree).run_write_attempt(
+                task_id=str(task_id),
+                attempt_id=attempt_id,
+                role=kind,
+                allowed=[str(path) for path in allowed],
+                forbidden=[str(path) for path in forbidden],
+                operation=invoke,
             )
+        except Exception as exc:
+            result = _unexpected_worker_failure(exc)
         else:
-            result = write_outcome.result
+            if write_outcome.error is not None:
+                result = _unexpected_worker_failure(write_outcome.error)
+            elif write_outcome.result is None:
+                result = _unexpected_worker_failure(
+                    RuntimeError("write attempt returned no worker result")
+                )
+            else:
+                result = write_outcome.result
     else:
         result = invoke()
     _complete_attempt(kernel, task_id, kind, result, attempt_id)

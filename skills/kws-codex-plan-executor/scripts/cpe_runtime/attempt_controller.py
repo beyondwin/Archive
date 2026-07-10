@@ -6,7 +6,13 @@ from typing import Callable, Generic, TypeVar
 from typing import TYPE_CHECKING
 
 from .events import read_events
-from .git_delta import GitDelta, capture_snapshot, diff_snapshots, scope_errors
+from .git_delta import (
+    INVALID_GIT_HEAD,
+    GitDelta,
+    capture_snapshot,
+    diff_snapshots,
+    scope_errors,
+)
 from .manifest import load_verified_manifest
 from .packets import PACKET_ROLE_POLICY
 from .projector import project
@@ -78,7 +84,11 @@ class AttemptController:
         except Exception as exc:
             error = exc
         finally:
-            after = capture_snapshot(self.worktree)
+            after = capture_snapshot(self.worktree, tolerate_invalid_git=True)
+            if (
+                after.head == INVALID_GIT_HEAD or not after._git_metadata_valid
+            ) and error is None:
+                error = RuntimeError("post-write git metadata is invalid")
             delta = diff_snapshots(before, after, self.worktree)
             revision = self._revision()
             patch_ref = None
