@@ -3,15 +3,56 @@ from __future__ import annotations
 import subprocess
 import hashlib
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 
 from .evidence import put_json
 from .kernel import Kernel, Transition
 from .manifest import load_verified_manifest, resolve_ref
 from .model_policy import CORE_ROUTE
+from .packets import PACKET_ROLE_POLICY, packet_entry, verify_packet
 from .projector import project
 from .events import read_events
 from .worker import Worker, WorkerError, WorkerRequest, WorkerResult
+
+
+@dataclass(frozen=True)
+class PacketBoundWorkerRequest(WorkerRequest):
+    task_id: str
+    packet_path: str
+    packet_sha256: str
+
+
+def make_packet_request(
+    run_dir: Path,
+    manifest: dict,
+    task_id: str,
+    attempt_id: str,
+    attempt_kind: str,
+    prompt: str,
+    worktree: Path,
+) -> PacketBoundWorkerRequest:
+    verify_packet(run_dir, manifest, task_id)
+    entry = packet_entry(manifest, task_id)
+    packet_prompt = (
+        f"{prompt}\n\n"
+        "VERIFIED TASK PACKET (immutable runtime input)\n"
+        f"task_id={task_id}\n"
+        f"packet_path={entry['path']}\n"
+        f"packet_sha256={entry['sha256']}"
+    )
+    role = PACKET_ROLE_POLICY[attempt_kind]
+    return PacketBoundWorkerRequest(
+        attempt_id,
+        attempt_kind,
+        packet_prompt,
+        worktree,
+        role["read_only"],
+        role["verdict_capable"],
+        task_id,
+        entry["path"],
+        entry["sha256"],
+    )
 
 
 def run_scouts(requests: list[WorkerRequest], worker: Worker) -> list[WorkerResult]:
@@ -105,8 +146,19 @@ def _worker_attempt(
 ) -> WorkerResult:
     task_id = str(task["id"]) if task else None
     attempt_id = f"{task_id or 'run'}.{kind}.{ordinal}"
+    manifest = load_verified_manifest(kernel.run_dir / "run_manifest.json")
+    packet_task_id = task_id or str((manifest.get("task_graph") or [{}])[0].get("id") or "")
     try:
-        result = worker.run(WorkerRequest(attempt_id, kind, prompt, worktree, False, True))
+        request = make_packet_request(
+            kernel.run_dir,
+            manifest,
+            packet_task_id,
+            attempt_id,
+            kind,
+            prompt,
+            worktree,
+        )
+        result = worker.run(request)
     except WorkerError as exc:
         payload = {"status": "failed", "summary": str(exc), "changed_files": [], "findings": [], "evidence_refs": [], "missing_evidence": [str(exc)], "verification": [], "failure_category": "transient"}
         result = WorkerResult("failed", payload, {"verified": False, "error": str(exc)}, {}, 0, hashlib.sha256(str(exc).encode()).hexdigest(), str(exc))
@@ -178,7 +230,15 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
         if scouts:
             kernel.transition(Transition("task.status_changed", {"from": "ready", "to": "scouting"}, task_id=task_id))
             requests = [
-                WorkerRequest(f"{task_id}.scout.{index}", "scout", prompt, worktree, True, False)
+                make_packet_request(
+                    kernel.run_dir,
+                    manifest,
+                    task_id,
+                    f"{task_id}.scout.{index}",
+                    "scout",
+                    prompt,
+                    worktree,
+                )
                 for index, prompt in enumerate(scouts, 1)
             ]
             for index, result in enumerate(run_scouts(requests, worker), 1):
@@ -208,7 +268,7 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
         repair_counts: dict[str, int] = {}
         cycle = 1
         while True:
-            review = _worker_attempt(worker, kernel, task, worktree, "review", cycle, f"Review task {task_id} against its packet and diff.")
+            review = _worker_attempt(worker, kernel, task, worktree, "task_review", cycle, f"Review task {task_id} against its packet and diff.")
             if review.status == "completed" and _trusted(review):
                 kernel.transition(Transition("task.status_changed", {"from": "reviewing", "to": "verifying"}, task_id=task_id))
                 acceptance_ok, acceptance_payload = _acceptance(task, worktree, kernel, cycle)

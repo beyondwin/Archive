@@ -7,6 +7,9 @@ import json
 import subprocess
 from pathlib import Path
 
+from cpe_runtime.manifest import load_verified_manifest
+from cpe_runtime.packets import verify_packet
+
 from cpe_audit_common import (
     ADAPTIVE_LOCAL_FAST_PATH_DOCS_ONLY,
     ADAPTIVE_LOCAL_FAST_PATH_LINEAR_TASK,
@@ -82,9 +85,9 @@ def write_scope_format_invalid(pattern: str) -> bool:
 def packet_context_status(packet: dict) -> str:
     budget = packet.get("context_budget") if isinstance(packet, dict) else {}
     if not isinstance(budget, dict):
-        return "unknown"
+        return "green"
     status = budget.get("status")
-    return status if isinstance(status, str) and status.strip() else "unknown"
+    return status if isinstance(status, str) and status.strip() else "green"
 
 
 def packet_estimated_chars(packet: dict) -> int:
@@ -96,13 +99,14 @@ def packet_estimated_chars(packet: dict) -> int:
 
 
 def adaptive_value_decision(packet: dict, write_scope: list[str], explicit_requested: bool) -> tuple[str, str, dict]:
-    files = list_strings(packet.get("files"))
-    dependencies = dependency_list(packet)
-    explicit_risks = list_strings(packet.get("risk_markers"))
+    task = packet.get("task") if isinstance(packet.get("task"), dict) else {}
+    contract = packet.get("execution_contract") if isinstance(packet.get("execution_contract"), dict) else {}
+    files = list_strings(task.get("file_claims"))
+    dependencies = dependency_list(task)
+    explicit_risks = list_strings(task.get("risk_markers"))
     allowed = []
-    policy = packet.get("write_policy") if isinstance(packet, dict) else {}
-    if isinstance(policy, dict):
-        allowed = list_strings(policy.get("allowed_write_globs"))
+    if isinstance(contract, dict):
+        allowed = list_strings(contract.get("allowed_edits"))
     context_status = packet_context_status(packet)
     estimated_chars = packet_estimated_chars(packet)
     risk_markers = path_risk_markers(files + write_scope, explicit_risks)
@@ -146,9 +150,8 @@ def advisory_value_decision(packet: dict, write_scope: list[str], explicit_reque
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Decide CPE subagent pre-dispatch readiness.")
-    parser.add_argument("--state", required=True)
+    parser.add_argument("--run-dir", required=True)
     parser.add_argument("--task-id", required=True)
-    parser.add_argument("--task-packet", required=True)
     parser.add_argument("--repo-root", required=True)
     parser.add_argument("--write-scope", action="append", required=True)
     parser.add_argument("--output")
@@ -167,7 +170,7 @@ def main() -> int:
     args = parser.parse_args()
 
     repo = Path(args.repo_root).resolve()
-    state_path = Path(args.state)
+    run_dir = Path(args.run_dir).expanduser().resolve()
     failed: list[str] = []
     decision = "delegate"
     reason = "all pre-dispatch prerequisites passed"
@@ -198,32 +201,20 @@ def main() -> int:
         decision = "local_fallback"
         reason = "spawn_agent tool policy requires explicit user delegation intent"
 
-    packet_path = Path(args.task_packet)
     packet = {}
-    if not packet_path.is_file():
-        failed.append("task_packet_missing")
-    else:
-        packet = json.loads(packet_path.read_text(encoding="utf-8"))
+    try:
+        manifest = load_verified_manifest(run_dir / "run_manifest.json")
+        draft = verify_packet(run_dir, manifest, args.task_id)
+        packet = json.loads(draft.content)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        category = str(exc) or "packet_invalid"
+        failed.append(category)
+        decision = "block"
+        reason = category
 
-    if not state_path.is_file():
-        failed.append("state_missing")
-        state = {}
-    else:
-        state = json.loads(state_path.read_text(encoding="utf-8"))
-        if state.get("subagents_requested") is not True:
-            failed.append("subagents_not_requested")
-        tasks = state.get("tasks") if isinstance(state.get("tasks"), dict) else {}
-        task_state = tasks.get(args.task_id) if isinstance(tasks.get(args.task_id), dict) else {}
-        expected_hash = task_state.get("task_packet_sha256")
-        actual_hash = packet.get("sha256") if isinstance(packet, dict) else None
-        if expected_hash and actual_hash and expected_hash != actual_hash:
-            failed.append("task_packet_hash_mismatch")
-            decision = "block"
-            reason = "task packet hash does not match state"
-
-    policy = packet.get("write_policy") if isinstance(packet, dict) else {}
-    allowed = policy.get("allowed_write_globs") if isinstance(policy, dict) else []
-    forbidden = policy.get("forbidden_write_globs") if isinstance(policy, dict) else []
+    contract = packet.get("execution_contract") if isinstance(packet, dict) else {}
+    allowed = contract.get("allowed_edits") if isinstance(contract, dict) else []
+    forbidden = contract.get("forbidden_edits") if isinstance(contract, dict) else []
     if not allowed:
         failed.append("allowed_write_globs_empty")
     if any(write_scope_too_broad(str(scope)) for scope in allowed):
@@ -247,8 +238,8 @@ def main() -> int:
     if isinstance(spec, dict) and spec.get("fallback_used") is True:
         failed.append("explicit_spec_mapping_required")
 
-    acceptance = packet.get("acceptance") if isinstance(packet, dict) else {}
-    if isinstance(acceptance, dict) and not acceptance.get("command"):
+    acceptance = contract.get("acceptance_command_or_honest_substitute") if isinstance(contract, dict) else None
+    if not acceptance:
         failed.append("acceptance_command_missing")
 
     dirty = git_changed(repo)

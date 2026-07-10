@@ -16,8 +16,9 @@ from pathlib import Path
 from preflight_dependencies import check_requirements
 
 from cpe_runtime.events import read_events, validate_chain
-from cpe_runtime.kernel import Kernel, Transition, rebuild_snapshot
-from cpe_runtime.manifest import create_manifest, load_verified_manifest, write_manifest
+from cpe_runtime.kernel import Kernel, RunKernel, Transition, rebuild_snapshot
+from cpe_runtime.manifest import create_manifest, load_verified_manifest
+from cpe_runtime.packets import build_packet
 from cpe_runtime.plan_compiler import CompileBlocked, compile_run
 from cpe_runtime.projector import project
 from cpe_runtime.prompt_export import render_export_bundle
@@ -54,38 +55,6 @@ def _allocate_paths(plan: Path) -> tuple[str, Path, Path]:
     raise PreflightError("unable to allocate a non-conflicting run id")
 
 
-def _write_json_exclusive(path: Path, payload: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("x", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        handle.write("\n")
-        handle.flush()
-        os.fsync(handle.fileno())
-
-
-def _task_packets(run_dir: Path, tasks: list[dict], spec: Path | None, spec_manifest: dict | None) -> None:
-    spec_lines = spec.read_text(encoding="utf-8").splitlines() if spec else []
-    sections = (spec_manifest or {}).get("sections", {})
-    for task in tasks:
-        excerpts = []
-        for ref in task["spec_refs"]:
-            section = sections[ref]
-            excerpts.append(
-                {
-                    "id": ref,
-                    "sha256": section["sha256"],
-                    "text": "\n".join(spec_lines[section["line_start"] - 1 : section["line_end"]]),
-                }
-            )
-        packet = {
-            "schema_version": "3",
-            "task": task,
-            "spec_sections": excerpts,
-            "write_policy": {"allowed": task["file_claims"], "forbidden": ["run_manifest.json", "events.jsonl", "state.json"]},
-        }
-        _write_json_exclusive(run_dir / "artifacts" / "task-packets" / f"{task['id']}.json", packet)
-
-
 def _create_worktree(workspace: Path, worktree: Path, run_id: str) -> str:
     worktree.parent.mkdir(parents=True, exist_ok=True)
     branch = f"codex/{run_id}"
@@ -113,12 +82,10 @@ def execute_run(args: argparse.Namespace) -> int:
         mode=args.mode,
     )
     tasks = list(compiled.tasks)
-    spec_manifest = compiled.spec_manifest
     head = compiled.source_head
     status = list(compiled.source_status)
     run_id, run_dir, worktree = _allocate_paths(plan)
     _create_worktree(workspace, worktree, run_id)
-    run_dir.mkdir(parents=True, exist_ok=False)
     pricing = Path(__file__).resolve().parents[1] / "data" / "pricing-snapshot.json"
     manifest = create_manifest(
         run_id,
@@ -133,9 +100,8 @@ def execute_run(args: argparse.Namespace) -> int:
         source_head=head,
         source_status=status,
     )
-    write_manifest(run_dir / "run_manifest.json", manifest)
-    _task_packets(run_dir, tasks, spec, spec_manifest)
-    kernel = Kernel(run_dir)
+    packet_drafts = [build_packet(compiled, task) for task in tasks]
+    kernel = RunKernel.initialize(run_dir, manifest, packet_drafts)
     kernel.transition(Transition("run.status_changed", {"from": "created", "to": "ready"}))
     result = run_tasks(tasks, Worker(), kernel)
     payload = {"run_id": run_id, "run_dir": str(run_dir), "worktree": str(worktree), **result}

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from pathlib import PurePosixPath
 
 from .model_policy import policy_hash, policy_payload
 
@@ -81,6 +82,7 @@ def create_manifest(
         "pricing_snapshot": file_record(pricing_snapshot),
         "pricing_snapshot_hash": sha256_file(pricing_snapshot),
         "source_git": {"head": source_head, "status": list(source_status or [])},
+        "task_packets": [],
     }
 
 
@@ -136,4 +138,29 @@ def validate_manifest(manifest: dict) -> list[str]:
     pricing = manifest.get("pricing_snapshot") or {}
     if pricing.get("sha256") != manifest.get("pricing_snapshot_hash"):
         errors.append("pricing_snapshot_hash_mismatch")
+    packet_entries = manifest.get("task_packets")
+    if not isinstance(packet_entries, list):
+        errors.append("packet_index_invalid")
+    else:
+        seen: set[str] = set()
+        task_ids = {str(task.get("id")) for task in manifest.get("task_graph", []) if isinstance(task, dict)}
+        for entry in packet_entries:
+            if not isinstance(entry, dict):
+                errors.append("packet_index_invalid")
+                continue
+            task_id = entry.get("task_id")
+            path = entry.get("path")
+            digest = entry.get("sha256")
+            if (
+                not isinstance(task_id, str)
+                or task_id not in task_ids
+                or task_id in seen
+                or not isinstance(path, str)
+                or PurePosixPath(path) != PurePosixPath("artifacts", "task-packets", f"{task_id}.json")
+                or entry.get("media_type") != "application/json"
+                or not isinstance(digest, str)
+                or len(digest) != 64
+            ):
+                errors.append("packet_index_invalid")
+            seen.add(str(task_id))
     return list(dict.fromkeys(errors))
