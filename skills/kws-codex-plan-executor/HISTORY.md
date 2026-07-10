@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 3.0.0 - 2026-07-10
+
+- Replaced mutable v2 execution surfaces with v3 manifest, evidence, event,
+  projection, validation, reconciliation, repair, inspection, and fixed model routing.
+- Added reproducible dependency reporting and deterministic migration dry-run evidence.
+
 - Added schema-aware subagent boundary attestation for accepted delegated runs.
 - Added attempt-lineage validation so finished state has at most one final
   accepted attempt per task/write scope.

@@ -2,8 +2,8 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec/design docs, or when exporting a fresh-session/handoff prompt from the same plan.
 metadata:
-  version: "2.27.0"
-  updated_at: "2026-07-05"
+  version: "3.0.0"
+  updated_at: "2026-07-10"
 ---
 
 # KWS Codex Plan Executor
@@ -409,18 +409,13 @@ For prompt/handoff mode:
 1. Verify workspace, plan, spec, and docs paths before inserting them.
 2. Fill every `{{...}}` token in `templates/fresh-session-prompt.txt` or remove
    the optional section.
-3. Keep conservative Spark evidence packing unless the user requests no Spark,
-   no model optimization, or `gpt-5.5 only`.
-4. Include `templates/spark-scout-bullets.ko.txt` only when the user explicitly
-   asks for broader Spark/model scout routing.
+3. Use only the fixed Sol/high core and Terra/high read-only scout routes.
 5. Run the checklist in `references/prompt-export-checklist.md`.
 
 Prompt and handoff modes are export-only. Do not create `~/.codex/orchestrator`
 artifacts, create worktrees, execute tasks, or report completion artifacts in
-these modes. Return exactly one fenced `text` block containing the generated
-prompt. Handoff export must include the literal `HANDOFF CHECKPOINT`; no-Spark
-or `gpt-5.5 only` exports must still include the literal `gpt-5.5 high` while
-omitting Spark routes.
+these modes. Return exactly one fenced `text` block containing the generated prompt.
+Handoff export includes the literal `HANDOFF CHECKPOINT` marker.
 
 ## Validation Matrix
 

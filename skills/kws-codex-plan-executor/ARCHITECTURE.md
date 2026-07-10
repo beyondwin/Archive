@@ -1,6 +1,7 @@
 # Architecture
 
-The executor separates code mutation from orchestration state.
+The v3 executor separates code mutation from immutable manifest/event/evidence
+artifacts and the rebuildable state projection.
 
 ```mermaid
 flowchart TD
