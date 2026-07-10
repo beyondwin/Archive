@@ -91,6 +91,7 @@
 id: T1
 title: Reproducible dependency and eval runner
 owner_boundary: Eval environment and command reporting only
+spec_refs: [S1.20, S1.21]
 files:
   - path: skills/kws-codex-plan-executor/requirements-eval.txt
     mode: owned
@@ -336,6 +337,7 @@ git commit -m "test(cpe): make eval failures reproducible"
 id: T2
 title: Fixed model policy, launcher, prompt export, and invocation rejection
 owner_boundary: Model routing and exported launcher only
+spec_refs: [S1.6.1, S1.13, S1.14]
 files:
   - path: skills/kws-codex-plan-executor/scripts/cpe_runtime/__init__.py
     mode: owned
@@ -614,6 +616,7 @@ git commit -m "feat(cpe): enforce fixed Sol and Terra routes"
 id: T3
 title: Immutable v3 manifest and content-addressed evidence
 owner_boundary: Run inputs and immutable artifacts only
+spec_refs: [S1.6.3, S1.7, S1.8, S1.9.1]
 files:
   - path: skills/kws-codex-plan-executor/scripts/cpe_runtime/manifest.py
     mode: owned
@@ -746,6 +749,7 @@ git commit -m "feat(cpe): add immutable run and evidence stores"
 id: T4
 title: Event store, pure projector, and atomic transition kernel
 owner_boundary: Durable run transitions only
+spec_refs: [S1.6.3, S1.9.2, S1.9.4, S1.10]
 files:
   - path: skills/kws-codex-plan-executor/scripts/cpe_runtime/events.py
     mode: owned
@@ -884,6 +888,7 @@ git commit -m "feat(cpe): add replayable event transition kernel"
 id: T5
 title: V3 task packets with no full-spec fallback
 owner_boundary: Plan compilation, task packet context, readiness, and executability
+spec_refs: [S1.6.2, S1.11, S1.15]
 files:
   - path: skills/kws-codex-plan-executor/scripts/parse_invocation_args.py
     mode: edit
@@ -1030,6 +1035,7 @@ git commit -m "feat(cpe): require explicit task spec mappings"
 id: T6
 title: Semantic Superpowers capability audit
 owner_boundary: Read-only compatibility discovery only
+spec_refs: [S1.11]
 files:
   - path: skills/kws-codex-plan-executor/scripts/audit_superpowers_compatibility.py
     mode: edit
@@ -1147,6 +1153,7 @@ git commit -m "fix(cpe): audit Superpowers by capability"
 id: T7
 title: Executable v3 plan runtime
 owner_boundary: Worker launch, task scheduling, run/resume/export orchestration
+spec_refs: [S1.6.4, S1.12, S1.13]
 files:
   - path: skills/kws-codex-plan-executor/scripts/cpe_runtime/worker.py
     mode: owned
@@ -1284,6 +1291,7 @@ git commit -m "feat(cpe): execute v3 plans through fixed model workers"
 id: T8
 title: One v3 validator for all consumers
 owner_boundary: Schema, integrity, attestation, and completion decisions
+spec_refs: [S1.9.4, S1.18]
 files:
   - path: skills/kws-codex-plan-executor/scripts/cpe_runtime/validation.py
     mode: owned
@@ -1374,6 +1382,7 @@ git commit -m "feat(cpe): validate v3 runs from replayed evidence"
 id: T9
 title: Deterministic v3 reconciliation and repair
 owner_boundary: Drift detection and explicitly safe repair only
+spec_refs: [S1.10, S1.16, S1.17]
 files:
   - path: skills/kws-codex-plan-executor/scripts/cpe_runtime/reconciliation.py
     mode: owned
@@ -1462,6 +1471,7 @@ git commit -m "feat(cpe): reconcile and repair v3 event state"
 id: T10
 title: V3 current and recent run inspection
 owner_boundary: Read-only projections and aggregate metrics
+spec_refs: [S1.6.6, S1.19]
 files:
   - path: skills/kws-codex-plan-executor/scripts/cpe_runtime/inspection.py
     mode: owned
@@ -1543,6 +1553,7 @@ git commit -m "feat(cpe): inspect v3 runs from immutable evidence"
 id: T11
 title: End-to-end deterministic and live migration evidence
 owner_boundary: Eval fixtures and release evidence only
+spec_refs: [S1.20, S1.20.1, S1.20.2, S1.20.3, S1.20.4, S1.20.5]
 files:
   - path: skills/kws-codex-plan-executor/evals/static_execution_runner.py
     mode: edit
@@ -1672,6 +1683,7 @@ git commit -m "test(cpe): gate v3 with replay and model migration evals"
 id: T12
 title: Public contract, documentation, cleanup, release baseline, and Graphify
 owner_boundary: Package contract and release closeout
+spec_refs: [S1.23, S1.24, S1.26]
 files:
   - path: skills/kws-codex-plan-executor/SKILL.md
     mode: edit
