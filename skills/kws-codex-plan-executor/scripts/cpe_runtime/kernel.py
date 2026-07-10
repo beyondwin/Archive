@@ -262,6 +262,15 @@ class Kernel:
     def transition(self, command: Transition) -> dict:
         return transition_run(self.run_dir, command, snapshot_writer=self._snapshot_writer)
 
+    @property
+    def state(self) -> dict:
+        """Return the replayed durable state; never trust the snapshot as input."""
+        manifest = load_verified_manifest(self.run_dir / "run_manifest.json")
+        events = read_events(self.run_dir / "events.jsonl")
+        if validate_chain(events):
+            raise ValueError("event_chain_invalid")
+        return project(manifest, events)
+
     def store_patch_evidence(self, patch_bytes: bytes) -> dict[str, str]:
         if not isinstance(patch_bytes, bytes) or not patch_bytes:
             raise ValueError("patch evidence must be non-empty bytes")
