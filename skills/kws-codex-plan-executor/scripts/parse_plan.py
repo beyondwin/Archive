@@ -9,6 +9,8 @@ import re
 import sys
 from pathlib import Path
 
+import yaml
+
 
 TASK_RE = re.compile(
     r"(?m)^(#{2,4})[ \t]+(?:Task|작업)[ \t]+(\d+(?:\.\d+)*)[ \t]*(?::|-|–|—)[ \t]*(.+?)[ \t]*$"
@@ -56,6 +58,7 @@ YAML_TASK_BLOCK_RE = re.compile(
     r"(?ms)^```yaml[ \t]+(?P<kind>(?:agentrunway|waygent)-task)[^\n]*\n(?P<body>.*?)\n```"
 )
 YAML_TASK_RE = re.compile(r"```yaml\s+(?:agentrunway|waygent)-task\s*\n(?P<body>.*?)\n```", re.S)
+YAML_LOCAL_RE = re.compile(r"(?ms)^```yaml(?:[^\n]*)\n(?P<body>.*?)\n```[ \t]*$")
 YAML_TASK_ID_RE = re.compile(r"(?m)^(?:task_id|id):\s*(?P<value>\S+)\s*$")
 YAML_TITLE_RE = re.compile(r"(?m)^title:\s*(?P<value>.+?)\s*$")
 YAML_DEPENDENCIES_RE = re.compile(r"(?m)^dependencies:\s*\[(?P<value>[^\]]*)\]\s*$")
@@ -398,16 +401,76 @@ def _extract_yaml_file_claims(
 
 
 def _extract_yaml_task_metadata(raw_body: str, repo_root: Path) -> dict:
-    match = YAML_TASK_RE.search(raw_body)
+    explicit_match = YAML_TASK_RE.search(raw_body)
+    match = explicit_match or YAML_LOCAL_RE.search(raw_body)
     if not match:
-        return {"task_id": None, "depends_on_raw": [], "files": []}
+        return {
+            "task_id": None,
+            "depends_on_raw": [],
+            "files": [],
+            "file_line_numbers": {},
+            "spec_refs": [],
+            "acceptance_command": None,
+        }
     yaml_body = match.group("body")
-    task_id_match = YAML_TASK_ID_RE.search(yaml_body)
-    files, _ = _extract_yaml_file_claims(yaml_body, repo_root)
+    try:
+        payload = yaml.safe_load(yaml_body)
+    except yaml.YAMLError:
+        payload = None
+    if not isinstance(payload, dict) or not any(
+        key in payload for key in ("id", "task_id", "files", "file_claims", "dependencies", "spec_refs", "acceptance")
+    ):
+        return {
+            "task_id": None,
+            "depends_on_raw": [],
+            "files": [],
+            "file_line_numbers": {},
+            "spec_refs": [],
+            "acceptance_command": None,
+        }
+
+    raw_id = payload.get("task_id") or payload.get("id")
+    yaml_task_id = _clean_yaml_scalar(str(raw_id)) if raw_id is not None else None
+    files: list[str] = []
+    file_line_numbers: dict[str, int] = {}
+    raw_files = payload.get("files", payload.get("file_claims", []))
+    if isinstance(raw_files, list):
+        for item in raw_files:
+            raw_path = item.get("path") if isinstance(item, dict) else item
+            if not isinstance(raw_path, str) or not raw_path.strip():
+                continue
+            repo_path = _repo_relative(raw_path, repo_root)
+            files.append(repo_path)
+            path_match = re.search(re.escape(raw_path), yaml_body)
+            if path_match:
+                file_line_numbers.setdefault(
+                    repo_path,
+                    _line_number(raw_body, match.start("body") + path_match.start()),
+                )
+
+    raw_dependencies = payload.get("dependencies", payload.get("depends_on", []))
+    dependencies = [str(item) for item in raw_dependencies] if isinstance(raw_dependencies, list) else []
+    raw_spec_refs = payload.get("spec_refs", [])
+    spec_refs = [str(item) for item in raw_spec_refs] if isinstance(raw_spec_refs, list) else []
+
+    raw_acceptance = payload.get("acceptance", payload.get("verify", payload.get("verification")))
+    commands: list[str] = []
+    if isinstance(raw_acceptance, str):
+        commands.append(raw_acceptance.strip())
+    elif isinstance(raw_acceptance, list):
+        for item in raw_acceptance:
+            command = item.get("command") if isinstance(item, dict) else item
+            if isinstance(command, str) and command.strip():
+                commands.append(command.strip())
+
     return {
-        "task_id": _clean_yaml_scalar(task_id_match.group("value")) if task_id_match else None,
-        "depends_on_raw": _extract_yaml_dependencies(yaml_body),
-        "files": files,
+        "task_id": yaml_task_id if explicit_match else None,
+        "yaml_task_id": yaml_task_id,
+        "depends_on_raw": dependencies,
+        "files": sorted(dict.fromkeys(files)),
+        "file_line_numbers": file_line_numbers,
+        "spec_refs": list(dict.fromkeys(spec_refs)),
+        "acceptance_command": "\n".join(commands) if commands else None,
     }
 
 
@@ -519,14 +582,19 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
         if not files and yaml_metadata["files"]:
             files = yaml_metadata["files"]
             has_files = True
+            file_line_numbers = yaml_metadata["file_line_numbers"]
         if mode in EXECUTION_MODES and not has_files:
             _die(f"{_task_id_from_number(match.group(2))} has no Files block")
         task_id = yaml_metadata["task_id"] or _task_id_from_number(match.group(2))
-        acceptance_command, acceptance_source = _extract_acceptance_after_line(
-            raw_markdown,
-            raw_body_start_line,
-            raw_body_end_line,
-        )
+        if yaml_metadata["acceptance_command"]:
+            acceptance_command = yaml_metadata["acceptance_command"]
+            acceptance_source = "plan.yaml.acceptance"
+        else:
+            acceptance_command, acceptance_source = _extract_acceptance_after_line(
+                raw_markdown,
+                raw_body_start_line,
+                raw_body_end_line,
+            )
         tasks.append(
             {
                 "id": task_id,
@@ -538,9 +606,9 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
                 "body_line_end": body_line_end,
                 "files": files,
                 "file_line_numbers": file_line_numbers,
-                "spec_refs": _extract_spec_refs(body_raw),
+                "spec_refs": yaml_metadata["spec_refs"] or _extract_spec_refs(body_raw),
                 "depends_on": _extract_depends_on(body),
-                "yaml_task_id": yaml_metadata["task_id"],
+                "yaml_task_id": yaml_metadata.get("yaml_task_id") or yaml_metadata["task_id"],
                 "_raw_depends_on": yaml_metadata["depends_on_raw"],
                 "has_acceptance_criteria": bool(AC_RE.search(body)),
                 "acceptance_command": acceptance_command,
