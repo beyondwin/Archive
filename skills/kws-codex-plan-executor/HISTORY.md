@@ -2,18 +2,14 @@
 
 ## Unreleased
 
-## 3.0.0 - 2026-07-10
+## 3.0.0 - 2026-07-10 (deterministic-ready; paid-live-pending)
 
 - Replaced mutable v2 execution surfaces with v3 manifest, evidence, event,
   projection, validation, reconciliation, repair, inspection, and fixed model routing.
 - Added reproducible dependency reporting and deterministic migration dry-run evidence.
-
-- Added schema-aware subagent boundary attestation for accepted delegated runs.
-- Added attempt-lineage validation so finished state has at most one final
-  accepted attempt per task/write scope.
-- Improved full-spec fallback guidance with candidate spec refs and suggested
-  plan patches.
-- Split read-only inspection observations from durable run-quality debt.
+- Added a cost-free, injectable 4x8 migration aggregator with an enforced
+  `$50.00` cap. Paid live execution still requires explicit approval and a
+  passing report before release closeout.
 
 ## 2.27.0 - 2026-07-05
 

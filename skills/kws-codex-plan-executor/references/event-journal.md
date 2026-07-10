@@ -1,28 +1,13 @@
 # Event Journal
 
-Replay evidence is emitted to AgentLens under `kws-cpe.<event>`.
+`events.jsonl` is the authoritative CPE v3 transition history. The runtime
+appends one canonical JSON event while holding an exclusive file lock, flushes
+and fsyncs it, then rebuilds and atomically replaces `state.json`.
 
-State remains authoritative at
-`~/.codex/orchestrator/<run_id>/state.json`. AgentLens events are useful for
-inspection and replay, but event emission is best-effort and must not block plan
-execution.
+Validation rejects sequence gaps, duplicate event IDs, predecessor mismatch,
+hash mismatch, invalid transitions, and a stored projection that differs from
+replay. Evidence is referenced by digest rather than embedded as raw prompt,
+transcript, secret, or unbounded command output.
 
-Every event payload should include:
-
-- `run_id`
-- `run_dir_ref`
-- `state_path_ref`
-- `workspace_ref`
-- `worktree_ref`
-- redacted task or verification metadata
-
-Use home-relative or repo-relative refs and do not store absolute home paths in
-AgentLens payloads.
-
-For resume, persist `agentlens_orchestration_run` and
-`last_agentlens_event_at` in state when available.
-
-Local trajectory projection is stored independently at `trajectory_path`.
-`scripts/append_trajectory_event.py` writes append-only JSONL with monotonically
-increasing `seq`, redacted refs, task id, summary, evidence refs, and compact
-context budget metadata. Do not store raw prompts in trajectory events.
+Repair never edits or truncates the journal. A safe state change is represented
+by a compensating event; rebuilding the projection does not require a new event.

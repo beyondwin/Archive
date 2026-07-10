@@ -1,20 +1,11 @@
-# Prompt Export Checklist
+# Prompt And Handoff Export Checklist
 
-- Prompt and handoff modes are export-only.
-- Checked prompt artifacts include stable-prefix and hot-tail cache markers.
-- No dynamic `{{...}}` placeholder appears inside a stable-prefix block.
-- The generated prompt names `~/.codex/worktrees/<run_id>` for code execution.
-- The generated prompt names `~/.codex/orchestrator/<run_id>/state.json` for state.
-- The prompt includes `context.json`, `context_snapshot_path`,
-  `context_basis_hash`, `context_health`, `handoff_ready`, and `next_action`.
-- The prompt includes `completion_audit`, `prompt_to_artifact_checklist`,
-  `verification_evidence`, `lifecycle_outcome`, `handoff_reason`, `finished`,
-  `blocked`, and `failed`.
-- The prompt requires `TASK EXECUTION CONTRACT` before edits.
-- The prompt states `subagents=on` as the subagent-first default, documents
-  `subagents=auto` as conservative explicit-request mode, documents
-  `subagents=off`, and names task `subagent_strategy` for local fallback.
-- The prompt includes the high-risk verification matrix terms: misleading
-  success, stale state, hung.
-- Handoff prompts include `HANDOFF CHECKPOINT`.
-- No unfilled `{{...}}` template token remains.
+- Resolve and read the plan, optional spec, and workspace paths.
+- Render exactly one fenced text block with the enforced Sol/high launcher and
+  prompt body.
+- For handoff, include the literal `HANDOFF CHECKPOINT` marker.
+- Leave no template tokens or selectable model options.
+- Do not create a worktree, run directory, manifest, event, state projection,
+  or completion claim.
+- Run the prompt contract check or inspect the generated block manually when no
+  fixture covers the request.

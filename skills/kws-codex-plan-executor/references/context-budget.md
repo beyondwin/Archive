@@ -1,76 +1,13 @@
 # Context Budget
 
-Context budget metadata makes `context.json` easier to inspect during long
-execution runs. It is a character-based estimate, not an exact tokenizer.
+Each worker receives a bounded task packet containing the current goal, file
+claims, dependencies, acceptance commands, explicit spec sections, relevant
+decisions, and evidence refs. Do not inline unrelated plan/spec sections, raw
+conversation history, or prior model transcripts.
 
-Budget status:
+If required task evidence cannot fit, stop and narrow the task or create a
+reviewed artifact summary. A budget limit never authorizes omission of safety,
+scope, acceptance, or completion evidence.
 
-```text
-green: estimated_chars <= 70% of max_chars
-yellow: estimated_chars > 70% and <= 100% of max_chars
-red: estimated_chars > max_chars or required source omitted
-```
-
-Section record:
-
-```json
-{
-  "role": "plan",
-  "path": "skills/kws-codex-plan-executor/docs/experiments/example/PLAN.md",
-  "section": "Task 2: Implement validator",
-  "estimated_chars": 4210,
-  "sha256": "..."
-}
-```
-
-Snapshot-level summary:
-
-```json
-{
-  "context_budget": {
-    "active_strategy": "source_snapshot",
-    "packet_count": 0,
-    "status": "green",
-    "max_chars": 120000,
-    "context_threshold": 0.7,
-    "estimated_chars": 4210,
-    "included_sections": [],
-    "omitted_sections": []
-  }
-}
-```
-
-When task packets are present, `context.json` does not inline packet text.
-Instead it records `active_strategy: "task_packet"`, `packet_count`, and a
-`task_packet_index` with task id, packet path, packet hash, and estimated
-characters. In this mode, the budget status is based on the largest individual
-packet, not the combined source plan/spec size, because only one task packet is
-active execution context at a time. `estimated_chars` remains the sum of packet
-estimates for audit readability, and `max_packet_chars` records the value used
-for the green/yellow/red status.
-
-Pass `--context-threshold` to tune the green/yellow boundary consistently for
-source snapshots and task-packet snapshots. The accepted range is `[0.05,0.95]`.
-
-Build snapshots with a budget:
-
-```bash
-python3 scripts/build_context_snapshot.py \
-  --repo-root "$WORKTREE_ABS" \
-  --run-id "$RUN_ID" \
-  --plan "$PLAN_REL" \
-  --spec "${SPEC_REL:-}" \
-  --docs "${DOCS_REL:-}" \
-  --spec-manifest "$RUN_DIR/spec_manifest.json" \
-  --task-packet-dir "$RUN_DIR/task_packets" \
-  --max-chars 120000 \
-  --context-threshold 0.70 \
-  --output "$RUN_DIR/context.json"
-```
-
-Truncate or omit at Markdown section boundaries. Never truncate inside fenced
-code blocks when the section is included.
-
-Required source omission is always red. Optional source omission can be yellow
-when the snapshot still preserves the active plan, spec, and docs needed for
-the next task.
+Usage and cached-input counters are attempt evidence. Compare efficiency only
+after quality and integrity gates pass.

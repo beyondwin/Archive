@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import tempfile
+import json
 from pathlib import Path
 import sys
 
@@ -9,11 +10,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from cpe_runtime.events import append_event, read_events, validate_chain
 from cpe_runtime.kernel import Kernel, Transition, rebuild_snapshot
 from cpe_runtime.projector import initial_state, project
+from cpe_runtime.manifest import create_manifest, write_manifest
 
 
 def main() -> int:
     with tempfile.TemporaryDirectory() as raw:
-        run = Path(raw); (run / "run_manifest.json").write_text('{"schema_version":"3","run_id":"fixture"}\n')
+        root = Path(raw); run = root / "run"
+        for name in ("plan.md", "pricing.json"):
+            (root / name).write_text("{}\n", encoding="utf-8")
+        manifest = create_manifest("fixture", "interactive", root, root / "worktree", root / "plan.md", None, [], root / "pricing.json")
+        write_manifest(run / "run_manifest.json", manifest)
         path = run / "events.jsonl"
         append_event(path, {"type": "run.status_changed", "payload": {"from": "created", "to": "ready"}})
         events = read_events(path)

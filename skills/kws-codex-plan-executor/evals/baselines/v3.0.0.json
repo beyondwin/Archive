@@ -1,5 +1,17 @@
 {
   "version": "3.0.0",
   "date": "2026-07-10T00:00:00Z",
-  "fixtures": []
+  "fixtures": [
+    {
+      "fixture": "live-model-migration-deterministic",
+      "mode": "deterministic",
+      "passed": true,
+      "checks": {
+        "treatments": 4,
+        "cases": 8,
+        "paid_provider_calls": 0,
+        "hard_cap_usd": 50.0
+      }
+    }
+  ]
 }

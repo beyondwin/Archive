@@ -78,16 +78,14 @@ else
   done
 fi
 
-# V3 deterministic checks are production-module checks above; legacy static
-# fixture execution is intentionally not part of the active v3 baseline.
-fixtures=()
-
 mkdir -p "$EVAL_DIR/baselines"
 partial="$BASELINE_FILE.partial"
 : > "$partial"
 overall_status=0
 
 run_check "skill_contract" python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md"
+run_check "docs_contract" python3 "$EVAL_DIR/check_docs_contract.py"
+run_check "runtime_safety" python3 "$EVAL_DIR/check_runtime_safety.py"
 run_check "model_policy" python3 "$EVAL_DIR/check_model_policy.py"
 run_check "model_surface" python3 "$EVAL_DIR/check_model_surface.py"
 run_check "invocation_args" python3 "$EVAL_DIR/check_invocation_args.py"
@@ -109,10 +107,6 @@ run_check "live_model_migration" python3 "$EVAL_DIR/check_live_model_migration.p
 run_check "superpowers_compatibility" python3 "$EVAL_DIR/check_superpowers_compatibility.py"
 run_check "eval_harness" python3 "$EVAL_DIR/check_eval_harness.py"
 run_check "release_contract" python3 "$EVAL_DIR/check_release_contract.py"
-if [ "$update_baseline" -eq 0 ]; then
-  run_check "release_contract" python3 "$EVAL_DIR/check_release_contract.py"
-fi
-run_check "superpowers_compatibility" python3 "$EVAL_DIR/check_superpowers_compatibility.py"
 while IFS= read -r parser_fixture; do
   run_check "parse_plan:$(basename "$parser_fixture")" python3 "$EVAL_DIR/check_parse_plan.py" --fixture "$parser_fixture"
 done < <(find "$EVAL_DIR/parser-fixtures" -name '*.yaml' -type f | sort)

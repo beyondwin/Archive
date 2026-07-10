@@ -28,14 +28,14 @@ Do not treat passing tests as proof that documentation is current.
 | Headless behavior | `references/headless-runner.md`, `docs/how-it-works.md`, `docs/evals-and-verification.md` |
 | Prompt or handoff export | `templates/fresh-session-prompt.txt`, `references/prompt-export-checklist.md`, `docs/evals-and-verification.md` |
 | State schema | `references/state-schema.md`, `docs/state-and-logging.md`, `docs/how-it-works.md` |
-| Context health | `references/state-schema.md`, `docs/state-and-logging.md`, `docs/how-it-works.md`, `docs/decisions.md` |
-| Learning log schema or privacy | `references/learning-log.md`, `docs/state-and-logging.md`, `docs/risks-limitations-deferrals.md` |
+| Task context or usage evidence | `references/context-intelligence.md`, `references/cache-strategy.md`, `docs/how-it-works.md` |
+| Diagnostic evidence or privacy | `references/learning-log.md`, `docs/state-and-logging.md`, `docs/risks-limitations-deferrals.md` |
 | Parser behavior | `docs/how-it-works.md`, `docs/evals-and-verification.md`, parser fixtures |
 | Eval harness or commands | `docs/evals-and-verification.md`, `docs/verification-log.md` |
 | Design rationale or accepted tradeoff | `docs/decisions.md`, `ARCHITECTURE.md` when stable |
 | New risk, limit, or intentional deferral | `docs/risks-limitations-deferrals.md` |
 | Maintenance workflow | `docs/future-agent-guide.md`, `references/change-protocol.md`, this file |
-| Release-level behavior change | `SKILL.md` version, `HISTORY.md`, `README.md`, and affected runtime docs |
+| Release-level behavior change | `SKILL.md` version/status, `HISTORY.md`, `README.md`, release evidence, and affected runtime docs |
 
 ## Pre-Final Checklist
 

@@ -1,137 +1,51 @@
-# Architecture
+# CPE v3 Architecture
 
-The v3 executor separates code mutation from immutable manifest/event/evidence
-artifacts and the rebuildable state projection.
+CPE v3 separates immutable inputs and events from rebuildable projections.
 
 ```mermaid
-flowchart TD
-  Plan["plan/spec/docs"] --> Parse["parse and validate tasks"]
-  Parse --> Worktree["git worktree under ~/.codex/worktrees/<run_id>"]
-  Parse --> State["state under ~/.codex/orchestrator/<run_id>"]
-  State --> Packet["spec manifest and task packets"]
-  Packet --> Compat["Superpowers compatibility audit"]
-  Compat --> ExecAudit["plan executability audit"]
-  ExecAudit --> Gate["packet quality and dispatch gate"]
-  Gate --> Worker["Superpowers loop, subagent, or local fallback"]
-  Worktree --> Task["task contract, RED, implementation, GREEN"]
-  State --> Context["context.json and context_health"]
-  Worker --> Task
-  Task --> Verify["diff policy, acceptance, reconcile, validate"]
-  Verify --> Recovery["command observation and recovery policy"]
-  Recovery --> Trajectory["trajectory.jsonl and progress_ledger"]
-  Verify --> Done["finished / blocked / failed"]
+flowchart LR
+  Input["plan, spec, docs"] --> Preflight["parse and preflight"]
+  Preflight --> Manifest["immutable run manifest"]
+  Manifest --> Kernel["transition kernel"]
+  Kernel --> Events["authoritative events.jsonl"]
+  Kernel --> Evidence["content-addressed evidence"]
+  Events --> Projector["pure projector"]
+  Manifest --> Projector
+  Projector --> State["rebuildable state.json"]
+  Events --> Consumers["validate, reconcile, repair, inspect"]
+  Evidence --> Consumers
 ```
 
-`run_id` uses `<plan-slug>-<YYYYMMDD-HHMMSS>` and receives a short random suffix
-on collision.
+## Boundaries
 
-The worktree stores repository files only. The orchestrator directory stores
-`state.json`, `context.json`, `hooks/`, `learning_events/`, raw evidence, and
-headless result files.
+- `cpe.py` owns run, resume, and prompt/handoff export routing.
+- `cpe_runtime.model_policy` owns the closed Sol/high core and Terra/high scout
+  routes and launcher attestation.
+- `manifest`, `events`, `evidence`, `projector`, and `kernel` own durable state.
+- `worker` launches Codex; `scheduler` serializes write-capable tasks and may
+  bound concurrency for read-only scouts.
+- `validation` is the shared integrity decision used by completion,
+  reconciliation, repair, and inspection.
+- `reconciliation` detects drift. `repair` plans safe actions before applying
+  an explicit action. `inspection` is read-only derived reporting.
 
-CPE is a thin stateful bridge when current Superpowers contracts are available.
-`scripts/audit_superpowers_compatibility.py` compares the installed
-Superpowers workflow with CPE's stateful contracts and scores three routes:
-CPE-primary execution, Superpowers-native-only execution, and the thin
-stateful bridge. The bridge wins when Superpowers supplies the implementation
-loop and CPE preserves run state, task packets, worktree isolation, validation,
-prompt/handoff export, headless execution, resume, and inspection.
+The worktree contains product changes only. The run directory contains the
+manifest, event stream, state projection, and immutable artifacts. A successful
+transition appends and syncs an event before atomically replacing the state
+projection. Replay therefore recovers an interrupted snapshot write without
+rewriting history.
 
-New state should prefer `execution_worktree` for the actual edit and command
-boundary. `workspace` remains a backward-compatible broad pointer for older
-runs and fixture state. `command_cwd_evidence` records command, cwd, phase, and
-status only; it never stores full logs or secrets.
+## Execution
 
-Subagents remain available by default through `subagents=on`, but dispatch is
-adaptive. CPE first proves delegation is safe, then checks whether it has value.
-Small, low-risk, linear tasks may use local fast path and record
-`subagent_strategy.mode = local_fallback` with an adaptive reason. Larger
-parallel-worthy tasks still delegate from task packets with disjoint write
-scopes and parent review. Finished state cannot retain running or unreviewed
-subagent records.
+Core attempts always use Sol/high: coordination, implementation, review,
+verification judgment, repair, and completion. Terra/high can only produce
+bounded findings from a read-only scout. A scout cannot write files or issue a
+quality verdict.
 
-Parent acceptance is a separate boundary from pre-dispatch. Accepted delegated
-records that opt into `subagent_boundary_schema_version=1` must prove worker
-cwd/git root matched `execution_worktree` and that the source workspace did not
-drift without operator override. Attempt lineage keeps rejected and superseded
-worker attempts inspectable while allowing only one final accepted record per
-task/write-scope group.
+Tasks with write claims execute one at a time. Every attempt records route
+attestation and immutable evidence. Completion checks event integrity, replay
+parity, evidence digests, task states, git scope, review and verification, and
+the final completion record.
 
-For approved interactive implementation plans, CPE should not duplicate the
-current Superpowers implementation loop when the compatibility audit recommends
-`thin_stateful_bridge`. Instead, Superpowers `subagent-driven-development`
-handles implementer/reviewer flow while CPE records the durable state and audit
-surface. Prompt, handoff, headless, resume, and inspection remain CPE-owned
-because they depend on CPE-specific artifacts.
-
-`delegation_policy` records the requested mode, request source, active spawn
-policy, explicit user delegation intent, effective mode, adaptive policy kind,
-safety gate, value gate, and deterministic signals. The pre-dispatch script owns
-deterministic fallbacks such as an explicit-request-only spawn policy and
-adaptive local fast path. Run-quality debt distinguishes expected local
-fallback from prevented delegation, and separately reports missing dispatch
-evidence for finished write-capable tasks.
-
-`preflight_bootstrap` is detection-only. It suggests dependency or capability
-bootstrap commands and records tool availability, but CPE never executes those
-commands automatically.
-
-AgentLens events provide best-effort replay and learning telemetry. State in
-`~/.codex/orchestrator/<run_id>/state.json` remains the source of truth.
-
-Prompt construction uses a stable prefix/hot tail split. The stable prefix
-contains invariant execution rules; task/run payloads live in the hot tail and
-are audited by `scripts/audit_prompt_cache.py`.
-
-Human-readable task views are generated from task packet JSON and stored with
-orchestration artifacts. They improve operator and subagent readability but do
-not participate as source-of-truth state. State validation only trusts the JSON
-packet, task state, and completion audit fields.
-
-Graphify freshness and subagent dispatch readiness are represented as JSON
-evidence. State remains authoritative; helper outputs are accepted only after
-state validation and parent review. Finished runs that record `graphify_audit`
-must also include Graphify evidence in `completion_audit.verification_evidence`.
-
-`inspect_runs.py` can compute read-only `run_quality` for recent runs across
-all plans, including stale non-terminal state, validation drift, delegation
-counts, workspace/execution-worktree mismatch, and actionable follow-up markers
-for stale or missing-worktree runs. Finished missing execution worktrees are
-reported through `inspection_observations` so reports can explain current
-filesystem state without rewriting durable completion quality.
-
-Run-quality operational debt is classified in
-`scripts/run_quality_debt.py` so state validation and read-only inspection use
-the same stable follow-up strings while keeping filesystem observations such as
-missing execution worktrees out of finished-state hard validation.
-Plan executability state keeps raw audit counts separate from
-operator-reviewed effective counts, so a reviewed blocker reduction remains
-auditable after finalization.
-
-`scripts/normalize_cpe_run.py` turns a run state into deterministic replay JSON:
-terminal outcome, completion status, run-quality grade, open followups,
-inspection observations, duplicate final subagent attempt count, dispatch
-decision reason counts, plan audit counts, residual risk classes, and
-forbidden-pattern markers. It intentionally avoids raw transcripts and full
-prompts.
-
-Recent-run rubric reports sit beside inspection and normalized replay. They
-aggregate state-derived evidence across runs so operator debt can be improved
-without weakening per-run completion gates.
-
-Operational quality signal ownership:
-
-- `run_quality_debt.py` classifies stable followups and report-only display
-  classes.
-- `analyze_recent_runs.py` aggregates recent state into operator-facing rubric
-  JSON.
-- `preflight_dispatch.py` owns final dispatch decisions and advisory
-  would-have evidence.
-- Task packet and readiness scripts own full-spec fallback diagnosis and
-  packet-owned next actions.
-
-Structured failure state separates machine-readable blockers from human
-handoff summaries. `current_blocker` records recoverable blocked state,
-`failure_decision` records non-success failure decisions, and
-`recovery_attempts` tracks bounded retries by root signature. Finished runs must
-clear active blockers and open recovery attempts.
+V2 run directories are not migration inputs. Consumers read their schema marker,
+return `unsupported_schema`, and leave their bytes unchanged.

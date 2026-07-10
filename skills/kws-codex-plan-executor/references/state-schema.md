@@ -1,421 +1,53 @@
-# State Schema
+# V3 State Schema
 
-State source of truth:
+The run directory contains four classes of artifact:
 
 ```text
-~/.codex/orchestrator/<run_id>/state.json
+run_manifest.json  immutable run inputs and hashes
+events.jsonl       authoritative ordered history
+state.json         rebuildable current-state projection
+artifacts/         immutable evidence and derived reports
 ```
 
-Example:
+## Manifest
 
-```json
-{
-  "schema_version": "1",
-  "run_id": "example-plan-20260519-143022",
-  "mode": "interactive",
-  "workspace": "/repo",
-  "plan": "/repo/plan.md",
-  "branch": "codex/example-plan-20260519-143022",
-  "worktree": "/Users/example/.codex/worktrees/example-plan-20260519-143022",
-  "run_dir": "/Users/example/.codex/orchestrator/example-plan-20260519-143022",
-  "state_path": "/Users/example/.codex/orchestrator/example-plan-20260519-143022/state.json",
-  "context_snapshot_path": "/Users/example/.codex/orchestrator/example-plan-20260519-143022/context.json",
-  "context_basis_hash": "0000000000000000000000000000000000000000000000000000000000000000",
-  "spec_manifest_path": "/Users/example/.codex/orchestrator/example-plan-20260519-143022/spec_manifest.json",
-  "task_packet_dir": "/Users/example/.codex/orchestrator/example-plan-20260519-143022/task_packets",
-  "current_task_packet_path": "/Users/example/.codex/orchestrator/example-plan-20260519-143022/task_packets/task_0.json",
-  "decisions_register": [],
-  "preflight_warnings": [],
-  "last_completed_task": null,
-  "last_completed_at": null,
-  "compaction": {
-    "points": [],
-    "last_compaction_after_task": null,
-    "context_drop_count": 0
-  },
-  "current_task": "task_0",
-  "current_phase": "task_loop",
-  "lifecycle_outcome": null,
-  "handoff_reason": "",
-  "completion_audit": null,
-  "subagents_requested": true,
-  "subagent_runs": [],
-  "tasks": {},
-  "risk_levels": {},
-  "review_issue_keys": [],
-  "verification": [],
-  "cache_strategy": {
-    "mode": "interactive-default",
-    "stable_prefix_policy": "static-first-hot-tail",
-    "provider_cache_control": "unavailable",
-    "prompt_audit_version": "1"
-  },
-  "cache_observations": [],
-  "prompt_audit": null,
-  "graphify_audit": null,
-  "dispatch_decisions": [],
-  "session_owned_resources": [],
-  "last_checkpoint": null,
-  "timestamps": {
-    "started_at": "2026-05-19T14:30:22Z",
-    "updated_at": "2026-05-19T14:30:22Z",
-    "completed_at": null
-  }
-}
-```
+`schema_version` is exactly `"3"`. The manifest pins the run ID, mode,
+workspace and execution-worktree refs, plan and optional spec hashes, task graph
+and hash, fixed model policy and hash, and pricing snapshot and hash. It is
+created once. A changed manifest is integrity drift, not an update.
 
-Required path invariants:
+## Events
 
-- `run_dir` ends with `.codex/orchestrator/<run_id>`.
-- `worktree` ends with `.codex/worktrees/<run_id>`.
-- `state_path` equals `run_dir/state.json`.
-- When `tasks` is non-empty, `current_task` references one of its task ids.
-- `context_snapshot_path`, when present, equals `run_dir/context.json`.
-- `spec_manifest_path`, when present, equals `run_dir/spec_manifest.json`.
-- `task_packet_dir`, when present, equals `run_dir/task_packets`.
-- `current_task_packet_path`, when present, lives under `task_packet_dir`.
-- Old local journal metadata is rejected; AgentLens metadata belongs in
-  `agentlens_orchestration_run` and `last_agentlens_event_at`.
-- `subagents_requested` defaults to `true` because `subagents=on` is the
-  default. Set it to `false` only for `subagents=off`, or for `subagents=auto`
-  when there was no explicit user request for subagents/delegation/parallel
-  work.
-- In finished v2.20+ runs with `subagents_requested=true`, completed
-  write-capable tasks must include `subagent_strategy`:
-  - `mode=delegated`: `run_ids` references reviewed completed
-    `subagent_runs` for the same task.
-  - `mode=local_fallback`: `run_ids` is empty and `reason` explains the failed
-    pre-dispatch prerequisite, safety reason, or adaptive local fast path
-    reason.
-- Cache fields are optional for older runs. When present,
-  `cache_strategy.mode` is one of `interactive-default`,
-  `headless-explicit`, `prompt-export`, or `handoff-export`; provider cache
-  control is one of `unavailable`, `available-unused`, `available-enabled`, or
-  `unknown`.
-- Provider cache counters are telemetry only. Missing cache read/write counters
-  are recorded as `null`, not zero.
-- Finished runs cannot carry non-empty
-  `prompt_audit.dynamic_marker_violations`.
-- Finished `completion_audit.prompt_to_artifact_checklist`,
-  `completion_audit.verification_evidence`, and
-  `completion_audit.residual_risk` are lists. Use an empty `residual_risk` list
-  when there is no known residual risk; do not store scalar strings. Residual
-  risk items may be strings or structured residual risk objects. Structured
-  objects require `owner`, `class`, `summary`, and `blocks_release`; a
-  `blocks_release=true` item cannot coexist with passed finished completion.
-- `completion_audit.verification_evidence` may include
-  `class=verification_bundle` objects with `name`, `commands`, `status`, and
-  optional `required`. These classify project-level verification evidence and
-  do not replace task acceptance commands.
-- `graphify_audit` records deterministic freshness output from
-  `scripts/check_graphify_freshness.py`. Finished runs cannot carry
-  non-empty `graphify_audit.errors`, and must reference the Graphify evidence
-  from `completion_audit.verification_evidence`.
-- `plan_executability_audit` records read-only output from
-  `scripts/audit_plan_executability.py`. When present, `path` must live under
-  `run_dir`, `grade` is `green|yellow|red`, and issue counts are non-negative
-  integers. Finished states cannot retain a red plan executability audit. Raw
-  fields such as `raw_blocking_issue_count` and `raw_fixable_issue_count` are
-  optional for older state but must match the readable artifact when present.
-  If effective blocker counts are lower than raw blocker counts, the state
-  records `operator_reviewed_blocking_issues` and `operator_decision`.
-  The audit may include `plan_support` as
-  `current_superpowers_compatible`, `cpe_fixable_metadata`,
-  `operator_review_required`, or `blocked_unsupported_plan_shape`. A finished
-  state cannot retain `blocked_unsupported_plan_shape`; operator-reviewed risk
-  must remain auditable through raw/effective counts and operator decision
-  fields.
-- `dispatch_decisions` records output from `scripts/preflight_dispatch.py`.
-  Decisions are `delegate`, `local_fallback`, or `block`; finished runs cannot
-  retain a `block` decision.
-- `timestamps.started_at` and `timestamps.updated_at` are ISO timestamps.
-  `timestamps.completed_at` is nullable while a run is active, but must be an
-  ISO timestamp before `lifecycle_outcome=finished`.
+Each event has a monotonic `seq`, unique `event_id`, UTC timestamp, runtime
+actor, type, payload, optional task/attempt IDs, `previous_hash`, and `hash`.
+The hash is SHA-256 over canonical event JSON without the `hash` field.
 
-v2.20 context-intelligence state may add per-task fields:
+The active projector consumes run status, task status, attempt, evidence,
+context, completion, and repair events. Unknown or invalid transitions are not
+accepted as successful state changes.
 
-```json
-{
-  "task_0": {
-    "task_packet_path": "<run_dir>/task_packets/task_0.json",
-    "task_packet_sha256": "<sha256>",
-    "task_packet_view_path": "<run_dir>/task_packets/task_0.md",
-    "task_packet_view_sha256": "<sha256>",
-    "spec_section_ids": ["S1"],
-    "fallback_spec_used": false,
-    "next_task_summary": "Implemented human packet view rendering.",
-    "subagent_strategy": {
-      "mode": "delegated",
-      "run_ids": ["agent_123"],
-      "reason": "Default subagent-first execution for an eligible task packet."
-    },
-    "timing": {
-      "started": "2026-05-19T14:31:00Z",
-      "completed": "2026-05-19T14:34:00Z",
-      "verified": "2026-05-19T14:35:00Z"
-    }
-  }
-}
-```
+## Projection
 
-When v2.20 fields are present, `decisions_register` and
-`preflight_warnings` must be lists. Finished completed tasks must include
-`timing.started` and `timing.completed`. `last_completed_task` is either null or
-a task id in `tasks`.
+`state.json` includes:
 
-`task_packet_view_path` and `task_packet_view_sha256` are optional claims about
-generated markdown views. The markdown is a derived readability artifact; the
-JSON task packet and state remain authoritative. `next_task_summary` is an
-optional one-line hot-tail hint and must not contain raw secrets, absolute home
-paths, full prompts, transcripts, or newline characters.
+- `schema_version`, `run_id`, and run lifecycle;
+- current task and projected task statuses;
+- projected attempt summaries and evidence index;
+- blockers, context health, repairs, and completion audit when emitted;
+- the last applied event sequence and hash.
 
-`context_health.hot_tail_summaries` may mirror one-line task summaries for the
-next prompt or handoff tail:
+No agent writes this file. The transition kernel replays the manifest and event
+stream and atomically replaces the projection. Validation compares stored bytes
+with a fresh projection.
 
-```json
-{
-  "context_health": {
-    "hot_tail_summaries": [
-      {"task_id": "task_0", "summary": "Implemented human packet view rendering."}
-    ]
-  }
-}
-```
+## Evidence
 
-v2.22 operational run quality state may add:
+Evidence refs are run-relative and content-addressed. A ref records kind, path,
+digest, and media type. Absolute paths, parent traversal, missing objects, and
+digest mismatches are integrity failures.
 
-```json
-{
-  "source_workspace": "/repo/source",
-  "execution_worktree": "/Users/example/.codex/worktrees/example-plan-20260519-143022",
-  "command_cwd_evidence": [
-    {
-      "command": "python3 scripts/preflight_local_env.py --repo-root \"$WORKTREE_ABS\"",
-      "cwd": "/Users/example/.codex/worktrees/example-plan-20260519-143022",
-      "phase": "preflight",
-      "status": "passed"
-    }
-  ],
-  "delegation_policy": {
-    "requested_mode": "on",
-    "requested_source": "default",
-    "explicit_user_delegation_request": false,
-    "spawn_policy": "explicit-request-required",
-    "effective_mode": "local_fallback",
-    "reason": "spawn_agent tool policy requires explicit user delegation intent"
-  },
-  "preflight_bootstrap": {
-    "schema_version": "1",
-    "warnings": [],
-    "bootstrap_plan": [],
-    "environment_capabilities": {
-      "node": "present",
-      "bun": "present",
-      "pnpm": "present",
-      "gradle_wrapper": "absent",
-      "android_sdk": "unknown",
-      "adb": "absent",
-      "cargo": "absent",
-      "agentlens": "absent"
-    }
-  },
-  "run_quality": {
-    "schema_version": "1",
-    "validation_status": "passed",
-    "terminal_state": "finished",
-    "stale": false,
-    "workspace_matches_execution_worktree": true,
-    "score": 92,
-    "grade": "yellow",
-    "schema_drift": [],
-    "open_followups": ["agentlens_missing"],
-    "operational_debt": {
-      "schema_version": "1",
-      "followups": ["agentlens_missing"],
-      "count": 1,
-      "blocking": false
-    },
-    "readiness": {"task_count": 1, "fixable_issue_count": 0, "blocking_issue_count": 0},
-    "dispatch_consistency": {"mismatch_count": 0, "override_count": 0},
-    "context_quality": {"full_spec_fallback_count": 0},
-    "verification_quality": {"completion_audit_passed": true},
-    "recommendations": [],
-    "summary": "Run finished with validated state."
-  },
-  "plan_executability_audit": {
-    "path": "/Users/example/.codex/orchestrator/example-plan-20260519-143022/plan_executability_audit.json",
-    "grade": "yellow",
-    "raw_grade": "red",
-    "blocking_issue_count": 0,
-    "raw_blocking_issue_count": 2,
-    "fixable_issue_count": 1,
-    "raw_fixable_issue_count": 1,
-    "operator_reviewed_blocking_issues": ["task_1:risk_marker_requires_operator_review"],
-    "operator_decision": "Proceed locally after operator review."
-  }
-}
-```
+## Compatibility
 
-`execution_worktree`, when present, must equal `worktree` and end with
-`.codex/worktrees/<run_id>`. `workspace` remains backward compatible; new
-operator guidance should use `execution_worktree` as the command/edit boundary.
-
-`subagent_boundary_schema_version=1` opts a run into strict accepted-subagent
-boundary validation. Older finished states without the marker remain readable.
-When present, every accepted completed subagent run must carry
-`boundary_attestation`, and the attested worker git root must match
-`execution_worktree`. The attestation also records source workspace before/after
-HEADs, `source_workspace_unchanged`, and `dirty_scope_after`; source workspace
-drift requires an explicit operator override before acceptance.
-
-Accepted final attempt lineage is grouped by `attempt_group` when present, or
-by owner task plus write scope otherwise. Finished state may retain rejected or
-superseded attempts for audit history, but a group can have only one completed,
-accepted final attempt. Superseded attempts use `review_status=rejected` with
-`superseded_by` pointing at the accepted replacement.
-
-### delegation_capability
-
-Optional object with `schema_version`, `spawn_policy`,
-`explicit_user_delegation_request`, `run_level_effective_mode`, and `reason`.
-It summarizes run-level spawn capability before per-task dispatch. A
-`local_fallback` capability caused by `explicit-request-required` policy is
-expected local fallback debt, not proof that task safety gates were skipped.
-
-### agentlens_status
-
-Optional object with `schema_version`, `status`, and `blocking`. Valid statuses
-are `agentlens_recorded`, `agentlens_unavailable`, `agentlens_emit_failed`, and
-`agentlens_not_applicable`. AgentLens remains best-effort; state and completion
-audit evidence remain authoritative.
-
-### spec.mapping fallback diagnosis
-
-Task packets may include `fallback_reason`, `suggested_spec_refs`,
-`suggested_plan_patch`, `next_action`, and `operator_reviewed` inside
-`spec.mapping`. Unreviewed fallback remains operational-quality debt.
-Explicitly reviewed fallback may be context-green when the context budget is
-not red. Readiness audits surface the packet-owned `next_action` and suggested
-plan patch; they do not synthesize replacements that hide missing task-packet
-fields.
-
-### run_quality.followup_taxonomy
-
-Optional object with `schema_version=1`, `actionable_followups`,
-`informational_followups`, and `release_blocking_followups`. The taxonomy is
-derived from `open_followups`; it does not replace `completion_audit`,
-validation, or residual-risk rules.
-
-`green-with-info` is allowed only in read-only reports such as
-`analyze_recent_runs.py`. Durable `run_quality.grade` remains `green`,
-`yellow`, or `red`.
-
-`run_quality.open_followups` may include actionable inspection markers such as
-`stale_non_terminal_run`, `missing_execution_worktree`, and
-`state_schema_drift`, plus stable debt markers such as
-`delegation_policy_expected_local_fallback`,
-`delegation_policy_prevented_all_delegation`, and
-`delegation_policy_missing_dispatch_evidence`. Finished states that use v2.22
-operational fields such as
-`execution_worktree`, `delegation_policy`, or `preflight_bootstrap` must embed
-`run_quality` with `readiness`, `dispatch_consistency`, `context_quality`, and
-`verification_quality`; this keeps completion quality inspectable even after
-the execution worktree is removed.
-
-Read-only inspection may attach `run_quality.inspection_observations` with
-`schema_version=1`, `missing_execution_worktree`, `observed_after_completion`,
-and `display_class`. These fields describe the current inspection environment;
-they do not mutate durable completion evidence or convert a finished missing
-worktree into product-verification failure.
-
-Structured residual risk object example:
-
-```json
-{
-  "owner": "operator",
-  "class": "external_credentials",
-  "summary": "Production deploy requires VM_PUBLIC_IP.",
-  "blocks_release": false,
-  "unblocks_when": "Operator provides credentials and reruns deploy smoke.",
-  "evidence_ref": "completion_audit.verification_evidence[0]"
-}
-```
-
-`run_quality.grade` is an operational quality grade, not a replacement for
-`completion_audit.passed`. A finished run may have
-`completion_audit.passed=true` and `run_quality.grade=yellow` when
-implementation verification passed but non-blocking executor follow-up remains.
-
-Valid advisory residual-risk classes include `external_credentials`,
-`environment_gap`, `test_scope_gap`, `third_party_drift`,
-`manual_review_needed`, and `known_executor_debt`, plus the legacy deployment,
-monitoring, executor-evidence, environment-unavailable, and product follow-up
-classes. These classes are readability metadata only.
-
-## Stale Blocked Repair
-
-`scripts/repair_runs.py --apply --run-id <id> --action mark-blocked-stale`
-may change a validated non-terminal stale run with a missing execution worktree
-into a blocked run. The patch sets:
-
-```json
-{
-  "lifecycle_outcome": "blocked",
-  "current_phase": "recover",
-  "handoff_reason": "Run <id> is stale and cannot resume because its execution worktree is missing.",
-  "current_blocker": {
-    "category": "state_integrity_drift",
-    "summary": "Run <id> is stale and its execution worktree is missing.",
-    "recoverable": true,
-    "next_action_kind": "operator_decision"
-  },
-  "context_health": {
-    "status": "yellow",
-    "handoff_ready": true,
-    "next_action": "Inspect the blocked state and start a fresh CPE run if implementation should continue."
-  }
-}
-```
-
-The repair also refreshes `timestamps.updated_at` and sets
-`timestamps.completed_at` when it is absent. The script validates the original
-state, validates the patched state, and writes only
-`~/.codex/orchestrator/<run_id>/state.json`.
-
-`delegation_policy.requested_source` is `default`, `explicit`,
-`natural_language`, or `resume_state`. `spawn_policy` is `available`,
-`unavailable`, `explicit-request-required`, or `unknown`. `effective_mode` is
-`delegate`, `local_fallback`, `off`, or `blocked`.
-
-Adaptive dispatch may add optional fields to `delegation_policy`:
-
-- `policy_kind`: `adaptive` or `legacy`.
-- `safety_gate`: `pending`, `passed`, or `failed`.
-- `value_gate`: `pending`, `delegate`, `local_fast_path`, `block`, or `skipped`.
-- `signals`: object with deterministic inputs such as declared file count,
-  allowed write glob count, packet budget status, explicit delegation intent,
-  and risk markers.
-- `would_have_decision`: optional advisory `delegate`, `local_fallback`, or
-  `block` when spawn policy prevents actual delegation.
-- `would_have_reason`: optional non-empty advisory reason paired with
-  `would_have_decision`.
-- `would_have_value_gate`: optional advisory `delegate`, `local_fast_path`, or
-  `block`. Final execution still follows `decision`, `reason`,
-  `failed_prerequisites`, and task `subagent_strategy`.
-
-When a finished task's final `subagent_strategy` differs from the latest
-non-block dispatch decision for that task, the task must include
-`subagent_strategy_override` with `from_reason`, `to_reason`, `changed_at`,
-`evidence`, and `operator_decision`. This is for stale or superseded dispatch
-evidence only; it is not a way to bypass safety gates.
-
-Known adaptive local fast path reasons are
-`adaptive_policy_local_fast_path_small_scope`,
-`adaptive_policy_local_fast_path_docs_only`,
-`adaptive_policy_local_fast_path_linear_task`, and
-`adaptive_policy_local_fast_path_low_parallel_value`. Finished runs may use
-these reasons only when the task still records unit manifest, diff scope, and
-verification evidence.
-
-`preflight_bootstrap.bootstrap_plan` contains suggestions only. CPE must not run
-those commands automatically.
+Only schema `3` participates in execution. A v2 marker yields
+`unsupported_schema`; validation, reconciliation, repair, resume, and inspection
+must not reinterpret or mutate that run.
