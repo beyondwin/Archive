@@ -84,7 +84,11 @@ def _scope_result(role: str, revision: int, changed_files: list[str]) -> dict[st
     }
 
 
-def _scope_fixture(root: Path) -> tuple[Path, Path, list[dict], RunKernel]:
+def _scope_fixture(
+    root: Path,
+    *,
+    forbidden_paths: list[str] | None = None,
+) -> tuple[Path, Path, list[dict], RunKernel]:
     plan = root / "plan.md"
     pricing = root / "pricing.json"
     plan.write_text("# scope fault\n", encoding="utf-8")
@@ -96,8 +100,14 @@ def _scope_fixture(root: Path) -> tuple[Path, Path, list[dict], RunKernel]:
     _run(["git", "config", "user.name", "Eval"], worktree).check_returncode()
     (worktree / "owned-a.txt").write_text("a0\n", encoding="utf-8")
     (worktree / "owned-b.txt").write_text("b0\n", encoding="utf-8")
+    (worktree / ".gitignore").write_text("ignored-forbidden.bin\n", encoding="utf-8")
     _run(["git", "add", "-A"], worktree).check_returncode()
     _run(["git", "commit", "-q", "-m", "bootstrap"], worktree).check_returncode()
+    info_exclude = worktree / ".git" / "info" / "exclude"
+    info_exclude.write_text(
+        info_exclude.read_text(encoding="utf-8") + "\nignored-unclaimed.bin\n",
+        encoding="utf-8",
+    )
     head = _run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
     tasks = [
         {
@@ -105,6 +115,10 @@ def _scope_fixture(root: Path) -> tuple[Path, Path, list[dict], RunKernel]:
             "title": "owns a",
             "dependencies": [],
             "file_claims": ["owned-a.txt"],
+            "execution_contract": {
+                "allowed_paths": ["owned-a.txt"],
+                "forbidden_paths": list(forbidden_paths or []),
+            },
             "acceptance_command": "true",
         },
         {
@@ -124,16 +138,28 @@ def _scope_fixture(root: Path) -> tuple[Path, Path, list[dict], RunKernel]:
     return worktree, kernel.run_dir, tasks, kernel
 
 
-def _scope_fault(commit_head: bool, invalid_worker_result: bool = False) -> dict[str, bool]:
+def _scope_fault(
+    commit_head: bool,
+    invalid_worker_result: bool = False,
+    *,
+    ignored_path: str | None = None,
+    ignored_forbidden: bool = False,
+    unexpected_exception: bool = False,
+) -> dict[str, bool]:
     with tempfile.TemporaryDirectory(prefix="cpe-scope-fault-") as raw:
-        worktree, run_dir, tasks, kernel = _scope_fixture(Path(raw))
+        forbidden_paths = [ignored_path] if ignored_path and ignored_forbidden else []
+        worktree, run_dir, tasks, kernel = _scope_fixture(
+            Path(raw), forbidden_paths=forbidden_paths
+        )
         launched: list[str] = []
 
         def provider(request, _argv):
             launched.append(request.attempt_kind)
             reported: list[str] = []
             if request.attempt_kind == "implementation" and request.task_id == "T1":
-                if commit_head:
+                if ignored_path:
+                    (worktree / ignored_path).write_bytes(b"\x00ignored write")
+                elif commit_head:
                     (worktree / "owned-a.txt").write_text("a1\n", encoding="utf-8")
                     _run(["git", "add", "owned-a.txt"], worktree).check_returncode()
                     _run(["git", "commit", "-q", "-m", "worker commit"], worktree).check_returncode()
@@ -143,19 +169,30 @@ def _scope_fault(commit_head: bool, invalid_worker_result: bool = False) -> dict
                     reported = ["owned-a.txt"]
                 if invalid_worker_result:
                     return {"status": "completed"}
+                if unexpected_exception:
+                    raise RuntimeError("provider exploded after write")
             return _scope_result(request.attempt_kind, request.worktree_revision, reported)
 
         try:
             result = run_tasks(tasks, Worker(provider=provider), kernel)
-        except ValueError as exc:
+        except Exception as exc:
             result = {"status": "error", "reason": str(exc)}
         manifest = load_verified_manifest(run_dir / "run_manifest.json")
         events = read_events(run_dir / "events.jsonl")
         state = project(manifest, events)
         revision_indexes = [index for index, event in enumerate(events) if event["type"] == "worktree.revision_recorded"]
         blocker_indexes = [index for index, event in enumerate(events) if event["type"] == "blocker.opened"]
-        expected_root = "worktree_head_changed" if commit_head else "task_scope:T1:owned-b.txt"
+        changed_path = ignored_path or "owned-b.txt"
+        expected_root = "worktree_head_changed" if commit_head else f"task_scope:T1:{changed_path}"
+        expected_scope_error = (
+            f"forbidden_write:{changed_path}"
+            if ignored_forbidden
+            else f"unclaimed_write:{changed_path}"
+        )
         blocker = state["active_blockers"][0] if state["active_blockers"] else {}
+        completed_attempts = [
+            event for event in events if event["type"] == "attempt.completed"
+        ]
         return {
             "blocked_before_downstream": result.get("status") == "blocked"
             and result.get("failure_category") == "policy_violation"
@@ -164,13 +201,28 @@ def _scope_fault(commit_head: bool, invalid_worker_result: bool = False) -> dict
             "revision_advanced": state["worktree_revision"] == 1,
             "policy_blocker_typed": blocker.get("category") == "policy_violation"
             and blocker.get("root_cause_key") == expected_root,
+            "scope_error_is_real_path": commit_head
+            or blocker.get("scope_errors") == [expected_scope_error],
             "revision_precedes_blocker": bool(revision_indexes and blocker_indexes)
             and revision_indexes[0] < blocker_indexes[0],
             "worker_report_is_diagnostic_only": commit_head
             or any(
                 event["type"] == "worktree.revision_recorded"
-                and event["payload"].get("changed_files") == ["owned-b.txt"]
+                and event["payload"].get("changed_files") == [changed_path]
                 for event in events
+            ),
+            "unexpected_exception_is_failed_attempt": not unexpected_exception
+            or (
+                len(completed_attempts) == 1
+                and completed_attempts[0]["payload"].get("status") == "failed"
+                and completed_attempts[0]["payload"].get("failure_category")
+                == "unexpected_worker_error"
+                and bool(completed_attempts[0]["payload"].get("evidence_refs"))
+                and any(
+                    item.get("kind") == "worker_result"
+                    for item in state["artifact_index"]
+                )
+                and state["lifecycle"] == "blocked"
             ),
         }
 
@@ -179,11 +231,26 @@ def scope_cases() -> dict[str, bool]:
     cross_task = _scope_fault(False)
     head_change = _scope_fault(True)
     failed_worker = _scope_fault(False, invalid_worker_result=True)
+    ignored_forbidden = _scope_fault(
+        False,
+        ignored_path="ignored-forbidden.bin",
+        ignored_forbidden=True,
+    )
+    ignored_unclaimed = _scope_fault(
+        False,
+        ignored_path="ignored-unclaimed.bin",
+    )
+    unexpected_exception = _scope_fault(False, unexpected_exception=True)
     return {
         **{f"cross_task_{name}": passed for name, passed in cross_task.items()},
         **{f"head_change_{name}": passed for name, passed in head_change.items()},
         **{f"failed_worker_{name}": passed for name, passed in failed_worker.items()},
+        **{f"ignored_forbidden_{name}": passed for name, passed in ignored_forbidden.items()},
+        **{f"ignored_unclaimed_{name}": passed for name, passed in ignored_unclaimed.items()},
+        **{f"unexpected_exception_{name}": passed for name, passed in unexpected_exception.items()},
     }
+
+
 def verdict_cases() -> dict[str, bool]:
     base = {
         "findings": [],

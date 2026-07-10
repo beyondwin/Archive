@@ -275,6 +275,36 @@ def main() -> int:
             }
         )
 
+    with tempfile.TemporaryDirectory(prefix="cpe-ignored-git-delta-") as raw:
+        repo = Path(raw)
+        run(["git", "init", "-q"], repo).check_returncode()
+        run(["git", "config", "user.email", "eval@example.com"], repo).check_returncode()
+        run(["git", "config", "user.name", "Eval"], repo).check_returncode()
+        (repo / ".gitignore").write_text("ignored-by-gitignore.bin\n", encoding="utf-8")
+        run(["git", "add", ".gitignore"], repo).check_returncode()
+        run(["git", "commit", "-q", "-m", "ignore rules"], repo).check_returncode()
+        info_exclude = repo / ".git" / "info" / "exclude"
+        info_exclude.write_text(
+            info_exclude.read_text(encoding="utf-8") + "\nignored-by-info.bin\n",
+            encoding="utf-8",
+        )
+        before_ignored = capture_snapshot(repo)
+        (repo / "ignored-by-gitignore.bin").write_bytes(b"\x00ignored")
+        (repo / "ignored-by-info.bin").write_bytes(b"ignored by info\n")
+        after_ignored = capture_snapshot(repo)
+        ignored_delta = diff_snapshots(before_ignored, after_ignored, repo)
+        ignored_paths = ("ignored-by-gitignore.bin", "ignored-by-info.bin")
+        checks.update(
+            {
+                "ignored_content_is_in_full_tree_snapshot": ignored_delta.changed_files
+                == ignored_paths,
+                "git_metadata_is_excluded_from_snapshot": not any(
+                    path == ".git" or path.startswith(".git/")
+                    for path, _fingerprint in after_ignored.files
+                ),
+            }
+        )
+
     with tempfile.TemporaryDirectory(prefix="cpe-patch-kernel-") as raw:
         run_dir = Path(raw) / "run"
         run_dir.mkdir()
