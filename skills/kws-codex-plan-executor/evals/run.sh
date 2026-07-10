@@ -81,6 +81,7 @@ fi
 mkdir -p "$EVAL_DIR/baselines"
 partial="$BASELINE_FILE.partial"
 : > "$partial"
+trap 'rm -f "$partial"' EXIT
 overall_status=0
 
 run_check "skill_contract" python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md"
@@ -106,6 +107,7 @@ run_check "fault_injection" python3 "$EVAL_DIR/check_fault_injection.py"
 run_check "live_model_migration" python3 "$EVAL_DIR/check_live_model_migration.py"
 run_check "superpowers_compatibility" python3 "$EVAL_DIR/check_superpowers_compatibility.py"
 run_check "eval_harness" python3 "$EVAL_DIR/check_eval_harness.py"
+rm -f "$partial"
 run_check "release_contract" python3 "$EVAL_DIR/check_release_contract.py"
 while IFS= read -r parser_fixture; do
   run_check "parse_plan:$(basename "$parser_fixture")" python3 "$EVAL_DIR/check_parse_plan.py" --fixture "$parser_fixture"

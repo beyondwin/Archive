@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 
-FALLBACK_POLICIES = {"full_spec_on_blocker", "halt_on_blocker"}
+FALLBACK_POLICIES = {"halt_on_blocker"}
 DEFAULT_FORBIDDEN_GLOBS = [".git/**", "graphify-out/**"]
 
 
