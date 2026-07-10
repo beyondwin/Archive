@@ -1,10 +1,13 @@
 {
   "schema_version": "1",
   "version": "3.0.0",
-  "status": "deterministic_ready_paid_pending",
+  "status": "integrity_closure_pending_paid_pending",
+  "deterministic_status": "integrity-closure-pending",
+  "paid_live_status": "pending",
   "release_ready": false,
   "deterministic_evidence": {
-    "status": "passed",
+    "status": "pending",
+    "reason": "audited deterministic integrity failures are not yet closed",
     "command": "python3 evals/check_live_model_migration.py",
     "treatment_count": 4,
     "case_count": 8,

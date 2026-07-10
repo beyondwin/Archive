@@ -5,8 +5,8 @@ durable transition as a hash-chained event. It remains independent from
 Waygent. `events.jsonl` is authoritative; `state.json` is a rebuildable
 projection for resume and inspection.
 
-Release status: **deterministic-ready; paid-live-pending**. The deterministic
-suite and dry-run migration planning are required development evidence. The
+Release status: **integrity-closure-pending; paid-live-pending**. The current
+deterministic suite does not yet exercise every audited integrity failure. The
 credentialed four-treatment, eight-case live matrix still requires explicit
 cost approval and must pass before paid release closeout is claimed.
 

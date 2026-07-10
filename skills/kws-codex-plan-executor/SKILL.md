@@ -4,14 +4,14 @@ description: Use when executing an implementation plan in Codex from a plan path
 metadata:
   version: "3.0.0"
   updated_at: "2026-07-10"
-  release_status: "deterministic-ready; paid-live-pending"
+  release_status: "integrity-closure-pending; paid-live-pending"
 ---
 
 # KWS Codex Plan Executor
 
-CPE v3 is an independent, event-sourced Codex plan executor. Its deterministic
-release checks are ready; the paid live migration matrix has not run, so release
-closeout remains `paid-live-pending`.
+CPE v3 is an independent, event-sourced Codex plan executor. Its integrity
+closure is still pending, and the paid live migration matrix has not run, so
+release closeout remains `integrity-closure-pending; paid-live-pending`.
 
 ## Public Commands
 
