@@ -244,8 +244,8 @@ def main() -> int:
         failed.append("packet_context_budget_red")
 
     spec = packet.get("spec") if isinstance(packet, dict) else {}
-    if isinstance(spec, dict) and spec.get("fallback_used") is True and budget.get("status") != "green":
-        failed.append("full_spec_fallback_not_delegable")
+    if isinstance(spec, dict) and spec.get("fallback_used") is True:
+        failed.append("explicit_spec_mapping_required")
 
     acceptance = packet.get("acceptance") if isinstance(packet, dict) else {}
     if isinstance(acceptance, dict) and not acceptance.get("command"):

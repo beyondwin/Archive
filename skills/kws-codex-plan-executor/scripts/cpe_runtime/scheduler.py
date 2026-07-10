@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import subprocess
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .evidence import put_json
 from .kernel import Kernel, Transition
-from .manifest import load_manifest, resolve_ref
+from .manifest import load_verified_manifest, resolve_ref
 from .model_policy import CORE_ROUTE
 from .projector import project
 from .events import read_events
@@ -101,7 +102,8 @@ def _worker_attempt(
     try:
         result = worker.run(WorkerRequest(attempt_id, kind, prompt, worktree, False, True))
     except WorkerError as exc:
-        raise RuntimeError(f"{attempt_id}: {exc}") from exc
+        payload = {"status": "failed", "summary": str(exc), "changed_files": [], "findings": [], "evidence_refs": [], "missing_evidence": [str(exc)], "verification": [], "failure_category": "transient"}
+        result = WorkerResult("failed", payload, {"verified": False, "error": str(exc)}, {}, 0, hashlib.sha256(str(exc).encode()).hexdigest(), str(exc))
     _record_attempt(kernel, task_id, kind, result, attempt_id)
     _attach(kernel, task_id, attempt_id, "worker_result", result.payload)
     return result
@@ -112,20 +114,11 @@ def _acceptance(task: dict, worktree: Path, kernel: Kernel, ordinal: int) -> tup
     if not command:
         payload = {"command": "", "returncode": 2, "passed": False, "output": "acceptance command missing"}
     else:
-        result = subprocess.run(
-            ["/bin/sh", "-lc", command],
-            cwd=worktree,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            timeout=600,
-        )
-        payload = {
-            "command": command,
-            "returncode": result.returncode,
-            "passed": result.returncode == 0,
-            "output": result.stdout[-8000:],
-        }
+        try:
+            result = subprocess.run(["/bin/sh", "-lc", command], cwd=worktree, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600)
+            payload = {"command": command, "returncode": result.returncode, "passed": result.returncode == 0, "output": result.stdout[-8000:]}
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            payload = {"command": command, "returncode": 124, "passed": False, "output": str(exc)}
     attempt_id = f"{task['id']}.acceptance.{ordinal}"
     _attach(kernel, str(task["id"]), attempt_id, "acceptance", payload)
     return bool(payload["passed"]), payload
@@ -146,7 +139,7 @@ def _block(kernel: Kernel, task_id: str, phase: str, reason: str) -> dict:
 
 def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Path) -> dict:
     kernel = kernel_or_run_dir if isinstance(kernel_or_run_dir, Kernel) else Kernel(kernel_or_run_dir)
-    manifest = load_manifest(kernel.run_dir / "run_manifest.json")
+    manifest = load_verified_manifest(kernel.run_dir / "run_manifest.json")
     worktree = resolve_ref(str(manifest["execution_worktree_ref"]))
     if worktree.resolve() == kernel.run_dir.resolve():
         raise ValueError("run directory must never be used as execution worktree")

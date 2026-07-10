@@ -19,7 +19,7 @@ from preflight_dependencies import check_requirements
 
 from cpe_runtime.events import read_events, validate_chain
 from cpe_runtime.kernel import Kernel, Transition, rebuild_snapshot
-from cpe_runtime.manifest import create_manifest, load_manifest, write_manifest
+from cpe_runtime.manifest import create_manifest, load_verified_manifest, write_manifest
 from cpe_runtime.projector import project
 from cpe_runtime.prompt_export import render_export_bundle
 from cpe_runtime.scheduler import run_tasks
@@ -204,7 +204,7 @@ def resume_run(run_id: str) -> int:
         print(json.dumps({"classification": "run_missing", "run_id": run_id}), file=sys.stderr)
         return 2
     try:
-        manifest = load_manifest(run_dir / "run_manifest.json")
+        manifest = load_verified_manifest(run_dir / "run_manifest.json")
         events = read_events(run_dir / "events.jsonl")
     except ValueError as exc:
         print(json.dumps({"classification": str(exc), "run_id": run_id}), file=sys.stderr)
@@ -236,6 +236,11 @@ def export_plan(args: argparse.Namespace) -> int:
     body = plan.read_text(encoding="utf-8")
     if spec:
         body += f"\n\nSPEC PATH: {spec}\n"
+    for doc in args.docs or []:
+        doc_path = Path(doc).expanduser().resolve()
+        if not doc_path.is_file():
+            raise PreflightError(f"docs path is unreadable: {doc_path}")
+        body += f"\n\nDOC PATH: {doc_path}\n{doc_path.read_text(encoding='utf-8')}\n"
     if args.mode == "handoff":
         body = "HANDOFF CHECKPOINT\n\n" + body
     print(render_export_bundle(body, workspace), end="")

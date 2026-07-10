@@ -303,7 +303,7 @@ def build_packet(
     decisions: list[dict],
     max_chars: int,
     context_threshold: float,
-    fallback_policy: str,
+    fallback_policy: str = "halt_on_blocker",
 ) -> dict:
     if fallback_policy not in FALLBACK_POLICIES:
         die(f"invalid manifest fallback: {fallback_policy}")
@@ -443,7 +443,7 @@ def main() -> int:
         decisions,
         args.max_chars,
         args.context_threshold,
-        None,
+        "halt_on_blocker",
     )
     output = Path(args.output).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)

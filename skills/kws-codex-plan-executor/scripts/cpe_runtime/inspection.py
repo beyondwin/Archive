@@ -10,22 +10,31 @@ from .reconciliation import reconcile
 from .validation import validate_run
 
 
-def _cost(usage: dict[str, int], manifest: dict) -> dict[str, object]:
+def _cost(attempts: list[dict], manifest: dict) -> dict[str, object]:
     record = manifest.get("pricing_snapshot") or {}
     try:
         pricing = json.loads(resolve_ref(str(record["ref"])).read_text(encoding="utf-8"))
-        rates = pricing["models"]["gpt-5.6-sol"]
+        models = pricing["models"]
     except (OSError, KeyError, TypeError, json.JSONDecodeError):
         return {"estimated_cost_usd": None, "short_context_cost_usd": None, "long_context_cost_usd": None}
 
     def calculate(kind: str) -> float:
-        rate = rates[kind]
-        uncached = max(0, usage["input_tokens"] - usage["cached_input_tokens"])
-        total = (
-            uncached * float(rate["input"])
-            + usage["cached_input_tokens"] * float(rate["cached_input"])
-            + usage["output_tokens"] * float(rate["output"])
-        ) / 1_000_000
+        total = 0.0
+        for attempt in attempts:
+            attestation = attempt.get("attestation") or {}
+            model = attestation.get("actual_model") or attestation.get("requested_model") or "gpt-5.6-sol"
+            rate = models.get(model, {}).get(kind)
+            usage = attempt.get("usage") or {}
+            if not isinstance(rate, dict):
+                continue
+            input_tokens = max(0, int(usage.get("input_tokens", 0) or 0))
+            cached = max(0, int(usage.get("cached_input_tokens", 0) or 0))
+            output = max(0, int(usage.get("output_tokens", 0) or 0))
+            total += (
+                max(0, input_tokens - cached) * float(rate["input"])
+                + cached * float(rate["cached_input"])
+                + output * float(rate["output"])
+            ) / 1_000_000
         return round(total, 8)
 
     return {
@@ -78,7 +87,7 @@ def inspect_run(run_dir: Path) -> dict[str, object]:
         "errors": validation.errors,
         "reconciliation": reconciliation.as_dict(),
     }
-    result.update(_cost({key: int(result[key]) for key in ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens")}, manifest))
+    result.update(_cost(attempts, manifest))
     return result
 
 
