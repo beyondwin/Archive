@@ -71,6 +71,8 @@ owner_boundary: Release metadata and its deterministic contract only
 acceptance: cd skills/kws-codex-plan-executor && python3 evals/check_release_contract.py
 expected: passed=true and release_ready=false with integrity-closure-pending
 risks: [Active docs currently claim deterministic readiness from checks that do not exercise the audited failures.]
+operator_reviewed: true
+operator_decision: Approved for local deterministic metadata correction; paid live execution and external writes remain out of scope.
 ```
 
 **Files:**
@@ -1512,6 +1514,8 @@ owner_boundary: Cost-free release evidence, version transition, baseline, verifi
 acceptance: cd skills/kws-codex-plan-executor && ./evals/run.sh && python3 evals/check_release_contract.py && cd ../.. && bun run check && git diff --check
 expected: deterministic gates pass, paid live stays pending, Graphify is fresh, and the tracked worktree is clean
 risks: [A release log can pass today with an old failing run because the contract validates strings instead of current evidence fields.]
+operator_reviewed: true
+operator_decision: Approved for local cost-free release closeout only; paid live execution remains pending and release_ready remains false.
 ```
 
 **Files:**
