@@ -193,7 +193,7 @@ def fallback_next_action(reason: str, refs: list[str]) -> str:
     return "Review spec mapping evidence and add task-specific spec_refs."
 
 
-def resolve_sections(task: dict, manifest: dict, fallback_policy: str) -> tuple[list[str], bool, dict]:
+def resolve_sections(task: dict, manifest: dict, fallback_policy: str | None = None) -> tuple[list[str], bool, dict]:
     sections = manifest.get("sections", {})
     explicit = [item for item in task.get("spec_refs", []) if isinstance(item, str) and item.strip()]
     if explicit:
@@ -229,34 +229,7 @@ def resolve_sections(task: dict, manifest: dict, fallback_policy: str) -> tuple[
             "source": "manifest",
         }
 
-    matched, candidate_scores = heuristic_sections(task, manifest)
-    if matched:
-        selected = [item["section_id"] for item in candidate_scores if item["section_id"] in matched]
-        return selected, False, {
-            "selected_section_ids": selected,
-            "candidate_scores": candidate_scores,
-            "mapping_reason": "Matched task file or identifier signals.",
-            "requires_parent_mapping": False,
-            "source": "heuristic",
-        }
-
-    if fallback_policy == "halt_on_blocker":
-        die(f"no spec section mapping for {task.get('id')}")
-    reason = fallback_reason(task, candidate_scores)
-    refs = suggested_spec_refs(candidate_scores)
-    patch = suggested_plan_patch(refs) if refs else ""
-    return ["*"], True, {
-        "selected_section_ids": ["*"],
-        "candidate_scores": candidate_scores,
-        "mapping_reason": "No task-specific spec section matched; using full spec fallback.",
-        "requires_parent_mapping": True,
-        "source": "fallback",
-        "fallback_reason": reason,
-        "suggested_spec_refs": refs,
-        "suggested_plan_patch": patch,
-        "next_action": fallback_next_action(reason, refs),
-        "operator_reviewed": False,
-    }
+    die(f"missing_explicit_spec_mapping: {task.get('id', 'unknown')}")
 
 
 def spec_context(spec_path: Path, manifest: dict, section_ids: list[str], fallback_used: bool) -> tuple[str, str, str]:
@@ -452,7 +425,6 @@ def main() -> int:
     parser.add_argument("--decisions")
     parser.add_argument("--max-chars", type=int, default=60000)
     parser.add_argument("--context-threshold", type=float, default=0.70)
-    parser.add_argument("--manifest-fallback", default="full_spec_on_blocker")
     parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
@@ -471,7 +443,7 @@ def main() -> int:
         decisions,
         args.max_chars,
         args.context_threshold,
-        args.manifest_fallback,
+        None,
     )
     output = Path(args.output).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)

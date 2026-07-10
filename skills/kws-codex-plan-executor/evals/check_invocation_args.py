@@ -104,7 +104,6 @@ def main() -> int:
         and "mode=interactive" in echo
         and "subagents=on" in echo
         and "context_mode=sliced" in echo
-        and "manifest_fallback=full_spec_on_blocker" in echo
     )
     if not checks["echo_contains_required_fields"]:
         failures.append("echo line should include plan count, mode, subagents, context mode, and fallback policy")

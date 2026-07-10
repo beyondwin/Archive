@@ -45,27 +45,8 @@ def audit_packet(packet_path: Path) -> tuple[dict, list[dict]]:
         )
 
     spec = packet.get("spec") if isinstance(packet.get("spec"), dict) else {}
-    if spec.get("fallback_used") is True:
-        mapping = spec.get("mapping") if isinstance(spec.get("mapping"), dict) else {}
-        reviewed = mapping.get("operator_reviewed") is True
-        next_action = (
-            mapping.get("next_action")
-            if isinstance(mapping.get("next_action"), str) and mapping.get("next_action").strip()
-            else "next_action missing from packet mapping"
-        )
-        issues.append(
-            issue(
-                task_id,
-                "info" if reviewed else "fixable",
-                "full_spec_fallback",
-                "Task packet uses full spec fallback instead of task-specific spec sections.",
-                fallback_reason=mapping.get("fallback_reason") or "unknown",
-                suggested_spec_refs=list_strings(mapping.get("suggested_spec_refs")),
-                suggested_plan_patch=mapping.get("suggested_plan_patch") or "",
-                next_action=next_action,
-                operator_reviewed=reviewed,
-            )
-        )
+    if "section_ids" not in spec or not isinstance(spec.get("section_ids"), list) or not spec.get("section_ids"):
+        issues.append(issue(task_id, "blocking", "missing_explicit_spec_mapping", "Task packet must include explicit spec section ids."))
 
     policy = packet.get("write_policy") if isinstance(packet.get("write_policy"), dict) else {}
     allowed = list_strings(policy.get("allowed_write_globs"))

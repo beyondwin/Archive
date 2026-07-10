@@ -153,9 +153,7 @@ def section_end_line(index: int, sections: list[tuple[str, int, int, str]], tota
     return total_lines if total_lines else line_start
 
 
-def build_manifest(spec_path: Path, fallback_policy: str) -> dict:
-    if fallback_policy not in FALLBACK_POLICIES:
-        die(f"invalid fallback policy: {fallback_policy}")
+def build_manifest(spec_path: Path) -> dict:
     try:
         text = spec_path.read_text(encoding="utf-8")
     except OSError:
@@ -198,11 +196,10 @@ def build_manifest(spec_path: Path, fallback_policy: str) -> dict:
             section_order.append(section_id)
 
     return {
-        "schema_version": "1",
+        "schema_version": "3",
         "spec_path": str(spec_path),
         "spec_sha256": sha256_text(text),
         "spec_total_chars": len(text),
-        "fallback_policy": fallback_policy,
         "sections": sections,
         "section_order": section_order,
         "task_to_sections": {},
@@ -213,11 +210,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("spec_path")
     parser.add_argument("--output")
-    parser.add_argument("--fallback-policy", default="full_spec_on_blocker")
     args = parser.parse_args()
 
     spec_path = Path(args.spec_path).expanduser().resolve()
-    manifest = build_manifest(spec_path, args.fallback_policy)
+    manifest = build_manifest(spec_path)
     text = json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
     if args.output:
         output = Path(args.output).expanduser()
