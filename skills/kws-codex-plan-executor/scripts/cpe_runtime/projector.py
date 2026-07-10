@@ -34,6 +34,78 @@ RETRY_PHASE_STATES = {
 }
 
 
+def valid_evidence_refs(value: object) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(isinstance(ref, dict) and bool(ref) for ref in value)
+    )
+
+
+def valid_attempt_completion(
+    state: dict,
+    task_id: str | None,
+    attempt_id: str | None,
+    payload: dict,
+) -> bool:
+    matches = [item for item in state.get("attempts", []) if item.get("attempt_id") == attempt_id]
+    usage = payload.get("usage")
+    latency = payload.get("latency_ms")
+    status = payload.get("status")
+    return (
+        isinstance(attempt_id, str)
+        and bool(attempt_id)
+        and len(matches) == 1
+        and matches[0].get("task_id") == task_id
+        and matches[0].get("status") == "started"
+        and status in {"completed", "failed", "interrupted"}
+        and isinstance(payload.get("attestation"), dict)
+        and isinstance(usage, dict)
+        and all(
+            isinstance(key, str)
+            and isinstance(value, int)
+            and not isinstance(value, bool)
+            and value >= 0
+            for key, value in usage.items()
+        )
+        and isinstance(latency, int)
+        and not isinstance(latency, bool)
+        and latency >= 0
+        and (status == "completed" or valid_evidence_refs(payload.get("evidence_refs")))
+    )
+
+
+def valid_verdict(
+    state: dict,
+    task_id: str | None,
+    attempt_id: str | None,
+    payload: dict,
+) -> bool:
+    matches = [item for item in state.get("attempts", []) if item.get("attempt_id") == attempt_id]
+    revision = payload.get("worktree_revision")
+    return (
+        isinstance(attempt_id, str)
+        and bool(attempt_id)
+        and len(matches) == 1
+        and matches[0].get("task_id") == task_id
+        and payload.get("status") in {"passed", "changes_requested", "blocked", "inconclusive"}
+        and isinstance(revision, int)
+        and not isinstance(revision, bool)
+        and revision == state.get("worktree_revision", 0)
+        and isinstance(payload.get("findings"), list)
+        and isinstance(payload.get("missing_evidence"), list)
+    )
+
+
+def owned_active_blocker(state: dict, task_id: str | None, blocker_id: object) -> dict | None:
+    matches = [
+        item
+        for item in state.get("active_blockers", [])
+        if item.get("blocker_id") == blocker_id and item.get("task_id") == task_id
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
 def initial_state(manifest: dict) -> dict:
     tasks = {
         str(task["id"]): {
@@ -94,10 +166,17 @@ def apply_event(state: dict, event: dict) -> dict:
         state["current_task"] = None if payload["to"] in {"completed", "blocked", "failed"} else task_id
     elif typ == "task.retry_scheduled":
         task_id = event.get("task_id")
+        if (
+            task_id not in state["tasks"]
+            or payload.get("phase") not in RETRY_PHASE_STATES
+            or state["tasks"][task_id]["status"] != "blocked"
+            or any(item.get("task_id") == task_id for item in state["active_blockers"])
+            or not valid_evidence_refs(payload.get("evidence_refs"))
+        ):
+            raise ValueError("invalid retry payload")
         state["retry_queue"].append({"task_id": task_id, **payload})
-        if task_id in state["tasks"] and state["tasks"][task_id]["status"] == "blocked":
-            state["tasks"][task_id]["status"] = RETRY_PHASE_STATES[payload["phase"]]
-            state["current_task"] = task_id
+        state["tasks"][task_id]["status"] = RETRY_PHASE_STATES[payload["phase"]]
+        state["current_task"] = task_id
     elif typ in {"attempt.recorded", "attempt.started"}:
         record = {"task_id": event.get("task_id"), "attempt_id": event.get("attempt_id"), **payload}
         if typ == "attempt.started":
@@ -108,13 +187,15 @@ def apply_event(state: dict, event: dict) -> dict:
                 state["usage_totals"][key] += int((payload.get("usage") or {}).get(key, 0) or 0)
     elif typ == "attempt.completed":
         attempt_id = event.get("attempt_id")
+        if not valid_attempt_completion(state, event.get("task_id"), attempt_id, payload):
+            raise ValueError("invalid attempt payload")
         matching = [item for item in state["attempts"] if item.get("attempt_id") == attempt_id]
-        if len(matching) != 1:
-            raise ValueError("unknown attempt")
         matching[0].update(payload)
         for key in state["usage_totals"]:
             state["usage_totals"][key] += int((payload.get("usage") or {}).get(key, 0) or 0)
     elif typ == "verdict.recorded":
+        if not valid_verdict(state, event.get("task_id"), event.get("attempt_id"), payload):
+            raise ValueError("invalid verdict payload")
         state["verdicts"].append(
             {"task_id": event.get("task_id"), "attempt_id": event.get("attempt_id"), **payload}
         )
@@ -131,10 +212,10 @@ def apply_event(state: dict, event: dict) -> dict:
         state["blockers"] = deepcopy(state["active_blockers"])
     elif typ == "blocker.updated":
         blocker_id = payload["blocker_id"]
-        active = {item.get("blocker_id"): item for item in state["active_blockers"]}
-        if blocker_id not in active:
-            raise ValueError("unknown blocker")
-        active[blocker_id].update(payload)
+        blocker = owned_active_blocker(state, event.get("task_id"), blocker_id)
+        if blocker is None or len(payload) < 2 or {"status", "task_id"} & payload.keys():
+            raise ValueError("invalid blocker update payload")
+        blocker.update(payload)
         history = [item for item in state["blocker_history"] if item.get("blocker_id") == blocker_id]
         if len(history) != 1:
             raise ValueError("unknown blocker")
@@ -142,9 +223,13 @@ def apply_event(state: dict, event: dict) -> dict:
         state["blockers"] = deepcopy(state["active_blockers"])
     elif typ == "blocker.resolved":
         blocker_id = payload["blocker_id"]
-        active = {item.get("blocker_id"): item for item in state["active_blockers"]}
-        if blocker_id not in active:
-            raise ValueError("unknown blocker")
+        blocker = owned_active_blocker(state, event.get("task_id"), blocker_id)
+        if (
+            blocker is None
+            or {"status", "task_id"} & payload.keys()
+            or not valid_evidence_refs(payload.get("evidence_refs"))
+        ):
+            raise ValueError("invalid blocker resolution payload")
         state["active_blockers"] = [
             item for item in state["active_blockers"] if item.get("blocker_id") != blocker_id
         ]

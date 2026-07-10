@@ -16,7 +16,7 @@ from cpe_runtime.events import (
     validate_chain,
 )
 from cpe_runtime.kernel import Kernel, Transition, _validate_transition, rebuild_snapshot
-from cpe_runtime.projector import initial_state, project
+from cpe_runtime.projector import apply_event, initial_state, project
 from cpe_runtime.manifest import create_manifest, write_manifest
 
 
@@ -280,13 +280,24 @@ def check_kernel_payload_validation() -> None:
             task_id="T1",
         ),
     )
+    evidence_ref = {
+        "kind": "verification",
+        "path": "artifacts/evidence/retry.json",
+        "sha256": "d" * 64,
+        "media_type": "application/json",
+    }
     _validate_transition(
         run_dir,
         manifest,
         state,
         Transition(
             "task.retry_scheduled",
-            {"phase": "acceptance", "root_cause_key": "acceptance:1", "worktree_revision": 0},
+            {
+                "phase": "acceptance",
+                "root_cause_key": "acceptance:1",
+                "worktree_revision": 0,
+                "evidence_refs": [evidence_ref],
+            },
             task_id="T1",
         ),
     )
@@ -309,10 +320,168 @@ def check_kernel_payload_validation() -> None:
     )
 
 
+def check_integrity_rejections() -> None:
+    manifest = _task_manifest()
+    run_dir = Path("/nonexistent-event-kernel-fixture")
+    evidence_ref = {
+        "kind": "verification",
+        "path": "artifacts/evidence/failure.json",
+        "sha256": "c" * 64,
+        "media_type": "application/json",
+    }
+
+    blocked = initial_state(manifest)
+    blocked["lifecycle"] = "running"
+    blocked["tasks"]["T1"]["status"] = "blocked"
+    blocked["active_blockers"] = [
+        {"blocker_id": "B1", "task_id": "T1", "status": "open"}
+    ]
+    _expect_error(
+        "invalid retry payload",
+        lambda: _validate_transition(
+            run_dir,
+            manifest,
+            blocked,
+            Transition(
+                "task.retry_scheduled",
+                {
+                    "phase": "acceptance",
+                    "root_cause_key": "acceptance:1",
+                    "worktree_revision": 0,
+                    "evidence_refs": [evidence_ref],
+                },
+                task_id="T1",
+            ),
+        ),
+    )
+    resolved = {**blocked, "active_blockers": []}
+    _expect_error(
+        "invalid retry payload",
+        lambda: _validate_transition(
+            run_dir,
+            manifest,
+            resolved,
+            Transition(
+                "task.retry_scheduled",
+                {
+                    "phase": "acceptance",
+                    "root_cause_key": "acceptance:1",
+                    "worktree_revision": 0,
+                    "evidence_refs": [],
+                },
+                task_id="T1",
+            ),
+        ),
+    )
+
+    for event_type, payload, message in (
+        ("blocker.updated", {"blocker_id": "B1", "owner": "operator"}, "invalid blocker update payload"),
+        ("blocker.resolved", {"blocker_id": "B1", "evidence_refs": [evidence_ref]}, "invalid blocker resolution payload"),
+        ("blocker.updated", {"blocker_id": "B1", "status": "resolved"}, "invalid blocker update payload"),
+        ("blocker.updated", {"blocker_id": "B1", "task_id": "T2"}, "invalid blocker update payload"),
+        ("blocker.resolved", {"blocker_id": "B1", "status": "resolved", "evidence_refs": [evidence_ref]}, "invalid blocker resolution payload"),
+    ):
+        _expect_error(
+            message,
+            lambda event_type=event_type, payload=payload: _validate_transition(
+                run_dir,
+                manifest,
+                blocked,
+                Transition(event_type, payload, task_id=None),
+            ),
+        )
+
+    attempts = initial_state(manifest)
+    attempts["lifecycle"] = "running"
+    attempts["attempts"] = [
+        {"task_id": "T1", "attempt_id": "A1", "kind": "task_review", "status": "started"}
+    ]
+    valid_completion = {
+        "status": "completed",
+        "attestation": {"verified": False},
+        "usage": {"input_tokens": 1},
+        "latency_ms": 1,
+    }
+    for payload in (
+        {**valid_completion, "attestation": []},
+        {**valid_completion, "usage": {"input_tokens": True}},
+        {**valid_completion, "latency_ms": True},
+        {**valid_completion, "status": "failed"},
+    ):
+        _expect_error(
+            "invalid attempt payload",
+            lambda payload=payload: _validate_transition(
+                run_dir,
+                manifest,
+                attempts,
+                Transition("attempt.completed", payload, task_id="T1", attempt_id="A1"),
+            ),
+        )
+    completed = {**attempts, "attempts": [{**attempts["attempts"][0], **valid_completion}]}
+    _expect_error(
+        "invalid attempt payload",
+        lambda: _validate_transition(
+            run_dir,
+            manifest,
+            completed,
+            Transition("attempt.completed", valid_completion, task_id="T1", attempt_id="A1"),
+        ),
+    )
+
+    verdict = {
+        "status": "passed",
+        "findings": [],
+        "missing_evidence": [],
+        "worktree_revision": 0,
+    }
+    for attempt_id, payload in (
+        ("unknown", verdict),
+        ("A1", {**verdict, "worktree_revision": 1}),
+        ("A1", {**verdict, "findings": {}}),
+        ("A1", {**verdict, "missing_evidence": None}),
+    ):
+        _expect_error(
+            "invalid verdict payload",
+            lambda attempt_id=attempt_id, payload=payload: _validate_transition(
+                run_dir,
+                manifest,
+                attempts,
+                Transition("verdict.recorded", payload, task_id="T1", attempt_id=attempt_id),
+            ),
+        )
+
+    projection = apply_event(
+        attempts,
+        {
+            "seq": 1,
+            "hash": "event-1",
+            "type": "attempt.completed",
+            "task_id": "T1",
+            "attempt_id": "A1",
+            "payload": valid_completion,
+        },
+    )
+    _expect_error(
+        "invalid attempt payload",
+        lambda: apply_event(
+            projection,
+            {
+                "seq": 2,
+                "hash": "event-2",
+                "type": "attempt.completed",
+                "task_id": "T1",
+                "attempt_id": "A1",
+                "payload": valid_completion,
+            },
+        ),
+    )
+
+
 def main() -> int:
     check_typed_lifecycle_replay()
     check_write_and_read_event_boundaries()
     check_kernel_payload_validation()
+    check_integrity_rejections()
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw); run = root / "run"
         for name in ("plan.md", "pricing.json"):
