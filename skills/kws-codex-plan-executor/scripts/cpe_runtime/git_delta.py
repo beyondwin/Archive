@@ -31,6 +31,7 @@ class GitDelta:
     patch_sha256: str
     patch_bytes: bytes
     head_changed: bool
+    _structural_directories: tuple[str, ...] = field(default=(), repr=False)
 
 
 def _git_result(worktree: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]:
@@ -366,6 +367,17 @@ def diff_snapshots(before: GitSnapshot, after: GitSnapshot, worktree: Path) -> G
             if before_map.get(path) != after_map.get(path)
         )
     )
+    structural_directories = tuple(
+        sorted(
+            path
+            for path in changed
+            if (path in before_map) != (path in after_map)
+            and any(
+                fingerprint.startswith(("directory:", "error:directory:"))
+                for fingerprint in (before_map.get(path, ""), after_map.get(path, ""))
+            )
+        )
+    )
     payload = bytearray(b"CPE-GIT-DELTA-V1\0")
     payload.extend(_field(b"B", before.head.encode("ascii")))
     payload.extend(_field(b"A", after.head.encode("ascii")))
@@ -385,12 +397,26 @@ def diff_snapshots(before: GitSnapshot, after: GitSnapshot, worktree: Path) -> G
         patch,
         before.head != after.head
         or before._git_identity_sha256 != after._git_identity_sha256,
+        structural_directories,
     )
 
 
 def _matches(path: str, patterns: list[str] | tuple[str, ...]) -> bool:
     candidate = PurePosixPath(path)
-    return any(path == pattern or candidate.match(pattern) for pattern in patterns)
+    for pattern in patterns:
+        if path == pattern or candidate.match(pattern):
+            return True
+        if pattern.endswith("/**"):
+            root = pattern[:-3].rstrip("/")
+            if root and (path == root or path.startswith(f"{root}/")):
+                return True
+    return False
+
+
+def _is_descendant(path: str, directory: str) -> bool:
+    child_parts = PurePosixPath(path).parts
+    parent_parts = PurePosixPath(directory).parts
+    return len(child_parts) > len(parent_parts) and child_parts[: len(parent_parts)] == parent_parts
 
 
 def scope_errors(
@@ -399,10 +425,23 @@ def scope_errors(
     forbidden: list[str] | tuple[str, ...],
 ) -> list[str]:
     forbidden_paths = sorted(path for path in delta.changed_files if _matches(path, forbidden))
+    allowed_descendants = [
+        path
+        for path in delta.changed_files
+        if path not in forbidden_paths and _matches(path, allowed)
+    ]
+    structural_ancestors = {
+        directory
+        for directory in delta._structural_directories
+        if directory not in forbidden_paths
+        and any(_is_descendant(path, directory) for path in allowed_descendants)
+    }
     unclaimed_paths = sorted(
         path
         for path in delta.changed_files
-        if path not in forbidden_paths and not _matches(path, allowed)
+        if path not in forbidden_paths
+        and path not in structural_ancestors
+        and not _matches(path, allowed)
     )
     errors = [f"forbidden_write:{path}" for path in forbidden_paths]
     errors.extend(f"unclaimed_write:{path}" for path in unclaimed_paths)

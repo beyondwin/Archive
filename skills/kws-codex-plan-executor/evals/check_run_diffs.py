@@ -358,6 +358,72 @@ def main() -> int:
             sealed.chmod(0o600)
         checks["strict_unreadable_baseline_fails_closed"] = strict_rejected
 
+    with tempfile.TemporaryDirectory(prefix="cpe-directory-scope-") as raw:
+        repo = Path(raw)
+        run(["git", "init", "-q"], repo).check_returncode()
+        run(["git", "config", "user.email", "eval@example.com"], repo).check_returncode()
+        run(["git", "config", "user.name", "Eval"], repo).check_returncode()
+        (repo / "baseline.txt").write_text("baseline\n", encoding="utf-8")
+        run(["git", "add", "baseline.txt"], repo).check_returncode()
+        run(["git", "commit", "-q", "-m", "baseline"], repo).check_returncode()
+
+        before_created_tree = capture_snapshot(repo)
+        owned = repo / "newdir" / "sub" / "owned.txt"
+        owned.parent.mkdir(parents=True)
+        owned.write_text("owned\n", encoding="utf-8")
+        after_created_tree = capture_snapshot(repo)
+        created_tree_delta = diff_snapshots(before_created_tree, after_created_tree, repo)
+        checks.update(
+            {
+                "exact_child_authorizes_structural_parents": scope_errors(
+                    created_tree_delta, ["newdir/sub/owned.txt"], []
+                )
+                == [],
+                "recursive_glob_authorizes_child_and_parents": scope_errors(
+                    created_tree_delta, ["newdir/**"], []
+                )
+                == [],
+                "forbidden_child_does_not_authorize_structural_parents": scope_errors(
+                    created_tree_delta,
+                    ["newdir/sub/owned.txt"],
+                    ["newdir/sub/owned.txt"],
+                )
+                == [
+                    "forbidden_write:newdir/sub/owned.txt",
+                    "unclaimed_write:newdir",
+                    "unclaimed_write:newdir/sub",
+                ],
+            }
+        )
+
+        before_empty = after_created_tree
+        (repo / "standalone-empty").mkdir()
+        empty_delta = diff_snapshots(before_empty, capture_snapshot(repo), repo)
+        checks["standalone_empty_directory_stays_unclaimed"] = scope_errors(
+            empty_delta, [], []
+        ) == ["unclaimed_write:standalone-empty"]
+
+        existing = repo / "existing-directory"
+        existing.mkdir()
+        existing.chmod(0o700)
+        before_mode = capture_snapshot(repo)
+        existing.chmod(0o755)
+        mode_delta = diff_snapshots(before_mode, capture_snapshot(repo), repo)
+        checks["existing_directory_mode_change_stays_unclaimed"] = scope_errors(
+            mode_delta, [], []
+        ) == ["unclaimed_write:existing-directory"]
+
+        before_removed_tree = capture_snapshot(repo)
+        owned.unlink()
+        owned.parent.rmdir()
+        (repo / "newdir").rmdir()
+        removed_tree_delta = diff_snapshots(
+            before_removed_tree, capture_snapshot(repo), repo
+        )
+        checks["allowed_removed_child_authorizes_removed_parents"] = scope_errors(
+            removed_tree_delta, ["newdir/sub/owned.txt"], []
+        ) == []
+
     with tempfile.TemporaryDirectory(prefix="cpe-patch-kernel-") as raw:
         run_dir = Path(raw) / "run"
         run_dir.mkdir()
