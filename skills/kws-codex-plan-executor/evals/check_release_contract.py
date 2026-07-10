@@ -156,6 +156,8 @@ def main() -> int:
                 and live_status.get("release_ready") is True
             )
             or (
+                version != "3.0.0"
+                and
                 live_status.get("status") == "deterministic_ready_paid_pending"
                 and live_status.get("deterministic_evidence", {}).get("status") == "passed"
                 and live_status.get("paid_live_evidence", {}).get("status") == "pending"
@@ -179,10 +181,18 @@ def main() -> int:
     if version == "3.0.0":
         expected_status = "integrity-closure-pending; paid-live-pending"
         checks["integrity_closure_is_pending"] = release_status == expected_status
+        checks["canonical_status_is_pending"] = (
+            live_status.get("status") == "integrity_closure_pending_paid_pending"
+        )
+        checks["deterministic_status_is_pending"] = (
+            live_status.get("deterministic_status") == "integrity-closure-pending"
+        )
         checks["release_ready_is_false"] = live_status.get("release_ready") is False
         checks["paid_live_is_pending"] = live_status.get("paid_live_status") == "pending"
         for check_name in (
             "integrity_closure_is_pending",
+            "canonical_status_is_pending",
+            "deterministic_status_is_pending",
             "release_ready_is_false",
             "paid_live_is_pending",
         ):
