@@ -53,9 +53,10 @@ class WriteAttemptOutcome(Generic[T]):
 
 
 class AttemptController:
-    def __init__(self, kernel: Kernel, worktree: Path):
+    def __init__(self, kernel: Kernel, worktree: Path, worker: object | None = None):
         self.kernel = kernel
         self.worktree = worktree.expanduser().resolve()
+        self.worker = worker
 
     def _revision(self) -> int:
         manifest = load_verified_manifest(self.kernel.run_dir / "run_manifest.json")
