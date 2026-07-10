@@ -12,6 +12,9 @@ from pathlib import Path
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SKILL_ROOT / "scripts"))
+
+from cpe_runtime.plan_compiler import CompileBlocked, compile_run
 
 
 def run(command: list[str], cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -48,6 +51,14 @@ def blocked_run(repo: Path, plan: Path, codex_home: Path) -> subprocess.Complete
         SKILL_ROOT,
         env,
     )
+
+
+def compile_block_category(repo: Path, plan: Path) -> str | None:
+    try:
+        compile_run(plan=plan, spec=None, docs=(), workspace=repo, mode="interactive")
+    except CompileBlocked as exc:
+        return exc.category
+    return None
 
 
 def main() -> int:
@@ -91,6 +102,23 @@ def main() -> int:
             dangerous_home / "worktrees"
         ).exists()
 
+        for label, command in (
+            ("newline_git_push", "echo safe\ngit push origin main"),
+            ("newline_rm_rf", "echo safe\nrm -rf /tmp/cpe-readiness-fixture"),
+        ):
+            command_repo = root / f"{label}-repo"
+            initialize_repo(command_repo)
+            (command_repo / "target.txt").write_text("target\n", encoding="utf-8")
+            command_plan = command_repo / "plan.md"
+            command_plan.write_text(
+                header
+                + f"## Task 1: {label}\n\n**Files:**\n- Modify: `target.txt`\n\nVerification:\n```bash\n{command}\n```\n",
+                encoding="utf-8",
+            )
+            run(["git", "add", "."], command_repo)
+            run(["git", "commit", "-qm", "fixture"], command_repo)
+            checks[f"{label}_blocks"] = compile_block_category(command_repo, command_plan) == "operator_review_required"
+
         dirty_repo = root / "dirty-repo"
         initialize_repo(dirty_repo)
         (dirty_repo / "target.txt").write_text("target\n", encoding="utf-8")
@@ -109,6 +137,39 @@ def main() -> int:
         checks["dirty_claim_creates_no_roots"] = not (dirty_home / "orchestrator").exists() and not (
             dirty_home / "worktrees"
         ).exists()
+
+        spaced_repo = root / "spaced-repo"
+        initialize_repo(spaced_repo)
+        spaced_target = spaced_repo / "docs" / "my file.md"
+        spaced_target.parent.mkdir()
+        spaced_target.write_text("clean\n", encoding="utf-8")
+        spaced_plan = spaced_repo / "plan.md"
+        spaced_plan.write_text(
+            header
+            + "## Task 1: Spaced Path\n\n**Files:**\n- Modify: `docs/my file.md`\n\nVerification:\n```bash\ntrue\n```\n",
+            encoding="utf-8",
+        )
+        run(["git", "add", "."], spaced_repo)
+        run(["git", "commit", "-qm", "fixture"], spaced_repo)
+        spaced_target.write_text("dirty\n", encoding="utf-8")
+        checks["dirty_spaced_claim_blocks"] = compile_block_category(spaced_repo, spaced_plan) == "related_dirty_scope"
+
+        rename_repo = root / "rename-repo"
+        initialize_repo(rename_repo)
+        rename_docs = rename_repo / "docs"
+        rename_docs.mkdir()
+        old_target = rename_docs / "old file.md"
+        old_target.write_text("clean\n", encoding="utf-8")
+        rename_plan = rename_repo / "plan.md"
+        rename_plan.write_text(
+            header
+            + "## Task 1: Renamed Path\n\n**Files:**\n- Modify: `docs/new file.md`\n\nVerification:\n```bash\ntrue\n```\n",
+            encoding="utf-8",
+        )
+        run(["git", "add", "."], rename_repo)
+        run(["git", "commit", "-qm", "fixture"], rename_repo)
+        run(["git", "mv", "docs/old file.md", "docs/new file.md"], rename_repo)
+        checks["dirty_rename_claim_blocks"] = compile_block_category(rename_repo, rename_plan) == "related_dirty_scope"
 
     failures.extend(name for name, passed in checks.items() if not passed)
     payload = {"passed": not failures, "checks": checks, "failures": failures}

@@ -20,3 +20,10 @@ expected:
   require_explicit_files: true
   require_numeric_dependencies: true
   require_acceptance_commands: true
+  tasks:
+    - id: task_1
+      operator_reviewed: true
+      operator_decision: Approved for local deterministic metadata correction; paid live execution and external writes remain out of scope.
+    - id: task_13
+      operator_reviewed: true
+      operator_decision: Approved for local cost-free release closeout only; paid live execution remains pending and release_ready remains false.

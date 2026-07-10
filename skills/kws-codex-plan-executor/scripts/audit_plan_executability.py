@@ -269,10 +269,15 @@ def assert_plan_executable(plan: Path, spec: Path | None, workspace: Path) -> No
     plan_text = plan.read_text(encoding="utf-8")
     shape_blocking = [] if current_superpowers_header_present(plan_text) else [BLOCKED_UNSUPPORTED_PLAN_SHAPE]
     audited = [audit_task(task, None, workspace, shape_blocking) for task in parsed["tasks"]]
-    for result in audited:
-        result["blocking_issues"] = [
-            issue for issue in result["blocking_issues"] if issue != RISK_MARKER_REQUIRES_OPERATOR_REVIEW
-        ]
+    for source, result in zip(parsed["tasks"], audited, strict=True):
+        operator_decision = source.get("operator_decision")
+        explicitly_reviewed = source.get("operator_reviewed") is True and (
+            isinstance(operator_decision, str) and bool(operator_decision.strip())
+        )
+        if explicitly_reviewed:
+            result["blocking_issues"] = [
+                issue for issue in result["blocking_issues"] if issue != RISK_MARKER_REQUIRES_OPERATOR_REVIEW
+            ]
     available = set()
     if spec is not None:
         available = set(build_spec_manifest(spec).get("sections", {}))
