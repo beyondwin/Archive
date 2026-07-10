@@ -16,7 +16,16 @@ from .evidence import verify_ref
 from .manifest import load_verified_manifest, resolve_ref, validate_manifest
 from .model_policy import CORE_ROUTE
 from .packets import PacketDraft, verify_packet
-from .projector import RETRY_PHASE_STATES, RUN_TRANSITIONS, TASK_TRANSITIONS, project
+from .projector import (
+    RETRY_PHASE_STATES,
+    RUN_TRANSITIONS,
+    TASK_TRANSITIONS,
+    owned_active_blocker,
+    project,
+    valid_attempt_completion,
+    valid_evidence_refs,
+    valid_verdict,
+)
 
 
 @dataclass(frozen=True)
@@ -186,6 +195,8 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
             or not isinstance(revision, int)
             or isinstance(revision, bool)
             or revision != state.get("worktree_revision", 0)
+            or any(item.get("task_id") == command.task_id for item in state.get("active_blockers", []))
+            or not valid_evidence_refs(payload.get("evidence_refs"))
         ):
             raise ValueError("invalid retry payload")
     elif command.event_type == "attempt.started":
@@ -197,15 +208,10 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
         ):
             raise ValueError("invalid attempt payload")
     elif command.event_type == "attempt.completed":
-        matches = [item for item in state.get("attempts", []) if item.get("attempt_id") == command.attempt_id]
-        if (
-            not command.attempt_id
-            or len(matches) != 1
-            or payload.get("status") not in {"completed", "failed", "interrupted"}
-        ):
+        if not valid_attempt_completion(state, command.task_id, command.attempt_id, payload):
             raise ValueError("invalid attempt payload")
     elif command.event_type == "verdict.recorded":
-        if payload.get("status") not in {"passed", "changes_requested", "blocked", "inconclusive"}:
+        if not valid_verdict(state, command.task_id, command.attempt_id, payload):
             raise ValueError("invalid verdict payload")
     elif command.event_type == "worktree.revision_recorded":
         source = payload.get("from")
@@ -254,25 +260,20 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
             raise ValueError("invalid blocker payload")
     elif command.event_type == "blocker.updated":
         blocker_id = payload.get("blocker_id")
-        matches = [
-            item for item in state.get("active_blockers", [])
-            if item.get("blocker_id") == blocker_id
-        ]
-        if not isinstance(blocker_id, str) or len(matches) != 1 or len(payload) < 2:
+        if (
+            not isinstance(blocker_id, str)
+            or owned_active_blocker(state, command.task_id, blocker_id) is None
+            or len(payload) < 2
+            or bool({"status", "task_id"} & payload.keys())
+        ):
             raise ValueError("invalid blocker update payload")
     elif command.event_type == "blocker.resolved":
         blocker_id = payload.get("blocker_id")
-        matches = [
-            item for item in state.get("active_blockers", [])
-            if item.get("blocker_id") == blocker_id
-        ]
-        evidence_refs = payload.get("evidence_refs")
         if (
             not isinstance(blocker_id, str)
-            or len(matches) != 1
-            or not isinstance(evidence_refs, list)
-            or not evidence_refs
-            or any(not isinstance(ref, dict) for ref in evidence_refs)
+            or owned_active_blocker(state, command.task_id, blocker_id) is None
+            or bool({"status", "task_id"} & payload.keys())
+            or not valid_evidence_refs(payload.get("evidence_refs"))
         ):
             raise ValueError("invalid blocker resolution payload")
     elif command.event_type == "evidence.attached":
