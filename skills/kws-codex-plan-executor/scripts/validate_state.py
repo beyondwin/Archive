@@ -1451,18 +1451,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("state")
     args = parser.parse_args()
-    try:
-        data = json.loads(Path(args.state).read_text(encoding="utf-8"))
-    except Exception as exc:
-        print(f"state is not readable JSON: {exc}", file=sys.stderr)
-        return 2
-    errors = validate(data)
-    if errors:
-        for error in errors:
-            print(error, file=sys.stderr)
-        return 1
-    print("state ok")
-    return 0
+    from cpe_runtime.validation import validate_run
+    path = Path(args.state).expanduser().resolve()
+    report = validate_run(path if path.is_dir() else path.parent)
+    print(json.dumps(report.as_dict(), ensure_ascii=False, indent=2))
+    if report.classification == "unsupported_schema": return 2
+    return 0 if report.passed else 1
 
 
 if __name__ == "__main__":
