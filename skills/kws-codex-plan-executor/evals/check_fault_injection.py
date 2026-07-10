@@ -89,6 +89,8 @@ def _scope_fixture(
     root: Path,
     *,
     forbidden_paths: list[str] | None = None,
+    allowed_paths: list[str] | None = None,
+    t1_claims: list[str] | None = None,
 ) -> tuple[Path, Path, list[dict], RunKernel]:
     plan = root / "plan.md"
     pricing = root / "pricing.json"
@@ -111,14 +113,15 @@ def _scope_fixture(
         encoding="utf-8",
     )
     head = _run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
+    claims = list(t1_claims or ["owned-a.txt"])
     tasks = [
         {
             "id": "T1",
             "title": "owns a",
             "dependencies": [],
-            "file_claims": ["owned-a.txt"],
+            "file_claims": claims,
             "execution_contract": {
-                "allowed_paths": ["owned-a.txt"],
+                "allowed_paths": list(allowed_paths or claims),
                 "forbidden_paths": list(forbidden_paths or []),
             },
             "acceptance_command": "true",
@@ -390,6 +393,38 @@ def _root_unreadable_fault() -> dict[str, bool]:
         }
 
 
+def _allowed_parent_directory_fault(allowed_pattern: str) -> dict[str, bool]:
+    with tempfile.TemporaryDirectory(prefix="cpe-allowed-parent-") as raw:
+        worktree, run_dir, tasks, kernel = _scope_fixture(
+            Path(raw),
+            allowed_paths=[allowed_pattern],
+            t1_claims=["newdir/owned.txt"],
+        )
+        launched: list[str] = []
+
+        def provider(request, _argv):
+            launched.append(request.attempt_kind)
+            changed: list[str] = []
+            if request.attempt_kind == "implementation" and request.task_id == "T1":
+                (worktree / "newdir").mkdir()
+                (worktree / "newdir" / "owned.txt").write_text(
+                    "owned\n", encoding="utf-8"
+                )
+                changed = ["newdir/owned.txt"]
+            return _scope_result(request.attempt_kind, request.worktree_revision, changed)
+
+        result = run_tasks(tasks, Worker(provider=provider), kernel)
+        manifest = load_verified_manifest(run_dir / "run_manifest.json")
+        state = project(manifest, read_events(run_dir / "events.jsonl"))
+        return {
+            "completed_without_scope_blocker": result.get("status") == "completed"
+            and not state["active_blockers"],
+            "single_revision_recorded": state["worktree_revision"] == 1,
+            "downstream_roles_ran": "task_review" in launched
+            and "verification" in launched,
+        }
+
+
 def scope_cases() -> dict[str, bool]:
     cross_task = _scope_fault(False)
     head_change = _scope_fault(True)
@@ -414,6 +449,8 @@ def scope_cases() -> dict[str, bool]:
     sealed_dir = _scope_fault(False, chmod_directory=True)
     initial_invalid_git = _initial_invalid_git_fault()
     root_unreadable = _root_unreadable_fault()
+    allowed_exact_parent = _allowed_parent_directory_fault("newdir/owned.txt")
+    allowed_glob_parent = _allowed_parent_directory_fault("newdir/**")
     return {
         **{f"cross_task_{name}": passed for name, passed in cross_task.items()},
         **{f"head_change_{name}": passed for name, passed in head_change.items()},
@@ -431,6 +468,8 @@ def scope_cases() -> dict[str, bool]:
         **{f"sealed_dir_{name}": passed for name, passed in sealed_dir.items()},
         **{f"initial_invalid_git_{name}": passed for name, passed in initial_invalid_git.items()},
         **{f"root_unreadable_{name}": passed for name, passed in root_unreadable.items()},
+        **{f"allowed_exact_parent_{name}": passed for name, passed in allowed_exact_parent.items()},
+        **{f"allowed_glob_parent_{name}": passed for name, passed in allowed_glob_parent.items()},
     }
 
 
