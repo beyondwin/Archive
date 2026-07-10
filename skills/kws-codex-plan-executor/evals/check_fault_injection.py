@@ -114,6 +114,7 @@ def _scope_fixture(
     (worktree / ".gitignore").write_text("ignored-forbidden.bin\n", encoding="utf-8")
     _run(["git", "add", "-A"], worktree).check_returncode()
     _run(["git", "commit", "-q", "-m", "bootstrap"], worktree).check_returncode()
+    _run(["git", "branch", "-m", "codex/scope-fault"], worktree).check_returncode()
     _run(["git", "branch", "same-commit-branch"], worktree).check_returncode()
     info_exclude = worktree / ".git" / "info" / "exclude"
     info_exclude.write_text(
@@ -793,6 +794,270 @@ def completion_cases() -> dict[str, bool]:
         zero_integrity = validate_integrity(zero_run)
         zero_completion = validate_completion(zero_run)
 
+        forged_body_run, _ = make_v3_run(
+            root / "forged-content-body",
+            false_completion=False,
+            terminal=False,
+            forge_content_body_path=True,
+        )
+        forged_body_report = validate_integrity(forged_body_run)
+
+        latest_verdict_run, latest_verdict_state = make_v3_run(
+            root / "latest-verdict", false_completion=False, terminal=False
+        )
+        latest_packet_sha = next(
+            verdict["packet_sha256"]
+            for verdict in latest_verdict_state["verdicts"]
+            if verdict.get("task_id") == "T1"
+        )
+        latest_attempt = "T1.task_review.2"
+        append_event(
+            latest_verdict_run / "events.jsonl",
+            {
+                "type": "attempt.started",
+                "task_id": "T1",
+                "attempt_id": latest_attempt,
+                "payload": {"kind": "task_review", "worktree_revision": 1},
+            },
+        )
+        append_event(
+            latest_verdict_run / "events.jsonl",
+            {
+                "type": "attempt.completed",
+                "task_id": "T1",
+                "attempt_id": latest_attempt,
+                "payload": {
+                    "status": "completed",
+                    "attestation": {
+                        "verified": True,
+                        "actual_model": CORE_ROUTE.model,
+                        "actual_reasoning": CORE_ROUTE.reasoning,
+                    },
+                    "usage": {},
+                    "latency_ms": 1,
+                    "worktree_revision": 1,
+                },
+            },
+        )
+        append_event(
+            latest_verdict_run / "events.jsonl",
+            {
+                "type": "verdict.recorded",
+                "task_id": "T1",
+                "attempt_id": latest_attempt,
+                "payload": {
+                    "status": "changes_requested",
+                    "findings": [{"severity": "major", "action": "repair latest finding"}],
+                    "missing_evidence": [],
+                    "worktree_revision": 1,
+                    "worktree_patch_sha256": latest_verdict_state["worktree_patch_sha256"],
+                    "packet_sha256": latest_packet_sha,
+                },
+            },
+        )
+        rebuild_snapshot(latest_verdict_run)
+        latest_verdict_report = validate_completion(latest_verdict_run)
+
+        latest_acceptance_run, latest_acceptance_state = make_v3_run(
+            root / "latest-acceptance", false_completion=False, terminal=False
+        )
+        latest_acceptance_payload = {
+            "kind": "acceptance",
+            "task_id": "T1",
+            "passed": False,
+            "worktree_revision": 1,
+            "worktree_patch_sha256": latest_acceptance_state["worktree_patch_sha256"],
+            "packet_sha256": latest_packet_sha,
+        }
+        latest_acceptance_ref = put_json(
+            latest_acceptance_run, "acceptance", latest_acceptance_payload
+        ).as_dict()
+        append_event(
+            latest_acceptance_run / "events.jsonl",
+            {
+                "type": "evidence.attached",
+                "task_id": "T1",
+                "attempt_id": "T1.acceptance.2",
+                "payload": {"kind": "acceptance", "ref": latest_acceptance_ref},
+            },
+        )
+        rebuild_snapshot(latest_acceptance_run)
+        latest_acceptance_report = validate_completion(latest_acceptance_run)
+
+        latest_repository_run, latest_repository_state = make_v3_run(
+            root / "latest-repository", false_completion=False, terminal=False
+        )
+        latest_repository_payload = {
+            "kind": "repository_check",
+            "task_id": "T1",
+            "passed": False,
+            "commands": ["false"],
+            "worktree_revision": 1,
+            "worktree_patch_sha256": latest_repository_state["worktree_patch_sha256"],
+            "packet_sha256": latest_packet_sha,
+        }
+        latest_repository_ref = put_json(
+            latest_repository_run, "repository_check", latest_repository_payload
+        ).as_dict()
+        append_event(
+            latest_repository_run / "events.jsonl",
+            {
+                "type": "evidence.attached",
+                "task_id": "T1",
+                "attempt_id": "run.repository.2",
+                "payload": {"kind": "repository_check", "ref": latest_repository_ref},
+            },
+        )
+        rebuild_snapshot(latest_repository_run)
+        latest_repository_report = validate_completion(latest_repository_run)
+
+        started_root = root / "revision-zero-started"
+        started_root.mkdir()
+        _started_worktree, started_run, _started_tasks, started_kernel = _scope_fixture(
+            started_root
+        )
+        started_kernel.transition(
+            Transition("run.status_changed", {"from": "created", "to": "ready"})
+        )
+        started_kernel.transition(
+            Transition("run.status_changed", {"from": "ready", "to": "running"})
+        )
+        started_kernel.transition(
+            Transition(
+                "attempt.started",
+                {"kind": "implementation", "worktree_revision": 0},
+                task_id="T1",
+                attempt_id="T1.implementation.interrupted",
+            )
+        )
+        started_report = validate_integrity(started_run)
+
+        zero_dirty_root = root / "revision-zero-dirty"
+        zero_dirty_root.mkdir()
+        zero_dirty_worktree, zero_dirty_run, _tasks, zero_dirty_kernel = _scope_fixture(
+            zero_dirty_root
+        )
+        zero_dirty_kernel.transition(
+            Transition("run.status_changed", {"from": "created", "to": "ready"})
+        )
+        (zero_dirty_worktree / "owned-a.txt").write_text(
+            "dirty before recorded revision\n", encoding="utf-8"
+        )
+        _run(["git", "add", "owned-a.txt"], zero_dirty_worktree).check_returncode()
+        zero_dirty_report = validate_integrity(zero_dirty_run)
+
+        zero_branch_root = root / "revision-zero-branch"
+        zero_branch_root.mkdir()
+        zero_branch_worktree, zero_branch_run, _tasks, zero_branch_kernel = _scope_fixture(
+            zero_branch_root
+        )
+        zero_branch_kernel.transition(
+            Transition("run.status_changed", {"from": "created", "to": "ready"})
+        )
+        _run(["git", "switch", "-q", "same-commit-branch"], zero_branch_worktree).check_returncode()
+        zero_branch_report = validate_integrity(zero_branch_run)
+
+        patch_symlink_run, _ = make_v3_run(
+            root / "patch-parent-symlink", false_completion=False, terminal=False
+        )
+        patch_root = patch_symlink_run / "artifacts" / "patches"
+        external_patches = root / "external-patches"
+        shutil.move(str(patch_root), external_patches)
+        patch_root.symlink_to(external_patches, target_is_directory=True)
+        patch_symlink_report = validate_integrity(patch_symlink_run)
+
+        evidence_symlink_run, _ = make_v3_run(
+            root / "evidence-parent-symlink", false_completion=False, terminal=False
+        )
+        acceptance_root = evidence_symlink_run / "artifacts" / "evidence" / "acceptance"
+        external_acceptance = root / "external-acceptance"
+        shutil.move(str(acceptance_root), external_acceptance)
+        acceptance_root.symlink_to(external_acceptance, target_is_directory=True)
+        evidence_symlink_report = validate_integrity(evidence_symlink_run)
+
+        task_mismatch_run, task_mismatch_state = make_v3_run(
+            root / "task-mismatch", false_completion=False, terminal=False
+        )
+        mismatch_binding = {
+            "kind": "acceptance",
+            "task_id": "T2",
+            "passed": True,
+            "worktree_revision": 1,
+            "worktree_patch_sha256": task_mismatch_state["worktree_patch_sha256"],
+            "packet_sha256": latest_packet_sha,
+        }
+        task_mismatch_ref = put_json(
+            task_mismatch_run, "acceptance", mismatch_binding
+        ).as_dict()
+        append_event(
+            task_mismatch_run / "events.jsonl",
+            {
+                "type": "evidence.attached",
+                "task_id": "T1",
+                "attempt_id": "T1.acceptance.mismatch",
+                "payload": {"kind": "acceptance", "ref": task_mismatch_ref},
+            },
+        )
+        rebuild_snapshot(task_mismatch_run)
+        task_mismatch_report = validate_integrity(task_mismatch_run)
+
+        attempt_mismatch_run, attempt_mismatch_state = make_v3_run(
+            root / "attempt-mismatch", false_completion=False, terminal=False
+        )
+        attempt_mismatch_payload = {
+            "kind": "task_review",
+            "task_id": "T1",
+            "status": "passed",
+            "findings": [],
+            "missing_evidence": [],
+            "worktree_revision": 1,
+            "worktree_patch_sha256": attempt_mismatch_state["worktree_patch_sha256"],
+            "packet_sha256": latest_packet_sha,
+        }
+        attempt_mismatch_ref = put_json(
+            attempt_mismatch_run, "task_review", attempt_mismatch_payload
+        ).as_dict()
+        append_event(
+            attempt_mismatch_run / "events.jsonl",
+            {
+                "type": "evidence.attached",
+                "task_id": "T1",
+                "attempt_id": "T1.verification.1",
+                "payload": {"kind": "task_review", "ref": attempt_mismatch_ref},
+            },
+        )
+        rebuild_snapshot(attempt_mismatch_run)
+        attempt_mismatch_report = validate_integrity(attempt_mismatch_run)
+
+        final_task_mismatch_run, final_task_mismatch_state = make_v3_run(
+            root / "final-task-mismatch", false_completion=False, terminal=False
+        )
+        final_task_mismatch_payload = {
+            "kind": "final_review",
+            "task_id": "T1",
+            "packet_task_id": "T2",
+            "status": "passed",
+            "findings": [],
+            "missing_evidence": [],
+            "worktree_revision": 1,
+            "worktree_patch_sha256": final_task_mismatch_state["worktree_patch_sha256"],
+            "packet_sha256": latest_packet_sha,
+        }
+        final_task_mismatch_ref = put_json(
+            final_task_mismatch_run, "final_review", final_task_mismatch_payload
+        ).as_dict()
+        append_event(
+            final_task_mismatch_run / "events.jsonl",
+            {
+                "type": "evidence.attached",
+                "task_id": "T1",
+                "attempt_id": "run.final_review.1",
+                "payload": {"kind": "final_review", "ref": final_task_mismatch_ref},
+            },
+        )
+        rebuild_snapshot(final_task_mismatch_run)
+        final_task_mismatch_report = validate_integrity(final_task_mismatch_run)
+
         return {
             "healthy_running_integrity_passes": integrity.passed,
             "false_completion_has_exact_codes": completion.errors
@@ -856,6 +1121,42 @@ def completion_cases() -> dict[str, bool]:
                 zero_integrity.passed
                 and "revision_zero_baseline_unverified" in zero_integrity.warnings
                 and "current_revision_patch_unverifiable" in zero_completion.errors
+            ),
+            "patch_body_paths_match_header_paths": (
+                "revision_patch_evidence_invalid" in forged_body_report.errors
+            ),
+            "latest_task_review_verdict_wins": (
+                "current_revision_task_review_not_passed" in latest_verdict_report.errors
+            ),
+            "latest_acceptance_evidence_wins": (
+                "current_revision_acceptance_not_passed" in latest_acceptance_report.errors
+            ),
+            "latest_repository_evidence_wins": (
+                "current_revision_repository_check_missing" in latest_repository_report.errors
+            ),
+            "revision_zero_started_write_is_integrity_error": (
+                "revision_zero_write_attempt_unrecorded" in started_report.errors
+            ),
+            "revision_zero_visible_dirty_state_is_error": (
+                "revision_zero_worktree_dirty" in zero_dirty_report.errors
+            ),
+            "revision_zero_branch_identity_change_is_error": (
+                "revision_zero_worktree_dirty" in zero_branch_report.errors
+            ),
+            "patch_parent_symlink_is_rejected": (
+                "revision_patch_evidence_invalid" in patch_symlink_report.errors
+            ),
+            "evidence_parent_symlink_is_rejected": (
+                "evidence_path_invalid" in evidence_symlink_report.errors
+            ),
+            "artifact_task_id_must_match_payload": (
+                "artifact_task_mismatch" in task_mismatch_report.errors
+            ),
+            "role_evidence_attempt_must_match_kind": (
+                "artifact_attempt_mismatch" in attempt_mismatch_report.errors
+            ),
+            "final_review_packet_task_matches_artifact_task": (
+                "artifact_task_mismatch" in final_task_mismatch_report.errors
             ),
         }
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 import sys
 import tempfile
@@ -157,8 +158,10 @@ def make_v3_run(
     file_claims: list[str] | None = None,
     include_patch_ref: bool = True,
     include_stale_history: bool = False,
+    include_current_negative_history: bool = False,
     revision_changed_files: list[str] | None = None,
     repository_contradiction: bool = False,
+    forge_content_body_path: bool = False,
 ) -> tuple[Path, dict]:
     root.mkdir(parents=True, exist_ok=True)
     plan = root / "plan.md"
@@ -209,8 +212,16 @@ def make_v3_run(
     (worktree / "owned.txt").write_text("after\n", encoding="utf-8")
     after_write = capture_snapshot(worktree)
     delta = diff_snapshots(before_write, after_write, worktree)
-    patch_sha = delta.patch_sha256
-    patch_ref = kernel.store_patch_evidence(delta.patch_bytes)
+    patch_bytes = delta.patch_bytes
+    if forge_content_body_path:
+        body_path = patch_bytes.rfind(b"owned.txt")
+        if body_path < 0:
+            raise AssertionError("canonical patch fixture has no body path")
+        patch_bytes = (
+            patch_bytes[:body_path] + b"other.txt" + patch_bytes[body_path + len(b"owned.txt") :]
+        )
+    patch_sha = hashlib.sha256(patch_bytes).hexdigest()
+    patch_ref = kernel.store_patch_evidence(patch_bytes)
     revision_payload = {
         "from": 0,
         "to": 1,
@@ -331,6 +342,27 @@ def make_v3_run(
                 {"kind": "acceptance", "ref": stale_ref},
                 task_id="T1",
                 attempt_id="T1.acceptance.old",
+            )
+        if include_current_negative_history:
+            negative_payload = {
+                "kind": "acceptance",
+                "task_id": "T1",
+                "passed": False,
+                "worktree_revision": 1,
+                "worktree_patch_sha256": patch_sha,
+                "packet_sha256": packet_sha,
+            }
+            negative_ref = put_json(run_dir, "acceptance", negative_payload).as_dict()
+            _append(
+                run_dir,
+                "evidence.attached",
+                {"kind": "acceptance", "ref": negative_ref},
+                task_id="T1",
+                attempt_id="T1.acceptance.failed",
+            )
+            evidence_refs.append(negative_ref)
+            evidence_records.append(
+                {"kind": "acceptance", "task_id": "T1", "ref": negative_ref}
             )
         acceptance_payload = {
             "kind": "acceptance",
