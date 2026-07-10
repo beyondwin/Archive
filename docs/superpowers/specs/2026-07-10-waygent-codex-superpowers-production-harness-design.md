@@ -365,7 +365,7 @@ The primary adapter is a version-pinned Codex App Server client. It uses:
 - root threads per role/attempt;
 - explicit skill input items;
 - structured output schema;
-- thread start/interrupt/steer/terminate;
+- thread/turn start, turn interrupt/steer, and owned App Server process shutdown;
 - diff, token, compaction, tool and approval events;
 - task-specific sandbox and writable roots.
 
