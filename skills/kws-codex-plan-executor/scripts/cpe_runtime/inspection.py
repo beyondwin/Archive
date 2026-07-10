@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from .events import read_events
-from .manifest import load_manifest, resolve_ref
+from .manifest import load_verified_manifest, resolve_ref
 from .projector import project
 from .reconciliation import reconcile
 from .validation import validate_run
@@ -22,7 +22,9 @@ def _cost(attempts: list[dict], manifest: dict) -> dict[str, object]:
         total = 0.0
         for attempt in attempts:
             attestation = attempt.get("attestation") or {}
-            model = attestation.get("actual_model") or attestation.get("requested_model") or "gpt-5.6-sol"
+            model = attestation.get("actual_model") or attestation.get("requested_model")
+            if not model:
+                continue
             rate = models.get(model, {}).get(kind)
             usage = attempt.get("usage") or {}
             if not isinstance(rate, dict):
@@ -50,7 +52,7 @@ def inspect_run(run_dir: Path) -> dict[str, object]:
     if validation.classification == "unsupported_schema":
         return {"run_id": run_dir.name, "classification": "unsupported_schema", "passed": False}
     try:
-        manifest = load_manifest(run_dir / "run_manifest.json")
+        manifest = load_verified_manifest(run_dir / "run_manifest.json")
         state = project(manifest, read_events(run_dir / "events.jsonl"))
     except (OSError, ValueError, KeyError, TypeError):
         return {

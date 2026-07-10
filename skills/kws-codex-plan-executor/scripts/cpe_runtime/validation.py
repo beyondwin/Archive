@@ -152,6 +152,11 @@ def validate_run(run_dir: Path) -> ValidationReport:
         if git_error:
             checks["worktree_and_diff"].append(git_error)
         else:
+            expected_head = ((manifest.get("source_git") or {}).get("head"))
+            if expected_head:
+                head_result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                if head_result.returncode or head_result.stdout.strip() != expected_head:
+                    checks["worktree_and_diff"].append("worktree_identity_mismatch")
             claims = {
                 str(path)
                 for task in manifest.get("task_graph", [])
@@ -195,6 +200,20 @@ def validate_run(run_dir: Path) -> ValidationReport:
                 and not expected.get("blockers")
             ):
                 checks["completion"].append("completion_gate_failed")
+            else:
+                indexed_refs = {
+                    json.dumps(item.get("ref"), sort_keys=True)
+                    for item in expected.get("artifact_index", [])
+                    if isinstance(item.get("ref"), dict)
+                }
+                for ref in audit.get("verification_evidence", []):
+                    if not isinstance(ref, dict) or json.dumps(ref, sort_keys=True) not in indexed_refs or verify_ref(run_dir, ref):
+                        checks["completion"].append("completion_evidence_invalid")
+                        break
+                else:
+                    audit_refs = {json.dumps(ref, sort_keys=True) for ref in audit.get("verification_evidence", []) if isinstance(ref, dict)}
+                    if audit_refs != indexed_refs:
+                        checks["completion"].append("completion_evidence_incomplete")
         else:
             checks["completion"].append("completion_gate_failed")
 

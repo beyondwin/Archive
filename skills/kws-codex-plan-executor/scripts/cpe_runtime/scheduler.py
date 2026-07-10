@@ -20,8 +20,14 @@ def run_scouts(requests: list[WorkerRequest], worker: Worker) -> list[WorkerResu
     for request in requests:
         if not request.read_only or request.verdict_capable or request.attempt_kind != "scout":
             raise ValueError("unsafe scout request")
+    def run_one(request: WorkerRequest) -> WorkerResult:
+        try:
+            return worker.run(request)
+        except WorkerError as exc:
+            digest = hashlib.sha256(str(exc).encode()).hexdigest()
+            return WorkerResult("failed", {"status": "failed", "summary": str(exc), "changed_files": [], "findings": [], "evidence_refs": [], "missing_evidence": [str(exc)], "verification": [], "failure_category": "transient"}, {"verified": False, "error": str(exc)}, {}, 0, digest, str(exc))
     with ThreadPoolExecutor(max_workers=min(4, len(requests)), thread_name_prefix="cpe-scout") as pool:
-        return list(pool.map(worker.run, requests))
+        return list(pool.map(run_one, requests))
 
 
 def _topological(tasks: list[dict]) -> list[dict]:
@@ -125,21 +131,23 @@ def _acceptance(task: dict, worktree: Path, kernel: Kernel, ordinal: int) -> tup
 
 
 def _block(kernel: Kernel, task_id: str, phase: str, reason: str) -> dict:
-    state = project(load_manifest(kernel.run_dir / "run_manifest.json"), read_events(kernel.run_dir / "events.jsonl"))
+    state = project(load_verified_manifest(kernel.run_dir / "run_manifest.json"), read_events(kernel.run_dir / "events.jsonl"))
     current = state["tasks"][task_id]["status"]
     if current not in {"blocked", "failed", "completed"}:
         kernel.transition(
             Transition("task.status_changed", {"from": current, "to": "blocked", "reason": reason}, task_id=task_id)
         )
-    state = project(load_manifest(kernel.run_dir / "run_manifest.json"), read_events(kernel.run_dir / "events.jsonl"))
+    state = project(load_verified_manifest(kernel.run_dir / "run_manifest.json"), read_events(kernel.run_dir / "events.jsonl"))
     if state["lifecycle"] == "running":
         kernel.transition(Transition("run.status_changed", {"from": "running", "to": "blocked", "reason": reason}))
-    return {"completed": [key for key, value in state["tasks"].items() if value["status"] == "completed"], "blocked": task_id, "reason": reason, "phase": phase}
+    return {"completed": [key for key, value in state["tasks"].items() if value["status"] == "completed"], "blocked": task_id, "status": "blocked", "reason": reason, "phase": phase}
 
 
 def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Path) -> dict:
     kernel = kernel_or_run_dir if isinstance(kernel_or_run_dir, Kernel) else Kernel(kernel_or_run_dir)
     manifest = load_verified_manifest(kernel.run_dir / "run_manifest.json")
+    if tasks != list(manifest.get("task_graph") or []):
+        raise ValueError("task_graph_mismatch")
     worktree = resolve_ref(str(manifest["execution_worktree_ref"]))
     if worktree.resolve() == kernel.run_dir.resolve():
         raise ValueError("run directory must never be used as execution worktree")
@@ -176,6 +184,8 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
             for index, result in enumerate(run_scouts(requests, worker), 1):
                 _record_attempt(kernel, task_id, "scout", result, f"{task_id}.scout.{index}")
                 _attach(kernel, task_id, f"{task_id}.scout.{index}", "scout", result.payload)
+                if result.status != "completed" or not result.attestation.get("verified"):
+                    return _block(kernel, task_id, "scouting", "scout_failed_or_unattested")
             kernel.transition(Transition("task.status_changed", {"from": "scouting", "to": "implementing"}, task_id=task_id))
         else:
             kernel.transition(Transition("task.status_changed", {"from": "ready", "to": "implementing"}, task_id=task_id))
