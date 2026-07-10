@@ -411,6 +411,8 @@ def _extract_yaml_task_metadata(raw_body: str, repo_root: Path) -> dict:
             "file_line_numbers": {},
             "spec_refs": [],
             "acceptance_command": None,
+            "operator_reviewed": False,
+            "operator_decision": None,
         }
     yaml_body = match.group("body")
     try:
@@ -427,6 +429,8 @@ def _extract_yaml_task_metadata(raw_body: str, repo_root: Path) -> dict:
             "file_line_numbers": {},
             "spec_refs": [],
             "acceptance_command": None,
+            "operator_reviewed": False,
+            "operator_decision": None,
         }
 
     raw_id = payload.get("task_id") or payload.get("id")
@@ -462,6 +466,12 @@ def _extract_yaml_task_metadata(raw_body: str, repo_root: Path) -> dict:
             command = item.get("command") if isinstance(item, dict) else item
             if isinstance(command, str) and command.strip():
                 commands.append(command.strip())
+    raw_operator_decision = payload.get("operator_decision")
+    operator_decision = (
+        raw_operator_decision.strip()
+        if isinstance(raw_operator_decision, str) and raw_operator_decision.strip()
+        else None
+    )
 
     return {
         "task_id": yaml_task_id if explicit_match else None,
@@ -471,6 +481,8 @@ def _extract_yaml_task_metadata(raw_body: str, repo_root: Path) -> dict:
         "file_line_numbers": file_line_numbers,
         "spec_refs": list(dict.fromkeys(spec_refs)),
         "acceptance_command": "\n".join(commands) if commands else None,
+        "operator_reviewed": payload.get("operator_reviewed") is True,
+        "operator_decision": operator_decision,
     }
 
 
@@ -478,6 +490,8 @@ def _extract_yaml_task_blocks(raw_markdown: str, repo_root: Path, mode: str) -> 
     tasks: list[dict] = []
     for index, match in enumerate(YAML_TASK_BLOCK_RE.finditer(raw_markdown), start=1):
         yaml_body = match.group("body")
+        payload = yaml.safe_load(yaml_body)
+        payload = payload if isinstance(payload, dict) else {}
         task_id_match = YAML_TASK_ID_RE.search(yaml_body)
         if not task_id_match:
             _die(f"yaml task block at line {_line_number(raw_markdown, match.start())} has no id")
@@ -510,6 +524,13 @@ def _extract_yaml_task_blocks(raw_markdown: str, repo_root: Path, mode: str) -> 
                 "has_acceptance_criteria": bool(YAML_VERIFY_RE.search(yaml_body)),
                 "acceptance_command": acceptance_command,
                 "acceptance_source": acceptance_source,
+                "operator_reviewed": payload.get("operator_reviewed") is True,
+                "operator_decision": (
+                    str(payload["operator_decision"]).strip()
+                    if isinstance(payload.get("operator_decision"), str)
+                    and str(payload["operator_decision"]).strip()
+                    else None
+                ),
             }
         )
     return tasks
@@ -613,6 +634,8 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
                 "has_acceptance_criteria": bool(AC_RE.search(body)),
                 "acceptance_command": acceptance_command,
                 "acceptance_source": acceptance_source,
+                "operator_reviewed": yaml_metadata["operator_reviewed"],
+                "operator_decision": yaml_metadata["operator_decision"],
             }
         )
     aliases = {task["id"]: task["id"] for task in tasks}

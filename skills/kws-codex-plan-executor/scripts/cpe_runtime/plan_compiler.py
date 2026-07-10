@@ -17,10 +17,11 @@ from .manifest import sha256_bytes, sha256_file
 
 FORBIDDEN_RUNTIME_PATHS = ("run_manifest.json", "events.jsonl", "state.json")
 DANGEROUS_COMMAND_RE = re.compile(
-    r"(?:^|[;&|]\s*)(?:sudo\b|rm\s+-rf\b|git\s+push\b|git\s+reset\s+--hard\b|"
+    r"^\s*(?:sudo\b|rm\s+-rf\b|git\s+push\b|git\s+reset\s+--hard\b|"
     r"kubectl\s+(?:apply|delete)\b|terraform\s+apply\b|aws\s+.*(?:delete|terminate))",
     re.IGNORECASE,
 )
+COMMAND_BOUNDARY_RE = re.compile(r"(?:\r\n?|\n|&&|\|\||[;&|])")
 
 
 @dataclass(frozen=True)
@@ -62,14 +63,44 @@ def read_git_basis(workspace: Path) -> tuple[str, tuple[str, ...]]:
             {"workspace": str(workspace), "stderr": root.stderr.strip()},
         )
     head = _run(["git", "rev-parse", "HEAD"], workspace)
-    status = _run(["git", "status", "--porcelain=v1", "--untracked-files=all"], workspace)
+    status = _run(["git", "status", "--porcelain=v1", "-z", "--untracked-files=all"], workspace)
     if head.returncode or status.returncode:
         raise CompileBlocked(
             "git_basis_invalid",
             "git basis could not be read",
             {"head_stderr": head.stderr.strip(), "status_stderr": status.stderr.strip()},
         )
-    return head.stdout.strip(), tuple(line for line in status.stdout.splitlines() if line)
+    return head.stdout.strip(), _parse_porcelain_z(status.stdout)
+
+
+def _parse_porcelain_z(output: str) -> tuple[str, ...]:
+    records = output.split("\0")
+    parsed: list[str] = []
+    index = 0
+    while index < len(records):
+        record = records[index]
+        if not record:
+            index += 1
+            continue
+        if len(record) < 4 or record[2] != " ":
+            raise CompileBlocked(
+                "git_basis_invalid",
+                "git status returned a malformed porcelain record",
+                {"record": record},
+            )
+        status = record[:2]
+        parsed.append(f"{status} {record[3:]}")
+        index += 1
+        if "R" in status or "C" in status:
+            if index >= len(records) or not records[index]:
+                raise CompileBlocked(
+                    "git_basis_invalid",
+                    "git status rename record is incomplete",
+                    {"record": record},
+                )
+            parsed.append(f"{status} {records[index]}")
+            index += 1
+    return tuple(parsed)
 
 
 def compile_tasks(
@@ -135,6 +166,8 @@ def compile_tasks(
                     "acceptance_command": command,
                 },
                 "source_hashes": {"plan": plan_hash, "spec_sections": selected_hashes},
+                "operator_reviewed": raw.get("operator_reviewed") is True,
+                "operator_decision": raw.get("operator_decision"),
             }
         )
 
@@ -153,7 +186,8 @@ def compile_tasks(
 def assert_safe_commands(tasks: tuple[dict[str, object], ...]) -> None:
     for task in tasks:
         command = str(task.get("acceptance_command") or "")
-        if DANGEROUS_COMMAND_RE.search(command):
+        segments = (segment for segment in COMMAND_BOUNDARY_RE.split(command) if segment.strip())
+        if any(DANGEROUS_COMMAND_RE.search(segment) for segment in segments):
             raise CompileBlocked(
                 "operator_review_required",
                 f"{task['id']} acceptance command requires operator review",

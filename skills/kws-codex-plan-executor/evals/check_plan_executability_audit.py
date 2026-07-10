@@ -15,7 +15,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPT_DIR))
 
-from cpe_runtime.plan_compiler import compile_run
+from cpe_runtime.plan_compiler import CompileBlocked, compile_run
 
 
 def run(command: list[str], cwd: Path) -> None:
@@ -77,6 +77,32 @@ def main() -> int:
                 workspace=workspace,
                 mode="interactive",
             )
+            risky_plan = root / "risky-plan.md"
+            risky_plan.write_text(
+                "# Risky Plan\n\n"
+                "> REQUIRED SUB-SKILL: subagent-driven-development or executing-plans\n\n"
+                "## Task 1: Unreviewed infrastructure\n\n"
+                "```yaml\n"
+                "id: T1\n"
+                "files:\n"
+                "  - path: infra/deploy.py\n"
+                "    mode: edit\n"
+                "acceptance: true\n"
+                "```\n",
+                encoding="utf-8",
+            )
+            try:
+                compile_run(
+                    plan=risky_plan,
+                    spec=None,
+                    docs=(),
+                    workspace=workspace,
+                    mode="interactive",
+                )
+            except CompileBlocked as exc:
+                risky_category = exc.category
+            else:
+                risky_category = None
         finally:
             if old_codex_home is None:
                 os.environ.pop("CODEX_HOME", None)
@@ -86,6 +112,7 @@ def main() -> int:
         checks["integrity_plan_compiles"] = len(integrity.tasks) == 13
         checks["quality_plan_compiles"] = len(quality.tasks) == 12
         checks["explicit_cpe_plan_compiles"] = len(explicit.tasks) == 1
+        checks["generic_risky_plan_blocks"] = risky_category == "plan_not_executable"
         checks["plan_source_is_first"] = integrity.sources[0].role == "plan"
         checks["compiled_contracts_present"] = all(
             task.get("execution_contract") and task.get("source_hashes") for task in integrity.tasks

@@ -20,3 +20,7 @@ expected:
   require_numeric_dependencies: true
   require_acceptance_commands: true
   require_task_local_yaml: true
+  tasks:
+    - id: task_11
+      operator_reviewed: true
+      operator_decision: Approved for deterministic fault checks and the dry-run $50 cap plan only; paid provider execution still requires separate same-session approval.
