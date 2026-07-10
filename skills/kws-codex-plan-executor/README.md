@@ -1,7 +1,7 @@
 # KWS Codex Plan Executor
 
-`kws-codex-plan-executor` executes implementation plans or exports fresh-session
-prompts from the same plan inputs.
+`kws-codex-plan-executor` 3.0.0 executes implementation plans through an
+immutable manifest/event/evidence runtime or exports fixed Sol/high launchers.
 
 With current Superpowers installed, CPE acts as a thin stateful bridge. For
 approved interactive implementation plans, run

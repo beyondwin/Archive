@@ -6,6 +6,10 @@ umask 077
 
 EVAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SKILL_DIR="$(dirname "$EVAL_DIR")"
+if [ -x "$SKILL_DIR/.venv/bin/python3" ]; then
+  PATH="$SKILL_DIR/.venv/bin:$PATH"
+  export PATH
+fi
 if [ -n "${CODEX_EVAL_HOME:-}" ]; then
   REPORT_ROOT="$CODEX_EVAL_HOME/.codex/eval-reports"
   mkdir -p "$REPORT_ROOT"
@@ -74,43 +78,37 @@ else
   done
 fi
 
+# V3 deterministic checks are production-module checks above; legacy static
+# fixture execution is intentionally not part of the active v3 baseline.
+fixtures=()
+
 mkdir -p "$EVAL_DIR/baselines"
 partial="$BASELINE_FILE.partial"
 : > "$partial"
 overall_status=0
 
 run_check "skill_contract" python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md"
-run_check "state_schema" python3 "$EVAL_DIR/check_state_schema.py"
-run_check "context_summary" python3 "$EVAL_DIR/check_context_summary.py"
-run_check "run_diffs" python3 "$EVAL_DIR/check_run_diffs.py"
-run_check "state_reconciliation" python3 "$EVAL_DIR/check_state_reconciliation.py"
-run_check "context_snapshot" python3 "$EVAL_DIR/check_context_snapshot.py"
-run_check "headless_result" python3 "$EVAL_DIR/check_headless_result.py"
-run_check "spec_manifest" python3 "$EVAL_DIR/check_spec_manifest.py"
-run_check "task_packet" python3 "$EVAL_DIR/check_task_packet.py"
-run_check "task_packet_view" python3 "$EVAL_DIR/check_task_packet_view.py"
-run_check "local_env_preflight" python3 "$EVAL_DIR/check_local_env_preflight.py"
+run_check "model_policy" python3 "$EVAL_DIR/check_model_policy.py"
+run_check "model_surface" python3 "$EVAL_DIR/check_model_surface.py"
 run_check "invocation_args" python3 "$EVAL_DIR/check_invocation_args.py"
-run_check "inspect_runs" python3 "$EVAL_DIR/check_inspect_runs.py"
-run_check "repair_runs" python3 "$EVAL_DIR/check_repair_runs.py"
-run_check "decisions_register" python3 "$EVAL_DIR/check_decisions_register.py"
-run_check "prompt_cache_audit" python3 "$EVAL_DIR/check_prompt_cache_audit.py"
-run_check "cache_observations" python3 "$EVAL_DIR/check_cache_observations.py"
-run_check "graphify_freshness" python3 "$EVAL_DIR/check_graphify_freshness.py"
-run_check "preflight_dispatch" python3 "$EVAL_DIR/check_preflight_dispatch.py"
-run_check "run_readiness" python3 "$EVAL_DIR/check_run_readiness.py"
+run_check "manifest_evidence" python3 "$EVAL_DIR/check_manifest_evidence.py"
+run_check "event_kernel" python3 "$EVAL_DIR/check_event_kernel.py"
+run_check "execution_runtime" python3 "$EVAL_DIR/check_execution_runtime.py"
+run_check "state_schema" python3 "$EVAL_DIR/check_state_schema.py"
+run_check "validation_parity" python3 "$EVAL_DIR/check_validation_consumer_parity.py"
 run_check "plan_executability_audit" python3 "$EVAL_DIR/check_plan_executability_audit.py"
-run_check "validate_state_modular_parity" python3 "$EVAL_DIR/check_validate_state_modular_parity.py"
-run_check "markdown_golden_cases" python3 "$EVAL_DIR/check_markdown_golden_cases.py"
-run_check "verification_bundle" python3 "$EVAL_DIR/check_verification_bundle.py"
+run_check "state_reconciliation" python3 "$EVAL_DIR/check_state_reconciliation.py"
+run_check "repair_runs" python3 "$EVAL_DIR/check_repair_runs.py"
 run_check "recovery_policy" python3 "$EVAL_DIR/check_recovery_policy.py"
-run_check "trajectory_projection" python3 "$EVAL_DIR/check_trajectory_projection.py"
-run_check "progress_ledger" python3 "$EVAL_DIR/check_progress_ledger.py"
-run_check "operational_run_quality" python3 "$EVAL_DIR/check_operational_run_quality.py"
-run_check "cpe_replay" python3 "$EVAL_DIR/check_cpe_replay.py"
+run_check "inspect_runs" python3 "$EVAL_DIR/check_inspect_runs.py"
 run_check "recent_run_rubric" python3 "$EVAL_DIR/check_recent_run_rubric.py"
+run_check "cpe_replay" python3 "$EVAL_DIR/check_cpe_replay.py"
+run_check "operational_run_quality" python3 "$EVAL_DIR/check_operational_run_quality.py"
+run_check "fault_injection" python3 "$EVAL_DIR/check_fault_injection.py"
+run_check "live_model_migration" python3 "$EVAL_DIR/check_live_model_migration.py"
+run_check "superpowers_compatibility" python3 "$EVAL_DIR/check_superpowers_compatibility.py"
 run_check "eval_harness" python3 "$EVAL_DIR/check_eval_harness.py"
-run_check "baseline_utils" python3 "$EVAL_DIR/check_baseline_utils.py"
+run_check "release_contract" python3 "$EVAL_DIR/check_release_contract.py"
 if [ "$update_baseline" -eq 0 ]; then
   run_check "release_contract" python3 "$EVAL_DIR/check_release_contract.py"
 fi
@@ -119,6 +117,7 @@ while IFS= read -r parser_fixture; do
   run_check "parse_plan:$(basename "$parser_fixture")" python3 "$EVAL_DIR/check_parse_plan.py" --fixture "$parser_fixture"
 done < <(find "$EVAL_DIR/parser-fixtures" -name '*.yaml' -type f | sort)
 
+if [ "${#fixtures[@]}" -gt 0 ]; then
 for fixture_path in "${fixtures[@]}"; do
   fixture_name="$(basename "$fixture_path" .yaml)"
   parent="$(mktemp -d -t "codex-executor-eval-${fixture_name}.XXXXXX")"
@@ -313,6 +312,7 @@ with open(path, "a", encoding="utf-8") as fh:
 PY
   unset checker_status
 done
+fi
 
 generated_baseline="$(mktemp -t "codex-executor-baseline-${SKILL_VERSION}.XXXXXX.json")"
 jq -s --arg version "$SKILL_VERSION" '{version: $version, date: now | todate, fixtures: .}' "$partial" > "$generated_baseline"
