@@ -329,6 +329,48 @@ class Kernel:
     def transition(self, command: Transition) -> dict:
         return transition_run(self.run_dir, command, snapshot_writer=self._snapshot_writer)
 
+    def store_patch_evidence(self, patch_bytes: bytes) -> dict[str, str]:
+        if not isinstance(patch_bytes, bytes) or not patch_bytes:
+            raise ValueError("patch evidence must be non-empty bytes")
+        digest = hashlib.sha256(patch_bytes).hexdigest()
+        artifacts = self.run_dir / "artifacts"
+        artifacts.mkdir(mode=0o700, exist_ok=True)
+        if artifacts.is_symlink():
+            raise ValueError("patch evidence root must not be a symlink")
+        root = artifacts / "patches"
+        root.mkdir(mode=0o700, exist_ok=True)
+        if root.is_symlink() or root.resolve().parent != self.run_dir.resolve() / "artifacts":
+            raise ValueError("patch evidence path escapes run root")
+        target = root / f"{digest}.patch"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(target, flags, 0o600)
+        except FileExistsError:
+            if target.is_symlink():
+                raise ValueError("existing patch evidence is not a regular file")
+            read_descriptor = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                with os.fdopen(read_descriptor, "rb", closefd=False) as handle:
+                    existing = handle.read()
+            finally:
+                os.close(read_descriptor)
+            if existing != patch_bytes:
+                raise ValueError("existing patch evidence has different content")
+        else:
+            try:
+                with os.fdopen(descriptor, "wb") as handle:
+                    handle.write(patch_bytes)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+            finally:
+                _fsync_dir(root)
+        return {
+            "kind": "patch",
+            "path": target.relative_to(self.run_dir).as_posix(),
+            "sha256": digest,
+            "media_type": "application/octet-stream",
+        }
+
 
 def _write_packet_exclusive(root: Path, draft: PacketDraft) -> None:
     path = root / draft.relative_path

@@ -1,12 +1,22 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Generic, TypeVar
 from typing import TYPE_CHECKING
 
+from .events import read_events
+from .git_delta import GitDelta, capture_snapshot, diff_snapshots, scope_errors
+from .manifest import load_verified_manifest
 from .packets import PACKET_ROLE_POLICY
+from .projector import project
 
 if TYPE_CHECKING:
+    from .kernel import Kernel
     from .worker import WorkerRequest
+
+
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -24,6 +34,83 @@ ROLE_POLICIES = {
     )
     for role, policy in PACKET_ROLE_POLICY.items()
 }
+
+
+@dataclass(frozen=True)
+class WriteAttemptOutcome(Generic[T]):
+    result: T
+    delta: GitDelta
+    scope_errors: tuple[str, ...]
+    worktree_revision: int
+    patch_ref: dict[str, str] | None
+
+
+class AttemptController:
+    def __init__(self, kernel: Kernel, worktree: Path):
+        self.kernel = kernel
+        self.worktree = worktree.expanduser().resolve()
+
+    def _revision(self) -> int:
+        manifest = load_verified_manifest(self.kernel.run_dir / "run_manifest.json")
+        state = project(manifest, read_events(self.kernel.run_dir / "events.jsonl"))
+        return int(state["worktree_revision"])
+
+    def run_write_attempt(
+        self,
+        *,
+        task_id: str,
+        attempt_id: str,
+        role: str,
+        allowed: list[str],
+        forbidden: list[str],
+        operation: Callable[[], T],
+    ) -> WriteAttemptOutcome[T]:
+        normalized = canonical_role(role)
+        policy = ROLE_POLICIES.get(normalized)
+        if policy is None or not policy.product_write or policy.read_only:
+            raise ValueError("run_write_attempt requires a product-write role")
+        before = capture_snapshot(self.worktree)
+        result: T
+        error: BaseException | None = None
+        try:
+            result = operation()
+        except BaseException as exc:
+            error = exc
+            result = None  # type: ignore[assignment]
+        after = capture_snapshot(self.worktree)
+        delta = diff_snapshots(before, after, self.worktree)
+        revision = self._revision()
+        patch_ref = None
+        if delta.changed_files or delta.head_changed:
+            patch_ref = self.kernel.store_patch_evidence(delta.patch_bytes)
+            worker_files: list[str] = []
+            payload = getattr(result, "payload", None)
+            if isinstance(payload, dict) and isinstance(payload.get("changed_files"), list):
+                worker_files = [str(path) for path in payload["changed_files"]]
+            from .kernel import Transition
+
+            self.kernel.transition(
+                Transition(
+                    "worktree.revision_recorded",
+                    {
+                        "from": revision,
+                        "to": revision + 1,
+                        "task_id": task_id,
+                        "attempt_id": attempt_id,
+                        "changed_files": list(delta.changed_files),
+                        "worker_reported_changed_files": worker_files,
+                        "patch_sha256": delta.patch_sha256,
+                        "patch_ref": patch_ref,
+                    },
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                )
+            )
+            revision += 1
+        errors = tuple(scope_errors(delta, allowed, forbidden))
+        if error is not None:
+            raise error
+        return WriteAttemptOutcome(result, delta, errors, revision, patch_ref)
 
 
 def canonical_role(role: str) -> str:

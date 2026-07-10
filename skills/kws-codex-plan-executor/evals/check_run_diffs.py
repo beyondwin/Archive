@@ -4,10 +4,17 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
+from cpe_runtime.git_delta import capture_snapshot, diff_snapshots, scope_errors
+from cpe_runtime.kernel import Kernel
 
 
 RUN_ID = "diff-policy-20260519-143022"
@@ -176,6 +183,19 @@ def main() -> int:
             lambda repo: (repo / "docs" / "new.md").write_text("new\n", encoding="utf-8"),
             True,
         ),
+        (
+            "nul_safe_docs_path_passes",
+            lambda state: (
+                state["tasks"]["task_0"]["unit_manifest"].update(
+                    {"tool_policy": "docs", "allowed_write_globs": ["docs/**"]}
+                ),
+                state["tasks"]["task_0"]["contract"].update({"allowed_edits": []}),
+            ),
+            lambda repo: (repo / "docs" / "odd\nname.md").write_text(
+                "new\n", encoding="utf-8"
+            ),
+            True,
+        ),
     ]
 
     for name, mutate_state, mutate_repo, expect_pass in cases:
@@ -183,6 +203,111 @@ def main() -> int:
         checks[name] = ok
         if not ok:
             failures.append(failure)
+
+    with tempfile.TemporaryDirectory(prefix="cpe-git-delta-") as raw:
+        repo = Path(raw)
+        run(["git", "init", "-q"], repo).check_returncode()
+        run(["git", "config", "user.email", "eval@example.com"], repo).check_returncode()
+        run(["git", "config", "user.name", "Eval"], repo).check_returncode()
+        (repo / "tracked.txt").write_bytes(b"before\x00tracked")
+        (repo / "deleted.txt").write_text("delete me\n", encoding="utf-8")
+        (repo / "link").symlink_to("target-before")
+        run(["git", "add", "-A"], repo).check_returncode()
+        run(["git", "commit", "-q", "-m", "base"], repo).check_returncode()
+        before = capture_snapshot(repo)
+        os.utime(repo / "tracked.txt", None)
+        mtime_only = capture_snapshot(repo)
+        (repo / "tracked.txt").write_bytes(b"after\x00tracked")
+        (repo / "deleted.txt").unlink()
+        (repo / "link").unlink()
+        (repo / "link").symlink_to("target-after")
+        odd_path = "odd\nname.bin"
+        (repo / odd_path).write_bytes(b"\x00\xff\x10binary")
+        after = capture_snapshot(repo)
+        delta = diff_snapshots(before, after, repo)
+        expected = tuple(sorted(("deleted.txt", "link", odd_path, "tracked.txt")))
+        checks.update(
+            {
+                "mtime_is_not_a_change": before == mtime_only,
+                "tracked_delete_binary_and_symlink_detected": delta.changed_files == expected,
+                "nul_safe_path_preserved": odd_path in delta.changed_files,
+                "patch_digest_is_canonical": delta.patch_sha256
+                == hashlib.sha256(delta.patch_bytes).hexdigest(),
+                "snapshot_is_content_stable": after == capture_snapshot(repo),
+                "scope_errors_are_deterministic": scope_errors(
+                    delta,
+                    ["tracked.txt", "*.bin"],
+                    ["deleted.txt", "link"],
+                )
+                == [
+                    "forbidden_write:deleted.txt",
+                    "forbidden_write:link",
+                ],
+                "forbidden_precedes_unclaimed": scope_errors(
+                    delta,
+                    ["tracked.txt"],
+                    ["link", "deleted.txt"],
+                )
+                == [
+                    "forbidden_write:deleted.txt",
+                    "forbidden_write:link",
+                    f"unclaimed_write:{odd_path}",
+                ],
+            }
+        )
+        run(["git", "add", "-A"], repo).check_returncode()
+        run(["git", "commit", "-q", "-m", "worker commit"], repo).check_returncode()
+        committed = capture_snapshot(repo)
+        head_delta = diff_snapshots(after, committed, repo)
+        run(["git", "commit", "-q", "--allow-empty", "-m", "empty worker commit"], repo).check_returncode()
+        empty_committed = capture_snapshot(repo)
+        empty_head_delta = diff_snapshots(committed, empty_committed, repo)
+        checks.update(
+            {
+                "head_change_detected": head_delta.head_changed,
+                "empty_head_change_detected": empty_head_delta.head_changed
+                and empty_head_delta.changed_files == (),
+                "head_is_in_canonical_patch": before.head.encode() in delta.patch_bytes
+                and after.head.encode() in delta.patch_bytes
+                and committed.head.encode() in head_delta.patch_bytes,
+                "head_change_is_scope_error": scope_errors(head_delta, ["**"], [])
+                == ["worktree_head_changed"],
+            }
+        )
+
+    with tempfile.TemporaryDirectory(prefix="cpe-patch-kernel-") as raw:
+        run_dir = Path(raw) / "run"
+        run_dir.mkdir()
+        kernel = Kernel(run_dir)
+        ref = kernel.store_patch_evidence(b"canonical patch\x00bytes")
+        same_ref = kernel.store_patch_evidence(b"canonical patch\x00bytes")
+        target = run_dir / ref["path"]
+        checks.update(
+            {
+                "kernel_patch_is_content_addressed": ref == same_ref
+                and ref["sha256"] == hashlib.sha256(target.read_bytes()).hexdigest(),
+                "kernel_patch_is_private_file": target.stat().st_mode & 0o777 == 0o600,
+            }
+        )
+
+    with tempfile.TemporaryDirectory(prefix="cpe-patch-nofollow-") as raw:
+        run_dir = Path(raw) / "run"
+        patches = run_dir / "artifacts" / "patches"
+        patches.mkdir(parents=True)
+        raw_patch = b"no follow patch"
+        digest = hashlib.sha256(raw_patch).hexdigest()
+        outside = Path(raw) / "outside"
+        outside.write_bytes(b"untouched")
+        (patches / f"{digest}.patch").symlink_to(outside)
+        try:
+            Kernel(run_dir).store_patch_evidence(raw_patch)
+        except ValueError:
+            nofollow_rejected = outside.read_bytes() == b"untouched"
+        else:
+            nofollow_rejected = False
+        checks["kernel_patch_refuses_symlink"] = nofollow_rejected
+
+    failures.extend(name for name, passed in checks.items() if not passed and name not in failures)
 
     payload = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload, indent=2))

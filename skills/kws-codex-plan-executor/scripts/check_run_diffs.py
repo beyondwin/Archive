@@ -4,31 +4,30 @@
 from __future__ import annotations
 
 import argparse
-import fnmatch
 import json
+import os
 import subprocess
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 
-def git_lines(repo_root: Path, args: list[str]) -> list[str]:
+def git_paths(repo_root: Path, args: list[str]) -> list[str]:
     result = subprocess.run(
-        ["git", *args],
+        ["git", *args, "-z"],
         cwd=repo_root,
-        text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
     if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or "git command failed")
-    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        raise RuntimeError(os.fsdecode(result.stderr).strip() or "git command failed")
+    return [os.fsdecode(item) for item in result.stdout.split(b"\0") if item]
 
 
 def changed_files(repo_root: Path) -> list[str]:
     changed: set[str] = set()
-    changed.update(git_lines(repo_root, ["diff", "--name-only"]))
-    changed.update(git_lines(repo_root, ["diff", "--cached", "--name-only"]))
-    changed.update(git_lines(repo_root, ["ls-files", "--others", "--exclude-standard"]))
+    changed.update(git_paths(repo_root, ["diff", "--name-only"]))
+    changed.update(git_paths(repo_root, ["diff", "--cached", "--name-only"]))
+    changed.update(git_paths(repo_root, ["ls-files", "--others", "--exclude-standard"]))
     return sorted(changed)
 
 
@@ -39,7 +38,8 @@ def as_string_list(value: object) -> list[str]:
 
 
 def matches_any(path: str, patterns: list[str]) -> bool:
-    return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
+    candidate = PurePosixPath(path)
+    return any(path == pattern or candidate.match(pattern) for pattern in patterns)
 
 
 def classify(path: str, allowed: list[str], forbidden: list[str]) -> str | None:
