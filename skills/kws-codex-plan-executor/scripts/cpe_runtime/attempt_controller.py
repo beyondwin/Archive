@@ -89,6 +89,8 @@ class AttemptController:
                 after.head == INVALID_GIT_HEAD or not after._git_metadata_valid
             ) and error is None:
                 error = RuntimeError("post-write git metadata is invalid")
+            if not after._filesystem_valid and error is None:
+                error = RuntimeError("post-write filesystem content is not fully readable")
             delta = diff_snapshots(before, after, self.worktree)
             revision = self._revision()
             patch_ref = None
