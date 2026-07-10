@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -103,6 +104,7 @@ def _scope_fixture(
     (worktree / ".gitignore").write_text("ignored-forbidden.bin\n", encoding="utf-8")
     _run(["git", "add", "-A"], worktree).check_returncode()
     _run(["git", "commit", "-q", "-m", "bootstrap"], worktree).check_returncode()
+    _run(["git", "branch", "same-commit-branch"], worktree).check_returncode()
     info_exclude = worktree / ".git" / "info" / "exclude"
     info_exclude.write_text(
         info_exclude.read_text(encoding="utf-8") + "\nignored-unclaimed.bin\n",
@@ -145,6 +147,10 @@ def _scope_fault(
     ignored_path: str | None = None,
     ignored_forbidden: bool = False,
     unexpected_exception: bool = False,
+    delete_git: bool = False,
+    delete_index: bool = False,
+    stage_allowed: bool = False,
+    switch_same_commit: bool = False,
 ) -> dict[str, bool]:
     with tempfile.TemporaryDirectory(prefix="cpe-scope-fault-") as raw:
         forbidden_paths = [ignored_path] if ignored_path and ignored_forbidden else []
@@ -157,7 +163,17 @@ def _scope_fault(
             launched.append(request.attempt_kind)
             reported: list[str] = []
             if request.attempt_kind == "implementation" and request.task_id == "T1":
-                if ignored_path:
+                if delete_git:
+                    shutil.rmtree(worktree / ".git")
+                elif delete_index:
+                    (worktree / ".git" / "index").unlink()
+                elif stage_allowed:
+                    (worktree / "owned-a.txt").write_text("staged allowed write\n", encoding="utf-8")
+                    _run(["git", "add", "owned-a.txt"], worktree).check_returncode()
+                    reported = ["owned-a.txt"]
+                elif switch_same_commit:
+                    _run(["git", "switch", "-q", "same-commit-branch"], worktree).check_returncode()
+                elif ignored_path:
                     (worktree / ignored_path).write_bytes(b"\x00ignored write")
                 elif commit_head:
                     (worktree / "owned-a.txt").write_text("a1\n", encoding="utf-8")
@@ -182,8 +198,16 @@ def _scope_fault(
         state = project(manifest, events)
         revision_indexes = [index for index, event in enumerate(events) if event["type"] == "worktree.revision_recorded"]
         blocker_indexes = [index for index, event in enumerate(events) if event["type"] == "blocker.opened"]
-        changed_path = ignored_path or "owned-b.txt"
-        expected_root = "worktree_head_changed" if commit_head else f"task_scope:T1:{changed_path}"
+        changed_path = "owned-a.txt" if stage_allowed else ignored_path or "owned-b.txt"
+        expected_root = (
+            "worktree_head_changed"
+            if commit_head
+            or delete_git
+            or delete_index
+            or stage_allowed
+            or switch_same_commit
+            else f"task_scope:T1:{changed_path}"
+        )
         expected_scope_error = (
             f"forbidden_write:{changed_path}"
             if ignored_forbidden
@@ -202,16 +226,25 @@ def _scope_fault(
             "policy_blocker_typed": blocker.get("category") == "policy_violation"
             and blocker.get("root_cause_key") == expected_root,
             "scope_error_is_real_path": commit_head
+            or delete_git
+            or delete_index
+            or stage_allowed
+            or switch_same_commit
             or blocker.get("scope_errors") == [expected_scope_error],
             "revision_precedes_blocker": bool(revision_indexes and blocker_indexes)
             and revision_indexes[0] < blocker_indexes[0],
             "worker_report_is_diagnostic_only": commit_head
+            or delete_git
+            or delete_index
+            or switch_same_commit
             or any(
                 event["type"] == "worktree.revision_recorded"
                 and event["payload"].get("changed_files") == [changed_path]
                 for event in events
             ),
-            "unexpected_exception_is_failed_attempt": not unexpected_exception
+            "unexpected_exception_is_failed_attempt": not (
+                unexpected_exception or delete_git
+            )
             or (
                 len(completed_attempts) == 1
                 and completed_attempts[0]["payload"].get("status") == "failed"
@@ -224,6 +257,37 @@ def _scope_fault(
                 )
                 and state["lifecycle"] == "blocked"
             ),
+        }
+
+
+def _initial_invalid_git_fault() -> dict[str, bool]:
+    with tempfile.TemporaryDirectory(prefix="cpe-initial-invalid-git-") as raw:
+        worktree, run_dir, tasks, kernel = _scope_fixture(Path(raw))
+        shutil.rmtree(worktree / ".git")
+        launched: list[str] = []
+
+        def provider(request, _argv):
+            launched.append(request.attempt_kind)
+            return _scope_result(request.attempt_kind, request.worktree_revision, [])
+
+        try:
+            result = run_tasks(tasks, Worker(provider=provider), kernel)
+        except Exception as exc:
+            result = {"status": "error", "reason": str(exc)}
+        manifest = load_verified_manifest(run_dir / "run_manifest.json")
+        events = read_events(run_dir / "events.jsonl")
+        state = project(manifest, events)
+        completed_attempts = [
+            event for event in events if event["type"] == "attempt.completed"
+        ]
+        return {
+            "blocked_without_worker_launch": result.get("status") == "blocked"
+            and not launched,
+            "run_is_not_left_active": state["lifecycle"] == "blocked",
+            "no_false_revision": state["worktree_revision"] == 0,
+            "failed_attempt_recorded": len(completed_attempts) == 1
+            and completed_attempts[0]["payload"].get("status") == "failed"
+            and bool(completed_attempts[0]["payload"].get("evidence_refs")),
         }
 
 
@@ -241,6 +305,11 @@ def scope_cases() -> dict[str, bool]:
         ignored_path="ignored-unclaimed.bin",
     )
     unexpected_exception = _scope_fault(False, unexpected_exception=True)
+    deleted_git = _scope_fault(False, delete_git=True)
+    deleted_index = _scope_fault(False, delete_index=True)
+    staged_index = _scope_fault(False, stage_allowed=True)
+    same_commit_branch = _scope_fault(False, switch_same_commit=True)
+    initial_invalid_git = _initial_invalid_git_fault()
     return {
         **{f"cross_task_{name}": passed for name, passed in cross_task.items()},
         **{f"head_change_{name}": passed for name, passed in head_change.items()},
@@ -248,6 +317,11 @@ def scope_cases() -> dict[str, bool]:
         **{f"ignored_forbidden_{name}": passed for name, passed in ignored_forbidden.items()},
         **{f"ignored_unclaimed_{name}": passed for name, passed in ignored_unclaimed.items()},
         **{f"unexpected_exception_{name}": passed for name, passed in unexpected_exception.items()},
+        **{f"deleted_git_{name}": passed for name, passed in deleted_git.items()},
+        **{f"deleted_index_{name}": passed for name, passed in deleted_index.items()},
+        **{f"staged_index_{name}": passed for name, passed in staged_index.items()},
+        **{f"same_commit_branch_{name}": passed for name, passed in same_commit_branch.items()},
+        **{f"initial_invalid_git_{name}": passed for name, passed in initial_invalid_git.items()},
     }
 
 
