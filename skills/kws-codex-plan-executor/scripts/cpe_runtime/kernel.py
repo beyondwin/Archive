@@ -28,6 +28,9 @@ from .projector import (
 )
 
 
+TASK_COMPLETION_ATTEMPT_KINDS = frozenset({"implementation", "task_review", "verification"})
+
+
 @dataclass(frozen=True)
 class Transition:
     event_type: str
@@ -84,7 +87,7 @@ def _completion_ready(run_dir: Path, manifest: dict, state: dict) -> bool:
     if state.get("active_blockers", state.get("blockers", [])):
         return False
     for task_id in state["tasks"]:
-        if not {"implementation", "review", "verification"}.issubset(_attempt_kinds(state, task_id)):
+        if not TASK_COMPLETION_ATTEMPT_KINDS.issubset(_attempt_kinds(state, task_id)):
             return False
         kinds = {item.get("kind") for item in state.get("artifact_index", []) if item.get("task_id") == task_id}
         if not {"acceptance", "verification"}.issubset(kinds):
@@ -176,7 +179,7 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
         target = payload.get("to")
         if target not in TASK_TRANSITIONS.get(current, set()):
             raise ValueError("invalid task transition")
-        if target == "completed" and not {"implementation", "review", "verification"}.issubset(
+        if target == "completed" and not TASK_COMPLETION_ATTEMPT_KINDS.issubset(
             _attempt_kinds(state, command.task_id)
         ):
             raise ValueError("task completion gate failed")

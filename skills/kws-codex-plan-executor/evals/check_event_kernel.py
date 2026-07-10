@@ -15,7 +15,14 @@ from cpe_runtime.events import (
     read_events,
     validate_chain,
 )
-from cpe_runtime.kernel import Kernel, Transition, _validate_transition, rebuild_snapshot
+from cpe_runtime.kernel import (
+    TASK_COMPLETION_ATTEMPT_KINDS,
+    Kernel,
+    Transition,
+    _validate_transition,
+    rebuild_snapshot,
+)
+from cpe_runtime.model_policy import CORE_ROUTE
 from cpe_runtime.projector import apply_event, initial_state, project
 from cpe_runtime.manifest import create_manifest, write_manifest
 
@@ -427,6 +434,36 @@ def check_integrity_rejections() -> None:
             Transition("attempt.completed", valid_completion, task_id="T1", attempt_id="A1"),
         ),
     )
+
+    assert "task_review" in TASK_COMPLETION_ATTEMPT_KINDS
+    assert "review" not in TASK_COMPLETION_ATTEMPT_KINDS
+    completion_state = initial_state(manifest)
+    completion_state["lifecycle"] = "running"
+    completion_state["tasks"]["T1"]["status"] = "verifying"
+    attestation = {
+        "verified": True,
+        "actual_model": CORE_ROUTE.model,
+        "actual_reasoning": CORE_ROUTE.reasoning,
+    }
+    completion_state["attempts"] = [
+        {
+            "task_id": "T1",
+            "attempt_id": f"A-{kind}",
+            "kind": kind,
+            "status": "completed",
+            "attestation": attestation,
+        }
+        for kind in ("implementation", "review", "verification")
+    ]
+    complete_task = Transition(
+        "task.status_changed", {"from": "verifying", "to": "completed"}, task_id="T1"
+    )
+    _expect_error(
+        "task completion gate failed",
+        lambda: _validate_transition(run_dir, manifest, completion_state, complete_task),
+    )
+    completion_state["attempts"][1]["kind"] = "task_review"
+    _validate_transition(run_dir, manifest, completion_state, complete_task)
 
     verdict = {
         "status": "passed",
