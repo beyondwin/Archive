@@ -6,7 +6,13 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from .attempt_controller import ROLE_POLICIES, canonical_role, validate_verdict
+from .attempt_controller import (
+    ROLE_POLICIES,
+    AttemptController,
+    WriteAttemptOutcome,
+    canonical_role,
+    validate_verdict,
+)
 from .evidence import put_json
 from .kernel import Kernel, Transition
 from .manifest import load_verified_manifest, resolve_ref
@@ -186,7 +192,7 @@ def _worker_attempt(
     ordinal: int,
     prompt: str,
     packet_task_id: str | None = None,
-) -> WorkerResult:
+) -> tuple[WorkerResult, WriteAttemptOutcome[WorkerResult] | None]:
     task_id = str(task["id"]) if task else None
     attempt_id = f"{task_id or 'run'}.{kind}.{ordinal}"
     manifest = load_verified_manifest(kernel.run_dir / "run_manifest.json")
@@ -194,22 +200,41 @@ def _worker_attempt(
         (manifest.get("task_graph") or [{}])[0].get("id") or ""
     )
     _start_attempt(kernel, task_id, kind, attempt_id)
-    try:
-        request = make_packet_request(
-            kernel.run_dir,
-            manifest,
-            request_task_id,
-            attempt_id,
-            kind,
-            prompt,
-            worktree,
+    def invoke() -> WorkerResult:
+        try:
+            request = make_packet_request(
+                kernel.run_dir,
+                manifest,
+                request_task_id,
+                attempt_id,
+                kind,
+                prompt,
+                worktree,
+            )
+            return worker.run(request)
+        except WorkerError as exc:
+            payload = {"status": "failed", "summary": str(exc), "changed_files": [], "findings": [], "evidence_refs": [], "missing_evidence": [str(exc)], "verification": [], "verdict": None, "failure_category": "transient"}
+            return WorkerResult("failed", payload, {"verified": False, "error": str(exc)}, {}, 0, hashlib.sha256(str(exc).encode()).hexdigest(), str(exc))
+
+    write_outcome = None
+    policy = ROLE_POLICIES[canonical_role(kind)]
+    if policy.product_write:
+        contract = task.get("execution_contract") if task and isinstance(task.get("execution_contract"), dict) else {}
+        allowed = list(contract.get("allowed_paths") or (task.get("file_claims") if task else []) or [])
+        forbidden = list(contract.get("forbidden_paths") or [])
+        write_outcome = AttemptController(kernel, worktree).run_write_attempt(
+            task_id=str(task_id),
+            attempt_id=attempt_id,
+            role=kind,
+            allowed=[str(path) for path in allowed],
+            forbidden=[str(path) for path in forbidden],
+            operation=invoke,
         )
-        result = worker.run(request)
-    except WorkerError as exc:
-        payload = {"status": "failed", "summary": str(exc), "changed_files": [], "findings": [], "evidence_refs": [], "missing_evidence": [str(exc)], "verification": [], "verdict": None, "failure_category": "transient"}
-        result = WorkerResult("failed", payload, {"verified": False, "error": str(exc)}, {}, 0, hashlib.sha256(str(exc).encode()).hexdigest(), str(exc))
+        result = write_outcome.result
+    else:
+        result = invoke()
     _complete_attempt(kernel, task_id, kind, result, attempt_id)
-    return result
+    return result, write_outcome
 
 
 def run_final_reviews(
@@ -221,18 +246,17 @@ def run_final_reviews(
     results: list[WorkerResult] = []
     for ordinal, task in enumerate(_topological(tasks), 1):
         task_id = str(task["id"])
-        results.append(
-            _worker_attempt(
-                worker,
-                kernel,
-                None,
-                worktree,
-                "final_review",
-                ordinal,
-                f"Review the complete diff for cross-task regressions using task packet {task_id}.",
-                packet_task_id=task_id,
-            )
+        result, _ = _worker_attempt(
+            worker,
+            kernel,
+            None,
+            worktree,
+            "final_review",
+            ordinal,
+            f"Review the complete diff for cross-task regressions using task packet {task_id}.",
+            packet_task_id=task_id,
         )
+        results.append(result)
     return results
 
 
@@ -262,6 +286,39 @@ def _block(kernel: Kernel, task_id: str, phase: str, reason: str) -> dict:
     if state["lifecycle"] == "running":
         kernel.transition(Transition("run.status_changed", {"from": "running", "to": "blocked", "reason": reason}))
     return {"completed": [key for key, value in state["tasks"].items() if value["status"] == "completed"], "blocked": task_id, "status": "blocked", "reason": reason, "phase": phase}
+
+
+def _scope_block(
+    kernel: Kernel,
+    task_id: str,
+    phase: str,
+    outcome: WriteAttemptOutcome[WorkerResult],
+) -> dict:
+    error = outcome.scope_errors[0]
+    if error == "worktree_head_changed":
+        root_cause_key = error
+    else:
+        _, path = error.split(":", 1)
+        root_cause_key = f"task_scope:{task_id}:{path}"
+    kernel.transition(
+        Transition(
+            "blocker.opened",
+            {
+                "blocker_id": f"{task_id}.policy.{outcome.worktree_revision}",
+                "category": "policy_violation",
+                "root_cause_key": root_cause_key,
+                "owner": "cpe",
+                "resume_condition": "restore task scope and schedule an explicit retry",
+                "scope_errors": list(outcome.scope_errors),
+            },
+            task_id=task_id,
+        )
+    )
+    result = _block(kernel, task_id, phase, "policy_violation")
+    result["failure_category"] = "policy_violation"
+    result["root_cause_key"] = root_cause_key
+    result["scope_errors"] = list(outcome.scope_errors)
+    return result
 
 
 def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Path) -> dict:
@@ -320,7 +377,7 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
         else:
             kernel.transition(Transition("task.status_changed", {"from": "ready", "to": "implementing"}, task_id=task_id))
 
-        implementation = _worker_attempt(
+        implementation, implementation_write = _worker_attempt(
             worker,
             kernel,
             task,
@@ -329,16 +386,16 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
             1,
             f"Implement task {task_id} using only its verified packet and current revision.",
         )
-        changed = set(implementation.payload.get("changed_files") or [])
-        claims = set(task.get("file_claims") or [])
-        if implementation.status != "completed" or not _trusted(implementation) or not changed.issubset(claims):
+        if implementation_write is not None and implementation_write.scope_errors:
+            return _scope_block(kernel, task_id, "implementation", implementation_write)
+        if implementation.status != "completed" or not _trusted(implementation):
             return _block(kernel, task_id, "implementation", "implementation_or_attestation_failed")
         kernel.transition(Transition("task.status_changed", {"from": "implementing", "to": "reviewing"}, task_id=task_id))
 
         repair_counts: dict[str, int] = {}
         cycle = 1
         while True:
-            review = _worker_attempt(worker, kernel, task, worktree, "task_review", cycle, f"Review task {task_id} against its packet and diff.")
+            review, _ = _worker_attempt(worker, kernel, task, worktree, "task_review", cycle, f"Review task {task_id} against its packet and diff.")
             review_verdict = review.payload.get("verdict")
             if (
                 review.status == "completed"
@@ -348,7 +405,7 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
             ):
                 kernel.transition(Transition("task.status_changed", {"from": "reviewing", "to": "verifying"}, task_id=task_id))
                 acceptance_ok, acceptance_payload = _acceptance(task, worktree, kernel, cycle)
-                verification = _worker_attempt(
+                verification, _ = _worker_attempt(
                     worker,
                     kernel,
                     task,
@@ -418,7 +475,7 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
             if repair_counts[root_key] > 2:
                 return _block(kernel, task_id, phase, f"repair_limit_exhausted:{root_key}")
             kernel.transition(Transition("task.status_changed", {"from": phase, "to": "repairing"}, task_id=task_id))
-            repair = _worker_attempt(
+            repair, repair_write = _worker_attempt(
                 worker,
                 kernel,
                 task,
@@ -427,6 +484,8 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
                 repair_counts[root_key],
                 f"Repair {task_id} root cause {root_key}; remain inside file claims.",
             )
+            if repair_write is not None and repair_write.scope_errors:
+                return _scope_block(kernel, task_id, "repairing", repair_write)
             if repair.status != "completed" or not _trusted(repair):
                 return _block(kernel, task_id, "repairing", f"repair_failed:{root_key}")
             kernel.transition(Transition("task.status_changed", {"from": "repairing", "to": "reviewing"}, task_id=task_id))
