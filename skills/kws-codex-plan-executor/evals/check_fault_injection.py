@@ -13,8 +13,9 @@ from types import SimpleNamespace
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from cpe_runtime.attempt_controller import validate_verdict
-from cpe_runtime.events import read_events
-from cpe_runtime.kernel import RunKernel, Transition
+from cpe_runtime.events import append_event, read_events
+from cpe_runtime.evidence import put_json
+from cpe_runtime.kernel import RunKernel, Transition, rebuild_snapshot
 from cpe_runtime.manifest import create_manifest, load_verified_manifest
 from cpe_runtime.model_policy import CORE_ROUTE
 from cpe_runtime.packets import build_packet
@@ -26,6 +27,7 @@ from cpe_runtime.validation import validate_completion, validate_integrity
 from check_validation_consumer_parity import (
     EXPECTED_FALSE_COMPLETION_CODES,
     make_v3_run,
+    record_revision,
 )
 
 
@@ -627,15 +629,16 @@ def completion_cases() -> dict[str, bool]:
         evidence_refs = [
             item["ref"] for item in healthy_before_audit["artifact_index"]
         ]
+        evidence_checklist = [
+            {"kind": item["kind"], "task_id": item.get("task_id"), "ref": item["ref"]}
+            for item in healthy_before_audit["artifact_index"]
+        ]
         with_audit = RunKernel(healthy_run).transition(
             Transition(
                 "completion.recorded",
                 {
                     "passed": True,
-                    "prompt_to_artifact_checklist": [
-                        "T1 acceptance",
-                        "repository checks",
-                    ],
+                    "prompt_to_artifact_checklist": evidence_checklist,
                     "verification_evidence": evidence_refs,
                     "residual_risk": [],
                 },
@@ -645,14 +648,150 @@ def completion_cases() -> dict[str, bool]:
             Transition("run.status_changed", {"from": "running", "to": "completed"})
         )
         healthy_report = validate_completion(healthy_run)
+        healthy_worktree = root / "healthy" / "worktree"
+        (healthy_worktree / "owned.txt").write_text(
+            "unrecorded post-evidence write\n", encoding="utf-8"
+        )
+        post_evidence_report = validate_completion(healthy_run)
 
-        stale_run, stale_state = make_v3_run(
+        ignored_run, _ = make_v3_run(
+            root / "ignored-tamper", false_completion=False, terminal=False
+        )
+        (root / "ignored-tamper" / "worktree" / "ignored.bin").write_bytes(
+            b"ignored post-evidence tamper\0"
+        )
+        ignored_report = validate_completion(ignored_run)
+
+        index_run, _ = make_v3_run(
+            root / "index-tamper", false_completion=False, terminal=False
+        )
+        _run(["git", "add", "owned.txt"], root / "index-tamper" / "worktree").check_returncode()
+        index_report = validate_completion(index_run)
+
+        branch_run, _ = make_v3_run(
+            root / "branch-tamper", false_completion=False, terminal=False
+        )
+        _run(
+            ["git", "switch", "-q", "-c", "tampered-branch"],
+            root / "branch-tamper" / "worktree",
+        ).check_returncode()
+        branch_report = validate_completion(branch_run)
+
+        stale_run, _ = make_v3_run(
             root / "stale", false_completion=False, terminal=False
         )
-        stale_state = dict(stale_state)
-        stale_state["worktree_revision"] = 2
-        stale_state["worktree_patch_sha256"] = "d" * 64
-        stale_report = validate_completion(stale_run, candidate_state=stale_state)
+        record_revision(stale_run, "T1", b"later revision\n")
+        stale_report = validate_completion(stale_run)
+
+        missing_patch_run, _ = make_v3_run(
+            root / "missing-patch",
+            false_completion=False,
+            terminal=False,
+            include_patch_ref=False,
+        )
+        missing_patch_report = validate_integrity(missing_patch_run)
+
+        wrong_scope_run, _ = make_v3_run(
+            root / "wrong-scope",
+            false_completion=False,
+            terminal=False,
+            file_claims=["other.txt"],
+        )
+        wrong_scope_report = validate_integrity(wrong_scope_run)
+
+        unbound_run, _ = make_v3_run(
+            root / "unbound", false_completion=False, terminal=False
+        )
+        unbound_ref = put_json(
+            unbound_run,
+            "verification",
+            {"kind": "verification", "task_id": "T1", "status": "passed"},
+        ).as_dict()
+        append_event(
+            unbound_run / "events.jsonl",
+            {
+                "type": "evidence.attached",
+                "task_id": "T1",
+                "attempt_id": "T1.verification.unbound",
+                "payload": {"kind": "verification", "ref": unbound_ref},
+            },
+        )
+        rebuild_snapshot(unbound_run)
+        unbound_integrity = validate_integrity(unbound_run)
+        unbound_completion = validate_completion(unbound_run)
+
+        mismatch_run, _ = make_v3_run(
+            root / "kind-mismatch", false_completion=False, terminal=False
+        )
+        mismatch_ref = put_json(
+            mismatch_run,
+            "verification",
+            {"kind": "verification", "task_id": "T1", "status": "passed"},
+        ).as_dict()
+        append_event(
+            mismatch_run / "events.jsonl",
+            {
+                "type": "evidence.attached",
+                "task_id": "T1",
+                "attempt_id": "T1.task_review.mismatch",
+                "payload": {"kind": "task_review", "ref": mismatch_ref},
+            },
+        )
+        rebuild_snapshot(mismatch_run)
+        mismatch_report = validate_integrity(mismatch_run)
+
+        duplicate_run, duplicate_state = make_v3_run(
+            root / "duplicate-artifact", false_completion=False, terminal=False
+        )
+        duplicate_item = duplicate_state["artifact_index"][0]
+        append_event(
+            duplicate_run / "events.jsonl",
+            {
+                "type": "evidence.attached",
+                "task_id": duplicate_item.get("task_id"),
+                "attempt_id": "T1.duplicate",
+                "payload": {"kind": duplicate_item["kind"], "ref": duplicate_item["ref"]},
+            },
+        )
+        rebuild_snapshot(duplicate_run)
+        duplicate_report = validate_integrity(duplicate_run)
+
+        changed_mismatch_run, _ = make_v3_run(
+            root / "changed-mismatch",
+            false_completion=False,
+            terminal=False,
+            revision_changed_files=["not-the-real-path.txt"],
+        )
+        changed_mismatch_report = validate_integrity(changed_mismatch_run)
+
+        patch_tamper_run, patch_tamper_state = make_v3_run(
+            root / "patch-tamper", false_completion=False, terminal=False
+        )
+        patch_digest = patch_tamper_state["worktree_patch_sha256"]
+        (patch_tamper_run / "artifacts" / "patches" / f"{patch_digest}.patch").write_bytes(
+            b"tampered patch"
+        )
+        patch_tamper_report = validate_integrity(patch_tamper_run)
+
+        contradiction_run, _ = make_v3_run(
+            root / "contradiction",
+            false_completion=False,
+            terminal=False,
+            repository_contradiction=True,
+        )
+        contradiction_report = validate_completion(contradiction_run)
+
+        zero_root = root / "revision-zero"
+        zero_root.mkdir()
+        _zero_worktree, zero_run, _zero_tasks, zero_kernel = _scope_fixture(zero_root)
+        zero_kernel.transition(
+            Transition("run.status_changed", {"from": "created", "to": "ready"})
+        )
+        zero_kernel.transition(
+            Transition("run.status_changed", {"from": "ready", "to": "running"})
+        )
+        zero_integrity = validate_integrity(zero_run)
+        zero_completion = validate_completion(zero_run)
 
         return {
             "healthy_running_integrity_passes": integrity.passed,
@@ -667,6 +806,18 @@ def completion_cases() -> dict[str, bool]:
             "healthy_current_evidence_can_complete": completed.get("lifecycle")
             == "completed"
             and healthy_report.passed,
+            "unrecorded_post_evidence_write_fails": (
+                "current_revision_worktree_mismatch" in post_evidence_report.errors
+            ),
+            "ignored_write_invalidates_revision": (
+                "current_revision_worktree_mismatch" in ignored_report.errors
+            ),
+            "index_tamper_invalidates_revision": (
+                "current_revision_worktree_mismatch" in index_report.errors
+            ),
+            "branch_tamper_invalidates_revision": (
+                "current_revision_worktree_mismatch" in branch_report.errors
+            ),
             "later_revision_invalidates_all_success": (
                 "current_revision_acceptance_not_passed" in stale_report.errors
                 and "current_revision_task_review_not_passed" in stale_report.errors
@@ -674,6 +825,37 @@ def completion_cases() -> dict[str, bool]:
                 and "current_revision_final_review_not_passed" in stale_report.errors
                 and "current_revision_repository_check_missing" in stale_report.errors
                 and "stale_completion_evidence" in stale_report.errors
+            ),
+            "missing_revision_patch_ref_fails_integrity": (
+                "revision_patch_evidence_missing" in missing_patch_report.errors
+            ),
+            "revision_scope_is_task_local": (
+                "revision_scope_violation" in wrong_scope_report.errors
+            ),
+            "unbound_completion_evidence_warns_and_blocks": (
+                "stale_revision_evidence" in unbound_integrity.warnings
+                and "unbound_completion_evidence" in unbound_completion.errors
+            ),
+            "artifact_kind_mismatch_fails_integrity": (
+                "artifact_kind_mismatch" in mismatch_report.errors
+            ),
+            "duplicate_artifact_ref_fails_integrity": (
+                "duplicate_artifact_ref" in duplicate_report.errors
+            ),
+            "revision_changed_files_must_match_patch": (
+                "revision_patch_chain_invalid" in changed_mismatch_report.errors
+            ),
+            "revision_patch_content_tamper_fails_integrity": (
+                "revision_patch_evidence_invalid" in patch_tamper_report.errors
+            ),
+            "contradictory_repository_payload_cannot_pass": (
+                "current_revision_repository_check_missing" in contradiction_report.errors
+                and "completion_evidence_not_passed" in contradiction_report.errors
+            ),
+            "revision_zero_is_explicitly_unverified": (
+                zero_integrity.passed
+                and "revision_zero_baseline_unverified" in zero_integrity.warnings
+                and "current_revision_patch_unverifiable" in zero_completion.errors
             ),
         }
 

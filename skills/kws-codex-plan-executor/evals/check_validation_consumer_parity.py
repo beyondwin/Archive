@@ -12,8 +12,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 from cpe_runtime.events import append_event, read_events
 from cpe_runtime.evidence import put_json
+from cpe_runtime.git_delta import capture_snapshot, diff_snapshots
 from cpe_runtime.inspection import inspect_run
-from cpe_runtime.kernel import RunKernel, Transition
+from cpe_runtime.kernel import RunKernel, Transition, rebuild_snapshot
 from cpe_runtime.manifest import create_manifest, load_verified_manifest
 from cpe_runtime.model_policy import CORE_ROUTE
 from cpe_runtime.packets import build_packet, packet_entry
@@ -87,7 +88,7 @@ def _verdict(
     packet_task_id: str | None = None,
     findings: list[dict] | None = None,
     missing_evidence: list[object] | None = None,
-) -> None:
+) -> dict[str, object]:
     payload: dict[str, object] = {
         "status": status,
         "findings": list(findings or []),
@@ -99,6 +100,52 @@ def _verdict(
     if packet_task_id is not None:
         payload["packet_task_id"] = packet_task_id
     _append(run_dir, "verdict.recorded", payload, task_id=task_id, attempt_id=attempt_id)
+    return payload
+
+
+def _attach_payload(
+    run_dir: Path,
+    *,
+    kind: str,
+    task_id: str,
+    attempt_id: str,
+    payload: dict[str, object],
+) -> dict[str, str]:
+    semantic = {**payload, "kind": kind, "task_id": task_id}
+    ref = put_json(run_dir, kind, semantic).as_dict()
+    _append(
+        run_dir,
+        "evidence.attached",
+        {"kind": kind, "ref": ref},
+        task_id=task_id,
+        attempt_id=attempt_id,
+    )
+    return ref
+
+
+def record_revision(run_dir: Path, task_id: str, content: bytes) -> dict:
+    manifest = load_verified_manifest(run_dir / "run_manifest.json")
+    state = project(manifest, read_events(run_dir / "events.jsonl"))
+    worktree = Path(str(manifest["execution_worktree_ref"])).expanduser().resolve()
+    before = capture_snapshot(worktree)
+    (worktree / "owned.txt").write_bytes(content)
+    after = capture_snapshot(worktree)
+    delta = diff_snapshots(before, after, worktree)
+    patch_ref = RunKernel(run_dir).store_patch_evidence(delta.patch_bytes)
+    _append(
+        run_dir,
+        "worktree.revision_recorded",
+        {
+            "from": state["worktree_revision"],
+            "to": state["worktree_revision"] + 1,
+            "patch_sha256": delta.patch_sha256,
+            "patch_ref": patch_ref,
+            "changed_files": list(delta.changed_files),
+        },
+        task_id=task_id,
+        attempt_id=f"{task_id}.repair.actual",
+    )
+    return rebuild_snapshot(run_dir)
 
 
 def make_v3_run(
@@ -107,6 +154,11 @@ def make_v3_run(
     false_completion: bool,
     terminal: bool,
     record_audit: bool = True,
+    file_claims: list[str] | None = None,
+    include_patch_ref: bool = True,
+    include_stale_history: bool = False,
+    revision_changed_files: list[str] | None = None,
+    repository_contradiction: bool = False,
 ) -> tuple[Path, dict]:
     root.mkdir(parents=True, exist_ok=True)
     plan = root / "plan.md"
@@ -119,14 +171,15 @@ def make_v3_run(
     _run(["git", "config", "user.email", "eval@example.com"], worktree).check_returncode()
     _run(["git", "config", "user.name", "Eval"], worktree).check_returncode()
     (worktree / "owned.txt").write_text("before\n", encoding="utf-8")
-    _run(["git", "add", "owned.txt"], worktree).check_returncode()
+    (worktree / ".gitignore").write_text("ignored.bin\n", encoding="utf-8")
+    _run(["git", "add", "owned.txt", ".gitignore"], worktree).check_returncode()
     _run(["git", "commit", "-q", "-m", "fixture"], worktree).check_returncode()
     head = _run(["git", "rev-parse", "HEAD"], worktree).stdout.strip()
     task = {
         "id": "T1",
         "title": "validator fixture",
         "dependencies": [],
-        "file_claims": ["owned.txt"],
+        "file_claims": list(file_claims or ["owned.txt"]),
         "acceptance_command": "true",
     }
     draft = build_packet(SimpleNamespace(sources=(), spec_manifest=None), task)
@@ -142,7 +195,7 @@ def make_v3_run(
         source_head=head,
     )
     run_dir = root / "run"
-    RunKernel.initialize(run_dir, manifest, [draft])
+    kernel = RunKernel.initialize(run_dir, manifest, [draft])
     manifest = load_verified_manifest(run_dir / "run_manifest.json")
     packet_sha = packet_entry(manifest, "T1")["sha256"]
 
@@ -152,20 +205,36 @@ def make_v3_run(
     _append(run_dir, "task.status_changed", {"from": "ready", "to": "implementing"}, task_id="T1")
     _attempt(run_dir, "T1", "T1.implementation.1", "implementation", 0)
 
+    before_write = capture_snapshot(worktree)
     (worktree / "owned.txt").write_text("after\n", encoding="utf-8")
-    patch_sha = "b" * 64
+    after_write = capture_snapshot(worktree)
+    delta = diff_snapshots(before_write, after_write, worktree)
+    patch_sha = delta.patch_sha256
+    patch_ref = kernel.store_patch_evidence(delta.patch_bytes)
+    revision_payload = {
+        "from": 0,
+        "to": 1,
+        "patch_sha256": patch_sha,
+        "changed_files": list(
+            delta.changed_files if revision_changed_files is None else revision_changed_files
+        ),
+    }
+    if include_patch_ref:
+        revision_payload["patch_ref"] = patch_ref
     _append(
         run_dir,
         "worktree.revision_recorded",
-        {"from": 0, "to": 1, "patch_sha256": patch_sha, "changed_files": ["owned.txt"]},
+        revision_payload,
         task_id="T1",
         attempt_id="T1.implementation.1",
     )
     _append(run_dir, "task.status_changed", {"from": "implementing", "to": "reviewing"}, task_id="T1")
 
     evidence_refs: list[dict] = []
+    evidence_records: list[dict[str, object]] = []
     if false_completion:
         acceptance_payload = {
+            "kind": "acceptance",
             "task_id": "T1",
             "passed": True,
             "worktree_revision": 0,
@@ -174,6 +243,7 @@ def make_v3_run(
         }
         acceptance_ref = put_json(run_dir, "acceptance", acceptance_payload).as_dict()
         evidence_refs.append(acceptance_ref)
+        evidence_records.append({"kind": "acceptance", "task_id": "T1", "ref": acceptance_ref})
         _append(
             run_dir,
             "evidence.attached",
@@ -182,7 +252,7 @@ def make_v3_run(
             attempt_id="T1.acceptance.1",
         )
         _attempt(run_dir, "T1", "T1.task_review.1", "task_review", 1)
-        _verdict(
+        review_payload = _verdict(
             run_dir,
             "T1",
             "T1.task_review.1",
@@ -192,9 +262,18 @@ def make_v3_run(
             packet_sha256=packet_sha,
             findings=[{"severity": "critical", "action": "repair false completion"}],
         )
+        review_ref = _attach_payload(
+            run_dir,
+            kind="task_review",
+            task_id="T1",
+            attempt_id="T1.task_review.1",
+            payload=review_payload,
+        )
+        evidence_refs.append(review_ref)
+        evidence_records.append({"kind": "task_review", "task_id": "T1", "ref": review_ref})
         _append(run_dir, "task.status_changed", {"from": "reviewing", "to": "verifying"}, task_id="T1")
         _attempt(run_dir, "T1", "T1.verification.1", "verification", 1)
-        _verdict(
+        verification_payload = _verdict(
             run_dir,
             "T1",
             "T1.verification.1",
@@ -204,9 +283,18 @@ def make_v3_run(
             packet_sha256=packet_sha,
             missing_evidence=["required device proof"],
         )
+        verification_ref = _attach_payload(
+            run_dir,
+            kind="verification",
+            task_id="T1",
+            attempt_id="T1.verification.1",
+            payload=verification_payload,
+        )
+        evidence_refs.append(verification_ref)
+        evidence_records.append({"kind": "verification", "task_id": "T1", "ref": verification_ref})
         _append(run_dir, "task.status_changed", {"from": "verifying", "to": "completed"}, task_id="T1")
         _attempt(run_dir, None, "run.final_review.1", "final_review", 1)
-        _verdict(
+        final_payload = _verdict(
             run_dir,
             None,
             "run.final_review.1",
@@ -217,8 +305,35 @@ def make_v3_run(
             packet_task_id="T1",
             findings=[{"severity": "critical", "action": "repair accepted content"}],
         )
+        final_ref = _attach_payload(
+            run_dir,
+            kind="final_review",
+            task_id="T1",
+            attempt_id="run.final_review.1",
+            payload=final_payload,
+        )
+        evidence_refs.append(final_ref)
+        evidence_records.append({"kind": "final_review", "task_id": "T1", "ref": final_ref})
     else:
+        if include_stale_history:
+            stale_payload = {
+                "kind": "acceptance",
+                "task_id": "T1",
+                "passed": True,
+                "worktree_revision": 0,
+                "worktree_patch_sha256": None,
+                "packet_sha256": packet_sha,
+            }
+            stale_ref = put_json(run_dir, "acceptance", stale_payload).as_dict()
+            _append(
+                run_dir,
+                "evidence.attached",
+                {"kind": "acceptance", "ref": stale_ref},
+                task_id="T1",
+                attempt_id="T1.acceptance.old",
+            )
         acceptance_payload = {
+            "kind": "acceptance",
             "task_id": "T1",
             "passed": True,
             "worktree_revision": 1,
@@ -227,14 +342,22 @@ def make_v3_run(
         }
         acceptance_ref = put_json(run_dir, "acceptance", acceptance_payload).as_dict()
         evidence_refs.append(acceptance_ref)
+        evidence_records.append({"kind": "acceptance", "task_id": "T1", "ref": acceptance_ref})
         _append(run_dir, "evidence.attached", {"kind": "acceptance", "ref": acceptance_ref}, task_id="T1")
         _attempt(run_dir, "T1", "T1.task_review.1", "task_review", 1)
-        _verdict(run_dir, "T1", "T1.task_review.1", status="passed", revision=1, patch_sha256=patch_sha, packet_sha256=packet_sha)
+        review_payload = _verdict(run_dir, "T1", "T1.task_review.1", status="passed", revision=1, patch_sha256=patch_sha, packet_sha256=packet_sha)
+        review_ref = _attach_payload(run_dir, kind="task_review", task_id="T1", attempt_id="T1.task_review.1", payload=review_payload)
+        evidence_refs.append(review_ref)
+        evidence_records.append({"kind": "task_review", "task_id": "T1", "ref": review_ref})
         _append(run_dir, "task.status_changed", {"from": "reviewing", "to": "verifying"}, task_id="T1")
         _attempt(run_dir, "T1", "T1.verification.1", "verification", 1)
-        _verdict(run_dir, "T1", "T1.verification.1", status="passed", revision=1, patch_sha256=patch_sha, packet_sha256=packet_sha)
+        verification_payload = _verdict(run_dir, "T1", "T1.verification.1", status="passed", revision=1, patch_sha256=patch_sha, packet_sha256=packet_sha)
+        verification_ref = _attach_payload(run_dir, kind="verification", task_id="T1", attempt_id="T1.verification.1", payload=verification_payload)
+        evidence_refs.append(verification_ref)
+        evidence_records.append({"kind": "verification", "task_id": "T1", "ref": verification_ref})
         _append(run_dir, "task.status_changed", {"from": "verifying", "to": "completed"}, task_id="T1")
         repository_payload = {
+            "kind": "repository_check",
             "task_id": "T1",
             "passed": True,
             "worktree_revision": 1,
@@ -242,18 +365,24 @@ def make_v3_run(
             "packet_sha256": packet_sha,
             "commands": ["true"],
         }
+        if repository_contradiction:
+            repository_payload["status"] = "failed"
         repository_ref = put_json(run_dir, "repository_check", repository_payload).as_dict()
         evidence_refs.append(repository_ref)
+        evidence_records.append({"kind": "repository_check", "task_id": "T1", "ref": repository_ref})
         _append(run_dir, "evidence.attached", {"kind": "repository_check", "ref": repository_ref}, task_id="T1")
         _attempt(run_dir, None, "run.final_review.1", "final_review", 1)
-        _verdict(run_dir, None, "run.final_review.1", status="passed", revision=1, patch_sha256=patch_sha, packet_sha256=packet_sha, packet_task_id="T1")
+        final_payload = _verdict(run_dir, None, "run.final_review.1", status="passed", revision=1, patch_sha256=patch_sha, packet_sha256=packet_sha, packet_task_id="T1")
+        final_ref = _attach_payload(run_dir, kind="final_review", task_id="T1", attempt_id="run.final_review.1", payload=final_payload)
+        evidence_refs.append(final_ref)
+        evidence_records.append({"kind": "final_review", "task_id": "T1", "ref": final_ref})
         if record_audit:
             _append(
                 run_dir,
                 "completion.recorded",
                 {
                     "passed": True,
-                    "prompt_to_artifact_checklist": ["T1 acceptance", "repository checks"],
+                    "prompt_to_artifact_checklist": evidence_records,
                     "verification_evidence": evidence_refs,
                     "residual_risk": [],
                 },
