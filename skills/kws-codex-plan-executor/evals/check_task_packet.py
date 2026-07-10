@@ -3,18 +3,23 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
 import build_task_packet as packet_adapter
 from cpe_runtime.kernel import RunKernel
 from cpe_runtime.manifest import create_manifest, load_verified_manifest
-from cpe_runtime.packets import PACKET_ROLE_POLICY, build_packet, verify_packet
+from cpe_runtime.model_policy import CORE_ROUTE
+from cpe_runtime.packets import PACKET_ROLE_POLICY, build_packet, export_packet, verify_packet
+from cpe_runtime import scheduler
 from cpe_runtime.scheduler import make_packet_request
+from cpe_runtime.worker import WorkerResult
 
 
 SENTINEL = "CPE_PACKET_SENTINEL_7d3e2d"
@@ -147,6 +152,28 @@ def main() -> int:
         else:
             checks["public_builder_rejects_missing_explicit_mapping"] = False
 
+        export_path = root / "exported-task-packet.json"
+        with patch("cpe_runtime.packets.os.fsync", wraps=os.fsync) as synced:
+            export_packet(export_path, draft)
+        checks["public_export_is_fsynced"] = synced.call_count == 1
+        preserved = export_path.read_bytes()
+        try:
+            export_packet(export_path, draft)
+        except FileExistsError:
+            checks["public_export_never_overwrites"] = export_path.read_bytes() == preserved
+        else:
+            checks["public_export_never_overwrites"] = False
+        symlink_target = root / "symlink-target.json"
+        symlink_target.write_bytes(b"preserve-me\n")
+        symlink_path = root / "symlink-export.json"
+        symlink_path.symlink_to(symlink_target)
+        try:
+            export_packet(symlink_path, draft)
+        except OSError:
+            checks["public_export_refuses_symlink"] = symlink_target.read_bytes() == b"preserve-me\n"
+        else:
+            checks["public_export_refuses_symlink"] = False
+
         roles = ("implementation", "task_review", "verification", "repair", "final_review")
         requests = [
             make_packet_request(
@@ -167,6 +194,79 @@ def main() -> int:
             and SENTINEL not in request.prompt
             for request in requests
         )
+
+        task_two = {
+            **task,
+            "id": "T2",
+            "title": "Second packet task",
+            "file_claims": ["src/second.py"],
+            "execution_contract": {
+                **task["execution_contract"],
+                "allowed_paths": ["src/second.py"],
+            },
+        }
+        draft_two = build_packet(compiled, task_two)
+        multi_manifest = create_manifest(
+            "multi-packet-fixture",
+            "interactive",
+            root,
+            worktree,
+            plan,
+            spec,
+            [task, task_two],
+            pricing,
+        )
+        multi_run_dir = root / "multi-run"
+        multi_kernel = RunKernel.initialize(multi_run_dir, multi_manifest, [draft, draft_two])
+        final_review_requests = []
+
+        class RecordingWorker:
+            def run(self, request):
+                final_review_requests.append(request)
+                return WorkerResult(
+                    "completed",
+                    {
+                        "status": "completed",
+                        "summary": "reviewed",
+                        "changed_files": [],
+                        "findings": [],
+                        "evidence_refs": [],
+                        "missing_evidence": [],
+                        "verification": [],
+                    },
+                    {
+                        "verified": True,
+                        "actual_model": CORE_ROUTE.model,
+                        "actual_reasoning": CORE_ROUTE.reasoning,
+                    },
+                    {},
+                    0,
+                    "0" * 64,
+                )
+
+        run_final_reviews = getattr(scheduler, "run_final_reviews", None)
+        if run_final_reviews is None:
+            checks["multi_task_final_review_consumes_every_packet"] = False
+        else:
+            results = run_final_reviews(
+                [task, task_two], RecordingWorker(), multi_kernel, worktree
+            )
+            multi_entries = {
+                entry["task_id"]: entry
+                for entry in load_verified_manifest(
+                    multi_run_dir / "run_manifest.json"
+                )["task_packets"]
+            }
+            checks["multi_task_final_review_consumes_every_packet"] = (
+                len(results) == 2
+                and [request.task_id for request in final_review_requests] == ["T1", "T2"]
+                and all(
+                    request.attempt_kind == "final_review"
+                    and request.packet_path == multi_entries[request.task_id]["path"]
+                    and request.packet_sha256 == multi_entries[request.task_id]["sha256"]
+                    for request in final_review_requests
+                )
+            )
 
         packet_path = run_dir / draft.relative_path
         packet_path.write_bytes(draft.content.replace(SENTINEL.encode(), b"MUTATED_PACKET_SENTINEL"))

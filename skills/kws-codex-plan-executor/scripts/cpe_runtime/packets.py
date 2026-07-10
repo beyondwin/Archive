@@ -34,6 +34,20 @@ def canonical_packet_bytes(payload: object) -> bytes:
     ).encode("utf-8")
 
 
+def export_packet(path: Path, draft: PacketDraft) -> None:
+    """Export a packet once, through the canonical immutable boundary."""
+    path = path.expanduser()
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        with os.fdopen(descriptor, "wb", closefd=False) as handle:
+            handle.write(draft.content)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        os.close(descriptor)
+
+
 def _compiled_value(compiled: object, name: str, default: object) -> object:
     if isinstance(compiled, dict):
         return compiled.get(name, default)
