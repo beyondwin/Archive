@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-from cpe_runtime.packets import PacketDraft, build_packet as build_runtime_packet
+from cpe_runtime.packets import PacketDraft, build_packet as build_runtime_packet, export_packet
 
 
 def die(message: str) -> None:
@@ -119,7 +119,10 @@ def main() -> int:
         die(str(exc))
     output = Path(args.output).expanduser()
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_bytes(draft.content)
+    try:
+        export_packet(output, draft)
+    except OSError as exc:
+        die(f"output is not an unused regular path: {output}: {exc}")
     return 0
 
 

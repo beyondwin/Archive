@@ -143,16 +143,19 @@ def _worker_attempt(
     kind: str,
     ordinal: int,
     prompt: str,
+    packet_task_id: str | None = None,
 ) -> WorkerResult:
     task_id = str(task["id"]) if task else None
     attempt_id = f"{task_id or 'run'}.{kind}.{ordinal}"
     manifest = load_verified_manifest(kernel.run_dir / "run_manifest.json")
-    packet_task_id = task_id or str((manifest.get("task_graph") or [{}])[0].get("id") or "")
+    request_task_id = packet_task_id or task_id or str(
+        (manifest.get("task_graph") or [{}])[0].get("id") or ""
+    )
     try:
         request = make_packet_request(
             kernel.run_dir,
             manifest,
-            packet_task_id,
+            request_task_id,
             attempt_id,
             kind,
             prompt,
@@ -165,6 +168,30 @@ def _worker_attempt(
     _record_attempt(kernel, task_id, kind, result, attempt_id)
     _attach(kernel, task_id, attempt_id, "worker_result", result.payload)
     return result
+
+
+def run_final_reviews(
+    tasks: list[dict],
+    worker: Worker,
+    kernel: Kernel,
+    worktree: Path,
+) -> list[WorkerResult]:
+    results: list[WorkerResult] = []
+    for ordinal, task in enumerate(_topological(tasks), 1):
+        task_id = str(task["id"])
+        results.append(
+            _worker_attempt(
+                worker,
+                kernel,
+                None,
+                worktree,
+                "final_review",
+                ordinal,
+                f"Review the complete diff for cross-task regressions using task packet {task_id}.",
+                packet_task_id=task_id,
+            )
+        )
+    return results
 
 
 def _acceptance(task: dict, worktree: Path, kernel: Kernel, ordinal: int) -> tuple[bool, dict]:
@@ -315,8 +342,8 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
             kernel.transition(Transition("task.status_changed", {"from": "repairing", "to": "reviewing"}, task_id=task_id))
             cycle += 1
 
-    final_review = _worker_attempt(worker, kernel, None, worktree, "final_review", 1, "Review the complete diff for cross-task regressions.")
-    if final_review.status != "completed" or not _trusted(final_review):
+    final_reviews = run_final_reviews(tasks, worker, kernel, worktree)
+    if any(result.status != "completed" or not _trusted(result) for result in final_reviews):
         state = project(manifest, read_events(kernel.run_dir / "events.jsonl"))
         kernel.transition(Transition("run.status_changed", {"from": state["lifecycle"], "to": "blocked", "reason": "final_review_failed"}))
         return {"completed": completed, "blocked": "final_review"}
