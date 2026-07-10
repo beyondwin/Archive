@@ -6,6 +6,9 @@ import json
 from pathlib import Path
 from typing import Any
 
+from build_spec_manifest import build_manifest as build_spec_manifest
+from parse_plan import parse_plan
+
 from cpe_audit_common import (
     ADAPTIVE_LOCAL_FAST_PATH_DOCS_ONLY,
     ADAPTIVE_LOCAL_FAST_PATH_LINEAR_TASK,
@@ -60,7 +63,8 @@ def read_plan_text(plan: dict[str, Any], plan_json: Path) -> str:
 
 
 def current_superpowers_header_present(plan_text: str) -> bool:
-    return all(marker in plan_text for marker in CURRENT_SUPERPOWERS_PLAN_MARKERS)
+    explicit_cpe_task = "```yaml waygent-task" in plan_text or "```yaml agentrunway-task" in plan_text
+    return explicit_cpe_task or all(marker in plan_text for marker in CURRENT_SUPERPOWERS_PLAN_MARKERS)
 
 
 def primary_blocking_reason(blocking: list[str]) -> str:
@@ -247,6 +251,50 @@ def build_payload(plan_json: Path, repo_root: Path, packet_dir: Path | None) -> 
         "tasks": tasks,
         "global_followups": sorted(dict.fromkeys(global_blocking)),
     }
+
+
+def assert_plan_executable(plan: Path, spec: Path | None, workspace: Path) -> None:
+    """Audit a source plan directly and raise the compiler's typed blocker."""
+    from cpe_runtime.plan_compiler import CompileBlocked
+
+    try:
+        parsed = parse_plan(plan, workspace, "interactive")
+    except SystemExit as exc:
+        raise CompileBlocked(
+            "plan_not_executable",
+            "plan parsing failed during executability audit",
+            {"plan": str(plan), "exit_code": exc.code},
+        ) from None
+
+    plan_text = plan.read_text(encoding="utf-8")
+    shape_blocking = [] if current_superpowers_header_present(plan_text) else [BLOCKED_UNSUPPORTED_PLAN_SHAPE]
+    audited = [audit_task(task, None, workspace, shape_blocking) for task in parsed["tasks"]]
+    for result in audited:
+        result["blocking_issues"] = [
+            issue for issue in result["blocking_issues"] if issue != RISK_MARKER_REQUIRES_OPERATOR_REVIEW
+        ]
+    available = set()
+    if spec is not None:
+        available = set(build_spec_manifest(spec).get("sections", {}))
+        for source, result in zip(parsed["tasks"], audited, strict=True):
+            refs = list_strings(source.get("spec_refs"))
+            if not refs:
+                result["blocking_issues"].append("missing_explicit_spec_mapping")
+            if any(ref not in available for ref in refs):
+                result["blocking_issues"].append("unknown_spec_refs")
+            result["blocking_issues"] = sorted(dict.fromkeys(result["blocking_issues"]))
+
+    blocking = [
+        {"task_id": item["task_id"], "issues": item["blocking_issues"]}
+        for item in audited
+        if item["blocking_issues"]
+    ]
+    if blocking:
+        raise CompileBlocked(
+            "plan_not_executable",
+            "plan executability audit found blocking issues",
+            {"plan": str(plan), "spec": str(spec) if spec else None, "tasks": blocking},
+        )
 
 
 def main() -> int:

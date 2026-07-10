@@ -13,8 +13,12 @@ def canonical_hash(payload: object) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def sha256_bytes(content: bytes) -> str:
+    return hashlib.sha256(content).hexdigest()
+
+
 def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return sha256_bytes(path.read_bytes())
 
 
 def relative_ref(path: Path) -> str:

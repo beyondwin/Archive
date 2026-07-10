@@ -216,6 +216,35 @@ def build_payload(superpowers_root: Path, skill_root: Path) -> dict[str, Any]:
     }
 
 
+def assert_superpowers_compatible(plan: Path, workspace: Path) -> None:
+    """Raise a compiler-owned blocking error when required capabilities are absent."""
+    from cpe_runtime.plan_compiler import CompileBlocked
+
+    plan_text = read_text(plan)
+    plan_markers = {
+        "required_sub_skill": "REQUIRED SUB-SKILL" in plan_text,
+        "subagent_driven_development": "subagent-driven-development" in plan_text,
+        "executing_plans": "executing-plans" in plan_text,
+    }
+    explicit_cpe_task = "```yaml waygent-task" in plan_text or "```yaml agentrunway-task" in plan_text
+    if not explicit_cpe_task and not all(plan_markers.values()):
+        raise CompileBlocked(
+            "superpowers_incompatible",
+            "plan is missing the current Superpowers execution header",
+            {"plan": str(plan), "workspace": str(workspace), "markers": plan_markers},
+        )
+
+    superpowers_root = Path.home() / ".codex" / "skills"
+    skill_root = Path(__file__).resolve().parents[1]
+    payload = build_payload(superpowers_root, skill_root)
+    if not payload["passed"]:
+        raise CompileBlocked(
+            "superpowers_incompatible",
+            "required Superpowers or CPE capabilities are unavailable",
+            payload,
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--superpowers-root", required=True, help="Directory containing Superpowers skill folders")

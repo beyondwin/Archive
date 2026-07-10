@@ -13,13 +13,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from build_spec_manifest import build_manifest as build_spec_manifest
-from parse_plan import parse_plan
 from preflight_dependencies import check_requirements
 
 from cpe_runtime.events import read_events, validate_chain
 from cpe_runtime.kernel import Kernel, Transition, rebuild_snapshot
 from cpe_runtime.manifest import create_manifest, load_verified_manifest, write_manifest
+from cpe_runtime.plan_compiler import CompileBlocked, compile_run
 from cpe_runtime.projector import project
 from cpe_runtime.prompt_export import render_export_bundle
 from cpe_runtime.scheduler import run_tasks
@@ -29,13 +28,6 @@ from cpe_runtime.worker import Worker
 
 class PreflightError(ValueError):
     pass
-
-
-DANGEROUS_COMMAND_RE = re.compile(
-    r"(?:^|[;&|]\s*)(?:sudo\b|rm\s+-rf\b|git\s+push\b|git\s+reset\s+--hard\b|"
-    r"kubectl\s+(?:apply|delete)\b|terraform\s+apply\b|aws\s+.*(?:delete|terminate))",
-    re.IGNORECASE,
-)
 
 
 def _run(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -60,62 +52,6 @@ def _allocate_paths(plan: Path) -> tuple[str, Path, Path]:
         if not run_dir.exists() and not worktree.exists():
             return run_id, run_dir, worktree
     raise PreflightError("unable to allocate a non-conflicting run id")
-
-
-def _git_info(workspace: Path) -> tuple[str, list[str]]:
-    root = _run(["git", "rev-parse", "--show-toplevel"], workspace)
-    if root.returncode or Path(root.stdout.strip()).resolve() != workspace.resolve():
-        raise PreflightError("workspace must be a git repository root")
-    head = _run(["git", "rev-parse", "HEAD"], workspace)
-    status = _run(["git", "status", "--porcelain=v1", "--untracked-files=all"], workspace)
-    if head.returncode or status.returncode:
-        raise PreflightError("git preflight failed")
-    return head.stdout.strip(), [line for line in status.stdout.splitlines() if line]
-
-
-def _compile_tasks(plan: Path, spec: Path | None, workspace: Path, mode: str) -> tuple[list[dict], dict | None]:
-    parsed = parse_plan(plan, workspace, mode)
-    spec_manifest = build_spec_manifest(spec) if spec else None
-    available = set((spec_manifest or {}).get("sections", {}))
-    tasks: list[dict] = []
-    for item in parsed["tasks"]:
-        refs = list(item.get("spec_refs") or [])
-        if spec is not None and not refs:
-            raise PreflightError(f"missing_explicit_spec_mapping: {item['id']}")
-        unknown = [ref for ref in refs if ref not in available]
-        if unknown:
-            raise PreflightError(f"unknown_spec_refs: {item['id']}: {', '.join(unknown)}")
-        command = str(item.get("acceptance_command") or "").strip()
-        if not command:
-            raise PreflightError(f"acceptance_command_missing: {item['id']}")
-        if DANGEROUS_COMMAND_RE.search(command):
-            raise PreflightError(f"operator_review_required: {item['id']} acceptance command")
-        tasks.append(
-            {
-                "id": str(item["id"]),
-                "title": str(item.get("title", item["id"])),
-                "dependencies": list(item.get("depends_on") or []),
-                "file_claims": list(item.get("files") or []),
-                "spec_refs": refs,
-                "acceptance_command": command,
-                "plan_line": item.get("line"),
-                "prompt": str(item.get("body") or item["id"]),
-            }
-        )
-    ids = {task["id"] for task in tasks}
-    for task in tasks:
-        unknown_dependencies = set(task["dependencies"]) - ids
-        if unknown_dependencies:
-            raise PreflightError(f"unknown_dependencies: {task['id']}")
-    return tasks, spec_manifest
-
-
-def _check_dirty_scope(status: list[str], tasks: list[dict]) -> None:
-    claims = {path for task in tasks for path in task["file_claims"]}
-    dirty = {line[3:].split(" -> ")[-1] for line in status if len(line) >= 4}
-    overlap = sorted(dirty & claims)
-    if overlap:
-        raise PreflightError(f"related_dirty_scope: {', '.join(overlap)}")
 
 
 def _write_json_exclusive(path: Path, payload: object) -> None:
@@ -169,9 +105,17 @@ def execute_run(args: argparse.Namespace) -> int:
     dependency_report = check_requirements()
     if not dependency_report["passed"]:
         raise PreflightError(json.dumps(dependency_report, ensure_ascii=False))
-    head, status = _git_info(workspace)
-    tasks, spec_manifest = _compile_tasks(plan, spec, workspace, args.mode)
-    _check_dirty_scope(status, tasks)
+    compiled = compile_run(
+        plan=plan,
+        spec=spec,
+        docs=tuple(docs),
+        workspace=workspace,
+        mode=args.mode,
+    )
+    tasks = list(compiled.tasks)
+    spec_manifest = compiled.spec_manifest
+    head = compiled.source_head
+    status = list(compiled.source_status)
     run_id, run_dir, worktree = _allocate_paths(plan)
     _create_worktree(workspace, worktree, run_id)
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -280,6 +224,20 @@ def main() -> int:
         if args.command == "resume":
             return resume_run(args.run_id)
         return export_plan(args)
+    except CompileBlocked as exc:
+        print(
+            json.dumps(
+                {
+                    "classification": "preflight_blocked",
+                    "category": exc.category,
+                    "error": exc.summary,
+                    "evidence": exc.evidence,
+                },
+                ensure_ascii=False,
+            ),
+            file=sys.stderr,
+        )
+        return 2
     except PreflightError as exc:
         print(json.dumps({"classification": "preflight_blocked", "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
         return 2

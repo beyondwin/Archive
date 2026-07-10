@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -25,17 +26,31 @@ def main() -> int:
     fixture_path = Path(args.fixture).resolve()
     fixture = yaml.safe_load(fixture_path.read_text(encoding="utf-8")) or {}
     expected = fixture.get("expected") or {}
-    script = fixture_path.parents[2] / "scripts" / "parse_plan.py"
+    skill_root = fixture_path.parents[2]
+    repo_root = skill_root.parents[1]
+    script = skill_root / "scripts" / "parse_plan.py"
     mode = fixture.get("mode", "interactive")
     failures: list[str] = []
     checks: dict[str, bool] = {}
 
-    with tempfile.TemporaryDirectory(prefix="codex-parse-plan-") as temp:
-        repo = Path(temp) / "repo"
-        repo.mkdir()
-        plan = repo / "plan.md"
-        plan.write_text(fixture.get("plan", ""), encoding="utf-8")
-        result = run([sys.executable, str(script), "--plan", str(plan), "--repo-root", str(repo), "--mode", mode])
+    source_plan = fixture.get("plan_path")
+    if source_plan:
+        plan = (repo_root / str(source_plan)).resolve()
+        result = run(
+            [sys.executable, str(script), "--plan", str(plan), "--repo-root", str(repo_root), "--mode", mode]
+        )
+        checks["source_plan_loaded"] = plan.is_file()
+        if not checks["source_plan_loaded"]:
+            failures.append(f"source plan does not exist: {plan}")
+    else:
+        with tempfile.TemporaryDirectory(prefix="codex-parse-plan-") as temp:
+            repo = Path(temp) / "repo"
+            repo.mkdir()
+            plan = repo / "plan.md"
+            plan.write_text(fixture.get("plan", ""), encoding="utf-8")
+            result = run(
+                [sys.executable, str(script), "--plan", str(plan), "--repo-root", str(repo), "--mode", mode]
+            )
 
     expected_error = expected.get("error_contains")
     if expected_error:
@@ -115,6 +130,50 @@ def main() -> int:
                     task_failures.append(f"{task_id}.{key}: expected {expected_value!r}, got {actual_task.get(key)!r}")
         checks["tasks_match"] = not task_failures
         failures.extend(task_failures)
+
+    parsed_tasks = parsed.get("tasks", [])
+    expected_task_ids = expected.get("task_ids") or []
+    if expected_task_ids:
+        actual_task_ids = [task.get("id") for task in parsed_tasks]
+        checks["task_ids_match"] = expected_task_ids == actual_task_ids
+        if not checks["task_ids_match"]:
+            failures.append(f"expected task ids {expected_task_ids}, got {actual_task_ids}")
+
+    expected_task_count = expected.get("task_count")
+    if expected_task_count is not None:
+        checks["task_count_matches"] = len(parsed_tasks) == expected_task_count
+        if not checks["task_count_matches"]:
+            failures.append(f"expected {expected_task_count} tasks, got {len(parsed_tasks)}")
+
+    if expected.get("require_explicit_files"):
+        missing = [task.get("id") for task in parsed_tasks if not task.get("files")]
+        checks["explicit_files_present"] = not missing
+        if missing:
+            failures.append(f"tasks without explicit files: {missing}")
+
+    if expected.get("require_numeric_dependencies"):
+        ids = {task.get("id") for task in parsed_tasks}
+        invalid = [
+            f"{task.get('id')}:{dependency}"
+            for task in parsed_tasks
+            for dependency in task.get("depends_on", [])
+            if dependency not in ids or not re.fullmatch(r"task_\d+(?:_\d+)*", str(dependency))
+        ]
+        checks["numeric_dependencies"] = not invalid
+        if invalid:
+            failures.append(f"invalid numeric dependencies: {invalid}")
+
+    if expected.get("require_acceptance_commands"):
+        missing = [task.get("id") for task in parsed_tasks if not str(task.get("acceptance_command") or "").strip()]
+        checks["acceptance_commands_present"] = not missing
+        if missing:
+            failures.append(f"tasks without acceptance commands: {missing}")
+
+    if expected.get("require_task_local_yaml"):
+        missing = [task.get("id") for task in parsed_tasks if not task.get("yaml_task_id")]
+        checks["task_local_yaml_present"] = not missing
+        if missing:
+            failures.append(f"tasks without task-local yaml metadata: {missing}")
 
     payload = {
         "fixture": fixture.get("name") or fixture_path.stem,
