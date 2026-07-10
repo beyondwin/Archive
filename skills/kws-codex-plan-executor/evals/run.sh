@@ -2,9 +2,36 @@
 # Eval harness for kws-codex-plan-executor.
 
 set -euo pipefail
+umask 077
 
 EVAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SKILL_DIR="$(dirname "$EVAL_DIR")"
+if [ -n "${CODEX_EVAL_HOME:-}" ]; then
+  REPORT_ROOT="$CODEX_EVAL_HOME/.codex/eval-reports"
+  mkdir -p "$REPORT_ROOT"
+else
+  REPORT_ROOT="${TMPDIR:-/tmp}"
+fi
+REPORT_DIR="$(mktemp -d "$REPORT_ROOT/kws-codex-plan-executor-eval.XXXXXX")"
+chmod 700 "$REPORT_DIR"
+EVAL_REPORT="$REPORT_DIR/eval-report.jsonl"
+: > "$EVAL_REPORT"
+echo "eval report: $EVAL_REPORT"
+
+run_check() {
+  local name="$1"
+  shift
+  if [ "${1:-}" = "--output" ]; then
+    local output="$2"
+    shift 2
+    python3 "$EVAL_DIR/run_check.py" --report "$EVAL_REPORT" --name "$name" --output "$output" -- "$@"
+  else
+    python3 "$EVAL_DIR/run_check.py" --report "$EVAL_REPORT" --name "$name" -- "$@"
+  fi
+}
+
+run_check "preflight_dependencies" python3 "$SKILL_DIR/scripts/preflight_dependencies.py"
+
 SKILL_VERSION="$(python3 - "$SKILL_DIR/SKILL.md" <<'PY'
 import re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
@@ -52,44 +79,44 @@ partial="$BASELINE_FILE.partial"
 : > "$partial"
 overall_status=0
 
-python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md" >/dev/null
-python3 "$EVAL_DIR/check_state_schema.py" >/dev/null
-python3 "$EVAL_DIR/check_context_summary.py" >/dev/null
-python3 "$EVAL_DIR/check_run_diffs.py" >/dev/null
-python3 "$EVAL_DIR/check_state_reconciliation.py" >/dev/null
-python3 "$EVAL_DIR/check_context_snapshot.py" >/dev/null
-python3 "$EVAL_DIR/check_headless_result.py" >/dev/null
-python3 "$EVAL_DIR/check_spec_manifest.py" >/dev/null
-python3 "$EVAL_DIR/check_task_packet.py" >/dev/null
-python3 "$EVAL_DIR/check_task_packet_view.py" >/dev/null
-python3 "$EVAL_DIR/check_local_env_preflight.py" >/dev/null
-python3 "$EVAL_DIR/check_invocation_args.py" >/dev/null
-python3 "$EVAL_DIR/check_inspect_runs.py" >/dev/null
-python3 "$EVAL_DIR/check_repair_runs.py" >/dev/null
-python3 "$EVAL_DIR/check_decisions_register.py" >/dev/null
-python3 "$EVAL_DIR/check_prompt_cache_audit.py" >/dev/null
-python3 "$EVAL_DIR/check_cache_observations.py" >/dev/null
-python3 "$EVAL_DIR/check_graphify_freshness.py" >/dev/null
-python3 "$EVAL_DIR/check_preflight_dispatch.py" >/dev/null
-python3 "$EVAL_DIR/check_run_readiness.py" >/dev/null
-python3 "$EVAL_DIR/check_plan_executability_audit.py" >/dev/null
-python3 "$EVAL_DIR/check_validate_state_modular_parity.py" >/dev/null
-python3 "$EVAL_DIR/check_markdown_golden_cases.py" >/dev/null
-python3 "$EVAL_DIR/check_verification_bundle.py" >/dev/null
-python3 "$EVAL_DIR/check_recovery_policy.py" >/dev/null
-python3 "$EVAL_DIR/check_trajectory_projection.py" >/dev/null
-python3 "$EVAL_DIR/check_progress_ledger.py" >/dev/null
-python3 "$EVAL_DIR/check_operational_run_quality.py" >/dev/null
-python3 "$EVAL_DIR/check_cpe_replay.py" >/dev/null
-python3 "$EVAL_DIR/check_recent_run_rubric.py" >/dev/null
-python3 "$EVAL_DIR/check_eval_harness.py" >/dev/null
-python3 "$EVAL_DIR/check_baseline_utils.py" >/dev/null
+run_check "skill_contract" python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md"
+run_check "state_schema" python3 "$EVAL_DIR/check_state_schema.py"
+run_check "context_summary" python3 "$EVAL_DIR/check_context_summary.py"
+run_check "run_diffs" python3 "$EVAL_DIR/check_run_diffs.py"
+run_check "state_reconciliation" python3 "$EVAL_DIR/check_state_reconciliation.py"
+run_check "context_snapshot" python3 "$EVAL_DIR/check_context_snapshot.py"
+run_check "headless_result" python3 "$EVAL_DIR/check_headless_result.py"
+run_check "spec_manifest" python3 "$EVAL_DIR/check_spec_manifest.py"
+run_check "task_packet" python3 "$EVAL_DIR/check_task_packet.py"
+run_check "task_packet_view" python3 "$EVAL_DIR/check_task_packet_view.py"
+run_check "local_env_preflight" python3 "$EVAL_DIR/check_local_env_preflight.py"
+run_check "invocation_args" python3 "$EVAL_DIR/check_invocation_args.py"
+run_check "inspect_runs" python3 "$EVAL_DIR/check_inspect_runs.py"
+run_check "repair_runs" python3 "$EVAL_DIR/check_repair_runs.py"
+run_check "decisions_register" python3 "$EVAL_DIR/check_decisions_register.py"
+run_check "prompt_cache_audit" python3 "$EVAL_DIR/check_prompt_cache_audit.py"
+run_check "cache_observations" python3 "$EVAL_DIR/check_cache_observations.py"
+run_check "graphify_freshness" python3 "$EVAL_DIR/check_graphify_freshness.py"
+run_check "preflight_dispatch" python3 "$EVAL_DIR/check_preflight_dispatch.py"
+run_check "run_readiness" python3 "$EVAL_DIR/check_run_readiness.py"
+run_check "plan_executability_audit" python3 "$EVAL_DIR/check_plan_executability_audit.py"
+run_check "validate_state_modular_parity" python3 "$EVAL_DIR/check_validate_state_modular_parity.py"
+run_check "markdown_golden_cases" python3 "$EVAL_DIR/check_markdown_golden_cases.py"
+run_check "verification_bundle" python3 "$EVAL_DIR/check_verification_bundle.py"
+run_check "recovery_policy" python3 "$EVAL_DIR/check_recovery_policy.py"
+run_check "trajectory_projection" python3 "$EVAL_DIR/check_trajectory_projection.py"
+run_check "progress_ledger" python3 "$EVAL_DIR/check_progress_ledger.py"
+run_check "operational_run_quality" python3 "$EVAL_DIR/check_operational_run_quality.py"
+run_check "cpe_replay" python3 "$EVAL_DIR/check_cpe_replay.py"
+run_check "recent_run_rubric" python3 "$EVAL_DIR/check_recent_run_rubric.py"
+run_check "eval_harness" python3 "$EVAL_DIR/check_eval_harness.py"
+run_check "baseline_utils" python3 "$EVAL_DIR/check_baseline_utils.py"
 if [ "$update_baseline" -eq 0 ]; then
-  python3 "$EVAL_DIR/check_release_contract.py" >/dev/null
+  run_check "release_contract" python3 "$EVAL_DIR/check_release_contract.py"
 fi
-python3 "$EVAL_DIR/check_superpowers_compatibility.py" >/dev/null
+run_check "superpowers_compatibility" python3 "$EVAL_DIR/check_superpowers_compatibility.py"
 while IFS= read -r parser_fixture; do
-  python3 "$EVAL_DIR/check_parse_plan.py" --fixture "$parser_fixture" >/dev/null
+  run_check "parse_plan:$(basename "$parser_fixture")" python3 "$EVAL_DIR/check_parse_plan.py" --fixture "$parser_fixture"
 done < <(find "$EVAL_DIR/parser-fixtures" -name '*.yaml' -type f | sort)
 
 for fixture_path in "${fixtures[@]}"; do
@@ -254,13 +281,14 @@ PY
   fi
   set -e
 
+  checker_status=0
+  checker_output="$tmpdir/.harness/checker-output.json"
   if [ "$mode" = "prompt" ] || [ "$mode" = "handoff" ]; then
-    checker_status=0
-    checker_out="$(CODEX_EVAL_HOME="$eval_home" python3 "$EVAL_DIR/check_prompt.py" --fixture "$fixture_path" --output "$tmpdir/.harness/final.md" 2>&1)" || checker_status=$?
+    run_check "fixture:$fixture_name:prompt" --output "$checker_output" env CODEX_EVAL_HOME="$eval_home" python3 "$EVAL_DIR/check_prompt.py" --fixture "$fixture_path" --output "$tmpdir/.harness/final.md" || checker_status=$?
   else
-    checker_status=0
-    checker_out="$(CODEX_EVAL_HOME="$eval_home" python3 "$EVAL_DIR/check_execution.py" --fixture "$fixture_path" --workdir "$tmpdir" --final-output "$tmpdir/.harness/final.md" --run-log "$tmpdir/.harness/run.jsonl" 2>&1)" || checker_status=$?
+    run_check "fixture:$fixture_name:execution" --output "$checker_output" env CODEX_EVAL_HOME="$eval_home" python3 "$EVAL_DIR/check_execution.py" --fixture "$fixture_path" --workdir "$tmpdir" --final-output "$tmpdir/.harness/final.md" --run-log "$tmpdir/.harness/run.jsonl" || checker_status=$?
   fi
+  checker_out="$(<"$checker_output")"
   if [ "$codex_status" -ne 0 ] || [ "$checker_status" -ne 0 ]; then
     overall_status=1
   fi
@@ -322,7 +350,7 @@ if [ "$update_baseline" -eq 1 ]; then
   else
     merge_subset_baseline "$BASELINE_FILE" "$generated_baseline" "$BASELINE_FILE"
   fi
-  python3 "$EVAL_DIR/check_release_contract.py" >/dev/null
+  run_check "release_contract_after_update" python3 "$EVAL_DIR/check_release_contract.py"
   cat "$BASELINE_FILE"
 else
   compare_mode="full"
