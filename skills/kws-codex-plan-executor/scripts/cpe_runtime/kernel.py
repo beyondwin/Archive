@@ -4,11 +4,13 @@ import fcntl
 import json
 import os
 import tempfile
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
 from .events import EVENT_TYPES, append_event, read_events, validate_chain
-from .manifest import load_manifest
+from .evidence import verify_ref
+from .manifest import load_verified_manifest, resolve_ref, validate_manifest
 from .model_policy import CORE_ROUTE
 from .projector import RUN_TRANSITIONS, TASK_TRANSITIONS, project
 
@@ -63,7 +65,7 @@ def _attempt_kinds(state: dict, task_id: str | None) -> set[str]:
     }
 
 
-def _completion_ready(state: dict) -> bool:
+def _completion_ready(run_dir: Path, manifest: dict, state: dict) -> bool:
     if not state.get("tasks") or any(item.get("status") != "completed" for item in state["tasks"].values()):
         return False
     if state.get("blockers"):
@@ -77,6 +79,30 @@ def _completion_ready(state: dict) -> bool:
     if "final_review" not in _attempt_kinds(state, None):
         return False
     audit = state.get("completion_audit")
+    if validate_manifest(manifest):
+        return False
+    snapshot = run_dir / "state.json"
+    if snapshot.is_file():
+        try:
+            if json.loads(snapshot.read_text(encoding="utf-8")) != state:
+                return False
+        except (OSError, json.JSONDecodeError):
+            return False
+    for item in state.get("artifact_index", []):
+        ref = item.get("ref")
+        if not isinstance(ref, dict) or verify_ref(run_dir, ref):
+            return False
+    try:
+        worktree = resolve_ref(str(manifest["execution_worktree_ref"]))
+        result = subprocess.run(["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=worktree, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if result.returncode:
+            return False
+        changed = {line[3:].split(" -> ")[-1] for line in result.stdout.splitlines() if len(line) >= 4}
+        claims = {str(path) for task in manifest.get("task_graph", []) for path in task.get("file_claims", [])}
+        if not changed.issubset(claims):
+            return False
+    except (OSError, KeyError, ValueError):
+        return False
     return bool(
         isinstance(audit, dict)
         and audit.get("passed") is True
@@ -85,7 +111,7 @@ def _completion_ready(state: dict) -> bool:
     )
 
 
-def _validate_transition(manifest: dict, state: dict, command: Transition) -> None:
+def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Transition) -> None:
     if command.event_type not in EVENT_TYPES:
         raise ValueError("unknown event type")
     payload = command.payload
@@ -99,7 +125,7 @@ def _validate_transition(manifest: dict, state: dict, command: Transition) -> No
         target = payload.get("to")
         if target not in RUN_TRANSITIONS.get(state["lifecycle"], set()):
             raise ValueError("invalid run transition")
-        if target == "completed" and not _completion_ready(state):
+        if target == "completed" and not _completion_ready(run_dir, manifest, state):
             raise ValueError("completion gate failed")
         return
     if command.event_type == "task.status_changed":
@@ -142,13 +168,13 @@ def transition_run(run_dir: Path, command: Transition, snapshot_writer=atomic_wr
     lock_path = run_dir / ".kernel.lock"
     with lock_path.open("a+", encoding="utf-8") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        manifest = load_manifest(run_dir / "run_manifest.json")
+        manifest = load_verified_manifest(run_dir / "run_manifest.json")
         events_path = run_dir / "events.jsonl"
         events = read_events(events_path)
         if validate_chain(events):
             raise ValueError("event_chain_invalid")
         state = project(manifest, events)
-        _validate_transition(manifest, state, command)
+        _validate_transition(run_dir, manifest, state, command)
         append_event(
             events_path,
             {
@@ -178,7 +204,7 @@ def rebuild_snapshot(run_dir: Path) -> dict:
     lock_path = run_dir / ".kernel.lock"
     with lock_path.open("a+", encoding="utf-8") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-        manifest = load_manifest(run_dir / "run_manifest.json")
+        manifest = load_verified_manifest(run_dir / "run_manifest.json")
         events = read_events(run_dir / "events.jsonl")
         if validate_chain(events):
             raise ValueError("event_chain_invalid")

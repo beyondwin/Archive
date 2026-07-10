@@ -108,6 +108,11 @@ def main() -> int:
             ValueError,
             lambda: kernel.transition(Transition("run.status_changed", {"from": "running", "to": "completed"})),
         )
+        (root / "plan.md").write_text("# drifted plan\n", encoding="utf-8")
+        raises(
+            ValueError,
+            lambda: kernel.transition(Transition("run.status_changed", {"from": "running", "to": "failed"})),
+        )
 
         report = validate_run(run_dir)
         assert report.passed is False

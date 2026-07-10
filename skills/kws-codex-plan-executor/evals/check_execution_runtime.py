@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
-import json, tempfile
+import json, tempfile, subprocess
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -16,6 +16,7 @@ def main() -> int:
         pricing.write_text("{}\n", encoding="utf-8")
         run_dir = root / "run"; worktree = root / "worktree"
         worktree.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=worktree, check=True)
         task_graph = [{"id": "T1", "acceptance_command": "true"}, {"id": "T2", "acceptance_command": "true"}]
         manifest = create_manifest("x", "interactive", root, worktree, plan, None, task_graph, pricing)
         write_manifest(run_dir / "run_manifest.json", manifest)

@@ -104,6 +104,14 @@ def load_manifest(path: Path) -> dict:
     return manifest
 
 
+def load_verified_manifest(path: Path) -> dict:
+    manifest = load_manifest(path)
+    errors = validate_manifest(manifest)
+    if errors:
+        raise ValueError(errors[0])
+    return manifest
+
+
 def validate_manifest(manifest: dict) -> list[str]:
     errors: list[str] = []
     if manifest.get("plan_graph_hash") != canonical_hash(manifest.get("task_graph")):
