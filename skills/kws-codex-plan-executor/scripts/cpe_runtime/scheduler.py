@@ -16,6 +16,7 @@ from .attempt_controller import (
 )
 from .evidence import EvidenceRef, put_json
 from .events import read_events
+from .git_delta import INVALID_GIT_HEAD, GitDelta, capture_snapshot, diff_snapshots
 from .kernel import Kernel, Transition
 from .manifest import load_verified_manifest, resolve_ref
 from .model_policy import CORE_ROUTE
@@ -33,10 +34,27 @@ class TaskCycleResult:
     reason: str | None = None
 
 
+@dataclass(frozen=True)
+class ReadOnlyGuardResult:
+    value: object | None
+    delta: GitDelta | None
+    error: Exception | None
+    mutation_root: str | None
+
+
 def next_phase(state: dict, task_id: str) -> str:
     tasks = state.get("tasks")
     if not isinstance(tasks, dict) or task_id not in tasks:
         raise ValueError("unknown task")
+    retry_queue = state.get("retry_queue") or []
+    for retry in reversed(retry_queue):
+        if isinstance(retry, dict) and retry.get("task_id") == task_id:
+            phase = retry.get("phase")
+            if phase not in {
+                "implementation", "repair", "acceptance", "task_review", "verification"
+            }:
+                raise ValueError(f"unknown retry phase: {phase}")
+            return str(phase)
     status = tasks[task_id].get("status")
     phases = {
         "pending": "implementation",
@@ -119,10 +137,7 @@ def run_scouts(requests: list[WorkerRequest], worker: Worker) -> list[WorkerResu
             raise ValueError("unsafe scout request")
 
     def run_one(request: WorkerRequest) -> WorkerResult:
-        try:
-            return worker.run(request)
-        except WorkerError as exc:
-            return _worker_error_result(exc, "transient")
+        return _guarded_worker(request, worker)
 
     with ThreadPoolExecutor(
         max_workers=min(4, len(requests)), thread_name_prefix="cpe-scout"
@@ -160,18 +175,25 @@ def _trusted(result: WorkerResult) -> bool:
     )
 
 
-def _worker_error_result(error: Exception, category: str) -> WorkerResult:
+def _worker_error_result(
+    error: Exception,
+    category: str,
+    *,
+    root_cause_key: str | None = None,
+    changed_files: tuple[str, ...] = (),
+) -> WorkerResult:
     message = f"{type(error).__name__}: {error}"[:2000]
     payload = {
         "status": "failed",
         "summary": message,
-        "changed_files": [],
+        "changed_files": list(changed_files),
         "findings": [],
         "evidence_refs": [],
         "missing_evidence": [message],
         "verification": [],
         "verdict": None,
         "failure_category": category,
+        "root_cause_key": root_cause_key or f"{category}:{type(error).__name__}",
     }
     return WorkerResult(
         "failed",
@@ -182,6 +204,108 @@ def _worker_error_result(error: Exception, category: str) -> WorkerResult:
         hashlib.sha256(message.encode()).hexdigest(),
         message,
     )
+
+
+def _guard_read_only(worktree: Path, operation) -> ReadOnlyGuardResult:
+    try:
+        before = capture_snapshot(worktree, tolerate_invalid_git=True)
+    except Exception as exc:
+        return ReadOnlyGuardResult(None, None, exc, "read_only_guard:baseline")
+    if not before._filesystem_valid:
+        return ReadOnlyGuardResult(
+            None, None, RuntimeError("read-only baseline is unreadable"),
+            "read_only_guard:baseline",
+        )
+    value: object | None = None
+    error: Exception | None = None
+    try:
+        value = operation()
+    except Exception as exc:
+        error = exc
+    try:
+        after = capture_snapshot(worktree, tolerate_invalid_git=True)
+        delta = diff_snapshots(before, after, worktree)
+    except Exception as exc:
+        return ReadOnlyGuardResult(value, None, error or exc, "read_only_mutation:unreadable")
+    invalid = (
+        not after._filesystem_valid
+        or before._git_metadata_valid != after._git_metadata_valid
+        or (before.head == INVALID_GIT_HEAD) != (after.head == INVALID_GIT_HEAD)
+    )
+    mutated = bool(delta.changed_files or delta.head_changed or invalid)
+    if mutated:
+        path = delta.changed_files[0] if delta.changed_files else "git_metadata"
+        return ReadOnlyGuardResult(value, delta, error, f"read_only_mutation:{path}")
+    return ReadOnlyGuardResult(value, delta, error, None)
+
+
+def _guarded_worker(request: WorkerRequest, worker: object) -> WorkerResult:
+    guarded = _guard_read_only(request.worktree, lambda: worker.run(request))
+    if guarded.mutation_root is not None:
+        changed = guarded.delta.changed_files if guarded.delta is not None else ()
+        return _worker_error_result(
+            RuntimeError("read-only phase mutated the execution worktree"),
+            "read_only_mutation",
+            root_cause_key=guarded.mutation_root,
+            changed_files=changed,
+        )
+    if guarded.error is not None:
+        category = "transient" if isinstance(guarded.error, WorkerError) else "unexpected_worker_error"
+        return _worker_error_result(guarded.error, category)
+    if not isinstance(guarded.value, WorkerResult):
+        return _worker_error_result(
+            TypeError("read-only worker returned an invalid result"),
+            "unexpected_worker_error",
+        )
+    return guarded.value
+
+
+def _guarded_shell(command: str, worktree: Path, timeout: int) -> dict[str, object]:
+    guarded = _guard_read_only(
+        worktree,
+        lambda: subprocess.run(
+            ["/bin/sh", "-lc", command],
+            cwd=worktree,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+        ),
+    )
+    if guarded.mutation_root is not None:
+        changed = list(guarded.delta.changed_files) if guarded.delta is not None else []
+        return {
+            "command": command,
+            "returncode": 125,
+            "output": "read-only command mutated the execution worktree",
+            "failure_category": "read_only_mutation",
+            "root_cause_key": guarded.mutation_root,
+            "actual_changed_files": changed,
+        }
+    if guarded.error is not None:
+        return {
+            "command": command,
+            "returncode": 124,
+            "output": str(guarded.error),
+            "failure_category": "read_only_guard_failure",
+            "root_cause_key": f"read_only_guard:{type(guarded.error).__name__}",
+            "actual_changed_files": [],
+        }
+    completed = guarded.value
+    if not isinstance(completed, subprocess.CompletedProcess):
+        return {
+            "command": command,
+            "returncode": 124,
+            "output": "read-only command produced no result",
+            "failure_category": "read_only_guard_failure",
+            "root_cause_key": "read_only_guard:invalid_result",
+            "actual_changed_files": [],
+        }
+    return {
+        "command": command,
+        "returncode": completed.returncode,
+        "output": str(completed.stdout)[-8000:],
+    }
 
 
 def _next_ordinal(kernel: Kernel, task_id: str | None, kind: str) -> int:
@@ -357,7 +481,16 @@ def _worker_attempt(
             else:
                 result = write_outcome.result
     else:
-        result = invoke()
+        request = make_packet_request(
+            kernel.run_dir,
+            manifest,
+            request_task_id,
+            attempt_id,
+            kind,
+            prompt,
+            controller.worktree,
+        )
+        result = _guarded_worker(request, controller.worker)
     _complete_attempt(kernel, task_id, request_task_id, kind, result, attempt_id)
     return result, write_outcome, attempt_id
 
@@ -393,7 +526,7 @@ def _acceptance(
     task: dict,
     controller: AttemptController,
     kernel: Kernel,
-) -> tuple[bool, dict]:
+) -> tuple[bool, dict, dict[str, str]]:
     task_id = str(task["id"])
     ordinal = 1 + sum(
         1
@@ -409,22 +542,7 @@ def _acceptance(
             "output": "acceptance command missing",
         }
     else:
-        try:
-            result = subprocess.run(
-                ["/bin/sh", "-lc", command],
-                cwd=controller.worktree,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                timeout=600,
-            )
-            result_payload = {
-                "command": command,
-                "returncode": result.returncode,
-                "output": result.stdout[-8000:],
-            }
-        except (subprocess.TimeoutExpired, OSError) as exc:
-            result_payload = {"command": command, "returncode": 124, "output": str(exc)}
+        result_payload = _guarded_shell(command, controller.worktree, 600)
     passed = result_payload["returncode"] == 0
     payload = {
         "kind": "acceptance",
@@ -437,11 +555,70 @@ def _acceptance(
         **_binding(kernel, task_id),
         **result_payload,
     }
-    _attach(kernel, task_id, attempt_id, "acceptance", payload)
-    return passed, payload
+    ref = _attach(kernel, task_id, attempt_id, "acceptance", payload)
+    return passed, payload, ref
 
 
-def _block(kernel: Kernel, task_id: str, phase: str, reason: str) -> dict:
+def _attempt_evidence(kernel: Kernel, attempt_id: str) -> list[dict]:
+    matches = [
+        attempt for attempt in kernel.state.get("attempts", [])
+        if attempt.get("attempt_id") == attempt_id
+    ]
+    return list(matches[-1].get("evidence_refs") or []) if matches else []
+
+
+def _block(
+    kernel: Kernel,
+    task_id: str,
+    phase: str,
+    reason: str,
+    *,
+    category: str | None = None,
+    root_cause_key: str | None = None,
+    owner: str = "cpe",
+    resume_condition: str | None = None,
+    evidence_refs: list[dict] | None = None,
+    details: dict[str, object] | None = None,
+) -> dict:
+    category = category or "runtime_blocked"
+    root_cause_key = root_cause_key or f"{phase}:{reason}"
+    refs = list(evidence_refs or [])
+    if not refs:
+        ref = _attach(
+            kernel,
+            task_id,
+            None,
+            "blocker_evidence",
+            {
+                "kind": "blocker_evidence",
+                "task_id": task_id,
+                "phase": phase,
+                "reason": reason,
+                "category": category,
+                "root_cause_key": root_cause_key,
+                **_binding(kernel, task_id),
+            },
+        )
+        refs = [ref]
+    state = kernel.state
+    active = [
+        blocker for blocker in state.get("active_blockers", [])
+        if blocker.get("task_id") == task_id
+        and blocker.get("category") == category
+        and blocker.get("root_cause_key") == root_cause_key
+    ]
+    if not active:
+        payload: dict[str, object] = {
+            "blocker_id": f"{task_id}.{category}.{len(state.get('blocker_history', [])) + 1}",
+            "category": category,
+            "root_cause_key": root_cause_key,
+            "owner": owner,
+            "resume_condition": resume_condition
+            or "resolve the typed blocker and schedule an explicit retry",
+            "evidence_refs": refs,
+        }
+        payload.update(details or {})
+        kernel.transition(Transition("blocker.opened", payload, task_id=task_id))
     state = kernel.state
     current = state["tasks"][task_id]["status"]
     if current not in {"blocked", "failed", "completed"}:
@@ -482,21 +659,16 @@ def _scope_block(
         if error == "worktree_head_changed"
         else f"task_scope:{task_id}:{error.split(':', 1)[1]}"
     )
-    kernel.transition(
-        Transition(
-            "blocker.opened",
-            {
-                "blocker_id": f"{task_id}.policy.{outcome.worktree_revision}",
-                "category": "policy_violation",
-                "root_cause_key": root_cause_key,
-                "owner": "cpe",
-                "resume_condition": "restore task scope and schedule an explicit retry",
-                "scope_errors": list(outcome.scope_errors),
-            },
-            task_id=task_id,
-        )
+    result = _block(
+        kernel,
+        task_id,
+        phase,
+        "policy_violation",
+        category="policy_violation",
+        root_cause_key=root_cause_key,
+        resume_condition="restore task scope and schedule an explicit retry",
+        details={"scope_errors": list(outcome.scope_errors)},
     )
-    result = _block(kernel, task_id, phase, "policy_violation")
     result.update(
         failure_category="policy_violation",
         root_cause_key=root_cause_key,
@@ -514,25 +686,21 @@ def _verdict_block(
 ) -> TaskCycleResult:
     status = str(verdict["status"])
     binding = _binding(kernel, task_id)
-    kernel.transition(
-        Transition(
-            "blocker.opened",
-            {
-                "blocker_id": f"{task_id}.{status}.{attempt_id}",
-                "category": status,
-                "root_cause_key": f"{phase}:{status}",
-                "owner": str(verdict.get("owner") or "cpe"),
-                "resume_condition": str(
-                    verdict.get("resume_condition")
-                    or verdict.get("next_evidence_action")
-                    or "satisfy the typed verdict and schedule an explicit retry"
-                ),
-                "evidence_refs": list(verdict.get("evidence_refs") or []),
-            },
-            task_id=task_id,
-        )
+    _block(
+        kernel,
+        task_id,
+        phase,
+        f"{phase}_verdict:{status}",
+        category=status,
+        root_cause_key=f"{phase}:{status}",
+        owner=str(verdict.get("owner") or "cpe"),
+        resume_condition=str(
+            verdict.get("resume_condition")
+            or verdict.get("next_evidence_action")
+            or "satisfy the typed verdict and schedule an explicit retry"
+        ),
+        evidence_refs=_attempt_evidence(kernel, attempt_id),
     )
-    _block(kernel, task_id, phase, f"{phase}_verdict:{status}")
     return TaskCycleResult(task_id, "blocked", phase, int(binding["worktree_revision"]), status)
 
 
@@ -557,7 +725,7 @@ def _repair(
                     task_id=task_id,
                 )
             )
-    repair, outcome, _ = _worker_attempt(
+    repair, outcome, attempt_id = _worker_attempt(
         controller,
         kernel,
         task,
@@ -568,7 +736,16 @@ def _repair(
         _scope_block(kernel, task_id, "repair", outcome)
         return TaskCycleResult(task_id, "blocked", "repair", outcome.worktree_revision, "policy_violation")
     if repair.status != "completed" or not _trusted(repair):
-        _block(kernel, task_id, "repair", f"repair_failed:{root_key}")
+        category = str(repair.payload.get("failure_category") or "repair_failed")
+        _block(
+            kernel,
+            task_id,
+            "repair",
+            f"repair_failed:{root_key}",
+            category=category,
+            root_cause_key=str(repair.payload.get("root_cause_key") or root_key),
+            evidence_refs=_attempt_evidence(kernel, attempt_id),
+        )
         return TaskCycleResult(task_id, "blocked", "repair", kernel.state["worktree_revision"], root_key)
     if outcome is None or (not outcome.delta.changed_files and not outcome.delta.head_changed):
         _block(kernel, task_id, "repair", f"repair_did_not_advance_revision:{root_key}")
@@ -584,16 +761,56 @@ def _repair(
     return None
 
 
+def _latest_task_payload(kernel: Kernel, task_id: str, kind: str) -> dict | None:
+    for artifact in reversed(kernel.state.get("artifact_index", [])):
+        if artifact.get("task_id") != task_id or artifact.get("kind") != kind:
+            continue
+        ref = artifact.get("ref")
+        if not isinstance(ref, dict):
+            continue
+        try:
+            payload = json.loads(
+                (kernel.run_dir / str(ref["path"])).read_text(encoding="utf-8")
+            )
+        except (KeyError, OSError, json.JSONDecodeError):
+            continue
+        binding = _binding(kernel, task_id)
+        if all(payload.get(key) == binding.get(key) for key in binding):
+            return payload
+    return None
+
+
+def _worker_block_cycle(
+    kernel: Kernel,
+    task_id: str,
+    phase: str,
+    result: WorkerResult,
+    attempt_id: str,
+) -> TaskCycleResult:
+    category = str(result.payload.get("failure_category") or f"{phase}_failed")
+    root = str(result.payload.get("root_cause_key") or f"{phase}:worker_failed")
+    _block(
+        kernel,
+        task_id,
+        phase,
+        f"{phase}_worker_failed",
+        category=category,
+        root_cause_key=root,
+        evidence_refs=_attempt_evidence(kernel, attempt_id),
+    )
+    return TaskCycleResult(
+        task_id, "blocked", phase, int(kernel.state["worktree_revision"]), category
+    )
+
+
 def run_task_cycle(task: dict, controller: AttemptController, kernel: Kernel) -> TaskCycleResult:
     task_id = str(task["id"])
     if task_id not in kernel.state.get("tasks", {}):
         raise ValueError("unknown task")
     preserve_completed = kernel.state["tasks"][task_id]["status"] == "completed"
-    if not preserve_completed:
-        phase = next_phase(kernel.state, task_id)
-        if phase != "implementation":
-            raise ValueError(f"task cycle cannot start from phase {phase}")
-        implementation, outcome, _ = _worker_attempt(
+    phase = "acceptance" if preserve_completed else next_phase(kernel.state, task_id)
+    if phase == "implementation":
+        implementation, outcome, implementation_attempt = _worker_attempt(
             controller,
             kernel,
             task,
@@ -604,8 +821,9 @@ def run_task_cycle(task: dict, controller: AttemptController, kernel: Kernel) ->
             _scope_block(kernel, task_id, "implementation", outcome)
             return TaskCycleResult(task_id, "blocked", "implementation", outcome.worktree_revision, "policy_violation")
         if implementation.status != "completed" or not _trusted(implementation):
-            _block(kernel, task_id, "implementation", "implementation_or_attestation_failed")
-            return TaskCycleResult(task_id, "blocked", "implementation", kernel.state["worktree_revision"], "implementation failed")
+            return _worker_block_cycle(
+                kernel, task_id, "implementation", implementation, implementation_attempt
+            )
         current = kernel.state["tasks"][task_id]["status"]
         if current != "implementing":
             raise ValueError(f"implementation completed from unexpected state {current}")
@@ -616,14 +834,68 @@ def run_task_cycle(task: dict, controller: AttemptController, kernel: Kernel) ->
                 task_id=task_id,
             )
         )
+        phase = "acceptance"
+    elif phase == "repair":
+        blocked = _repair(
+            task,
+            controller,
+            kernel,
+            "scheduled_retry:repair",
+            preserve_completed=False,
+        )
+        if blocked is not None:
+            return blocked
+        phase = "acceptance"
+    elif phase not in {"acceptance", "task_review", "verification"}:
+        raise ValueError(f"task cycle cannot start from phase {phase}")
 
     repair_counts: dict[str, int] = {}
+    acceptance: dict | None = None
     while True:
-        acceptance_ok, acceptance = _acceptance(task, controller, kernel)
-        if not acceptance_ok:
-            root_key = f"acceptance:{acceptance['returncode']}"
-            phase = "acceptance"
-        else:
+        root_key: str | None = None
+        failed_phase = phase
+        if phase == "acceptance":
+            acceptance_ok, acceptance, acceptance_ref = _acceptance(task, controller, kernel)
+            failure_category = acceptance.get("failure_category")
+            if failure_category in {"read_only_mutation", "read_only_guard_failure"}:
+                _block(
+                    kernel,
+                    task_id,
+                    "acceptance",
+                    str(failure_category),
+                    category=str(failure_category),
+                    root_cause_key=str(
+                        acceptance.get("root_cause_key") or "acceptance:read_only_guard"
+                    ),
+                    evidence_refs=[acceptance_ref],
+                )
+                return TaskCycleResult(
+                    task_id,
+                    "blocked",
+                    "acceptance",
+                    int(kernel.state["worktree_revision"]),
+                    str(failure_category),
+                )
+            if not acceptance_ok:
+                root_key = f"acceptance:{acceptance['returncode']}"
+                failed_phase = "acceptance"
+            else:
+                phase = "task_review"
+        if phase == "task_review" and root_key is None:
+            acceptance = acceptance or _latest_task_payload(kernel, task_id, "acceptance")
+            if acceptance is None:
+                _block(
+                    kernel,
+                    task_id,
+                    "task_review",
+                    "current_acceptance_evidence_missing",
+                    category="missing_evidence",
+                    root_cause_key="task_review:current_acceptance_evidence_missing",
+                )
+                return TaskCycleResult(
+                    task_id, "blocked", "task_review",
+                    int(kernel.state["worktree_revision"]), "missing_evidence"
+                )
             review, _, review_attempt = _worker_attempt(
                 controller,
                 kernel,
@@ -634,15 +906,16 @@ def run_task_cycle(task: dict, controller: AttemptController, kernel: Kernel) ->
             _semantic_verdict(kernel, task_id, review_attempt, "task_review", review)
             review_verdict = review.payload.get("verdict")
             if review.status != "completed" or not _trusted(review) or not isinstance(review_verdict, dict):
-                root_key = "task_review:worker_failed"
-                phase = "task_review"
+                return _worker_block_cycle(
+                    kernel, task_id, "task_review", review, review_attempt
+                )
             else:
                 route = route_verdict(review_verdict)
                 if route in {"blocked", "inconclusive"}:
                     return _verdict_block(kernel, task_id, "task_review", review_attempt, review_verdict)
                 if route == "repair":
                     root_key = str(review.payload.get("root_cause_key") or "task_review:changes_requested")
-                    phase = "task_review"
+                    failed_phase = "task_review"
                 else:
                     if not preserve_completed and kernel.state["tasks"][task_id]["status"] == "reviewing":
                         kernel.transition(
@@ -652,62 +925,79 @@ def run_task_cycle(task: dict, controller: AttemptController, kernel: Kernel) ->
                                 task_id=task_id,
                             )
                         )
-                    verification, _, verification_attempt = _worker_attempt(
-                        controller,
-                        kernel,
-                        task,
-                        "verification",
-                        f"Verify acceptance and task-review evidence for {task_id}: {acceptance}",
-                    )
-                    _semantic_verdict(
-                        kernel, task_id, verification_attempt, "verification", verification
-                    )
-                    verification_verdict = verification.payload.get("verdict")
-                    if (
-                        verification.status != "completed"
-                        or not _trusted(verification)
-                        or not isinstance(verification_verdict, dict)
-                    ):
-                        root_key = "verification:worker_failed"
-                        phase = "verification"
-                    else:
-                        route = route_verdict(verification_verdict)
-                        if route in {"blocked", "inconclusive"}:
-                            return _verdict_block(
-                                kernel,
-                                task_id,
-                                "verification",
-                                verification_attempt,
-                                verification_verdict,
-                            )
-                        if route == "continue":
-                            if not preserve_completed:
-                                kernel.transition(
-                                    Transition(
-                                        "task.status_changed",
-                                        {"from": "verifying", "to": "completed"},
-                                        task_id=task_id,
-                                    )
-                                )
-                            return TaskCycleResult(
-                                task_id,
-                                "passed",
-                                "verification",
-                                int(kernel.state["worktree_revision"]),
-                            )
-                        root_key = str(
-                            verification.payload.get("root_cause_key")
-                            or "verification:changes_requested"
+                    phase = "verification"
+        if phase == "verification" and root_key is None:
+            acceptance = acceptance or _latest_task_payload(kernel, task_id, "acceptance")
+            if acceptance is None:
+                _block(
+                    kernel,
+                    task_id,
+                    "verification",
+                    "current_acceptance_evidence_missing",
+                    category="missing_evidence",
+                    root_cause_key="verification:current_acceptance_evidence_missing",
+                )
+                return TaskCycleResult(
+                    task_id, "blocked", "verification",
+                    int(kernel.state["worktree_revision"]), "missing_evidence"
+                )
+            verification, _, verification_attempt = _worker_attempt(
+                controller,
+                kernel,
+                task,
+                "verification",
+                f"Verify acceptance and task-review evidence for {task_id}: {acceptance}",
+            )
+            _semantic_verdict(
+                kernel, task_id, verification_attempt, "verification", verification
+            )
+            verification_verdict = verification.payload.get("verdict")
+            if (
+                verification.status != "completed"
+                or not _trusted(verification)
+                or not isinstance(verification_verdict, dict)
+            ):
+                return _worker_block_cycle(
+                    kernel, task_id, "verification", verification, verification_attempt
+                )
+            route = route_verdict(verification_verdict)
+            if route in {"blocked", "inconclusive"}:
+                return _verdict_block(
+                    kernel,
+                    task_id,
+                    "verification",
+                    verification_attempt,
+                    verification_verdict,
+                )
+            if route == "continue":
+                if not preserve_completed:
+                    kernel.transition(
+                        Transition(
+                            "task.status_changed",
+                            {"from": "verifying", "to": "completed"},
+                            task_id=task_id,
                         )
-                        phase = "verification"
+                    )
+                return TaskCycleResult(
+                    task_id,
+                    "passed",
+                    "verification",
+                    int(kernel.state["worktree_revision"]),
+                )
+            root_key = str(
+                verification.payload.get("root_cause_key")
+                or "verification:changes_requested"
+            )
+            failed_phase = "verification"
 
+        assert root_key is not None
         repair_counts[root_key] = repair_counts.get(root_key, 0) + 1
         if repair_counts[root_key] > 2:
-            _block(kernel, task_id, phase, f"repair_limit_exhausted:{root_key}")
+            _block(kernel, task_id, failed_phase, f"repair_limit_exhausted:{root_key}")
             return TaskCycleResult(
                 task_id,
                 "blocked",
-                phase,
+                failed_phase,
                 int(kernel.state["worktree_revision"]),
                 root_key,
             )
@@ -720,6 +1010,8 @@ def run_task_cycle(task: dict, controller: AttemptController, kernel: Kernel) ->
         )
         if blocked is not None:
             return blocked
+        acceptance = None
+        phase = "acceptance"
 
 
 def run_repository_checks(manifest: dict, revision: int) -> tuple[EvidenceRef, ...]:
@@ -738,25 +1030,13 @@ def run_repository_checks(manifest: dict, revision: int) -> tuple[EvidenceRef, .
         )
     )
     results: list[dict[str, object]] = []
+    command_failure: dict[str, object] | None = None
     for command in commands:
-        try:
-            completed = subprocess.run(
-                ["/bin/sh", "-lc", command],
-                cwd=worktree,
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                timeout=900,
-            )
-            results.append(
-                {
-                    "command": command,
-                    "returncode": completed.returncode,
-                    "output": completed.stdout[-8000:],
-                }
-            )
-        except (subprocess.TimeoutExpired, OSError) as exc:
-            results.append({"command": command, "returncode": 124, "output": str(exc)})
+        command_result = _guarded_shell(command, worktree, 900)
+        results.append(command_result)
+        if command_result.get("returncode") != 0:
+            command_failure = command_result
+            break
     bundle_passed = bool(commands) and all(item["returncode"] == 0 for item in results)
     refs: list[EvidenceRef] = []
     for ordinal, task in enumerate(_topological(list(manifest.get("task_graph") or [])), 1):
@@ -784,6 +1064,20 @@ def run_repository_checks(manifest: dict, revision: int) -> tuple[EvidenceRef, .
             )
         )
         refs.append(ref)
+    if command_failure is not None:
+        owner_task = str((manifest.get("task_graph") or [{}])[0].get("id") or "")
+        category = str(command_failure.get("failure_category") or "repository_check_failed")
+        _block(
+            kernel,
+            owner_task,
+            "repository_checks",
+            category,
+            category=category,
+            root_cause_key=str(
+                command_failure.get("root_cause_key") or "repository_checks:command_failed"
+            ),
+            evidence_refs=[ref.as_dict() for ref in refs],
+        )
     return tuple(refs)
 
 
@@ -923,6 +1217,41 @@ def _cycle_block_result(kernel: Kernel, cycle: TaskCycleResult) -> dict:
     return result
 
 
+def _map_final_findings(findings: object, known: set[str]) -> list[str] | None:
+    if not isinstance(findings, list) or not findings:
+        return None
+    mapped: list[str] = []
+    identifier_keys = ("task_id", "affected_task_id", "target_task_id", "packet_task_id")
+    for finding in findings:
+        if not isinstance(finding, dict):
+            return None
+        identifiers: list[str] = []
+        for key in identifier_keys:
+            if key not in finding:
+                continue
+            value = finding.get(key)
+            if not isinstance(value, str) or not value:
+                return None
+            identifiers.append(value)
+        if "task_ids" in finding:
+            values = finding.get("task_ids")
+            if (
+                not isinstance(values, list)
+                or not values
+                or any(not isinstance(value, str) or not value for value in values)
+            ):
+                return None
+            identifiers.extend(values)
+        unique = set(identifiers)
+        if len(unique) != 1:
+            return None
+        task_id = next(iter(unique))
+        if task_id not in known:
+            return None
+        mapped.append(task_id)
+    return mapped
+
+
 def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Path) -> dict:
     kernel = kernel_or_run_dir if isinstance(kernel_or_run_dir, Kernel) else Kernel(kernel_or_run_dir)
     manifest = load_verified_manifest(kernel.run_dir / "run_manifest.json")
@@ -944,10 +1273,40 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
     for task in ordered:
         task_id = str(task["id"])
         if kernel.state["tasks"][task_id]["status"] != "completed":
-            try:
-                _initialize_task(kernel, task, controller)
-            except ValueError as exc:
-                return _block(kernel, task_id, "dependency", str(exc))
+            dependencies = [str(item) for item in task.get("dependencies") or []]
+            if any(
+                kernel.state["tasks"].get(item, {}).get("status") != "completed"
+                for item in dependencies
+            ):
+                return _block(
+                    kernel,
+                    task_id,
+                    "dependency",
+                    "dependency_not_completed",
+                    category="dependency_not_completed",
+                )
+            status = kernel.state["tasks"][task_id]["status"]
+            if status in {"pending", "ready"}:
+                try:
+                    _initialize_task(kernel, task, controller)
+                except ValueError as exc:
+                    return _block(kernel, task_id, "initialization", str(exc))
+            elif status == "scouting":
+                kernel.transition(
+                    Transition(
+                        "task.status_changed",
+                        {"from": "scouting", "to": "implementing"},
+                        task_id=task_id,
+                    )
+                )
+            elif status not in {"implementing", "reviewing", "verifying", "repairing"}:
+                return _block(
+                    kernel,
+                    task_id,
+                    "resume",
+                    f"task_not_runnable:{status}",
+                    category="resume_state_invalid",
+                )
             cycle = run_task_cycle(task, controller, kernel)
             if cycle.status != "passed":
                 return _cycle_block_result(kernel, cycle)
@@ -978,29 +1337,31 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
                 break
         if not converged:
             task_id = str(ordered[0]["id"])
-            kernel.transition(
-                Transition(
-                    "blocker.opened",
-                    {
-                        "blocker_id": f"run.scheduler_nonconvergence.{final_revision}",
-                        "category": "scheduler_nonconvergence",
-                        "root_cause_key": "current_revision_evidence_did_not_converge",
-                        "owner": "cpe",
-                        "resume_condition": "bound repeated repair writes and schedule an explicit retry",
-                    },
-                    task_id=task_id,
-                )
-            )
             return _block(
                 kernel,
                 task_id,
                 "stabilization",
                 "current_revision_evidence_did_not_converge",
+                category="scheduler_nonconvergence",
+                root_cause_key="current_revision_evidence_did_not_converge",
+                resume_condition="bound repeated repair writes and schedule an explicit retry",
             )
 
         runtime_manifest = dict(manifest)
         runtime_manifest["_runtime_run_dir"] = str(kernel.run_dir)
         run_repository_checks(runtime_manifest, final_revision)
+        if kernel.state["lifecycle"] == "blocked":
+            blocker = kernel.state["active_blockers"][-1]
+            return {
+                "completed": [
+                    key for key, value in kernel.state["tasks"].items()
+                    if value["status"] == "completed"
+                ],
+                "blocked": blocker.get("task_id"),
+                "status": "blocked",
+                "reason": blocker.get("category"),
+                "phase": "repository_checks",
+            }
         repository_report = validate_completion(kernel.run_dir)
         if "current_revision_repository_check_missing" in repository_report.errors:
             return _block(kernel, str(ordered[0]["id"]), "repository_checks", "repository_checks_failed")
@@ -1011,7 +1372,27 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
             task_id = str(task["id"])
             verdict = result.payload.get("verdict")
             if result.status != "completed" or not _trusted(result) or not isinstance(verdict, dict):
-                return _block(kernel, task_id, "final_review", "final_review_failed")
+                verdict_attempt = next(
+                    (
+                        attempt for attempt in reversed(kernel.state["attempts"])
+                        if attempt.get("task_id") is None
+                        and attempt.get("kind") == "final_review"
+                        and attempt.get("status") != "started"
+                    ),
+                    {},
+                )
+                category = str(result.payload.get("failure_category") or "final_review_failed")
+                return _block(
+                    kernel,
+                    task_id,
+                    "final_review",
+                    category,
+                    category=category,
+                    root_cause_key=str(
+                        result.payload.get("root_cause_key") or "final_review:worker_failed"
+                    ),
+                    evidence_refs=list(verdict_attempt.get("evidence_refs") or []),
+                )
             route = route_verdict(verdict)
             if route in {"blocked", "inconclusive"}:
                 attempt_id = next(
@@ -1030,14 +1411,17 @@ def run_tasks(tasks: list[dict], worker: Worker, kernel_or_run_dir: Kernel | Pat
                 }
             if route == "repair":
                 findings = verdict.get("findings") or []
-                named = [
-                    str(finding.get("task_id"))
-                    for finding in findings
-                    if isinstance(finding, dict) and finding.get("task_id") is not None
-                ]
                 known = {str(item["id"]) for item in ordered}
-                if not named or any(item not in known for item in named):
-                    return _block(kernel, task_id, "final_review", "final_review_finding_task_invalid")
+                named = _map_final_findings(findings, known)
+                if named is None:
+                    return _block(
+                        kernel,
+                        task_id,
+                        "final_review",
+                        "final_review_finding_task_invalid",
+                        category="final_review_mapping_invalid",
+                        root_cause_key="final_review:ambiguous_finding_task",
+                    )
                 repair_task_ids.extend(named)
 
         if not repair_task_ids:

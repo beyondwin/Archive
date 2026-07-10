@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -14,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from cpe_runtime.attempt_controller import ROLE_POLICIES, RolePolicy, validate_verdict
 from cpe_runtime.events import read_events
 from cpe_runtime.evidence import verify_ref
-from cpe_runtime.kernel import RunKernel
+from cpe_runtime.kernel import RunKernel, Transition
 from cpe_runtime.manifest import create_manifest, load_verified_manifest
 from cpe_runtime.model_policy import CORE_ROUTE, SCOUT_ROUTE
 from cpe_runtime.packets import build_packet
@@ -107,6 +108,18 @@ def semantic_phases(run_dir: Path, revision: int) -> list[str]:
     return phases
 
 
+def assert_typed_blocked(result: dict, state: dict, category: str) -> None:
+    assert result.get("status") == "blocked", result
+    blockers = state.get("active_blockers") or []
+    assert blockers, state
+    blocker = blockers[-1]
+    assert blocker.get("category") == category, blocker
+    for key in ("root_cause_key", "owner", "resume_condition"):
+        assert isinstance(blocker.get(key), str) and blocker[key], blocker
+    assert isinstance(blocker.get("evidence_refs"), list) and blocker["evidence_refs"], blocker
+    assert all(attempt.get("status") != "started" for attempt in state.get("attempts") or []), state
+
+
 def main() -> int:
     assert ROLE_POLICIES == {
         "scout": RolePolicy(True, False, False),
@@ -196,6 +209,13 @@ def main() -> int:
         ),
     )
     assert next_phase({"tasks": {"T1": {"status": "ready"}}}, "T1") == "implementation"
+    assert next_phase(
+        {
+            "tasks": {"T1": {"status": "verifying"}},
+            "retry_queue": [{"task_id": "T1", "phase": "acceptance"}],
+        },
+        "T1",
+    ) == "acceptance"
     assert route_verdict({"status": "passed"}) == "continue"
     assert route_verdict({"status": "changes_requested"}) == "repair"
     for invalid in ("unknown", {"status": "unknown"}):
@@ -452,6 +472,201 @@ def main() -> int:
                     if payload.get("worktree_revision") == 4:
                         current.append(payload)
                 assert current and current[-1].get("status") == "passed", (task_id, kind)
+
+    with tempfile.TemporaryDirectory(prefix="cpe-final-mapping-") as raw:
+        root = Path(raw)
+        tasks = [{
+            "id": "T1", "title": "one", "dependencies": [],
+            "file_claims": ["T1.txt"], "acceptance_command": "true",
+        }]
+        run_dir, worktree, manifest = initialize_run(root, "final-mapping-fixture", tasks)
+        final_requested = False
+        repair_calls = 0
+
+        def ambiguous_final_provider(request, _argv):
+            nonlocal final_requested, repair_calls
+            if request.attempt_kind == "implementation":
+                (worktree / "T1.txt").write_text("initial\n", encoding="utf-8")
+            elif request.attempt_kind == "repair":
+                repair_calls += 1
+                (worktree / "T1.txt").write_text("repaired\n", encoding="utf-8")
+            result = result_for(request.attempt_kind, request.worktree_revision)
+            if request.attempt_kind == "final_review" and not final_requested:
+                final_requested = True
+                findings = [
+                    {
+                        "task_id": "T1", "severity": "high",
+                        "summary": "valid mapping", "action": "repair T1",
+                    },
+                    {
+                        "severity": "high", "summary": "missing mapping",
+                        "action": "must not be dropped",
+                    },
+                ]
+                result["findings"] = findings
+                result["verdict"] = {
+                    "status": "changes_requested", "findings": findings,
+                    "missing_evidence": [],
+                    "worktree_revision": request.worktree_revision,
+                }
+            return result
+
+        result = run_tasks(tasks, Worker(provider=ambiguous_final_provider), run_dir)
+        state = project(manifest, read_events(run_dir / "events.jsonl"))
+        assert_typed_blocked(result, state, "final_review_mapping_invalid")
+        assert repair_calls == 0, repair_calls
+
+    with tempfile.TemporaryDirectory(prefix="cpe-readonly-mutation-") as raw:
+        root = Path(raw)
+        tasks = [{
+            "id": "T1", "title": "one", "dependencies": [],
+            "file_claims": ["T1.txt"], "acceptance_command": "true",
+        }]
+        run_dir, worktree, manifest = initialize_run(root, "readonly-mutation-fixture", tasks)
+
+        def mutating_review_provider(request, _argv):
+            if request.attempt_kind == "implementation":
+                (worktree / "T1.txt").write_text("initial\n", encoding="utf-8")
+            elif request.attempt_kind == "task_review":
+                (worktree / "read-only-escape.txt").write_text("escape\n", encoding="utf-8")
+            return result_for(request.attempt_kind, request.worktree_revision)
+
+        result = run_tasks(tasks, Worker(provider=mutating_review_provider), run_dir)
+        state = project(manifest, read_events(run_dir / "events.jsonl"))
+        assert_typed_blocked(result, state, "read_only_mutation")
+        assert state["worktree_revision"] == 1, state["worktree_revision"]
+
+    with tempfile.TemporaryDirectory(prefix="cpe-readonly-exception-") as raw:
+        root = Path(raw)
+        tasks = [{
+            "id": "T1", "title": "one", "dependencies": [],
+            "file_claims": ["T1.txt"], "acceptance_command": "true",
+        }]
+        run_dir, worktree, manifest = initialize_run(root, "readonly-exception-fixture", tasks)
+
+        def exploding_review_provider(request, _argv):
+            if request.attempt_kind == "implementation":
+                (worktree / "T1.txt").write_text("initial\n", encoding="utf-8")
+            elif request.attempt_kind == "task_review":
+                raise RuntimeError("read-only provider exploded")
+            return result_for(request.attempt_kind, request.worktree_revision)
+
+        result = run_tasks(tasks, Worker(provider=exploding_review_provider), run_dir)
+        state = project(manifest, read_events(run_dir / "events.jsonl"))
+        assert_typed_blocked(result, state, "unexpected_worker_error")
+        failed = [
+            attempt for attempt in state["attempts"]
+            if attempt.get("kind") == "task_review" and attempt.get("status") == "failed"
+        ]
+        assert len(failed) == 1 and failed[0].get("evidence_refs"), failed
+
+    with tempfile.TemporaryDirectory(prefix="cpe-command-mutation-") as raw:
+        root = Path(raw)
+        marker = root / "repository-marker"
+        repository_command = (
+            f"if [ -f {shlex.quote(str(marker))} ]; then "
+            "printf mutation > repository-escape.txt; else "
+            f": > {shlex.quote(str(marker))}; fi"
+        )
+        tasks = [{
+            "id": "T1", "title": "one", "dependencies": [],
+            "file_claims": ["T1.txt"], "acceptance_command": repository_command,
+        }]
+        run_dir, worktree, manifest = initialize_run(root, "repository-mutation-fixture", tasks)
+
+        def command_provider(request, _argv):
+            if request.attempt_kind == "implementation":
+                (worktree / "T1.txt").write_text("initial\n", encoding="utf-8")
+            return result_for(request.attempt_kind, request.worktree_revision)
+
+        result = run_tasks(tasks, Worker(provider=command_provider), run_dir)
+        state = project(manifest, read_events(run_dir / "events.jsonl"))
+        assert_typed_blocked(result, state, "read_only_mutation")
+        assert state["worktree_revision"] == 1, state["worktree_revision"]
+
+    with tempfile.TemporaryDirectory(prefix="cpe-acceptance-mutation-") as raw:
+        root = Path(raw)
+        tasks = [{
+            "id": "T1", "title": "one", "dependencies": [],
+            "file_claims": ["T1.txt"],
+            "acceptance_command": "printf mutation > acceptance-escape.txt",
+        }]
+        run_dir, worktree, manifest = initialize_run(root, "acceptance-mutation-fixture", tasks)
+
+        def acceptance_provider(request, _argv):
+            if request.attempt_kind == "implementation":
+                (worktree / "T1.txt").write_text("initial\n", encoding="utf-8")
+            return result_for(request.attempt_kind, request.worktree_revision)
+
+        result = run_tasks(tasks, Worker(provider=acceptance_provider), run_dir)
+        state = project(manifest, read_events(run_dir / "events.jsonl"))
+        assert_typed_blocked(result, state, "read_only_mutation")
+        assert state["worktree_revision"] == 1, state["worktree_revision"]
+
+    with tempfile.TemporaryDirectory(prefix="cpe-acceptance-retry-") as raw:
+        root = Path(raw)
+        tasks = [{
+            "id": "T1", "title": "one", "dependencies": [],
+            "file_claims": ["T1.txt"], "acceptance_command": "true",
+        }]
+        run_dir, worktree, manifest = initialize_run(root, "acceptance-retry-fixture", tasks)
+        implementation_calls = 0
+        verification_calls = 0
+
+        def retry_provider(request, _argv):
+            nonlocal implementation_calls, verification_calls
+            if request.attempt_kind == "implementation":
+                implementation_calls += 1
+                (worktree / "T1.txt").write_text("initial\n", encoding="utf-8")
+            result = result_for(request.attempt_kind, request.worktree_revision)
+            if request.attempt_kind == "verification":
+                verification_calls += 1
+                if verification_calls == 1:
+                    result["verdict"] = {
+                        "status": "blocked", "findings": [],
+                        "missing_evidence": [],
+                        "worktree_revision": request.worktree_revision,
+                        "owner": "cpe",
+                        "resume_condition": "retry acceptance",
+                    }
+            return result
+
+        kernel = RunKernel(run_dir)
+        first = run_tasks(tasks, Worker(provider=retry_provider), kernel)
+        first_state = kernel.state
+        assert_typed_blocked(first, first_state, "blocked")
+        blocker = first_state["active_blockers"][-1]
+        retry_ref = first_state["artifact_index"][-1]["ref"]
+        kernel.transition(
+            Transition(
+                "blocker.resolved",
+                {"blocker_id": blocker["blocker_id"], "evidence_refs": [retry_ref]},
+                task_id="T1",
+            )
+        )
+        kernel.transition(
+            Transition(
+                "task.retry_scheduled",
+                {
+                    "phase": "acceptance",
+                    "root_cause_key": "verification:blocked",
+                    "worktree_revision": kernel.state["worktree_revision"],
+                    "evidence_refs": [retry_ref],
+                },
+                task_id="T1",
+            )
+        )
+        kernel.transition(
+            Transition("run.status_changed", {"from": "blocked", "to": "ready"})
+        )
+        second = run_tasks(tasks, Worker(provider=retry_provider), kernel)
+        assert second["status"] == "completed", second
+        assert implementation_calls == 1, implementation_calls
+        acceptance_refs = [
+            item for item in kernel.state["artifact_index"]
+            if item.get("task_id") == "T1" and item.get("kind") == "acceptance"
+        ]
+        assert len(acceptance_refs) >= 2, acceptance_refs
 
     print('{"passed": true}')
     return 0
