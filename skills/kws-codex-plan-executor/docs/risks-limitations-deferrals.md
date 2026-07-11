@@ -11,6 +11,11 @@
   when a test command left untracked bytecode. No live quality or
   context-reduction release claim is approved, and `release_ready=false`
   remains required until new implementation evidence passes the same thresholds.
+- A later auth-only-home and stable-prefix remediation removed those quality
+  regressions: the final matrix reached 100% task completion, evidence,
+  attestation, isolation, and drift-free rates with zero critical regressions.
+  It remains release-blocked solely because Sol v3 reduced context by 10.61%,
+  below the unchanged 25% requirement.
 - The v3 deterministic harness uses a maintained inventory, public CLI fixture
   repositories, fake providers, and an isolated oracle. This covers behavior,
   while the completed live ledger records real provider quality and latency.
