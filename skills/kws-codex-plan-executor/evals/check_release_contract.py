@@ -31,15 +31,14 @@ def read(path: Path) -> str:
 
 
 def latest_verification(text: str) -> dict:
-    payloads: list[dict] = []
     for raw in VERIFICATION_BLOCK_RE.findall(text):
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
             continue
         if payload.get("schema_version") == "cpe-release-verification.v1":
-            payloads.append(payload)
-    return payloads[-1] if payloads else {}
+            return payload
+    return {}
 
 
 def expected_implementation_commit(repo_root: Path) -> str:
@@ -253,8 +252,14 @@ def main() -> int:
         item.get("command") for item in commands if isinstance(item, dict)
     }
     expected_commit = expected_implementation_commit(skill_dir.parents[1])
+    maintained_check_count = (
+        len(maintained_checks)
+        if maintained_checks_pass and isinstance(maintained_checks, list)
+        else 0
+    )
     release_checks = {
         "version_is_301": version == "3.0.1",
+        "verification_version_matches": verification.get("version") == version,
         "deterministic_ready": release_status == "deterministic-ready; paid-live-pending",
         "canonical_status_is_deterministic_ready": (
             live_status.get("status") == "deterministic_ready_paid_pending"
@@ -285,8 +290,11 @@ def main() -> int:
             )
         ),
         "current_passing_counts_recorded": (
-            isinstance(verification.get("eval_passing_count"), int)
-            and verification.get("eval_passing_count", 0) > 0
+            maintained_check_count > 0
+            and verification.get("eval_passing_count") == maintained_check_count
+            and live_status.get("deterministic_evidence", {}).get(
+                "maintained_check_count"
+            ) == maintained_check_count
             and isinstance(verification.get("bun_passing_count"), int)
             and verification.get("bun_passing_count", 0) > 0
         ),
