@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- 2026-07-11: Aligned active documentation with the integrity-closure runtime:
+  seven focused owners, immutable packet/digest consumption by every role,
+  measured Git revisions, canonical integrity/completion profiles, explicit
+  retry and repair semantics, machine-readable public exits, and the maintained
+  public-CLI behavior harness. Historical experiment entries below remain
+  descriptions of their release and are not active executable guidance.
 - 2026-07-10: Corrected the 3.0.0 release claim to
   `integrity-closure-pending; paid-live-pending`. This is an evidence
   correction while audited fail-closed gaps are closed, not an architectural

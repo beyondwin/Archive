@@ -13,3 +13,15 @@ new work. Multiple ambiguous runs are never guessed.
 
 All modes use the fixed two-route model contract. Exported launchers carry the
 model and reasoning flags; the prompt body does not act as model enforcement.
+
+Every execution worker, regardless of interactive or headless mode, consumes a
+manifest-indexed task packet with the same verified `packet_sha256` and current
+`worktree_revision`. Roles are `scout`, `implementation`, `task_review`,
+`verification`, `repair`, and `final_review`; acceptance and
+`repository_check` are deterministic read-only phases rather than worker
+roles. Semantic results bind `worktree_patch_sha256`.
+
+Interactive and headless execution return the same `PublicResult` JSON and
+exit mapping: `success=0`, `blocked=1`, `failed=2`. Export prints one fenced,
+collision-free bundle to stdout and creates no run directory, worktree, or
+executor artifacts.

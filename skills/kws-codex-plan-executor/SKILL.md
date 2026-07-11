@@ -23,7 +23,9 @@ python3 scripts/cpe.py export --plan PLAN --workspace REPO --mode handoff
 
 python3 scripts/validate_state.py RUN_DIR
 python3 scripts/reconcile_state.py --run-dir RUN_DIR --check
-python3 scripts/repair_runs.py --run-id RUN_ID --action ACTION [--apply]
+python3 scripts/repair_runs.py --run-dir RUN_DIR
+python3 scripts/repair_runs.py --run-dir RUN_DIR --action ACTION \
+  --details '{...}' --expected-projection-delta '{...}' --apply
 python3 scripts/inspect_runs.py --codex-home ~/.codex --all-plans
 python3 scripts/analyze_recent_runs.py --codex-home ~/.codex --recent 20
 ```
@@ -56,20 +58,30 @@ artifacts/         immutable task packets, evidence, prompts, and reports
 ```
 
 Each executable task declares dependencies, file claims, acceptance commands,
-and evidence requirements. When a spec is supplied, every task needs explicit
-explicit `spec_refs`; a missing or conflicting mapping blocks before edits. Write-capable
-tasks execute sequentially. Independent read-only scouts may run concurrently.
-Models never edit the manifest, events, evidence index, or state projection.
+and evidence requirements. When a spec is supplied, every task needs explicit `spec_refs`;
+a missing or conflicting mapping blocks before edits. Every
+`scout`, `implementation`, `task_review`, `verification`, `repair`, and
+`final_review` request consumes the manifest-indexed task packet and verifies
+its `packet_sha256`. Write-capable tasks execute sequentially. Independent
+read-only scouts may run concurrently. Models never edit the manifest, events,
+evidence index, or state projection.
 
 Implementation starts only in the isolated worktree after the
 `using-superpowers` and `test-driven-development` gates; the source checkout
 and `main` branch are never used as the edit target.
 
-Completion requires a valid manifest and event chain, snapshot replay parity,
-all task and whole-diff reviews, in-scope git evidence, acceptance evidence,
-fixed-route attestations, resolved blockers, and repository-specific checks.
-The resulting projection records a structured `completion_audit`; missing
-completion evidence is a blocker.
+Implementation and repair are the only product-writing roles. Their measured
+Git delta records `worktree_revision` and `worktree_patch_sha256`; every later
+`acceptance`, `task_review`, `verification`, `repository_check`, and
+`final_review` record is valid only at that revision. A later write invalidates
+the earlier suffix and schedules it again.
+
+Completion first passes canonical integrity validation, then canonical
+completion validation. It requires a valid manifest and event chain, snapshot
+replay parity, all task and whole-diff reviews, in-scope git evidence,
+acceptance evidence, fixed-route attestations, resolved blockers, and
+repository-specific checks. The resulting projection records a structured
+`completion_audit`; missing or stale completion evidence is a blocker.
 
 ## References
 

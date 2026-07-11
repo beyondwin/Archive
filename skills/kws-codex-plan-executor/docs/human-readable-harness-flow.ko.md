@@ -5,11 +5,12 @@
 
 ```mermaid
 flowchart LR
-  Dependency["의존성 preflight"] --> Policy["고정 모델 정책"]
-  Policy --> Store["manifest, event, evidence"]
-  Store --> Execute["가짜 provider 실행"]
-  Execute --> Consumers["validate, reconcile, repair, inspect"]
-  Consumers --> Fault["fault injection"]
+  Inventory["maintained eval inventory"] --> CLI["public CLI"]
+  CLI --> Temp["임시 Git 저장소 + 가짜 provider"]
+  Temp --> Consumers["validate, reconcile, repair, inspect"]
+  Oracle["isolated oracle"] --> Compare["결과와 exit 비교"]
+  Consumers --> Compare
+  Compare --> Fault["fault injection"]
   Fault --> Release["release/docs contract"]
 ```
 
@@ -17,7 +18,12 @@ flowchart LR
 증거 digest, 소비자 간 오류 코드, 안전한 수리, 조회의 비변경성, 오래된 경로와
 과장된 릴리스 문구를 다룹니다.
 
-현재 v3 harness에서는 기존 정적 YAML 실행 fixture 반복이 비활성화되어
-있습니다. 따라서 `./evals/run.sh` 통과는 결정론적 준비 상태를 뜻할 뿐,
-유료 라이브 품질 gate 통과를 뜻하지 않습니다. 유료 gate는 별도 명시적 비용
-승인 후 4개 treatment와 8개 case를 실행해 성공 보고서를 만들어야 합니다.
+하네스는 유지 목록의 각 검사가 실제 실행됐는지 확인합니다. 런타임 검사는
+production parser, scheduler, validator, repair를 복제하지 않고 public CLI를
+호출합니다. isolated oracle은 기대 결과만 계산하며 production projector나
+validator를 import할 수 없습니다. 공개 결과는 `PublicResult` 하나이고 exit는
+`success=0`, `blocked=1`, `failed=2`로 비교합니다.
+
+`./evals/run.sh` 통과는 유료 라이브 품질 gate 통과를 뜻하지 않습니다. 현재
+3.0.0은 integrity closure 중이며, 유료 gate는 별도 명시적 비용 승인 후 4개
+treatment와 8개 case를 실행해 성공 보고서를 만들어야 합니다.

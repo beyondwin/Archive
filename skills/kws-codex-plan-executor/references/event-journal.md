@@ -38,8 +38,10 @@ and replay continue to accept it, but the append boundary rejects it for new
 writes.
 
 `worktree.revision_recorded` advances exactly one revision from the currently
-projected value and carries a 64-character lowercase SHA-256 patch digest.
-Future write controllers may also include `changed_files` and `attempt_id`.
+projected value and carries a 64-character lowercase SHA-256 patch digest,
+immutable patch ref, measured `changed_files`, task ID, and attempt ID. Only a
+successful measured implementation or repair boundary may emit it. A later
+revision makes earlier semantic success evidence stale.
 
 Blockers use stable `blocker_id` values across `opened`, `updated`, and
 `resolved`. Opening records category, owner, and resume condition, and may
@@ -47,3 +49,10 @@ record a root-cause key. Resolution requires evidence refs. Retrying a blocked
 task is a separate `task.retry_scheduled` event with an explicit phase, root
 cause, and worktree revision; no generic `blocked -> ready` transition is
 inferred.
+
+`verdict.recorded` stores the normalized typed verdict from read-only
+`task_review`, `verification`, or `final_review`; worker status is never used as
+a verdict. `evidence.attached` links current acceptance and
+`repository_check` results to the same task packet and revision. The exact
+ordered completion checklist is stored only by `completion.recorded` after the
+canonical completion profile passes.

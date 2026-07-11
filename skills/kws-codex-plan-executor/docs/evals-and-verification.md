@@ -15,13 +15,19 @@ The active deterministic suite exercises dependency reporting, fixed routing,
 override rejection, manifest/evidence integrity, event replay, execution,
 validation parity, reconciliation, safe repair, inspection, recent-run metrics,
 fault injection, migration planning, Superpowers capability checks, and release
-metadata. The legacy static YAML execution-fixture loop is disabled in the v3
-harness; a green deterministic run must not be described as paid live-model
-evidence.
+metadata. `evals/run.sh` reads the maintained eval inventory and executes every
+listed behavior check. Runtime cases invoke the public CLI in temporary Git
+repositories with a fake provider, then compare public state and exit behavior
+to an isolated oracle. The oracle may compute expectations but may not call the
+production scheduler, validator, projector, or repair implementation. A green
+deterministic run must not be described as paid live-model evidence.
 
-Release status is `deterministic-ready; paid-live-pending`. The live matrix has
-four treatments and eight cases. It is opt-in, capped at `$50.00`, and requires
-the operator's explicit approval in the session that incurs cost:
+Release status for 3.0.0 is
+`integrity-closure-pending; paid-live-pending` with `release_ready=false`.
+Task 13 may move to deterministic readiness only after L0-L4, fresh Graphify,
+and clean tracked-tree evidence. The live matrix has four treatments and eight
+cases. It is opt-in, capped at `$50.00`, and requires the operator's explicit
+approval in the session that incurs cost:
 
 ```bash
 python3 evals/live_model_migration.py \

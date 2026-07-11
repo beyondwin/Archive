@@ -32,6 +32,8 @@ Resume and inspect:
 ```bash
 python3 scripts/cpe.py resume --run-id RUN_ID
 python3 scripts/validate_state.py ~/.codex/orchestrator/RUN_ID
+python3 scripts/reconcile_state.py --run-dir ~/.codex/orchestrator/RUN_ID --check
+python3 scripts/repair_runs.py --run-dir ~/.codex/orchestrator/RUN_ID
 python3 scripts/inspect_runs.py --codex-home ~/.codex --all-plans
 python3 scripts/analyze_recent_runs.py --codex-home ~/.codex --recent 20
 ```
@@ -43,9 +45,19 @@ python3 scripts/analyze_recent_runs.py --codex-home ~/.codex --recent 20
 - Write-capable tasks run sequentially.
 - Supplied specs require explicit per-task section mappings.
 - Models cannot write durable executor state.
+- All six worker roles consume one manifest-indexed, digest-verified task packet.
+- Implementation and repair are the only product-writing roles; every success
+  record binds to the resulting Git revision and patch digest.
 - Validation, reconciliation, repair, and inspection replay the same manifest
   and event chain.
 - V2 runs are preserved but classified only as `unsupported_schema`.
+
+Execution prints exactly one machine-readable `PublicResult`. Status-to-exit
+mapping is `success=0`, `blocked=1`, and `failed=2`; zero is possible only after
+canonical completion validation. The deterministic harness uses the maintained
+eval inventory to drive the public CLI against temporary repositories and
+compares results with an isolated oracle. It never treats duplicated fixture
+logic as production behavior.
 
 See [SKILL.md](SKILL.md), [ARCHITECTURE.md](ARCHITECTURE.md), and
 [evals-and-verification.md](docs/evals-and-verification.md).
