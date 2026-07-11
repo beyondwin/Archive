@@ -1,5 +1,51 @@
 # Verification Log
 
+## 2026-07-12 Asia/Seoul - checkpoint-bound subscription live-matrix result
+
+- Reviewed checkpoint: `085ca7fdafd2aebefd5a0b4d2e5a63ad0bde88db`.
+- Manifest: `e7669eca298fcf438e92e843d914c181209fae1ab1ec46787112a1d3dcd91f4b`.
+- Result: all 32 unique slots reached terminal completion under one immutable
+  ledger: 25 credentialed calls and seven expected policy outcomes, with no
+  failed, pending, or duplicate slot.
+- Aggregation replay and mixed-run/result digest validation succeeded. The
+  unchanged release gate failed on `core_model_attestation_below_100_percent`
+  and `context_token_reduction_below_25_percent`.
+- Sol v3 context input was 1,938,930 tokens versus 1,559,416 for GPT-5.5, a
+  24.3% increase rather than the required 25% reduction. The bundled CLI's
+  `thread.started` events omitted model and reasoning fields, so the trusted
+  oracle correctly left core model attestation at 0% instead of inferring it.
+- Privacy audit: the tracked status and sanitized CPE evidence contain no raw
+  transcript, absolute user-home path, temporary execution path, or oracle
+  path. Raw slot artifacts remain external and untracked.
+- Decision: preserve `release_ready=false` and paid-live pending. Do not lower
+  thresholds, rewrite result records, merge to main, or rerun paid calls for
+  documentation, Graphify, or release-only changes.
+
+```json
+{
+  "schema_version": "cpe-live-matrix-result.v1",
+  "implementation_commit": "085ca7fdafd2aebefd5a0b4d2e5a63ad0bde88db",
+  "implementation_tree": "7e8e1b69af3b822587074a67bdcaf4d29ce7bbac",
+  "implementation_patch_sha256": "dc61a93dd1caa4e5c8983c6acf8efeea2910437a1beeaea1614e9efc67986888",
+  "manifest_sha256": "e7669eca298fcf438e92e843d914c181209fae1ab1ec46787112a1d3dcd91f4b",
+  "credentialed_call_count": 25,
+  "expected_policy_failure_count": 7,
+  "release_gate": {
+    "passed": false,
+    "failures": [
+      "core_model_attestation_below_100_percent",
+      "context_token_reduction_below_25_percent"
+    ]
+  },
+  "privacy_audit": {
+    "raw_transcript_tracked": false,
+    "absolute_user_home_path_tracked": false,
+    "temporary_execution_path_tracked": false,
+    "oracle_path_tracked": false
+  }
+}
+```
+
 ## 2026-07-12 Asia/Seoul - subscription live-matrix deterministic verification
 
 - Branch: `codex/2026-07-11-cpe-v3-subscription-live-matrix-20260711-152521`.
