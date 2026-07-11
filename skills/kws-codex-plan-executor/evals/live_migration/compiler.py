@@ -15,6 +15,7 @@ from .contracts import (
     EXPECTED_CASES,
     EXPECTED_POLICY_FAILURE,
     EXPECTED_PROMPT_SHA256,
+    EXPECTED_PROMPT_SOURCE_SHA256,
     EXPECTED_TREATMENTS,
     MAX_METERED_BUDGET_USD,
     METERED_DOLLAR_MODE,
@@ -24,6 +25,7 @@ from .contracts import (
     Treatment,
     canonical_json,
     sha256_bytes,
+    worker_prompt_bytes,
 )
 
 
@@ -73,7 +75,7 @@ def load_registry(eval_dir: Path) -> tuple[tuple[Treatment, ...], tuple[CaseRef,
     return treatments, cases
 
 
-def _prompt_bytes(eval_dir: Path, prompt_ref: str) -> bytes:
+def _prompt_source_bytes(eval_dir: Path, prompt_ref: str) -> bytes:
     if prompt_ref == "terra-scout-generated":
         return _TERRA_PROMPT
     try:
@@ -97,13 +99,20 @@ def _input_digests(
 
     prompt_digests: dict[str, str] = {}
     for treatment in treatments:
-        digest = sha256_bytes(_prompt_bytes(eval_dir, treatment.prompt))
+        source = _prompt_source_bytes(eval_dir, treatment.prompt)
+        source_digest = sha256_bytes(source)
+        if source_digest != EXPECTED_PROMPT_SOURCE_SHA256[treatment.prompt]:
+            raise LiveMigrationContractError(
+                f"prompt template source digest drifted: {treatment.prompt}"
+            )
+        digest = sha256_bytes(worker_prompt_bytes(source, treatment.prompt))
         if digest != EXPECTED_PROMPT_SHA256[treatment.prompt]:
             raise LiveMigrationContractError(
                 f"prompt template digest drifted: {treatment.prompt}"
             )
         prompt_digests[treatment.id] = digest
         inputs[f"prompt:{treatment.id}"] = digest
+        inputs[f"prompt_source:{treatment.id}"] = source_digest
     return inputs, prompt_digests
 
 
