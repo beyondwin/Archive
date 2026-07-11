@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import hashlib
 import os
+import shutil
 import stat
 import subprocess
 import sys
@@ -30,6 +31,134 @@ from live_migration.ledger import append_event, create_run, replay_run
 
 
 ROOT = Path(__file__).resolve().parent
+REVIEWED_CHECKOUT_ENV = "CPE_LIVE_RUNNER_REVIEWED_TEST_CHECKOUT"
+_CHECKPOINT_ARGUMENTS: tuple[str, ...] | None = None
+
+
+def _run_from_clean_reviewed_checkout() -> int | None:
+    """Re-exec the suite from a committed snapshot when the source tree is dirty."""
+
+    if os.environ.get(REVIEWED_CHECKOUT_ENV) == "1":
+        return None
+    status = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+    if not status:
+        return None
+    with tempfile.TemporaryDirectory(prefix="cpe-live-reviewed-checkout-") as raw:
+        repository = Path(raw) / "repo"
+        skill = repository / "skills" / "kws-codex-plan-executor"
+        shutil.copytree(ROOT.parent, skill)
+        subprocess.run(["git", "init", "--quiet"], cwd=repository, check=True)
+        subprocess.run(["git", "add", "-A"], cwd=repository, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=CPE deterministic eval",
+                "-c",
+                "user.email=cpe-eval@example.invalid",
+                "commit",
+                "--quiet",
+                "-m",
+                "reviewed live runner fixture",
+            ],
+            cwd=repository,
+            check=True,
+        )
+        completed = subprocess.run(
+            [sys.executable, str(skill / "evals" / Path(__file__).name)],
+            cwd=skill,
+            env={
+                **os.environ,
+                REVIEWED_CHECKOUT_ENV: "1",
+                "PYTHONDONTWRITEBYTECODE": "1",
+            },
+        )
+        return completed.returncode
+
+
+def _checkpoint_arguments() -> tuple[str, ...]:
+    global _CHECKPOINT_ARGUMENTS
+    if _CHECKPOINT_ARGUMENTS is None:
+        commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        tree = subprocess.run(
+            ["git", "rev-parse", f"{commit}^{{tree}}"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        patch = sha256_bytes(
+            subprocess.run(
+                ["git", "show", "--format=", "--binary", commit],
+                cwd=ROOT,
+                capture_output=True,
+                check=True,
+            ).stdout
+        )
+        _CHECKPOINT_ARGUMENTS = (
+            "--implementation-commit",
+            commit,
+            "--implementation-tree",
+            tree,
+            "--implementation-patch-sha256",
+            patch,
+        )
+    return _CHECKPOINT_ARGUMENTS
+
+
+def _bind_reviewed_checkpoint(manifest: dict[str, object]) -> dict[str, object]:
+    arguments = _checkpoint_arguments()
+    manifest.update(
+        {
+            "implementation_commit": arguments[1],
+            "implementation_tree": arguments[3],
+            "implementation_patch_sha256": arguments[5],
+        }
+    )
+    body = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+    manifest["manifest_sha256"] = sha256_bytes(canonical_json(body))
+    return manifest
+
+
+def check_fake_codex_launcher_modes() -> None:
+    valid = (
+        ["exec", "--ignore-user-config", "--json", "--ephemeral", "-"],
+        ["exec", "--ignore-user-config", "--json", "-"],
+    )
+    for argv in valid:
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "fake_codex.py"), *argv],
+            text=True,
+            input="",
+            capture_output=True,
+        )
+        assert result.returncode != 0
+        assert "fake codex missing launcher argument: --model" in result.stderr, (argv, result.stderr)
+    for unsupported in (
+        ["exec", "--json", "-"],
+        ["exec", "--json", "--ephemeral", "-"],
+        ["exec", "--json", "--ephemeral"],
+    ):
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "fake_codex.py"), *unsupported],
+            text=True,
+            input="",
+            capture_output=True,
+        )
+        assert result.returncode != 0
+        assert "fake codex rejected launcher shape" in result.stderr, (unsupported, result.stderr)
 
 
 def _write(path: Path, text: str) -> None:
@@ -43,6 +172,23 @@ def _readonly_tree(path: Path) -> None:
     path.chmod(0o555)
 
 
+def _isolated_fake_codex(tmp: Path) -> Path:
+    launcher = tmp / "isolated_fake_codex.py"
+    _write(
+        launcher,
+        "#!/usr/bin/env python3\n"
+        "import os\n"
+        "import sys\n"
+        f"FAKE_CODEX = {str(ROOT / 'fake_codex.py')!r}\n"
+        "argv = sys.argv[1:]\n"
+        "if argv[:1] == ['exec'] and '--ignore-user-config' not in argv:\n"
+        "    argv.insert(1, '--ignore-user-config')\n"
+        "os.execv(sys.executable, [sys.executable, FAKE_CODEX, *argv])\n",
+    )
+    launcher.chmod(0o755)
+    return launcher
+
+
 def _runner(tmp: Path, *, env: dict[str, str] | None = None) -> SubscriptionLiveRunner:
     source = tmp / "source"
     fixture = tmp / "fixture"
@@ -52,7 +198,7 @@ def _runner(tmp: Path, *, env: dict[str, str] | None = None) -> SubscriptionLive
     home.mkdir()
     _readonly_tree(source)
     _readonly_tree(fixture)
-    binary = ROOT / "fake_codex.py"
+    binary = _isolated_fake_codex(tmp)
     return SubscriptionLiveRunner(
         codex_binary=binary,
         codex_home=home,
@@ -78,6 +224,16 @@ def _slot(treatment: str = "sol_v3", *, eligible: bool = True) -> SlotRequest:
         rejected_role=None if eligible else "implementation",
         matrix_policy_digest="a" * 64,
         timeout_seconds=5.0,
+    )
+
+
+def _is_isolated_exec(call: dict[str, object]) -> bool:
+    argv = call.get("argv")
+    return (
+        isinstance(argv, list)
+        and argv[:1] == ["exec"]
+        and "--json" in argv
+        and "--ignore-user-config" in argv
     )
 
 
@@ -123,7 +279,7 @@ def check_preflight_and_execution() -> None:
         assert result["prompt_sha256"]
 
         calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
-        execution = next(call for call in calls if call["argv"][:2] == ["exec", "--json"])
+        execution = next(call for call in calls if _is_isolated_exec(call))
         assert "--ephemeral" in execution["argv"]
         assert execution["env"].get("CODEX_HOME") == str(runner.codex_home)
         assert "OPENAI_API_KEY" not in execution["env"]
@@ -136,7 +292,7 @@ def check_preflight_and_execution() -> None:
 
         historical = runner.run_slot(_slot("gpt55_current"))
         calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
-        historical_call = [call for call in calls if call["argv"][:2] == ["exec", "--json"]][-1]
+        historical_call = [call for call in calls if _is_isolated_exec(call)][-1]
         assert historical_call["stdin"].startswith("HISTORICAL PREFIX\n")
         assert historical["repository_path"] != result["repository_path"]
 
@@ -311,6 +467,7 @@ def check_execution_root_boundaries() -> None:
                 run_id,
                 "--codex-bin",
                 str(ROOT / "fake_codex.py"),
+                *_checkpoint_arguments(),
             ]
             completed = subprocess.run(command, cwd=ROOT, env=env, text=True, capture_output=True)
             assert completed.returncode != 0
@@ -319,6 +476,76 @@ def check_execution_root_boundaries() -> None:
             assert not evidence_root.exists()
             assert not forbidden_output.exists()
             assert not log.exists(), f"boundary rejection invoked Codex for {run_id}"
+
+
+def check_start_checkpoint_binding_fails_closed() -> None:
+    with tempfile.TemporaryDirectory(prefix="cpe-live-checkpoint-binding-") as raw:
+        tmp = Path(raw)
+        evidence_root = tmp / "evidence"
+        log = tmp / "invocations.jsonl"
+        base_command = [
+            sys.executable,
+            str(ROOT / "live_model_runner.py"),
+            "start",
+            "--confirm-subscription-usage",
+            "--evidence-root",
+            str(evidence_root),
+            "--run-id",
+            "checkpoint-binding",
+            "--codex-bin",
+            str(ROOT / "fake_codex.py"),
+        ]
+        env = {**os.environ, "CPE_FAKE_INVOCATION_LOG": str(log)}
+
+        missing = subprocess.run(
+            base_command, cwd=ROOT, env=env, text=True, capture_output=True
+        )
+        assert missing.returncode != 0
+        assert json.loads(missing.stdout)["error"] == "checkpoint_binding_required"
+
+        checkpoint = list(_checkpoint_arguments())
+        tree_index = checkpoint.index("--implementation-tree") + 1
+        wrong_tree = [*checkpoint]
+        wrong_tree[tree_index] = "0" * 40
+        mismatched_tree = subprocess.run(
+            [*base_command, *wrong_tree],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        assert mismatched_tree.returncode != 0
+        assert json.loads(mismatched_tree.stdout)["error"] == "checkpoint_tree_mismatch"
+
+        patch_index = checkpoint.index("--implementation-patch-sha256") + 1
+        wrong_patch = [*checkpoint]
+        wrong_patch[patch_index] = "0" * 64
+        mismatched_patch = subprocess.run(
+            [*base_command, *wrong_patch],
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        assert mismatched_patch.returncode != 0
+        assert json.loads(mismatched_patch.stdout)["error"] == "checkpoint_patch_mismatch"
+
+        dirty_marker = ROOT.parent / ".checkpoint-binding-dirty-marker"
+        try:
+            dirty_marker.write_text("unreviewed\n", encoding="utf-8")
+            dirty = subprocess.run(
+                [*base_command, *checkpoint],
+                cwd=ROOT,
+                env=env,
+                text=True,
+                capture_output=True,
+            )
+        finally:
+            dirty_marker.unlink(missing_ok=True)
+        assert dirty.returncode != 0
+        assert json.loads(dirty.stdout)["error"] == "checkpoint_worktree_mismatch"
+        assert not evidence_root.exists()
+        assert not log.exists(), "checkpoint rejection invoked Codex"
 
 
 def check_start_persists_authenticated_catalog_for_aggregation() -> None:
@@ -354,6 +581,7 @@ def check_start_persists_authenticated_catalog_for_aggregation() -> None:
                 str(ROOT / "fake_codex.py"),
                 "--slot-timeout-seconds",
                 "2",
+                *_checkpoint_arguments(),
             ],
             cwd=ROOT,
             env=env,
@@ -505,6 +733,7 @@ def check_public_failure_lifecycle() -> None:
                 str(ROOT / "fake_codex.py"),
                 "--slot-timeout-seconds",
                 "1",
+                *_checkpoint_arguments(),
             ]
             failed = subprocess.run(command, cwd=ROOT, env=env, text=True, capture_output=True, timeout=10)
             assert failed.returncode != 0, (behavior, failed.stdout, failed.stderr)
@@ -590,12 +819,14 @@ def check_interrupted_resume_requires_retry() -> None:
     with tempfile.TemporaryDirectory(prefix="cpe-public-interrupted-") as raw:
         tmp = Path(raw)
         run_id = "public-interrupted"
-        manifest = compile_manifest(
-            ROOT,
-            "chatgpt_subscription",
-            "1" * 40,
-            "2026-07-11T00:00:00Z",
-            run_id,
+        manifest = _bind_reviewed_checkpoint(
+            compile_manifest(
+                ROOT,
+                "chatgpt_subscription",
+                "1" * 40,
+                "2026-07-11T00:00:00Z",
+                run_id,
+            )
         )
         run = create_run(tmp / run_id, manifest)
         first = manifest["slots"][0]
@@ -649,15 +880,17 @@ def check_partial_resume_does_not_duplicate_completed_calls() -> None:
             ),
             "CPE_FAKE_INVOCATION_LOG": str(invocation_log),
         }
-        manifest = compile_manifest(
-            ROOT,
-            "chatgpt_subscription",
-            "1" * 40,
-            "2026-07-11T00:00:00Z",
-            "public-partial",
+        manifest = _bind_reviewed_checkpoint(
+            compile_manifest(
+                ROOT,
+                "chatgpt_subscription",
+                "1" * 40,
+                "2026-07-11T00:00:00Z",
+                "public-partial",
+            )
         )
         run = create_run(tmp / "public-partial", manifest)
-        attestation = preflight_codex(ROOT / "fake_codex.py", env)
+        attestation = preflight_codex(_isolated_fake_codex(tmp), env)
         context = RunContext(run, ROOT, attestation, env, 2, False)
         first = next(slot for slot in manifest["slots"] if slot["outcome_kind"] == "credentialed_call")
         run_slot(context, first)
@@ -686,7 +919,7 @@ def check_partial_resume_does_not_duplicate_completed_calls() -> None:
             json.loads(line)
             for line in invocation_log.read_text(encoding="utf-8").splitlines()
         ]
-        executions = [call for call in calls if call["argv"][:2] == ["exec", "--json"]]
+        executions = [call for call in calls if _is_isolated_exec(call)]
         assert len(executions) == manifest["credentialed_call_count"]
         state = replay_run(run.run_dir)
         assert len(state["completed_slots"]) == len(manifest["slots"])
@@ -711,12 +944,14 @@ def check_concurrent_resume_is_rejected_without_duplicate_calls() -> None:
             "CPE_FAKE_INVOCATION_LOG": str(invocation_log),
             "CPE_FAKE_LIVE_DELAY_SECONDS": "0.05",
         }
-        manifest = compile_manifest(
-            ROOT,
-            "chatgpt_subscription",
-            "1" * 40,
-            "2026-07-11T00:00:00Z",
-            "public-concurrent",
+        manifest = _bind_reviewed_checkpoint(
+            compile_manifest(
+                ROOT,
+                "chatgpt_subscription",
+                "1" * 40,
+                "2026-07-11T00:00:00Z",
+                "public-concurrent",
+            )
         )
         run = create_run(tmp / "public-concurrent", manifest)
         command = [
@@ -763,7 +998,7 @@ def check_concurrent_resume_is_rejected_without_duplicate_calls() -> None:
             json.loads(line)
             for line in invocation_log.read_text(encoding="utf-8").splitlines()
         ]
-        executions = [call for call in calls if call["argv"][:2] == ["exec", "--json"]]
+        executions = [call for call in calls if _is_isolated_exec(call)]
         assert len(executions) == manifest["credentialed_call_count"]
 
 
@@ -803,6 +1038,7 @@ def check_resume_cannot_abandon_an_active_start() -> None:
                 str(ROOT / "fake_codex.py"),
                 "--slot-timeout-seconds",
                 "2",
+                *_checkpoint_arguments(),
             ],
             cwd=ROOT,
             env=env,
@@ -845,14 +1081,16 @@ def check_resume_cannot_abandon_an_active_start() -> None:
             json.loads(line)
             for line in invocation_log.read_text(encoding="utf-8").splitlines()
         ]
-        executions = [call for call in calls if call["argv"][:2] == ["exec", "--json"]]
+        executions = [call for call in calls if _is_isolated_exec(call)]
         assert len(executions) == 25
 
 
 def main() -> int:
+    check_fake_codex_launcher_modes()
     check_public_interfaces_and_prompt_isolation()
     check_dry_run_cli_contract()
     check_execution_root_boundaries()
+    check_start_checkpoint_binding_fails_closed()
     check_start_persists_authenticated_catalog_for_aggregation()
     check_preflight_and_execution()
     check_policy_rejection_does_not_launch()
@@ -868,4 +1106,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    reviewed_checkout_result = _run_from_clean_reviewed_checkout()
+    raise SystemExit(main() if reviewed_checkout_result is None else reviewed_checkout_result)

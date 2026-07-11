@@ -49,11 +49,7 @@ def _packet(prompt: dict[str, object]) -> tuple[Path, dict[str, object]]:
 
 
 def _validate_launcher_shape(argv: list[str]) -> None:
-    expected_prefix = (
-        ["exec", "--json"]
-        if "--ephemeral" in argv
-        else ["exec", "--ignore-user-config", "--json"]
-    )
+    expected_prefix = ["exec", "--ignore-user-config", "--json"]
     if argv[:len(expected_prefix)] != expected_prefix or argv[-1:] != ["-"]:
         raise SystemExit("fake codex rejected launcher shape")
 
