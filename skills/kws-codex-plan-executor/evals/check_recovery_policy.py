@@ -134,6 +134,7 @@ def main() -> int:
         ("task_review_changes_requested", "task_review:changes_requested"): "repair",
         ("verification_interrupted", "verification:interrupted"): "acceptance",
         ("verification_failed", "verification:failed"): "repair",
+        ("review_evidence_and_run_integrity", "scheduled_retry:repair"): "repair",
     }
     for (category, root), phase in matrix.items():
         decision = select_resume(blocked(category, root), report())

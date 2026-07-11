@@ -39,6 +39,7 @@ RESUME_PHASES = {
     "verification_interrupted": "acceptance",
     "verification_failed": "repair",
     "scope_policy_revalidated": "implementation",
+    "scheduled_repair_retry": "repair",
 }
 
 
@@ -89,6 +90,8 @@ def _resume_category(blocker: dict) -> str | None:
         return "task_review_changes_requested"
     if root.startswith("verification:"):
         return "verification_interrupted" if "interrupt" in root else "verification_failed"
+    if root == "scheduled_retry:repair":
+        return "scheduled_repair_retry"
     return None
 
 
