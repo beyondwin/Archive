@@ -8,6 +8,7 @@ import fcntl
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import uuid
@@ -46,6 +47,7 @@ INVOCATION_POLICY = {
     "execution_order": "sequential",
     "session_persistence": "new_thread_with_session_attestation",
     "slot_isolation": "fresh_fixture_copy",
+    "user_home_isolation": "run_local_auth_only_codex_home",
 }
 
 
@@ -260,7 +262,37 @@ def _dry_run(args: argparse.Namespace) -> dict[str, object]:
 def _child_env(codex_home: Path) -> dict[str, str]:
     child = {key: value for key, value in os.environ.items() if key not in API_KEY_ENV_NAMES}
     child["CODEX_HOME"] = str(codex_home)
+    child["PYTHONDONTWRITEBYTECODE"] = "1"
     return child
+
+
+def _run_codex_home(run: LiveRun, source_home: Path, *, create: bool) -> Path:
+    """Create or validate the auth-only Codex home owned by one live ledger."""
+
+    target = run.run_dir / "codex-home"
+    auth = target / "auth.json"
+    if create:
+        source_auth = source_home.expanduser().resolve() / "auth.json"
+        if not source_auth.is_file() or source_auth.is_symlink():
+            raise LiveRunnerError(
+                "subscription_auth_unavailable",
+                "ChatGPT subscription auth.json is required for the run-local Codex home",
+            )
+        target.mkdir(mode=0o700, exist_ok=False)
+        shutil.copyfile(source_auth, auth)
+        auth.chmod(0o600)
+    if (
+        not target.is_dir()
+        or target.is_symlink()
+        or not auth.is_file()
+        or auth.is_symlink()
+        or target.resolve().parent != run.run_dir.resolve()
+    ):
+        raise LiveRunnerError(
+            "run_codex_home_invalid",
+            "live execution requires its original auth-only run-local Codex home",
+        )
+    return target.resolve()
 
 
 def _preflight_codex(codex_binary: Path):
@@ -361,11 +393,12 @@ def _preflight_codex(codex_binary: Path):
 
 def _context(run: LiveRun, args: argparse.Namespace) -> RunContext:
     attestation = _preflight_codex(args.codex_bin)
+    run_home = _run_codex_home(run, attestation.codex_home, create=False)
     return RunContext(
         run=run,
         eval_dir=ROOT,
         codex=attestation,
-        child_env=_child_env(attestation.codex_home),
+        child_env=_child_env(run_home),
         slot_timeout_seconds=args.slot_timeout_seconds,
         retry_failed=bool(getattr(args, "retry_failed", False)),
     )
@@ -475,7 +508,8 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
         "implementation_patch_sha256": str(manifest["implementation_patch_sha256"]),
     })
     run = create_run(run_dir, manifest)
-    context = RunContext(run, ROOT, attestation, _child_env(attestation.codex_home), args.slot_timeout_seconds, False)
+    run_home = _run_codex_home(run, attestation.codex_home, create=True)
+    context = RunContext(run, ROOT, attestation, _child_env(run_home), args.slot_timeout_seconds, False)
     descriptor = _acquire_run_execution_lock(run_dir)
     try:
         return _execute(context, list(manifest["slots"]))
