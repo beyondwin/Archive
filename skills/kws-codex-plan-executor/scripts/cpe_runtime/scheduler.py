@@ -108,7 +108,7 @@ def make_packet_request(
         read_only=policy.read_only,
         verdict_capable=policy.verdict_capable,
         task_id=task_id,
-        packet_path=entry["path"],
+        packet_path=str((run_dir / entry["path"]).resolve()),
         packet_sha256=entry["sha256"],
         worktree_revision=int(state["worktree_revision"]),
     )

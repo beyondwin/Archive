@@ -18,13 +18,12 @@ def _value(argv: list[str], flag: str) -> str:
 
 
 def _packet(prompt: dict[str, object]) -> tuple[Path, dict[str, object]]:
-    relative = str(prompt.get("packet_path") or "")
+    declared = Path(str(prompt.get("packet_path") or "")).expanduser()
     expected = str(prompt.get("packet_sha256") or "")
-    home = Path(os.environ["CODEX_HOME"]).resolve()
-    matches = list((home / "orchestrator").glob(f"*/{relative}"))
-    if len(matches) != 1:
+    packet_root = (Path(os.environ["CODEX_HOME"]).resolve() / "orchestrator").resolve()
+    path = declared.resolve()
+    if not path.is_relative_to(packet_root) or not path.is_file():
         raise SystemExit("fake codex could not resolve one packet")
-    path = matches[0]
     raw = path.read_bytes()
     if hashlib.sha256(raw).hexdigest() != expected:
         raise SystemExit("fake codex rejected packet digest")
