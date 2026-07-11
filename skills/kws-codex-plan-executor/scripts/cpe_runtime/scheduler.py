@@ -897,6 +897,30 @@ def _latest_task_payload(kernel: Kernel, task_id: str, kind: str) -> dict | None
     return None
 
 
+def _latest_operator_decision(kernel: Kernel, task_id: str) -> dict | None:
+    for artifact in reversed(kernel.state.get("artifact_index", [])):
+        if artifact.get("task_id") != task_id or artifact.get("kind") != "operator_decision":
+            continue
+        ref = artifact.get("ref")
+        if not isinstance(ref, dict):
+            continue
+        try:
+            payload = json.loads(
+                (kernel.run_dir / str(ref["path"])).read_text(encoding="utf-8")
+            )
+        except (KeyError, OSError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(payload, dict)
+            and payload.get("kind") == "operator_decision"
+            and payload.get("task_id") == task_id
+            and payload.get("worktree_revision") == kernel.state.get("worktree_revision")
+            and payload.get("approved") is True
+        ):
+            return payload
+    return None
+
+
 def _worker_block_cycle(
     kernel: Kernel,
     task_id: str,
@@ -1016,12 +1040,20 @@ def run_task_cycle(task: dict, controller: AttemptController, kernel: Kernel) ->
                     task_id, "blocked", "task_review",
                     int(kernel.state["worktree_revision"]), "missing_evidence"
                 )
+            operator_decision = _latest_operator_decision(kernel, task_id)
+            operator_context = (
+                " User-approved operator decision evidence applies: "
+                + json.dumps(operator_decision, ensure_ascii=False, sort_keys=True)
+                if operator_decision is not None
+                else ""
+            )
             review, _, review_attempt = _worker_attempt(
                 controller,
                 kernel,
                 task,
                 "task_review",
-                f"Review task {task_id} against its packet, acceptance, and current diff.",
+                f"Review task {task_id} against its packet, acceptance, and current diff."
+                f"{operator_context}",
             )
             _semantic_verdict(kernel, task_id, review_attempt, "task_review", review)
             review_verdict = review.payload.get("verdict")
