@@ -155,8 +155,19 @@ def _evidence_provenance(
         expected_packet = packet_entry(manifest, task_id)["sha256"]
     except ValueError:
         return False
+    state_revision = state.get("worktree_revision")
+    payload_revision = payload.get("worktree_revision")
+    revisions_are_strict = (
+        isinstance(state_revision, int)
+        and not isinstance(state_revision, bool)
+        and state_revision >= 0
+        and isinstance(payload_revision, int)
+        and not isinstance(payload_revision, bool)
+        and payload_revision >= 0
+    )
     binding_ok = (
-        payload.get("worktree_revision") == state.get("worktree_revision")
+        revisions_are_strict
+        and payload_revision == state_revision
         and payload.get("worktree_patch_sha256") == state.get("worktree_patch_sha256")
         and payload.get("packet_sha256") == expected_packet
     )
@@ -165,11 +176,19 @@ def _evidence_provenance(
             return False
         prefix = f"{task_id}.acceptance."
         ordinal = attempt_id.removeprefix(prefix) if attempt_id.startswith(prefix) else ""
+        expected_ordinal = 1 + sum(
+            1
+            for artifact in state.get("artifact_index") or []
+            if isinstance(artifact, dict)
+            and artifact.get("task_id") == task_id
+            and artifact.get("kind") == "acceptance"
+        )
         return (
             bool(ordinal)
             and ordinal.isdigit()
             and int(ordinal) > 0
             and str(int(ordinal)) == ordinal
+            and int(ordinal) == expected_ordinal
             and binding_ok
         )
     if kind == "repository_check":
@@ -185,7 +204,8 @@ def _evidence_provenance(
             or str(int(revision)) != revision
             or str(int(ordinal)) != ordinal
             or int(ordinal) < 1
-            or int(revision) != state.get("worktree_revision")
+            or not revisions_are_strict
+            or int(revision) != state_revision
             or not binding_ok
         ):
             return False
