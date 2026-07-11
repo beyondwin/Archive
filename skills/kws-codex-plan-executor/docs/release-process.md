@@ -24,8 +24,9 @@ patch hygiene, current v3 baseline, and documentation contract pass after the
 integrity closure. It does not mean a credentialed model comparison ran.
 
 `paid-live-pending` means the approved live migration matrix has not produced a
-successful current report. Version `3.0.1` is deterministic-ready, but paid
-release closeout must not be claimed.
+successful current report. Version `3.0.1` is deterministic-ready and now
+contains the guarded subscription runner, but paid release closeout must not be
+claimed merely because that runner exists.
 
 Throughout integrity-closure Tasks 1-12, the exact active tuple is version
 `3.0.0`, status `integrity-closure-pending; paid-live-pending`, and
@@ -38,17 +39,35 @@ The completed deterministic closure publishes version `3.0.1`, status
 is backed by the current baseline and the structured L0-L4 evidence in the
 verification log; it makes no credentialed-provider claim.
 
-Paid closeout requires all of the following:
+Paid-live closeout requires all of the following:
 
-1. show four treatments, eight cases, and the `$50.00` hard cap;
-2. obtain explicit cost approval in the execution session;
-3. run `live_model_migration.py --confirm-live-cost --budget-usd 50`;
-4. preserve the report as external release evidence;
-5. confirm `release_gate.passed=true` without weakening thresholds;
-6. change release status only in a reviewed follow-up with a fresh verification
-   log entry.
+1. dry-run the exact four-treatment, eight-case manifest and confirm 32 slots,
+   25 credentialed calls, and seven expected policy failures;
+2. obtain explicit ChatGPT subscription-usage confirmation in the execution
+   session, use ChatGPT login, and reject API-key authentication;
+3. run `live_model_runner.py start --confirm-subscription-usage` from the exact
+   independently reviewed implementation, using a private evidence root outside
+   repository inputs;
+4. resolve all slots without any timeout, subscription-limit, malformed-output,
+   drift, attestation, or evidence blocker, using explicit resume/retry only;
+5. aggregate the immutable ledger with `live_model_migration.py
+   --billing-mode chatgpt_subscription --confirm-subscription-usage`;
+6. preserve the sanitized report as external release evidence and confirm it
+   includes every required manifest, fixture, oracle, prompt, model-catalog,
+   implementation, and result digest;
+7. confirm `release_gate.passed=true` without weakening thresholds;
+8. obtain independent review of both the implementation and sanitized report;
+9. change release status only in a reviewed follow-up with a fresh verification
+   log entry. That entry must state that ChatGPT subscription authentication was
+   used and direct USD cost was not observable.
 
-A dry run proves matrix shape and budget enforcement only.
+A dry run proves matrix shape and digest binding only. Account-side subscription
+or existing-credit attribution is outside the runner's observability, so the
+report must use `cost_usd=null` and `cost_observability=unavailable`.
+
+The legacy metered-dollar compatibility path remains bounded by the `$50.00`
+hard cap and explicit cost approval. Injected or metered evidence cannot
+substitute for the required ChatGPT subscription ledger in this closeout.
 
 ## Deterministic Checklist
 

@@ -18,10 +18,6 @@
     },
     {
       "exit_code": 0,
-      "name": "live_model_migration"
-    },
-    {
-      "exit_code": 0,
       "name": "superpowers_compatibility"
     },
     {
@@ -74,6 +70,30 @@
     },
     {
       "exit_code": 0,
+      "name": "maintained:check_live_matrix_compiler"
+    },
+    {
+      "exit_code": 0,
+      "name": "maintained:check_live_matrix_fixtures"
+    },
+    {
+      "exit_code": 0,
+      "name": "maintained:check_live_matrix_oracle"
+    },
+    {
+      "exit_code": 0,
+      "name": "maintained:check_live_matrix_ledger"
+    },
+    {
+      "exit_code": 0,
+      "name": "maintained:check_live_model_runner"
+    },
+    {
+      "exit_code": 0,
+      "name": "maintained:check_live_model_migration"
+    },
+    {
+      "exit_code": 0,
       "name": "maintained:check_cpe_replay"
     },
     {
@@ -123,6 +143,10 @@
     {
       "exit_code": 0,
       "name": "public_cli_integration"
+    },
+    {
+      "exit_code": 0,
+      "name": "subscription_live_matrix_dry_run"
     },
     {
       "exit_code": 0,

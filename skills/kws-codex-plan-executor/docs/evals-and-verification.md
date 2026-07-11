@@ -9,18 +9,6 @@ workspace sandbox may read that external evidence but cannot edit it.
 Full-tree scope checks continue to include ignored content, except untracked
 Python `__pycache__` directories, which repository policy classifies as
 machine-local runtime cache rather than product evidence.
-Root runtime literals such as `state.json` match only the repository root;
-nested fixture files with the same basename remain governed by their declared
-task glob.
-An integrity-valid scope blocker may be retried after the policy is corrected;
-resume still rejects it when current revision validation reports any remaining
-scope violation.
-Packet prompts also state the role-specific result contract: write roles emit
-`verdict=null`, while verdict-capable roles repeat the exact verdict findings
-and missing-evidence arrays at the top level for contradiction checks.
-Transient worker failures are recorded with their active role, including
-`task_review_interrupted`, so an integrity-valid blocked run can retry the
-exact read-only phase instead of being rejected as an unknown generic failure.
 
 Install the pinned eval dependency in an isolated environment, then run:
 
@@ -36,26 +24,67 @@ git diff --check
 The active deterministic suite exercises dependency reporting, fixed routing,
 override rejection, manifest/evidence integrity, event replay, execution,
 validation parity, reconciliation, safe repair, inspection, recent-run metrics,
-fault injection, migration planning, Superpowers capability checks, and release
-metadata. `evals/run.sh` reads the maintained eval inventory and executes every
+fault injection, exact live-matrix compilation, fixture/oracle/ledger integrity,
+guarded runner failure modes, migration aggregation, Superpowers capability
+checks, and release metadata. `evals/run.sh` reads the maintained eval inventory
+and executes every
 listed behavior check. Runtime cases invoke the public CLI in temporary Git
 repositories with a fake provider, then compare public state and exit behavior
 to an isolated oracle. The oracle may compute expectations but may not call the
 production scheduler, validator, projector, or repair implementation. A green
 deterministic run must not be described as paid live-model evidence.
 
-Release status for 3.0.0 is
-`integrity-closure-pending; paid-live-pending` with `release_ready=false`.
-Task 13 may move to deterministic readiness only after L0-L4, fresh Graphify,
-and clean tracked-tree evidence. The live matrix has four treatments and eight
-cases. It is opt-in, capped at `$50.00`, and requires the operator's explicit
-approval in the session that incurs cost:
+Version 3.0.1 currently publishes
+`deterministic-ready; paid-live-pending` with `release_ready=false`. The live
+matrix has four treatments and eight cases: exactly 25 credentialed calls and
+seven expected Terra policy failures. Dry-run compilation makes no provider
+calls:
+
+```bash
+python3 evals/live_model_runner.py dry-run \
+  --billing-mode chatgpt_subscription \
+  --output /tmp/cpe-v3-subscription-plan.json
+```
+
+After reviewing the plan, an operator may explicitly authorize subscription
+usage and choose an evidence root outside this repository:
+
+```bash
+python3 evals/live_model_runner.py start \
+  --billing-mode chatgpt_subscription \
+  --confirm-subscription-usage \
+  --evidence-root /absolute/private/evidence-root
+
+python3 evals/live_model_runner.py resume \
+  --confirm-subscription-usage \
+  --run-dir /absolute/private/evidence-root/RUN_ID
+```
+
+`start` requires the authenticated ChatGPT Codex binary, rejects API-key
+authentication, verifies the exact model catalog, and stops on timeout,
+subscription limit, malformed output, drift, or missing attestation. `resume`
+continues only unresolved slots; a failed slot additionally requires
+`--retry-failed`. Do not place the evidence root in the repository or fixture
+tree, and do not commit raw event streams or model output.
+
+Aggregate a completely resolved immutable ledger into a sanitized report:
 
 ```bash
 python3 evals/live_model_migration.py \
-  --confirm-live-cost --budget-usd 50 \
-  --output /tmp/cpe-v3-live-report.json
+  --billing-mode chatgpt_subscription \
+  --confirm-subscription-usage \
+  --run-dir /absolute/private/evidence-root/RUN_ID \
+  --output /absolute/private/cpe-v3-subscription-report.json
 ```
 
-Until that report exists and `release_gate.passed=true`, paid release closeout
-has not passed. A dry run proves matrix shape and budget enforcement only.
+The report must preserve the exact manifest/result set, all required input,
+prompt, implementation, model-catalog, and result digests, 25 credentialed
+calls, seven policy failures, and no unresolved timeout, rate-limit,
+malformed-output, or evidence blocker. Subscription billing is an external
+boundary, so a valid report states `cost_usd=null` and
+`cost_observability=unavailable` rather than inventing a direct USD cost.
+
+Until the checked-in aggregator reports `release_gate.passed=true` and an
+independent reviewer approves both the exact implementation and sanitized
+report, paid-live closeout has not passed. A dry run proves matrix shape and
+digest binding only. No command in this flow changes release metadata.

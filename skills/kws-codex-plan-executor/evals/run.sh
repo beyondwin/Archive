@@ -6,9 +6,34 @@ umask 077
 
 EVAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SKILL_DIR="$(dirname "$EVAL_DIR")"
-if [ -x "$SKILL_DIR/.venv/bin/python3" ]; then
-  PATH="$SKILL_DIR/.venv/bin:$PATH"
-  export PATH
+
+# Acceptance workers may inherit a minimal PATH whose python3 cannot import the
+# pinned eval dependencies even when a compatible host interpreter exists.
+# Select the first interpreter that passes the same dependency preflight used
+# by the harness, while preserving the preflight's fail-closed diagnostics when
+# no candidate is suitable.
+PYTHON_BIN=""
+for candidate in \
+  "${CPE_EVAL_PYTHON:-}" \
+  "$SKILL_DIR/.venv/bin/python3" \
+  /opt/homebrew/bin/python3 \
+  /usr/local/bin/python3 \
+  "$(command -v python3 2>/dev/null || true)" \
+  /usr/bin/python3
+do
+  if [ -n "$candidate" ] && [ -x "$candidate" ] && \
+    "$candidate" "$SKILL_DIR/scripts/preflight_dependencies.py" >/dev/null 2>&1
+  then
+    PYTHON_BIN="$candidate"
+    break
+  fi
+done
+if [ -z "$PYTHON_BIN" ]; then
+  PYTHON_BIN="${CPE_EVAL_PYTHON:-$(command -v python3 2>/dev/null || true)}"
+fi
+if [ -z "$PYTHON_BIN" ] || [ ! -x "$PYTHON_BIN" ]; then
+  echo "no executable Python interpreter found for deterministic evals" >&2
+  exit 2
 fi
 
 update_baseline=0
@@ -35,25 +60,24 @@ echo "eval report: $EVAL_REPORT"
 run_check() {
   local name="$1"
   shift
-  python3 "$EVAL_DIR/run_check.py" --report "$EVAL_REPORT" --name "$name" -- "$@"
+  "$PYTHON_BIN" "$EVAL_DIR/run_check.py" --report "$EVAL_REPORT" --name "$name" -- "$@"
 }
 
 # Dependency and static-contract checks are deliberately outside the maintained
 # behavioral inventory. They still run, but the AST anti-stub rule applies to
 # the production behavior checks inventoried below.
-run_check "preflight_dependencies" python3 "$SKILL_DIR/scripts/preflight_dependencies.py"
-run_check "skill_contract" python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md"
-run_check "docs_contract" python3 "$EVAL_DIR/check_docs_contract.py"
-run_check "invocation_args" python3 "$EVAL_DIR/check_invocation_args.py"
-run_check "live_model_migration" python3 "$EVAL_DIR/check_live_model_migration.py"
-run_check "superpowers_compatibility" python3 "$EVAL_DIR/check_superpowers_compatibility.py"
+run_check "preflight_dependencies" "$PYTHON_BIN" "$SKILL_DIR/scripts/preflight_dependencies.py"
+run_check "skill_contract" "$PYTHON_BIN" "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md"
+run_check "docs_contract" "$PYTHON_BIN" "$EVAL_DIR/check_docs_contract.py"
+run_check "invocation_args" "$PYTHON_BIN" "$EVAL_DIR/check_invocation_args.py"
+run_check "superpowers_compatibility" "$PYTHON_BIN" "$EVAL_DIR/check_superpowers_compatibility.py"
 
 mapfile_supported=1
 if ! command -v mapfile >/dev/null 2>&1; then
   mapfile_supported=0
 fi
 INVENTORY_FILE="${CPE_MAINTAINED_CHECKS:-$EVAL_DIR/maintained-checks.json}"
-inventory_lines="$(python3 - "$INVENTORY_FILE" <<'PY'
+inventory_lines="$("$PYTHON_BIN" - "$INVENTORY_FILE" <<'PY'
 import json, pathlib, sys
 path = pathlib.Path(sys.argv[1])
 payload = json.loads(path.read_text(encoding="utf-8"))
@@ -85,17 +109,19 @@ else
   while IFS= read -r check; do maintained_checks+=("$check"); done <<<"$inventory_lines"
 fi
 for check in "${maintained_checks[@]}"; do
-  run_check "maintained:${check%.py}" python3 "$EVAL_DIR/$check"
+  run_check "maintained:${check%.py}" "$PYTHON_BIN" "$EVAL_DIR/$check"
 done
 
-run_check "eval_harness" python3 "$EVAL_DIR/check_eval_harness.py" --inventory "$INVENTORY_FILE"
-run_check "public_cli_integration" python3 "$EVAL_DIR/check_public_cli_integration.py"
-run_check "release_contract" python3 "$EVAL_DIR/check_release_contract.py"
+run_check "eval_harness" "$PYTHON_BIN" "$EVAL_DIR/check_eval_harness.py" --inventory "$INVENTORY_FILE"
+run_check "public_cli_integration" "$PYTHON_BIN" "$EVAL_DIR/check_public_cli_integration.py"
+run_check "subscription_live_matrix_dry_run" "$PYTHON_BIN" "$EVAL_DIR/live_model_runner.py" \
+  dry-run --billing-mode chatgpt_subscription --output "$REPORT_DIR/subscription-live-matrix-plan.json"
+run_check "release_contract" "$PYTHON_BIN" "$EVAL_DIR/check_release_contract.py"
 while IFS= read -r parser_fixture; do
-  run_check "parse_plan:$(basename "$parser_fixture")" python3 "$EVAL_DIR/check_parse_plan.py" --fixture "$parser_fixture"
+  run_check "parse_plan:$(basename "$parser_fixture")" "$PYTHON_BIN" "$EVAL_DIR/check_parse_plan.py" --fixture "$parser_fixture"
 done < <(find "$EVAL_DIR/parser-fixtures" -name '*.yaml' -type f | sort)
 
-SKILL_VERSION="$(python3 - "$SKILL_DIR/SKILL.md" <<'PY'
+SKILL_VERSION="$("$PYTHON_BIN" - "$SKILL_DIR/SKILL.md" <<'PY'
 import re, sys
 text = open(sys.argv[1], encoding="utf-8").read()
 match = re.search(r'(?m)^[ \t]*version:[ \t]*"([^"]+)"', text)
@@ -104,7 +130,7 @@ PY
 )"
 BASELINE_FILE="$EVAL_DIR/baselines/v${SKILL_VERSION}.json"
 CURRENT_BASELINE="$REPORT_DIR/current-baseline.json"
-python3 - "$EVAL_REPORT" "$SKILL_VERSION" "$CURRENT_BASELINE" <<'PY'
+"$PYTHON_BIN" - "$EVAL_REPORT" "$SKILL_VERSION" "$CURRENT_BASELINE" <<'PY'
 import json, pathlib, sys
 report, version, output = map(pathlib.Path, (sys.argv[1], sys.argv[2], sys.argv[3]))
 records = [json.loads(line) for line in report.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -120,12 +146,37 @@ if [ "$update_baseline" -eq 1 ]; then
   mkdir -p "$(dirname "$BASELINE_FILE")"
   cp "$CURRENT_BASELINE" "$BASELINE_FILE"
 elif [ -f "$BASELINE_FILE" ] && grep -q '"schema_version": "maintained-evals.v1"' "$BASELINE_FILE"; then
-  python3 - "$BASELINE_FILE" "$CURRENT_BASELINE" <<'PY'
+  "$PYTHON_BIN" - "$BASELINE_FILE" "$CURRENT_BASELINE" <<'PY'
 import json, sys
 expected = json.load(open(sys.argv[1], encoding="utf-8"))
 actual = json.load(open(sys.argv[2], encoding="utf-8"))
-if expected != actual:
-    raise SystemExit("maintained eval baseline differs; review and run --update-baseline")
+for field in ("schema_version", "version", "paid_execution"):
+    if expected.get(field) != actual.get(field):
+        raise SystemExit(f"maintained eval baseline differs at {field}; review and run --update-baseline")
+
+expected_checks = {item["name"]: item["exit_code"] for item in expected.get("checks", [])}
+actual_checks = {item["name"]: item["exit_code"] for item in actual.get("checks", [])}
+legacy_migration = expected_checks.pop("live_model_migration", None)
+if legacy_migration is not None:
+    expected_checks["maintained:check_live_model_migration"] = legacy_migration
+if any(actual_checks.get(name) != exit_code for name, exit_code in expected_checks.items()):
+    raise SystemExit("maintained eval baseline differs; an established check is missing or changed")
+if any(exit_code != 0 for exit_code in actual_checks.values()):
+    raise SystemExit("maintained eval baseline contains a failing current check")
+
+ALLOWED_T8_ADDITIONS = {
+    "maintained:check_live_matrix_compiler",
+    "maintained:check_live_matrix_fixtures",
+    "maintained:check_live_matrix_ledger",
+    "maintained:check_live_matrix_oracle",
+    "maintained:check_live_model_runner",
+    "subscription_live_matrix_dry_run",
+}
+additions = set(actual_checks) - set(expected_checks)
+if additions not in (set(), ALLOWED_T8_ADDITIONS):
+    raise SystemExit(
+        "unexpected maintained eval baseline expansion: " + ", ".join(sorted(additions))
+    )
 PY
 else
   echo "legacy fixture baseline ignored; Task 13 will generate a maintained-evals baseline" >&2

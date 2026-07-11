@@ -77,3 +77,28 @@ typed verdicts, and the exact final completion record.
 
 V2 run directories are not migration inputs. Consumers read their schema marker,
 return `unsupported_schema`, and leave their bytes unchanged.
+
+## Subscription Live-Evidence Boundary
+
+The live migration runner under `evals/live_model_runner.py` is intentionally
+outside the seven plan-runtime owners. It compiles the checked-in treatments,
+case fixtures, hidden oracles, worker schema, and policy into one digest-bound
+32-slot manifest. Seven Terra-ineligible slots are recorded as expected policy
+failures without a provider call; the remaining 25 slots each launch one
+ephemeral, explicitly routed Codex turn in a fresh fixture worktree.
+
+`start` requires ChatGPT login, rejects API-key environment credentials, checks
+the exact model/reasoning catalog, strips API-key variables from child
+environments, and writes only to an operator-selected evidence root outside the
+repository and fixture inputs. Each slot records prompt, fixture, oracle,
+implementation, model-catalog, event, output, and result digests in an
+append-only ledger. Timeout, subscription-limit, malformed-output, source
+drift, oracle drift, or attestation failures block the run; `resume` never
+silently retries a failed slot and requires `--retry-failed` when applicable.
+
+`evals/live_model_migration.py` replays a completely resolved ledger and is the
+only checked-in aggregator for subscription results. The sanitized report keeps
+`cost_usd=null` and `cost_observability=unavailable` because the runner cannot
+observe which account-side subscription or existing-credit bucket was used.
+The runner and aggregator cannot change release metadata; a separate reviewed
+follow-up may do so only after `release_gate.passed=true`.

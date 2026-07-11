@@ -21,6 +21,7 @@ EVAL_DIR = Path(__file__).resolve().parent
 INVENTORY = EVAL_DIR / "maintained-checks.json"
 ORACLE = EVAL_DIR / "public-cli-oracles.json"
 RUNNER = EVAL_DIR / "public_cli_fixture_runner.py"
+HARNESS = EVAL_DIR / "run.sh"
 STATIC_RUNNERS = ("static_execution_runner.py", "static_prompt_runner.py")
 REQUIRED_MAINTAINED = frozenset({
     "check_cpe_replay.py",
@@ -30,6 +31,12 @@ REQUIRED_MAINTAINED = frozenset({
     "check_fault_injection.py",
     "check_headless_result.py",
     "check_inspect_runs.py",
+    "check_live_matrix_compiler.py",
+    "check_live_matrix_fixtures.py",
+    "check_live_matrix_ledger.py",
+    "check_live_matrix_oracle.py",
+    "check_live_model_migration.py",
+    "check_live_model_runner.py",
     "check_manifest_evidence.py",
     "check_model_policy.py",
     "check_operational_run_quality.py",
@@ -83,17 +90,30 @@ def _inventory_paths(path: Path) -> tuple[list[str], list[str]]:
     return paths, failures
 
 
-def _production_aliases(tree: ast.Module) -> set[str]:
+def _production_aliases(statements: list[ast.stmt]) -> set[str]:
+    """Return production bindings created directly in one execution scope."""
     aliases: set[str] = set()
-    for node in tree.body:
+    for node in statements:
         if isinstance(node, ast.ImportFrom) and node.module and (
-            node.module == "cpe" or node.module.startswith("cpe_runtime")
+            node.module == "cpe"
+            or node.module.startswith("cpe_runtime")
+            or node.module.startswith("live_migration")
+            or ".live_migration" in node.module
+            or node.module.endswith(("live_model_migration", "live_model_runner"))
         ):
             aliases.update(item.asname or item.name for item in node.names if item.name != "*")
         elif isinstance(node, ast.Import):
             for item in node.names:
-                if item.name == "cpe" or item.name.startswith("cpe_runtime"):
+                if (
+                    item.name == "cpe"
+                    or item.name.startswith("cpe_runtime")
+                    or item.name.startswith("live_migration")
+                    or ".live_migration" in item.name
+                    or item.name.endswith(("live_model_migration", "live_model_runner"))
+                ):
                     aliases.add(item.asname or item.name.split(".")[0])
+        if _statement_terminates(node):
+            break
     return aliases
 
 
@@ -106,6 +126,25 @@ def _constant_truth(node: ast.AST) -> bool | None:
             return None if nested is None else not nested
         return None
     return bool(value)
+
+
+def _statements_terminate(statements: list[ast.stmt]) -> bool:
+    return any(_statement_terminates(statement) for statement in statements)
+
+
+def _statement_terminates(node: ast.stmt) -> bool:
+    if isinstance(node, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+        return True
+    if isinstance(node, ast.If):
+        truth = _constant_truth(node.test)
+        if truth is True:
+            return _statements_terminate(node.body)
+        if truth is False:
+            return _statements_terminate(node.orelse)
+        return bool(node.body and node.orelse) and (
+            _statements_terminate(node.body) and _statements_terminate(node.orelse)
+        )
+    return False
 
 
 class _ExecutableCallVisitor(ast.NodeVisitor):
@@ -125,26 +164,146 @@ class _ExecutableCallVisitor(ast.NodeVisitor):
     def visit_Lambda(self, node: ast.Lambda) -> None:
         return
 
+    def visit_statements(self, statements: list[ast.stmt]) -> None:
+        for statement in statements:
+            self.visit(statement)
+            if _statement_terminates(statement):
+                break
+
     def visit_If(self, node: ast.If) -> None:
         self.visit(node.test)
         truth = _constant_truth(node.test)
-        selected = node.body if truth is True else node.orelse if truth is False else [*node.body, *node.orelse]
-        for child in selected:
-            self.visit(child)
+        if truth is None:
+            self.visit_statements(node.body)
+            self.visit_statements(node.orelse)
+            return
+        self.visit_statements(node.body if truth else node.orelse)
 
     def visit_While(self, node: ast.While) -> None:
         self.visit(node.test)
         truth = _constant_truth(node.test)
         selected = node.orelse if truth is False else [*node.body, *node.orelse]
-        for child in selected:
-            self.visit(child)
+        self.visit_statements(selected)
+
+
+def _entrypoint_truth(node: ast.AST) -> bool | None:
+    if (
+        isinstance(node, ast.Compare)
+        and isinstance(node.left, ast.Name)
+        and node.left.id == "__name__"
+        and len(node.ops) == 1
+        and len(node.comparators) == 1
+        and isinstance(node.comparators[0], ast.Constant)
+        and node.comparators[0].value == "__main__"
+    ):
+        if isinstance(node.ops[0], ast.Eq):
+            return True
+        if isinstance(node.ops[0], ast.NotEq):
+            return False
+    return _constant_truth(node)
+
+
+class _GuaranteedEntrypointCallVisitor(_ExecutableCallVisitor):
+    """Collect calls only from branches proven to run for script execution."""
+
+    def visit_If(self, node: ast.If) -> None:
+        self.visit(node.test)
+        truth = _entrypoint_truth(node.test)
+        if truth is None:
+            return
+        self.visit_statements(node.body if truth else node.orelse)
+
+    def visit_While(self, node: ast.While) -> None:
+        self.visit(node.test)
+        truth = _entrypoint_truth(node.test)
+        if truth is False:
+            self.visit_statements(node.orelse)
+
+
+def _entrypoint_calls(tree: ast.Module) -> list[ast.Call]:
+    definitions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    visitor = _GuaranteedEntrypointCallVisitor()
+    visitor.visit_statements(tree.body)
+    calls = list(visitor.calls)
+    pending = [
+        call.func.id
+        for call in calls
+        if isinstance(call.func, ast.Name) and call.func.id in definitions
+    ]
+    seen: set[str] = set()
+    while pending:
+        name = pending.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        function_visitor = _GuaranteedEntrypointCallVisitor()
+        function_visitor.visit_statements(definitions[name].body)
+        calls.extend(function_visitor.calls)
+        pending.extend(
+            call.func.id
+            for call in function_visitor.calls
+            if isinstance(call.func, ast.Name)
+            and call.func.id in definitions
+            and call.func.id not in seen
+        )
+    return calls
 
 
 def _executable_calls(function: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.Call]:
     visitor = _ExecutableCallVisitor()
-    for statement in function.body:
-        visitor.visit(statement)
+    visitor.visit_statements(function.body)
     return visitor.calls
+
+
+def _discoverable_test_methods(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
+    module_aliases = {"unittest": "unittest", "pytest": "pytest"}
+    testcase_aliases = {"TestCase"}
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for item in node.names:
+                if item.name in {"unittest", "pytest"}:
+                    module_aliases[item.asname or item.name] = item.name
+        elif isinstance(node, ast.ImportFrom) and node.module == "unittest":
+            for item in node.names:
+                if item.name == "TestCase":
+                    testcase_aliases.add(item.asname or item.name)
+
+    runner_kinds: set[str] = set()
+    for call in _entrypoint_calls(tree):
+        if not isinstance(call.func, ast.Attribute) or call.func.attr != "main":
+            continue
+        if isinstance(call.func.value, ast.Name):
+            runner = module_aliases.get(call.func.value.id)
+            if runner:
+                runner_kinds.add(runner)
+
+    methods: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        unittest_case = "unittest" in runner_kinds and any(
+            (isinstance(base, ast.Name) and base.id in testcase_aliases)
+            or (
+                isinstance(base, ast.Attribute)
+                and base.attr == "TestCase"
+                and isinstance(base.value, ast.Name)
+                and module_aliases.get(base.value.id) == "unittest"
+            )
+            for base in node.bases
+        )
+        pytest_case = "pytest" in runner_kinds and node.name.startswith("Test")
+        if unittest_case or pytest_case:
+            methods.extend(
+                method
+                for method in node.body
+                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and method.name.startswith("test_")
+            )
+    return methods
 
 
 def _reachable_functions(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
@@ -155,7 +314,7 @@ def _reachable_functions(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFu
     }
     pending = ["main"]
     seen: set[str] = set()
-    reachable: list[ast.FunctionDef | ast.AsyncFunctionDef] = []
+    reachable = _discoverable_test_methods(tree)
     while pending:
         name = pending.pop()
         if name in seen or name not in definitions:
@@ -173,7 +332,7 @@ def _production_backed(tree: ast.Module) -> bool:
     reachable = _reachable_functions(tree)
     if not reachable:
         return False
-    aliases = _production_aliases(tree)
+    module_aliases = _production_aliases(tree.body)
     assignments = {
         target.id: ast.unparse(node.value)
         for node in tree.body
@@ -183,6 +342,7 @@ def _production_backed(tree: ast.Module) -> bool:
         if isinstance(target, ast.Name)
     }
     for function in reachable:
+        aliases = module_aliases | _production_aliases(function.body)
         for node in _executable_calls(function):
             if isinstance(node.func, ast.Name) and node.func.id in aliases:
                 return True
@@ -442,9 +602,45 @@ def main() -> int:
         "def exercise():\n    return validate_run(None)\n"
         "def main():\n    exercise()\n    return 0\n"
     )
+    unused_decoy_test = ast.parse(
+        "from cpe_runtime.validation import validate_run\n"
+        "class DecoyTests:\n"
+        "    def test_production(self):\n        validate_run(None)\n"
+        "def main():\n    print('{\"passed\": true}')\n    return 0\n"
+    )
+    environment_gated_unittest = ast.parse(
+        "import os\n"
+        "import unittest\n"
+        "from cpe_runtime.validation import validate_run\n"
+        "class ProductionTests(unittest.TestCase):\n"
+        "    def test_production(self):\n        validate_run(None)\n"
+        "if os.environ.get('RUN_TESTS'):\n    unittest.main()\n"
+    )
+    dead_scope_import = ast.parse(
+        "def decoy():\n"
+        "    from cpe_runtime.validation import validate_run\n"
+        "def main():\n"
+        "    try:\n        validate_run(None)\n"
+        "    except NameError:\n        pass\n"
+        "    return 0\n"
+    )
+    post_return_import = ast.parse(
+        "def main():\n"
+        "    try:\n        validate_run(None)\n"
+        "    except NameError:\n        pass\n"
+        "    return 0\n"
+        "    from cpe_runtime.validation import validate_run\n"
+    )
+    reachable_alternate_branch = ast.parse(
+        "from cpe_runtime.validation import validate_run\n"
+        "def main():\n"
+        "    if runtime_condition():\n        return 0\n"
+        "    else:\n        validate_run(None)\n"
+    )
     guard_checks, trace = _oracle_guard_checks()
     inventory_payload = json.loads(args.inventory.read_text(encoding="utf-8"))
     mutation_checks = _inventory_mutation_checks(inventory_payload)
+    harness_text = HARNESS.read_text(encoding="utf-8")
     checks = {
         "required_inventory_exact": set(paths) == REQUIRED_MAINTAINED,
         "unique_inventory": len(paths) == len(set(paths)),
@@ -454,12 +650,40 @@ def main() -> int:
         "assigned_production_reference_rejected": not _production_backed(assigned_import),
         "dead_branch_production_call_rejected": not _production_backed(dead_call),
         "reachable_helper_production_call_accepted": _production_backed(helper_call),
+        "unexecuted_decoy_test_method_rejected": not _production_backed(unused_decoy_test),
+        "environment_gated_unittest_runner_rejected": not _production_backed(environment_gated_unittest),
+        "dead_scope_production_import_rejected": not _production_backed(dead_scope_import),
+        "post_return_production_import_rejected": not _production_backed(post_return_import),
+        "reachable_alternate_branch_accepted": _production_backed(reachable_alternate_branch),
         "runner_source_has_no_oracle_reference": "oracle" not in RUNNER.read_text(encoding="utf-8").lower()
         and "check_public_cli_integration" not in RUNNER.read_text(encoding="utf-8"),
         "static_runners_removed": not any("static runner" in item for item in failures),
         "oracle_isolated": ORACLE.resolve() not in trace.opened,
         "oracle_guard_executed_full_runner": trace.results_written,
         "runner_invoked_public_subprocesses": bool(trace.subprocess_argv),
+        "subscription_dry_run_wired": all(
+            token in harness_text
+            for token in (
+                "live_model_runner.py",
+                "dry-run",
+                "--billing-mode",
+                "chatgpt_subscription",
+                "--output",
+            )
+        ),
+        "pending_baseline_expansion_bounded": all(
+            token in harness_text
+            for token in (
+                "ALLOWED_T8_ADDITIONS",
+                "maintained:check_live_matrix_compiler",
+                "maintained:check_live_matrix_fixtures",
+                "maintained:check_live_matrix_ledger",
+                "maintained:check_live_matrix_oracle",
+                "maintained:check_live_model_runner",
+                "subscription_live_matrix_dry_run",
+                "unexpected maintained eval baseline expansion",
+            )
+        ),
         **guard_checks,
         **mutation_checks,
     }

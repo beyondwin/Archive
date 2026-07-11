@@ -2,13 +2,26 @@
 
 - Published evidence state is **deterministic-ready; paid-live-pending**. Audited
   deterministic integrity gaps are closed by the current cost-free suite. The
-  credentialed four-treatment, eight-case migration matrix has not run. No live
-  quality, regression, or context-reduction release claim is approved yet, and
-  `release_ready=false` remains required.
+  guarded four-treatment, eight-case subscription runner is checked in, but the
+  credentialed matrix has not run. No live quality, regression, or
+  context-reduction release claim is approved yet, and `release_ready=false`
+  remains required.
 - The v3 deterministic harness uses a maintained inventory, public CLI fixture
   repositories, fake providers, and an isolated oracle. This covers behavior,
-  not real provider quality, latency, or cost; those remain with the pending
-  paid live matrix.
+  not real provider quality or latency; those remain with the pending live
+  matrix.
+- The live runner can verify ChatGPT login and remove API-key credentials from
+  child environments, but it cannot prove which account-side subscription or
+  existing-credit bucket a call consumed. Subscription reports therefore keep
+  `cost_usd=null` and `cost_observability=unavailable`; operators must inspect
+  account billing settings independently.
+- A timeout, subscription limit, malformed result, missing digest, source or
+  oracle drift, unavailable exact model route, or incomplete slot ledger blocks
+  aggregation. Resume is explicit, and failed slots are not retried without
+  `--retry-failed`.
+- Live evidence is stored outside the repository and is not a release claim by
+  itself. The exact implementation and sanitized report require independent
+  review before a follow-up may change version, status, or `release_ready`.
 - V2 runs cannot resume or migrate. Consumers preserve them and return
   `unsupported_schema`; operators must start a new v3 run.
 - Sol/high unavailability or missing actual-model attestation blocks core work;
