@@ -1,0 +1,13 @@
+{
+  "schema_version": "1",
+  "oracles": {
+    "successful_public_run": {"exit_code": 0, "status": "success", "changed_files": ["result.txt"]},
+    "task_review_interruption_fails_closed": {"exit_code": 1, "status": "blocked", "changed_files": ["result.txt"]},
+    "verification_interruption_fails_closed": {"exit_code": 1, "status": "blocked", "changed_files": ["result.txt"]},
+    "final_review_interruption_fails_closed": {"exit_code": 1, "status": "blocked", "changed_files": ["result.txt"]},
+    "missing_files_preflight": {"exit_code": 1, "status": "blocked", "changed_files": []},
+    "packet_mutation_fails_closed": {"exit_code": 2, "status": "failed", "changed_files": ["result.txt"]},
+    "invalid_provider_result_fails_closed": {"exit_code": 1, "status": "blocked", "changed_files": []},
+    "collision_safe_export": {"exit_code": 0, "status": "exported", "changed_files": []}
+  }
+}
