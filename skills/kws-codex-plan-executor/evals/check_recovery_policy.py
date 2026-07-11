@@ -16,6 +16,7 @@ from cpe_runtime.git_delta import capture_snapshot, diff_snapshots
 from cpe_runtime.kernel import RunKernel, Transition
 from cpe_runtime.manifest import create_manifest, load_verified_manifest
 from cpe_runtime.model_policy import CORE_ROUTE, SCOUT_ROUTE
+from cpe_runtime.operator_decisions import approved_cleanup_claims, approved_scope_claims
 from cpe_runtime.packets import build_packet, packet_entry
 from cpe_runtime.reconciliation import ResumeDecision, select_resume
 from cpe_runtime.validation import ValidationReport
@@ -178,6 +179,16 @@ def main() -> int:
     unindexed["artifact_index"] = []
     assert select_resume(unindexed, report()).action == "reject"
 
+    queued = blocked("verification_failed", "verification:failed")
+    queued["active_blockers"] = []
+    queued["lifecycle"] = "ready"
+    queued["current_task"] = "T1"
+    queued["tasks"]["T1"]["status"] = "implementing"
+    queued_ref = queued["artifact_index"][0]["ref"]
+    queued["retry_queue"] = [{"task_id": "T1", "phase": "implementation", "evidence_refs": [queued_ref]}]
+    queued_decision = select_resume(queued, report())
+    assert queued_decision.action == "continue" and queued_decision.phase == "implementation"
+
     with tempfile.TemporaryDirectory(prefix="cpe-operator-repair-") as raw:
         run_id, run_dir = interrupted_run(Path(raw))
         from cpe_runtime.kernel import Kernel
@@ -195,6 +206,19 @@ def main() -> int:
         blocker = {"root_cause_key": "dependency:stale_contract"}
         assert _approved_dependency_repair_owner(kernel, "T1", blocker, ["T0"]) == "T0"
         assert _approved_dependency_repair_owner(kernel, "T1", {"root_cause_key": "other"}, ["T0"]) is None
+        scope_payload = {
+            "kind": "operator_decision",
+            "approved": True,
+            "scope_override_for_next_revision": True,
+            "task_id": "T1",
+            "worktree_revision": kernel.state["worktree_revision"],
+            "additional_file_claims": ["future-owned.txt"],
+        }
+        scope_ref = put_json(run_dir, "operator_decision", scope_payload).as_dict()
+        kernel.transition(Transition("evidence.attached", {"kind": "operator_decision", "ref": scope_ref}, task_id="T1"))
+        assert approved_scope_claims(run_dir, kernel.state, "T1", kernel.state["worktree_revision"]) == ["future-owned.txt"]
+        assert approved_cleanup_claims(run_dir, kernel.state, "T1", kernel.state["worktree_revision"]) == []
+        assert approved_scope_claims(run_dir, kernel.state, "T1", kernel.state["worktree_revision"] + 1) == []
 
     with tempfile.TemporaryDirectory(prefix="cpe-resume-") as raw:
         run_id, run_dir = interrupted_run(Path(raw))

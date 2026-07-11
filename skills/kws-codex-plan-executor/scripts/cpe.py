@@ -667,12 +667,15 @@ def resume_run(run_id: str, worker: Worker | None = None) -> int:
             run_id=run_id,
             state_path=str(run_dir / "state.json"),
         ))
-    if decision.action != "retry" or decision.phase is None:
+    if decision.action not in {"retry", "continue"} or decision.phase is None:
         return _structured_resume_failure(run_id, "resume_state_invalid")
 
     refs = [dict(ref) for ref in decision.evidence_refs]
     blocker_id = decision.blocker_id
-    if blocker_id is not None:
+    queued_continuation = decision.action == "continue"
+    if queued_continuation:
+        task_id = str(state.get("current_task") or "")
+    elif blocker_id is not None:
         blocker = next(item for item in state["active_blockers"] if item.get("blocker_id") == blocker_id)
         task_id = str(blocker["task_id"])
     else:
@@ -703,25 +706,26 @@ def resume_run(run_id: str, worker: Worker | None = None) -> int:
             refs,
         )
 
-    resolved = apply_repair(
-        run_dir,
-        "resolve_blocker",
-        details={"blocker_id": blocker_id, "evidence_refs": refs},
-    )
-    if not resolved["applied"]:
-        return _structured_resume_failure(run_id, "repair_delta_not_observed")
-    scheduled = apply_repair(
-        run_dir,
-        "schedule_retry",
-        details={
-            "task_id": task_id,
-            "phase": decision.phase,
-            "root_cause_key": f"resume:{decision.phase}",
-            "evidence_refs": refs,
-        },
-    )
-    if not scheduled["applied"]:
-        return _structured_resume_failure(run_id, "repair_delta_not_observed")
+    if not queued_continuation:
+        resolved = apply_repair(
+            run_dir,
+            "resolve_blocker",
+            details={"blocker_id": blocker_id, "evidence_refs": refs},
+        )
+        if not resolved["applied"]:
+            return _structured_resume_failure(run_id, "repair_delta_not_observed")
+        scheduled = apply_repair(
+            run_dir,
+            "schedule_retry",
+            details={
+                "task_id": task_id,
+                "phase": decision.phase,
+                "root_cause_key": f"resume:{decision.phase}",
+                "evidence_refs": refs,
+            },
+        )
+        if not scheduled["applied"]:
+            return _structured_resume_failure(run_id, "repair_delta_not_observed")
     if kernel.state["lifecycle"] == "blocked":
         kernel.transition(Transition("run.status_changed", {"from": "blocked", "to": "ready", "reason": "evidence-backed resume"}))
     try:
