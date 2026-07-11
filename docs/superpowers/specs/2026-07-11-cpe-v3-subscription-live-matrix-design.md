@@ -182,7 +182,10 @@ Homebrew shim cannot select a different binary. Before execution it verifies:
   live run.
 
 Each credentialed slot receives a fresh copied fixture repository and isolated
-Codex home/session directory. The runner invokes one model turn with the
+output/evidence directory. The runner uses the already attested ChatGPT
+`CODEX_HOME` because an empty home is unauthenticated; it never copies auth
+material into a slot. Every invocation uses `--ephemeral` so the live matrix
+does not persist a Codex session. The runner invokes one model turn with the
 treatment's exact prompt prefix plus the case task, requests the checked output
 schema, and captures JSONL events. It sets a per-slot timeout, terminates the
 process group on timeout, and never silently retries a completed call.
@@ -259,6 +262,8 @@ The runner supports two distinct accounting modes:
 
 - requires ChatGPT login attestation;
 - rejects API-key authentication;
+- reuses the attested `CODEX_HOME` only for authentication and runs every turn
+  with `--ephemeral`;
 - does not require or enforce `--budget-usd`;
 - records input, cached-input, and output tokens from Codex events;
 - records `cost_usd=null` and `cost_observability=unavailable`;
@@ -374,17 +379,18 @@ Implementation must add cost-free tests for:
 1. exact 25-call and seven-policy-outcome compilation;
 2. fixture and oracle digest validation;
 3. API-key and wrong-auth rejection;
-4. ChatGPT subscription mode without a dollar estimate;
-5. metered mode retaining the `$50` fail-closed boundary;
-6. subprocess timeout and process-group termination;
-7. partial-run replay and resume without duplicate calls;
-8. corrupted, duplicate, missing, and stale slot evidence;
-9. hidden-oracle and prompt-isolation enforcement;
-10. deterministic success and failure scoring for every fixture;
-11. `cost_usd=null` acceptance only for attested subscription evidence;
-12. release rejection for incomplete or synthetic evidence;
-13. sanitized report digest binding to the current implementation commit;
-14. unchanged quality thresholds and paid-pending behavior before a passing
+4. authenticated-home reuse, empty-home rejection, and ephemeral execution;
+5. ChatGPT subscription mode without a dollar estimate;
+6. metered mode retaining the `$50` fail-closed boundary;
+7. subprocess timeout and process-group termination;
+8. partial-run replay and resume without duplicate calls;
+9. corrupted, duplicate, missing, and stale slot evidence;
+10. hidden-oracle and prompt-isolation enforcement;
+11. deterministic success and failure scoring for every fixture;
+12. `cost_usd=null` acceptance only for attested subscription evidence;
+13. release rejection for incomplete or synthetic evidence;
+14. sanitized report digest binding to the current implementation commit;
+15. unchanged quality thresholds and paid-pending behavior before a passing
     live report.
 
 The full closeout verification remains:
