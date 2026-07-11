@@ -141,6 +141,27 @@ class OracleContractTests(unittest.TestCase):
         self.assertFalse(schema["additionalProperties"])
         self.assertEqual(set(schema["required"]), OUTPUT_FIELDS)
         self.assertEqual(set(schema["properties"]), OUTPUT_FIELDS)
+        for field in ("finding_ids", "fact_ids", "block_ids", "changed_files"):
+            with self.subTest(field=field):
+                self.assertNotIn("uniqueItems", schema["properties"][field])
+
+    def test_runtime_rejects_duplicate_worker_result_values(self) -> None:
+        duplicate_values = {
+            "finding_ids": ["finding.one", "finding.one"],
+            "fact_ids": ["fact.one", "fact.one"],
+            "block_ids": ["block.one", "block.one"],
+            "changed_files": ["src/example.py", "src/example.py"],
+        }
+        for field, values in duplicate_values.items():
+            with self.subTest(field=field):
+                with self.assertRaisesRegex(OracleInputError, rf"^{field} contains duplicates$"):
+                    evaluate_slot(
+                        self.slot(),
+                        self.fixture,
+                        self.process(),
+                        self.output(**{field: values}),
+                        self.events(),
+                    )
 
     def test_subscription_result_uses_trusted_evidence_and_v2_shape(self) -> None:
         result = evaluate_slot(self.slot(), self.fixture, self.process(), self.output(), self.events())
