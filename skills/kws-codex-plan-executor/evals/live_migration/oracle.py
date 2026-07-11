@@ -211,11 +211,13 @@ def _event_attestation(
 ) -> tuple[bool, bool]:
     if not isinstance(events, list) or not all(isinstance(event, dict) for event in events):
         raise OracleInputError("events must be a list of objects")
-    model_events = [event for event in events if event.get("type") == "thread.started"]
+    model_events = [event for event in events if event.get("type") == "model.attested"]
     model_attested = (
         len(model_events) == 1
         and model_events[0].get("model") == slot.get("model") == process.model
         and model_events[0].get("reasoning_effort") == slot.get("reasoning") == process.reasoning_effort
+        and model_events[0].get("source") == "codex_session_jsonl"
+        and bool(_HEX_64.fullmatch(str(model_events[0].get("session_sha256") or "")))
     )
     usage_events = [event for event in events if event.get("type") == "turn.completed"]
     usage_totals = [0, 0, 0]
