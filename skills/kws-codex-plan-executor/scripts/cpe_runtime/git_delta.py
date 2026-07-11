@@ -406,7 +406,7 @@ def diff_snapshots(before: GitSnapshot, after: GitSnapshot, worktree: Path) -> G
     )
 
 
-def _matches(path: str, patterns: list[str] | tuple[str, ...]) -> bool:
+def matches_path(path: str, patterns: list[str] | tuple[str, ...]) -> bool:
     candidate = PurePosixPath(path)
     for pattern in patterns:
         if path == pattern:
@@ -433,11 +433,11 @@ def scope_errors(
     allowed: list[str] | tuple[str, ...],
     forbidden: list[str] | tuple[str, ...],
 ) -> list[str]:
-    forbidden_paths = sorted(path for path in delta.changed_files if _matches(path, forbidden))
+    forbidden_paths = sorted(path for path in delta.changed_files if matches_path(path, forbidden))
     allowed_descendants = [
         path
         for path in delta.changed_files
-        if path not in forbidden_paths and _matches(path, allowed)
+        if path not in forbidden_paths and matches_path(path, allowed)
     ]
     structural_ancestors = {
         directory
@@ -450,7 +450,7 @@ def scope_errors(
         for path in delta.changed_files
         if path not in forbidden_paths
         and path not in structural_ancestors
-        and not _matches(path, allowed)
+        and not matches_path(path, allowed)
     )
     errors = [f"forbidden_write:{path}" for path in forbidden_paths]
     errors.extend(f"unclaimed_write:{path}" for path in unclaimed_paths)
