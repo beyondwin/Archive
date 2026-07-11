@@ -176,6 +176,36 @@ def main() -> int:
             "worktree_patch_sha256": None,
             "packet_sha256": packet_sha,
         }
+        for malformed_id, malformed_binding in (
+            ("T1.acceptance.2", binding),
+            ("T1.acceptance.0", binding),
+            ("T1.acceptance.01", binding),
+            ("T1.acceptance.1", {**binding, "worktree_revision": False}),
+        ):
+            malformed_ref = put_json(
+                run_dir,
+                "acceptance",
+                {
+                    "kind": "acceptance",
+                    "task_id": "T1",
+                    "attempt_id": malformed_id,
+                    "status": "passed",
+                    "passed": True,
+                    "findings": [],
+                    "missing_evidence": [],
+                    "probe": str(malformed_binding["worktree_revision"]) + malformed_id,
+                    **malformed_binding,
+                },
+            ).as_dict()
+            before_malformed = read_events(run_dir / "events.jsonl")
+            malformed = apply_repair(
+                run_dir,
+                "reconnect_existing_evidence",
+                details={"task_id": "T1", "attempt_id": malformed_id, "ref": malformed_ref},
+            )
+            assert malformed["applied"] is False, malformed
+            assert read_events(run_dir / "events.jsonl") == before_malformed, "invalid acceptance ordinal mutated events"
+
         acceptance_id = "T1.acceptance.1"
         acceptance_ref = put_json(
             run_dir,
@@ -197,6 +227,53 @@ def main() -> int:
             details={"task_id": "T1", "attempt_id": acceptance_id, "ref": acceptance_ref},
         )
         assert acceptance["applied"] is True and acceptance["validation"]["passed"] is True, acceptance
+
+        duplicate_ordinal_ref = put_json(
+            run_dir,
+            "acceptance",
+            {
+                "kind": "acceptance",
+                "task_id": "T1",
+                "attempt_id": acceptance_id,
+                "status": "passed",
+                "passed": True,
+                "findings": [],
+                "missing_evidence": [],
+                "probe": "duplicate ordinal",
+                **binding,
+            },
+        ).as_dict()
+        before_duplicate_ordinal = read_events(run_dir / "events.jsonl")
+        duplicate_ordinal = apply_repair(
+            run_dir,
+            "reconnect_existing_evidence",
+            details={"task_id": "T1", "attempt_id": acceptance_id, "ref": duplicate_ordinal_ref},
+        )
+        assert duplicate_ordinal["applied"] is False, duplicate_ordinal
+        assert read_events(run_dir / "events.jsonl") == before_duplicate_ordinal, "reused acceptance ordinal mutated events"
+
+        bool_repository_ref = put_json(
+            run_dir,
+            "repository_check",
+            {
+                "kind": "repository_check",
+                "task_id": "T1",
+                "attempt_id": "run.repository_checks.0.1",
+                "status": "passed",
+                "passed": True,
+                "findings": [],
+                "missing_evidence": [],
+                **{**binding, "worktree_revision": False},
+            },
+        ).as_dict()
+        before_bool_repository = read_events(run_dir / "events.jsonl")
+        bool_repository = apply_repair(
+            run_dir,
+            "reconnect_existing_evidence",
+            details={"task_id": "T1", "attempt_id": "run.repository_checks.0.1", "ref": bool_repository_ref},
+        )
+        assert bool_repository["applied"] is False, bool_repository
+        assert read_events(run_dir / "events.jsonl") == before_bool_repository, "boolean repository revision mutated events"
 
         repository_id = "run.repository_checks.0.1"
         repository_ref = put_json(
@@ -252,7 +329,7 @@ def main() -> int:
             assert malformed["applied"] is False, malformed
             assert read_events(run_dir / "events.jsonl") == before_malformed, "malformed synthetic evidence mutated events"
 
-    print('{"passed": true, "checks": {"run_dir_adapter": true, "no_op_false": true, "delta_required": true, "wrong_delta_no_mutation": true, "stale_attempt_evidence": true, "invalid_reconnect_rejected": true, "reconnect_provenance": true, "ambiguous_digest_rejected": true, "synthetic_acceptance_reconnected": true, "synthetic_repository_check_reconnected": true, "malformed_synthetic_rejected": true}}')
+    print('{"passed": true, "checks": {"run_dir_adapter": true, "no_op_false": true, "delta_required": true, "wrong_delta_no_mutation": true, "stale_attempt_evidence": true, "invalid_reconnect_rejected": true, "reconnect_provenance": true, "ambiguous_digest_rejected": true, "synthetic_acceptance_reconnected": true, "synthetic_repository_check_reconnected": true, "strict_synthetic_ordinals": true, "boolean_revision_rejected": true, "malformed_synthetic_rejected": true}}')
     return 0
 
 
