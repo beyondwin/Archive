@@ -8,6 +8,8 @@ import os
 import subprocess
 import sys
 import tempfile
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -19,12 +21,21 @@ from cpe_runtime.kernel import Kernel, RunKernel, Transition
 from cpe_runtime.manifest import create_manifest
 from cpe_runtime.packets import build_packet
 from cpe_runtime.public_result import PublicResult, blocked_result, failed_result
+import cpe as public_cpe
 
 
 def _schema_errors(value: object, schema: dict, path: str = "$") -> list[str]:
     """Interpret the tracked schema subset without an undeclared dependency."""
 
     errors: list[str] = []
+    if isinstance(schema.get("not"), dict) and not _schema_errors(value, schema["not"], path):
+        errors.append(f"{path}:not")
+    any_of = schema.get("anyOf")
+    if isinstance(any_of, list) and not any(
+        isinstance(item, dict) and not _schema_errors(value, item, path)
+        for item in any_of
+    ):
+        errors.append(f"{path}:anyOf")
     expected = schema.get("type")
     allowed = expected if isinstance(expected, list) else [expected] if expected else []
     type_ok = {
@@ -209,6 +220,71 @@ def _initialization_failure_subprocess(root: Path) -> tuple[subprocess.Completed
     return result, repo
 
 
+def _mutation_hook_execution(root: Path) -> bool:
+    repo, _ = _repo(root)
+    (repo / "target.txt").write_text("target\n", encoding="utf-8")
+    plan = repo / "plan.md"
+    original_bytes = (
+        "# Fixture Plan\n\n"
+        "> REQUIRED SUB-SKILL: subagent-driven-development or executing-plans\n\n"
+        "## Task 1: Implement target\n\n"
+        "**Files:**\n- Modify: `target.txt`\n\n"
+        "Verification:\n```bash\ntrue\n```\n"
+    ).encode()
+    plan.write_bytes(original_bytes)
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "plan")
+    bin_dir = root / "bin"
+    _fake_codex(bin_dir)
+    old_home = os.environ.get("CODEX_HOME")
+    old_path = os.environ.get("PATH")
+    original_create = public_cpe._create_worktree
+
+    def mutate_after_create(*args: object, **kwargs: object) -> str:
+        branch = original_create(*args, **kwargs)
+        plan.write_text("# MUTATED AFTER COMPILE\n", encoding="utf-8")
+        return branch
+
+    public_cpe._create_worktree = mutate_after_create
+    os.environ["CODEX_HOME"] = str(root / "codex")
+    os.environ["PATH"] = str(bin_dir) + os.pathsep + (old_path or "")
+    output = StringIO()
+    try:
+        with redirect_stdout(output):
+            code = public_cpe.execute_run(
+                SimpleNamespace(
+                    workspace=str(repo),
+                    plan=str(plan),
+                    spec=None,
+                    docs=[],
+                    mode="headless",
+                )
+            )
+    finally:
+        public_cpe._create_worktree = original_create
+        if old_home is None:
+            os.environ.pop("CODEX_HOME", None)
+        else:
+            os.environ["CODEX_HOME"] = old_home
+        if old_path is None:
+            os.environ.pop("PATH", None)
+        else:
+            os.environ["PATH"] = old_path
+    if code != 0:
+        return False
+    payload = json.loads(output.getvalue())
+    run_dir = Path(str(payload["state_path"])).parent
+    manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+    plan_ref = Path(str(manifest["plan"]["ref"])).expanduser()
+    packet = json.loads((run_dir / "artifacts" / "task-packets" / "task_1.json").read_text(encoding="utf-8"))
+    expected = __import__("hashlib").sha256(original_bytes).hexdigest()
+    return (
+        plan_ref.read_bytes() == original_bytes
+        and manifest["plan"]["sha256"] == expected
+        and packet["source_hashes"]["plan"] == expected
+    )
+
+
 def _payload(result: subprocess.CompletedProcess[str]) -> dict[str, object]:
     try:
         value = json.loads(result.stdout)
@@ -229,6 +305,33 @@ def main() -> int:
     ]
     checks["public_result_schema_matrix"] = all(not _schema_errors(item.as_dict(), schema) for item in samples)
     checks["public_result_exit_matrix"] = [item.exit_code() for item in samples] == [0, 1, 2]
+    details = {
+        "category": "state_integrity",
+        "summary": "x",
+        "recoverable": False,
+        "next_action": "x",
+        "evidence_refs": [],
+    }
+    invalid_results = []
+    for kwargs in (
+        {"status": "success", "run_id": "r", "state_path": "/s", "blocker": details},
+        {"status": "blocked", "run_id": None, "state_path": None, "blocker": details, "failure_decision": details},
+        {"status": "failed", "run_id": None, "state_path": None, "failure_decision": details, "blocker": details},
+    ):
+        try:
+            invalid_results.append(PublicResult(summary="bad", next_action="x", **kwargs))
+        except ValueError:
+            pass
+    checks["public_result_exclusivity"] = not invalid_results
+    invalid_payloads = []
+    success_extra = samples[0].as_dict(); success_extra["blocker"] = details
+    blocked_extra = samples[1].as_dict(); blocked_extra["failure_decision"] = details
+    failed_extra = samples[2].as_dict(); failed_extra["blocker"] = details
+    invalid_payloads.extend((success_extra, blocked_extra, failed_extra))
+    checks["schema_exclusivity"] = all(_schema_errors(item, schema) for item in invalid_payloads)
+
+    with tempfile.TemporaryDirectory() as raw:
+        checks["compiled_bytes_survive_source_mutation"] = _mutation_hook_execution(Path(raw))
 
     with tempfile.TemporaryDirectory() as raw:
         success = _success_subprocess(Path(raw))
@@ -279,6 +382,29 @@ def main() -> int:
             and payload.get("status") == "failed"
             and not _schema_errors(payload, schema)
             and "Traceback" not in tampered.stderr
+        )
+
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        _, _, run_dir = _initialize(root, "manifest-array")
+        (run_dir / "run_manifest.json").write_text("[]\n", encoding="utf-8")
+        corrupt = _public(root / "codex", "resume", "--run-id", "manifest-array")
+        payload = _payload(corrupt)
+        checks["manifest_shape_corruption_failed_json"] = (
+            corrupt.returncode == 2
+            and payload.get("status") == "failed"
+            and not _schema_errors(payload, schema)
+            and "Traceback" not in corrupt.stderr
+        )
+
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        _, _, run_dir = _initialize(root, "published-replay")
+        state = json.loads((run_dir / "state.json").read_text(encoding="utf-8")) if (run_dir / "state.json").is_file() else {}
+        checks["published_initialization_replayable"] = (
+            (run_dir / "events.jsonl").is_file()
+            and state.get("lifecycle") == "created"
+            and state.get("tasks", {}).get("T1", {}).get("status") == "pending"
         )
 
     with tempfile.TemporaryDirectory() as raw:

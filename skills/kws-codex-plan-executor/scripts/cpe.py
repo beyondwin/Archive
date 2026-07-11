@@ -18,7 +18,8 @@ from preflight_dependencies import check_requirements
 from cpe_runtime.events import read_events, validate_chain
 from cpe_runtime.evidence import put_json
 from cpe_runtime.kernel import Kernel, RunKernel, Transition, rebuild_snapshot
-from cpe_runtime.manifest import create_manifest, load_verified_manifest, resolve_ref
+from cpe_runtime.manifest import canonical_hash, file_record, load_verified_manifest, relative_ref, resolve_ref
+from cpe_runtime.model_policy import policy_hash, policy_payload
 from cpe_runtime.packets import build_packet
 from cpe_runtime.plan_compiler import CompileBlocked, compile_run
 from cpe_runtime.projector import project
@@ -59,13 +60,75 @@ def _allocate_paths(plan: Path) -> tuple[str, Path, Path]:
     raise PreflightError("unable to allocate a non-conflicting run id")
 
 
-def _create_worktree(workspace: Path, worktree: Path, run_id: str) -> str:
+def _create_worktree(workspace: Path, worktree: Path, run_id: str, source_head: str) -> str:
     worktree.parent.mkdir(parents=True, exist_ok=True)
     branch = f"codex/{run_id}"
-    result = _run(["git", "worktree", "add", "-q", "-b", branch, str(worktree), "HEAD"], workspace)
+    result = _run(["git", "worktree", "add", "-q", "-b", branch, str(worktree), source_head], workspace)
     if result.returncode:
         raise PreflightError(f"worktree creation failed: {result.stderr.strip()}")
     return branch
+
+
+def _compiled_manifest(
+    run_id: str,
+    mode: str,
+    workspace: Path,
+    worktree: Path,
+    run_dir: Path,
+    compiled: object,
+    pricing: Path,
+) -> dict[str, object]:
+    """Build all input records from the immutable bytes returned by compilation."""
+
+    sources = tuple(getattr(compiled, "sources", ()))
+    plan_sources = [source for source in sources if getattr(source, "role", None) == "plan"]
+    spec_sources = [source for source in sources if getattr(source, "role", None) == "spec"]
+    doc_sources = [source for source in sources if getattr(source, "role", None) == "doc"]
+    if len(plan_sources) != 1 or len(spec_sources) > 1:
+        raise ValueError("compiled_input_shape_invalid")
+    plan_digest = str(plan_sources[0].sha256)
+    tasks = list(getattr(compiled, "tasks", ()))
+    if any(
+        not isinstance(task, dict)
+        or not isinstance(task.get("source_hashes"), dict)
+        or task["source_hashes"].get("plan") != plan_digest
+        for task in tasks
+    ):
+        raise ValueError("compiled_input_digest_mismatch")
+
+    def record(label: str, source: object) -> dict[str, str]:
+        content = getattr(source, "content", None)
+        digest = getattr(source, "sha256", None)
+        if not isinstance(content, bytes) or hashlib.sha256(content).hexdigest() != digest:
+            raise ValueError("compiled_input_digest_mismatch")
+        target = run_dir / "artifacts" / "inputs" / f"{label}.snapshot"
+        return {"ref": relative_ref(target), "sha256": str(digest)}
+
+    plan_record = record("plan", plan_sources[0])
+    spec_record = record("spec", spec_sources[0]) if spec_sources else None
+    doc_records = [record(f"doc-{index:03d}", source) for index, source in enumerate(doc_sources)]
+    pricing_record = file_record(pricing)
+    return {
+        "schema_version": "3",
+        "run_id": run_id,
+        "mode": mode,
+        "workspace_ref": relative_ref(workspace),
+        "execution_worktree_ref": relative_ref(worktree),
+        "plan": plan_record,
+        "spec": spec_record,
+        "docs": doc_records,
+        "task_graph": tasks,
+        "plan_graph_hash": canonical_hash(tasks),
+        "model_policy": policy_payload(),
+        "model_policy_hash": policy_hash(),
+        "pricing_snapshot": pricing_record,
+        "pricing_snapshot_hash": pricing_record["sha256"],
+        "source_git": {
+            "head": str(getattr(compiled, "source_head")),
+            "status": list(getattr(compiled, "source_status", ())),
+        },
+        "task_packets": [],
+    }
 
 
 def _emit(result: PublicResult) -> int:
@@ -146,26 +209,13 @@ def execute_run(args: argparse.Namespace) -> int:
     )
     tasks = list(compiled.tasks)
     head = compiled.source_head
-    status = list(compiled.source_status)
     run_id, run_dir, worktree = _allocate_paths(plan)
-    branch = _create_worktree(workspace, worktree, run_id)
+    branch = _create_worktree(workspace, worktree, run_id, head)
     pricing = Path(__file__).resolve().parents[1] / "data" / "pricing-snapshot.json"
     try:
-        manifest = create_manifest(
-            run_id,
-            args.mode,
-            workspace,
-            worktree,
-            plan,
-            spec,
-            tasks,
-            pricing,
-            docs=docs,
-            source_head=head,
-            source_status=status,
-        )
+        manifest = _compiled_manifest(run_id, args.mode, workspace, worktree, run_dir, compiled, pricing)
         packet_drafts = [build_packet(compiled, task) for task in tasks]
-        kernel = RunKernel.initialize(run_dir, manifest, packet_drafts)
+        kernel = RunKernel.initialize(run_dir, manifest, packet_drafts, input_sources=compiled.sources)
     except (ValueError, OSError, RuntimeError) as exc:
         _cleanup_unpublished_worktree(workspace, worktree, branch, head, run_id, run_dir)
         return _emit(
@@ -606,6 +656,10 @@ def main() -> int:
     except PreflightError as exc:
         return _emit(blocked_result(str(exc), category="preflight", next_action="Correct the invocation and retry."))
     except (ValueError, OSError, RuntimeError) as exc:
+        return _emit(failed_result(str(exc) or type(exc).__name__, category="state_integrity"))
+    except Exception as exc:
+        # Public input/state decoders may surface shape errors as TypeError,
+        # AttributeError, or KeyError. Convert them without swallowing exits or interrupts.
         return _emit(failed_result(str(exc) or type(exc).__name__, category="state_integrity"))
 
 

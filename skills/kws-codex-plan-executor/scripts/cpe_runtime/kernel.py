@@ -340,28 +340,54 @@ def _write_packet_exclusive(root: Path, draft: PacketDraft) -> None:
     _fsync_dir(path.parent)
 
 
-def _stage_input_snapshots(root: Path, manifest: dict) -> list[dict[str, str]]:
+def _stage_input_snapshots(
+    root: Path,
+    manifest: dict,
+    input_sources: tuple[object, ...] | None,
+) -> list[dict[str, str]]:
     """Copy verified invocation inputs into the unpublished initialization tree."""
 
-    records: list[tuple[str, dict]] = []
-    if isinstance(manifest.get("plan"), dict):
-        records.append(("plan", manifest["plan"]))
-    if isinstance(manifest.get("spec"), dict):
-        records.append(("spec", manifest["spec"]))
-    records.extend(
-        (f"doc-{index:03d}", record)
-        for index, record in enumerate(manifest.get("docs") or [])
-        if isinstance(record, dict)
-    )
+    records: list[tuple[str, bytes, str]] = []
+    if input_sources is not None:
+        doc_index = 0
+        seen: set[str] = set()
+        for source in input_sources:
+            role = getattr(source, "role", None)
+            content = getattr(source, "content", None)
+            digest = getattr(source, "sha256", None)
+            if role == "doc":
+                label = f"doc-{doc_index:03d}"
+                doc_index += 1
+            elif role in {"plan", "spec"} and role not in seen:
+                label = str(role)
+                seen.add(label)
+            else:
+                raise ValueError("compiled_input_shape_invalid")
+            if not isinstance(content, bytes) or hashlib.sha256(content).hexdigest() != digest:
+                raise ValueError("compiled_input_digest_mismatch")
+            records.append((label, content, str(digest)))
+    else:
+        source_records: list[tuple[str, dict]] = []
+        if isinstance(manifest.get("plan"), dict):
+            source_records.append(("plan", manifest["plan"]))
+        if isinstance(manifest.get("spec"), dict):
+            source_records.append(("spec", manifest["spec"]))
+        source_records.extend(
+            (f"doc-{index:03d}", record)
+            for index, record in enumerate(manifest.get("docs") or [])
+            if isinstance(record, dict)
+        )
+        for label, record in source_records:
+            source = Path(str(record["ref"])).expanduser().resolve()
+            content = source.read_bytes()
+            digest = hashlib.sha256(content).hexdigest()
+            if digest != record.get("sha256"):
+                raise ValueError("manifest_hash_mismatch")
+            records.append((label, content, digest))
     snapshots: list[dict[str, str]] = []
     input_root = root / "artifacts" / "inputs"
     input_root.mkdir(parents=True, mode=0o700)
-    for label, record in records:
-        source = Path(str(record["ref"])).expanduser().resolve()
-        content = source.read_bytes()
-        digest = hashlib.sha256(content).hexdigest()
-        if digest != record.get("sha256"):
-            raise ValueError("manifest_hash_mismatch")
+    for label, content, digest in records:
         target = input_root / f"{label}.snapshot"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(target, flags, 0o600)
@@ -380,9 +406,41 @@ def _stage_input_snapshots(root: Path, manifest: dict) -> list[dict[str, str]]:
     return snapshots
 
 
+def _validation_manifest_for_stage(manifest: dict, stage: Path, snapshots: list[dict[str, str]]) -> dict:
+    """Point a validation-only copy at unpublished bytes without changing durable refs."""
+
+    by_role = {item["role"]: item for item in snapshots}
+
+    def staged_record(label: str, durable: object) -> dict[str, str] | None:
+        if durable is None:
+            return None
+        if not isinstance(durable, dict) or label not in by_role:
+            raise ValueError("compiled_input_shape_invalid")
+        snapshot = by_role[label]
+        if durable.get("sha256") != snapshot["sha256"]:
+            raise ValueError("compiled_input_digest_mismatch")
+        return {"ref": str(stage / snapshot["path"]), "sha256": snapshot["sha256"]}
+
+    candidate = dict(manifest)
+    candidate["plan"] = staged_record("plan", manifest.get("plan"))
+    candidate["spec"] = staged_record("spec", manifest.get("spec"))
+    docs = manifest.get("docs")
+    if not isinstance(docs, list):
+        raise ValueError("compiled_input_shape_invalid")
+    candidate["docs"] = [staged_record(f"doc-{index:03d}", record) for index, record in enumerate(docs)]
+    return candidate
+
+
 class RunKernel(Kernel):
     @classmethod
-    def initialize(cls, run_dir: Path, manifest: dict, packet_drafts: list[PacketDraft]) -> "RunKernel":
+    def initialize(
+        cls,
+        run_dir: Path,
+        manifest: dict,
+        packet_drafts: list[PacketDraft],
+        *,
+        input_sources: tuple[object, ...] | None = None,
+    ) -> "RunKernel":
         run_dir = run_dir.expanduser().resolve()
         if run_dir.exists():
             raise FileExistsError(run_dir)
@@ -403,25 +461,34 @@ class RunKernel(Kernel):
             }
             for draft in packet_drafts
         ]
-        errors = validate_manifest(initialized_manifest)
-        if errors:
-            raise ValueError(errors[0])
         run_dir.parent.mkdir(parents=True, exist_ok=True)
         stage = run_dir.parent / f".{run_dir.name}.initialize-{secrets.token_hex(6)}"
         stage.mkdir(mode=0o700)
         published = False
         try:
-            initialized_manifest["input_snapshots"] = _stage_input_snapshots(stage, initialized_manifest)
+            snapshots = _stage_input_snapshots(stage, initialized_manifest, input_sources)
+            initialized_manifest["input_snapshots"] = snapshots
             for draft in packet_drafts:
                 _write_packet_exclusive(stage, draft)
+            validation_manifest = _validation_manifest_for_stage(initialized_manifest, stage, snapshots)
+            errors = validate_manifest(validation_manifest)
+            if errors:
+                raise ValueError(errors[0])
             write_path = stage / "run_manifest.json"
             from .manifest import write_manifest
 
             write_manifest(write_path, initialized_manifest)
-            staged_manifest = load_verified_manifest(write_path)
             for draft in packet_drafts:
-                if verify_packet(stage, staged_manifest, draft.task_id) != draft:
+                if verify_packet(stage, initialized_manifest, draft.task_id) != draft:
                     raise ValueError("packet_digest_mismatch")
+            events_path = stage / "events.jsonl"
+            descriptor = os.open(events_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            _fsync_dir(stage)
+            atomic_write_snapshot(stage / "state.json", project(initialized_manifest, []))
             os.replace(stage, run_dir)
             _fsync_dir(run_dir.parent)
             published = True
