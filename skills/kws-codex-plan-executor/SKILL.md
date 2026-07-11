@@ -2,16 +2,17 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec or design documents, resuming or inspecting a v3 run, or exporting a prompt or handoff launcher.
 metadata:
-  version: "3.0.0"
-  updated_at: "2026-07-10"
-  release_status: "integrity-closure-pending; paid-live-pending"
+  version: "3.0.1"
+  updated_at: "2026-07-11"
+  release_status: "deterministic-ready; paid-live-pending"
 ---
 
 # KWS Codex Plan Executor
 
-CPE v3 is an independent, event-sourced Codex plan executor. Its integrity
-closure is still pending, and the paid live migration matrix has not run, so
-release closeout remains `integrity-closure-pending; paid-live-pending`.
+CPE v3 is an independent, event-sourced Codex plan executor. Its audited
+deterministic integrity closure is complete, while the paid live migration
+matrix has not run, so the published tuple is
+`deterministic-ready; paid-live-pending`.
 
 ## Public Commands
 
@@ -97,3 +98,6 @@ repository-specific checks. The resulting projection records a structured
 Before changing this skill, follow [change-protocol.md](references/change-protocol.md),
 [doc-update-protocol.md](docs/doc-update-protocol.md), and
 [release-process.md](docs/release-process.md).
+
+The immediately preceding pending candidate used the metadata literal
+`version: "3.0.0"`; it remains historical compatibility context only.

@@ -1,16 +1,15 @@
 {
   "schema_version": "1",
-  "version": "3.0.0",
-  "status": "integrity_closure_pending_paid_pending",
-  "deterministic_status": "integrity-closure-pending",
+  "version": "3.0.1",
+  "status": "deterministic_ready_paid_pending",
+  "deterministic_status": "deterministic-ready",
   "paid_live_status": "pending",
   "release_ready": false,
   "deterministic_evidence": {
-    "status": "pending",
-    "reason": "audited deterministic integrity failures are not yet closed",
-    "command": "python3 evals/check_live_model_migration.py",
-    "treatment_count": 4,
-    "case_count": 8,
+    "status": "passed",
+    "reason": "current cost-free L0-L4 integrity gates passed on the recorded implementation commit",
+    "command": "./evals/run.sh",
+    "maintained_check_count": 49,
     "paid_provider_calls": 0
   },
   "paid_live_evidence": {

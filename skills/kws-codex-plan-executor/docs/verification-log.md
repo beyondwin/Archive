@@ -1,5 +1,44 @@
 # Verification Log
 
+## 2026-07-11 Asia/Seoul - CPE 3.0.1 deterministic integrity closure
+
+- Branch: `codex/2026-07-10-cpe-v3-integrity-closure-20260710-212304`.
+- Scope: final cost-free L0-L4 evidence for immutable packet ownership,
+  current-revision verdicts, fail-closed recovery and public execution, the
+  maintained public-CLI harness, release metadata, and documentation contracts.
+- Graphify: pending until the release evidence commit is created; it is updated
+  and committed separately so the freshness audit can recognize a graph-only
+  closeout commit.
+
+```json
+{
+  "schema_version": "cpe-release-verification.v1",
+  "version": "3.0.1",
+  "implementation_commit": "fdd9bdf70b3149c1c056d97ea4fcaf9d42c68df2",
+  "timestamp": "2026-07-11T11:18:09+09:00",
+  "commands": [
+    {"command": "./evals/run.sh", "exit_code": 0},
+    {"command": "python3 -m py_compile scripts/*.py scripts/cpe_runtime/*.py evals/*.py", "exit_code": 0},
+    {"command": "bash -n evals/run.sh", "exit_code": 0},
+    {"command": "python3 evals/check_release_contract.py", "exit_code": 0},
+    {"command": "python3 evals/check_docs_contract.py", "exit_code": 0},
+    {"command": "bun run check", "exit_code": 0},
+    {"command": "git diff --check", "exit_code": 0}
+  ],
+  "eval_passing_count": 49,
+  "bun_passing_count": 820,
+  "graphify": "pending_release_commit",
+  "paid_live": "skipped_not_approved",
+  "residual_risk": "paid live migration gate pending"
+}
+```
+
+All listed commands were run against the pre-release implementation commit and
+exited zero. The maintained CPE report contained 49 passing checks and no
+failures; the repository Bun output contained 820 passing tests. Paid provider
+execution was skipped because it was not approved. The remaining release risk
+is the paid live migration gate; therefore `release_ready=false`.
+
 ## 2026-07-10 Asia/Seoul - CPE v3 documentation truth sweep
 
 - Branch: `codex/cpe-v3-quality-model-routing`.

@@ -24,15 +24,19 @@ patch hygiene, current v3 baseline, and documentation contract pass after the
 integrity closure. It does not mean a credentialed model comparison ran.
 
 `paid-live-pending` means the approved live migration matrix has not produced a
-successful current report. The `3.0.0` version remains visible as an
-integrity-closure-pending release candidate, but deterministic or paid release
-closeout must not be claimed.
+successful current report. Version `3.0.1` is deterministic-ready, but paid
+release closeout must not be claimed.
 
 Throughout integrity-closure Tasks 1-12, the exact active tuple is version
 `3.0.0`, status `integrity-closure-pending; paid-live-pending`, and
 `release_ready=false`. Only the final closure task may change deterministic
 status and version after recording current L0-L4, fresh Graphify, and clean
 tracked-tree evidence. It must not infer paid readiness from those checks.
+
+The completed deterministic closure publishes version `3.0.1`, status
+`deterministic-ready; paid-live-pending`, and `release_ready=false`. This tuple
+is backed by the current baseline and the structured L0-L4 evidence in the
+verification log; it makes no credentialed-provider claim.
 
 Paid closeout requires all of the following:
 

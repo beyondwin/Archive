@@ -17,4 +17,4 @@
 | Repair | Dry-run first; exact allowlisted action, evidence, and expected projection delta for apply; `applied=false` is a valid no-op |
 | Public result | One `PublicResult`; exit 0 only after canonical completion, blocked is 1, failed is 2 |
 | Harness | Maintained inventory drives the public CLI; expectations come from an isolated oracle |
-| Release | 3.0.0 remains integrity-closure-pending and paid-live-pending until audited deterministic gaps close; paid evidence remains separate |
+| Release | 3.0.1 is deterministic-ready and paid-live-pending after audited cost-free closure; paid evidence remains separate and release_ready stays false |
