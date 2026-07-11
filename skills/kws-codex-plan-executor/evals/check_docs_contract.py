@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
+from urllib.parse import unquote
 
 
 ACTIVE_DOCS = (
@@ -18,9 +19,11 @@ ACTIVE_DOCS = (
     "references/execution-cycle.md",
     "references/mode-contracts.md",
     "references/headless-runner.md",
+    "references/headless-result-schema.md",
     "references/prompt-export-checklist.md",
     "references/drift-reconciliation.md",
     "references/subagent-run-store.md",
+    "references/verifier-prompt.md",
     "references/cache-strategy.md",
     "references/change-protocol.md",
     "references/common-mistakes.md",
@@ -83,6 +86,81 @@ SAFE_REPAIR_ACTIONS = (
     "schedule_retry",
 )
 
+REQUIRED_COMMANDS = (
+    "python3 scripts/cpe.py run --plan PLAN [--spec SPEC] --workspace REPO --mode interactive",
+    "python3 scripts/cpe.py resume --run-id RUN_ID",
+    "python3 scripts/cpe.py export --plan PLAN --workspace REPO --mode prompt",
+    "python3 scripts/cpe.py export --plan PLAN --workspace REPO --mode handoff",
+    "python3 scripts/reconcile_state.py --run-dir RUN_DIR --check",
+    "python3 scripts/repair_runs.py --run-dir RUN_DIR --dry-run",
+)
+
+MARKDOWN_LINK_RE = re.compile(r"\[[^\]\n]+\]\(([^)\n]*)\)")
+FENCED_CODE_RE = re.compile(r"```.*?```|~~~.*?~~~", re.DOTALL)
+INLINE_CODE_RE = re.compile(r"`+[^`\n]*`+")
+
+
+def _markdown_relative_link_failures(root: Path, texts: dict[str, str]) -> list[str]:
+    """Return broken or unsafe relative Markdown links from active docs."""
+    root = root.resolve()
+    failures: list[str] = []
+    for relative, original in texts.items():
+        text = INLINE_CODE_RE.sub("", FENCED_CODE_RE.sub("", original))
+        source = (root / relative).resolve()
+        for match in MARKDOWN_LINK_RE.finditer(text):
+            raw = match.group(1).strip()
+            if not raw:
+                failures.append(f"{relative}: malformed empty Markdown link")
+                continue
+            if raw.startswith("<"):
+                closing = raw.find(">")
+                if closing < 0:
+                    failures.append(f"{relative}: malformed Markdown link: {raw}")
+                    continue
+                target = raw[1:closing]
+                suffix = raw[closing + 1 :].strip()
+            else:
+                parts = raw.split(maxsplit=1)
+                target = parts[0]
+                suffix = parts[1].strip() if len(parts) == 2 else ""
+            if suffix and re.fullmatch(r'(?:"[^"]*"|\'[^\']*\')', suffix) is None:
+                failures.append(f"{relative}: malformed Markdown link: {raw}")
+                continue
+            lowered = target.lower()
+            if lowered.startswith(("http://", "https://", "mailto:")) or target.startswith("#"):
+                continue
+            if re.match(r"^[a-z][a-z0-9+.-]*:", lowered):
+                failures.append(f"{relative}: unsupported Markdown link scheme: {target}")
+                continue
+            target = unquote(target.split("#", 1)[0].split("?", 1)[0])
+            if not target or "\x00" in target or "\\" in target:
+                failures.append(f"{relative}: malformed Markdown link: {raw}")
+                continue
+            candidate = (source.parent / target).resolve()
+            try:
+                candidate.relative_to(root)
+            except ValueError:
+                failures.append(f"{relative}: Markdown link escapes skill root: {target}")
+                continue
+            if not candidate.exists():
+                failures.append(f"{relative}: missing Markdown link target: {target}")
+    return failures
+
+
+def _link_validator_self_test(root: Path, texts: dict[str, str]) -> str | None:
+    injected = dict(texts)
+    injected["README.md"] = injected.get("README.md", "") + (
+        "\n[broken](missing-contract-target.md)\n"
+        "`[ignored-code](missing-code-target.md)`\n"
+        "[ignored-anchor](#local-section)\n"
+    )
+    failures = _markdown_relative_link_failures(root, injected)
+    if not any("README.md: missing Markdown link target: missing-contract-target.md" in item for item in failures):
+        return "Markdown link validator self-test did not reject an injected broken README link"
+    if any("missing-code-target.md" in item or "#local-section" in item for item in failures):
+        return "Markdown link validator self-test did not ignore code spans or pure anchors"
+    return None
+
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
@@ -121,6 +199,15 @@ def main() -> int:
     for term in required_skill_terms:
         if term not in skill:
             failures.append(f"SKILL.md missing v3 public contract term: {term}")
+
+    active_text = "\n".join(texts.values())
+    for command in REQUIRED_COMMANDS:
+        if command not in active_text:
+            failures.append(f"active docs missing exact public command: {command}")
+
+    failures.extend(_markdown_relative_link_failures(root, texts))
+    if self_test_failure := _link_validator_self_test(root, texts):
+        failures.append(self_test_failure)
 
     release_docs = "\n".join(
         texts.get(name, "")

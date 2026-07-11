@@ -23,7 +23,7 @@ python3 scripts/cpe.py export --plan PLAN --workspace REPO --mode handoff
 
 python3 scripts/validate_state.py RUN_DIR
 python3 scripts/reconcile_state.py --run-dir RUN_DIR --check
-python3 scripts/repair_runs.py --run-dir RUN_DIR
+python3 scripts/repair_runs.py --run-dir RUN_DIR --dry-run
 python3 scripts/repair_runs.py --run-dir RUN_DIR --action ACTION \
   --details '{...}' --expected-projection-delta '{...}' --apply
 python3 scripts/inspect_runs.py --codex-home ~/.codex --all-plans

@@ -30,7 +30,7 @@ rewrite a damaged event chain, or mutate an unsupported schema.
 ```bash
 python3 scripts/reconcile_state.py --run-dir RUN_DIR --check
 python3 scripts/reconcile_state.py --run-dir RUN_DIR --repair-safe
-python3 scripts/repair_runs.py --run-dir RUN_DIR
+python3 scripts/repair_runs.py --run-dir RUN_DIR --dry-run
 python3 scripts/repair_runs.py --run-dir RUN_DIR --action schedule_retry \
   --details '{"task_id":"T1","phase":"implementation","root_cause_key":"KEY"}' \
   --expected-projection-delta '{"task_status:T1":"implementing"}' --apply
