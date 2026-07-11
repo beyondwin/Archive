@@ -28,13 +28,11 @@ flowchart LR
 계획 파싱
   → 읽기 전용 사전 점검
   → 별도 worktree 생성
-  → 명시적 task/spec 매핑과 작업 패킷
-  → Sol 구현
-  → Sol 리뷰
-  → 결정론적 명령 실행
-  → Sol 검증 판단
-  → 필요하면 Sol 수리와 재검증
-  → 전체 diff 리뷰와 완료 gate
+  → 명시적 task/spec 매핑과 digest 검증 작업 패킷
+  → Sol 구현 → 수용 명령 → 읽기 전용 작업 리뷰 → 읽기 전용 검증
+  → 저장소 명령 묶음 → 읽기 전용 최종 리뷰
+  → 필요하면 Sol 수리, revision 증가, 뒤쪽 gate 전체 재실행
+  → canonical integrity/completion gate
 ```
 
 파일을 쓸 수 있는 작업은 순서대로 실행합니다. Terra/high는 자료 위치나 관련
@@ -49,9 +47,14 @@ flowchart LR
   기록할 수 없습니다.
 - 이전 스키마는 내용을 해석해 새 상태로 바꾸지 않고
   `unsupported_schema`로만 분류합니다.
+- 실행 중이지만 일관된 상태는 integrity 검사를 통과해도 completion 검사를
+  통과하지 않습니다. `blocked`는 증거가 가리키는 정확한 phase로만 재개하고,
+  수리는 변경할 것이 없으면 `applied=false`일 수 있습니다.
 
 ## 릴리스 상태를 보는 법
 
-결정론적 검사 통과와 유료 라이브 품질 gate 통과는 별개입니다. 현재 상태는
-`deterministic-ready; paid-live-pending`입니다. 실제 유료 매트릭스가 명시적
-비용 승인 후 통과하기 전에는 “3.0.0 라이브 검증 완료”라고 해석하면 안 됩니다.
+결정론적 검사 통과와 유료 라이브 품질 gate 통과는 별개입니다. 현재 3.0.0
+상태는 `integrity-closure-pending; paid-live-pending`이며
+`release_ready=false`입니다. L0-L4 closure가 끝나기 전에는 deterministic
+ready도 아니고, 실제 유료 매트릭스가 명시적 비용 승인 후 통과하기 전에는
+라이브 검증 완료도 아닙니다.

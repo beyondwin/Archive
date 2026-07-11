@@ -28,6 +28,12 @@ successful current report. The `3.0.0` version remains visible as an
 integrity-closure-pending release candidate, but deterministic or paid release
 closeout must not be claimed.
 
+Throughout integrity-closure Tasks 1-12, the exact active tuple is version
+`3.0.0`, status `integrity-closure-pending; paid-live-pending`, and
+`release_ready=false`. Only the final closure task may change deterministic
+status and version after recording current L0-L4, fresh Graphify, and clean
+tracked-tree evidence. It must not infer paid readiness from those checks.
+
 Paid closeout requires all of the following:
 
 1. show four treatments, eight cases, and the `$50.00` hard cap;
@@ -48,6 +54,7 @@ python3 -m py_compile scripts/*.py scripts/cpe_runtime/*.py evals/*.py
 bash -n evals/run.sh
 python3 evals/check_release_contract.py
 python3 evals/check_docs_contract.py
+python3 scripts/cpe.py --help
 git diff --check
 ```
 

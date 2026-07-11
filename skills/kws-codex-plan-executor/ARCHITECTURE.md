@@ -2,30 +2,51 @@
 
 CPE v3 separates immutable inputs and events from rebuildable projections.
 
+## Seven Runtime Owners
+
+| Owner | Responsibility |
+| --- | --- |
+| `PlanCompiler` | Read plan/spec/docs into immutable internal input snapshot bytes, freeze source hashes, and reject unsafe plans before allocation |
+| `PacketStore` | Export each task packet once and index its path and `packet_sha256` in the manifest |
+| `AttemptController` | Enforce role policy, measure the real Git/filesystem delta, scope it, and advance `worktree_revision` with `worktree_patch_sha256` |
+| `RunKernel` | Append typed events, attach immutable evidence, replay, and atomically project state |
+| `CanonicalValidator` | Expose ordered `validate_integrity` and `validate_completion` profiles used by every consumer |
+| `RecoveryEngine` | Classify evidence-derived resume phases and apply only declared, projection-checked compensating actions |
+| `PublicCLI` | Own run/resume `PublicResult` JSON, export bundles, and exit-code behavior |
+
 ```mermaid
 flowchart LR
-  Input["plan, spec, docs"] --> Preflight["parse and preflight"]
+  Input["internal input snapshot: plan, spec, docs"] --> Preflight["PlanCompiler"]
   Preflight --> Manifest["immutable run manifest"]
-  Manifest --> Kernel["transition kernel"]
+  Manifest --> Packet["PacketStore"]
+  Packet --> Attempt["AttemptController"]
+  Attempt --> Kernel["RunKernel"]
   Kernel --> Events["authoritative events.jsonl"]
   Kernel --> Evidence["content-addressed evidence"]
   Events --> Projector["pure projector"]
   Manifest --> Projector
   Projector --> State["rebuildable state.json"]
-  Events --> Consumers["validate, reconcile, repair, inspect"]
+  Events --> Consumers["CanonicalValidator, RecoveryEngine, PublicCLI"]
   Evidence --> Consumers
 ```
 
 ## Boundaries
 
-- `cpe.py` owns run, resume, and prompt/handoff export routing.
+- `cpe.py` is the `PublicCLI` adapter for run, resume, and prompt/handoff export.
 - `cpe_runtime.model_policy` owns the closed Sol/high core and Terra/high scout
   routes and launcher attestation.
-- `manifest`, `events`, `evidence`, `projector`, and `kernel` own durable state.
+- `plan_compiler` captures source bytes before allocation. Later parsing and
+  packet slicing use this internal input snapshot, not mutable source paths.
+- `packets` exports each task packet once; every role verifies the indexed path
+  and `packet_sha256` before launch.
+- `manifest`, `events`, `evidence`, `projector`, and `kernel` implement
+  `RunKernel` durable state ownership.
 - `worker` launches Codex; `scheduler` serializes write-capable tasks and may
   bound concurrency for read-only scouts.
-- `validation` is the shared integrity decision used by completion,
-  reconciliation, repair, and inspection.
+- `validation` is `CanonicalValidator`. `validate_integrity` admits healthy
+  incomplete runs; `validate_completion` additionally requires current
+  acceptance, task review, verification, repository check, final review, and
+  an exact completion audit.
 - `reconciliation` detects drift. `repair` plans safe actions before applying
   an explicit action. `inspection` is read-only derived reporting.
 
@@ -42,10 +63,17 @@ verification judgment, repair, and completion. Terra/high can only produce
 bounded findings from a read-only scout. A scout cannot write files or issue a
 quality verdict.
 
-Tasks with write claims execute one at a time. Every attempt records route
-attestation and immutable evidence. Completion checks event integrity, replay
-parity, evidence digests, task states, git scope, review and verification, and
-the final completion record.
+Tasks with write claims execute one at a time. Only implementation and repair
+may write product files. The controller captures the full delta, rejects
+out-of-scope paths or Git metadata mutation, stores immutable patch evidence,
+and advances `worktree_revision`. Every semantic evidence payload binds its
+task packet, `worktree_revision`, and `worktree_patch_sha256`.
+
+The ordered suffix is `acceptance -> task_review -> verification ->
+repository_check -> final_review`. A repair write invalidates evidence from the
+old revision and repeats every affected downstream gate. Completion checks
+event integrity, replay parity, evidence digests, task states, git scope,
+typed verdicts, and the exact final completion record.
 
 V2 run directories are not migration inputs. Consumers read their schema marker,
 return `unsupported_schema`, and leave their bytes unchanged.

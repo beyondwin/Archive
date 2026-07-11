@@ -14,7 +14,10 @@ artifacts/         immutable evidence and derived reports
 `schema_version` is exactly `"3"`. The manifest pins the run ID, mode,
 workspace and execution-worktree refs, plan and optional spec hashes, task graph
 and hash, fixed model policy and hash, and pricing snapshot and hash. It is
-created once. A changed manifest is integrity drift, not an update.
+created once. The compiler's plan/spec/docs internal input snapshots are hashed
+before allocation; the manifest also indexes every immutable task packet by
+task ID, run-relative path, media type, and `packet_sha256`. A changed manifest
+is integrity drift, not an update.
 
 ## Events
 
@@ -40,6 +43,13 @@ state changes.
 - context health, repairs, and completion audit when emitted;
 - the last applied event sequence and hash.
 
+Typed evidence for acceptance, task review, verification, repository check,
+and final review records the task and attempt identity, `packet_sha256`,
+`worktree_revision`, and `worktree_patch_sha256`. These records become stale
+after any later product write. `completion_audit` is a candidate payload only
+while validating the exact prospective `completion.recorded` transition; it
+cannot replace authoritative replay state.
+
 Blockers are projected by stable ID. Open and update events change both the
 active record and its history record. Resolution removes the blocker from
 `active_blockers` while retaining the resolved record and evidence in
@@ -53,8 +63,10 @@ with a fresh projection.
 ## Evidence
 
 Evidence refs are run-relative and content-addressed. A ref records kind, path,
-digest, and media type. Absolute paths, parent traversal, missing objects, and
-digest mismatches are integrity failures.
+digest, and media type. Absolute paths, parent traversal, symlinked ancestors,
+missing or contradictory objects, and digest mismatches are integrity failures.
+Patch evidence is immutable and must describe the measured current delta, not
+a worker-reported file list.
 
 ## Compatibility
 

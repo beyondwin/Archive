@@ -60,6 +60,27 @@ FORBIDDEN_ACTIVE_TERMS = (
     "check_progress_ledger.py",
     "check_cache_observations.py",
     "baselines/v2",
+    "static_execution_runner.py",
+    "static_prompt_runner.py",
+)
+
+SEVEN_RUNTIME_OWNERS = (
+    "PlanCompiler",
+    "PacketStore",
+    "AttemptController",
+    "RunKernel",
+    "CanonicalValidator",
+    "RecoveryEngine",
+    "PublicCLI",
+)
+
+SAFE_REPAIR_ACTIONS = (
+    "rebuild_snapshot",
+    "regenerate_derived_reports",
+    "mark_stale_attempt_interrupted",
+    "reconnect_existing_evidence",
+    "resolve_blocker",
+    "schedule_retry",
 )
 
 
@@ -112,6 +133,72 @@ def main() -> int:
     )
     if "deterministic-ready" not in release_docs or "paid-live-pending" not in release_docs:
         failures.append("release docs must distinguish deterministic-ready from paid-live-pending")
+    stale_release_claims = (
+        r"(?:3\.0\.0|release status|현재 3\.0\.0).{0,100}`?deterministic-ready; paid-live-pending`?",
+        r"`?deterministic-ready; paid-live-pending`?.{0,100}(?:3\.0\.0|current release|현재)",
+    )
+    for relative in (
+        "SKILL.md",
+        "README.md",
+        "docs/evals-and-verification.md",
+        "docs/mental-model.ko.md",
+        "docs/risks-limitations-deferrals.md",
+        "docs/release-process.md",
+    ):
+        text = texts.get(relative, "")
+        if any(re.search(pattern, text, re.IGNORECASE | re.DOTALL) for pattern in stale_release_claims):
+            failures.append(f"{relative}: 3.0.0 must not claim deterministic-ready")
+
+    architecture = texts.get("ARCHITECTURE.md", "")
+    for owner in SEVEN_RUNTIME_OWNERS:
+        if owner not in architecture:
+            failures.append(f"ARCHITECTURE.md missing runtime owner: {owner}")
+    architecture_terms = (
+        "internal input snapshot",
+        "packet_sha256",
+        "worktree_revision",
+        "validate_integrity",
+        "validate_completion",
+        "repository_check",
+        "final_review",
+    )
+    for term in architecture_terms:
+        if term not in architecture:
+            failures.append(f"ARCHITECTURE.md missing integrity contract term: {term}")
+
+    execution_docs = "\n".join(
+        texts.get(name, "")
+        for name in ("SKILL.md", "references/execution-cycle.md", "references/mode-contracts.md")
+    )
+    for role in ("scout", "implementation", "task_review", "verification", "repair", "final_review"):
+        if role not in execution_docs:
+            failures.append(f"execution docs missing packet-consuming role: {role}")
+    for term in ("acceptance", "repository_check", "worktree_patch_sha256"):
+        if term not in execution_docs:
+            failures.append(f"execution docs missing phase or revision term: {term}")
+
+    repair_docs = "\n".join(
+        texts.get(name, "")
+        for name in ("references/drift-reconciliation.md", "docs/user-guide.ko.md")
+    )
+    for action in SAFE_REPAIR_ACTIONS:
+        if action not in repair_docs:
+            failures.append(f"repair docs missing exact safe action: {action}")
+    for term in ("applied=false", "--expected-projection-delta", "--apply"):
+        if term not in repair_docs:
+            failures.append(f"repair docs missing apply contract: {term}")
+
+    public_docs = "\n".join(
+        texts.get(name, "")
+        for name in ("README.md", "docs/how-it-works.md", "docs/human-readable-harness-flow.ko.md")
+    )
+    for term in ("PublicResult", "success=0", "blocked=1", "failed=2"):
+        if term not in public_docs:
+            failures.append(f"public docs missing result contract: {term}")
+    for term in ("maintained eval inventory", "public CLI", "isolated oracle"):
+        if term not in public_docs:
+            failures.append(f"harness docs missing behavior-test contract: {term}")
+
     release_process = texts.get("docs/release-process.md", "")
     if "release_gate.passed=true" not in release_process or "explicit cost approval" not in release_process:
         failures.append("release process must define the paid live closeout evidence")
