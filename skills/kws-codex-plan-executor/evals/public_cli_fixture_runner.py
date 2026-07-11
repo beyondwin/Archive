@@ -17,6 +17,9 @@ EVAL_DIR = Path(__file__).resolve().parent
 SKILL_DIR = EVAL_DIR.parent
 CASES = EVAL_DIR / "public-cli-cases.json"
 CPE = SKILL_DIR / "scripts" / "cpe.py"
+VALIDATE = SKILL_DIR / "scripts" / "validate_state.py"
+RECONCILE = SKILL_DIR / "scripts" / "reconcile_state.py"
+REPAIR = SKILL_DIR / "scripts" / "repair_runs.py"
 
 
 def _run(argv: list[str], cwd: Path, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -65,33 +68,69 @@ def _case(case: dict[str, object], root: Path) -> dict[str, object]:
     fake_binary = bin_dir / "codex"
     shutil.copyfile(EVAL_DIR / "fake_codex.py", fake_binary)
     fake_binary.chmod(0o755)
-    command = str(case["command"])
-    argv = [sys.executable, str(CPE), command, "--plan", str(plan), "--workspace", str(repo)]
-    if command == "run":
-        argv.extend(["--mode", str(case.get("mode") or "interactive")])
-    elif command == "export":
-        argv.extend(["--mode", str(case.get("mode") or "prompt")])
-    else:
-        raise ValueError(f"unsupported public case command: {command}")
     env = {
         **os.environ,
         "CODEX_HOME": str(home),
         "CPE_FAKE_CASE_FILE": str(fake_case),
         "PATH": str(bin_dir) + os.pathsep + os.environ.get("PATH", ""),
     }
+    command = str(case["command"])
+    setup_argv: list[str] | None = None
+    setup_result: subprocess.CompletedProcess[str] | None = None
+    setup_payload: dict[str, object] = {}
+    run_id = ""
+    state_path: str | None = None
+    if command in {"resume", "validate", "reconcile", "repair"}:
+        setup_argv = [
+            sys.executable, str(CPE), "run", "--plan", str(plan),
+            "--workspace", str(repo), "--mode", str(case.get("setup_mode") or "interactive"),
+        ]
+        setup_result = _run(setup_argv, SKILL_DIR, env)
+        try:
+            setup_payload = json.loads(setup_result.stdout)
+        except json.JSONDecodeError:
+            setup_payload = {}
+        run_id = str(setup_payload.get("run_id") or "")
+        raw_state_path = setup_payload.get("state_path")
+        state_path = str(raw_state_path) if isinstance(raw_state_path, str) else None
+    if command == "run":
+        argv = [
+            sys.executable, str(CPE), "run", "--plan", str(plan),
+            "--workspace", str(repo), "--mode", str(case.get("mode") or "interactive"),
+        ]
+    elif command == "export":
+        argv = [
+            sys.executable, str(CPE), "export", "--plan", str(plan),
+            "--workspace", str(repo), "--mode", str(case.get("mode") or "prompt"),
+        ]
+    elif command == "resume":
+        argv = [sys.executable, str(CPE), "resume", "--run-id", run_id]
+    elif command == "validate":
+        argv = [sys.executable, str(VALIDATE), state_path or str(root / "missing-state.json")]
+    elif command == "reconcile":
+        argv = [sys.executable, str(RECONCILE), "--state", state_path or str(root / "missing-state.json"), "--check"]
+    elif command == "repair":
+        argv = [sys.executable, str(REPAIR), "--state", state_path or str(root / "missing-state.json"), "--dry-run"]
+    else:
+        raise ValueError(f"unsupported public case command: {command}")
     completed = _run(argv, SKILL_DIR, env)
     payload: dict[str, object] = {}
-    if command == "run":
-        try:
-            payload = json.loads(completed.stdout)
-        except json.JSONDecodeError:
-            payload = {}
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError:
+        payload = {}
     run_dirs = sorted((home / "orchestrator").glob("*")) if (home / "orchestrator").is_dir() else []
-    run_id = str(payload.get("run_id") or (run_dirs[-1].name if run_dirs else ""))
+    run_id = str(payload.get("run_id") or run_id or (run_dirs[-1].name if run_dirs else ""))
     worktree = home / "worktrees" / run_id if run_id else None
     changed = _changed(worktree) if worktree and worktree.is_dir() else _changed(repo)
     diffs = _diffs(worktree) if worktree and worktree.is_dir() else _diffs(repo)
-    status = str(payload.get("status") or ("exported" if command == "export" and completed.returncode == 0 else "unknown"))
+    success_labels = {
+        "export": "exported",
+        "validate": "validated",
+        "reconcile": "reconciled",
+        "repair": "repair_planned",
+    }
+    status = str(payload.get("status") or (success_labels.get(command) if completed.returncode == 0 else "unknown"))
     return {
         "id": case_id,
         "command": command,
@@ -101,10 +140,14 @@ def _case(case: dict[str, object], root: Path) -> dict[str, object]:
         "stderr": completed.stderr,
         "status": status,
         "run_id": run_id or None,
-        "state_path": payload.get("state_path"),
+        "state_path": payload.get("state_path") or state_path,
+        "entrypoint": argv[1],
+        "setup_argv": setup_argv,
+        "setup_exit_code": setup_result.returncode if setup_result else None,
+        "setup_status": setup_payload.get("status") if setup_result else None,
         "changed_files": changed,
         **diffs,
-        "public_cpe_invoked": argv[1] == str(CPE),
+        "public_entrypoint_invoked": argv[1] in {str(CPE), str(VALIDATE), str(RECONCILE), str(REPAIR)},
     }
 
 
