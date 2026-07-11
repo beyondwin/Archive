@@ -17,6 +17,7 @@ from preflight_dependencies import check_requirements
 
 from cpe_runtime.events import read_events, validate_chain
 from cpe_runtime.evidence import put_json
+from cpe_runtime.git_delta import matches_path
 from cpe_runtime.kernel import Kernel, RunKernel, Transition, rebuild_snapshot
 from cpe_runtime.manifest import canonical_hash, file_record, load_verified_manifest, relative_ref, resolve_ref
 from cpe_runtime.model_policy import policy_hash, policy_payload
@@ -25,9 +26,9 @@ from cpe_runtime.plan_compiler import CompileBlocked, compile_run
 from cpe_runtime.projector import project
 from cpe_runtime.prompt_export import render_export_bundle
 from cpe_runtime.public_result import PublicResult, blocked_result, failed_result
-from cpe_runtime.reconciliation import select_resume
+from cpe_runtime.reconciliation import ResumeDecision, select_resume
 from cpe_runtime.repair import apply_repair
-from cpe_runtime.scheduler import run_tasks
+from cpe_runtime.scheduler import run_delegated_dependency_repair, run_tasks
 from cpe_runtime.validation import validate_completion, validate_integrity
 from cpe_runtime.worker import Worker
 
@@ -383,6 +384,112 @@ def _open_recovery_blocker(
     return blocker_id
 
 
+def _repository_evidence_path(value: object) -> str | None:
+    if not isinstance(value, str) or not value or value.startswith("/"):
+        return None
+    candidate = re.sub(r":\d+(?::\d+)?$", "", value)
+    return candidate if "/" in candidate else None
+
+
+def _delegated_scope_resume(
+    manifest: dict[str, object],
+    state: dict[str, object],
+    integrity: object,
+    worker: Worker,
+    kernel: Kernel,
+) -> ResumeDecision | None:
+    """Repair one claim-bound integration defect through its sole direct dependency."""
+
+    blockers = list(state.get("active_blockers") or [])
+    if len(blockers) != 1 or blockers[0].get("category") != "scope_claim_conflict":
+        return None
+    if not getattr(integrity, "passed", False):
+        return None
+    blocker = blockers[0]
+    task_id = str(blocker.get("task_id") or "")
+    tasks = {
+        str(task.get("id")): task
+        for task in manifest.get("task_graph") or []
+        if isinstance(task, dict) and task.get("id") is not None
+    }
+    target = tasks.get(task_id)
+    if not isinstance(target, dict):
+        return None
+    dependencies = [str(item) for item in target.get("dependencies") or []]
+    if len(dependencies) != 1:
+        return None
+    owner = tasks.get(dependencies[0])
+    if (
+        not isinstance(owner, dict)
+        or state.get("tasks", {}).get(dependencies[0], {}).get("status") != "completed"
+    ):
+        return None
+    refs = [dict(ref) for ref in blocker.get("evidence_refs") or [] if isinstance(ref, dict)]
+    if len(refs) != 1 or refs[0].get("kind") != "worker_result":
+        return None
+    try:
+        payload = json.loads((kernel.run_dir / str(refs[0]["path"])).read_text(encoding="utf-8"))
+    except (KeyError, OSError, json.JSONDecodeError):
+        return None
+    result = payload.get("result") if isinstance(payload, dict) else None
+    if (
+        not isinstance(result, dict)
+        or result.get("status") != "blocked"
+        or result.get("failure_category") != "scope_claim_conflict"
+        or result.get("root_cause_key") != blocker.get("root_cause_key")
+        or not result.get("findings")
+    ):
+        return None
+    target_claims = [str(path) for path in target.get("file_claims") or []]
+    owner_claims = [str(path) for path in owner.get("file_claims") or []]
+    cited = [
+        path
+        for path in (_repository_evidence_path(item) for item in result.get("evidence_refs") or [])
+        if path is not None
+    ]
+    outside = [path for path in cited if not matches_path(path, target_claims)]
+    if not outside or any(not matches_path(path, owner_claims) for path in outside):
+        return None
+    context = json.dumps(
+        {
+            "root_cause_key": blocker.get("root_cause_key"),
+            "summary": result.get("summary"),
+            "findings": result.get("findings"),
+            "missing_evidence": result.get("missing_evidence"),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    cycle = run_delegated_dependency_repair(
+        owner,
+        task_id,
+        str(blocker.get("root_cause_key") or "scope_claim_conflict"),
+        context,
+        worker,
+        kernel,
+    )
+    if cycle.status != "passed":
+        return ResumeDecision("remain_blocked", blocker_id=str(blocker.get("blocker_id") or "") or None)
+    recovery_ref = _recovery_evidence(
+        kernel,
+        task_id,
+        {
+            "category": "delegated_dependency_repair",
+            "owner_task_id": str(owner["id"]),
+            "target_task_id": task_id,
+            "root_cause_key": blocker.get("root_cause_key"),
+            "worktree_revision": kernel.state.get("worktree_revision"),
+            "source_evidence_refs": refs,
+        },
+    )
+    return ResumeDecision(
+        "retry",
+        "acceptance",
+        str(blocker.get("blocker_id") or "") or None,
+        (recovery_ref,),
+    )
+
+
 def _structured_resume_failure(run_id: str, classification: str, **extra: object) -> int:
     run_dir = _codex_home() / "orchestrator" / run_id
     details = extra.get("errors")
@@ -503,7 +610,13 @@ def resume_run(run_id: str, worker: Worker | None = None) -> int:
             state = kernel.state
             integrity = validate_integrity(run_dir)
 
-    decision = select_resume(state, integrity)
+    decision = _delegated_scope_resume(
+        manifest,
+        state,
+        integrity,
+        worker or Worker(),
+        kernel,
+    ) or select_resume(state, integrity)
     if decision.action == "reject":
         return _structured_resume_failure(run_id, "resume_rejected", errors=integrity.errors)
     if decision.action == "remain_blocked":

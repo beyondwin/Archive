@@ -783,6 +783,7 @@ def _repair(
     root_key: str,
     *,
     preserve_completed: bool,
+    recovery_context: str | None = None,
 ) -> TaskCycleResult | None:
     task_id = str(task["id"])
     current = kernel.state["tasks"][task_id]["status"]
@@ -797,12 +798,15 @@ def _repair(
                     task_id=task_id,
                 )
             )
+    prompt = f"Repair {task_id} root cause {root_key}; remain inside file claims."
+    if recovery_context:
+        prompt += f" Evidence-backed delegated recovery context: {recovery_context}"
     repair, outcome, attempt_id = _worker_attempt(
         controller,
         kernel,
         task,
         "repair",
-        f"Repair {task_id} root cause {root_key}; remain inside file claims.",
+        prompt,
     )
     if outcome is not None and outcome.scope_errors:
         _scope_block(kernel, task_id, "repair", outcome)
@@ -839,6 +843,39 @@ def _repair(
             )
         )
     return None
+
+
+def run_delegated_dependency_repair(
+    owner_task: dict,
+    target_task_id: str,
+    root_key: str,
+    recovery_context: str,
+    worker: Worker,
+    kernel: Kernel,
+) -> TaskCycleResult:
+    """Repair a cross-task integration defect through one completed dependency packet."""
+
+    owner_id = str(owner_task["id"])
+    if kernel.state["tasks"].get(owner_id, {}).get("status") != "completed":
+        raise ValueError("delegated repair owner must be completed")
+    worktree = resolve_ref(
+        str(load_verified_manifest(kernel.run_dir / "run_manifest.json")["execution_worktree_ref"])
+    )
+    controller = AttemptController(kernel, worktree, worker)
+    blocked = _repair(
+        owner_task,
+        controller,
+        kernel,
+        root_key,
+        preserve_completed=True,
+        recovery_context=(
+            f"Target task {target_task_id} is blocked by a claim boundary. "
+            f"Use only this dependency packet's claims. {recovery_context}"
+        ),
+    )
+    if blocked is not None:
+        return blocked
+    return run_task_cycle(owner_task, controller, kernel)
 
 
 def _latest_task_payload(kernel: Kernel, task_id: str, kind: str) -> dict | None:
