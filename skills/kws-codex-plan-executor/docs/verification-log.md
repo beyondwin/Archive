@@ -641,6 +641,9 @@ host-runtime policy.
 Typed `scheduled_retry:repair` blockers are now mapped back to the repair phase,
 including the previously persisted no-revision wrapper form, so a fail-closed
 recovery worker can be retried after its host context is fixed.
+Worker launchers now use Codex `--ignore-user-config`, retaining `CODEX_HOME`
+authentication while isolating packet-bound execution from unrelated user MCP
+servers and their expiring OAuth sessions.
 
 Commands and results:
 
@@ -654,6 +657,8 @@ Commands and results:
 - `python3 evals/check_validation_consumer_parity.py`: pass.
 - `python3 evals/check_recovery_policy.py`: pass with scheduled repair retry
   recovery coverage.
+- `python3 evals/check_model_policy.py`: pass with user-config-isolated worker
+  launcher coverage.
 - `python3 evals/check_task_packet.py`: pass with canonical host validation and
   prior-task-evidence prompt checks.
 - `./evals/run.sh`: pass with 50 passing checks.

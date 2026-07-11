@@ -63,7 +63,7 @@ def launcher_argv(
     if route == SCOUT_ROUTE and sandbox != "read-only":
         raise PolicyError("scout requires sandbox=read-only")
     argv = [
-        "codex", "exec", "--json", "--model", route.model,
+        "codex", "exec", "--ignore-user-config", "--json", "--model", route.model,
         "-c", f'model_reasoning_effort="{route.reasoning}"',
         "--sandbox", sandbox, "-C", str(worktree),
     ]

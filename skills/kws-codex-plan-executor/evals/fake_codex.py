@@ -35,7 +35,11 @@ def _packet(prompt: dict[str, object]) -> tuple[Path, dict[str, object]]:
 
 def main() -> int:
     argv = sys.argv[1:]
-    if len(argv) < 2 or argv[:2] != ["exec", "--json"] or argv[-1] != "-":
+    if (
+        len(argv) < 3
+        or argv[:3] != ["exec", "--ignore-user-config", "--json"]
+        or argv[-1] != "-"
+    ):
         raise SystemExit("fake codex rejected launcher shape")
     model = _value(argv, "--model")
     reasoning = _value(argv, "-c")
