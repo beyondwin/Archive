@@ -15,7 +15,9 @@
 - Apply `using-superpowers` and `test-driven-development` before implementation tasks.
 - Use exactly `gpt-5.5/high`, `gpt-5.6-sol/high`, and `gpt-5.6-terra/high` as declared by the current matrix.
 - Compile exactly 32 unique slots: 25 credentialed calls and seven Terra policy failures.
-- Do not launch a model before Tasks 1-9 pass review and cost-free verification.
+- Do not launch a live-matrix treatment through `live_model_runner.py` before
+  Tasks 1-9 pass review and cost-free verification. CPE implementation and
+  review workers remain allowed under the fixed runtime routing contract.
 - Subscription execution must use ChatGPT authentication and a child environment without `OPENAI_API_KEY` or `OPENAI_ORG_ID`.
 - Subscription mode has no `--budget-usd`; it records `cost_usd=null` and token usage instead.
 - Do not purchase credits, enable auto top-up, switch to API-key billing, or change account settings.
@@ -1036,8 +1038,8 @@ python3 evals/check_release_contract.py
 ./evals/run.sh
 ```
 
-Expected: all maintained checks and the full cost-free harness pass; no real
-Codex model is invoked.
+Expected: all maintained checks and the full cost-free harness pass; no
+live-matrix treatment is invoked.
 
 - [ ] **Step 6: Commit Task 8**
 
@@ -1168,7 +1170,7 @@ review again. Do not start live execution with an unresolved blocking finding.
 
 Run the same commands from Step 2 plus Graphify freshness. Record the exact
 reviewed implementation commit. Expected: clean tracked tree, all gates green,
-status pending, and no model calls yet.
+status pending, and no live-matrix treatment calls yet.
 
 ---
 
