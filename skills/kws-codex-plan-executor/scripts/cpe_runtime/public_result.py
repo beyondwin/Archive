@@ -42,6 +42,12 @@ class PublicResult:
             raise ValueError("public result text must be non-empty")
         if self.status == "success" and (not self.run_id or not self.state_path):
             raise ValueError("successful public result requires run and state paths")
+        if self.status == "success" and (self.blocker is not None or self.failure_decision is not None):
+            raise ValueError("successful public result forbids failure details")
+        if self.status == "blocked" and self.failure_decision is not None:
+            raise ValueError("blocked public result forbids failure_decision")
+        if self.status == "failed" and self.blocker is not None:
+            raise ValueError("failed public result forbids blocker")
         required = self.blocker if self.status == "blocked" else self.failure_decision if self.status == "failed" else None
         if self.status != "success" and not isinstance(required, dict):
             raise ValueError(f"{self.status} public result requires structured failure details")

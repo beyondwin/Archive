@@ -15,6 +15,9 @@ The common fields are `status`, `run_id`, `state_path`, `summary`,
 - `failed` exits 2 and requires `failure_decision` with the same failure
   metadata and a machine decision.
 
+The three variants are exclusive: success forbids both failure detail fields,
+blocked forbids `failure_decision`, and failed forbids `blocker`.
+
 The only public failure categories are `preflight`, `environment`,
 `transient`, `implementation`, `review`, `verification`, `policy_violation`,
 `state_integrity`, and `operator_review`.

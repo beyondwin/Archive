@@ -148,6 +148,12 @@
         "properties": {
           "run_id": {"type": "string", "minLength": 1},
           "state_path": {"type": "string", "minLength": 1}
+        },
+        "not": {
+          "anyOf": [
+            {"required": ["blocker"]},
+            {"required": ["failure_decision"]}
+          ]
         }
       }
     },
@@ -156,7 +162,8 @@
         "properties": {"status": {"const": "blocked"}}
       },
       "then": {
-        "required": ["blocker"]
+        "required": ["blocker"],
+        "not": {"required": ["failure_decision"]}
       }
     },
     {
@@ -164,7 +171,8 @@
         "properties": {"status": {"const": "failed"}}
       },
       "then": {
-        "required": ["failure_decision"]
+        "required": ["failure_decision"],
+        "not": {"required": ["blocker"]}
       }
     }
   ]
