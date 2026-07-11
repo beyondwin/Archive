@@ -11,7 +11,7 @@ from typing import Callable
 
 from .events import read_events, validate_chain
 from .evidence import KIND_RE, verify_ref
-from .git_delta import GitDelta, capture_snapshot, scope_errors
+from .git_delta import GitDelta, capture_snapshot, matches_path, scope_errors
 from .manifest import load_manifest, resolve_ref, validate_manifest
 from .model_policy import CORE_ROUTE, SCOUT_ROUTE
 from .packets import packet_entry, verify_packet
@@ -819,20 +819,7 @@ def _check_git_scope(context: dict[str, object]) -> tuple[list[str], list[str]]:
         forbidden.extend(str(path) for path in (contract.get("forbidden_paths") or []))
 
     def matches(path: str, patterns: list[str]) -> bool:
-        candidate = PurePosixPath(path)
-        return any(
-            path == pattern
-            or candidate.match(pattern)
-            or (
-                pattern.endswith("/**")
-                and bool(pattern[:-3].rstrip("/"))
-                and (
-                    path == pattern[:-3].rstrip("/")
-                    or path.startswith(f"{pattern[:-3].rstrip('/')}/")
-                )
-            )
-            for pattern in patterns
-        )
+        return matches_path(path, patterns)
 
     errors: list[str] = []
     violated = any(matches(path, forbidden) or not matches(path, allowed) for path in changed)

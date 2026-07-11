@@ -628,6 +628,9 @@ review phase and can safely interpret previously recorded generic transient
 blockers from the matching failed attempt.
 Root-only runtime filename protection no longer catches nested fixture files,
 and an integrity-valid scope blocker can retry after that policy correction.
+Runtime scope enforcement and replay validation now share the same
+`matches_path` implementation; the active T2 run validates cleanly under the
+corrected nested-fixture rule.
 
 Commands and results:
 
@@ -639,6 +642,7 @@ Commands and results:
 - `python3 evals/check_run_diffs.py`: pass.
 - `python3 evals/check_fault_injection.py`: pass.
 - `python3 evals/check_recovery_policy.py`: pass.
+- `python3 evals/check_validation_consumer_parity.py`: pass.
 - `./evals/run.sh`: pass with 50 passing checks.
 - `git diff --check`: pass.
 
