@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -62,6 +63,108 @@ def _refs_indexed(state: dict, refs: object) -> bool:
         if isinstance(item, dict)
     }
     return all(_canonical(ref) in indexed for ref in refs)
+
+
+def _candidate_evidence(
+    run_dir: Path,
+    details: dict[str, object],
+) -> tuple[dict[str, object], dict[str, object]] | None:
+    requested_ref = details.get("ref")
+    requested_digest = details.get("sha256")
+    if isinstance(requested_ref, dict):
+        ref_digest = requested_ref.get("sha256")
+        if requested_digest is not None and requested_digest != ref_digest:
+            return None
+        requested_digest = ref_digest
+    if (
+        not isinstance(requested_digest, str)
+        or len(requested_digest) != 64
+        or any(character not in "0123456789abcdef" for character in requested_digest)
+    ):
+        return None
+    evidence_root = run_dir / "artifacts" / "evidence"
+    try:
+        for ancestor in (run_dir / "artifacts", evidence_root):
+            metadata = ancestor.lstat()
+            if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+                return None
+    except OSError:
+        return None
+    candidates: list[tuple[dict[str, object], dict[str, object]]] = []
+    try:
+        paths = list(evidence_root.glob(f"*/{requested_digest}.json"))
+    except OSError:
+        return None
+    for path in paths:
+        kind = path.parent.name
+        try:
+            parent_metadata = path.parent.lstat()
+            path_metadata = path.lstat()
+        except OSError:
+            continue
+        if (
+            stat.S_ISLNK(parent_metadata.st_mode)
+            or not stat.S_ISDIR(parent_metadata.st_mode)
+            or stat.S_ISLNK(path_metadata.st_mode)
+            or not stat.S_ISREG(path_metadata.st_mode)
+        ):
+            continue
+        ref: dict[str, object] = {
+            "kind": kind,
+            "path": path.relative_to(run_dir).as_posix(),
+            "sha256": requested_digest,
+            "media_type": "application/json",
+        }
+        if verify_ref(run_dir, ref) != []:
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        candidates.append((ref, payload))
+    if len(candidates) != 1:
+        return None
+    candidate_ref, payload = candidates[0]
+    if isinstance(requested_ref, dict) and _canonical(requested_ref) != _canonical(candidate_ref):
+        return None
+    return candidate_ref, payload
+
+
+def _evidence_provenance(
+    state: dict,
+    ref: dict[str, object],
+    payload: dict[str, object],
+    task_id: object,
+    attempt_id: object,
+) -> bool:
+    if not isinstance(task_id, str) or task_id not in state.get("tasks", {}):
+        return False
+    if payload.get("kind") is not None and payload.get("kind") != ref.get("kind"):
+        return False
+    if payload.get("task_id") is not None and payload.get("task_id") != task_id:
+        return False
+    if payload.get("packet_task_id") is not None and payload.get("packet_task_id") != task_id:
+        return False
+    payload_attempt = payload.get("attempt_id")
+    if attempt_id is None:
+        return payload_attempt is None and ref.get("kind") not in {"task_review", "verification", "final_review"}
+    if not isinstance(attempt_id, str) or (payload_attempt is not None and payload_attempt != attempt_id):
+        return False
+    attempts = [
+        item
+        for item in state.get("attempts") or []
+        if isinstance(item, dict) and item.get("attempt_id") == attempt_id
+    ]
+    if len(attempts) != 1:
+        return False
+    attempt = attempts[0]
+    if ref.get("kind") != attempt.get("kind"):
+        return False
+    if ref.get("kind") == "final_review":
+        return attempt.get("task_id") is None and payload.get("packet_task_id") == task_id
+    return attempt.get("task_id") == task_id
 
 
 def _derive_delta(action: str, details: dict[str, object], before: dict) -> dict[str, object]:
@@ -202,16 +305,16 @@ def apply_repair(
             )
             changed = True
     elif action == "reconnect_existing_evidence":
-        ref = details.get("ref")
         task_id = details.get("task_id")
         attempt_id = details.get("attempt_id")
         already = [_canonical(item.get("ref")) for item in before.get("artifact_index") or [] if isinstance(item, dict)]
+        candidate = _candidate_evidence(run_dir, details)
+        ref, payload = candidate if candidate is not None else (None, None)
         if (
             isinstance(ref, dict)
-            and verify_ref(run_dir, ref) == []
+            and isinstance(payload, dict)
             and _canonical(ref) not in already
-            and isinstance(task_id, str)
-            and task_id in before.get("tasks", {})
+            and _evidence_provenance(before, ref, payload, task_id, attempt_id)
         ):
             kernel.transition(
                 Transition(

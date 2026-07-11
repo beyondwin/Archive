@@ -182,13 +182,20 @@ def main() -> int:
         from cpe_runtime.projector import project
         state = project(manifest, read_events(run_dir / "events.jsonl"))
         assert any(item["category"] == "workspace_precondition" for item in state["active_blockers"]), state
+        first_missing_events = (run_dir / "events.jsonl").read_bytes()
+        first_missing_artifacts = list(state["artifact_index"])
+        assert resume_run(run_id, worker=Worker(provider=lambda _request, _argv: (_ for _ in ()).throw(AssertionError("worker must not run")))) == 1
+        repeated = project(manifest, read_events(run_dir / "events.jsonl"))
+        assert (run_dir / "events.jsonl").read_bytes() == first_missing_events, "repeated missing-worktree resume appended events"
+        assert repeated["artifact_index"] == first_missing_artifacts, "repeated missing-worktree resume duplicated evidence"
+        assert len([item for item in repeated["active_blockers"] if item["category"] == "workspace_precondition"]) == 1
         parked.rename(worktree)
         worker = Worker(provider=lambda request, _argv: provider_result(request.attempt_kind, request.worktree_revision))
         assert resume_run(run_id, worker=worker) == 0
         state = project(manifest, read_events(run_dir / "events.jsonl"))
         assert state["lifecycle"] == "completed", state
 
-    print('{"passed": true, "checks": {"resume_matrix": true, "operator_blocker": true, "digest_reject": true, "indexed_evidence": true, "blocked_resume_completed": true, "invalid_packet_non_mutating": true, "missing_worktree_blocker": true}}')
+    print('{"passed": true, "checks": {"resume_matrix": true, "operator_blocker": true, "digest_reject": true, "indexed_evidence": true, "blocked_resume_completed": true, "invalid_packet_non_mutating": true, "missing_worktree_idempotent": true}}')
     return 0
 
 
