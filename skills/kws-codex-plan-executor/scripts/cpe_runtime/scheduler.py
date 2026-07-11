@@ -23,7 +23,7 @@ from .kernel import Kernel, Transition
 from .manifest import load_verified_manifest, resolve_ref
 from .model_policy import CORE_ROUTE
 from .packets import packet_entry, verify_packet
-from .validation import COMPLETION_EVIDENCE_KINDS, validate_completion
+from .validation import COMPLETION_EVIDENCE_KINDS, validate_completion, validate_integrity
 from .worker import Worker, WorkerError, WorkerRequest, WorkerResult
 
 
@@ -820,8 +820,16 @@ def _repair(
         )
         return TaskCycleResult(task_id, "blocked", "repair", kernel.state["worktree_revision"], root_key)
     if outcome is None or (not outcome.delta.changed_files and not outcome.delta.head_changed):
-        _block(kernel, task_id, "repair", f"repair_did_not_advance_revision:{root_key}")
-        return TaskCycleResult(task_id, "blocked", "repair", kernel.state["worktree_revision"], root_key)
+        no_change_retry_is_valid = (
+            outcome is not None
+            and root_key == "scheduled_retry:repair"
+            and validate_integrity(kernel.run_dir).passed
+        )
+        if not no_change_retry_is_valid:
+            _block(kernel, task_id, "repair", f"repair_did_not_advance_revision:{root_key}")
+            return TaskCycleResult(
+                task_id, "blocked", "repair", kernel.state["worktree_revision"], root_key
+            )
     if not preserve_completed:
         kernel.transition(
             Transition(
