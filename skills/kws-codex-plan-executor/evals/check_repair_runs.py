@@ -13,9 +13,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from cpe_runtime.evidence import put_json
 from cpe_runtime.events import read_events
 from cpe_runtime.kernel import RunKernel, Transition
-from cpe_runtime.manifest import create_manifest
-from cpe_runtime.packets import build_packet
+from cpe_runtime.manifest import create_manifest, load_verified_manifest
+from cpe_runtime.packets import build_packet, packet_entry
 from cpe_runtime.repair import apply_repair
+from cpe_runtime.validation import validate_completion
 
 
 def fixture(root: Path) -> tuple[Path, RunKernel]:
@@ -168,7 +169,90 @@ def main() -> int:
         assert ambiguous["applied"] is False, ambiguous
         assert read_events(run_dir / "events.jsonl") == before_duplicate, "ambiguous digest mutated events"
 
-    print('{"passed": true, "checks": {"run_dir_adapter": true, "no_op_false": true, "delta_required": true, "wrong_delta_no_mutation": true, "stale_attempt_evidence": true, "invalid_reconnect_rejected": true, "reconnect_provenance": true, "ambiguous_digest_rejected": true}}')
+        manifest = load_verified_manifest(run_dir / "run_manifest.json")
+        packet_sha = packet_entry(manifest, "T1")["sha256"]
+        binding = {
+            "worktree_revision": 0,
+            "worktree_patch_sha256": None,
+            "packet_sha256": packet_sha,
+        }
+        acceptance_id = "T1.acceptance.1"
+        acceptance_ref = put_json(
+            run_dir,
+            "acceptance",
+            {
+                "kind": "acceptance",
+                "task_id": "T1",
+                "attempt_id": acceptance_id,
+                "status": "passed",
+                "passed": True,
+                "findings": [],
+                "missing_evidence": [],
+                **binding,
+            },
+        ).as_dict()
+        acceptance = apply_repair(
+            run_dir,
+            "reconnect_existing_evidence",
+            details={"task_id": "T1", "attempt_id": acceptance_id, "ref": acceptance_ref},
+        )
+        assert acceptance["applied"] is True and acceptance["validation"]["passed"] is True, acceptance
+
+        repository_id = "run.repository_checks.0.1"
+        repository_ref = put_json(
+            run_dir,
+            "repository_check",
+            {
+                "kind": "repository_check",
+                "task_id": "T1",
+                "attempt_id": repository_id,
+                "status": "passed",
+                "passed": True,
+                "findings": [],
+                "missing_evidence": [],
+                **binding,
+            },
+        ).as_dict()
+        repository = apply_repair(
+            run_dir,
+            "reconnect_existing_evidence",
+            details={"task_id": "T1", "attempt_id": repository_id, "ref": repository_ref},
+        )
+        assert repository["applied"] is True and repository["validation"]["passed"] is True, repository
+        completion_errors = validate_completion(run_dir).errors
+        assert "current_revision_acceptance_not_passed" not in completion_errors, completion_errors
+        assert "current_revision_repository_check_missing" not in completion_errors, completion_errors
+
+        for kind, malformed_id, malformed_binding in (
+            ("acceptance", "T1.acceptance.01", binding),
+            ("acceptance", "T1.acceptance.2", {**binding, "worktree_revision": 1}),
+            ("repository_check", "run.repository_checks.1.1", {**binding, "worktree_revision": 1}),
+            ("repository_check", "run.repository_checks.0.2", binding),
+        ):
+            malformed_ref = put_json(
+                run_dir,
+                kind,
+                {
+                    "kind": kind,
+                    "task_id": "T1",
+                    "attempt_id": malformed_id,
+                    "status": "passed",
+                    "passed": True,
+                    "findings": [],
+                    "missing_evidence": [],
+                    **malformed_binding,
+                },
+            ).as_dict()
+            before_malformed = read_events(run_dir / "events.jsonl")
+            malformed = apply_repair(
+                run_dir,
+                "reconnect_existing_evidence",
+                details={"task_id": "T1", "attempt_id": malformed_id, "ref": malformed_ref},
+            )
+            assert malformed["applied"] is False, malformed
+            assert read_events(run_dir / "events.jsonl") == before_malformed, "malformed synthetic evidence mutated events"
+
+    print('{"passed": true, "checks": {"run_dir_adapter": true, "no_op_false": true, "delta_required": true, "wrong_delta_no_mutation": true, "stale_attempt_evidence": true, "invalid_reconnect_rejected": true, "reconnect_provenance": true, "ambiguous_digest_rejected": true, "synthetic_acceptance_reconnected": true, "synthetic_repository_check_reconnected": true, "malformed_synthetic_rejected": true}}')
     return 0
 
 

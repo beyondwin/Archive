@@ -9,6 +9,7 @@ from .evidence import verify_ref
 from .events import read_events
 from .kernel import Kernel, Transition, rebuild_snapshot
 from .manifest import load_verified_manifest
+from .packets import packet_entry
 from .projector import RETRY_PHASE_STATES, project
 from .reconciliation import reconcile
 from .validation import validate_integrity
@@ -133,6 +134,7 @@ def _candidate_evidence(
 
 
 def _evidence_provenance(
+    manifest: dict,
     state: dict,
     ref: dict[str, object],
     payload: dict[str, object],
@@ -141,16 +143,74 @@ def _evidence_provenance(
 ) -> bool:
     if not isinstance(task_id, str) or task_id not in state.get("tasks", {}):
         return False
-    if payload.get("kind") is not None and payload.get("kind") != ref.get("kind"):
+    kind = ref.get("kind")
+    if payload.get("kind") != kind:
         return False
-    if payload.get("task_id") is not None and payload.get("task_id") != task_id:
+    if payload.get("task_id") != task_id:
         return False
     if payload.get("packet_task_id") is not None and payload.get("packet_task_id") != task_id:
         return False
     payload_attempt = payload.get("attempt_id")
+    try:
+        expected_packet = packet_entry(manifest, task_id)["sha256"]
+    except ValueError:
+        return False
+    binding_ok = (
+        payload.get("worktree_revision") == state.get("worktree_revision")
+        and payload.get("worktree_patch_sha256") == state.get("worktree_patch_sha256")
+        and payload.get("packet_sha256") == expected_packet
+    )
+    if kind == "acceptance":
+        if not isinstance(attempt_id, str) or payload_attempt != attempt_id:
+            return False
+        prefix = f"{task_id}.acceptance."
+        ordinal = attempt_id.removeprefix(prefix) if attempt_id.startswith(prefix) else ""
+        return (
+            bool(ordinal)
+            and ordinal.isdigit()
+            and int(ordinal) > 0
+            and str(int(ordinal)) == ordinal
+            and binding_ok
+        )
+    if kind == "repository_check":
+        if not isinstance(attempt_id, str) or payload_attempt != attempt_id:
+            return False
+        parts = attempt_id.split(".")
+        if len(parts) != 4 or parts[:2] != ["run", "repository_checks"]:
+            return False
+        revision, ordinal = parts[2:]
+        if (
+            not revision.isdigit()
+            or not ordinal.isdigit()
+            or str(int(revision)) != revision
+            or str(int(ordinal)) != ordinal
+            or int(ordinal) < 1
+            or int(revision) != state.get("worktree_revision")
+            or not binding_ok
+        ):
+            return False
+        by_id = {
+            str(task["id"]): task
+            for task in manifest.get("task_graph") or []
+            if isinstance(task, dict) and task.get("id") is not None
+        }
+        ordered: list[str] = []
+        ready = [identifier for identifier, task in by_id.items() if not task.get("dependencies")]
+        seen: set[str] = set()
+        while ready:
+            identifier = ready.pop(0)
+            if identifier in seen:
+                continue
+            seen.add(identifier)
+            ordered.append(identifier)
+            for candidate_id, candidate in by_id.items():
+                dependencies = [str(item) for item in candidate.get("dependencies") or []]
+                if candidate_id not in seen and set(dependencies).issubset(seen):
+                    ready.append(candidate_id)
+        return len(ordered) == len(by_id) and int(ordinal) <= len(ordered) and ordered[int(ordinal) - 1] == task_id
     if attempt_id is None:
         return payload_attempt is None and ref.get("kind") not in {"task_review", "verification", "final_review"}
-    if not isinstance(attempt_id, str) or (payload_attempt is not None and payload_attempt != attempt_id):
+    if not isinstance(attempt_id, str) or payload_attempt != attempt_id:
         return False
     attempts = [
         item
@@ -314,7 +374,7 @@ def apply_repair(
             isinstance(ref, dict)
             and isinstance(payload, dict)
             and _canonical(ref) not in already
-            and _evidence_provenance(before, ref, payload, task_id, attempt_id)
+            and _evidence_provenance(manifest, before, ref, payload, task_id, attempt_id)
         ):
             kernel.transition(
                 Transition(
