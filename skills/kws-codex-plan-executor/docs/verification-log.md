@@ -639,7 +639,8 @@ RED evidence without treating omitted prompt context as missing evidence; the
 same context also lets repair roles distinguish product defects from corrected
 host-runtime policy.
 Typed `scheduled_retry:repair` blockers are now mapped back to the repair phase,
-so a fail-closed recovery worker can be retried after its host context is fixed.
+including the previously persisted no-revision wrapper form, so a fail-closed
+recovery worker can be retried after its host context is fixed.
 
 Commands and results:
 
