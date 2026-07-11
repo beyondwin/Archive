@@ -88,7 +88,7 @@ for check in "${maintained_checks[@]}"; do
   run_check "maintained:${check%.py}" python3 "$EVAL_DIR/$check"
 done
 
-run_check "eval_harness" python3 "$EVAL_DIR/check_eval_harness.py"
+run_check "eval_harness" python3 "$EVAL_DIR/check_eval_harness.py" --inventory "$INVENTORY_FILE"
 run_check "public_cli_integration" python3 "$EVAL_DIR/check_public_cli_integration.py"
 run_check "release_contract" python3 "$EVAL_DIR/check_release_contract.py"
 while IFS= read -r parser_fixture; do

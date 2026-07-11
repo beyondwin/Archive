@@ -54,6 +54,30 @@
       }
     },
     {
+      "id": "completed_run_resume_boundary",
+      "command": "resume",
+      "plan": "# Resume Boundary\n\n```yaml waygent-task\nid: task_1\ntitle: Resume completed run\ndependencies: []\nfile_claims:\n  - result.txt\nacceptance: test -f result.txt\n```\n",
+      "fake": {"write_claimed_file": true, "implementation_content": "resume boundary\n"}
+    },
+    {
+      "id": "completed_run_validate_boundary",
+      "command": "validate",
+      "plan": "# Validate Boundary\n\n```yaml waygent-task\nid: task_1\ntitle: Validate completed run\ndependencies: []\nfile_claims:\n  - result.txt\nacceptance: test -f result.txt\n```\n",
+      "fake": {"write_claimed_file": true, "implementation_content": "validate boundary\n"}
+    },
+    {
+      "id": "completed_run_reconcile_boundary",
+      "command": "reconcile",
+      "plan": "# Reconcile Boundary\n\n```yaml waygent-task\nid: task_1\ntitle: Reconcile completed run\ndependencies: []\nfile_claims:\n  - result.txt\nacceptance: test -f result.txt\n```\n",
+      "fake": {"write_claimed_file": true, "implementation_content": "reconcile boundary\n"}
+    },
+    {
+      "id": "completed_run_repair_boundary",
+      "command": "repair",
+      "plan": "# Repair Boundary\n\n```yaml waygent-task\nid: task_1\ntitle: Plan repair for completed run\ndependencies: []\nfile_claims:\n  - result.txt\nacceptance: test -f result.txt\n```\n",
+      "fake": {"write_claimed_file": true, "implementation_content": "repair boundary\n"}
+    },
+    {
       "id": "collision_safe_export",
       "command": "export",
       "mode": "handoff",
