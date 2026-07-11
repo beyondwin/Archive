@@ -228,13 +228,25 @@ def resume_run(run_id: str, worker: Worker | None = None) -> int:
         if not incomplete:
             return _structured_resume_failure(run_id, "worktree_missing")
         task_id = str(state.get("current_task") or incomplete[0])
-        ref = _recovery_evidence(
-            kernel,
-            task_id,
-            {"category": "workspace_precondition", "worktree": str(worktree), "status": "missing"},
-        )
-        _open_recovery_blocker(kernel, task_id, "workspace_precondition", "worktree_missing", [ref])
-        print(json.dumps({"run_id": run_id, "status": "blocked", "category": "workspace_precondition", "evidence_refs": [ref]}, ensure_ascii=False))
+        existing = [
+            item
+            for item in state.get("active_blockers") or []
+            if item.get("task_id") == task_id
+            and item.get("category") == "workspace_precondition"
+            and item.get("root_cause_key") == "worktree_missing"
+        ]
+        if existing:
+            refs = [dict(ref) for ref in existing[0].get("evidence_refs") or []]
+        else:
+            refs = [
+                _recovery_evidence(
+                    kernel,
+                    task_id,
+                    {"category": "workspace_precondition", "worktree": str(worktree), "status": "missing"},
+                )
+            ]
+        _open_recovery_blocker(kernel, task_id, "workspace_precondition", "worktree_missing", refs)
+        print(json.dumps({"run_id": run_id, "status": "blocked", "category": "workspace_precondition", "evidence_refs": refs}, ensure_ascii=False))
         return 1
 
     if integrity.passed:

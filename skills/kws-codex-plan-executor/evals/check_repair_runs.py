@@ -131,7 +131,44 @@ def main() -> int:
         assert invalid["applied"] is False, invalid
         assert read_events(run_dir / "events.jsonl") == before_invalid, "invalid evidence ref was connected"
 
-    print('{"passed": true, "checks": {"run_dir_adapter": true, "no_op_false": true, "delta_required": true, "wrong_delta_no_mutation": true, "stale_attempt_evidence": true, "invalid_reconnect_rejected": true}}')
+        candidate_payload = {
+            "kind": "verification",
+            "task_id": "T1",
+            "attempt_id": "T1.verification.interrupted",
+            "status": "passed",
+        }
+        candidate_ref = put_json(run_dir, "verification", candidate_payload).as_dict()
+        before_provenance = read_events(run_dir / "events.jsonl")
+        for bad_details in (
+            {"task_id": "missing", "attempt_id": "T1.verification.interrupted", "ref": candidate_ref},
+            {"task_id": "T1", "attempt_id": "missing", "ref": candidate_ref},
+        ):
+            rejected = apply_repair(run_dir, "reconnect_existing_evidence", details=bad_details)
+            assert rejected["applied"] is False, rejected
+            assert read_events(run_dir / "events.jsonl") == before_provenance, "bad provenance mutated events"
+
+        connected = apply_repair(
+            run_dir,
+            "reconnect_existing_evidence",
+            details={"task_id": "T1", "attempt_id": "T1.verification.interrupted", "sha256": candidate_ref["sha256"]},
+        )
+        assert connected["applied"] is True, connected
+        assert connected["validation"]["passed"] is True, connected
+
+        duplicate_payload = {"task_id": "T1", "purpose": "ambiguous reconnect"}
+        first_duplicate = put_json(run_dir, "recovery", duplicate_payload).as_dict()
+        second_duplicate = put_json(run_dir, "blocker_evidence", duplicate_payload).as_dict()
+        assert first_duplicate["sha256"] == second_duplicate["sha256"]
+        before_duplicate = read_events(run_dir / "events.jsonl")
+        ambiguous = apply_repair(
+            run_dir,
+            "reconnect_existing_evidence",
+            details={"task_id": "T1", "sha256": first_duplicate["sha256"]},
+        )
+        assert ambiguous["applied"] is False, ambiguous
+        assert read_events(run_dir / "events.jsonl") == before_duplicate, "ambiguous digest mutated events"
+
+    print('{"passed": true, "checks": {"run_dir_adapter": true, "no_op_false": true, "delta_required": true, "wrong_delta_no_mutation": true, "stale_attempt_evidence": true, "invalid_reconnect_rejected": true, "reconnect_provenance": true, "ambiguous_digest_rejected": true}}')
     return 0
 
 
