@@ -139,6 +139,10 @@ def main() -> int:
             "runtime_blocked",
             "repair:repair_did_not_advance_revision:scheduled_retry:repair",
         ): "repair",
+        (
+            "runtime_blocked",
+            "repair:repair_did_not_advance_revision:t2_review_evidence_not_fail_closed",
+        ): "repair",
     }
     for (category, root), phase in matrix.items():
         decision = select_resume(blocked(category, root), report())
