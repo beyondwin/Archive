@@ -130,6 +130,7 @@ def main() -> int:
     matrix = {
         ("implementation_interrupted", "implementation:interrupted"): "implementation",
         ("acceptance_failed", "acceptance:1"): "repair",
+        ("task_review_interrupted", "task_review:interrupted"): "task_review",
         ("task_review_changes_requested", "task_review:changes_requested"): "repair",
         ("verification_interrupted", "verification:interrupted"): "acceptance",
         ("verification_failed", "verification:failed"): "repair",
@@ -138,6 +139,19 @@ def main() -> int:
         decision = select_resume(blocked(category, root), report())
         assert decision == ResumeDecision("retry", phase, "B1", decision.evidence_refs), decision
         assert decision.evidence_refs, decision
+
+    legacy_transient = blocked("transient", "transient:WorkerError")
+    legacy_transient["attempts"] = [
+        {
+            "attempt_id": "T1.task_review.1",
+            "task_id": "T1",
+            "kind": "task_review",
+            "status": "failed",
+        }
+    ]
+    transient_decision = select_resume(legacy_transient, report())
+    assert transient_decision.action == "retry", transient_decision
+    assert transient_decision.phase == "task_review", transient_decision
 
     operator = select_resume(blocked("operator_review", "operator:decision", owner="operator"), report())
     assert operator.action == "remain_blocked" and operator.phase is None, operator

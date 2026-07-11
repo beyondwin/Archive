@@ -623,6 +623,9 @@ while arbitrary gitignored files remain fail-closed scope evidence.
 Role-specific packet prompts now make redundant verdict fields explicit so
 reviewers preserve the existing contradiction check instead of emitting a
 detailed top-level finding and a separately summarized verdict finding.
+Recovery now maps typed `task_review_interrupted` blockers back to the exact
+review phase and can safely interpret previously recorded generic transient
+blockers from the matching failed attempt.
 
 Commands and results:
 
@@ -633,6 +636,7 @@ Commands and results:
 - `python3 evals/check_public_cli_integration.py`: pass.
 - `python3 evals/check_run_diffs.py`: pass.
 - `python3 evals/check_fault_injection.py`: pass.
+- `python3 evals/check_recovery_policy.py`: pass.
 - `./evals/run.sh`: pass with 50 passing checks.
 - `git diff --check`: pass.
 
