@@ -26,7 +26,8 @@ SENTINEL = "CPE_PACKET_SENTINEL_7d3e2d"
 
 
 def result_contract_ok(request) -> bool:
-    contract = json.loads(request.prompt).get("result_contract")
+    prompt = json.loads(request.prompt)
+    contract = prompt.get("result_contract")
     return bool(
         isinstance(contract, dict)
         and contract.get("top_level_findings_must_equal_verdict_findings")
@@ -36,6 +37,20 @@ def result_contract_ok(request) -> bool:
         )
         is request.verdict_capable
         and contract.get("verdict_must_be_null") is (not request.verdict_capable)
+    )
+
+
+def verdict_context_ok(request) -> bool:
+    prompt = json.loads(request.prompt)
+    validation = prompt.get("canonical_runtime_validation")
+    evidence = prompt.get("prior_task_evidence")
+    if not request.verdict_capable:
+        return validation is None and evidence is None
+    return bool(
+        isinstance(validation, dict)
+        and "validate_state.py" in str(validation.get("command") or "")
+        and validation.get("authority") == "current_host_cpe_runtime"
+        and isinstance(evidence, list)
     )
 
 
@@ -207,7 +222,58 @@ def main() -> int:
             and request.task_id == "T1"
             and SENTINEL not in request.prompt
             and result_contract_ok(request)
+            and verdict_context_ok(request)
             for request in requests
+        )
+        prior_ref_path = run_dir / "artifacts" / "evidence" / "worker_result" / "prior.json"
+        prior_ref_path.parent.mkdir(parents=True, exist_ok=True)
+        prior_ref_path.write_text("{}\n", encoding="utf-8")
+        prior = scheduler._prior_task_evidence(
+            run_dir,
+            {
+                "attempts": [
+                    {
+                        "attempt_id": "T1.implementation.1",
+                        "task_id": "T1",
+                        "kind": "implementation",
+                        "status": "completed",
+                        "worktree_revision": 1,
+                        "evidence_refs": [
+                            {
+                                "kind": "worker_result",
+                                "path": prior_ref_path.relative_to(run_dir).as_posix(),
+                                "sha256": "a" * 64,
+                            }
+                        ],
+                    },
+                    {
+                        "attempt_id": "T2.implementation.1",
+                        "task_id": "T2",
+                        "evidence_refs": [
+                            {"path": "../../outside.json", "sha256": "b" * 64}
+                        ],
+                    },
+                ]
+            },
+            "T1",
+        )
+        checks["verdict_context_indexes_prior_task_evidence"] = (
+            prior
+            == [
+                {
+                    "attempt_id": "T1.implementation.1",
+                    "kind": "implementation",
+                    "status": "completed",
+                    "worktree_revision": 1,
+                    "evidence_refs": [
+                        {
+                            "kind": "worker_result",
+                            "path": str(prior_ref_path.resolve()),
+                            "sha256": "a" * 64,
+                        }
+                    ],
+                }
+            ]
         )
 
         task_two = {

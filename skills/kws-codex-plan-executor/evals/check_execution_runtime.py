@@ -255,13 +255,19 @@ def main() -> int:
             expected = "read-only" if ROLE_POLICIES[request.attempt_kind].read_only else "workspace-write"
             assert sandbox == expected
             prompt = json.loads(request.prompt)
-            assert set(prompt) == {
+            expected_prompt_keys = {
                 "task_id",
                 "packet_path",
                 "packet_sha256",
                 "worktree_revision",
                 "instruction",
+                "result_contract",
             }
+            if request.verdict_capable:
+                expected_prompt_keys.update(
+                    {"canonical_runtime_validation", "prior_task_evidence"}
+                )
+            assert set(prompt) == expected_prompt_keys
             assert prompt["task_id"] == request.task_id
             assert prompt["packet_path"] == request.packet_path
             assert prompt["packet_sha256"] == request.packet_sha256
