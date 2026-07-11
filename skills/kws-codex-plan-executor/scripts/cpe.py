@@ -4,12 +4,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
 import secrets
 import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -23,10 +23,11 @@ from cpe_runtime.packets import build_packet
 from cpe_runtime.plan_compiler import CompileBlocked, compile_run
 from cpe_runtime.projector import project
 from cpe_runtime.prompt_export import render_export_bundle
+from cpe_runtime.public_result import PublicResult, blocked_result, failed_result
 from cpe_runtime.reconciliation import select_resume
 from cpe_runtime.repair import apply_repair
 from cpe_runtime.scheduler import run_tasks
-from cpe_runtime.validation import validate_integrity, validate_run
+from cpe_runtime.validation import validate_completion, validate_integrity
 from cpe_runtime.worker import Worker
 
 
@@ -67,6 +68,65 @@ def _create_worktree(workspace: Path, worktree: Path, run_id: str) -> str:
     return branch
 
 
+def _emit(result: PublicResult) -> int:
+    print(json.dumps(result.as_dict(), ensure_ascii=False, indent=2))
+    return result.exit_code()
+
+
+def _context_artifacts(run_dir: Path) -> dict[str, str | None]:
+    return {
+        "spec_manifest_path": str(run_dir / "run_manifest.json"),
+        "task_packet_dir": str(run_dir / "artifacts" / "task-packets"),
+        "decisions_path": None,
+    }
+
+
+def _changed_files(worktree: Path) -> tuple[str, ...]:
+    result = _run(["git", "status", "--short", "--untracked-files=all"], worktree)
+    if result.returncode:
+        return ()
+    return tuple(line[3:] for line in result.stdout.splitlines() if len(line) > 3)
+
+
+def _owned_worktree(workspace: Path, worktree: Path, branch: str, source_head: str, run_id: str) -> bool:
+    if worktree.name != run_id or not worktree.is_dir():
+        return False
+    head = _run(["git", "rev-parse", "HEAD"], worktree)
+    current_branch = _run(["git", "symbolic-ref", "--short", "HEAD"], worktree)
+    listed = _run(["git", "worktree", "list", "--porcelain"], workspace)
+    branch_ref = f"refs/heads/{branch}"
+    blocks = [block.splitlines() for block in listed.stdout.strip().split("\n\n")]
+    registered = any(
+        f"worktree {worktree}" in block and f"branch {branch_ref}" in block
+        for block in blocks
+    )
+    return (
+        head.returncode == 0
+        and head.stdout.strip() == source_head
+        and current_branch.returncode == 0
+        and current_branch.stdout.strip() == branch
+        and listed.returncode == 0
+        and registered
+    )
+
+
+def _cleanup_unpublished_worktree(
+    workspace: Path,
+    worktree: Path,
+    branch: str,
+    source_head: str,
+    run_id: str,
+    run_dir: Path,
+) -> None:
+    """Remove only this invocation's unpublished worktree and matching branch."""
+
+    if run_dir.exists() or not _owned_worktree(workspace, worktree, branch, source_head, run_id):
+        return
+    removed = _run(["git", "worktree", "remove", "--force", str(worktree)], workspace)
+    if removed.returncode == 0:
+        _run(["git", "branch", "-D", branch], workspace)
+
+
 def execute_run(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace).expanduser().resolve()
     plan = Path(args.plan).expanduser().resolve()
@@ -88,28 +148,99 @@ def execute_run(args: argparse.Namespace) -> int:
     head = compiled.source_head
     status = list(compiled.source_status)
     run_id, run_dir, worktree = _allocate_paths(plan)
-    _create_worktree(workspace, worktree, run_id)
+    branch = _create_worktree(workspace, worktree, run_id)
     pricing = Path(__file__).resolve().parents[1] / "data" / "pricing-snapshot.json"
-    manifest = create_manifest(
-        run_id,
-        args.mode,
-        workspace,
-        worktree,
-        plan,
-        spec,
-        tasks,
-        pricing,
-        docs=docs,
-        source_head=head,
-        source_status=status,
-    )
-    packet_drafts = [build_packet(compiled, task) for task in tasks]
-    kernel = RunKernel.initialize(run_dir, manifest, packet_drafts)
+    try:
+        manifest = create_manifest(
+            run_id,
+            args.mode,
+            workspace,
+            worktree,
+            plan,
+            spec,
+            tasks,
+            pricing,
+            docs=docs,
+            source_head=head,
+            source_status=status,
+        )
+        packet_drafts = [build_packet(compiled, task) for task in tasks]
+        kernel = RunKernel.initialize(run_dir, manifest, packet_drafts)
+    except (ValueError, OSError, RuntimeError) as exc:
+        _cleanup_unpublished_worktree(workspace, worktree, branch, head, run_id, run_dir)
+        return _emit(
+            failed_result(
+                str(exc) or type(exc).__name__,
+                category="environment" if isinstance(exc, OSError) else "state_integrity",
+                run_id=run_id,
+                next_action="Correct initialization inputs and start a new run.",
+            )
+        )
+    except BaseException:
+        _cleanup_unpublished_worktree(workspace, worktree, branch, head, run_id, run_dir)
+        raise
     kernel.transition(Transition("run.status_changed", {"from": "created", "to": "ready"}))
-    result = run_tasks(tasks, Worker(), kernel)
-    payload = {"run_id": run_id, "run_dir": str(run_dir), "worktree": str(worktree), **result}
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
-    return 0 if result.get("status") == "completed" else 1
+    try:
+        result = run_tasks(tasks, Worker(), kernel)
+    except (ValueError, OSError, RuntimeError) as exc:
+        return _emit(
+            failed_result(
+                str(exc) or type(exc).__name__,
+                category="state_integrity",
+                run_id=run_id,
+                state_path=str(run_dir / "state.json"),
+                next_action="Inspect the published run evidence before reconciliation.",
+            )
+        )
+    if result.get("status") != "completed":
+        state = kernel.state
+        blocker = (state.get("active_blockers") or [{}])[-1]
+        summary = str(result.get("reason") or blocker.get("category") or "run blocked")
+        phase = str(result.get("phase") or "")
+        reason = str(result.get("reason") or blocker.get("category") or "")
+        category = (
+            "policy_violation"
+            if "policy" in reason or "scope" in reason
+            else "review"
+            if phase in {"task_review", "final_review"}
+            else "verification"
+            if phase in {"acceptance", "verification", "repository_checks"}
+            else "transient"
+            if "transient" in reason
+            else "implementation"
+        )
+        return _emit(
+            blocked_result(
+                summary,
+                category=category,
+                run_id=run_id,
+                state_path=str(run_dir / "state.json"),
+                evidence_refs=tuple(blocker.get("evidence_refs") or ()),
+            )
+        )
+    completion = validate_completion(run_dir)
+    if not completion.passed:
+        return _emit(
+            failed_result(
+                "completion validation failed: " + ",".join(completion.errors),
+                category="state_integrity",
+                run_id=run_id,
+                state_path=str(run_dir / "state.json"),
+            )
+        )
+    return _emit(
+        PublicResult(
+            status="success",
+            run_id=run_id,
+            state_path=str(run_dir / "state.json"),
+            summary="Run completed and passed canonical completion validation.",
+            changed_files=_changed_files(worktree),
+            verification=({"command": "validate_completion", "status": "passed"},),
+            residual_risk=("paid live migration gate pending",),
+            context_artifacts=_context_artifacts(run_dir),
+            next_action="Review the isolated worktree changes.",
+        )
+    )
 
 
 def _recovery_evidence(
@@ -184,11 +315,24 @@ def _open_recovery_blocker(
 
 
 def _structured_resume_failure(run_id: str, classification: str, **extra: object) -> int:
-    print(
-        json.dumps({"classification": classification, "run_id": run_id, **extra}, ensure_ascii=False),
-        file=sys.stderr,
+    run_dir = _codex_home() / "orchestrator" / run_id
+    details = extra.get("errors")
+    suffix = f": {','.join(map(str, details))}" if isinstance(details, list) else ""
+    category = (
+        "environment"
+        if classification in {"run_missing", "manifest_missing", "worktree_missing"}
+        else "implementation"
+        if classification == "repair_delta_not_observed"
+        else "state_integrity"
     )
-    return 2
+    return _emit(
+        failed_result(
+            classification + suffix,
+            category=category,
+            run_id=run_id if run_dir.exists() else None,
+            state_path=str(run_dir / "state.json") if run_dir.exists() else None,
+        )
+    )
 
 
 def resume_run(run_id: str, worker: Worker | None = None) -> int:
@@ -206,11 +350,23 @@ def resume_run(run_id: str, worker: Worker | None = None) -> int:
         return _structured_resume_failure(run_id, "event_chain_invalid")
     state = project(manifest, events)
     if state["lifecycle"] == "completed":
-        validation = validate_run(run_dir)
+        validation = validate_completion(run_dir)
         if not validation.passed:
             return _structured_resume_failure(run_id, "completed_run_invalid", errors=validation.errors)
-        print(json.dumps({"run_id": run_id, "status": "completed"}))
-        return 0
+        worktree = resolve_ref(str(manifest["execution_worktree_ref"]))
+        return _emit(
+            PublicResult(
+                status="success",
+                run_id=run_id,
+                state_path=str(run_dir / "state.json"),
+                summary="Completed run passed canonical completion validation.",
+                changed_files=_changed_files(worktree),
+                verification=({"command": "validate_completion", "status": "passed"},),
+                residual_risk=("paid live migration gate pending",),
+                context_artifacts=_context_artifacts(run_dir),
+                next_action="Review the isolated worktree changes.",
+            )
+        )
     kernel = Kernel(run_dir)
     worktree = resolve_ref(str(manifest["execution_worktree_ref"]))
     integrity = validate_integrity(run_dir)
@@ -246,8 +402,13 @@ def resume_run(run_id: str, worker: Worker | None = None) -> int:
                 )
             ]
         _open_recovery_blocker(kernel, task_id, "workspace_precondition", "worktree_missing", refs)
-        print(json.dumps({"run_id": run_id, "status": "blocked", "category": "workspace_precondition", "evidence_refs": refs}, ensure_ascii=False))
-        return 1
+        return _emit(blocked_result(
+            "execution worktree is missing",
+            category="environment",
+            run_id=run_id,
+            state_path=str(run_dir / "state.json"),
+            evidence_refs=tuple(refs),
+        ))
 
     if integrity.passed:
         workspace_blockers = [
@@ -277,8 +438,12 @@ def resume_run(run_id: str, worker: Worker | None = None) -> int:
     if decision.action == "reject":
         return _structured_resume_failure(run_id, "resume_rejected", errors=integrity.errors)
     if decision.action == "remain_blocked":
-        print(json.dumps({"run_id": run_id, "status": "blocked", "blocker_id": decision.blocker_id}, ensure_ascii=False))
-        return 1
+        return _emit(blocked_result(
+            f"run remains blocked: {decision.blocker_id}",
+            category="operator_review",
+            run_id=run_id,
+            state_path=str(run_dir / "state.json"),
+        ))
     if decision.action != "retry" or decision.phase is None:
         return _structured_resume_failure(run_id, "resume_state_invalid")
 
@@ -336,9 +501,41 @@ def resume_run(run_id: str, worker: Worker | None = None) -> int:
         return _structured_resume_failure(run_id, "repair_delta_not_observed")
     if kernel.state["lifecycle"] == "blocked":
         kernel.transition(Transition("run.status_changed", {"from": "blocked", "to": "ready", "reason": "evidence-backed resume"}))
-    result = run_tasks(list(manifest["task_graph"]), worker or Worker(), kernel)
-    print(json.dumps({"run_id": run_id, **result}, ensure_ascii=False, indent=2))
-    return 0 if result.get("status") == "completed" else 1
+    try:
+        result = run_tasks(list(manifest["task_graph"]), worker or Worker(), kernel)
+    except (ValueError, OSError, RuntimeError) as exc:
+        return _emit(
+            failed_result(
+                str(exc) or type(exc).__name__,
+                category="state_integrity",
+                run_id=run_id,
+                state_path=str(run_dir / "state.json"),
+                next_action="Inspect the published run evidence before reconciliation.",
+            )
+        )
+    if result.get("status") != "completed":
+        return _emit(blocked_result(
+            str(result.get("reason") or "resumed run blocked"),
+            category="implementation",
+            run_id=run_id,
+            state_path=str(run_dir / "state.json"),
+        ))
+    completion = validate_completion(run_dir)
+    if not completion.passed:
+        return _structured_resume_failure(run_id, "completed_run_invalid", errors=completion.errors)
+    return _emit(
+        PublicResult(
+            status="success",
+            run_id=run_id,
+            state_path=str(run_dir / "state.json"),
+            summary="Resumed run completed and passed canonical completion validation.",
+            changed_files=_changed_files(worktree),
+            verification=({"command": "validate_completion", "status": "passed"},),
+            residual_risk=("paid live migration gate pending",),
+            context_artifacts=_context_artifacts(run_dir),
+            next_action="Review the isolated worktree changes.",
+        )
+    )
 
 
 def export_plan(args: argparse.Namespace) -> int:
@@ -347,17 +544,25 @@ def export_plan(args: argparse.Namespace) -> int:
     spec = Path(args.spec).expanduser().resolve() if args.spec else None
     if not plan.is_file() or not workspace.is_dir() or (spec and not spec.is_file()):
         raise PreflightError("workspace, plan, or spec path is unreadable")
-    body = plan.read_text(encoding="utf-8")
-    if spec:
-        body += f"\n\nSPEC PATH: {spec}\n"
+    template_path = Path(__file__).resolve().parents[1] / "templates" / "fresh-session-prompt.txt"
+    template = template_path.read_text(encoding="utf-8")
+    doc_refs: list[str] = []
     for doc in args.docs or []:
         doc_path = Path(doc).expanduser().resolve()
         if not doc_path.is_file():
             raise PreflightError(f"docs path is unreadable: {doc_path}")
-        body += f"\n\nDOC PATH: {doc_path}\n{doc_path.read_text(encoding='utf-8')}\n"
-    if args.mode == "handoff":
-        body = "HANDOFF CHECKPOINT\n\n" + body
-    print(render_export_bundle(body, workspace), end="")
+        doc_refs.append(f"{doc_path} sha256={hashlib.sha256(doc_path.read_bytes()).hexdigest()}")
+    refs: dict[str, object] = {
+        "workspace": workspace,
+        "plan": plan,
+        "plan_sha256": hashlib.sha256(plan.read_bytes()).hexdigest(),
+        "spec": spec or "none",
+        "spec_sha256": hashlib.sha256(spec.read_bytes()).hexdigest() if spec else "none",
+        "docs": "; ".join(doc_refs) or "none",
+        "mode": args.mode,
+        "handoff_section": "HANDOFF CHECKPOINT" if args.mode == "handoff" else "",
+    }
+    print(render_export_bundle(template, refs, workspace), end="")
     return 0
 
 
@@ -390,22 +595,18 @@ def main() -> int:
             return resume_run(args.run_id)
         return export_plan(args)
     except CompileBlocked as exc:
-        print(
-            json.dumps(
-                {
-                    "classification": "preflight_blocked",
-                    "category": exc.category,
-                    "error": exc.summary,
-                    "evidence": exc.evidence,
-                },
-                ensure_ascii=False,
-            ),
-            file=sys.stderr,
+        return _emit(
+            blocked_result(
+                exc.summary,
+                category="preflight",
+                evidence_refs=tuple(exc.evidence) if isinstance(exc.evidence, list) else (),
+                next_action="Correct the plan contract and run preflight again.",
+            )
         )
-        return 2
     except PreflightError as exc:
-        print(json.dumps({"classification": "preflight_blocked", "error": str(exc)}, ensure_ascii=False), file=sys.stderr)
-        return 2
+        return _emit(blocked_result(str(exc), category="preflight", next_action="Correct the invocation and retry."))
+    except (ValueError, OSError, RuntimeError) as exc:
+        return _emit(failed_result(str(exc) or type(exc).__name__, category="state_integrity"))
 
 
 if __name__ == "__main__":

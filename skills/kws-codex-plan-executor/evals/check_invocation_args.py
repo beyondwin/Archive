@@ -108,6 +108,34 @@ def main() -> int:
     if not checks["echo_contains_required_fields"]:
         failures.append("echo line should include plan count, mode, subagents, context mode, and fallback policy")
 
+    cpe = Path(__file__).resolve().parents[1] / "scripts" / "cpe.py"
+    run_help = subprocess.run(
+        [sys.executable, str(cpe), "run", "--help"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    export_help = subprocess.run(
+        [sys.executable, str(cpe), "export", "--help"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    checks["public_cli_modes_are_explicit"] = (
+        run_help.returncode == 0
+        and "{interactive,headless}" in run_help.stdout
+        and export_help.returncode == 0
+        and "{prompt,handoff}" in export_help.stdout
+    )
+    if not checks["public_cli_modes_are_explicit"]:
+        failures.append("public CPE run and export modes should be explicit")
+    checks["public_cli_has_no_model_override"] = all(
+        token not in run_help.stdout + export_help.stdout
+        for token in ("--model", "--reasoning", "--profile")
+    )
+    if not checks["public_cli_has_no_model_override"]:
+        failures.append("public CPE must not expose model or reasoning overrides")
+
     payload_out = {"passed": not failures, "checks": checks, "failures": failures}
     print(json.dumps(payload_out, ensure_ascii=False, indent=2))
     return 0 if not failures else 1
