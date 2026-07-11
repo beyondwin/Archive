@@ -16,11 +16,12 @@ from types import SimpleNamespace
 SKILL = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL / "scripts"))
 
-from cpe_runtime.events import append_event
+from cpe_runtime.events import append_event, read_events, validate_chain
 from cpe_runtime.kernel import Kernel, RunKernel, Transition
 from cpe_runtime.manifest import create_manifest
 from cpe_runtime.packets import build_packet
 from cpe_runtime.public_result import PublicResult, blocked_result, failed_result
+from cpe_runtime.projector import project
 import cpe as public_cpe
 
 
@@ -239,8 +240,21 @@ def _mutation_hook_execution(root: Path) -> bool:
     old_home = os.environ.get("CODEX_HOME")
     old_path = os.environ.get("PATH")
     original_create = public_cpe._create_worktree
+    stage_observed = False
 
     def mutate_after_create(*args: object, **kwargs: object) -> str:
+        nonlocal stage_observed
+        stages = list((root / "codex" / "orchestrator").glob(".*.initialize-*"))
+        stage_observed = len(stages) == 1 and all(
+            (stages[0] / name).is_file()
+            for name in (
+                "run_manifest.json",
+                "events.jsonl",
+                "state.json",
+                "artifacts/inputs/plan.snapshot",
+                "artifacts/task-packets/task_1.json",
+            )
+        )
         branch = original_create(*args, **kwargs)
         plan.write_text("# MUTATED AFTER COMPILE\n", encoding="utf-8")
         return branch
@@ -279,6 +293,8 @@ def _mutation_hook_execution(root: Path) -> bool:
     packet = json.loads((run_dir / "artifacts" / "task-packets" / "task_1.json").read_text(encoding="utf-8"))
     expected = __import__("hashlib").sha256(original_bytes).hexdigest()
     return (
+        stage_observed
+        and
         plan_ref.read_bytes() == original_bytes
         and manifest["plan"]["sha256"] == expected
         and packet["source_hashes"]["plan"] == expected
@@ -401,8 +417,13 @@ def main() -> int:
         root = Path(raw)
         _, _, run_dir = _initialize(root, "published-replay")
         state = json.loads((run_dir / "state.json").read_text(encoding="utf-8")) if (run_dir / "state.json").is_file() else {}
+        manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+        events = read_events(run_dir / "events.jsonl")
         checks["published_initialization_replayable"] = (
             (run_dir / "events.jsonl").is_file()
+            and len(events) >= 1
+            and not validate_chain(events)
+            and state == project(manifest, events)
             and state.get("lifecycle") == "created"
             and state.get("tasks", {}).get("T1", {}).get("status") == "pending"
         )

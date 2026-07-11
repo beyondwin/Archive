@@ -38,6 +38,35 @@ class Transition:
     attempt_id: str | None = None
 
 
+@dataclass(frozen=True)
+class PreparedRun:
+    """A fully fsynced private run tree that has not been published yet."""
+
+    run_dir: Path
+    stage: Path
+
+    def cleanup(self) -> None:
+        if self.stage.exists():
+            shutil.rmtree(self.stage, ignore_errors=True)
+
+    def publish(self) -> "RunKernel":
+        if self.run_dir.exists():
+            raise FileExistsError(self.run_dir)
+        if not self.stage.is_dir():
+            raise ValueError("prepared_run_missing")
+        os.replace(self.stage, self.run_dir)
+        _fsync_dir(self.run_dir.parent)
+        manifest = load_verified_manifest(self.run_dir / "run_manifest.json")
+        events = read_events(self.run_dir / "events.jsonl")
+        if validate_chain(events):
+            raise ValueError("event_chain_invalid")
+        replayed = project(manifest, events)
+        cached = json.loads((self.run_dir / "state.json").read_text(encoding="utf-8"))
+        if cached != replayed:
+            raise ValueError("snapshot_replay_mismatch")
+        return RunKernel(self.run_dir)
+
+
 def _fsync_dir(path: Path) -> None:
     descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
     try:
@@ -433,14 +462,14 @@ def _validation_manifest_for_stage(manifest: dict, stage: Path, snapshots: list[
 
 class RunKernel(Kernel):
     @classmethod
-    def initialize(
+    def prepare(
         cls,
         run_dir: Path,
         manifest: dict,
         packet_drafts: list[PacketDraft],
         *,
         input_sources: tuple[object, ...] | None = None,
-    ) -> "RunKernel":
+    ) -> PreparedRun:
         run_dir = run_dir.expanduser().resolve()
         if run_dir.exists():
             raise FileExistsError(run_dir)
@@ -464,7 +493,6 @@ class RunKernel(Kernel):
         run_dir.parent.mkdir(parents=True, exist_ok=True)
         stage = run_dir.parent / f".{run_dir.name}.initialize-{secrets.token_hex(6)}"
         stage.mkdir(mode=0o700)
-        published = False
         try:
             snapshots = _stage_input_snapshots(stage, initialized_manifest, input_sources)
             initialized_manifest["input_snapshots"] = snapshots
@@ -482,20 +510,48 @@ class RunKernel(Kernel):
                 if verify_packet(stage, initialized_manifest, draft.task_id) != draft:
                     raise ValueError("packet_digest_mismatch")
             events_path = stage / "events.jsonl"
-            descriptor = os.open(events_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            try:
-                os.fsync(descriptor)
-            finally:
-                os.close(descriptor)
+            append_event(
+                events_path,
+                {
+                    "type": "context.updated",
+                    "payload": {
+                        "status": "green",
+                        "phase": "initialized",
+                        "run_id": initialized_manifest.get("run_id"),
+                    },
+                },
+            )
+            events = read_events(events_path)
+            if validate_chain(events):
+                raise ValueError("event_chain_invalid")
+            atomic_write_snapshot(stage / "state.json", project(initialized_manifest, events))
             _fsync_dir(stage)
-            atomic_write_snapshot(stage / "state.json", project(initialized_manifest, []))
-            os.replace(stage, run_dir)
-            _fsync_dir(run_dir.parent)
-            published = True
+            return PreparedRun(run_dir, stage)
+        except BaseException:
+            shutil.rmtree(stage, ignore_errors=True)
+            raise
+
+    @classmethod
+    def initialize(
+        cls,
+        run_dir: Path,
+        manifest: dict,
+        packet_drafts: list[PacketDraft],
+        *,
+        input_sources: tuple[object, ...] | None = None,
+    ) -> "RunKernel":
+        """Compatibility wrapper for callers that do not need a pre-worktree stage."""
+
+        prepared = cls.prepare(
+            run_dir,
+            manifest,
+            packet_drafts,
+            input_sources=input_sources,
+        )
+        try:
+            return prepared.publish()
         finally:
-            if not published:
-                shutil.rmtree(stage, ignore_errors=True)
-        return cls(run_dir)
+            prepared.cleanup()
 
 
 def rebuild_snapshot(run_dir: Path) -> dict:
