@@ -96,6 +96,56 @@ def _production_aliases(tree: ast.Module) -> set[str]:
     return aliases
 
 
+def _constant_truth(node: ast.AST) -> bool | None:
+    try:
+        value = ast.literal_eval(node)
+    except (ValueError, TypeError, SyntaxError, MemoryError, RecursionError):
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+            nested = _constant_truth(node.operand)
+            return None if nested is None else not nested
+        return None
+    return bool(value)
+
+
+class _ExecutableCallVisitor(ast.NodeVisitor):
+    def __init__(self) -> None:
+        self.calls: list[ast.Call] = []
+
+    def visit_Call(self, node: ast.Call) -> None:
+        self.calls.append(node)
+        self.generic_visit(node)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        return
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        return
+
+    def visit_Lambda(self, node: ast.Lambda) -> None:
+        return
+
+    def visit_If(self, node: ast.If) -> None:
+        self.visit(node.test)
+        truth = _constant_truth(node.test)
+        selected = node.body if truth is True else node.orelse if truth is False else [*node.body, *node.orelse]
+        for child in selected:
+            self.visit(child)
+
+    def visit_While(self, node: ast.While) -> None:
+        self.visit(node.test)
+        truth = _constant_truth(node.test)
+        selected = node.orelse if truth is False else [*node.body, *node.orelse]
+        for child in selected:
+            self.visit(child)
+
+
+def _executable_calls(function: ast.FunctionDef | ast.AsyncFunctionDef) -> list[ast.Call]:
+    visitor = _ExecutableCallVisitor()
+    for statement in function.body:
+        visitor.visit(statement)
+    return visitor.calls
+
+
 def _reachable_functions(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
     definitions = {
         node.name: node
@@ -112,10 +162,9 @@ def _reachable_functions(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFu
         seen.add(name)
         function = definitions[name]
         reachable.append(function)
-        for node in ast.walk(function):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                if node.func.id in definitions and node.func.id not in seen:
-                    pending.append(node.func.id)
+        for node in _executable_calls(function):
+            if isinstance(node.func, ast.Name) and node.func.id in definitions and node.func.id not in seen:
+                pending.append(node.func.id)
     return reachable
 
 
@@ -124,14 +173,6 @@ def _production_backed(tree: ast.Module) -> bool:
     if not reachable:
         return False
     aliases = _production_aliases(tree)
-    referenced = {
-        node.id
-        for function in reachable
-        for node in ast.walk(function)
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
-    }
-    if aliases & referenced:
-        return True
     assignments = {
         target.id: ast.unparse(node.value)
         for node in tree.body
@@ -141,9 +182,15 @@ def _production_backed(tree: ast.Module) -> bool:
         if isinstance(target, ast.Name)
     }
     for function in reachable:
-        for node in ast.walk(function):
-            if not isinstance(node, ast.Call):
-                continue
+        for node in _executable_calls(function):
+            if isinstance(node.func, ast.Name) and node.func.id in aliases:
+                return True
+            if isinstance(node.func, ast.Attribute):
+                root = node.func.value
+                while isinstance(root, ast.Attribute):
+                    root = root.value
+                if isinstance(root, ast.Name) and root.id in aliases:
+                    return True
             target = ast.unparse(node.func)
             if target not in {"subprocess.run", "subprocess.Popen"}:
                 continue
@@ -191,6 +238,7 @@ def _guarded_script(script: Path, argv: list[str], output_dir: Path) -> GuardTra
     original_run = subprocess.run
     original_popen = subprocess.Popen
     oracle_text = str(ORACLE.resolve())
+    forbidden_identifiers = (oracle_text, ORACLE.name, "public-cli-oracles", "ORACLE_TARGET")
 
     def deny_oracle(path: Path) -> None:
         resolved = path.expanduser().resolve()
@@ -207,20 +255,41 @@ def _guarded_script(script: Path, argv: list[str], output_dir: Path) -> GuardTra
         deny_oracle(path)
         return original_path_open(path, *args, **kwargs)
 
-    def inspect_argv(argv_value: object) -> tuple[str, ...]:
+    def inspect_surface(value: object, surface: str) -> None:
+        if value is None:
+            return
+        if isinstance(value, dict):
+            for key, item in value.items():
+                inspect_surface(key, surface)
+                inspect_surface(item, surface)
+            return
+        if isinstance(value, (list, tuple, set)):
+            for item in value:
+                inspect_surface(item, surface)
+            return
+        rendered = str(value)
+        if any(identifier in rendered for identifier in forbidden_identifiers):
+            raise PermissionError(f"fixture runner subprocess {surface} attempted to reference its oracle")
+
+    def inspect_subprocess(argv_value: object, kwargs: dict[str, object]) -> tuple[str, ...]:
         normalized = _argv_strings(argv_value)
         launched.append(normalized)
-        if any(oracle_text in item for item in normalized):
-            raise PermissionError("fixture runner subprocess attempted to read its oracle")
+        inspect_surface(argv_value, "argv")
+        for key in ("env", "cwd", "input", "args"):
+            inspect_surface(kwargs.get(key), key)
+        if kwargs.get("shell"):
+            inspect_surface(argv_value, "shell command")
         return normalized
 
-    def guarded_run(argv_value, *args, **kwargs):
-        inspect_argv(argv_value)
-        return original_run(argv_value, *args, **kwargs)
+    def guarded_run(argv_value=None, *args, **kwargs):
+        actual = kwargs.get("args") if argv_value is None else argv_value
+        inspect_subprocess(actual, kwargs)
+        return original_run(*args, **kwargs) if argv_value is None else original_run(argv_value, *args, **kwargs)
 
-    def guarded_popen(argv_value, *args, **kwargs):
-        inspect_argv(argv_value)
-        return original_popen(argv_value, *args, **kwargs)
+    def guarded_popen(argv_value=None, *args, **kwargs):
+        actual = kwargs.get("args") if argv_value is None else argv_value
+        inspect_subprocess(actual, kwargs)
+        return original_popen(*args, **kwargs) if argv_value is None else original_popen(argv_value, *args, **kwargs)
 
     old_argv = sys.argv
     sys.argv = argv
@@ -259,10 +328,18 @@ def _oracle_guard_checks() -> tuple[dict[str, bool], GuardTrace]:
             f"subprocess.run([sys.executable, '-c', {child_code!r}], check=True)\n",
             encoding="utf-8",
         )
+        environment_reader = root / "environment_oracle_read.py"
+        environment_reader.write_text(
+            "import os, subprocess, sys\n"
+            f"env = {{**os.environ, 'ORACLE_TARGET': {str(ORACLE.resolve())!r}}}\n"
+            "subprocess.run([sys.executable, '-c', \"import os; open(os.environ['ORACLE_TARGET']).read()\"], env=env, check=True)\n",
+            encoding="utf-8",
+        )
         caught: dict[str, bool] = {}
         for name, script in (
             ("conditional_full_path_oracle_read_rejected", conditional),
             ("subprocess_oracle_read_rejected", subprocess_reader),
+            ("subprocess_environment_oracle_read_rejected", environment_reader),
         ):
             try:
                 _guarded_script(script, [str(script)], root / name)
@@ -351,6 +428,19 @@ def main() -> int:
         "from cpe_runtime.scheduler import route_verdict\n"
         "def main():\n    print('{\"passed\": true}')\n    return 0\n"
     )
+    assigned_import = ast.parse(
+        "from cpe_runtime.validation import validate_run\n"
+        "def main():\n    _ = validate_run\n    print('{\"passed\": true}')\n    return 0\n"
+    )
+    dead_call = ast.parse(
+        "from cpe_runtime.validation import validate_run\n"
+        "def main():\n    if False:\n        validate_run(None)\n    print('{\"passed\": true}')\n    return 0\n"
+    )
+    helper_call = ast.parse(
+        "from cpe_runtime.validation import validate_run\n"
+        "def exercise():\n    return validate_run(None)\n"
+        "def main():\n    exercise()\n    return 0\n"
+    )
     guard_checks, trace = _oracle_guard_checks()
     inventory_payload = json.loads(args.inventory.read_text(encoding="utf-8"))
     mutation_checks = _inventory_mutation_checks(inventory_payload)
@@ -360,6 +450,11 @@ def main() -> int:
         "all_paths_exist": all((EVAL_DIR / path).is_file() for path in paths),
         "ast_anti_stub": not any("literal-success" in item or "reachable production" in item for item in failures),
         "unused_production_import_rejected": not _production_backed(unused_import),
+        "assigned_production_reference_rejected": not _production_backed(assigned_import),
+        "dead_branch_production_call_rejected": not _production_backed(dead_call),
+        "reachable_helper_production_call_accepted": _production_backed(helper_call),
+        "runner_source_has_no_oracle_reference": "oracle" not in RUNNER.read_text(encoding="utf-8").lower()
+        and "check_public_cli_integration" not in RUNNER.read_text(encoding="utf-8"),
         "static_runners_removed": not any("static runner" in item for item in failures),
         "oracle_isolated": ORACLE.resolve() not in trace.opened,
         "oracle_guard_executed_full_runner": trace.results_written,
