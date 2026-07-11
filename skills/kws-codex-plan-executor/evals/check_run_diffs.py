@@ -291,6 +291,10 @@ def main() -> int:
         before_ignored = capture_snapshot(repo)
         (repo / "ignored-by-gitignore.bin").write_bytes(b"\x00ignored")
         (repo / "ignored-by-info.bin").write_bytes(b"ignored by info\n")
+        (repo / "__pycache__").mkdir()
+        (repo / "__pycache__" / "generated.cpython-314.pyc").write_bytes(
+            b"generated cache"
+        )
         after_ignored = capture_snapshot(repo)
         ignored_delta = diff_snapshots(before_ignored, after_ignored, repo)
         ignored_paths = ("ignored-by-gitignore.bin", "ignored-by-info.bin")
@@ -298,6 +302,10 @@ def main() -> int:
             {
                 "ignored_content_is_in_full_tree_snapshot": ignored_delta.changed_files
                 == ignored_paths,
+                "untracked_python_cache_is_excluded": not any(
+                    path == "__pycache__" or path.startswith("__pycache__/")
+                    for path, _fingerprint in after_ignored.files
+                ),
                 "git_metadata_is_excluded_from_snapshot": not any(
                     path == ".git" or path.startswith(".git/")
                     for path, _fingerprint in after_ignored.files

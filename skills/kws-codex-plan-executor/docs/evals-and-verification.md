@@ -6,6 +6,9 @@ subset, and model/reasoning attestation may be recovered only from the
 CLI-owned session JSONL whose thread ID and worktree match the completed call.
 Workers receive the verified packet's absolute run-store path and digest; the
 workspace sandbox may read that external evidence but cannot edit it.
+Full-tree scope checks continue to include ignored content, except untracked
+Python `__pycache__` directories, which repository policy classifies as
+machine-local runtime cache rather than product evidence.
 
 Install the pinned eval dependency in an isolated environment, then run:
 

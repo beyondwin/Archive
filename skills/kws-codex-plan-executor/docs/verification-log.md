@@ -618,6 +618,8 @@ forms and fail-closed session JSONL model/reasoning attestation bound to the
 worker thread and worktree. Also bound each worker prompt to the verified
 packet's absolute read-only run-store path so the real sandbox can consume the
 same digest-indexed bytes used by deterministic fixtures.
+Untracked Python `__pycache__` directories are excluded from product snapshots
+while arbitrary gitignored files remain fail-closed scope evidence.
 
 Commands and results:
 
@@ -626,6 +628,8 @@ Commands and results:
 - `python3 -m py_compile scripts/cpe_runtime/worker.py evals/check_codex_cli_compatibility.py`: pass.
 - `python3 evals/check_task_packet.py`: pass.
 - `python3 evals/check_public_cli_integration.py`: pass.
+- `python3 evals/check_run_diffs.py`: pass.
+- `python3 evals/check_fault_injection.py`: pass.
 - `./evals/run.sh`: pass with 50 passing checks.
 - `git diff --check`: pass.
 
