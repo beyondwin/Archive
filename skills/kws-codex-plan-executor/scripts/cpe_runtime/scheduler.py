@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shlex
+import sys
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -112,32 +114,92 @@ def make_packet_request(
         packet_sha256=entry["sha256"],
         worktree_revision=int(state["worktree_revision"]),
     )
-    return WorkerRequest(**{**request.__dict__, "prompt": packet_prompt(request, instruction)})
-
-
-def packet_prompt(request: WorkerRequest, instruction: str) -> str:
-    return json.dumps(
-        {
-            "task_id": request.task_id,
-            "packet_path": request.packet_path,
-            "packet_sha256": request.packet_sha256,
-            "worktree_revision": request.worktree_revision,
-            "instruction": instruction,
-            "result_contract": {
-                "verdict_must_be_null": not request.verdict_capable,
-                "top_level_findings_must_equal_verdict_findings": request.verdict_capable,
-                "top_level_missing_evidence_must_equal_verdict_missing_evidence": request.verdict_capable,
-                "guidance": (
-                    "For verdict-capable roles, copy verdict.findings and "
-                    "verdict.missing_evidence exactly into the matching top-level arrays."
-                    if request.verdict_capable
-                    else "This role cannot issue a verdict; return verdict=null."
-                ),
-            },
-        },
-        ensure_ascii=False,
-        sort_keys=True,
+    prior_task_evidence = _prior_task_evidence(run_dir, state, task_id)
+    return WorkerRequest(
+        **{
+            **request.__dict__,
+            "prompt": packet_prompt(
+                request,
+                instruction,
+                run_dir=run_dir,
+                prior_task_evidence=prior_task_evidence,
+            ),
+        }
     )
+
+
+def _prior_task_evidence(run_dir: Path, state: dict, task_id: str) -> list[dict[str, object]]:
+    root = run_dir.expanduser().resolve()
+    evidence: list[dict[str, object]] = []
+    for attempt in state.get("attempts", []):
+        if not isinstance(attempt, dict) or attempt.get("task_id") != task_id:
+            continue
+        refs: list[dict[str, str]] = []
+        for ref in attempt.get("evidence_refs") or []:
+            if not isinstance(ref, dict) or not isinstance(ref.get("path"), str):
+                continue
+            path = (root / str(ref["path"])).resolve()
+            try:
+                path.relative_to(root)
+            except ValueError:
+                continue
+            refs.append(
+                {
+                    "kind": str(ref.get("kind") or ""),
+                    "path": str(path),
+                    "sha256": str(ref.get("sha256") or ""),
+                }
+            )
+        if refs:
+            evidence.append(
+                {
+                    "attempt_id": str(attempt.get("attempt_id") or ""),
+                    "kind": str(attempt.get("kind") or ""),
+                    "status": str(attempt.get("status") or ""),
+                    "worktree_revision": attempt.get("worktree_revision"),
+                    "evidence_refs": refs,
+                }
+            )
+    return evidence
+
+
+def packet_prompt(
+    request: WorkerRequest,
+    instruction: str,
+    *,
+    run_dir: Path,
+    prior_task_evidence: list[dict[str, object]],
+) -> str:
+    payload: dict[str, object] = {
+        "task_id": request.task_id,
+        "packet_path": request.packet_path,
+        "packet_sha256": request.packet_sha256,
+        "worktree_revision": request.worktree_revision,
+        "instruction": instruction,
+        "result_contract": {
+            "verdict_must_be_null": not request.verdict_capable,
+            "top_level_findings_must_equal_verdict_findings": request.verdict_capable,
+            "top_level_missing_evidence_must_equal_verdict_missing_evidence": request.verdict_capable,
+            "guidance": (
+                "For verdict-capable roles, copy verdict.findings and "
+                "verdict.missing_evidence exactly into the matching top-level arrays."
+                if request.verdict_capable
+                else "This role cannot issue a verdict; return verdict=null."
+            ),
+        },
+    }
+    if request.verdict_capable:
+        validator = Path(__file__).resolve().parents[1] / "validate_state.py"
+        payload["canonical_runtime_validation"] = {
+            "authority": "current_host_cpe_runtime",
+            "command": shlex.join([sys.executable, str(validator), str(run_dir.resolve())]),
+            "guidance": (
+                "Use this current host-runtime command for canonical run validation. "
+                "Do not substitute a validator copied into the execution worktree."
+            ),
+        }
+        payload["prior_task_evidence"] = prior_task_evidence
+    return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 
 def run_scouts(requests: list[WorkerRequest], worker: Worker) -> list[WorkerResult]:

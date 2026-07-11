@@ -631,18 +631,24 @@ and an integrity-valid scope blocker can retry after that policy correction.
 Runtime scope enforcement and replay validation now share the same
 `matches_path` implementation; the active T2 run validates cleanly under the
 corrected nested-fixture rule.
+Verdict-capable workers now receive the current host runtime's canonical
+`validate_state.py` command instead of inferring authority from an older copy
+inside the execution worktree. Their packet prompt also indexes every prior
+task-attempt worker-result artifact, so verification can inspect authentic TDD
+RED evidence without treating omitted prompt context as missing evidence.
 
 Commands and results:
 
 - `python3 evals/check_codex_cli_compatibility.py`: pass.
 - live `codex exec` worker-schema probe with `gpt-5.6-sol/high`: pass; exit 0.
 - `python3 -m py_compile scripts/cpe_runtime/worker.py evals/check_codex_cli_compatibility.py`: pass.
-- `python3 evals/check_task_packet.py`: pass.
 - `python3 evals/check_public_cli_integration.py`: pass.
 - `python3 evals/check_run_diffs.py`: pass.
 - `python3 evals/check_fault_injection.py`: pass.
 - `python3 evals/check_recovery_policy.py`: pass.
 - `python3 evals/check_validation_consumer_parity.py`: pass.
+- `python3 evals/check_task_packet.py`: pass with canonical host validation and
+  prior-task-evidence prompt checks.
 - `./evals/run.sh`: pass with 50 passing checks.
 - `git diff --check`: pass.
 
