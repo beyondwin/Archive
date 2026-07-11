@@ -1,12 +1,12 @@
-# KWS Codex Plan Executor 3.0.0
+# KWS Codex Plan Executor 3.0.1
 
 CPE v3 executes implementation plans in isolated git worktrees and records each
 durable transition as a hash-chained event. It remains independent from
 Waygent. `events.jsonl` is authoritative; `state.json` is a rebuildable
 projection for resume and inspection.
 
-Release status: **integrity-closure-pending; paid-live-pending**. The current
-deterministic suite does not yet exercise every audited integrity failure. The
+Published evidence state: **deterministic-ready; paid-live-pending**. The cost-free
+integrity suite now exercises the audited fail-closed boundaries. The
 credentialed four-treatment, eight-case live matrix still requires explicit
 cost approval and must pass before paid release closeout is claimed.
 

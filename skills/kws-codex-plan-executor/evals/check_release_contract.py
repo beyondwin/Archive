@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -12,10 +13,59 @@ SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 SKILL_VERSION_RE = re.compile(r'(?m)^[ \t]*version:[ \t]*"([^"]+)"')
 RELEASE_STATUS_RE = re.compile(r'(?m)^[ \t]*release_status:[ \t]*"([^"]+)"')
 HISTORY_VERSION_RE = re.compile(r"^## (\d+\.\d+\.\d+)(?:\s+-\s+(.+))?$", re.MULTILINE)
+VERIFICATION_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
+RELEASE_SUBJECT = "release(cpe): publish deterministic integrity 3.0.1"
+REQUIRED_COST_FREE_COMMANDS = {
+    "./evals/run.sh",
+    "python3 -m py_compile scripts/*.py scripts/cpe_runtime/*.py evals/*.py",
+    "bash -n evals/run.sh",
+    "python3 evals/check_release_contract.py",
+    "python3 evals/check_docs_contract.py",
+    "bun run check",
+    "git diff --check",
+}
 
 
 def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
+
+
+def latest_verification(text: str) -> dict:
+    payloads: list[dict] = []
+    for raw in VERIFICATION_BLOCK_RE.findall(text):
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if payload.get("schema_version") == "cpe-release-verification.v1":
+            payloads.append(payload)
+    return payloads[-1] if payloads else {}
+
+
+def expected_implementation_commit(repo_root: Path) -> str:
+    history = subprocess.run(
+        ["git", "log", "--format=%H%x09%s"],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.splitlines()
+    release_commit = next(
+        (
+            line.split("\t", 1)[0]
+            for line in history
+            if "\t" in line and line.split("\t", 1)[1] == RELEASE_SUBJECT
+        ),
+        "",
+    )
+    revision = f"{release_commit}^" if release_commit else "HEAD"
+    return subprocess.run(
+        ["git", "rev-parse", revision],
+        cwd=repo_root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def main() -> int:
@@ -77,7 +127,8 @@ def main() -> int:
         )
 
     fixtures = baseline_payload.get("fixtures")
-    checks["baseline_has_nonempty_passing_fixtures"] = (
+    maintained_checks = baseline_payload.get("checks")
+    legacy_fixtures_pass = (
         isinstance(fixtures, list)
         and bool(fixtures)
         and all(
@@ -88,8 +139,26 @@ def main() -> int:
             for item in fixtures
         )
     )
+    maintained_checks_pass = (
+        baseline_payload.get("schema_version") == "maintained-evals.v1"
+        and isinstance(maintained_checks, list)
+        and bool(maintained_checks)
+        and all(
+            isinstance(item, dict)
+            and isinstance(item.get("name"), str)
+            and bool(item["name"])
+            and item.get("exit_code") == 0
+            for item in maintained_checks
+        )
+        and baseline_payload.get("paid_execution") == "skipped_not_approved"
+    )
+    checks["baseline_has_nonempty_passing_fixtures"] = (
+        legacy_fixtures_pass or maintained_checks_pass
+    )
     if baseline_path.is_file() and not checks["baseline_has_nonempty_passing_fixtures"]:
-        failures.append("current v3 baseline must contain at least one named passing fixture")
+        failures.append(
+            "current v3 baseline must contain named passing legacy fixtures or maintained checks"
+        )
 
     history_text = read(history_path)
     history_versions = [item[0] for item in HISTORY_VERSION_RE.findall(history_text)]
@@ -178,26 +247,57 @@ def main() -> int:
             "or deterministic-ready/paid-pending or integrity-closure/paid-pending"
         )
 
-    if version == "3.0.0":
-        expected_status = "integrity-closure-pending; paid-live-pending"
-        checks["integrity_closure_is_pending"] = release_status == expected_status
-        checks["canonical_status_is_pending"] = (
-            live_status.get("status") == "integrity_closure_pending_paid_pending"
-        )
-        checks["deterministic_status_is_pending"] = (
-            live_status.get("deterministic_status") == "integrity-closure-pending"
-        )
-        checks["release_ready_is_false"] = live_status.get("release_ready") is False
-        checks["paid_live_is_pending"] = live_status.get("paid_live_status") == "pending"
-        for check_name in (
-            "integrity_closure_is_pending",
-            "canonical_status_is_pending",
-            "deterministic_status_is_pending",
-            "release_ready_is_false",
-            "paid_live_is_pending",
-        ):
-            if not checks[check_name]:
-                failures.append(f"3.0.0 pending release contract failed: {check_name}")
+    verification = latest_verification(verification_log_text)
+    commands = verification.get("commands", [])
+    command_names = {
+        item.get("command") for item in commands if isinstance(item, dict)
+    }
+    expected_commit = expected_implementation_commit(skill_dir.parents[1])
+    release_checks = {
+        "version_is_301": version == "3.0.1",
+        "deterministic_ready": release_status == "deterministic-ready; paid-live-pending",
+        "canonical_status_is_deterministic_ready": (
+            live_status.get("status") == "deterministic_ready_paid_pending"
+            and live_status.get("deterministic_status") == "deterministic-ready"
+            and live_status.get("deterministic_evidence", {}).get("status") == "passed"
+        ),
+        "paid_live_pending": (
+            live_status.get("paid_live_status") == "pending"
+            and live_status.get("paid_live_evidence", {}).get("status") == "pending"
+            and verification.get("paid_live") == "skipped_not_approved"
+        ),
+        "release_ready_false": live_status.get("release_ready") is False,
+        "implementation_commit_recorded": (
+            verification.get("implementation_commit") == expected_commit
+        ),
+        "verification_timestamp_recorded": bool(
+            re.fullmatch(
+                r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:\d{2})",
+                str(verification.get("timestamp", "")),
+            )
+        ),
+        "all_cost_free_commands_recorded": REQUIRED_COST_FREE_COMMANDS <= command_names,
+        "all_cost_free_commands_passed": (
+            bool(commands)
+            and all(
+                isinstance(item, dict) and item.get("exit_code") == 0
+                for item in commands
+            )
+        ),
+        "current_passing_counts_recorded": (
+            isinstance(verification.get("eval_passing_count"), int)
+            and verification.get("eval_passing_count", 0) > 0
+            and isinstance(verification.get("bun_passing_count"), int)
+            and verification.get("bun_passing_count", 0) > 0
+        ),
+        "paid_live_residual_risk_recorded": (
+            verification.get("residual_risk") == "paid live migration gate pending"
+        ),
+    }
+    checks.update(release_checks)
+    for check_name, passed in release_checks.items():
+        if not passed:
+            failures.append(f"3.0.1 deterministic release contract failed: {check_name}")
 
     payload = {
         "version": version,

@@ -1,9 +1,10 @@
 # Risks, Limitations, And Deferrals
 
-- Release status is **integrity-closure-pending; paid-live-pending**. Audited
-  deterministic integrity gaps must close before deterministic readiness. The credentialed
-  four-treatment, eight-case migration matrix has not run. No live quality,
-  regression, or context-reduction release claim is approved yet.
+- Published evidence state is **deterministic-ready; paid-live-pending**. Audited
+  deterministic integrity gaps are closed by the current cost-free suite. The
+  credentialed four-treatment, eight-case migration matrix has not run. No live
+  quality, regression, or context-reduction release claim is approved yet, and
+  `release_ready=false` remains required.
 - The v3 deterministic harness uses a maintained inventory, public CLI fixture
   repositories, fake providers, and an isolated oracle. This covers behavior,
   not real provider quality, latency, or cost; those remain with the pending
