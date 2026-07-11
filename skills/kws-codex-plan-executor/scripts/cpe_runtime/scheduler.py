@@ -800,6 +800,9 @@ def _worker_block_cycle(
 ) -> TaskCycleResult:
     category = str(result.payload.get("failure_category") or f"{phase}_failed")
     root = str(result.payload.get("root_cause_key") or f"{phase}:worker_failed")
+    if category == "transient":
+        category = f"{phase}_interrupted"
+        root = f"{phase}:interrupted"
     _block(
         kernel,
         task_id,

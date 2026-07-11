@@ -12,6 +12,9 @@ machine-local runtime cache rather than product evidence.
 Packet prompts also state the role-specific result contract: write roles emit
 `verdict=null`, while verdict-capable roles repeat the exact verdict findings
 and missing-evidence arrays at the top level for contradiction checks.
+Transient worker failures are recorded with their active role, including
+`task_review_interrupted`, so an integrity-valid blocked run can retry the
+exact read-only phase instead of being rejected as an unknown generic failure.
 
 Install the pinned eval dependency in an isolated environment, then run:
 

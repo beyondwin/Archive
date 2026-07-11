@@ -34,6 +34,7 @@ REPAIRABLE = {
 RESUME_PHASES = {
     "implementation_interrupted": "implementation",
     "acceptance_failed": "repair",
+    "task_review_interrupted": "task_review",
     "task_review_changes_requested": "repair",
     "verification_interrupted": "acceptance",
     "verification_failed": "repair",
@@ -79,10 +80,33 @@ def _resume_category(blocker: dict) -> str | None:
         return "implementation_interrupted"
     if root.startswith("acceptance:"):
         return "acceptance_failed"
+    if root.startswith("task_review:") and "interrupt" in root:
+        return "task_review_interrupted"
     if root.startswith("task_review:") and "changes_requested" in root:
         return "task_review_changes_requested"
     if root.startswith("verification:"):
         return "verification_interrupted" if "interrupt" in root else "verification_failed"
+    return None
+
+
+def _legacy_transient_phase(state: dict, blocker: dict) -> str | None:
+    if blocker.get("category") != "transient":
+        return None
+    task_id = blocker.get("task_id")
+    phases = {
+        "implementation": "implementation",
+        "task_review": "task_review",
+        "verification": "acceptance",
+        "repair": "repair",
+    }
+    for attempt in reversed(list(state.get("attempts") or [])):
+        if (
+            isinstance(attempt, dict)
+            and attempt.get("task_id") == task_id
+            and attempt.get("status") == "failed"
+            and attempt.get("kind") in phases
+        ):
+            return phases[str(attempt["kind"])]
     return None
 
 
@@ -108,9 +132,10 @@ def select_resume(state: dict, integrity_report: ValidationReport) -> ResumeDeci
         refs = _indexed_refs(state, blocker.get("evidence_refs"))
         category = _resume_category(blocker)
         blocker_id = blocker.get("blocker_id")
-        if refs is None or category is None or not isinstance(blocker_id, str) or not blocker_id:
+        phase = RESUME_PHASES[category] if category is not None else _legacy_transient_phase(state, blocker)
+        if refs is None or phase is None or not isinstance(blocker_id, str) or not blocker_id:
             return ResumeDecision("reject")
-        return ResumeDecision("retry", RESUME_PHASES[category], blocker_id, refs)
+        return ResumeDecision("retry", phase, blocker_id, refs)
 
     active = [
         item
