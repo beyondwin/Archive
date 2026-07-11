@@ -14,23 +14,24 @@
   },
   "paid_live_evidence": {
     "status": "pending",
-    "reason": "The replacement digest-bound 32-slot ChatGPT subscription ledger completed with 100% model attestation, but the unchanged release gate failed on a critical regression, task-success regression, and insufficient context-token reduction",
-    "run_id": "checkpoint-a9b0b43-live-matrix",
-    "manifest_sha256": "d89af64ff2f7f05a231568030b1a5ca7c29e6e60ddc97b41648241c48c5d7ff1",
-    "implementation_commit": "a9b0b432b4bf58ba879deed54dffcb7637980326",
-    "implementation_tree": "9e2a4caf45c581eea1d0970279e7b55f814988d8",
-    "implementation_patch_sha256": "c2a282b1de92a16d964defa776fa430fe3d0b5e1400e998ef81155ec424d5dff",
+    "reason": "The final digest-bound 32-slot ChatGPT subscription ledger passed every quality and integrity requirement except the unchanged 25 percent context-token reduction threshold; Sol v3 measured 10.61 percent reduction",
+    "run_id": "checkpoint-c090a7f-live-matrix",
+    "manifest_sha256": "c7ae947f0f5f9f16763ffa7cd17c4ab0eaa8409a9f70aa049b19309c8f2a1159",
+    "implementation_commit": "c090a7f1c0897b9812668d1e59c92a2d61dc0ee2",
+    "implementation_tree": "cbc0c4a67fe664c076661fbb54911797f1fa85c3",
+    "implementation_patch_sha256": "9c75801fac32e5aa7180818be222969296ecd16d5360768d16f9ddc47e1633ad",
     "credentialed_call_count": 25,
     "expected_policy_failure_count": 7,
     "release_gate": {
       "passed": false,
       "failures": [
-        "critical_regressions_present",
-        "task_success_regressed_vs_gpt55",
         "context_token_reduction_below_25_percent"
       ],
       "core_model_attestation_rate": 1.0,
-      "context_token_reduction_vs_gpt55": 0.023824
+      "critical_regressions": 0,
+      "task_completion_rate": 1.0,
+      "evidence_completeness_rate": 1.0,
+      "context_token_reduction_vs_gpt55": 0.106063
     },
     "cost_usd": null,
     "cost_observability": "unavailable"

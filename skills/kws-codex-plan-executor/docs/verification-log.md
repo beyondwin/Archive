@@ -1,5 +1,43 @@
 # Verification Log
 
+## 2026-07-12 Asia/Seoul - final isolated-worker live-matrix result
+
+- Reviewed checkpoint: `c090a7f1c0897b9812668d1e59c92a2d61dc0ee2`.
+- Manifest: `c7ae947f0f5f9f16763ffa7cd17c4ab0eaa8409a9f70aa049b19309c8f2a1159`.
+- The exact 32 outcomes completed under one immutable ledger: 25 credentialed
+  calls and seven policy outcomes, with no failed, pending, or duplicate slot.
+- Each child used a ledger-owned auth-only Codex home. The full export template
+  source and its 198-byte worker prefix were independently digest-bound.
+- All quality and integrity requirements passed except context reduction:
+  attestation, task completion, evidence completeness, isolation, and
+  drift-free rates were 100%; critical regressions were zero. Sol v3 used
+  354,261 context tokens versus GPT-5.5's 396,293, a 10.61% reduction rather
+  than the required 25%.
+- Decision: keep `release_ready=false`, preserve the terminal ledger, do not
+  lower the threshold, and do not repeat paid execution without a materially
+  different reviewed context architecture.
+
+```json
+{
+  "schema_version": "cpe-live-matrix-result.v1",
+  "implementation_commit": "c090a7f1c0897b9812668d1e59c92a2d61dc0ee2",
+  "implementation_tree": "cbc0c4a67fe664c076661fbb54911797f1fa85c3",
+  "implementation_patch_sha256": "9c75801fac32e5aa7180818be222969296ecd16d5360768d16f9ddc47e1633ad",
+  "manifest_sha256": "c7ae947f0f5f9f16763ffa7cd17c4ab0eaa8409a9f70aa049b19309c8f2a1159",
+  "credentialed_call_count": 25,
+  "expected_policy_failure_count": 7,
+  "release_gate": {
+    "passed": false,
+    "core_model_attestation_rate": 1.0,
+    "task_completion_rate": 1.0,
+    "evidence_completeness_rate": 1.0,
+    "critical_regressions": 0,
+    "context_token_reduction_vs_gpt55": 0.106063,
+    "failures": ["context_token_reduction_below_25_percent"]
+  }
+}
+```
+
 ## 2026-07-12 Asia/Seoul - live-matrix blocker remediation result
 
 - Reviewed checkpoint: `a9b0b432b4bf58ba879deed54dffcb7637980326`.
