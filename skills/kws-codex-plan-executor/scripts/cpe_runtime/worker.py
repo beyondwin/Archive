@@ -98,6 +98,48 @@ def _normalize_usage(value: object) -> dict[str, int]:
     return {key: max(0, int(source.get(key, 0) or 0)) for key in USAGE_FIELDS}
 
 
+def _read_session_attestation(
+    *, codex_home: Path, thread_id: str, worktree: Path
+) -> dict[str, str]:
+    """Read model attestation from the CLI-owned session for one thread."""
+    matches: list[dict[str, str]] = []
+    sessions = codex_home.expanduser().resolve() / "sessions"
+    if not sessions.is_dir():
+        return {}
+    for path in sessions.rglob(f"*{thread_id}*.jsonl"):
+        session_matches = False
+        candidate: dict[str, str] = {}
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(record, dict) or not isinstance(record.get("payload"), dict):
+                continue
+            payload = record["payload"]
+            if record.get("type") == "session_meta":
+                raw_cwd = payload.get("cwd")
+                try:
+                    cwd_matches = bool(raw_cwd) and Path(str(raw_cwd)).resolve() == worktree.resolve()
+                except OSError:
+                    cwd_matches = False
+                session_matches = payload.get("id") == thread_id and cwd_matches
+            elif record.get("type") == "turn_context":
+                model = payload.get("model")
+                reasoning = payload.get("effort") or payload.get("reasoning_effort")
+                if model and reasoning:
+                    candidate = {"model": str(model), "reasoning": str(reasoning)}
+        if session_matches and candidate:
+            matches.append(candidate)
+    if len(matches) != 1:
+        return {}
+    return {**matches[0], "trusted_source": "codex_session_jsonl"}
+
+
 class Worker:
     def __init__(
         self,
@@ -170,6 +212,7 @@ class Worker:
         events: list[dict] = []
         metadata: dict[str, object] = {}
         usage: dict[str, int] = _normalize_usage({})
+        thread_id: str | None = None
         for line in stdout.splitlines():
             if not line.strip():
                 continue
@@ -181,12 +224,20 @@ class Worker:
                 continue
             events.append(event)
             if event.get("type") == "thread.started":
+                raw_thread_id = event.get("thread_id") or (event.get("thread") or {}).get("id")
+                thread_id = str(raw_thread_id) if raw_thread_id else None
                 model = event.get("model") or (event.get("thread") or {}).get("model")
                 reasoning = event.get("reasoning_effort") or (event.get("thread") or {}).get("reasoning_effort")
                 if model and reasoning:
                     metadata = {"model": model, "reasoning": reasoning, "trusted_source": "codex_cli_jsonl"}
             if event.get("type") == "turn.completed":
                 usage = _normalize_usage(event.get("usage") or (event.get("turn") or {}).get("usage"))
+        if not metadata and thread_id:
+            metadata = _read_session_attestation(
+                codex_home=Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")),
+                thread_id=thread_id,
+                worktree=request.worktree,
+            )
         if not last_message.is_file():
             raise WorkerError("worker last-message artifact missing")
         try:

@@ -24,6 +24,7 @@ RUNNER = EVAL_DIR / "public_cli_fixture_runner.py"
 STATIC_RUNNERS = ("static_execution_runner.py", "static_prompt_runner.py")
 REQUIRED_MAINTAINED = frozenset({
     "check_cpe_replay.py",
+    "check_codex_cli_compatibility.py",
     "check_event_kernel.py",
     "check_execution_runtime.py",
     "check_fault_injection.py",

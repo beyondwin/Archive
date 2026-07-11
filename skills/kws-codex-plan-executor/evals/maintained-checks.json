@@ -2,6 +2,7 @@
   "schema_version": "1",
   "checks": [
     {"path": "check_model_policy.py", "production_entrypoint": "cpe_runtime.model_policy", "mutation_assertion": "invalid routes and launcher mismatches fail closed"},
+    {"path": "check_codex_cli_compatibility.py", "production_entrypoint": "cpe_runtime.worker", "mutation_assertion": "unsupported response schemas and unattested session routes fail closed"},
     {"path": "check_manifest_evidence.py", "production_entrypoint": "cpe_runtime.manifest,cpe_runtime.evidence", "mutation_assertion": "mutated evidence digests are rejected"},
     {"path": "check_event_kernel.py", "production_entrypoint": "cpe_runtime.kernel,cpe_runtime.projector", "mutation_assertion": "illegal transitions and event mutations fail"},
     {"path": "check_execution_runtime.py", "production_entrypoint": "cpe_runtime.scheduler", "mutation_assertion": "negative verdict and late-revision cases block completion"},

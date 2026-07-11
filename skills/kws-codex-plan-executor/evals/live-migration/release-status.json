@@ -9,7 +9,7 @@
     "status": "passed",
     "reason": "current cost-free L0-L4 integrity gates passed on the recorded implementation commit",
     "command": "./evals/run.sh",
-    "maintained_check_count": 49,
+    "maintained_check_count": 50,
     "paid_provider_calls": 0
   },
   "paid_live_evidence": {
