@@ -14,6 +14,7 @@ from .evidence import KIND_RE, verify_ref
 from .git_delta import GitDelta, capture_snapshot, matches_path, scope_errors
 from .manifest import load_manifest, resolve_ref, validate_manifest
 from .model_policy import CORE_ROUTE, SCOUT_ROUTE
+from .operator_decisions import approved_cleanup_claims, approved_scope_claims
 from .packets import packet_entry, verify_packet
 from .projector import project
 
@@ -809,6 +810,7 @@ def _check_git_scope(context: dict[str, object]) -> tuple[list[str], list[str]]:
         return [], []
     allowed: list[str] = []
     forbidden: list[str] = []
+    state = context.get("state") if isinstance(context.get("state"), dict) else {}
     for task in manifest.get("task_graph", []):
         if not isinstance(task, dict):
             continue
@@ -817,11 +819,20 @@ def _check_git_scope(context: dict[str, object]) -> tuple[list[str], list[str]]:
             contract = {}
         allowed.extend(str(path) for path in (contract.get("allowed_paths") or task.get("file_claims") or []))
         forbidden.extend(str(path) for path in (contract.get("forbidden_paths") or []))
+        allowed.extend(
+            approved_cleanup_claims(
+                context["run_dir"],
+                state,
+                str(task.get("id") or ""),
+                int(state.get("worktree_revision", -1)),
+            )
+        )
 
     def matches(path: str, patterns: list[str]) -> bool:
         return matches_path(path, patterns)
 
     errors: list[str] = []
+    warnings: list[str] = []
     violated = any(matches(path, forbidden) or not matches(path, allowed) for path in changed)
     if violated:
         errors.append("diff_scope_violation")
@@ -831,7 +842,8 @@ def _check_git_scope(context: dict[str, object]) -> tuple[list[str], list[str]]:
         for task in manifest.get("task_graph", [])
         if isinstance(task, dict)
     }
-    for event, parsed in _revision_validation(context)["records"]:
+    revision_records = list(_revision_validation(context)["records"])
+    for record_index, (event, parsed) in enumerate(revision_records):
         task = tasks.get(str(event.get("task_id")))
         if not isinstance(task, dict):
             errors.append("revision_scope_violation")
@@ -843,6 +855,28 @@ def _check_git_scope(context: dict[str, object]) -> tuple[list[str], list[str]]:
             str(path)
             for path in (contract.get("allowed_paths") or task.get("file_claims") or [])
         ]
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+        extra = approved_scope_claims(
+            context["run_dir"],
+            context.get("state") if isinstance(context.get("state"), dict) else {},
+            str(event.get("task_id") or ""),
+            int(payload.get("from", -1)),
+        )
+        cleanup = approved_cleanup_claims(
+            context["run_dir"],
+            context.get("state") if isinstance(context.get("state"), dict) else {},
+            str(event.get("task_id") or ""),
+            int(payload.get("from", -1)),
+        )
+        global_claims = [
+            str(path)
+            for candidate in manifest.get("task_graph") or []
+            if isinstance(candidate, dict)
+            for path in candidate.get("file_claims") or []
+        ]
+        task_allowed.extend(
+            path for path in extra if path in cleanup or matches_path(path, global_claims)
+        )
         task_forbidden = [str(path) for path in (contract.get("forbidden_paths") or [])]
         structural = tuple(
             path
@@ -862,9 +896,84 @@ def _check_git_scope(context: dict[str, object]) -> tuple[list[str], list[str]]:
             or parsed.before_identity != parsed.after_identity,
             structural,
         )
-        if scope_errors(delta, task_allowed, task_forbidden):
+        cleanup_violation = any(
+            not matches_path(path, [str(item) for item in task.get("file_claims") or []])
+            and matches_path(path, cleanup)
+            and after != "absent"
+            for path, after in zip(parsed.paths, parsed.after_fingerprints)
+        )
+        if cleanup_violation:
             errors.append("revision_scope_violation")
-    return _dedupe(errors), []
+        delta_scope_errors = scope_errors(delta, task_allowed, task_forbidden)
+        if delta_scope_errors:
+            current_revision = int(state.get("worktree_revision", -1))
+            recovery_claims = approved_cleanup_claims(
+                context["run_dir"], state, str(event.get("task_id") or ""), current_revision
+            )
+            active_policy_blocker = any(
+                blocker.get("task_id") == event.get("task_id")
+                and blocker.get("category") == "policy_violation"
+                and blocker.get("status") == "open"
+                for blocker in state.get("active_blockers") or []
+                if isinstance(blocker, dict)
+            )
+            resolved_policy_recovery = (
+                state.get("tasks", {}).get(event.get("task_id"), {}).get("status")
+                in {"blocked", "repairing"}
+                and any(
+                    blocker.get("task_id") == event.get("task_id")
+                    and blocker.get("category") == "policy_violation"
+                    and blocker.get("status") == "resolved"
+                    for blocker in state.get("blocker_history") or []
+                    if isinstance(blocker, dict)
+                )
+            )
+            recoverable_cleanup = (
+                payload.get("to") == current_revision
+                and (active_policy_blocker or resolved_policy_recovery)
+                and bool(recovery_claims)
+                and all(
+                    any(matches_path(path, [claim]) for claim in recovery_claims)
+                    for path in parsed.paths
+                    if not matches_path(path, task_allowed)
+                )
+            )
+            cleanup_revision = int(payload.get("to", -1))
+            paired_claims = approved_cleanup_claims(
+                context["run_dir"],
+                state,
+                str(event.get("task_id") or ""),
+                cleanup_revision,
+            )
+            offending_paths = [
+                path for path in parsed.paths if not matches_path(path, task_allowed)
+            ]
+            paired_cleanup = False
+            if record_index + 1 < len(revision_records) and paired_claims:
+                next_event, next_parsed = revision_records[record_index + 1]
+                next_payload = (
+                    next_event.get("payload")
+                    if isinstance(next_event.get("payload"), dict)
+                    else {}
+                )
+                next_after = dict(zip(next_parsed.paths, next_parsed.after_fingerprints))
+                paired_cleanup = (
+                    next_event.get("task_id") == event.get("task_id")
+                    and next_payload.get("from") == cleanup_revision
+                    and bool(offending_paths)
+                    and all(
+                        any(matches_path(path, [claim]) for claim in paired_claims)
+                        and next_after.get(path) == "absent"
+                        for path in offending_paths
+                    )
+                )
+            if paired_cleanup:
+                warnings.append("scope_violation_repaired_by_cleanup")
+            elif recoverable_cleanup:
+                warnings.append("cleanup_only_scope_recovery_pending")
+            else:
+                errors.append("revision_scope_violation")
+    return _dedupe(errors), _dedupe(warnings)
 
 
 def _check_task_states(context: dict[str, object]) -> tuple[list[str], list[str]]:

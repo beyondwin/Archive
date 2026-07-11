@@ -5,7 +5,7 @@ from pathlib import Path
 
 from .events import read_events
 from .manifest import load_manifest
-from .projector import project
+from .projector import RETRY_PHASE_STATES, project
 from .validation import ValidationReport, validate_completion, validate_integrity
 
 
@@ -166,6 +166,21 @@ def select_resume(state: dict, integrity_report: ValidationReport) -> ResumeDeci
             "verification": "acceptance",
         }.get(str(attempt.get("kind")))
         return ResumeDecision("retry", phase, None, refs) if phase else ResumeDecision("reject")
+    current_task = state.get("current_task")
+    for queued in reversed(list(state.get("retry_queue") or [])):
+        if not isinstance(queued, dict) or queued.get("task_id") != current_task:
+            continue
+        phase = str(queued.get("phase") or "")
+        refs = _indexed_refs(state, queued.get("evidence_refs"))
+        expected = RETRY_PHASE_STATES.get(phase)
+        if (
+            isinstance(current_task, str)
+            and expected is not None
+            and state.get("tasks", {}).get(current_task, {}).get("status") == expected
+            and refs is not None
+        ):
+            return ResumeDecision("continue", phase, None, refs)
+        return ResumeDecision("reject")
     return ResumeDecision("reject")
 
 

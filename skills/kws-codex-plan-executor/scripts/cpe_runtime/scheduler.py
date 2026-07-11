@@ -18,10 +18,11 @@ from .attempt_controller import (
 )
 from .evidence import EvidenceRef, put_json
 from .events import read_events
-from .git_delta import INVALID_GIT_HEAD, GitDelta, capture_snapshot, diff_snapshots
+from .git_delta import INVALID_GIT_HEAD, GitDelta, capture_snapshot, diff_snapshots, matches_path
 from .kernel import Kernel, Transition
 from .manifest import load_verified_manifest, resolve_ref
 from .model_policy import CORE_ROUTE
+from .operator_decisions import approved_cleanup_claims, approved_scope_claims
 from .packets import packet_entry, verify_packet
 from .validation import COMPLETION_EVIDENCE_KINDS, validate_completion, validate_integrity
 from .worker import Worker, WorkerError, WorkerRequest, WorkerResult
@@ -530,6 +531,28 @@ def _worker_attempt(
             else {}
         )
         allowed = list(contract.get("allowed_paths") or (task.get("file_claims") if task else []) or [])
+        if task is not None:
+            extra = approved_scope_claims(
+                kernel.run_dir,
+                kernel.state,
+                str(task_id),
+                int(kernel.state["worktree_revision"]),
+            )
+            cleanup = approved_cleanup_claims(
+                kernel.run_dir,
+                kernel.state,
+                str(task_id),
+                int(kernel.state["worktree_revision"]),
+            )
+            global_claims = [
+                str(path)
+                for candidate in manifest.get("task_graph") or []
+                if isinstance(candidate, dict)
+                for path in candidate.get("file_claims") or []
+            ]
+            allowed.extend(
+                path for path in extra if path in cleanup or matches_path(path, global_claims)
+            )
         forbidden = list(contract.get("forbidden_paths") or [])
         try:
             write_outcome = controller.run_write_attempt(
@@ -798,7 +821,17 @@ def _repair(
                     task_id=task_id,
                 )
             )
-    prompt = f"Repair {task_id} root cause {root_key}; remain inside file claims."
+    operator_decision = _latest_operator_decision(kernel, task_id)
+    operator_context = (
+        " User-approved operator decision evidence applies: "
+        + json.dumps(operator_decision, ensure_ascii=False, sort_keys=True)
+        if operator_decision is not None
+        else ""
+    )
+    prompt = (
+        f"Repair {task_id} root cause {root_key}; remain inside file claims."
+        f"{operator_context}"
+    )
     if recovery_context:
         prompt += f" Evidence-backed delegated recovery context: {recovery_context}"
     repair, outcome, attempt_id = _worker_attempt(
