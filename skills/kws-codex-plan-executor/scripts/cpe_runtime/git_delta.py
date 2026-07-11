@@ -181,6 +181,11 @@ def _listed_paths(
                     continue
                 relative = name if not prefix else prefix + b"/" + name
                 relative_text = os.fsdecode(relative)
+                if name == b"__pycache__" and not any(
+                    path == relative_text or path.startswith(f"{relative_text}/")
+                    for path in tracked
+                ):
+                    continue
                 filesystem.add(relative_text)
                 try:
                     is_directory = entry.is_dir(follow_symlinks=False)
