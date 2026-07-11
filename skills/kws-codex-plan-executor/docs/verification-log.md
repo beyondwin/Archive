@@ -25,7 +25,7 @@
     {"command": "bun run check", "exit_code": 0},
     {"command": "git diff --check", "exit_code": 0}
   ],
-  "eval_passing_count": 49,
+  "eval_passing_count": 50,
   "bun_passing_count": 820,
   "graphify": "pending_release_commit",
   "paid_live": "skipped_not_approved",
@@ -34,7 +34,7 @@
 ```
 
 All listed commands were run against the pre-release implementation commit and
-exited zero. The maintained CPE report contained 49 passing checks and no
+exited zero. The maintained CPE report contained 50 passing checks and no
 failures; the repository Bun output contained 820 passing tests. Paid provider
 execution was skipped because it was not approved. The remaining release risk
 is the paid live migration gate; therefore `release_ready=false`.
@@ -608,3 +608,21 @@ Skipped: paid live execution was not run because explicit cost approval and
 external live result evidence were not provided. Residual risk: release remains
 `deterministic_ready_paid_pending` with `release_ready=false` until the paid
 quality matrix passes under the `$50.00` hard cap.
+## 2026-07-11 Asia/Seoul
+
+Branch: `codex/cpe-v3-subscription-live-matrix-20260711-143143`.
+
+Scope: Codex CLI 0.144 execution compatibility required before the approved
+subscription live-matrix plan could start. Added supported array/union schema
+forms and fail-closed session JSONL model/reasoning attestation bound to the
+worker thread and worktree.
+
+Commands and results:
+
+- `python3 evals/check_codex_cli_compatibility.py`: pass.
+- live `codex exec` worker-schema probe with `gpt-5.6-sol/high`: pass; exit 0.
+- `python3 -m py_compile scripts/cpe_runtime/worker.py evals/check_codex_cli_compatibility.py`: pass.
+- `git diff --check`: pass.
+
+Residual risk: this compatibility fix does not itself change paid-live status;
+the approved 32-slot matrix and unchanged release gate still must complete.

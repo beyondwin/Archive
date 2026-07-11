@@ -1,5 +1,10 @@
 # Evals And Verification
 
+The maintained runtime checks include current Codex CLI compatibility: the
+worker response schema must stay inside the supported Structured Outputs
+subset, and model/reasoning attestation may be recovered only from the
+CLI-owned session JSONL whose thread ID and worktree match the completed call.
+
 Install the pinned eval dependency in an isolated environment, then run:
 
 ```bash

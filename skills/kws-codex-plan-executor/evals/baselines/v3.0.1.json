@@ -30,6 +30,10 @@
     },
     {
       "exit_code": 0,
+      "name": "maintained:check_codex_cli_compatibility"
+    },
+    {
+      "exit_code": 0,
       "name": "maintained:check_manifest_evidence"
     },
     {
