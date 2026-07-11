@@ -33,7 +33,7 @@ Resume and inspect:
 python3 scripts/cpe.py resume --run-id RUN_ID
 python3 scripts/validate_state.py ~/.codex/orchestrator/RUN_ID
 python3 scripts/reconcile_state.py --run-dir ~/.codex/orchestrator/RUN_ID --check
-python3 scripts/repair_runs.py --run-dir ~/.codex/orchestrator/RUN_ID
+python3 scripts/repair_runs.py --run-dir ~/.codex/orchestrator/RUN_ID --dry-run
 python3 scripts/inspect_runs.py --codex-home ~/.codex --all-plans
 python3 scripts/analyze_recent_runs.py --codex-home ~/.codex --recent 20
 ```

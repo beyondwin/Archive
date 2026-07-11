@@ -53,7 +53,7 @@ python3 scripts/cpe.py export --plan /abs/plan.md \
 python3 scripts/validate_state.py ~/.codex/orchestrator/RUN_ID
 python3 scripts/reconcile_state.py --run-dir ~/.codex/orchestrator/RUN_ID --check
 python3 scripts/reconcile_state.py --run-dir ~/.codex/orchestrator/RUN_ID --repair-safe
-python3 scripts/repair_runs.py --run-dir ~/.codex/orchestrator/RUN_ID
+python3 scripts/repair_runs.py --run-dir ~/.codex/orchestrator/RUN_ID --dry-run
 python3 scripts/repair_runs.py --run-dir ~/.codex/orchestrator/RUN_ID \
   --action schedule_retry \
   --details '{"task_id":"T1","phase":"implementation","root_cause_key":"KEY"}' \
