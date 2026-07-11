@@ -246,6 +246,13 @@ def apply_event(state: dict, event: dict) -> dict:
     elif typ == "completion.recorded":
         state["completion_audit"] = payload
     elif typ == "repair.applied":
+        if (
+            payload.get("applied") is not True
+            or not isinstance(payload.get("expected_projection_delta"), dict)
+            or not payload["expected_projection_delta"]
+            or payload.get("observed_projection_delta") != payload["expected_projection_delta"]
+        ):
+            raise ValueError("invalid repair payload")
         state["repairs"].append(payload)
     return state
 

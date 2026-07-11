@@ -16,14 +16,17 @@ from pathlib import Path
 from preflight_dependencies import check_requirements
 
 from cpe_runtime.events import read_events, validate_chain
+from cpe_runtime.evidence import put_json
 from cpe_runtime.kernel import Kernel, RunKernel, Transition, rebuild_snapshot
-from cpe_runtime.manifest import create_manifest, load_verified_manifest
+from cpe_runtime.manifest import create_manifest, load_verified_manifest, resolve_ref
 from cpe_runtime.packets import build_packet
 from cpe_runtime.plan_compiler import CompileBlocked, compile_run
 from cpe_runtime.projector import project
 from cpe_runtime.prompt_export import render_export_bundle
+from cpe_runtime.reconciliation import select_resume
+from cpe_runtime.repair import apply_repair
 from cpe_runtime.scheduler import run_tasks
-from cpe_runtime.validation import validate_run
+from cpe_runtime.validation import validate_integrity, validate_run
 from cpe_runtime.worker import Worker
 
 
@@ -109,35 +112,219 @@ def execute_run(args: argparse.Namespace) -> int:
     return 0 if result.get("status") == "completed" else 1
 
 
-def resume_run(run_id: str) -> int:
+def _recovery_evidence(
+    kernel: Kernel,
+    task_id: str,
+    payload: dict[str, object],
+    *,
+    attempt_id: str | None = None,
+) -> dict[str, object]:
+    ref = put_json(kernel.run_dir, "recovery", payload).as_dict()
+    kernel.transition(
+        Transition(
+            "evidence.attached",
+            {"kind": "recovery", "ref": ref},
+            task_id=task_id,
+            attempt_id=attempt_id,
+        )
+    )
+    return ref
+
+
+def _open_recovery_blocker(
+    kernel: Kernel,
+    task_id: str,
+    category: str,
+    root_cause_key: str,
+    refs: list[dict[str, object]],
+) -> str:
+    state = kernel.state
+    existing = [
+        item
+        for item in state.get("active_blockers") or []
+        if item.get("task_id") == task_id
+        and item.get("category") == category
+        and item.get("root_cause_key") == root_cause_key
+    ]
+    if existing:
+        return str(existing[0]["blocker_id"])
+    blocker_id = f"{task_id}.{category}.{len(state.get('blocker_history') or []) + 1}"
+    kernel.transition(
+        Transition(
+            "blocker.opened",
+            {
+                "blocker_id": blocker_id,
+                "category": category,
+                "root_cause_key": root_cause_key,
+                "owner": "cpe",
+                "resume_condition": "restore the recovery precondition and schedule an explicit retry",
+                "evidence_refs": refs,
+            },
+            task_id=task_id,
+        )
+    )
+    current = kernel.state["tasks"][task_id]["status"]
+    if current not in {"blocked", "completed", "failed"}:
+        kernel.transition(
+            Transition(
+                "task.status_changed",
+                {"from": current, "to": "blocked", "reason": category},
+                task_id=task_id,
+            )
+        )
+    lifecycle = kernel.state["lifecycle"]
+    if lifecycle != "blocked" and lifecycle not in {"completed", "failed"}:
+        kernel.transition(
+            Transition(
+                "run.status_changed",
+                {"from": lifecycle, "to": "blocked", "reason": category},
+            )
+        )
+    return blocker_id
+
+
+def _structured_resume_failure(run_id: str, classification: str, **extra: object) -> int:
+    print(
+        json.dumps({"classification": classification, "run_id": run_id, **extra}, ensure_ascii=False),
+        file=sys.stderr,
+    )
+    return 2
+
+
+def resume_run(run_id: str, worker: Worker | None = None) -> int:
     run_dir = _codex_home() / "orchestrator" / run_id
     if not run_dir.is_dir():
-        print(json.dumps({"classification": "run_missing", "run_id": run_id}), file=sys.stderr)
-        return 2
+        return _structured_resume_failure(run_id, "run_missing")
     try:
         manifest = load_verified_manifest(run_dir / "run_manifest.json")
         events = read_events(run_dir / "events.jsonl")
     except ValueError as exc:
-        print(json.dumps({"classification": str(exc), "run_id": run_id}), file=sys.stderr)
-        return 2
+        return _structured_resume_failure(run_id, str(exc))
     except OSError:
-        print(json.dumps({"classification": "manifest_missing", "run_id": run_id}), file=sys.stderr)
-        return 2
+        return _structured_resume_failure(run_id, "manifest_missing")
     if validate_chain(events):
-        print(json.dumps({"classification": "event_chain_invalid", "run_id": run_id}), file=sys.stderr)
-        return 2
+        return _structured_resume_failure(run_id, "event_chain_invalid")
     state = project(manifest, events)
     if state["lifecycle"] == "completed":
         validation = validate_run(run_dir)
         if not validation.passed:
-            print(json.dumps({"classification": "completed_run_invalid", "run_id": run_id, "errors": validation.errors}), file=sys.stderr)
-            return 2
+            return _structured_resume_failure(run_id, "completed_run_invalid", errors=validation.errors)
         print(json.dumps({"run_id": run_id, "status": "completed"}))
         return 0
-    if state["lifecycle"] == "blocked":
-        Kernel(run_dir).transition(Transition("run.status_changed", {"from": "blocked", "to": "ready", "reason": "explicit resume"}))
-    rebuild_snapshot(run_dir)
-    result = run_tasks(list(manifest["task_graph"]), Worker(), Kernel(run_dir))
+    kernel = Kernel(run_dir)
+    worktree = resolve_ref(str(manifest["execution_worktree_ref"]))
+    integrity = validate_integrity(run_dir)
+    if not worktree.is_dir():
+        workspace_errors = {
+            "worktree_missing",
+            "worktree_identity_mismatch",
+            "revision_zero_worktree_dirty",
+            "current_revision_worktree_mismatch",
+        }
+        non_workspace_errors = [error for error in integrity.errors if error not in workspace_errors]
+        if non_workspace_errors:
+            return _structured_resume_failure(run_id, "resume_rejected", errors=integrity.errors)
+        incomplete = [task_id for task_id, task in state.get("tasks", {}).items() if task.get("status") != "completed"]
+        if not incomplete:
+            return _structured_resume_failure(run_id, "worktree_missing")
+        task_id = str(state.get("current_task") or incomplete[0])
+        ref = _recovery_evidence(
+            kernel,
+            task_id,
+            {"category": "workspace_precondition", "worktree": str(worktree), "status": "missing"},
+        )
+        _open_recovery_blocker(kernel, task_id, "workspace_precondition", "worktree_missing", [ref])
+        print(json.dumps({"run_id": run_id, "status": "blocked", "category": "workspace_precondition", "evidence_refs": [ref]}, ensure_ascii=False))
+        return 1
+
+    if integrity.passed:
+        workspace_blockers = [
+            item
+            for item in state.get("active_blockers") or []
+            if item.get("category") == "workspace_precondition"
+        ]
+        for blocker in workspace_blockers:
+            task_id = str(blocker["task_id"])
+            ref = _recovery_evidence(
+                kernel,
+                task_id,
+                {"category": "workspace_precondition", "worktree": str(worktree), "status": "restored"},
+            )
+            restored = apply_repair(
+                run_dir,
+                "resolve_blocker",
+                details={"blocker_id": blocker["blocker_id"], "evidence_refs": [ref]},
+            )
+            if not restored["applied"]:
+                return _structured_resume_failure(run_id, "repair_delta_not_observed")
+        if workspace_blockers:
+            state = kernel.state
+            integrity = validate_integrity(run_dir)
+
+    decision = select_resume(state, integrity)
+    if decision.action == "reject":
+        return _structured_resume_failure(run_id, "resume_rejected", errors=integrity.errors)
+    if decision.action == "remain_blocked":
+        print(json.dumps({"run_id": run_id, "status": "blocked", "blocker_id": decision.blocker_id}, ensure_ascii=False))
+        return 1
+    if decision.action != "retry" or decision.phase is None:
+        return _structured_resume_failure(run_id, "resume_state_invalid")
+
+    refs = [dict(ref) for ref in decision.evidence_refs]
+    blocker_id = decision.blocker_id
+    if blocker_id is not None:
+        blocker = next(item for item in state["active_blockers"] if item.get("blocker_id") == blocker_id)
+        task_id = str(blocker["task_id"])
+    else:
+        active = [item for item in state.get("attempts") or [] if item.get("status") == "started"]
+        if len(active) != 1:
+            return _structured_resume_failure(run_id, "resume_state_invalid")
+        attempt = active[0]
+        task_id = str(attempt["task_id"])
+        ref = _recovery_evidence(
+            kernel,
+            task_id,
+            {"category": "interrupted_attempt", "attempt_id": attempt["attempt_id"], "kind": attempt.get("kind")},
+            attempt_id=str(attempt["attempt_id"]),
+        )
+        refs = [ref]
+        interruption = apply_repair(
+            run_dir,
+            "mark_stale_attempt_interrupted",
+            details={"attempt_id": attempt["attempt_id"], "evidence_refs": refs},
+        )
+        if not interruption["applied"]:
+            return _structured_resume_failure(run_id, "repair_delta_not_observed")
+        blocker_id = _open_recovery_blocker(
+            kernel,
+            task_id,
+            f"{attempt.get('kind')}_interrupted",
+            f"{attempt.get('kind')}:interrupted",
+            refs,
+        )
+
+    resolved = apply_repair(
+        run_dir,
+        "resolve_blocker",
+        details={"blocker_id": blocker_id, "evidence_refs": refs},
+    )
+    if not resolved["applied"]:
+        return _structured_resume_failure(run_id, "repair_delta_not_observed")
+    scheduled = apply_repair(
+        run_dir,
+        "schedule_retry",
+        details={
+            "task_id": task_id,
+            "phase": decision.phase,
+            "root_cause_key": f"resume:{decision.phase}",
+            "evidence_refs": refs,
+        },
+    )
+    if not scheduled["applied"]:
+        return _structured_resume_failure(run_id, "repair_delta_not_observed")
+    if kernel.state["lifecycle"] == "blocked":
+        kernel.transition(Transition("run.status_changed", {"from": "blocked", "to": "ready", "reason": "evidence-backed resume"}))
+    result = run_tasks(list(manifest["task_graph"]), worker or Worker(), kernel)
     print(json.dumps({"run_id": run_id, **result}, ensure_ascii=False, indent=2))
     return 0 if result.get("status") == "completed" else 1
 
