@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from cpe import resume_run
+from cpe import _approved_dependency_repair_owner, resume_run
 from cpe_runtime.evidence import put_json
 from cpe_runtime.git_delta import capture_snapshot, diff_snapshots
 from cpe_runtime.kernel import RunKernel, Transition
@@ -177,6 +177,24 @@ def main() -> int:
     unindexed = blocked("verification_failed", "verification:failed")
     unindexed["artifact_index"] = []
     assert select_resume(unindexed, report()).action == "reject"
+
+    with tempfile.TemporaryDirectory(prefix="cpe-operator-repair-") as raw:
+        run_id, run_dir = interrupted_run(Path(raw))
+        from cpe_runtime.kernel import Kernel
+        kernel = Kernel(run_dir)
+        payload = {
+            "kind": "operator_decision",
+            "approved": True,
+            "task_id": "T1",
+            "worktree_revision": kernel.state["worktree_revision"],
+            "root_cause_key": "dependency:stale_contract",
+            "dependency_repair_owner_task_id": "T0",
+        }
+        ref = put_json(run_dir, "operator_decision", payload).as_dict()
+        kernel.transition(Transition("evidence.attached", {"kind": "operator_decision", "ref": ref}, task_id="T1"))
+        blocker = {"root_cause_key": "dependency:stale_contract"}
+        assert _approved_dependency_repair_owner(kernel, "T1", blocker, ["T0"]) == "T0"
+        assert _approved_dependency_repair_owner(kernel, "T1", {"root_cause_key": "other"}, ["T0"]) is None
 
     with tempfile.TemporaryDirectory(prefix="cpe-resume-") as raw:
         run_id, run_dir = interrupted_run(Path(raw))
