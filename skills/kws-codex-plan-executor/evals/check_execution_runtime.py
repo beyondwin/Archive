@@ -673,6 +673,59 @@ def main() -> int:
         ]
         assert len(acceptance_refs) >= 2, acceptance_refs
 
+    with tempfile.TemporaryDirectory(prefix="cpe-noop-repair-retry-") as raw:
+        root = Path(raw)
+        tasks = [{
+            "id": "T1", "title": "one", "dependencies": [],
+            "file_claims": ["T1.txt"], "acceptance_command": "true",
+        }]
+        run_dir, worktree, manifest = initialize_run(root, "noop-repair-retry-fixture", tasks)
+        verification_calls = 0
+
+        def noop_repair_provider(request, _argv):
+            nonlocal verification_calls
+            if request.attempt_kind == "implementation":
+                (worktree / "T1.txt").write_text("initial\n", encoding="utf-8")
+            result = result_for(request.attempt_kind, request.worktree_revision)
+            if request.attempt_kind == "verification":
+                verification_calls += 1
+                if verification_calls == 1:
+                    result["verdict"] = {
+                        "status": "blocked", "findings": [], "missing_evidence": [],
+                        "worktree_revision": request.worktree_revision,
+                        "owner": "cpe", "resume_condition": "retry repair",
+                    }
+            return result
+
+        kernel = RunKernel(run_dir)
+        first = run_tasks(tasks, Worker(provider=noop_repair_provider), kernel)
+        assert_typed_blocked(first, kernel.state, "blocked")
+        blocker = kernel.state["active_blockers"][-1]
+        retry_ref = kernel.state["artifact_index"][-1]["ref"]
+        kernel.transition(
+            Transition(
+                "blocker.resolved",
+                {"blocker_id": blocker["blocker_id"], "evidence_refs": [retry_ref]},
+                task_id="T1",
+            )
+        )
+        kernel.transition(
+            Transition(
+                "task.retry_scheduled",
+                {
+                    "phase": "repair",
+                    "root_cause_key": "scheduled_retry:repair",
+                    "worktree_revision": kernel.state["worktree_revision"],
+                    "evidence_refs": [retry_ref],
+                },
+                task_id="T1",
+            )
+        )
+        kernel.transition(Transition("run.status_changed", {"from": "blocked", "to": "ready"}))
+        second = run_tasks(tasks, Worker(provider=noop_repair_provider), kernel)
+        assert second["status"] == "completed", second
+        assert kernel.state["worktree_revision"] == 1, kernel.state["worktree_revision"]
+
     print('{"passed": true}')
     return 0
 
