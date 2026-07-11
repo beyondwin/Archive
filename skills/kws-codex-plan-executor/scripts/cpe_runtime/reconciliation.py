@@ -38,6 +38,7 @@ RESUME_PHASES = {
     "task_review_changes_requested": "repair",
     "verification_interrupted": "acceptance",
     "verification_failed": "repair",
+    "scope_policy_revalidated": "implementation",
 }
 
 
@@ -76,6 +77,8 @@ def _resume_category(blocker: dict) -> str | None:
     if category in RESUME_PHASES:
         return category
     root = str(blocker.get("root_cause_key") or "")
+    if category == "policy_violation" and root.startswith("task_scope:"):
+        return "scope_policy_revalidated"
     if root.startswith("implementation:") and "interrupt" in root:
         return "implementation_interrupted"
     if root.startswith("acceptance:"):
