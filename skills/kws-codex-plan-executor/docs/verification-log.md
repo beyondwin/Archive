@@ -1,5 +1,47 @@
 # Verification Log
 
+## 2026-07-12 Asia/Seoul - subscription live-matrix deterministic verification
+
+- Branch: `codex/2026-07-11-cpe-v3-subscription-live-matrix-20260711-152521`.
+- Scope: current cost-free verification for the six additional live-matrix
+  checks and guarded subscription dry-run, without paid provider execution.
+- Lineage: `implementation_commit` remains the immutable published 3.0.1
+  release basis required by the v1 schema. `worktree_base_commit`,
+  `worktree_revision`, and `worktree_patch_sha256` bind this newer evidence to
+  the exact current implementation delta on which the commands ran.
+
+```json
+{
+  "schema_version": "cpe-release-verification.v1",
+  "version": "3.0.1",
+  "implementation_commit": "fdd9bdf70b3149c1c056d97ea4fcaf9d42c68df2",
+  "worktree_base_commit": "3e92099cc4ed9801a5c8a1f08b50da91078fc7f5",
+  "worktree_revision": 41,
+  "worktree_patch_sha256": "d42d87dcc78798336e29a686f5d2ea6c41fa63aa0747e633cd1242bf2ab1a763",
+  "timestamp": "2026-07-12T03:39:42+09:00",
+  "commands": [
+    {"command": "./evals/run.sh", "exit_code": 0},
+    {"command": "python3 -m py_compile scripts/*.py scripts/cpe_runtime/*.py evals/*.py", "exit_code": 0},
+    {"command": "bash -n evals/run.sh", "exit_code": 0},
+    {"command": "python3 evals/check_release_contract.py", "exit_code": 0},
+    {"command": "python3 evals/check_docs_contract.py", "exit_code": 0},
+    {"command": "bun run check", "exit_code": 0},
+    {"command": "git diff --check", "exit_code": 0}
+  ],
+  "eval_passing_count": 56,
+  "bun_passing_count": 820,
+  "graphify": "update_blocked_by_managed_sandbox",
+  "paid_live": "skipped_not_approved",
+  "residual_risk": "paid live migration gate pending"
+}
+```
+
+All commands were run against worktree revision 41. The maintained CPE report
+contained 56 passing checks and no failures; the repository Bun output
+contained 820 passing tests. `graphify update .` remained blocked by the
+managed sandbox as recorded in the detailed entry below. Paid provider
+execution was not approved or run, so `release_ready=false` remains unchanged.
+
 ## 2026-07-11 Asia/Seoul - CPE 3.0.1 deterministic integrity closure
 
 - Branch: `codex/2026-07-10-cpe-v3-integrity-closure-20260710-212304`.
@@ -620,49 +662,60 @@ packet's absolute read-only run-store path so the real sandbox can consume the
 same digest-indexed bytes used by deterministic fixtures.
 Untracked Python `__pycache__` directories are excluded from product snapshots
 while arbitrary gitignored files remain fail-closed scope evidence.
-Role-specific packet prompts now make redundant verdict fields explicit so
-reviewers preserve the existing contradiction check instead of emitting a
-detailed top-level finding and a separately summarized verdict finding.
-Recovery now maps typed `task_review_interrupted` blockers back to the exact
-review phase and can safely interpret previously recorded generic transient
-blockers from the matching failed attempt.
-Root-only runtime filename protection no longer catches nested fixture files,
-and an integrity-valid scope blocker can retry after that policy correction.
-Runtime scope enforcement and replay validation now share the same
-`matches_path` implementation; the active T2 run validates cleanly under the
-corrected nested-fixture rule.
-All workers now receive the current host runtime's canonical
-`validate_state.py` command instead of inferring authority from an older copy
-inside the execution worktree. Their packet prompt also indexes every prior
-task-attempt worker-result artifact, so verification can inspect authentic TDD
-RED evidence without treating omitted prompt context as missing evidence; the
-same context also lets repair roles distinguish product defects from corrected
-host-runtime policy.
-Typed `scheduled_retry:repair` blockers are now mapped back to the repair phase,
-including the previously persisted no-revision wrapper form, so a fail-closed
-recovery worker can be retried after its host context is fixed.
-Worker launchers now use Codex `--ignore-user-config`, retaining `CODEX_HOME`
-authentication while isolating packet-bound execution from unrelated user MCP
-servers and their expiring OAuth sessions.
 
 Commands and results:
 
 - `python3 evals/check_codex_cli_compatibility.py`: pass.
 - live `codex exec` worker-schema probe with `gpt-5.6-sol/high`: pass; exit 0.
 - `python3 -m py_compile scripts/cpe_runtime/worker.py evals/check_codex_cli_compatibility.py`: pass.
+- `python3 evals/check_task_packet.py`: pass.
 - `python3 evals/check_public_cli_integration.py`: pass.
 - `python3 evals/check_run_diffs.py`: pass.
 - `python3 evals/check_fault_injection.py`: pass.
-- `python3 evals/check_recovery_policy.py`: pass.
-- `python3 evals/check_validation_consumer_parity.py`: pass.
-- `python3 evals/check_recovery_policy.py`: pass with scheduled repair retry
-  recovery coverage.
-- `python3 evals/check_model_policy.py`: pass with user-config-isolated worker
-  launcher coverage.
-- `python3 evals/check_task_packet.py`: pass with canonical host validation and
-  prior-task-evidence prompt checks.
 - `./evals/run.sh`: pass with 50 passing checks.
 - `git diff --check`: pass.
 
 Residual risk: this compatibility fix does not itself change paid-live status;
 the approved 32-slot matrix and unchanged release gate still must complete.
+
+## 2026-07-12 Asia/Seoul
+
+Branch and basis:
+`codex/2026-07-11-cpe-v3-subscription-live-matrix-20260711-152521` at
+`3e92099cc4ed9801a5c8a1f08b50da91078fc7f5` with the T1-T8 worktree delta.
+
+Scope: documented the guarded ChatGPT subscription live runner, immutable
+32-slot evidence flow, explicit resume/retry behavior, checked-in aggregation,
+billing-observability boundary, and independent-review closeout gate. Refreshed
+the active 3.0.1 maintained baseline and synchronized its deterministic
+maintained-check count from 50 to 56 without changing the published
+`deterministic-ready; paid-live-pending` tuple or `release_ready=false`.
+
+Commands and results:
+
+- `python3 evals/check_docs_contract.py`: initial documentation draft failed on
+  two release-wording assertions; corrected wording then passed with
+  `passed=true`.
+- `python3 evals/check_release_contract.py`: initial RED failed only
+  `current_passing_counts_recorded` because release metadata still recorded 50
+  checks after the baseline reached 56; after the authorized count-only repair,
+  pass with version 3.0.1 still the sole active v3 baseline and paid-live
+  evidence pending.
+- `./evals/run.sh --update-baseline`: exit 0; 56 passing maintained/static/
+  parser records written to `evals/baselines/v3.0.1.json`, including the live
+  compiler, fixtures, oracle, ledger, runner, aggregator, and subscription
+  dry-run checks.
+
+- `graphify update .` and `graphify update . --no-cluster`: both exit 1 in the
+  managed sandbox with `[Errno 1] Operation not permitted`; no Graphify output
+  changed.
+- `python3 skills/kws-codex-plan-executor/scripts/check_graphify_freshness.py
+  --repo-root .`: exit 1; honestly reports `fresh=false`, built commit
+  `9082451a`, current commit `3e92099c`, and `update_required=true`.
+
+Skipped: the credentialed ChatGPT subscription matrix was not requested or run;
+the baseline records `paid_execution=skipped_not_approved`. Residual risk: the
+live quality gate and fresh Graphify output remain pending. The current runner
+must receive independent review, then complete the exact matrix and produce a
+separately reviewed sanitized report with `release_gate.passed=true` before any
+paid-live closeout.

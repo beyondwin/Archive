@@ -3,7 +3,7 @@ name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec or design documents, resuming or inspecting a v3 run, or exporting a prompt or handoff launcher.
 metadata:
   version: "3.0.1"
-  updated_at: "2026-07-11"
+  updated_at: "2026-07-12"
   release_status: "deterministic-ready; paid-live-pending"
 ---
 
@@ -13,6 +13,13 @@ CPE v3 is an independent, event-sourced Codex plan executor. Its audited
 deterministic integrity closure is complete, while the paid live migration
 matrix has not run, so the published tuple is
 `deterministic-ready; paid-live-pending`.
+
+The checked-in subscription live-matrix runner is a guarded release-evidence
+tool, not an execution route for normal CPE plans. It dry-runs, starts, and
+resumes the exact 32-slot matrix with ChatGPT subscription authentication,
+isolated fixture worktrees, an immutable ledger, and fail-closed aggregation.
+Its presence does not change `release_ready=false`; only a complete reviewed
+report with `release_gate.passed=true` can authorize a later closeout.
 
 ## Public Commands
 
@@ -29,12 +36,18 @@ python3 scripts/repair_runs.py --run-dir RUN_DIR --action ACTION \
   --details '{...}' --expected-projection-delta '{...}' --apply
 python3 scripts/inspect_runs.py --codex-home ~/.codex --all-plans
 python3 scripts/analyze_recent_runs.py --codex-home ~/.codex --recent 20
+
+python3 evals/live_model_runner.py dry-run \
+  --billing-mode chatgpt_subscription --output /tmp/cpe-live-plan.json
 ```
 
 `run` and `resume` are execution surfaces. `export` in `prompt` or `handoff`
 mode is export-only and creates no worktree or run artifacts. Validation,
 reconciliation, repair, inspect, and recent-run inspection consume v3 run
 artifacts. A v2 schema is reported as `unsupported_schema` and never rewritten.
+`evals/live_model_runner.py` is separate from those public plan-execution
+surfaces and requires explicit subscription-usage confirmation before any
+credentialed call.
 
 ## Fixed Routing
 

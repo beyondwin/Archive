@@ -6,9 +6,11 @@ Waygent. `events.jsonl` is authoritative; `state.json` is a rebuildable
 projection for resume and inspection.
 
 Published evidence state: **deterministic-ready; paid-live-pending**. The cost-free
-integrity suite now exercises the audited fail-closed boundaries. The
-credentialed four-treatment, eight-case live matrix still requires explicit
-cost approval and must pass before paid release closeout is claimed.
+integrity suite now exercises the audited fail-closed boundaries. The guarded
+runner and exact four-treatment, eight-case fixtures are checked in, but the
+credentialed ChatGPT subscription matrix has not run. It still requires
+explicit subscription-usage confirmation and a reviewed passing report before
+paid-live release closeout is claimed.
 
 ## Quick Start
 
@@ -38,6 +40,20 @@ python3 scripts/inspect_runs.py --codex-home ~/.codex --all-plans
 python3 scripts/analyze_recent_runs.py --codex-home ~/.codex --recent 20
 ```
 
+Plan the subscription live matrix without making provider calls:
+
+```bash
+python3 evals/live_model_runner.py dry-run \
+  --billing-mode chatgpt_subscription \
+  --output /tmp/cpe-v3-subscription-plan.json
+```
+
+`start` and `resume` are release-evidence operations, not normal CPE execution
+commands. They require `--confirm-subscription-usage`, an external evidence
+directory, ChatGPT login (API-key authentication is rejected), and independent
+review of the exact implementation and sanitized report. See
+[evals-and-verification.md](docs/evals-and-verification.md).
+
 ## Contract Summary
 
 - Sol/high is fixed for all core and verdict-capable attempts.
@@ -51,6 +67,10 @@ python3 scripts/analyze_recent_runs.py --codex-home ~/.codex --recent 20
 - Validation, reconciliation, repair, and inspection replay the same manifest
   and event chain.
 - V2 runs are preserved but classified only as `unsupported_schema`.
+- The live runner freezes the exact 32-slot manifest (25 credentialed calls and
+  seven expected policy failures), runs each credentialed slot in an isolated
+  ephemeral Codex turn, and commits digest-bound evidence to a replayable
+  external ledger.
 
 Execution prints exactly one machine-readable `PublicResult`. Status-to-exit
 mapping is `success=0`, `blocked=1`, and `failed=2`; zero is possible only after

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Added the guarded ChatGPT subscription live-matrix evidence path: exact
+  32-slot compilation, eight deterministic fixture repositories and hidden
+  oracles, 25 isolated credentialed turns, seven expected policy failures,
+  digest-bound append-only evidence, explicit resume/retry semantics, and
+  fail-closed aggregation.
+- Kept the published version at 3.0.1 and the release tuple at
+  `deterministic-ready; paid-live-pending`. The runner is available for the
+  approved evidence run, but no live-quality or release-readiness claim is made
+  until that exact implementation and its sanitized passing report receive
+  independent review.
+
 ## 3.0.1 - 2026-07-11 (deterministic-ready; paid-live-pending)
 
 - Aligned active documentation with the integrity-closure runtime:
