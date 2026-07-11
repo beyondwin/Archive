@@ -275,6 +275,29 @@ def main() -> int:
             }
         )
 
+    with tempfile.TemporaryDirectory(prefix="cpe-root-literal-scope-") as raw:
+        repo = Path(raw)
+        run(["git", "init", "-q"], repo).check_returncode()
+        run(["git", "config", "user.email", "eval@example.com"], repo).check_returncode()
+        run(["git", "config", "user.name", "Eval"], repo).check_returncode()
+        (repo / "baseline.txt").write_text("baseline\n", encoding="utf-8")
+        run(["git", "add", "baseline.txt"], repo).check_returncode()
+        run(["git", "commit", "-q", "-m", "baseline"], repo).check_returncode()
+        before_nested = capture_snapshot(repo)
+        nested = repo / "fixtures" / "template" / "run" / "state.json"
+        nested.parent.mkdir(parents=True)
+        nested.write_text("{}\n", encoding="utf-8")
+        after_nested = capture_snapshot(repo)
+        nested_delta = diff_snapshots(before_nested, after_nested, repo)
+        checks["root_literal_does_not_forbid_nested_fixture"] = scope_errors(
+            nested_delta, ["fixtures/**"], ["state.json"]
+        ) == []
+        (repo / "state.json").write_text("{}\n", encoding="utf-8")
+        root_delta = diff_snapshots(after_nested, capture_snapshot(repo), repo)
+        checks["root_literal_still_forbids_root_file"] = scope_errors(
+            root_delta, ["fixtures/**"], ["state.json"]
+        ) == ["forbidden_write:state.json"]
+
     with tempfile.TemporaryDirectory(prefix="cpe-ignored-git-delta-") as raw:
         repo = Path(raw)
         run(["git", "init", "-q"], repo).check_returncode()

@@ -626,6 +626,8 @@ detailed top-level finding and a separately summarized verdict finding.
 Recovery now maps typed `task_review_interrupted` blockers back to the exact
 review phase and can safely interpret previously recorded generic transient
 blockers from the matching failed attempt.
+Root-only runtime filename protection no longer catches nested fixture files,
+and an integrity-valid scope blocker can retry after that policy correction.
 
 Commands and results:
 

@@ -409,7 +409,11 @@ def diff_snapshots(before: GitSnapshot, after: GitSnapshot, worktree: Path) -> G
 def _matches(path: str, patterns: list[str] | tuple[str, ...]) -> bool:
     candidate = PurePosixPath(path)
     for pattern in patterns:
-        if path == pattern or candidate.match(pattern):
+        if path == pattern:
+            return True
+        if "/" not in pattern and not any(token in pattern for token in ("*", "?", "[")):
+            continue
+        if candidate.match(pattern):
             return True
         if pattern.endswith("/**"):
             root = pattern[:-3].rstrip("/")

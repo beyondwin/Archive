@@ -153,6 +153,12 @@ def main() -> int:
     assert transient_decision.action == "retry", transient_decision
     assert transient_decision.phase == "task_review", transient_decision
 
+    revalidated_scope = select_resume(
+        blocked("policy_violation", "task_scope:T1:nested/state.json"), report()
+    )
+    assert revalidated_scope.action == "retry", revalidated_scope
+    assert revalidated_scope.phase == "implementation", revalidated_scope
+
     operator = select_resume(blocked("operator_review", "operator:decision", owner="operator"), report())
     assert operator.action == "remain_blocked" and operator.phase is None, operator
 
