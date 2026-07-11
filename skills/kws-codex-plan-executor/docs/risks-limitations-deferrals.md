@@ -4,9 +4,11 @@
   deterministic integrity gaps are closed by the current cost-free suite. The
   guarded four-treatment, eight-case subscription runner completed its exact
   32-slot matrix with 25 credentialed calls and seven policy outcomes. The
-  unchanged release gate failed because the CLI event stream did not provide
-  actual-model attestation and Sol v3 used 24.3% more context tokens than the
-  GPT-5.5 baseline instead of reducing them by at least 25%. No live quality or
+  first unchanged release gate failed on missing CLI model attestation and
+  context growth. A checkpointed remediation then reached 100% model
+  attestation, but its replacement matrix still failed: Sol v3 reduced context
+  by only 2.38%, regressed task success, and produced one critical regression
+  when a test command left untracked bytecode. No live quality or
   context-reduction release claim is approved, and `release_ready=false`
   remains required until new implementation evidence passes the same thresholds.
 - The v3 deterministic harness uses a maintained inventory, public CLI fixture

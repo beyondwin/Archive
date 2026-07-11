@@ -1,5 +1,54 @@
 # Verification Log
 
+## 2026-07-12 Asia/Seoul - live-matrix blocker remediation result
+
+- Reviewed checkpoint: `a9b0b432b4bf58ba879deed54dffcb7637980326`.
+- Manifest: `d89af64ff2f7f05a231568030b1a5ca7c29e6e60ddc97b41648241c48c5d7ff1`.
+- All 32 unique outcomes completed under one immutable ledger: 25 credentialed
+  calls and seven policy outcomes, with no failed, pending, or duplicate slot.
+- Cwd-bound CLI session receipts raised core model attestation from 0% to 100%
+  without placing session paths or raw transcripts in sanitized evidence.
+- The unchanged release gate still failed. Sol v3 context was 1,855,362 tokens
+  versus 1,900,642 for GPT-5.5, a 2.38% reduction rather than the required 25%.
+  Sol v3 completed 75% of tasks versus GPT-5.5's 87.5%, and its single-file
+  case left untracked bytecode during model-run verification, producing one
+  critical regression.
+- Decision: retain `release_ready=false`, preserve both terminal ledgers, and
+  stop repeated paid execution for the same performance root cause. A future
+  implementation must remove fixture side effects and materially reduce agent
+  read amplification before another reviewed checkpoint may run.
+- Privacy audit passed: tracked and sanitized evidence contains no raw
+  transcript, absolute user-home path, temporary execution path, or oracle
+  path. Per-slot CLI sessions remain external and untracked.
+
+```json
+{
+  "schema_version": "cpe-live-matrix-result.v1",
+  "implementation_commit": "a9b0b432b4bf58ba879deed54dffcb7637980326",
+  "implementation_tree": "9e2a4caf45c581eea1d0970279e7b55f814988d8",
+  "implementation_patch_sha256": "c2a282b1de92a16d964defa776fa430fe3d0b5e1400e998ef81155ec424d5dff",
+  "manifest_sha256": "d89af64ff2f7f05a231568030b1a5ca7c29e6e60ddc97b41648241c48c5d7ff1",
+  "credentialed_call_count": 25,
+  "expected_policy_failure_count": 7,
+  "release_gate": {
+    "passed": false,
+    "core_model_attestation_rate": 1.0,
+    "context_token_reduction_vs_gpt55": 0.023824,
+    "failures": [
+      "critical_regressions_present",
+      "task_success_regressed_vs_gpt55",
+      "context_token_reduction_below_25_percent"
+    ]
+  },
+  "privacy_audit": {
+    "raw_transcript_tracked": false,
+    "absolute_user_home_path_tracked": false,
+    "temporary_execution_path_tracked": false,
+    "oracle_path_tracked": false
+  }
+}
+```
+
 ## 2026-07-12 Asia/Seoul - checkpoint-bound subscription live-matrix result
 
 - Reviewed checkpoint: `085ca7fdafd2aebefd5a0b4d2e5a63ad0bde88db`.
