@@ -2,14 +2,17 @@
 
 - Published evidence state is **deterministic-ready; paid-live-pending**. Audited
   deterministic integrity gaps are closed by the current cost-free suite. The
-  guarded four-treatment, eight-case subscription runner is checked in, but the
-  credentialed matrix has not run. No live quality, regression, or
-  context-reduction release claim is approved yet, and `release_ready=false`
-  remains required.
+  guarded four-treatment, eight-case subscription runner completed its exact
+  32-slot matrix with 25 credentialed calls and seven policy outcomes. The
+  unchanged release gate failed because the CLI event stream did not provide
+  actual-model attestation and Sol v3 used 24.3% more context tokens than the
+  GPT-5.5 baseline instead of reducing them by at least 25%. No live quality or
+  context-reduction release claim is approved, and `release_ready=false`
+  remains required until new implementation evidence passes the same thresholds.
 - The v3 deterministic harness uses a maintained inventory, public CLI fixture
   repositories, fake providers, and an isolated oracle. This covers behavior,
-  not real provider quality or latency; those remain with the pending live
-  matrix.
+  while the completed live ledger records real provider quality and latency.
+  It does not turn a measured failed release gate into release evidence.
 - The live runner can verify ChatGPT login and remove API-key credentials from
   child environments, but it cannot prove which account-side subscription or
   existing-credit bucket a call consumed. Subscription reports therefore keep
@@ -22,6 +25,9 @@
 - Live evidence is stored outside the repository and is not a release claim by
   itself. The exact implementation and sanitized report require independent
   review before a follow-up may change version, status, or `release_ready`.
+- The terminal ledger and sanitized summary passed a privacy audit: tracked
+  evidence contains no raw transcript, absolute user-home path, or oracle path.
+  Raw per-slot execution artifacts remain external and untracked.
 - V2 runs cannot resume or migrate. Consumers preserve them and return
   `unsupported_schema`; operators must start a new v3 run.
 - Sol/high unavailability or missing actual-model attestation blocks core work;

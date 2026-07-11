@@ -14,7 +14,21 @@
   },
   "paid_live_evidence": {
     "status": "pending",
-    "reason": "ChatGPT subscription execution is approved, but a completed digest-bound 32-slot live ledger and aggregate release-gate report have not been produced",
+    "reason": "The digest-bound 32-slot ChatGPT subscription ledger completed, but the unchanged release gate failed on core model attestation and context-token reduction; remediation evidence is pending",
+    "run_id": "checkpoint-085ca7f-live-matrix",
+    "manifest_sha256": "e7669eca298fcf438e92e843d914c181209fae1ab1ec46787112a1d3dcd91f4b",
+    "implementation_commit": "085ca7fdafd2aebefd5a0b4d2e5a63ad0bde88db",
+    "implementation_tree": "7e8e1b69af3b822587074a67bdcaf4d29ce7bbac",
+    "implementation_patch_sha256": "dc61a93dd1caa4e5c8983c6acf8efeea2910437a1beeaea1614e9efc67986888",
+    "credentialed_call_count": 25,
+    "expected_policy_failure_count": 7,
+    "release_gate": {
+      "passed": false,
+      "failures": [
+        "core_model_attestation_below_100_percent",
+        "context_token_reduction_below_25_percent"
+      ]
+    },
     "cost_usd": null,
     "cost_observability": "unavailable"
   }
