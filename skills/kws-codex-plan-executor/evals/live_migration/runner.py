@@ -548,10 +548,10 @@ def _git_text(repo: Path, *args: str) -> str:
     return result.stdout
 
 
-def _parse_events(stdout: str) -> tuple[list[dict[str, object]], dict[str, int], str | None, str | None]:
+def _parse_events(stdout: str) -> tuple[list[dict[str, object]], dict[str, int], str | None]:
     events: list[dict[str, object]] = []
     usage = {"input_tokens": 0, "cached_input_tokens": 0, "output_tokens": 0}
-    model = reasoning = None
+    thread_id = None
     for line in stdout.splitlines():
         try:
             event = json.loads(line)
@@ -561,12 +561,59 @@ def _parse_events(stdout: str) -> tuple[list[dict[str, object]], dict[str, int],
             raise LiveRunnerError("malformed_event_stream", "Codex emitted a non-object event")
         events.append(event)
         if event.get("type") == "thread.started":
-            model = str(event.get("model"))
-            reasoning = str(event.get("reasoning_effort"))
+            raw_thread_id = event.get("thread_id") or (event.get("thread") or {}).get("id")
+            thread_id = str(raw_thread_id) if raw_thread_id else None
         if event.get("type") == "turn.completed" and isinstance(event.get("usage"), dict):
             for name in usage:
                 usage[name] += int(event["usage"].get(name, 0))
-    return events, usage, model, reasoning
+    return events, usage, thread_id
+
+
+def _read_session_attestation(
+    codex_home: Path, thread_id: str | None, worktree: Path
+) -> dict[str, str]:
+    """Return one cwd-bound model receipt from the CLI-owned session journal."""
+    if not thread_id:
+        return {}
+    sessions = codex_home.expanduser().resolve() / "sessions"
+    matches: list[dict[str, str]] = []
+    if not sessions.is_dir():
+        return {}
+    for path in sessions.rglob(f"*{thread_id}*.jsonl"):
+        session_matches = False
+        candidate: dict[str, str] = {}
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            continue
+        for line in raw.decode("utf-8", errors="replace").splitlines():
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            payload = record.get("payload") if isinstance(record, dict) else None
+            if not isinstance(payload, dict):
+                continue
+            if record.get("type") == "session_meta":
+                try:
+                    cwd_matches = Path(str(payload.get("cwd") or "")).resolve() == worktree.resolve()
+                except OSError:
+                    cwd_matches = False
+                session_matches = payload.get("id") == thread_id and cwd_matches
+            elif record.get("type") == "turn_context":
+                model = payload.get("model")
+                reasoning = payload.get("effort") or payload.get("reasoning_effort")
+                if model and reasoning:
+                    candidate = {"model": str(model), "reasoning_effort": str(reasoning)}
+        if session_matches and candidate:
+            matches.append(
+                {
+                    **candidate,
+                    "source": "codex_session_jsonl",
+                    "session_sha256": _sha256_bytes(raw),
+                }
+            )
+    return matches[0] if len(matches) == 1 else {}
 
 
 def _attempt_paths(context: RunContext, slot: dict[str, object], key: SlotKey) -> tuple[Path, Path]:
@@ -670,7 +717,7 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
         evidence_dir.mkdir(parents=True, exist_ok=False)
         last_message = evidence_dir / "last-message.json"
         argv = [
-            str(context.codex.binary), "exec", "--json", "--ephemeral", "--model", str(slot["model"]),
+            str(context.codex.binary), "exec", "--json", "--model", str(slot["model"]),
             "-c", 'model_reasoning_effort="high"', "--sandbox",
             "workspace-write" if fixture.contract["mode"] == "write" else "read-only",
             "-C", str(fixture.repo), "--output-schema", str(worker_schema),
@@ -697,7 +744,16 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
             output = json.loads(last_message.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise LiveRunnerError("malformed_output", "Codex did not emit valid checked JSON output") from exc
-        events, usage, model, reasoning = _parse_events(stdout)
+        events, usage, thread_id = _parse_events(stdout)
+        attestation = _read_session_attestation(
+            Path(context.child_env["CODEX_HOME"]), thread_id, fixture.repo
+        )
+        if not attestation:
+            raise LiveRunnerError(
+                "incomplete_attestation",
+                "one cwd-bound Codex session model receipt is required",
+            )
+        events.append({"type": "model.attested", **attestation})
     except LiveRunnerError as exc:
         _record_slot_failure(
             context, key, evidence_dir, exc, prompt=prompt, stdout=stdout, stderr=stderr
@@ -720,7 +776,7 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
         exit_code=process.returncode, latency_ms=latency_ms, timed_out=False,
         retry_count=0, tracked_diff=tracked_diff, cached_diff=cached_diff,
         untracked_files=untracked, changed_files=changed, acceptance_exit_code=acceptance.returncode,
-        model=model, reasoning_effort=reasoning, input_tokens=usage["input_tokens"],
+        model=attestation["model"], reasoning_effort=attestation["reasoning_effort"], input_tokens=usage["input_tokens"],
         cached_input_tokens=usage["cached_input_tokens"], output_tokens=usage["output_tokens"],
         source_drift=False, oracle_drift=False,
     )
@@ -740,6 +796,7 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
         {
             "events.jsonl": stdout.encode(), "stderr.txt": stderr.encode(),
             "last-message.json": canonical_json(output), "prompt.sha256": (_sha256_bytes(prompt.encode()) + "\n").encode(),
+            "attestation.json": canonical_json(attestation),
         },
         result,
     )

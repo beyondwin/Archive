@@ -1,14 +1,15 @@
 <!-- CPE_CACHE_STABLE_PREFIX_START -->
-KWS Codex Plan Executor fresh-session prompt. Follow the invariant execution
-contract first, keep repository edits isolated from orchestration state, apply
-required skills before implementation work, and return the mode-appropriate
-result shape.
+KWS Codex Plan Executor fresh-session contract.
+
+Work only in the supplied workspace. Keep code edits separate from CPE runtime
+state. Use the smallest applicable skill set, batch independent reads, and do
+not search for unspecified plans, specs, or repository-wide context. Treat an
+appended case contract as authoritative. Never inspect hidden oracle material.
+Verify the requested acceptance command and report only checked evidence.
 <!-- CPE_CACHE_STABLE_PREFIX_END -->
 <!-- CPE_CACHE_HOT_TAIL_START -->
 
-다음 계획을 새 Codex 세션에서 `/kws-codex-plan-executor`로 실행해.
-
-입력:
+Execute the supplied task with these inputs:
 - workspace: {{WORKSPACE}}
 - plan: {{PLAN}} (sha256={{PLAN_SHA256}})
 - spec: {{SPEC}} (sha256={{SPEC_SHA256}})
@@ -16,26 +17,21 @@ result shape.
 - mode: {{MODE}}
 - headless_sandbox: {{HEADLESS_SANDBOX}}
 
-계약:
-- `interactive`/`headless` 실행은 `run_id=<plan-slug>-<YYYYMMDD-HHMMSS>`를 만들고, 코드는 `~/.codex/worktrees/<run_id>`에 git worktree로 격리해. 같은 경로가 있으면 짧은 random suffix를 붙여 중복을 피한다.
-- 오케스트레이션 상태는 `~/.codex/orchestrator/<run_id>/state.json`에 유지해. `context.json`, `hooks/`, `learning_events/`, headless logs, raw command evidence도 `~/.codex/orchestrator/<run_id>/` 하위에 둔다.
-- 작업 worktree에는 코드와 일반 git working tree 파일만 둔다.
-- `prompt`와 `handoff` 모드는 export-only다. worktree, state, context snapshot, hooks, logs, task artifact를 만들지 말고 plan task를 실행하지 마.
-- CPE v3의 모델 라우팅은 고정 Sol/high core와 Terra/high read-only scout뿐이다. 모델, reasoning, profile, alias, fallback override를 입력이나 prompt로 선택하지 마.
-- headless 실행이면 `headless_sandbox` 값을 `HEADLESS_SANDBOX`로 매핑한다. `HEADLESS_SANDBOX=read-only`에서는 preflight와 prompt verification만 수행하고 편집하지 마.
-- 편집 전 항상 `TASK EXECUTION CONTRACT` 5줄(`scope`, `files_to_inspect`, `allowed_edits`, `forbidden_edits`, `acceptance_command_or_honest_substitute`)을 말하고 state에 기록해.
-- `using-superpowers`와 `test-driven-development`를 implementation work 전에 적용해. 이 규칙은 interactive and headless 모두에 적용되며 not a headless-only rule이다. RED evidence를 먼저 기록하고 GREEN evidence로 닫아.
-- local `SKILL.md`를 직접 읽어야 하면 active skill registry/root mapping에서 경로를 해석해. Do not hard-code `.system`; 읽기 실패 시 registry entry와 root table을 먼저 다시 확인하고, registry 자체가 stale임이 입증되지 않으면 classify it as an operator path-resolution error.
-- repo instructions가 graphify를 언급하면 `graphify-out/GRAPH_REPORT.md`의 Built from commit 값을 `git rev-parse HEAD`와 비교하고, 코드 변경 후 `graphify update .`를 실행해. 결과는 `completion_audit.verification_evidence`에 남겨.
-- `context.json`, `context_snapshot_path`, `context_basis_hash`, `context_health`, `handoff_ready`, `next_action`, `completion_audit`, `prompt_to_artifact_checklist`, `verification_evidence`, `lifecycle_outcome`, `handoff_reason`을 state에 유지해.
-- high-risk verification matrix를 사용해 misleading success, stale state, hung command/process 리스크를 확인해.
-- `main` 또는 호출자의 원래 checkout에서 구현하지 마. `git worktree list --porcelain`로 확인하고 branch name already exists면 append the run_id.
-- headless 실행이면 `templates/headless-output-schema.json`의 `status`, `run_id`, `state_path`, `summary`, `changed_files`, `verification`, `open_gaps`, `residual_risk`, `context_artifacts`, `next_action` shape를 지켜. Do not launch another nested `codex exec`.
-- AgentLens learning event는 execution-only best-effort로만 남겨. payload에는 `run_id`, `run_dir_ref`, `state_path_ref`를 포함하고 absolute home paths, secrets, raw transcript, 긴 로그는 저장하지 마.
+If plan and mode are concrete, invoke `/kws-codex-plan-executor` once. Create
+one isolated worktree and keep state under the CPE run directory. Fixed routing
+is Sol/high core and Terra/high read-only scout; never override or downgrade it.
+Before edits, record scope, files to inspect, allowed edits, forbidden edits,
+and acceptance command. Apply required skills, preserve unrelated changes, and
+record RED/GREEN evidence for implementation or repair.
 
-완료 전:
-- `scripts/reconcile_state.py --state "$STATE_PATH" --check` 또는 `--repair-safe`
-- `scripts/validate_state.py "$STATE_PATH"`
-- 계획에 적힌 acceptance command 또는 honest substitute
+If the placeholders above are unresolved and an appended case contract is
+present, execute that bounded case directly. Do not invoke nested CPE, search
+for plan/spec files, or inspect files outside the supplied repository and the
+minimum required skill entrypoints.
+
+`prompt` and `handoff` are export-only. A read-only headless sandbox may only
+preflight and verify prompts. For execution modes, reconcile and validate state
+before completion. Keep secrets, raw transcripts, absolute home paths, and
+oracle paths out of tracked or sanitized evidence.
 
 {{HANDOFF_SECTION}}

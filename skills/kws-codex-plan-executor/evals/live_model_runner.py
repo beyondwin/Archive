@@ -44,7 +44,7 @@ INVOCATION_POLICY = {
     "codex_binary": "chatgpt_app_bundled",
     "completed_call_retry": "forbidden",
     "execution_order": "sequential",
-    "session_persistence": "ephemeral",
+    "session_persistence": "new_thread_with_session_attestation",
     "slot_isolation": "fresh_fixture_copy",
 }
 
@@ -400,12 +400,12 @@ def _run_slot_with_isolated_user_config(
             if (
                 command
                 and command[0] == str(context.codex.binary)
-                and "--ephemeral" in command
+                and "--output-schema" in command
             ):
                 if command[1:2] != ["exec"]:
                     raise LiveRunnerError(
                         "unsafe_codex_invocation",
-                        "ephemeral Codex invocation must use the exec launcher",
+                        "live Codex invocation must use the exec launcher",
                     )
                 if "--ignore-user-config" not in command:
                     command.insert(2, "--ignore-user-config")

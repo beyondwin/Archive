@@ -119,7 +119,15 @@ class OracleContractTests(unittest.TestCase):
     def events(*, model: str = "gpt-5.6-sol", include_model: bool = True, include_usage: bool = True) -> list[dict[str, object]]:
         events: list[dict[str, object]] = []
         if include_model:
-            events.append({"type": "thread.started", "model": model, "reasoning_effort": "high"})
+            events.append(
+                {
+                    "type": "model.attested",
+                    "model": model,
+                    "reasoning_effort": "high",
+                    "source": "codex_session_jsonl",
+                    "session_sha256": "a" * 64,
+                }
+            )
         events.append({"type": "turn.started"})
         if include_usage:
             events.append(

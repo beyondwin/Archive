@@ -54,6 +54,22 @@ def _validate_launcher_shape(argv: list[str]) -> None:
         raise SystemExit("fake codex rejected launcher shape")
 
 
+def _write_session_attestation(
+    *, thread_id: str, worktree: Path, model: str
+) -> None:
+    root = Path(os.environ["CODEX_HOME"]) / "sessions" / "2026" / "07" / "12"
+    root.mkdir(parents=True, exist_ok=True)
+    target = root / f"rollout-{thread_id}.jsonl"
+    records = (
+        {"type": "session_meta", "payload": {"id": thread_id, "cwd": str(worktree)}},
+        {"type": "turn_context", "payload": {"model": model, "effort": "high"}},
+    )
+    target.write_text(
+        "".join(json.dumps(record, sort_keys=True) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+
 def main() -> int:
     argv = sys.argv[1:]
     if argv == ["login", "status"]:
@@ -102,7 +118,10 @@ def main() -> int:
     schema = Path(_value(argv, "--output-schema"))
     if not schema.is_file() or reasoning != 'model_reasoning_effort="high"':
         raise SystemExit("fake codex rejected schema or reasoning")
-    if "--ephemeral" in argv:
+    schema_payload = json.loads(schema.read_text(encoding="utf-8"))
+    required = set(schema_payload.get("required", []))
+    live_schema = {"summary", "finding_ids", "fact_ids", "block_ids", "changed_files"}.issubset(required)
+    if "--ephemeral" in argv or live_schema:
         behavior = os.environ.get("CPE_FAKE_LIVE_BEHAVIOR", "success")
         delay_seconds = float(os.environ.get("CPE_FAKE_LIVE_DELAY_SECONDS", "0"))
         if delay_seconds:
@@ -126,8 +145,6 @@ def main() -> int:
             return 1
         if behavior == "stdout_marker":
             print(json.dumps({"type": "model.output", "text": "document the usage limit"}))
-        schema_payload = json.loads(schema.read_text(encoding="utf-8"))
-        required = set(schema_payload.get("required", []))
         if behavior == "malformed":
             last_message.write_text("not json\n", encoding="utf-8")
         elif behavior == "schema_invalid":
@@ -153,7 +170,12 @@ def main() -> int:
             )
         else:
             last_message.write_text(json.dumps({"status": "completed", "verdict": None}, sort_keys=True) + "\n", encoding="utf-8")
-        print(json.dumps({"type": "thread.started", "model": model, "reasoning_effort": "high"}))
+        if "--ephemeral" in argv:
+            print(json.dumps({"type": "thread.started", "model": model, "reasoning_effort": "high"}))
+        else:
+            thread_id = hashlib.sha256(f"{model}:{worktree}".encode()).hexdigest()[:32]
+            _write_session_attestation(thread_id=thread_id, worktree=worktree, model=model)
+            print(json.dumps({"type": "thread.started", "thread_id": thread_id}))
         print(json.dumps({"type": "turn.started"}))
         print(json.dumps({"type": "turn.completed", "usage": {"input_tokens": 1, "cached_input_tokens": 0, "output_tokens": 1, "reasoning_output_tokens": 0}}))
         return 0
