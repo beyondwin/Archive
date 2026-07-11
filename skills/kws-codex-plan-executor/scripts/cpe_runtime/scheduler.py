@@ -188,17 +188,16 @@ def packet_prompt(
             ),
         },
     }
-    if request.verdict_capable:
-        validator = Path(__file__).resolve().parents[1] / "validate_state.py"
-        payload["canonical_runtime_validation"] = {
-            "authority": "current_host_cpe_runtime",
-            "command": shlex.join([sys.executable, str(validator), str(run_dir.resolve())]),
-            "guidance": (
-                "Use this current host-runtime command for canonical run validation. "
-                "Do not substitute a validator copied into the execution worktree."
-            ),
-        }
-        payload["prior_task_evidence"] = prior_task_evidence
+    validator = Path(__file__).resolve().parents[1] / "validate_state.py"
+    payload["canonical_runtime_validation"] = {
+        "authority": "current_host_cpe_runtime",
+        "command": shlex.join([sys.executable, str(validator), str(run_dir.resolve())]),
+        "guidance": (
+            "Use this current host-runtime command for canonical run validation. "
+            "Do not substitute a validator copied into the execution worktree."
+        ),
+    }
+    payload["prior_task_evidence"] = prior_task_evidence
     return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
 

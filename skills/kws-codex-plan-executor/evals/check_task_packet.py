@@ -40,12 +40,10 @@ def result_contract_ok(request) -> bool:
     )
 
 
-def verdict_context_ok(request) -> bool:
+def runtime_context_ok(request) -> bool:
     prompt = json.loads(request.prompt)
     validation = prompt.get("canonical_runtime_validation")
     evidence = prompt.get("prior_task_evidence")
-    if not request.verdict_capable:
-        return validation is None and evidence is None
     return bool(
         isinstance(validation, dict)
         and "validate_state.py" in str(validation.get("command") or "")
@@ -222,7 +220,7 @@ def main() -> int:
             and request.task_id == "T1"
             and SENTINEL not in request.prompt
             and result_contract_ok(request)
-            and verdict_context_ok(request)
+            and runtime_context_ok(request)
             for request in requests
         )
         prior_ref_path = run_dir / "artifacts" / "evidence" / "worker_result" / "prior.json"
@@ -257,7 +255,7 @@ def main() -> int:
             },
             "T1",
         )
-        checks["verdict_context_indexes_prior_task_evidence"] = (
+        checks["runtime_context_indexes_prior_task_evidence"] = (
             prior
             == [
                 {

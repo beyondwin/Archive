@@ -263,10 +263,9 @@ def main() -> int:
                 "instruction",
                 "result_contract",
             }
-            if request.verdict_capable:
-                expected_prompt_keys.update(
-                    {"canonical_runtime_validation", "prior_task_evidence"}
-                )
+            expected_prompt_keys.update(
+                {"canonical_runtime_validation", "prior_task_evidence"}
+            )
             assert set(prompt) == expected_prompt_keys
             assert prompt["task_id"] == request.task_id
             assert prompt["packet_path"] == request.packet_path

@@ -631,11 +631,13 @@ and an integrity-valid scope blocker can retry after that policy correction.
 Runtime scope enforcement and replay validation now share the same
 `matches_path` implementation; the active T2 run validates cleanly under the
 corrected nested-fixture rule.
-Verdict-capable workers now receive the current host runtime's canonical
+All workers now receive the current host runtime's canonical
 `validate_state.py` command instead of inferring authority from an older copy
 inside the execution worktree. Their packet prompt also indexes every prior
 task-attempt worker-result artifact, so verification can inspect authentic TDD
-RED evidence without treating omitted prompt context as missing evidence.
+RED evidence without treating omitted prompt context as missing evidence; the
+same context also lets repair roles distinguish product defects from corrected
+host-runtime policy.
 
 Commands and results:
 
