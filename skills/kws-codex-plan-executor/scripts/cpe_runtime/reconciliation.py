@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .validation import validate_completion, validate_run
+from .events import read_events
+from .manifest import load_manifest
+from .projector import project
+from .validation import ValidationReport, validate_completion, validate_integrity
 
 
 @dataclass(frozen=True)
@@ -28,6 +31,110 @@ REPAIRABLE = {
     "snapshot_replay_mismatch": "rebuild_snapshot",
 }
 
+RESUME_PHASES = {
+    "implementation_interrupted": "implementation",
+    "acceptance_failed": "repair",
+    "task_review_changes_requested": "repair",
+    "verification_interrupted": "acceptance",
+    "verification_failed": "repair",
+}
+
+
+@dataclass(frozen=True)
+class ResumeDecision:
+    action: str
+    phase: str | None = None
+    blocker_id: str | None = None
+    evidence_refs: tuple[dict[str, object], ...] = ()
+
+
+def _canonical_ref(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    import json
+
+    return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+
+def _indexed_refs(state: dict, refs: object) -> tuple[dict[str, object], ...] | None:
+    if not isinstance(refs, list) or not refs or any(not isinstance(ref, dict) for ref in refs):
+        return None
+    indexed = {
+        _canonical_ref(item.get("ref"))
+        for item in state.get("artifact_index") or []
+        if isinstance(item, dict)
+    }
+    canonical = [_canonical_ref(ref) for ref in refs]
+    if any(ref is None or ref not in indexed for ref in canonical):
+        return None
+    return tuple(dict(ref) for ref in refs)
+
+
+def _resume_category(blocker: dict) -> str | None:
+    category = str(blocker.get("category") or "")
+    if category in RESUME_PHASES:
+        return category
+    root = str(blocker.get("root_cause_key") or "")
+    if root.startswith("implementation:") and "interrupt" in root:
+        return "implementation_interrupted"
+    if root.startswith("acceptance:"):
+        return "acceptance_failed"
+    if root.startswith("task_review:") and "changes_requested" in root:
+        return "task_review_changes_requested"
+    if root.startswith("verification:"):
+        return "verification_interrupted" if "interrupt" in root else "verification_failed"
+    return None
+
+
+def select_resume(state: dict, integrity_report: ValidationReport) -> ResumeDecision:
+    """Choose one deterministic resume action from replayed, integrity-valid state."""
+    if not isinstance(state, dict) or not integrity_report.passed:
+        errors = set(getattr(integrity_report, "errors", ()) or ())
+        if errors == {"worktree_missing"}:
+            return ResumeDecision("open_workspace_blocker")
+        return ResumeDecision("reject")
+    if state.get("lifecycle") == "completed":
+        return ResumeDecision("complete")
+
+    blockers = list(state.get("active_blockers") or [])
+    if len(blockers) > 1:
+        return ResumeDecision("reject")
+    if blockers:
+        blocker = blockers[0]
+        if not isinstance(blocker, dict):
+            return ResumeDecision("reject")
+        if blocker.get("owner") == "operator" or blocker.get("category") == "operator_review":
+            return ResumeDecision("remain_blocked", blocker_id=str(blocker.get("blocker_id") or "") or None)
+        refs = _indexed_refs(state, blocker.get("evidence_refs"))
+        category = _resume_category(blocker)
+        blocker_id = blocker.get("blocker_id")
+        if refs is None or category is None or not isinstance(blocker_id, str) or not blocker_id:
+            return ResumeDecision("reject")
+        return ResumeDecision("retry", RESUME_PHASES[category], blocker_id, refs)
+
+    active = [
+        item
+        for item in state.get("attempts") or []
+        if isinstance(item, dict) and item.get("status") == "started"
+    ]
+    if len(active) == 1:
+        attempt = active[0]
+        matching_refs = [
+            item.get("ref")
+            for item in state.get("artifact_index") or []
+            if isinstance(item, dict)
+            and item.get("attempt_id") == attempt.get("attempt_id")
+            and isinstance(item.get("ref"), dict)
+        ]
+        refs = _indexed_refs(state, matching_refs) if matching_refs else ()
+        phase = {
+            "implementation": "implementation",
+            "repair": "repair",
+            "verification": "acceptance",
+        }.get(str(attempt.get("kind")))
+        return ResumeDecision("retry", phase, None, refs) if phase else ResumeDecision("reject")
+    return ResumeDecision("reject")
+
 
 def reconcile(run_dir: Path, *, completion: bool = False) -> ReconciliationReport:
     """Classify canonical findings without treating healthy incompletion as drift.
@@ -35,7 +142,16 @@ def reconcile(run_dir: Path, *, completion: bool = False) -> ReconciliationRepor
     Recovery planning uses the default lifecycle adapter. Completion callers may
     request the strict profile before a terminal event exists.
     """
-    report = validate_completion(run_dir) if completion else validate_run(run_dir)
+    integrity = validate_integrity(run_dir)
+    report = validate_completion(run_dir) if completion else integrity
+    if not completion and integrity.passed:
+        try:
+            manifest = load_manifest(run_dir / "run_manifest.json")
+            replay = project(manifest, read_events(run_dir / "events.jsonl"))
+        except (OSError, TypeError, ValueError):
+            replay = None
+        if isinstance(replay, dict) and replay.get("lifecycle") == "completed":
+            report = validate_completion(run_dir)
     if report.classification == "unsupported_schema":
         return ReconciliationReport(
             "blocking_drift",
@@ -55,7 +171,13 @@ def reconcile(run_dir: Path, *, completion: bool = False) -> ReconciliationRepor
             )
         )
     if not findings:
-        classification = "clean"
+        try:
+            manifest = load_manifest(run_dir / "run_manifest.json")
+            state = project(manifest, read_events(run_dir / "events.jsonl"))
+        except (OSError, TypeError, ValueError):
+            classification = "blocking_drift"
+        else:
+            classification = "clean" if state.get("lifecycle") == "completed" else "clean_incomplete"
     elif all(item["severity"] == "repairable" for item in findings):
         classification = "repairable"
     else:

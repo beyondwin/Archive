@@ -222,7 +222,18 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
         if payload.get("status") not in {"green", "yellow", "red"}:
             raise ValueError("invalid context payload")
     elif command.event_type == "repair.applied":
-        if not payload.get("action") or "before" not in payload or "after" not in payload:
+        expected = payload.get("expected_projection_delta")
+        observed = payload.get("observed_projection_delta")
+        if (
+            not payload.get("action")
+            or "before" not in payload
+            or "after" not in payload
+            or payload.get("applied") is not True
+            or not isinstance(expected, dict)
+            or not expected
+            or observed != expected
+            or payload.get("after") != observed
+        ):
             raise ValueError("invalid repair payload")
 
 
