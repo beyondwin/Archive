@@ -340,6 +340,46 @@ def _write_packet_exclusive(root: Path, draft: PacketDraft) -> None:
     _fsync_dir(path.parent)
 
 
+def _stage_input_snapshots(root: Path, manifest: dict) -> list[dict[str, str]]:
+    """Copy verified invocation inputs into the unpublished initialization tree."""
+
+    records: list[tuple[str, dict]] = []
+    if isinstance(manifest.get("plan"), dict):
+        records.append(("plan", manifest["plan"]))
+    if isinstance(manifest.get("spec"), dict):
+        records.append(("spec", manifest["spec"]))
+    records.extend(
+        (f"doc-{index:03d}", record)
+        for index, record in enumerate(manifest.get("docs") or [])
+        if isinstance(record, dict)
+    )
+    snapshots: list[dict[str, str]] = []
+    input_root = root / "artifacts" / "inputs"
+    input_root.mkdir(parents=True, mode=0o700)
+    for label, record in records:
+        source = Path(str(record["ref"])).expanduser().resolve()
+        content = source.read_bytes()
+        digest = hashlib.sha256(content).hexdigest()
+        if digest != record.get("sha256"):
+            raise ValueError("manifest_hash_mismatch")
+        target = input_root / f"{label}.snapshot"
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(target, flags, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        snapshots.append(
+            {
+                "role": label,
+                "path": target.relative_to(root).as_posix(),
+                "sha256": digest,
+            }
+        )
+    _fsync_dir(input_root)
+    return snapshots
+
+
 class RunKernel(Kernel):
     @classmethod
     def initialize(cls, run_dir: Path, manifest: dict, packet_drafts: list[PacketDraft]) -> "RunKernel":
@@ -371,6 +411,7 @@ class RunKernel(Kernel):
         stage.mkdir(mode=0o700)
         published = False
         try:
+            initialized_manifest["input_snapshots"] = _stage_input_snapshots(stage, initialized_manifest)
             for draft in packet_drafts:
                 _write_packet_exclusive(stage, draft)
             write_path = stage / "run_manifest.json"

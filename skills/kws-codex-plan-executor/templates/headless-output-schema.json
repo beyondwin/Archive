@@ -17,15 +17,13 @@
   "properties": {
     "status": {
       "type": "string",
-      "enum": ["success", "blocked", "failed", "cancelled"]
+      "enum": ["success", "blocked", "failed"]
     },
     "run_id": {
-      "type": "string",
-      "minLength": 1
+      "type": ["string", "null"]
     },
     "state_path": {
-      "type": "string",
-      "minLength": 1
+      "type": ["string", "null"]
     },
     "summary": {
       "type": "string",
@@ -83,21 +81,11 @@
     "blocker": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["category", "summary", "recoverable", "next_action_kind"],
+      "required": ["category", "summary", "recoverable", "next_action", "evidence_refs"],
       "properties": {
         "category": {
           "type": "string",
-          "enum": [
-            "operator_input_required",
-            "workspace_precondition",
-            "plan_contract_gap",
-            "diff_scope_gap",
-            "execution_source_failure",
-            "transient_tooling_or_resource",
-            "state_integrity_drift",
-            "subagent_coordination",
-            "observability_degraded"
-          ]
+          "enum": ["preflight", "environment", "transient", "implementation", "review", "verification", "policy_violation", "state_integrity", "operator_review"]
         },
         "summary": {
           "type": "string",
@@ -106,17 +94,25 @@
         "recoverable": {
           "type": "boolean"
         },
-        "next_action_kind": {
+        "next_action": {
           "type": "string",
-          "enum": ["continue", "retry", "bootstrap", "local_fallback", "operator_decision", "block", "fail"]
+          "minLength": 1
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {"type": "object"}
         }
       }
     },
     "failure_decision": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["decision", "reason"],
+      "required": ["category", "decision", "reason", "recoverable", "next_action", "evidence_refs"],
       "properties": {
+        "category": {
+          "type": "string",
+          "enum": ["preflight", "environment", "transient", "implementation", "review", "verification", "policy_violation", "state_integrity", "operator_review"]
+        },
         "decision": {
           "type": "string",
           "enum": ["failed", "block", "fail"]
@@ -124,6 +120,17 @@
         "reason": {
           "type": "string",
           "minLength": 1
+        },
+        "recoverable": {
+          "type": "boolean"
+        },
+        "next_action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence_refs": {
+          "type": "array",
+          "items": {"type": "object"}
         }
       }
     },
@@ -133,6 +140,17 @@
     }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {"status": {"const": "success"}}
+      },
+      "then": {
+        "properties": {
+          "run_id": {"type": "string", "minLength": 1},
+          "state_path": {"type": "string", "minLength": 1}
+        }
+      }
+    },
     {
       "if": {
         "properties": {"status": {"const": "blocked"}}

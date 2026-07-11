@@ -10,8 +10,8 @@ result shape.
 
 입력:
 - workspace: {{WORKSPACE}}
-- plan: {{PLAN}}
-- spec: {{SPEC}}
+- plan: {{PLAN}} (sha256={{PLAN_SHA256}})
+- spec: {{SPEC}} (sha256={{SPEC_SHA256}})
 - docs: {{DOCS}}
 - mode: {{MODE}}
 - headless_sandbox: {{HEADLESS_SANDBOX}}

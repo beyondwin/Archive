@@ -1,20 +1,24 @@
 # Headless Result Schema
 
-Headless runs write a final JSON payload with:
+Public `run` and `resume` emit exactly one JSON object to stdout. Expected
+runtime failures use the same shape and never require parsing stderr or a
+traceback.
 
-- `status`
-- `run_id`
-- `state_path`, pointing at `~/.codex/orchestrator/<run_id>/state.json`
-- `summary`
-- `changed_files`
-- `verification`
-- `open_gaps`
-- `residual_risk`
-- `context_artifacts`
-- `next_action`
+The common fields are `status`, `run_id`, `state_path`, `summary`,
+`changed_files`, `verification`, `open_gaps`, `residual_risk`,
+`context_artifacts`, and `next_action`.
 
-For `status=blocked`, the payload also includes `blocker` with category,
-summary, recoverability, and next action kind. For `status=failed`, the payload
-includes `failure_decision` with the machine decision and reason.
+- `success` exits 0 and requires non-null `run_id` and `state_path`. CPE calls
+  canonical `validate_completion` immediately before returning it.
+- `blocked` exits 1 and requires `blocker` with category, summary,
+  recoverability, next action, and evidence references.
+- `failed` exits 2 and requires `failure_decision` with the same failure
+  metadata and a machine decision.
 
-The machine-readable schema lives at `templates/headless-output-schema.json`.
+The only public failure categories are `preflight`, `environment`,
+`transient`, `implementation`, `review`, `verification`, `policy_violation`,
+`state_integrity`, and `operator_review`.
+
+The machine-readable contract is
+`templates/headless-output-schema.json`; `scripts/cpe_runtime/public_result.py`
+is its serializer and exit-code owner.
