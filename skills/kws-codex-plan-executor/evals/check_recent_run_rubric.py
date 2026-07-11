@@ -7,6 +7,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+
+from cpe_runtime.scheduler import route_verdict
 
 
 def _run(script: str) -> tuple[int, dict]:
@@ -49,6 +52,7 @@ def main() -> int:
         "rubric_executes_multiple_behavior_checks": len(operational.get("checks") or {}) >= 5
         and len(parity.get("checks") or {}) >= 5,
         "rubric_is_read_only": before == after,
+        "rubric_uses_current_verdict_contract": route_verdict({"status": "passed"}) == "continue",
     }
     failures = [name for name, passed in checks.items() if not passed]
     print(json.dumps({"passed": not failures, "checks": checks, "failures": failures}, indent=2))

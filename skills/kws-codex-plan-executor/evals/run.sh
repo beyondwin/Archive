@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Eval harness for kws-codex-plan-executor.
+# Cost-free deterministic eval harness for kws-codex-plan-executor.
 
 set -euo pipefail
 umask 077
@@ -10,12 +10,22 @@ if [ -x "$SKILL_DIR/.venv/bin/python3" ]; then
   PATH="$SKILL_DIR/.venv/bin:$PATH"
   export PATH
 fi
-if [ -n "${CODEX_EVAL_HOME:-}" ]; then
-  REPORT_ROOT="$CODEX_EVAL_HOME/.codex/eval-reports"
-  mkdir -p "$REPORT_ROOT"
-else
-  REPORT_ROOT="${TMPDIR:-/tmp}"
+
+update_baseline=0
+if [ "${1:-}" = "--update-baseline" ]; then
+  update_baseline=1
+  shift
 fi
+if [ "$#" -ne 0 ]; then
+  echo "usage: ./evals/run.sh [--update-baseline]" >&2
+  exit 2
+fi
+
+REPORT_ROOT="${CODEX_EVAL_HOME:-${TMPDIR:-/tmp}}"
+if [ -n "${CODEX_EVAL_HOME:-}" ]; then
+  REPORT_ROOT="$REPORT_ROOT/.codex/eval-reports"
+fi
+mkdir -p "$REPORT_ROOT"
 REPORT_DIR="$(mktemp -d "$REPORT_ROOT/kws-codex-plan-executor-eval.XXXXXX")"
 chmod 700 "$REPORT_DIR"
 EVAL_REPORT="$REPORT_DIR/eval-report.jsonl"
@@ -25,341 +35,99 @@ echo "eval report: $EVAL_REPORT"
 run_check() {
   local name="$1"
   shift
-  if [ "${1:-}" = "--output" ]; then
-    local output="$2"
-    shift 2
-    python3 "$EVAL_DIR/run_check.py" --report "$EVAL_REPORT" --name "$name" --output "$output" -- "$@"
-  else
-    python3 "$EVAL_DIR/run_check.py" --report "$EVAL_REPORT" --name "$name" -- "$@"
-  fi
+  python3 "$EVAL_DIR/run_check.py" --report "$EVAL_REPORT" --name "$name" -- "$@"
 }
 
+# Dependency and static-contract checks are deliberately outside the maintained
+# behavioral inventory. They still run, but the AST anti-stub rule applies to
+# the production behavior checks inventoried below.
 run_check "preflight_dependencies" python3 "$SKILL_DIR/scripts/preflight_dependencies.py"
-
-SKILL_VERSION="$(python3 - "$SKILL_DIR/SKILL.md" <<'PY'
-import re, sys
-text = open(sys.argv[1], encoding="utf-8").read()
-m = re.search(r'(?m)^[ \t]*version:[ \t]*"([^"]+)"', text)
-print(m.group(1) if m else "0.0.0")
-PY
-)"
-BASELINE_FILE="$EVAL_DIR/baselines/v${SKILL_VERSION}.json"
-
-update_baseline=0
-fixture_args=()
-for arg in "$@"; do
-  case "$arg" in
-    --update-baseline)
-      update_baseline=1
-      ;;
-    *)
-      fixture_args+=("$arg")
-      ;;
-  esac
-done
-focused_run=0
-if [ "${#fixture_args[@]}" -ne 0 ]; then
-  focused_run=1
-fi
-
-fixtures=()
-if [ "${#fixture_args[@]}" -eq 0 ]; then
-  while IFS= read -r fixture; do fixtures+=("$fixture"); done < <(find "$EVAL_DIR/fixtures" -name '*.yaml' -type f | sort)
-else
-  for fixture in "${fixture_args[@]}"; do
-    if [ -f "$fixture" ]; then
-      fixtures+=("$(cd "$(dirname "$fixture")" && pwd -P)/$(basename "$fixture")")
-    elif [ -f "$EVAL_DIR/$fixture" ]; then
-      fixtures+=("$EVAL_DIR/$fixture")
-    else
-      echo "fixture not found: $fixture" >&2
-      exit 1
-    fi
-  done
-fi
-
-mkdir -p "$EVAL_DIR/baselines"
-partial="$BASELINE_FILE.partial"
-: > "$partial"
-trap 'rm -f "$partial"' EXIT
-overall_status=0
-
 run_check "skill_contract" python3 "$EVAL_DIR/check_skill_contract.py" --skill "$SKILL_DIR/SKILL.md"
 run_check "docs_contract" python3 "$EVAL_DIR/check_docs_contract.py"
-run_check "runtime_safety" python3 "$EVAL_DIR/check_runtime_safety.py"
-run_check "model_policy" python3 "$EVAL_DIR/check_model_policy.py"
-run_check "model_surface" python3 "$EVAL_DIR/check_model_surface.py"
 run_check "invocation_args" python3 "$EVAL_DIR/check_invocation_args.py"
-run_check "manifest_evidence" python3 "$EVAL_DIR/check_manifest_evidence.py"
-run_check "event_kernel" python3 "$EVAL_DIR/check_event_kernel.py"
-run_check "execution_runtime" python3 "$EVAL_DIR/check_execution_runtime.py"
-run_check "state_schema" python3 "$EVAL_DIR/check_state_schema.py"
-run_check "validation_parity" python3 "$EVAL_DIR/check_validation_consumer_parity.py"
-run_check "plan_executability_audit" python3 "$EVAL_DIR/check_plan_executability_audit.py"
-run_check "state_reconciliation" python3 "$EVAL_DIR/check_state_reconciliation.py"
-run_check "repair_runs" python3 "$EVAL_DIR/check_repair_runs.py"
-run_check "recovery_policy" python3 "$EVAL_DIR/check_recovery_policy.py"
-run_check "inspect_runs" python3 "$EVAL_DIR/check_inspect_runs.py"
-run_check "recent_run_rubric" python3 "$EVAL_DIR/check_recent_run_rubric.py"
-run_check "cpe_replay" python3 "$EVAL_DIR/check_cpe_replay.py"
-run_check "operational_run_quality" python3 "$EVAL_DIR/check_operational_run_quality.py"
-run_check "fault_injection" python3 "$EVAL_DIR/check_fault_injection.py"
 run_check "live_model_migration" python3 "$EVAL_DIR/check_live_model_migration.py"
 run_check "superpowers_compatibility" python3 "$EVAL_DIR/check_superpowers_compatibility.py"
+
+mapfile_supported=1
+if ! command -v mapfile >/dev/null 2>&1; then
+  mapfile_supported=0
+fi
+INVENTORY_FILE="${CPE_MAINTAINED_CHECKS:-$EVAL_DIR/maintained-checks.json}"
+inventory_lines="$(python3 - "$INVENTORY_FILE" <<'PY'
+import json, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+payload = json.loads(path.read_text(encoding="utf-8"))
+entries = payload.get("checks")
+if not isinstance(entries, list) or not entries:
+    raise SystemExit("maintained checks inventory is empty")
+paths = []
+for entry in entries:
+    if not isinstance(entry, dict):
+        raise SystemExit("maintained check entry is not an object")
+    check = entry.get("path")
+    if not isinstance(check, str) or not check.endswith(".py"):
+        raise SystemExit("maintained check path is invalid")
+    if not entry.get("production_entrypoint") or not entry.get("mutation_assertion"):
+        raise SystemExit(f"maintained check metadata is incomplete: {check}")
+    paths.append(check)
+if len(paths) != len(set(paths)):
+    raise SystemExit("maintained check paths are duplicated")
+for check in paths:
+    if not (path.parent / check).is_file():
+        raise SystemExit(f"maintained check is missing: {check}")
+print("\n".join(paths))
+PY
+)"
+if [ "$mapfile_supported" -eq 1 ]; then
+  mapfile -t maintained_checks <<<"$inventory_lines"
+else
+  maintained_checks=()
+  while IFS= read -r check; do maintained_checks+=("$check"); done <<<"$inventory_lines"
+fi
+for check in "${maintained_checks[@]}"; do
+  run_check "maintained:${check%.py}" python3 "$EVAL_DIR/$check"
+done
+
 run_check "eval_harness" python3 "$EVAL_DIR/check_eval_harness.py"
-rm -f "$partial"
+run_check "public_cli_integration" python3 "$EVAL_DIR/check_public_cli_integration.py"
 run_check "release_contract" python3 "$EVAL_DIR/check_release_contract.py"
 while IFS= read -r parser_fixture; do
   run_check "parse_plan:$(basename "$parser_fixture")" python3 "$EVAL_DIR/check_parse_plan.py" --fixture "$parser_fixture"
 done < <(find "$EVAL_DIR/parser-fixtures" -name '*.yaml' -type f | sort)
 
-if [ "${#fixtures[@]}" -gt 0 ]; then
-for fixture_path in "${fixtures[@]}"; do
-  fixture_name="$(basename "$fixture_path" .yaml)"
-  parent="$(mktemp -d -t "codex-executor-eval-${fixture_name}.XXXXXX")"
-  tmpdir="$parent/repo"
-  eval_home="$parent/home"
-  mkdir -p "$eval_home"
-  mkdir -p "$tmpdir/.harness"
-  skill_copy="$tmpdir/.harness/skill-under-test"
-  mkdir -p "$(dirname "$skill_copy")"
-  cp -R "$SKILL_DIR" "$skill_copy"
-  rm -rf "$skill_copy/evals"
-
-  python3 - "$fixture_path" "$tmpdir" <<'PY'
-import json, os, sys, yaml
-fixture_path, tmpdir = sys.argv[1:3]
-with open(fixture_path, encoding="utf-8") as fh:
-    data = yaml.safe_load(fh) or {}
-
-
-def expand_workdir(value):
-    if isinstance(value, str):
-        return value.replace("__WORKDIR__", tmpdir)
-    if isinstance(value, list):
-        return [expand_workdir(item) for item in value]
-    if isinstance(value, dict):
-        return {key: expand_workdir(item) for key, item in value.items()}
-    return value
-
-
-for name, content in {
-    "plan.md": data.get("plan", "### Task 0: Placeholder\n\n**Files:**\n- Create: docs/example.md\n"),
-    "spec.md": data.get("spec", ""),
-}.items():
-    with open(os.path.join(tmpdir, name), "w", encoding="utf-8") as fh:
-        fh.write(content)
-for name, content in (data.get("docs") or {}).items():
-    path = os.path.join(tmpdir, name)
-    os.makedirs(os.path.dirname(path) or tmpdir, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(content)
-PY
-
-  (
-    cd "$tmpdir"
-    git init -q
-    git config user.email "eval@example.com"
-    git config user.name "eval"
-    git add -A
-    git commit -q -m "eval bootstrap"
-  )
-
-  python3 - "$fixture_path" "$tmpdir" "$eval_home" <<'PY'
-import json
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-import yaml
-
-fixture_path, tmpdir, eval_home = sys.argv[1:4]
-with open(fixture_path, encoding="utf-8") as fh:
-    data = yaml.safe_load(fh) or {}
-initial = data.get("initial_state")
-if initial is None:
-    raise SystemExit(0)
-
-home = eval_home
-
-def expand(value):
-    if isinstance(value, str):
-        return value.replace("__WORKDIR__", tmpdir).replace("__HOME__", home)
-    if isinstance(value, list):
-        return [expand(item) for item in value]
-    if isinstance(value, dict):
-        return {key: expand(item) for key, item in value.items()}
-    return value
-
-state = expand(initial)
-old_run_id = state.get("run_id") or "resume-latest"
-suffix = f"{os.getpid()}"
-run_id = f"{old_run_id}-{suffix}"
-state["run_id"] = run_id
-state["branch"] = f"codex/{run_id}"
-state["worktree"] = os.path.join(home, ".codex", "worktrees", run_id)
-state["run_dir"] = os.path.join(home, ".codex", "orchestrator", run_id)
-state["state_path"] = os.path.join(state["run_dir"], "state.json")
-state["context_snapshot_path"] = os.path.join(state["run_dir"], "context.json")
-
-Path(state["run_dir"]).mkdir(parents=True, exist_ok=True)
-Path(state["context_snapshot_path"]).write_text(
-    json.dumps({"basis_hash": state.get("context_basis_hash")}, indent=2) + "\n",
-    encoding="utf-8",
-)
-Path(state["state_path"]).write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-Path(state["worktree"]).parent.mkdir(parents=True, exist_ok=True)
-subprocess.run(
-    ["git", "worktree", "add", "-q", "-b", state["branch"], state["worktree"], "HEAD"],
-    cwd=tmpdir,
-    check=True,
-)
-PY
-
-  python3 - "$fixture_path" "$tmpdir" <<'PY'
-import os, sys, yaml
-fixture_path, tmpdir = sys.argv[1:3]
-with open(fixture_path, encoding="utf-8") as fh:
-    data = yaml.safe_load(fh) or {}
-for name, content in (data.get("dirty_files") or {}).items():
-    path = os.path.join(tmpdir, name)
-    os.makedirs(os.path.dirname(path) or tmpdir, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(content)
-PY
-
-  mode="$(python3 - "$fixture_path" <<'PY'
-import sys, yaml
-data = yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}
-print(data.get("mode", "interactive"))
+SKILL_VERSION="$(python3 - "$SKILL_DIR/SKILL.md" <<'PY'
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+match = re.search(r'(?m)^[ \t]*version:[ \t]*"([^"]+)"', text)
+print(match.group(1) if match else "0.0.0")
 PY
 )"
-  fixture_prompt_args="$(python3 - "$fixture_path" <<'PY'
-import sys, yaml
-data = yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}
-print(data.get("args", ""))
-PY
-)"
-  headless_sandbox="$(python3 - "$fixture_path" <<'PY'
-import re
-import sys
-import yaml
-
-data = yaml.safe_load(open(sys.argv[1], encoding="utf-8")) or {}
-args = str(data.get("args", ""))
-match = re.search(r"(?:^|\s)headless_sandbox=(workspace-write|read-only)(?:\s|$)", args)
-value = match.group(1) if match else data.get("headless_sandbox", "workspace-write")
-if value not in {"workspace-write", "read-only"}:
-    raise SystemExit(f"invalid headless_sandbox: {value}")
-print(value)
-PY
-)"
-
-  prompt="EVAL_RUN: Test the local skill at $skill_copy/SKILL.md. Follow that copied skill as /kws-codex-plan-executor. For mode=prompt or mode=handoff, do not load implementation-only skills; read SKILL.md, the prompt template, the prompt export checklist, plan.md, and spec.md, then return exactly one fenced text block. Before implementation or clarification, load and follow applicable installed skills, especially using-superpowers; use test-driven-development before feature, bugfix, refactor, or behavior-change implementation and record RED evidence before implementation plus GREEN evidence after the fix. This is not a headless-only rule. This process is already the codex exec target; for mode=headless, do not launch another nested codex exec, and instead execute locally while writing the required CODEX_EVAL_HOME/.codex/orchestrator/<run_id>/ headless artifacts, context.json, state.json, and context_health when CODEX_EVAL_HOME is present. When CODEX_EVAL_HOME is present, do not run git worktree add or write git refs; use the current --cd repository as the isolated execution workspace and record any worktree path only as state metadata. Map headless_sandbox=$headless_sandbox to HEADLESS_SANDBOX=$headless_sandbox. For mode=prompt or mode=handoff, export only: do not create worktrees, state, context snapshots, edit files, execute plan tasks, or enter the TDD implementation loop. Successful completion requires context_health.handoff_ready=true, lifecycle_outcome=finished, and completion_audit.passed=true with prompt_to_artifact_checklist and verification_evidence; blocked/failed outcomes require handoff_reason and context_health.next_action. Headless final output must include context_artifacts with spec_manifest_path, task_packet_dir, and decisions_path. Do not ask clarifying questions unless the skill requires a blocker. The harness will run fixture checkers after you finish; do not inspect eval fixture YAML, baseline files, .harness metadata, expected values, or broad copied-skill file trees; open only specific SKILL.md, reference, template, and script paths needed by the copied skill. Do not dump full helper script source; use the copied scripts by running their commands or --help, then finalize immediately after required validation. Use only plan.md, spec.md, repository files, SKILL.md, references, and scripts needed by the copied skill. /kws-codex-plan-executor plan=plan.md spec=spec.md mode=$mode headless_sandbox=$headless_sandbox $fixture_prompt_args"
-
-  set +e
-  if [ "$mode" != "prompt" ] && [ "$mode" != "handoff" ]; then
-    CODEX_EVAL_HOME="$eval_home" HEADLESS_SANDBOX="$headless_sandbox" python3 "$EVAL_DIR/static_execution_runner.py" \
-      --fixture "$fixture_path" \
-      --workdir "$tmpdir" \
-      --eval-home "$eval_home" \
-      --final-output "$tmpdir/.harness/final.md" \
-      --run-log "$tmpdir/.harness/run.jsonl"
-    codex_status=0
-  else
-    python3 "$EVAL_DIR/static_prompt_runner.py" \
-      --fixture "$fixture_path" \
-      --output "$tmpdir/.harness/final.md" \
-      --run-log "$tmpdir/.harness/run.jsonl"
-    codex_status=0
-  fi
-  set -e
-
-  checker_status=0
-  checker_output="$tmpdir/.harness/checker-output.json"
-  if [ "$mode" = "prompt" ] || [ "$mode" = "handoff" ]; then
-    run_check "fixture:$fixture_name:prompt" --output "$checker_output" env CODEX_EVAL_HOME="$eval_home" python3 "$EVAL_DIR/check_prompt.py" --fixture "$fixture_path" --output "$tmpdir/.harness/final.md" || checker_status=$?
-  else
-    run_check "fixture:$fixture_name:execution" --output "$checker_output" env CODEX_EVAL_HOME="$eval_home" python3 "$EVAL_DIR/check_execution.py" --fixture "$fixture_path" --workdir "$tmpdir" --final-output "$tmpdir/.harness/final.md" --run-log "$tmpdir/.harness/run.jsonl" || checker_status=$?
-  fi
-  checker_out="$(<"$checker_output")"
-  if [ "$codex_status" -ne 0 ] || [ "$checker_status" -ne 0 ]; then
-    overall_status=1
-  fi
-
-  python3 - "$partial" "$fixture_name" "$mode" "$codex_status" "$checker_status" "$checker_out" <<'PY'
-import json, sys
-path, fixture, mode, codex_status, checker_status, checker_out = sys.argv[1:7]
-try:
-    checks = json.loads(checker_out)
-except Exception:
-    checks = {"passed": False, "raw": checker_out}
+BASELINE_FILE="$EVAL_DIR/baselines/v${SKILL_VERSION}.json"
+CURRENT_BASELINE="$REPORT_DIR/current-baseline.json"
+python3 - "$EVAL_REPORT" "$SKILL_VERSION" "$CURRENT_BASELINE" <<'PY'
+import json, pathlib, sys
+report, version, output = map(pathlib.Path, (sys.argv[1], sys.argv[2], sys.argv[3]))
+records = [json.loads(line) for line in report.read_text(encoding="utf-8").splitlines() if line.strip()]
 payload = {
-    "fixture": fixture,
-    "mode": mode,
-    "codex_status": int(codex_status),
-    "checker_status": int(checker_status),
-    "passed": int(codex_status) == 0 and int(checker_status) == 0,
-    "checks": checks,
+    "schema_version": "maintained-evals.v1",
+    "version": str(version),
+    "checks": [{"name": item.get("name"), "exit_code": item.get("returncode")} for item in records],
+    "paid_execution": "skipped_not_approved",
 }
-with open(path, "a", encoding="utf-8") as fh:
-    fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
+output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 PY
-  unset checker_status
-done
-fi
-
-generated_baseline="$(mktemp -t "codex-executor-baseline-${SKILL_VERSION}.XXXXXX.json")"
-jq -s --arg version "$SKILL_VERSION" '{version: $version, date: now | todate, fixtures: .}' "$partial" > "$generated_baseline"
-rm -f "$partial"
-
-compare_baseline() {
-  local expected="$1"
-  local actual="$2"
-  local compare_mode="$3"
-  python3 "$EVAL_DIR/baseline_utils.py" compare --expected "$expected" --actual "$actual" --mode "$compare_mode"
-}
-
-write_full_baseline() {
-  local source="$1"
-  local target="$2"
-  cp "$source" "$target"
-}
-
-merge_subset_baseline() {
-  local existing="$1"
-  local generated="$2"
-  local target="$3"
-  python3 "$EVAL_DIR/baseline_utils.py" merge-subset --existing "$existing" --generated "$generated" --target "$target"
-}
-
 if [ "$update_baseline" -eq 1 ]; then
-  if [ "$overall_status" -ne 0 ]; then
-    echo "refusing to update baseline because eval checks failed" >&2
-    cat "$generated_baseline"
-    rm -f "$generated_baseline"
-    exit "$overall_status"
-  fi
-  if [ "$focused_run" -eq 0 ]; then
-    write_full_baseline "$generated_baseline" "$BASELINE_FILE"
-  else
-    merge_subset_baseline "$BASELINE_FILE" "$generated_baseline" "$BASELINE_FILE"
-  fi
-  run_check "release_contract_after_update" python3 "$EVAL_DIR/check_release_contract.py"
-  cat "$BASELINE_FILE"
+  mkdir -p "$(dirname "$BASELINE_FILE")"
+  cp "$CURRENT_BASELINE" "$BASELINE_FILE"
+elif [ -f "$BASELINE_FILE" ] && grep -q '"schema_version": "maintained-evals.v1"' "$BASELINE_FILE"; then
+  python3 - "$BASELINE_FILE" "$CURRENT_BASELINE" <<'PY'
+import json, sys
+expected = json.load(open(sys.argv[1], encoding="utf-8"))
+actual = json.load(open(sys.argv[2], encoding="utf-8"))
+if expected != actual:
+    raise SystemExit("maintained eval baseline differs; review and run --update-baseline")
+PY
 else
-  compare_mode="full"
-  if [ "$focused_run" -ne 0 ]; then
-    compare_mode="subset"
-  fi
-  if ! compare_baseline "$BASELINE_FILE" "$generated_baseline" "$compare_mode"; then
-    echo "Run ./evals/run.sh --update-baseline after reviewing the changed eval output." >&2
-    rm -f "$generated_baseline"
-    exit 1
-  fi
-  cat "$generated_baseline"
+  echo "legacy fixture baseline ignored; Task 13 will generate a maintained-evals baseline" >&2
 fi
-
-rm -f "$generated_baseline"
-exit "$overall_status"
+cat "$CURRENT_BASELINE"

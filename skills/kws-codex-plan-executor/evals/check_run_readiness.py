@@ -61,6 +61,18 @@ def compile_block_category(repo: Path, plan: Path) -> str | None:
     return None
 
 
+def public_blocked(result: subprocess.CompletedProcess[str], marker: str) -> bool:
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return False
+    return (
+        result.returncode != 0
+        and payload.get("status") == "blocked"
+        and marker in (result.stdout + result.stderr)
+    )
+
+
 def main() -> int:
     checks: dict[str, bool] = {}
     failures: list[str] = []
@@ -79,7 +91,7 @@ def main() -> int:
         run(["git", "commit", "-qm", "fixture"], missing_repo)
         missing_home = root / "missing-home"
         missing = blocked_run(missing_repo, missing_plan, missing_home)
-        checks["missing_files_blocks"] = missing.returncode == 2 and "preflight_blocked" in missing.stderr
+        checks["missing_files_blocks"] = public_blocked(missing, "preflight")
         checks["missing_files_creates_no_roots"] = not (missing_home / "orchestrator").exists() and not (
             missing_home / "worktrees"
         ).exists()
@@ -97,7 +109,7 @@ def main() -> int:
         run(["git", "commit", "-qm", "fixture"], dangerous_repo)
         dangerous_home = root / "dangerous-home"
         dangerous = blocked_run(dangerous_repo, dangerous_plan, dangerous_home)
-        checks["unsafe_command_blocks"] = dangerous.returncode == 2 and "operator_review_required" in dangerous.stderr
+        checks["unsafe_command_blocks"] = public_blocked(dangerous, "requires operator review")
         checks["unsafe_command_creates_no_roots"] = not (dangerous_home / "orchestrator").exists() and not (
             dangerous_home / "worktrees"
         ).exists()
@@ -133,7 +145,7 @@ def main() -> int:
         (dirty_repo / "target.txt").write_text("dirty\n", encoding="utf-8")
         dirty_home = root / "dirty-home"
         dirty = blocked_run(dirty_repo, dirty_plan, dirty_home)
-        checks["dirty_claim_blocks"] = dirty.returncode == 2 and "related_dirty_scope" in dirty.stderr
+        checks["dirty_claim_blocks"] = public_blocked(dirty, "claimed task paths already contain source changes")
         checks["dirty_claim_creates_no_roots"] = not (dirty_home / "orchestrator").exists() and not (
             dirty_home / "worktrees"
         ).exists()

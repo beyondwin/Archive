@@ -1,0 +1,27 @@
+{
+  "schema_version": "1",
+  "checks": [
+    {"path": "check_model_policy.py", "production_entrypoint": "cpe_runtime.model_policy", "mutation_assertion": "invalid routes and launcher mismatches fail closed"},
+    {"path": "check_manifest_evidence.py", "production_entrypoint": "cpe_runtime.manifest,cpe_runtime.evidence", "mutation_assertion": "mutated evidence digests are rejected"},
+    {"path": "check_event_kernel.py", "production_entrypoint": "cpe_runtime.kernel,cpe_runtime.projector", "mutation_assertion": "illegal transitions and event mutations fail"},
+    {"path": "check_execution_runtime.py", "production_entrypoint": "cpe_runtime.scheduler", "mutation_assertion": "negative verdict and late-revision cases block completion"},
+    {"path": "check_state_schema.py", "production_entrypoint": "cpe_runtime.validation", "mutation_assertion": "invalid projected state is rejected"},
+    {"path": "check_validation_consumer_parity.py", "production_entrypoint": "cpe_runtime.validation", "mutation_assertion": "all consumers reject the same false-completion mutations"},
+    {"path": "check_plan_executability_audit.py", "production_entrypoint": "cpe_runtime.plan_compiler", "mutation_assertion": "unsafe or incomplete plan shapes block"},
+    {"path": "check_state_reconciliation.py", "production_entrypoint": "cpe_runtime.reconciliation", "mutation_assertion": "snapshot drift is classified from replay"},
+    {"path": "check_repair_runs.py", "production_entrypoint": "cpe_runtime.repair", "mutation_assertion": "repairs without declared projection delta fail"},
+    {"path": "check_recovery_policy.py", "production_entrypoint": "cpe.resume_run", "mutation_assertion": "invalid packet and blocked-resume mutations fail closed"},
+    {"path": "check_inspect_runs.py", "production_entrypoint": "cpe_runtime.inspection", "mutation_assertion": "inspection derives status from canonical validators"},
+    {"path": "check_cpe_replay.py", "production_entrypoint": "cpe_runtime.projector", "mutation_assertion": "event replay and snapshot must remain identical"},
+    {"path": "check_operational_run_quality.py", "production_entrypoint": "cpe_runtime.scheduler", "mutation_assertion": "unknown phases and verdicts fail closed"},
+    {"path": "check_recent_run_rubric.py", "production_entrypoint": "cpe_runtime.scheduler", "mutation_assertion": "rubric execution cannot mutate the repository"},
+    {"path": "check_fault_injection.py", "production_entrypoint": "cpe_runtime.validation,cpe_runtime.scheduler", "mutation_assertion": "scope packet evidence event and revision faults fail closed"},
+    {"path": "check_run_readiness.py", "production_entrypoint": "scripts/cpe.py", "mutation_assertion": "blocked preflight leaves no durable roots"},
+    {"path": "check_task_packet.py", "production_entrypoint": "cpe_runtime.packets", "mutation_assertion": "packet digest role and source mutations fail"},
+    {"path": "check_run_diffs.py", "production_entrypoint": "cpe_runtime.git_delta", "mutation_assertion": "unclaimed and Git metadata writes fail"},
+    {"path": "check_headless_result.py", "production_entrypoint": "cpe_runtime.public_result", "mutation_assertion": "invalid headless result shapes fail"},
+    {"path": "check_preflight_dispatch.py", "production_entrypoint": "cpe_runtime.kernel", "mutation_assertion": "dispatch cannot precede verified readiness"},
+    {"path": "check_verification_bundle.py", "production_entrypoint": "cpe_runtime.validation", "mutation_assertion": "missing or stale verification evidence fails"},
+    {"path": "check_validate_state_modular_parity.py", "production_entrypoint": "cpe_runtime.validation", "mutation_assertion": "standalone and module validators reject the same mutations"}
+  ]
+}
