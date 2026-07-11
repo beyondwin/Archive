@@ -638,6 +638,8 @@ task-attempt worker-result artifact, so verification can inspect authentic TDD
 RED evidence without treating omitted prompt context as missing evidence; the
 same context also lets repair roles distinguish product defects from corrected
 host-runtime policy.
+Typed `scheduled_retry:repair` blockers are now mapped back to the repair phase,
+so a fail-closed recovery worker can be retried after its host context is fixed.
 
 Commands and results:
 
@@ -649,6 +651,8 @@ Commands and results:
 - `python3 evals/check_fault_injection.py`: pass.
 - `python3 evals/check_recovery_policy.py`: pass.
 - `python3 evals/check_validation_consumer_parity.py`: pass.
+- `python3 evals/check_recovery_policy.py`: pass with scheduled repair retry
+  recovery coverage.
 - `python3 evals/check_task_packet.py`: pass with canonical host validation and
   prior-task-evidence prompt checks.
 - `./evals/run.sh`: pass with 50 passing checks.
