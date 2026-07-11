@@ -954,12 +954,20 @@ def run_task_cycle(task: dict, controller: AttemptController, kernel: Kernel) ->
     preserve_completed = kernel.state["tasks"][task_id]["status"] == "completed"
     phase = "acceptance" if preserve_completed else next_phase(kernel.state, task_id)
     if phase == "implementation":
+        operator_decision = _latest_operator_decision(kernel, task_id)
+        operator_context = (
+            " User-approved operator decision evidence applies: "
+            + json.dumps(operator_decision, ensure_ascii=False, sort_keys=True)
+            if operator_decision is not None
+            else ""
+        )
         implementation, outcome, implementation_attempt = _worker_attempt(
             controller,
             kernel,
             task,
             "implementation",
-            f"Implement task {task_id} using only its verified packet and current revision.",
+            f"Implement task {task_id} using only its verified packet and current revision."
+            f"{operator_context}",
         )
         if outcome is not None and outcome.scope_errors:
             _scope_block(kernel, task_id, "implementation", outcome)

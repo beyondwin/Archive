@@ -391,6 +391,39 @@ def _repository_evidence_path(value: object) -> str | None:
     return candidate if "/" in candidate else None
 
 
+def _approved_dependency_repair_owner(
+    kernel: Kernel,
+    task_id: str,
+    blocker: dict[str, object],
+    dependencies: list[str],
+) -> str | None:
+    """Return the explicitly approved completed dependency for one blocker."""
+
+    for artifact in reversed(kernel.state.get("artifact_index", [])):
+        if artifact.get("task_id") != task_id or artifact.get("kind") != "operator_decision":
+            continue
+        ref = artifact.get("ref")
+        if not isinstance(ref, dict):
+            continue
+        try:
+            payload = json.loads(
+                (kernel.run_dir / str(ref["path"])).read_text(encoding="utf-8")
+            )
+        except (KeyError, OSError, json.JSONDecodeError):
+            continue
+        owner = str(payload.get("dependency_repair_owner_task_id") or "")
+        if (
+            payload.get("kind") == "operator_decision"
+            and payload.get("approved") is True
+            and payload.get("task_id") == task_id
+            and payload.get("worktree_revision") == kernel.state.get("worktree_revision")
+            and payload.get("root_cause_key") == blocker.get("root_cause_key")
+            and owner in dependencies
+        ):
+            return owner
+    return None
+
+
 def _delegated_scope_resume(
     manifest: dict[str, object],
     state: dict[str, object],
@@ -401,7 +434,10 @@ def _delegated_scope_resume(
     """Repair one claim-bound integration defect through its sole direct dependency."""
 
     blockers = list(state.get("active_blockers") or [])
-    if len(blockers) != 1 or blockers[0].get("category") != "scope_claim_conflict":
+    if len(blockers) != 1 or blockers[0].get("category") not in {
+        "scope_claim_conflict",
+        "out_of_scope_dependency_defect",
+    }:
         return None
     if not getattr(integrity, "passed", False):
         return None
@@ -418,10 +454,14 @@ def _delegated_scope_resume(
     dependencies = [str(item) for item in target.get("dependencies") or []]
     if len(dependencies) != 1:
         return None
-    owner = tasks.get(dependencies[0])
+    approved_owner = _approved_dependency_repair_owner(
+        kernel, task_id, blocker, dependencies
+    )
+    owner_id = approved_owner or dependencies[0]
+    owner = tasks.get(owner_id)
     if (
         not isinstance(owner, dict)
-        or state.get("tasks", {}).get(dependencies[0], {}).get("status") != "completed"
+        or state.get("tasks", {}).get(owner_id, {}).get("status") != "completed"
     ):
         return None
     refs = [dict(ref) for ref in blocker.get("evidence_refs") or [] if isinstance(ref, dict)]
@@ -435,7 +475,7 @@ def _delegated_scope_resume(
     if (
         not isinstance(result, dict)
         or result.get("status") != "blocked"
-        or result.get("failure_category") != "scope_claim_conflict"
+        or result.get("failure_category") != blocker.get("category")
         or result.get("root_cause_key") != blocker.get("root_cause_key")
         or not result.get("findings")
     ):
@@ -448,7 +488,8 @@ def _delegated_scope_resume(
         if path is not None
     ]
     outside = [path for path in cited if not matches_path(path, target_claims)]
-    if not outside or any(not matches_path(path, owner_claims) for path in outside):
+    claim_bound = bool(outside) and all(matches_path(path, owner_claims) for path in outside)
+    if not claim_bound and approved_owner is None:
         return None
     context = json.dumps(
         {
