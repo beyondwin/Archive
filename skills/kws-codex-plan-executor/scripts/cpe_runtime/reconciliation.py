@@ -90,7 +90,10 @@ def _resume_category(blocker: dict) -> str | None:
         return "task_review_changes_requested"
     if root.startswith("verification:"):
         return "verification_interrupted" if "interrupt" in root else "verification_failed"
-    if root == "scheduled_retry:repair":
+    if root in {
+        "scheduled_retry:repair",
+        "repair:repair_did_not_advance_revision:scheduled_retry:repair",
+    }:
         return "scheduled_repair_retry"
     return None
 
