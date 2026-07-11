@@ -620,6 +620,9 @@ packet's absolute read-only run-store path so the real sandbox can consume the
 same digest-indexed bytes used by deterministic fixtures.
 Untracked Python `__pycache__` directories are excluded from product snapshots
 while arbitrary gitignored files remain fail-closed scope evidence.
+Role-specific packet prompts now make redundant verdict fields explicit so
+reviewers preserve the existing contradiction check instead of emitting a
+detailed top-level finding and a separately summarized verdict finding.
 
 Commands and results:
 

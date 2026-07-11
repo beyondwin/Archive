@@ -123,6 +123,17 @@ def packet_prompt(request: WorkerRequest, instruction: str) -> str:
             "packet_sha256": request.packet_sha256,
             "worktree_revision": request.worktree_revision,
             "instruction": instruction,
+            "result_contract": {
+                "verdict_must_be_null": not request.verdict_capable,
+                "top_level_findings_must_equal_verdict_findings": request.verdict_capable,
+                "top_level_missing_evidence_must_equal_verdict_missing_evidence": request.verdict_capable,
+                "guidance": (
+                    "For verdict-capable roles, copy verdict.findings and "
+                    "verdict.missing_evidence exactly into the matching top-level arrays."
+                    if request.verdict_capable
+                    else "This role cannot issue a verdict; return verdict=null."
+                ),
+            },
         },
         ensure_ascii=False,
         sort_keys=True,

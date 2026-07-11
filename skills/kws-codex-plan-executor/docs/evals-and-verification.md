@@ -9,6 +9,9 @@ workspace sandbox may read that external evidence but cannot edit it.
 Full-tree scope checks continue to include ignored content, except untracked
 Python `__pycache__` directories, which repository policy classifies as
 machine-local runtime cache rather than product evidence.
+Packet prompts also state the role-specific result contract: write roles emit
+`verdict=null`, while verdict-capable roles repeat the exact verdict findings
+and missing-evidence arrays at the top level for contradiction checks.
 
 Install the pinned eval dependency in an isolated environment, then run:
 
