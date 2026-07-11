@@ -14,7 +14,8 @@
   },
   "paid_live_evidence": {
     "status": "pending",
-    "reason": "explicit live-cost approval and external result evidence have not been provided",
-    "hard_cap_usd": 50.0
+    "reason": "ChatGPT subscription execution is approved, but a completed digest-bound 32-slot live ledger and aggregate release-gate report have not been produced",
+    "cost_usd": null,
+    "cost_observability": "unavailable"
   }
 }

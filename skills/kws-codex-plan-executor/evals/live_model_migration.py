@@ -362,6 +362,19 @@ def _validate_runner_manifest(manifest: dict[str, Any]) -> None:
         raise MigrationContractError("run manifest must contain one non-empty run_id")
     if re.fullmatch(r"[0-9a-f]{40}", str(manifest.get("implementation_commit", ""))) is None:
         raise MigrationContractError("run manifest is missing its implementation digest")
+    invocation_policy = manifest.get("invocation_policy")
+    if invocation_policy is not None:
+        if re.fullmatch(
+            r"[0-9a-f]{40}", str(manifest.get("implementation_tree", ""))
+        ) is None:
+            raise MigrationContractError("run manifest is missing its implementation tree")
+        as_sha256(manifest, "implementation_patch_sha256")
+        if not isinstance(invocation_policy, dict) or not invocation_policy:
+            raise MigrationContractError("run manifest has an invalid invocation policy")
+        if sha256_bytes(canonical_json(invocation_policy)) != as_sha256(
+            manifest, "invocation_policy_sha256"
+        ):
+            raise MigrationContractError("run manifest invocation policy digest does not match")
     as_sha256(manifest, "manifest_sha256")
     inputs = manifest.get("inputs")
     if not isinstance(inputs, dict) or not inputs:
@@ -493,6 +506,9 @@ def aggregate_run(run_dir: Path) -> dict[str, Any]:
         "run_id": manifest["run_id"],
         "manifest_sha256": manifest["manifest_sha256"],
         "implementation_commit": manifest["implementation_commit"],
+        "implementation_tree": manifest.get("implementation_tree"),
+        "implementation_patch_sha256": manifest.get("implementation_patch_sha256"),
+        "invocation_policy_sha256": manifest.get("invocation_policy_sha256"),
         "input_sha256": manifest["inputs"],
         "model_catalog_sha256": manifest["model_catalog_sha256"],
         "result_sha256": result_digests,
@@ -562,7 +578,6 @@ def main(argv: list[str] | None = None) -> int:
             "schema_version": "2",
             "dry_run": args.dry_run,
             "billing_mode": args.billing_mode,
-            "hard_cap_usd": MAX_BUDGET_USD,
             "treatment_count": len(matrix["treatments"]),
             "case_count": len(cases["cases"]),
             "execution_plan": execution_plan,
@@ -579,6 +594,7 @@ def main(argv: list[str] | None = None) -> int:
             common.update(
                 {
                     "budget_usd": round(args.budget_usd, 2),
+                    "hard_cap_usd": MAX_BUDGET_USD,
                     "estimated_max_cost_usd": estimated_max_cost_usd,
                 }
             )
