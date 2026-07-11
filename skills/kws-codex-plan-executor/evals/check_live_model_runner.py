@@ -15,7 +15,12 @@ import time
 from pathlib import Path
 
 from live_migration.compiler import compile_manifest
-from live_migration.contracts import EXPECTED_CASES, canonical_json, sha256_bytes
+from live_migration.contracts import (
+    EXPECTED_CASES,
+    canonical_json,
+    sha256_bytes,
+    worker_prompt_bytes,
+)
 from live_migration.fixtures import materialize_fixture
 from live_migration.runner import (
     CodexAttestation,
@@ -397,7 +402,8 @@ def check_public_interfaces_and_prompt_isolation() -> None:
             slot = next(item for item in manifest["slots"] if item["treatment_id"] == treatment)
             prompt = render_prompt(slot, fixture, ROOT)
             prefix_ref = str(slot["prompt_renderer"])
-            prefix = (ROOT / "live-migration" / prefix_ref).resolve().read_text(encoding="utf-8")
+            source = (ROOT / "live-migration" / prefix_ref).resolve().read_bytes()
+            prefix = worker_prompt_bytes(source, prefix_ref).decode("utf-8")
             assert prompt.startswith(prefix)
             assert str(fixture.contract["task"]) in prompt
             assert json.dumps(fixture.contract["allowed_paths"], sort_keys=True) in prompt
@@ -406,6 +412,10 @@ def check_public_interfaces_and_prompt_isolation() -> None:
             assert "worker-result-schema.json" in prompt
             assert str(fixture.oracle_dir) not in prompt
             assert "expected.json" not in prompt
+            if treatment == "sol_v3":
+                assert "{{WORKSPACE}}" not in prompt
+                assert "{{PLAN}}" not in prompt
+                assert len(prefix.encode("utf-8")) < 256
 
 
 def check_dry_run_cli_contract() -> None:

@@ -1,11 +1,7 @@
 <!-- CPE_CACHE_STABLE_PREFIX_START -->
-KWS Codex Plan Executor fresh-session contract.
-
-Work only in the supplied workspace. Keep code edits separate from CPE runtime
-state. Use the smallest applicable skill set, batch independent reads, and do
-not search for unspecified plans, specs, or repository-wide context. Treat an
-appended case contract as authoritative. Never inspect hidden oracle material.
-Verify the requested acceptance command and report only checked evidence.
+CPE v3 bounded worker. Follow the appended case contract. Batch only required
+reads and verification; do not search for plans, specs, skills, or hidden oracle
+data. Do not repeat a passing command.
 <!-- CPE_CACHE_STABLE_PREFIX_END -->
 <!-- CPE_CACHE_HOT_TAIL_START -->
 

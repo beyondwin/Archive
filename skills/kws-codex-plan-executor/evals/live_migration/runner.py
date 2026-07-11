@@ -21,6 +21,7 @@ from .contracts import (
     CaseRef,
     SlotKey,
     canonical_json,
+    worker_prompt_bytes,
 )
 from .fixtures import MaterializedFixture, materialize_fixture
 from .ledger import LiveRun, append_event, commit_slot
@@ -520,6 +521,7 @@ def render_prompt(slot: dict[str, object], fixture: MaterializedFixture, eval_di
             prefix_bytes = (Path(eval_dir) / "live-migration" / renderer).resolve().read_bytes()
         except OSError as exc:
             raise LiveRunnerError("prompt_template_unavailable", f"cannot read prompt template: {renderer}") from exc
+    prefix_bytes = worker_prompt_bytes(prefix_bytes, renderer)
     if _sha256_bytes(prefix_bytes) != slot.get("prompt_sha256"):
         raise LiveRunnerError("prompt_template_drift", f"prompt digest mismatch for {slot.get('treatment_id')}")
     contract = fixture.contract

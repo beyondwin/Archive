@@ -13,6 +13,7 @@ MAX_METERED_BUDGET_USD = 50.0
 
 CREDENTIALLED_CALL = "credentialed_call"
 EXPECTED_POLICY_FAILURE = "expected_policy_failure"
+FRESH_SESSION_PROMPT = "../../templates/fresh-session-prompt.txt"
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,21 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def worker_prompt_bytes(source: bytes, prompt_ref: str) -> bytes:
+    """Compile the worker-visible prefix while retaining the full export source."""
+
+    if prompt_ref != FRESH_SESSION_PROMPT:
+        return source
+    start = b"<!-- CPE_CACHE_STABLE_PREFIX_START -->"
+    end = b"<!-- CPE_CACHE_STABLE_PREFIX_END -->"
+    if source.count(start) != 1 or source.count(end) != 1:
+        raise LiveMigrationContractError("fresh-session prompt cache markers are invalid")
+    body = source.split(start, 1)[1].split(end, 1)[0].strip()
+    if not body:
+        raise LiveMigrationContractError("fresh-session worker prefix is empty")
+    return body + b"\n"
+
+
 EXPECTED_TREATMENTS = (
     Treatment("gpt55_current", "gpt-5.5", "high", "current-v2-prompt.txt"),
     Treatment("sol_current", "gpt-5.6-sol", "high", "current-v2-prompt.txt"),
@@ -74,6 +90,11 @@ EXPECTED_CASES = (
 
 EXPECTED_PROMPT_SHA256 = {
     "current-v2-prompt.txt": "48586761ca6bc42b249672332d0f07c4ad33d5aa980e6caaf8aa77744e896f2d",
-    "../../templates/fresh-session-prompt.txt": "bb78e41238f8657dc45f173906b5a7e1475e6415e578d99244e86df41407170f",
+    "../../templates/fresh-session-prompt.txt": "76e377d2b4ce4a4f8ca360972cfe6d86d2193f540bc36d46a98aad6535efe042",
     "terra-scout-generated": "4dec7101f5fb93f9b08544c46a691632c89ff0d14d62940204ab867afa98c883",
+}
+
+EXPECTED_PROMPT_SOURCE_SHA256 = {
+    **EXPECTED_PROMPT_SHA256,
+    "../../templates/fresh-session-prompt.txt": "9c1175a4c1ed4a3242d00483278de735dc319204e598169635b9bc122eebddd9",
 }
