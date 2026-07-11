@@ -615,13 +615,18 @@ Branch: `codex/cpe-v3-subscription-live-matrix-20260711-143143`.
 Scope: Codex CLI 0.144 execution compatibility required before the approved
 subscription live-matrix plan could start. Added supported array/union schema
 forms and fail-closed session JSONL model/reasoning attestation bound to the
-worker thread and worktree.
+worker thread and worktree. Also bound each worker prompt to the verified
+packet's absolute read-only run-store path so the real sandbox can consume the
+same digest-indexed bytes used by deterministic fixtures.
 
 Commands and results:
 
 - `python3 evals/check_codex_cli_compatibility.py`: pass.
 - live `codex exec` worker-schema probe with `gpt-5.6-sol/high`: pass; exit 0.
 - `python3 -m py_compile scripts/cpe_runtime/worker.py evals/check_codex_cli_compatibility.py`: pass.
+- `python3 evals/check_task_packet.py`: pass.
+- `python3 evals/check_public_cli_integration.py`: pass.
+- `./evals/run.sh`: pass with 50 passing checks.
 - `git diff --check`: pass.
 
 Residual risk: this compatibility fix does not itself change paid-live status;

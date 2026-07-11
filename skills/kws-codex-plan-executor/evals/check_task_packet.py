@@ -188,7 +188,7 @@ def main() -> int:
             for role in roles
         ]
         checks["all_dispatch_roles_receive_manifest_packet"] = all(
-            request.packet_path == entry["path"]
+            request.packet_path == str((run_dir / entry["path"]).resolve())
             and request.packet_sha256 == entry["sha256"]
             and request.task_id == "T1"
             and SENTINEL not in request.prompt
@@ -262,7 +262,13 @@ def main() -> int:
                 and [request.task_id for request in final_review_requests] == ["T1", "T2"]
                 and all(
                     request.attempt_kind == "final_review"
-                    and request.packet_path == multi_entries[request.task_id]["path"]
+                    and request.packet_path
+                    == str(
+                        (
+                            multi_run_dir
+                            / multi_entries[request.task_id]["path"]
+                        ).resolve()
+                    )
                     and request.packet_sha256 == multi_entries[request.task_id]["sha256"]
                     for request in final_review_requests
                 )
