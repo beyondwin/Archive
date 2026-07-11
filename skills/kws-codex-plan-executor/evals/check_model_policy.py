@@ -18,7 +18,7 @@ def main() -> int:
         "core_implementation": route_for("implementation", read_only=False, verdict_capable=True) == CORE_ROUTE,
         "safe_scout": route_for("scout", read_only=True, verdict_capable=False) == SCOUT_ROUTE,
         "launcher": launcher_argv(CORE_ROUTE, Path("/tmp/worktree"), sandbox="workspace-write") == [
-            "codex", "exec", "--json", "--model", "gpt-5.6-sol",
+            "codex", "exec", "--ignore-user-config", "--json", "--model", "gpt-5.6-sol",
             "-c", 'model_reasoning_effort="high"', "--sandbox", "workspace-write",
             "-C", "/tmp/worktree", "-",
         ],
