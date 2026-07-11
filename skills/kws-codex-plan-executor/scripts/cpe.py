@@ -210,14 +210,12 @@ def execute_run(args: argparse.Namespace) -> int:
     tasks = list(compiled.tasks)
     head = compiled.source_head
     run_id, run_dir, worktree = _allocate_paths(plan)
-    branch = _create_worktree(workspace, worktree, run_id, head)
     pricing = Path(__file__).resolve().parents[1] / "data" / "pricing-snapshot.json"
     try:
         manifest = _compiled_manifest(run_id, args.mode, workspace, worktree, run_dir, compiled, pricing)
         packet_drafts = [build_packet(compiled, task) for task in tasks]
-        kernel = RunKernel.initialize(run_dir, manifest, packet_drafts, input_sources=compiled.sources)
+        prepared = RunKernel.prepare(run_dir, manifest, packet_drafts, input_sources=compiled.sources)
     except (ValueError, OSError, RuntimeError) as exc:
-        _cleanup_unpublished_worktree(workspace, worktree, branch, head, run_id, run_dir)
         return _emit(
             failed_result(
                 str(exc) or type(exc).__name__,
@@ -227,8 +225,29 @@ def execute_run(args: argparse.Namespace) -> int:
             )
         )
     except BaseException:
+        raise
+    branch = f"codex/{run_id}"
+    try:
+        branch = _create_worktree(workspace, worktree, run_id, head)
+        kernel = prepared.publish()
+    except (ValueError, OSError, RuntimeError) as exc:
+        prepared.cleanup()
+        _cleanup_unpublished_worktree(workspace, worktree, branch, head, run_id, run_dir)
+        return _emit(
+            failed_result(
+                str(exc) or type(exc).__name__,
+                category="environment" if isinstance(exc, OSError) else "state_integrity",
+                run_id=run_id,
+                state_path=str(run_dir / "state.json") if run_dir.exists() else None,
+                next_action="Correct initialization inputs and start a new run.",
+            )
+        )
+    except BaseException:
+        prepared.cleanup()
         _cleanup_unpublished_worktree(workspace, worktree, branch, head, run_id, run_dir)
         raise
+    finally:
+        prepared.cleanup()
     kernel.transition(Transition("run.status_changed", {"from": "created", "to": "ready"}))
     try:
         result = run_tasks(tasks, Worker(), kernel)
