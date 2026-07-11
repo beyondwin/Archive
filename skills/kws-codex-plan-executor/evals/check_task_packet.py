@@ -25,6 +25,20 @@ from cpe_runtime.worker import WorkerResult
 SENTINEL = "CPE_PACKET_SENTINEL_7d3e2d"
 
 
+def result_contract_ok(request) -> bool:
+    contract = json.loads(request.prompt).get("result_contract")
+    return bool(
+        isinstance(contract, dict)
+        and contract.get("top_level_findings_must_equal_verdict_findings")
+        is request.verdict_capable
+        and contract.get(
+            "top_level_missing_evidence_must_equal_verdict_missing_evidence"
+        )
+        is request.verdict_capable
+        and contract.get("verdict_must_be_null") is (not request.verdict_capable)
+    )
+
+
 def main() -> int:
     checks: dict[str, bool] = {}
     with tempfile.TemporaryDirectory(prefix="cpe-packet-") as raw:
@@ -192,6 +206,7 @@ def main() -> int:
             and request.packet_sha256 == entry["sha256"]
             and request.task_id == "T1"
             and SENTINEL not in request.prompt
+            and result_contract_ok(request)
             for request in requests
         )
 
