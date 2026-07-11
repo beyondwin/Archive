@@ -19,7 +19,12 @@ def _log_invocation(argv: list[str], stdin: str = "") -> None:
     visible_env = {
         key: value
         for key, value in os.environ.items()
-        if key in {"CODEX_HOME", "OPENAI_API_KEY", "CODEX_API_KEY"}
+        if key in {
+            "CODEX_HOME",
+            "OPENAI_API_KEY",
+            "CODEX_API_KEY",
+            "PYTHONDONTWRITEBYTECODE",
+        }
     }
     with Path(declared).open("a", encoding="utf-8") as handle:
         handle.write(json.dumps({"argv": argv, "env": visible_env, "stdin": stdin}, sort_keys=True) + "\n")

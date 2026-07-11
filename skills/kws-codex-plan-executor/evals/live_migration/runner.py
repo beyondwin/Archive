@@ -529,6 +529,7 @@ def render_prompt(slot: dict[str, object], fixture: MaterializedFixture, eval_di
         f"allowed_paths: {json.dumps(contract['allowed_paths'], sort_keys=True)}\n"
         f"forbidden_paths: {json.dumps(contract['forbidden_paths'], sort_keys=True)}\n"
         f"acceptance_command: {contract['acceptance_command']}\n"
+        f"expected_status: {'blocked' if contract.get('expected_policy') == 'block' else 'completed'}\n"
         f"output_contract: {slot.get('output_schema', 'live-migration/worker-result-schema.json')}\n"
     )
     hot_tail = (

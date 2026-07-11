@@ -166,6 +166,14 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8")
 
 
+def _seed_run_codex_home(run_dir: Path) -> None:
+    home = run_dir / "codex-home"
+    home.mkdir(mode=0o700)
+    auth = home / "auth.json"
+    auth.write_text("{}\n", encoding="utf-8")
+    auth.chmod(0o600)
+
+
 def _readonly_tree(path: Path) -> None:
     for item in sorted(path.rglob("*"), reverse=True):
         item.chmod(0o555 if item.is_dir() else 0o444)
@@ -482,6 +490,7 @@ def check_start_checkpoint_binding_fails_closed() -> None:
     with tempfile.TemporaryDirectory(prefix="cpe-live-checkpoint-binding-") as raw:
         tmp = Path(raw)
         evidence_root = tmp / "evidence"
+        invocation_log = tmp / "invocations.jsonl"
         log = tmp / "invocations.jsonl"
         base_command = [
             sys.executable,
@@ -553,8 +562,10 @@ def check_start_persists_authenticated_catalog_for_aggregation() -> None:
         tmp = Path(raw)
         run_id = "catalog-bound-run"
         evidence_root = tmp / "evidence"
+        invocation_log = tmp / "invocations.jsonl"
         codex_home = tmp / "codex-home"
         codex_home.mkdir()
+        (codex_home / "auth.json").write_text("{}\n", encoding="utf-8")
         env = {
             **os.environ,
             "CODEX_HOME": str(codex_home),
@@ -565,6 +576,7 @@ def check_start_persists_authenticated_catalog_for_aggregation() -> None:
                     for model in ("gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra")
                 ]
             ),
+            "CPE_FAKE_INVOCATION_LOG": str(invocation_log),
         }
         attestation = preflight_codex(ROOT / "fake_codex.py", env)
         started = subprocess.run(
@@ -596,6 +608,16 @@ def check_start_persists_authenticated_catalog_for_aggregation() -> None:
         assert manifest["model_catalog_sha256"] == attestation.catalog_sha256
         body = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
         assert manifest["manifest_sha256"] == sha256_bytes(canonical_json(body))
+        run_home = run_dir / "codex-home"
+        assert {path.name for path in run_home.iterdir()} <= {"auth.json", "sessions"}
+        calls = [json.loads(line) for line in invocation_log.read_text(encoding="utf-8").splitlines()]
+        executions = [call for call in calls if _is_isolated_exec(call)]
+        assert executions
+        assert all(
+            Path(call["env"].get("CODEX_HOME", "")).resolve() == run_home.resolve()
+            for call in executions
+        )
+        assert all(call["env"].get("PYTHONDONTWRITEBYTECODE") == "1" for call in executions)
 
         report = tmp / "report.json"
         aggregated = subprocess.run(
@@ -709,6 +731,7 @@ def check_public_failure_lifecycle() -> None:
             descendant_pid = tmp / "descendant.pid"
             codex_home = tmp / "codex-home"
             codex_home.mkdir()
+            (codex_home / "auth.json").write_text("{}\n", encoding="utf-8")
             env = {
                 **os.environ,
                 "CODEX_HOME": str(codex_home),
@@ -829,6 +852,7 @@ def check_interrupted_resume_requires_retry() -> None:
             )
         )
         run = create_run(tmp / run_id, manifest)
+        _seed_run_codex_home(run.run_dir)
         first = manifest["slots"][0]
         append_event(run, "slot_started", {"treatment_id": first["treatment_id"], "case_id": first["case_id"]})
         completed = subprocess.run(
@@ -868,6 +892,7 @@ def check_partial_resume_does_not_duplicate_completed_calls() -> None:
         invocation_log = tmp / "calls.jsonl"
         codex_home = tmp / "codex-home"
         codex_home.mkdir()
+        (codex_home / "auth.json").write_text("{}\n", encoding="utf-8")
         env = {
             **os.environ,
             "CODEX_HOME": str(codex_home),
@@ -890,6 +915,7 @@ def check_partial_resume_does_not_duplicate_completed_calls() -> None:
             )
         )
         run = create_run(tmp / "public-partial", manifest)
+        _seed_run_codex_home(run.run_dir)
         attestation = preflight_codex(_isolated_fake_codex(tmp), env)
         context = RunContext(run, ROOT, attestation, env, 2, False)
         first = next(slot for slot in manifest["slots"] if slot["outcome_kind"] == "credentialed_call")
@@ -931,6 +957,7 @@ def check_concurrent_resume_is_rejected_without_duplicate_calls() -> None:
         invocation_log = tmp / "calls.jsonl"
         codex_home = tmp / "codex-home"
         codex_home.mkdir()
+        (codex_home / "auth.json").write_text("{}\n", encoding="utf-8")
         env = {
             **os.environ,
             "CODEX_HOME": str(codex_home),
@@ -954,6 +981,7 @@ def check_concurrent_resume_is_rejected_without_duplicate_calls() -> None:
             )
         )
         run = create_run(tmp / "public-concurrent", manifest)
+        _seed_run_codex_home(run.run_dir)
         command = [
             sys.executable,
             str(ROOT / "live_model_runner.py"),
@@ -1011,6 +1039,7 @@ def check_resume_cannot_abandon_an_active_start() -> None:
         invocation_log = tmp / "calls.jsonl"
         codex_home = tmp / "codex-home"
         codex_home.mkdir()
+        (codex_home / "auth.json").write_text("{}\n", encoding="utf-8")
         env = {
             **os.environ,
             "CODEX_HOME": str(codex_home),
