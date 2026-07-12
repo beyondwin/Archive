@@ -28,6 +28,12 @@ successful current report. Version `3.0.1` is deterministic-ready and now
 contains the guarded subscription runner, but paid release closeout must not be
 claimed merely because that runner exists.
 
+`paid-live-verified` means the exact reviewed subscription ledger is complete,
+the unchanged checked-in release gate passes, independent implementation and
+report review passes, and the tracked privacy audit passes. Version `3.1.0`
+publishes this state with `release_ready=true`; it does not claim observable
+account-side USD attribution.
+
 Throughout integrity-closure Tasks 1-12, the exact active tuple is version
 `3.0.0`, status `integrity-closure-pending; paid-live-pending`, and
 `release_ready=false`. Only the final closure task may change deterministic
@@ -68,6 +74,11 @@ report must use `cost_usd=null` and `cost_observability=unavailable`.
 The legacy metered-dollar compatibility path remains bounded by the `$50.00`
 hard cap and explicit cost approval. Injected or metered evidence cannot
 substitute for the required ChatGPT subscription ledger in this closeout.
+
+The 3.1.0 closeout satisfied this checklist with 25 credentialed calls, seven
+expected policy failures, `release_gate.passed=true`, independent review, and a
+clean privacy audit. The release-only closeout made no provider calls and did
+not alter thresholds, immutable result records, or checkpoint digests.
 
 ## Deterministic Checklist
 

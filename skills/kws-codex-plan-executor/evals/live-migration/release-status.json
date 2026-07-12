@@ -1,10 +1,10 @@
 {
   "schema_version": "1",
-  "version": "3.0.1",
-  "status": "deterministic_ready_paid_pending",
+  "version": "3.1.0",
+  "status": "released",
   "deterministic_status": "deterministic-ready",
-  "paid_live_status": "pending",
-  "release_ready": false,
+  "paid_live_status": "verified",
+  "release_ready": true,
   "deterministic_evidence": {
     "status": "passed",
     "reason": "current cost-free L0-L4 integrity gates passed on the recorded implementation commit",
@@ -13,27 +13,38 @@
     "paid_provider_calls": 0
   },
   "paid_live_evidence": {
-    "status": "pending",
-    "reason": "The final digest-bound 32-slot ChatGPT subscription ledger passed every quality and integrity requirement except the unchanged 25 percent context-token reduction threshold; Sol v3 measured 10.61 percent reduction",
-    "run_id": "checkpoint-c090a7f-live-matrix",
-    "manifest_sha256": "c7ae947f0f5f9f16763ffa7cd17c4ab0eaa8409a9f70aa049b19309c8f2a1159",
-    "implementation_commit": "c090a7f1c0897b9812668d1e59c92a2d61dc0ee2",
-    "implementation_tree": "cbc0c4a67fe664c076661fbb54911797f1fa85c3",
-    "implementation_patch_sha256": "9c75801fac32e5aa7180818be222969296ecd16d5360768d16f9ddc47e1633ad",
+    "status": "passed",
+    "evidence_status": "accepted",
+    "reason": "The explicitly authorized materially changed immutable 32-slot ChatGPT subscription ledger passed the unchanged release gate; independent review and the T11 privacy audit passed",
+    "run_id": "checkpoint-0a2a635-live-matrix",
+    "supersedes_run_id": "checkpoint-c090a7f-live-matrix",
+    "manifest_sha256": "71dbe06bca320da3ff75a907a336f62c7c5c575c3260c3b07561dd3692be9c6d",
+    "implementation_commit": "0a2a6352d8f6f4717534fdc84869d4bedd0dce73",
+    "implementation_tree": "6a2f1fb4e84b51b5851bc84973bbc3b75adae698",
+    "implementation_patch_sha256": "314f23190c6cf00cc488c2d10ed8b7497e7dac86401a3425b971989a0b8c4caf",
     "credentialed_call_count": 25,
     "expected_policy_failure_count": 7,
     "release_gate": {
-      "passed": false,
-      "failures": [
-        "context_token_reduction_below_25_percent"
-      ],
+      "passed": true,
+      "failures": [],
       "core_model_attestation_rate": 1.0,
       "critical_regressions": 0,
       "task_completion_rate": 1.0,
       "evidence_completeness_rate": 1.0,
-      "context_token_reduction_vs_gpt55": 0.106063
+      "minimum_context_token_reduction": 0.25,
+      "context_token_reduction_vs_gpt55": 0.626922
     },
     "cost_usd": null,
-    "cost_observability": "unavailable"
+    "cost_observability": "unavailable",
+    "billing_boundary": "The runner cannot prove which account-side subscription or existing-credit bucket OpenAI consumed; operator account settings remain an external billing boundary."
+  },
+  "final_release_closeout": {
+    "status": "passed",
+    "completed_task": "T11",
+    "live_report_sha256": "7b1c59e011a6123145bf2adba8bd812909c8a99ef9bd15c15083d98783a4042e",
+    "privacy_audit_status": "passed",
+    "privacy_audit_sha256": "ac174b58c37c9883a56ab1e1ff19b269815af6f0af056e065e713f4819dee1d1",
+    "release_only_paid_provider_calls": 0,
+    "reason": "The reviewed live report, unchanged release gate, privacy audit, and release-only closeout requirements passed."
   }
 }

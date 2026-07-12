@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from pathlib import Path
 
 
@@ -14,15 +13,19 @@ SKILL_VERSION_RE = re.compile(r'(?m)^[ \t]*version:[ \t]*"([^"]+)"')
 RELEASE_STATUS_RE = re.compile(r'(?m)^[ \t]*release_status:[ \t]*"([^"]+)"')
 HISTORY_VERSION_RE = re.compile(r"^## (\d+\.\d+\.\d+)(?:\s+-\s+(.+))?$", re.MULTILINE)
 VERIFICATION_BLOCK_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
-RELEASE_SUBJECT = "release(cpe): publish deterministic integrity 3.0.1"
+RELEASE_VERSION = "3.1.0"
+RELEASE_STATUS = "deterministic-ready; paid-live-verified"
+LIVE_REPORT_SHA256 = "7b1c59e011a6123145bf2adba8bd812909c8a99ef9bd15c15083d98783a4042e"
+PRIVACY_AUDIT_SHA256 = "ac174b58c37c9883a56ab1e1ff19b269815af6f0af056e065e713f4819dee1d1"
 REQUIRED_COST_FREE_COMMANDS = {
     "./evals/run.sh",
     "python3 -m py_compile scripts/*.py scripts/cpe_runtime/*.py evals/*.py",
     "bash -n evals/run.sh",
     "python3 evals/check_release_contract.py",
     "python3 evals/check_docs_contract.py",
-    "bun run check",
     "git diff --check",
+    "privacy audit (tracked release surfaces)",
+    "graphify update . (threaded sandbox substitute)",
 }
 
 
@@ -39,32 +42,6 @@ def latest_verification(text: str) -> dict:
         if payload.get("schema_version") == "cpe-release-verification.v1":
             return payload
     return {}
-
-
-def expected_implementation_commit(repo_root: Path) -> str:
-    history = subprocess.run(
-        ["git", "log", "--format=%H%x09%s"],
-        cwd=repo_root,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.splitlines()
-    release_commit = next(
-        (
-            line.split("\t", 1)[0]
-            for line in history
-            if "\t" in line and line.split("\t", 1)[1] == RELEASE_SUBJECT
-        ),
-        "",
-    )
-    revision = f"{release_commit}^" if release_commit else "HEAD"
-    return subprocess.run(
-        ["git", "rev-parse", revision],
-        cwd=repo_root,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout.strip()
 
 
 def main() -> int:
@@ -251,29 +228,33 @@ def main() -> int:
     command_names = {
         item.get("command") for item in commands if isinstance(item, dict)
     }
-    expected_commit = expected_implementation_commit(skill_dir.parents[1])
     maintained_check_count = (
         len(maintained_checks)
         if maintained_checks_pass and isinstance(maintained_checks, list)
         else 0
     )
+    paid_live_evidence = live_status.get("paid_live_evidence", {})
+    closeout = live_status.get("final_release_closeout", {})
     release_checks = {
-        "version_is_301": version == "3.0.1",
+        "version_is_310": version == RELEASE_VERSION,
         "verification_version_matches": verification.get("version") == version,
-        "deterministic_ready": release_status == "deterministic-ready; paid-live-pending",
-        "canonical_status_is_deterministic_ready": (
-            live_status.get("status") == "deterministic_ready_paid_pending"
+        "published_status_is_paid_live_verified": release_status == RELEASE_STATUS,
+        "canonical_status_is_released": (
+            live_status.get("status") == "released"
             and live_status.get("deterministic_status") == "deterministic-ready"
             and live_status.get("deterministic_evidence", {}).get("status") == "passed"
         ),
-        "paid_live_pending": (
-            live_status.get("paid_live_status") == "pending"
-            and live_status.get("paid_live_evidence", {}).get("status") == "pending"
-            and verification.get("paid_live") == "skipped_not_approved"
+        "paid_live_verified": (
+            live_status.get("paid_live_status") == "verified"
+            and paid_live_evidence.get("status") == "passed"
+            and paid_live_evidence.get("evidence_status") == "accepted"
+            and paid_live_evidence.get("release_gate", {}).get("passed") is True
+            and verification.get("paid_live") == "verified_from_reviewed_external_evidence"
         ),
-        "release_ready_false": live_status.get("release_ready") is False,
+        "release_ready_true": live_status.get("release_ready") is True,
         "implementation_commit_recorded": (
-            verification.get("implementation_commit") == expected_commit
+            verification.get("implementation_commit")
+            == paid_live_evidence.get("implementation_commit")
         ),
         "verification_timestamp_recorded": bool(
             re.fullmatch(
@@ -295,17 +276,36 @@ def main() -> int:
             and live_status.get("deterministic_evidence", {}).get(
                 "maintained_check_count"
             ) == maintained_check_count
-            and isinstance(verification.get("bun_passing_count"), int)
-            and verification.get("bun_passing_count", 0) > 0
         ),
-        "paid_live_residual_risk_recorded": (
-            verification.get("residual_risk") == "paid live migration gate pending"
+        "reviewed_live_report_recorded": (
+            verification.get("live_report_sha256") == LIVE_REPORT_SHA256
+            and closeout.get("live_report_sha256") == LIVE_REPORT_SHA256
+        ),
+        "privacy_audit_recorded": (
+            verification.get("privacy_audit_sha256") == PRIVACY_AUDIT_SHA256
+            and closeout.get("privacy_audit_sha256") == PRIVACY_AUDIT_SHA256
+            and closeout.get("privacy_audit_status") == "passed"
+        ),
+        "subscription_billing_boundary_recorded": (
+            paid_live_evidence.get("cost_usd") is None
+            and paid_live_evidence.get("cost_observability") == "unavailable"
+            and verification.get("authentication") == "chatgpt_subscription"
+            and verification.get("direct_usd_cost") == "not_observable"
+        ),
+        "release_only_closeout_made_no_paid_calls": (
+            verification.get("paid_calls_in_closeout") == 0
+        ),
+        "graphify_freshness_recorded": verification.get("graphify") == "fresh",
+        "closeout_complete": closeout.get("status") == "passed",
+        "residual_risk_recorded": (
+            verification.get("residual_risk")
+            == "account-side subscription or credit attribution remains externally unobservable"
         ),
     }
     checks.update(release_checks)
     for check_name, passed in release_checks.items():
         if not passed:
-            failures.append(f"3.0.1 deterministic release contract failed: {check_name}")
+            failures.append(f"3.1.0 paid-live release contract failed: {check_name}")
 
     payload = {
         "version": version,

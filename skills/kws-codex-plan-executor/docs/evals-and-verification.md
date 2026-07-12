@@ -34,11 +34,12 @@ to an isolated oracle. The oracle may compute expectations but may not call the
 production scheduler, validator, projector, or repair implementation. A green
 deterministic run must not be described as paid live-model evidence.
 
-Version 3.0.1 currently publishes
-`deterministic-ready; paid-live-pending` with `release_ready=false`. The live
-matrix has four treatments and eight cases: exactly 25 credentialed calls and
-seven expected Terra policy failures. Dry-run compilation makes no provider
-calls:
+Version 3.1.0 publishes `deterministic-ready; paid-live-verified` with
+`release_ready=true`. The reviewed live matrix completed its four treatments
+and eight cases: exactly 25 credentialed calls and seven expected Terra policy
+failures. The unchanged release gate passed, and the tracked privacy audit found
+no raw transcripts, oracle paths, temporary execution paths, or absolute user
+home paths. Dry-run compilation still makes no provider calls:
 
 ```bash
 python3 evals/live_model_runner.py dry-run \
@@ -92,7 +93,8 @@ malformed-output, or evidence blocker. Subscription billing is an external
 boundary, so a valid report states `cost_usd=null` and
 `cost_observability=unavailable` rather than inventing a direct USD cost.
 
-Until the checked-in aggregator reports `release_gate.passed=true` and an
-independent reviewer approves both the exact implementation and sanitized
-report, paid-live closeout has not passed. A dry run proves matrix shape and
-digest binding only. No command in this flow changes release metadata.
+The published report records `release_gate.passed=true`; independent review
+approved both the exact implementation and sanitized report, and the T11
+privacy audit passed. A dry run proves matrix shape and digest binding only.
+Future evidence runs do not change release metadata automatically and must
+repeat the same review and privacy gates.

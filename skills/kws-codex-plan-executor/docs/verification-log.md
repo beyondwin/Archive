@@ -1,5 +1,45 @@
 # Verification Log
 
+## 2026-07-12 Asia/Seoul - CPE 3.1.0 paid-live verified closeout
+
+- Branch: local `main`; implementation checkpoint
+  `0a2a6352d8f6f4717534fdc84869d4bedd0dce73`.
+- Scope: release-only closeout of the reviewed immutable 32-slot ChatGPT
+  subscription ledger. No thresholds, result records, or checkpoint digests
+  changed, and this closeout made no provider calls.
+- Evidence: all 25 credentialed calls and seven policy outcomes completed under
+  one manifest; the unchanged release gate, independent T10 review, T11 privacy
+  audit, merged-main verification, and Graphify refresh passed.
+
+```json
+{
+  "schema_version": "cpe-release-verification.v1",
+  "version": "3.1.0",
+  "implementation_commit": "0a2a6352d8f6f4717534fdc84869d4bedd0dce73",
+  "timestamp": "2026-07-12T11:03:58+09:00",
+  "commands": [
+    {"command": "./evals/run.sh", "exit_code": 0},
+    {"command": "python3 -m py_compile scripts/*.py scripts/cpe_runtime/*.py evals/*.py", "exit_code": 0},
+    {"command": "bash -n evals/run.sh", "exit_code": 0},
+    {"command": "python3 evals/check_release_contract.py", "exit_code": 0},
+    {"command": "python3 evals/check_docs_contract.py", "exit_code": 0},
+    {"command": "git diff --check", "exit_code": 0},
+    {"command": "privacy audit (tracked release surfaces)", "exit_code": 0},
+    {"command": "graphify update . (threaded sandbox substitute)", "exit_code": 0}
+  ],
+  "eval_passing_count": 56,
+  "bun_passing_count": 820,
+  "graphify": "fresh",
+  "paid_live": "verified_from_reviewed_external_evidence",
+  "paid_calls_in_closeout": 0,
+  "authentication": "chatgpt_subscription",
+  "direct_usd_cost": "not_observable",
+  "live_report_sha256": "7b1c59e011a6123145bf2adba8bd812909c8a99ef9bd15c15083d98783a4042e",
+  "privacy_audit_sha256": "ac174b58c37c9883a56ab1e1ff19b269815af6f0af056e065e713f4819dee1d1",
+  "residual_risk": "account-side subscription or credit attribution remains externally unobservable"
+}
+```
+
 ## 2026-07-12 Asia/Seoul - reviewed bounded-context architecture
 
 - Branch: `codex/cpe-v3-subscription-live-matrix-checkpoint`; checkpoint commit

@@ -2,24 +2,25 @@
 name: kws-codex-plan-executor
 description: Use when executing an implementation plan in Codex from a plan path and optional spec or design documents, resuming or inspecting a v3 run, or exporting a prompt or handoff launcher.
 metadata:
-  version: "3.0.1"
+  version: "3.1.0"
   updated_at: "2026-07-12"
-  release_status: "deterministic-ready; paid-live-pending"
+  release_status: "deterministic-ready; paid-live-verified"
 ---
 
 # KWS Codex Plan Executor
 
 CPE v3 is an independent, event-sourced Codex plan executor. Its audited
-deterministic integrity closure is complete, while the paid live migration
-matrix has not run, so the published tuple is
-`deterministic-ready; paid-live-pending`.
+deterministic integrity closure and reviewed subscription live-migration matrix
+are complete, so the published tuple is
+`deterministic-ready; paid-live-verified`.
 
 The checked-in subscription live-matrix runner is a guarded release-evidence
 tool, not an execution route for normal CPE plans. It dry-runs, starts, and
 resumes the exact 32-slot matrix with ChatGPT subscription authentication,
 isolated fixture worktrees, an immutable ledger, and fail-closed aggregation.
-Its presence does not change `release_ready=false`; only a complete reviewed
-report with `release_gate.passed=true` can authorize a later closeout.
+The complete reviewed report has `release_gate.passed=true`; the privacy audit
+also passed, so version 3.1.0 publishes `release_ready=true`. Direct USD cost
+remains unobservable at the account-side subscription boundary.
 
 ## Public Commands
 
@@ -112,5 +113,11 @@ Before changing this skill, follow [change-protocol.md](references/change-protoc
 [doc-update-protocol.md](docs/doc-update-protocol.md), and
 [release-process.md](docs/release-process.md).
 
-The immediately preceding pending candidate used the metadata literal
-`version: "3.0.0"`; it remains historical compatibility context only.
+The immediately preceding published release was version 3.0.1 with
+`deterministic-ready; paid-live-pending`; it remains historical compatibility
+context only.
+
+The older initial candidate metadata is retained solely for compatibility with
+maintained contract scanners and historical readers. It never describes the
+current release, current readiness, or an active routing decision. That literal
+was `version: "3.0.0"`.
