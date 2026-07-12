@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Iterable, Mapping
 
-from .model_policy import CORE_ROUTE
+from .model_policy import CORE_ROUTE, SCOUT_ROUTE, Route
 from .task_contracts import TaskContractV4
 
 
@@ -22,6 +22,7 @@ CANDIDATE_PREFIX_SHA256 = "d931fc1020b46212ed589400fdaa12f6d04e3fe0a10da6607e260
 BUNDLE_SCHEMA_VERSION = "cpe.prompt-bundle.v4"
 CONTROL_TREATMENT = "cpe-3.1.0-production-control"
 CANDIDATE_TREATMENT = "cpe-4.0.0-task-contract-candidate"
+SCOUT_TREATMENT = "cpe-4.0.0-bounded-read-only-scout"
 
 
 class PromptBundleError(ValueError):
@@ -290,14 +291,20 @@ def _case_digest(
 
 
 def _bundle(
-    *, treatment_id: str, prompt: str, contract: TaskContractV4, case_sha256: str
+    *,
+    treatment_id: str,
+    prompt: str,
+    contract: TaskContractV4,
+    case_sha256: str,
+    route: Route = CORE_ROUTE,
+    role: str = "implementation",
 ) -> PromptBundle:
     return PromptBundle(
         schema_version=BUNDLE_SCHEMA_VERSION,
         treatment_id=treatment_id,
-        model=CORE_ROUTE.model,
-        reasoning=CORE_ROUTE.reasoning,
-        role="implementation",
+        model=route.model,
+        reasoning=route.reasoning,
+        role=role,
         prompt=prompt,
         prompt_sha256=_sha256(prompt.encode()),
         task_contract_sha256=contract.contract_sha256,
@@ -388,6 +395,46 @@ def build_candidate_bundle(
     )
     return _bundle(
         treatment_id=CANDIDATE_TREATMENT, prompt=prompt, contract=contract, case_sha256=digest
+    )
+
+
+def build_scout_bundle(
+    contract: TaskContractV4,
+    *,
+    bounded_context: Iterable[Mapping[str, object]] = (),
+    fixture_path: Path | None = None,
+    case_sha256: str | None = None,
+) -> PromptBundle:
+    """Build the bounded Terra read-only, non-verdict quality treatment."""
+
+    fixture = _control_fixture(fixture_path or _default_fixture_path())
+    context = _safe_json(tuple(bounded_context), "bounded_context")
+    payload = {
+        "role": "scout",
+        "authority": {
+            "read_only": True,
+            "writes_allowed": False,
+            "verdict_capable": False,
+            "guidance": "Bounded read-only scout. Make no writes and issue no verdict.",
+        },
+        "task_contract": _contract_body(contract),
+        "task_contract_sha256": contract.contract_sha256,
+        "bounded_visible_context": context,
+        "result_schema": fixture["output_schema"],
+        "result_schema_sha256": CONTROL_OUTPUT_SCHEMA_SHA256,
+    }
+    prompt = (
+        "You are a bounded read-only scout. Make no writes and issue no verdict.\n"
+        + _canonical_bytes(payload).decode()
+    )
+    digest = case_sha256 or _case_digest(contract, bounded_context=context)
+    return _bundle(
+        treatment_id=SCOUT_TREATMENT,
+        prompt=prompt,
+        contract=contract,
+        case_sha256=digest,
+        route=SCOUT_ROUTE,
+        role="scout",
     )
 
 

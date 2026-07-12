@@ -106,6 +106,7 @@ _V4_BINDING_FIELDS = (
     "prompt_sha256",
     "task_contract_sha256",
     "case_sha256",
+    "prompt_output_schema_sha256",
     "output_schema_sha256",
 )
 
@@ -728,15 +729,29 @@ def render_prompt(
             str(slot.get("case_id") or ""),
             str(slot.get("case_slug") or ""),
         )
-        bundle_kind = "control" if treatment_id == "sol_v31_control" else "candidate"
+        bundle_kind = (
+            "control"
+            if treatment_id == "sol_v31_control"
+            else "scout" if treatment_id == "terra_v4" else "candidate"
+        )
         bundle = bundles[bundle_kind]
+        launched_schema_sha256 = _sha256_bytes(v4_worker_output_schema_bytes(eval_dir))
         binding = {
             "prompt_sha256": bundle.prompt_sha256,
             "task_contract_sha256": bundle.task_contract_sha256,
             "case_sha256": bundle.case_sha256,
-            "output_schema_sha256": bundle.output_schema_sha256,
+            "prompt_output_schema_sha256": bundle.output_schema_sha256,
+            "output_schema_sha256": launched_schema_sha256,
         }
-        if any(slot.get(field) != value for field, value in binding.items()):
+        role_matches = (
+            slot.get("prompt_role") == bundle.role
+            and slot.get("model") == bundle.model
+            and slot.get("reasoning") == bundle.reasoning
+            and (bundle.role != "scout" or slot.get("verdict_capable") is False)
+        )
+        if not role_matches or any(
+            slot.get(field) != value for field, value in binding.items()
+        ):
             raise LiveRunnerError(
                 "prompt_bundle_drift", f"v4 prompt binding drifted for {treatment_id}"
             )
@@ -993,6 +1008,13 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
         }:
             worker_schema = evidence_dir / "worker-result-schema.json"
             worker_schema.write_bytes(v4_worker_output_schema_bytes(context.eval_dir))
+            if _sha256_bytes(worker_schema.read_bytes()) != slot.get(
+                "output_schema_sha256"
+            ):
+                raise LiveRunnerError(
+                    "launched_output_schema_drift",
+                    "launched v4 output schema differs from the manifest binding",
+                )
         else:
             worker_schema = (Path(context.eval_dir) / str(slot["output_schema"])).resolve()
         last_message = evidence_dir / "last-message.json"

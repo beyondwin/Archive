@@ -14,7 +14,11 @@ import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
-from live_migration.compiler import compile_v4_manifest, v4_case_prompt_bundles
+from live_migration.compiler import (
+    compile_v4_manifest,
+    v4_case_prompt_bundles,
+    v4_worker_output_schema_bytes,
+)
 from live_migration.contracts import (
     CREDENTIALLED_CALL,
     CaseRef,
@@ -27,6 +31,7 @@ from live_migration.ledger import (
     LedgerError,
     append_event,
     create_run,
+    load_registered_release_manifest,
     record_terminal_full_run,
     record_release_terminal,
     register_release_run,
@@ -87,9 +92,32 @@ def check_production_faithful_case_prompts(manifest: dict[str, object]) -> None:
         assert candidate["prompt_sha256"] == bundles["candidate"].prompt_sha256
         assert control["case_sha256"] == candidate["case_sha256"]
         assert control["case_sha256"] == bundles["control"].case_sha256
-        assert control["output_schema_sha256"] == candidate["output_schema_sha256"]
-        assert control["output_schema_sha256"] == bundles["control"].output_schema_sha256
+        launched_schema_sha256 = hashlib.sha256(
+            v4_worker_output_schema_bytes(ROOT)
+        ).hexdigest()
+        assert control["output_schema_sha256"] == launched_schema_sha256
+        assert candidate["output_schema_sha256"] == launched_schema_sha256
+        assert (
+            control["prompt_output_schema_sha256"]
+            == bundles["control"].output_schema_sha256
+        )
         assert control["task_contract_sha256"] == candidate["task_contract_sha256"]
+
+    terra = slots[16]
+    terra_bundles = v4_case_prompt_bundles(
+        ROOT,
+        str(terra["case_id"]),
+        str(terra["case_slug"]),
+    )
+    scout = terra_bundles["scout"]
+    assert scout.role == "scout"
+    assert scout.model == "gpt-5.6-terra"
+    assert scout.reasoning == "high"
+    assert terra["prompt_sha256"] == scout.prompt_sha256
+    assert terra["prompt_role"] == "scout"
+    assert terra["verdict_capable"] is False
+    assert "read-only" in scout.prompt.lower()
+    assert "no verdict" in scout.prompt.lower()
 
     with tempfile.TemporaryDirectory(prefix="cpe-v4-prompt-render-") as raw:
         control = slots[0]
@@ -311,6 +339,20 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
             is None
             for call in provider_calls
         )
+        manifest_payload = json.loads(
+            (run_dir / "manifest.json").read_text(encoding="utf-8")
+        )
+        launched_schema_digest = str(
+            manifest_payload["slots"][0]["output_schema_sha256"]
+        )
+        for call in provider_calls:
+            schema_path = Path(call["argv"][call["argv"].index("--output-schema") + 1])
+            assert hashlib.sha256(schema_path.read_bytes()).hexdigest() == launched_schema_digest
+        terra_call = next(
+            call for call in provider_calls if "gpt-5.6-terra" in call["argv"]
+        )
+        assert "bounded read-only scout" in terra_call["stdin"].lower()
+        assert "no verdict" in terra_call["stdin"].lower()
         policy_results = list((run_dir / "slots" / "terra_v4").glob("*/result.json"))
         assert sum(
             json.loads(path.read_text())["expected_policy_failure"] is True
@@ -451,6 +493,112 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
         ]
         assert sum(call["argv"][:1] == ["exec"] for call in all_calls) == 34
 
+        transient_root = tmp / "transient-evidence"
+        transient_id = "fake-v4-transient"
+        execs_before_transient = sum(
+            call["argv"][:1] == ["exec"] for call in all_calls
+        )
+        transient_start = subprocess.run(
+            [
+                sys.executable,
+                str(runner),
+                "start",
+                "--matrix",
+                "v4",
+                "--billing-mode",
+                "chatgpt_subscription",
+                "--confirm-subscription-usage",
+                "--sentinel-only",
+                "--evidence-root",
+                str(transient_root),
+                "--run-id",
+                transient_id,
+                "--codex-bin",
+                str(skill / "evals" / "fake_codex.py"),
+                *_checkpoint_arguments(repo),
+            ],
+            cwd=skill,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert transient_start.returncode == 0, transient_start.stdout
+        transient_dir = transient_root / transient_id
+        transient_failure = subprocess.run(
+            [
+                sys.executable,
+                str(runner),
+                "resume",
+                "--confirm-subscription-usage",
+                "--run-dir",
+                str(transient_dir),
+                "--codex-bin",
+                str(skill / "evals" / "fake_codex.py"),
+            ],
+            cwd=skill,
+            env={**env, "CPE_FAKE_LIVE_BEHAVIOR": "billing"},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert transient_failure.returncode == 1
+        assert json.loads(transient_failure.stdout)["error"] == "subscription_limit_reached"
+        transient_lineage = json.loads(
+            (transient_root / "quality-release-state.json").read_text(encoding="utf-8")
+        )
+        assert transient_lineage["terminal_full_runs"] == 0
+        assert transient_lineage["runs"][0]["terminal"] is False
+
+        transient_retry = subprocess.run(
+            [
+                sys.executable,
+                str(runner),
+                "resume",
+                "--confirm-subscription-usage",
+                "--retry-failed",
+                "--run-dir",
+                str(transient_dir),
+                "--codex-bin",
+                str(skill / "evals" / "fake_codex.py"),
+            ],
+            cwd=skill,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert transient_retry.returncode == 0, transient_retry.stdout
+        transient_aggregate = subprocess.run(
+            [
+                sys.executable,
+                str(runner),
+                "aggregate",
+                "--run-dir",
+                str(transient_dir),
+                "--output",
+                str(transient_root / "aggregate.json"),
+            ],
+            cwd=skill,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert transient_aggregate.returncode == 1
+        transient_lineage = json.loads(
+            (transient_root / "quality-release-state.json").read_text(encoding="utf-8")
+        )
+        assert transient_lineage["terminal_full_runs"] == 1
+        all_calls = [
+            json.loads(line)
+            for line in invocation_log.read_text(encoding="utf-8").splitlines()
+        ]
+        execs_after_transient = sum(
+            call["argv"][:1] == ["exec"] for call in all_calls
+        )
+        assert execs_after_transient - execs_before_transient == 18
+
         (repo / "forbidden-third.txt").write_text("third\n", encoding="utf-8")
         subprocess.run(["git", "add", "forbidden-third.txt"], cwd=repo, check=True)
         subprocess.run(
@@ -499,7 +647,10 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
             json.loads(line)
             for line in invocation_log.read_text(encoding="utf-8").splitlines()
         ]
-        assert sum(call["argv"][:1] == ["exec"] for call in all_calls) == 34
+        assert (
+            sum(call["argv"][:1] == ["exec"] for call in all_calls)
+            == execs_after_transient
+        )
 
 
 def check_sentinel_resume_and_immutable_ledger(manifest: dict[str, object]) -> None:
@@ -547,6 +698,7 @@ def check_sentinel_resume_and_immutable_ledger(manifest: dict[str, object]) -> N
             "prompt_sha256",
             "task_contract_sha256",
             "case_sha256",
+            "prompt_output_schema_sha256",
             "output_schema_sha256",
         ):
             assert result[field] == first_slot[field]
@@ -593,6 +745,10 @@ def check_release_lineage_preserves_corrected_run_cap() -> None:
         first_manifest = compile_v4_manifest(commit="1" * 40, run_id="initial")
         second_manifest = compile_v4_manifest(commit="2" * 40, run_id="corrected")
         register_release_run(root, first_manifest)
+        initial_projection = replay_release_lineage(root)
+        register_release_run(root, first_manifest)
+        idempotent_projection = replay_release_lineage(root)
+        assert idempotent_projection == initial_projection
         record_release_terminal(
             root,
             run_id="initial",
@@ -620,6 +776,52 @@ def check_release_lineage_preserves_corrected_run_cap() -> None:
             LedgerError,
             "a third release-lineage run must be rejected before provider execution",
         )
+
+
+def check_registration_crash_is_idempotently_recoverable() -> None:
+    import live_model_runner
+
+    with tempfile.TemporaryDirectory(prefix="cpe-v4-registration-crash-") as raw:
+        run_dir = Path(raw) / "evidence" / "crash-recovery"
+        manifest = compile_v4_manifest(commit="5" * 40, run_id="crash-recovery")
+
+        def injected_crash(_root: Path, _manifest: dict[str, object]):
+            raise OSError("injected child create crash")
+
+        expect_error(
+            lambda: live_model_runner._register_and_create_v4_run(
+                run_dir,
+                manifest,
+                create=injected_crash,
+            ),
+            OSError,
+            "injected child creation must surface without consuming another attempt",
+        )
+        after_crash = replay_release_lineage(run_dir.parent)
+        assert after_crash["event_count"] == 1
+        assert len(after_crash["runs"]) == 1
+        assert load_registered_release_manifest(run_dir.parent, "crash-recovery") == manifest
+        expect_error(
+            lambda: register_release_run(
+                run_dir.parent,
+                compile_v4_manifest(
+                    commit="5" * 40,
+                    run_id="crash-recovery",
+                    created_at="2026-07-12T23:59:59Z",
+                ),
+            ),
+            LedgerError,
+            "different manifest must not consume or replace a pending registration",
+        )
+        assert replay_release_lineage(run_dir.parent) == after_crash
+        recovered = live_model_runner._register_and_create_v4_run(
+            run_dir,
+            manifest,
+            create=create_run,
+        )
+        assert recovered.run_dir == run_dir
+        after_recovery = replay_release_lineage(run_dir.parent)
+        assert after_recovery == after_crash
 
 
 def check_success_is_terminal_only_after_aggregate_and_privacy() -> None:
@@ -688,6 +890,7 @@ def main() -> int:
     check_fake_cli_sentinel_resume_waits_for_aggregate()
     check_sentinel_resume_and_immutable_ledger(manifest)
     check_release_lineage_preserves_corrected_run_cap()
+    check_registration_crash_is_idempotently_recoverable()
     check_success_is_terminal_only_after_aggregate_and_privacy()
     print("quality matrix v4 checks passed")
     return 0

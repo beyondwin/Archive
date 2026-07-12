@@ -15,6 +15,7 @@ from cpe_runtime.prompt_bundles import (
     PromptBundleError,
     build_candidate_bundle,
     build_control_bundle,
+    build_scout_bundle,
     paired_bundles,
 )
 from cpe_runtime.task_contracts import compile_task_contract
@@ -85,6 +86,15 @@ def main() -> int:
         control.case_sha256 == candidate.case_sha256
         and control.output_schema_sha256 == candidate.output_schema_sha256
         and control.task_contract_sha256 == candidate.task_contract_sha256 == contract.contract_sha256
+    )
+    scout = build_scout_bundle(contract, bounded_context=bounded_context)
+    checks["bounded_terra_scout"] = (
+        scout.model == "gpt-5.6-terra"
+        and scout.reasoning == "high"
+        and scout.role == "scout"
+        and "bounded read-only scout" in scout.prompt.lower()
+        and "no verdict" in scout.prompt.lower()
+        and "writes_allowed\":false" in scout.prompt
     )
     checks["distinct_real_prompts"] = (
         control.prompt_sha256 != candidate.prompt_sha256
