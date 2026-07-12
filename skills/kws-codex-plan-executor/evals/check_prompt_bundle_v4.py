@@ -141,11 +141,59 @@ def main() -> int:
             lambda: build_candidate_bundle(contract, prefix_path=drifted_prefix)
         )
 
+        nested_mutations = {
+            "worker_instruction_drift_rejected": (
+                ("worker_stdin", "instruction"),
+                "mutated scheduler instruction",
+            ),
+            "selected_spec_drift_rejected": (
+                ("selected_spec",),
+                [{"id": "S1.12", "sha256": "0" * 64, "text": "mutated"}],
+            ),
+        }
+        for name, (keys, value) in nested_mutations.items():
+            mutated = json.loads(json.dumps(fixture))
+            target = mutated["normalized_production_input"]
+            for key in keys[:-1]:
+                target = target[key]
+            target[keys[-1]] = value
+            path = Path(raw) / f"{name}.json"
+            path.write_text(json.dumps(mutated), encoding="utf-8")
+            checks[name] = rejected(
+                lambda path=path: build_control_bundle(contract, fixture_path=path)
+            )
+
     checks["absolute_dynamic_context_rejected"] = rejected(
         lambda: build_candidate_bundle(
             contract,
             bounded_context=({"path": "/private/example.py", "content": "x"},),
         )
+    )
+    sensitive_paths = (
+        "secrets/api-key.txt",
+        "oracle/expected.json",
+        "transcripts/session.json",
+        "~/private.txt",
+        "$HOME/private.txt",
+    )
+    checks["sensitive_context_paths_rejected"] = all(
+        rejected(
+            lambda path=path: build_candidate_bundle(
+                contract,
+                bounded_context=({"path": path, "content": "redacted"},),
+            )
+        )
+        for path in sensitive_paths
+    )
+
+    evidence_a = ({"attempt_id": "task_7.implementation.1", "status": "completed"},)
+    evidence_b = ({"attempt_id": "task_7.implementation.2", "status": "completed"},)
+    control_a, candidate_a = paired_bundles(contract, prior_task_evidence=evidence_a)
+    control_b, candidate_b = paired_bundles(contract, prior_task_evidence=evidence_b)
+    checks["prior_evidence_is_case_bound"] = (
+        control_a.case_sha256 == candidate_a.case_sha256
+        and control_b.case_sha256 == candidate_b.case_sha256
+        and control_a.case_sha256 != control_b.case_sha256
     )
 
     failures = [name for name, passed in checks.items() if not passed]

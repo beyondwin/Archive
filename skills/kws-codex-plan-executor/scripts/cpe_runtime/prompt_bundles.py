@@ -68,7 +68,10 @@ def _contains_absolute_path(value: object) -> bool:
     return (
         PurePosixPath(value).is_absolute()
         or value.startswith("file:///")
+        or value.startswith(("~/", "$HOME/", "${HOME}/"))
         or re.search(r"(?<![\w$])/(?:Users|home|private|tmp|var/folders)/", value) is not None
+        or re.search(r"(?:^|[\\/\s'\"])(?:secrets?|oracle|transcripts?)/", value, re.IGNORECASE)
+        is not None
     )
 
 
@@ -110,6 +113,9 @@ def _control_fixture(path: Path) -> dict[str, object]:
         "scheduler_sha256": CONTROL_SCHEDULER_SHA256,
         "packet_source_sha256": CONTROL_PACKET_SOURCE_SHA256,
         "output_schema_sha256": CONTROL_OUTPUT_SCHEMA_SHA256,
+        "normalized_production_input_sha256": (
+            "00bf67a13ca907cec3cf8389d1536a5d497b262e0290396e2e414dff9f3b8009"
+        ),
     }
     if any(payload.get(key) != value for key, value in exact.items()):
         raise PromptBundleError("control_source_drift")
@@ -125,6 +131,10 @@ def _control_fixture(path: Path) -> dict[str, object]:
         raise PromptBundleError("control_input_is_not_production_shape")
     if _contains_absolute_path(normalized):
         raise PromptBundleError("control_input_contains_absolute_path")
+    if _sha256(_canonical_bytes(normalized)) != payload.get(
+        "normalized_production_input_sha256"
+    ):
+        raise PromptBundleError("control_input_drift")
     packet_bytes = normalized["packet_bytes"]
     if not isinstance(packet_bytes, str) or _sha256(packet_bytes.encode()) != payload.get(
         "packet_sha256"
@@ -151,68 +161,100 @@ def _contract_body(contract: TaskContractV4) -> dict[str, object]:
     return body
 
 
-def _v3_task(contract: TaskContractV4) -> dict[str, object]:
+def _bound_spec_sections(
+    template: object, contract: TaskContractV4
+) -> list[dict[str, object]]:
+    if not isinstance(template, list) or not template or not isinstance(template[0], dict):
+        raise PromptBundleError("control_selected_spec_invalid")
+    keys = set(template[0])
+    if keys != {"id", "sha256", "text"}:
+        raise PromptBundleError("control_selected_spec_invalid")
+    return [
+        {key: section[key] for key in ("id", "sha256", "text")}
+        for section in contract.spec_sections
+    ]
+
+
+def _bound_control_packet(
+    packet_bytes: object,
+    contract: TaskContractV4,
+    spec_sections: list[dict[str, object]],
+) -> dict[str, object]:
+    if not isinstance(packet_bytes, str):
+        raise PromptBundleError("control_packet_invalid")
+    try:
+        packet = json.loads(packet_bytes)
+    except json.JSONDecodeError as exc:
+        raise PromptBundleError("control_packet_invalid") from exc
+    if not isinstance(packet, dict) or not isinstance(packet.get("task"), dict):
+        raise PromptBundleError("control_packet_invalid")
     body = _contract_body(contract)
-    return {
-        "id": contract.task_id,
-        "title": contract.title,
-        "dependencies": list(contract.dependencies),
-        "task_type": contract.task_type,
-        "task_source": contract.task_source,
-        "spec_refs": [section["id"] for section in contract.spec_sections],
-        "file_claims": list(contract.file_claims),
-        "acceptance_command": "\n".join(contract.acceptance_commands),
-        "source_hashes": body["source_hashes"],
-        "execution_contract": {
+    task = dict(packet["task"])
+    task.update(
+        {
+            "id": contract.task_id,
+            "title": contract.title,
+            "dependencies": list(contract.dependencies),
+            "task_type": contract.task_type,
+            "task_source": contract.task_source,
+            "spec_refs": [section["id"] for section in contract.spec_sections],
+            "file_claims": list(contract.file_claims),
+            "acceptance_command": "\n".join(contract.acceptance_commands),
+            "source_hashes": body["source_hashes"],
+        }
+    )
+    task_execution = dict(task.get("execution_contract") or {})
+    task_execution.update(
+        {
             "allowed_paths": list(contract.file_claims),
             "forbidden_paths": list(contract.forbidden_paths),
             "acceptance_command": "\n".join(contract.acceptance_commands),
-        },
-    }
-
-
-def _v3_packet(contract: TaskContractV4) -> dict[str, object]:
-    task = _v3_task(contract)
-    return {
-        "schema_version": "3.1",
-        "task_id": contract.task_id,
-        "task": task,
-        "spec_sections": _json_copy(list(contract.spec_sections)),
-        "execution_contract": {
-            "scope": "bounded task scope",
+        }
+    )
+    task["execution_contract"] = task_execution
+    execution = dict(packet.get("execution_contract") or {})
+    execution.update(
+        {
             "files_to_inspect": list(contract.file_claims),
             "allowed_edits": list(contract.file_claims),
             "forbidden_edits": list(contract.forbidden_paths),
-            "acceptance_command_or_honest_substitute": "\n".join(contract.acceptance_commands),
-        },
-        "required_methods": ["using-superpowers", "test-driven-development"],
-        "role_policy": {
-            "scout": {"read_only": True, "verdict_capable": False, "product_write": False},
-            "implementation": {"read_only": False, "verdict_capable": False, "product_write": True},
-            "task_review": {"read_only": True, "verdict_capable": True, "product_write": False},
-            "verification": {"read_only": True, "verdict_capable": True, "product_write": False},
-            "repair": {"read_only": False, "verdict_capable": False, "product_write": True},
-            "final_review": {"read_only": True, "verdict_capable": True, "product_write": False},
-        },
-        "evidence_requirements": [
-            "changed_files", "findings", "evidence_refs", "missing_evidence", "verification"
-        ],
-        "source_hashes": _json_copy(contract.source_hashes),
-    }
+            "acceptance_command_or_honest_substitute": "\n".join(
+                contract.acceptance_commands
+            ),
+        }
+    )
+    packet.update(
+        {
+            "task_id": contract.task_id,
+            "task": task,
+            "spec_sections": spec_sections,
+            "execution_contract": execution,
+            "source_hashes": _json_copy(contract.source_hashes),
+        }
+    )
+    return packet
 
 
-def _result_contract() -> dict[str, object]:
-    return {
-        "verdict_must_be_null": True,
-        "top_level_findings_must_equal_verdict_findings": False,
-        "top_level_missing_evidence_must_equal_verdict_missing_evidence": False,
-        "guidance": "This role cannot issue a verdict; return verdict=null.",
-    }
+def _bind_fixture_tokens(value: object, replacements: Mapping[str, object]) -> object:
+    if isinstance(value, dict):
+        return {key: _bind_fixture_tokens(item, replacements) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_bind_fixture_tokens(item, replacements) for item in value]
+    if not isinstance(value, str):
+        return value
+    if value in replacements:
+        return _json_copy(replacements[value])
+    rendered = value
+    for token, replacement in replacements.items():
+        if isinstance(replacement, str):
+            rendered = rendered.replace(token, replacement)
+    return rendered
 
 
 def _case_digest(
     contract: TaskContractV4,
     *,
+    prior_task_evidence: object = (),
     prior_findings: object = (),
     finding_delta: object = (),
     bounded_context: object = (),
@@ -221,6 +263,9 @@ def _case_digest(
         _canonical_bytes(
             {
                 "task_contract": _contract_body(contract),
+                "prior_task_evidence": _safe_json(
+                    prior_task_evidence, "prior_task_evidence"
+                ),
                 "prior_findings": _safe_json(prior_findings, "prior_findings"),
                 "finding_delta": _safe_json(finding_delta, "finding_delta"),
                 "bounded_visible_context": _safe_json(bounded_context, "bounded_context"),
@@ -255,42 +300,42 @@ def build_control_bundle(
     case_sha256: str | None = None,
 ) -> PromptBundle:
     fixture = _control_fixture(fixture_path or _default_fixture_path())
+    normalized = fixture["normalized_production_input"]
+    if not isinstance(normalized, dict):
+        raise PromptBundleError("control_input_is_not_production_shape")
     prior_evidence = _safe_json(tuple(prior_task_evidence), "prior_task_evidence")
-    packet = _v3_packet(contract)
+    spec_sections = _bound_spec_sections(normalized["selected_spec"], contract)
+    packet = _bound_control_packet(normalized["packet_bytes"], contract, spec_sections)
     packet_bytes = _canonical_bytes(packet).decode()
     packet_sha256 = _sha256(packet_bytes.encode())
-    scheduler_instruction = (
-        f"Implement task {contract.task_id} using only its verified packet and current revision."
-    )
-    worker_stdin = {
-        "task_id": contract.task_id,
-        "packet_path": f"$RUN_DIR/artifacts/task-packets/{contract.task_id}.json",
-        "packet_sha256": packet_sha256,
-        "worktree_revision": 0,
-        "instruction": scheduler_instruction,
-        "result_contract": _result_contract(),
-        "canonical_runtime_validation": {
-            "authority": "current_host_cpe_runtime",
-            "command": "python3 $WORKTREE/skills/kws-codex-plan-executor/scripts/validate_state.py $RUN_DIR",
-            "guidance": (
-                "Use this current host-runtime command for canonical run validation. "
-                "Do not substitute a validator copied into the execution worktree."
-            ),
+    scheduler_template = normalized["scheduler_instruction"]
+    if not isinstance(scheduler_template, str):
+        raise PromptBundleError("control_scheduler_invalid")
+    scheduler_instruction = scheduler_template.format(task_id=contract.task_id)
+    worker_stdin = _bind_fixture_tokens(
+        normalized["worker_stdin"],
+        {
+            "$TASK_ID": contract.task_id,
+            "$PACKET_SHA256": packet_sha256,
+            "$SCHEDULER_INSTRUCTION": scheduler_instruction,
+            "$PRIOR_TASK_EVIDENCE": prior_evidence,
         },
-        "prior_task_evidence": prior_evidence,
-    }
+    )
+    result_contract = _json_copy(normalized["result_contract"])
     production_input = {
         "source_commit": CONTROL_SOURCE_COMMIT,
         "scheduler_instruction": scheduler_instruction,
         "worker_stdin": worker_stdin,
         "packet_bytes": packet_bytes,
-        "spec_sections": _json_copy(list(contract.spec_sections)),
+        "spec_sections": spec_sections,
         "prior_task_evidence": prior_evidence,
-        "result_contract": _result_contract(),
+        "result_contract": result_contract,
         "output_schema": fixture["output_schema"],
     }
     prompt = _canonical_bytes(production_input).decode()
-    digest = case_sha256 or _case_digest(contract)
+    digest = case_sha256 or _case_digest(
+        contract, prior_task_evidence=prior_evidence
+    )
     return _bundle(
         treatment_id=CONTROL_TREATMENT, prompt=prompt, contract=contract, case_sha256=digest
     )
@@ -347,6 +392,7 @@ def paired_bundles(
     context = tuple(bounded_context)
     case_sha256 = _case_digest(
         contract,
+        prior_task_evidence=evidence,
         prior_findings=findings,
         finding_delta=delta,
         bounded_context=context,
