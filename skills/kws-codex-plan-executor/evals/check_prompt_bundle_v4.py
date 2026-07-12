@@ -55,6 +55,14 @@ def rejected(callable_) -> bool:
     return False
 
 
+def accepted(callable_) -> bool:
+    try:
+        callable_()
+    except PromptBundleError:
+        return False
+    return True
+
+
 def main() -> int:
     checks: dict[str, bool] = {}
     contract = fixture_contract()
@@ -184,6 +192,47 @@ def main() -> int:
             )
         )
         for path in sensitive_paths
+    )
+    approved_root_bypasses = (
+        "$WORKTREE/secrets/api-key.txt",
+        "$RUN_DIR/oracle/expected.json",
+    )
+    checks["approved_root_sensitive_suffixes_rejected"] = all(
+        rejected(
+            lambda path=path: build_candidate_bundle(
+                contract,
+                bounded_context=({"path": path, "content": "redacted"},),
+            )
+        )
+        for path in approved_root_bypasses
+    )
+    sensitive_mapping_keys = (
+        "/Users/kws/private.txt",
+        "oracle/expected.json",
+    )
+    checks["sensitive_mapping_keys_rejected"] = all(
+        rejected(
+            lambda path=path: build_candidate_bundle(
+                contract,
+                bounded_context=({path: "redacted"},),
+            )
+        )
+        for path in sensitive_mapping_keys
+    )
+    checks["benign_and_near_match_paths_allowed"] = all(
+        accepted(
+            lambda path=path: build_candidate_bundle(
+                contract,
+                bounded_context=({"path": path, "content": "safe"},),
+            )
+        )
+        for path in (
+            "$WORKTREE/src/prompt.py",
+            "$RUN_DIR/artifacts/result.json",
+            "secretary/api-key.txt",
+            "oracle-notes/expected.json",
+            "transcripts.md/session.json",
+        )
     )
 
     evidence_a = ({"attempt_id": "task_7.implementation.1", "status": "completed"},)
