@@ -60,6 +60,85 @@ class V4ResumeDecision:
     checkpoint_head: str | None = None
 
 
+def _is_lower_hex(value: object, length: int) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == length
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _active_v4_attempts(state: dict, task_id: str) -> list[dict[str, object]]:
+    attempts = state.get("attempts")
+    if not isinstance(attempts, list):
+        raise ValueError("invalid_v4_resume_attempts")
+    return [
+        item
+        for item in attempts
+        if isinstance(item, dict)
+        and item.get("task_id") == task_id
+        and item.get("status") == "started"
+    ]
+
+
+def _durable_selected_repair(state: dict, task_id: str) -> dict[str, object]:
+    selected_repairs = state.get("selected_repairs")
+    if not isinstance(selected_repairs, dict):
+        raise ValueError("selected_repair_invalid")
+    selected = selected_repairs.get(task_id)
+    if selected is None:
+        raise ValueError("selected_repair_missing")
+    if not isinstance(selected, dict):
+        raise ValueError("selected_repair_invalid")
+
+    decisions = state.get("decisions")
+    if not isinstance(decisions, list):
+        raise ValueError("selected_repair_invalid")
+    durable: dict[str, object] | None = None
+    for decision in decisions:
+        if not isinstance(decision, dict) or decision.get("task_id") != task_id:
+            continue
+        if decision.get("decision_kind") == "selected_repair_recorded":
+            durable = dict(decision)
+        elif decision.get("decision_kind") == "selected_repair_resolved":
+            if (
+                durable is None
+                or durable.get("selected_repair_ref")
+                != decision.get("selected_repair_ref")
+            ):
+                raise ValueError("selected_repair_invalid")
+            durable = None
+    if durable is None:
+        raise ValueError("selected_repair_missing")
+    if selected != durable:
+        raise ValueError("selected_repair_invalid")
+
+    ref = selected.get("selected_repair_ref")
+    count = selected.get("repair_count")
+    if (
+        selected.get("decision_kind") != "selected_repair_recorded"
+        or selected.get("selected_action") != "repair"
+        or selected.get("approval_basis") != "standing_autonomy_policy"
+        or selected.get("task_id") != task_id
+        or not _is_lower_hex(selected.get("contract_sha256"), 64)
+        or not _is_lower_hex(selected.get("rejected_candidate_commit"), 40)
+        or not isinstance(selected.get("root_cause_key"), str)
+        or not selected.get("root_cause_key")
+        or type(count) is not int
+        or count not in {1, 2}
+        or selected.get("repair_slot") != count
+        or not _is_lower_hex(selected.get("review_scope_sha256"), 64)
+        or not _is_lower_hex(selected.get("finding_sha256"), 64)
+        or not isinstance(ref, dict)
+        or ref.get("kind") != "selected_repair"
+        or not isinstance(ref.get("path"), str)
+        or not _is_lower_hex(ref.get("sha256"), 64)
+        or ref.get("media_type") != "application/json"
+    ):
+        raise ValueError("selected_repair_invalid")
+    return selected
+
+
 def select_v4_resume(state: dict, task_id: str) -> V4ResumeDecision:
     """Select same-attempt quota resume or checkpoint-bound runtime resume."""
 
@@ -78,19 +157,30 @@ def select_v4_resume(state: dict, task_id: str) -> V4ResumeDecision:
     task = tasks[task_id]
     if task.get("status") == "waiting_user":
         return V4ResumeDecision("await_user_authority", task_id)
+    active = _active_v4_attempts(state, task_id)
     if task.get("status") != "waiting_external":
-        return V4ResumeDecision("schedule", task_id)
+        if not active:
+            return V4ResumeDecision("schedule", task_id)
+        if len(active) > 1:
+            raise ValueError("active_model_attempt_ambiguous")
+        attempt = active[0]
+        attempt_id = attempt.get("attempt_id")
+        if (
+            task.get("status") != "reviewing"
+            or attempt.get("kind") != "repair"
+            or not isinstance(attempt_id, str)
+            or not attempt_id
+            or task.get("active_attempt_id") != attempt_id
+        ):
+            raise ValueError("active_model_attempt_unreconciled")
+        _durable_selected_repair(state, task_id)
+        return V4ResumeDecision(
+            "resume_same_attempt", task_id, phase="repair", attempt_id=attempt_id
+        )
     phase = task.get("resume_phase")
     if phase not in {"implementation", "repair", "task_review", "verification"}:
         raise ValueError("invalid_v4_resume_phase")
     persisted_attempt = task.get("active_attempt_id")
-    active = [
-        item
-        for item in state.get("attempts", [])
-        if isinstance(item, dict)
-        and item.get("task_id") == task_id
-        and item.get("status") == "started"
-    ]
     if len(active) > 1:
         raise ValueError("active_model_attempt_ambiguous")
     if active:
