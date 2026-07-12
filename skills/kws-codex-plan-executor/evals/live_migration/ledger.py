@@ -40,6 +40,7 @@ _RELEASE_EVENT_SCHEMA = "cpe-quality-release-event.v4"
 _RELEASE_EVENT_FIELDS = _EVENT_FIELDS
 _RELEASE_EVENTS_FILE = "quality-release-events.jsonl"
 _RELEASE_STATE_FILE = "quality-release-state.json"
+_RELEASE_MANIFEST_DIR = "quality-release-manifests"
 
 
 class LedgerError(RuntimeError):
@@ -406,6 +407,41 @@ def replay_release_lineage(root: Path) -> dict[str, object]:
         return projection
 
 
+def _release_manifest_path(root: Path, run_id: str) -> Path:
+    return root / _RELEASE_MANIFEST_DIR / f"{quote(run_id, safe='-._~')}.json"
+
+
+def load_registered_release_manifest(
+    root: Path, run_id: str
+) -> dict[str, object] | None:
+    """Load the immutable parent copy needed after a pre-child-create crash."""
+
+    release_root = Path(root)
+    if not release_root.is_dir():
+        return None
+    with _locked_run(release_root):
+        events = _read_release_events(release_root)
+        projection = _release_projection(events)
+        record = next(
+            (
+                item
+                for item in projection["runs"]
+                if item.get("run_id") == run_id
+            ),
+            None,
+        )
+        if record is None:
+            return None
+        manifest = _load_object(
+            _release_manifest_path(release_root, run_id),
+            f"registered release manifest {run_id}",
+        )
+        digest = _manifest_digest(manifest)
+        if digest != record.get("manifest_sha256"):
+            raise LedgerError("registered release manifest differs from its lineage event")
+        return manifest
+
+
 def register_release_run(root: Path, manifest: dict[str, object]) -> dict[str, object]:
     """Reserve one immutable release attempt before any provider execution."""
 
@@ -432,8 +468,29 @@ def register_release_run(root: Path, manifest: dict[str, object]) -> dict[str, o
         projection = _release_projection(events)
         runs = projection["runs"]
         assert isinstance(runs, list)
-        if any(record.get("run_id") == run_id for record in runs):
-            raise LedgerError("release run is already registered")
+        existing = next(
+            (record for record in runs if record.get("run_id") == run_id), None
+        )
+        if existing is not None:
+            if (
+                existing.get("manifest_sha256") == manifest_sha256
+                and existing.get("checkpoint") == checkpoint
+                and existing.get("terminal") is False
+            ):
+                stored = _load_object(
+                    _release_manifest_path(release_root, run_id),
+                    f"registered release manifest {run_id}",
+                )
+                if canonical_json(stored) != canonical_json(manifest):
+                    raise LedgerError("idempotent release manifest artifact differs")
+                return next(
+                    event
+                    for event in events
+                    if event["type"] == "release_run_registered"
+                    and isinstance(event["payload"], dict)
+                    and event["payload"].get("run_id") == run_id
+                )
+            raise LedgerError("release run ID is bound to a different or terminal manifest")
         if len(runs) >= _MAX_TERMINAL_FULL_RUNS or projection["release_passed"] is True:
             raise LedgerError("release terminal full run limit reached")
         if runs:
@@ -442,6 +499,18 @@ def register_release_run(root: Path, manifest: dict[str, object]) -> dict[str, o
                 raise LedgerError("corrected release run requires one terminal failure")
             if previous.get("checkpoint") == checkpoint:
                 raise LedgerError("corrected release run requires a changed checkpoint")
+        manifest_path = _release_manifest_path(release_root, run_id)
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_bytes = canonical_json(manifest)
+        if manifest_path.exists():
+            try:
+                if manifest_path.read_bytes() != manifest_bytes:
+                    raise LedgerError("release run manifest artifact differs")
+            except OSError as exc:
+                raise LedgerError(f"release manifest artifact is unreadable: {exc}") from exc
+        else:
+            _write_exclusive(manifest_path, manifest_bytes)
+            _fsync_directory(manifest_path.parent)
         event = _append_release_event_locked(
             release_root,
             "release_run_registered",
@@ -484,6 +553,12 @@ def record_release_terminal(
         target = next((record for record in runs if record.get("run_id") == run_id), None)
         if target is None or target.get("terminal") is True:
             raise LedgerError("release run is missing or already terminal")
+        registered_manifest = _load_object(
+            _release_manifest_path(release_root, run_id),
+            f"registered release manifest {run_id}",
+        )
+        if _manifest_digest(registered_manifest) != target.get("manifest_sha256"):
+            raise LedgerError("terminal release manifest differs from its registration")
         event = _append_release_event_locked(
             release_root,
             "release_run_terminal",

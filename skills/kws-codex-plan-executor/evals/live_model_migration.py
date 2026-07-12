@@ -555,6 +555,7 @@ def _aggregate_v4_run(
         "prompt_sha256",
         "task_contract_sha256",
         "case_sha256",
+        "prompt_output_schema_sha256",
         "output_schema_sha256",
     )
     failures: list[str] = []

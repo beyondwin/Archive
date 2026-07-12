@@ -46,10 +46,10 @@ def _load_v4_prompt_runtime():
     skill_root = str(_skill_root())
     if skill_root not in sys.path:
         sys.path.insert(0, skill_root)
-    from scripts.cpe_runtime.prompt_bundles import paired_bundles
+    from scripts.cpe_runtime.prompt_bundles import build_scout_bundle, paired_bundles
     from scripts.cpe_runtime.task_contracts import compile_task_contract
 
-    return paired_bundles, compile_task_contract
+    return paired_bundles, build_scout_bundle, compile_task_contract
 
 
 def v4_case_prompt_bundles(
@@ -80,7 +80,7 @@ def v4_case_prompt_bundles(
         raise LiveMigrationContractError(f"cannot compile v4 prompt context: {exc}") from exc
     task_source = canonical_json(case).decode("utf-8")
     source_hash = sha256_bytes(task_source.encode("utf-8"))
-    paired_bundles, compile_task_contract = _load_v4_prompt_runtime()
+    paired_bundles, build_scout_bundle, compile_task_contract = _load_v4_prompt_runtime()
     contract = compile_task_contract(
         {
             "id": case_slug,
@@ -101,7 +101,12 @@ def v4_case_prompt_bundles(
         contract,
         bounded_context=tuple(bounded_context),
     )
-    return {"control": control, "candidate": candidate}
+    scout = build_scout_bundle(
+        contract,
+        bounded_context=tuple(bounded_context),
+        case_sha256=control.case_sha256,
+    )
+    return {"control": control, "candidate": candidate, "scout": scout}
 
 
 def v4_worker_output_schema_bytes(eval_dir: Path) -> bytes:
@@ -234,6 +239,7 @@ def compile_v4_manifest(
     bundles_by_case = {
         case.id: v4_case_prompt_bundles(root, case.id, case.slug) for case in cases
     }
+    launched_output_schema_sha256 = sha256_bytes(v4_worker_output_schema_bytes(root))
     for treatment in treatments:
         for case in ordered_cases[treatment.id]:
             canonical_case = case_by_id[case.id]
@@ -243,7 +249,11 @@ def compile_v4_manifest(
             slot_keys.add(key)
             credentialed = treatment.id != "terra_v4" or canonical_case == terra_read_only
             policy_failure = not credentialed
-            bundle_kind = "control" if treatment.id == "sol_v31_control" else "candidate"
+            bundle_kind = (
+                "control"
+                if treatment.id == "sol_v31_control"
+                else "scout" if treatment.id == "terra_v4" else "candidate"
+            )
             bundle = bundles_by_case[canonical_case.id][bundle_kind]
             fixture_ref = f"live-migration/fixtures/{canonical_case.slug}/repo"
             oracle_ref = f"live-migration/fixtures/{canonical_case.slug}/oracle"
@@ -257,7 +267,10 @@ def compile_v4_manifest(
                 "prompt_sha256": bundle.prompt_sha256,
                 "task_contract_sha256": bundle.task_contract_sha256,
                 "case_sha256": bundle.case_sha256,
-                "output_schema_sha256": bundle.output_schema_sha256,
+                "prompt_output_schema_sha256": bundle.output_schema_sha256,
+                "output_schema_sha256": launched_output_schema_sha256,
+                "prompt_role": bundle.role,
+                "verdict_capable": False if bundle.role == "scout" else None,
                 "credentialed": credentialed,
                 "outcome_kind": CREDENTIALLED_CALL if credentialed else EXPECTED_POLICY_FAILURE,
                 "expected_policy_failure": policy_failure,

@@ -28,6 +28,7 @@ from live_migration.ledger import (
     LiveRun,
     append_event,
     create_run,
+    load_registered_release_manifest,
     record_release_terminal,
     register_release_run,
     replay_run,
@@ -518,20 +519,6 @@ def _execute(
             results.append(result)
     except LiveRunnerError as exc:
         append_event(context.run, "run_blocked", {"code": exc.code, "message": str(exc)})
-        if (
-            complete_run
-            and context.run.manifest.get("schema_version") == "cpe-quality-manifest.v4"
-        ):
-            failure = {"code": exc.code, "message": str(exc)}
-            record_release_terminal(
-                context.run.run_dir.parent,
-                run_id=str(context.run.manifest["run_id"]),
-                passed=False,
-                aggregate_sha256=sha256_bytes(canonical_json(failure)),
-                privacy_sha256=sha256_bytes(
-                    canonical_json({"status": "not_run", "reason": "execution_failed"})
-                ),
-            )
         raise
     if complete_run:
         append_event(context.run, "run_completed", {"completed_slots": len(results)})
@@ -552,6 +539,18 @@ def _execute(
     }
 
 
+def _register_and_create_v4_run(
+    run_dir: Path,
+    manifest: dict[str, object],
+    *,
+    create=create_run,
+) -> LiveRun:
+    """Idempotently reserve the release attempt, then create its child ledger."""
+
+    register_release_run(run_dir.parent, manifest)
+    return create(run_dir, manifest)
+
+
 def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[str, object]:
     if not args.confirm_subscription_usage:
         parser.error("start requires --confirm-subscription-usage")
@@ -561,12 +560,22 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
         parser.error("this runner requires --billing-mode chatgpt_subscription")
     run_id = args.run_id or f"cpe-live-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     run_dir = _new_run_dir(args.evidence_root, run_id)
-    manifest = _compile(
-        args.billing_mode,
-        run_id,
-        _checkpoint_binding(args, required=True),
-        matrix=args.matrix,
-    )
+    binding = _checkpoint_binding(args, required=True)
+    recovered_manifest = load_registered_release_manifest(run_dir.parent, run_id)
+    if recovered_manifest is not None:
+        if _manifest_checkpoint_binding(recovered_manifest) != binding:
+            raise LiveRunnerError(
+                "registered_checkpoint_mismatch",
+                "registered release manifest uses a different immutable checkpoint",
+            )
+        manifest = recovered_manifest
+    else:
+        manifest = _compile(
+            args.billing_mode,
+            run_id,
+            binding,
+            matrix=args.matrix,
+        )
     if run_dir.exists():
         raise LiveRunnerError("execution_root_not_fresh", f"run directory already exists: {run_dir}")
     required_models = (
@@ -575,15 +584,24 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
         else None
     )
     attestation = _preflight_codex(args.codex_bin, required_models)
-    manifest["model_catalog_sha256"] = attestation.catalog_sha256
-    manifest = _bind_manifest(manifest, {
-        "implementation_commit": str(manifest["implementation_commit"]),
-        "implementation_tree": str(manifest["implementation_tree"]),
-        "implementation_patch_sha256": str(manifest["implementation_patch_sha256"]),
-    })
-    if manifest.get("schema_version") == "cpe-quality-manifest.v4":
-        register_release_run(run_dir.parent, manifest)
-    run = create_run(run_dir, manifest)
+    if recovered_manifest is not None:
+        if manifest.get("model_catalog_sha256") != attestation.catalog_sha256:
+            raise LiveRunnerError(
+                "registered_catalog_mismatch",
+                "authenticated model catalog changed since release registration",
+            )
+    else:
+        manifest["model_catalog_sha256"] = attestation.catalog_sha256
+        manifest = _bind_manifest(manifest, {
+            "implementation_commit": str(manifest["implementation_commit"]),
+            "implementation_tree": str(manifest["implementation_tree"]),
+            "implementation_patch_sha256": str(manifest["implementation_patch_sha256"]),
+        })
+    run = (
+        _register_and_create_v4_run(run_dir, manifest)
+        if manifest.get("schema_version") == "cpe-quality-manifest.v4"
+        else create_run(run_dir, manifest)
+    )
     run_home = _run_codex_home(run, attestation.codex_home, create=True)
     context = RunContext(run, ROOT, attestation, _child_env(run_home), args.slot_timeout_seconds, False)
     descriptor = _acquire_run_execution_lock(run_dir)
