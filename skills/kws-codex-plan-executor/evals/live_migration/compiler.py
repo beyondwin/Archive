@@ -46,10 +46,14 @@ def _load_v4_prompt_runtime():
     skill_root = str(_skill_root())
     if skill_root not in sys.path:
         sys.path.insert(0, skill_root)
-    from scripts.cpe_runtime.prompt_bundles import build_scout_bundle, paired_bundles
+    from scripts.cpe_runtime.prompt_bundles import (
+        build_scout_bundle,
+        paired_bundles,
+        worker_output_schema,
+    )
     from scripts.cpe_runtime.task_contracts import compile_task_contract
 
-    return paired_bundles, build_scout_bundle, compile_task_contract
+    return paired_bundles, build_scout_bundle, worker_output_schema, compile_task_contract
 
 
 def v4_case_prompt_bundles(
@@ -80,7 +84,9 @@ def v4_case_prompt_bundles(
         raise LiveMigrationContractError(f"cannot compile v4 prompt context: {exc}") from exc
     task_source = canonical_json(case).decode("utf-8")
     source_hash = sha256_bytes(task_source.encode("utf-8"))
-    paired_bundles, build_scout_bundle, compile_task_contract = _load_v4_prompt_runtime()
+    paired_bundles, build_scout_bundle, _worker_output_schema, compile_task_contract = (
+        _load_v4_prompt_runtime()
+    )
     contract = compile_task_contract(
         {
             "id": case_slug,
@@ -112,12 +118,12 @@ def v4_case_prompt_bundles(
 def v4_worker_output_schema_bytes(eval_dir: Path) -> bytes:
     """Return the exact Task 7 output schema used by both v4 treatments."""
 
-    fixture = _load_object(
+    _paired_bundles, _build_scout_bundle, worker_output_schema, _compile_task_contract = (
+        _load_v4_prompt_runtime()
+    )
+    schema = worker_output_schema(
         Path(eval_dir) / "control-bundles" / "cpe-3.1.0-production.json"
     )
-    schema = fixture.get("output_schema")
-    if not isinstance(schema, dict):
-        raise LiveMigrationContractError("v4 production output schema is unavailable")
     return canonical_json(schema)
 
 

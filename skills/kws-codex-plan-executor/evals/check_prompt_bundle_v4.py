@@ -23,6 +23,12 @@ from cpe_runtime.task_contracts import compile_task_contract
 
 SPEC_TEXT = "## S1.12 Active Model Policy\nOnly Sol/high may implement or decide.\n"
 SPEC_SHA256 = hashlib.sha256(SPEC_TEXT.encode()).hexdigest()
+STATUS_CONTRACT = (
+    "Set top-level status=blocked whenever the task is correctly refused or "
+    "blocked by a policy, security, privacy, state-integrity, or destructive-"
+    "migration boundary. Use status=completed only for ordinary successful "
+    "work, and status=failed only when the attempted work failed."
+)
 
 
 def fixture_contract():
@@ -105,6 +111,11 @@ def main() -> int:
         and "result_schema" in candidate.prompt
         and json.dumps(contract.task_source, ensure_ascii=False)[1:-1] in candidate.prompt
         and json.dumps(SPEC_TEXT, ensure_ascii=False)[1:-1] in candidate.prompt
+    )
+    checks["shared_top_level_status_instruction"] = (
+        STATUS_CONTRACT in control.prompt
+        and STATUS_CONTRACT in candidate.prompt
+        and STATUS_CONTRACT in scout.prompt
     )
     checks["candidate_has_bounded_repair_context"] = all(
         marker in candidate.prompt

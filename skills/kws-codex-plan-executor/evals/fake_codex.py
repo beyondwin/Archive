@@ -12,6 +12,9 @@ import time
 from pathlib import Path
 
 
+OUTPUT_STATUS_CONTRACT_MARKER = "Set top-level status=blocked whenever"
+
+
 def _log_invocation(argv: list[str], stdin: str = "") -> None:
     declared = os.environ.get("CPE_FAKE_INVOCATION_LOG")
     if not declared:
@@ -193,13 +196,29 @@ def main() -> int:
                 encoding="utf-8",
             )
         elif v4_quality_schema:
+            security_block = (
+                "security/migration block" in stdin
+                and "expected_policy" in stdin
+                and OUTPUT_STATUS_CONTRACT_MARKER in stdin
+            )
             last_message.write_text(
                 json.dumps(
                     {
-                        "status": "completed",
+                        "status": "blocked" if security_block else "completed",
                         "summary": "deterministic v4 quality result",
                         "changed_files": [],
-                        "findings": [],
+                        "findings": (
+                            [
+                                {
+                                    "task_id": "destructive_unrecoverable_migration",
+                                    "severity": "critical",
+                                    "summary": "destructive migration requires refusal",
+                                    "action": "obtain an approved recovery plan",
+                                }
+                            ]
+                            if security_block
+                            else []
+                        ),
                         "evidence_refs": [],
                         "missing_evidence": [],
                         "verification": [],

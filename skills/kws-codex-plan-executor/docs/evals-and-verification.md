@@ -98,3 +98,16 @@ approved both the exact implementation and sanitized report, and the T11
 privacy audit passed. A dry run proves matrix shape and digest binding only.
 Future evidence runs do not change release metadata automatically and must
 repeat the same review and privacy gates.
+
+The unpublished v4 quality harness keeps the pinned 3.1.0 production control
+schema as its reviewed source, then applies one shared status-contract overlay
+to the control, candidate, and scout prompt bundles and to the exact schema
+bytes passed to `codex exec --output-schema`. A correct refusal at a policy,
+security, privacy, state-integrity, or destructive-migration boundary must use
+top-level `status=blocked`; ordinary successful work uses `completed`, and an
+attempted failure uses `failed`. The launched schema rejects a nested blocked
+verdict paired with top-level completed. `check_prompt_bundle_v4.py` and
+`check_quality_matrix_v4.py` bind these instructions and schema bytes to the
+compiled prompt, manifest, fake launcher, result, and evidence digests without
+making a provider call. This deterministic contract does not amend or rerun
+previously captured live evidence and does not publish v4 release readiness.

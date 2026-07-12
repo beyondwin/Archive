@@ -916,3 +916,46 @@ live quality gate and fresh Graphify output remain pending. The current runner
 must receive independent review, then complete the exact matrix and produce a
 separately reviewed sanitized report with `release_gate.passed=true` before any
 paid-live closeout.
+
+## 2026-07-12 Asia/Seoul - v4 output-status contract fix
+
+Branch and basis: `codex/cpe-v4-autonomous-efficient-executor-continuation` at
+`6cb582508f767ca03782196f55c030033e5a40d6` plus the focused pre-commit fix.
+
+Scope: retained the digest-verified 3.1.0 production-control schema as the
+pinned source and added one shared v4 output-status overlay and instruction for
+control, candidate, and scout bundles. Correct refusals at policy, security,
+privacy, state-integrity, or destructive-migration boundaries require
+top-level `blocked`; a nested blocked verdict cannot pair with top-level
+completed. No oracle, release threshold, captured evidence, or release metadata
+was changed.
+
+Commands and results:
+
+- TDD RED: `python3 evals/check_prompt_bundle_v4.py` exited 1 with only
+  `shared_top_level_status_instruction=false`.
+- TDD RED: `python3 evals/check_quality_matrix_v4.py` exited 1 because the exact
+  launched schema had no status-contract description; the pre-fix schema also
+  accepted completed plus nested blocked.
+- Fake-boundary RED: the same quality check exited 1 because both exact
+  security/migration control and candidate prompts still produced top-level
+  completed results instead of the required blocked result.
+- Task 7 focused checks (`check_model_policy.py`,
+  `check_prompt_bundle_v4.py`, and `check_prompt.py --real-plan`): exit 0.
+- Task 8 focused checks (`check_quality_matrix_v4.py`, ledger, oracle, and live
+  runner checks): exit 0. The quality check exercised exact launched schema
+  bytes and the fake Codex CLI only.
+- Task 9 focused checks (`check_cpe_v4_e2e.py` and
+  `check_cpe_v4_release_evidence.py` self-check): exit 0.
+- `./evals/run.sh`: exit 0; maintained checks passed with paid execution
+  skipped, not approved.
+- `python3 evals/check_docs_contract.py`, full Python `py_compile`,
+  `bash -n evals/run.sh`, and `python3 scripts/cpe.py --help`: exit 0.
+- repository `bun run check`: exit 0; TypeScript build and test suite passed.
+- `git diff --check`: exit 0.
+
+Credentialed/provider calls: zero. Existing live evidence and its failed
+aggregate were read only through sanitized result surfaces and were not
+modified or rerun. Residual risk: a corrected live matrix and Waygent dogfood
+remain separate, explicitly unauthorized follow-up work; this deterministic fix
+does not claim v4 release readiness.
