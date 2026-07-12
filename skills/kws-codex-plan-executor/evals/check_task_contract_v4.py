@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import operator
 import sys
 import tempfile
 from dataclasses import FrozenInstanceError
@@ -84,6 +85,25 @@ def _expect_rejection(payload: dict[str, object], expected: str, *, canonical: b
     return False
 
 
+def _nested_mutation_is_blocked(path: str) -> bool:
+    contract = compile_fixture("20-v4-lossless-plan.md")
+    body_before = contract.body()
+    digest_before = contract.contract_sha256
+    try:
+        if path == "spec_sections":
+            operator.setitem(contract.spec_sections[0], "text", "tampered")
+        elif path == "source_hashes":
+            operator.setitem(contract.source_hashes, "plan", "0" * 64)
+        elif path == "nested_source_hashes":
+            spec_hashes = contract.source_hashes["spec_sections"]
+            operator.setitem(spec_hashes, "S1.6", "0" * 64)  # type: ignore[arg-type]
+        else:
+            raise AssertionError(f"unknown mutation path: {path}")
+    except TypeError:
+        return contract.body() == body_before and contract.contract_sha256 == digest_before
+    return False
+
+
 def main() -> int:
     checks: dict[str, bool] = {}
     contract = compile_fixture("20-v4-lossless-plan.md")
@@ -119,6 +139,11 @@ def main() -> int:
         checks["contract_is_frozen"] = True
     else:
         checks["contract_is_frozen"] = False
+    checks["spec_sections_are_deeply_immutable"] = _nested_mutation_is_blocked("spec_sections")
+    checks["source_hashes_are_deeply_immutable"] = _nested_mutation_is_blocked("source_hashes")
+    checks["nested_source_hashes_are_deeply_immutable"] = _nested_mutation_is_blocked(
+        "nested_source_hashes"
+    )
 
     task = {
         "id": contract.task_id,
