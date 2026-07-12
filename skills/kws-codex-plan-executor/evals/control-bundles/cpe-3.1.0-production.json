@@ -4,6 +4,7 @@
   "scheduler_sha256": "de9897c9956748355c78625dde1b6adddb511afa332f3937bb3e509ff10f6990",
   "packet_source_sha256": "8ec8a837d509af23143da0f18bb45318fc00e8ea90b6d5e0ee4addf6cbdf26b7",
   "output_schema_sha256": "9101db72c34a58b3fbc68235cb5a6ea80e6b464dd98f83d7c7dc8cec3960beb5",
+  "normalized_production_input_sha256": "00bf67a13ca907cec3cf8389d1536a5d497b262e0290396e2e414dff9f3b8009",
   "scheduler_instruction_sha256": "2bffa31c4ba641c441e4ced88141cb29c9e9a9bb724863acce858c3ad6d9feb7",
   "packet_sha256": "e05b51de855bbdc6ce37510eda920bda51adcb0016291e374348bd11ad8fcfd9",
   "normalized_production_input": {
@@ -20,7 +21,11 @@
         "top_level_missing_evidence_must_equal_verdict_missing_evidence": false,
         "guidance": "This role cannot issue a verdict; return verdict=null."
       },
-      "canonical_runtime_validation": "python3 $WORKTREE/skills/kws-codex-plan-executor/scripts/validate_state.py $RUN_DIR",
+      "canonical_runtime_validation": {
+        "authority": "current_host_cpe_runtime",
+        "command": "python3 $WORKTREE/skills/kws-codex-plan-executor/scripts/validate_state.py $RUN_DIR",
+        "guidance": "Use this current host-runtime command for canonical run validation. Do not substitute a validator copied into the execution worktree."
+      },
       "prior_task_evidence": "$PRIOR_TASK_EVIDENCE"
     },
     "packet_bytes": "{\"evidence_requirements\":[\"changed_files\",\"findings\",\"evidence_refs\",\"missing_evidence\",\"verification\"],\"execution_contract\":{\"acceptance_command_or_honest_substitute\":\"python3 check_prompt.py\",\"allowed_edits\":[\"src/prompt.py\"],\"files_to_inspect\":[\"src/prompt.py\"],\"forbidden_edits\":[\"events.jsonl\"],\"scope\":\"bounded task scope\"},\"required_methods\":[\"using-superpowers\",\"test-driven-development\"],\"role_policy\":{\"final_review\":{\"product_write\":false,\"read_only\":true,\"verdict_capable\":true},\"implementation\":{\"product_write\":true,\"read_only\":false,\"verdict_capable\":false},\"repair\":{\"product_write\":true,\"read_only\":false,\"verdict_capable\":false},\"scout\":{\"product_write\":false,\"read_only\":true,\"verdict_capable\":false},\"task_review\":{\"product_write\":false,\"read_only\":true,\"verdict_capable\":true},\"verification\":{\"product_write\":false,\"read_only\":true,\"verdict_capable\":true}},\"schema_version\":\"3.1\",\"source_hashes\":{\"plan\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"spec_sections\":{\"S1.12\":\"69dbcb3e9656ae72bc9d8152279e74d165d59848ae59b74a49c480ee92f04394\"}},\"spec_sections\":[{\"id\":\"S1.12\",\"sha256\":\"69dbcb3e9656ae72bc9d8152279e74d165d59848ae59b74a49c480ee92f04394\",\"text\":\"## S1.12 Active Model Policy\\nOnly Sol/high may implement or decide.\\n\"}],\"task\":{\"acceptance_command\":\"python3 check_prompt.py\",\"execution_contract\":{\"acceptance_command\":\"python3 check_prompt.py\",\"allowed_paths\":[\"src/prompt.py\"],\"forbidden_paths\":[\"events.jsonl\"]},\"file_claims\":[\"src/prompt.py\"],\"id\":\"task_7_control\",\"source_hashes\":{\"plan\":\"1111111111111111111111111111111111111111111111111111111111111111\",\"spec_sections\":{\"S1.12\":\"69dbcb3e9656ae72bc9d8152279e74d165d59848ae59b74a49c480ee92f04394\"}},\"spec_refs\":[\"S1.12\"],\"title\":\"Production prompt bundle control\"},\"task_id\":\"task_7_control\"}\n",
