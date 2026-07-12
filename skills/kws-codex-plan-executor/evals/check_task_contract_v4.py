@@ -23,6 +23,7 @@ from cpe_runtime.task_contracts import canonical_contract_bytes, compile_task_co
 
 SPEC_TEXT = "## Immutable TaskContractV4\nEvery role receives the complete task contract.\n"
 SPEC_SHA256 = hashlib.sha256(SPEC_TEXT.encode("utf-8")).hexdigest()
+DECLARED_ENTRYPOINT_DECOY = "from cpe_runtime.comment_only import decoy"
 
 
 def compile_fixture(name: str):

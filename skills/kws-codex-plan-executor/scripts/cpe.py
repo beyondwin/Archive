@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -1236,7 +1237,13 @@ def supervise_v4_run(
     min_polls: int = 1,
     one_pass: bool = False,
 ) -> int:
-    if poll_interval < 0 or timeout < 0 or min_polls < 1:
+    if (
+        not math.isfinite(poll_interval)
+        or not math.isfinite(timeout)
+        or poll_interval < 0
+        or timeout < 0
+        or min_polls < 1
+    ):
         return _structured_resume_failure(run_id, "supervise_options_invalid")
     deadline = time.monotonic() + timeout
     polls = 0
