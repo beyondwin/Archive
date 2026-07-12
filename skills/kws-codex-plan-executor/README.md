@@ -1,16 +1,16 @@
-# KWS Codex Plan Executor 3.0.1
+# KWS Codex Plan Executor 3.1.0
 
 CPE v3 executes implementation plans in isolated git worktrees and records each
 durable transition as a hash-chained event. It remains independent from
 Waygent. `events.jsonl` is authoritative; `state.json` is a rebuildable
 projection for resume and inspection.
 
-Published evidence state: **deterministic-ready; paid-live-pending**. The cost-free
-integrity suite now exercises the audited fail-closed boundaries. The guarded
-runner and exact four-treatment, eight-case fixtures are checked in, but the
-credentialed ChatGPT subscription matrix has not run. It still requires
-explicit subscription-usage confirmation and a reviewed passing report before
-paid-live release closeout is claimed.
+Published evidence state: **deterministic-ready; paid-live-verified**. The
+cost-free integrity suite exercises the audited fail-closed boundaries, and the
+reviewed four-treatment, eight-case ChatGPT subscription matrix completed all
+25 credentialed calls and seven expected policy failures with the unchanged
+release gate passing. The tracked privacy audit also passed; account-side USD
+cost attribution remains unavailable.
 
 ## Quick Start
 
@@ -50,9 +50,9 @@ python3 evals/live_model_runner.py dry-run \
 
 `start` and `resume` are release-evidence operations, not normal CPE execution
 commands. They require `--confirm-subscription-usage`, an external evidence
-directory, ChatGPT login (API-key authentication is rejected), and independent
-review of the exact implementation and sanitized report. See
-[evals-and-verification.md](docs/evals-and-verification.md).
+directory, and ChatGPT login; API-key authentication is rejected. Any future
+matrix must again receive independent review of the exact implementation and
+sanitized report. See [evals-and-verification.md](docs/evals-and-verification.md).
 
 ## Contract Summary
 

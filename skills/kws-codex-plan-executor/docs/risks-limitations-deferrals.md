@@ -1,25 +1,14 @@
 # Risks, Limitations, And Deferrals
 
-- Published evidence state is **deterministic-ready; paid-live-pending**. Audited
-  deterministic integrity gaps are closed by the current cost-free suite. The
-  guarded four-treatment, eight-case subscription runner completed its exact
-  32-slot matrix with 25 credentialed calls and seven policy outcomes. The
-  first unchanged release gate failed on missing CLI model attestation and
-  context growth. A checkpointed remediation then reached 100% model
-  attestation, but its replacement matrix still failed: Sol v3 reduced context
-  by only 2.38%, regressed task success, and produced one critical regression
-  when a test command left untracked bytecode. No live quality or
-  context-reduction release claim is approved, and `release_ready=false`
-  remains required until new implementation evidence passes the same thresholds.
-- A later auth-only-home and stable-prefix remediation removed those quality
-  regressions: the final matrix reached 100% task completion, evidence,
-  attestation, isolation, and drift-free rates with zero critical regressions.
-  It remains release-blocked solely because Sol v3 reduced context by 10.61%,
-  below the unchanged 25% requirement.
+- Published evidence state is **deterministic-ready; paid-live-verified**.
+  Audited deterministic integrity gaps are closed by the current cost-free
+  suite, and the reviewed four-treatment, eight-case subscription matrix passed
+  the unchanged release gate. The tracked privacy audit passed and
+  `release_ready=true`.
 - The v3 deterministic harness uses a maintained inventory, public CLI fixture
   repositories, fake providers, and an isolated oracle. This covers behavior,
-  while the completed live ledger records real provider quality and latency.
-  It does not turn a measured failed release gate into release evidence.
+  not real provider quality or latency; the reviewed live matrix supplies the
+  release evidence for version 3.1.0.
 - The live runner can verify ChatGPT login and remove API-key credentials from
   child environments, but it cannot prove which account-side subscription or
   existing-credit bucket a call consumed. Subscription reports therefore keep
@@ -30,11 +19,12 @@
   aggregation. Resume is explicit, and failed slots are not retried without
   `--retry-failed`.
 - Live evidence is stored outside the repository and is not a release claim by
-  itself. The exact implementation and sanitized report require independent
-  review before a follow-up may change version, status, or `release_ready`.
-- The terminal ledger and sanitized summary passed a privacy audit: tracked
-  evidence contains no raw transcript, absolute user-home path, or oracle path.
-  Raw per-slot execution artifacts remain external and untracked.
+  itself. Version 3.1.0 was published only after independent implementation and
+  sanitized-report review plus a tracked privacy audit; future evidence must
+  repeat those gates before changing version, status, or `release_ready`.
+- Raw per-slot transcripts, user-home paths, temporary execution paths, and
+  oracle paths remain external and untracked; sanitized release evidence
+  contains none of them.
 - V2 runs cannot resume or migrate. Consumers preserve them and return
   `unsupported_schema`; operators must start a new v3 run.
 - Sol/high unavailability or missing actual-model attestation blocks core work;

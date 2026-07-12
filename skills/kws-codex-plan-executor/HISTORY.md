@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 3.1.0 - 2026-07-12 (deterministic-ready; paid-live-verified)
+
 - Added the guarded ChatGPT subscription live-matrix evidence path: exact
   32-slot compilation, eight deterministic fixture repositories and hidden
   oracles, 25 isolated credentialed turns, seven expected policy failures,
@@ -10,11 +12,11 @@
 - Added the reviewed Sol v3 live-worker context packet: a bounded tracked-file
   snapshot plus runner-attested baseline subprocess evidence. Historical
   treatments remain unchanged and hidden oracle data stays outside the packet.
-- Kept the published version at 3.0.1 and the release tuple at
-  `deterministic-ready; paid-live-pending`. The runner is available for the
-  approved evidence run, but no live-quality or release-readiness claim is made
-  until that exact implementation and its sanitized passing report receive
-  independent review.
+- Published the reviewed live evidence after all 25 credentialed calls and
+  seven expected policy failures completed, the unchanged release gate passed,
+  and the tracked privacy audit found no forbidden content. Version 3.1.0 uses
+  `deterministic-ready; paid-live-verified` with `release_ready=true`; direct
+  USD cost attribution remains unavailable at the account-side boundary.
 
 ## 3.0.1 - 2026-07-11 (deterministic-ready; paid-live-pending)
 
