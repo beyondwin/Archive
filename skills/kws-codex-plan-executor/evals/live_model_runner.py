@@ -34,6 +34,8 @@ from live_migration.ledger import (
     register_release_run,
     replay_run,
 )
+from live_migration.predecessor import attest_predecessor_release
+from live_migration.privacy import audit_sanitized_payload
 from live_model_migration import aggregate_run
 from live_migration.runner import (
     API_KEY_ENV_NAMES,
@@ -93,6 +95,9 @@ def _parser() -> argparse.ArgumentParser:
     aggregate = commands.add_parser("aggregate")
     aggregate.add_argument("--run-dir", type=Path, required=True)
     aggregate.add_argument("--output", type=Path, required=True)
+    predecessor = commands.add_parser("attest-predecessor")
+    predecessor.add_argument("--predecessor-root", type=Path, required=True)
+    predecessor.add_argument("--evidence-root", type=Path, required=True)
     return parser
 
 
@@ -692,15 +697,15 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
 
 
 def _privacy_audit(payload: dict[str, object]) -> dict[str, object]:
-    serialized = canonical_json(payload).decode("utf-8")
-    patterns = {
-        "absolute_home_path": r"(?:/Users/|/home/|/private/tmp/|/var/folders/)",
-        "credential_material": r"(?:OPENAI_API_KEY|CODEX_API_KEY|auth\.json)",
-        "hidden_oracle_path": r"(?:^|[\"/])oracle(?:[\"/])",
-        "transcript_surface": r"transcripts?",
-    }
-    failures = [name for name, pattern in patterns.items() if re.search(pattern, serialized, re.I)]
-    return {"passed": not failures, "failures": failures}
+    return audit_sanitized_payload(payload)
+
+
+def _attest_predecessor(args: argparse.Namespace) -> dict[str, object]:
+    target = args.evidence_root.expanduser().resolve()
+    predecessor = args.predecessor_root.expanduser().resolve()
+    _assert_execution_root_safe(target)
+    _assert_execution_root_safe(predecessor)
+    return attest_predecessor_release(target, predecessor, REPOSITORY_ROOT)
 
 
 def _aggregate(args: argparse.Namespace) -> dict[str, object]:
@@ -795,6 +800,8 @@ def main(argv: list[str] | None = None) -> int:
             result = _start(args, parser)
         elif args.command == "resume":
             result = _resume(args, parser)
+        elif args.command == "attest-predecessor":
+            result = _attest_predecessor(args)
         else:
             result = _aggregate(args)
     except (

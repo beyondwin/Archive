@@ -25,6 +25,11 @@
 - Raw per-slot transcripts, user-home paths, temporary execution paths, and
   oracle paths remain external and untracked; sanitized release evidence
   contains none of them.
+- The v4 corrected-run predecessor importer proves continuity only from the
+  exact filesystem root it validates at import time. It is not a signature or
+  remote transparency service. A tampered root fails validation, while the new
+  root retains only source digests and implementation identity needed to
+  enforce the one-corrected-run cap.
 - V2 runs cannot resume or migrate. Consumers preserve them and return
   `unsupported_schema`; operators must start a new v3 run.
 - Sol/high unavailability or missing actual-model attestation blocks core work;

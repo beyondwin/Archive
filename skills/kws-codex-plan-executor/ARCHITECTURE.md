@@ -108,3 +108,14 @@ only checked-in aggregator for subscription results. The sanitized report keeps
 observe which account-side subscription or existing-credit bucket was used.
 The runner and aggregator cannot change release metadata; a separate reviewed
 follow-up may do so only after `release_gate.passed=true`.
+
+The unpublished v4 release lineage also supports a privacy-safe cross-root
+predecessor attestation. The importer validates the predecessor event chain,
+stored projection, immutable manifest and child ledger, regenerated aggregate,
+privacy verdict, sanitized checkpoint artifacts, and implementation Git
+identity in place. Artifact bytes are fsynced before the append-only event, so
+same-input recovery is idempotent after a crash. The corrected root stores only
+domain-separated digests, counts, and checkpoint identity; it does not copy
+the predecessor manifest or any slot, oracle, output, session, or auth bytes.
+Projection counts the attested terminal failure toward the initial-plus-one-
+corrected cap.

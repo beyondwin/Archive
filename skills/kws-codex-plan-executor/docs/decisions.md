@@ -21,3 +21,4 @@
 | Live billing | API-key authentication is rejected; subscription usage requires explicit confirmation, while account-side cost attribution remains externally unobservable and is recorded as `cost_usd=null` |
 | Release | 3.1.0 is deterministic-ready and paid-live-verified after the audited cost-free closure, reviewed passing live report, and privacy audit; `release_ready=true` |
 | Closeout | Only the checked-in aggregator may evaluate a complete ledger; independent review of the exact implementation and sanitized report plus a passing privacy audit precede a minor-version or release-status change |
+| V4 corrected lineage | A new evidence root may attest exactly one validated terminal failed predecessor through digest-only, domain-separated evidence; oracle-bearing manifests and child evidence are never copied |

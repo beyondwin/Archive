@@ -40,6 +40,9 @@ python3 scripts/analyze_recent_runs.py --codex-home ~/.codex --recent 20
 
 python3 evals/live_model_runner.py dry-run \
   --billing-mode chatgpt_subscription --output /tmp/cpe-live-plan.json
+python3 evals/live_model_runner.py attest-predecessor \
+  --predecessor-root /absolute/failed-evidence-root \
+  --evidence-root /absolute/corrected-evidence-root
 ```
 
 `run` and `resume` are execution surfaces. `export` in `prompt` or `handoff`
@@ -49,6 +52,12 @@ artifacts. A v2 schema is reported as `unsupported_schema` and never rewritten.
 `evals/live_model_runner.py` is separate from those public plan-execution
 surfaces and requires explicit subscription-usage confirmation before any
 credentialed call.
+
+The v4-only `attest-predecessor` maintenance command is cost-free. It validates
+one terminal failed predecessor root in place, then stores only a
+domain-separated digest attestation in a fresh corrected root. It never copies
+the predecessor manifest, slot evidence, output, session, authentication, or
+oracle-bearing path bytes.
 
 ## Fixed Routing
 

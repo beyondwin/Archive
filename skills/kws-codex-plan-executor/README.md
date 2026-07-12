@@ -54,6 +54,13 @@ directory, and ChatGPT login; API-key authentication is rejected. Any future
 matrix must again receive independent review of the exact implementation and
 sanitized report. See [evals-and-verification.md](docs/evals-and-verification.md).
 
+For an explicitly authorized v4 corrected run in a new evidence root, first
+use `live_model_runner.py attest-predecessor`. The command makes no provider
+call: it validates the old failed ledger, projections, manifests, aggregate,
+privacy verdict, and Git checkpoint in place, then persists only digest-bound
+lineage. The corrected registration must use a changed checkpoint, and a third
+full run is rejected before authentication or provider preflight.
+
 ## Contract Summary
 
 - Sol/high is fixed for all core and verdict-capable attempts.
