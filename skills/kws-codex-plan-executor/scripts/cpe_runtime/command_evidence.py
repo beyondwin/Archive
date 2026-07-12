@@ -85,7 +85,18 @@ def _command_metadata(
     if not tokens:
         return "<untrusted-command>", "unsafe", digest
     executable = Path(tokens[0]).name.lower()
-    if executable in {"sh", "bash", "zsh", "fish", "cmd", "powershell", "pwsh"}:
+    if executable in {
+        "sh",
+        "bash",
+        "zsh",
+        "fish",
+        "cmd",
+        "powershell",
+        "pwsh",
+        "env",
+        "xargs",
+        "find",
+    }:
         return "<shell-wrapper>", "unsafe", digest
 
     approved = digest in approved_test_digests
@@ -100,26 +111,13 @@ def _command_metadata(
     if executable in {"python", "python3"}:
         if approved and len(tokens) > 2 and tokens[1] == "-m" and tokens[2] in {"pytest", "unittest"}:
             return f"{executable} -m test-runner <args>", "test", digest
-        if approved:
+        if (
+            approved
+            and len(tokens) > 1
+            and not tokens[1].startswith("-")
+            and Path(tokens[1]).suffix.lower() == ".py"
+        ):
             return f"{executable} test-script <args>", "test", digest
-    if approved:
-        return "approved-test-command <args>", "test", digest
-
-    if executable in {"pwd", "ls", "rg", "grep", "cat", "head", "tail", "wc"}:
-        return f"{executable} <args>", "read_only", digest
-    if executable == "git" and len(tokens) > 1 and tokens[1] in {
-        "status",
-        "diff",
-        "log",
-        "show",
-        "rev-parse",
-        "ls-files",
-    }:
-        return f"git {tokens[1]} <args>", "read_only", digest
-    if executable == "sed" and "-n" in tokens[1:] and not any(
-        token == "-i" or token.startswith("-i") for token in tokens[1:]
-    ):
-        return "sed -n <args>", "read_only", digest
     return "<untrusted-command>", "unsafe", digest
 
 
