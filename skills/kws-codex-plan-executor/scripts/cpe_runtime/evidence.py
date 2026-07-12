@@ -84,14 +84,33 @@ def put_json(run_dir: Path, kind: str, payload: object) -> EvidenceRef:
     return EvidenceRef(kind, relative.as_posix(), digest)
 
 
-def put_method_evidence(run_dir: Path, evidence: object) -> EvidenceRef:
+def put_method_evidence(
+    run_dir: Path,
+    evidence: object,
+    *,
+    task_id: str,
+    packet_sha256: str,
+    contract_sha256: str,
+) -> dict[str, str]:
     """Persist only the canonical, sanitized method-evidence projection."""
 
     from .command_evidence import MethodEvidence, method_evidence_payload
 
     if not isinstance(evidence, MethodEvidence):
         raise EvidenceError("invalid method evidence")
-    return put_json(run_dir, "method_evidence", method_evidence_payload(evidence))
+    payload = {
+        **method_evidence_payload(evidence),
+        "task_id": task_id,
+        "packet_sha256": packet_sha256,
+        "contract_sha256": contract_sha256,
+    }
+    ref = put_json(run_dir, "method_evidence", payload).as_dict()
+    return {
+        **ref,
+        "task_id": task_id,
+        "packet_sha256": packet_sha256,
+        "contract_sha256": contract_sha256,
+    }
 
 
 def coerce_ref(value: EvidenceRef | dict[str, object]) -> EvidenceRef:
@@ -133,4 +152,41 @@ def verify_ref(run_dir: Path, value: EvidenceRef | dict[str, object]) -> list[st
         return ["evidence missing"]
     if hashlib.sha256(resolved.read_bytes()).hexdigest() != ref.sha256:
         return ["evidence digest mismatch"]
+    return []
+
+
+def verify_method_evidence_ref(
+    run_dir: Path,
+    value: object,
+    *,
+    task_id: str,
+    packet_sha256: str,
+    contract_sha256: str,
+) -> list[str]:
+    """Re-open method evidence and bind it to its immutable authorization."""
+
+    if not isinstance(value, dict):
+        return ["method evidence reference invalid"]
+    problems = verify_ref(run_dir, value)
+    if problems:
+        return problems
+    expected = {
+        "task_id": task_id,
+        "packet_sha256": packet_sha256,
+        "contract_sha256": contract_sha256,
+    }
+    if value.get("kind") != "method_evidence" or any(
+        value.get(field) != expected_value for field, expected_value in expected.items()
+    ):
+        return ["method evidence authorization mismatch"]
+    try:
+        payload = json.loads((run_dir.resolve() / str(value["path"])).read_text(encoding="utf-8"))
+    except (KeyError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return ["method evidence invalid"]
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != "cpe.method-evidence.v4"
+        or any(payload.get(field) != expected_value for field, expected_value in expected.items())
+    ):
+        return ["method evidence authorization mismatch"]
     return []

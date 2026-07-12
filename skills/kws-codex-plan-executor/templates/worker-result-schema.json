@@ -40,12 +40,23 @@
         {"type": "null"},
         {
           "type": "object",
-          "required": ["kind", "path", "sha256", "media_type"],
+          "required": [
+            "kind",
+            "path",
+            "sha256",
+            "media_type",
+            "task_id",
+            "packet_sha256",
+            "contract_sha256"
+          ],
           "properties": {
             "kind": {"const": "method_evidence"},
             "path": {"type": "string"},
             "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-            "media_type": {"const": "application/json"}
+            "media_type": {"const": "application/json"},
+            "task_id": {"type": "string", "minLength": 1},
+            "packet_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "contract_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
           },
           "additionalProperties": false
         }

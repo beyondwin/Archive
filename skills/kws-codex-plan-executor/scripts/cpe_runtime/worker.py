@@ -94,7 +94,7 @@ def _validate_result(payload: object, *, role: str, revision: int) -> dict[str, 
     return payload
 
 
-def _request_task_type(request: WorkerRequest) -> str:
+def _request_method_context(request: WorkerRequest) -> dict[str, object]:
     from .task_contracts import TASK_TYPES
 
     if not request.packet_path:
@@ -110,7 +110,29 @@ def _request_task_type(request: WorkerRequest) -> str:
     task_type = contract.get("task_type") if isinstance(contract, dict) else None
     if not isinstance(task_type, str) or task_type not in TASK_TYPES:
         raise WorkerError("method_contract_task_type_missing")
-    return task_type
+    packet_task_id = packet.get("task_id") if isinstance(packet, dict) else None
+    contract_task_id = contract.get("task_id") if isinstance(contract, dict) else None
+    if packet_task_id != request.task_id or contract_task_id != request.task_id:
+        raise WorkerError("method_contract_task_id_mismatch")
+    contract_sha256 = packet.get("task_contract_sha256") if isinstance(packet, dict) else None
+    if (
+        not isinstance(contract_sha256, str)
+        or len(contract_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in contract_sha256)
+    ):
+        raise WorkerError("method_contract_digest_missing")
+    acceptance_commands = contract.get("acceptance_commands") if isinstance(contract, dict) else None
+    if not isinstance(acceptance_commands, list) or not acceptance_commands or any(
+        not isinstance(command, str) or not command.strip() for command in acceptance_commands
+    ):
+        raise WorkerError("method_contract_acceptance_missing")
+    return {
+        "task_type": task_type,
+        "task_id": request.task_id,
+        "packet_sha256": request.packet_sha256,
+        "contract_sha256": contract_sha256,
+        "acceptance_commands": tuple(acceptance_commands),
+    }
 
 
 def _method_evidence_run_dir(request: WorkerRequest) -> Path:
@@ -135,17 +157,29 @@ def _bind_method_evidence(
         "repair",
     }:
         return payload
-    task_type = _request_task_type(request)
+    context = _request_method_context(request)
+    task_type = str(context["task_type"])
     if task_type != "tdd_implementation":
         return payload
     try:
         decoded = json.loads(raw_events)
         events = decoded if isinstance(decoded, list) else []
-        evidence = build_method_evidence(task_type, normalize_codex_items(events))
+        acceptance_commands = context["acceptance_commands"]
+        if not isinstance(acceptance_commands, tuple):
+            raise MethodEvidenceError("acceptance_commands_invalid")
+        evidence = build_method_evidence(
+            task_type,
+            normalize_codex_items(events, test_commands=acceptance_commands),
+        )
     except (json.JSONDecodeError, MethodEvidenceError) as exc:
         raise WorkerError(f"method_contract_failed:{exc}") from exc
-    ref = put_method_evidence(_method_evidence_run_dir(request), evidence)
-    payload["method_evidence_ref"] = ref.as_dict()
+    payload["method_evidence_ref"] = put_method_evidence(
+        _method_evidence_run_dir(request),
+        evidence,
+        task_id=str(context["task_id"]),
+        packet_sha256=str(context["packet_sha256"]),
+        contract_sha256=str(context["contract_sha256"]),
+    )
     return payload
 
 
