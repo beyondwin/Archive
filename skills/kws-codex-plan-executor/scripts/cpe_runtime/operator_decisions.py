@@ -3,6 +3,26 @@ from __future__ import annotations
 import json
 from pathlib import Path, PurePosixPath
 
+from .autonomy import AutonomyDecision
+
+
+def decision_event_payload(decision: AutonomyDecision) -> dict[str, object]:
+    """Convert one immutable autonomy decision to the durable v4 event shape."""
+
+    if not isinstance(decision, AutonomyDecision):
+        raise TypeError("autonomy_decision_required")
+    return {
+        "decision_id": decision.decision_id,
+        "selected_action": decision.selected,
+        "alternatives": list(decision.alternatives),
+        "basis": decision.basis,
+        "confidence": decision.confidence,
+        "reversible": decision.reversible,
+        "affected_tasks": list(decision.affected_tasks),
+        "approval_basis": decision.approval_basis,
+        "user_input_required": decision.user_input_required,
+    }
+
 
 def approved_scope_claims(
     run_dir: Path,
