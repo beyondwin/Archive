@@ -125,7 +125,26 @@ def main() -> int:
         raise SystemExit("fake codex rejected schema or reasoning")
     schema_payload = json.loads(schema.read_text(encoding="utf-8"))
     required = set(schema_payload.get("required", []))
-    live_schema = {"summary", "finding_ids", "fact_ids", "block_ids", "changed_files"}.issubset(required)
+    legacy_live_schema = {
+        "summary",
+        "finding_ids",
+        "fact_ids",
+        "block_ids",
+        "changed_files",
+    }.issubset(required)
+    v4_quality_schema = {
+        "status",
+        "summary",
+        "changed_files",
+        "findings",
+        "evidence_refs",
+        "missing_evidence",
+        "verification",
+        "verdict",
+        "root_cause_key",
+        "failure_category",
+    }.issubset(required)
+    live_schema = legacy_live_schema or v4_quality_schema
     if "--ephemeral" in argv or live_schema:
         behavior = os.environ.get("CPE_FAKE_LIVE_BEHAVIOR", "success")
         delay_seconds = float(os.environ.get("CPE_FAKE_LIVE_DELAY_SECONDS", "0"))
@@ -157,7 +176,7 @@ def main() -> int:
                 json.dumps({"status": "completed"}, sort_keys=True) + "\n",
                 encoding="utf-8",
             )
-        elif {"summary", "finding_ids", "fact_ids", "block_ids", "changed_files"}.issubset(required):
+        elif legacy_live_schema:
             last_message.write_text(
                 json.dumps(
                     {
@@ -167,6 +186,26 @@ def main() -> int:
                         "fact_ids": [],
                         "block_ids": [],
                         "changed_files": [],
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        elif v4_quality_schema:
+            last_message.write_text(
+                json.dumps(
+                    {
+                        "status": "completed",
+                        "summary": "deterministic v4 quality result",
+                        "changed_files": [],
+                        "findings": [],
+                        "evidence_refs": [],
+                        "missing_evidence": [],
+                        "verification": [],
+                        "verdict": None,
+                        "root_cause_key": None,
+                        "failure_category": None,
                     },
                     sort_keys=True,
                 )
