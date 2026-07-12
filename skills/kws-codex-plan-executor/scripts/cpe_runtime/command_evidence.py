@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shlex
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Iterable
@@ -18,6 +19,7 @@ class MethodEvidenceError(ValueError):
 
 MAX_COMMAND_CHARS = 2048
 MAX_OUTPUT_CHARS = 16384
+COMMAND_DIGEST_DOMAIN = b"cpe.command-observation.v4\0"
 _HOME_PATH_RE = re.compile(r"/(?:Users|home)/[^\s'\"]+(?:/[^\s'\"]*)?")
 _HIDDEN_PATH_RE = re.compile(r"[^\s'\"]*(?:\.superpowers|hidden[-_]?oracle)[^\s'\"]*", re.I)
 _SECRET_RES = (
@@ -32,6 +34,8 @@ _SECRET_RES = (
 @dataclass(frozen=True)
 class CommandObservation:
     command: str
+    command_sha256: str
+    command_kind: str
     status: str
     exit_code: int | None
     output_sha256: str
@@ -62,15 +66,79 @@ def _output_digest(value: object) -> str:
     return hashlib.sha256(sanitized.encode("utf-8")).hexdigest()
 
 
+def _command_digest(command: str) -> str:
+    return hashlib.sha256(COMMAND_DIGEST_DOMAIN + command.encode("utf-8")).hexdigest()
+
+
+def _command_metadata(
+    command: str, approved_test_digests: frozenset[str]
+) -> tuple[str, str, str]:
+    """Return allowlisted shape, mutation classification, and opaque binding."""
+
+    digest = _command_digest(command)
+    if any(marker in command for marker in ("\n", "\r", ";", "|", "&", ">", "<", "`", "$(")):
+        return "<shell-control>", "unsafe", digest
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return "<untrusted-command>", "unsafe", digest
+    if not tokens:
+        return "<untrusted-command>", "unsafe", digest
+    executable = Path(tokens[0]).name.lower()
+    if executable in {"sh", "bash", "zsh", "fish", "cmd", "powershell", "pwsh"}:
+        return "<shell-wrapper>", "unsafe", digest
+
+    approved = digest in approved_test_digests
+    if executable in {"pytest", "py.test"} and approved:
+        return "pytest <args>", "test", digest
+    if executable in {"bun", "npm", "pnpm", "yarn", "cargo", "go", "dotnet"}:
+        if approved and len(tokens) > 1 and tokens[1].lower() == "test":
+            return f"{executable} test <args>", "test", digest
+    if executable in {"make", "just", "mvn", "gradle", "gradlew"}:
+        if approved and any(token.lower() in {"test", "check"} for token in tokens[1:]):
+            return f"{executable} test-target <args>", "test", digest
+    if executable in {"python", "python3"}:
+        if approved and len(tokens) > 2 and tokens[1] == "-m" and tokens[2] in {"pytest", "unittest"}:
+            return f"{executable} -m test-runner <args>", "test", digest
+        if approved:
+            return f"{executable} test-script <args>", "test", digest
+    if approved:
+        return "approved-test-command <args>", "test", digest
+
+    if executable in {"pwd", "ls", "rg", "grep", "cat", "head", "tail", "wc"}:
+        return f"{executable} <args>", "read_only", digest
+    if executable == "git" and len(tokens) > 1 and tokens[1] in {
+        "status",
+        "diff",
+        "log",
+        "show",
+        "rev-parse",
+        "ls-files",
+    }:
+        return f"git {tokens[1]} <args>", "read_only", digest
+    if executable == "sed" and "-n" in tokens[1:] and not any(
+        token == "-i" or token.startswith("-i") for token in tokens[1:]
+    ):
+        return "sed -n <args>", "read_only", digest
+    return "<untrusted-command>", "unsafe", digest
+
+
 def _exit_code(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
-def normalize_codex_items(events: Iterable[object]) -> tuple[CommandObservation, ...]:
+def normalize_codex_items(
+    events: Iterable[object], *, test_commands: Iterable[str] = ()
+) -> tuple[CommandObservation, ...]:
     """Retain only completed command items and the first file-change boundary."""
 
     observations: list[CommandObservation] = []
     mutation_seen = False
+    approved_test_digests = frozenset(
+        _command_digest(command.strip())
+        for command in test_commands
+        if isinstance(command, str) and command.strip()
+    )
     for sequence, event in enumerate(events):
         if not isinstance(event, dict) or event.get("type") != "item.completed":
             continue
@@ -86,9 +154,14 @@ def normalize_codex_items(events: Iterable[object]) -> tuple[CommandObservation,
         raw_command = item.get("command")
         if not isinstance(raw_command, str) or not raw_command.strip():
             continue
+        command, command_kind, command_sha256 = _command_metadata(
+            raw_command.strip(), approved_test_digests
+        )
         observations.append(
             CommandObservation(
-                command=_sanitize(raw_command.strip(), limit=MAX_COMMAND_CHARS),
+                command=command[:MAX_COMMAND_CHARS],
+                command_sha256=command_sha256,
+                command_kind=command_kind,
                 status=str(item.get("status") or ""),
                 exit_code=_exit_code(item.get("exit_code")),
                 output_sha256=_output_digest(item.get("aggregated_output")),
@@ -96,6 +169,8 @@ def normalize_codex_items(events: Iterable[object]) -> tuple[CommandObservation,
                 before_first_mutation=not mutation_seen,
             )
         )
+        if command_kind == "unsafe":
+            mutation_seen = True
     return tuple(observations)
 
 
@@ -138,7 +213,10 @@ def build_method_evidence(
     red_candidates = [
         item
         for item in normalized
-        if item.before_first_mutation and item.exit_code is not None and item.exit_code != 0
+        if item.before_first_mutation
+        and item.command_kind == "test"
+        and item.exit_code is not None
+        and item.exit_code != 0
     ]
     if not red_candidates:
         raise MethodEvidenceError("tdd_red_missing_before_first_mutation")
@@ -149,7 +227,8 @@ def build_method_evidence(
             for item in normalized
             if item.sequence > red.sequence
             and not item.before_first_mutation
-            and item.command == red.command
+            and item.command_kind == "test"
+            and item.command_sha256 == red.command_sha256
             and item.exit_code == 0
         ),
         None,
