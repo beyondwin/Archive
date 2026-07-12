@@ -362,6 +362,70 @@ def capture_binary_patch(worktree: Path, changed_files: tuple[str, ...] | list[s
     return bytes(payload)
 
 
+def working_tree_changed_files(worktree: Path) -> tuple[str, ...]:
+    """Return every tracked or untracked path that differs from ``HEAD``."""
+
+    worktree = worktree.expanduser().resolve()
+    tracked = _git_result(
+        worktree,
+        ["diff", "--name-only", "--no-renames", "-z", "HEAD", "--"],
+    )
+    untracked = _git_result(
+        worktree,
+        ["ls-files", "--others", "--exclude-standard", "-z", "--"],
+    )
+    if tracked.returncode or untracked.returncode:
+        raise RuntimeError("git_candidate_scan_failed")
+    return tuple(
+        sorted(
+            {
+                os.fsdecode(item)
+                for item in tracked.stdout.split(b"\0") + untracked.stdout.split(b"\0")
+                if item
+            }
+        )
+    )
+
+
+def committed_patch_digest(
+    worktree: Path,
+    predecessor: str,
+    commit: str,
+) -> tuple[tuple[str, ...], str]:
+    """Measure a direct commit delta with a domain-separated binary digest."""
+
+    worktree = worktree.expanduser().resolve()
+    names = _git_result(
+        worktree,
+        ["diff", "--name-only", "--no-renames", "-z", predecessor, commit, "--"],
+    )
+    patch = _git_result(
+        worktree,
+        [
+            "diff",
+            "--binary",
+            "--full-index",
+            "--no-ext-diff",
+            "--no-renames",
+            predecessor,
+            commit,
+            "--",
+        ],
+    )
+    if names.returncode or patch.returncode:
+        raise RuntimeError("git_candidate_measurement_failed")
+    changed_files = tuple(
+        sorted({os.fsdecode(item) for item in names.stdout.split(b"\0") if item})
+    )
+    payload = bytearray(b"CPE-CANDIDATE-COMMIT-V1\0")
+    payload.extend(_field(b"P", predecessor.encode("ascii")))
+    payload.extend(_field(b"C", commit.encode("ascii")))
+    for path in changed_files:
+        payload.extend(_field(b"F", _path_bytes(path)))
+    payload.extend(_field(b"D", patch.stdout))
+    return changed_files, hashlib.sha256(bytes(payload)).hexdigest()
+
+
 def diff_snapshots(before: GitSnapshot, after: GitSnapshot, worktree: Path) -> GitDelta:
     before_map = dict(before.files)
     after_map = dict(after.files)
