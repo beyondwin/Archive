@@ -1,0 +1,11 @@
+{
+  "schema_version": "cpe.dogfood-contract.v4",
+  "id": "waygent-p0-task1",
+  "run_ids_created_limit": 1,
+  "model_attempts_limit": 6,
+  "same_root_repairs_limit": 2,
+  "verified_checkpoints_required": 1,
+  "elapsed_seconds_limit": 3600,
+  "source_checkout_unchanged": true,
+  "runtime_patch_allowed": false
+}

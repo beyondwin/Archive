@@ -24,35 +24,15 @@ RUNNER = EVAL_DIR / "public_cli_fixture_runner.py"
 HARNESS = EVAL_DIR / "run.sh"
 STATIC_RUNNERS = ("static_execution_runner.py", "static_prompt_runner.py")
 REQUIRED_MAINTAINED = frozenset({
-    "check_cpe_replay.py",
-    "check_codex_cli_compatibility.py",
-    "check_event_kernel.py",
-    "check_execution_runtime.py",
-    "check_fault_injection.py",
-    "check_headless_result.py",
-    "check_inspect_runs.py",
-    "check_live_matrix_compiler.py",
-    "check_live_matrix_fixtures.py",
-    "check_live_matrix_ledger.py",
-    "check_live_matrix_oracle.py",
-    "check_live_model_migration.py",
-    "check_live_model_runner.py",
-    "check_manifest_evidence.py",
-    "check_model_policy.py",
-    "check_operational_run_quality.py",
-    "check_plan_executability_audit.py",
-    "check_preflight_dispatch.py",
-    "check_recent_run_rubric.py",
-    "check_recovery_policy.py",
-    "check_repair_runs.py",
-    "check_run_diffs.py",
-    "check_run_readiness.py",
-    "check_state_reconciliation.py",
-    "check_state_schema.py",
-    "check_task_packet.py",
-    "check_validate_state_modular_parity.py",
-    "check_validation_consumer_parity.py",
-    "check_verification_bundle.py",
+    "check_task_contract_v4.py",
+    "check_checkpoint_lifecycle_v4.py",
+    "check_method_evidence_v4.py",
+    "check_autonomy_supervisor_v4.py",
+    "check_v4_state_contract.py",
+    "check_scheduler_v4.py",
+    "check_prompt_bundle_v4.py",
+    "check_quality_matrix_v4.py",
+    "check_cpe_v4_e2e.py",
 })
 
 
@@ -526,7 +506,7 @@ def _inventory_mutation_checks(payload: dict[str, object]) -> dict[str, bool]:
         },
         "required_inventory_omission_rejected": {
             **payload,
-            "checks": [entry for entry in entries if entry.get("path") != "check_execution_runtime.py"],
+            "checks": [entry for entry in entries if entry.get("path") != "check_scheduler_v4.py"],
         },
     }
     results: dict[str, bool] = {}

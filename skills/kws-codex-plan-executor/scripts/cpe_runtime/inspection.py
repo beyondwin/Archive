@@ -69,6 +69,7 @@ def inspect_run(run_dir: Path, *, completion: bool = False) -> dict[str, object]
     lifecycle = state.get("lifecycle")
     reconciliation = reconcile(run_dir, completion=completion)
     result: dict[str, object] = {
+        "schema_version": "cpe.inspection.v4",
         "run_id": manifest["run_id"],
         "classification": validation.classification,
         "passed": validation.passed,
@@ -90,6 +91,15 @@ def inspect_run(run_dir: Path, *, completion: bool = False) -> dict[str, object]
         "warnings": validation.warnings,
         "validation_checks": validation.checks or {},
         "reconciliation": reconciliation.as_dict(),
+        "current_task": state.get("current_task"),
+        "checkpoint_head": state.get("checkpoint_head"),
+        "attempt_limit": (state.get("attempt_budget") or {}).get("limit"),
+        "attempt_used": (state.get("attempt_budget") or {}).get("used"),
+        "user_input_required": lifecycle == "waiting_user",
+        "decisions": list(state.get("decisions", [])),
+        "backlog": list(state.get("backlog", [])),
+        "repair_roots": dict(state.get("repair_roots", {})),
+        "checkpoint_lineage": list(state.get("verified_checkpoints", [])),
     }
     result.update(_cost(attempts, manifest))
     return result

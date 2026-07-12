@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read-only inspection for CPE v3 runs."""
+"""Read-only inspection for clean-cut CPE v4 runs."""
 
 from __future__ import annotations
 

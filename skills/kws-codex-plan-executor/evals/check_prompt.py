@@ -66,7 +66,9 @@ def _evaluate(text: str, expected: dict[str, object]) -> tuple[dict[str, bool], 
     forbidden = [str(item) for item in expected.get("must_not_include", []) if str(item) in text]
     checks["must_include"] = not missing
     checks["must_not_include"] = not forbidden
-    checks["fixed_launcher"] = "codex exec --json --model gpt-5.6-sol" in text and 'model_reasoning_effort="high"' in text
+    checks["fixed_launcher"] = bool(
+        re.search(r"codex exec\b[^\n]*--json\b[^\n]*--model gpt-5\.6-sol\b", text)
+    ) and 'model_reasoning_effort="high"' in text
     checks["model_not_in_prompt_body"] = "gpt-5.6-" not in body
     checks["no_implementation_started_language"] = IMPLEMENTATION_STARTED_RE.search(text) is None
     failures.extend(f"missing required text: {item}" for item in missing)
@@ -119,7 +121,7 @@ def main() -> int:
     parser.add_argument("--output")
     parser.add_argument("--real-plan", action="store_true")
     args = parser.parse_args()
-    if args.real_plan:
+    if args.real_plan or (not args.fixture and not args.output):
         name, payload = _real_plan()
     else:
         if not args.fixture or not args.output:
