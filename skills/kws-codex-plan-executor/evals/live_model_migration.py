@@ -20,6 +20,14 @@ from live_migration.contracts import canonical_json, sha256_bytes
 from live_migration.ledger import LedgerError, replay_run
 from live_migration.envelopes import open_launch_envelope
 
+SCRIPTS_ROOT = Path(__file__).resolve().parents[1] / "scripts"
+if str(SCRIPTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_ROOT))
+from cpe_runtime.quality_v4 import (
+    canonical_credentialed_semantic_verdict,
+    canonical_v4_envelope_map,
+)
+
 
 MAX_BUDGET_USD = 50.00
 ESTIMATED_RUN_COST_USD = 1.50
@@ -552,7 +560,10 @@ def _aggregate_v4_run(
     seen: set[tuple[str, str]] = set()
     results: list[dict[str, Any]] = []
     result_digests: dict[str, str] = {}
-    envelope_digests: dict[str, str] = {}
+    try:
+        envelope_digests = canonical_v4_envelope_map(manifest)
+    except ValueError as exc:
+        raise MigrationContractError(str(exc)) from exc
     binding_fields = (
         "prompt_sha256",
         "task_contract_sha256",
@@ -592,7 +603,8 @@ def _aggregate_v4_run(
                 open_launch_envelope(artifact, envelope_sha256)
             except (MigrationContractError, ValueError):
                 failures.append("launch_envelope_substitution")
-            envelope_digests[f"{treatment_id}/{case_id}"] = envelope_sha256
+            if envelope_digests.get(f"{treatment_id}/{case_id}") != envelope_sha256:
+                failures.append("launch_envelope_manifest_map_failed")
         if slot.get("expected_policy_failure") and (
             result.get("manifest_sha256") != manifest.get("manifest_sha256")
             or result.get("matrix_policy_sha256") != slot.get("matrix_policy_sha256")
@@ -628,6 +640,14 @@ def _aggregate_v4_run(
         failures.append("candidate_task_completion_regressed")
     if any(bool(result.get("critical_regression")) for result in credentialed):
         failures.append("critical_regression_detected")
+    try:
+        semantic_verdicts = [
+            canonical_credentialed_semantic_verdict(result) for result in credentialed
+        ]
+    except ValueError as exc:
+        raise MigrationContractError(str(exc)) from exc
+    if not all(semantic_verdicts):
+        failures.append("semantic_verdict_failed")
     for field, code in (
         ("evidence_complete", "evidence_incomplete"),
         ("model_attested", "model_attestation_incomplete"),

@@ -67,7 +67,9 @@ before other credentialed slots. The compiler seals exact stdin and
 the runner reopens and verifies that artifact immediately before launch.
 Hidden oracle paths and bytes are bound separately and never enter the worker
 prompt, argv, or environment. Resume reuses a passed sentinel and cannot bypass
-or duplicate it.
+or duplicate it. The runner-owned semantic gate requires an exact hidden-oracle
+ID match for the qualified block case, and the compiler-owned 17-entry envelope
+map is reused unchanged by ledger aggregation and sanitized release validation.
 
 ## Contract Summary
 
