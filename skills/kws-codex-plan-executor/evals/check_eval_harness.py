@@ -59,25 +59,14 @@ def _inventory_paths(path: Path) -> tuple[list[str], list[str]]:
         target = EVAL_DIR / relative
         declaration = entry.get("production_entrypoint")
         if target.is_file() and isinstance(declaration, str):
-            source = target.read_text(encoding="utf-8")
-            for raw in declaration.split(","):
-                declared = raw.strip()
-                module = (
-                    declared
-                    if declared.startswith(("cpe_runtime.", "live_migration."))
-                    else "cpe"
-                    if declared == "cpe" or declared.startswith("cpe.")
-                    else declared
+            try:
+                tree = ast.parse(target.read_text(encoding="utf-8"), filename=str(target))
+            except SyntaxError:
+                tree = None
+            if tree is None or not _declared_entrypoints_backed(tree, declaration):
+                failures.append(
+                    f"declared production entrypoint is not reachable: {relative}:{declaration}"
                 )
-                referenced = (
-                    f"from {module} import" in source
-                    or f"import {module}" in source
-                    or (module == "cpe" and "cpe.py" in source)
-                )
-                if not referenced:
-                    failures.append(
-                        f"declared production entrypoint is not referenced: {relative}:{declared}"
-                    )
         paths.append(relative)
     if len(paths) != len(set(paths)):
         failures.append("maintained inventory contains duplicate check paths")
@@ -330,6 +319,82 @@ def _reachable_functions(tree: ast.Module) -> list[ast.FunctionDef | ast.AsyncFu
     return reachable
 
 
+def _declared_entrypoints_backed(tree: ast.Module, declaration: str) -> bool:
+    """Bind declared production modules to AST imports and reachable calls."""
+
+    reachable = _reachable_functions(tree)
+    definitions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    selected = {function.name for function in reachable}
+    pending = [
+        node.id
+        for function in reachable
+        for node in ast.walk(function)
+        if isinstance(node, ast.Name) and node.id in definitions
+    ]
+    while pending:
+        name = pending.pop()
+        if name in selected:
+            continue
+        selected.add(name)
+        function = definitions[name]
+        reachable.append(function)
+        pending.extend(
+            node.id
+            for node in ast.walk(function)
+            if isinstance(node, ast.Name)
+            and node.id in definitions
+            and node.id not in selected
+        )
+    calls = [call for function in reachable for call in _executable_calls(function)]
+    imports: dict[str, set[str]] = {}
+    statements = list(tree.body)
+    for function in reachable:
+        statements.extend(function.body)
+    for node in statements:
+        if isinstance(node, ast.ImportFrom) and node.module:
+            imports.setdefault(node.module, set()).update(
+                item.asname or item.name for item in node.names if item.name != "*"
+            )
+        elif isinstance(node, ast.Import):
+            for item in node.names:
+                imports.setdefault(item.name, set()).add(
+                    item.asname or item.name.split(".")[0]
+                )
+
+    called_roots: set[str] = set()
+    public_cpe_subprocess = False
+    for call in calls:
+        root = call.func
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if isinstance(root, ast.Name):
+            called_roots.add(root.id)
+        if ast.unparse(call.func) in {"subprocess.run", "subprocess.Popen"}:
+            rendered = ast.unparse(call)
+            if "cpe.py" in rendered:
+                public_cpe_subprocess = True
+
+    for raw in declaration.split(","):
+        declared = raw.strip()
+        module = (
+            declared
+            if declared.startswith(("cpe_runtime.", "live_migration."))
+            else "cpe"
+            if declared == "cpe" or declared.startswith("cpe.")
+            else declared
+        )
+        aliases = imports.get(module, set())
+        if not aliases.intersection(called_roots) and not (
+            module == "cpe" and public_cpe_subprocess
+        ):
+            return False
+    return True
+
+
 def _production_backed(tree: ast.Module) -> bool:
     reachable = _reachable_functions(tree)
     if not reachable:
@@ -536,7 +601,7 @@ def _inventory_mutation_checks(payload: dict[str, object]) -> dict[str, bool]:
                 {
                     **entry,
                     **(
-                        {"production_entrypoint": "cpe_runtime.definitely_missing"}
+                        {"production_entrypoint": "cpe_runtime.comment_only"}
                         if index == 0
                         else {}
                     ),

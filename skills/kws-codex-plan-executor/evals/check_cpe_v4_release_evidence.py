@@ -11,9 +11,13 @@ from pathlib import Path
 
 
 SKILL_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = SKILL_ROOT.parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
-from cpe_runtime.public_result import validate_release_evidence_root
+from cpe_runtime.public_result import (
+    trusted_release_repository_root,
+    validate_release_evidence_root,
+)
 
 
 def canonical_sha256(payload: object) -> str:
@@ -83,17 +87,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--evidence-root")
     parser.add_argument("--implementation-commit")
-    parser.add_argument("--workspace")
     args = parser.parse_args()
     if args.evidence_root:
         if not args.implementation_commit:
             print(json.dumps({"passed": False, "errors": ["implementation_commit_required"]}))
             return 1
-        if not args.workspace:
-            print(json.dumps({"passed": False, "errors": ["workspace_required"]}))
-            return 1
         report = validate_release_evidence_root(
-            Path(args.evidence_root), args.implementation_commit, Path(args.workspace)
+            Path(args.evidence_root),
+            args.implementation_commit,
+            trusted_release_repository_root(Path(__file__)),
         )
         print(json.dumps(report, sort_keys=True))
         return 0 if report["passed"] else 1
@@ -124,8 +126,6 @@ def main() -> int:
                 str(empty),
                 "--implementation-commit",
                 commit,
-                "--workspace",
-                str(repo),
             ],
             text=True,
             stdout=subprocess.PIPE,
@@ -135,13 +135,46 @@ def main() -> int:
         assert rejected.returncode != 0
         assert "release_evidence_missing" in rejected.stdout
         missing_pin = subprocess.run(
-            [sys.executable, __file__, "--evidence-root", str(empty), "--workspace", str(repo)],
+            [sys.executable, __file__, "--evidence-root", str(empty)],
             text=True,
             stdout=subprocess.PIPE,
             check=False,
         )
         assert missing_pin.returncode != 0
         assert "implementation_commit_required" in missing_pin.stdout
+
+        public_commit = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            check=True,
+        ).stdout.strip()
+        public_tree = subprocess.run(
+            ["git", "rev-parse", "HEAD^{tree}"],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            check=True,
+        ).stdout.strip()
+        public_valid = root / "public-valid"
+        public_valid.mkdir()
+        write_valid_fixture(public_valid, public_commit, public_tree)
+        public_invocation = subprocess.run(
+            [
+                sys.executable,
+                __file__,
+                "--evidence-root",
+                str(public_valid),
+                "--implementation-commit",
+                public_commit,
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        assert public_invocation.returncode == 0, public_invocation.stdout
         valid = root / "valid"
         valid.mkdir()
         write_valid_fixture(valid, commit, tree)

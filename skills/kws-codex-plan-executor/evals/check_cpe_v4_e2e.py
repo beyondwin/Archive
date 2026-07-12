@@ -106,6 +106,27 @@ def main() -> int:
         assert json.loads(tampered.stdout)["summary"] == "event_chain_invalid"
         events_path.write_text(original_events, encoding="utf-8")
 
+        for option in ("--timeout", "--poll-interval"):
+            for value in ("nan", "inf", "-inf"):
+                non_finite = subprocess.run(
+                    [
+                        sys.executable,
+                        str(SKILL_ROOT / "scripts" / "cpe.py"),
+                        "supervise",
+                        "--run-id",
+                        result["run_id"],
+                        f"{option}={value}",
+                        "--one-pass",
+                    ],
+                    env=fixture_env,
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    check=False,
+                )
+                assert non_finite.returncode != 0, (option, value, non_finite.stdout)
+                assert json.loads(non_finite.stdout)["summary"] == "supervise_options_invalid"
+
         waiting_root = Path(raw) / "waiting-user"
         waiting = run_v4_fixture(
             FIXTURE, waiting_root, pause_task_id="task_1", pause_kind="waiting_user"

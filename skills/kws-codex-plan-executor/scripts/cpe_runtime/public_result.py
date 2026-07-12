@@ -27,6 +27,38 @@ def _canonical_sha256(payload: object) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
+def trusted_release_repository_root(validator_path: Path) -> Path:
+    """Derive the tracked Git checkout that contains the public validator."""
+
+    validator = validator_path.expanduser().resolve()
+    if not validator.is_file():
+        raise ValueError("release_validator_path_invalid")
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=validator.parent,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if result.returncode:
+        raise ValueError("release_validator_repository_invalid")
+    root = Path(result.stdout.strip()).resolve()
+    try:
+        relative = validator.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("release_validator_repository_invalid") from exc
+    tracked = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", relative.as_posix()],
+        cwd=root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if tracked.returncode or tracked.stdout.strip() != relative.as_posix():
+        raise ValueError("release_validator_repository_invalid")
+    return root
+
+
 def validate_release_evidence_root(
     root: Path, implementation_commit: str, workspace: Path
 ) -> dict[str, object]:
