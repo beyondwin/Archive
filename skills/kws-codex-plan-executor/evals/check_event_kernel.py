@@ -253,6 +253,25 @@ def check_kernel_payload_validation() -> None:
         Transition("candidate.checkpoint_recorded", _checkpoint_payload(), task_id="T1"),
     )
     _expect_error(
+        "invalid checkpoint payload",
+        lambda: _validate_transition(
+            run_dir,
+            manifest,
+            state,
+            Transition(
+                "task.checkpoint_verified",
+                {"commit": "b" * 40, "contract_sha256": "d" * 64},
+                task_id="T1",
+            ),
+        ),
+    )
+    _validate_transition(
+        run_dir,
+        manifest,
+        state,
+        Transition("task.checkpoint_verified", _verified_payload(), task_id="T1"),
+    )
+    _expect_error(
         "invalid decision payload",
         lambda: _validate_transition(
             run_dir,

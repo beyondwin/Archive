@@ -108,6 +108,8 @@ def check_v4_manifest_and_initial_state() -> dict:
     state = project(manifest, [])
     assert state["schema_version"] == "4"
     assert state["attempt_budget"] == {"limit": 40, "used": 0}
+    assert state["source_head"] == "a" * 40
+    assert state["checkpoint_head"] is None
     for key in (
         "runtime",
         "candidate_checkpoints",
@@ -138,6 +140,42 @@ def check_clean_cut_schema_rejection() -> None:
         assert report.errors == ["unsupported_run_schema"]
 
 
+def check_runtime_upgrade_requires_verified_event(manifest: dict) -> None:
+    with tempfile.TemporaryDirectory(prefix="cpe-v4-no-verified-checkpoint-") as raw:
+        path = Path(raw) / "events.jsonl"
+        append_event(
+            path,
+            {
+                "type": "runtime.upgraded",
+                "payload": {
+                    "old_runtime_commit": "a" * 40,
+                    "new_runtime_commit": "d" * 40,
+                    "reason": "must not upgrade from the unverified source head",
+                    "compatibility_epoch": "cpe-v4",
+                    "worktree_clean": True,
+                    "verified_checkpoint": "a" * 40,
+                },
+            },
+        )
+        with assert_raises_text(ValueError, "runtime_upgrade_requires_verified_checkpoint"):
+            project(manifest, read_events(path))
+
+
+def check_replay_rejects_incomplete_verified_checkpoint(manifest: dict) -> None:
+    with tempfile.TemporaryDirectory(prefix="cpe-v4-incomplete-checkpoint-") as raw:
+        path = Path(raw) / "events.jsonl"
+        append_event(
+            path,
+            {
+                "type": "task.checkpoint_verified",
+                "task_id": "T1",
+                "payload": {"commit": "b" * 40, "contract_sha256": "c" * 64},
+            },
+        )
+        with assert_raises_text(ValueError, "invalid checkpoint payload"):
+            project(manifest, read_events(path))
+
+
 def check_v4_event_and_runtime_upgrade(manifest: dict) -> None:
     from cpe_runtime.runtime_upgrade import RuntimeIdentity, validate_runtime_upgrade
 
@@ -153,7 +191,14 @@ def check_v4_event_and_runtime_upgrade(manifest: dict) -> None:
             {
                 "type": "task.checkpoint_verified",
                 "task_id": "T1",
-                "payload": {"commit": checkpoint, "contract_sha256": "c" * 64},
+                "payload": {
+                    "predecessor": "a" * 40,
+                    "commit": checkpoint,
+                    "tree": "c" * 40,
+                    "contract_sha256": "d" * 64,
+                    "acceptance_sha256": "e" * 64,
+                    "review_sha256": "f" * 64,
+                },
             },
         )
         upgrade_payload = {
@@ -168,6 +213,7 @@ def check_v4_event_and_runtime_upgrade(manifest: dict) -> None:
             RuntimeIdentity("a" * 40, "cpe-v4"),
             upgrade_payload,
             checkpoint_head=checkpoint,
+            verified_checkpoints=[{"commit": checkpoint}],
         )
         assert target == RuntimeIdentity("d" * 40, "cpe-v4")
         append_event(path, {"type": "runtime.upgraded", "payload": upgrade_payload})
@@ -191,12 +237,15 @@ def check_v4_event_and_runtime_upgrade(manifest: dict) -> None:
                     RuntimeIdentity("a" * 40, "cpe-v4"),
                     invalid,
                     checkpoint_head=checkpoint,
+                    verified_checkpoints=[{"commit": checkpoint}],
                 )
 
 
 def main() -> int:
     manifest = check_v4_manifest_and_initial_state()
     check_clean_cut_schema_rejection()
+    check_runtime_upgrade_requires_verified_event(manifest)
+    check_replay_rejects_incomplete_verified_checkpoint(manifest)
     check_v4_event_and_runtime_upgrade(manifest)
     print('{"passed": true}')
     return 0

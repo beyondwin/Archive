@@ -22,6 +22,7 @@ from .projector import (
     valid_attempt_completion,
     valid_evidence_refs,
     valid_verdict,
+    valid_verified_checkpoint_payload,
 )
 from .runtime_upgrade import RuntimeIdentity, validate_runtime_upgrade
 from .validation import validate_completion
@@ -161,12 +162,7 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
     elif command.event_type == "verdict.recorded":
         if not valid_verdict(state, command.task_id, command.attempt_id, payload):
             raise ValueError("invalid verdict payload")
-    elif command.event_type in {"candidate.checkpoint_recorded", "task.checkpoint_verified"}:
-        digest_fields = (
-            ("patch_sha256",)
-            if command.event_type == "candidate.checkpoint_recorded"
-            else ("contract_sha256", "acceptance_sha256", "review_sha256")
-        )
+    elif command.event_type == "candidate.checkpoint_recorded":
         commits = (payload.get("predecessor"), payload.get("commit"), payload.get("tree"))
         if (
             any(
@@ -175,20 +171,22 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
                 or any(character not in "0123456789abcdef" for character in value)
                 for value in commits
             )
+            or not isinstance(payload.get("patch_sha256"), str)
+            or len(str(payload["patch_sha256"])) != 64
             or any(
-                not isinstance(payload.get(field), str)
-                or len(str(payload[field])) != 64
-                or any(character not in "0123456789abcdef" for character in str(payload[field]))
-                for field in digest_fields
+                character not in "0123456789abcdef"
+                for character in str(payload["patch_sha256"])
             )
         ):
             raise ValueError("invalid checkpoint payload")
-        if command.event_type == "candidate.checkpoint_recorded":
-            changed_files = payload.get("changed_files")
-            if not isinstance(changed_files, list) or any(
-                not isinstance(path, str) or not path for path in changed_files
-            ):
-                raise ValueError("invalid checkpoint payload")
+        changed_files = payload.get("changed_files")
+        if not isinstance(changed_files, list) or any(
+            not isinstance(path, str) or not path for path in changed_files
+        ):
+            raise ValueError("invalid checkpoint payload")
+    elif command.event_type == "task.checkpoint_verified":
+        if not valid_verified_checkpoint_payload(payload):
+            raise ValueError("invalid checkpoint payload")
     elif command.event_type == "blocker.opened":
         required = ("blocker_id", "category", "owner", "resume_condition")
         if (
@@ -236,6 +234,7 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
             RuntimeIdentity.from_mapping(state.get("runtime")),
             payload,
             checkpoint_head=state.get("checkpoint_head"),
+            verified_checkpoints=state.get("verified_checkpoints", []),
         )
     elif command.event_type == "completion.recorded":
         if payload.get("passed") is not True:
