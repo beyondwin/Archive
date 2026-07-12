@@ -19,8 +19,12 @@ from cpe import run_v4_dogfood_fixture
 from cpe_runtime.dogfood_v4 import verify_v4_dogfood_run
 from cpe_runtime.git_delta import committed_patch_digest
 from cpe_runtime.public_result import validate_release_evidence_root
+from cpe_runtime.release_policy_v4 import (
+    load_release_policy,
+    validate_release_checkpoint,
+)
 from live_migration.compiler import compile_v4_manifest
-from live_migration.contracts import CREDENTIALLED_CALL, canonical_json
+from live_migration.contracts import CREDENTIALLED_CALL, LiveMigrationContractError, canonical_json
 from live_migration.ledger import (
     LedgerError,
     append_event,
@@ -28,16 +32,83 @@ from live_migration.ledger import (
     register_release_run,
 )
 from live_migration.release_transaction import finalize_v4_release
-from live_migration.runner import execute_v4_slots, install_v4_sealed_artifacts
+from live_migration.runner import (
+    LiveRunnerError,
+    QUALIFIED_SENTINEL,
+    _start_v4_credentialed_attempt,
+    execute_v4_slots,
+    install_v4_sealed_artifacts,
+)
 
 
 FIXTURE = SKILL_ROOT / "evals" / "parser-fixtures" / "22-v4-dogfood-plan.md"
+POLICY = SKILL_ROOT / "evals" / "live-migration" / "release-policy-v4.json"
 
 
 def git_text(*args: str) -> str:
     return subprocess.run(
         ["git", *args], cwd=REPO_ROOT, text=True, capture_output=True, check=True
     ).stdout.strip()
+
+
+def check_tracked_release_policy() -> None:
+    policy = load_release_policy()
+    assert policy["trusted_base_commit"] == "344f6112a7254b87cfa25fe0f6d6f3acbc964487"
+    assert policy["critical_matrix_attempt_limit"] == 2
+    assert policy["dogfood_attempt_limit"] == 4
+    assert policy["combined_attempt_limit"] == 6
+    assert policy["critical_path_live_label"] == "critical-path-live verified"
+    assert policy["full_paid_matrix_deferred_label"] == "full paid-live certification deferred"
+    contract = Path(str(policy["dogfood_task_contract_absolute_path"]))
+    assert contract.is_file()
+    assert policy["dogfood_task_contract_sha256"] == __import__("hashlib").sha256(
+        contract.read_bytes()
+    ).hexdigest()
+
+    with tempfile.TemporaryDirectory(prefix="cpe-policy-fixture-") as raw:
+        repo = Path(raw)
+        subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "fixture@example.invalid"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Fixture"], cwd=repo, check=True)
+        (repo / "contract.json").write_text(contract.read_text(encoding="utf-8"), encoding="utf-8")
+        (repo / "seed.txt").write_text("base\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "base"], cwd=repo, check=True)
+        base = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, text=True, capture_output=True, check=True).stdout.strip()
+        (repo / "seed.txt").write_text("child\n", encoding="utf-8")
+        subprocess.run(["git", "commit", "-qam", "child"], cwd=repo, check=True)
+        child = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, text=True, capture_output=True, check=True).stdout.strip()
+        fixture_policy = json.loads(POLICY.read_text(encoding="utf-8"))
+        fixture_policy["trusted_base_commit"] = base
+        fixture_policy["dogfood_task_contract_path"] = "contract.json"
+        fixture_policy["dogfood_task_contract_sha256"] = __import__("hashlib").sha256(
+            (repo / "contract.json").read_bytes()
+        ).hexdigest()
+        (repo / "policy.json").write_text(
+            json.dumps(fixture_policy, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "policy.json"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-qm", "policy"], cwd=repo, check=True)
+        policy_commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, text=True, capture_output=True, check=True).stdout.strip()
+        loaded = load_release_policy(repo / "policy.json", repository=repo)
+        binding = validate_release_checkpoint(repo, policy_commit, policy=loaded)
+        assert binding["implementation_base_commit"] == base
+        orphan = subprocess.run(
+            ["git", "commit-tree", subprocess.run(["git", "rev-parse", f"{child}^{{tree}}"], cwd=repo, text=True, capture_output=True, check=True).stdout.strip()],
+            cwd=repo,
+            input="orphan\n",
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
+        for rejected in (base, orphan):
+            try:
+                validate_release_checkpoint(repo, rejected, policy=loaded)
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("base==head or stale child checkpoint was accepted")
 
 
 def check_critical_profile() -> None:
@@ -63,12 +134,26 @@ def check_critical_profile() -> None:
         ("sol_v4_candidate", "security/migration block"),
         ("sol_v4_candidate", "single-file implementation"),
     ]
+    try:
+        compile_v4_manifest(
+            head,
+            "base-equals-head",
+            proof_profile="critical_path_live",
+            implementation_base_commit=head,
+        )
+    except LiveMigrationContractError:
+        pass
+    else:
+        raise AssertionError("compiler accepted caller-selected base==head")
 
 
 def check_production_dogfood_verifier() -> None:
     with tempfile.TemporaryDirectory(prefix="cpe-v4-dogfood-") as raw:
         result = run_v4_dogfood_fixture(FIXTURE, Path(raw))
         run_dir = Path(result["run_dir"])
+        dogfood_manifest = json.loads((run_dir / "run_manifest.json").read_text(encoding="utf-8"))
+        assert dogfood_manifest["attempt_budget_limit"] == 4
+        assert dogfood_manifest["release_policy_sha256"] == load_release_policy()["policy_sha256"]
         verified = verify_v4_dogfood_run(
             run_dir,
             expected_implementation_commit=result["implementation_commit"],
@@ -168,6 +253,14 @@ def _critical_run(root: Path) -> tuple[Path, str, str]:
     resumed = execute_v4_slots(run, provider)
     assert resumed["provider_invocations"] == 1
     assert calls == 2
+    for retry, expected in ((False, "critical_attempt_budget_exhausted"), (True, "retry_failed_forbidden")):
+        try:
+            _start_v4_credentialed_attempt(run, QUALIFIED_SENTINEL, retry=retry)
+        except LiveRunnerError as exc:
+            assert exc.code == expected
+        else:
+            raise AssertionError("release attempt budget permitted another paid start")
+    assert calls == 2
     append_event(run, "run_completed", {"completed_slots": 9})
     return run.run_dir, head, tree
 
@@ -201,6 +294,11 @@ def check_terminal_generation_and_recovery() -> None:
             assert finalize_v4_release(**kwargs) == finalized
             report = validate_release_evidence_root(root, head, REPO_ROOT)
             assert report["passed"] is True, report
+            retained = root / "dogfood" / str(dogfood["run_id"])
+            assert retained.is_dir()
+            assert {"run_manifest.json", "events.jsonl", "state.json", "task-contract.json", "checkpoint.json"}.issubset(
+                {path.name for path in retained.iterdir()}
+            )
             generation = root / "release-generations" / str(finalized["generation_sha256"])
             result_path = generation / "result.json"
             original = result_path.read_bytes()
@@ -223,9 +321,33 @@ def check_terminal_generation_and_recovery() -> None:
                 path.write_bytes(mutated)
                 assert validate_release_evidence_root(root, head, REPO_ROOT)["passed"] is False
                 path.write_bytes(original_bytes)
+            retained_state = retained / "state.json"
+            original_state = retained_state.read_bytes()
+            retained_state.write_bytes(original_state.replace(b'"schema_version":"4"', b'"schema_version":"x"', 1))
+            assert validate_release_evidence_root(root, head, REPO_ROOT)["passed"] is False
+            retained_state.write_bytes(original_state)
+            retained_contract = retained / "task-contract.json"
+            original_contract = retained_contract.read_bytes()
+            retained_contract.write_bytes(original_contract.replace(b'"task_id":"task_1"', b'"task_id":"other_1"', 1))
+            assert validate_release_evidence_root(root, head, REPO_ROOT)["passed"] is False
+            retained_contract.write_bytes(original_contract)
+            removed = retained.with_name(retained.name + "-removed")
+            retained.rename(removed)
+            assert validate_release_evidence_root(root, head, REPO_ROOT)["passed"] is False
+            removed.rename(retained)
+            for forbidden in ("checkpoint.json", "manifest.json", "result.json", "privacy-audit.json", "dogfood-result.json", "aggregate.json"):
+                marker = root / forbidden
+                marker.write_text("{}\n", encoding="utf-8")
+                assert validate_release_evidence_root(root, head, REPO_ROOT)["passed"] is False
+                marker.unlink()
+            unexpected = root / "unexpected.txt"
+            unexpected.write_text("x\n", encoding="utf-8")
+            assert validate_release_evidence_root(root, head, REPO_ROOT)["passed"] is False
+            unexpected.unlink()
 
 
 def main() -> int:
+    check_tracked_release_policy()
     check_critical_profile()
     check_production_dogfood_verifier()
     check_orphan_root_cannot_validate()

@@ -34,6 +34,7 @@ from .fixtures import MaterializedFixture, materialize_fixture
 from .ledger import LiveRun, append_event, commit_slot, replay_run
 from .oracle import OracleInputError, ProcessEvidence, evaluate_slot, policy_failure_result
 from cpe_runtime.quality_v4 import canonical_credentialed_semantic_verdict
+from cpe_runtime.release_policy_v4 import load_release_policy
 
 
 API_KEY_ENV_NAMES = {
@@ -330,6 +331,7 @@ def execute_v4_slots(
             continue
         if slot.get("outcome_kind") != CREDENTIALLED_CALL or slot.get("credentialed") is not True:
             raise LiveRunnerError("invalid_slot_contract", "v4 slot outcome is inconsistent")
+        _start_v4_credentialed_attempt(run, key, retry=False)
         files, result = invoke_provider(slot)
         provider_invocations += 1
         bound_result = _bind_v4_result(slot, result)
@@ -360,6 +362,49 @@ def execute_v4_slots(
         "executed_slots": len(selected),
         "provider_invocations": provider_invocations,
     }
+
+
+def _v4_credentialed_attempt_count(run: LiveRun) -> int:
+    if not (run.run_dir / "events.jsonl").is_file():
+        return 0
+    credentialed = {
+        SlotKey(str(slot["treatment_id"]), str(slot["case_id"]))
+        for slot in run.manifest.get("slots", ())
+        if isinstance(slot, dict) and slot.get("credentialed") is True
+    }
+    count = 0
+    for line in (run.run_dir / "events.jsonl").read_text(encoding="utf-8").splitlines():
+        event = json.loads(line)
+        if event.get("type") not in {"slot_started", "slot_retry_started"}:
+            continue
+        payload = event.get("payload") or {}
+        if SlotKey(str(payload.get("treatment_id")), str(payload.get("case_id"))) in credentialed:
+            count += 1
+    return count
+
+
+def _start_v4_credentialed_attempt(run: LiveRun, key: SlotKey, *, retry: bool) -> None:
+    if run.manifest.get("schema_version") != "cpe-quality-manifest.v4":
+        append_event(
+            run,
+            "slot_retry_started" if retry else "slot_started",
+            {"treatment_id": key.treatment_id, "case_id": key.case_id},
+        )
+        return
+    if retry:
+        raise LiveRunnerError("retry_failed_forbidden", "v4 release evidence forbids paid retries")
+    if run.manifest.get("proof_profile") == "critical_path_live":
+        policy = load_release_policy()
+        if _v4_credentialed_attempt_count(run) >= int(policy["critical_matrix_attempt_limit"]):
+            raise LiveRunnerError(
+                "critical_attempt_budget_exhausted",
+                "critical-path release evidence refuses a third credentialed attempt",
+            )
+    append_event(
+        run,
+        "slot_started",
+        {"treatment_id": key.treatment_id, "case_id": key.case_id},
+    )
 
 
 def _sha256_bytes(raw: bytes) -> str:
@@ -1234,11 +1279,7 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
     if slot.get("outcome_kind") != CREDENTIALLED_CALL:
         raise LiveRunnerError("invalid_slot_contract", "unknown compiled slot outcome")
 
-    append_event(
-        context.run,
-        "slot_retry_started" if context.retry_failed else "slot_started",
-        {"treatment_id": key.treatment_id, "case_id": key.case_id},
-    )
+    _start_v4_credentialed_attempt(context.run, key, retry=context.retry_failed)
     evidence_dir: Path | None = None
     prompt = stdout = stderr = ""
     prompt_bytes = b""

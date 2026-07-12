@@ -77,6 +77,16 @@ that sentinel, one candidate single-file success regression, and seven
 deterministic no-call policy outcomes. `full_paid_matrix` retains the 17-entry
 map as optional certification, not as the merge gate.
 
+The tracked `evals/live-migration/release-policy-v4.json` is the sole release
+trust anchor. It fixes the implementation base to
+`344f6112a7254b87cfa25fe0f6d6f3acbc964487`, binds the canonical tracked
+dogfood task contract, caps critical/dogfood/combined attempts at `2/4/6`, and
+supplies the exact release labels. CLI checkpoint arguments cannot select
+another base or override this policy. Finalization retains replayable dogfood
+manifest, event, state, task-contract, and checkpoint evidence under
+`evidence_root/dogfood/<run_id>`; validation rejects mutable root summaries and
+unexpected root entries.
+
 `aggregate` cannot publish a release package or terminal event. After an
 actual one-task CPE v4 dogfood run, `finalize-release` replays both ledgers,
 recomputes the trusted-base Git patch, and publishes one content-addressed

@@ -131,6 +131,24 @@ def validate_manifest(manifest: dict) -> list[str]:
     if not isinstance(manifest, dict) or manifest.get("schema_version") != RUN_SCHEMA_VERSION:
         return ["unsupported_run_schema"]
     errors: list[str] = []
+    attempt_limit = manifest.get("attempt_budget_limit", 40)
+    if type(attempt_limit) is not int or not 1 <= attempt_limit <= 40:
+        errors.append("attempt_budget_limit_invalid")
+    if "release_policy_sha256" in manifest:
+        try:
+            from .release_policy_v4 import load_release_policy
+
+            release_policy = load_release_policy()
+            if (
+                manifest.get("release_policy_sha256") != release_policy["policy_sha256"]
+                or attempt_limit != release_policy["dogfood_attempt_limit"]
+                or len(manifest.get("task_graph") or []) != 1
+                or manifest["task_graph"][0].get("task_contract_sha256")
+                != release_policy["dogfood_task_contract_sha256"]
+            ):
+                errors.append("release_policy_binding_invalid")
+        except (OSError, ValueError):
+            errors.append("release_policy_binding_invalid")
     runtime = manifest.get("runtime")
     if (
         not isinstance(runtime, dict)

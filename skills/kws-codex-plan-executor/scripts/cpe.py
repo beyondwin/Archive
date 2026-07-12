@@ -30,6 +30,7 @@ from cpe_runtime.prompt_export import render_export_bundle
 from cpe_runtime.public_result import PublicResult, blocked_result, failed_result
 from cpe_runtime.reconciliation import ResumeDecision, select_resume, select_v4_resume
 from cpe_runtime.repair import apply_repair
+from cpe_runtime.release_policy_v4 import load_release_policy
 from cpe_runtime.scheduler import (
     LifecycleOperations,
     PreTurnInterruption,
@@ -122,7 +123,7 @@ def _compiled_manifest(
     spec_record = record("spec", spec_sources[0]) if spec_sources else None
     doc_records = [record(f"doc-{index:03d}", source) for index, source in enumerate(doc_sources)]
     pricing_record = file_record(pricing)
-    return {
+    manifest = {
         "schema_version": "4",
         "run_id": run_id,
         "mode": mode,
@@ -147,6 +148,12 @@ def _compiled_manifest(
         },
         "task_packets": [],
     }
+    if len(tasks) == 1:
+        release_policy = load_release_policy()
+        if tasks[0].get("task_contract_sha256") == release_policy["dogfood_task_contract_sha256"]:
+            manifest["attempt_budget_limit"] = release_policy["dogfood_attempt_limit"]
+            manifest["release_policy_sha256"] = release_policy["policy_sha256"]
+    return manifest
 
 
 def _emit(result: PublicResult) -> int:

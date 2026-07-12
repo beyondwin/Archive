@@ -107,6 +107,8 @@ _DOGFOOD_INPUT_KEYS = frozenset(
         "elapsed_seconds",
         "source_checkout_unchanged",
         "runtime_patch_required",
+        "retained_run_id",
+        "retained_checkpoint_sha256",
     }
 )
 _DOGFOOD_KEYS = _DOGFOOD_INPUT_KEYS | {"implementation_commit", "implementation_tree"}
@@ -235,6 +237,9 @@ def validate_v4_release_payloads(payloads: Mapping[str, Mapping[str, object]]) -
         or not 0 <= dogfood["elapsed_seconds"] <= 3600
         or type(dogfood["source_checkout_unchanged"]) is not bool
         or type(dogfood["runtime_patch_required"]) is not bool
+        or not isinstance(dogfood["retained_run_id"], str)
+        or not dogfood["retained_run_id"]
+        or not _sha256(dogfood["retained_checkpoint_sha256"])
     ):
         raise ValueError("quality_v4_dogfood_schema_invalid")
     if status == "not_run" and any(
@@ -371,6 +376,8 @@ def build_v4_release_evidence_payloads(
         "elapsed_seconds": dogfood.get("elapsed_seconds"),
         "source_checkout_unchanged": dogfood.get("source_checkout_unchanged"),
         "runtime_patch_required": dogfood.get("runtime_patch_required"),
+        "retained_run_id": dogfood.get("retained_run_id"),
+        "retained_checkpoint_sha256": dogfood.get("retained_checkpoint_sha256"),
     }
     pre_privacy = {
         "manifest.json": release_manifest,

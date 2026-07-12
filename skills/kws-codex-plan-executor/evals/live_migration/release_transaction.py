@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 
-from cpe_runtime.dogfood_v4 import verify_v4_dogfood_run
-from cpe_runtime.git_delta import committed_patch_digest
+from cpe_runtime.dogfood_v4 import retain_v4_dogfood_run, verify_v4_dogfood_run
 from cpe_runtime.manifest import load_verified_manifest
+from cpe_runtime.release_policy_v4 import load_release_policy, validate_release_checkpoint
 from cpe_runtime.quality_v4 import (
     RELEASE_EVIDENCE_FILENAMES,
     build_v4_release_evidence_payloads,
@@ -22,28 +21,26 @@ from .ledger import (
 )
 
 
-def _git(repository: Path, *args: str) -> str:
-    result = subprocess.run(
-        ["git", *args], cwd=repository, text=True, capture_output=True
-    )
-    if result.returncode:
-        raise LedgerError("release implementation checkpoint cannot be resolved")
-    return result.stdout.strip()
-
-
 def _verify_implementation(manifest: dict[str, object], repository: Path) -> None:
     commit = str(manifest.get("implementation_commit") or "")
     base = str(manifest.get("implementation_base_commit") or "")
     tree = str(manifest.get("implementation_tree") or "")
     patch = str(manifest.get("implementation_patch_sha256") or "")
-    if _git(repository, "rev-parse", f"{commit}^{{tree}}") != tree:
-        raise LedgerError("release implementation tree differs from Git")
     try:
-        _files, actual_patch = committed_patch_digest(repository, base, commit)
-    except RuntimeError as exc:
-        raise LedgerError("release implementation patch cannot be recomputed") from exc
-    if actual_patch != patch:
-        raise LedgerError("release implementation patch differs from Git")
+        policy = load_release_policy()
+        if base != policy["trusted_base_commit"]:
+            raise ValueError("release base differs from policy")
+        validate_release_checkpoint(
+            repository,
+            commit,
+            implementation_tree=tree,
+            implementation_patch_sha256=patch,
+            policy=policy,
+        )
+        if manifest.get("release_policy_sha256") != policy["policy_sha256"]:
+            raise ValueError("release policy digest differs")
+    except ValueError as exc:
+        raise LedgerError("release implementation checkpoint violates tracked policy") from exc
 
 
 def finalize_v4_release(
@@ -70,6 +67,7 @@ def finalize_v4_release(
     if registered is None or canonical_json(registered) != canonical_json(manifest):
         raise LedgerError("release child manifest differs from registration")
     _verify_implementation(manifest, repo)
+    policy = load_release_policy()
     aggregate = aggregate_run(child)
     profile = manifest.get("proof_profile", "full_paid_matrix")
     exact = (2, 7) if profile == "critical_path_live" else (17, 7)
@@ -91,8 +89,8 @@ def finalize_v4_release(
     tasks = dogfood_manifest.get("task_graph")
     if not isinstance(tasks, list) or len(tasks) != 1:
         raise LedgerError("release dogfood task contract is invalid")
-    task_contract_sha256 = tasks[0].get("task_contract_sha256")
-    if not isinstance(task_contract_sha256, str):
+    task_contract_sha256 = str(policy["dogfood_task_contract_sha256"])
+    if tasks[0].get("task_contract_sha256") != task_contract_sha256:
         raise LedgerError("release dogfood task contract is invalid")
     dogfood = verify_v4_dogfood_run(
         dogfood_run_dir,
@@ -100,6 +98,27 @@ def finalize_v4_release(
         expected_implementation_tree=str(manifest["implementation_tree"]),
         expected_task_contract_sha256=task_contract_sha256,
     )
+    if int(dogfood.get("model_attempts") or 0) > int(policy["dogfood_attempt_limit"]):
+        raise LedgerError("release dogfood attempt budget exceeded")
+    if profile == "critical_path_live":
+        if int(aggregate.get("credentialed_call_count") or 0) > int(policy["critical_matrix_attempt_limit"]):
+            raise LedgerError("release critical matrix attempt budget exceeded")
+        if int(aggregate.get("credentialed_call_count") or 0) + int(dogfood.get("model_attempts") or 0) > int(policy["combined_attempt_limit"]):
+            raise LedgerError("release combined attempt budget exceeded")
+    retained = root / "dogfood" / str(dogfood_manifest["run_id"])
+    retained_checkpoint = retain_v4_dogfood_run(
+        dogfood_run_dir,
+        retained,
+        expected_implementation_commit=str(manifest["implementation_commit"]),
+        expected_implementation_tree=str(manifest["implementation_tree"]),
+        expected_task_contract_sha256=task_contract_sha256,
+        task_contract_path=Path(str(policy["dogfood_task_contract_absolute_path"])),
+    )
+    dogfood = {
+        **dogfood,
+        "retained_run_id": str(dogfood_manifest["run_id"]),
+        "retained_checkpoint_sha256": sha256_bytes(canonical_json(retained_checkpoint)),
+    }
     payloads = build_v4_release_evidence_payloads(manifest, aggregate, dogfood)
     payload_bytes = {
         name: canonical_json(payloads[name]) for name in RELEASE_EVIDENCE_FILENAMES
