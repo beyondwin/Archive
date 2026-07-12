@@ -76,7 +76,9 @@ def select_v4_resume(state: dict, task_id: str) -> V4ResumeDecision:
     if not isinstance(tasks, dict) or not isinstance(tasks.get(task_id), dict):
         raise ValueError("invalid_v4_resume_task")
     task = tasks[task_id]
-    if task.get("status") not in {"waiting_external", "waiting_user"}:
+    if task.get("status") == "waiting_user":
+        return V4ResumeDecision("await_user_authority", task_id)
+    if task.get("status") != "waiting_external":
         return V4ResumeDecision("schedule", task_id)
     phase = task.get("resume_phase")
     if phase not in {"implementation", "repair", "task_review", "verification"}:

@@ -267,6 +267,31 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
             payload.get("backlog_item"), dict
         ):
             raise ValueError("invalid decision payload")
+        if payload.get("decision_kind") == "selected_repair_recorded":
+            from .evidence import verify_ref
+
+            ref = payload.get("selected_repair_ref")
+            if (
+                payload.get("task_id") != command.task_id
+                or payload.get("rejected_candidate_commit") is None
+                or not isinstance(payload.get("root_cause_key"), str)
+                or not payload["root_cause_key"]
+                or type(payload.get("repair_count")) is not int
+                or payload["repair_count"] not in {1, 2}
+                or payload.get("repair_slot") != payload.get("repair_count")
+                or not isinstance(ref, dict)
+                or verify_ref(run_dir, ref)
+            ):
+                raise ValueError("invalid decision payload")
+        if payload.get("decision_kind") == "selected_repair_resolved":
+            selected = state.get("selected_repairs", {}).get(str(command.task_id))
+            if (
+                payload.get("task_id") != command.task_id
+                or not isinstance(selected, dict)
+                or selected.get("selected_repair_ref")
+                != payload.get("selected_repair_ref")
+            ):
+                raise ValueError("invalid decision payload")
     elif command.event_type == "notification.requested":
         if not isinstance(payload.get("dedupe_key"), str) or not payload["dedupe_key"]:
             raise ValueError("invalid notification payload")
