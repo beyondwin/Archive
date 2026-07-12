@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import stat
 import subprocess
+import shutil
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -15,6 +16,7 @@ from .packets import packet_entry
 from .projector import RETRY_PHASE_STATES, project
 from .reconciliation import reconcile
 from .validation import validate_integrity
+from .git_delta import matches_path, working_tree_changed_files
 
 
 SAFE_ACTIONS = {
@@ -133,6 +135,96 @@ def prepare_repaired_candidate(product_worktree: Path, rejected: object) -> None
     )
     if reset.returncode:
         raise RuntimeError("repair_candidate_reset_failed")
+
+
+def restore_interrupted_worktree(
+    product_worktree: Path,
+    target_commit: str,
+    *,
+    file_claims: tuple[str, ...],
+    forbidden_paths: tuple[str, ...],
+) -> None:
+    """Restore only a measured, wholly in-claim partial task delta."""
+
+    worktree = product_worktree.expanduser().resolve()
+    if (
+        len(target_commit) != 40
+        or any(character not in "0123456789abcdef" for character in target_commit)
+    ):
+        raise ValueError("restore_target_invalid")
+    head_result = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=worktree,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if head_result.returncode:
+        raise RuntimeError("evidence_integrity_failure")
+    head = head_result.stdout.strip()
+    committed = subprocess.run(
+        ["git", "diff", "--name-only", "-z", target_commit, head, "--"],
+        cwd=worktree,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if committed.returncode:
+        raise RuntimeError("evidence_integrity_failure")
+    committed_paths = tuple(
+        path.decode("utf-8", "surrogateescape")
+        for path in committed.stdout.split(b"\0")
+        if path
+    )
+    working_paths = working_tree_changed_files(worktree)
+    measured = tuple(dict.fromkeys((*committed_paths, *working_paths)))
+    if any(
+        matches_path(path, forbidden_paths)
+        or not matches_path(path, file_claims)
+        for path in measured
+    ):
+        raise RuntimeError("evidence_integrity_failure")
+
+    reset = subprocess.run(
+        ["git", "reset", "--hard", target_commit],
+        cwd=worktree,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if reset.returncode:
+        raise RuntimeError("evidence_integrity_failure")
+    for path in working_paths:
+        candidate = worktree / path
+        try:
+            candidate.relative_to(worktree)
+        except ValueError as exc:
+            raise RuntimeError("evidence_integrity_failure") from exc
+        tracked = subprocess.run(
+            ["git", "ls-files", "--error-unmatch", "--", path],
+            cwd=worktree,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if tracked.returncode == 0 or not candidate.exists():
+            continue
+        if candidate.is_symlink() or candidate.is_file():
+            candidate.unlink()
+        elif candidate.is_dir():
+            shutil.rmtree(candidate)
+        else:
+            raise RuntimeError("evidence_integrity_failure")
+    final_head = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=worktree,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if (
+        final_head.returncode
+        or final_head.stdout.strip() != target_commit
+        or working_tree_changed_files(worktree)
+    ):
+        raise RuntimeError("evidence_integrity_failure")
 
 
 def plan_repairs(run_dir: Path) -> RepairPlan:

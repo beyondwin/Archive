@@ -72,6 +72,16 @@ def select_v4_resume(state: dict, task_id: str) -> V4ResumeDecision:
         raise ValueError("invalid_v4_resume_state")
     if state.get("lifecycle") in {"completed", "failed"}:
         return V4ResumeDecision("terminal_noop", task_id)
+    tasks = state.get("tasks")
+    if not isinstance(tasks, dict) or not isinstance(tasks.get(task_id), dict):
+        raise ValueError("invalid_v4_resume_task")
+    task = tasks[task_id]
+    if task.get("status") not in {"waiting_external", "waiting_user"}:
+        return V4ResumeDecision("schedule", task_id)
+    phase = task.get("resume_phase")
+    if phase not in {"implementation", "repair", "task_review", "verification"}:
+        raise ValueError("invalid_v4_resume_phase")
+    persisted_attempt = task.get("active_attempt_id")
     active = [
         item
         for item in state.get("attempts", [])
@@ -82,15 +92,21 @@ def select_v4_resume(state: dict, task_id: str) -> V4ResumeDecision:
     if len(active) > 1:
         raise ValueError("active_model_attempt_ambiguous")
     if active:
-        phase = str(active[0].get("kind") or "")
-        if phase not in {"implementation", "repair", "task_review", "verification"}:
+        active_phase = str(active[0].get("kind") or "")
+        if active_phase != phase:
             raise ValueError("invalid_v4_resume_phase")
         attempt_id = active[0].get("attempt_id")
-        if not isinstance(attempt_id, str) or not attempt_id:
+        if (
+            not isinstance(attempt_id, str)
+            or not attempt_id
+            or persisted_attempt != attempt_id
+        ):
             raise ValueError("invalid_v4_resume_attempt")
         return V4ResumeDecision(
-            "resume_same_attempt", task_id, phase=phase, attempt_id=attempt_id
+            "resume_same_attempt", task_id, phase=str(phase), attempt_id=attempt_id
         )
+    if persisted_attempt is not None:
+        raise ValueError("invalid_v4_resume_attempt")
     checkpoint = state.get("checkpoint_head")
     recorded = [
         item
@@ -104,9 +120,12 @@ def select_v4_resume(state: dict, task_id: str) -> V4ResumeDecision:
         and len(recorded) == 1
     ):
         return V4ResumeDecision(
-            "resume_verified_checkpoint", task_id, checkpoint_head=checkpoint
+            "resume_verified_checkpoint",
+            task_id,
+            phase=str(phase),
+            checkpoint_head=checkpoint,
         )
-    return V4ResumeDecision("reject", task_id)
+    return V4ResumeDecision("resume_phase", task_id, phase=str(phase))
 
 
 def _canonical_ref(value: object) -> str | None:

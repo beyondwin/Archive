@@ -20,13 +20,13 @@ RUN_TRANSITIONS = {
 TASK_TRANSITIONS = {
     "pending": {"ready", "blocked", "failed", "waiting_user", "waiting_external"},
     "ready": {"scouting", "implementing", "blocked", "failed", "waiting_user", "waiting_external"},
-    "scouting": {"implementing", "blocked", "failed"},
-    "implementing": {"reviewing", "repairing", "blocked", "failed"},
-    "reviewing": {"verifying", "repairing", "blocked", "failed"},
-    "verifying": {"completed", "repairing", "blocked", "failed"},
-    "repairing": {"reviewing", "verifying", "blocked", "failed"},
-    "waiting_user": {"ready", "blocked", "failed"},
-    "waiting_external": {"ready", "blocked", "failed"},
+    "scouting": {"implementing", "blocked", "failed", "waiting_user", "waiting_external"},
+    "implementing": {"reviewing", "repairing", "blocked", "failed", "waiting_user", "waiting_external"},
+    "reviewing": {"verifying", "repairing", "blocked", "failed", "waiting_user", "waiting_external"},
+    "verifying": {"completed", "repairing", "blocked", "failed", "waiting_user", "waiting_external"},
+    "repairing": {"reviewing", "verifying", "blocked", "failed", "waiting_user", "waiting_external"},
+    "waiting_user": {"ready", "implementing", "reviewing", "repairing", "verifying", "blocked", "failed"},
+    "waiting_external": {"ready", "implementing", "reviewing", "repairing", "verifying", "blocked", "failed"},
     "completed": set(),
     "blocked": {"failed"},
     "failed": set(),
@@ -41,6 +41,75 @@ RETRY_PHASE_STATES = {
     "task_review": "reviewing",
     "verification": "verifying",
 }
+
+
+def validate_task_status_change(
+    state: dict,
+    task_id: str | None,
+    payload: dict,
+    attempt_id: str | None,
+) -> None:
+    tasks = state.get("tasks")
+    if not isinstance(tasks, dict) or task_id not in tasks:
+        raise ValueError("unknown task")
+    task = tasks[task_id]
+    current = task.get("status")
+    target = payload.get("to")
+    if payload.get("from") != current:
+        raise ValueError("task transition from mismatch")
+    if target not in TASK_TRANSITIONS.get(str(current), set()):
+        raise ValueError("invalid task transition")
+    waiting = target in {"waiting_external", "waiting_user"}
+    if target == "blocked":
+        if not isinstance(payload.get("wait_reason"), str) or not payload["wait_reason"]:
+            raise ValueError("invalid task blocked payload")
+        if any(key in payload for key in ("resume_phase", "active_attempt_id")):
+            raise ValueError("invalid task blocked payload")
+        return
+    if waiting:
+        reason = payload.get("wait_reason")
+        phase = payload.get("resume_phase")
+        active = payload.get("active_attempt_id")
+        if (
+            not isinstance(reason, str)
+            or not reason
+            or phase not in RETRY_PHASE_STATES
+            or (active is not None and (not isinstance(active, str) or not active))
+            or active != attempt_id
+        ):
+            raise ValueError("invalid task wait payload")
+        expected = RETRY_PHASE_STATES[str(phase)]
+        if active is not None and current != expected:
+            raise ValueError("invalid task wait payload")
+        return
+    if current in {"waiting_external", "waiting_user"}:
+        if target == "failed":
+            if any(
+                key in payload
+                for key in ("wait_reason", "resume_phase", "active_attempt_id")
+            ):
+                raise ValueError("invalid task transition payload")
+            return
+        phase = task.get("resume_phase")
+        persisted_active = task.get("active_attempt_id")
+        active = payload.get("active_attempt_id")
+        if (
+            phase not in RETRY_PHASE_STATES
+            or payload.get("resume_phase") != phase
+            or attempt_id != active
+            or (
+                persisted_active is not None
+                and active != persisted_active
+            )
+        ):
+            raise ValueError("task resume phase mismatch")
+        expected = RETRY_PHASE_STATES[str(phase)]
+        allowed_targets = {expected, "ready"} if active is None else {expected}
+        if target not in allowed_targets:
+            raise ValueError("task resume phase mismatch")
+        return
+    if any(key in payload for key in ("wait_reason", "resume_phase", "active_attempt_id")):
+        raise ValueError("invalid task transition payload")
 
 
 def _require_v4_schema(value: object) -> dict:
@@ -148,6 +217,9 @@ def initial_state(manifest: dict) -> dict:
             "spec_refs": list(task.get("spec_refs") or []),
             "acceptance_command": task.get("acceptance_command"),
             "task_contract_sha256": task.get("task_contract_sha256"),
+            "wait_reason": None,
+            "resume_phase": None,
+            "active_attempt_id": None,
         }
         for task in manifest.get("task_graph", [])
     }
@@ -200,15 +272,28 @@ def apply_event(state: dict, event: dict) -> dict:
         state["wait_reason"] = payload.get("wait_reason")
     elif typ == "task.status_changed":
         task_id = event.get("task_id")
-        if task_id not in state["tasks"]:
-            raise ValueError("unknown task")
-        state["tasks"][task_id]["status"] = payload["to"]
+        validate_task_status_change(
+            state, task_id, payload, event.get("attempt_id")
+        )
+        task = state["tasks"][task_id]
+        task["status"] = payload["to"]
+        if payload["to"] in {"waiting_external", "waiting_user"}:
+            task["wait_reason"] = payload["wait_reason"]
+            task["resume_phase"] = payload["resume_phase"]
+            task["active_attempt_id"] = payload.get("active_attempt_id")
+        elif payload["to"] == "blocked":
+            task["wait_reason"] = payload["wait_reason"]
+            task["resume_phase"] = None
+            task["active_attempt_id"] = None
+        elif payload["from"] in {"waiting_external", "waiting_user"}:
+            task["wait_reason"] = None
+            task["resume_phase"] = None
+            task["active_attempt_id"] = None
         state["current_task"] = (
             None
             if payload["to"] in {"completed", "blocked", "failed", "waiting_user", "waiting_external"}
             else task_id
         )
-        state["wait_reason"] = payload.get("wait_reason")
     elif typ == "attempt.started":
         if state["attempt_budget"]["used"] >= state["attempt_budget"]["limit"]:
             raise ValueError("attempt_budget_exhausted")
@@ -221,12 +306,21 @@ def apply_event(state: dict, event: dict) -> dict:
                 **payload,
             }
         )
+        task_id = event.get("task_id")
+        if task_id in state["tasks"]:
+            state["tasks"][task_id]["active_attempt_id"] = event.get("attempt_id")
     elif typ == "attempt.completed":
         attempt_id = event.get("attempt_id")
         if not valid_attempt_completion(state, event.get("task_id"), attempt_id, payload):
             raise ValueError("invalid attempt payload")
         matching = [item for item in state["attempts"] if item.get("attempt_id") == attempt_id]
         matching[0].update(payload)
+        task_id = event.get("task_id")
+        if (
+            task_id in state["tasks"]
+            and state["tasks"][task_id].get("active_attempt_id") == attempt_id
+        ):
+            state["tasks"][task_id]["active_attempt_id"] = None
         for key in state["usage_totals"]:
             state["usage_totals"][key] += int((payload.get("usage") or {}).get(key, 0) or 0)
     elif typ == "verdict.recorded":
@@ -266,6 +360,24 @@ def apply_event(state: dict, event: dict) -> dict:
         history[0]["status"] = "resolved"
     elif typ == "decision.recorded":
         state["decisions"].append(payload)
+        if payload.get("decision_kind") == "repair_root_updated":
+            root = payload.get("root_cause_key")
+            count = payload.get("repair_count")
+            if (
+                not isinstance(root, str)
+                or not root
+                or type(count) is not int
+                or count not in {1, 2}
+                or count < int(state["repair_roots"].get(root, 0))
+            ):
+                raise ValueError("invalid repair root decision")
+            state["repair_roots"][root] = count
+        elif payload.get("decision_kind") == "backlog_added":
+            item = payload.get("backlog_item")
+            if not isinstance(item, dict):
+                raise ValueError("invalid backlog decision")
+            if item not in state["backlog"]:
+                state["backlog"].append(item)
     elif typ == "notification.requested":
         state["notifications"].append(payload)
     elif typ == "runtime.upgraded":

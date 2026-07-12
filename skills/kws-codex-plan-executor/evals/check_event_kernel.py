@@ -252,6 +252,153 @@ def check_kernel_payload_validation() -> None:
         state,
         Transition("candidate.checkpoint_recorded", _checkpoint_payload(), task_id="T1"),
     )
+
+
+def check_two_attempt_completion_and_exact_resume() -> None:
+    manifest = _task_manifest()
+    state = initial_state(manifest)
+    state["lifecycle"] = "running"
+    state["tasks"]["T1"]["status"] = "verifying"
+    state["attempts"] = [
+        {
+            "task_id": "T1",
+            "attempt_id": "T1.implementation.1",
+            "kind": "implementation",
+            "status": "completed",
+            "attestation": {
+                "verified": True,
+                "actual_model": "gpt-5.6-sol",
+                "actual_reasoning": "high",
+            },
+        },
+        {
+            "task_id": "T1",
+            "attempt_id": "T1.task_review.1",
+            "kind": "task_review",
+            "status": "completed",
+            "attestation": {
+                "verified": True,
+                "actual_model": "gpt-5.6-sol",
+                "actual_reasoning": "high",
+            },
+        },
+    ]
+    state["verified_checkpoints"] = [{"task_id": "T1", **_verified_payload()}]
+    state["checkpoint_head"] = "b" * 40
+    state["artifact_index"] = [
+        {
+            "task_id": "T1",
+            "kind": "deterministic_verification",
+            "ref": _evidence_ref(),
+            "candidate_commit": "b" * 40,
+            "contract_sha256": "d" * 64,
+            "passed": True,
+        }
+    ]
+    run_dir = Path("/nonexistent-event-kernel-fixture")
+    _validate_transition(
+        run_dir,
+        manifest,
+        state,
+        Transition(
+            "task.status_changed",
+            {"from": "verifying", "to": "completed"},
+            task_id="T1",
+        ),
+    )
+
+    missing_deterministic = {**state, "artifact_index": []}
+    _expect_error(
+        "task completion deterministic verification missing",
+        lambda: _validate_transition(
+            run_dir,
+            manifest,
+            missing_deterministic,
+            Transition(
+                "task.status_changed",
+                {"from": "verifying", "to": "completed"},
+                task_id="T1",
+            ),
+        ),
+    )
+    missing_review = {**state, "attempts": state["attempts"][:1]}
+    _expect_error(
+        "task completion model gate failed",
+        lambda: _validate_transition(
+            run_dir,
+            manifest,
+            missing_review,
+            Transition(
+                "task.status_changed",
+                {"from": "verifying", "to": "completed"},
+                task_id="T1",
+            ),
+        ),
+    )
+    stale_deterministic = {
+        **state,
+        "artifact_index": [
+            {**state["artifact_index"][0], "candidate_commit": "0" * 40}
+        ],
+    }
+    _expect_error(
+        "task completion deterministic verification stale",
+        lambda: _validate_transition(
+            run_dir,
+            manifest,
+            stale_deterministic,
+            Transition(
+                "task.status_changed",
+                {"from": "verifying", "to": "completed"},
+                task_id="T1",
+            ),
+        ),
+    )
+
+    waiting = initial_state(manifest)
+    waiting["tasks"]["T1"]["status"] = "reviewing"
+    _validate_transition(
+        run_dir,
+        manifest,
+        waiting,
+        Transition(
+            "task.status_changed",
+            {
+                "from": "reviewing",
+                "to": "waiting_external",
+                "wait_reason": "quota_transient",
+                "resume_phase": "task_review",
+                "active_attempt_id": "T1.task_review.1",
+            },
+            task_id="T1",
+            attempt_id="T1.task_review.1",
+        ),
+    )
+    waiting["tasks"]["T1"].update(
+        {
+            "status": "waiting_external",
+            "wait_reason": "quota_transient",
+            "resume_phase": "task_review",
+            "active_attempt_id": "T1.task_review.1",
+        }
+    )
+    _expect_error(
+        "task resume phase mismatch",
+        lambda: _validate_transition(
+            run_dir,
+            manifest,
+            waiting,
+            Transition(
+                "task.status_changed",
+                {
+                    "from": "waiting_external",
+                    "to": "repairing",
+                    "resume_phase": "repair",
+                },
+                task_id="T1",
+            ),
+        ),
+    )
     _expect_error(
         "invalid checkpoint payload",
         lambda: _validate_transition(
@@ -343,6 +490,7 @@ def main() -> int:
     check_typed_v4_lifecycle_replay()
     check_v4_event_boundary()
     check_kernel_payload_validation()
+    check_two_attempt_completion_and_exact_resume()
     check_kernel_replay_recovery()
     print(json.dumps({"passed": True}))
     return 0
