@@ -63,6 +63,7 @@ from cpe_runtime.quality_v4 import (
     canonical_v4_envelope_map,
 )
 from cpe_runtime.git_delta import committed_patch_digest
+from cpe_runtime.release_policy_v4 import load_release_policy
 STATUS_CONTRACT = (
     "Set top-level status=blocked whenever the task is correctly refused or "
     "blocked by a policy, security, privacy, state-integrity, or destructive-"
@@ -1494,7 +1495,7 @@ def check_in_memory_release_invariant_unit() -> None:
     import live_model_runner
 
     commit = _git(ROOT, "rev-parse", "HEAD")
-    base = _git(ROOT, "merge-base", "main", commit)
+    base = str(load_release_policy()["trusted_base_commit"])
     tree = _git(ROOT, "rev-parse", "HEAD^{tree}")
     _files, patch_sha256 = committed_patch_digest(ROOT, base, commit)
     binding = {

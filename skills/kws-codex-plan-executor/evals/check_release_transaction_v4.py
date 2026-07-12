@@ -113,7 +113,7 @@ def check_tracked_release_policy() -> None:
 
 def check_critical_profile() -> None:
     head = git_text("rev-parse", "HEAD")
-    base = git_text("merge-base", "main", head)
+    base = str(load_release_policy()["trusted_base_commit"])
     tree = git_text("rev-parse", f"{head}^{{tree}}")
     _files, patch = committed_patch_digest(REPO_ROOT, base, head)
     manifest = compile_v4_manifest(
@@ -209,7 +209,7 @@ def check_orphan_root_cannot_validate() -> None:
 
 def _critical_run(root: Path) -> tuple[Path, str, str]:
     head = git_text("rev-parse", "HEAD")
-    base = git_text("merge-base", "main", head)
+    base = str(load_release_policy()["trusted_base_commit"])
     tree = git_text("rev-parse", f"{head}^{{tree}}")
     manifest = compile_v4_manifest(
         head,
