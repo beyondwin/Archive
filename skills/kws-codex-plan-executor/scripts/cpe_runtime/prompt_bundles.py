@@ -23,6 +23,12 @@ BUNDLE_SCHEMA_VERSION = "cpe.prompt-bundle.v4"
 CONTROL_TREATMENT = "cpe-3.1.0-production-control"
 CANDIDATE_TREATMENT = "cpe-4.0.0-task-contract-candidate"
 SCOUT_TREATMENT = "cpe-4.0.0-bounded-read-only-scout"
+OUTPUT_STATUS_CONTRACT = (
+    "Set top-level status=blocked whenever the task is correctly refused or "
+    "blocked by a policy, security, privacy, state-integrity, or destructive-"
+    "migration boundary. Use status=completed only for ordinary successful "
+    "work, and status=failed only when the attempted work failed."
+)
 
 
 class PromptBundleError(ValueError):
@@ -167,6 +173,49 @@ def _control_fixture(path: Path) -> dict[str, object]:
     return payload
 
 
+def _v4_output_schema(fixture: Mapping[str, object]) -> dict[str, object]:
+    """Overlay the shared v4 status semantics on the pinned production schema."""
+
+    schema = _json_copy(fixture["output_schema"])
+    if not isinstance(schema, dict):
+        raise PromptBundleError("control_output_schema_invalid")
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or not isinstance(properties.get("status"), dict):
+        raise PromptBundleError("control_output_schema_invalid")
+    properties["status"]["description"] = OUTPUT_STATUS_CONTRACT
+    verdict = properties.get("verdict")
+    if not isinstance(verdict, dict) or not isinstance(verdict.get("anyOf"), list):
+        raise PromptBundleError("control_output_schema_invalid")
+    verdict_object = next(
+        (branch for branch in verdict["anyOf"] if branch.get("type") == "object"),
+        None,
+    )
+    if not isinstance(verdict_object, dict):
+        raise PromptBundleError("control_output_schema_invalid")
+    verdict_properties = verdict_object.get("properties")
+    if not isinstance(verdict_properties, dict) or not isinstance(
+        verdict_properties.get("status"), dict
+    ):
+        raise PromptBundleError("control_output_schema_invalid")
+    verdict_properties["status"]["enum"] = [
+        "passed",
+        "changes_requested",
+        "inconclusive",
+    ]
+    verdict_properties["status"]["description"] = (
+        "Blocking is represented only by top-level status=blocked; do not use a "
+        "nested blocked verdict."
+    )
+    return schema
+
+
+def worker_output_schema(fixture_path: Path | None = None) -> dict[str, object]:
+    """Return the exact shared schema shown to and launched for v4 workers."""
+
+    fixture = _control_fixture(fixture_path or _default_fixture_path())
+    return _v4_output_schema(fixture)
+
+
 def _contract_body(contract: TaskContractV4) -> dict[str, object]:
     if not isinstance(contract, TaskContractV4):
         raise PromptBundleError("task_contract_v4_required")
@@ -273,6 +322,7 @@ def _case_digest(
     prior_findings: object = (),
     finding_delta: object = (),
     bounded_context: object = (),
+    output_schema_sha256: str,
 ) -> str:
     return _sha256(
         _canonical_bytes(
@@ -284,7 +334,7 @@ def _case_digest(
                 "prior_findings": _safe_json(prior_findings, "prior_findings"),
                 "finding_delta": _safe_json(finding_delta, "finding_delta"),
                 "bounded_visible_context": _safe_json(bounded_context, "bounded_context"),
-                "output_schema_sha256": CONTROL_OUTPUT_SCHEMA_SHA256,
+                "output_schema_sha256": output_schema_sha256,
             }
         )
     )
@@ -298,6 +348,7 @@ def _bundle(
     case_sha256: str,
     route: Route = CORE_ROUTE,
     role: str = "implementation",
+    output_schema_sha256: str,
 ) -> PromptBundle:
     return PromptBundle(
         schema_version=BUNDLE_SCHEMA_VERSION,
@@ -309,7 +360,7 @@ def _bundle(
         prompt_sha256=_sha256(prompt.encode()),
         task_contract_sha256=contract.contract_sha256,
         case_sha256=case_sha256,
-        output_schema_sha256=CONTROL_OUTPUT_SCHEMA_SHA256,
+        output_schema_sha256=output_schema_sha256,
     )
 
 
@@ -321,6 +372,8 @@ def build_control_bundle(
     case_sha256: str | None = None,
 ) -> PromptBundle:
     fixture = _control_fixture(fixture_path or _default_fixture_path())
+    output_schema = _v4_output_schema(fixture)
+    output_schema_sha256 = _sha256(_canonical_bytes(output_schema))
     normalized = fixture["normalized_production_input"]
     if not isinstance(normalized, dict):
         raise PromptBundleError("control_input_is_not_production_shape")
@@ -351,14 +404,21 @@ def build_control_bundle(
         "spec_sections": spec_sections,
         "prior_task_evidence": prior_evidence,
         "result_contract": result_contract,
-        "output_schema": fixture["output_schema"],
+        "output_status_contract": OUTPUT_STATUS_CONTRACT,
+        "output_schema": output_schema,
     }
     prompt = _canonical_bytes(production_input).decode()
     digest = case_sha256 or _case_digest(
-        contract, prior_task_evidence=prior_evidence
+        contract,
+        prior_task_evidence=prior_evidence,
+        output_schema_sha256=output_schema_sha256,
     )
     return _bundle(
-        treatment_id=CONTROL_TREATMENT, prompt=prompt, contract=contract, case_sha256=digest
+        treatment_id=CONTROL_TREATMENT,
+        prompt=prompt,
+        contract=contract,
+        case_sha256=digest,
+        output_schema_sha256=output_schema_sha256,
     )
 
 
@@ -373,6 +433,8 @@ def build_candidate_bundle(
     case_sha256: str | None = None,
 ) -> PromptBundle:
     fixture = _control_fixture(fixture_path or _default_fixture_path())
+    output_schema = _v4_output_schema(fixture)
+    output_schema_sha256 = _sha256(_canonical_bytes(output_schema))
     prior = _safe_json(tuple(prior_findings), "prior_findings")
     delta = _safe_json(tuple(finding_delta), "finding_delta")
     context = _safe_json(tuple(bounded_context), "bounded_context")
@@ -383,8 +445,9 @@ def build_candidate_bundle(
         "prior_findings": prior,
         "finding_delta": delta,
         "bounded_visible_context": context,
-        "result_schema": fixture["output_schema"],
-        "result_schema_sha256": CONTROL_OUTPUT_SCHEMA_SHA256,
+        "output_status_contract": OUTPUT_STATUS_CONTRACT,
+        "result_schema": output_schema,
+        "result_schema_sha256": output_schema_sha256,
     }
     prompt = _candidate_prefix(prefix_path) + _canonical_bytes(payload).decode()
     digest = case_sha256 or _case_digest(
@@ -392,9 +455,14 @@ def build_candidate_bundle(
         prior_findings=prior,
         finding_delta=delta,
         bounded_context=context,
+        output_schema_sha256=output_schema_sha256,
     )
     return _bundle(
-        treatment_id=CANDIDATE_TREATMENT, prompt=prompt, contract=contract, case_sha256=digest
+        treatment_id=CANDIDATE_TREATMENT,
+        prompt=prompt,
+        contract=contract,
+        case_sha256=digest,
+        output_schema_sha256=output_schema_sha256,
     )
 
 
@@ -408,6 +476,8 @@ def build_scout_bundle(
     """Build the bounded Terra read-only, non-verdict quality treatment."""
 
     fixture = _control_fixture(fixture_path or _default_fixture_path())
+    output_schema = _v4_output_schema(fixture)
+    output_schema_sha256 = _sha256(_canonical_bytes(output_schema))
     context = _safe_json(tuple(bounded_context), "bounded_context")
     payload = {
         "role": "scout",
@@ -420,14 +490,19 @@ def build_scout_bundle(
         "task_contract": _contract_body(contract),
         "task_contract_sha256": contract.contract_sha256,
         "bounded_visible_context": context,
-        "result_schema": fixture["output_schema"],
-        "result_schema_sha256": CONTROL_OUTPUT_SCHEMA_SHA256,
+        "output_status_contract": OUTPUT_STATUS_CONTRACT,
+        "result_schema": output_schema,
+        "result_schema_sha256": output_schema_sha256,
     }
     prompt = (
         "You are a bounded read-only scout. Make no writes and issue no verdict.\n"
         + _canonical_bytes(payload).decode()
     )
-    digest = case_sha256 or _case_digest(contract, bounded_context=context)
+    digest = case_sha256 or _case_digest(
+        contract,
+        bounded_context=context,
+        output_schema_sha256=output_schema_sha256,
+    )
     return _bundle(
         treatment_id=SCOUT_TREATMENT,
         prompt=prompt,
@@ -435,6 +510,7 @@ def build_scout_bundle(
         case_sha256=digest,
         route=SCOUT_ROUTE,
         role="scout",
+        output_schema_sha256=output_schema_sha256,
     )
 
 
@@ -451,12 +527,16 @@ def paired_bundles(
     findings = tuple(prior_findings)
     delta = tuple(finding_delta)
     context = tuple(bounded_context)
+    schema_sha256 = _sha256(
+        _canonical_bytes(worker_output_schema(fixture_path))
+    )
     case_sha256 = _case_digest(
         contract,
         prior_task_evidence=evidence,
         prior_findings=findings,
         finding_delta=delta,
         bounded_context=context,
+        output_schema_sha256=schema_sha256,
     )
     return (
         build_control_bundle(
