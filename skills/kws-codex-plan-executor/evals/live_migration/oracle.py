@@ -357,8 +357,13 @@ def evaluate_slot(
         "output": measured_output,
         "events": events,
     }
+    result_schema = (
+        "cpe-quality-result.v4"
+        if slot["treatment_id"] in {"sol_v31_control", "sol_v4_candidate", "terra_v4"}
+        else "cpe-live-result.v2"
+    )
     return {
-        "schema_version": "cpe-live-result.v2",
+        "schema_version": result_schema,
         "run_id": slot["run_id"],
         "treatment_id": slot["treatment_id"],
         "case_id": slot["case_id"],
@@ -391,7 +396,7 @@ def policy_failure_result(slot: dict[str, object], manifest_sha256: str) -> dict
     for field in ("run_id", "treatment_id", "case_id", "model", "reasoning", "billing_mode"):
         _require_text(slot.get(field), f"slot.{field}")
     if (
-        slot.get("treatment_id") != "terra_scout"
+        slot.get("treatment_id") not in {"terra_scout", "terra_v4"}
         or slot.get("model") != "gpt-5.6-terra"
         or slot.get("outcome_kind") != EXPECTED_POLICY_FAILURE
         or slot.get("expected_policy_failure") is not True
@@ -413,8 +418,13 @@ def policy_failure_result(slot: dict[str, object], manifest_sha256: str) -> dict
         "manifest_sha256": manifest_sha256,
         "matrix_policy_sha256": matrix_policy_sha256,
     }
+    result_schema = (
+        "cpe-quality-result.v4"
+        if slot["treatment_id"] == "terra_v4"
+        else "cpe-live-result.v2"
+    )
     return {
-        "schema_version": "cpe-live-result.v2",
+        "schema_version": result_schema,
         "run_id": slot["run_id"],
         "treatment_id": slot["treatment_id"],
         "case_id": slot["case_id"],

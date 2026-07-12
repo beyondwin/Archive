@@ -13,7 +13,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from .contracts import (
     CREDENTIALLED_CALL,
@@ -24,7 +24,7 @@ from .contracts import (
     worker_prompt_bytes,
 )
 from .fixtures import MaterializedFixture, materialize_fixture
-from .ledger import LiveRun, append_event, commit_slot
+from .ledger import LiveRun, append_event, commit_slot, replay_run
 from .oracle import OracleInputError, ProcessEvidence, evaluate_slot, policy_failure_result
 
 
@@ -95,6 +95,69 @@ class RunContext:
     child_env: dict[str, str]
     slot_timeout_seconds: int
     retry_failed: bool
+
+
+FakeProvider = Callable[
+    [dict[str, object]], tuple[dict[str, bytes], dict[str, object]]
+]
+
+
+def execute_v4_slots(
+    run: LiveRun,
+    invoke_provider: FakeProvider,
+    *,
+    sentinel_only: bool = False,
+) -> dict[str, int]:
+    """Execute only pending v4 slots, with deterministic policy outcomes inline."""
+
+    if not isinstance(run, LiveRun):
+        raise LiveRunnerError("invalid_run", "run must be an immutable LiveRun")
+    if run.manifest.get("schema_version") != "cpe-quality-manifest.v4":
+        raise LiveRunnerError("invalid_matrix", "execute_v4_slots requires a v4 manifest")
+    if not callable(invoke_provider):
+        raise LiveRunnerError("invalid_provider", "provider callback must be callable")
+    projection = replay_run(run.run_dir)
+    pending = {
+        SlotKey(str(item["treatment_id"]), str(item["case_id"]))
+        for item in projection["pending_slots"]
+    }
+    selected = [
+        slot
+        for slot in run.manifest["slots"]
+        if SlotKey(str(slot["treatment_id"]), str(slot["case_id"])) in pending
+    ]
+    if sentinel_only:
+        selected = selected[:1]
+        if selected and selected[0].get("outcome_kind") != CREDENTIALLED_CALL:
+            raise LiveRunnerError(
+                "invalid_sentinel", "the first pending v4 slot must be credentialed"
+            )
+    provider_invocations = 0
+    for slot in selected:
+        key = SlotKey(str(slot["treatment_id"]), str(slot["case_id"]))
+        if slot.get("outcome_kind") == EXPECTED_POLICY_FAILURE:
+            bound = {
+                **slot,
+                "run_id": run.manifest["run_id"],
+                "billing_mode": run.manifest["billing_mode"],
+            }
+            result = policy_failure_result(bound, run.manifest_sha256)
+            commit_slot(
+                run,
+                key,
+                {"policy.json": canonical_json(slot.get("policy_reason"))},
+                result,
+            )
+            continue
+        if slot.get("outcome_kind") != CREDENTIALLED_CALL or slot.get("credentialed") is not True:
+            raise LiveRunnerError("invalid_slot_contract", "v4 slot outcome is inconsistent")
+        files, result = invoke_provider(slot)
+        provider_invocations += 1
+        commit_slot(run, key, files, result)
+    return {
+        "executed_slots": len(selected),
+        "provider_invocations": provider_invocations,
+    }
 
 
 def _sha256_bytes(raw: bytes) -> str:
@@ -466,7 +529,12 @@ def _catalog_from_app_server(binary: Path, child_env: Mapping[str, str]) -> dict
         raise LiveRunnerError("malformed_model_catalog", "the exact model catalog was malformed") from exc
 
 
-def preflight_codex(codex_bin: Path, env: Mapping[str, str]) -> CodexAttestation:
+def preflight_codex(
+    codex_bin: Path,
+    env: Mapping[str, str],
+    *,
+    required_models: frozenset[str] | None = None,
+) -> CodexAttestation:
     """Attest one app-bundled Codex binary and ChatGPT-authenticated home."""
 
     binary = Path(codex_bin).expanduser().resolve()
@@ -493,7 +561,9 @@ def preflight_codex(codex_bin: Path, env: Mapping[str, str]) -> CodexAttestation
     if login.returncode != 0 or login.stdout.strip() != "Logged in using ChatGPT":
         raise LiveRunnerError("chatgpt_login_required", "exact ChatGPT login attestation is required")
     catalog = _catalog_from_app_server(binary, child_env)
-    required = {"gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra"}
+    required = required_models or frozenset(
+        {"gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra"}
+    )
     for model in required:
         if model not in catalog or "high" not in catalog[model]:
             raise LiveRunnerError("required_model_unavailable", f"missing exact model route: {model}/high")

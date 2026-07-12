@@ -16,14 +16,20 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 
-from live_migration.compiler import compile_manifest
+from live_migration.compiler import compile_manifest, compile_v4_manifest
 from live_migration.contracts import (
     CHATGPT_SUBSCRIPTION,
     SlotKey,
     canonical_json,
     sha256_bytes,
 )
-from live_migration.ledger import LiveRun, append_event, create_run, replay_run
+from live_migration.ledger import (
+    LiveRun,
+    append_event,
+    create_run,
+    record_terminal_full_run,
+    replay_run,
+)
 from live_migration.runner import (
     API_KEY_ENV_NAMES,
     LiveRunnerError,
@@ -58,6 +64,7 @@ def _parser() -> argparse.ArgumentParser:
     dry.add_argument("--billing-mode", default=CHATGPT_SUBSCRIPTION)
     dry.add_argument("--output", type=Path, required=True)
     dry.add_argument("--run-id", default="cpe-v3-subscription-dry-run")
+    dry.add_argument("--matrix", choices=("v4",))
     _add_checkpoint_arguments(dry)
 
     start = commands.add_parser("start")
@@ -67,6 +74,8 @@ def _parser() -> argparse.ArgumentParser:
     start.add_argument("--codex-bin", type=Path, default=DEFAULT_CODEX_BINARY)
     start.add_argument("--run-id")
     start.add_argument("--slot-timeout-seconds", type=int, default=900)
+    start.add_argument("--matrix", choices=("v4",))
+    start.add_argument("--sentinel-only", action="store_true")
     _add_checkpoint_arguments(start)
 
     resume = commands.add_parser("resume")
@@ -201,11 +210,27 @@ def _bind_manifest(
 
 
 def _compile(
-    billing_mode: str, run_id: str, binding: dict[str, str]
+    billing_mode: str,
+    run_id: str,
+    binding: dict[str, str],
+    *,
+    matrix: str | None = None,
 ) -> dict[str, object]:
-    manifest = compile_manifest(
-        ROOT, billing_mode, binding["implementation_commit"], _created_at(), run_id
-    )
+    if matrix == "v4":
+        if billing_mode != CHATGPT_SUBSCRIPTION:
+            raise LiveRunnerError(
+                "unsupported_billing_mode", "v4 requires ChatGPT subscription billing"
+            )
+        manifest = compile_v4_manifest(
+            binding["implementation_commit"],
+            run_id,
+            eval_dir=ROOT,
+            created_at=_created_at(),
+        )
+    else:
+        manifest = compile_manifest(
+            ROOT, billing_mode, binding["implementation_commit"], _created_at(), run_id
+        )
     return _bind_manifest(manifest, binding)
 
 
@@ -233,7 +258,10 @@ def _new_run_dir(evidence_root: Path, run_id: str) -> Path:
 
 def _dry_run(args: argparse.Namespace) -> dict[str, object]:
     manifest = _compile(
-        args.billing_mode, args.run_id, _checkpoint_binding(args, required=False)
+        args.billing_mode,
+        args.run_id,
+        _checkpoint_binding(args, required=False),
+        matrix=args.matrix,
     )
     payload = {
         "status": "dry_run",
@@ -295,7 +323,9 @@ def _run_codex_home(run: LiveRun, source_home: Path, *, create: bool) -> Path:
     return target.resolve()
 
 
-def _preflight_codex(codex_binary: Path):
+def _preflight_codex(
+    codex_binary: Path, required_models: tuple[str, ...] | None = None
+):
     """Accept the app CLI's stderr login-status stream without weakening its value."""
 
     original_run = subprocess.run
@@ -386,13 +416,22 @@ def _preflight_codex(codex_binary: Path):
 
     subprocess.run = run_with_login_status_compatibility
     try:
-        return preflight_codex(codex_binary, os.environ)
+        return preflight_codex(
+            codex_binary,
+            os.environ,
+            required_models=(frozenset(required_models) if required_models else None),
+        )
     finally:
         subprocess.run = original_run
 
 
 def _context(run: LiveRun, args: argparse.Namespace) -> RunContext:
-    attestation = _preflight_codex(args.codex_bin)
+    required_models = (
+        ("gpt-5.6-sol", "gpt-5.6-terra")
+        if run.manifest.get("schema_version") == "cpe-quality-manifest.v4"
+        else None
+    )
+    attestation = _preflight_codex(args.codex_bin, required_models)
     run_home = _run_codex_home(run, attestation.codex_home, create=False)
     return RunContext(
         run=run,
@@ -456,6 +495,7 @@ def _execute(
     slots: list[dict[str, object]],
     *,
     retry_slots: set[SlotKey] | None = None,
+    complete_run: bool = True,
 ) -> dict[str, object]:
     results: list[dict[str, object]] = []
     try:
@@ -471,18 +511,42 @@ def _execute(
             results.append(result)
     except LiveRunnerError as exc:
         append_event(context.run, "run_blocked", {"code": exc.code, "message": str(exc)})
+        if (
+            complete_run
+            and context.run.manifest.get("schema_version") == "cpe-quality-manifest.v4"
+        ):
+            record_terminal_full_run(
+                context.run,
+                checkpoint_sha256=str(
+                    context.run.manifest["implementation_patch_sha256"]
+                ),
+                passed=False,
+            )
         raise
-    append_event(context.run, "run_completed", {"completed_slots": len(results)})
+    if complete_run:
+        append_event(context.run, "run_completed", {"completed_slots": len(results)})
+        if context.run.manifest.get("schema_version") == "cpe-quality-manifest.v4":
+            record_terminal_full_run(
+                context.run,
+                checkpoint_sha256=str(
+                    context.run.manifest["implementation_patch_sha256"]
+                ),
+                passed=True,
+            )
     state = replay_run(context.run.run_dir)
     return {
-        "status": "completed",
+        "status": "completed" if complete_run else "sentinel_completed",
         "run_id": context.run.manifest["run_id"],
         "run_dir": str(context.run.run_dir),
         "slot_count": len(context.run.manifest["slots"]),
         "completed_count": len(state["completed_slots"]),
         "credentialed_call_count": context.run.manifest["credentialed_call_count"],
         "expected_policy_failure_count": context.run.manifest["expected_policy_failure_count"],
-        "next_action": "aggregate and verify the immutable live report",
+        "next_action": (
+            "aggregate and verify the immutable live report"
+            if complete_run
+            else "resume the same immutable ledger for pending slots"
+        ),
     }
 
 
@@ -496,11 +560,19 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
     run_id = args.run_id or f"cpe-live-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     run_dir = _new_run_dir(args.evidence_root, run_id)
     manifest = _compile(
-        args.billing_mode, run_id, _checkpoint_binding(args, required=True)
+        args.billing_mode,
+        run_id,
+        _checkpoint_binding(args, required=True),
+        matrix=args.matrix,
     )
     if run_dir.exists():
         raise LiveRunnerError("execution_root_not_fresh", f"run directory already exists: {run_dir}")
-    attestation = _preflight_codex(args.codex_bin)
+    required_models = (
+        ("gpt-5.6-sol", "gpt-5.6-terra")
+        if manifest.get("schema_version") == "cpe-quality-manifest.v4"
+        else None
+    )
+    attestation = _preflight_codex(args.codex_bin, required_models)
     manifest["model_catalog_sha256"] = attestation.catalog_sha256
     manifest = _bind_manifest(manifest, {
         "implementation_commit": str(manifest["implementation_commit"]),
@@ -512,7 +584,14 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
     context = RunContext(run, ROOT, attestation, _child_env(run_home), args.slot_timeout_seconds, False)
     descriptor = _acquire_run_execution_lock(run_dir)
     try:
-        return _execute(context, list(manifest["slots"]))
+        slots = list(manifest["slots"])
+        if args.sentinel_only:
+            if manifest.get("schema_version") != "cpe-quality-manifest.v4":
+                raise LiveRunnerError(
+                    "sentinel_requires_v4", "--sentinel-only requires --matrix v4"
+                )
+            slots = slots[:1]
+        return _execute(context, slots, complete_run=not args.sentinel_only)
     finally:
         os.close(descriptor)
 

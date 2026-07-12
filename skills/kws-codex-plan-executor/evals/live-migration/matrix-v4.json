@@ -1,0 +1,1 @@
+{"schema_version":"4","treatments":[{"id":"sol_v31_control","model":"gpt-5.6-sol","reasoning":"high"},{"id":"sol_v4_candidate","model":"gpt-5.6-sol","reasoning":"high"},{"id":"terra_v4","model":"gpt-5.6-terra","reasoning":"high"}]}

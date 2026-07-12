@@ -39,6 +39,9 @@ EXPECTED_TREATMENTS = (
     ("sol_v3", "gpt-5.6-sol", "high", "../../templates/fresh-session-prompt.txt"),
     ("terra_scout", "gpt-5.6-terra", "high", "terra-scout-generated"),
 )
+PINNED_PRODUCTION_CONTROL_RENDERER = (
+    "../control-bundles/cpe-3.1.0-production.json"
+)
 EXPECTED_CASES = (
     "single-file implementation",
     "cross-package implementation",
@@ -411,7 +414,13 @@ def _validate_runner_manifest(manifest: dict[str, Any]) -> None:
             slot.get("reasoning"),
             slot.get("prompt_renderer"),
         )
-        if actual_treatment != expected_treatment:
+        pinned_control_compatibility = (
+            slot.get("treatment_id") in {"gpt55_current", "sol_current"}
+            and expected_treatment is not None
+            and actual_treatment[:2] == expected_treatment[:2]
+            and actual_treatment[2] == PINNED_PRODUCTION_CONTROL_RENDERER
+        )
+        if actual_treatment != expected_treatment and not pinned_control_compatibility:
             raise MigrationContractError("run manifest slot changed the treatment contract")
         expected_policy = (
             slot.get("treatment_id") == "terra_scout"
