@@ -18,7 +18,10 @@ from cpe_runtime.public_result import (
     trusted_release_repository_root,
     validate_release_evidence_root,
 )
-from cpe_runtime.quality_v4 import canonical_v4_envelope_map
+from cpe_runtime.quality_v4 import (
+    build_v4_release_evidence_payloads,
+    canonical_v4_envelope_map,
+)
 from live_migration.compiler import compile_v4_manifest
 
 
@@ -29,36 +32,31 @@ def canonical_sha256(payload: object) -> str:
 
 def write_valid_fixture(root: Path, commit: str, tree: str) -> None:
     compiled = compile_v4_manifest(commit=commit, run_id="release-validator-fixture")
+    compiled["implementation_tree"] = tree
+    compiled["implementation_patch_sha256"] = "a" * 64
     envelope_sha256 = canonical_v4_envelope_map(compiled)
-    manifest = {
-        "schema_version": "cpe-quality-manifest.v4",
+    aggregate = {
+        "schema_version": "cpe-quality-aggregate.v4",
+        "run_id": compiled["run_id"],
+        "manifest_sha256": compiled["manifest_sha256"],
         "implementation_commit": commit,
         "implementation_tree": tree,
+        "implementation_patch_sha256": "a" * 64,
         "credentialed_call_count": 17,
         "policy_outcome_count": 7,
+        "duplicate_slot_count": 0,
+        "pending_slot_count": 0,
         "envelope_sha256": envelope_sha256,
-    }
-    result = {
-        "schema_version": "cpe-quality-result.v4",
-        "implementation_commit": commit,
-        "implementation_tree": tree,
-        "manifest_sha256": canonical_sha256(manifest),
-        "credentialed_call_count": 17,
-        "policy_outcome_count": 7,
-        "envelope_sha256": envelope_sha256,
-        "release_gate": {"passed": True},
-    }
-    privacy = {
-        "schema_version": "cpe.privacy-audit.v4",
-        "implementation_commit": commit,
-        "implementation_tree": tree,
-        "passed": True,
-        "findings": [],
+        "release_gate": {
+            "passed": True,
+            "failures": [],
+            "control_completed": 8,
+            "candidate_completed": 8,
+        },
     }
     dogfood = {
         "schema_version": "cpe.dogfood-result.v4",
-        "implementation_commit": commit,
-        "implementation_tree": tree,
+        "status": "passed",
         "run_ids_created": 1,
         "model_attempts": 6,
         "max_same_root_repairs": 2,
@@ -67,22 +65,8 @@ def write_valid_fixture(root: Path, commit: str, tree: str) -> None:
         "source_checkout_unchanged": True,
         "runtime_patch_required": False,
     }
-    checkpoint = {
-        "schema_version": "cpe.code-checkpoint.v4",
-        "commit": commit,
-        "tree": tree,
-        "manifest_sha256": canonical_sha256(manifest),
-        "result_sha256": canonical_sha256(result),
-        "privacy_sha256": canonical_sha256(privacy),
-        "dogfood_sha256": canonical_sha256(dogfood),
-    }
-    for name, payload in {
-        "checkpoint.json": checkpoint,
-        "manifest.json": manifest,
-        "result.json": result,
-        "privacy-audit.json": privacy,
-        "dogfood-result.json": dogfood,
-    }.items():
+    payloads = build_v4_release_evidence_payloads(compiled, aggregate, dogfood)
+    for name, payload in payloads.items():
         (root / name).write_text(
             json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
             encoding="utf-8",
@@ -218,6 +202,62 @@ def main() -> int:
         assert substituted["passed"] is False
         assert "launch_envelope_binding_invalid" in substituted["errors"]
         result_path.write_text(original_result, encoding="utf-8")
+
+        # Closed schemas reject a digest-consistent unknown field, including a
+        # caller-controlled absolute hidden-oracle path and a forged privacy pass.
+        dogfood_path = valid / "dogfood-result.json"
+        checkpoint_path = valid / "checkpoint.json"
+        privacy_path = valid / "privacy-audit.json"
+        original_dogfood = dogfood_path.read_text(encoding="utf-8")
+        original_checkpoint = checkpoint_path.read_text(encoding="utf-8")
+        original_privacy = privacy_path.read_text(encoding="utf-8")
+        dogfood_payload = json.loads(original_dogfood)
+        dogfood_payload["debug_note"] = "/private/tmp/oracle/expected.json"
+        dogfood_path.write_text(
+            json.dumps(dogfood_payload, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        privacy_payload = json.loads(original_privacy)
+        privacy_payload["passed"] = True
+        privacy_payload["findings"] = []
+        privacy_path.write_text(
+            json.dumps(privacy_payload, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        checkpoint_payload = json.loads(original_checkpoint)
+        checkpoint_payload["dogfood_sha256"] = canonical_sha256(dogfood_payload)
+        checkpoint_payload["privacy_sha256"] = canonical_sha256(privacy_payload)
+        checkpoint_path.write_text(
+            json.dumps(checkpoint_payload, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        hidden_oracle = validate_release_evidence_root(valid, commit, repo)
+        assert hidden_oracle["passed"] is False, hidden_oracle
+        assert "release_evidence_schema_invalid" in hidden_oracle["errors"]
+        assert "privacy_audit_failed" in hidden_oracle["errors"]
+        dogfood_path.write_text(original_dogfood, encoding="utf-8")
+        checkpoint_path.write_text(original_checkpoint, encoding="utf-8")
+        privacy_path.write_text(original_privacy, encoding="utf-8")
+
+        for filename in (
+            "checkpoint.json",
+            "manifest.json",
+            "result.json",
+            "privacy-audit.json",
+            "dogfood-result.json",
+        ):
+            path = valid / filename
+            original = path.read_text(encoding="utf-8")
+            payload = json.loads(original)
+            payload["debug_note"] = "safe-looking-extra"
+            path.write_text(
+                json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+                encoding="utf-8",
+            )
+            closed = validate_release_evidence_root(valid, commit, repo)
+            assert closed["passed"] is False, (filename, closed)
+            assert "release_evidence_schema_invalid" in closed["errors"]
+            path.write_text(original, encoding="utf-8")
 
         rewritten = root / "rewritten"
         rewritten.mkdir()
