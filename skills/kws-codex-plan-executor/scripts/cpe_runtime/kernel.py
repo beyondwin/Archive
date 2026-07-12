@@ -10,12 +10,11 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from .events import WRITABLE_EVENT_TYPES, append_event, read_events, validate_chain
+from .events import EVENT_TYPES, append_event, read_events, validate_chain
 from .manifest import load_verified_manifest, validate_manifest
 from .model_policy import CORE_ROUTE
 from .packets import PacketDraft, verify_packet
 from .projector import (
-    RETRY_PHASE_STATES,
     RUN_TRANSITIONS,
     TASK_TRANSITIONS,
     owned_active_blocker,
@@ -24,6 +23,7 @@ from .projector import (
     valid_evidence_refs,
     valid_verdict,
 )
+from .runtime_upgrade import RuntimeIdentity, validate_runtime_upgrade
 from .validation import validate_completion
 
 
@@ -110,7 +110,9 @@ def _attempt_kinds(state: dict, task_id: str | None) -> set[str]:
 
 
 def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Transition) -> None:
-    if command.event_type not in WRITABLE_EVENT_TYPES:
+    if manifest.get("schema_version") != "4" or state.get("schema_version") != "4":
+        raise ValueError("unsupported_run_schema")
+    if command.event_type not in EVENT_TYPES:
         raise ValueError("unknown event type")
     payload = command.payload
     if not isinstance(payload, dict):
@@ -144,28 +146,13 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
         return
     if command.task_id is not None and command.task_id not in state["tasks"]:
         raise ValueError("unknown task")
-    if command.event_type == "task.retry_scheduled":
-        phase = payload.get("phase")
-        revision = payload.get("worktree_revision")
-        if phase not in RETRY_PHASE_STATES:
-            raise ValueError("invalid retry phase")
-        if (
-            state["tasks"][command.task_id]["status"] != "blocked"
-            or not isinstance(payload.get("root_cause_key"), str)
-            or not payload["root_cause_key"]
-            or not isinstance(revision, int)
-            or isinstance(revision, bool)
-            or revision != state.get("worktree_revision", 0)
-            or any(item.get("task_id") == command.task_id for item in state.get("active_blockers", []))
-            or not valid_evidence_refs(payload.get("evidence_refs"))
-        ):
-            raise ValueError("invalid retry payload")
-    elif command.event_type == "attempt.started":
+    if command.event_type == "attempt.started":
         if (
             not command.attempt_id
             or not isinstance(payload.get("kind"), str)
             or not payload["kind"]
             or any(item.get("attempt_id") == command.attempt_id for item in state.get("attempts", []))
+            or state["attempt_budget"]["used"] >= state["attempt_budget"]["limit"]
         ):
             raise ValueError("invalid attempt payload")
     elif command.event_type == "attempt.completed":
@@ -174,36 +161,34 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
     elif command.event_type == "verdict.recorded":
         if not valid_verdict(state, command.task_id, command.attempt_id, payload):
             raise ValueError("invalid verdict payload")
-    elif command.event_type == "worktree.revision_recorded":
-        source = payload.get("from")
-        target = payload.get("to")
-        digest = payload.get("patch_sha256")
-        valid_digest = (
-            isinstance(digest, str)
-            and len(digest) == 64
-            and all(character in "0123456789abcdef" for character in digest)
+    elif command.event_type in {"candidate.checkpoint_recorded", "task.checkpoint_verified"}:
+        digest_fields = (
+            ("patch_sha256",)
+            if command.event_type == "candidate.checkpoint_recorded"
+            else ("contract_sha256", "acceptance_sha256", "review_sha256")
         )
+        commits = (payload.get("predecessor"), payload.get("commit"), payload.get("tree"))
         if (
-            not isinstance(source, int)
-            or isinstance(source, bool)
-            or not isinstance(target, int)
-            or isinstance(target, bool)
-            or source != state.get("worktree_revision", 0)
-            or target != source + 1
-            or not valid_digest
+            any(
+                not isinstance(value, str)
+                or len(value) != 40
+                or any(character not in "0123456789abcdef" for character in value)
+                for value in commits
+            )
+            or any(
+                not isinstance(payload.get(field), str)
+                or len(str(payload[field])) != 64
+                or any(character not in "0123456789abcdef" for character in str(payload[field]))
+                for field in digest_fields
+            )
         ):
-            raise ValueError("invalid worktree revision payload")
-        changed_files = payload.get("changed_files")
-        if changed_files is not None and (
-            not isinstance(changed_files, list)
-            or any(not isinstance(path, str) or not path for path in changed_files)
-        ):
-            raise ValueError("invalid worktree revision payload")
-        payload_attempt_id = payload.get("attempt_id")
-        if payload_attempt_id is not None and (
-            not isinstance(payload_attempt_id, str) or not payload_attempt_id
-        ):
-            raise ValueError("invalid worktree revision payload")
+            raise ValueError("invalid checkpoint payload")
+        if command.event_type == "candidate.checkpoint_recorded":
+            changed_files = payload.get("changed_files")
+            if not isinstance(changed_files, list) or any(
+                not isinstance(path, str) or not path for path in changed_files
+            ):
+                raise ValueError("invalid checkpoint payload")
     elif command.event_type == "blocker.opened":
         required = ("blocker_id", "category", "owner", "resume_condition")
         if (
@@ -219,15 +204,6 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
             not isinstance(root_cause_key, str) or not root_cause_key
         ):
             raise ValueError("invalid blocker payload")
-    elif command.event_type == "blocker.updated":
-        blocker_id = payload.get("blocker_id")
-        if (
-            not isinstance(blocker_id, str)
-            or owned_active_blocker(state, command.task_id, blocker_id) is None
-            or len(payload) < 2
-            or bool({"status", "task_id"} & payload.keys())
-        ):
-            raise ValueError("invalid blocker update payload")
     elif command.event_type == "blocker.resolved":
         blocker_id = payload.get("blocker_id")
         if (
@@ -240,6 +216,27 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
     elif command.event_type == "evidence.attached":
         if not isinstance(payload.get("ref"), dict) or not payload.get("kind"):
             raise ValueError("invalid evidence payload")
+    elif command.event_type == "decision.recorded":
+        if (
+            not isinstance(payload.get("selected_action"), str)
+            or not payload["selected_action"]
+            or not isinstance(payload.get("basis"), str)
+            or not payload["basis"]
+            or payload.get("approval_basis") not in {
+                "standing_autonomy_policy",
+                "direct_user_approval",
+            }
+        ):
+            raise ValueError("invalid decision payload")
+    elif command.event_type == "notification.requested":
+        if not isinstance(payload.get("dedupe_key"), str) or not payload["dedupe_key"]:
+            raise ValueError("invalid notification payload")
+    elif command.event_type == "runtime.upgraded":
+        validate_runtime_upgrade(
+            RuntimeIdentity.from_mapping(state.get("runtime")),
+            payload,
+            checkpoint_head=state.get("checkpoint_head"),
+        )
     elif command.event_type == "completion.recorded":
         if payload.get("passed") is not True:
             raise ValueError("completion evidence must pass")
@@ -247,23 +244,6 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
         report = validate_completion(run_dir, candidate_state=candidate)
         if not report.passed:
             raise ValueError(f"completion gate failed: {','.join(report.errors)}")
-    elif command.event_type == "context.updated":
-        if payload.get("status") not in {"green", "yellow", "red"}:
-            raise ValueError("invalid context payload")
-    elif command.event_type == "repair.applied":
-        expected = payload.get("expected_projection_delta")
-        observed = payload.get("observed_projection_delta")
-        if (
-            not payload.get("action")
-            or "before" not in payload
-            or "after" not in payload
-            or payload.get("applied") is not True
-            or not isinstance(expected, dict)
-            or not expected
-            or observed != expected
-            or payload.get("after") != observed
-        ):
-            raise ValueError("invalid repair payload")
 
 
 def transition_run(run_dir: Path, command: Transition, snapshot_writer=atomic_write_snapshot) -> dict:
@@ -473,6 +453,8 @@ class RunKernel(Kernel):
         run_dir = run_dir.expanduser().resolve()
         if run_dir.exists():
             raise FileExistsError(run_dir)
+        if manifest.get("schema_version") != "4":
+            raise ValueError("unsupported_run_schema")
         task_ids = [str(task.get("id")) for task in manifest.get("task_graph", []) if isinstance(task, dict)]
         draft_ids = [draft.task_id for draft in packet_drafts]
         if len(draft_ids) != len(set(draft_ids)) or set(draft_ids) != set(task_ids):
@@ -513,11 +495,10 @@ class RunKernel(Kernel):
             append_event(
                 events_path,
                 {
-                    "type": "context.updated",
+                    "type": "run.status_changed",
                     "payload": {
-                        "status": "green",
-                        "phase": "initialized",
-                        "run_id": initialized_manifest.get("run_id"),
+                        "from": "created",
+                        "to": "ready",
                     },
                 },
             )

@@ -1,36 +1,35 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import tempfile
 import json
 from pathlib import Path
 import sys
+import tempfile
+
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
 from cpe_runtime.events import (
-    READ_COMPAT_EVENT_TYPES,
-    WRITABLE_EVENT_TYPES,
+    EVENT_TYPES,
     append_event,
     canonical_event_hash,
     read_events,
     validate_chain,
 )
-from cpe_runtime.kernel import (
-    TASK_COMPLETION_ATTEMPT_KINDS,
-    Kernel,
-    Transition,
-    _validate_transition,
-    rebuild_snapshot,
-)
-from cpe_runtime.model_policy import CORE_ROUTE
-from cpe_runtime.projector import apply_event, initial_state, project
+from cpe_runtime.kernel import Kernel, Transition, _validate_transition, rebuild_snapshot
 from cpe_runtime.manifest import create_manifest, write_manifest
+from cpe_runtime.projector import initial_state, project
 
 
 def _task_manifest() -> dict:
     return {
-        "schema_version": "3",
+        "schema_version": "4",
         "run_id": "replay-fixture",
+        "runtime": {
+            "runtime_commit": "a" * 40,
+            "compatibility_epoch": "cpe-v4",
+        },
+        "source_git": {"head": "a" * 40, "status": []},
         "task_graph": [
             {
                 "id": "T1",
@@ -38,7 +37,8 @@ def _task_manifest() -> dict:
                 "dependencies": [],
                 "file_claims": [],
                 "spec_refs": [],
-                "acceptance_command": None,
+                "acceptance_command": "python3 check.py",
+                "task_contract_sha256": "c" * 64,
             }
         ],
     }
@@ -53,31 +53,55 @@ def _expect_error(message: str, operation) -> None:
         raise AssertionError(f"expected ValueError: {message}")
 
 
-def check_typed_lifecycle_replay() -> None:
-    with tempfile.TemporaryDirectory() as raw:
+def _evidence_ref() -> dict[str, str]:
+    return {
+        "kind": "verification",
+        "path": "artifacts/evidence/check.json",
+        "sha256": "e" * 64,
+        "media_type": "application/json",
+    }
+
+
+def _checkpoint_payload() -> dict[str, object]:
+    return {
+        "predecessor": "a" * 40,
+        "commit": "b" * 40,
+        "tree": "c" * 40,
+        "patch_sha256": "d" * 64,
+        "changed_files": ["owned.txt"],
+    }
+
+
+def _verified_payload() -> dict[str, str]:
+    return {
+        "predecessor": "a" * 40,
+        "commit": "b" * 40,
+        "tree": "c" * 40,
+        "contract_sha256": "d" * 64,
+        "acceptance_sha256": "e" * 64,
+        "review_sha256": "f" * 64,
+    }
+
+
+def check_typed_v4_lifecycle_replay() -> None:
+    with tempfile.TemporaryDirectory(prefix="cpe-v4-kernel-events-") as raw:
         path = Path(raw) / "events.jsonl"
-        evidence_ref = {
-            "kind": "verification",
-            "path": "artifacts/evidence/blocker.json",
-            "sha256": "b" * 64,
-            "media_type": "application/json",
-        }
         sequence = [
             {
                 "type": "task.status_changed",
                 "task_id": "T1",
-                "payload": {"from": "pending", "to": "blocked"},
+                "payload": {"from": "pending", "to": "ready"},
             },
             {
                 "type": "attempt.started",
                 "task_id": "T1",
-                "attempt_id": "A0",
-                "payload": {"kind": "implementation", "worktree_revision": 0},
+                "attempt_id": "A1",
+                "payload": {"kind": "implementation"},
             },
             {
                 "type": "attempt.completed",
                 "task_id": "T1",
-                "attempt_id": "A0",
+                "attempt_id": "A1",
                 "payload": {
                     "status": "completed",
                     "attestation": {"verified": True},
@@ -88,55 +112,62 @@ def check_typed_lifecycle_replay() -> None:
             {
                 "type": "verdict.recorded",
                 "task_id": "T1",
-                "attempt_id": "A0",
+                "attempt_id": "A1",
                 "payload": {
                     "status": "changes_requested",
                     "findings": [{"severity": "major", "summary": "repair"}],
                     "missing_evidence": [],
-                    "worktree_revision": 0,
                 },
+            },
+            {
+                "type": "candidate.checkpoint_recorded",
+                "task_id": "T1",
+                "payload": _checkpoint_payload(),
+            },
+            {
+                "type": "task.checkpoint_verified",
+                "task_id": "T1",
+                "payload": _verified_payload(),
             },
             {
                 "type": "blocker.opened",
                 "task_id": "T1",
                 "payload": {
                     "blocker_id": "B1",
-                    "category": "verification",
-                    "root_cause_key": "acceptance:1",
+                    "category": "runtime_defect",
+                    "root_cause_key": "runtime:1",
                     "owner": "cpe",
-                    "resume_condition": "acceptance passes",
+                    "resume_condition": "upgrade runtime",
                 },
-            },
-            {
-                "type": "blocker.updated",
-                "task_id": "T1",
-                "payload": {"blocker_id": "B1", "owner": "operator"},
             },
             {
                 "type": "blocker.resolved",
                 "task_id": "T1",
-                "payload": {"blocker_id": "B1", "evidence_refs": [evidence_ref]},
+                "payload": {"blocker_id": "B1", "evidence_refs": [_evidence_ref()]},
             },
             {
-                "type": "task.retry_scheduled",
+                "type": "decision.recorded",
                 "task_id": "T1",
                 "payload": {
-                    "phase": "acceptance",
-                    "root_cause_key": "acceptance:1",
-                    "worktree_revision": 0,
-                    "evidence_refs": [evidence_ref],
+                    "selected_action": "upgrade runtime",
+                    "basis": "runtime defect at verified checkpoint",
+                    "approval_basis": "standing_autonomy_policy",
                 },
             },
             {
-                "type": "worktree.revision_recorded",
+                "type": "notification.requested",
                 "task_id": "T1",
-                "attempt_id": "A1",
+                "payload": {"dedupe_key": "runtime:T1", "kind": "runtime_upgraded"},
+            },
+            {
+                "type": "runtime.upgraded",
                 "payload": {
-                    "from": 0,
-                    "to": 1,
-                    "patch_sha256": "a" * 64,
-                    "changed_files": ["owned.txt"],
-                    "attempt_id": "A1",
+                    "old_runtime_commit": "a" * 40,
+                    "new_runtime_commit": "f" * 40,
+                    "reason": "resume after a runtime defect",
+                    "compatibility_epoch": "cpe-v4",
+                    "worktree_clean": True,
+                    "verified_checkpoint": "b" * 40,
                 },
             },
         ]
@@ -146,39 +177,29 @@ def check_typed_lifecycle_replay() -> None:
         events = read_events(path)
         assert validate_chain(events) == []
         state = project(_task_manifest(), events)
-        assert state["active_blockers"] == []
-        assert state["blocker_history"][0]["status"] == "resolved"
-        assert state["blocker_history"][0]["owner"] == "operator"
-        assert state["tasks"]["T1"]["status"] == "verifying"
-        assert state["retry_queue"][0]["phase"] == "acceptance"
-        assert state["worktree_revision"] == 1
-        assert state["worktree_patch_sha256"] == "a" * 64
+        assert state["schema_version"] == "4"
+        assert state["attempt_budget"] == {"limit": 40, "used": 1}
         assert state["attempts"][0]["status"] == "completed"
         assert state["usage_totals"]["output_tokens"] == 3
         assert state["verdicts"][0]["status"] == "changes_requested"
+        assert state["candidate_checkpoints"][0]["commit"] == "b" * 40
+        assert state["verified_checkpoints"][0]["commit"] == "b" * 40
+        assert state["checkpoint_head"] == "b" * 40
+        assert state["active_blockers"] == []
+        assert state["blocker_history"][0]["status"] == "resolved"
+        assert state["decisions"][0]["approval_basis"] == "standing_autonomy_policy"
+        assert state["notifications"][0]["dedupe_key"] == "runtime:T1"
+        assert state["runtime"]["runtime_commit"] == "f" * 40
 
 
-def check_write_and_read_event_boundaries() -> None:
-    assert "attempt.recorded" not in WRITABLE_EVENT_TYPES
-    assert READ_COMPAT_EVENT_TYPES == WRITABLE_EVENT_TYPES | {"attempt.recorded"}
-    with tempfile.TemporaryDirectory() as raw:
+def check_v4_event_boundary() -> None:
+    assert "attempt.recorded" not in EVENT_TYPES
+    assert "worktree.revision_recorded" not in EVENT_TYPES
+    with tempfile.TemporaryDirectory(prefix="cpe-v4-event-boundary-") as raw:
         path = Path(raw) / "events.jsonl"
         _expect_error(
             "unknown event type",
-            lambda: append_event(
-                path,
-                {
-                    "type": "attempt.recorded",
-                    "attempt_id": "legacy-A1",
-                    "payload": {
-                        "kind": "implementation",
-                        "status": "completed",
-                        "attestation": {},
-                        "usage": {},
-                        "latency_ms": 1,
-                    },
-                },
-            ),
+            lambda: append_event(path, {"type": "attempt.recorded", "payload": {}}),
         )
 
     legacy = {
@@ -189,27 +210,18 @@ def check_write_and_read_event_boundaries() -> None:
         "actor": "cpe-runtime",
         "task_id": "T1",
         "attempt_id": "legacy-A1",
-        "payload": {
-            "kind": "implementation",
-            "status": "failed",
-            "attestation": {},
-            "usage": {"input_tokens": 7},
-            "latency_ms": 1,
-        },
+        "payload": {},
         "previous_hash": None,
     }
     legacy["hash"] = canonical_event_hash(legacy)
-    assert validate_chain([legacy]) == []
-    state = project(_task_manifest(), [legacy])
-    assert state["attempts"][0]["attempt_id"] == "legacy-A1"
-    assert state["usage_totals"]["input_tokens"] == 7
+    assert validate_chain([legacy]) == ["invalid event envelope"]
 
 
 def check_kernel_payload_validation() -> None:
     manifest = _task_manifest()
     state = initial_state(manifest)
     state["lifecycle"] = "running"
-    state["tasks"]["T1"]["status"] = "blocked"
+    state["tasks"]["T1"]["status"] = "ready"
     run_dir = Path("/nonexistent-event-kernel-fixture")
 
     _expect_error(
@@ -218,94 +230,35 @@ def check_kernel_payload_validation() -> None:
             run_dir,
             manifest,
             state,
-            Transition(
-                "attempt.recorded",
-                {
-                    "kind": "implementation",
-                    "status": "completed",
-                    "attestation": {},
-                    "usage": {},
-                    "latency_ms": 1,
-                },
-                task_id="T1",
-                attempt_id="A0",
-            ),
+            Transition("attempt.recorded", {}, task_id="T1", attempt_id="A0"),
         ),
     )
     _expect_error(
-        "invalid worktree revision payload",
+        "invalid checkpoint payload",
         lambda: _validate_transition(
             run_dir,
             manifest,
             state,
             Transition(
-                "worktree.revision_recorded",
-                {"from": 0, "to": 1, "patch_sha256": "short"},
+                "candidate.checkpoint_recorded",
+                {**_checkpoint_payload(), "commit": "short"},
                 task_id="T1",
             ),
         ),
     )
-    _expect_error(
-        "invalid blocker resolution payload",
-        lambda: _validate_transition(
-            run_dir,
-            manifest,
-            {
-                **state,
-                "active_blockers": [{"blocker_id": "B1", "task_id": "T1"}],
-            },
-            Transition("blocker.resolved", {"blocker_id": "B1"}, task_id="T1"),
-        ),
+    _validate_transition(
+        run_dir,
+        manifest,
+        state,
+        Transition("candidate.checkpoint_recorded", _checkpoint_payload(), task_id="T1"),
     )
     _expect_error(
-        "invalid retry phase",
+        "invalid decision payload",
         lambda: _validate_transition(
             run_dir,
             manifest,
             state,
-            Transition(
-                "task.retry_scheduled",
-                {"phase": "guess", "root_cause_key": "acceptance:1", "worktree_revision": 0},
-                task_id="T1",
-            ),
-        ),
-    )
-
-    _validate_transition(
-        run_dir,
-        manifest,
-        state,
-        Transition(
-            "blocker.opened",
-            {
-                "blocker_id": "B2",
-                "category": "policy_violation",
-                "root_cause_key": "task_scope:T1:owned.txt",
-                "owner": "cpe",
-                "resume_condition": "repair the task scope",
-            },
-            task_id="T1",
-        ),
-    )
-    evidence_ref = {
-        "kind": "verification",
-        "path": "artifacts/evidence/retry.json",
-        "sha256": "d" * 64,
-        "media_type": "application/json",
-    }
-    _validate_transition(
-        run_dir,
-        manifest,
-        state,
-        Transition(
-            "task.retry_scheduled",
-            {
-                "phase": "acceptance",
-                "root_cause_key": "acceptance:1",
-                "worktree_revision": 0,
-                "evidence_refs": [evidence_ref],
-            },
-            task_id="T1",
+            Transition("decision.recorded", {"selected_action": "continue"}, task_id="T1"),
         ),
     )
     _validate_transition(
@@ -313,225 +266,47 @@ def check_kernel_payload_validation() -> None:
         manifest,
         state,
         Transition(
-            "worktree.revision_recorded",
+            "decision.recorded",
             {
-                "from": 0,
-                "to": 1,
-                "patch_sha256": "a" * 64,
-                "changed_files": ["owned.txt"],
-                "attempt_id": "A1",
+                "selected_action": "continue",
+                "basis": "approved plan",
+                "approval_basis": "standing_autonomy_policy",
             },
             task_id="T1",
-            attempt_id="A1",
         ),
     )
 
 
-def check_integrity_rejections() -> None:
-    manifest = _task_manifest()
-    run_dir = Path("/nonexistent-event-kernel-fixture")
-    evidence_ref = {
-        "kind": "verification",
-        "path": "artifacts/evidence/failure.json",
-        "sha256": "c" * 64,
-        "media_type": "application/json",
-    }
-
-    blocked = initial_state(manifest)
-    blocked["lifecycle"] = "running"
-    blocked["tasks"]["T1"]["status"] = "blocked"
-    blocked["active_blockers"] = [
-        {"blocker_id": "B1", "task_id": "T1", "status": "open"}
-    ]
-    _expect_error(
-        "invalid retry payload",
-        lambda: _validate_transition(
-            run_dir,
-            manifest,
-            blocked,
-            Transition(
-                "task.retry_scheduled",
-                {
-                    "phase": "acceptance",
-                    "root_cause_key": "acceptance:1",
-                    "worktree_revision": 0,
-                    "evidence_refs": [evidence_ref],
-                },
-                task_id="T1",
-            ),
-        ),
-    )
-    resolved = {**blocked, "active_blockers": []}
-    _expect_error(
-        "invalid retry payload",
-        lambda: _validate_transition(
-            run_dir,
-            manifest,
-            resolved,
-            Transition(
-                "task.retry_scheduled",
-                {
-                    "phase": "acceptance",
-                    "root_cause_key": "acceptance:1",
-                    "worktree_revision": 0,
-                    "evidence_refs": [],
-                },
-                task_id="T1",
-            ),
-        ),
-    )
-
-    for event_type, payload, message in (
-        ("blocker.updated", {"blocker_id": "B1", "owner": "operator"}, "invalid blocker update payload"),
-        ("blocker.resolved", {"blocker_id": "B1", "evidence_refs": [evidence_ref]}, "invalid blocker resolution payload"),
-        ("blocker.updated", {"blocker_id": "B1", "status": "resolved"}, "invalid blocker update payload"),
-        ("blocker.updated", {"blocker_id": "B1", "task_id": "T2"}, "invalid blocker update payload"),
-        ("blocker.resolved", {"blocker_id": "B1", "status": "resolved", "evidence_refs": [evidence_ref]}, "invalid blocker resolution payload"),
-    ):
-        _expect_error(
-            message,
-            lambda event_type=event_type, payload=payload: _validate_transition(
-                run_dir,
-                manifest,
-                blocked,
-                Transition(event_type, payload, task_id=None),
-            ),
-        )
-
-    attempts = initial_state(manifest)
-    attempts["lifecycle"] = "running"
-    attempts["attempts"] = [
-        {"task_id": "T1", "attempt_id": "A1", "kind": "task_review", "status": "started"}
-    ]
-    valid_completion = {
-        "status": "completed",
-        "attestation": {"verified": False},
-        "usage": {"input_tokens": 1},
-        "latency_ms": 1,
-    }
-    for payload in (
-        {**valid_completion, "attestation": []},
-        {**valid_completion, "usage": {"input_tokens": True}},
-        {**valid_completion, "latency_ms": True},
-        {**valid_completion, "status": "failed"},
-    ):
-        _expect_error(
-            "invalid attempt payload",
-            lambda payload=payload: _validate_transition(
-                run_dir,
-                manifest,
-                attempts,
-                Transition("attempt.completed", payload, task_id="T1", attempt_id="A1"),
-            ),
-        )
-    completed = {**attempts, "attempts": [{**attempts["attempts"][0], **valid_completion}]}
-    _expect_error(
-        "invalid attempt payload",
-        lambda: _validate_transition(
-            run_dir,
-            manifest,
-            completed,
-            Transition("attempt.completed", valid_completion, task_id="T1", attempt_id="A1"),
-        ),
-    )
-
-    assert "task_review" in TASK_COMPLETION_ATTEMPT_KINDS
-    assert "review" not in TASK_COMPLETION_ATTEMPT_KINDS
-    completion_state = initial_state(manifest)
-    completion_state["lifecycle"] = "running"
-    completion_state["tasks"]["T1"]["status"] = "verifying"
-    attestation = {
-        "verified": True,
-        "actual_model": CORE_ROUTE.model,
-        "actual_reasoning": CORE_ROUTE.reasoning,
-    }
-    completion_state["attempts"] = [
-        {
-            "task_id": "T1",
-            "attempt_id": f"A-{kind}",
-            "kind": kind,
-            "status": "completed",
-            "attestation": attestation,
-        }
-        for kind in ("implementation", "review", "verification")
-    ]
-    complete_task = Transition(
-        "task.status_changed", {"from": "verifying", "to": "completed"}, task_id="T1"
-    )
-    _expect_error(
-        "task completion gate failed",
-        lambda: _validate_transition(run_dir, manifest, completion_state, complete_task),
-    )
-    completion_state["attempts"][1]["kind"] = "task_review"
-    _validate_transition(run_dir, manifest, completion_state, complete_task)
-
-    verdict = {
-        "status": "passed",
-        "findings": [],
-        "missing_evidence": [],
-        "worktree_revision": 0,
-    }
-    for attempt_id, payload in (
-        ("unknown", verdict),
-        ("A1", {**verdict, "worktree_revision": 1}),
-        ("A1", {**verdict, "findings": {}}),
-        ("A1", {**verdict, "missing_evidence": None}),
-    ):
-        _expect_error(
-            "invalid verdict payload",
-            lambda attempt_id=attempt_id, payload=payload: _validate_transition(
-                run_dir,
-                manifest,
-                attempts,
-                Transition("verdict.recorded", payload, task_id="T1", attempt_id=attempt_id),
-            ),
-        )
-
-    projection = apply_event(
-        attempts,
-        {
-            "seq": 1,
-            "hash": "event-1",
-            "type": "attempt.completed",
-            "task_id": "T1",
-            "attempt_id": "A1",
-            "payload": valid_completion,
-        },
-    )
-    _expect_error(
-        "invalid attempt payload",
-        lambda: apply_event(
-            projection,
-            {
-                "seq": 2,
-                "hash": "event-2",
-                "type": "attempt.completed",
-                "task_id": "T1",
-                "attempt_id": "A1",
-                "payload": valid_completion,
-            },
-        ),
-    )
-
-
-def main() -> int:
-    check_typed_lifecycle_replay()
-    check_write_and_read_event_boundaries()
-    check_kernel_payload_validation()
-    check_integrity_rejections()
-    with tempfile.TemporaryDirectory() as raw:
-        root = Path(raw); run = root / "run"
+def check_kernel_replay_recovery() -> None:
+    with tempfile.TemporaryDirectory(prefix="cpe-v4-kernel-replay-") as raw:
+        root = Path(raw)
+        run = root / "run"
         for name in ("plan.md", "pricing.json"):
             (root / name).write_text("{}\n", encoding="utf-8")
-        manifest = create_manifest("fixture", "interactive", root, root / "worktree", root / "plan.md", None, [], root / "pricing.json")
+        manifest = create_manifest(
+            "fixture",
+            "interactive",
+            root,
+            root / "worktree",
+            root / "plan.md",
+            None,
+            [],
+            root / "pricing.json",
+            source_head="a" * 40,
+        )
         write_manifest(run / "run_manifest.json", manifest)
+
         path = run / "events.jsonl"
-        append_event(path, {"type": "run.status_changed", "payload": {"from": "created", "to": "ready"}})
+        append_event(
+            path,
+            {"type": "run.status_changed", "payload": {"from": "created", "to": "ready"}},
+        )
         events = read_events(path)
         assert validate_chain(events) == []
         events[0]["payload"]["to"] = "running"
         assert validate_chain(events) == ["event hash mismatch"]
-        (run / "events.jsonl").unlink(); (run / "state.json").unlink(missing_ok=True)
+
+        path.unlink()
         kernel = Kernel(run)
         kernel.transition(Transition("run.status_changed", {"from": "created", "to": "ready"}))
         kernel._snapshot_writer = lambda *_: (_ for _ in ()).throw(OSError("fixture crash"))
@@ -540,9 +315,17 @@ def main() -> int:
         except OSError:
             pass
         recovered = rebuild_snapshot(run)
+        assert recovered["schema_version"] == "4"
         assert recovered["lifecycle"] == "running"
         assert recovered["last_event"]["seq"] == 2
-    print('{"passed": true}')
+
+
+def main() -> int:
+    check_typed_v4_lifecycle_replay()
+    check_v4_event_boundary()
+    check_kernel_payload_validation()
+    check_kernel_replay_recovery()
+    print(json.dumps({"passed": True}))
     return 0
 
 
