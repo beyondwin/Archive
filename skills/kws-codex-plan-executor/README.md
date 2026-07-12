@@ -75,6 +75,13 @@ regression, and seven deterministic no-call outcomes. The 17-call
 deferred` until separately finalized. `aggregate` is non-terminal; only
 dogfood-bound `finalize-release` can publish a terminal generation.
 
+V4 release compilation and validation load one Git-tracked canonical policy at
+`evals/live-migration/release-policy-v4.json`. It fixes the trusted base,
+approved dogfood contract digest, exact `2 + 4 <= 6` attempt budgets, and
+release labels; none are CLI-overridable. A terminal release retains and
+replays the dogfood run evidence beneath `dogfood/<run_id>` and accepts only the
+closed release-root layout.
+
 ## Contract Summary
 
 - Sol/high is fixed for all core and verdict-capable attempts.

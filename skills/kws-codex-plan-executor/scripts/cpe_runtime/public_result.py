@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .privacy import audit_sanitized_payload
-from .git_delta import committed_patch_digest
+from .dogfood_v4 import verify_retained_v4_dogfood_run
+from .release_policy_v4 import load_release_policy, validate_release_checkpoint
 from .quality_v4 import (
     canonical_v4_envelope_map,
     validate_v4_release_payloads,
@@ -118,6 +119,33 @@ def validate_release_evidence_root(
     dogfood = payloads["dogfood"]
     errors: list[str] = []
 
+    run_id = str(manifest.get("run_id") or "")
+    retained_run_id = str(dogfood.get("retained_run_id") or "")
+    allowed_root_entries = {
+        "quality-release-events.jsonl",
+        "quality-release-state.json",
+        "quality-release-manifests",
+        "quality-release-predecessor.json",
+        "release-generations",
+        "dogfood",
+        run_id,
+    }
+    root_entries = {path.name for path in root.iterdir()}
+    if (
+        not run_id
+        or root_entries - allowed_root_entries
+        or any(name in root_entries for name in {"checkpoint.json", "manifest.json", "result.json", "privacy-audit.json", "dogfood-result.json", "aggregate.json"})
+    ):
+        errors.append("release_root_file_set_invalid")
+    dogfood_root = root / "dogfood"
+    if (
+        not retained_run_id
+        or not dogfood_root.is_dir()
+        or dogfood_root.is_symlink()
+        or {path.name for path in dogfood_root.iterdir()} != {retained_run_id}
+    ):
+        errors.append("release_root_file_set_invalid")
+
     privacy_reaudit = audit_sanitized_payload(release_payloads)
     try:
         validate_v4_release_payloads(release_payloads)
@@ -184,14 +212,17 @@ def validate_release_evidence_root(
         errors.append("reviewed_checkpoint_binding_invalid")
     if reviewed_tree is not None:
         try:
-            _changed_files, actual_patch = committed_patch_digest(
+            policy = load_release_policy()
+            validate_release_checkpoint(
                 workspace.expanduser().resolve(),
-                str(manifest.get("implementation_base_commit")),
                 implementation_commit,
+                implementation_tree=reviewed_tree,
+                implementation_patch_sha256=str(manifest.get("implementation_patch_sha256") or ""),
+                policy=policy,
             )
-            if actual_patch != manifest.get("implementation_patch_sha256"):
+            if manifest.get("implementation_base_commit") != policy["trusted_base_commit"]:
                 errors.append("implementation_patch_invalid")
-        except RuntimeError:
+        except ValueError:
             errors.append("implementation_patch_invalid")
     bindings = {
         "manifest_sha256": _canonical_sha256(manifest),
@@ -260,6 +291,30 @@ def validate_release_evidence_root(
         and dogfood.get("runtime_patch_required") is False
     )
     dogfood_valid = dogfood_valid and len(dogfood.get("verified_checkpoints", [])) == 1
+    try:
+        policy = load_release_policy()
+        retained = verify_retained_v4_dogfood_run(
+            root / "dogfood" / retained_run_id,
+            expected_implementation_commit=implementation_commit,
+            expected_implementation_tree=str(checkpoint.get("tree") or ""),
+            expected_task_contract_sha256=str(policy["dogfood_task_contract_sha256"]),
+        )
+        retained_checkpoint = root / "dogfood" / retained_run_id / "checkpoint.json"
+        if (
+            not retained_run_id
+            or dogfood.get("retained_checkpoint_sha256") != hashlib.sha256(retained_checkpoint.read_bytes()).hexdigest()
+            or int(retained.get("model_attempts") or 0) > int(policy["dogfood_attempt_limit"])
+            or (
+                manifest.get("proof_profile") == "critical_path_live"
+                and (
+                    int(manifest.get("credentialed_call_count") or 0) > int(policy["critical_matrix_attempt_limit"])
+                    or int(manifest.get("credentialed_call_count") or 0) + int(retained.get("model_attempts") or 0) > int(policy["combined_attempt_limit"])
+                )
+            )
+        ):
+            dogfood_valid = False
+    except (OSError, ValueError):
+        dogfood_valid = False
     if not dogfood_valid:
         errors.append("dogfood_limits_invalid")
     try:

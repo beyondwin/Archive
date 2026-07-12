@@ -157,3 +157,13 @@ one `release_evidence_finalized` event, then projects state. Orphan generations
 are ignored and event-before-state crashes recover idempotently. The public
 validator reads only the terminal generation and independently recomputes the
 child counts, gates, envelope bindings, Git identity, digests, and privacy.
+
+The v4 transaction's root of trust is the Git-tracked canonical release policy,
+not manifest or CLI input. Compiler, runner, finalizer, and validator all load
+the same fixed base, canonical dogfood contract digest, attempt limits, and
+labels. The paid runner journals each credentialed attempt before launch,
+forbids release retries, and refuses a third critical-path attempt. A matching
+one-task CPE manifest carries a four-attempt kernel budget. Finalization copies
+the replay inputs into `dogfood/<run_id>`, binds their checkpoint digest into
+the five-file generation, and the public validator replays them from relative
+paths while enforcing a closed root allowlist.

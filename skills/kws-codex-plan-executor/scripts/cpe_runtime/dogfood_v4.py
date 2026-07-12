@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
+import shutil
+import tempfile
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -10,6 +15,15 @@ from .events import read_events, validate_chain
 from .git_delta import committed_patch_digest, working_tree_changed_files
 from .manifest import load_verified_manifest, resolve_ref
 from .projector import project
+
+
+_RETAINED_FILES = frozenset(
+    {"run_manifest.json", "events.jsonl", "state.json", "task-contract.json", "checkpoint.json"}
+)
+
+
+def _canonical(payload: object) -> bytes:
+    return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
 
 
 def _git(worktree: Path, *args: str) -> str:
@@ -150,3 +164,119 @@ def verify_v4_dogfood_run(
         "source_checkout_unchanged": True,
         "runtime_patch_required": False,
     }
+
+
+def retain_v4_dogfood_run(
+    run_dir: Path,
+    target: Path,
+    *,
+    expected_implementation_commit: str,
+    expected_implementation_tree: str,
+    expected_task_contract_sha256: str,
+    task_contract_path: Path,
+) -> dict[str, object]:
+    """Publish the replayable dogfood trust evidence beneath the release root."""
+
+    result = verify_v4_dogfood_run(
+        run_dir,
+        expected_implementation_commit=expected_implementation_commit,
+        expected_implementation_tree=expected_implementation_tree,
+        expected_task_contract_sha256=expected_task_contract_sha256,
+    )
+    source = run_dir.expanduser().resolve()
+    raw = {
+        name: (source / name).read_bytes()
+        for name in ("run_manifest.json", "events.jsonl", "state.json")
+    }
+    contract = task_contract_path.expanduser().resolve().read_bytes()
+    if hashlib.sha256(contract).hexdigest() != expected_task_contract_sha256:
+        raise ValueError("dogfood_task_contract_invalid")
+    manifest = json.loads(raw["run_manifest.json"])
+    run_id = str(manifest.get("run_id") or "")
+    if not run_id or target.name != run_id:
+        raise ValueError("dogfood_run_identity_invalid")
+    checkpoint = {
+        "schema_version": "cpe.retained-dogfood-checkpoint.v4",
+        "run_id": run_id,
+        "implementation_commit": expected_implementation_commit,
+        "implementation_tree": expected_implementation_tree,
+        "task_contract_sha256": expected_task_contract_sha256,
+        "run_manifest_sha256": hashlib.sha256(raw["run_manifest.json"]).hexdigest(),
+        "events_sha256": hashlib.sha256(raw["events.jsonl"]).hexdigest(),
+        "state_sha256": hashlib.sha256(raw["state.json"]).hexdigest(),
+        "result": result,
+    }
+    parent = target.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix=f".{run_id}.", dir=parent))
+    try:
+        for name, content in {
+            **raw,
+            "task-contract.json": contract,
+            "checkpoint.json": _canonical(checkpoint),
+        }.items():
+            (stage / name).write_bytes(content)
+        if target.exists():
+            if not target.is_dir() or target.is_symlink() or any(
+                (target / name).read_bytes() != (stage / name).read_bytes()
+                for name in _RETAINED_FILES
+            ):
+                raise ValueError("dogfood_retained_artifact_mismatch")
+            return checkpoint
+        os.replace(stage, target)
+        return checkpoint
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+
+
+def verify_retained_v4_dogfood_run(
+    retained_dir: Path,
+    *,
+    expected_implementation_commit: str,
+    expected_implementation_tree: str,
+    expected_task_contract_sha256: str,
+) -> dict[str, object]:
+    """Replay the retained relative artifacts without trusting the original run path."""
+
+    root = retained_dir.expanduser().resolve()
+    if (
+        not root.is_dir()
+        or root.is_symlink()
+        or {path.name for path in root.iterdir()} != _RETAINED_FILES
+        or any(not path.is_file() or path.is_symlink() for path in root.iterdir())
+    ):
+        raise ValueError("dogfood_retained_artifact_invalid")
+    raw = {name: (root / name).read_bytes() for name in _RETAINED_FILES}
+    try:
+        manifest = json.loads(raw["run_manifest.json"])
+        events = read_events(root / "events.jsonl")
+        state = json.loads(raw["state.json"])
+        checkpoint = json.loads(raw["checkpoint.json"])
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        raise ValueError("dogfood_retained_artifact_invalid") from exc
+    if validate_chain(events) or project(manifest, events) != state:
+        raise ValueError("dogfood_run_integrity_invalid")
+    contract_digest = hashlib.sha256(raw["task-contract.json"]).hexdigest()
+    tasks = manifest.get("task_graph")
+    attempts = [event for event in events if event.get("type") == "attempt.started"]
+    if (
+        checkpoint.get("schema_version") != "cpe.retained-dogfood-checkpoint.v4"
+        or checkpoint.get("run_id") != manifest.get("run_id")
+        or root.name != manifest.get("run_id")
+        or checkpoint.get("implementation_commit") != expected_implementation_commit
+        or checkpoint.get("implementation_tree") != expected_implementation_tree
+        or checkpoint.get("task_contract_sha256") != expected_task_contract_sha256
+        or contract_digest != expected_task_contract_sha256
+        or not isinstance(tasks, list)
+        or len(tasks) != 1
+        or tasks[0].get("task_contract_sha256") != expected_task_contract_sha256
+        or not 1 <= len(attempts) <= 4
+        or checkpoint.get("run_manifest_sha256") != hashlib.sha256(raw["run_manifest.json"]).hexdigest()
+        or checkpoint.get("events_sha256") != hashlib.sha256(raw["events.jsonl"]).hexdigest()
+        or checkpoint.get("state_sha256") != hashlib.sha256(raw["state.json"]).hexdigest()
+    ):
+        raise ValueError("dogfood_retained_artifact_invalid")
+    result = checkpoint.get("result")
+    if not isinstance(result, dict) or result.get("model_attempts") != len(attempts):
+        raise ValueError("dogfood_retained_artifact_invalid")
+    return result

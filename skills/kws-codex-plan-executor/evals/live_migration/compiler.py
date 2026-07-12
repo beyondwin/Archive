@@ -38,7 +38,10 @@ from .envelopes import seal_launch_envelope, seal_oracle_binding
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
-from cpe_runtime.git_delta import committed_patch_digest
+from cpe_runtime.release_policy_v4 import (
+    load_release_policy,
+    validate_release_checkpoint,
+)
 from cpe_runtime.quality_v4 import canonical_v4_envelope_map
 
 
@@ -438,27 +441,22 @@ def compile_v4_manifest(
         "slots": slots,
     }
     if implementation_base_commit is not None:
-        if not _COMMIT_SHA.fullmatch(implementation_base_commit):
-            raise LiveMigrationContractError("implementation base must be a 40-character SHA")
         repository_root = root.parents[2]
         try:
-            tree = subprocess.run(
-                ["git", "rev-parse", f"{commit}^{{tree}}"],
-                cwd=repository_root,
-                text=True,
-                capture_output=True,
-                check=True,
-            ).stdout.strip()
-            _changed, patch_sha256 = committed_patch_digest(
-                repository_root, implementation_base_commit, commit
-            )
-        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            policy = load_release_policy()
+            if implementation_base_commit != policy["trusted_base_commit"]:
+                raise ValueError("release_checkpoint_base_mismatch")
+            checkpoint = validate_release_checkpoint(repository_root, commit, policy=policy)
+        except (RuntimeError, ValueError, subprocess.CalledProcessError) as exc:
             raise LiveMigrationContractError("implementation checkpoint cannot be resolved") from exc
         body.update(
             {
-                "implementation_base_commit": implementation_base_commit,
-                "implementation_tree": tree,
-                "implementation_patch_sha256": patch_sha256,
+                **checkpoint,
+                "release_policy_sha256": policy["policy_sha256"],
+                "dogfood_task_contract_sha256": policy["dogfood_task_contract_sha256"],
+                "critical_matrix_attempt_limit": policy["critical_matrix_attempt_limit"],
+                "dogfood_attempt_limit": policy["dogfood_attempt_limit"],
+                "combined_attempt_limit": policy["combined_attempt_limit"],
             }
         )
     canonical_v4_envelope_map(body)

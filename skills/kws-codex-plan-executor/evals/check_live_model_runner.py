@@ -77,6 +77,19 @@ def _run_from_clean_reviewed_checkout() -> int | None:
             cwd=repository,
             check=True,
         )
+        base = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repository, text=True, capture_output=True, check=True
+        ).stdout.strip()
+        policy_path = skill / "evals" / "live-migration" / "release-policy-v4.json"
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        policy["trusted_base_commit"] = base
+        policy_path.write_text(json.dumps(policy, sort_keys=True, separators=(",", ":")) + "\n", encoding="utf-8")
+        subprocess.run(["git", "add", policy_path.relative_to(repository)], cwd=repository, check=True)
+        subprocess.run(
+            ["git", "-c", "user.name=CPE deterministic eval", "-c", "user.email=cpe-eval@example.invalid", "commit", "--quiet", "-m", "bind tracked release policy"],
+            cwd=repository,
+            check=True,
+        )
         completed = subprocess.run(
             [sys.executable, str(skill / "evals" / Path(__file__).name)],
             cwd=skill,
@@ -99,13 +112,8 @@ def _checkpoint_arguments() -> tuple[str, ...]:
             capture_output=True,
             check=True,
         ).stdout.strip()
-        base = subprocess.run(
-            ["git", "merge-base", "main", commit],
-            cwd=ROOT,
-            text=True,
-            capture_output=True,
-            check=True,
-        ).stdout.strip()
+        policy_path = ROOT / "live-migration" / "release-policy-v4.json"
+        base = str(json.loads(policy_path.read_text(encoding="utf-8"))["trusted_base_commit"])
         tree = subprocess.run(
             ["git", "rev-parse", f"{commit}^{{tree}}"],
             cwd=ROOT,

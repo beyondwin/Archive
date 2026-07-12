@@ -336,7 +336,8 @@ def _git(repo: Path, *args: str) -> str:
 
 def _checkpoint_arguments(repo: Path) -> list[str]:
     commit = _git(repo, "rev-parse", "HEAD")
-    base = _git(repo, "merge-base", "HEAD", commit)
+    policy_path = repo / "skills" / "kws-codex-plan-executor" / "evals" / "live-migration" / "release-policy-v4.json"
+    base = str(json.loads(policy_path.read_text(encoding="utf-8"))["trusted_base_commit"])
     tree = _git(repo, "rev-parse", "HEAD^{tree}")
     _files, patch = committed_patch_digest(repo, base, commit)
     return [
@@ -349,6 +350,24 @@ def _checkpoint_arguments(repo: Path) -> list[str]:
         "--implementation-patch-sha256",
         patch,
     ]
+
+
+def _commit_trusted_policy_child(repo: Path, skill: Path) -> str:
+    base = _git(repo, "rev-parse", "HEAD")
+    policy_path = skill / "evals" / "live-migration" / "release-policy-v4.json"
+    policy = json.loads(policy_path.read_text(encoding="utf-8"))
+    policy["trusted_base_commit"] = base
+    policy_path.write_text(
+        json.dumps(policy, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", policy_path.relative_to(repo)], cwd=repo, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=CPE quality eval", "-c", "user.email=cpe-quality@example.invalid", "commit", "--quiet", "-m", "bind tracked release policy"],
+        cwd=repo,
+        check=True,
+    )
+    return _git(repo, "rev-parse", "HEAD")
 
 
 def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
@@ -374,6 +393,7 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
             cwd=repo,
             check=True,
         )
+        _commit_trusted_policy_child(repo, skill)
         evidence_root = tmp / "evidence"
         auth_home = tmp / "auth-home"
         auth_home.mkdir()
@@ -928,6 +948,7 @@ def check_authentic_production_release_e2e() -> None:
             cwd=repo,
             check=True,
         )
+        _commit_trusted_policy_child(repo, skill)
         commit = _git(repo, "rev-parse", "HEAD")
         tree = _git(repo, "rev-parse", "HEAD^{tree}")
         evidence_root = tmp / "evidence"
@@ -1588,6 +1609,8 @@ def check_in_memory_release_invariant_unit() -> None:
             "elapsed_seconds": 0,
             "source_checkout_unchanged": True,
             "runtime_patch_required": False,
+            "retained_run_id": "quality-unit-dogfood",
+            "retained_checkpoint_sha256": "d" * 64,
         }
         dogfood["status"] = "passed"
         package = build_v4_release_evidence_payloads(manifest, aggregate, dogfood)

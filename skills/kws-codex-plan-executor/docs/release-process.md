@@ -89,6 +89,16 @@ and one terminal release generation. Its passing label is exactly
 its absence report exactly `full paid-live certification deferred`.
 Historical failed 17-call evidence is lineage context only.
 
+The merge-gate transaction is anchored by tracked canonical
+`evals/live-migration/release-policy-v4.json`. Its trusted base is
+`344f6112a7254b87cfa25fe0f6d6f3acbc964487`; critical matrix attempts are
+limited to two, dogfood attempts to four, and the combined total to six.
+Failed paid slots are not retryable. Finalization retains the dogfood replay
+inputs under `dogfood/<run_id>` and binds that checkpoint into the terminal
+generation. Validation rejects caller-selected bases, contract substitution,
+retained-run deletion or replacement, mutable root summaries, and unexpected
+release-root entries.
+
 ## Deterministic Checklist
 
 ```bash

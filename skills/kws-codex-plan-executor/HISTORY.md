@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added one tracked canonical release policy that fixes the reviewed base,
+  approved dogfood contract, exact 2/4/6 attempt caps, and release labels.
+- Made the compiler, paid runner, finalizer, and validator reject
+  caller-selected bases, paid retries, retained dogfood drift, and mutable root
+  summaries; replayable dogfood evidence now lives beneath the release root.
+
 - Added the exact two-call `critical_path_live` merge proof; the 17-call
   `full_paid_matrix` remains optional certification and is deferred by default.
 - Moved v4 publication from aggregate to dogfood-bound, crash-recoverable,

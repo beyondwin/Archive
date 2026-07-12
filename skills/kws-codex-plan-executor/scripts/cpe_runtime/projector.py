@@ -253,7 +253,7 @@ def initial_state(manifest: dict) -> dict:
         "repair_roots": {},
         "selected_repairs": {},
         "wait_reason": None,
-        "attempt_budget": {"limit": 40, "used": 0},
+        "attempt_budget": {"limit": int(manifest.get("attempt_budget_limit", 40)), "used": 0},
         "completion_audit": None,
         "usage_totals": {
             "input_tokens": 0,

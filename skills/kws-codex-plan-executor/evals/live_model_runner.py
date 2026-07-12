@@ -48,7 +48,7 @@ from live_migration.runner import (
     install_v4_sealed_artifacts,
     verify_v4_manifest_sealed_artifacts,
 )
-from cpe_runtime.git_delta import committed_patch_digest
+from cpe_runtime.release_policy_v4 import load_release_policy, validate_release_checkpoint
 
 
 ROOT = Path(__file__).resolve().parent
@@ -159,22 +159,27 @@ def _validate_checkpoint_binding(
         raise LiveRunnerError("invalid_checkpoint_binding", "implementation tree must be a Git SHA-1")
     if SHA256.fullmatch(binding["implementation_patch_sha256"]) is None:
         raise LiveRunnerError("invalid_checkpoint_binding", "implementation patch must be a SHA-256")
-    actual_tree = _git_bytes(
-        "rev-parse", f"{binding['implementation_commit']}^{{tree}}"
-    ).decode().strip()
-    if actual_tree != binding["implementation_tree"]:
-        raise LiveRunnerError("checkpoint_tree_mismatch", "implementation commit does not match its reviewed tree")
     try:
-        _changed_files, actual_patch = committed_patch_digest(
+        policy = load_release_policy()
+        if binding["implementation_base_commit"] != policy["trusted_base_commit"]:
+            raise LiveRunnerError("checkpoint_base_mismatch", "implementation base differs from tracked release policy")
+        actual_tree = _git_bytes(
+            "rev-parse", f"{binding['implementation_commit']}^{{tree}}"
+        ).decode().strip()
+        if actual_tree != binding["implementation_tree"]:
+            raise LiveRunnerError("checkpoint_tree_mismatch", "implementation commit does not match its reviewed tree")
+        actual = validate_release_checkpoint(
             REPOSITORY_ROOT,
-            binding["implementation_base_commit"],
             binding["implementation_commit"],
+            implementation_tree=binding["implementation_tree"],
+            implementation_patch_sha256=binding["implementation_patch_sha256"],
+            policy=policy,
         )
-    except RuntimeError as exc:
-        raise LiveRunnerError("checkpoint_patch_mismatch", "implementation patch cannot be recomputed") from exc
-    if actual_patch != binding["implementation_patch_sha256"]:
-        raise LiveRunnerError("checkpoint_patch_mismatch", "implementation commit does not match its reviewed patch")
-    return binding
+    except LiveRunnerError:
+        raise
+    except ValueError as exc:
+        raise LiveRunnerError("checkpoint_patch_mismatch", "implementation checkpoint violates tracked release policy") from exc
+    return {key: actual[key] for key in binding}
 
 
 def _assert_execution_checkpoint(binding: dict[str, str]) -> None:
@@ -227,15 +232,8 @@ def _checkpoint_binding(args: argparse.Namespace, *, required: bool) -> dict[str
                 "live execution requires the reviewed implementation commit, tree, and patch SHA-256",
             )
         commit = _git_commit()
-        base = _git_bytes("merge-base", "main", commit).decode().strip()
-        tree = _git_bytes("rev-parse", f"{commit}^{{tree}}").decode().strip()
-        _changed, patch_sha256 = committed_patch_digest(REPOSITORY_ROOT, base, commit)
-        return {
-            "implementation_base_commit": base,
-            "implementation_commit": commit,
-            "implementation_tree": tree,
-            "implementation_patch_sha256": patch_sha256,
-        }
+        checkpoint = validate_release_checkpoint(REPOSITORY_ROOT, commit)
+        return {key: str(checkpoint[key]) for key in values}
 
     binding = _validate_checkpoint_binding(values)
     if required:

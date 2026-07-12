@@ -1088,3 +1088,26 @@ canonical digest validation; real dogfood may later replace the closed
 - Status: deterministic implementation only. A future real terminal critical
   proof may report `critical-path-live verified`; optional full certification
   remains `full paid-live certification deferred`.
+
+## 2026-07-13 Asia/Seoul - CPE v4 tracked release trust anchors
+
+- Branch: `codex/cpe-v4-autonomous-efficient-executor-continuation`; starting
+  implementation: `60c035595bd9e245a9c25f61b25e489419a810de`.
+- Scope: one Git-tracked canonical release policy, exact reviewed base and
+  patch verification, pre-call 2/4/6 attempt budgets, canonical dogfood task
+  contract, retained dogfood replay evidence, and a closed release-root layout.
+- TDD RED: `check_release_transaction_v4.py` first failed because the tracked
+  policy loader did not exist, then failed because finalization did not retain
+  replayable dogfood artifacts. Contract substitution, deletion, state tamper,
+  caller-selected base, third matrix start, paid retry, and root convenience
+  files were added as fail-closed mutations.
+- Focused checks: `check_release_transaction_v4.py`,
+  `check_quality_matrix_v4.py`, `check_live_model_runner.py`, and
+  `check_cpe_v4_e2e.py` all exited 0.
+- `./evals/run.sh`: exit 0; every maintained check passed and
+  `paid_execution=skipped_not_approved`.
+- Repository `bun run check`: exit 0; TypeScript build and the full Bun test
+  selection passed.
+- Python compilation, shell syntax, docs/release contracts, and
+  `git diff --check`: exit 0. Provider/network/model calls: zero. Task 11,
+  local main, remote push, and paid-live execution were not run.
