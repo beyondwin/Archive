@@ -67,6 +67,14 @@ continues only unresolved slots; a failed slot additionally requires
 `--retry-failed`. Do not place the evidence root in the repository or fixture
 tree, and do not commit raw event streams or model output.
 
+Before a Sol v3 credentialed call, the runner executes the immutable fixture
+baseline command itself and verifies its declared exit code. It then renders a
+bounded snapshot of tracked UTF-8 seed files and that baseline output into the
+worker prompt. Read-only cases are instructed to make no tool call; write cases
+are instructed to make the minimal edit and run acceptance once. The snapshot
+is capped by file count, per-file bytes, and total bytes, and cannot traverse
+the separate hidden oracle directory.
+
 Aggregate a completely resolved immutable ledger into a sanitized report:
 
 ```bash

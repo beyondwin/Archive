@@ -28,6 +28,7 @@ from live_migration.runner import (
     RunContext,
     SlotRequest,
     SubscriptionLiveRunner,
+    collect_baseline_evidence,
     preflight_codex,
     render_prompt,
     run_slot,
@@ -398,9 +399,15 @@ def check_public_interfaces_and_prompt_isolation() -> None:
             EXPECTED_CASES[0],
             Path(raw) / "repo",
         )
+        baseline = collect_baseline_evidence(fixture, {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
         for treatment in ("gpt55_current", "sol_current", "sol_v3"):
             slot = next(item for item in manifest["slots"] if item["treatment_id"] == treatment)
-            prompt = render_prompt(slot, fixture, ROOT)
+            prompt = render_prompt(
+                slot,
+                fixture,
+                ROOT,
+                baseline_evidence=baseline if treatment == "sol_v3" else None,
+            )
             prefix_ref = str(slot["prompt_renderer"])
             source = (ROOT / "live-migration" / prefix_ref).resolve().read_bytes()
             prefix = worker_prompt_bytes(source, prefix_ref).decode("utf-8")
@@ -416,6 +423,13 @@ def check_public_interfaces_and_prompt_isolation() -> None:
                 assert "{{WORKSPACE}}" not in prompt
                 assert "{{PLAN}}" not in prompt
                 assert len(prefix.encode("utf-8")) < 256
+                assert "--- bounded visible context ---" in prompt
+                assert "path: src/example.py" in prompt
+                assert "def clamp" in prompt
+                assert "baseline_exit_code: 1" in prompt
+                assert "Do not re-read the supplied files" in prompt
+            else:
+                assert "--- bounded visible context ---" not in prompt
 
 
 def check_dry_run_cli_contract() -> None:

@@ -1,5 +1,29 @@
 # Verification Log
 
+## 2026-07-12 Asia/Seoul - reviewed bounded-context architecture
+
+- Branch: `codex/cpe-v3-subscription-live-matrix-checkpoint`; checkpoint commit
+  pending after this verification entry.
+- Scope: Sol v3 live workers now receive a bounded tracked-file snapshot and
+  runner-executed fixture baseline result. Historical prompts are unchanged;
+  untracked files, Git internals, and the separate oracle tree remain excluded.
+- TDD evidence: `python3 evals/check_live_model_runner.py` first failed because
+  `collect_baseline_evidence` did not exist, then passed after the implementation.
+- `./evals/run.sh` - PASS, all 56 maintained and parser checks; paid execution
+  remained `skipped_not_approved`.
+- `python3 -m py_compile scripts/*.py scripts/cpe_runtime/*.py evals/*.py` - PASS.
+- `bash -n evals/run.sh` - PASS.
+- `python3 evals/check_docs_contract.py` - PASS.
+- `python3 evals/check_release_contract.py` - PASS with the truthful pre-live
+  state `release_ready=false`.
+- `git diff --check` - PASS.
+- Prompt packet audit - PASS for all eight fixtures; rendered Sol v3 packets
+  were 1,772-2,683 bytes and contained neither oracle paths nor `expected.json`.
+- `graphify update .` - PASS; Graphify refreshed 11,072 nodes and 17,658 edges.
+- Residual gate: do not claim release readiness until one new immutable 25+7
+  subscription ledger passes the unchanged 25% context-reduction threshold and
+  receives final evidence/privacy review.
+
 ## 2026-07-12 Asia/Seoul - final isolated-worker live-matrix result
 
 - Reviewed checkpoint: `c090a7f1c0897b9812668d1e59c92a2d61dc0ee2`.

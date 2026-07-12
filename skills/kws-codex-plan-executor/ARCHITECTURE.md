@@ -87,6 +87,12 @@ case fixtures, hidden oracles, worker schema, and policy into one digest-bound
 failures without a provider call; the remaining 25 slots each launch one
 ephemeral, explicitly routed Codex turn in a fresh fixture worktree.
 
+For Sol v3 slots, the runner precomputes a bounded visible-context packet from
+tracked UTF-8 seed files and the fixture-owned baseline subprocess result. This
+keeps the oracle physically and logically separate while removing redundant
+discovery and baseline turns. Historical treatments continue to discover the
+same visible repository through their original prompt path.
+
 `start` requires ChatGPT login, rejects API-key environment credentials, checks
 the exact model/reasoning catalog, strips API-key variables from child
 environments, and writes only to an operator-selected evidence root outside the

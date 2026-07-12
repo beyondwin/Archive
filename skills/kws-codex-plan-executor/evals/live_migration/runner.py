@@ -47,6 +47,10 @@ BILLING_BOUNDARY = (
     "The runner cannot prove which account-side subscription or existing-credit "
     "bucket OpenAI consumed; account billing settings remain an external boundary."
 )
+VISIBLE_CONTEXT_MAX_FILES = 64
+VISIBLE_CONTEXT_MAX_FILE_BYTES = 16 * 1024
+VISIBLE_CONTEXT_MAX_TOTAL_BYTES = 32 * 1024
+BASELINE_OUTPUT_MAX_BYTES = 16 * 1024
 
 
 class LiveRunnerError(RuntimeError):
@@ -508,7 +512,92 @@ def preflight_codex(codex_bin: Path, env: Mapping[str, str]) -> CodexAttestation
     )
 
 
-def render_prompt(slot: dict[str, object], fixture: MaterializedFixture, eval_dir: Path) -> str:
+def collect_baseline_evidence(
+    fixture: MaterializedFixture, env: Mapping[str, str]
+) -> dict[str, object]:
+    """Run the fixture-owned baseline once before a Sol v3 worker turn."""
+
+    command = shlex.split(str(fixture.contract["baseline_command"]))
+    completed = subprocess.run(
+        command,
+        cwd=fixture.repo,
+        env=dict(env),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    expected = int(fixture.contract["baseline_exit_code"])
+    if completed.returncode != expected:
+        raise LiveRunnerError(
+            "baseline_contract_mismatch",
+            "fixture baseline exit code did not match its immutable contract",
+        )
+    stdout = completed.stdout.encode("utf-8")
+    stderr = completed.stderr.encode("utf-8")
+    if len(stdout) + len(stderr) > BASELINE_OUTPUT_MAX_BYTES:
+        raise LiveRunnerError(
+            "baseline_output_too_large", "fixture baseline output exceeded its prompt bound"
+        )
+    return {
+        "command": str(fixture.contract["baseline_command"]),
+        "exit_code": completed.returncode,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+    }
+
+
+def _visible_context_snapshot(repository: Path) -> str:
+    """Render only bounded, tracked, text seed files; never traverse hidden oracle data."""
+
+    tracked = tuple(
+        line
+        for line in _git_text(repository, "ls-files").splitlines()
+        if line
+    )
+    if not tracked or len(tracked) > VISIBLE_CONTEXT_MAX_FILES:
+        raise LiveRunnerError(
+            "visible_context_file_bound", "tracked fixture file count exceeded its prompt bound"
+        )
+    sections: list[str] = []
+    total = 0
+    root = repository.resolve()
+    for relative in tracked:
+        path = (root / relative).resolve()
+        if not path.is_relative_to(root) or not path.is_file() or path.is_symlink():
+            raise LiveRunnerError(
+                "unsafe_visible_context", "tracked fixture context contains an unsafe path"
+            )
+        raw = path.read_bytes()
+        if len(raw) > VISIBLE_CONTEXT_MAX_FILE_BYTES:
+            raise LiveRunnerError(
+                "visible_context_file_bound", "tracked fixture file exceeded its prompt bound"
+            )
+        total += len(raw)
+        if total > VISIBLE_CONTEXT_MAX_TOTAL_BYTES:
+            raise LiveRunnerError(
+                "visible_context_total_bound", "tracked fixture context exceeded its prompt bound"
+            )
+        if b"\x00" in raw:
+            raise LiveRunnerError(
+                "binary_visible_context", "tracked fixture context must contain text only"
+            )
+        try:
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise LiveRunnerError(
+                "binary_visible_context", "tracked fixture context must be valid UTF-8"
+            ) from exc
+        sections.append(f"path: {relative}\n---\n{content.rstrip()}\n---")
+    return "\n\n".join(sections)
+
+
+def render_prompt(
+    slot: dict[str, object],
+    fixture: MaterializedFixture,
+    eval_dir: Path,
+    *,
+    baseline_evidence: Mapping[str, object] | None = None,
+) -> str:
     """Render a digest-bound treatment prefix plus common model-visible contract."""
 
     if not isinstance(slot, dict) or not isinstance(fixture, MaterializedFixture):
@@ -534,13 +623,33 @@ def render_prompt(slot: dict[str, object], fixture: MaterializedFixture, eval_di
         f"expected_status: {'blocked' if contract.get('expected_policy') == 'block' else 'completed'}\n"
         f"output_contract: {slot.get('output_schema', 'live-migration/worker-result-schema.json')}\n"
     )
+    visible_context = ""
+    if str(slot.get("treatment_id")) == "sol_v3":
+        if baseline_evidence is None:
+            raise LiveRunnerError(
+                "baseline_evidence_required",
+                "Sol v3 prompt compilation requires runner-owned baseline evidence",
+            )
+        visible_context = (
+            "\n--- bounded visible context ---\n"
+            "The tracked seed files and baseline below are complete. Do not re-read the "
+            "supplied files or rerun the baseline. For read-only work, invoke no tools and "
+            "return the structured result directly. For write work, make the minimal edit "
+            "and run the acceptance command once.\n"
+            f"baseline_command: {baseline_evidence['command']}\n"
+            f"baseline_exit_code: {baseline_evidence['exit_code']}\n"
+            f"baseline_stdout:\n{str(baseline_evidence['stdout']).rstrip()}\n"
+            f"baseline_stderr:\n{str(baseline_evidence['stderr']).rstrip()}\n"
+            "tracked_seed_files:\n"
+            f"{_visible_context_snapshot(fixture.repo)}\n"
+        )
     hot_tail = (
         "\n--- dynamic slot context ---\n"
         f"repository_path: {fixture.repo}\n"
         f"case_id: {slot.get('case_id')}\n"
         f"treatment_id: {slot.get('treatment_id')}\n"
     )
-    prompt = prefix_bytes.decode("utf-8") + stable_contract + hot_tail
+    prompt = prefix_bytes.decode("utf-8") + stable_contract + visible_context + hot_tail
     if str(fixture.oracle_dir) in prompt or "expected.json" in prompt:
         raise LiveRunnerError("oracle_prompt_leak", "hidden oracle material entered the model prompt")
     return prompt
@@ -715,7 +824,17 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
             CaseRef(key.case_id, str(slot["case_slug"])),
             worktree,
         )
-        prompt = render_prompt(slot, fixture, context.eval_dir)
+        baseline_evidence = (
+            collect_baseline_evidence(fixture, context.child_env)
+            if key.treatment_id == "sol_v3"
+            else None
+        )
+        prompt = render_prompt(
+            slot,
+            fixture,
+            context.eval_dir,
+            baseline_evidence=baseline_evidence,
+        )
         worker_schema = (Path(context.eval_dir) / str(slot["output_schema"])).resolve()
         evidence_dir.mkdir(parents=True, exist_ok=False)
         last_message = evidence_dir / "last-message.json"

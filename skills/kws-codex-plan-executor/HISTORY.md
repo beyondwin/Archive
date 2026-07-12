@@ -7,6 +7,9 @@
   oracles, 25 isolated credentialed turns, seven expected policy failures,
   digest-bound append-only evidence, explicit resume/retry semantics, and
   fail-closed aggregation.
+- Added the reviewed Sol v3 live-worker context packet: a bounded tracked-file
+  snapshot plus runner-attested baseline subprocess evidence. Historical
+  treatments remain unchanged and hidden oracle data stays outside the packet.
 - Kept the published version at 3.0.1 and the release tuple at
   `deterministic-ready; paid-live-pending`. The runner is available for the
   approved evidence run, but no live-quality or release-readiness claim is made
