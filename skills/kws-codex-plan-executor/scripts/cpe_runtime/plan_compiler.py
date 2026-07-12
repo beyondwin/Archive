@@ -13,6 +13,7 @@ from build_spec_manifest import build_manifest as build_spec_manifest
 from parse_plan import parse_plan
 
 from .manifest import sha256_bytes, sha256_file
+from .task_contracts import compile_task_contract
 
 
 FORBIDDEN_RUNTIME_PATHS = ("run_manifest.json", "events.jsonl", "state.json")
@@ -106,6 +107,7 @@ def _parse_porcelain_z(output: str) -> tuple[str, ...]:
 def compile_tasks(
     parsed: dict[str, object],
     spec_manifest: dict[str, object] | None,
+    spec_content: bytes | None = None,
 ) -> tuple[dict[str, object], ...]:
     sections = (spec_manifest or {}).get("sections", {})
     if not isinstance(sections, dict):
@@ -150,26 +152,70 @@ def compile_tasks(
             for ref in refs
             if isinstance(sections.get(ref), dict)
         }
-        compiled.append(
-            {
-                "id": task_id,
-                "title": str(raw.get("title") or task_id),
-                "dependencies": [str(item) for item in raw.get("depends_on", [])],
-                "file_claims": files,
-                "spec_refs": refs,
+        selected_sections: list[dict[str, str]] = []
+        if refs:
+            if spec_content is None:
+                raise CompileBlocked(
+                    "spec_snapshot_missing",
+                    f"{task_id} cannot compile spec excerpts without a spec snapshot",
+                    {"task_id": task_id},
+                )
+            spec_lines = spec_content.decode("utf-8").splitlines(keepends=True)
+            for ref in refs:
+                section = sections[ref]
+                if not isinstance(section, dict):
+                    continue
+                start = int(section.get("line_start", 1))
+                end = int(section.get("line_end", start))
+                text = "".join(spec_lines[start - 1 : end])
+                actual = sha256_bytes(text.encode("utf-8"))
+                if actual != selected_hashes.get(ref):
+                    raise CompileBlocked(
+                        "spec_section_digest_mismatch",
+                        f"{task_id} spec excerpt digest changed",
+                        {"task_id": task_id, "spec_ref": ref},
+                    )
+                selected_sections.append({"id": ref, "sha256": actual, "text": text})
+        compiled_task = {
+            "id": task_id,
+            "title": str(raw.get("title") or task_id),
+            "dependencies": [str(item) for item in raw.get("depends_on", [])],
+            "file_claims": files,
+            "spec_refs": refs,
+            "acceptance_command": command,
+            "plan_line": raw.get("line"),
+            "prompt": str(raw.get("body") or task_id),
+            "execution_contract": {
+                "allowed_paths": files,
+                "forbidden_paths": list(FORBIDDEN_RUNTIME_PATHS),
                 "acceptance_command": command,
-                "plan_line": raw.get("line"),
-                "prompt": str(raw.get("body") or task_id),
-                "execution_contract": {
-                    "allowed_paths": files,
-                    "forbidden_paths": list(FORBIDDEN_RUNTIME_PATHS),
-                    "acceptance_command": command,
-                },
-                "source_hashes": {"plan": plan_hash, "spec_sections": selected_hashes},
-                "operator_reviewed": raw.get("operator_reviewed") is True,
-                "operator_decision": raw.get("operator_decision"),
-            }
-        )
+            },
+            "source_hashes": {"plan": plan_hash, "spec_sections": selected_hashes},
+            "operator_reviewed": raw.get("operator_reviewed") is True,
+            "operator_decision": raw.get("operator_decision"),
+            "task_type": raw.get("task_type") or "tdd_implementation",
+            "risk_class": raw.get("risk_class"),
+            "task_source": raw.get("task_source"),
+            "forbidden_paths": raw.get("forbidden_paths") or list(FORBIDDEN_RUNTIME_PATHS),
+            "required_methods": raw.get("required_methods") or [],
+            "required_evidence": raw.get("required_evidence") or [],
+            "checkpoint_message": raw.get("checkpoint_message"),
+        }
+        try:
+            contract = compile_task_contract(
+                compiled_task,
+                spec_sections=tuple(selected_sections),
+                source_hashes=compiled_task["source_hashes"],
+            )
+        except ValueError as exc:
+            raise CompileBlocked(
+                "task_contract_invalid",
+                f"{task_id} task contract is invalid",
+                {"task_id": task_id, "error": str(exc)},
+            ) from None
+        compiled_task["task_contract"] = contract.body()
+        compiled_task["task_contract_sha256"] = contract.contract_sha256
+        compiled.append(compiled_task)
 
     ids = {str(task["id"]) for task in compiled}
     for task in compiled:
@@ -273,10 +319,11 @@ def compile_run(
             "specification could not be compiled",
             {"spec": str(spec), "exit_code": exc.code},
         ) from None
-    tasks = compile_tasks(parsed, spec_manifest)
+    sources = snapshot_source_bytes(plan, spec, docs)
+    spec_content = next((source.content for source in sources if source.role == "spec"), None)
+    tasks = compile_tasks(parsed, spec_manifest, spec_content)
     assert_safe_commands(tasks)
     assert_clean_claimed_scope(status, tasks)
     assert_superpowers_compatible(plan, workspace)
     assert_plan_executable(plan, spec, workspace)
-    sources = snapshot_source_bytes(plan, spec, docs)
     return CompiledRun(tasks, spec_manifest, sources, head, status)
