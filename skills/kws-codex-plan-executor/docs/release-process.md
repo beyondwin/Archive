@@ -80,6 +80,15 @@ expected policy failures, `release_gate.passed=true`, independent review, and a
 clean privacy audit. The release-only closeout made no provider calls and did
 not alter thresholds, immutable result records, or checkpoint digests.
 
+## V4 tiered proof
+
+The v4 merge gate is `critical_path_live`: two credentialed Sol candidate
+slots, seven deterministic policy outcomes, one verified CPE v4 dogfood run,
+and one terminal release generation. Its passing label is exactly
+`critical-path-live verified`. The 17-call `full_paid_matrix` is optional; in
+its absence report exactly `full paid-live certification deferred`.
+Historical failed 17-call evidence is lineage context only.
+
 ## Deterministic Checklist
 
 ```bash

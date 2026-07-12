@@ -68,8 +68,12 @@ the runner reopens and verifies that artifact immediately before launch.
 Hidden oracle paths and bytes are bound separately and never enter the worker
 prompt, argv, or environment. Resume reuses a passed sentinel and cannot bypass
 or duplicate it. The runner-owned semantic gate requires an exact hidden-oracle
-ID match for the qualified block case, and the compiler-owned 17-entry envelope
-map is reused unchanged by ledger aggregation and sanitized release validation.
+ID match for the qualified block case. The v4 merge gate uses
+`--proof-profile critical_path_live`: that sentinel, one Sol single-file
+regression, and seven deterministic no-call outcomes. The 17-call
+`full_paid_matrix` is optional and remains `full paid-live certification
+deferred` until separately finalized. `aggregate` is non-terminal; only
+dogfood-bound `finalize-release` can publish a terminal generation.
 
 ## Contract Summary
 

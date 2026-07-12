@@ -1067,3 +1067,24 @@ Task 11, main, remote, push, merge, version, baseline, or release-status action
 ran. Residual risk: the five-file replacement is crash-detectable through
 canonical digest validation; real dogfood may later replace the closed
 `status=not_run` record under separate authority.
+## 2026-07-13 Asia/Seoul - CPE v4 critical release transaction
+
+- Branch: `codex/cpe-v4-autonomous-efficient-executor-continuation`; base
+  implementation before this change: `612d54dcdfd55fac77494e4347e0b9308eecdd96`.
+- Scope: exact `critical_path_live` 2+7 proof, dogfood-derived
+  `finalize-release`, content-addressed generation/event/state recovery, shared
+  trusted-base Git patch validation, and tiered v4 status labels.
+- RED: `check_release_transaction_v4.py` failed on the absent production
+  dogfood path. Focused and task suites then passed, including fake Codex
+  sentinel/resume (two calls), one-task fake CPE dogfood, both crash windows,
+  idempotence, orphan/tamper/forgery rejection, and public validation.
+- `./evals/run.sh`: the first run exposed a missing fixed inventory allowlist;
+  after adding the new maintained check, the fresh rerun passed every recorded
+  check with `paid_execution=skipped_not_approved`.
+- Repository `bun run check`: 820 pass, 10 skip, 0 fail across 149 files.
+- Python compile, shell syntax, docs/release contracts, CLI help, and diff
+  hygiene: passed. Provider/network/model/live/dogfood/Task 11/main/remote
+  calls: 0; only cost-free fake dogfood artifacts were created in temp roots.
+- Status: deterministic implementation only. A future real terminal critical
+  proof may report `critical-path-live verified`; optional full certification
+  remains `full paid-live certification deferred`.

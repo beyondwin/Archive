@@ -902,24 +902,36 @@ def run_v4_fixture(
     *,
     pause_task_id: str | None = None,
     pause_kind: str | None = None,
+    workspace_source: Path | None = None,
 ) -> dict[str, object]:
     """Drive the production v4 kernel through a deterministic fake provider."""
 
     root = root.resolve()
     workspace = root / "workspace"
     codex_home = root / "codex-home"
-    workspace.mkdir(parents=True)
-    (workspace / "verify.py").write_text(
-        "import pathlib,sys\nraise SystemExit(0 if pathlib.Path(sys.argv[1]).is_file() else 1)\n",
-        encoding="utf-8",
-    )
-    _run(["git", "init", "-q"], workspace)
-    _run(["git", "config", "user.email", "cpe-fixture@example.invalid"], workspace)
-    _run(["git", "config", "user.name", "CPE Fixture"], workspace)
-    _run(["git", "add", "verify.py"], workspace)
-    committed = _run(["git", "commit", "-qm", "fixture base"], workspace)
-    if committed.returncode:
-        raise RuntimeError("fixture_repository_initialization_failed")
+    if workspace_source is None:
+        workspace.mkdir(parents=True)
+        (workspace / "verify.py").write_text(
+            "import pathlib,sys\nraise SystemExit(0 if pathlib.Path(sys.argv[1]).is_file() else 1)\n",
+            encoding="utf-8",
+        )
+        _run(["git", "init", "-q"], workspace)
+        _run(["git", "config", "user.email", "cpe-fixture@example.invalid"], workspace)
+        _run(["git", "config", "user.name", "CPE Fixture"], workspace)
+        _run(["git", "add", "verify.py"], workspace)
+        committed = _run(["git", "commit", "-qm", "fixture base"], workspace)
+        if committed.returncode:
+            raise RuntimeError("fixture_repository_initialization_failed")
+    else:
+        source = workspace_source.expanduser().resolve()
+        cloned = subprocess.run(
+            ["git", "clone", "--shared", "--quiet", str(source), str(workspace)],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if cloned.returncode:
+            raise RuntimeError("fixture_repository_clone_failed")
 
     compiled = compile_run(plan=plan.resolve(), spec=None, docs=(), workspace=workspace, mode="interactive")
     run_id = "cpe-v4-ten-task-fixture"
@@ -935,7 +947,7 @@ def run_v4_fixture(
     manifest = load_verified_manifest(run_dir / "run_manifest.json")
     contracts = _v4_contracts(manifest)
     review_counts: dict[str, int] = {}
-    interruptions = {"task_6": 1, "task_8": 1}
+    interruptions = {"task_6": 1, "task_8": 1} if workspace_source is None else {}
     counters = {"transient_resumes": 0, "runtime_upgrades": 0}
 
     def fake_provider(request: WorkerRequest, _argv: list[str]) -> dict[str, object]:
@@ -1129,7 +1141,7 @@ def run_v4_fixture(
     else:
         raise RuntimeError("fixture_resume_limit_exhausted")
 
-    if len(kernel.state.get("verified_checkpoints", [])) != 10:
+    if len(kernel.state.get("verified_checkpoints", [])) != len(contracts):
         raise RuntimeError("fixture_checkpoint_count_invalid")
     state = kernel.state
     return {
@@ -1141,8 +1153,26 @@ def run_v4_fixture(
         "verified_checkpoints": list(state["verified_checkpoints"]),
         "max_same_root_repairs": max(state.get("repair_roots", {}).values(), default=0),
         "backlog_count": len(state.get("backlog", [])),
+        "run_dir": str(run_dir),
+        "implementation_commit": str(manifest["source_git"]["head"]),
+        "implementation_tree": _run(
+            ["git", "rev-parse", f"{manifest['source_git']['head']}^{{tree}}"], workspace
+        ).stdout.strip(),
+        "task_contract_sha256": contracts[0].contract_sha256 if len(contracts) == 1 else None,
         **counters,
     }
+
+
+def run_v4_dogfood_fixture(plan: Path, root: Path) -> dict[str, object]:
+    """Run one cost-free fake-provider task through the production CPE v4 kernel."""
+
+    started = time.monotonic()
+    result = run_v4_fixture(
+        plan,
+        root,
+        workspace_source=Path(__file__).resolve().parents[3],
+    )
+    return {**result, "elapsed_seconds": time.monotonic() - started}
 
 
 def export_plan(args: argparse.Namespace) -> int:

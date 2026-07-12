@@ -147,14 +147,13 @@ one sanitized top-level envelope map with exactly the 17 qualified
 packaging, and public release validation all consume that same map; policy
 slots cannot enter it.
 
-For v4, production `live_model_runner.py aggregate` is the sole release
-packager. After replaying the completed child ledger and evaluating its release
-and privacy gates, it atomically replaces `checkpoint.json`, `manifest.json`,
-`result.json`, `privacy-audit.json`, and `dogfood-result.json` in the evidence
-root. These are sanitized release schemas, not copies of the raw child
-manifest or result. Every object has an exact key/type contract, dogfood fields
-are selected individually, and the privacy verdict is derived from the
-complete packaged object graph. The public validator reparses canonical bytes,
-rejects duplicate/unknown/missing fields, recomputes package digests and
-cross-file bindings, and re-runs the shared privacy audit instead of trusting
-the stored verdict.
+For v4, `aggregate` only records the recomputed child aggregate. Production
+`finalize-release` is the sole release packager. It verifies the exact proof
+profile, derives dogfood only from a real CPE run directory, and recomputes the
+implementation patch from the manifest's trusted base with the checkpoint Git
+helper. It fsyncs the exact five payloads under
+`release-generations/<sha256>.tmp`, atomically renames the generation, appends
+one `release_evidence_finalized` event, then projects state. Orphan generations
+are ignored and event-before-state crashes recover idempotently. The public
+validator reads only the terminal generation and independently recomputes the
+child counts, gates, envelope bindings, Git identity, digests, and privacy.

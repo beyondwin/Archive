@@ -2,12 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import shutil
-import tempfile
 from collections.abc import Mapping, Sequence
-from pathlib import Path
 
 from .privacy import audit_sanitized_payload
 
@@ -28,6 +24,16 @@ EXPECTED_V4_ENVELOPE_KEYS = frozenset(
     + [f"sol_v4_candidate/{case_id}" for case_id in _CASES]
     + ["terra_v4/large read-only exploration"]
 )
+CRITICAL_V4_ENVELOPE_KEYS = frozenset(
+    {
+        "sol_v4_candidate/security/migration block",
+        "sol_v4_candidate/single-file implementation",
+    }
+)
+PROOF_PROFILE_COUNTS = {
+    "critical_path_live": (9, 2, 7),
+    "full_paid_matrix": (24, 17, 7),
+}
 
 RELEASE_EVIDENCE_FILENAMES = (
     "checkpoint.json",
@@ -52,8 +58,10 @@ _MANIFEST_KEYS = frozenset(
         "schema_version",
         "run_id",
         "implementation_commit",
+        "implementation_base_commit",
         "implementation_tree",
         "implementation_patch_sha256",
+        "proof_profile",
         "ledger_manifest_sha256",
         "slot_count",
         "credentialed_call_count",
@@ -69,8 +77,10 @@ _RESULT_KEYS = frozenset(
         "schema_version",
         "run_id",
         "implementation_commit",
+        "implementation_base_commit",
         "implementation_tree",
         "implementation_patch_sha256",
+        "proof_profile",
         "manifest_sha256",
         "credentialed_call_count",
         "policy_outcome_count",
@@ -151,12 +161,16 @@ def validate_v4_release_payloads(payloads: Mapping[str, Mapping[str, object]]) -
         or not isinstance(manifest["run_id"], str)
         or not manifest["run_id"]
         or not _git_oid(manifest["implementation_commit"])
+        or not _git_oid(manifest["implementation_base_commit"])
         or not _git_oid(manifest["implementation_tree"])
         or not _sha256(manifest["implementation_patch_sha256"])
         or not _sha256(manifest["ledger_manifest_sha256"])
-        or manifest["slot_count"] != 24
-        or manifest["credentialed_call_count"] != 17
-        or manifest["policy_outcome_count"] != 7
+        or manifest["proof_profile"] not in PROOF_PROFILE_COUNTS
+        or (
+            manifest["slot_count"],
+            manifest["credentialed_call_count"],
+            manifest["policy_outcome_count"],
+        ) != PROOF_PROFILE_COUNTS[str(manifest["proof_profile"])]
         or not _is_int(manifest["pending_slot_count"])
         or manifest["pending_slot_count"] < 0
         or not _is_int(manifest["duplicate_slot_count"])
@@ -174,11 +188,14 @@ def validate_v4_release_payloads(payloads: Mapping[str, Mapping[str, object]]) -
         or not isinstance(result["run_id"], str)
         or not result["run_id"]
         or not _git_oid(result["implementation_commit"])
+        or not _git_oid(result["implementation_base_commit"])
         or not _git_oid(result["implementation_tree"])
         or not _sha256(result["implementation_patch_sha256"])
         or not _sha256(result["manifest_sha256"])
-        or result["credentialed_call_count"] != 17
-        or result["policy_outcome_count"] != 7
+        or result["proof_profile"] != manifest["proof_profile"]
+        or (
+            result["credentialed_call_count"], result["policy_outcome_count"]
+        ) != PROOF_PROFILE_COUNTS[str(result["proof_profile"])][1:]
         or not _is_int(result["pending_slot_count"])
         or result["pending_slot_count"] < 0
         or not _is_int(result["duplicate_slot_count"])
@@ -250,8 +267,14 @@ def canonical_v4_envelope_map(payload: Mapping[str, object]) -> dict[str, str]:
     if not isinstance(supplied, Mapping):
         raise ValueError("quality_v4_envelope_map_missing")
     envelope_map = dict(supplied)
-    if (
-        set(envelope_map) != EXPECTED_V4_ENVELOPE_KEYS
+    profile = payload.get("proof_profile", "full_paid_matrix")
+    expected_keys = (
+        CRITICAL_V4_ENVELOPE_KEYS
+        if profile == "critical_path_live"
+        else EXPECTED_V4_ENVELOPE_KEYS
+    )
+    if profile not in PROOF_PROFILE_COUNTS or (
+        set(envelope_map) != expected_keys
         or any(not isinstance(key, str) for key in envelope_map)
         or any(not isinstance(value, str) or _SHA256.fullmatch(value) is None for value in envelope_map.values())
     ):
@@ -296,8 +319,10 @@ def build_v4_release_evidence_payloads(
         "schema_version": "cpe.release-manifest.v4",
         "run_id": manifest.get("run_id"),
         "implementation_commit": commit,
+        "implementation_base_commit": manifest.get("implementation_base_commit"),
         "implementation_tree": tree,
         "implementation_patch_sha256": manifest.get("implementation_patch_sha256"),
+        "proof_profile": manifest.get("proof_profile", "full_paid_matrix"),
         "ledger_manifest_sha256": manifest.get("manifest_sha256"),
         "slot_count": len(manifest.get("slots", ())),
         "credentialed_call_count": manifest.get("credentialed_call_count"),
@@ -316,8 +341,10 @@ def build_v4_release_evidence_payloads(
         "schema_version": "cpe.release-result.v4",
         "run_id": manifest.get("run_id"),
         "implementation_commit": commit,
+        "implementation_base_commit": manifest.get("implementation_base_commit"),
         "implementation_tree": tree,
         "implementation_patch_sha256": manifest.get("implementation_patch_sha256"),
+        "proof_profile": manifest.get("proof_profile", "full_paid_matrix"),
         "manifest_sha256": _canonical_sha256(release_manifest),
         "credentialed_call_count": aggregate.get("credentialed_call_count"),
         "policy_outcome_count": aggregate.get("policy_outcome_count"),
@@ -381,24 +408,3 @@ def build_v4_release_evidence_payloads(
         checkpoint["privacy_sha256"] = _canonical_sha256(privacy)
     validate_v4_release_payloads(payloads)
     return payloads
-
-
-def write_v4_release_evidence_payloads(
-    root: Path, payloads: Mapping[str, Mapping[str, object]]
-) -> None:
-    """Atomically replace each member of the one closed release byte set."""
-
-    validate_v4_release_payloads(payloads)
-    root = root.expanduser().resolve()
-    if not root.is_dir() or root.is_symlink():
-        raise ValueError("quality_v4_release_root_invalid")
-    staged = Path(tempfile.mkdtemp(prefix=".cpe-release-v4-", dir=root))
-    try:
-        for name in RELEASE_EVIDENCE_FILENAMES:
-            (staged / name).write_bytes(
-                (json.dumps(payloads[name], sort_keys=True, separators=(",", ":")) + "\n").encode()
-            )
-        for name in RELEASE_EVIDENCE_FILENAMES:
-            os.replace(staged / name, root / name)
-    finally:
-        shutil.rmtree(staged, ignore_errors=True)

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .privacy import audit_sanitized_payload
+from .git_delta import committed_patch_digest
 from .quality_v4 import (
     canonical_v4_envelope_map,
     validate_v4_release_payloads,
@@ -78,7 +79,13 @@ def validate_release_evidence_root(
         "privacy": "privacy-audit.json",
         "dogfood": "dogfood-result.json",
     }
-    if not root.is_dir() or any(not (root / name).is_file() for name in names.values()):
+    if not root.is_dir():
+        return {"passed": False, "errors": ["release_evidence_missing"]}
+    try:
+        from live_migration.ledger import LedgerError, terminal_release_generation
+
+        terminal, generation = terminal_release_generation(root)
+    except (ImportError, LedgerError, OSError, ValueError):
         return {"passed": False, "errors": ["release_evidence_missing"]}
     payloads: dict[str, dict[str, object]] = {}
     release_payloads: dict[str, dict[str, object]] = {}
@@ -93,7 +100,7 @@ def validate_release_evidence_root(
 
     try:
         for key, name in names.items():
-            raw = (root / name).read_bytes()
+            raw = (generation / name).read_bytes()
             value = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
             if not isinstance(value, dict):
                 raise ValueError
@@ -169,6 +176,23 @@ def validate_release_evidence_root(
         for payload in (manifest, result, privacy, dogfood)
     ):
         errors.append("reviewed_checkpoint_binding_invalid")
+    if (
+        manifest.get("implementation_base_commit")
+        != result.get("implementation_base_commit")
+        or manifest.get("proof_profile") != result.get("proof_profile")
+    ):
+        errors.append("reviewed_checkpoint_binding_invalid")
+    if reviewed_tree is not None:
+        try:
+            _changed_files, actual_patch = committed_patch_digest(
+                workspace.expanduser().resolve(),
+                str(manifest.get("implementation_base_commit")),
+                implementation_commit,
+            )
+            if actual_patch != manifest.get("implementation_patch_sha256"):
+                errors.append("implementation_patch_invalid")
+        except RuntimeError:
+            errors.append("implementation_patch_invalid")
     bindings = {
         "manifest_sha256": _canonical_sha256(manifest),
         "result_sha256": _canonical_sha256(result),
@@ -191,8 +215,17 @@ def validate_release_evidence_root(
         or manifest.get("terminal") is not (manifest.get("pending_slot_count") == 0)
     ):
         errors.append("release_evidence_cross_binding_invalid")
+    expected_counts = (
+        (2, 7)
+        if manifest.get("proof_profile") == "critical_path_live"
+        else (17, 7)
+        if manifest.get("proof_profile") == "full_paid_matrix"
+        else None
+    )
     for payload in (manifest, result):
-        if payload.get("credentialed_call_count") != 17 or payload.get("policy_outcome_count") != 7:
+        if expected_counts is None or (
+            payload.get("credentialed_call_count"), payload.get("policy_outcome_count")
+        ) != expected_counts:
             errors.append("quality_matrix_count_invalid")
             break
     try:
@@ -214,10 +247,10 @@ def validate_release_evidence_root(
     ):
         errors.append("privacy_audit_failed")
     dogfood_valid = (
-        dogfood.get("status") in {"not_run", "passed"}
-        and dogfood.get("run_ids_created") in {0, 1}
+        dogfood.get("status") == "passed"
+        and dogfood.get("run_ids_created") == 1
         and type(dogfood.get("model_attempts")) is int
-        and 0 <= dogfood["model_attempts"] <= 6
+        and 1 <= dogfood["model_attempts"] <= 4
         and type(dogfood.get("max_same_root_repairs")) is int
         and 0 <= dogfood["max_same_root_repairs"] <= 2
         and isinstance(dogfood.get("verified_checkpoints"), list)
@@ -226,12 +259,36 @@ def validate_release_evidence_root(
         and dogfood.get("source_checkout_unchanged") is True
         and dogfood.get("runtime_patch_required") is False
     )
-    if dogfood.get("status") == "passed":
-        dogfood_valid = dogfood_valid and dogfood.get("run_ids_created") == 1 and len(dogfood["verified_checkpoints"]) >= 1
-    elif dogfood.get("status") == "not_run":
-        dogfood_valid = dogfood_valid and dogfood.get("run_ids_created") == 0 and dogfood.get("verified_checkpoints") == []
+    dogfood_valid = dogfood_valid and len(dogfood.get("verified_checkpoints", [])) == 1
     if not dogfood_valid:
         errors.append("dogfood_limits_invalid")
+    try:
+        from live_model_migration import aggregate_run
+        from live_migration.contracts import canonical_json, sha256_bytes
+
+        child_aggregate = aggregate_run(root / str(manifest.get("run_id")))
+        if (
+            sha256_bytes(canonical_json(child_aggregate)) != terminal.get("aggregate_sha256")
+            or child_aggregate.get("credentialed_call_count") != manifest.get("credentialed_call_count")
+            or child_aggregate.get("policy_outcome_count") != manifest.get("policy_outcome_count")
+            or child_aggregate.get("pending_slot_count") != 0
+            or child_aggregate.get("duplicate_slot_count") != 0
+            or child_aggregate.get("release_gate") != result.get("release_gate")
+            or child_aggregate.get("envelope_sha256") != result.get("envelope_sha256")
+        ):
+            errors.append("authoritative_child_gate_invalid")
+    except (ImportError, OSError, ValueError):
+        errors.append("authoritative_child_gate_invalid")
+    event_bindings = {
+        "generation_sha256": generation.name,
+        "checkpoint_sha256": hashlib.sha256((generation / "checkpoint.json").read_bytes()).hexdigest(),
+        "privacy_sha256": hashlib.sha256((generation / "privacy-audit.json").read_bytes()).hexdigest(),
+        "dogfood_sha256": hashlib.sha256((generation / "dogfood-result.json").read_bytes()).hexdigest(),
+        "child_manifest_sha256": manifest.get("ledger_manifest_sha256"),
+        "proof_profile": manifest.get("proof_profile"),
+    }
+    if any(terminal.get(key) != value for key, value in event_bindings.items()):
+        errors.append("release_terminal_binding_invalid")
     return {
         "passed": not errors,
         "errors": errors,

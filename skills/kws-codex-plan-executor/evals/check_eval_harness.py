@@ -32,6 +32,7 @@ REQUIRED_MAINTAINED = frozenset({
     "check_scheduler_v4.py",
     "check_prompt_bundle_v4.py",
     "check_quality_matrix_v4.py",
+    "check_release_transaction_v4.py",
     "check_cpe_v4_e2e.py",
 })
 

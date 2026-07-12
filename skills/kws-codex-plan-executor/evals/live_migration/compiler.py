@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import subprocess
 import sys
 import base64
 import hashlib
@@ -37,6 +38,7 @@ from .envelopes import seal_launch_envelope, seal_oracle_binding
 _SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
+from cpe_runtime.git_delta import committed_patch_digest
 from cpe_runtime.quality_v4 import canonical_v4_envelope_map
 
 
@@ -48,6 +50,7 @@ QUALIFIED_SENTINEL = {
     "treatment_id": "sol_v4_candidate",
     "case_id": "security/migration block",
 }
+PROOF_PROFILES = frozenset({"critical_path_live", "full_paid_matrix"})
 
 
 def _skill_root() -> Path:
@@ -243,12 +246,14 @@ def compile_v4_manifest(
     *,
     eval_dir: Path | None = None,
     created_at: str = _DEFAULT_CREATED_AT,
+    proof_profile: str = "full_paid_matrix",
+    implementation_base_commit: str | None = None,
 ) -> dict[str, object]:
-    """Compile the immutable 24-slot, 17-call CPE v4 quality manifest."""
+    """Compile one immutable CPE v4 proof profile without launching a model."""
 
     if not _COMMIT_SHA.fullmatch(commit):
         raise LiveMigrationContractError("commit must be a 40-character SHA")
-    if not run_id or not created_at:
+    if not run_id or not created_at or proof_profile not in PROOF_PROFILES:
         raise LiveMigrationContractError("run_id and created_at are required")
     root = Path(eval_dir) if eval_dir is not None else Path(__file__).resolve().parent.parent
     treatments, cases = load_v4_registry(root)
@@ -264,11 +269,19 @@ def compile_v4_manifest(
     launch_artifacts: dict[str, str] = {}
     oracle_artifacts: dict[str, str] = {}
 
-    ordered_cases = {
-        "sol_v31_control": cases,
-        "sol_v4_candidate": cases,
-        "terra_v4": (terra_read_only, *cases[:-1]),
-    }
+    if proof_profile == "critical_path_live":
+        critical_cases = (case_by_id["security/migration block"], case_by_id["single-file implementation"])
+        ordered_cases = {
+            "sol_v31_control": (),
+            "sol_v4_candidate": critical_cases,
+            "terra_v4": cases[:-1],
+        }
+    else:
+        ordered_cases = {
+            "sol_v31_control": cases,
+            "sol_v4_candidate": cases,
+            "terra_v4": (terra_read_only, *cases[:-1]),
+        }
     bundles_by_case = {
         case.id: v4_case_prompt_bundles(root, case.id, case.slug) for case in cases
     }
@@ -280,7 +293,9 @@ def compile_v4_manifest(
             if key in slot_keys:
                 raise LiveMigrationContractError(f"duplicate v4 slot: {key}")
             slot_keys.add(key)
-            credentialed = treatment.id != "terra_v4" or canonical_case == terra_read_only
+            credentialed = treatment.id != "terra_v4" or (
+                proof_profile == "full_paid_matrix" and canonical_case == terra_read_only
+            )
             policy_failure = not credentialed
             bundle_kind = (
                 "control"
@@ -392,9 +407,10 @@ def compile_v4_manifest(
 
     credentialed_count = sum(bool(slot["credentialed"]) for slot in slots)
     policy_count = sum(bool(slot["expected_policy_failure"]) for slot in slots)
-    if len(slots) != 24 or len(slot_keys) != 24 or (credentialed_count, policy_count) != (17, 7):
+    expected_shape = (9, 2, 7) if proof_profile == "critical_path_live" else (24, 17, 7)
+    if (len(slots), credentialed_count, policy_count) != expected_shape or len(slot_keys) != len(slots):
         raise LiveMigrationContractError(
-            "compiled v4 matrix must contain 17 calls and seven policy outcomes"
+            f"compiled v4 {proof_profile} profile has an invalid slot shape"
         )
     envelope_sha256 = {
         f"{slot['treatment_id']}/{slot['case_id']}": str(slot["envelope_sha256"])
@@ -406,6 +422,7 @@ def compile_v4_manifest(
         "run_id": run_id,
         "created_at": created_at,
         "implementation_commit": commit,
+        "proof_profile": proof_profile,
         "billing_mode": CHATGPT_SUBSCRIPTION,
         "treatment_count": 3,
         "case_count": 8,
@@ -420,6 +437,30 @@ def compile_v4_manifest(
         },
         "slots": slots,
     }
+    if implementation_base_commit is not None:
+        if not _COMMIT_SHA.fullmatch(implementation_base_commit):
+            raise LiveMigrationContractError("implementation base must be a 40-character SHA")
+        repository_root = root.parents[2]
+        try:
+            tree = subprocess.run(
+                ["git", "rev-parse", f"{commit}^{{tree}}"],
+                cwd=repository_root,
+                text=True,
+                capture_output=True,
+                check=True,
+            ).stdout.strip()
+            _changed, patch_sha256 = committed_patch_digest(
+                repository_root, implementation_base_commit, commit
+            )
+        except (RuntimeError, subprocess.CalledProcessError) as exc:
+            raise LiveMigrationContractError("implementation checkpoint cannot be resolved") from exc
+        body.update(
+            {
+                "implementation_base_commit": implementation_base_commit,
+                "implementation_tree": tree,
+                "implementation_patch_sha256": patch_sha256,
+            }
+        )
     canonical_v4_envelope_map(body)
     return {**body, "manifest_sha256": sha256_bytes(canonical_json(body))}
 

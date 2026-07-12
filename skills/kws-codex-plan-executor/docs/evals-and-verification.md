@@ -125,15 +125,14 @@ ledger evidence.
 The cost-free authentic production E2E launches the real runner CLI and fake
 Codex subprocess with a top-level blocked sentinel carrying the wrong hidden-
 oracle ID, then proves one invocation followed by a zero-call blocked resume.
-Its passing branch compiles and materializes the real sealed artifacts, parses
-fake Codex output, evaluates the runner-owned hidden oracle, resumes without
-duplicating the sentinel, and lets production `aggregate` write the five
-canonical release files. The public validator independently enforces closed
-schemas, Git/checkpoint/digest/envelope bindings, and a shared privacy re-audit
-over those actual payloads. Unknown fields such as caller `debug_note` fail
-even when superficial hashes and the stored privacy boolean are rewritten.
-The pre-dogfood package uses a closed `status=not_run` record with zero metrics;
-no arbitrary dogfood JSON is copied.
+Its passing branch uses `critical_path_live`: the sentinel, one single-file
+regression, and seven no-call policies, for exactly two fake provider
+invocations. `aggregate` remains non-terminal and writes no public package.
+The same E2E runs one actual fake-provider CPE v4 dogfood checkpoint, then
+production `finalize-release` publishes the content-addressed terminal
+generation. The validator independently recomputes child gates, Git patch,
+closed schemas, digests, envelopes, and privacy; orphan or mutable root files,
+unknown dogfood fields, generation tamper, and lineage/state drift fail.
 
 When the sole authorized corrected v4 run uses a new evidence root, import the
 failed predecessor lineage without copying its oracle-bearing manifest:

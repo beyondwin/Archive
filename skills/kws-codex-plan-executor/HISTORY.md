@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Added the exact two-call `critical_path_live` merge proof; the 17-call
+  `full_paid_matrix` remains optional certification and is deferred by default.
+- Moved v4 publication from aggregate to dogfood-bound, crash-recoverable,
+  content-addressed `finalize-release` generations and terminal lineage.
+
 - Added a cost-free v4 predecessor-lineage attestation for corrected quality
   runs. It validates one terminal failed evidence root in place, stores only
   domain-separated digests and checkpoint identity in the new root, and

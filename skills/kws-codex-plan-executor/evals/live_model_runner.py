@@ -29,11 +29,11 @@ from live_migration.ledger import (
     append_event,
     create_run,
     load_registered_release_manifest,
-    record_release_terminal,
     recover_orphan_release_registration,
     register_release_run,
     replay_run,
 )
+from live_migration.release_transaction import finalize_v4_release
 from live_migration.predecessor import attest_predecessor_release
 from live_migration.privacy import audit_sanitized_payload
 from live_model_migration import aggregate_run
@@ -48,10 +48,7 @@ from live_migration.runner import (
     install_v4_sealed_artifacts,
     verify_v4_manifest_sealed_artifacts,
 )
-from cpe_runtime.quality_v4 import (
-    build_v4_release_evidence_payloads,
-    write_v4_release_evidence_payloads,
-)
+from cpe_runtime.git_delta import committed_patch_digest
 
 
 ROOT = Path(__file__).resolve().parent
@@ -80,6 +77,11 @@ def _parser() -> argparse.ArgumentParser:
     dry.add_argument("--output", type=Path, required=True)
     dry.add_argument("--run-id", default="cpe-v3-subscription-dry-run")
     dry.add_argument("--matrix", choices=("v4",))
+    dry.add_argument(
+        "--proof-profile",
+        choices=("critical_path_live", "full_paid_matrix"),
+        default="full_paid_matrix",
+    )
     _add_checkpoint_arguments(dry)
 
     start = commands.add_parser("start")
@@ -90,6 +92,11 @@ def _parser() -> argparse.ArgumentParser:
     start.add_argument("--run-id")
     start.add_argument("--slot-timeout-seconds", type=int, default=900)
     start.add_argument("--matrix", choices=("v4",))
+    start.add_argument(
+        "--proof-profile",
+        choices=("critical_path_live", "full_paid_matrix"),
+        default="full_paid_matrix",
+    )
     start.add_argument("--sentinel-only", action="store_true")
     _add_checkpoint_arguments(start)
 
@@ -103,6 +110,10 @@ def _parser() -> argparse.ArgumentParser:
     aggregate = commands.add_parser("aggregate")
     aggregate.add_argument("--run-dir", type=Path, required=True)
     aggregate.add_argument("--output", type=Path, required=True)
+    finalize = commands.add_parser("finalize-release")
+    finalize.add_argument("--evidence-root", type=Path, required=True)
+    finalize.add_argument("--run-dir", type=Path, required=True)
+    finalize.add_argument("--dogfood-run-dir", type=Path, required=True)
     predecessor = commands.add_parser("attest-predecessor")
     predecessor.add_argument("--predecessor-root", type=Path, required=True)
     predecessor.add_argument("--evidence-root", type=Path, required=True)
@@ -110,6 +121,7 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _add_checkpoint_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--implementation-base-commit")
     parser.add_argument("--implementation-commit")
     parser.add_argument("--implementation-tree")
     parser.add_argument("--implementation-patch-sha256")
@@ -139,6 +151,8 @@ def _validate_checkpoint_binding(
     values: dict[str, object],
 ) -> dict[str, str]:
     binding = {key: str(value) for key, value in values.items()}
+    if GIT_OID.fullmatch(binding["implementation_base_commit"]) is None:
+        raise LiveRunnerError("invalid_checkpoint_binding", "implementation base must be a Git SHA-1")
     if GIT_OID.fullmatch(binding["implementation_commit"]) is None:
         raise LiveRunnerError("invalid_checkpoint_binding", "implementation commit must be a Git SHA-1")
     if GIT_OID.fullmatch(binding["implementation_tree"]) is None:
@@ -150,9 +164,14 @@ def _validate_checkpoint_binding(
     ).decode().strip()
     if actual_tree != binding["implementation_tree"]:
         raise LiveRunnerError("checkpoint_tree_mismatch", "implementation commit does not match its reviewed tree")
-    actual_patch = sha256_bytes(
-        _git_bytes("show", "--format=", "--binary", binding["implementation_commit"])
-    )
+    try:
+        _changed_files, actual_patch = committed_patch_digest(
+            REPOSITORY_ROOT,
+            binding["implementation_base_commit"],
+            binding["implementation_commit"],
+        )
+    except RuntimeError as exc:
+        raise LiveRunnerError("checkpoint_patch_mismatch", "implementation patch cannot be recomputed") from exc
     if actual_patch != binding["implementation_patch_sha256"]:
         raise LiveRunnerError("checkpoint_patch_mismatch", "implementation commit does not match its reviewed patch")
     return binding
@@ -175,6 +194,7 @@ def _assert_execution_checkpoint(binding: dict[str, str]) -> None:
 
 def _manifest_checkpoint_binding(manifest: dict[str, object]) -> dict[str, str]:
     values = {
+        "implementation_base_commit": manifest.get("implementation_base_commit"),
         "implementation_commit": manifest.get("implementation_commit"),
         "implementation_tree": manifest.get("implementation_tree"),
         "implementation_patch_sha256": manifest.get("implementation_patch_sha256"),
@@ -189,6 +209,7 @@ def _manifest_checkpoint_binding(manifest: dict[str, object]) -> dict[str, str]:
 
 def _checkpoint_binding(args: argparse.Namespace, *, required: bool) -> dict[str, str]:
     values: dict[str, object] = {
+        "implementation_base_commit": args.implementation_base_commit,
         "implementation_commit": args.implementation_commit,
         "implementation_tree": args.implementation_tree,
         "implementation_patch_sha256": args.implementation_patch_sha256,
@@ -206,9 +227,11 @@ def _checkpoint_binding(args: argparse.Namespace, *, required: bool) -> dict[str
                 "live execution requires the reviewed implementation commit, tree, and patch SHA-256",
             )
         commit = _git_commit()
+        base = _git_bytes("merge-base", "main", commit).decode().strip()
         tree = _git_bytes("rev-parse", f"{commit}^{{tree}}").decode().strip()
-        patch_sha256 = sha256_bytes(_git_bytes("show", "--format=", "--binary", commit))
+        _changed, patch_sha256 = committed_patch_digest(REPOSITORY_ROOT, base, commit)
         return {
+            "implementation_base_commit": base,
             "implementation_commit": commit,
             "implementation_tree": tree,
             "implementation_patch_sha256": patch_sha256,
@@ -237,6 +260,7 @@ def _compile(
     binding: dict[str, str],
     *,
     matrix: str | None = None,
+    proof_profile: str = "full_paid_matrix",
 ) -> dict[str, object]:
     if matrix == "v4":
         if billing_mode != CHATGPT_SUBSCRIPTION:
@@ -248,6 +272,8 @@ def _compile(
             run_id,
             eval_dir=ROOT,
             created_at=_created_at(),
+            proof_profile=proof_profile,
+            implementation_base_commit=binding["implementation_base_commit"],
         )
     else:
         manifest = compile_manifest(
@@ -284,6 +310,7 @@ def _dry_run(args: argparse.Namespace) -> dict[str, object]:
         args.run_id,
         _checkpoint_binding(args, required=False),
         matrix=args.matrix,
+        proof_profile=args.proof_profile,
     )
     payload = {
         "status": "dry_run",
@@ -293,6 +320,7 @@ def _dry_run(args: argparse.Namespace) -> dict[str, object]:
         "credentialed_call_count": manifest["credentialed_call_count"],
         "expected_policy_failure_count": manifest["expected_policy_failure_count"],
         "implementation_commit": manifest["implementation_commit"],
+        "implementation_base_commit": manifest.get("implementation_base_commit"),
         "implementation_tree": manifest["implementation_tree"],
         "implementation_patch_sha256": manifest["implementation_patch_sha256"],
         "invocation_policy_sha256": manifest["invocation_policy_sha256"],
@@ -660,6 +688,7 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
             run_id,
             binding,
             matrix=args.matrix,
+            proof_profile=args.proof_profile,
         )
     if manifest.get("schema_version") == "cpe-quality-manifest.v4":
         verify_v4_manifest_sealed_artifacts(manifest)
@@ -683,6 +712,7 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
     else:
         manifest["model_catalog_sha256"] = attestation.catalog_sha256
         manifest = _bind_manifest(manifest, {
+            "implementation_base_commit": str(manifest["implementation_base_commit"]),
             "implementation_commit": str(manifest["implementation_commit"]),
             "implementation_tree": str(manifest["implementation_tree"]),
             "implementation_patch_sha256": str(manifest["implementation_patch_sha256"]),
@@ -744,40 +774,16 @@ def _aggregate(args: argparse.Namespace) -> dict[str, object]:
     payload: dict[str, object] = {**aggregate, "privacy_audit": privacy}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(canonical_json(payload))
-    if aggregate.get("schema_version") == "cpe-quality-aggregate.v4":
-        manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
-        dogfood = {
-            "schema_version": "cpe.dogfood-result.v4",
-            "status": "not_run",
-            "run_ids_created": 0,
-            "model_attempts": 0,
-            "max_same_root_repairs": 0,
-            "verified_checkpoints": [],
-            "elapsed_seconds": 0,
-            "source_checkout_unchanged": True,
-            "runtime_patch_required": False,
-        }
-        release_payloads = build_v4_release_evidence_payloads(
-            manifest, aggregate, dogfood
-        )
-        write_v4_release_evidence_payloads(run_dir.parent, release_payloads)
-    aggregate_sha256 = sha256_bytes(canonical_json(aggregate))
-    privacy_sha256 = sha256_bytes(canonical_json(privacy))
-    gate = aggregate.get("release_gate")
-    passed = (
-        isinstance(gate, dict)
-        and gate.get("passed") is True
-        and privacy.get("passed") is True
-    )
-    record_release_terminal(
-        run_dir.parent,
-        run_id=str(aggregate["run_id"]),
-        manifest_sha256=str(aggregate["manifest_sha256"]),
-        passed=passed,
-        aggregate_sha256=aggregate_sha256,
-        privacy_sha256=privacy_sha256,
-    )
     return payload
+
+
+def _finalize_release(args: argparse.Namespace) -> dict[str, object]:
+    return finalize_v4_release(
+        evidence_root=args.evidence_root,
+        run_dir=args.run_dir,
+        dogfood_run_dir=args.dogfood_run_dir,
+        repository=REPOSITORY_ROOT,
+    )
 
 
 def _resume(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[str, object]:
@@ -876,6 +882,8 @@ def main(argv: list[str] | None = None) -> int:
             result = _resume(args, parser)
         elif args.command == "attest-predecessor":
             result = _attest_predecessor(args)
+        elif args.command == "finalize-release":
+            result = _finalize_release(args)
         else:
             result = _aggregate(args)
     except (

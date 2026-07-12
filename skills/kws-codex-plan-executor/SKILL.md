@@ -43,6 +43,10 @@ python3 evals/live_model_runner.py dry-run \
 python3 evals/live_model_runner.py attest-predecessor \
   --predecessor-root /absolute/failed-evidence-root \
   --evidence-root /absolute/corrected-evidence-root
+python3 evals/live_model_runner.py finalize-release \
+  --evidence-root /absolute/evidence-root \
+  --run-dir /absolute/evidence-root/current-run \
+  --dogfood-run-dir /absolute/cpe-v4-dogfood-run
 ```
 
 `run` and `resume` are execution surfaces. `export` in `prompt` or `handoff`
@@ -68,8 +72,18 @@ output-schema bytes. Hidden oracle material stays in a separate runner-owned
 binding drift blocks before a provider invocation. A sentinel semantic/oracle
 failure terminally protects all remaining credentialed slots. For the block-ID
 sentinel, semantic pass requires `review_accurate=true`; top-level blocked alone
-is insufficient. One compiler-derived 17-entry sanitized envelope map binds the
-slot ledger, aggregate, and release validator without exposing oracle material.
+is insufficient. The merge-gate `critical_path_live` profile contains exactly
+that sentinel, one candidate single-file success regression, and seven
+deterministic no-call policy outcomes. `full_paid_matrix` retains the 17-entry
+map as optional certification, not as the merge gate.
+
+`aggregate` cannot publish a release package or terminal event. After an
+actual one-task CPE v4 dogfood run, `finalize-release` replays both ledgers,
+recomputes the trusted-base Git patch, and publishes one content-addressed
+five-file generation followed by one terminal event. The validator trusts only
+that terminal generation. A pass is labeled exactly `critical-path-live
+verified`; absent optional certification is labeled exactly `full paid-live
+certification deferred`.
 
 ## Fixed Routing
 

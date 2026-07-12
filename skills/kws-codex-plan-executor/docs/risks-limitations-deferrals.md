@@ -5,6 +5,10 @@
   suite, and the reviewed four-treatment, eight-case subscription matrix passed
   the unchanged release gate. The tracked privacy audit passed and
   `release_ready=true`.
+- That 3.1.0 state is historical v3 evidence. The unpublished v4 merge gate can
+  claim `critical-path-live verified` only from a terminal generation; optional
+  17-call certification remains `full paid-live certification deferred` until
+  its own terminal pass.
 - The v3 deterministic harness uses a maintained inventory, public CLI fixture
   repositories, fake providers, and an isolated oracle. This covers behavior,
   not real provider quality or latency; the reviewed live matrix supplies the

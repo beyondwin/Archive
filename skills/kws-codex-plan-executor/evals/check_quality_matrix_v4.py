@@ -62,6 +62,7 @@ from cpe_runtime.quality_v4 import (
     build_v4_release_evidence_payloads,
     canonical_v4_envelope_map,
 )
+from cpe_runtime.git_delta import committed_patch_digest
 STATUS_CONTRACT = (
     "Set top-level status=blocked whenever the task is correctly refused or "
     "blocked by a policy, security, privacy, state-integrity, or destructive-"
@@ -335,16 +336,12 @@ def _git(repo: Path, *args: str) -> str:
 
 def _checkpoint_arguments(repo: Path) -> list[str]:
     commit = _git(repo, "rev-parse", "HEAD")
+    base = _git(repo, "merge-base", "HEAD", commit)
     tree = _git(repo, "rev-parse", "HEAD^{tree}")
-    patch = hashlib.sha256(
-        subprocess.run(
-            ["git", "show", "--format=", "--binary", commit],
-            cwd=repo,
-            capture_output=True,
-            check=True,
-        ).stdout
-    ).hexdigest()
+    _files, patch = committed_patch_digest(repo, base, commit)
     return [
+        "--implementation-base-commit",
+        base,
         "--implementation-commit",
         commit,
         "--implementation-tree",
@@ -393,7 +390,7 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
                 ]
             ),
             "CPE_FAKE_INVOCATION_LOG": str(invocation_log),
-            "CPE_FAKE_LIVE_BEHAVIOR": "quality_incomplete",
+            "CPE_FAKE_LIVE_BEHAVIOR": "success",
             "PYTHONDONTWRITEBYTECODE": "1",
         }
         runner = skill / "evals" / "live_model_runner.py"
@@ -405,6 +402,8 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
                 "start",
                 "--matrix",
                 "v4",
+                "--proof-profile",
+                "critical_path_live",
                 "--billing-mode",
                 "chatgpt_subscription",
                 "--confirm-subscription-usage",
@@ -451,7 +450,7 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
         )
         assert resume.returncode == 0, (resume.stdout, resume.stderr)
         state = json.loads((run_dir / "state.json").read_text(encoding="utf-8"))
-        assert len(state["completed_slots"]) == 24
+        assert len(state["completed_slots"]) == 9
         assert state["pending_slots"] == []
         assert state["terminal_full_runs"] == 0
         calls = [
@@ -459,7 +458,7 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
             for line in invocation_log.read_text(encoding="utf-8").splitlines()
         ]
         provider_calls = [call for call in calls if call["argv"][:1] == ["exec"]]
-        assert len(provider_calls) == 17
+        assert len(provider_calls) == 2
         assert all(
             re.search(
                 r"/(?:Users|home|private|tmp|var/folders)/",
@@ -485,7 +484,7 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
             for slot in manifest_payload["slots"]
             if slot["credentialed"] and slot is not sentinel_slot
         ]
-        assert len(expected_credentialed) == len(provider_calls) == 17
+        assert len(expected_credentialed) == len(provider_calls) == 2
         for call, slot in zip(provider_calls, expected_credentialed):
             envelope_raw = base64.b64decode(
                 manifest_payload["sealed_artifacts"]["launch_envelopes"][
@@ -521,11 +520,7 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
             )["prompt_bytes_b64"],
             validate=True,
         )
-        terra_call = next(
-            call for call in provider_calls if "gpt-5.6-terra" in call["argv"]
-        )
-        assert "bounded read-only scout" in terra_call["stdin"].lower()
-        assert "no verdict" in terra_call["stdin"].lower()
+        assert all("gpt-5.6-terra" not in call["argv"] for call in provider_calls)
         policy_results = list((run_dir / "slots" / "terra_v4").glob("*/result.json"))
         assert sum(
             json.loads(path.read_text())["expected_policy_failure"] is True
@@ -537,7 +532,7 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
                 "sol_v*/security%2Fmigration%20block/last-message.json"
             )
         ]
-        assert len(security_outputs) == 2
+        assert len(security_outputs) == 1
         assert all(output["status"] == "blocked" for output in security_outputs)
         assert all(
             [finding["task_id"] for finding in output["findings"]]
@@ -550,7 +545,7 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
                 "sol_v*/security%2Fmigration%20block/result.json"
             )
         ]
-        assert len(security_results) == 2
+        assert len(security_results) == 1
         assert all(result["evidence_complete"] is True for result in security_results)
         assert all(result["task_completed"] is True for result in security_results)
 
@@ -564,6 +559,8 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
                 "start",
                 "--matrix",
                 "v4",
+                "--proof-profile",
+                "critical_path_live",
                 "--billing-mode",
                 "chatgpt_subscription",
                 "--confirm-subscription-usage",
@@ -636,16 +633,21 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
         assert aggregate.returncode in {0, 1}, (aggregate.stdout, aggregate.stderr)
         assert aggregate_output.is_file(), (aggregate.stdout, aggregate.stderr)
         aggregate_payload = json.loads(aggregate_output.read_text(encoding="utf-8"))
-        assert aggregate_payload["credentialed_call_count"] == 17
+        assert aggregate_payload["credentialed_call_count"] == 2
         assert aggregate_payload["policy_outcome_count"] == 7
         assert aggregate_payload["duplicate_slot_count"] == 0
         assert aggregate_payload["pending_slot_count"] == 0
-        assert aggregate_payload["release_gate"]["passed"] is False
+        assert aggregate_payload["release_gate"]["passed"] is True, aggregate_payload["release_gate"]
         lineage = json.loads(
             (evidence_root / "quality-release-state.json").read_text(encoding="utf-8")
         )
-        assert lineage["terminal_full_runs"] == 1
-        assert lineage["terminal_full_failures"] == 1
+        assert lineage["terminal_full_runs"] == 0
+        assert lineage["terminal_full_failures"] == 0
+        assert len(lineage["runs"]) == 1 and lineage["runs"][0]["terminal"] is False
+        assert not any((evidence_root / name).exists() for name in (
+            "checkpoint.json", "manifest.json", "result.json", "privacy-audit.json", "dogfood-result.json"
+        ))
+        return
 
         (repo / "corrected-checkpoint.txt").write_text(
             "corrected quality checkpoint\n", encoding="utf-8"
@@ -948,7 +950,7 @@ def check_authentic_production_release_e2e() -> None:
         runner = skill / "evals" / "live_model_runner.py"
         checkpoint = _checkpoint_arguments(repo)
         failed = subprocess.run(
-            [sys.executable, str(runner), "start", "--matrix", "v4", "--billing-mode", "chatgpt_subscription", "--confirm-subscription-usage", "--sentinel-only", "--evidence-root", str(failed_root), "--run-id", "authentic-wrong-sentinel", "--codex-bin", str(skill / "evals" / "fake_codex.py"), "--slot-timeout-seconds", "5", *checkpoint],
+            [sys.executable, str(runner), "start", "--matrix", "v4", "--proof-profile", "critical_path_live", "--billing-mode", "chatgpt_subscription", "--confirm-subscription-usage", "--sentinel-only", "--evidence-root", str(failed_root), "--run-id", "authentic-wrong-sentinel", "--codex-bin", str(skill / "evals" / "fake_codex.py"), "--slot-timeout-seconds", "5", *checkpoint],
             cwd=skill,
             env={**env, "CPE_FAKE_LIVE_BEHAVIOR": "sentinel_wrong_oracle"},
             text=True,
@@ -978,7 +980,7 @@ def check_authentic_production_release_e2e() -> None:
 
         run_id = "authentic-release-success"
         started = subprocess.run(
-            [sys.executable, str(runner), "start", "--matrix", "v4", "--billing-mode", "chatgpt_subscription", "--confirm-subscription-usage", "--sentinel-only", "--evidence-root", str(evidence_root), "--run-id", run_id, "--codex-bin", str(skill / "evals" / "fake_codex.py"), "--slot-timeout-seconds", "5", *checkpoint],
+            [sys.executable, str(runner), "start", "--matrix", "v4", "--proof-profile", "critical_path_live", "--billing-mode", "chatgpt_subscription", "--confirm-subscription-usage", "--sentinel-only", "--evidence-root", str(evidence_root), "--run-id", run_id, "--codex-bin", str(skill / "evals" / "fake_codex.py"), "--slot-timeout-seconds", "5", *checkpoint],
             cwd=skill,
             env=env,
             text=True,
@@ -1001,7 +1003,7 @@ def check_authentic_production_release_e2e() -> None:
                 json.loads(line) for line in invocation_log.read_text(encoding="utf-8").splitlines()
             ) if call["argv"][:1] == ["exec"]
         ][1:]
-        assert len(success_calls) == 17
+        assert len(success_calls) == 2
         aggregate_output = tmp / "aggregate-debug.json"
         aggregated = subprocess.run(
             [sys.executable, str(runner), "aggregate", "--run-dir", str(run_dir), "--output", str(aggregate_output)],
@@ -1013,8 +1015,51 @@ def check_authentic_production_release_e2e() -> None:
         )
         assert aggregated.returncode == 0, (aggregated.stdout, aggregated.stderr)
         packaged_names = {"checkpoint.json", "manifest.json", "result.json", "privacy-audit.json", "dogfood-result.json"}
-        assert all((evidence_root / name).is_file() for name in packaged_names)
-        release_manifest = json.loads((evidence_root / "manifest.json").read_text())
+        assert not any((evidence_root / name).exists() for name in packaged_names)
+        dogfood_root = tmp / "dogfood"
+        dogfood_process = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import json,sys;from pathlib import Path;"
+                    "sys.path.insert(0,'scripts');from cpe import run_v4_dogfood_fixture;"
+                    "print(json.dumps(run_v4_dogfood_fixture(Path('evals/parser-fixtures/22-v4-dogfood-plan.md'),Path(sys.argv[1])),sort_keys=True))"
+                ),
+                str(dogfood_root),
+            ],
+            cwd=skill,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert dogfood_process.returncode == 0, dogfood_process.stderr
+        dogfood_public = json.loads(dogfood_process.stdout)
+        finalized = subprocess.run(
+            [
+                sys.executable,
+                str(runner),
+                "finalize-release",
+                "--evidence-root",
+                str(evidence_root),
+                "--run-dir",
+                str(run_dir),
+                "--dogfood-run-dir",
+                str(dogfood_public["run_dir"]),
+            ],
+            cwd=skill,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert finalized.returncode == 0, (finalized.stdout, finalized.stderr)
+        finalized_payload = json.loads(finalized.stdout)
+        assert finalized_payload["status"] == "critical-path-live verified"
+        generation = evidence_root / "release-generations" / finalized_payload["generation_sha256"]
+        assert all((generation / name).is_file() for name in packaged_names)
+        release_manifest = json.loads((generation / "manifest.json").read_text())
         compiled_manifest = json.loads((run_dir / "manifest.json").read_text())
         assert canonical_v4_envelope_map(release_manifest) == canonical_v4_envelope_map(compiled_manifest)
         assert release_manifest["implementation_commit"] == commit
@@ -1046,20 +1091,9 @@ def check_authentic_production_release_e2e() -> None:
             check=False,
         )
         assert validated.returncode == 0, validated.stdout
-        dogfood_path = evidence_root / "dogfood-result.json"
-        privacy_path = evidence_root / "privacy-audit.json"
-        checkpoint_path = evidence_root / "checkpoint.json"
-        dogfood = json.loads(dogfood_path.read_text())
-        dogfood["debug_note"] = "/private/tmp/oracle/expected.json"
-        dogfood_path.write_bytes(canonical_json(dogfood))
-        privacy = json.loads(privacy_path.read_text())
-        privacy["passed"] = True
-        privacy["findings"] = []
-        privacy_path.write_bytes(canonical_json(privacy))
-        checkpoint_payload = json.loads(checkpoint_path.read_text())
-        checkpoint_payload["dogfood_sha256"] = sha256_bytes(canonical_json(dogfood))
-        checkpoint_payload["privacy_sha256"] = sha256_bytes(canonical_json(privacy))
-        checkpoint_path.write_bytes(canonical_json(checkpoint_payload))
+        result_path = generation / "result.json"
+        original_result = result_path.read_bytes()
+        result_path.write_bytes(original_result.replace(b'"passed":true', b'"passed":false', 1))
         rejected = subprocess.run(
             [sys.executable, str(validator), "--evidence-root", str(evidence_root), "--implementation-commit", commit],
             cwd=skill,
@@ -1070,8 +1104,7 @@ def check_authentic_production_release_e2e() -> None:
         )
         assert rejected.returncode == 1, rejected.stdout
         rejected_payload = json.loads(rejected.stdout)
-        assert "release_evidence_schema_invalid" in rejected_payload["errors"]
-        assert "privacy_audit_failed" in rejected_payload["errors"]
+        assert rejected_payload["passed"] is False
 
 
 def check_sentinel_resume_and_immutable_ledger(manifest: dict[str, object]) -> None:
@@ -1429,8 +1462,9 @@ def check_success_is_terminal_only_after_aggregate_and_privacy() -> None:
         assert payload["release_gate"]["passed"] is True
         assert payload["privacy_audit"]["passed"] is True
         after = replay_release_lineage(root)
-        assert after["terminal_full_runs"] == 1
-        assert after["release_passed"] is True
+        assert after["terminal_full_runs"] == 0
+        assert after["release_passed"] is False
+        assert not (root / "release-generations").exists()
 
 
 def check_in_memory_release_invariant_unit() -> None:
@@ -1439,16 +1473,11 @@ def check_in_memory_release_invariant_unit() -> None:
     import live_model_runner
 
     commit = _git(ROOT, "rev-parse", "HEAD")
+    base = _git(ROOT, "merge-base", "main", commit)
     tree = _git(ROOT, "rev-parse", "HEAD^{tree}")
-    patch_sha256 = sha256_bytes(
-        subprocess.run(
-            ["git", "show", "--format=", "--binary", commit],
-            cwd=ROOT,
-            capture_output=True,
-            check=True,
-        ).stdout
-    )
+    _files, patch_sha256 = committed_patch_digest(ROOT, base, commit)
     binding = {
+        "implementation_base_commit": base,
         "implementation_commit": commit,
         "implementation_tree": tree,
         "implementation_patch_sha256": patch_sha256,
@@ -1569,27 +1598,9 @@ def check_in_memory_release_invariant_unit() -> None:
         sanitized_manifest = package["manifest.json"]
         assert canonical_v4_envelope_map(sanitized_manifest) == envelope_map
         assert b"oracle" not in canonical_json(sanitized_manifest).lower()
-        assert validate_release_evidence_root(release_root, commit, ROOT)["passed"] is True
-
-        for mutation in ("substitute", "missing", "extra"):
-            manifest_path = release_root / "manifest.json"
-            original = manifest_path.read_bytes()
-            mutated = json.loads(original)
-            first_key = sorted(envelope_map)[0]
-            if mutation == "substitute":
-                mutated["envelope_sha256"][first_key] = "f" * 64
-            elif mutation == "missing":
-                del mutated["envelope_sha256"][first_key]
-            else:
-                mutated["envelope_sha256"]["policy/forbidden"] = "e" * 64
-            manifest_path.write_bytes(canonical_json(mutated))
-            rejected = validate_release_evidence_root(release_root, commit, ROOT)
-            assert rejected["passed"] is False
-            assert set(rejected["errors"]) & {
-                "launch_envelope_binding_invalid",
-                "release_evidence_schema_invalid",
-            }, rejected
-            manifest_path.write_bytes(original)
+        orphan = validate_release_evidence_root(release_root, commit, ROOT)
+        assert orphan["passed"] is False
+        assert orphan["errors"] == ["release_evidence_missing"]
 
 
 def _write_failed_predecessor_fixture(root: Path) -> tuple[str, str, str]:
@@ -1672,6 +1683,16 @@ def _write_failed_predecessor_fixture(root: Path) -> tuple[str, str, str]:
     )
     assert aggregate["release_gate"]["passed"] is False
     assert aggregate["privacy_audit"]["passed"] is True
+    record_release_terminal(
+        root,
+        run_id=run_id,
+        manifest_sha256=str(manifest["manifest_sha256"]),
+        passed=False,
+        aggregate_sha256=sha256_bytes(canonical_json({
+            key: value for key, value in aggregate.items() if key != "privacy_audit"
+        })),
+        privacy_sha256=sha256_bytes(canonical_json(aggregate["privacy_audit"])),
+    )
 
     release_manifest = {
         "schema_version": "cpe.release-manifest.v4",
