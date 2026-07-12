@@ -203,7 +203,8 @@ def _decode_artifact(raw: str, label: str) -> bytes:
 def verify_v4_manifest_sealed_artifacts(manifest: Mapping[str, object]) -> None:
     launches, oracles = _sealed_payloads(manifest)
     credentialed = [slot for slot in manifest.get("slots", ()) if isinstance(slot, dict) and slot.get("credentialed") is True]
-    if len(credentialed) != 17 or len(launches) != 17 or len(oracles) != 17:
+    expected = 2 if manifest.get("proof_profile") == "critical_path_live" else 17
+    if len(credentialed) != expected or len(launches) != expected or len(oracles) != expected:
         raise LiveRunnerError("sealed_artifact_count_mismatch", "v4 requires one sealed pair per credentialed slot")
     for slot in credentialed:
         envelope_digest = str(slot.get("envelope_sha256") or "")

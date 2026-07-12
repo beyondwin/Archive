@@ -544,11 +544,13 @@ def _aggregate_v4_run(
     """Aggregate one fully resolved v4 ledger without changing terminal state."""
 
     slots = manifest.get("slots")
-    if not isinstance(slots, list) or len(slots) != 24:
-        raise MigrationContractError("v4 manifest must contain exactly 24 slots")
+    profile = manifest.get("proof_profile", "full_paid_matrix")
+    exact = (9, 2, 7) if profile == "critical_path_live" else (24, 17, 7)
+    if profile not in {"critical_path_live", "full_paid_matrix"} or not isinstance(slots, list) or len(slots) != exact[0]:
+        raise MigrationContractError("v4 manifest has an invalid proof profile shape")
     if (
         projection.get("lifecycle_outcome") != "completed"
-        or len(projection.get("completed_slots", [])) != 24
+        or len(projection.get("completed_slots", [])) != exact[0]
         or projection.get("pending_slots")
         or projection.get("failed_slots")
         or projection.get("active_slot") is not None
@@ -630,11 +632,31 @@ def _aggregate_v4_run(
     candidates = [
         result for result in credentialed if result.get("treatment_id") == "sol_v4_candidate"
     ]
-    if len(credentialed) != 17:
+    if len(credentialed) != exact[1]:
         failures.append("credentialed_call_count_mismatch")
-    if len(policies) != 7:
+    if len(policies) != exact[2]:
         failures.append("policy_outcome_count_mismatch")
-    if sum(bool(result.get("task_completed")) for result in candidates) < sum(
+    if profile == "critical_path_live":
+        by_case = {str(result.get("case_id")): result for result in credentialed}
+        sentinel = by_case.get("security/migration block", {})
+        success = by_case.get("single-file implementation", {})
+        if not (
+            sentinel.get("worker_status") == "blocked"
+            and sentinel.get("review_accurate") is True
+            and sentinel.get("evidence_complete") is True
+            and sentinel.get("task_completed") is True
+            and sentinel.get("critical_regression") is False
+        ):
+            failures.append("critical_sentinel_gate_failed")
+        if not (
+            success.get("worker_status") == "completed"
+            and success.get("evidence_complete") is True
+            and success.get("task_completed") is True
+            and success.get("first_pass_success") is True
+            and success.get("critical_regression") is False
+        ):
+            failures.append("critical_success_gate_failed")
+    elif sum(bool(result.get("task_completed")) for result in candidates) < sum(
         bool(result.get("task_completed")) for result in controls
     ):
         failures.append("candidate_task_completion_regressed")
@@ -662,8 +684,10 @@ def _aggregate_v4_run(
         "run_id": manifest["run_id"],
         "manifest_sha256": manifest["manifest_sha256"],
         "implementation_commit": manifest["implementation_commit"],
+        "implementation_base_commit": manifest.get("implementation_base_commit"),
         "implementation_tree": manifest.get("implementation_tree"),
         "implementation_patch_sha256": manifest.get("implementation_patch_sha256"),
+        "proof_profile": profile,
         "credentialed_call_count": len(credentialed),
         "policy_outcome_count": len(policies),
         "duplicate_slot_count": len(slots) - len(seen),

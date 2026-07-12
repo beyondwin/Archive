@@ -6,6 +6,7 @@ import fcntl
 import hmac
 import json
 import os
+import shutil
 import tempfile
 import uuid
 import re
@@ -45,6 +46,15 @@ PREDECESSOR_ATTESTATION_SCHEMA = "cpe-quality-predecessor-attestation.v1"
 PREDECESSOR_ATTESTATION_DOMAIN = "cpe-quality-predecessor-attestation.v1"
 _PREDECESSOR_ATTESTATION_FILE = "quality-release-predecessor.json"
 _PREDECESSOR_EVENT = "predecessor_release_attested"
+_FINALIZED_EVENT = "release_evidence_finalized"
+_GENERATION_DIR = "release-generations"
+_GENERATION_FILES = (
+    "checkpoint.json",
+    "manifest.json",
+    "result.json",
+    "privacy-audit.json",
+    "dogfood-result.json",
+)
 _PREDECESSOR_DIGEST_FIELDS = frozenset(
     {
         "predecessor_event_sha256",
@@ -475,6 +485,24 @@ def _release_projection(
                     "terminal_manifest_sha256": payload["manifest_sha256"],
                 }
             )
+        elif event["type"] == _FINALIZED_EVENT:
+            record = by_id.get(str(payload.get("run_id")))
+            if record is None or record["terminal"] is True:
+                raise LedgerError("release finalization has no pending registered run")
+            _validate_release_generation(root, payload)
+            record.update(
+                {
+                    "terminal": True,
+                    "passed": True,
+                    "aggregate_sha256": payload["aggregate_sha256"],
+                    "privacy_sha256": payload["privacy_sha256"],
+                    "terminal_manifest_sha256": payload["child_manifest_sha256"],
+                    "generation_sha256": payload["generation_sha256"],
+                    "proof_profile": payload["proof_profile"],
+                    "dogfood_sha256": payload["dogfood_sha256"],
+                    "checkpoint_sha256": payload["checkpoint_sha256"],
+                }
+            )
         else:
             raise LedgerError("release lineage event type is invalid")
     failures = sum(record["terminal"] and record["passed"] is False for record in runs)
@@ -488,6 +516,53 @@ def _release_projection(
         "release_passed": any(record["terminal"] and record["passed"] is True for record in runs),
         "release_blocked": failures >= _MAX_TERMINAL_FULL_RUNS,
     }
+
+
+def _validate_release_generation(root: Path, payload: dict[str, object]) -> Path:
+    required = {
+        "run_id",
+        "generation_sha256",
+        "child_manifest_sha256",
+        "aggregate_sha256",
+        "dogfood_sha256",
+        "checkpoint_sha256",
+        "privacy_sha256",
+        "proof_profile",
+        "file_sha256",
+    }
+    file_sha256 = payload.get("file_sha256")
+    if (
+        set(payload) != required
+        or payload.get("proof_profile") not in {"critical_path_live", "full_paid_matrix"}
+        or not isinstance(file_sha256, dict)
+        or set(file_sha256) != set(_GENERATION_FILES)
+        or any(not isinstance(value, str) or _SHA256.fullmatch(value) is None for value in file_sha256.values())
+        or any(not isinstance(payload.get(field), str) or _SHA256.fullmatch(str(payload[field])) is None for field in (
+            "generation_sha256", "child_manifest_sha256", "aggregate_sha256", "dogfood_sha256", "checkpoint_sha256", "privacy_sha256"
+        ))
+    ):
+        raise LedgerError("release finalization payload is invalid")
+    expected_generation = sha256_bytes(
+        canonical_json(
+            {
+                "schema_version": "cpe.release-generation.v4",
+                "file_sha256": {name: file_sha256[name] for name in _GENERATION_FILES},
+            }
+        )
+    )
+    if payload["generation_sha256"] != expected_generation:
+        raise LedgerError("release generation digest is invalid")
+    generation = root / _GENERATION_DIR / expected_generation
+    if not generation.is_dir() or generation.is_symlink():
+        raise LedgerError("release generation is missing")
+    actual_names = {path.name for path in generation.iterdir()}
+    if actual_names != set(_GENERATION_FILES):
+        raise LedgerError("release generation file set is invalid")
+    for name in _GENERATION_FILES:
+        path = generation / name
+        if not path.is_file() or path.is_symlink() or sha256_bytes(path.read_bytes()) != file_sha256[name]:
+            raise LedgerError("release generation file digest is invalid")
+    return generation
 
 
 def _append_release_event_locked(
@@ -538,6 +613,107 @@ def validate_release_lineage(root: Path) -> dict[str, object]:
         ):
             raise LedgerError("release lineage projection differs from authoritative events")
         return projection
+
+
+def finalize_release_generation(
+    root: Path,
+    *,
+    run_id: str,
+    payload_bytes: dict[str, bytes],
+    child_manifest_sha256: str,
+    aggregate_sha256: str,
+    dogfood_sha256: str,
+    checkpoint_sha256: str,
+    privacy_sha256: str,
+    proof_profile: str,
+    crash_at: str | None = None,
+) -> dict[str, object]:
+    """Publish one fsynced generation, then one terminal lineage event and state."""
+
+    if set(payload_bytes) != set(_GENERATION_FILES):
+        raise LedgerError("release generation file set is invalid")
+    release_root = Path(root)
+    release_root.mkdir(parents=True, exist_ok=True)
+    file_sha256 = {name: sha256_bytes(payload_bytes[name]) for name in _GENERATION_FILES}
+    generation_sha256 = sha256_bytes(
+        canonical_json(
+            {
+                "schema_version": "cpe.release-generation.v4",
+                "file_sha256": {name: file_sha256[name] for name in _GENERATION_FILES},
+            }
+        )
+    )
+    payload: dict[str, object] = {
+        "run_id": run_id,
+        "generation_sha256": generation_sha256,
+        "child_manifest_sha256": child_manifest_sha256,
+        "aggregate_sha256": aggregate_sha256,
+        "dogfood_sha256": dogfood_sha256,
+        "checkpoint_sha256": checkpoint_sha256,
+        "privacy_sha256": privacy_sha256,
+        "proof_profile": proof_profile,
+        "file_sha256": file_sha256,
+    }
+    with _locked_run(release_root):
+        generation_root = release_root / _GENERATION_DIR
+        generation_root.mkdir(mode=0o700, exist_ok=True)
+        final = generation_root / generation_sha256
+        temporary = generation_root / f"{generation_sha256}.tmp"
+        if final.exists():
+            _validate_release_generation(release_root, payload)
+        else:
+            if temporary.exists():
+                if not temporary.is_dir() or temporary.is_symlink():
+                    raise LedgerError("release generation temporary is invalid")
+                shutil.rmtree(temporary)
+            temporary.mkdir(mode=0o700)
+            try:
+                for name in _GENERATION_FILES:
+                    _write_exclusive(temporary / name, payload_bytes[name])
+                _fsync_directory(temporary)
+                os.replace(temporary, final)
+                _fsync_directory(generation_root)
+            except BaseException:
+                shutil.rmtree(temporary, ignore_errors=True)
+                raise
+        if crash_at == "generation_before_event":
+            raise LedgerError("injected_generation_before_event")
+        events = _read_release_events(release_root)
+        finalized = [event for event in events if event["type"] == _FINALIZED_EVENT]
+        if finalized:
+            if len(finalized) != 1 or finalized[0]["payload"] != payload:
+                raise LedgerError("a different release generation is already terminal")
+            event = finalized[0]
+        else:
+            projection = _release_projection(events, release_root)
+            runs = projection["runs"]
+            target = next(
+                (record for record in runs if record.get("run_id") == run_id), None
+            )
+            if target is None or target.get("terminal") is True:
+                raise LedgerError("release finalization requires one pending registered run")
+            event = _append_release_event_locked(release_root, _FINALIZED_EVENT, payload)
+        if crash_at == "event_before_state":
+            raise LedgerError("injected_event_before_state")
+        _atomic_json(
+            release_root / _RELEASE_STATE_FILE,
+            _release_projection(_read_release_events(release_root), release_root),
+        )
+        return event
+
+
+def terminal_release_generation(root: Path) -> tuple[dict[str, object], Path]:
+    """Return the sole valid terminal generation referenced by stored lineage."""
+
+    release_root = Path(root)
+    projection = validate_release_lineage(release_root)
+    events = _read_release_events(release_root)
+    finalized = [event for event in events if event["type"] == _FINALIZED_EVENT]
+    if len(finalized) != 1 or projection.get("release_passed") is not True:
+        raise LedgerError("terminal release generation is missing")
+    payload = finalized[0]["payload"]
+    assert isinstance(payload, dict)
+    return payload, _validate_release_generation(release_root, payload)
 
 
 def _commit_predecessor_attestation(

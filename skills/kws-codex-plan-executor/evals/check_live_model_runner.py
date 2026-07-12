@@ -34,6 +34,7 @@ from live_migration.runner import (
     run_slot,
 )
 from live_migration.ledger import append_event, create_run, replay_run
+from cpe_runtime.git_delta import committed_patch_digest
 
 
 ROOT = Path(__file__).resolve().parent
@@ -98,6 +99,13 @@ def _checkpoint_arguments() -> tuple[str, ...]:
             capture_output=True,
             check=True,
         ).stdout.strip()
+        base = subprocess.run(
+            ["git", "merge-base", "main", commit],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout.strip()
         tree = subprocess.run(
             ["git", "rev-parse", f"{commit}^{{tree}}"],
             cwd=ROOT,
@@ -105,15 +113,10 @@ def _checkpoint_arguments() -> tuple[str, ...]:
             capture_output=True,
             check=True,
         ).stdout.strip()
-        patch = sha256_bytes(
-            subprocess.run(
-                ["git", "show", "--format=", "--binary", commit],
-                cwd=ROOT,
-                capture_output=True,
-                check=True,
-            ).stdout
-        )
+        _files, patch = committed_patch_digest(ROOT, base, commit)
         _CHECKPOINT_ARGUMENTS = (
+            "--implementation-base-commit",
+            base,
             "--implementation-commit",
             commit,
             "--implementation-tree",
@@ -128,9 +131,10 @@ def _bind_reviewed_checkpoint(manifest: dict[str, object]) -> dict[str, object]:
     arguments = _checkpoint_arguments()
     manifest.update(
         {
-            "implementation_commit": arguments[1],
-            "implementation_tree": arguments[3],
-            "implementation_patch_sha256": arguments[5],
+            "implementation_base_commit": arguments[1],
+            "implementation_commit": arguments[3],
+            "implementation_tree": arguments[5],
+            "implementation_patch_sha256": arguments[7],
         }
     )
     body = {key: value for key, value in manifest.items() if key != "manifest_sha256"}

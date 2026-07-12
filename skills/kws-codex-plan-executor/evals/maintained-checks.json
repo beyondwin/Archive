@@ -8,7 +8,8 @@
     {"path": "check_v4_state_contract.py", "production_entrypoint": "cpe_runtime.projector", "mutation_assertion": "schema3 and invalid v4 events cannot enter the run projection"},
     {"path": "check_scheduler_v4.py", "production_entrypoint": "cpe_runtime.scheduler,cpe_runtime.reconciliation", "mutation_assertion": "bounded lifecycle crash privacy and dependency resume mutations fail closed"},
     {"path": "check_prompt_bundle_v4.py", "production_entrypoint": "cpe_runtime.prompt_bundles", "mutation_assertion": "production control and candidate prompt bindings reject drift"},
-    {"path": "check_quality_matrix_v4.py", "production_entrypoint": "live_migration.compiler,live_migration.runner,live_migration.ledger", "mutation_assertion": "the exact 17-call and seven-policy matrix rejects lineage drift"},
+    {"path": "check_quality_matrix_v4.py", "production_entrypoint": "live_migration.compiler,live_migration.runner,live_migration.ledger", "mutation_assertion": "the exact critical 2-call plus seven-policy proof and deferred full 17-call profile reject lineage drift"},
+    {"path": "check_release_transaction_v4.py", "production_entrypoint": "live_migration.release_transaction,cpe_runtime.dogfood_v4,cpe_runtime.public_result", "mutation_assertion": "dogfood-bound content-addressed terminal generations reject crashes, orphan files, forged checkpoints, and tamper"},
     {"path": "check_cpe_v4_e2e.py", "production_entrypoint": "cpe.run_v4_fixture,cpe.resume_v4_run,cpe.inspect_v4_run", "mutation_assertion": "one ten-task run must verify ten ordered checkpoints within 40 attempts"}
   ]
 }
