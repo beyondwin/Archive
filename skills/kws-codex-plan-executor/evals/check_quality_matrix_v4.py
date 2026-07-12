@@ -45,10 +45,23 @@ from live_migration.ledger import (
 )
 from live_migration.fixtures import materialize_fixture
 from live_migration.predecessor import attest_predecessor_release
-from live_migration.runner import LiveRunnerError, execute_v4_slots, render_prompt
-
+from live_migration.privacy import audit_sanitized_payload
+from live_migration.runner import (
+    LiveRunnerError,
+    execute_v4_slots,
+    install_v4_sealed_artifacts,
+    render_prompt,
+)
+from live_model_migration import aggregate_run
 
 ROOT = Path(__file__).resolve().parent
+if str(ROOT.parent / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT.parent / "scripts"))
+from cpe_runtime.public_result import validate_release_evidence_root
+from cpe_runtime.quality_v4 import (
+    build_v4_release_evidence_payloads,
+    canonical_v4_envelope_map,
+)
 STATUS_CONTRACT = (
     "Set top-level status=blocked whenever the task is correctly refused or "
     "blocked by a policy, security, privacy, state-integrity, or destructive-"
@@ -90,6 +103,10 @@ def check_exact_manifest() -> dict[str, object]:
     assert all(slot["credentialed"] is False for slot in slots[17:])
     assert sum(slot["outcome_kind"] == CREDENTIALLED_CALL for slot in slots) == 17
     credentialed = [slot for slot in slots if slot["credentialed"]]
+    assert manifest.get("envelope_sha256") == {
+        f"{slot['treatment_id']}/{slot['case_id']}": slot["envelope_sha256"]
+        for slot in credentialed
+    }
     assert all(re.fullmatch(r"[0-9a-f]{64}", str(slot["envelope_sha256"])) for slot in credentialed)
     assert all(
         re.fullmatch(r"[0-9a-f]{64}", str(slot["oracle_binding_sha256"]))
@@ -561,7 +578,7 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
                 *_checkpoint_arguments(repo),
             ],
             cwd=skill,
-            env={**env, "CPE_FAKE_LIVE_BEHAVIOR": "sentinel_fail"},
+            env={**env, "CPE_FAKE_LIVE_BEHAVIOR": "sentinel_wrong_oracle"},
             text=True,
             capture_output=True,
             check=False,
@@ -915,6 +932,7 @@ def check_sentinel_resume_and_immutable_ledger(manifest: dict[str, object]) -> N
                     "task_completed": True,
                     "worker_status": "blocked" if key.case_id == "security/migration block" else "completed",
                     "evidence_complete": True,
+                    "review_accurate": True,
                     "critical_regression": False,
                     "model_attested": True,
                     "worktree_isolated": True,
@@ -1209,6 +1227,7 @@ def check_success_is_terminal_only_after_aggregate_and_privacy() -> None:
                     "worker_status": "blocked" if slot["case_id"] == "security/migration block" else "completed",
                     "critical_regression": False,
                     "evidence_complete": True,
+                    "review_accurate": True,
                     "model_attested": True,
                     "worktree_isolated": True,
                     "drift_free": True,
@@ -1243,6 +1262,163 @@ def check_success_is_terminal_only_after_aggregate_and_privacy() -> None:
         after = replay_release_lineage(root)
         assert after["terminal_full_runs"] == 1
         assert after["release_passed"] is True
+
+
+def check_compiler_runner_aggregate_release_invariant() -> None:
+    """One cost-free production path owns semantic gating and envelope evidence."""
+
+    import live_model_runner
+
+    commit = _git(ROOT, "rev-parse", "HEAD")
+    tree = _git(ROOT, "rev-parse", "HEAD^{tree}")
+    patch_sha256 = sha256_bytes(
+        subprocess.run(
+            ["git", "show", "--format=", "--binary", commit],
+            cwd=ROOT,
+            capture_output=True,
+            check=True,
+        ).stdout
+    )
+    binding = {
+        "implementation_commit": commit,
+        "implementation_tree": tree,
+        "implementation_patch_sha256": patch_sha256,
+    }
+
+    def result_for(slot: dict[str, object], *, accurate: bool) -> dict[str, object]:
+        return {
+            "schema_version": "cpe-quality-result.v4",
+            "run_id": slot["run_id"],
+            "treatment_id": slot["treatment_id"],
+            "case_id": slot["case_id"],
+            "outcome_kind": CREDENTIALLED_CALL,
+            "expected_policy_failure": False,
+            "task_completed": True,
+            "worker_status": "blocked" if slot["case_id"] == "security/migration block" else "completed",
+            "review_accurate": accurate,
+            "evidence_complete": True,
+            "critical_regression": False,
+            "model_attested": True,
+            "worktree_isolated": True,
+            "drift_free": True,
+        }
+
+    with tempfile.TemporaryDirectory(prefix="cpe-v4-one-e2e-") as raw:
+        root = Path(raw)
+        wrong_manifest = live_model_runner._bind_manifest(
+            compile_v4_manifest(commit=commit, run_id="wrong-semantic", eval_dir=ROOT),
+            binding,
+        )
+        wrong_run = create_run(root / "wrong-semantic", wrong_manifest)
+        install_v4_sealed_artifacts(wrong_run)
+        wrong_calls = 0
+
+        def wrong_provider(slot: dict[str, object]):
+            nonlocal wrong_calls
+            wrong_calls += 1
+            return {"fake-provider.json": canonical_json({"fake": True})}, result_for(
+                {**slot, "run_id": wrong_manifest["run_id"]}, accurate=False
+            )
+
+        expect_error(
+            lambda: execute_v4_slots(wrong_run, wrong_provider, sentinel_only=True),
+            LiveRunnerError,
+            "wrong hidden-oracle ID must block the qualified sentinel",
+        )
+        assert wrong_calls == 1
+        calls_before_resume = wrong_calls
+        expect_error(
+            lambda: execute_v4_slots(wrong_run, wrong_provider),
+            LiveRunnerError,
+            "resume must preserve the terminal semantic sentinel block",
+        )
+        assert wrong_calls == calls_before_resume
+
+        manifest = live_model_runner._bind_manifest(
+            compile_v4_manifest(commit=commit, run_id="correct-semantic", eval_dir=ROOT),
+            binding,
+        )
+        run = create_run(root / "correct-semantic", manifest)
+        install_v4_sealed_artifacts(run)
+        calls = 0
+
+        def passing_provider(slot: dict[str, object]):
+            nonlocal calls
+            calls += 1
+            return {"fake-provider.json": canonical_json({"fake": True})}, result_for(
+                {**slot, "run_id": manifest["run_id"]}, accurate=True
+            )
+
+        first = execute_v4_slots(run, passing_provider, sentinel_only=True)
+        assert first["provider_invocations"] == 1 and calls == 1
+        resumed = execute_v4_slots(run, passing_provider)
+        assert resumed["provider_invocations"] == 16 and calls == 17
+        no_duplicate = execute_v4_slots(run, passing_provider)
+        assert no_duplicate["provider_invocations"] == 0 and calls == 17
+        append_event(run, "run_completed", {"completed_slots": 24})
+        aggregate = aggregate_run(run.run_dir)
+        envelope_map = canonical_v4_envelope_map(manifest)
+        assert canonical_v4_envelope_map(aggregate) == envelope_map
+        assert aggregate["release_gate"]["passed"] is True
+
+        for slot in manifest["slots"]:
+            if slot["credentialed"] is not True:
+                assert "envelope_sha256" not in slot
+                continue
+            key = f"{slot['treatment_id']}/{slot['case_id']}"
+            slot_dir = (
+                run.run_dir
+                / "slots"
+                / quote(str(slot["treatment_id"]), safe="-._~")
+                / quote(str(slot["case_id"]), safe="-._~")
+            )
+            result = json.loads((slot_dir / "result.json").read_text(encoding="utf-8"))
+            index = json.loads((slot_dir / "index.json").read_text(encoding="utf-8"))
+            assert result["envelope_sha256"] == index["envelope_sha256"] == envelope_map[key]
+            envelope = json.loads((slot_dir / "launch-envelope.json").read_text(encoding="utf-8"))
+            prompt = base64.b64decode(envelope["prompt_bytes_b64"], validate=True)
+            assert b"oracle" not in canonical_json(envelope).lower()
+            assert b"expected.json" not in prompt.lower()
+
+        privacy = audit_sanitized_payload(aggregate)
+        dogfood = {
+            "schema_version": "cpe.dogfood-result.v4",
+            "run_ids_created": 1,
+            "model_attempts": 0,
+            "max_same_root_repairs": 0,
+            "verified_checkpoints": [commit],
+            "elapsed_seconds": 0,
+            "source_checkout_unchanged": True,
+            "runtime_patch_required": False,
+        }
+        package = build_v4_release_evidence_payloads(
+            manifest, aggregate, privacy, dogfood
+        )
+        release_root = root / "release"
+        release_root.mkdir()
+        for name, payload in package.items():
+            (release_root / name).write_bytes(canonical_json(payload))
+        sanitized_manifest = package["manifest.json"]
+        assert canonical_v4_envelope_map(sanitized_manifest) == envelope_map
+        assert b"oracle" not in canonical_json(sanitized_manifest).lower()
+        assert validate_release_evidence_root(release_root, commit, ROOT)["passed"] is True
+
+        for mutation in ("substitute", "missing", "extra"):
+            manifest_path = release_root / "manifest.json"
+            original = manifest_path.read_bytes()
+            mutated = json.loads(original)
+            first_key = sorted(envelope_map)[0]
+            if mutation == "substitute":
+                mutated["envelope_sha256"][first_key] = "f" * 64
+            elif mutation == "missing":
+                del mutated["envelope_sha256"][first_key]
+            else:
+                mutated["envelope_sha256"]["policy/forbidden"] = "e" * 64
+            manifest_path.write_bytes(canonical_json(mutated))
+            rejected = validate_release_evidence_root(release_root, commit, ROOT)
+            assert rejected["passed"] is False
+            assert "launch_envelope_binding_invalid" in rejected["errors"]
+            manifest_path.write_bytes(original)
 
 
 def _write_failed_predecessor_fixture(root: Path) -> tuple[str, str, str]:
@@ -1309,6 +1485,7 @@ def _write_failed_predecessor_fixture(root: Path) -> tuple[str, str, str]:
                 ),
                 "critical_regression": False,
                 "evidence_complete": not incomplete,
+                "review_accurate": True,
                 "model_attested": True,
                 "worktree_isolated": True,
                 "drift_free": True,
@@ -1585,6 +1762,7 @@ def main() -> int:
     check_registration_crash_is_idempotently_recoverable()
     check_orphan_manifest_registration_recovery()
     check_success_is_terminal_only_after_aggregate_and_privacy()
+    check_compiler_runner_aggregate_release_invariant()
     check_cross_root_predecessor_attestation()
     print("quality matrix v4 checks passed")
     return 0

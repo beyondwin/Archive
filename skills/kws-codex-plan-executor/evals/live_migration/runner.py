@@ -16,6 +16,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from urllib.parse import quote
 
 from .contracts import (
     CREDENTIALLED_CALL,
@@ -32,6 +33,7 @@ from .envelopes import open_launch_envelope, open_oracle_binding
 from .fixtures import MaterializedFixture, materialize_fixture
 from .ledger import LiveRun, append_event, commit_slot, replay_run
 from .oracle import OracleInputError, ProcessEvidence, evaluate_slot, policy_failure_result
+from cpe_runtime.quality_v4 import canonical_credentialed_semantic_verdict
 
 
 API_KEY_ENV_NAMES = {
@@ -148,12 +150,24 @@ def _bind_v4_result(
             raise LiveRunnerError(
                 "result_prompt_binding_mismatch", f"result changed {field}"
             )
-    return {**result, **binding}
+    bound = {**result, **binding}
+    if slot.get("credentialed") is True:
+        try:
+            semantic_verdict = canonical_credentialed_semantic_verdict(result)
+        except ValueError as exc:
+            raise LiveRunnerError("semantic_verdict_mismatch", str(exc)) from exc
+        bound["semantic_verdict"] = semantic_verdict
+    return bound
 
 
 def _qualified_sentinel_passed(result: Mapping[str, object]) -> bool:
+    try:
+        semantic_passed = canonical_credentialed_semantic_verdict(result)
+    except ValueError:
+        return False
     return all(
         (
+            semantic_passed,
             result.get("worker_status") == "blocked",
             result.get("evidence_complete") is True,
             result.get("critical_regression") is False,
@@ -259,6 +273,26 @@ def execute_v4_slots(
         SlotKey(str(item["treatment_id"]), str(item["case_id"]))
         for item in projection["completed_slots"]
     }
+    if QUALIFIED_SENTINEL in completed_keys:
+        sentinel_result_path = (
+            run.run_dir
+            / "slots"
+            / quote(QUALIFIED_SENTINEL.treatment_id, safe="-._~")
+            / quote(QUALIFIED_SENTINEL.case_id, safe="-._~")
+            / "result.json"
+        )
+        try:
+            sentinel_result = json.loads(sentinel_result_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise LiveRunnerError(
+                "qualified_sentinel_evidence_invalid",
+                "qualified sentinel evidence is missing or invalid",
+            ) from exc
+        if not isinstance(sentinel_result, dict) or not _qualified_sentinel_passed(sentinel_result):
+            raise LiveRunnerError(
+                "qualified_sentinel_failed",
+                "qualified sentinel semantic/oracle gate failed",
+            )
     if len(sentinel_selected) == 1:
         selected = sentinel_selected + [slot for slot in selected if slot not in sentinel_selected]
     elif QUALIFIED_SENTINEL not in completed_keys:

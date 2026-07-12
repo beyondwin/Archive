@@ -122,6 +122,14 @@ fail closed before a credentialed call; aggregate and release validation reject
 envelope substitution across manifest, result, slot index, prompt binding, and
 ledger evidence.
 
+The cost-free production E2E additionally runs a top-level blocked sentinel
+with the wrong hidden-oracle ID and proves one invocation followed by a zero-
+call blocked resume. Its passing branch compiles and materializes the real
+sealed artifacts, completes all remaining slots through a fake provider,
+aggregates the immutable ledger, builds the sanitized release package, and
+validates it against the real Git checkpoint. Missing, extra, substituted, or
+policy envelope-map entries fail the public release validator.
+
 When the sole authorized corrected v4 run uses a new evidence root, import the
 failed predecessor lineage without copying its oracle-bearing manifest:
 

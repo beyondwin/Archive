@@ -6,6 +6,8 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from .quality_v4 import canonical_v4_envelope_map
+
 
 ALLOWED_FAILURE_CATEGORIES = frozenset(
     {
@@ -153,20 +155,12 @@ def validate_release_evidence_root(
         if payload.get("credentialed_call_count") != 17 or payload.get("policy_outcome_count") != 7:
             errors.append("quality_matrix_count_invalid")
             break
-    manifest_envelopes = manifest.get("envelope_sha256")
-    result_envelopes = result.get("envelope_sha256")
-    envelope_binding_valid = (
-        isinstance(manifest_envelopes, dict)
-        and isinstance(result_envelopes, dict)
-        and manifest_envelopes == result_envelopes
-        and len(manifest_envelopes) == 17
-        and all(
-            isinstance(key, str)
-            and key
-            and lower_hex(value, 64)
-            for key, value in manifest_envelopes.items()
-        )
-    )
+    try:
+        manifest_envelopes = canonical_v4_envelope_map(manifest)
+        result_envelopes = canonical_v4_envelope_map(result)
+        envelope_binding_valid = manifest_envelopes == result_envelopes
+    except ValueError:
+        envelope_binding_valid = False
     if not envelope_binding_valid:
         errors.append("launch_envelope_binding_invalid")
     if not isinstance(result.get("release_gate"), dict) or result["release_gate"].get("passed") is not True:

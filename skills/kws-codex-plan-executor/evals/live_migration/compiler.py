@@ -34,6 +34,11 @@ from .contracts import (
 )
 from .envelopes import seal_launch_envelope, seal_oracle_binding
 
+_SCRIPTS = Path(__file__).resolve().parents[2] / "scripts"
+if str(_SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(_SCRIPTS))
+from cpe_runtime.quality_v4 import canonical_v4_envelope_map
+
 
 _COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _TERRA_PROMPT = b"bounded read-only scout prompt renderer v1\n"
@@ -391,6 +396,11 @@ def compile_v4_manifest(
         raise LiveMigrationContractError(
             "compiled v4 matrix must contain 17 calls and seven policy outcomes"
         )
+    envelope_sha256 = {
+        f"{slot['treatment_id']}/{slot['case_id']}": str(slot["envelope_sha256"])
+        for slot in slots
+        if slot["credentialed"] is True
+    }
     body: dict[str, object] = {
         "schema_version": "cpe-quality-manifest.v4",
         "run_id": run_id,
@@ -402,6 +412,7 @@ def compile_v4_manifest(
         "credentialed_call_count": credentialed_count,
         "expected_policy_failure_count": policy_count,
         "qualified_sentinel": QUALIFIED_SENTINEL,
+        "envelope_sha256": envelope_sha256,
         "inputs": inputs,
         "sealed_artifacts": {
             "launch_envelopes": launch_artifacts,
@@ -409,6 +420,7 @@ def compile_v4_manifest(
         },
         "slots": slots,
     }
+    canonical_v4_envelope_map(body)
     return {**body, "manifest_sha256": sha256_bytes(canonical_json(body))}
 
 

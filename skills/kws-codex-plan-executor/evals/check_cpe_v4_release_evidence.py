@@ -18,6 +18,8 @@ from cpe_runtime.public_result import (
     trusted_release_repository_root,
     validate_release_evidence_root,
 )
+from cpe_runtime.quality_v4 import canonical_v4_envelope_map
+from live_migration.compiler import compile_v4_manifest
 
 
 def canonical_sha256(payload: object) -> str:
@@ -26,7 +28,8 @@ def canonical_sha256(payload: object) -> str:
 
 
 def write_valid_fixture(root: Path, commit: str, tree: str) -> None:
-    envelope_sha256 = {f"slot-{index}": f"{index + 1:064x}" for index in range(17)}
+    compiled = compile_v4_manifest(commit=commit, run_id="release-validator-fixture")
+    envelope_sha256 = canonical_v4_envelope_map(compiled)
     manifest = {
         "schema_version": "cpe-quality-manifest.v4",
         "implementation_commit": commit,
@@ -205,7 +208,8 @@ def main() -> int:
         result_path = valid / "result.json"
         original_result = result_path.read_text(encoding="utf-8")
         result_payload = json.loads(original_result)
-        result_payload["envelope_sha256"]["slot-0"] = "f" * 64
+        first_envelope = sorted(result_payload["envelope_sha256"])[0]
+        result_payload["envelope_sha256"][first_envelope] = "f" * 64
         result_path.write_text(
             json.dumps(result_payload, sort_keys=True, separators=(",", ":")) + "\n",
             encoding="utf-8",

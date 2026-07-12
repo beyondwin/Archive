@@ -1003,3 +1003,35 @@ Credentialed/provider calls: zero. Residual risk: the attestation is local
 filesystem continuity evidence, not a signature or remote transparency log.
 Any later staged quality calls and release-tier changes are separately reviewed
 work and are not authorized or implemented by this fix.
+
+## 2026-07-12 Asia/Seoul - v4 semantic and envelope E2E invariant
+
+Branch and basis: `codex/cpe-v4-autonomous-efficient-executor-continuation` at
+`61ae7843c9a0f019e1b5e4ec356521ad8fc48a34` plus this focused fix.
+
+Scope: made the runner-owned hidden-oracle semantic verdict mandatory for the
+qualified block-ID sentinel and made one compiler-derived 17-entry sanitized
+envelope map authoritative through slot results, ledger indexes, aggregation,
+release packaging, and public release validation. Added one production-backed,
+cost-free E2E covering wrong-ID block/resume, successful completion, privacy,
+and release-map substitution/missing/extra rejection.
+
+Commands and results:
+
+- TDD RED: `python3 evals/check_quality_matrix_v4.py` exited 1 when a top-level
+  blocked sentinel with the wrong required ID incorrectly returned
+  `sentinel_completed`; a second RED showed the compiler lacked the canonical
+  top-level envelope map.
+- Focused quality and release-evidence checks: exit 0.
+- `./evals/run.sh`: exit 0; all maintained checks passed and paid execution was
+  `skipped_not_approved`.
+- Repository `bun run check`: exit 0; 820 pass, 10 skip, 0 fail. The live
+  provider smoke remained skipped.
+- `graphify update .`: exit 0 with 11,853 nodes and 19,862 edges. Its branch-wide
+  generated churn was not retained in this focused review patch.
+- Full Python compilation, shell syntax, docs/release contracts, CLI help, and
+  `git diff --check`: exit 0.
+
+Credentialed/provider/network/model calls: zero. Residual risk: the real
+subscription sentinel, staged budget, dogfood, Task 11, main, and remote
+operations remain explicitly unauthorized and were not run.

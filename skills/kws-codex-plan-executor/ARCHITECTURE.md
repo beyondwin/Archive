@@ -137,3 +137,12 @@ side-effect boundary, model/worktree/drift attestations, and sealed bindings
 immediately after the single result. Only a passing sentinel permits remaining
 credentialed slots; failure terminally blocks at one call, while resume reuses
 the passed slot without duplication.
+
+The runner derives one canonical credentialed semantic verdict from the hidden
+oracle comparison and persists it with the slot result. The block-ID sentinel
+passes only when `review_accurate=true`, so a blocked worker response with a
+wrong or missing required ID cannot unlock the matrix. The compiler also emits
+one sanitized top-level envelope map with exactly the 17 qualified
+`treatment/case` keys. Slot evidence, ledger indexes, aggregation, release
+packaging, and public release validation all consume that same map; policy
+slots cannot enter it.

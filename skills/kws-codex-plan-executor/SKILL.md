@@ -66,7 +66,10 @@ from a content-addressed `LaunchEnvelopeV4` containing the exact prompt and
 output-schema bytes. Hidden oracle material stays in a separate runner-owned
 `OracleBindingV4`; any envelope, route, source, fixture, schema, or oracle
 binding drift blocks before a provider invocation. A sentinel semantic/oracle
-failure terminally protects all remaining credentialed slots.
+failure terminally protects all remaining credentialed slots. For the block-ID
+sentinel, semantic pass requires `review_accurate=true`; top-level blocked alone
+is insufficient. One compiler-derived 17-entry sanitized envelope map binds the
+slot ledger, aggregate, and release validator without exposing oracle material.
 
 ## Fixed Routing
 
