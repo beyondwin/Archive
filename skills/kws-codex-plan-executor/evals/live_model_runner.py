@@ -30,6 +30,7 @@ from live_migration.ledger import (
     create_run,
     load_registered_release_manifest,
     record_release_terminal,
+    recover_orphan_release_registration,
     register_release_run,
     replay_run,
 )
@@ -625,6 +626,7 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
     run_id = args.run_id or f"cpe-live-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     run_dir = _new_run_dir(args.evidence_root, run_id)
     binding = _checkpoint_binding(args, required=True)
+    recover_orphan_release_registration(run_dir.parent, run_id)
     recovered_manifest = load_registered_release_manifest(run_dir.parent, run_id)
     if recovered_manifest is not None:
         if _manifest_checkpoint_binding(recovered_manifest) != binding:

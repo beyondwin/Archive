@@ -26,6 +26,7 @@ from live_migration.contracts import (
     LiveMigrationContractError,
     SlotKey,
     canonical_json,
+    sha256_bytes,
 )
 from live_migration.ledger import (
     LedgerError,
@@ -34,6 +35,7 @@ from live_migration.ledger import (
     load_registered_release_manifest,
     record_terminal_full_run,
     record_release_terminal,
+    recover_orphan_release_registration,
     register_release_run,
     replay_run,
     replay_release_lineage,
@@ -868,6 +870,67 @@ def check_registration_crash_is_idempotently_recoverable() -> None:
         )
 
 
+def check_orphan_manifest_registration_recovery() -> None:
+    with tempfile.TemporaryDirectory(prefix="cpe-v4-orphan-registration-") as raw:
+        root = Path(raw)
+        manifest = compile_v4_manifest(commit="6" * 40, run_id="orphaned")
+        manifest["model_catalog_sha256"] = "7" * 64
+        body = {key: value for key, value in manifest.items() if key != "manifest_sha256"}
+        manifest["manifest_sha256"] = sha256_bytes(canonical_json(body))
+
+        def injected_append(*_args, **_kwargs):
+            raise OSError("injected crash after manifest fsync")
+
+        expect_error(
+            lambda: register_release_run(
+                root,
+                manifest,
+                append_event_fn=injected_append,
+            ),
+            OSError,
+            "post-fsync pre-event crash must leave an orphan manifest",
+        )
+        assert replay_release_lineage(root)["event_count"] == 0
+        recovered = recover_orphan_release_registration(root, "orphaned")
+        assert recovered["type"] == "release_run_registered"
+        once = replay_release_lineage(root)
+        assert once["event_count"] == 1
+        assert once["runs"][0]["manifest_sha256"] == manifest["manifest_sha256"]
+        recover_orphan_release_registration(root, "orphaned")
+        assert replay_release_lineage(root) == once
+
+        tamper_root = Path(raw) / "tampered"
+        tampered_manifest = compile_v4_manifest(commit="8" * 40, run_id="tampered")
+        tampered_manifest["model_catalog_sha256"] = "9" * 64
+        tampered_body = {
+            key: value
+            for key, value in tampered_manifest.items()
+            if key != "manifest_sha256"
+        }
+        tampered_manifest["manifest_sha256"] = sha256_bytes(
+            canonical_json(tampered_body)
+        )
+        expect_error(
+            lambda: register_release_run(
+                tamper_root,
+                tampered_manifest,
+                append_event_fn=injected_append,
+            ),
+            OSError,
+            "tamper setup must stop before registration event",
+        )
+        artifact = next((tamper_root / "quality-release-manifests").glob("*.json"))
+        mutated = json.loads(artifact.read_text(encoding="utf-8"))
+        mutated["created_at"] = "tampered"
+        artifact.write_bytes(canonical_json(mutated))
+        expect_error(
+            lambda: recover_orphan_release_registration(tamper_root, "tampered"),
+            LedgerError,
+            "tampered orphan manifest must never create a registration event",
+        )
+        assert replay_release_lineage(tamper_root)["event_count"] == 0
+
+
 def check_success_is_terminal_only_after_aggregate_and_privacy() -> None:
     with tempfile.TemporaryDirectory(prefix="cpe-v4-success-gates-") as raw:
         root = Path(raw) / "evidence"
@@ -935,6 +998,7 @@ def main() -> int:
     check_sentinel_resume_and_immutable_ledger(manifest)
     check_release_lineage_preserves_corrected_run_cap()
     check_registration_crash_is_idempotently_recoverable()
+    check_orphan_manifest_registration_recovery()
     check_success_is_terminal_only_after_aggregate_and_privacy()
     print("quality matrix v4 checks passed")
     return 0
