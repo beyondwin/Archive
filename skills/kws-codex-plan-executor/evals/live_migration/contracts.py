@@ -25,6 +25,13 @@ class Treatment:
 
 
 @dataclass(frozen=True)
+class QualityTreatmentV4:
+    id: str
+    model: str
+    reasoning: str
+
+
+@dataclass(frozen=True)
 class CaseRef:
     id: str
     slug: str
@@ -71,8 +78,18 @@ def worker_prompt_bytes(source: bytes, prompt_ref: str) -> bytes:
 
 
 EXPECTED_TREATMENTS = (
-    Treatment("gpt55_current", "gpt-5.5", "high", "current-v2-prompt.txt"),
-    Treatment("sol_current", "gpt-5.6-sol", "high", "current-v2-prompt.txt"),
+    Treatment(
+        "gpt55_current",
+        "gpt-5.5",
+        "high",
+        "../control-bundles/cpe-3.1.0-production.json",
+    ),
+    Treatment(
+        "sol_current",
+        "gpt-5.6-sol",
+        "high",
+        "../control-bundles/cpe-3.1.0-production.json",
+    ),
     Treatment("sol_v3", "gpt-5.6-sol", "high", "../../templates/fresh-session-prompt.txt"),
     Treatment("terra_scout", "gpt-5.6-terra", "high", "terra-scout-generated"),
 )
@@ -89,7 +106,7 @@ EXPECTED_CASES = (
 )
 
 EXPECTED_PROMPT_SHA256 = {
-    "current-v2-prompt.txt": "48586761ca6bc42b249672332d0f07c4ad33d5aa980e6caaf8aa77744e896f2d",
+    "../control-bundles/cpe-3.1.0-production.json": "4b933268aa306baee965477117945925e0124875e50bc5aca8fb340b0cd039a0",
     "../../templates/fresh-session-prompt.txt": "76e377d2b4ce4a4f8ca360972cfe6d86d2193f540bc36d46a98aad6535efe042",
     "terra-scout-generated": "4dec7101f5fb93f9b08544c46a691632c89ff0d14d62940204ab867afa98c883",
 }
@@ -97,4 +114,23 @@ EXPECTED_PROMPT_SHA256 = {
 EXPECTED_PROMPT_SOURCE_SHA256 = {
     **EXPECTED_PROMPT_SHA256,
     "../../templates/fresh-session-prompt.txt": "9c1175a4c1ed4a3242d00483278de735dc319204e598169635b9bc122eebddd9",
+}
+
+
+EXPECTED_V4_TREATMENTS = (
+    QualityTreatmentV4("sol_v31_control", "gpt-5.6-sol", "high"),
+    QualityTreatmentV4("sol_v4_candidate", "gpt-5.6-sol", "high"),
+    QualityTreatmentV4("terra_v4", "gpt-5.6-terra", "high"),
+)
+
+V4_PROMPT_RENDERERS = {
+    "sol_v31_control": "../control-bundles/cpe-3.1.0-production.json",
+    "sol_v4_candidate": "../../templates/cpe-v4-worker-prefix.txt",
+    "terra_v4": "terra-scout-generated",
+}
+
+V4_PROMPT_SHA256 = {
+    "sol_v31_control": "4b933268aa306baee965477117945925e0124875e50bc5aca8fb340b0cd039a0",
+    "sol_v4_candidate": "d931fc1020b46212ed589400fdaa12f6d04e3fe0a10da6607e260ee0f625b68b",
+    "terra_v4": "4dec7101f5fb93f9b08544c46a691632c89ff0d14d62940204ab867afa98c883",
 }

@@ -8,6 +8,7 @@ import json
 import os
 import tempfile
 import uuid
+import re
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -32,6 +33,9 @@ _EVENT_FIELDS = frozenset(
     }
 )
 _RESERVED_SLOT_FILES = frozenset({"index.json", "result.json"})
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_TERMINAL_FULL_RUN_EVENT = "terminal_full_run_recorded"
+_MAX_TERMINAL_FULL_RUNS = 2
 
 
 class LedgerError(RuntimeError):
@@ -251,6 +255,43 @@ def append_event(
         return event
 
 
+def record_terminal_full_run(
+    run: LiveRun,
+    *,
+    checkpoint_sha256: str,
+    passed: bool,
+) -> dict[str, object]:
+    """Record the initial terminal run or its sole corrected rerun."""
+
+    if not isinstance(run, LiveRun):
+        raise LedgerError("run must be a LiveRun")
+    if not isinstance(checkpoint_sha256, str) or _SHA256.fullmatch(checkpoint_sha256) is None:
+        raise LedgerError("terminal full run requires a SHA-256 checkpoint")
+    if type(passed) is not bool:
+        raise LedgerError("terminal full run passed must be boolean")
+    with _locked_run(run.run_dir):
+        projection = _replay_run_locked(run.run_dir)
+        terminal_runs = int(projection["terminal_full_runs"])
+        if terminal_runs >= _MAX_TERMINAL_FULL_RUNS:
+            raise LedgerError("terminal full run limit reached")
+        if terminal_runs and projection["terminal_full_run_passed"] is True:
+            raise LedgerError("a passed terminal full run cannot be rerun")
+        previous_checkpoint = projection["terminal_full_run_checkpoint_sha256"]
+        if terminal_runs and previous_checkpoint == checkpoint_sha256:
+            raise LedgerError("corrected terminal full run requires a changed checkpoint")
+        event = _append_event_locked(
+            run,
+            _TERMINAL_FULL_RUN_EVENT,
+            {
+                "run_number": terminal_runs + 1,
+                "checkpoint_sha256": checkpoint_sha256,
+                "passed": passed,
+            },
+        )
+        _replay_run_locked(run.run_dir)
+        return event
+
+
 def _append_event_locked(
     run: LiveRun,
     event_type: str,
@@ -408,8 +449,32 @@ def _validate_event_semantics(
     slot_set = set(_manifest_slots(manifest))
     active: SlotKey | None = None
     completed: set[SlotKey] = set()
+    terminal_checkpoints: list[str] = []
+    terminal_passed = False
     for position, event in enumerate(events):
         event_type = event["type"]
+        if event_type == _TERMINAL_FULL_RUN_EVENT:
+            payload = event["payload"]
+            assert isinstance(payload, dict)
+            checkpoint = payload.get("checkpoint_sha256")
+            passed = payload.get("passed")
+            if (
+                set(payload) != {"run_number", "checkpoint_sha256", "passed"}
+                or payload.get("run_number") != len(terminal_checkpoints) + 1
+                or not isinstance(checkpoint, str)
+                or _SHA256.fullmatch(checkpoint) is None
+                or type(passed) is not bool
+            ):
+                raise LedgerError("terminal full run event is invalid")
+            if len(terminal_checkpoints) >= _MAX_TERMINAL_FULL_RUNS:
+                raise LedgerError("terminal full run limit exceeded")
+            if terminal_passed:
+                raise LedgerError("a passed terminal full run cannot be rerun")
+            if terminal_checkpoints and checkpoint == terminal_checkpoints[-1]:
+                raise LedgerError("corrected terminal full run requires a changed checkpoint")
+            terminal_checkpoints.append(checkpoint)
+            terminal_passed = passed
+            continue
         if event_type not in {
             "slot_started",
             "slot_retry_started",
@@ -535,6 +600,10 @@ def _replay_run_locked(root: Path) -> dict[str, object]:
     active: SlotKey | None = None
     completed_events: dict[SlotKey, dict[str, object]] = {}
     lifecycle_outcome: object = None
+    terminal_full_runs = 0
+    terminal_full_failures = 0
+    terminal_full_run_passed = False
+    terminal_full_run_checkpoint_sha256: str | None = None
     for event in events:
         event_type = event["type"]
         if event_type in {"slot_started", "slot_retry_started", "slot_failed", "slot_completed"}:
@@ -563,6 +632,14 @@ def _replay_run_locked(root: Path) -> dict[str, object]:
             lifecycle_outcome = "failed"
         elif event_type in {"run_blocked", "run_stopped"}:
             lifecycle_outcome = "blocked"
+        elif event_type == _TERMINAL_FULL_RUN_EVENT:
+            payload = event["payload"]
+            assert isinstance(payload, dict)
+            terminal_full_runs += 1
+            terminal_full_run_passed = bool(payload["passed"])
+            terminal_full_run_checkpoint_sha256 = str(payload["checkpoint_sha256"])
+            if not terminal_full_run_passed:
+                terminal_full_failures += 1
 
     for key, event in completed_events.items():
         _validate_completed_slot(root, key, event)
@@ -595,6 +672,11 @@ def _replay_run_locked(root: Path) -> dict[str, object]:
         "failed_slots": [_key_object(key) for key in failed],
         "active_slot": _key_object(active) if active is not None else None,
         "lifecycle_outcome": lifecycle_outcome,
+        "terminal_full_runs": terminal_full_runs,
+        "terminal_full_failures": terminal_full_failures,
+        "terminal_full_run_passed": terminal_full_run_passed,
+        "terminal_full_run_checkpoint_sha256": terminal_full_run_checkpoint_sha256,
+        "release_blocked": terminal_full_failures >= _MAX_TERMINAL_FULL_RUNS,
     }
     state_path = root / "state.json"
     expected_state = canonical_json(projection)
