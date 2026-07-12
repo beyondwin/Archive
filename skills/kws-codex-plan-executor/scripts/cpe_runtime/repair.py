@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import stat
 import subprocess
@@ -8,7 +9,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .evidence import verify_ref
+from .evidence import put_json, verify_ref
 from .events import read_events
 from .kernel import Kernel, Transition, rebuild_snapshot
 from .manifest import load_verified_manifest
@@ -45,6 +46,7 @@ def scheduler_bookkeeping(state: dict) -> dict:
     projected = deepcopy(state)
     roots: dict[str, int] = {}
     backlog: list[dict[str, object]] = []
+    selected_repairs: dict[str, dict[str, object]] = {}
     for decision in projected.get("decisions", []):
         if not isinstance(decision, dict):
             continue
@@ -57,9 +59,223 @@ def scheduler_bookkeeping(state: dict) -> dict:
             item = decision.get("backlog_item")
             if isinstance(item, dict) and item not in backlog:
                 backlog.append(dict(item))
+        elif decision.get("decision_kind") == "selected_repair_recorded":
+            task_id = decision.get("task_id")
+            if isinstance(task_id, str) and task_id:
+                selected_repairs[task_id] = dict(decision)
+        elif decision.get("decision_kind") == "selected_repair_resolved":
+            task_id = decision.get("task_id")
+            selected = selected_repairs.get(str(task_id))
+            if (
+                selected is not None
+                and selected.get("selected_repair_ref")
+                == decision.get("selected_repair_ref")
+            ):
+                selected_repairs.pop(str(task_id), None)
     projected["repair_roots"] = roots
     projected["backlog"] = backlog
+    projected["selected_repairs"] = selected_repairs
     return projected
+
+
+def _bound_json_digest(domain: bytes, payload: object) -> str:
+    raw = json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode()
+    return hashlib.sha256(domain + b"\0" + raw).hexdigest()
+
+
+def _read_verified_json(run_dir: Path, ref: object) -> dict[str, object]:
+    if not isinstance(ref, dict) or verify_ref(run_dir, ref):
+        raise ValueError("selected_repair_reference_invalid")
+    try:
+        payload = json.loads(
+            (run_dir.resolve() / str(ref["path"])).read_text(encoding="utf-8")
+        )
+    except (KeyError, OSError, TypeError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("selected_repair_reference_invalid") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("selected_repair_reference_invalid")
+    return payload
+
+
+def record_selected_repair(
+    kernel: Kernel,
+    *,
+    task_id: str,
+    contract_sha256: str,
+    rejected_candidate: object,
+    review_attempt_id: str,
+    verdict: dict[str, object],
+    finding: dict[str, object],
+    root_cause_key: str,
+    repair_count: int,
+    review_scope: dict[str, object],
+    review_scope_sha256: str,
+) -> dict[str, object]:
+    """Persist the exact semantic repair selection before model dispatch."""
+
+    run_id = kernel.state.get("run_id")
+    candidate = {
+        "commit": getattr(rejected_candidate, "commit", None),
+        "tree": getattr(rejected_candidate, "tree", None),
+        "patch_sha256": getattr(rejected_candidate, "patch_sha256", None),
+    }
+    if (
+        not isinstance(run_id, str)
+        or not run_id
+        or not isinstance(task_id, str)
+        or not task_id
+        or not isinstance(contract_sha256, str)
+        or len(contract_sha256) != 64
+        or not isinstance(review_attempt_id, str)
+        or not review_attempt_id
+        or not isinstance(root_cause_key, str)
+        or not root_cause_key
+        or type(repair_count) is not int
+        or repair_count not in {1, 2}
+        or any(not isinstance(candidate[field], str) for field in candidate)
+    ):
+        raise ValueError("selected_repair_invalid")
+    review_payload = {
+        "schema_version": "cpe.review-findings.v4",
+        "run_id": run_id,
+        "task_id": task_id,
+        "contract_sha256": contract_sha256,
+        "candidate_commit": candidate["commit"],
+        "review_attempt_id": review_attempt_id,
+        "verdict": deepcopy(verdict),
+    }
+    review_ref = put_json(
+        kernel.run_dir, "review_findings", review_payload
+    ).as_dict()
+    finding_sha256 = _bound_json_digest(b"CPE-REPAIR-FINDING-V4", finding)
+    payload = {
+        "schema_version": "cpe.selected-repair.v4",
+        "run_id": run_id,
+        "task_id": task_id,
+        "contract_sha256": contract_sha256,
+        "rejected_candidate": candidate,
+        "review_artifact_ref": review_ref,
+        "review_artifact_sha256": review_ref["sha256"],
+        "review_attempt_id": review_attempt_id,
+        "finding": deepcopy(finding),
+        "finding_sha256": finding_sha256,
+        "root_cause_key": root_cause_key,
+        "repair_slot": repair_count,
+        "repair_count": repair_count,
+        "review_scope": deepcopy(review_scope),
+        "review_scope_sha256": review_scope_sha256,
+    }
+    selected_ref = put_json(
+        kernel.run_dir, "selected_repair", payload
+    ).as_dict()
+    decision = {
+        "decision_kind": "selected_repair_recorded",
+        "selected_action": "repair",
+        "basis": "bound review finding selected under bounded same-root repair policy",
+        "approval_basis": "standing_autonomy_policy",
+        "task_id": task_id,
+        "contract_sha256": contract_sha256,
+        "rejected_candidate_commit": candidate["commit"],
+        "root_cause_key": root_cause_key,
+        "repair_slot": repair_count,
+        "repair_count": repair_count,
+        "review_scope_sha256": review_scope_sha256,
+        "finding_sha256": finding_sha256,
+        "selected_repair_ref": selected_ref,
+    }
+    kernel.transition(Transition("decision.recorded", decision, task_id=task_id))
+    return {**payload, "selected_repair_ref": selected_ref}
+
+
+def reopen_selected_repair(
+    kernel: Kernel,
+    *,
+    task_id: str,
+    contract_sha256: str,
+    rejected_candidate: object,
+    review_scope: dict[str, object],
+    review_scope_sha256: str,
+) -> dict[str, object]:
+    """Re-open and fully validate the selected repair after a durable wait."""
+
+    selected = kernel.state.get("selected_repairs", {}).get(task_id)
+    if not isinstance(selected, dict):
+        raise ValueError("selected_repair_missing")
+    payload = _read_verified_json(kernel.run_dir, selected.get("selected_repair_ref"))
+    candidate = {
+        "commit": getattr(rejected_candidate, "commit", None),
+        "tree": getattr(rejected_candidate, "tree", None),
+        "patch_sha256": getattr(rejected_candidate, "patch_sha256", None),
+    }
+    finding = payload.get("finding")
+    review_ref = payload.get("review_artifact_ref")
+    count = payload.get("repair_count")
+    if (
+        payload.get("schema_version") != "cpe.selected-repair.v4"
+        or payload.get("run_id") != kernel.state.get("run_id")
+        or payload.get("task_id") != task_id
+        or payload.get("contract_sha256") != contract_sha256
+        or payload.get("rejected_candidate") != candidate
+        or payload.get("review_scope") != review_scope
+        or payload.get("review_scope_sha256") != review_scope_sha256
+        or not isinstance(finding, dict)
+        or payload.get("finding_sha256")
+        != _bound_json_digest(b"CPE-REPAIR-FINDING-V4", finding)
+        or not isinstance(payload.get("root_cause_key"), str)
+        or type(count) is not int
+        or count not in {1, 2}
+        or payload.get("repair_slot") != count
+        or payload.get("review_artifact_sha256")
+        != (review_ref or {}).get("sha256")
+    ):
+        raise ValueError("selected_repair_binding_invalid")
+    review_payload = _read_verified_json(kernel.run_dir, review_ref)
+    matching_verdicts = [
+        item
+        for item in kernel.state.get("verdicts", [])
+        if isinstance(item, dict)
+        and item.get("task_id") == task_id
+        and item.get("attempt_id") == payload.get("review_attempt_id")
+        and item.get("status") == "changes_requested"
+    ]
+    if len(matching_verdicts) != 1:
+        raise ValueError("selected_repair_review_invalid")
+    state_verdict = dict(matching_verdicts[0])
+    state_verdict.pop("task_id", None)
+    state_verdict.pop("attempt_id", None)
+    if (
+        review_payload.get("schema_version") != "cpe.review-findings.v4"
+        or review_payload.get("run_id") != kernel.state.get("run_id")
+        or review_payload.get("task_id") != task_id
+        or review_payload.get("contract_sha256") != contract_sha256
+        or review_payload.get("candidate_commit") != candidate["commit"]
+        or review_payload.get("review_attempt_id")
+        != payload.get("review_attempt_id")
+        or review_payload.get("verdict") != state_verdict
+    ):
+        raise ValueError("selected_repair_review_invalid")
+    return {**payload, "selected_repair_ref": dict(selected["selected_repair_ref"])}
+
+
+def resolve_selected_repair(
+    kernel: Kernel, *, task_id: str, selected_repair_ref: dict[str, object]
+) -> None:
+    kernel.transition(
+        Transition(
+            "decision.recorded",
+            {
+                "decision_kind": "selected_repair_resolved",
+                "selected_action": "continue_review",
+                "basis": "selected semantic repair produced an accepted candidate",
+                "approval_basis": "standing_autonomy_policy",
+                "task_id": task_id,
+                "selected_repair_ref": deepcopy(selected_repair_ref),
+            },
+            task_id=task_id,
+        )
+    )
 
 
 def record_repair_root(kernel: Kernel, *, task_id: str, root_cause_key: str, count: int) -> None:

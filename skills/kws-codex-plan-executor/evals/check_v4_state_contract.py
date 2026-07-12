@@ -118,6 +118,7 @@ def check_v4_manifest_and_initial_state() -> dict:
         "decisions",
         "backlog",
         "repair_roots",
+        "selected_repairs",
         "wait_reason",
     ):
         assert key in state, key
@@ -348,6 +349,55 @@ def check_v4_event_and_runtime_upgrade(manifest: dict) -> None:
                 )
 
 
+def check_selected_repair_decision_projection(manifest: dict) -> None:
+    selected_ref = {
+        "kind": "selected_repair",
+        "path": "artifacts/evidence/selected_repair/" + "a" * 64 + ".json",
+        "sha256": "a" * 64,
+        "media_type": "application/json",
+    }
+    recorded = {
+        "decision_kind": "selected_repair_recorded",
+        "selected_action": "repair",
+        "basis": "fixture selected product repair",
+        "approval_basis": "standing_autonomy_policy",
+        "task_id": "T1",
+        "contract_sha256": fixture_contract().contract_sha256,
+        "rejected_candidate_commit": "b" * 40,
+        "root_cause_key": "defect:projection",
+        "repair_slot": 1,
+        "repair_count": 1,
+        "review_scope_sha256": "c" * 64,
+        "finding_sha256": "d" * 64,
+        "selected_repair_ref": selected_ref,
+    }
+    with tempfile.TemporaryDirectory(prefix="cpe-v4-selected-repair-") as raw:
+        path = Path(raw) / "events.jsonl"
+        append_event(
+            path,
+            {"type": "decision.recorded", "task_id": "T1", "payload": recorded},
+        )
+        selected = project(manifest, read_events(path))["selected_repairs"]["T1"]
+        assert selected["root_cause_key"] == "defect:projection"
+        assert selected["repair_slot"] == selected["repair_count"] == 1
+        append_event(
+            path,
+            {
+                "type": "decision.recorded",
+                "task_id": "T1",
+                "payload": {
+                    "decision_kind": "selected_repair_resolved",
+                    "selected_action": "continue_review",
+                    "basis": "fixture repair accepted",
+                    "approval_basis": "standing_autonomy_policy",
+                    "task_id": "T1",
+                    "selected_repair_ref": selected_ref,
+                },
+            },
+        )
+        assert project(manifest, read_events(path))["selected_repairs"] == {}
+
+
 def main() -> int:
     manifest = check_v4_manifest_and_initial_state()
     check_clean_cut_schema_rejection()
@@ -355,6 +405,7 @@ def main() -> int:
     check_replay_rejects_incomplete_verified_checkpoint(manifest)
     check_task_local_wait_and_exact_resume_projection(manifest)
     check_v4_event_and_runtime_upgrade(manifest)
+    check_selected_repair_decision_projection(manifest)
     print('{"passed": true}')
     return 0
 

@@ -21,6 +21,7 @@ from cpe_runtime.evidence import put_method_evidence
 from cpe_runtime.kernel import RunKernel, Transition
 from cpe_runtime.manifest import create_manifest
 from cpe_runtime.packets import build_packet
+from cpe_runtime.reconciliation import select_v4_resume
 from cpe_runtime.scheduler import (
     ExternalModelInterruption,
     LifecycleOperations,
@@ -55,8 +56,65 @@ def git(repo: Path, *args: str) -> str:
 class MemoryKernel:
     """Faithful projection subset; checkpoint helpers remain production code."""
 
-    def __init__(self, run_dir: Path, source_head: str, task_ids: tuple[str, ...]):
+    def __init__(
+        self,
+        run_dir: Path,
+        source_head: str,
+        tasks: tuple[TaskContractV4, ...],
+    ):
         self.run_dir = run_dir
+        root = run_dir.parent
+        plan = root / "memory-plan.md"
+        pricing = root / "memory-pricing.json"
+        plan.write_text("# memory fixture\n", encoding="utf-8")
+        pricing.write_text("{}\n", encoding="utf-8")
+        records = [
+            {
+                "id": task.task_id,
+                "title": task.title,
+                "dependencies": list(task.dependencies),
+                "file_claims": list(task.file_claims),
+                "spec_refs": [],
+                "acceptance_command": "\n".join(task.acceptance_commands),
+                "task_contract": task.body(),
+                "task_contract_sha256": task.contract_sha256,
+            }
+            for task in tasks
+        ]
+        drafts = [
+            build_packet(SimpleNamespace(sources=(), spec_manifest=None), record)
+            for record in records
+        ]
+        manifest = create_manifest(
+            "scheduler-v4-fixture",
+            "interactive",
+            root,
+            root / "product",
+            plan,
+            None,
+            records,
+            pricing,
+            source_head=source_head,
+        )
+        manifest["task_packets"] = [
+            {
+                "task_id": draft.task_id,
+                "path": draft.relative_path,
+                "media_type": draft.media_type,
+                "sha256": draft.sha256,
+            }
+            for draft in drafts
+        ]
+        packet_root = run_dir / "artifacts" / "task-packets"
+        packet_root.mkdir(parents=True)
+        for draft in drafts:
+            (run_dir / draft.relative_path).write_bytes(draft.content)
+        (run_dir / "run_manifest.json").write_text(
+            json.dumps(manifest, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        packet_by_task = {draft.task_id: draft.sha256 for draft in drafts}
+        task_ids = tuple(task.task_id for task in tasks)
         self._state = {
             "schema_version": "4",
             "run_id": "scheduler-v4-fixture",
@@ -72,9 +130,15 @@ class MemoryKernel:
             "artifact_index": [],
             "backlog": [],
             "repair_roots": {},
+            "selected_repairs": {},
             "tasks": {
                 task_id: {
+                    "id": task_id,
                     "status": "ready",
+                    "task_contract_sha256": next(
+                        task.contract_sha256 for task in tasks if task.task_id == task_id
+                    ),
+                    "task_packet_sha256": packet_by_task[task_id],
                     "wait_reason": None,
                     "resume_phase": None,
                     "active_attempt_id": None,
@@ -136,6 +200,12 @@ class MemoryKernel:
             self._state["verdicts"].append(record)
         elif event_type == "decision.recorded":
             self._state["decisions"].append(command.payload)
+            if command.payload.get("decision_kind") == "selected_repair_recorded":
+                self._state["selected_repairs"][str(command.task_id)] = dict(
+                    command.payload
+                )
+            elif command.payload.get("decision_kind") == "selected_repair_resolved":
+                self._state["selected_repairs"].pop(str(command.task_id), None)
         elif event_type == "evidence.attached":
             self._state["artifact_index"].append(record)
         elif event_type == "runtime.upgraded":
@@ -181,6 +251,23 @@ def contract(
             "checkpoint_message": f"feat: complete {task_id}",
         },
         source_hashes={"plan": "f" * 64, "spec_sections": {}},
+    )
+
+
+def substituted_contract(task_id: str = "T1", marker: str = "foreign") -> TaskContractV4:
+    return compile_task_contract(
+        {
+            "id": task_id,
+            "title": f"substituted lifecycle {task_id}",
+            "task_type": "tdd_implementation",
+            "dependencies": [],
+            "task_source": f"### Task {task_id}\nSubstituted contract from {marker}.\n",
+            "file_claims": ["product.py", "*-partial.tmp"],
+            "acceptance_commands": [TEST_COMMAND],
+            "required_evidence": ["red", "green"],
+            "checkpoint_message": f"feat: substitute {task_id}",
+        },
+        source_hashes={"plan": hashlib.sha256(marker.encode()).hexdigest(), "spec_sections": {}},
     )
 
 
@@ -283,7 +370,9 @@ class FixtureOperations:
         self.boundary_changes = boundary_changes
         self.packet_sha256 = hashlib.sha256(task.contract_sha256.encode()).hexdigest()
         self.serial = 0
+        self.implementation_calls = 0
         self.repair_calls = 0
+        self.repair_findings: list[dict[str, object]] = []
         self.review_scopes: list[ReviewScope] = []
         self.semantic_calls = 0
         self.pre_turn_failures: list[BaseException] = []
@@ -322,6 +411,7 @@ class FixtureOperations:
         raise failure
 
     def implementation(self, task: TaskContractV4, _attempt_id: str) -> WorkerResult:
+        self.implementation_calls += 1
         self._partial_failure("implementation")
         if self.implementation_failures:
             raise self.implementation_failures.pop(0)
@@ -336,6 +426,7 @@ class FixtureOperations:
 
     def repair(self, task: TaskContractV4, _finding: dict, _attempt_id: str) -> WorkerResult:
         self.repair_calls += 1
+        self.repair_findings.append(dict(_finding))
         self._partial_failure("repair")
         if self.repair_failures:
             raise self.repair_failures.pop(0)
@@ -444,10 +535,11 @@ def run_fixture(
     repo, source_head = init_repo(root)
     task = contract()
     run_dir = root / "run"
-    kernel = MemoryKernel(run_dir, source_head, (task.task_id,))
+    kernel = MemoryKernel(run_dir, source_head, (task,))
     fixture = FixtureOperations(
         repo, run_dir, task, reviews, boundary_changes=boundary_changes
     )
+    fixture.packet_sha256 = kernel.state["tasks"][task.task_id]["task_packet_sha256"]
     fixture.kernel = kernel
     cycle = run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
     return cycle, kernel, fixture, repo
@@ -553,8 +645,9 @@ def assert_resume_and_budget(root: Path) -> None:
     repo, source_head = init_repo(root / "quota")
     task = contract()
     run_dir = root / "quota" / "run"
-    kernel = MemoryKernel(run_dir, source_head, (task.task_id,))
+    kernel = MemoryKernel(run_dir, source_head, (task,))
     fixture = FixtureOperations(repo, run_dir, task, [passed()])
+    fixture.packet_sha256 = kernel.state["tasks"][task.task_id]["task_packet_sha256"]
     fixture.kernel = kernel
     fixture.pre_turn_failures.append(PreTurnInterruption("provider not entered"))
     first = run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
@@ -576,12 +669,15 @@ def assert_resume_and_budget(root: Path) -> None:
     blocked_repo, blocked_head = init_repo(blocked_root)
     blocked_task = contract()
     blocked_kernel = MemoryKernel(
-        blocked_root / "run", blocked_head, (blocked_task.task_id,)
+        blocked_root / "run", blocked_head, (blocked_task,)
     )
     blocked_kernel.state["attempt_budget"]["used"] = 40
     blocked_fixture = FixtureOperations(
         blocked_repo, blocked_root / "run", blocked_task, [passed()]
     )
+    blocked_fixture.packet_sha256 = blocked_kernel.state["tasks"][blocked_task.task_id][
+        "task_packet_sha256"
+    ]
     blocked_fixture.kernel = blocked_kernel
     blocked = run_task_cycle_v4(
         blocked_task,
@@ -598,9 +694,11 @@ def assert_runtime_upgrade_resume(root: Path) -> None:
     first_task = contract("T1")
     second_task = contract("T2", dependencies=("T1",))
     run_dir = root / "run"
-    kernel = MemoryKernel(run_dir, source_head, ("T1", "T2"))
+    kernel = MemoryKernel(run_dir, source_head, (first_task, second_task))
     first_ops = FixtureOperations(repo, run_dir, first_task, [passed()])
     second_ops = FixtureOperations(repo, run_dir, second_task, [passed()])
+    first_ops.packet_sha256 = kernel.state["tasks"]["T1"]["task_packet_sha256"]
+    second_ops.packet_sha256 = kernel.state["tasks"]["T2"]["task_packet_sha256"]
     first_ops.kernel = kernel
     second_ops.kernel = kernel
     second_ops.implementation_failures.append(
@@ -641,12 +739,14 @@ def assert_task_local_external_wait(root: Path) -> None:
     first_task = contract("T1")
     independent_task = contract("T2")
     run_dir = root / "run"
-    kernel = MemoryKernel(run_dir, source_head, ("T1", "T2"))
+    kernel = MemoryKernel(run_dir, source_head, (first_task, independent_task))
     first_ops = FixtureOperations(repo, run_dir, first_task, [passed()])
     first_ops.implementation_failures.append(
         ExternalModelInterruption("quota_transient", "provider:quota:T1")
     )
     independent_ops = FixtureOperations(repo, run_dir, independent_task, [passed()])
+    first_ops.packet_sha256 = kernel.state["tasks"]["T1"]["task_packet_sha256"]
+    independent_ops.packet_sha256 = kernel.state["tasks"]["T2"]["task_packet_sha256"]
     first_ops.kernel = kernel
     independent_ops.kernel = kernel
     outcomes = run_tasks_v4(
@@ -1030,6 +1130,337 @@ def assert_runtime_wait_independent_and_verifier_exception(root: Path) -> None:
     assert git(repo, "status", "--porcelain=v1", "--untracked-files=all") == ""
 
 
+def assert_canonical_contract_and_packet_binding(root: Path) -> None:
+    original = contract("T1")
+    foreign = substituted_contract("T1", "other-run")
+    repo, run_dir, kernel, fixtures = initialize_real_runtime(
+        root / "same-id-substitution", (original,), {"T1": [passed()]}
+    )
+    before_seq = kernel.state["last_event"]["seq"]
+    rejected = run_task_cycle_v4(
+        foreign, fixtures["T1"].lifecycle(), kernel, repo, run_dir
+    )
+    assert rejected.status == "blocked", rejected
+    assert rejected.reason == "contract_binding_invalid", rejected
+    assert kernel.state["last_event"]["seq"] == before_seq
+    assert kernel.state["attempts"] == []
+
+    original = contract("T1")
+    repo, run_dir, kernel, fixtures = initialize_real_runtime(
+        root / "wrong-run-dir", (original,), {"T1": [passed()]}
+    )
+    before_seq = kernel.state["last_event"]["seq"]
+    rejected = run_task_cycle_v4(
+        original,
+        fixtures["T1"].lifecycle(),
+        kernel,
+        repo,
+        root / "not-the-kernel-run",
+    )
+    assert rejected.status == "blocked", rejected
+    assert rejected.reason == "run_binding_invalid", rejected
+    assert kernel.state["last_event"]["seq"] == before_seq
+    assert kernel.state["attempts"] == []
+    assert fixtures["T1"].implementation_calls == 0
+    assert git(repo, "status", "--porcelain=v1", "--untracked-files=all") == ""
+
+    first = contract("T1")
+    second = contract("T2")
+    repo, run_dir, kernel, fixtures = initialize_real_runtime(
+        root / "mixed-run-packet",
+        (first, second),
+        {"T1": [passed()], "T2": [passed()]},
+    )
+    before_seq = kernel.state["last_event"]["seq"]
+    rejected = run_task_cycle_v4(
+        first, fixtures["T2"].lifecycle(), kernel, repo, run_dir
+    )
+    assert rejected.status == "blocked", rejected
+    assert rejected.reason == "packet_binding_invalid", rejected
+    assert kernel.state["last_event"]["seq"] == before_seq
+    assert kernel.state["attempts"] == []
+    assert fixtures["T1"].implementation_calls == 0
+    assert fixtures["T2"].implementation_calls == 0
+
+    repo, run_dir, kernel, fixtures = initialize_real_runtime(
+        root / "cross-task-contract",
+        (first, second),
+        {"T1": [passed()], "T2": [passed()]},
+    )
+    before_seq = kernel.state["last_event"]["seq"]
+    rejected = run_task_cycle_v4(
+        second, fixtures["T1"].lifecycle(), kernel, repo, run_dir
+    )
+    assert rejected.status == "blocked", rejected
+    assert rejected.reason == "packet_binding_invalid", rejected
+    assert kernel.state["last_event"]["seq"] == before_seq
+    assert kernel.state["attempts"] == []
+
+
+def assert_selected_repair_survives_resume(root: Path) -> None:
+    task = contract()
+    generic = changes(
+        "review:generic", category="review_scope_expansion"
+    )["findings"][0]
+    product = changes("defect:product")["findings"][0]
+    verdict = {
+        "status": "changes_requested",
+        "findings": [generic, product],
+        "missing_evidence": [],
+        "worktree_revision": 0,
+    }
+    repo, run_dir, kernel, fixtures = initialize_real_runtime(
+        root, (task,), {"T1": [verdict, passed()]}
+    )
+    fixture = fixtures["T1"]
+    fixture.pre_turn_by_phase["repair"] = [PreTurnInterruption("repair paused")]
+    waiting = run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
+    assert waiting.status == "waiting_external", waiting
+    assert kernel.state["tasks"]["T1"]["resume_phase"] == "repair"
+    assert kernel.state["backlog"][0]["root_cause_key"] == "review:generic"
+    selected = kernel.state.get("selected_repairs", {}).get("T1")
+    assert isinstance(selected, dict), kernel.state.get("decisions")
+    assert selected["root_cause_key"] == "defect:product"
+    assert selected["repair_count"] == selected["repair_slot"] == 1
+    assert fixture.repair_calls == 0
+
+    resumed = run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
+    assert resumed.status == "completed", resumed
+    assert fixture.repair_findings[0]["root_cause_key"] == "defect:product"
+    assert kernel.state["repair_roots"] == {"defect:product": 1}
+    assert [item["root_cause_key"] for item in kernel.state["backlog"]] == [
+        "review:generic"
+    ]
+
+    task = contract()
+    repo, run_dir, kernel, fixtures = initialize_real_runtime(
+        root / "count-before-status-crash", (task,), {"T1": [verdict, passed()]}
+    )
+    fixture = fixtures["T1"]
+    fixture.pre_turn_by_phase["repair"] = [PreTurnInterruption("repair paused")]
+    waiting = run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
+    assert waiting.status == "waiting_external", waiting
+    original_transition = kernel.transition
+
+    def crash_before_repairing(command: Transition) -> dict:
+        if (
+            command.event_type == "task.status_changed"
+            and command.task_id == "T1"
+            and command.payload.get("to") == "repairing"
+        ):
+            raise SystemExit("fixture crash before repairing status persistence")
+        return original_transition(command)
+
+    kernel.transition = crash_before_repairing  # type: ignore[method-assign]
+    try:
+        run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
+    except SystemExit as exc:
+        assert str(exc) == "fixture crash before repairing status persistence"
+    else:
+        raise AssertionError("expected injected process crash")
+    finally:
+        kernel.transition = original_transition  # type: ignore[method-assign]
+    assert kernel.state["repair_roots"] == {"defect:product": 1}
+    assert kernel.state["tasks"]["T1"]["status"] == "waiting_external"
+    resumed = run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
+    assert resumed.status == "completed", resumed
+    assert kernel.state["repair_roots"] == {"defect:product": 1}
+    assert len(
+        [
+            decision
+            for decision in kernel.state["decisions"]
+            if decision.get("decision_kind") == "repair_root_updated"
+            and decision.get("root_cause_key") == "defect:product"
+        ]
+    ) == 1
+
+    task = contract()
+    repo, run_dir, kernel, fixtures = initialize_real_runtime(
+        root / "crash-window", (task,), {"T1": [verdict, passed()]}
+    )
+    fixture = fixtures["T1"]
+    fixture.pre_turn_by_phase["repair"] = [PreTurnInterruption("repair paused")]
+    waiting = run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
+    assert waiting.status == "waiting_external", waiting
+    attempt_id = "T1.repair.crash-window"
+    kernel.transition(
+        Transition(
+            "attempt.started",
+            {"kind": "repair"},
+            task_id="T1",
+            attempt_id=attempt_id,
+        )
+    )
+    kernel.transition(
+        Transition(
+            "task.status_changed",
+            {
+                "from": "waiting_external",
+                "to": "repairing",
+                "resume_phase": "repair",
+                "active_attempt_id": attempt_id,
+            },
+            task_id="T1",
+            attempt_id=attempt_id,
+        )
+    )
+    kernel.transition(
+        Transition(
+            "task.status_changed",
+            {
+                "from": "repairing",
+                "to": "waiting_external",
+                "wait_reason": "runtime_process_recovered",
+                "resume_phase": "repair",
+                "active_attempt_id": attempt_id,
+            },
+            task_id="T1",
+            attempt_id=attempt_id,
+        )
+    )
+    resumed = run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
+    assert resumed.status == "completed", resumed
+    assert kernel.state["repair_roots"] == {"defect:product": 1}
+    assert len(
+        [
+            decision
+            for decision in kernel.state["decisions"]
+            if decision.get("decision_kind") == "repair_root_updated"
+            and decision.get("root_cause_key") == "defect:product"
+        ]
+    ) == 1
+    assert fixture.repair_findings[0]["root_cause_key"] == "defect:product"
+    assert [item["root_cause_key"] for item in kernel.state["backlog"]] == [
+        "review:generic"
+    ]
+
+    task = contract()
+    repo, run_dir, kernel, fixtures = initialize_real_runtime(
+        root / "tampered-selection", (task,), {"T1": [verdict, passed()]}
+    )
+    fixture = fixtures["T1"]
+    fixture.pre_turn_by_phase["repair"] = [PreTurnInterruption("repair paused")]
+    waiting = run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
+    assert waiting.status == "waiting_external", waiting
+    ref = kernel.state["selected_repairs"]["T1"]["selected_repair_ref"]
+    (run_dir / ref["path"]).write_text("{}\n", encoding="utf-8")
+    blocked = run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
+    assert blocked.status == "blocked", blocked
+    assert blocked.reason == "evidence_integrity_failure"
+    assert fixture.repair_calls == 0
+
+
+def _upgrade_runtime(kernel: RunKernel, new_commit: str) -> None:
+    checkpoint = kernel.state["checkpoint_head"]
+    prior = dict(kernel.state["runtime"])
+    kernel.transition(
+        Transition(
+            "runtime.upgraded",
+            {
+                "old_runtime_commit": prior["runtime_commit"],
+                "new_runtime_commit": new_commit,
+                "reason": "resume interrupted semantic repair slot",
+                "compatibility_epoch": prior["compatibility_epoch"],
+                "worktree_clean": True,
+                "verified_checkpoint": checkpoint,
+            },
+        )
+    )
+
+
+def assert_waiting_user_authority_and_runtime_repair_slot(root: Path) -> None:
+    waiting_user = contract("T1")
+    independent = contract("T2")
+    dependent = contract("T3", dependencies=("T1",))
+    repo, run_dir, kernel, fixtures = initialize_real_runtime(
+        root / "waiting-user",
+        (waiting_user, independent, dependent),
+        {"T1": [passed()], "T2": [passed()], "T3": [passed()]},
+    )
+    current = kernel.state["tasks"]["T1"]["status"]
+    kernel.transition(
+        Transition(
+            "task.status_changed",
+            {
+                "from": current,
+                "to": "waiting_user",
+                "wait_reason": "authority_resolution_required",
+                "resume_phase": "implementation",
+                "active_attempt_id": None,
+            },
+            task_id="T1",
+        )
+    )
+    assert select_v4_resume(kernel.state, "T1").action == "await_user_authority"
+    results = run_tasks_v4(
+        (waiting_user, independent, dependent),
+        {task_id: fixture.lifecycle() for task_id, fixture in fixtures.items()},
+        kernel,
+        repo,
+        run_dir,
+    )
+    assert [item.task_id for item in results] == ["T2"], results
+    assert results[0].status == "completed"
+    assert fixtures["T1"].implementation_calls == 0
+    assert fixtures["T3"].implementation_calls == 0
+    assert kernel.state["tasks"]["T1"]["status"] == "waiting_user"
+    assert kernel.state["tasks"]["T3"]["status"] == "pending"
+
+    prerequisite = contract("T1")
+    repair_task = contract("T2", dependencies=("T1",))
+    repo, run_dir, kernel, fixtures = initialize_real_runtime(
+        root / "repeated-runtime-upgrade",
+        (prerequisite, repair_task),
+        {"T1": [passed()], "T2": [changes("defect:durable"), passed()]},
+    )
+    repair_fixture = fixtures["T2"]
+    repair_fixture.repair_failures.extend(
+        [
+            RuntimeUpgradeInterruption("runtime:adapter", "4.0.1", "fixture-b"),
+            RuntimeUpgradeInterruption("runtime:adapter", "4.0.2", "fixture-c"),
+        ]
+    )
+    operations = {key: value.lifecycle() for key, value in fixtures.items()}
+    first = run_tasks_v4(
+        (prerequisite, repair_task), operations, kernel, repo, run_dir
+    )
+    assert [item.status for item in first] == ["completed", "waiting_external"]
+    assert kernel.state["repair_roots"] == {"defect:durable": 1}
+    assert kernel.state["attempt_budget"]["used"] == 5
+    selected_ref = kernel.state["selected_repairs"]["T2"]["selected_repair_ref"]
+
+    _upgrade_runtime(kernel, "e" * 40)
+    second = run_tasks_v4(
+        (prerequisite, repair_task), operations, kernel, repo, run_dir
+    )
+    assert len(second) == 1 and second[0].status == "waiting_external", second
+    assert kernel.state["repair_roots"] == {"defect:durable": 1}
+    assert kernel.state["attempt_budget"]["used"] == 6
+    assert kernel.state["selected_repairs"]["T2"]["selected_repair_ref"] == selected_ref
+
+    _upgrade_runtime(kernel, "d" * 40)
+    third = run_tasks_v4(
+        (prerequisite, repair_task), operations, kernel, repo, run_dir
+    )
+    assert len(third) == 1 and third[0].status == "completed", third
+    assert kernel.state["repair_roots"] == {"defect:durable": 1}
+    assert kernel.state["attempt_budget"]["used"] == 8
+    assert kernel.state["selected_repairs"] == {}
+    assert len(
+        [
+            decision
+            for decision in kernel.state["decisions"]
+            if decision.get("decision_kind") == "repair_root_updated"
+            and decision.get("root_cause_key") == "defect:durable"
+        ]
+    ) == 1
+    assert [item["root_cause_key"] for item in repair_fixture.repair_findings] == [
+        "defect:durable",
+        "defect:durable",
+        "defect:durable",
+    ]
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory(prefix="cpe-scheduler-v4-") as raw:
         root = Path(raw)
@@ -1045,6 +1476,9 @@ def main() -> int:
             "B-review-binding-all-findings": lambda: assert_review_binding_and_all_findings(root / "review-binding"),
             "C-repair-timing-rollback": lambda: assert_repair_timing_and_rollback(root / "repair-rollback"),
             "D-verifier-runtime-boundary": lambda: assert_runtime_wait_independent_and_verifier_exception(root / "verifier-runtime"),
+            "E-canonical-contract-packet-binding": lambda: assert_canonical_contract_and_packet_binding(root / "canonical-binding"),
+            "F-selected-repair-resume": lambda: assert_selected_repair_survives_resume(root / "selected-repair"),
+            "G-authority-runtime-repair-slot": lambda: assert_waiting_user_authority_and_runtime_repair_slot(root / "authority-runtime"),
         }
         failures: dict[str, str] = {}
         for name, check in checks.items():

@@ -1301,6 +1301,86 @@ def _v4_result(
     )
 
 
+def _v4_preflight_failure(
+    contract: object,
+    operations: object,
+    kernel: Kernel,
+    run_dir: Path,
+) -> str | None:
+    """Bind dispatch to the canonical manifest task and immutable packet."""
+
+    from .manifest import load_verified_manifest
+    from .packets import verify_packet
+    from .task_contracts import TaskContractV4
+
+    if not isinstance(contract, TaskContractV4) or not isinstance(
+        operations, LifecycleOperations
+    ):
+        return "contract_invalid"
+    kernel_run_dir = getattr(kernel, "run_dir", None)
+    if (
+        not isinstance(kernel_run_dir, Path)
+        or run_dir.resolve() != kernel_run_dir.resolve()
+    ):
+        return "run_binding_invalid"
+    task_id = contract.task_id
+    tasks = kernel.state.get("tasks")
+    task_state = tasks.get(task_id) if isinstance(tasks, dict) else None
+    if not isinstance(task_state, dict):
+        return "contract_binding_invalid"
+    canonical_id = task_state.get("id", task_id)
+    canonical_contract = task_state.get("task_contract_sha256")
+    if canonical_id != task_id or (
+        canonical_contract is not None
+        and canonical_contract != contract.contract_sha256
+    ):
+        return "contract_binding_invalid"
+    if (
+        not isinstance(operations.packet_sha256, str)
+        or len(operations.packet_sha256) != 64
+        or any(
+            character not in "0123456789abcdef"
+            for character in operations.packet_sha256
+        )
+    ):
+        return "packet_binding_invalid"
+    canonical_packet = task_state.get("task_packet_sha256")
+    if canonical_packet is not None and canonical_packet != operations.packet_sha256:
+        return "packet_binding_invalid"
+
+    manifest_path = run_dir.resolve() / "run_manifest.json"
+    if not manifest_path.is_file():
+        return "run_binding_invalid"
+    try:
+        manifest = load_verified_manifest(manifest_path)
+        entries = [
+            item
+            for item in manifest.get("task_graph", [])
+            if isinstance(item, dict) and item.get("id") == task_id
+        ]
+        if len(entries) != 1:
+            return "contract_binding_invalid"
+        entry = entries[0]
+        if (
+            entry.get("task_contract_sha256") != contract.contract_sha256
+            or entry.get("task_contract") != contract.body()
+        ):
+            return "contract_binding_invalid"
+        packet = verify_packet(run_dir, manifest, task_id)
+        if packet.sha256 != operations.packet_sha256:
+            return "packet_binding_invalid"
+        payload = json.loads(packet.content)
+        if (
+            payload.get("task_id") != task_id
+            or payload.get("task_contract_sha256") != contract.contract_sha256
+            or payload.get("task_contract") != contract.body()
+        ):
+            return "packet_binding_invalid"
+    except (KeyError, OSError, TypeError, ValueError, json.JSONDecodeError):
+        return "packet_binding_invalid"
+    return None
+
+
 def _require_v4_worker_result(result: object) -> WorkerResult:
     if not isinstance(result, WorkerResult) or result.status != "completed" or not _trusted(result):
         raise ValueError("untrusted_model_result")
@@ -1412,23 +1492,28 @@ def _bound_review_verdict(
 def _record_v4_verdict(
     kernel: Kernel, task_id: str, attempt_id: str, verdict: dict[str, object]
 ) -> None:
+    payload = _recorded_v4_verdict(verdict)
     kernel.transition(
         Transition(
             "verdict.recorded",
-            {
-                "status": verdict["status"],
-                "findings": list(verdict["findings"]),
-                "missing_evidence": list(verdict["missing_evidence"]),
-                **(
-                    {"review_binding": dict(verdict["review_binding"])}
-                    if isinstance(verdict.get("review_binding"), dict)
-                    else {}
-                ),
-            },
+            payload,
             task_id=task_id,
             attempt_id=attempt_id,
         )
     )
+
+
+def _recorded_v4_verdict(verdict: dict[str, object]) -> dict[str, object]:
+    return {
+        "status": verdict["status"],
+        "findings": list(verdict["findings"]),
+        "missing_evidence": list(verdict["missing_evidence"]),
+        **(
+            {"review_binding": dict(verdict["review_binding"])}
+            if isinstance(verdict.get("review_binding"), dict)
+            else {}
+        ),
+    }
 
 
 def _approved_review_evidence(
@@ -1779,9 +1864,14 @@ def run_task_cycle_v4(
     from .checkpoints import create_candidate_checkpoint, promote_verified_checkpoint
     from .failure_policy import classify_failure
     from .reconciliation import select_v4_resume
-    from .repair import prepare_repaired_candidate, record_backlog, record_repair_root
-    from .task_contracts import TaskContractV4
-
+    from .repair import (
+        prepare_repaired_candidate,
+        record_backlog,
+        record_repair_root,
+        record_selected_repair,
+        reopen_selected_repair,
+        resolve_selected_repair,
+    )
     task_id = str(getattr(contract, "task_id", ""))
     phases: list[TaskPhase] = ["preflight"]
     scopes: list[ReviewScope] = []
@@ -1803,15 +1893,12 @@ def run_task_cycle_v4(
             reason,
         )
 
-    if (
-        not isinstance(contract, TaskContractV4)
-        or not task_id
-        or not isinstance(operations, LifecycleOperations)
-        or len(operations.packet_sha256) != 64
-        or any(character not in "0123456789abcdef" for character in operations.packet_sha256)
-    ):
+    preflight_failure = _v4_preflight_failure(
+        contract, operations, kernel, run_dir
+    )
+    if preflight_failure is not None:
         phases.append("blocked")
-        return finish("blocked", "blocked", "contract_invalid")
+        return finish("blocked", "blocked", preflight_failure)
     if any(
         item.get("task_id") == task_id
         and item.get("contract_sha256") == contract.contract_sha256
@@ -1820,6 +1907,12 @@ def run_task_cycle_v4(
         return finish("completed", "verified_checkpoint")
 
     task_state = kernel.state["tasks"][task_id]
+    if task_state["status"] == "waiting_user":
+        return finish(
+            "waiting_user",
+            "waiting_user",
+            str(task_state.get("wait_reason") or "authority_resolution_required"),
+        )
     if task_state["status"] == "pending":
         _task_transition(kernel, task_id, "ready")
     resume = select_v4_resume(kernel.state, task_id)
@@ -1831,7 +1924,7 @@ def run_task_cycle_v4(
     acceptance = None
     review_evidence = None
     scope = None
-    selected_repair: tuple[dict[str, object], str, int] | None = None
+    selected_repair: dict[str, object] | None = None
 
     def restore_or_block(target: str, abandon_kind: str | None = None) -> bool:
         try:
@@ -1862,7 +1955,18 @@ def run_task_cycle_v4(
         return finish("waiting_external", "waiting_external", reason)
 
     def on_started(target_status: str, repair: tuple[str, int] | None = None):
-        def callback(_kind: str, attempt_id: str, started_new: bool) -> None:
+        def callback(_kind: str, attempt_id: str, _started_new: bool) -> None:
+            if repair is not None:
+                current_count = int(
+                    _v4_state(kernel).get("repair_roots", {}).get(repair[0], 0)
+                )
+                if current_count < repair[1]:
+                    record_repair_root(
+                        kernel,
+                        task_id=task_id,
+                        root_cause_key=repair[0],
+                        count=repair[1],
+                    )
             current = kernel.state["tasks"][task_id]["status"]
             if current != target_status:
                 _task_transition(
@@ -1870,13 +1974,6 @@ def run_task_cycle_v4(
                     task_id,
                     target_status,
                     attempt_id=attempt_id,
-                )
-            if repair is not None and started_new:
-                record_repair_root(
-                    kernel,
-                    task_id=task_id,
-                    root_cause_key=repair[0],
-                    count=repair[1],
                 )
 
         return callback
@@ -2102,7 +2199,26 @@ def run_task_cycle_v4(
                     phases.append("blocked")
                     return finish("blocked", "blocked", "repair_policy_invalid")
                 root, count = decision.repair_root_update
-                selected_repair = (finding, root, count)
+                try:
+                    selected_repair = record_selected_repair(
+                        kernel,
+                        task_id=task_id,
+                        contract_sha256=contract.contract_sha256,
+                        rejected_candidate=candidate,
+                        review_attempt_id=review_turn.attempt_id,
+                        verdict=_recorded_v4_verdict(verdict),
+                        finding=finding,
+                        root_cause_key=root,
+                        repair_count=count,
+                        review_scope=review_scope_payload(scope),
+                        review_scope_sha256=review_scope_sha256(scope),
+                    )
+                except (OSError, RuntimeError, ValueError):
+                    _block_task(kernel, task_id, "evidence_integrity_failure")
+                    phases.append("blocked")
+                    return finish(
+                        "blocked", "blocked", "evidence_integrity_failure"
+                    )
                 phase = "repair"
                 continue
             try:
@@ -2124,16 +2240,24 @@ def run_task_cycle_v4(
             assert candidate is not None
             rejected = candidate
             if selected_repair is None:
-                findings = _latest_findings(kernel, task_id)
-                finding = findings[0]
-                root = str(finding.get("root_cause_key") or "product_defect")
-                active = _active_attempt_id(kernel, task_id, "repair")
-                current_count = int(
-                    _v4_state(kernel).get("repair_roots", {}).get(root, 0)
-                )
-                count = current_count if active is not None else current_count + 1
-                selected_repair = (finding, root, count)
-            finding, root, count = selected_repair
+                try:
+                    selected_repair = reopen_selected_repair(
+                        kernel,
+                        task_id=task_id,
+                        contract_sha256=contract.contract_sha256,
+                        rejected_candidate=rejected,
+                        review_scope=review_scope_payload(scope),
+                        review_scope_sha256=review_scope_sha256(scope),
+                    )
+                except (OSError, RuntimeError, ValueError):
+                    _block_task(kernel, task_id, "evidence_integrity_failure")
+                    phases.append("blocked")
+                    return finish(
+                        "blocked", "blocked", "evidence_integrity_failure"
+                    )
+            finding = dict(selected_repair["finding"])
+            root = str(selected_repair["root_cause_key"])
+            count = int(selected_repair["repair_count"])
             phases.append("repair")
             try:
                 repair_turn = controller.run_model_turn(
@@ -2198,6 +2322,13 @@ def run_task_cycle_v4(
                     candidate,
                     tuple(_latest_findings(kernel, task_id)),
                     boundaries,
+                )
+                resolve_selected_repair(
+                    kernel,
+                    task_id=task_id,
+                    selected_repair_ref=dict(
+                        selected_repair["selected_repair_ref"]
+                    ),
                 )
             except (RuntimeError, ValueError) as exc:
                 _block_task(kernel, task_id, "evidence_integrity_failure")
@@ -2350,8 +2481,15 @@ def run_tasks_v4(
 
     results: list[TaskCycleResult] = []
     externally_waiting: set[str] = set()
+    awaiting_user: set[str] = {
+        task_id
+        for task_id, task in kernel.state.get("tasks", {}).items()
+        if isinstance(task, dict) and task.get("status") == "waiting_user"
+    }
     for contract in ordered:
-        if set(contract.dependencies).intersection(externally_waiting):
+        if set(contract.dependencies).intersection(externally_waiting | awaiting_user):
+            continue
+        if contract.task_id in awaiting_user:
             continue
         if any(
             item.get("task_id") == contract.task_id

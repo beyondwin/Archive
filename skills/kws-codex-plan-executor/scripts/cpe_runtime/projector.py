@@ -207,6 +207,13 @@ def owned_active_blocker(state: dict, task_id: str | None, blocker_id: object) -
 
 def initial_state(manifest: dict) -> dict:
     manifest = _require_v4_schema(manifest)
+    packet_sha256_by_task = {
+        str(entry["task_id"]): str(entry["sha256"])
+        for entry in manifest.get("task_packets", [])
+        if isinstance(entry, dict)
+        and isinstance(entry.get("task_id"), str)
+        and isinstance(entry.get("sha256"), str)
+    }
     tasks = {
         str(task["id"]): {
             "id": str(task["id"]),
@@ -217,6 +224,7 @@ def initial_state(manifest: dict) -> dict:
             "spec_refs": list(task.get("spec_refs") or []),
             "acceptance_command": task.get("acceptance_command"),
             "task_contract_sha256": task.get("task_contract_sha256"),
+            "task_packet_sha256": packet_sha256_by_task.get(str(task["id"])),
             "wait_reason": None,
             "resume_phase": None,
             "active_attempt_id": None,
@@ -243,6 +251,7 @@ def initial_state(manifest: dict) -> dict:
         "notifications": [],
         "backlog": [],
         "repair_roots": {},
+        "selected_repairs": {},
         "wait_reason": None,
         "attempt_budget": {"limit": 40, "used": 0},
         "completion_audit": None,
@@ -378,6 +387,28 @@ def apply_event(state: dict, event: dict) -> dict:
                 raise ValueError("invalid backlog decision")
             if item not in state["backlog"]:
                 state["backlog"].append(item)
+        elif payload.get("decision_kind") == "selected_repair_recorded":
+            task_id = payload.get("task_id")
+            ref = payload.get("selected_repair_ref")
+            if (
+                task_id != event.get("task_id")
+                or task_id not in state["tasks"]
+                or not isinstance(ref, dict)
+                or payload.get("repair_slot") != payload.get("repair_count")
+            ):
+                raise ValueError("invalid selected repair decision")
+            state["selected_repairs"][task_id] = deepcopy(payload)
+        elif payload.get("decision_kind") == "selected_repair_resolved":
+            task_id = payload.get("task_id")
+            selected = state["selected_repairs"].get(str(task_id))
+            if (
+                task_id != event.get("task_id")
+                or selected is None
+                or selected.get("selected_repair_ref")
+                != payload.get("selected_repair_ref")
+            ):
+                raise ValueError("invalid selected repair resolution")
+            state["selected_repairs"].pop(str(task_id), None)
     elif typ == "notification.requested":
         state["notifications"].append(payload)
     elif typ == "runtime.upgraded":

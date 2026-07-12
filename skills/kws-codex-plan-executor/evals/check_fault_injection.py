@@ -51,6 +51,16 @@ def assert_resume_selection() -> None:
     runtime = select_v4_resume(state, "T2")
     assert runtime.action == "resume_verified_checkpoint"
     assert runtime.checkpoint_head == "a" * 40
+    state["tasks"]["T2"].update(
+        {
+            "status": "waiting_user",
+            "resume_phase": "implementation",
+            "active_attempt_id": None,
+        }
+    )
+    authority = select_v4_resume(state, "T2")
+    assert authority.action == "await_user_authority"
+    assert authority.phase is None and authority.attempt_id is None
 
 
 def main() -> int:
@@ -71,6 +81,7 @@ def main() -> int:
                     "attempt_budget_hard_stop": True,
                     "runtime_upgrade_checkpoint_resume": True,
                     "task_local_external_wait": True,
+                    "waiting_user_requires_authority": True,
                 },
             },
             sort_keys=True,
