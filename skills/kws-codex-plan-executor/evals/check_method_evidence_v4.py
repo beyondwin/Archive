@@ -173,6 +173,8 @@ def main() -> int:
     for mutating_command in (
         "printf 'implemented' > product.py",
         "sed -i '' 's/old/new/' product.py",
+        "sed -n 'w product.py' input.txt",
+        "git diff --output=product.py",
         "python3 check_mutation.py",
     ):
         bypass_events = [
@@ -192,6 +194,41 @@ def main() -> int:
             pass
         else:
             review_failures.append(f"mutation_order_bypass:{mutating_command}")
+
+    for wrapped_command in (
+        "env bash -c 'python3 mutate_then_fail.py'",
+        "python3 -c 'raise SystemExit(1)'",
+        "xargs python3 test_product.py",
+        "node test_product.js",
+    ):
+        wrapped_events = [
+            command_event(
+                command=wrapped_command,
+                exit_code=1,
+                status="failed",
+                output="",
+            ),
+            mutation_event(),
+            command_event(
+                command=wrapped_command,
+                exit_code=0,
+                status="completed",
+                output="",
+            ),
+        ]
+        try:
+            build_method_evidence(
+                "tdd_implementation",
+                normalize_codex_items(
+                    wrapped_events, test_commands=(wrapped_command,)
+                ),
+            )
+        except MethodEvidenceError:
+            pass
+        else:
+            review_failures.append(
+                f"wrapped_contract_command_accepted:{wrapped_command}"
+            )
 
     credential_commands = {
         "flag-token-value": f"{TEST_COMMAND} --token flag-token-value",
@@ -216,6 +253,37 @@ def main() -> int:
             if raw_argument in encoded:
                 review_failures.append(f"raw_argument_persisted:{raw_argument}")
     assert not review_failures, review_failures
+
+    for direct_test_command in (
+        TEST_COMMAND,
+        "python3 -m pytest tests/test_product.py",
+        "python3 -m unittest tests.test_product",
+        "pytest tests/test_product.py",
+        "bun test tests/product.test.ts",
+    ):
+        direct_events = [
+            command_event(
+                command=direct_test_command,
+                exit_code=1,
+                status="failed",
+                output="",
+            ),
+            mutation_event(),
+            command_event(
+                command=direct_test_command,
+                exit_code=0,
+                status="completed",
+                output="",
+            ),
+        ]
+        direct_evidence = build_method_evidence(
+            "tdd_implementation",
+            normalize_codex_items(
+                direct_events, test_commands=(direct_test_command,)
+            ),
+        )
+        assert direct_evidence.red is not None, direct_test_command
+        assert direct_evidence.green is not None, direct_test_command
 
     raises(
         MethodEvidenceError,
