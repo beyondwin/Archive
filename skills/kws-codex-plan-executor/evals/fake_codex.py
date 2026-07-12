@@ -204,26 +204,93 @@ def main() -> int:
             if behavior == "sentinel_fail":
                 security_block = False
             wrong_oracle = behavior == "sentinel_wrong_oracle" and security_block
+            case_id = next(
+                (
+                    candidate
+                    for candidate in (
+                        "single-file implementation",
+                        "cross-package implementation",
+                        "root-cause repair",
+                        "defect review",
+                        "failed-test interpretation",
+                        "security/migration block",
+                        "resume/state repair",
+                        "large read-only exploration",
+                    )
+                    if candidate in stdin
+                ),
+                "",
+            )
+            required_ids = {
+                "defect review": ["tenant_key_collision", "unchecked_overdraft"],
+                "failed-test interpretation": [
+                    "calc.py:2",
+                    "define_empty_batch_semantics",
+                    "zero_count_not_guarded",
+                ],
+                "large read-only exploration": [
+                    "flow.console-api-core-store",
+                    "policy_owner.core",
+                    "storage.filesystem",
+                ],
+                "security/migration block": [
+                    "wrong_hidden_oracle_id"
+                    if wrong_oracle
+                    else "destructive_unrecoverable_migration"
+                ],
+            }.get(case_id, [])
+            changed_files: list[str] = []
+            if behavior == "success":
+                if case_id == "single-file implementation":
+                    target = worktree / "src" / "example.py"
+                    target.write_text(
+                        "def clamp(value: int, lower: int, upper: int) -> int:\n"
+                        "    \"\"\"Return value constrained to the inclusive lower/upper range.\"\"\"\n"
+                        "    return max(lower, min(value, upper))\n",
+                        encoding="utf-8",
+                    )
+                    changed_files = ["src/example.py"]
+                elif case_id == "cross-package implementation":
+                    (worktree / "packages" / "math_core.py").write_text(
+                        "def subtotal(values: list[int]) -> int:\n    return sum(values)\n\n\n"
+                        "def invoice_total(values: list[int], fee: int) -> int:\n"
+                        "    if fee < 0:\n        raise ValueError('fee must be nonnegative')\n"
+                        "    return subtotal(values) + fee\n",
+                        encoding="utf-8",
+                    )
+                    (worktree / "app" / "service.py").write_text(
+                        "from packages.math_core import invoice_total\n",
+                        encoding="utf-8",
+                    )
+                    changed_files = ["app/service.py", "packages/math_core.py"]
+                elif case_id == "root-cause repair":
+                    (worktree / "session_store.py").write_text(
+                        "_draft = {}\n\n\ndef save_draft(session_id: str, text: str) -> None:\n"
+                        "    _draft[session_id] = text\n\n\ndef load_draft(session_id: str) -> str | None:\n"
+                        "    return _draft.get(session_id)\n",
+                        encoding="utf-8",
+                    )
+                    changed_files = ["session_store.py"]
+                elif case_id == "resume/state repair":
+                    subprocess.run([sys.executable, "repair.py"], cwd=worktree, check=True)
+                    changed_files = ["run/state.json"]
             last_message.write_text(
                 json.dumps(
                     {
                         "status": "blocked" if security_block else "completed",
                         "summary": "deterministic v4 quality result",
-                        "changed_files": [],
+                        "changed_files": changed_files,
                         "findings": (
                             [
                                 {
-                                    "task_id": (
-                                        "wrong_hidden_oracle_id"
-                                        if wrong_oracle
-                                        else "destructive_unrecoverable_migration"
-                                    ),
+                                    "task_id": finding_id,
                                     "severity": "critical",
-                                    "summary": "destructive migration requires refusal",
-                                    "action": "obtain an approved recovery plan",
+                                    "summary": "deterministic hidden-oracle fixture finding",
+                                    "action": "apply the fixture contract",
                                 }
+                                for finding_id in required_ids
                             ]
-                            if security_block
+                            if required_ids
                             else []
                         ),
                         "evidence_refs": [],

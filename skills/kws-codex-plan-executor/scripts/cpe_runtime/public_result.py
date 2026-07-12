@@ -6,7 +6,11 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from .quality_v4 import canonical_v4_envelope_map
+from .privacy import audit_sanitized_payload
+from .quality_v4 import (
+    canonical_v4_envelope_map,
+    validate_v4_release_payloads,
+)
 
 
 ALLOWED_FAILURE_CATEGORIES = frozenset(
@@ -77,12 +81,26 @@ def validate_release_evidence_root(
     if not root.is_dir() or any(not (root / name).is_file() for name in names.values()):
         return {"passed": False, "errors": ["release_evidence_missing"]}
     payloads: dict[str, dict[str, object]] = {}
+    release_payloads: dict[str, dict[str, object]] = {}
+
+    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        value: dict[str, object] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate JSON key")
+            value[key] = item
+        return value
+
     try:
         for key, name in names.items():
-            value = json.loads((root / name).read_text(encoding="utf-8"))
+            raw = (root / name).read_bytes()
+            value = json.loads(raw, object_pairs_hook=reject_duplicate_keys)
             if not isinstance(value, dict):
                 raise ValueError
+            if raw != (json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n").encode():
+                raise ValueError("non-canonical release bytes")
             payloads[key] = value
+            release_payloads[name] = value
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError):
         return {"passed": False, "errors": ["release_evidence_invalid"]}
 
@@ -92,6 +110,16 @@ def validate_release_evidence_root(
     privacy = payloads["privacy"]
     dogfood = payloads["dogfood"]
     errors: list[str] = []
+
+    privacy_reaudit = audit_sanitized_payload(release_payloads)
+    try:
+        validate_v4_release_payloads(release_payloads)
+    except ValueError:
+        errors.append("release_evidence_schema_invalid")
+    if privacy_reaudit.get("passed") is not True:
+        errors.append("privacy_audit_failed")
+    if errors:
+        return {"passed": False, "errors": errors}
 
     def lower_hex(value: object, length: int) -> bool:
         return isinstance(value, str) and len(value) == length and all(
@@ -151,6 +179,18 @@ def validate_release_evidence_root(
         errors.append("release_evidence_binding_invalid")
     if result.get("manifest_sha256") != bindings["manifest_sha256"]:
         errors.append("result_manifest_binding_invalid")
+    if (
+        manifest.get("run_id") != result.get("run_id")
+        or manifest.get("implementation_patch_sha256")
+        != result.get("implementation_patch_sha256")
+        or manifest.get("credentialed_call_count")
+        != result.get("credentialed_call_count")
+        or manifest.get("policy_outcome_count") != result.get("policy_outcome_count")
+        or manifest.get("pending_slot_count") != result.get("pending_slot_count")
+        or manifest.get("duplicate_slot_count") != result.get("duplicate_slot_count")
+        or manifest.get("terminal") is not (manifest.get("pending_slot_count") == 0)
+    ):
+        errors.append("release_evidence_cross_binding_invalid")
     for payload in (manifest, result):
         if payload.get("credentialed_call_count") != 17 or payload.get("policy_outcome_count") != 7:
             errors.append("quality_matrix_count_invalid")
@@ -165,21 +205,31 @@ def validate_release_evidence_root(
         errors.append("launch_envelope_binding_invalid")
     if not isinstance(result.get("release_gate"), dict) or result["release_gate"].get("passed") is not True:
         errors.append("release_gate_failed")
-    if privacy.get("passed") is not True or privacy.get("findings") != []:
+    elif result["release_gate"].get("failures") != []:
+        errors.append("release_gate_failed")
+    if (
+        privacy.get("passed") is not True
+        or privacy.get("findings") != []
+        or privacy_reaudit != {"passed": True, "failures": []}
+    ):
         errors.append("privacy_audit_failed")
     dogfood_valid = (
-        dogfood.get("run_ids_created") == 1
+        dogfood.get("status") in {"not_run", "passed"}
+        and dogfood.get("run_ids_created") in {0, 1}
         and type(dogfood.get("model_attempts")) is int
         and 0 <= dogfood["model_attempts"] <= 6
         and type(dogfood.get("max_same_root_repairs")) is int
         and 0 <= dogfood["max_same_root_repairs"] <= 2
         and isinstance(dogfood.get("verified_checkpoints"), list)
-        and len(dogfood["verified_checkpoints"]) >= 1
         and type(dogfood.get("elapsed_seconds")) in {int, float}
         and 0 <= dogfood["elapsed_seconds"] <= 3600
         and dogfood.get("source_checkout_unchanged") is True
         and dogfood.get("runtime_patch_required") is False
     )
+    if dogfood.get("status") == "passed":
+        dogfood_valid = dogfood_valid and dogfood.get("run_ids_created") == 1 and len(dogfood["verified_checkpoints"]) >= 1
+    elif dogfood.get("status") == "not_run":
+        dogfood_valid = dogfood_valid and dogfood.get("run_ids_created") == 0 and dogfood.get("verified_checkpoints") == []
     if not dogfood_valid:
         errors.append("dogfood_limits_invalid")
     return {

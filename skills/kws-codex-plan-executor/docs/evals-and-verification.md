@@ -122,13 +122,18 @@ fail closed before a credentialed call; aggregate and release validation reject
 envelope substitution across manifest, result, slot index, prompt binding, and
 ledger evidence.
 
-The cost-free production E2E additionally runs a top-level blocked sentinel
-with the wrong hidden-oracle ID and proves one invocation followed by a zero-
-call blocked resume. Its passing branch compiles and materializes the real
-sealed artifacts, completes all remaining slots through a fake provider,
-aggregates the immutable ledger, builds the sanitized release package, and
-validates it against the real Git checkpoint. Missing, extra, substituted, or
-policy envelope-map entries fail the public release validator.
+The cost-free authentic production E2E launches the real runner CLI and fake
+Codex subprocess with a top-level blocked sentinel carrying the wrong hidden-
+oracle ID, then proves one invocation followed by a zero-call blocked resume.
+Its passing branch compiles and materializes the real sealed artifacts, parses
+fake Codex output, evaluates the runner-owned hidden oracle, resumes without
+duplicating the sentinel, and lets production `aggregate` write the five
+canonical release files. The public validator independently enforces closed
+schemas, Git/checkpoint/digest/envelope bindings, and a shared privacy re-audit
+over those actual payloads. Unknown fields such as caller `debug_note` fail
+even when superficial hashes and the stored privacy boolean are rewritten.
+The pre-dogfood package uses a closed `status=not_run` record with zero metrics;
+no arbitrary dogfood JSON is copied.
 
 When the sole authorized corrected v4 run uses a new evidence root, import the
 failed predecessor lineage without copying its oracle-bearing manifest:

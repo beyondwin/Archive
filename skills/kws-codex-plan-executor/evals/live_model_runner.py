@@ -48,6 +48,10 @@ from live_migration.runner import (
     install_v4_sealed_artifacts,
     verify_v4_manifest_sealed_artifacts,
 )
+from cpe_runtime.quality_v4 import (
+    build_v4_release_evidence_payloads,
+    write_v4_release_evidence_payloads,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -740,6 +744,23 @@ def _aggregate(args: argparse.Namespace) -> dict[str, object]:
     payload: dict[str, object] = {**aggregate, "privacy_audit": privacy}
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_bytes(canonical_json(payload))
+    if aggregate.get("schema_version") == "cpe-quality-aggregate.v4":
+        manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+        dogfood = {
+            "schema_version": "cpe.dogfood-result.v4",
+            "status": "not_run",
+            "run_ids_created": 0,
+            "model_attempts": 0,
+            "max_same_root_repairs": 0,
+            "verified_checkpoints": [],
+            "elapsed_seconds": 0,
+            "source_checkout_unchanged": True,
+            "runtime_patch_required": False,
+        }
+        release_payloads = build_v4_release_evidence_payloads(
+            manifest, aggregate, dogfood
+        )
+        write_v4_release_evidence_payloads(run_dir.parent, release_payloads)
     aggregate_sha256 = sha256_bytes(canonical_json(aggregate))
     privacy_sha256 = sha256_bytes(canonical_json(privacy))
     gate = aggregate.get("release_gate")

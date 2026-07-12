@@ -1035,3 +1035,35 @@ Commands and results:
 Credentialed/provider/network/model calls: zero. Residual risk: the real
 subscription sentinel, staged budget, dogfood, Task 11, main, and remote
 operations remain explicitly unauthorized and were not run.
+
+## 2026-07-12 Asia/Seoul - v4 production release boundary closure
+
+Branch and basis: `codex/cpe-v4-autonomous-efficient-executor-continuation` at
+`6ed86d112b63205cdeb8630656804ffaf108c5e4` plus this focused closure.
+
+Scope: made production `live_model_runner.py aggregate` the sole five-file v4
+release packager. Added exact closed schemas, field-by-field dogfood shaping,
+shared full-package privacy audit, canonical byte parsing, independent public
+digest/cross-binding/privacy validation, and an authentic production CLI E2E.
+
+Commands and results:
+
+- TDD RED: release validator eval failed because the builder still required and
+  trusted caller privacy; production aggregate did not write the five files.
+- Authentic E2E RED: the prior in-memory helper bypassed `run_slot`, fake Codex,
+  hidden-oracle evaluation, production state transitions, and packaging.
+- Focused Task 8/9 suite (quality, ledger, 14 oracle tests, live runner, public
+  v4 E2E, release validator): exit 0.
+- `./evals/run.sh`: exit 0; all 35 maintained checks passed and paid execution
+  was `skipped_not_approved`.
+- Repository `bun run check`: exit 0; 820 pass, 10 skip, 0 fail across 149 files.
+- `graphify update .`: exit 0; 11,868 nodes and 19,904 edges. Generated churn
+  was intentionally not retained because Task 11 owns Graphify closeout.
+- Python compilation, shell syntax, docs/release contracts, CLI help, and diff
+  hygiene: run in the final syntax/docs gate for this change.
+
+Credentialed/provider/network/model calls: zero. No live subscription, dogfood,
+Task 11, main, remote, push, merge, version, baseline, or release-status action
+ran. Residual risk: the five-file replacement is crash-detectable through
+canonical digest validation; real dogfood may later replace the closed
+`status=not_run` record under separate authority.
