@@ -1,5 +1,11 @@
 # Risks, Limitations, And Deferrals
 
+The current v4 mainline risk register, release blockers, and ordered follow-up
+work are tracked in
+[v4-main-residual-risks-and-follow-up.md](v4-main-residual-risks-and-follow-up.md).
+The v3 statements below remain historical release context unless explicitly
+marked as v4.
+
 - Published evidence state is **deterministic-ready; paid-live-verified**.
   Audited deterministic integrity gaps are closed by the current cost-free
   suite, and the reviewed four-treatment, eight-case subscription matrix passed

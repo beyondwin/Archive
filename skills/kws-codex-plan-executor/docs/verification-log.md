@@ -1111,3 +1111,30 @@ canonical digest validation; real dogfood may later replace the closed
 - Python compilation, shell syntax, docs/release contracts, and
   `git diff --check`: exit 0. Provider/network/model calls: zero. Task 11,
   local main, remote push, and paid-live execution were not run.
+
+## 2026-07-13 Asia/Seoul - V4 mainline residual-risk register
+
+- Branch and basis: `main` at
+  `5901a91ad946301489e4c336ec5e1d292f848a0d` before this docs-only change.
+- Scope: added one canonical v4 mainline risk and follow-up register covering
+  the mutable-worktree release-policy Critical, staged critical live proof,
+  four-lane integration review, optional full certification, accepted
+  provenance/cost limits, and the separate multi-plan design program. Linked
+  it from the package README and existing risk index.
+- `./evals/run.sh`: exit 0; all maintained checks passed and
+  `paid_execution=skipped_not_approved`.
+- `python3 evals/check_docs_contract.py`: exit 0 with `passed=true`.
+- Full Python `py_compile`, `bash -n evals/run.sh`, markdown link/path check,
+  and `git diff --check`: exit 0.
+- `graphify update .`: exit 0; final refresh produced 11,958 nodes and 20,157
+  edges. The canonical
+  `graphify-out/GRAPH_REPORT.md` and `graph.json` were refreshed.
+- `check_graphify_freshness.py --update-ran`: exit 0 with `fresh=true` and no
+  errors. The automatic untracked dated backup was removed; canonical outputs
+  were retained.
+- Repository `bun run check` was not repeated for this docs/Graphify-only
+  change. The immediately preceding merged-main gate at the same runtime
+  checkpoint passed with 820 tests passed, 10 skipped, and zero failed.
+- Provider/network/model calls: zero. Residual risk is intentionally unchanged:
+  v4 cannot claim `critical-path-live verified` until the Git-object trust
+  anchor is repaired, freshly reviewed, and the bounded live proof completes.
