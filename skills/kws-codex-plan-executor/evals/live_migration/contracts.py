@@ -122,15 +122,3 @@ EXPECTED_V4_TREATMENTS = (
     QualityTreatmentV4("sol_v4_candidate", "gpt-5.6-sol", "high"),
     QualityTreatmentV4("terra_v4", "gpt-5.6-terra", "high"),
 )
-
-V4_PROMPT_RENDERERS = {
-    "sol_v31_control": "../control-bundles/cpe-3.1.0-production.json",
-    "sol_v4_candidate": "../../templates/cpe-v4-worker-prefix.txt",
-    "terra_v4": "terra-scout-generated",
-}
-
-V4_PROMPT_SHA256 = {
-    "sol_v31_control": "4b933268aa306baee965477117945925e0124875e50bc5aca8fb340b0cd039a0",
-    "sol_v4_candidate": "d931fc1020b46212ed589400fdaa12f6d04e3fe0a10da6607e260ee0f625b68b",
-    "terra_v4": "4dec7101f5fb93f9b08544c46a691632c89ff0d14d62940204ab867afa98c883",
-}

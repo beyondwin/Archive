@@ -24,12 +24,15 @@ from live_migration.contracts import (
     sha256_bytes,
 )
 from live_migration.ledger import (
+    LedgerError,
     LiveRun,
     append_event,
     create_run,
-    record_terminal_full_run,
+    record_release_terminal,
+    register_release_run,
     replay_run,
 )
+from live_model_migration import aggregate_run
 from live_migration.runner import (
     API_KEY_ENV_NAMES,
     LiveRunnerError,
@@ -84,6 +87,10 @@ def _parser() -> argparse.ArgumentParser:
     resume.add_argument("--retry-failed", action="store_true")
     resume.add_argument("--codex-bin", type=Path, default=DEFAULT_CODEX_BINARY)
     resume.add_argument("--slot-timeout-seconds", type=int, default=900)
+
+    aggregate = commands.add_parser("aggregate")
+    aggregate.add_argument("--run-dir", type=Path, required=True)
+    aggregate.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -515,24 +522,19 @@ def _execute(
             complete_run
             and context.run.manifest.get("schema_version") == "cpe-quality-manifest.v4"
         ):
-            record_terminal_full_run(
-                context.run,
-                checkpoint_sha256=str(
-                    context.run.manifest["implementation_patch_sha256"]
-                ),
+            failure = {"code": exc.code, "message": str(exc)}
+            record_release_terminal(
+                context.run.run_dir.parent,
+                run_id=str(context.run.manifest["run_id"]),
                 passed=False,
+                aggregate_sha256=sha256_bytes(canonical_json(failure)),
+                privacy_sha256=sha256_bytes(
+                    canonical_json({"status": "not_run", "reason": "execution_failed"})
+                ),
             )
         raise
     if complete_run:
         append_event(context.run, "run_completed", {"completed_slots": len(results)})
-        if context.run.manifest.get("schema_version") == "cpe-quality-manifest.v4":
-            record_terminal_full_run(
-                context.run,
-                checkpoint_sha256=str(
-                    context.run.manifest["implementation_patch_sha256"]
-                ),
-                passed=True,
-            )
     state = replay_run(context.run.run_dir)
     return {
         "status": "completed" if complete_run else "sentinel_completed",
@@ -579,6 +581,8 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
         "implementation_tree": str(manifest["implementation_tree"]),
         "implementation_patch_sha256": str(manifest["implementation_patch_sha256"]),
     })
+    if manifest.get("schema_version") == "cpe-quality-manifest.v4":
+        register_release_run(run_dir.parent, manifest)
     run = create_run(run_dir, manifest)
     run_home = _run_codex_home(run, attestation.codex_home, create=True)
     context = RunContext(run, ROOT, attestation, _child_env(run_home), args.slot_timeout_seconds, False)
@@ -594,6 +598,44 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
         return _execute(context, slots, complete_run=not args.sentinel_only)
     finally:
         os.close(descriptor)
+
+
+def _privacy_audit(payload: dict[str, object]) -> dict[str, object]:
+    serialized = canonical_json(payload).decode("utf-8")
+    patterns = {
+        "absolute_home_path": r"(?:/Users/|/home/|/private/tmp/|/var/folders/)",
+        "credential_material": r"(?:OPENAI_API_KEY|CODEX_API_KEY|auth\.json)",
+        "hidden_oracle_path": r"(?:^|[\"/])oracle(?:[\"/])",
+        "transcript_surface": r"transcripts?",
+    }
+    failures = [name for name, pattern in patterns.items() if re.search(pattern, serialized, re.I)]
+    return {"passed": not failures, "failures": failures}
+
+
+def _aggregate(args: argparse.Namespace) -> dict[str, object]:
+    run_dir = args.run_dir.expanduser().resolve()
+    _assert_execution_root_safe(run_dir)
+    aggregate = aggregate_run(run_dir)
+    privacy = _privacy_audit(aggregate)
+    payload: dict[str, object] = {**aggregate, "privacy_audit": privacy}
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_bytes(canonical_json(payload))
+    aggregate_sha256 = sha256_bytes(canonical_json(aggregate))
+    privacy_sha256 = sha256_bytes(canonical_json(privacy))
+    gate = aggregate.get("release_gate")
+    passed = (
+        isinstance(gate, dict)
+        and gate.get("passed") is True
+        and privacy.get("passed") is True
+    )
+    record_release_terminal(
+        run_dir.parent,
+        run_id=str(aggregate["run_id"]),
+        passed=passed,
+        aggregate_sha256=aggregate_sha256,
+        privacy_sha256=privacy_sha256,
+    )
+    return payload
 
 
 def _resume(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[str, object]:
@@ -659,13 +701,30 @@ def main(argv: list[str] | None = None) -> int:
             result = _dry_run(args)
         elif args.command == "start":
             result = _start(args, parser)
-        else:
+        elif args.command == "resume":
             result = _resume(args, parser)
-    except (LiveRunnerError, OSError, ValueError, subprocess.CalledProcessError) as exc:
+        else:
+            result = _aggregate(args)
+    except (
+        LedgerError,
+        LiveRunnerError,
+        OSError,
+        ValueError,
+        subprocess.CalledProcessError,
+    ) as exc:
         code = exc.code if isinstance(exc, LiveRunnerError) else "runner_failed"
         print(json.dumps({"status": "blocked", "error": code, "message": str(exc)}, sort_keys=True))
         return 1
     print(json.dumps(result, sort_keys=True))
+    if args.command == "aggregate":
+        gate = result.get("release_gate")
+        privacy = result.get("privacy_audit")
+        return 0 if (
+            isinstance(gate, dict)
+            and gate.get("passed") is True
+            and isinstance(privacy, dict)
+            and privacy.get("passed") is True
+        ) else 1
     return 0
 
 

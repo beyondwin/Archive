@@ -23,6 +23,7 @@ from .contracts import (
     canonical_json,
     worker_prompt_bytes,
 )
+from .compiler import v4_case_prompt_bundles, v4_worker_output_schema_bytes
 from .fixtures import MaterializedFixture, materialize_fixture
 from .ledger import LiveRun, append_event, commit_slot, replay_run
 from .oracle import OracleInputError, ProcessEvidence, evaluate_slot, policy_failure_result
@@ -101,6 +102,44 @@ FakeProvider = Callable[
     [dict[str, object]], tuple[dict[str, bytes], dict[str, object]]
 ]
 
+_V4_BINDING_FIELDS = (
+    "prompt_sha256",
+    "task_contract_sha256",
+    "case_sha256",
+    "output_schema_sha256",
+)
+
+
+def _v4_prompt_binding(slot: Mapping[str, object]) -> dict[str, str]:
+    if str(slot.get("treatment_id")) not in {
+        "sol_v31_control",
+        "sol_v4_candidate",
+        "terra_v4",
+    }:
+        return {}
+    binding: dict[str, str] = {}
+    for field in _V4_BINDING_FIELDS:
+        value = slot.get(field)
+        if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
+            raise LiveRunnerError(
+                "invalid_prompt_binding", f"v4 slot is missing {field}"
+            )
+        binding[field] = value
+    return binding
+
+
+def _bind_v4_result(
+    slot: Mapping[str, object], result: dict[str, object]
+) -> dict[str, object]:
+    binding = _v4_prompt_binding(slot)
+    for field, value in binding.items():
+        supplied = result.get(field)
+        if supplied is not None and supplied != value:
+            raise LiveRunnerError(
+                "result_prompt_binding_mismatch", f"result changed {field}"
+            )
+    return {**result, **binding}
+
 
 def execute_v4_slots(
     run: LiveRun,
@@ -141,11 +180,16 @@ def execute_v4_slots(
                 "run_id": run.manifest["run_id"],
                 "billing_mode": run.manifest["billing_mode"],
             }
-            result = policy_failure_result(bound, run.manifest_sha256)
+            result = _bind_v4_result(
+                slot, policy_failure_result(bound, run.manifest_sha256)
+            )
             commit_slot(
                 run,
                 key,
-                {"policy.json": canonical_json(slot.get("policy_reason"))},
+                {
+                    "policy.json": canonical_json(slot.get("policy_reason")),
+                    "prompt-binding.json": canonical_json(_v4_prompt_binding(slot)),
+                },
                 result,
             )
             continue
@@ -153,7 +197,12 @@ def execute_v4_slots(
             raise LiveRunnerError("invalid_slot_contract", "v4 slot outcome is inconsistent")
         files, result = invoke_provider(slot)
         provider_invocations += 1
-        commit_slot(run, key, files, result)
+        commit_slot(
+            run,
+            key,
+            {**files, "prompt-binding.json": canonical_json(_v4_prompt_binding(slot))},
+            _bind_v4_result(slot, result),
+        )
     return {
         "executed_slots": len(selected),
         "provider_invocations": provider_invocations,
@@ -672,6 +721,27 @@ def render_prompt(
 
     if not isinstance(slot, dict) or not isinstance(fixture, MaterializedFixture):
         raise LiveRunnerError("invalid_slot_contract", "compiled slot and materialized fixture are required")
+    treatment_id = str(slot.get("treatment_id") or "")
+    if treatment_id in {"sol_v31_control", "sol_v4_candidate", "terra_v4"}:
+        bundles = v4_case_prompt_bundles(
+            Path(eval_dir),
+            str(slot.get("case_id") or ""),
+            str(slot.get("case_slug") or ""),
+        )
+        bundle_kind = "control" if treatment_id == "sol_v31_control" else "candidate"
+        bundle = bundles[bundle_kind]
+        binding = {
+            "prompt_sha256": bundle.prompt_sha256,
+            "task_contract_sha256": bundle.task_contract_sha256,
+            "case_sha256": bundle.case_sha256,
+            "output_schema_sha256": bundle.output_schema_sha256,
+        }
+        if any(slot.get(field) != value for field, value in binding.items()):
+            raise LiveRunnerError(
+                "prompt_bundle_drift", f"v4 prompt binding drifted for {treatment_id}"
+            )
+        return bundle.prompt
+
     renderer = str(slot.get("prompt_renderer") or "")
     if renderer == "terra-scout-generated":
         prefix_bytes = b"bounded read-only scout prompt renderer v1\n"
@@ -874,8 +944,18 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
     key = SlotKey(str(slot["treatment_id"]), str(slot["case_id"]))
     bound_slot = {**slot, "run_id": context.run.manifest["run_id"], "billing_mode": context.run.manifest["billing_mode"]}
     if slot.get("outcome_kind") == EXPECTED_POLICY_FAILURE:
-        result = policy_failure_result(bound_slot, context.run.manifest_sha256)
-        commit_slot(context.run, key, {"policy.json": canonical_json(slot.get("policy_reason"))}, result)
+        result = _bind_v4_result(
+            slot, policy_failure_result(bound_slot, context.run.manifest_sha256)
+        )
+        commit_slot(
+            context.run,
+            key,
+            {
+                "policy.json": canonical_json(slot.get("policy_reason")),
+                "prompt-binding.json": canonical_json(_v4_prompt_binding(slot)),
+            },
+            result,
+        )
         return result
     if slot.get("outcome_kind") != CREDENTIALLED_CALL:
         raise LiveRunnerError("invalid_slot_contract", "unknown compiled slot outcome")
@@ -905,8 +985,16 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
             context.eval_dir,
             baseline_evidence=baseline_evidence,
         )
-        worker_schema = (Path(context.eval_dir) / str(slot["output_schema"])).resolve()
         evidence_dir.mkdir(parents=True, exist_ok=False)
+        if str(slot.get("treatment_id")) in {
+            "sol_v31_control",
+            "sol_v4_candidate",
+            "terra_v4",
+        }:
+            worker_schema = evidence_dir / "worker-result-schema.json"
+            worker_schema.write_bytes(v4_worker_output_schema_bytes(context.eval_dir))
+        else:
+            worker_schema = (Path(context.eval_dir) / str(slot["output_schema"])).resolve()
         last_message = evidence_dir / "last-message.json"
         argv = [
             str(context.codex.binary), "exec", "--json", "--model", str(slot["model"]),
@@ -973,7 +1061,9 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
         source_drift=False, oracle_drift=False,
     )
     try:
-        result = evaluate_slot(bound_slot, fixture, measured, output, events)
+        result = _bind_v4_result(
+            slot, evaluate_slot(bound_slot, fixture, measured, output, events)
+        )
     except OracleInputError as exc:
         error = LiveRunnerError(
             "malformed_output", "Codex output did not satisfy the closed result contract"
@@ -989,6 +1079,8 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
             "events.jsonl": stdout.encode(), "stderr.txt": stderr.encode(),
             "last-message.json": canonical_json(output), "prompt.sha256": (_sha256_bytes(prompt.encode()) + "\n").encode(),
             "attestation.json": canonical_json(attestation),
+            "prompt-binding.json": canonical_json(_v4_prompt_binding(slot)),
+            "output-schema.json": worker_schema.read_bytes(),
         },
         result,
     )

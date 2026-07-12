@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import sys
 from numbers import Real
 from pathlib import Path
 from typing import Any
@@ -25,8 +26,6 @@ from .contracts import (
     SlotKey,
     Treatment,
     QualityTreatmentV4,
-    V4_PROMPT_RENDERERS,
-    V4_PROMPT_SHA256,
     canonical_json,
     sha256_bytes,
     worker_prompt_bytes,
@@ -37,6 +36,84 @@ _COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _TERRA_PROMPT = b"bounded read-only scout prompt renderer v1\n"
 _OUTPUT_SCHEMA_REF = "live-migration/worker-result-schema.json"
 _DEFAULT_CREATED_AT = "1970-01-01T00:00:00Z"
+
+
+def _skill_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _load_v4_prompt_runtime():
+    skill_root = str(_skill_root())
+    if skill_root not in sys.path:
+        sys.path.insert(0, skill_root)
+    from scripts.cpe_runtime.prompt_bundles import paired_bundles
+    from scripts.cpe_runtime.task_contracts import compile_task_contract
+
+    return paired_bundles, compile_task_contract
+
+
+def v4_case_prompt_bundles(
+    eval_dir: Path,
+    case_id: str,
+    case_slug: str,
+) -> dict[str, object]:
+    """Build the approved same-case control/candidate pair with no local paths."""
+
+    root = Path(eval_dir)
+    fixture_root = root / "live-migration" / "fixtures" / case_slug
+    case = _load_object(fixture_root / "case.json")
+    if case.get("case_id") != case_id or case.get("slug") != case_slug:
+        raise LiveMigrationContractError("v4 prompt case does not match the registry")
+    repo = fixture_root / "repo"
+    bounded_context: list[dict[str, str]] = []
+    try:
+        for path in sorted(item for item in repo.rglob("*") if item.is_file()):
+            if path.is_symlink():
+                raise LiveMigrationContractError("v4 prompt context cannot contain symlinks")
+            bounded_context.append(
+                {
+                    "path": path.relative_to(repo).as_posix(),
+                    "content": path.read_text(encoding="utf-8"),
+                }
+            )
+    except (OSError, UnicodeError) as exc:
+        raise LiveMigrationContractError(f"cannot compile v4 prompt context: {exc}") from exc
+    task_source = canonical_json(case).decode("utf-8")
+    source_hash = sha256_bytes(task_source.encode("utf-8"))
+    paired_bundles, compile_task_contract = _load_v4_prompt_runtime()
+    contract = compile_task_contract(
+        {
+            "id": case_slug,
+            "title": case_id,
+            "task_type": (
+                "tdd_implementation" if case.get("mode") == "write" else "verification"
+            ),
+            "risk_class": "high",
+            "task_source": task_source,
+            "file_claims": case.get("allowed_paths"),
+            "forbidden_paths": case.get("forbidden_paths"),
+            "acceptance_command": case.get("acceptance_command"),
+            "checkpoint_message": f"Complete quality case: {case_id}",
+        },
+        source_hashes={"case": source_hash, "spec_sections": {}},
+    )
+    control, candidate = paired_bundles(
+        contract,
+        bounded_context=tuple(bounded_context),
+    )
+    return {"control": control, "candidate": candidate}
+
+
+def v4_worker_output_schema_bytes(eval_dir: Path) -> bytes:
+    """Return the exact Task 7 output schema used by both v4 treatments."""
+
+    fixture = _load_object(
+        Path(eval_dir) / "control-bundles" / "cpe-3.1.0-production.json"
+    )
+    schema = fixture.get("output_schema")
+    if not isinstance(schema, dict):
+        raise LiveMigrationContractError("v4 production output schema is unavailable")
+    return canonical_json(schema)
 
 
 def _reference_sha256(reference: str) -> str:
@@ -154,8 +231,10 @@ def compile_v4_manifest(
         "sol_v4_candidate": cases,
         "terra_v4": (terra_read_only, *cases[:-1]),
     }
+    bundles_by_case = {
+        case.id: v4_case_prompt_bundles(root, case.id, case.slug) for case in cases
+    }
     for treatment in treatments:
-        renderer = V4_PROMPT_RENDERERS[treatment.id]
         for case in ordered_cases[treatment.id]:
             canonical_case = case_by_id[case.id]
             key = SlotKey(treatment.id, canonical_case.id)
@@ -164,6 +243,8 @@ def compile_v4_manifest(
             slot_keys.add(key)
             credentialed = treatment.id != "terra_v4" or canonical_case == terra_read_only
             policy_failure = not credentialed
+            bundle_kind = "control" if treatment.id == "sol_v31_control" else "candidate"
+            bundle = bundles_by_case[canonical_case.id][bundle_kind]
             fixture_ref = f"live-migration/fixtures/{canonical_case.slug}/repo"
             oracle_ref = f"live-migration/fixtures/{canonical_case.slug}/oracle"
             slot: dict[str, object] = {
@@ -172,8 +253,11 @@ def compile_v4_manifest(
                 "case_slug": canonical_case.slug,
                 "model": treatment.model,
                 "reasoning": treatment.reasoning,
-                "prompt_renderer": renderer,
-                "prompt_sha256": V4_PROMPT_SHA256[treatment.id],
+                "prompt_renderer": f"paired-bundles:{bundle_kind}",
+                "prompt_sha256": bundle.prompt_sha256,
+                "task_contract_sha256": bundle.task_contract_sha256,
+                "case_sha256": bundle.case_sha256,
+                "output_schema_sha256": bundle.output_schema_sha256,
                 "credentialed": credentialed,
                 "outcome_kind": CREDENTIALLED_CALL if credentialed else EXPECTED_POLICY_FAILURE,
                 "expected_policy_failure": policy_failure,

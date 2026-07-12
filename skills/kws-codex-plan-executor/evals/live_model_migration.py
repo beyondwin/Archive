@@ -461,6 +461,8 @@ def aggregate_run(run_dir: Path) -> dict[str, Any]:
         manifest = load_json(root / "manifest.json")
     except (LedgerError, OSError) as exc:
         raise MigrationContractError(f"invalid live run ledger: {exc}") from exc
+    if manifest.get("schema_version") == "cpe-quality-manifest.v4":
+        return _aggregate_v4_run(root, manifest, projection)
     _validate_runner_manifest(manifest)
     if (
         projection.get("lifecycle_outcome") != "completed"
@@ -522,6 +524,123 @@ def aggregate_run(run_dir: Path) -> dict[str, Any]:
         "model_catalog_sha256": manifest["model_catalog_sha256"],
         "result_sha256": result_digests,
         "evidence_source": VALIDATED_LIVE_RUN_LEDGER,
+    }
+
+
+def _aggregate_v4_run(
+    root: Path,
+    manifest: dict[str, Any],
+    projection: dict[str, object],
+) -> dict[str, Any]:
+    """Aggregate one fully resolved v4 ledger without changing terminal state."""
+
+    slots = manifest.get("slots")
+    if not isinstance(slots, list) or len(slots) != 24:
+        raise MigrationContractError("v4 manifest must contain exactly 24 slots")
+    if (
+        projection.get("lifecycle_outcome") != "completed"
+        or len(projection.get("completed_slots", [])) != 24
+        or projection.get("pending_slots")
+        or projection.get("failed_slots")
+        or projection.get("active_slot") is not None
+    ):
+        raise MigrationContractError("v4 live run ledger is not completely resolved")
+    if projection.get("manifest_sha256") != manifest.get("manifest_sha256"):
+        raise MigrationContractError("v4 ledger projection is not bound to its manifest")
+
+    seen: set[tuple[str, str]] = set()
+    results: list[dict[str, Any]] = []
+    result_digests: dict[str, str] = {}
+    binding_fields = (
+        "prompt_sha256",
+        "task_contract_sha256",
+        "case_sha256",
+        "output_schema_sha256",
+    )
+    failures: list[str] = []
+    for slot in slots:
+        if not isinstance(slot, dict):
+            raise MigrationContractError("v4 manifest slot must be an object")
+        treatment_id = str(slot.get("treatment_id") or "")
+        case_id = str(slot.get("case_id") or "")
+        key = (treatment_id, case_id)
+        if key in seen:
+            failures.append("duplicate_slot")
+            continue
+        seen.add(key)
+        evidence_dir = _slot_path(root, treatment_id, case_id)
+        result = load_json(evidence_dir / "result.json")
+        index = load_json(evidence_dir / "index.json")
+        if result.get("run_id") != manifest.get("run_id"):
+            raise MigrationContractError("v4 live results contain mixed run IDs")
+        if any(result.get(field) != slot.get(field) for field in binding_fields):
+            failures.append("prompt_result_binding_failed")
+        if slot.get("expected_policy_failure") and (
+            result.get("manifest_sha256") != manifest.get("manifest_sha256")
+            or result.get("matrix_policy_sha256") != slot.get("matrix_policy_sha256")
+        ):
+            failures.append("policy_manifest_binding_failed")
+        digest = as_sha256(index, "result_sha256")
+        if sha256_bytes(canonical_json(result)) != digest:
+            raise MigrationContractError("v4 slot result is not bound to its ledger index")
+        result_digests[f"{treatment_id}/{case_id}"] = digest
+        results.append(result)
+
+    credentialed = [
+        result for result in results if result.get("outcome_kind") == "credentialed_call"
+    ]
+    policies = [
+        result
+        for result in results
+        if result.get("outcome_kind") == "expected_policy_failure"
+    ]
+    controls = [
+        result for result in credentialed if result.get("treatment_id") == "sol_v31_control"
+    ]
+    candidates = [
+        result for result in credentialed if result.get("treatment_id") == "sol_v4_candidate"
+    ]
+    if len(credentialed) != 17:
+        failures.append("credentialed_call_count_mismatch")
+    if len(policies) != 7:
+        failures.append("policy_outcome_count_mismatch")
+    if sum(bool(result.get("task_completed")) for result in candidates) < sum(
+        bool(result.get("task_completed")) for result in controls
+    ):
+        failures.append("candidate_task_completion_regressed")
+    if any(bool(result.get("critical_regression")) for result in credentialed):
+        failures.append("critical_regression_detected")
+    for field, code in (
+        ("evidence_complete", "evidence_incomplete"),
+        ("model_attested", "model_attestation_incomplete"),
+        ("worktree_isolated", "worktree_isolation_incomplete"),
+        ("drift_free", "drift_detected"),
+    ):
+        if any(result.get(field) is not True for result in credentialed):
+            failures.append(code)
+    failures = list(dict.fromkeys(failures))
+    return {
+        "schema_version": "cpe-quality-aggregate.v4",
+        "run_id": manifest["run_id"],
+        "manifest_sha256": manifest["manifest_sha256"],
+        "implementation_commit": manifest["implementation_commit"],
+        "implementation_tree": manifest.get("implementation_tree"),
+        "implementation_patch_sha256": manifest.get("implementation_patch_sha256"),
+        "credentialed_call_count": len(credentialed),
+        "policy_outcome_count": len(policies),
+        "duplicate_slot_count": len(slots) - len(seen),
+        "pending_slot_count": len(projection.get("pending_slots", [])),
+        "result_sha256": result_digests,
+        "release_gate": {
+            "passed": not failures,
+            "failures": failures,
+            "control_completed": sum(
+                bool(result.get("task_completed")) for result in controls
+            ),
+            "candidate_completed": sum(
+                bool(result.get("task_completed")) for result in candidates
+            ),
+        },
     }
 
 

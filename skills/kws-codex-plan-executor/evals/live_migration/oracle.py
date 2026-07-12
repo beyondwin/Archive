@@ -63,6 +63,18 @@ _ORACLE_ID_FIELD = {
 }
 _HEX_40 = re.compile(r"^[0-9a-f]{40}$")
 _HEX_64 = re.compile(r"^[0-9a-f]{64}$")
+_V4_OUTPUT_FIELDS = {
+    "status",
+    "summary",
+    "changed_files",
+    "findings",
+    "evidence_refs",
+    "missing_evidence",
+    "verification",
+    "verdict",
+    "root_cause_key",
+    "failure_category",
+}
 
 
 def _require_bool(value: object, label: str) -> bool:
@@ -110,6 +122,43 @@ def _validate_output(raw: object) -> dict[str, object]:
             raise OracleInputError(f"{field} contains duplicates")
     changed_files = _require_string_sequence(raw["changed_files"], "changed_files")
     return {**raw, "changed_files": list(changed_files)}
+
+
+def _validate_v4_output(raw: object, oracle_kind: str) -> dict[str, object]:
+    if not isinstance(raw, dict) or set(raw) != _V4_OUTPUT_FIELDS:
+        raise OracleInputError("v4 worker output fields do not match the approved result contract")
+    if raw["status"] not in {"completed", "blocked", "failed"}:
+        raise OracleInputError("v4 worker output has invalid status")
+    _require_text(raw["summary"], "summary")
+    changed_files = _require_string_sequence(raw["changed_files"], "changed_files")
+    findings = raw["findings"]
+    if not isinstance(findings, list) or not all(isinstance(item, dict) for item in findings):
+        raise OracleInputError("v4 findings must contain objects")
+    reported_ids: list[str] = []
+    for finding in findings:
+        if set(finding) != {"task_id", "severity", "summary", "action"}:
+            raise OracleInputError("v4 finding fields are invalid")
+        reported_ids.append(_require_text(finding["task_id"], "finding.task_id"))
+    if len(reported_ids) != len(set(reported_ids)):
+        raise OracleInputError("v4 finding identifiers contain duplicates")
+    for field in ("evidence_refs", "missing_evidence", "verification"):
+        value = raw[field]
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise OracleInputError(f"v4 {field} must contain strings")
+    selected = _ORACLE_ID_FIELD.get(oracle_kind)
+    normalized_ids = {
+        "finding_ids": [],
+        "fact_ids": [],
+        "block_ids": [],
+    }
+    if selected:
+        normalized_ids[selected] = reported_ids
+    return {
+        "status": raw["status"],
+        "summary": raw["summary"],
+        **normalized_ids,
+        "changed_files": list(changed_files),
+    }
 
 
 def _validate_process(process: ProcessEvidence) -> None:
@@ -283,7 +332,12 @@ def evaluate_slot(
     if contract.get("mode") not in {"write", "read_only"}:
         raise OracleInputError("fixture contract has invalid mode")
     _validate_process(process)
-    measured_output = _validate_output(output)
+    measured_output = (
+        _validate_v4_output(output, str(contract["oracle_kind"]))
+        if slot.get("treatment_id")
+        in {"sol_v31_control", "sol_v4_candidate", "terra_v4"}
+        else _validate_output(output)
+    )
     expected = _load_expected(fixture)
 
     model_attested, usage_attested = _event_attestation(slot, process, events)

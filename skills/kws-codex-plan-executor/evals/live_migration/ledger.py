@@ -36,6 +36,10 @@ _RESERVED_SLOT_FILES = frozenset({"index.json", "result.json"})
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _TERMINAL_FULL_RUN_EVENT = "terminal_full_run_recorded"
 _MAX_TERMINAL_FULL_RUNS = 2
+_RELEASE_EVENT_SCHEMA = "cpe-quality-release-event.v4"
+_RELEASE_EVENT_FIELDS = _EVENT_FIELDS
+_RELEASE_EVENTS_FILE = "quality-release-events.jsonl"
+_RELEASE_STATE_FILE = "quality-release-state.json"
 
 
 class LedgerError(RuntimeError):
@@ -289,6 +293,211 @@ def record_terminal_full_run(
             },
         )
         _replay_run_locked(run.run_dir)
+        return event
+
+
+def _read_release_events(root: Path) -> list[dict[str, object]]:
+    path = root / _RELEASE_EVENTS_FILE
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as exc:
+        raise LedgerError(f"release lineage is unreadable: {exc}") from exc
+    events: list[dict[str, object]] = []
+    previous: str | None = None
+    for sequence, line in enumerate(lines, start=1):
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise LedgerError("release lineage contains invalid JSON") from exc
+        if not isinstance(event, dict) or set(event) != _RELEASE_EVENT_FIELDS:
+            raise LedgerError("release lineage event fields are invalid")
+        if (
+            event.get("schema_version") != _RELEASE_EVENT_SCHEMA
+            or event.get("sequence") != sequence
+            or event.get("previous_sha256") != previous
+            or not isinstance(event.get("payload"), dict)
+        ):
+            raise LedgerError("release lineage event chain is invalid")
+        body = {key: event[key] for key in _RELEASE_EVENT_FIELDS if key != "event_sha256"}
+        digest = sha256_bytes(canonical_json(body))
+        if event.get("event_sha256") != digest:
+            raise LedgerError("release lineage event digest is invalid")
+        events.append(event)
+        previous = digest
+    return events
+
+
+def _release_projection(events: list[dict[str, object]]) -> dict[str, object]:
+    runs: list[dict[str, object]] = []
+    by_id: dict[str, dict[str, object]] = {}
+    for event in events:
+        payload = event["payload"]
+        assert isinstance(payload, dict)
+        if event["type"] == "release_run_registered":
+            record = {
+                "run_id": payload["run_id"],
+                "manifest_sha256": payload["manifest_sha256"],
+                "checkpoint": payload["checkpoint"],
+                "terminal": False,
+                "passed": None,
+                "aggregate_sha256": None,
+                "privacy_sha256": None,
+            }
+            runs.append(record)
+            by_id[str(payload["run_id"])] = record
+        elif event["type"] == "release_run_terminal":
+            record = by_id.get(str(payload.get("run_id")))
+            if record is None or record["terminal"] is True:
+                raise LedgerError("release terminal event has no pending registered run")
+            record.update(
+                {
+                    "terminal": True,
+                    "passed": payload["passed"],
+                    "aggregate_sha256": payload["aggregate_sha256"],
+                    "privacy_sha256": payload["privacy_sha256"],
+                }
+            )
+        else:
+            raise LedgerError("release lineage event type is invalid")
+    failures = sum(record["terminal"] and record["passed"] is False for record in runs)
+    return {
+        "schema_version": "cpe-quality-release-lineage.v4",
+        "event_count": len(events),
+        "last_event_sha256": events[-1]["event_sha256"] if events else None,
+        "runs": runs,
+        "terminal_full_runs": sum(bool(record["terminal"]) for record in runs),
+        "terminal_full_failures": failures,
+        "release_passed": any(record["terminal"] and record["passed"] is True for record in runs),
+        "release_blocked": failures >= _MAX_TERMINAL_FULL_RUNS,
+    }
+
+
+def _append_release_event_locked(
+    root: Path, event_type: str, payload: dict[str, object]
+) -> dict[str, object]:
+    events = _read_release_events(root)
+    body: dict[str, object] = {
+        "schema_version": _RELEASE_EVENT_SCHEMA,
+        "sequence": len(events) + 1,
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "type": event_type,
+        "payload": payload,
+        "previous_sha256": events[-1]["event_sha256"] if events else None,
+    }
+    event = {**body, "event_sha256": sha256_bytes(canonical_json(body))}
+    try:
+        with (root / _RELEASE_EVENTS_FILE).open("ab") as stream:
+            stream.write(canonical_json(event))
+            stream.flush()
+            os.fsync(stream.fileno())
+    except OSError as exc:
+        raise LedgerError(f"cannot append release lineage: {exc}") from exc
+    return event
+
+
+def replay_release_lineage(root: Path) -> dict[str, object]:
+    release_root = Path(root)
+    release_root.mkdir(parents=True, exist_ok=True)
+    with _locked_run(release_root):
+        projection = _release_projection(_read_release_events(release_root))
+        _atomic_json(release_root / _RELEASE_STATE_FILE, projection)
+        return projection
+
+
+def register_release_run(root: Path, manifest: dict[str, object]) -> dict[str, object]:
+    """Reserve one immutable release attempt before any provider execution."""
+
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != "cpe-quality-manifest.v4":
+        raise LedgerError("release lineage requires a v4 manifest")
+    run_id = manifest.get("run_id")
+    manifest_sha256 = manifest.get("manifest_sha256")
+    checkpoint = manifest.get("implementation_patch_sha256") or manifest.get(
+        "implementation_commit"
+    )
+    if (
+        not isinstance(run_id, str)
+        or not run_id
+        or not isinstance(manifest_sha256, str)
+        or _SHA256.fullmatch(manifest_sha256) is None
+        or not isinstance(checkpoint, str)
+        or re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", checkpoint) is None
+    ):
+        raise LedgerError("release manifest binding is invalid")
+    release_root = Path(root)
+    release_root.mkdir(parents=True, exist_ok=True)
+    with _locked_run(release_root):
+        events = _read_release_events(release_root)
+        projection = _release_projection(events)
+        runs = projection["runs"]
+        assert isinstance(runs, list)
+        if any(record.get("run_id") == run_id for record in runs):
+            raise LedgerError("release run is already registered")
+        if len(runs) >= _MAX_TERMINAL_FULL_RUNS or projection["release_passed"] is True:
+            raise LedgerError("release terminal full run limit reached")
+        if runs:
+            previous = runs[-1]
+            if previous.get("terminal") is not True or previous.get("passed") is not False:
+                raise LedgerError("corrected release run requires one terminal failure")
+            if previous.get("checkpoint") == checkpoint:
+                raise LedgerError("corrected release run requires a changed checkpoint")
+        event = _append_release_event_locked(
+            release_root,
+            "release_run_registered",
+            {
+                "run_id": run_id,
+                "manifest_sha256": manifest_sha256,
+                "checkpoint": checkpoint,
+            },
+        )
+        _atomic_json(
+            release_root / _RELEASE_STATE_FILE,
+            _release_projection(_read_release_events(release_root)),
+        )
+        return event
+
+
+def record_release_terminal(
+    root: Path,
+    *,
+    run_id: str,
+    passed: bool,
+    aggregate_sha256: str,
+    privacy_sha256: str,
+) -> dict[str, object]:
+    """Commit the post-aggregate and post-privacy terminal release verdict."""
+
+    if (
+        not isinstance(run_id, str)
+        or not run_id
+        or type(passed) is not bool
+        or _SHA256.fullmatch(aggregate_sha256 or "") is None
+        or _SHA256.fullmatch(privacy_sha256 or "") is None
+    ):
+        raise LedgerError("release terminal binding is invalid")
+    release_root = Path(root)
+    with _locked_run(release_root):
+        projection = _release_projection(_read_release_events(release_root))
+        runs = projection["runs"]
+        assert isinstance(runs, list)
+        target = next((record for record in runs if record.get("run_id") == run_id), None)
+        if target is None or target.get("terminal") is True:
+            raise LedgerError("release run is missing or already terminal")
+        event = _append_release_event_locked(
+            release_root,
+            "release_run_terminal",
+            {
+                "run_id": run_id,
+                "passed": passed,
+                "aggregate_sha256": aggregate_sha256,
+                "privacy_sha256": privacy_sha256,
+            },
+        )
+        _atomic_json(
+            release_root / _RELEASE_STATE_FILE,
+            _release_projection(_read_release_events(release_root)),
+        )
         return event
 
 
