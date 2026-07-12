@@ -38,6 +38,31 @@ def _json_copy(value: object) -> object:
     return json.loads(json.dumps(value, ensure_ascii=False))
 
 
+class _FrozenDict(dict):
+    """A JSON-compatible dict view that rejects mutation after construction."""
+
+    def _reject_mutation(self, *args: object, **kwargs: object) -> None:
+        del args, kwargs
+        raise TypeError("TaskContractV4 nested state is immutable")
+
+    __setitem__ = _reject_mutation
+    __delitem__ = _reject_mutation
+    clear = _reject_mutation
+    pop = _reject_mutation
+    popitem = _reject_mutation
+    setdefault = _reject_mutation
+    update = _reject_mutation
+    __ior__ = _reject_mutation
+
+
+def _deep_freeze(value: object) -> object:
+    if isinstance(value, dict):
+        return _FrozenDict({key: _deep_freeze(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_deep_freeze(item) for item in value)
+    return value
+
+
 @dataclass(frozen=True)
 class TaskContractV4:
     schema_version: str
@@ -57,6 +82,14 @@ class TaskContractV4:
     checkpoint_message: str
     source_hashes: dict[str, object]
     contract_sha256: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "spec_sections",
+            tuple(_deep_freeze(dict(section)) for section in self.spec_sections),
+        )
+        object.__setattr__(self, "source_hashes", _deep_freeze(dict(self.source_hashes)))
 
     def body(self) -> dict[str, object]:
         """Return the canonical digest body; the digest itself lives beside it."""
