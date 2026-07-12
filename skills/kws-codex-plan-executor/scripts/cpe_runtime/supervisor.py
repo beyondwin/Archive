@@ -96,7 +96,7 @@ def _known_ids(items: object, *fields: str) -> set[str]:
 def supervise(
     state: Mapping[str, object],
     *,
-    recovered_external_tasks: frozenset[str] = frozenset(),
+    recovered_external_waits: tuple[tuple[str, str], ...] = (),
     decisions: Iterable[AutonomyDecision] = (),
 ) -> SupervisionResult:
     if not isinstance(state, Mapping) or state.get("schema_version") != "4":
@@ -104,22 +104,40 @@ def supervise(
     run_id = state.get("run_id")
     if not isinstance(run_id, str) or not run_id:
         raise ValueError("run_id_required")
-    if not isinstance(recovered_external_tasks, frozenset) or any(
-        not isinstance(task_id, str) or not task_id for task_id in recovered_external_tasks
-    ):
-        raise ValueError("invalid_external_recovery_set")
     tasks = state.get("tasks")
     if not isinstance(tasks, dict):
         raise ValueError("invalid_task_state")
     if state.get("lifecycle") not in _RUN_LIFECYCLES:
         raise ValueError("invalid_run_lifecycle")
+    if state["lifecycle"] in {"completed", "failed"}:
+        return SupervisionResult(run_id, (), (), ())
     if any(not isinstance(task_id, str) or not task_id for task_id in tasks):
         raise ValueError("invalid_task_state")
+    if not isinstance(recovered_external_waits, tuple) or any(
+        not isinstance(item, tuple)
+        or len(item) != 2
+        or not isinstance(item[0], str)
+        or not item[0]
+        or not isinstance(item[1], str)
+        or not item[1]
+        for item in recovered_external_waits
+    ):
+        raise ValueError("invalid_external_recovery_reason")
+    if len({task_id for task_id, _reason in recovered_external_waits}) != len(
+        recovered_external_waits
+    ):
+        raise ValueError("duplicate_external_recovery_task")
+    recovered = dict(recovered_external_waits)
+    if any(
+        reason not in {"provider_transient", "quota_transient"}
+        for reason in recovered.values()
+    ):
+        raise ValueError("invalid_external_recovery_reason")
     if any(
         task_id not in tasks
         or not isinstance(tasks[task_id], dict)
         or tasks[task_id].get("status") != "waiting_external"
-        for task_id in recovered_external_tasks
+        for task_id in recovered
     ):
         raise ValueError("invalid_external_recovery_task")
 
@@ -145,10 +163,7 @@ def supervise(
         dependencies_complete = all(dependency in completed for dependency in dependencies)
         if status in {"pending", "ready"} and dependencies_complete:
             actions.append(SupervisionAction("schedule_task", run_id, task_id))
-        elif status == "waiting_external" and task_id in recovered_external_tasks:
-            wait_reason = task.get("wait_reason", state.get("wait_reason"))
-            if wait_reason not in {"provider_transient", "quota_transient"}:
-                raise ValueError("external_wait_not_resumable")
+        elif status == "waiting_external" and task_id in recovered:
             actions.append(
                 SupervisionAction(
                     "resume_external",
