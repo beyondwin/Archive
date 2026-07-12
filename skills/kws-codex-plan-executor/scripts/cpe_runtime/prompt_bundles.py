@@ -58,19 +58,33 @@ def _json_copy(value: object) -> object:
 
 def _contains_absolute_path(value: object) -> bool:
     if isinstance(value, Mapping):
-        return any(_contains_absolute_path(item) for item in value.values())
+        return any(
+            _contains_absolute_path(key) or _contains_absolute_path(item)
+            for key, item in value.items()
+        )
     if isinstance(value, (list, tuple)):
         return any(_contains_absolute_path(item) for item in value)
     if not isinstance(value, str):
         return False
-    if value.startswith(("$WORKTREE", "$RUN_DIR")):
-        return False
+    inspected = value
+    for approved_root in ("$WORKTREE", "$RUN_DIR"):
+        if value == approved_root:
+            return False
+        prefix = approved_root + "/"
+        if value.startswith(prefix):
+            inspected = value[len(prefix) :]
+            break
     return (
-        PurePosixPath(value).is_absolute()
-        or value.startswith("file:///")
-        or value.startswith(("~/", "$HOME/", "${HOME}/"))
-        or re.search(r"(?<![\w$])/(?:Users|home|private|tmp|var/folders)/", value) is not None
-        or re.search(r"(?:^|[\\/\s'\"])(?:secrets?|oracle|transcripts?)/", value, re.IGNORECASE)
+        PurePosixPath(inspected).is_absolute()
+        or inspected.startswith("file:///")
+        or inspected.startswith(("~/", "$HOME/", "${HOME}/"))
+        or re.search(r"(?<![\w$])/(?:Users|home|private|tmp|var/folders)/", inspected)
+        is not None
+        or re.search(
+            r"(?:^|[\\/\s'\"])(?:secrets?|oracle|transcripts?)/",
+            inspected,
+            re.IGNORECASE,
+        )
         is not None
     )
 
