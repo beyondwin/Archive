@@ -331,6 +331,70 @@ def _run_codex_home(run: LiveRun, source_home: Path, *, create: bool) -> Path:
     return target.resolve()
 
 
+def _recover_unstarted_v4_run(
+    run_dir: Path, manifest: dict[str, object]
+) -> LiveRun:
+    """Recover only an exact child ledger with no slot execution history."""
+
+    stored = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+    if canonical_json(stored) != canonical_json(manifest):
+        raise LiveRunnerError(
+            "registered_child_manifest_mismatch",
+            "existing child ledger uses a different registered manifest",
+        )
+    run = LiveRun(run_dir, stored, str(stored["manifest_sha256"]))
+    state = replay_run(run_dir)
+    if (
+        state.get("event_count") != 0
+        or state.get("completed_slots")
+        or state.get("failed_slots")
+        or state.get("active_slot") is not None
+    ):
+        raise LiveRunnerError(
+            "registered_child_already_started",
+            "existing child ledger has slot execution history and cannot restart",
+        )
+    return run
+
+
+def _initialize_recoverable_run_codex_home(
+    run: LiveRun, source_home: Path
+) -> Path:
+    """Idempotently finish auth-only home initialization before slot execution."""
+
+    if replay_run(run.run_dir).get("event_count") != 0:
+        raise LiveRunnerError(
+            "registered_child_already_started",
+            "auth initialization recovery is forbidden after slot execution starts",
+        )
+    source_auth = source_home.expanduser().resolve() / "auth.json"
+    if not source_auth.is_file() or source_auth.is_symlink():
+        raise LiveRunnerError(
+            "subscription_auth_unavailable",
+            "ChatGPT subscription auth.json is required for recovery",
+        )
+    target = run.run_dir / "codex-home"
+    target.mkdir(mode=0o700, exist_ok=True)
+    if target.is_symlink():
+        raise LiveRunnerError("run_codex_home_invalid", "recoverable Codex home is malformed")
+    for child in target.iterdir():
+        if child.name.startswith(".auth-") and child.name.endswith(".tmp"):
+            if not child.is_file() or child.is_symlink():
+                raise LiveRunnerError("run_codex_home_invalid", "auth temporary is unsafe")
+            child.unlink()
+        elif child.name != "auth.json":
+            raise LiveRunnerError("run_codex_home_invalid", "recoverable Codex home is malformed")
+    auth = target / "auth.json"
+    if not auth.exists():
+        temporary = target / f".auth-{uuid.uuid4().hex}.tmp"
+        shutil.copyfile(source_auth, temporary)
+        temporary.chmod(0o600)
+        os.replace(temporary, auth)
+    if not auth.is_file() or auth.is_symlink():
+        raise LiveRunnerError("run_codex_home_invalid", "recoverable auth file is invalid")
+    return target.resolve()
+
+
 def _preflight_codex(
     codex_binary: Path, required_models: tuple[str, ...] | None = None
 ):
@@ -576,8 +640,11 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
             binding,
             matrix=args.matrix,
         )
+    recovered_run = None
     if run_dir.exists():
-        raise LiveRunnerError("execution_root_not_fresh", f"run directory already exists: {run_dir}")
+        if recovered_manifest is None:
+            raise LiveRunnerError("execution_root_not_fresh", f"run directory already exists: {run_dir}")
+        recovered_run = _recover_unstarted_v4_run(run_dir, manifest)
     required_models = (
         ("gpt-5.6-sol", "gpt-5.6-terra")
         if manifest.get("schema_version") == "cpe-quality-manifest.v4"
@@ -597,12 +664,16 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
             "implementation_tree": str(manifest["implementation_tree"]),
             "implementation_patch_sha256": str(manifest["implementation_patch_sha256"]),
         })
-    run = (
+    run = recovered_run or (
         _register_and_create_v4_run(run_dir, manifest)
         if manifest.get("schema_version") == "cpe-quality-manifest.v4"
         else create_run(run_dir, manifest)
     )
-    run_home = _run_codex_home(run, attestation.codex_home, create=True)
+    run_home = (
+        _initialize_recoverable_run_codex_home(run, attestation.codex_home)
+        if manifest.get("schema_version") == "cpe-quality-manifest.v4"
+        else _run_codex_home(run, attestation.codex_home, create=True)
+    )
     context = RunContext(run, ROOT, attestation, _child_env(run_home), args.slot_timeout_seconds, False)
     descriptor = _acquire_run_execution_lock(run_dir)
     try:
@@ -649,6 +720,7 @@ def _aggregate(args: argparse.Namespace) -> dict[str, object]:
     record_release_terminal(
         run_dir.parent,
         run_id=str(aggregate["run_id"]),
+        manifest_sha256=str(aggregate["manifest_sha256"]),
         passed=passed,
         aggregate_sha256=aggregate_sha256,
         privacy_sha256=privacy_sha256,

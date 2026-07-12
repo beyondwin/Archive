@@ -344,7 +344,8 @@ def _release_projection(events: list[dict[str, object]]) -> dict[str, object]:
                 "terminal": False,
                 "passed": None,
                 "aggregate_sha256": None,
-                "privacy_sha256": None,
+                    "privacy_sha256": None,
+                    "terminal_manifest_sha256": None,
             }
             runs.append(record)
             by_id[str(payload["run_id"])] = record
@@ -358,6 +359,7 @@ def _release_projection(events: list[dict[str, object]]) -> dict[str, object]:
                     "passed": payload["passed"],
                     "aggregate_sha256": payload["aggregate_sha256"],
                     "privacy_sha256": payload["privacy_sha256"],
+                    "terminal_manifest_sha256": payload["manifest_sha256"],
                 }
             )
         else:
@@ -531,6 +533,7 @@ def record_release_terminal(
     root: Path,
     *,
     run_id: str,
+    manifest_sha256: str,
     passed: bool,
     aggregate_sha256: str,
     privacy_sha256: str,
@@ -541,6 +544,7 @@ def record_release_terminal(
         not isinstance(run_id, str)
         or not run_id
         or type(passed) is not bool
+        or _SHA256.fullmatch(manifest_sha256 or "") is None
         or _SHA256.fullmatch(aggregate_sha256 or "") is None
         or _SHA256.fullmatch(privacy_sha256 or "") is None
     ):
@@ -553,6 +557,8 @@ def record_release_terminal(
         target = next((record for record in runs if record.get("run_id") == run_id), None)
         if target is None or target.get("terminal") is True:
             raise LedgerError("release run is missing or already terminal")
+        if target.get("manifest_sha256") != manifest_sha256:
+            raise LedgerError("terminal aggregate manifest differs from registration")
         registered_manifest = _load_object(
             _release_manifest_path(release_root, run_id),
             f"registered release manifest {run_id}",
@@ -564,6 +570,7 @@ def record_release_terminal(
             "release_run_terminal",
             {
                 "run_id": run_id,
+                "manifest_sha256": manifest_sha256,
                 "passed": passed,
                 "aggregate_sha256": aggregate_sha256,
                 "privacy_sha256": privacy_sha256,

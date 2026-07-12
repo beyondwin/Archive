@@ -39,7 +39,7 @@ from live_migration.ledger import (
     replay_release_lineage,
 )
 from live_migration.fixtures import materialize_fixture
-from live_migration.runner import execute_v4_slots, render_prompt
+from live_migration.runner import LiveRunnerError, execute_v4_slots, render_prompt
 
 
 ROOT = Path(__file__).resolve().parent
@@ -752,14 +752,30 @@ def check_release_lineage_preserves_corrected_run_cap() -> None:
         record_release_terminal(
             root,
             run_id="initial",
+            manifest_sha256=str(first_manifest["manifest_sha256"]),
             passed=False,
             aggregate_sha256="a" * 64,
             privacy_sha256="b" * 64,
         )
         register_release_run(root, second_manifest)
+        before_mismatch = replay_release_lineage(root)
+        expect_error(
+            lambda: record_release_terminal(
+                root,
+                run_id="corrected",
+                manifest_sha256="f" * 64,
+                passed=False,
+                aggregate_sha256="c" * 64,
+                privacy_sha256="d" * 64,
+            ),
+            LedgerError,
+            "terminal aggregate from a different manifest must not append",
+        )
+        assert replay_release_lineage(root) == before_mismatch
         record_release_terminal(
             root,
             run_id="corrected",
+            manifest_sha256=str(second_manifest["manifest_sha256"]),
             passed=False,
             aggregate_sha256="c" * 64,
             privacy_sha256="d" * 64,
@@ -822,6 +838,34 @@ def check_registration_crash_is_idempotently_recoverable() -> None:
         assert recovered.run_dir == run_dir
         after_recovery = replay_release_lineage(run_dir.parent)
         assert after_recovery == after_crash
+        assert (
+            live_model_runner._recover_unstarted_v4_run(run_dir, manifest).manifest
+            == manifest
+        )
+        source_home = Path(raw) / "source-auth"
+        source_home.mkdir()
+        (source_home / "auth.json").write_text("{}\n", encoding="utf-8")
+        partial_home = run_dir / "codex-home"
+        partial_home.mkdir(mode=0o700)
+        (partial_home / ".auth-injected.tmp").write_text("partial", encoding="utf-8")
+        initialized = live_model_runner._initialize_recoverable_run_codex_home(
+            recovered, source_home
+        )
+        assert initialized == partial_home.resolve()
+        assert (partial_home / "auth.json").is_file()
+        append_event(
+            recovered,
+            "slot_started",
+            {
+                "treatment_id": manifest["slots"][0]["treatment_id"],
+                "case_id": manifest["slots"][0]["case_id"],
+            },
+        )
+        expect_error(
+            lambda: live_model_runner._recover_unstarted_v4_run(run_dir, manifest),
+            LiveRunnerError,
+            "recovery must stop after any slot attempt event",
+        )
 
 
 def check_success_is_terminal_only_after_aggregate_and_privacy() -> None:
