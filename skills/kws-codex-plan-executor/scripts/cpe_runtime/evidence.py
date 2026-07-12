@@ -84,6 +84,16 @@ def put_json(run_dir: Path, kind: str, payload: object) -> EvidenceRef:
     return EvidenceRef(kind, relative.as_posix(), digest)
 
 
+def put_method_evidence(run_dir: Path, evidence: object) -> EvidenceRef:
+    """Persist only the canonical, sanitized method-evidence projection."""
+
+    from .command_evidence import MethodEvidence, method_evidence_payload
+
+    if not isinstance(evidence, MethodEvidence):
+        raise EvidenceError("invalid method evidence")
+    return put_json(run_dir, "method_evidence", method_evidence_payload(evidence))
+
+
 def coerce_ref(value: EvidenceRef | dict[str, object]) -> EvidenceRef:
     if isinstance(value, EvidenceRef):
         return value

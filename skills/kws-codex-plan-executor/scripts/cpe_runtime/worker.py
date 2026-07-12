@@ -45,7 +45,7 @@ class WorkerResult:
 
 REQUIRED_RESULT_FIELDS = {
     "status", "summary", "changed_files", "findings", "evidence_refs",
-    "missing_evidence", "verification", "verdict",
+    "missing_evidence", "verification", "verdict", "method_evidence_ref",
 }
 ALLOWED_RESULT_FIELDS = REQUIRED_RESULT_FIELDS | {"root_cause_key", "failure_category"}
 DOCUMENTED_EVENT_TYPES = {
@@ -65,6 +65,7 @@ def _validate_result(payload: object, *, role: str, revision: int) -> dict[str, 
 
     if not isinstance(payload, dict):
         raise WorkerError("worker result must be an object")
+    payload.setdefault("method_evidence_ref", None)
     missing = REQUIRED_RESULT_FIELDS - payload.keys()
     extra = payload.keys() - ALLOWED_RESULT_FIELDS
     if missing or extra:
@@ -90,6 +91,61 @@ def _validate_result(payload: object, *, role: str, revision: int) -> dict[str, 
         payload["verdict"] = normalized_verdict
     elif verdict is not None:
         raise WorkerError(f"role {normalized_role} cannot issue a verdict")
+    return payload
+
+
+def _request_task_type(request: WorkerRequest) -> str:
+    from .task_contracts import TASK_TYPES
+
+    if not request.packet_path:
+        raise WorkerError("method_contract_packet_unavailable")
+    try:
+        raw = Path(request.packet_path).read_bytes()
+        if hashlib.sha256(raw).hexdigest() != request.packet_sha256:
+            raise WorkerError("method_contract_packet_digest_mismatch")
+        packet = json.loads(raw)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise WorkerError("method_contract_packet_unavailable") from exc
+    contract = packet.get("task_contract") if isinstance(packet, dict) else None
+    task_type = contract.get("task_type") if isinstance(contract, dict) else None
+    if not isinstance(task_type, str) or task_type not in TASK_TYPES:
+        raise WorkerError("method_contract_task_type_missing")
+    return task_type
+
+
+def _method_evidence_run_dir(request: WorkerRequest) -> Path:
+    packet = Path(request.packet_path).expanduser().resolve()
+    if packet.parent.name != "task-packets" or packet.parent.parent.name != "artifacts":
+        raise WorkerError("method_evidence_storage_unavailable")
+    return packet.parents[2]
+
+
+def _bind_method_evidence(
+    payload: dict[str, object], request: WorkerRequest, raw_events: str
+) -> dict[str, object]:
+    from .attempt_controller import canonical_role
+    from .command_evidence import MethodEvidenceError, build_method_evidence, normalize_codex_items
+    from .evidence import put_method_evidence
+
+    if payload.get("method_evidence_ref") is not None:
+        raise WorkerError("fabricated_method_evidence")
+    payload["method_evidence_ref"] = None
+    if payload.get("status") != "completed" or canonical_role(request.attempt_kind) not in {
+        "implementation",
+        "repair",
+    }:
+        return payload
+    task_type = _request_task_type(request)
+    if task_type != "tdd_implementation":
+        return payload
+    try:
+        decoded = json.loads(raw_events)
+        events = decoded if isinstance(decoded, list) else []
+        evidence = build_method_evidence(task_type, normalize_codex_items(events))
+    except (json.JSONDecodeError, MethodEvidenceError) as exc:
+        raise WorkerError(f"method_contract_failed:{exc}") from exc
+    ref = put_method_evidence(_method_evidence_run_dir(request), evidence)
+    payload["method_evidence_ref"] = ref.as_dict()
     return payload
 
 
@@ -281,6 +337,7 @@ class Worker:
                         role=request.attempt_kind,
                         revision=request.worktree_revision,
                     )
+                    payload = _bind_method_evidence(payload, request, raw_events)
                     attestation = attest_launcher(
                         route,
                         argv,
