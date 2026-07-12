@@ -9,6 +9,10 @@ from pathlib import PurePosixPath
 from .model_policy import policy_hash, policy_payload
 
 
+RUN_SCHEMA_VERSION = "4"
+COMPATIBILITY_EPOCH = "cpe-v4"
+
+
 def canonical_hash(payload: object) -> str:
     raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(raw).hexdigest()
@@ -60,6 +64,7 @@ def create_manifest(
     docs: list[Path] | None = None,
     source_head: str | None = None,
     source_status: list[str] | None = None,
+    runtime_commit: str | None = None,
 ) -> dict:
     if not run_id or "/" in run_id or run_id in {".", ".."}:
         raise ValueError("invalid run_id")
@@ -67,7 +72,7 @@ def create_manifest(
     if any(not item for item in ids) or len(ids) != len(set(ids)):
         raise ValueError("task graph requires unique task ids")
     return {
-        "schema_version": "3",
+        "schema_version": RUN_SCHEMA_VERSION,
         "run_id": run_id,
         "mode": mode,
         "workspace_ref": relative_ref(workspace),
@@ -82,6 +87,10 @@ def create_manifest(
         "pricing_snapshot": file_record(pricing_snapshot),
         "pricing_snapshot_hash": sha256_file(pricing_snapshot),
         "source_git": {"head": source_head, "status": list(source_status or [])},
+        "runtime": {
+            "runtime_commit": runtime_commit or source_head or "0" * 40,
+            "compatibility_epoch": COMPATIBILITY_EPOCH,
+        },
         "task_packets": [],
     }
 
@@ -98,12 +107,12 @@ def write_manifest(path: Path, manifest: dict) -> None:
 
 def load_manifest(path: Path) -> dict:
     manifest = json.loads(path.read_text(encoding="utf-8"))
-    if manifest.get("schema_version") != "3":
-        raise ValueError("unsupported_schema")
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != RUN_SCHEMA_VERSION:
+        raise ValueError("unsupported_run_schema")
     required = {
         "run_id", "workspace_ref", "execution_worktree_ref", "plan", "task_graph",
         "plan_graph_hash", "model_policy", "model_policy_hash", "pricing_snapshot",
-        "pricing_snapshot_hash",
+        "pricing_snapshot_hash", "runtime",
     }
     if not required.issubset(manifest):
         raise ValueError("manifest_invalid")
@@ -119,7 +128,18 @@ def load_verified_manifest(path: Path) -> dict:
 
 
 def validate_manifest(manifest: dict) -> list[str]:
+    if not isinstance(manifest, dict) or manifest.get("schema_version") != RUN_SCHEMA_VERSION:
+        return ["unsupported_run_schema"]
     errors: list[str] = []
+    runtime = manifest.get("runtime")
+    if (
+        not isinstance(runtime, dict)
+        or runtime.get("compatibility_epoch") != COMPATIBILITY_EPOCH
+        or not isinstance(runtime.get("runtime_commit"), str)
+        or len(runtime["runtime_commit"]) != 40
+        or any(character not in "0123456789abcdef" for character in runtime["runtime_commit"])
+    ):
+        errors.append("runtime_identity_invalid")
     if manifest.get("plan_graph_hash") != canonical_hash(manifest.get("task_graph")):
         errors.append("manifest_hash_mismatch")
     if manifest.get("model_policy") != policy_payload() or manifest.get("model_policy_hash") != policy_hash():

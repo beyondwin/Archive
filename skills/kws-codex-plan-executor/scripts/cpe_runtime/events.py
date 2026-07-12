@@ -9,18 +9,24 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
-WRITABLE_EVENT_TYPES = frozenset({
-    "run.status_changed", "task.status_changed", "task.retry_scheduled",
-    "attempt.started", "attempt.completed", "verdict.recorded",
-    "evidence.attached", "worktree.revision_recorded",
-    "blocker.opened", "blocker.updated", "blocker.resolved",
-    "repair.applied", "context.updated", "completion.recorded",
-})
-READ_COMPAT_EVENT_TYPES = WRITABLE_EVENT_TYPES | {"attempt.recorded"}
-
-# Kept as a read-side compatibility alias for callers that have not yet moved
-# to the explicit writable/read-compatible names.
-EVENT_TYPES = READ_COMPAT_EVENT_TYPES
+EVENT_TYPES = frozenset(
+    {
+        "run.status_changed",
+        "task.status_changed",
+        "attempt.started",
+        "attempt.completed",
+        "verdict.recorded",
+        "evidence.attached",
+        "candidate.checkpoint_recorded",
+        "task.checkpoint_verified",
+        "blocker.opened",
+        "blocker.resolved",
+        "decision.recorded",
+        "notification.requested",
+        "runtime.upgraded",
+        "completion.recorded",
+    }
+)
 
 
 def canonical_event_hash(payload: dict) -> str:
@@ -38,7 +44,7 @@ def _fsync_dir(path: Path) -> None:
 
 
 def append_event(path: Path, unsigned: dict) -> dict:
-    if unsigned.get("type") not in WRITABLE_EVENT_TYPES:
+    if unsigned.get("type") not in EVENT_TYPES:
         raise ValueError("unknown event type")
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+", encoding="utf-8") as handle:
@@ -91,7 +97,7 @@ def validate_chain(events: list[dict]) -> list[str]:
         seen.add(event.get("event_id"))
         if event.get("previous_hash") != previous:
             errors.append("invalid predecessor")
-        if event.get("type") not in READ_COMPAT_EVENT_TYPES or event.get("actor") != "cpe-runtime":
+        if event.get("type") not in EVENT_TYPES or event.get("actor") != "cpe-runtime":
             errors.append("invalid event envelope")
         actual = event.get("hash")
         body = dict(event)

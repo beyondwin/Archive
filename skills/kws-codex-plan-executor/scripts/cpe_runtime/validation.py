@@ -88,6 +88,11 @@ def _context(run_dir: Path, candidate_state: dict | None) -> dict[str, object]:
         "artifact_payloads": {},
         "revision_validation": None,
     }
+    if candidate_state is not None and (
+        not isinstance(candidate_state, dict) or candidate_state.get("schema_version") != "4"
+    ):
+        context["candidate_error"] = "unsupported_run_schema"
+        return context
     try:
         manifest = load_manifest(run_dir / "run_manifest.json")
     except ValueError as exc:
@@ -147,10 +152,10 @@ def _check_schema(context: dict[str, object]) -> tuple[list[str], list[str]]:
     if context.get("candidate_error"):
         return [str(context["candidate_error"])], []
     marker = _schema_marker(context["run_dir"])
-    if marker is not None and marker != "3":
-        return ["unsupported_schema"], []
+    if marker is not None and marker != "4":
+        return ["unsupported_run_schema"], []
     state = context.get("state")
-    if isinstance(state, dict) and state.get("schema_version") != "3":
+    if isinstance(state, dict) and state.get("schema_version") != "4":
         return ["state_schema_invalid"], []
     return [], []
 
@@ -478,7 +483,7 @@ def _revision_validation(context: dict[str, object]) -> dict[str, object]:
 def _check_manifest(context: dict[str, object]) -> tuple[list[str], list[str]]:
     error = context.get("manifest_error")
     if error:
-        return ["unsupported_schema" if error == "unsupported_schema" else str(error)], []
+        return [str(error)], []
     manifest = context.get("manifest")
     return (validate_manifest(manifest) if isinstance(manifest, dict) else ["manifest_invalid"]), []
 
@@ -1270,8 +1275,8 @@ def _validate(
     classification = (
         "valid"
         if not errors
-        else "unsupported_schema"
-        if errors == ["unsupported_schema"]
+        else "unsupported_run_schema"
+        if errors == ["unsupported_run_schema"]
         else "invalid"
     )
     return ValidationReport(classification, not errors, errors, warnings, checks)
