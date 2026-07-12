@@ -1572,7 +1572,116 @@ def assert_waiting_user_authority_and_runtime_repair_slot(root: Path) -> None:
     ]
 
 
+def assert_repaired_candidate_review_resume_is_durable(root: Path) -> None:
+    task = contract()
+    repo, run_dir, kernel, fixtures = initialize_real_runtime(
+        root, (task,), {"T1": [changes("defect:review-resume"), passed()]}
+    )
+    fixture = fixtures["T1"]
+    original_transition = kernel.transition
+
+    def crash_after_selection_resolved(command: Transition) -> dict:
+        state = original_transition(command)
+        if (
+            command.event_type == "decision.recorded"
+            and command.payload.get("decision_kind") == "selected_repair_resolved"
+        ):
+            raise SystemExit("fixture crash after repaired candidate acceptance")
+        return state
+
+    kernel.transition = crash_after_selection_resolved  # type: ignore[method-assign]
+    try:
+        run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
+    except SystemExit as exc:
+        assert str(exc) == "fixture crash after repaired candidate acceptance"
+    else:
+        raise AssertionError("expected repaired-candidate acceptance crash")
+    finally:
+        kernel.transition = original_transition  # type: ignore[method-assign]
+
+    assert kernel.state["tasks"]["T1"]["status"] == "reviewing"
+    assert kernel.state["selected_repairs"] == {}
+    resume = select_v4_resume(kernel.state, "T1")
+    assert resume.action == "schedule" and resume.phase == "task_review", resume
+    assert fixture.implementation_calls == 1
+    assert fixture.repair_calls == 1
+
+    resumed = run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
+    assert resumed.status == "completed", resumed
+    assert fixture.implementation_calls == 1
+    assert fixture.repair_calls == 1
+    assert len(
+        [
+            item
+            for item in kernel.state["attempts"]
+            if item.get("task_id") == "T1" and item.get("kind") == "implementation"
+        ]
+    ) == 1
+
+
+def assert_review_persistence_privacy_boundary(root: Path) -> None:
+    unsafe_findings = {
+        "raw-transcript-value": {"notes": "raw transcript: complete model conversation"},
+        "raw-transcript-key": {"transcript": "private-key-transcript-payload"},
+        "credential-value": {"notes": "sk-live-fixture-secret-value"},
+        "credential-key": {"api_key": "private-key-credential-payload"},
+        "home-path-value": {"notes": "/Users/example/private/result.json"},
+        "home-path-key": {"/Users/example/private/result.json": "private-home-key-payload"},
+        "oracle-path-value": {"notes": "oracle/expected.json"},
+        "oracle-path-key": {"oracle/expected.json": "private-oracle-key-payload"},
+        "raw-command-value": {"notes": "raw command output: all stdout and stderr"},
+        "raw-command-key": {"raw_command_output": "private-command-key-payload"},
+    }
+    for name, extra in unsafe_findings.items():
+        finding = dict(changes(f"privacy:{name}")["findings"][0])
+        finding["nested"] = {"items": [extra]}
+        verdict = {
+            "status": "changes_requested",
+            "findings": [finding],
+            "missing_evidence": [],
+            "worktree_revision": 0,
+        }
+        task = contract()
+        repo, run_dir, kernel, fixtures = initialize_real_runtime(
+            root / name, (task,), {"T1": [verdict, passed()]}
+        )
+        cycle = run_task_cycle_v4(
+            task, fixtures["T1"].lifecycle(), kernel, repo, run_dir
+        )
+        assert cycle.status == "blocked", (name, cycle)
+        assert cycle.reason == "evidence_integrity_failure", (name, cycle)
+        encoded = "\n".join(
+            path.read_text(encoding="utf-8", errors="replace")
+            for path in run_dir.rglob("*")
+            if path.is_file()
+        )
+        for value in extra.values():
+            assert str(value) not in encoded, (name, value)
+
+    benign = changes("review:generic", category="review_scope_expansion")
+    benign_finding = benign["findings"][0]
+    benign_finding["nested"] = {
+        "secretary": "oracle-notes/expected.json",
+        "transcripts.md/session.json": "command output summary",
+    }
+    task = contract()
+    repo, run_dir, kernel, fixtures = initialize_real_runtime(
+        root / "benign-near-matches", (task,), {"T1": [benign]}
+    )
+    cycle = run_task_cycle_v4(task, fixtures["T1"].lifecycle(), kernel, repo, run_dir)
+    assert cycle.status == "completed", cycle
+    assert kernel.state["backlog"][0]["finding"]["nested"] == benign_finding["nested"]
+
+
 def main() -> int:
+    public_cli = subprocess.run(
+        [sys.executable, str(SKILL / "scripts" / "cpe.py"), "--help"],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    assert public_cli.returncode == 0 and "supervise" in public_cli.stdout
     with tempfile.TemporaryDirectory(prefix="cpe-scheduler-v4-") as raw:
         root = Path(raw)
         checks = {
@@ -1590,6 +1699,8 @@ def main() -> int:
             "E-canonical-contract-packet-binding": lambda: assert_canonical_contract_and_packet_binding(root / "canonical-binding"),
             "F-selected-repair-resume": lambda: assert_selected_repair_survives_resume(root / "selected-repair"),
             "G-authority-runtime-repair-slot": lambda: assert_waiting_user_authority_and_runtime_repair_slot(root / "authority-runtime"),
+            "H-repaired-candidate-review-resume": lambda: assert_repaired_candidate_review_resume_is_durable(root / "review-resume"),
+            "I-review-persistence-privacy": lambda: assert_review_persistence_privacy_boundary(root / "review-privacy"),
         }
         failures: dict[str, str] = {}
         for name, check in checks.items():

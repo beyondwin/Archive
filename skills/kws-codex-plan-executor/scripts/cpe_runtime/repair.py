@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import stat
 import subprocess
 import shutil
@@ -28,6 +29,66 @@ SAFE_ACTIONS = {
     "resolve_blocker",
     "schedule_retry",
 }
+
+_PRIVATE_MAPPING_KEYS = frozenset(
+    {
+        "api_key",
+        "access_token",
+        "auth_token",
+        "client_secret",
+        "credential",
+        "credentials",
+        "password",
+        "private_key",
+        "raw_command_output",
+        "raw_transcript",
+        "secret",
+        "secrets",
+        "token",
+        "transcript",
+    }
+)
+_PRIVATE_PATH_SEGMENT = re.compile(
+    r"(?:^|[/\\])(?:credentials?|oracle|secrets?|transcripts?)(?:[/\\]|$)",
+    re.IGNORECASE,
+)
+_USER_HOME_PATH = re.compile(r"(?:^|\s)/Users/[^/\s]+/|(?:^|\s)/home/[^/\s]+/")
+_CREDENTIAL_VALUE = re.compile(
+    r"(?:^|\s)(?:sk-[A-Za-z0-9_-]{8,}|gh[oprsu]_[A-Za-z0-9]{8,}|Bearer\s+\S+)",
+    re.IGNORECASE,
+)
+
+
+def require_privacy_safe_review_payload(payload: object) -> None:
+    """Reject review material that cannot cross the durable privacy boundary."""
+
+    def visit(value: object) -> None:
+        if isinstance(value, dict):
+            for key, nested in value.items():
+                if not isinstance(key, str):
+                    raise ValueError("review_privacy_unsafe")
+                normalized = re.sub(r"[^a-z0-9]+", "_", key.lower()).strip("_")
+                if (
+                    normalized in _PRIVATE_MAPPING_KEYS
+                    or _PRIVATE_PATH_SEGMENT.search(key)
+                    or _USER_HOME_PATH.search(key)
+                ):
+                    raise ValueError("review_privacy_unsafe")
+                visit(nested)
+            return
+        if isinstance(value, (list, tuple)):
+            for nested in value:
+                visit(nested)
+            return
+        if isinstance(value, str) and (
+            _PRIVATE_PATH_SEGMENT.search(value)
+            or _USER_HOME_PATH.search(value)
+            or _CREDENTIAL_VALUE.search(value)
+            or re.search(r"\braw\s+(?:command\s+output|transcript)\b", value, re.IGNORECASE)
+        ):
+            raise ValueError("review_privacy_unsafe")
+
+    visit(payload)
 
 
 @dataclass(frozen=True)
@@ -114,6 +175,9 @@ def record_selected_repair(
     review_scope_sha256: str,
 ) -> dict[str, object]:
     """Persist the exact semantic repair selection before model dispatch."""
+
+    require_privacy_safe_review_payload(verdict)
+    require_privacy_safe_review_payload(finding)
 
     run_id = kernel.state.get("run_id")
     candidate = {
@@ -305,6 +369,7 @@ def record_backlog(
     root_cause_key: str,
     finding: dict[str, object],
 ) -> None:
+    require_privacy_safe_review_payload(finding)
     item = {
         "task_id": task_id,
         "category": category,

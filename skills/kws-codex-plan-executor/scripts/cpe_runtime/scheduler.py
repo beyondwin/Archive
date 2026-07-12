@@ -1492,7 +1492,10 @@ def _bound_review_verdict(
 def _record_v4_verdict(
     kernel: Kernel, task_id: str, attempt_id: str, verdict: dict[str, object]
 ) -> None:
+    from .repair import require_privacy_safe_review_payload
+
     payload = _recorded_v4_verdict(verdict)
+    require_privacy_safe_review_payload(payload)
     kernel.transition(
         Transition(
             "verdict.recorded",
@@ -1916,7 +1919,7 @@ def run_task_cycle_v4(
     if task_state["status"] == "pending":
         _task_transition(kernel, task_id, "ready")
     resume = select_v4_resume(kernel.state, task_id)
-    phase = resume.phase if resume.action.startswith("resume") else "implementation"
+    phase = resume.phase or "implementation"
     if phase not in {"implementation", "task_review", "repair", "verification"}:
         phase = "implementation"
     controller = ModelAttemptController(kernel)
@@ -2109,9 +2112,14 @@ def run_task_cycle_v4(
             except (RuntimeError, ValueError) as exc:
                 if not restore_or_block(str(getattr(candidate, "commit"))):
                     return finish("blocked", "blocked", "evidence_integrity_failure")
-                _block_task(kernel, task_id, "review_evidence_invalid")
+                reason = (
+                    "evidence_integrity_failure"
+                    if str(exc) == "review_privacy_unsafe"
+                    else "review_evidence_invalid"
+                )
+                _block_task(kernel, task_id, reason)
                 phases.append("blocked")
-                return finish("blocked", "blocked", str(exc))
+                return finish("blocked", "blocked", reason)
 
             status = str(verdict["status"])
             if status == "passed":
@@ -2323,6 +2331,7 @@ def run_task_cycle_v4(
                     tuple(_latest_findings(kernel, task_id)),
                     boundaries,
                 )
+                _task_transition(kernel, task_id, "reviewing")
                 resolve_selected_repair(
                     kernel,
                     task_id=task_id,
@@ -2487,6 +2496,12 @@ def run_tasks_v4(
         if isinstance(task, dict) and task.get("status") == "waiting_user"
     }
     for contract in ordered:
+        if any(
+            kernel.state.get("tasks", {}).get(dependency, {}).get("status")
+            != "completed"
+            for dependency in contract.dependencies
+        ):
+            continue
         if set(contract.dependencies).intersection(externally_waiting | awaiting_user):
             continue
         if contract.task_id in awaiting_user:

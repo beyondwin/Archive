@@ -160,7 +160,15 @@ def select_v4_resume(state: dict, task_id: str) -> V4ResumeDecision:
     active = _active_v4_attempts(state, task_id)
     if task.get("status") != "waiting_external":
         if not active:
-            return V4ResumeDecision("schedule", task_id)
+            phase_by_status = {
+                "implementing": "implementation",
+                "reviewing": "task_review",
+                "repairing": "repair",
+                "verifying": "verification",
+            }
+            return V4ResumeDecision(
+                "schedule", task_id, phase=phase_by_status.get(str(task.get("status")))
+            )
         if len(active) > 1:
             raise ValueError("active_model_attempt_ambiguous")
         attempt = active[0]

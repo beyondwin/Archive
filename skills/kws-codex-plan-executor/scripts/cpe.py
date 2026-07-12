@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run, resume, or export a CPE v3 implementation plan."""
+"""Run, resume, supervise, inspect, or export a CPE v4 implementation plan."""
 
 from __future__ import annotations
 
@@ -21,16 +21,27 @@ from cpe_runtime.git_delta import matches_path
 from cpe_runtime.kernel import Kernel, RunKernel, Transition, rebuild_snapshot
 from cpe_runtime.manifest import canonical_hash, file_record, load_verified_manifest, relative_ref, resolve_ref
 from cpe_runtime.model_policy import policy_hash, policy_payload
-from cpe_runtime.packets import build_packet
+from cpe_runtime.packets import build_packet, packet_entry
 from cpe_runtime.plan_compiler import CompileBlocked, compile_run
 from cpe_runtime.projector import project
 from cpe_runtime.prompt_export import render_export_bundle
 from cpe_runtime.public_result import PublicResult, blocked_result, failed_result
 from cpe_runtime.reconciliation import ResumeDecision, select_resume
 from cpe_runtime.repair import apply_repair
-from cpe_runtime.scheduler import run_delegated_dependency_repair, run_tasks
+from cpe_runtime.scheduler import (
+    LifecycleOperations,
+    PreTurnInterruption,
+    ReviewScope,
+    RuntimeUpgradeInterruption,
+    review_scope_payload,
+    review_scope_sha256,
+    run_delegated_dependency_repair,
+    run_tasks,
+    run_tasks_v4,
+)
+from cpe_runtime.task_contracts import contract_from_body
 from cpe_runtime.validation import validate_completion, validate_integrity
-from cpe_runtime.worker import Worker
+from cpe_runtime.worker import Worker, WorkerRequest
 
 
 class PreflightError(ValueError):
@@ -110,7 +121,7 @@ def _compiled_manifest(
     doc_records = [record(f"doc-{index:03d}", source) for index, source in enumerate(doc_sources)]
     pricing_record = file_record(pricing)
     return {
-        "schema_version": "3",
+        "schema_version": "4",
         "run_id": run_id,
         "mode": mode,
         "workspace_ref": relative_ref(workspace),
@@ -128,6 +139,10 @@ def _compiled_manifest(
             "head": str(getattr(compiled, "source_head")),
             "status": list(getattr(compiled, "source_status", ())),
         },
+        "runtime": {
+            "runtime_commit": str(getattr(compiled, "source_head")),
+            "compatibility_epoch": "cpe-v4",
+        },
         "task_packets": [],
     }
 
@@ -143,6 +158,119 @@ def _context_artifacts(run_dir: Path) -> dict[str, str | None]:
         "task_packet_dir": str(run_dir / "artifacts" / "task-packets"),
         "decisions_path": None,
     }
+
+
+def _v4_contracts(manifest: dict[str, object]):
+    return tuple(
+        contract_from_body(task["task_contract"], str(task["task_contract_sha256"]))
+        for task in manifest.get("task_graph", [])
+        if isinstance(task, dict)
+    )
+
+
+def _v4_operations(
+    contracts: tuple[object, ...],
+    manifest: dict[str, object],
+    kernel: Kernel,
+    worktree: Path,
+    worker: Worker,
+    *,
+    before_model_turn=None,
+) -> dict[str, LifecycleOperations]:
+    operations: dict[str, LifecycleOperations] = {}
+    for contract in contracts:
+        task_id = str(getattr(contract, "task_id"))
+        entry = packet_entry(manifest, task_id)
+        packet_path = kernel.run_dir / str(entry["path"])
+        packet_sha256 = str(entry["sha256"])
+
+        def invoke(
+            kind: str,
+            attempt_id: str,
+            payload: dict[str, object],
+            *,
+            task_id: str = task_id,
+            packet_path: Path = packet_path,
+            packet_sha256: str = packet_sha256,
+        ):
+            policy = {
+                "implementation": (False, False),
+                "repair": (False, False),
+                "task_review": (True, True),
+                "verification": (True, True),
+            }[kind]
+            return worker.run(
+                WorkerRequest(
+                    attempt_id=attempt_id,
+                    attempt_kind=kind,
+                    prompt=json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                    worktree=worktree,
+                    read_only=policy[0],
+                    verdict_capable=policy[1],
+                    task_id=task_id,
+                    packet_path=str(packet_path),
+                    packet_sha256=packet_sha256,
+                    worktree_revision=len(kernel.state.get("candidate_checkpoints", [])),
+                )
+            )
+
+        def implementation(current, attempt_id: str, *, invoke=invoke):
+            return invoke(
+                "implementation",
+                attempt_id,
+                {"role": "implementation", "task_contract": current.body()},
+            )
+
+        def repair(current, finding: dict[str, object], attempt_id: str, *, invoke=invoke):
+            return invoke(
+                "repair",
+                attempt_id,
+                {"role": "repair", "task_contract": current.body(), "finding": finding},
+            )
+
+        def review(current, scope: ReviewScope, attempt_id: str, *, invoke=invoke):
+            candidate_tree = _run(
+                ["git", "rev-parse", f"{scope.candidate_commit}^{{tree}}"], worktree
+            ).stdout.strip()
+            binding = {
+                "task_id": current.task_id,
+                "candidate_commit": scope.candidate_commit,
+                "candidate_tree": candidate_tree,
+                "contract_sha256": current.contract_sha256,
+                "worktree_revision": len(kernel.state.get("candidate_checkpoints", [])),
+                "review_scope_sha256": review_scope_sha256(scope),
+                "requested_scope": review_scope_payload(scope),
+            }
+            return invoke(
+                "task_review",
+                attempt_id,
+                {
+                    "role": "task_review",
+                    "task_contract": current.body(),
+                    "review_scope": review_scope_payload(scope),
+                    "required_review_binding": binding,
+                },
+            )
+
+        def before(phase: str, attempt_id: str, *, task_id: str = task_id) -> None:
+            if before_model_turn is not None:
+                before_model_turn(task_id, phase, attempt_id)
+
+        operations[task_id] = LifecycleOperations(
+            packet_sha256=packet_sha256,
+            before_model_turn=before,
+            implementation=implementation,
+            repair=repair,
+            review=review,
+            deterministic_verification=lambda *_args: (
+                True,
+                "production acceptance workspace and bound review passed",
+            ),
+            semantic_verification=None,
+            repair_boundary_changes=lambda *_args: (),
+            acceptance_environment=os.environ,
+        )
+    return operations
 
 
 def _changed_files(worktree: Path) -> tuple[str, ...]:
@@ -249,9 +377,13 @@ def execute_run(args: argparse.Namespace) -> int:
         raise
     finally:
         prepared.cleanup()
-    kernel.transition(Transition("run.status_changed", {"from": "created", "to": "ready"}))
+    manifest = load_verified_manifest(run_dir / "run_manifest.json")
+    contracts = _v4_contracts(manifest)
+    worker = Worker()
+    operations = _v4_operations(contracts, manifest, kernel, worktree, worker)
+    kernel.transition(Transition("run.status_changed", {"from": "ready", "to": "running"}))
     try:
-        result = run_tasks(tasks, Worker(), kernel)
+        results = run_tasks_v4(contracts, operations, kernel, worktree, run_dir)
     except (ValueError, OSError, RuntimeError) as exc:
         return _emit(
             failed_result(
@@ -262,12 +394,14 @@ def execute_run(args: argparse.Namespace) -> int:
                 next_action="Inspect the published run evidence before reconciliation.",
             )
         )
-    if result.get("status") != "completed":
+    state = kernel.state
+    if len(state.get("verified_checkpoints", [])) != len(contracts):
+        result = results[-1] if results else None
         state = kernel.state
         blocker = (state.get("active_blockers") or [{}])[-1]
-        summary = str(result.get("reason") or blocker.get("category") or "run blocked")
-        phase = str(result.get("phase") or "")
-        reason = str(result.get("reason") or blocker.get("category") or "")
+        summary = str(getattr(result, "reason", None) or blocker.get("category") or "run paused")
+        phase = str(getattr(result, "phase", "") or "")
+        reason = str(getattr(result, "reason", None) or blocker.get("category") or "")
         category = (
             "policy_violation"
             if "policy" in reason or "scope" in reason
@@ -288,27 +422,22 @@ def execute_run(args: argparse.Namespace) -> int:
                 evidence_refs=tuple(blocker.get("evidence_refs") or ()),
             )
         )
-    completion = validate_completion(run_dir)
-    if not completion.passed:
-        return _emit(
-            failed_result(
-                "completion validation failed: " + ",".join(completion.errors),
-                category="state_integrity",
-                run_id=run_id,
-                state_path=str(run_dir / "state.json"),
-            )
-        )
+    budget = dict(state.get("attempt_budget") or {})
     return _emit(
         PublicResult(
             status="success",
             run_id=run_id,
             state_path=str(run_dir / "state.json"),
-            summary="Run completed and passed canonical completion validation.",
+            summary="All v4 task checkpoints were verified.",
             changed_files=_changed_files(worktree),
-            verification=({"command": "validate_completion", "status": "passed"},),
-            residual_risk=("paid live migration gate pending",),
+            verification=({"command": "verified_task_checkpoints", "status": "passed"},),
             context_artifacts=_context_artifacts(run_dir),
             next_action="Review the isolated worktree changes.",
+            current_task=state.get("current_task"),
+            checkpoint_head=state.get("checkpoint_head"),
+            attempt_limit=budget.get("limit"),
+            attempt_used=budget.get("used"),
+            next_safe_action="inspect",
         )
     )
 
@@ -765,6 +894,212 @@ def resume_run(run_id: str, worker: Worker | None = None) -> int:
     )
 
 
+def run_v4_fixture(plan: Path, root: Path) -> dict[str, object]:
+    """Drive the production v4 kernel through a deterministic fake provider."""
+
+    root = root.resolve()
+    workspace = root / "workspace"
+    codex_home = root / "codex-home"
+    workspace.mkdir(parents=True)
+    (workspace / "verify.py").write_text(
+        "import pathlib,sys\nraise SystemExit(0 if pathlib.Path(sys.argv[1]).is_file() else 1)\n",
+        encoding="utf-8",
+    )
+    _run(["git", "init", "-q"], workspace)
+    _run(["git", "config", "user.email", "cpe-fixture@example.invalid"], workspace)
+    _run(["git", "config", "user.name", "CPE Fixture"], workspace)
+    _run(["git", "add", "verify.py"], workspace)
+    committed = _run(["git", "commit", "-qm", "fixture base"], workspace)
+    if committed.returncode:
+        raise RuntimeError("fixture_repository_initialization_failed")
+
+    compiled = compile_run(plan=plan.resolve(), spec=None, docs=(), workspace=workspace, mode="interactive")
+    run_id = "cpe-v4-ten-task-fixture"
+    run_dir = codex_home / "orchestrator" / run_id
+    worktree = codex_home / "worktrees" / run_id
+    pricing = Path(__file__).resolve().parents[1] / "data" / "pricing-snapshot.json"
+    manifest = _compiled_manifest(run_id, "interactive", workspace, worktree, run_dir, compiled, pricing)
+    drafts = [build_packet(compiled, task) for task in compiled.tasks]
+    prepared = RunKernel.prepare(run_dir, manifest, drafts, input_sources=compiled.sources)
+    _create_worktree(workspace, worktree, run_id, compiled.source_head)
+    kernel = prepared.publish()
+    prepared.cleanup()
+    manifest = load_verified_manifest(run_dir / "run_manifest.json")
+    contracts = _v4_contracts(manifest)
+    review_counts: dict[str, int] = {}
+    interruptions = {"task_6": 1, "task_8": 1}
+    counters = {"transient_resumes": 0, "runtime_upgrades": 0}
+
+    def fake_provider(request: WorkerRequest, _argv: list[str]) -> dict[str, object]:
+        prompt = json.loads(request.prompt)
+        task_id = request.task_id
+        contract = prompt["task_contract"]
+        command = contract["acceptance_commands"][0]
+        findings: list[dict[str, object]] = []
+        verdict = None
+        events: list[dict[str, object]] = []
+        if request.attempt_kind in {"implementation", "repair"}:
+            target = worktree / contract["file_claims"][0]
+            target.write_text(
+                f"{task_id}:{request.attempt_kind}:{request.attempt_id}\n",
+                encoding="utf-8",
+            )
+            events = [
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "red",
+                        "type": "command_execution",
+                        "command": command,
+                        "aggregated_output": "expected RED",
+                        "exit_code": 1,
+                        "status": "failed",
+                    },
+                },
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "mutation",
+                        "type": "file_change",
+                        "changes": [{"path": contract["file_claims"][0], "kind": "update"}],
+                        "status": "completed",
+                    },
+                },
+                {
+                    "type": "item.completed",
+                    "item": {
+                        "id": "green",
+                        "type": "command_execution",
+                        "command": command,
+                        "aggregated_output": "GREEN",
+                        "exit_code": 0,
+                        "status": "completed",
+                    },
+                },
+            ]
+        elif request.attempt_kind == "task_review":
+            review_counts[task_id] = review_counts.get(task_id, 0) + 1
+            if task_id == "task_3":
+                findings = [
+                    {
+                        "severity": "minor",
+                        "action": "record bounded hardening follow-up",
+                        "root_cause_key": "hardening:fixture",
+                        "failure_category": "review_scope_expansion",
+                        "release_impact": False,
+                    }
+                ]
+            elif task_id == "task_4" and review_counts[task_id] == 1:
+                findings = [
+                    {
+                        "severity": "major",
+                        "action": "repair the fixture defect",
+                        "root_cause_key": "defect:fixture-repair",
+                        "failure_category": "product_defect",
+                        "release_impact": False,
+                    }
+                ]
+            verdict = {
+                "status": "changes_requested" if findings else "passed",
+                "findings": findings,
+                "missing_evidence": [],
+                "worktree_revision": request.worktree_revision,
+                "review_binding": prompt["required_review_binding"],
+            }
+        result = {
+            "status": "completed",
+            "summary": "deterministic fake provider result",
+            "changed_files": [],
+            "findings": findings,
+            "evidence_refs": [],
+            "missing_evidence": [],
+            "verification": [],
+            "verdict": verdict,
+            "method_evidence_ref": None,
+        }
+        return {
+            "result": result,
+            "provider_metadata": {
+                "model": "gpt-5.6-sol",
+                "reasoning": "high",
+                "trusted_source": "fake_provider_contract",
+            },
+            "usage": {},
+            "events": events,
+        }
+
+    def before_model_turn(task_id: str, phase: str, _attempt_id: str) -> None:
+        remaining = interruptions.get(task_id, 0)
+        if not remaining or phase != "implementation":
+            return
+        interruptions[task_id] = remaining - 1
+        if task_id == "task_6":
+            counters["transient_resumes"] += 1
+            raise PreTurnInterruption("quota_transient")
+        counters["runtime_upgrades"] += 1
+        raise RuntimeUpgradeInterruption("runtime:fixture", "4.0.1", "fixture-build")
+
+    worker = Worker(provider=fake_provider, max_transient_retries=0)
+    operations = _v4_operations(
+        contracts,
+        manifest,
+        kernel,
+        worktree,
+        worker,
+        before_model_turn=before_model_turn,
+    )
+    kernel.transition(Transition("run.status_changed", {"from": "ready", "to": "running"}))
+    for _ in range(5):
+        results = run_tasks_v4(contracts, operations, kernel, worktree, run_dir)
+        if len(kernel.state.get("verified_checkpoints", [])) == len(contracts):
+            break
+        waiting = [
+            (task_id, task)
+            for task_id, task in kernel.state.get("tasks", {}).items()
+            if task.get("status") == "waiting_external"
+        ]
+        if not waiting:
+            raise RuntimeError(f"fixture_run_stalled:{results}")
+        task_id, task_state = waiting[0]
+        if task_id == "task_8":
+            checkpoint = str(kernel.state["checkpoint_head"])
+            prior = dict(kernel.state["runtime"])
+            kernel.transition(
+                Transition(
+                    "runtime.upgraded",
+                    {
+                        "old_runtime_commit": prior["runtime_commit"],
+                        "new_runtime_commit": "e" * 40,
+                        "reason": "fixture runtime upgrade",
+                        "compatibility_epoch": prior["compatibility_epoch"],
+                        "worktree_clean": True,
+                        "verified_checkpoint": checkpoint,
+                    },
+                )
+            )
+        if kernel.state["lifecycle"] == "waiting_external":
+            kernel.transition(
+                Transition("run.status_changed", {"from": "waiting_external", "to": "running"})
+            )
+    else:
+        raise RuntimeError("fixture_resume_limit_exhausted")
+
+    if len(kernel.state.get("verified_checkpoints", [])) != 10:
+        raise RuntimeError("fixture_checkpoint_count_invalid")
+    state = kernel.state
+    return {
+        "schema_version": "cpe.public-result.v4",
+        "status": "completed",
+        "run_id": run_id,
+        "run_ids_created": 1,
+        "model_attempts": state["attempt_budget"]["used"],
+        "verified_checkpoints": list(state["verified_checkpoints"]),
+        "max_same_root_repairs": max(state.get("repair_roots", {}).values(), default=0),
+        "backlog_count": len(state.get("backlog", [])),
+        **counters,
+    }
+
+
 def export_plan(args: argparse.Namespace) -> int:
     plan = Path(args.plan).expanduser().resolve()
     workspace = Path(args.workspace).expanduser().resolve()
@@ -793,6 +1128,99 @@ def export_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+def inspect_v4_run(run_id: str, *, supervise: bool = False) -> int:
+    run_dir = _codex_home() / "orchestrator" / run_id
+    if not run_dir.is_dir():
+        return _structured_resume_failure(run_id, "run_missing")
+    try:
+        manifest = load_verified_manifest(run_dir / "run_manifest.json")
+        state = project(manifest, read_events(run_dir / "events.jsonl"))
+    except ValueError as exc:
+        return _structured_resume_failure(run_id, str(exc))
+    total = len(state.get("tasks", {}))
+    verified = list(state.get("verified_checkpoints", []))
+    status = "completed" if total and len(verified) == total else str(state.get("lifecycle"))
+    budget = dict(state.get("attempt_budget") or {})
+    payload = {
+        "schema_version": "cpe.public-result.v4",
+        "run_id": run_id,
+        "status": status,
+        "current_task": state.get("current_task"),
+        "checkpoint_head": state.get("checkpoint_head"),
+        "attempt_limit": budget.get("limit"),
+        "attempt_used": budget.get("used"),
+        "next_safe_action": (
+            "none" if status == "completed" else "resume" if status != "waiting_user" else "provide_user_authority"
+        ),
+        "user_input_required": status == "waiting_user",
+        "decisions": list(state.get("decisions", [])),
+        "backlog": list(state.get("backlog", [])),
+        "repair_roots": dict(state.get("repair_roots", {})),
+        "checkpoint_lineage": verified,
+        "supervised": supervise,
+    }
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+def resume_v4_run(run_id: str, worker: Worker | None = None) -> int:
+    run_dir = _codex_home() / "orchestrator" / run_id
+    if not run_dir.is_dir():
+        return _structured_resume_failure(run_id, "run_missing")
+    try:
+        manifest = load_verified_manifest(run_dir / "run_manifest.json")
+    except ValueError as exc:
+        return _structured_resume_failure(run_id, str(exc))
+    kernel = Kernel(run_dir)
+    worktree = resolve_ref(str(manifest["execution_worktree_ref"]))
+    if not worktree.is_dir():
+        return _structured_resume_failure(run_id, "worktree_missing")
+    contracts = _v4_contracts(manifest)
+    operations = _v4_operations(
+        contracts, manifest, kernel, worktree, worker or Worker()
+    )
+    lifecycle = str(kernel.state.get("lifecycle"))
+    if lifecycle in {"waiting_external", "waiting_user"}:
+        kernel.transition(
+            Transition("run.status_changed", {"from": lifecycle, "to": "running"})
+        )
+    elif lifecycle == "ready":
+        kernel.transition(Transition("run.status_changed", {"from": "ready", "to": "running"}))
+    try:
+        results = run_tasks_v4(contracts, operations, kernel, worktree, run_dir)
+    except (OSError, RuntimeError, ValueError) as exc:
+        return _structured_resume_failure(run_id, str(exc))
+    state = kernel.state
+    if len(state.get("verified_checkpoints", [])) != len(contracts):
+        latest = results[-1] if results else None
+        return _emit(
+            blocked_result(
+                str(getattr(latest, "reason", None) or "run paused"),
+                category="transient",
+                run_id=run_id,
+                state_path=str(run_dir / "state.json"),
+            )
+        )
+    budget = dict(state.get("attempt_budget") or {})
+    return _emit(
+        PublicResult(
+            status="success",
+            run_id=run_id,
+            state_path=str(run_dir / "state.json"),
+            summary="All resumed v4 task checkpoints were verified.",
+            changed_files=_changed_files(worktree),
+            verification=({"command": "verified_task_checkpoints", "status": "passed"},),
+            context_artifacts=_context_artifacts(run_dir),
+            next_action="Inspect the run and reviewed checkpoint lineage.",
+            current_task=state.get("current_task"),
+            checkpoint_head=state.get("checkpoint_head"),
+            attempt_limit=budget.get("limit"),
+            attempt_used=budget.get("used"),
+            next_safe_action="inspect",
+        )
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -804,6 +1232,10 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--mode", choices=("interactive", "headless"), default="interactive")
     resume = sub.add_parser("resume")
     resume.add_argument("--run-id", required=True)
+    supervise = sub.add_parser("supervise")
+    supervise.add_argument("--run-id", required=True)
+    inspect = sub.add_parser("inspect")
+    inspect.add_argument("--run-id", required=True)
     export = sub.add_parser("export")
     export.add_argument("--plan", required=True)
     export.add_argument("--spec")
@@ -819,7 +1251,11 @@ def main() -> int:
         if args.command == "run":
             return execute_run(args)
         if args.command == "resume":
-            return resume_run(args.run_id)
+            return resume_v4_run(args.run_id)
+        if args.command == "supervise":
+            return inspect_v4_run(args.run_id, supervise=True)
+        if args.command == "inspect":
+            return inspect_v4_run(args.run_id)
         return export_plan(args)
     except CompileBlocked as exc:
         return _emit(

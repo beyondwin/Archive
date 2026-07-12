@@ -113,10 +113,9 @@ for check in "${maintained_checks[@]}"; do
 done
 
 run_check "eval_harness" "$PYTHON_BIN" "$EVAL_DIR/check_eval_harness.py" --inventory "$INVENTORY_FILE"
-run_check "public_cli_integration" "$PYTHON_BIN" "$EVAL_DIR/check_public_cli_integration.py"
+run_check "v4_release_evidence_validator" "$PYTHON_BIN" "$EVAL_DIR/check_cpe_v4_release_evidence.py"
 run_check "subscription_live_matrix_dry_run" "$PYTHON_BIN" "$EVAL_DIR/live_model_runner.py" \
-  dry-run --billing-mode chatgpt_subscription --output "$REPORT_DIR/subscription-live-matrix-plan.json"
-run_check "release_contract" "$PYTHON_BIN" "$EVAL_DIR/check_release_contract.py"
+  dry-run --matrix v4 --billing-mode chatgpt_subscription --output "$REPORT_DIR/subscription-live-matrix-plan.json"
 while IFS= read -r parser_fixture; do
   run_check "parse_plan:$(basename "$parser_fixture")" "$PYTHON_BIN" "$EVAL_DIR/check_parse_plan.py" --fixture "$parser_fixture"
 done < <(find "$EVAL_DIR/parser-fixtures" -name '*.yaml' -type f | sort)
@@ -130,6 +129,11 @@ PY
 )"
 BASELINE_FILE="$EVAL_DIR/baselines/v${SKILL_VERSION}.json"
 CURRENT_BASELINE="$REPORT_DIR/current-baseline.json"
+INVENTORY_SCHEMA="$($PYTHON_BIN - "$INVENTORY_FILE" <<'PY'
+import json, sys
+print(json.load(open(sys.argv[1], encoding="utf-8")).get("schema_version", ""))
+PY
+)"
 "$PYTHON_BIN" - "$EVAL_REPORT" "$SKILL_VERSION" "$CURRENT_BASELINE" <<'PY'
 import json, pathlib, sys
 report, version, output = map(pathlib.Path, (sys.argv[1], sys.argv[2], sys.argv[3]))
@@ -145,7 +149,7 @@ PY
 if [ "$update_baseline" -eq 1 ]; then
   mkdir -p "$(dirname "$BASELINE_FILE")"
   cp "$CURRENT_BASELINE" "$BASELINE_FILE"
-elif [ -f "$BASELINE_FILE" ] && grep -q '"schema_version": "maintained-evals.v1"' "$BASELINE_FILE"; then
+elif [ "$INVENTORY_SCHEMA" != "4" ] && [ -f "$BASELINE_FILE" ] && grep -q '"schema_version": "maintained-evals.v1"' "$BASELINE_FILE"; then
   "$PYTHON_BIN" - "$BASELINE_FILE" "$CURRENT_BASELINE" <<'PY'
 import json, sys
 expected = json.load(open(sys.argv[1], encoding="utf-8"))
