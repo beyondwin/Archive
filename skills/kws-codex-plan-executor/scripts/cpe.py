@@ -10,6 +10,7 @@ import os
 import re
 import secrets
 import subprocess
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -26,7 +27,7 @@ from cpe_runtime.plan_compiler import CompileBlocked, compile_run
 from cpe_runtime.projector import project
 from cpe_runtime.prompt_export import render_export_bundle
 from cpe_runtime.public_result import PublicResult, blocked_result, failed_result
-from cpe_runtime.reconciliation import ResumeDecision, select_resume
+from cpe_runtime.reconciliation import ResumeDecision, select_resume, select_v4_resume
 from cpe_runtime.repair import apply_repair
 from cpe_runtime.scheduler import (
     LifecycleOperations,
@@ -894,7 +895,13 @@ def resume_run(run_id: str, worker: Worker | None = None) -> int:
     )
 
 
-def run_v4_fixture(plan: Path, root: Path) -> dict[str, object]:
+def run_v4_fixture(
+    plan: Path,
+    root: Path,
+    *,
+    pause_task_id: str | None = None,
+    pause_kind: str | None = None,
+) -> dict[str, object]:
     """Drive the production v4 kernel through a deterministic fake provider."""
 
     root = root.resolve()
@@ -1049,6 +1056,43 @@ def run_v4_fixture(plan: Path, root: Path) -> dict[str, object]:
         before_model_turn=before_model_turn,
     )
     kernel.transition(Transition("run.status_changed", {"from": "ready", "to": "running"}))
+    if pause_task_id is not None:
+        if pause_kind != "waiting_user" or pause_task_id not in kernel.state.get("tasks", {}):
+            raise ValueError("fixture_pause_invalid")
+        kernel.transition(
+            Transition(
+                "task.status_changed",
+                {
+                    "from": "pending",
+                    "to": "waiting_user",
+                    "wait_reason": "authority_resolution_required",
+                    "resume_phase": "implementation",
+                    "active_attempt_id": None,
+                },
+                task_id=pause_task_id,
+            )
+        )
+        kernel.transition(
+            Transition(
+                "run.status_changed",
+                {
+                    "from": "running",
+                    "to": "waiting_user",
+                    "wait_reason": "authority_resolution_required",
+                },
+            )
+        )
+        return {
+            "schema_version": "cpe.public-result.v4",
+            "status": "waiting_user",
+            "run_id": run_id,
+            "run_ids_created": 1,
+            "model_attempts": 0,
+            "verified_checkpoints": [],
+            "max_same_root_repairs": 0,
+            "backlog_count": 0,
+            **counters,
+        }
     for _ in range(5):
         results = run_tasks_v4(contracts, operations, kernel, worktree, run_dir)
         if len(kernel.state.get("verified_checkpoints", [])) == len(contracts):
@@ -1128,20 +1172,33 @@ def export_plan(args: argparse.Namespace) -> int:
     return 0
 
 
-def inspect_v4_run(run_id: str, *, supervise: bool = False) -> int:
+def _v4_public_snapshot(run_id: str) -> dict[str, object]:
     run_dir = _codex_home() / "orchestrator" / run_id
     if not run_dir.is_dir():
-        return _structured_resume_failure(run_id, "run_missing")
-    try:
-        manifest = load_verified_manifest(run_dir / "run_manifest.json")
-        state = project(manifest, read_events(run_dir / "events.jsonl"))
-    except ValueError as exc:
-        return _structured_resume_failure(run_id, str(exc))
+        raise ValueError("run_missing")
+    manifest = load_verified_manifest(run_dir / "run_manifest.json")
+    events = read_events(run_dir / "events.jsonl")
+    if validate_chain(events):
+        raise ValueError("event_chain_invalid")
+    state = project(manifest, events)
     total = len(state.get("tasks", {}))
     verified = list(state.get("verified_checkpoints", []))
-    status = "completed" if total and len(verified) == total else str(state.get("lifecycle"))
+    task_statuses = {
+        str(item.get("status"))
+        for item in state.get("tasks", {}).values()
+        if isinstance(item, dict)
+    }
+    status = (
+        "completed"
+        if total and len(verified) == total
+        else "waiting_user"
+        if "waiting_user" in task_statuses
+        else "waiting_external"
+        if "waiting_external" in task_statuses
+        else str(state.get("lifecycle"))
+    )
     budget = dict(state.get("attempt_budget") or {})
-    payload = {
+    return {
         "schema_version": "cpe.public-result.v4",
         "run_id": run_id,
         "status": status,
@@ -1157,8 +1214,48 @@ def inspect_v4_run(run_id: str, *, supervise: bool = False) -> int:
         "backlog": list(state.get("backlog", [])),
         "repair_roots": dict(state.get("repair_roots", {})),
         "checkpoint_lineage": verified,
-        "supervised": supervise,
     }
+
+
+def inspect_v4_run(run_id: str) -> int:
+    try:
+        payload = _v4_public_snapshot(run_id)
+    except ValueError as exc:
+        return _structured_resume_failure(run_id, str(exc))
+    payload["supervised"] = False
+    payload["poll_count"] = 1
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
+    return 0
+
+
+def supervise_v4_run(
+    run_id: str,
+    *,
+    poll_interval: float,
+    timeout: float,
+    min_polls: int = 1,
+    one_pass: bool = False,
+) -> int:
+    if poll_interval < 0 or timeout < 0 or min_polls < 1:
+        return _structured_resume_failure(run_id, "supervise_options_invalid")
+    deadline = time.monotonic() + timeout
+    polls = 0
+    terminal = {"completed", "failed", "blocked", "waiting_user", "waiting_external"}
+    while True:
+        try:
+            payload = _v4_public_snapshot(run_id)
+        except ValueError as exc:
+            return _structured_resume_failure(run_id, str(exc))
+        polls += 1
+        if one_pass or (payload["status"] in terminal and polls >= min_polls):
+            break
+        if time.monotonic() >= deadline:
+            payload["next_safe_action"] = "supervise"
+            break
+        if poll_interval:
+            time.sleep(min(poll_interval, max(0.0, deadline - time.monotonic())))
+    payload["supervised"] = True
+    payload["poll_count"] = polls
     print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True))
     return 0
 
@@ -1171,6 +1268,45 @@ def resume_v4_run(run_id: str, worker: Worker | None = None) -> int:
         manifest = load_verified_manifest(run_dir / "run_manifest.json")
     except ValueError as exc:
         return _structured_resume_failure(run_id, str(exc))
+    try:
+        events = read_events(run_dir / "events.jsonl")
+    except (OSError, ValueError):
+        return _structured_resume_failure(run_id, "event_chain_invalid")
+    if validate_chain(events):
+        return _structured_resume_failure(run_id, "event_chain_invalid")
+    state = project(manifest, events)
+    waiting_user = [
+        task_id
+        for task_id, task in state.get("tasks", {}).items()
+        if isinstance(task, dict) and task.get("status") == "waiting_user"
+    ]
+    if waiting_user:
+        decision = select_v4_resume(state, str(waiting_user[0]))
+        if decision.action != "await_user_authority":
+            return _structured_resume_failure(run_id, "resume_state_invalid")
+        budget = dict(state.get("attempt_budget") or {})
+        return _emit(
+            PublicResult(
+                status="blocked",
+                run_id=run_id,
+                state_path=str(run_dir / "state.json"),
+                summary="user authority is required before resume",
+                next_action="Provide the required authority decision.",
+                blocker={
+                    "category": "operator_review",
+                    "summary": "user authority is required before resume",
+                    "recoverable": True,
+                    "next_action": "provide_user_authority",
+                    "evidence_refs": [],
+                },
+                current_task=str(waiting_user[0]),
+                checkpoint_head=state.get("checkpoint_head"),
+                attempt_limit=budget.get("limit"),
+                attempt_used=budget.get("used"),
+                next_safe_action="provide_user_authority",
+                user_input_required=True,
+            )
+        )
     kernel = Kernel(run_dir)
     worktree = resolve_ref(str(manifest["execution_worktree_ref"]))
     if not worktree.is_dir():
@@ -1234,6 +1370,10 @@ def build_parser() -> argparse.ArgumentParser:
     resume.add_argument("--run-id", required=True)
     supervise = sub.add_parser("supervise")
     supervise.add_argument("--run-id", required=True)
+    supervise.add_argument("--poll-interval", type=float, default=1.0)
+    supervise.add_argument("--timeout", type=float, default=30.0)
+    supervise.add_argument("--min-polls", type=int, default=1)
+    supervise.add_argument("--one-pass", action="store_true")
     inspect = sub.add_parser("inspect")
     inspect.add_argument("--run-id", required=True)
     export = sub.add_parser("export")
@@ -1253,7 +1393,13 @@ def main() -> int:
         if args.command == "resume":
             return resume_v4_run(args.run_id)
         if args.command == "supervise":
-            return inspect_v4_run(args.run_id, supervise=True)
+            return supervise_v4_run(
+                args.run_id,
+                poll_interval=args.poll_interval,
+                timeout=args.timeout,
+                min_polls=args.min_polls,
+                one_pass=args.one_pass,
+            )
         if args.command == "inspect":
             return inspect_v4_run(args.run_id)
         return export_plan(args)

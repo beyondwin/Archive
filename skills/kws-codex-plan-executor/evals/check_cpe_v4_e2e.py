@@ -42,6 +42,11 @@ def main() -> int:
 
         fixture_env = {"CODEX_HOME": str(Path(raw) / "codex-home")}
         for command in ("inspect", "supervise"):
+            extra = (
+                ["--poll-interval", "0", "--timeout", "1", "--min-polls", "2"]
+                if command == "supervise"
+                else []
+            )
             inspected = subprocess.run(
                 [
                     sys.executable,
@@ -49,6 +54,7 @@ def main() -> int:
                     command,
                     "--run-id",
                     result["run_id"],
+                    *extra,
                 ],
                 env=fixture_env,
                 text=True,
@@ -66,6 +72,64 @@ def main() -> int:
             assert public["repair_roots"] == {"defect:fixture-repair": 1}, public
             assert public["user_input_required"] is False, public
             assert public["supervised"] is (command == "supervise"), public
+            if command == "supervise":
+                assert public["poll_count"] >= 2, public
+
+        events_path = Path(raw) / "codex-home" / "orchestrator" / result["run_id"] / "events.jsonl"
+        original_events = events_path.read_text(encoding="utf-8")
+        lines = original_events.splitlines()
+        mutated = False
+        for index, line in enumerate(lines):
+            event = json.loads(line)
+            if event.get("type") == "decision.recorded":
+                event["payload"]["basis"] = "shape-valid tamper"
+                lines[index] = json.dumps(event, sort_keys=True, separators=(",", ":"))
+                mutated = True
+                break
+        assert mutated
+        events_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        tampered = subprocess.run(
+            [
+                sys.executable,
+                str(SKILL_ROOT / "scripts" / "cpe.py"),
+                "inspect",
+                "--run-id",
+                result["run_id"],
+            ],
+            env=fixture_env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        assert tampered.returncode != 0, tampered.stdout
+        assert json.loads(tampered.stdout)["summary"] == "event_chain_invalid"
+        events_path.write_text(original_events, encoding="utf-8")
+
+        waiting_root = Path(raw) / "waiting-user"
+        waiting = run_v4_fixture(
+            FIXTURE, waiting_root, pause_task_id="task_1", pause_kind="waiting_user"
+        )
+        waiting_env = {"CODEX_HOME": str(waiting_root / "codex-home")}
+        authority = subprocess.run(
+            [
+                sys.executable,
+                str(SKILL_ROOT / "scripts" / "cpe.py"),
+                "resume",
+                "--run-id",
+                waiting["run_id"],
+            ],
+            env=waiting_env,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        assert authority.returncode == 1, authority.stdout
+        authority_payload = json.loads(authority.stdout)
+        assert authority_payload["user_input_required"] is True, authority_payload
+        assert authority_payload["next_safe_action"] == "provide_user_authority", authority_payload
+        assert authority_payload["blocker"]["category"] == "operator_review", authority_payload
 
         schema3_home = Path(raw) / "schema3-home"
         run_dir = schema3_home / "orchestrator" / "legacy-v3"

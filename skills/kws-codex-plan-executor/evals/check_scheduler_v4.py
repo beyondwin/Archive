@@ -1621,6 +1621,14 @@ def assert_repaired_candidate_review_resume_is_durable(root: Path) -> None:
 
 def assert_review_persistence_privacy_boundary(root: Path) -> None:
     unsafe_findings = {
+        "plain-secret-value": {"notes": "secret: hunter2"},
+        "environment-credential-value": {
+            "notes": "OPENAI_API_KEY=sk-live-fixture-secret-value"
+        },
+        "assigned-home-path-value": {
+            "notes": "path=/Users/example/private/result.json"
+        },
+        "assigned-oracle-path-value": {"notes": "path=oracle/expected.json"},
         "raw-transcript-value": {"notes": "raw transcript: complete model conversation"},
         "raw-transcript-key": {"transcript": "private-key-transcript-payload"},
         "credential-value": {"notes": "sk-live-fixture-secret-value"},

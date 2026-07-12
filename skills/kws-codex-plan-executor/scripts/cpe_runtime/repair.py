@@ -49,12 +49,19 @@ _PRIVATE_MAPPING_KEYS = frozenset(
     }
 )
 _PRIVATE_PATH_SEGMENT = re.compile(
-    r"(?:^|[/\\])(?:credentials?|oracle|secrets?|transcripts?)(?:[/\\]|$)",
+    r"(?:^|[/\\=\s])(?:credentials?|oracle|secrets?|transcripts?)(?:[/\\]|$)",
     re.IGNORECASE,
 )
-_USER_HOME_PATH = re.compile(r"(?:^|\s)/Users/[^/\s]+/|(?:^|\s)/home/[^/\s]+/")
+_USER_HOME_PATH = re.compile(
+    r"(?:^|[=\s])/(?:Users|home)/[^/\s]+/", re.IGNORECASE
+)
 _CREDENTIAL_VALUE = re.compile(
-    r"(?:^|\s)(?:sk-[A-Za-z0-9_-]{8,}|gh[oprsu]_[A-Za-z0-9]{8,}|Bearer\s+\S+)",
+    r"(?:^|[=\s])(?:sk-[A-Za-z0-9_-]{8,}|gh[oprsu]_[A-Za-z0-9]{8,}|Bearer\s+\S+)",
+    re.IGNORECASE,
+)
+_SECRET_ASSIGNMENT = re.compile(
+    r"\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|"
+    r"credential|password|private[_-]?key|secret|token)\s*[:=]\s*\S+",
     re.IGNORECASE,
 )
 
@@ -84,6 +91,7 @@ def require_privacy_safe_review_payload(payload: object) -> None:
             _PRIVATE_PATH_SEGMENT.search(value)
             or _USER_HOME_PATH.search(value)
             or _CREDENTIAL_VALUE.search(value)
+            or _SECRET_ASSIGNMENT.search(value)
             or re.search(r"\braw\s+(?:command\s+output|transcript)\b", value, re.IGNORECASE)
         ):
             raise ValueError("review_privacy_unsafe")

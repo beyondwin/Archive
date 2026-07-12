@@ -56,6 +56,28 @@ def _inventory_paths(path: Path) -> tuple[list[str], list[str]]:
             continue
         if not entry.get("production_entrypoint") or not entry.get("mutation_assertion"):
             failures.append(f"maintained inventory metadata is incomplete: {relative}")
+        target = EVAL_DIR / relative
+        declaration = entry.get("production_entrypoint")
+        if target.is_file() and isinstance(declaration, str):
+            source = target.read_text(encoding="utf-8")
+            for raw in declaration.split(","):
+                declared = raw.strip()
+                module = (
+                    declared
+                    if declared.startswith(("cpe_runtime.", "live_migration."))
+                    else "cpe"
+                    if declared == "cpe" or declared.startswith("cpe.")
+                    else declared
+                )
+                referenced = (
+                    f"from {module} import" in source
+                    or f"import {module}" in source
+                    or (module == "cpe" and "cpe.py" in source)
+                )
+                if not referenced:
+                    failures.append(
+                        f"declared production entrypoint is not referenced: {relative}:{declared}"
+                    )
         paths.append(relative)
     if len(paths) != len(set(paths)):
         failures.append("maintained inventory contains duplicate check paths")
@@ -507,6 +529,20 @@ def _inventory_mutation_checks(payload: dict[str, object]) -> dict[str, bool]:
         "required_inventory_omission_rejected": {
             **payload,
             "checks": [entry for entry in entries if entry.get("path") != "check_scheduler_v4.py"],
+        },
+        "declared_production_entrypoint_mismatch_rejected": {
+            **payload,
+            "checks": [
+                {
+                    **entry,
+                    **(
+                        {"production_entrypoint": "cpe_runtime.definitely_missing"}
+                        if index == 0
+                        else {}
+                    ),
+                }
+                for index, entry in enumerate(entries)
+            ],
         },
     }
     results: dict[str, bool] = {}
