@@ -108,6 +108,25 @@ def valid_verdict(
     )
 
 
+def _valid_hex(value: object, length: int) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == length
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def valid_verified_checkpoint_payload(payload: object) -> bool:
+    return (
+        isinstance(payload, dict)
+        and all(_valid_hex(payload.get(field), 40) for field in ("predecessor", "commit", "tree"))
+        and all(
+            _valid_hex(payload.get(field), 64)
+            for field in ("contract_sha256", "acceptance_sha256", "review_sha256")
+        )
+    )
+
+
 def owned_active_blocker(state: dict, task_id: str | None, blocker_id: object) -> dict | None:
     matches = [
         item
@@ -139,6 +158,7 @@ def initial_state(manifest: dict) -> dict:
         "lifecycle": "created",
         "current_task": None,
         "runtime": runtime.as_dict(),
+        "source_head": (manifest.get("source_git") or {}).get("head"),
         "tasks": tasks,
         "attempts": [],
         "verdicts": [],
@@ -146,7 +166,7 @@ def initial_state(manifest: dict) -> dict:
         "blocker_history": [],
         "candidate_checkpoints": [],
         "verified_checkpoints": [],
-        "checkpoint_head": (manifest.get("source_git") or {}).get("head"),
+        "checkpoint_head": None,
         "decisions": [],
         "notifications": [],
         "backlog": [],
@@ -222,6 +242,8 @@ def apply_event(state: dict, event: dict) -> dict:
     elif typ == "candidate.checkpoint_recorded":
         state["candidate_checkpoints"].append({"task_id": event.get("task_id"), **payload})
     elif typ == "task.checkpoint_verified":
+        if not valid_verified_checkpoint_payload(payload):
+            raise ValueError("invalid checkpoint payload")
         state["verified_checkpoints"].append({"task_id": event.get("task_id"), **payload})
         state["checkpoint_head"] = payload["commit"]
     elif typ == "blocker.opened":
@@ -251,6 +273,7 @@ def apply_event(state: dict, event: dict) -> dict:
             RuntimeIdentity.from_mapping(state["runtime"]),
             payload,
             checkpoint_head=state["checkpoint_head"],
+            verified_checkpoints=state["verified_checkpoints"],
         )
         state["runtime"] = target.as_dict()
     elif typ == "completion.recorded":

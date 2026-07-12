@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Iterable, Mapping
 
 
 COMPATIBILITY_EPOCH = "cpe-v4"
@@ -48,6 +48,7 @@ def validate_runtime_upgrade(
     payload: Mapping[str, object],
     *,
     checkpoint_head: str | None,
+    verified_checkpoints: Iterable[Mapping[str, object]],
 ) -> RuntimeIdentity:
     """Validate a same-run, same-epoch runtime replacement at a safe checkpoint."""
 
@@ -59,9 +60,15 @@ def validate_runtime_upgrade(
         raise ValueError("runtime_compatibility_epoch_invalid")
     if payload.get("worktree_clean") is not True:
         raise ValueError("runtime_upgrade_requires_clean_tree")
+    verified_checkpoint = payload.get("verified_checkpoint")
+    has_verified_entry = any(
+        isinstance(checkpoint, Mapping) and checkpoint.get("commit") == verified_checkpoint
+        for checkpoint in verified_checkpoints
+    )
     if (
         not isinstance(checkpoint_head, str)
-        or payload.get("verified_checkpoint") != checkpoint_head
+        or verified_checkpoint != checkpoint_head
+        or not has_verified_entry
     ):
         raise ValueError("runtime_upgrade_requires_verified_checkpoint")
     reason = payload.get("reason")
