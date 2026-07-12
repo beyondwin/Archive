@@ -214,13 +214,15 @@ def check_supervision(decision: object) -> None:
                 "status": "started",
             }
         ],
-        "wait_reason": "provider_transient",
+        # T3 originally waited on the provider. Independent T1 has since changed
+        # the run-level projection, so recovery must not consult this value.
+        "wait_reason": "user_decision_required:T1",
         "notifications": [],
     }
     before = deepcopy(state)
     result = supervise(
         state,
-        recovered_external_tasks=frozenset({"T3"}),
+        recovered_external_waits=(("T3", "provider_transient"),),
         decisions=(decision, decision),
     )
     assert state == before, "supervision mutated projected state"
@@ -272,13 +274,51 @@ def check_supervision(decision: object) -> None:
     assert_raises_text(
         ValueError,
         "invalid_external_recovery_task",
-        lambda: supervise(state, recovered_external_tasks=frozenset({"T99"})),
+        lambda: supervise(
+            state,
+            recovered_external_waits=(("T99", "provider_transient"),),
+        ),
+    )
+    assert_raises_text(
+        ValueError,
+        "invalid_external_recovery_reason",
+        lambda: supervise(state, recovered_external_waits=(("T3", ""),)),
+    )
+    assert_raises_text(
+        ValueError,
+        "invalid_external_recovery_reason",
+        lambda: supervise(
+            state,
+            recovered_external_waits=(("T3", "runtime_defect"),),
+        ),
+    )
+    assert_raises_text(
+        ValueError,
+        "duplicate_external_recovery_task",
+        lambda: supervise(
+            state,
+            recovered_external_waits=(
+                ("T3", "provider_transient"),
+                ("T3", "quota_transient"),
+            ),
+        ),
     )
     assert_raises_text(
         ValueError,
         "invalid_run_lifecycle",
         lambda: supervise({**state, "lifecycle": "mystery"}),
     )
+
+    for lifecycle in ("completed", "failed"):
+        terminal = supervise(
+            {**state, "lifecycle": lifecycle},
+            recovered_external_waits=(("T3", "provider_transient"),),
+            decisions=(decision,),
+        )
+        assert terminal.run_id == state["run_id"], terminal
+        assert terminal.actions == (), terminal
+        assert terminal.decisions == (), terminal
+        assert terminal.notifications == (), terminal
 
 
 def main() -> int:
