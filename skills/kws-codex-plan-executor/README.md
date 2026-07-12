@@ -108,4 +108,6 @@ compares results with an isolated oracle. It never treats duplicated fixture
 logic as production behavior.
 
 See [SKILL.md](SKILL.md), [ARCHITECTURE.md](ARCHITECTURE.md), and
-[evals-and-verification.md](docs/evals-and-verification.md).
+[evals-and-verification.md](docs/evals-and-verification.md). The current v4
+release blockers and ordered follow-up work are tracked in
+[v4-main-residual-risks-and-follow-up.md](docs/v4-main-residual-risks-and-follow-up.md).
