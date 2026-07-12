@@ -17,7 +17,7 @@ class Route:
     reasoning: str
 
 
-POLICY_VERSION = "cpe.model-policy.v1"
+POLICY_VERSION = "cpe.model-policy.v4"
 CORE_ROUTE = Route("core", "gpt-5.6-sol", "high")
 SCOUT_ROUTE = Route("scout", "gpt-5.6-terra", "high")
 CORE_ATTEMPT_KINDS = frozenset({
