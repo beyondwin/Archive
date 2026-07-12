@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Added a cost-free v4 predecessor-lineage attestation for corrected quality
+  runs. It validates one terminal failed evidence root in place, stores only
+  domain-separated digests and checkpoint identity in the new root, and
+  preserves the initial-plus-one-corrected cap without copying oracle-bearing
+  manifests or runtime/session evidence.
+
 ## 3.1.0 - 2026-07-12 (deterministic-ready; paid-live-verified)
 
 - Added the guarded ChatGPT subscription live-matrix evidence path: exact

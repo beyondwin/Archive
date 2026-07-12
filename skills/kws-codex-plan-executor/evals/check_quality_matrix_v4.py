@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import argparse
 import os
 import re
 import shutil
@@ -39,8 +40,10 @@ from live_migration.ledger import (
     register_release_run,
     replay_run,
     replay_release_lineage,
+    _commit_predecessor_attestation,
 )
 from live_migration.fixtures import materialize_fixture
+from live_migration.predecessor import attest_predecessor_release
 from live_migration.runner import LiveRunnerError, execute_v4_slots, render_prompt
 
 
@@ -1101,6 +1104,326 @@ def check_success_is_terminal_only_after_aggregate_and_privacy() -> None:
         assert after["release_passed"] is True
 
 
+def _write_failed_predecessor_fixture(root: Path) -> tuple[str, str, str]:
+    """Materialize a production-backed failed v4 root with oracle-bearing manifest bytes."""
+
+    import live_model_runner
+
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, capture_output=True, check=True
+    ).stdout.strip()
+    tree = subprocess.run(
+        ["git", "rev-parse", "HEAD^{tree}"], cwd=ROOT, text=True, capture_output=True, check=True
+    ).stdout.strip()
+    patch_sha256 = sha256_bytes(
+        subprocess.run(
+            ["git", "show", "--format=", "--binary", commit],
+            cwd=ROOT,
+            capture_output=True,
+            check=True,
+        ).stdout
+    )
+    run_id = "failed-predecessor"
+    manifest = compile_v4_manifest(
+        commit=commit,
+        run_id=run_id,
+        eval_dir=ROOT,
+        created_at="2026-07-12T00:00:00Z",
+    )
+    manifest["model_catalog_sha256"] = "c" * 64
+    manifest = live_model_runner._bind_manifest(
+        manifest,
+        {
+            "implementation_commit": commit,
+            "implementation_tree": tree,
+            "implementation_patch_sha256": patch_sha256,
+        },
+    )
+    assert b"oracle" in canonical_json(manifest)
+    register_release_run(root, manifest)
+    run = create_run(root / run_id, manifest)
+
+    provider_calls = 0
+
+    def fake_provider(slot: dict[str, object]) -> tuple[dict[str, bytes], dict[str, object]]:
+        nonlocal provider_calls
+        provider_calls += 1
+        incomplete = slot["case_id"] == "security/migration block"
+        return (
+            {"fake-provider.json": canonical_json({"provider": "fake"})},
+            {
+                "schema_version": "cpe-quality-result.v4",
+                "run_id": run_id,
+                "treatment_id": slot["treatment_id"],
+                "case_id": slot["case_id"],
+                "outcome_kind": CREDENTIALLED_CALL,
+                "task_completed": not incomplete,
+                "critical_regression": False,
+                "evidence_complete": not incomplete,
+                "model_attested": True,
+                "worktree_isolated": True,
+                "drift_free": True,
+            },
+        )
+
+    execute_v4_slots(run, fake_provider)
+    assert provider_calls == 17
+    append_event(run, "run_completed", {"completed_slots": 24})
+    aggregate_path = root / "aggregate.json"
+    aggregate = live_model_runner._aggregate(
+        argparse.Namespace(run_dir=run.run_dir, output=aggregate_path)
+    )
+    assert aggregate["release_gate"]["passed"] is False
+    assert aggregate["privacy_audit"]["passed"] is True
+
+    release_manifest = {
+        "schema_version": "cpe.release-manifest.v4",
+        "run_id": run_id,
+        "implementation_commit": commit,
+        "implementation_tree": tree,
+        "implementation_patch_sha256": patch_sha256,
+        "ledger_manifest_sha256": manifest["manifest_sha256"],
+        "slot_count": 24,
+        "credentialed_call_count": 17,
+        "policy_outcome_count": 7,
+        "pending_slot_count": 0,
+        "duplicate_slot_count": 0,
+        "terminal": True,
+    }
+    release_result = {
+        "schema_version": "cpe.release-result.v4",
+        "run_id": run_id,
+        "implementation_commit": commit,
+        "implementation_tree": tree,
+        "implementation_patch_sha256": patch_sha256,
+        "manifest_sha256": sha256_bytes(canonical_json(release_manifest)),
+        "credentialed_call_count": 17,
+        "policy_outcome_count": 7,
+        "pending_slot_count": 0,
+        "duplicate_slot_count": 0,
+        "release_gate": aggregate["release_gate"],
+    }
+    privacy = {
+        "schema_version": "cpe.privacy-audit.v4",
+        "implementation_commit": commit,
+        "implementation_tree": tree,
+        "passed": True,
+        "findings": [],
+        "surfaces_scanned": 29,
+    }
+    dogfood = {
+        "schema_version": "cpe.dogfood-result.v4",
+        "implementation_commit": commit,
+        "implementation_tree": tree,
+        "run_ids_created": 0,
+        "model_attempts": 0,
+    }
+    checkpoint = {
+        "schema_version": "cpe.release-checkpoint.v4",
+        "commit": commit,
+        "tree": tree,
+        "manifest_sha256": sha256_bytes(canonical_json(release_manifest)),
+        "result_sha256": sha256_bytes(canonical_json(release_result)),
+        "privacy_sha256": sha256_bytes(canonical_json(privacy)),
+        "dogfood_sha256": sha256_bytes(canonical_json(dogfood)),
+    }
+    for name, payload in {
+        "manifest.json": release_manifest,
+        "result.json": release_result,
+        "privacy-audit.json": privacy,
+        "dogfood-result.json": dogfood,
+        "checkpoint.json": checkpoint,
+    }.items():
+        (root / name).write_bytes(canonical_json(payload))
+    return commit, tree, patch_sha256
+
+
+def check_cross_root_predecessor_attestation() -> None:
+    with tempfile.TemporaryDirectory(prefix="cpe-v4-predecessor-") as raw:
+        base = Path(raw)
+        invented_root = base / "invented"
+        expect_error(
+            lambda: _commit_predecessor_attestation(
+                invented_root,
+                {
+                    "schema_version": "cpe-quality-predecessor-attestation.v1",
+                    "attestation_sha256": "0" * 64,
+                },
+            ),
+            LedgerError,
+            "caller-supplied summary must fail before durable bytes are written",
+        )
+        assert not invented_root.exists()
+        predecessor = base / "predecessor"
+        predecessor.mkdir()
+        _, _, prior_patch = _write_failed_predecessor_fixture(predecessor)
+        dirty_target = base / "dirty-target"
+        dirty_target.mkdir()
+        (dirty_target / "auth.json").write_text("secret\n", encoding="utf-8")
+        dirty_import = subprocess.run(
+            [
+                sys.executable,
+                str(ROOT / "live_model_runner.py"),
+                "attest-predecessor",
+                "--predecessor-root",
+                str(predecessor),
+                "--evidence-root",
+                str(dirty_target),
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert dirty_import.returncode == 1
+        assert not (dirty_target / "quality-release-predecessor.json").exists()
+        assert not (dirty_target / "quality-release-events.jsonl").exists()
+        corrected_root = base / "corrected"
+        runner = ROOT / "live_model_runner.py"
+        command = [
+            sys.executable,
+            str(runner),
+            "attest-predecessor",
+            "--predecessor-root",
+            str(predecessor),
+            "--evidence-root",
+            str(corrected_root),
+        ]
+        imported = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
+        assert imported.returncode == 0, imported.stdout + imported.stderr
+        imported_payload = json.loads(imported.stdout)
+        assert imported_payload["status"] == "predecessor_attested"
+        lineage = replay_release_lineage(corrected_root)
+        assert lineage["terminal_full_runs"] == 1
+        assert lineage["terminal_full_failures"] == 1
+        assert lineage["release_passed"] is False
+        assert lineage["release_blocked"] is False
+        assert not (corrected_root / "quality-release-manifests").exists()
+        stored = b"".join(
+            path.read_bytes() for path in corrected_root.rglob("*") if path.is_file()
+        )
+        assert b"oracle" not in stored.lower()
+        assert str(predecessor).encode() not in stored
+        assert b"transcript" not in stored.lower()
+        assert b"auth.json" not in stored.lower()
+
+        idempotent = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
+        assert idempotent.returncode == 0, idempotent.stdout + idempotent.stderr
+        assert replay_release_lineage(corrected_root) == lineage
+
+        crash_root = base / "crash-recovery"
+
+        def injected_crash(*_args, **_kwargs):
+            raise OSError("injected post-artifact pre-event crash")
+
+        expect_error(
+            lambda: attest_predecessor_release(
+                crash_root,
+                predecessor,
+                ROOT.parents[2],
+                append_event_fn=injected_crash,
+            ),
+            OSError,
+            "predecessor artifact must survive a pre-event crash",
+        )
+        assert (crash_root / "quality-release-predecessor.json").is_file()
+        assert not (crash_root / "quality-release-events.jsonl").exists()
+        recovered = attest_predecessor_release(crash_root, predecessor, ROOT.parents[2])
+        assert recovered["status"] == "predecessor_attested"
+        assert replay_release_lineage(crash_root)["event_count"] == 1
+
+        post_event_root = base / "post-event-crash"
+
+        def injected_state_crash(*_args, **_kwargs):
+            raise OSError("injected post-event pre-state crash")
+
+        expect_error(
+            lambda: attest_predecessor_release(
+                post_event_root,
+                predecessor,
+                ROOT.parents[2],
+                write_state_fn=injected_state_crash,
+            ),
+            OSError,
+            "a post-event state crash must surface for recovery",
+        )
+        assert (post_event_root / "quality-release-events.jsonl").is_file()
+        assert not (post_event_root / "quality-release-state.json").exists()
+        attest_predecessor_release(post_event_root, predecessor, ROOT.parents[2])
+        assert replay_release_lineage(post_event_root)["event_count"] == 1
+
+        unchanged = compile_v4_manifest(commit="d" * 40, run_id="unchanged")
+        unchanged["implementation_patch_sha256"] = prior_patch
+        unchanged_body = {key: value for key, value in unchanged.items() if key != "manifest_sha256"}
+        unchanged["manifest_sha256"] = sha256_bytes(canonical_json(unchanged_body))
+        expect_error(
+            lambda: register_release_run(corrected_root, unchanged),
+            LedgerError,
+            "unchanged corrected checkpoint must be blocked",
+        )
+
+        corrected = compile_v4_manifest(commit="e" * 40, run_id="corrected")
+        register_release_run(corrected_root, corrected)
+        expect_error(
+            lambda: register_release_run(
+                corrected_root,
+                compile_v4_manifest(commit="f" * 40, run_id="forbidden-third"),
+            ),
+            LedgerError,
+            "third release registration must be blocked before provider calls",
+        )
+
+        different_predecessor = base / "different-predecessor"
+        different_predecessor.mkdir()
+        _write_failed_predecessor_fixture(different_predecessor)
+        expect_error(
+            lambda: attest_predecessor_release(
+                corrected_root, different_predecessor, ROOT.parents[2]
+            ),
+            LedgerError,
+            "a different validated predecessor must not replace the first attestation",
+        )
+
+        aggregate_path = predecessor / "aggregate.json"
+        original = aggregate_path.read_bytes()
+        aggregate_path.write_bytes(original.replace(b'"passed":false', b'"passed":true', 1))
+        tampered = subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
+        assert tampered.returncode == 1
+        assert json.loads(tampered.stdout)["status"] == "blocked"
+        aggregate_path.write_bytes(original)
+
+        dogfood_path = predecessor / "dogfood-result.json"
+        checkpoint_path = predecessor / "checkpoint.json"
+        original_dogfood = dogfood_path.read_bytes()
+        original_checkpoint = checkpoint_path.read_bytes()
+        dogfood = json.loads(original_dogfood)
+        dogfood["credential_note"] = "auth.json"
+        dogfood_path.write_bytes(canonical_json(dogfood))
+        checkpoint = json.loads(original_checkpoint)
+        checkpoint["dogfood_sha256"] = sha256_bytes(canonical_json(dogfood))
+        checkpoint_path.write_bytes(canonical_json(checkpoint))
+        forbidden_source_target = base / "forbidden-source-target"
+        forbidden_source = subprocess.run(
+            [
+                sys.executable,
+                str(runner),
+                "attest-predecessor",
+                "--predecessor-root",
+                str(predecessor),
+                "--evidence-root",
+                str(forbidden_source_target),
+            ],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert forbidden_source.returncode == 1
+        assert not forbidden_source_target.exists()
+        dogfood_path.write_bytes(original_dogfood)
+        checkpoint_path.write_bytes(original_checkpoint)
+
+
 def main() -> int:
     manifest = check_exact_manifest()
     check_production_faithful_case_prompts(manifest)
@@ -1113,6 +1436,7 @@ def main() -> int:
     check_registration_crash_is_idempotently_recoverable()
     check_orphan_manifest_registration_recovery()
     check_success_is_terminal_only_after_aggregate_and_privacy()
+    check_cross_root_predecessor_attestation()
     print("quality matrix v4 checks passed")
     return 0
 

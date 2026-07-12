@@ -452,12 +452,12 @@ def _validate_runner_manifest(manifest: dict[str, Any]) -> None:
         raise MigrationContractError("run manifest must contain seven policy failures")
 
 
-def aggregate_run(run_dir: Path) -> dict[str, Any]:
+def aggregate_run(run_dir: Path, *, repair_state: bool = True) -> dict[str, Any]:
     """Replay and aggregate one immutable runner-owned live evidence directory."""
 
     root = Path(run_dir).expanduser().resolve()
     try:
-        projection = replay_run(root)
+        projection = replay_run(root, repair_state=repair_state)
         manifest = load_json(root / "manifest.json")
     except (LedgerError, OSError) as exc:
         raise MigrationContractError(f"invalid live run ledger: {exc}") from exc

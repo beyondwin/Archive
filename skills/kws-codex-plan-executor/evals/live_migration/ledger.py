@@ -41,6 +41,24 @@ _RELEASE_EVENT_FIELDS = _EVENT_FIELDS
 _RELEASE_EVENTS_FILE = "quality-release-events.jsonl"
 _RELEASE_STATE_FILE = "quality-release-state.json"
 _RELEASE_MANIFEST_DIR = "quality-release-manifests"
+PREDECESSOR_ATTESTATION_SCHEMA = "cpe-quality-predecessor-attestation.v1"
+PREDECESSOR_ATTESTATION_DOMAIN = "cpe-quality-predecessor-attestation.v1"
+_PREDECESSOR_ATTESTATION_FILE = "quality-release-predecessor.json"
+_PREDECESSOR_EVENT = "predecessor_release_attested"
+_PREDECESSOR_DIGEST_FIELDS = frozenset(
+    {
+        "predecessor_event_sha256",
+        "predecessor_events_sha256",
+        "predecessor_state_sha256",
+        "predecessor_manifest_sha256",
+        "predecessor_manifest_artifact_sha256",
+        "predecessor_aggregate_sha256",
+        "predecessor_aggregate_artifact_sha256",
+        "predecessor_privacy_sha256",
+        "predecessor_privacy_artifact_sha256",
+        "attestation_sha256",
+    }
+)
 
 
 class LedgerError(RuntimeError):
@@ -330,13 +348,108 @@ def _read_release_events(root: Path) -> list[dict[str, object]]:
     return events
 
 
-def _release_projection(events: list[dict[str, object]]) -> dict[str, object]:
+def _validate_predecessor_artifact(
+    artifact: dict[str, object]
+) -> dict[str, object]:
+    required = {
+        "schema_version",
+        "domain",
+        *_PREDECESSOR_DIGEST_FIELDS,
+        "terminal_full_runs",
+        "terminal_full_failures",
+        "prior_checkpoint",
+        "implementation_commit",
+        "implementation_tree",
+        "implementation_patch_sha256",
+    }
+    if set(artifact) != required:
+        raise LedgerError("predecessor attestation fields are invalid")
+    if (
+        artifact.get("schema_version") != PREDECESSOR_ATTESTATION_SCHEMA
+        or artifact.get("domain") != PREDECESSOR_ATTESTATION_DOMAIN
+        or artifact.get("terminal_full_runs") != 1
+        or artifact.get("terminal_full_failures") != 1
+    ):
+        raise LedgerError("predecessor attestation contract is invalid")
+    if any(
+        not isinstance(artifact.get(field), str)
+        or _SHA256.fullmatch(str(artifact[field])) is None
+        for field in _PREDECESSOR_DIGEST_FIELDS
+    ):
+        raise LedgerError("predecessor attestation digest is invalid")
+    if (
+        not isinstance(artifact.get("implementation_commit"), str)
+        or re.fullmatch(r"[0-9a-f]{40}", str(artifact["implementation_commit"])) is None
+        or not isinstance(artifact.get("implementation_tree"), str)
+        or re.fullmatch(r"[0-9a-f]{40}", str(artifact["implementation_tree"])) is None
+        or artifact.get("implementation_patch_sha256") != artifact.get("prior_checkpoint")
+        or _SHA256.fullmatch(str(artifact.get("prior_checkpoint", ""))) is None
+    ):
+        raise LedgerError("predecessor implementation identity is invalid")
+    body = {key: value for key, value in artifact.items() if key != "attestation_sha256"}
+    expected_attestation = sha256_bytes(
+        canonical_json({"domain": PREDECESSOR_ATTESTATION_DOMAIN, "body": body})
+    )
+    if not hmac.compare_digest(str(artifact["attestation_sha256"]), expected_attestation):
+        raise LedgerError("predecessor attestation domain binding is invalid")
+    return artifact
+
+
+def _validate_predecessor_attestation(
+    root: Path, event: dict[str, object]
+) -> dict[str, object]:
+    artifact_path = root / _PREDECESSOR_ATTESTATION_FILE
+    if not artifact_path.is_file() or artifact_path.is_symlink():
+        raise LedgerError("predecessor attestation artifact is missing")
+    artifact = _validate_predecessor_artifact(
+        _load_object(artifact_path, _PREDECESSOR_ATTESTATION_FILE)
+    )
+    payload = event.get("payload")
+    if not isinstance(payload, dict) or set(payload) != {
+        "attestation_sha256",
+        "artifact_sha256",
+        "predecessor_event_sha256",
+    }:
+        raise LedgerError("predecessor attestation event payload is invalid")
+    artifact_sha256 = sha256_bytes(canonical_json(artifact))
+    if (
+        payload.get("attestation_sha256") != artifact.get("attestation_sha256")
+        or payload.get("artifact_sha256") != artifact_sha256
+        or payload.get("predecessor_event_sha256")
+        != artifact.get("predecessor_event_sha256")
+    ):
+        raise LedgerError("predecessor attestation event differs from its artifact")
+    return artifact
+
+
+def _release_projection(
+    events: list[dict[str, object]], root: Path
+) -> dict[str, object]:
     runs: list[dict[str, object]] = []
     by_id: dict[str, dict[str, object]] = {}
     for event in events:
         payload = event["payload"]
         assert isinstance(payload, dict)
-        if event["type"] == "release_run_registered":
+        if event["type"] == _PREDECESSOR_EVENT:
+            if runs or event["sequence"] != 1:
+                raise LedgerError("predecessor attestation must be the first release event")
+            artifact = _validate_predecessor_attestation(root, event)
+            runs.append(
+                {
+                    "kind": "predecessor_attestation",
+                    "attestation_sha256": artifact["attestation_sha256"],
+                    "manifest_sha256": artifact["predecessor_manifest_sha256"],
+                    "checkpoint": artifact["prior_checkpoint"],
+                    "terminal": True,
+                    "passed": False,
+                    "aggregate_sha256": artifact["predecessor_aggregate_sha256"],
+                    "privacy_sha256": artifact["predecessor_privacy_sha256"],
+                    "terminal_manifest_sha256": artifact["predecessor_manifest_sha256"],
+                }
+            )
+        elif event["type"] == "release_run_registered":
+            if str(payload.get("run_id")) in by_id:
+                raise LedgerError("release run ID is registered more than once")
             record = {
                 "run_id": payload["run_id"],
                 "manifest_sha256": payload["manifest_sha256"],
@@ -404,9 +517,87 @@ def replay_release_lineage(root: Path) -> dict[str, object]:
     release_root = Path(root)
     release_root.mkdir(parents=True, exist_ok=True)
     with _locked_run(release_root):
-        projection = _release_projection(_read_release_events(release_root))
+        projection = _release_projection(_read_release_events(release_root), release_root)
         _atomic_json(release_root / _RELEASE_STATE_FILE, projection)
         return projection
+
+
+def validate_release_lineage(root: Path) -> dict[str, object]:
+    """Validate a release chain and require byte-identical stored projection parity."""
+
+    release_root = Path(root)
+    if not release_root.is_dir() or release_root.is_symlink():
+        raise LedgerError("release lineage root is invalid")
+    with _locked_run(release_root):
+        projection = _release_projection(_read_release_events(release_root), release_root)
+        state_path = release_root / _RELEASE_STATE_FILE
+        if (
+            not state_path.is_file()
+            or state_path.is_symlink()
+            or state_path.read_bytes() != canonical_json(projection)
+        ):
+            raise LedgerError("release lineage projection differs from authoritative events")
+        return projection
+
+
+def _commit_predecessor_attestation(
+    root: Path,
+    artifact: dict[str, object],
+    *,
+    append_event_fn=None,
+    write_state_fn=None,
+) -> dict[str, object]:
+    """Publish one validated digest-only predecessor artifact before its event."""
+
+    if not isinstance(artifact, dict):
+        raise LedgerError("predecessor attestation must be an object")
+    _validate_predecessor_artifact(artifact)
+    release_root = Path(root)
+    release_root.mkdir(parents=True, exist_ok=True)
+    artifact_bytes = canonical_json(artifact)
+    with _locked_run(release_root):
+        events = _read_release_events(release_root)
+        predecessor_events = [event for event in events if event["type"] == _PREDECESSOR_EVENT]
+        artifact_path = release_root / _PREDECESSOR_ATTESTATION_FILE
+        if not events and not artifact_path.exists() and any(release_root.iterdir()):
+            raise LedgerError("predecessor attestation requires a fresh evidence root")
+        if artifact_path.exists():
+            if (
+                not artifact_path.is_file()
+                or artifact_path.is_symlink()
+                or artifact_path.read_bytes() != artifact_bytes
+            ):
+                raise LedgerError("different predecessor attestation is already stored")
+        else:
+            if events:
+                raise LedgerError("predecessor attestation must precede release registration")
+            _write_exclusive(artifact_path, artifact_bytes)
+            _fsync_directory(release_root)
+        if predecessor_events:
+            if len(predecessor_events) != 1:
+                raise LedgerError("multiple predecessor attestations are forbidden")
+            _validate_predecessor_attestation(release_root, predecessor_events[0])
+            (write_state_fn or _atomic_json)(
+                release_root / _RELEASE_STATE_FILE,
+                _release_projection(_read_release_events(release_root), release_root),
+            )
+            return predecessor_events[0]
+        if events:
+            raise LedgerError("predecessor attestation must be the first release event")
+        event = (append_event_fn or _append_release_event_locked)(
+            release_root,
+            _PREDECESSOR_EVENT,
+            {
+                "attestation_sha256": artifact.get("attestation_sha256"),
+                "artifact_sha256": sha256_bytes(artifact_bytes),
+                "predecessor_event_sha256": artifact.get("predecessor_event_sha256"),
+            },
+        )
+        (write_state_fn or _atomic_json)(
+            release_root / _RELEASE_STATE_FILE,
+            _release_projection(_read_release_events(release_root), release_root),
+        )
+        return event
 
 
 def _release_manifest_path(root: Path, run_id: str) -> Path:
@@ -423,7 +614,7 @@ def load_registered_release_manifest(
         return None
     with _locked_run(release_root):
         events = _read_release_events(release_root)
-        projection = _release_projection(events)
+        projection = _release_projection(events, release_root)
         record = next(
             (
                 item
@@ -472,7 +663,7 @@ def register_release_run(
     release_root.mkdir(parents=True, exist_ok=True)
     with _locked_run(release_root):
         events = _read_release_events(release_root)
-        projection = _release_projection(events)
+        projection = _release_projection(events, release_root)
         runs = projection["runs"]
         assert isinstance(runs, list)
         existing = next(
@@ -529,7 +720,7 @@ def register_release_run(
         )
         _atomic_json(
             release_root / _RELEASE_STATE_FILE,
-            _release_projection(_read_release_events(release_root)),
+            _release_projection(_read_release_events(release_root), release_root),
         )
         return event
 
@@ -562,7 +753,7 @@ def recover_orphan_release_registration(
         ):
             raise LedgerError("orphan release manifest contract is invalid")
         events = _read_release_events(release_root)
-        projection = _release_projection(events)
+        projection = _release_projection(events, release_root)
         runs = projection["runs"]
         assert isinstance(runs, list)
         existing = next(
@@ -600,7 +791,7 @@ def recover_orphan_release_registration(
         )
         _atomic_json(
             release_root / _RELEASE_STATE_FILE,
-            _release_projection(_read_release_events(release_root)),
+            _release_projection(_read_release_events(release_root), release_root),
         )
         return event
 
@@ -627,7 +818,7 @@ def record_release_terminal(
         raise LedgerError("release terminal binding is invalid")
     release_root = Path(root)
     with _locked_run(release_root):
-        projection = _release_projection(_read_release_events(release_root))
+        projection = _release_projection(_read_release_events(release_root), release_root)
         runs = projection["runs"]
         assert isinstance(runs, list)
         target = next((record for record in runs if record.get("run_id") == run_id), None)
@@ -654,7 +845,7 @@ def record_release_terminal(
         )
         _atomic_json(
             release_root / _RELEASE_STATE_FILE,
-            _release_projection(_read_release_events(release_root)),
+            _release_projection(_read_release_events(release_root), release_root),
         )
         return event
 
@@ -938,15 +1129,17 @@ def _key_object(key: SlotKey) -> dict[str, str]:
     return {"treatment_id": key.treatment_id, "case_id": key.case_id}
 
 
-def replay_run(run_dir: Path) -> dict[str, object]:
+def replay_run(run_dir: Path, *, repair_state: bool = True) -> dict[str, object]:
     """Validate authoritative evidence, derive state, and atomically repair drift."""
 
     root = Path(run_dir)
     with _locked_run(root):
-        return _replay_run_locked(root)
+        return _replay_run_locked(root, repair_state=repair_state)
 
 
-def _replay_run_locked(root: Path) -> dict[str, object]:
+def _replay_run_locked(
+    root: Path, *, repair_state: bool = True
+) -> dict[str, object]:
     run = _read_manifest(root)
     slots = _manifest_slots(run.manifest)
     slot_set = set(slots)
@@ -1051,6 +1244,8 @@ def _replay_run_locked(root: Path) -> dict[str, object]:
         current_state = state_path.read_bytes() if state_path.exists() else None
     except OSError as exc:
         raise LedgerError(f"state.json is unreadable: {exc}") from exc
+    if current_state != expected_state and not repair_state:
+        raise LedgerError("state.json differs from authoritative run events")
     if current_state != expected_state:
         _atomic_json(state_path, projection)
     return projection

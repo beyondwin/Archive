@@ -959,3 +959,47 @@ aggregate were read only through sanitized result surfaces and were not
 modified or rerun. Residual risk: a corrected live matrix and Waygent dogfood
 remain separate, explicitly unauthorized follow-up work; this deterministic fix
 does not claim v4 release readiness.
+
+## 2026-07-12 Asia/Seoul - v4 cross-root predecessor attestation
+
+Branch and basis: `codex/cpe-v4-autonomous-efficient-executor-continuation` at
+`6a9565eba5a4c0812b42984f88764615f8b94b62` plus the focused lineage fix.
+
+Scope: added the cost-free `attest-predecessor` command. It validates one real
+terminal failed v4 root in place and writes only a domain-separated digest
+artifact, hash-chained event, and projection to the corrected root. The
+projection preserves the initial-plus-one-corrected cap without copying the
+oracle-bearing manifest, child ledger, result, auth, or session bytes.
+
+Commands and results:
+
+- TDD RED: `python3 evals/check_quality_matrix_v4.py` exited 1 because
+  `attest-predecessor` was not a supported command.
+- Fail-closed RED: the same check exited 1 after an invented internal summary
+  left target bytes behind; pre-write schema and domain validation then made
+  the case pass without changing the supported CLI input surface.
+- Crash-recovery RED: the same check rejected the missing state-writer seam;
+  the final case injects a post-event/pre-state crash and proves an idempotent
+  retry restores projection parity without appending a second event.
+- Independent-review RED: dirty target and forbidden top-level predecessor
+  surfaces initially imported; the final check requires a fresh target and
+  recomputes the shared privacy audit across every sanitized release surface.
+- Task 8 focused quality, ledger, oracle, and runner checks: exit 0; the
+  production-backed fake predecessor covered idempotence, crash recovery,
+  different/tampered source rejection, corrected registration, and third-run
+  blocking.
+- Task 9 `check_cpe_v4_e2e.py` and release-evidence self-check: exit 0.
+- Actual failed Task 10 root read-only import into a temporary corrected root:
+  exit 0; only three sanitized release-lineage files were created and the
+  forbidden-path/material scan had no match.
+- `./evals/run.sh`: exit 0; all 35 recorded checks passed with paid execution
+  skipped, not approved.
+- Full Python `py_compile`, `bash -n evals/run.sh`, live-runner and CPE help,
+  docs contract, and `git diff --check`: exit 0.
+- Repository `bun run check`: exit 0; 820 pass, 10 skip, 0 fail across 149
+  files. The live provider smoke remained skipped.
+
+Credentialed/provider calls: zero. Residual risk: the attestation is local
+filesystem continuity evidence, not a signature or remote transparency log.
+Any later staged quality calls and release-tier changes are separately reviewed
+work and are not authorized or implemented by this fix.

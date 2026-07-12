@@ -111,3 +111,18 @@ verdict paired with top-level completed. `check_prompt_bundle_v4.py` and
 compiled prompt, manifest, fake launcher, result, and evidence digests without
 making a provider call. This deterministic contract does not amend or rerun
 previously captured live evidence and does not publish v4 release readiness.
+
+When the sole authorized corrected v4 run uses a new evidence root, import the
+failed predecessor lineage without copying its oracle-bearing manifest:
+
+```bash
+python3 evals/live_model_runner.py attest-predecessor \
+  --predecessor-root /absolute/failed-evidence-root \
+  --evidence-root /absolute/corrected-evidence-root
+```
+
+This command is cost-free and accepts no caller-supplied summary. It validates
+the real predecessor root in place and writes only a sanitized digest
+attestation followed by its hash-chained event. Repeating the same import is
+idempotent; a different or tampered predecessor, an unchanged corrected
+checkpoint, or a third registration fails before provider preflight.
