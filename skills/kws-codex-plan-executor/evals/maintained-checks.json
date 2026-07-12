@@ -5,8 +5,8 @@
     {"path": "check_checkpoint_lifecycle_v4.py", "production_entrypoint": "cpe_runtime.checkpoints,cpe_runtime.verification_workspace", "mutation_assertion": "candidate acceptance and verified checkpoint bindings reject drift"},
     {"path": "check_method_evidence_v4.py", "production_entrypoint": "cpe_runtime.command_evidence,cpe_runtime.evidence", "mutation_assertion": "TDD method evidence rejects raw and fabricated observations"},
     {"path": "check_autonomy_supervisor_v4.py", "production_entrypoint": "cpe_runtime.autonomy,cpe_runtime.supervisor", "mutation_assertion": "authority boundaries and notification deduplication fail closed"},
-    {"path": "check_v4_state_contract.py", "production_entrypoint": "cpe_runtime.kernel,cpe_runtime.projector", "mutation_assertion": "schema3 and invalid v4 events cannot enter the run projection"},
-    {"path": "check_scheduler_v4.py", "production_entrypoint": "cpe_runtime.scheduler,cpe_runtime.reconciliation,cpe_runtime.repair", "mutation_assertion": "bounded lifecycle crash privacy and dependency resume mutations fail closed"},
+    {"path": "check_v4_state_contract.py", "production_entrypoint": "cpe_runtime.projector", "mutation_assertion": "schema3 and invalid v4 events cannot enter the run projection"},
+    {"path": "check_scheduler_v4.py", "production_entrypoint": "cpe_runtime.scheduler,cpe_runtime.reconciliation", "mutation_assertion": "bounded lifecycle crash privacy and dependency resume mutations fail closed"},
     {"path": "check_prompt_bundle_v4.py", "production_entrypoint": "cpe_runtime.prompt_bundles", "mutation_assertion": "production control and candidate prompt bindings reject drift"},
     {"path": "check_quality_matrix_v4.py", "production_entrypoint": "live_migration.compiler,live_migration.runner,live_migration.ledger", "mutation_assertion": "the exact 17-call and seven-policy matrix rejects lineage drift"},
     {"path": "check_cpe_v4_e2e.py", "production_entrypoint": "cpe.run_v4_fixture,cpe.resume_v4_run,cpe.inspect_v4_run", "mutation_assertion": "one ten-task run must verify ten ordered checkpoints within 40 attempts"}

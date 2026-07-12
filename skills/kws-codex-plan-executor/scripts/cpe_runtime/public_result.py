@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -26,7 +27,9 @@ def _canonical_sha256(payload: object) -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def validate_release_evidence_root(root: Path) -> dict[str, object]:
+def validate_release_evidence_root(
+    root: Path, implementation_commit: str, workspace: Path
+) -> dict[str, object]:
     """Validate the immutable Task 10 evidence against its reviewed checkpoint."""
 
     root = root.expanduser().resolve()
@@ -61,12 +64,47 @@ def validate_release_evidence_root(root: Path) -> dict[str, object]:
             character in "0123456789abcdef" for character in value
         )
 
+    reviewed_tree: str | None = None
+    if not lower_hex(implementation_commit, 40) or not workspace.expanduser().resolve().is_dir():
+        errors.append("implementation_commit_invalid")
+    else:
+        repository = workspace.expanduser().resolve()
+        commit_result = subprocess.run(
+            ["git", "rev-parse", "--verify", f"{implementation_commit}^{{commit}}"],
+            cwd=repository,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        tree_result = subprocess.run(
+            ["git", "rev-parse", "--verify", f"{implementation_commit}^{{tree}}"],
+            cwd=repository,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        if (
+            commit_result.returncode
+            or tree_result.returncode
+            or commit_result.stdout.strip() != implementation_commit
+            or not lower_hex(tree_result.stdout.strip(), 40)
+        ):
+            errors.append("implementation_commit_invalid")
+        else:
+            reviewed_tree = tree_result.stdout.strip()
+
     if not lower_hex(checkpoint.get("commit"), 40) or not lower_hex(checkpoint.get("tree"), 40):
         errors.append("reviewed_checkpoint_invalid")
+    if (
+        checkpoint.get("commit") != implementation_commit
+        or reviewed_tree is None
+        or checkpoint.get("tree") != reviewed_tree
+    ):
+        errors.append("reviewed_checkpoint_mismatch")
     if any(
         payload.get("implementation_commit") != checkpoint.get("commit")
         or payload.get("implementation_tree") != checkpoint.get("tree")
-        for payload in (manifest, result)
+        for payload in (manifest, result, privacy, dogfood)
     ):
         errors.append("reviewed_checkpoint_binding_invalid")
     bindings = {
