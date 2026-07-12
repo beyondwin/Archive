@@ -444,7 +444,12 @@ def load_registered_release_manifest(
         return manifest
 
 
-def register_release_run(root: Path, manifest: dict[str, object]) -> dict[str, object]:
+def register_release_run(
+    root: Path,
+    manifest: dict[str, object],
+    *,
+    append_event_fn=None,
+) -> dict[str, object]:
     """Reserve one immutable release attempt before any provider execution."""
 
     if not isinstance(manifest, dict) or manifest.get("schema_version") != "cpe-quality-manifest.v4":
@@ -513,12 +518,83 @@ def register_release_run(root: Path, manifest: dict[str, object]) -> dict[str, o
         else:
             _write_exclusive(manifest_path, manifest_bytes)
             _fsync_directory(manifest_path.parent)
-        event = _append_release_event_locked(
+        event = (append_event_fn or _append_release_event_locked)(
             release_root,
             "release_run_registered",
             {
                 "run_id": run_id,
                 "manifest_sha256": manifest_sha256,
+                "checkpoint": checkpoint,
+            },
+        )
+        _atomic_json(
+            release_root / _RELEASE_STATE_FILE,
+            _release_projection(_read_release_events(release_root)),
+        )
+        return event
+
+
+def recover_orphan_release_registration(
+    root: Path, run_id: str
+) -> dict[str, object] | None:
+    """Recover a fsynced exact manifest whose registration event was not appended."""
+
+    release_root = Path(root)
+    if not release_root.is_dir():
+        return None
+    manifest_path = _release_manifest_path(release_root, run_id)
+    if not manifest_path.is_file() or manifest_path.is_symlink():
+        return None
+    with _locked_run(release_root):
+        manifest = _load_object(manifest_path, f"orphan release manifest {run_id}")
+        digest = _manifest_digest(manifest)
+        checkpoint = manifest.get("implementation_patch_sha256") or manifest.get(
+            "implementation_commit"
+        )
+        catalog = manifest.get("model_catalog_sha256")
+        if (
+            manifest.get("schema_version") != "cpe-quality-manifest.v4"
+            or manifest.get("run_id") != run_id
+            or not isinstance(checkpoint, str)
+            or re.fullmatch(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", checkpoint) is None
+            or not isinstance(catalog, str)
+            or _SHA256.fullmatch(catalog) is None
+        ):
+            raise LedgerError("orphan release manifest contract is invalid")
+        events = _read_release_events(release_root)
+        projection = _release_projection(events)
+        runs = projection["runs"]
+        assert isinstance(runs, list)
+        existing = next(
+            (record for record in runs if record.get("run_id") == run_id), None
+        )
+        if existing is not None:
+            if (
+                existing.get("manifest_sha256") == digest
+                and existing.get("checkpoint") == checkpoint
+            ):
+                return next(
+                    event
+                    for event in events
+                    if event["type"] == "release_run_registered"
+                    and isinstance(event["payload"], dict)
+                    and event["payload"].get("run_id") == run_id
+                )
+            raise LedgerError("orphan manifest conflicts with registered release run")
+        if len(runs) >= _MAX_TERMINAL_FULL_RUNS or projection["release_passed"] is True:
+            raise LedgerError("orphan recovery exceeds release run limit")
+        if runs:
+            previous = runs[-1]
+            if previous.get("terminal") is not True or previous.get("passed") is not False:
+                raise LedgerError("orphan corrected run lacks a terminal predecessor failure")
+            if previous.get("checkpoint") == checkpoint:
+                raise LedgerError("orphan corrected run did not change checkpoint")
+        event = _append_release_event_locked(
+            release_root,
+            "release_run_registered",
+            {
+                "run_id": run_id,
+                "manifest_sha256": digest,
                 "checkpoint": checkpoint,
             },
         )
