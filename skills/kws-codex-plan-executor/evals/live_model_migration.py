@@ -18,6 +18,7 @@ from urllib.parse import quote
 
 from live_migration.contracts import canonical_json, sha256_bytes
 from live_migration.ledger import LedgerError, replay_run
+from live_migration.envelopes import open_launch_envelope
 
 
 MAX_BUDGET_USD = 50.00
@@ -551,6 +552,7 @@ def _aggregate_v4_run(
     seen: set[tuple[str, str]] = set()
     results: list[dict[str, Any]] = []
     result_digests: dict[str, str] = {}
+    envelope_digests: dict[str, str] = {}
     binding_fields = (
         "prompt_sha256",
         "task_contract_sha256",
@@ -576,6 +578,21 @@ def _aggregate_v4_run(
             raise MigrationContractError("v4 live results contain mixed run IDs")
         if any(result.get(field) != slot.get(field) for field in binding_fields):
             failures.append("prompt_result_binding_failed")
+        if slot.get("credentialed") is True:
+            envelope_sha256 = as_sha256(slot, "envelope_sha256")
+            prompt_binding = load_json(evidence_dir / "prompt-binding.json")
+            if (
+                result.get("envelope_sha256") != envelope_sha256
+                or index.get("envelope_sha256") != envelope_sha256
+                or prompt_binding.get("envelope_sha256") != envelope_sha256
+            ):
+                failures.append("launch_envelope_binding_failed")
+            try:
+                artifact = load_json(evidence_dir / "launch-envelope.json")
+                open_launch_envelope(artifact, envelope_sha256)
+            except (MigrationContractError, ValueError):
+                failures.append("launch_envelope_substitution")
+            envelope_digests[f"{treatment_id}/{case_id}"] = envelope_sha256
         if slot.get("expected_policy_failure") and (
             result.get("manifest_sha256") != manifest.get("manifest_sha256")
             or result.get("matrix_policy_sha256") != slot.get("matrix_policy_sha256")
@@ -632,6 +649,7 @@ def _aggregate_v4_run(
         "duplicate_slot_count": len(slots) - len(seen),
         "pending_slot_count": len(projection.get("pending_slots", [])),
         "result_sha256": result_digests,
+        "envelope_sha256": envelope_digests,
         "release_gate": {
             "passed": not failures,
             "failures": failures,

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import base64
+import binascii
 import json
 import os
 import re
@@ -19,11 +21,14 @@ from .contracts import (
     CREDENTIALLED_CALL,
     EXPECTED_POLICY_FAILURE,
     CaseRef,
+    LiveMigrationContractError,
     SlotKey,
     canonical_json,
+    sha256_bytes,
     worker_prompt_bytes,
 )
 from .compiler import v4_case_prompt_bundles, v4_worker_output_schema_bytes
+from .envelopes import open_launch_envelope, open_oracle_binding
 from .fixtures import MaterializedFixture, materialize_fixture
 from .ledger import LiveRun, append_event, commit_slot, replay_run
 from .oracle import OracleInputError, ProcessEvidence, evaluate_slot, policy_failure_result
@@ -108,7 +113,9 @@ _V4_BINDING_FIELDS = (
     "case_sha256",
     "prompt_output_schema_sha256",
     "output_schema_sha256",
+    "envelope_sha256",
 )
+QUALIFIED_SENTINEL = SlotKey("sol_v4_candidate", "security/migration block")
 
 
 def _v4_prompt_binding(slot: Mapping[str, object]) -> dict[str, str]:
@@ -121,6 +128,8 @@ def _v4_prompt_binding(slot: Mapping[str, object]) -> dict[str, str]:
     binding: dict[str, str] = {}
     for field in _V4_BINDING_FIELDS:
         value = slot.get(field)
+        if field == "envelope_sha256" and slot.get("credentialed") is not True:
+            continue
         if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
             raise LiveRunnerError(
                 "invalid_prompt_binding", f"v4 slot is missing {field}"
@@ -140,6 +149,80 @@ def _bind_v4_result(
                 "result_prompt_binding_mismatch", f"result changed {field}"
             )
     return {**result, **binding}
+
+
+def _qualified_sentinel_passed(result: Mapping[str, object]) -> bool:
+    return all(
+        (
+            result.get("worker_status") == "blocked",
+            result.get("evidence_complete") is True,
+            result.get("critical_regression") is False,
+            result.get("task_completed") is True,
+            result.get("model_attested") is True,
+            result.get("worktree_isolated") is True,
+            result.get("drift_free") is True,
+            all(result.get(field) for field in _V4_BINDING_FIELDS),
+        )
+    )
+
+
+def _sealed_payloads(manifest: Mapping[str, object]) -> tuple[dict[str, str], dict[str, str]]:
+    sealed = manifest.get("sealed_artifacts")
+    if not isinstance(sealed, dict) or set(sealed) != {"launch_envelopes", "oracle_bindings"}:
+        raise LiveRunnerError("sealed_artifacts_missing", "v4 manifest is missing sealed artifacts")
+    launches = sealed.get("launch_envelopes")
+    oracles = sealed.get("oracle_bindings")
+    if not isinstance(launches, dict) or not isinstance(oracles, dict):
+        raise LiveRunnerError("sealed_artifacts_invalid", "sealed artifact maps are invalid")
+    if not all(isinstance(key, str) and isinstance(value, str) for key, value in (*launches.items(), *oracles.items())):
+        raise LiveRunnerError("sealed_artifacts_invalid", "sealed artifact entries are invalid")
+    return dict(launches), dict(oracles)
+
+
+def _decode_artifact(raw: str, label: str) -> bytes:
+    try:
+        return base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise LiveRunnerError("sealed_artifacts_invalid", f"{label} is not canonical base64") from exc
+
+
+def verify_v4_manifest_sealed_artifacts(manifest: Mapping[str, object]) -> None:
+    launches, oracles = _sealed_payloads(manifest)
+    credentialed = [slot for slot in manifest.get("slots", ()) if isinstance(slot, dict) and slot.get("credentialed") is True]
+    if len(credentialed) != 17 or len(launches) != 17 or len(oracles) != 17:
+        raise LiveRunnerError("sealed_artifact_count_mismatch", "v4 requires one sealed pair per credentialed slot")
+    for slot in credentialed:
+        envelope_digest = str(slot.get("envelope_sha256") or "")
+        oracle_digest = str(slot.get("oracle_binding_sha256") or "")
+        try:
+            envelope = json.loads(_decode_artifact(launches[envelope_digest], "launch envelope"))
+            oracle = json.loads(_decode_artifact(oracles[oracle_digest], "oracle binding"))
+            open_launch_envelope(envelope, envelope_digest)
+            open_oracle_binding(oracle, oracle_digest)
+        except (KeyError, json.JSONDecodeError, UnicodeDecodeError, LiveMigrationContractError) as exc:
+            raise LiveRunnerError("sealed_artifact_binding_mismatch", "sealed artifact differs from manifest") from exc
+
+
+def install_v4_sealed_artifacts(run: LiveRun) -> None:
+    """Publish content-addressed artifacts into the runner-owned evidence root."""
+
+    verify_v4_manifest_sealed_artifacts(run.manifest)
+    launches, oracles = _sealed_payloads(run.manifest)
+    for directory_name, payloads in (("launch-envelopes", launches), ("oracle-bindings", oracles)):
+        directory = run.run_dir / directory_name
+        directory.mkdir(mode=0o700, exist_ok=True)
+        expected_names = {f"{digest}.json" for digest in payloads}
+        if {path.name for path in directory.iterdir()} - expected_names:
+            raise LiveRunnerError("sealed_artifact_substitution", "sealed artifact directory contains unexpected files")
+        for digest, encoded in payloads.items():
+            raw = _decode_artifact(encoded, directory_name)
+            path = directory / f"{digest}.json"
+            if path.exists():
+                if not path.is_file() or path.is_symlink() or path.read_bytes() != raw:
+                    raise LiveRunnerError("sealed_artifact_substitution", "sealed artifact bytes were substituted")
+                continue
+            path.write_bytes(raw)
+            path.chmod(0o400)
 
 
 def execute_v4_slots(
@@ -166,11 +249,27 @@ def execute_v4_slots(
         for slot in run.manifest["slots"]
         if SlotKey(str(slot["treatment_id"]), str(slot["case_id"])) in pending
     ]
+    sentinel_selected = [
+        slot
+        for slot in selected
+        if SlotKey(str(slot["treatment_id"]), str(slot["case_id"]))
+        == QUALIFIED_SENTINEL
+    ]
+    completed_keys = {
+        SlotKey(str(item["treatment_id"]), str(item["case_id"]))
+        for item in projection["completed_slots"]
+    }
+    if len(sentinel_selected) == 1:
+        selected = sentinel_selected + [slot for slot in selected if slot not in sentinel_selected]
+    elif QUALIFIED_SENTINEL not in completed_keys:
+        raise LiveRunnerError("invalid_sentinel", "the exact qualified v4 sentinel must be pending or completed")
     if sentinel_only:
+        if not sentinel_selected:
+            raise LiveRunnerError("invalid_sentinel", "the exact qualified v4 sentinel is already completed")
         selected = selected[:1]
-        if selected and selected[0].get("outcome_kind") != CREDENTIALLED_CALL:
+        if len(selected) != 1 or selected[0].get("outcome_kind") != CREDENTIALLED_CALL:
             raise LiveRunnerError(
-                "invalid_sentinel", "the first pending v4 slot must be credentialed"
+                "invalid_sentinel", "the exact qualified v4 sentinel must be pending"
             )
     provider_invocations = 0
     for slot in selected:
@@ -198,12 +297,30 @@ def execute_v4_slots(
             raise LiveRunnerError("invalid_slot_contract", "v4 slot outcome is inconsistent")
         files, result = invoke_provider(slot)
         provider_invocations += 1
+        bound_result = _bind_v4_result(slot, result)
+        launches, _oracles = _sealed_payloads(run.manifest)
         commit_slot(
             run,
             key,
-            {**files, "prompt-binding.json": canonical_json(_v4_prompt_binding(slot))},
-            _bind_v4_result(slot, result),
+            {
+                **files,
+                "prompt-binding.json": canonical_json(_v4_prompt_binding(slot)),
+                "launch-envelope.json": _decode_artifact(
+                    launches[str(slot["envelope_sha256"])], "launch envelope"
+                ),
+            },
+            bound_result,
         )
+        if key == QUALIFIED_SENTINEL and not _qualified_sentinel_passed(bound_result):
+            append_event(
+                run,
+                "run_blocked",
+                {"code": "qualified_sentinel_failed", "message": "qualified sentinel semantic/oracle gate failed"},
+            )
+            raise LiveRunnerError(
+                "qualified_sentinel_failed",
+                "qualified sentinel semantic/oracle gate failed",
+            )
     return {
         "executed_slots": len(selected),
         "provider_invocations": provider_invocations,
@@ -227,6 +344,113 @@ def _tree_digest(root: Path) -> str:
         elif path.is_symlink():
             raise LiveRunnerError("unsafe_template", f"symlink is not permitted: {path}")
     return digest.hexdigest()
+
+
+def _source_tree_digest(root: Path, domain: bytes) -> str:
+    digest = hashlib.sha256(domain)
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        if path.is_symlink():
+            raise LiveRunnerError("source_drift", "sealed source contains a symlink")
+        relative = path.relative_to(root).as_posix().encode("utf-8")
+        raw = path.read_bytes()
+        for value in (relative, raw):
+            digest.update(len(value).to_bytes(8, "big"))
+            digest.update(value)
+    return digest.hexdigest()
+
+
+def _load_sealed_object(path: Path, label: str) -> dict[str, object]:
+    if not path.is_file() or path.is_symlink():
+        raise LiveRunnerError(f"{label}_missing", f"{label} artifact is missing")
+    try:
+        value = json.loads(path.read_bytes())
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise LiveRunnerError(f"{label}_tampered", f"{label} artifact is invalid") from exc
+    if not isinstance(value, dict):
+        raise LiveRunnerError(f"{label}_tampered", f"{label} artifact is not an object")
+    return value
+
+
+def _open_v4_launch_bytes(
+    context: RunContext, slot: dict[str, object], fixture: MaterializedFixture
+) -> tuple[bytes, bytes]:
+    envelope_sha256 = str(slot.get("envelope_sha256") or "")
+    oracle_sha256 = str(slot.get("oracle_binding_sha256") or "")
+    try:
+        envelope, prompt_bytes, schema_bytes = open_launch_envelope(
+            _load_sealed_object(
+                context.run.run_dir / "launch-envelopes" / f"{envelope_sha256}.json",
+                "launch_envelope",
+            ),
+            envelope_sha256,
+        )
+        oracle = open_oracle_binding(
+            _load_sealed_object(
+                context.run.run_dir / "oracle-bindings" / f"{oracle_sha256}.json",
+                "oracle_binding",
+            ),
+            oracle_sha256,
+        )
+    except LiveMigrationContractError as exc:
+        raise LiveRunnerError("sealed_binding_mismatch", str(exc)) from exc
+    source_root = (
+        Path(context.eval_dir)
+        / "live-migration"
+        / "fixtures"
+        / str(slot.get("case_slug"))
+    )
+    expected_sandbox = (
+        "read-only"
+        if slot.get("prompt_role") == "scout" or fixture.contract.get("mode") == "read_only"
+        else "workspace-write"
+    )
+    route = {
+        "model": slot.get("model"),
+        "reasoning": slot.get("reasoning"),
+        "role": slot.get("prompt_role"),
+        "sandbox": expected_sandbox,
+    }
+    expected_metadata = {
+        "treatment_id": slot.get("treatment_id"),
+        "model": slot.get("model"),
+        "reasoning": slot.get("reasoning"),
+        "role": slot.get("prompt_role"),
+        "task_id": slot.get("case_slug"),
+        "case_id": slot.get("case_id"),
+        "case_slug": slot.get("case_slug"),
+        "fixture_source_sha256": slot.get("fixture_source_sha256"),
+        "input_source_sha256": slot.get("input_source_sha256"),
+        "case_sha256": slot.get("case_sha256"),
+        "task_contract_sha256": slot.get("task_contract_sha256"),
+        "prompt_output_schema_sha256": slot.get("prompt_output_schema_sha256"),
+        "route_binding": route,
+        "route_binding_sha256": slot.get("route_binding_sha256"),
+    }
+    if any(envelope.get(name) != value for name, value in expected_metadata.items()):
+        raise LiveRunnerError("sealed_envelope_route_drift", "sealed launch metadata differs from manifest")
+    if envelope.get("prompt_sha256") != slot.get("prompt_sha256"):
+        raise LiveRunnerError("sealed_prompt_drift", "sealed prompt differs from manifest")
+    if envelope.get("output_schema_sha256") != slot.get("output_schema_sha256"):
+        raise LiveRunnerError("sealed_schema_drift", "sealed schema differs from manifest")
+    if sha256_bytes(canonical_json(route)) != slot.get("route_binding_sha256"):
+        raise LiveRunnerError("sealed_route_drift", "launch route differs from manifest")
+    if _source_tree_digest(source_root / "repo", b"cpe.fixture-source.v4\0") != slot.get("fixture_source_sha256"):
+        raise LiveRunnerError("fixture_source_drift", "fixture source changed after envelope compilation")
+    if _sha256_bytes((source_root / "case.json").read_bytes()) != slot.get("input_source_sha256"):
+        raise LiveRunnerError("case_source_drift", "case source changed after envelope compilation")
+    if (
+        oracle.get("treatment_id") != slot.get("treatment_id")
+        or oracle.get("case_id") != slot.get("case_id")
+        or oracle.get("case_slug") != slot.get("case_slug")
+        or oracle.get("envelope_sha256") != slot.get("envelope_sha256")
+        or oracle.get("oracle_ref") != slot.get("oracle")
+        or _source_tree_digest(source_root / "oracle", b"cpe.oracle-source.v4\0")
+        != oracle.get("oracle_source_sha256")
+    ):
+        raise LiveRunnerError("oracle_binding_mismatch", "hidden oracle binding differs from runner-owned source")
+    if str(fixture.oracle_dir) in prompt_bytes.decode("utf-8") or b"expected.json" in prompt_bytes:
+        raise LiveRunnerError("oracle_prompt_leak", "hidden oracle material entered the sealed prompt")
+    return prompt_bytes, schema_bytes
 
 
 def _assert_read_only_tree(path: Path, label: str) -> None:
@@ -982,6 +1206,7 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
     )
     evidence_dir: Path | None = None
     prompt = stdout = stderr = ""
+    prompt_bytes = b""
     try:
         worktree, evidence_dir = _attempt_paths(context, slot, key)
         fixture = materialize_fixture(
@@ -994,28 +1219,24 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
             if key.treatment_id == "sol_v3"
             else None
         )
-        prompt = render_prompt(
-            slot,
-            fixture,
-            context.eval_dir,
-            baseline_evidence=baseline_evidence,
-        )
         evidence_dir.mkdir(parents=True, exist_ok=False)
         if str(slot.get("treatment_id")) in {
             "sol_v31_control",
             "sol_v4_candidate",
             "terra_v4",
         }:
+            prompt_bytes, schema_bytes = _open_v4_launch_bytes(context, slot, fixture)
+            prompt = prompt_bytes.decode("utf-8")
             worker_schema = evidence_dir / "worker-result-schema.json"
-            worker_schema.write_bytes(v4_worker_output_schema_bytes(context.eval_dir))
-            if _sha256_bytes(worker_schema.read_bytes()) != slot.get(
-                "output_schema_sha256"
-            ):
-                raise LiveRunnerError(
-                    "launched_output_schema_drift",
-                    "launched v4 output schema differs from the manifest binding",
-                )
+            worker_schema.write_bytes(schema_bytes)
         else:
+            prompt = render_prompt(
+                slot,
+                fixture,
+                context.eval_dir,
+                baseline_evidence=baseline_evidence,
+            )
+            prompt_bytes = prompt.encode("utf-8")
             worker_schema = (Path(context.eval_dir) / str(slot["output_schema"])).resolve()
         last_message = evidence_dir / "last-message.json"
         argv = [
@@ -1027,13 +1248,17 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
         ]
         started = time.monotonic()
         process = subprocess.Popen(
-            argv, env=context.child_env, text=True, stdin=subprocess.PIPE,
+            argv, env=context.child_env, stdin=subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
         )
         try:
-            stdout, stderr = process.communicate(prompt, timeout=context.slot_timeout_seconds)
+            stdout_raw, stderr_raw = process.communicate(prompt_bytes, timeout=context.slot_timeout_seconds)
+            stdout = stdout_raw.decode("utf-8", errors="strict")
+            stderr = stderr_raw.decode("utf-8", errors="replace")
         except subprocess.TimeoutExpired as exc:
-            stdout, stderr = _stop_process_group(process)
+            stdout_raw, stderr_raw = _stop_process_group(process)
+            stdout = stdout_raw.decode("utf-8", errors="replace") if isinstance(stdout_raw, bytes) else stdout_raw
+            stderr = stderr_raw.decode("utf-8", errors="replace") if isinstance(stderr_raw, bytes) else stderr_raw
             raise LiveRunnerError(
                 "timeout_retry_required", "slot timed out; an explicit retry is required"
             ) from exc
@@ -1094,16 +1319,23 @@ def run_slot(context: RunContext, slot: dict[str, object]) -> dict[str, object]:
             context, key, evidence_dir, error, prompt=prompt, stdout=stdout, stderr=stderr
         )
         raise error from exc
+    slot_files = {
+        "events.jsonl": stdout.encode(), "stderr.txt": stderr.encode(),
+        "last-message.json": canonical_json(output), "prompt.sha256": (_sha256_bytes(prompt_bytes) + "\n").encode(),
+        "attestation.json": canonical_json(attestation),
+        "prompt-binding.json": canonical_json(_v4_prompt_binding(slot)),
+        "output-schema.json": worker_schema.read_bytes(),
+    }
+    if "envelope_sha256" in slot:
+        slot_files["launch-envelope.json"] = (
+            context.run.run_dir
+            / "launch-envelopes"
+            / f"{slot['envelope_sha256']}.json"
+        ).read_bytes()
     commit_slot(
         context.run,
         key,
-        {
-            "events.jsonl": stdout.encode(), "stderr.txt": stderr.encode(),
-            "last-message.json": canonical_json(output), "prompt.sha256": (_sha256_bytes(prompt.encode()) + "\n").encode(),
-            "attestation.json": canonical_json(attestation),
-            "prompt-binding.json": canonical_json(_v4_prompt_binding(slot)),
-            "output-schema.json": worker_schema.read_bytes(),
-        },
+        slot_files,
         result,
     )
     return result

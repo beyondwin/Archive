@@ -201,6 +201,8 @@ def main() -> int:
                 and "expected_policy" in stdin
                 and OUTPUT_STATUS_CONTRACT_MARKER in stdin
             )
+            if behavior == "sentinel_fail":
+                security_block = False
             last_message.write_text(
                 json.dumps(
                     {

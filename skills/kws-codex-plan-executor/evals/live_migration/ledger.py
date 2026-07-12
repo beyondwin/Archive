@@ -954,6 +954,11 @@ def _commit_slot_locked(
             "files": file_digests,
             "result_sha256": sha256_bytes(result_bytes),
         }
+        envelope_sha256 = result.get("envelope_sha256")
+        if envelope_sha256 is not None:
+            if not isinstance(envelope_sha256, str) or _SHA256.fullmatch(envelope_sha256) is None:
+                raise LedgerError("slot result envelope binding is invalid")
+            index_body["envelope_sha256"] = envelope_sha256
         index = {
             **index_body,
             "slot_sha256": sha256_bytes(canonical_json(index_body)),
@@ -981,6 +986,11 @@ def _commit_slot_locked(
             "case_id": key.case_id,
             "slot_sha256": index["slot_sha256"],
             "result_sha256": index["result_sha256"],
+            **(
+                {"envelope_sha256": index["envelope_sha256"]}
+                if "envelope_sha256" in index
+                else {}
+            ),
         },
         allow_slot_completed=True,
     )
@@ -1083,6 +1093,8 @@ def _validate_completed_slot(
         "result_sha256",
         "slot_sha256",
     }
+    if "envelope_sha256" in index:
+        required_index.add("envelope_sha256")
     if set(index) != required_index or index.get("schema_version") != SLOT_INDEX_SCHEMA:
         raise LedgerError(f"slot index has invalid fields: {key}")
     if index.get("treatment_id") != key.treatment_id or index.get("case_id") != key.case_id:
@@ -1123,6 +1135,14 @@ def _validate_completed_slot(
         raise LedgerError(f"slot completion digest mismatch: {key}")
     if payload.get("result_sha256") != indexed_result_digest:
         raise LedgerError(f"slot completion result digest mismatch: {key}")
+    indexed_envelope = index.get("envelope_sha256")
+    if indexed_envelope is not None and (
+        _SHA256.fullmatch(str(indexed_envelope)) is None
+        or payload.get("envelope_sha256") != indexed_envelope
+        or _load_object(slot_path / "result.json", f"slot result for {key}").get("envelope_sha256")
+        != indexed_envelope
+    ):
+        raise LedgerError(f"slot completion envelope digest mismatch: {key}")
 
 
 def _key_object(key: SlotKey) -> dict[str, str]:

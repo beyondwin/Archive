@@ -153,6 +153,22 @@ def validate_release_evidence_root(
         if payload.get("credentialed_call_count") != 17 or payload.get("policy_outcome_count") != 7:
             errors.append("quality_matrix_count_invalid")
             break
+    manifest_envelopes = manifest.get("envelope_sha256")
+    result_envelopes = result.get("envelope_sha256")
+    envelope_binding_valid = (
+        isinstance(manifest_envelopes, dict)
+        and isinstance(result_envelopes, dict)
+        and manifest_envelopes == result_envelopes
+        and len(manifest_envelopes) == 17
+        and all(
+            isinstance(key, str)
+            and key
+            and lower_hex(value, 64)
+            for key, value in manifest_envelopes.items()
+        )
+    )
+    if not envelope_binding_valid:
+        errors.append("launch_envelope_binding_invalid")
     if not isinstance(result.get("release_gate"), dict) or result["release_gate"].get("passed") is not True:
         errors.append("release_gate_failed")
     if privacy.get("passed") is not True or privacy.get("findings") != []:

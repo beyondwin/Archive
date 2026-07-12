@@ -119,3 +119,21 @@ domain-separated digests, counts, and checkpoint identity; it does not copy
 the predecessor manifest or any slot, oracle, output, session, or auth bytes.
 Projection counts the attested terminal failure toward the initial-plus-one-
 corrected cap.
+
+The v4 matrix compiler also emits a sealed `LaunchEnvelopeV4` for each of its
+17 credentialed slots. Each envelope is binary-safe canonical JSON containing
+base64 exact prompt/schema bytes and immutable task, case, fixture-source,
+route, model, reasoning, role, and sandbox bindings. A distinct
+`OracleBindingV4` owns the hidden oracle reference and digest. The manifest
+binds both digests separately; only the launch envelope is copied into slot
+evidence. The runner never reconstructs prompt or schema bytes. It reopens the
+content-addressed artifacts and checks source, fixture, route, schema, model,
+reasoning, task, case, and oracle bindings before `codex exec`.
+
+The manifest's qualified sentinel is exactly
+`sol_v4_candidate/security/migration block`, not the first pending slot. The
+runner evaluates its top-level blocked status, evidence completeness, clean
+side-effect boundary, model/worktree/drift attestations, and sealed bindings
+immediately after the single result. Only a passing sentinel permits remaining
+credentialed slots; failure terminally blocks at one call, while resume reuses
+the passed slot without duplication.
