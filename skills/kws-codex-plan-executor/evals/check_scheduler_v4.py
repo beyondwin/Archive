@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import hashlib
 import json
 import os
@@ -1231,6 +1232,116 @@ def assert_selected_repair_survives_resume(root: Path) -> None:
     assert [item["root_cause_key"] for item in kernel.state["backlog"]] == [
         "review:generic"
     ]
+
+    task = contract()
+    repo, run_dir, kernel, fixtures = initialize_real_runtime(
+        root / "fresh-dispatch-crash", (task,), {"T1": [verdict, passed()]}
+    )
+    fixture = fixtures["T1"]
+    original_transition = kernel.transition
+
+    def crash_after_repair_attempt_started(command: Transition) -> dict:
+        state = original_transition(command)
+        if (
+            command.event_type == "attempt.started"
+            and command.task_id == "T1"
+            and command.payload.get("kind") == "repair"
+        ):
+            raise SystemExit("fixture crash after repair attempt persistence")
+        return state
+
+    kernel.transition = crash_after_repair_attempt_started  # type: ignore[method-assign]
+    try:
+        run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
+    except SystemExit as exc:
+        assert str(exc) == "fixture crash after repair attempt persistence"
+    else:
+        raise AssertionError("expected injected fresh-dispatch process crash")
+    finally:
+        kernel.transition = original_transition  # type: ignore[method-assign]
+
+    crashed = kernel.state
+    active_repairs = [
+        item
+        for item in crashed["attempts"]
+        if item.get("task_id") == "T1"
+        and item.get("kind") == "repair"
+        and item.get("status") == "started"
+    ]
+    assert crashed["tasks"]["T1"]["status"] == "reviewing", crashed["tasks"]["T1"]
+    assert len(active_repairs) == 1, active_repairs
+    assert crashed["tasks"]["T1"]["active_attempt_id"] == active_repairs[0]["attempt_id"]
+    assert isinstance(crashed["selected_repairs"].get("T1"), dict), crashed["decisions"]
+    assert crashed["repair_roots"] == {}
+    assert fixture.implementation_calls == 1
+    assert fixture.repair_calls == 0
+    decision = select_v4_resume(crashed, "T1")
+    assert decision.action == "resume_same_attempt", decision
+    assert decision.phase == "repair", decision
+    assert decision.attempt_id == active_repairs[0]["attempt_id"], decision
+
+    missing_selection = deepcopy(crashed)
+    missing_selection["selected_repairs"].pop("T1")
+    try:
+        select_v4_resume(missing_selection, "T1")
+    except ValueError as exc:
+        assert str(exc) == "selected_repair_missing", exc
+    else:
+        raise AssertionError("missing selected repair must fail closed")
+
+    malformed_selection = deepcopy(crashed)
+    malformed_selection["selected_repairs"]["T1"] = {"task_id": "T1"}
+    try:
+        select_v4_resume(malformed_selection, "T1")
+    except ValueError as exc:
+        assert str(exc) == "selected_repair_invalid", exc
+    else:
+        raise AssertionError("malformed selected repair must fail closed")
+
+    tampered_selection = deepcopy(crashed)
+    tampered_selection["selected_repairs"]["T1"]["root_cause_key"] = (
+        "defect:substituted"
+    )
+    try:
+        select_v4_resume(tampered_selection, "T1")
+    except ValueError as exc:
+        assert str(exc) == "selected_repair_invalid", exc
+    else:
+        raise AssertionError("tampered selected repair must fail closed")
+
+    wrong_attempt_kind = deepcopy(crashed)
+    active_index = next(
+        index
+        for index, item in enumerate(wrong_attempt_kind["attempts"])
+        if item.get("attempt_id") == active_repairs[0]["attempt_id"]
+    )
+    wrong_attempt_kind["attempts"][active_index]["kind"] = "task_review"
+    try:
+        select_v4_resume(wrong_attempt_kind, "T1")
+    except ValueError as exc:
+        assert str(exc) == "active_model_attempt_unreconciled", exc
+    else:
+        raise AssertionError("non-repair active attempt must fail closed")
+
+    resumed = run_task_cycle_v4(task, fixture.lifecycle(), kernel, repo, run_dir)
+    assert resumed.status == "completed", resumed
+    assert fixture.implementation_calls == 1
+    assert fixture.repair_calls == 1
+    repair_attempts = [
+        item
+        for item in kernel.state["attempts"]
+        if item.get("task_id") == "T1" and item.get("kind") == "repair"
+    ]
+    assert len(repair_attempts) == 1, repair_attempts
+    assert kernel.state["repair_roots"] == {"defect:product": 1}
+    assert len(
+        [
+            item
+            for item in kernel.state["decisions"]
+            if item.get("decision_kind") == "repair_root_updated"
+            and item.get("root_cause_key") == "defect:product"
+        ]
+    ) == 1
 
     task = contract()
     repo, run_dir, kernel, fixtures = initialize_real_runtime(

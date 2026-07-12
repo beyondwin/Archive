@@ -105,6 +105,19 @@ def check_decision_policy() -> object:
 
 
 def check_authority_boundary() -> None:
+    reversible_repair = decide(
+        (
+            DecisionOption(
+                "repair or re-plan within approved scope",
+                "approved_documents",
+                reversible=True,
+                authority=Action(reversible=True, external=False),
+                affected_tasks=("T6",),
+            ),
+        )
+    )
+    assert reversible_repair.user_input_required is False, reversible_repair
+
     for action in (
         Action(purchase_or_billing_change=True),
         Action(credentials_or_new_authority=True),
