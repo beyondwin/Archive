@@ -159,6 +159,48 @@ class ModelAttemptController:
         )
         return f"{task_id}.{kind}.{ordinal}"
 
+    def interrupt_active(self, *, task_id: str, kind: str, reason: str) -> None:
+        from .evidence import put_json
+        from .kernel import Transition
+
+        attempt_id = self._active_attempt(task_id, kind)
+        if attempt_id is None:
+            return
+        digest = hashlib.sha256(reason.encode("utf-8", "replace")).hexdigest()
+        ref = put_json(
+            self.kernel.run_dir,
+            "model_interruption",
+            {
+                "task_id": task_id,
+                "attempt_id": attempt_id,
+                "kind": kind,
+                "error_type": "evidence_integrity_failure",
+                "message_sha256": digest,
+            },
+        ).as_dict()
+        self.kernel.transition(
+            Transition(
+                "evidence.attached",
+                {"kind": "model_interruption", "ref": ref},
+                task_id=task_id,
+                attempt_id=attempt_id,
+            )
+        )
+        self.kernel.transition(
+            Transition(
+                "attempt.completed",
+                {
+                    "status": "interrupted",
+                    "attestation": {},
+                    "usage": {},
+                    "latency_ms": 0,
+                    "evidence_refs": [ref],
+                },
+                task_id=task_id,
+                attempt_id=attempt_id,
+            )
+        )
+
     def run_model_turn(
         self,
         *,
@@ -167,6 +209,7 @@ class ModelAttemptController:
         before_turn: Callable[[str, str], None],
         operation: Callable[[str], T],
         preserve_attempt_on: tuple[type[Exception], ...] = (),
+        on_turn_started: Callable[[str, str, bool], None] | None = None,
     ) -> ModelTurnOutcome[T]:
         from .kernel import Transition
 
@@ -187,6 +230,8 @@ class ModelAttemptController:
                 )
             )
         try:
+            if on_turn_started is not None:
+                on_turn_started(kind, attempt_id, started_new)
             result = operation(attempt_id)
         except preserve_attempt_on:
             raise

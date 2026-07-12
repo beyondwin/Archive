@@ -23,12 +23,13 @@ from .projector import (
     valid_evidence_refs,
     valid_verdict,
     valid_verified_checkpoint_payload,
+    validate_task_status_change,
 )
 from .runtime_upgrade import RuntimeIdentity, validate_runtime_upgrade
 from .validation import validate_completion
 
 
-TASK_COMPLETION_ATTEMPT_KINDS = frozenset({"implementation", "task_review", "verification"})
+TASK_COMPLETION_ATTEMPT_KINDS = frozenset({"implementation", "task_review"})
 
 
 @dataclass(frozen=True)
@@ -132,18 +133,41 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
                 raise ValueError(f"completion gate failed: {','.join(report.errors)}")
         return
     if command.event_type == "task.status_changed":
-        if command.task_id not in state["tasks"]:
-            raise ValueError("unknown task")
-        current = state["tasks"][command.task_id]["status"]
-        if payload.get("from") != current:
-            raise ValueError("task transition from mismatch")
+        validate_task_status_change(
+            state, command.task_id, payload, command.attempt_id
+        )
         target = payload.get("to")
-        if target not in TASK_TRANSITIONS.get(current, set()):
-            raise ValueError("invalid task transition")
-        if target == "completed" and not TASK_COMPLETION_ATTEMPT_KINDS.issubset(
-            _attempt_kinds(state, command.task_id)
-        ):
-            raise ValueError("task completion gate failed")
+        if target == "completed":
+            if not TASK_COMPLETION_ATTEMPT_KINDS.issubset(
+                _attempt_kinds(state, command.task_id)
+            ):
+                raise ValueError("task completion model gate failed")
+            verified = [
+                item
+                for item in state.get("verified_checkpoints", [])
+                if item.get("task_id") == command.task_id
+            ]
+            if not verified:
+                raise ValueError("task completion verified checkpoint missing")
+            deterministic = [
+                item
+                for item in state.get("artifact_index", [])
+                if item.get("task_id") == command.task_id
+                and item.get("kind") == "deterministic_verification"
+            ]
+            if not deterministic:
+                raise ValueError("task completion deterministic verification missing")
+            checkpoint = verified[-1]
+            current_deterministic = [
+                item
+                for item in deterministic
+                if item.get("candidate_commit") == checkpoint.get("commit")
+                and item.get("contract_sha256")
+                == checkpoint.get("contract_sha256")
+                and item.get("passed") is True
+            ]
+            if not current_deterministic:
+                raise ValueError("task completion deterministic verification stale")
         return
     if command.task_id is not None and command.task_id not in state["tasks"]:
         raise ValueError("unknown task")
@@ -214,6 +238,12 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
     elif command.event_type == "evidence.attached":
         if not isinstance(payload.get("ref"), dict) or not payload.get("kind"):
             raise ValueError("invalid evidence payload")
+        if payload.get("kind") == "deterministic_verification" and (
+            not isinstance(payload.get("candidate_commit"), str)
+            or not isinstance(payload.get("contract_sha256"), str)
+            or payload.get("passed") is not True
+        ):
+            raise ValueError("invalid evidence payload")
     elif command.event_type == "decision.recorded":
         if (
             not isinstance(payload.get("selected_action"), str)
@@ -224,6 +254,17 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
                 "standing_autonomy_policy",
                 "direct_user_approval",
             }
+        ):
+            raise ValueError("invalid decision payload")
+        if payload.get("decision_kind") == "repair_root_updated" and (
+            not isinstance(payload.get("root_cause_key"), str)
+            or not payload["root_cause_key"]
+            or type(payload.get("repair_count")) is not int
+            or payload["repair_count"] not in {1, 2}
+        ):
+            raise ValueError("invalid decision payload")
+        if payload.get("decision_kind") == "backlog_added" and not isinstance(
+            payload.get("backlog_item"), dict
         ):
             raise ValueError("invalid decision payload")
     elif command.event_type == "notification.requested":

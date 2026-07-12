@@ -176,6 +176,113 @@ def check_replay_rejects_incomplete_verified_checkpoint(manifest: dict) -> None:
             project(manifest, read_events(path))
 
 
+def check_task_local_wait_and_exact_resume_projection(manifest: dict) -> None:
+    events = [
+        {"type": "task.status_changed", "task_id": "T1", "payload": {"from": "pending", "to": "ready"}},
+        {"type": "task.status_changed", "task_id": "T1", "payload": {"from": "ready", "to": "implementing"}},
+        {
+            "type": "task.status_changed",
+            "task_id": "T1",
+            "attempt_id": "T1.implementation.1",
+            "payload": {
+                "from": "implementing",
+                "to": "waiting_external",
+                "wait_reason": "quota_transient",
+                "resume_phase": "implementation",
+                "active_attempt_id": "T1.implementation.1",
+            },
+        },
+    ]
+    with tempfile.TemporaryDirectory(prefix="cpe-v4-task-wait-") as raw:
+        path = Path(raw) / "events.jsonl"
+        for event in events:
+            append_event(path, event)
+        state = project(manifest, read_events(path))
+        task = state["tasks"]["T1"]
+        assert task["status"] == "waiting_external"
+        assert task["wait_reason"] == "quota_transient"
+        assert task["resume_phase"] == "implementation"
+        assert task["active_attempt_id"] == "T1.implementation.1"
+        assert state["wait_reason"] is None
+
+        append_event(
+            path,
+            {
+                "type": "task.status_changed",
+                "task_id": "T1",
+                "attempt_id": "T1.implementation.1",
+                "payload": {
+                    "from": "waiting_external",
+                    "to": "implementing",
+                    "resume_phase": "implementation",
+                    "active_attempt_id": "T1.implementation.1",
+                },
+            },
+        )
+        resumed = project(manifest, read_events(path))["tasks"]["T1"]
+        assert resumed["status"] == "implementing"
+        assert resumed["wait_reason"] is None
+        assert resumed["resume_phase"] is None
+        assert resumed["active_attempt_id"] is None
+
+        invalid = dict(events[-1])
+        invalid["payload"] = {
+            "from": "implementing",
+            "to": "waiting_external",
+            "wait_reason": "quota_transient",
+            "resume_phase": "arbitrary",
+            "active_attempt_id": "T1.implementation.1",
+        }
+        invalid_path = Path(raw) / "invalid.jsonl"
+        for event in [*events[:-1], invalid]:
+            append_event(invalid_path, event)
+        with assert_raises_text(ValueError, "invalid task wait payload"):
+            project(manifest, read_events(invalid_path))
+
+    second = compile_task_contract(
+        {
+            "id": "T2",
+            "title": "Second waiting task",
+            "task_type": "tdd_implementation",
+            "task_source": "### Task 2: Second waiting task\n",
+            "acceptance_commands": ["python3 check_v4_state_contract.py"],
+        },
+        source_hashes={"plan": "f" * 64, "spec_sections": {}},
+    )
+    two_task_manifest = create_v4_manifest(
+        task_contracts=[fixture_contract(), second]
+    )
+    with tempfile.TemporaryDirectory(prefix="cpe-v4-multi-wait-") as raw:
+        path = Path(raw) / "events.jsonl"
+        for task_id, reason in (("T1", "quota_transient"), ("T2", "environment_unavailable")):
+            append_event(
+                path,
+                {
+                    "type": "task.status_changed",
+                    "task_id": task_id,
+                    "payload": {"from": "pending", "to": "ready"},
+                },
+            )
+            append_event(
+                path,
+                {
+                    "type": "task.status_changed",
+                    "task_id": task_id,
+                    "payload": {
+                        "from": "ready",
+                        "to": "waiting_external",
+                        "wait_reason": reason,
+                        "resume_phase": "implementation",
+                        "active_attempt_id": None,
+                    },
+                },
+            )
+        state = project(two_task_manifest, read_events(path))
+        assert state["tasks"]["T1"]["wait_reason"] == "quota_transient"
+        assert state["tasks"]["T2"]["wait_reason"] == "environment_unavailable"
+        assert state["wait_reason"] is None
+
+
 def check_v4_event_and_runtime_upgrade(manifest: dict) -> None:
     from cpe_runtime.runtime_upgrade import RuntimeIdentity, validate_runtime_upgrade
 
@@ -246,6 +353,7 @@ def main() -> int:
     check_clean_cut_schema_rejection()
     check_runtime_upgrade_requires_verified_event(manifest)
     check_replay_rejects_incomplete_verified_checkpoint(manifest)
+    check_task_local_wait_and_exact_resume_projection(manifest)
     check_v4_event_and_runtime_upgrade(manifest)
     print('{"passed": true}')
     return 0

@@ -27,6 +27,13 @@ def assert_resume_selection() -> None:
         "lifecycle": "waiting_external",
         "checkpoint_head": "a" * 40,
         "verified_checkpoints": [{"task_id": "T1", "commit": "a" * 40}],
+        "tasks": {
+            "T2": {
+                "status": "waiting_external",
+                "resume_phase": "implementation",
+                "active_attempt_id": "T2.implementation.1",
+            }
+        },
         "attempts": [
             {
                 "task_id": "T2",
@@ -40,6 +47,7 @@ def assert_resume_selection() -> None:
     assert quota.action == "resume_same_attempt"
     assert quota.attempt_id == "T2.implementation.1"
     state["attempts"][0]["status"] = "interrupted"
+    state["tasks"]["T2"]["active_attempt_id"] = None
     runtime = select_v4_resume(state, "T2")
     assert runtime.action == "resume_verified_checkpoint"
     assert runtime.checkpoint_head == "a" * 40
