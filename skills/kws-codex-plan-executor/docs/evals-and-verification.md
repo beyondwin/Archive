@@ -112,6 +112,16 @@ compiled prompt, manifest, fake launcher, result, and evidence digests without
 making a provider call. This deterministic contract does not amend or rerun
 previously captured live evidence and does not publish v4 release readiness.
 
+The same check reorders the manifest and proves that `--sentinel-only` still
+selects the exact candidate security/migration key. Its production CLI fake
+compares actual stdin and the actual `--output-schema` file byte-for-byte with
+the sealed launch envelope, proves a failed sentinel stops at one invocation,
+and proves resume neither bypasses nor duplicates a passed sentinel. Envelope,
+prompt, schema, route, source/fixture, and separate oracle-binding mismatches
+fail closed before a credentialed call; aggregate and release validation reject
+envelope substitution across manifest, result, slot index, prompt binding, and
+ledger evidence.
+
 When the sole authorized corrected v4 run uses a new evidence root, import the
 failed predecessor lineage without copying its oracle-bearing manifest:
 

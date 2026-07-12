@@ -43,6 +43,10 @@ from live_migration.runner import (
     RunContext,
     preflight_codex,
     run_slot,
+    QUALIFIED_SENTINEL,
+    _qualified_sentinel_passed,
+    install_v4_sealed_artifacts,
+    verify_v4_manifest_sealed_artifacts,
 )
 
 
@@ -587,6 +591,12 @@ def _execute(
                 slot_context = replace(context, retry_failed=key in retry_slots)
             result = _run_slot_with_isolated_user_config(slot_context, slot)
             results.append(result)
+            key = SlotKey(str(slot["treatment_id"]), str(slot["case_id"]))
+            if key == QUALIFIED_SENTINEL and not _qualified_sentinel_passed(result):
+                raise LiveRunnerError(
+                    "qualified_sentinel_failed",
+                    "qualified sentinel semantic/oracle gate failed; remaining slots are protected",
+                )
     except LiveRunnerError as exc:
         append_event(context.run, "run_blocked", {"code": exc.code, "message": str(exc)})
         raise
@@ -647,6 +657,8 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
             binding,
             matrix=args.matrix,
         )
+    if manifest.get("schema_version") == "cpe-quality-manifest.v4":
+        verify_v4_manifest_sealed_artifacts(manifest)
     recovered_run = None
     if run_dir.exists():
         if recovered_manifest is None:
@@ -676,6 +688,8 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
         if manifest.get("schema_version") == "cpe-quality-manifest.v4"
         else create_run(run_dir, manifest)
     )
+    if manifest.get("schema_version") == "cpe-quality-manifest.v4":
+        install_v4_sealed_artifacts(run)
     run_home = (
         _initialize_recoverable_run_codex_home(run, attestation.codex_home)
         if manifest.get("schema_version") == "cpe-quality-manifest.v4"
@@ -685,6 +699,16 @@ def _start(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[st
     descriptor = _acquire_run_execution_lock(run_dir)
     try:
         slots = list(manifest["slots"])
+        if manifest.get("schema_version") == "cpe-quality-manifest.v4":
+            sentinel_slots = [
+                slot
+                for slot in slots
+                if SlotKey(str(slot["treatment_id"]), str(slot["case_id"]))
+                == QUALIFIED_SENTINEL
+            ]
+            if len(sentinel_slots) != 1:
+                raise LiveRunnerError("invalid_sentinel", "manifest lacks the exact qualified sentinel")
+            slots = sentinel_slots + [slot for slot in slots if slot not in sentinel_slots]
         if args.sentinel_only:
             if manifest.get("schema_version") != "cpe-quality-manifest.v4":
                 raise LiveRunnerError(
@@ -748,6 +772,9 @@ def _resume(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
         binding = _manifest_checkpoint_binding(manifest)
         _assert_execution_checkpoint(binding)
         run = LiveRun(run_dir, manifest, str(manifest["manifest_sha256"]))
+        if manifest.get("schema_version") == "cpe-quality-manifest.v4":
+            verify_v4_manifest_sealed_artifacts(manifest)
+            install_v4_sealed_artifacts(run)
         state = replay_run(run_dir)
         completed = {
             SlotKey(str(item["treatment_id"]), str(item["case_id"]))
@@ -782,6 +809,32 @@ def _resume(args: argparse.Namespace, parser: argparse.ArgumentParser) -> dict[s
             if SlotKey(str(slot["treatment_id"]), str(slot["case_id"])) not in completed
             and (args.retry_failed or SlotKey(str(slot["treatment_id"]), str(slot["case_id"])) not in failed)
         ]
+        if manifest.get("schema_version") == "cpe-quality-manifest.v4":
+            sentinel_completed = QUALIFIED_SENTINEL in completed
+            if sentinel_completed:
+                from urllib.parse import quote
+
+                sentinel_result = json.loads(
+                    (
+                        run_dir
+                        / "slots"
+                        / quote(QUALIFIED_SENTINEL.treatment_id, safe="-._~")
+                        / quote(QUALIFIED_SENTINEL.case_id, safe="-._~")
+                        / "result.json"
+                    ).read_text(encoding="utf-8")
+                )
+                if not _qualified_sentinel_passed(sentinel_result):
+                    raise LiveRunnerError(
+                        "qualified_sentinel_failed",
+                        "qualified sentinel gate is terminally blocked",
+                    )
+            else:
+                slots.sort(
+                    key=lambda slot: 0
+                    if SlotKey(str(slot["treatment_id"]), str(slot["case_id"]))
+                    == QUALIFIED_SENTINEL
+                    else 1
+                )
         retry_slots = set(failed)
         if interrupted is not None:
             retry_slots.add(interrupted)

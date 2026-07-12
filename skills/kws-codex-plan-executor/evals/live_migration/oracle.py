@@ -429,6 +429,7 @@ def evaluate_slot(
         "evidence_complete": evidence_complete,
         "repairs": process.retry_count,
         "critical_regression": critical_regression,
+        "worker_status": measured_output["status"],
         "context_tokens": process.input_tokens,
         "cache_tokens": process.cached_input_tokens,
         "output_tokens": process.output_tokens,

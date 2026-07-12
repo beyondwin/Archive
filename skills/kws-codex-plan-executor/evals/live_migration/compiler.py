@@ -6,6 +6,8 @@ import json
 import math
 import re
 import sys
+import base64
+import hashlib
 from numbers import Real
 from pathlib import Path
 from typing import Any
@@ -30,12 +32,17 @@ from .contracts import (
     sha256_bytes,
     worker_prompt_bytes,
 )
+from .envelopes import seal_launch_envelope, seal_oracle_binding
 
 
 _COMMIT_SHA = re.compile(r"^[0-9a-f]{40}$")
 _TERRA_PROMPT = b"bounded read-only scout prompt renderer v1\n"
 _OUTPUT_SCHEMA_REF = "live-migration/worker-result-schema.json"
 _DEFAULT_CREATED_AT = "1970-01-01T00:00:00Z"
+QUALIFIED_SENTINEL = {
+    "treatment_id": "sol_v4_candidate",
+    "case_id": "security/migration block",
+}
 
 
 def _skill_root() -> Path:
@@ -131,6 +138,19 @@ def _reference_sha256(reference: str) -> str:
     """Bind a planned repository-relative artifact reference without inventing bytes."""
 
     return sha256_bytes(reference.encode("utf-8"))
+
+
+def _bound_tree_digest(root: Path, domain: bytes) -> str:
+    digest = hashlib.sha256(domain)
+    for path in sorted(item for item in root.rglob("*") if item.is_file()):
+        if path.is_symlink():
+            raise LiveMigrationContractError(f"sealed input cannot contain symlinks: {path}")
+        relative = path.relative_to(root).as_posix().encode("utf-8")
+        raw = path.read_bytes()
+        for value in (relative, raw):
+            digest.update(len(value).to_bytes(8, "big"))
+            digest.update(value)
+    return digest.hexdigest()
 
 
 def _load_object(path: Path) -> dict[str, Any]:
@@ -236,6 +256,8 @@ def compile_v4_manifest(
     terra_read_only = EXPECTED_CASES[-1]
     slots: list[dict[str, object]] = []
     slot_keys: set[SlotKey] = set()
+    launch_artifacts: dict[str, str] = {}
+    oracle_artifacts: dict[str, str] = {}
 
     ordered_cases = {
         "sol_v31_control": cases,
@@ -282,6 +304,63 @@ def compile_v4_manifest(
                 "expected_policy_failure": policy_failure,
             }
             if credentialed:
+                fixture_root = migration_dir / "fixtures" / canonical_case.slug
+                case_source_sha256 = sha256_bytes((fixture_root / "case.json").read_bytes())
+                fixture_source_sha256 = _bound_tree_digest(
+                    fixture_root / "repo", b"cpe.fixture-source.v4\0"
+                )
+                oracle_source_sha256 = _bound_tree_digest(
+                    fixture_root / "oracle", b"cpe.oracle-source.v4\0"
+                )
+                sandbox = "read-only" if bundle.role == "scout" else (
+                    "workspace-write" if _load_object(fixture_root / "case.json").get("mode") == "write" else "read-only"
+                )
+                route_binding = {
+                    "model": treatment.model,
+                    "reasoning": treatment.reasoning,
+                    "role": bundle.role,
+                    "sandbox": sandbox,
+                }
+                route_binding_sha256 = sha256_bytes(canonical_json(route_binding))
+                envelope = seal_launch_envelope(
+                    {
+                        "treatment_id": treatment.id,
+                        "model": treatment.model,
+                        "reasoning": treatment.reasoning,
+                        "role": bundle.role,
+                        "sandbox": sandbox,
+                        "task_id": canonical_case.slug,
+                        "case_id": canonical_case.id,
+                        "case_slug": canonical_case.slug,
+                        "fixture_source_sha256": fixture_source_sha256,
+                        "input_source_sha256": case_source_sha256,
+                        "case_sha256": bundle.case_sha256,
+                        "task_contract_sha256": bundle.task_contract_sha256,
+                        "prompt_output_schema_sha256": bundle.output_schema_sha256,
+                        "route_binding": route_binding,
+                        "route_binding_sha256": route_binding_sha256,
+                    },
+                    bundle.prompt.encode("utf-8"),
+                    v4_worker_output_schema_bytes(root),
+                )
+                oracle_binding = seal_oracle_binding(
+                    {
+                        "treatment_id": treatment.id,
+                        "case_id": canonical_case.id,
+                        "case_slug": canonical_case.slug,
+                        "envelope_sha256": str(envelope["envelope_sha256"]),
+                        "oracle_ref": oracle_ref,
+                        "oracle_source_sha256": oracle_source_sha256,
+                    }
+                )
+                envelope_sha256 = str(envelope["envelope_sha256"])
+                oracle_binding_sha256 = str(oracle_binding["oracle_binding_sha256"])
+                launch_artifacts[envelope_sha256] = base64.b64encode(
+                    canonical_json(envelope)
+                ).decode("ascii")
+                oracle_artifacts[oracle_binding_sha256] = base64.b64encode(
+                    canonical_json(oracle_binding)
+                ).decode("ascii")
                 slot.update(
                     {
                         "fixture": fixture_ref,
@@ -290,6 +369,11 @@ def compile_v4_manifest(
                         "oracle_ref_sha256": _reference_sha256(oracle_ref),
                         "output_schema": _OUTPUT_SCHEMA_REF,
                         "output_schema_ref_sha256": _reference_sha256(_OUTPUT_SCHEMA_REF),
+                        "fixture_source_sha256": fixture_source_sha256,
+                        "input_source_sha256": case_source_sha256,
+                        "route_binding_sha256": route_binding_sha256,
+                        "envelope_sha256": envelope_sha256,
+                        "oracle_binding_sha256": oracle_binding_sha256,
                     }
                 )
             else:
@@ -317,7 +401,12 @@ def compile_v4_manifest(
         "case_count": 8,
         "credentialed_call_count": credentialed_count,
         "expected_policy_failure_count": policy_count,
+        "qualified_sentinel": QUALIFIED_SENTINEL,
         "inputs": inputs,
+        "sealed_artifacts": {
+            "launch_envelopes": launch_artifacts,
+            "oracle_bindings": oracle_artifacts,
+        },
         "slots": slots,
     }
     return {**body, "manifest_sha256": sha256_bytes(canonical_json(body))}

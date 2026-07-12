@@ -26,12 +26,14 @@ def canonical_sha256(payload: object) -> str:
 
 
 def write_valid_fixture(root: Path, commit: str, tree: str) -> None:
+    envelope_sha256 = {f"slot-{index}": f"{index + 1:064x}" for index in range(17)}
     manifest = {
         "schema_version": "cpe-quality-manifest.v4",
         "implementation_commit": commit,
         "implementation_tree": tree,
         "credentialed_call_count": 17,
         "policy_outcome_count": 7,
+        "envelope_sha256": envelope_sha256,
     }
     result = {
         "schema_version": "cpe-quality-result.v4",
@@ -40,6 +42,7 @@ def write_valid_fixture(root: Path, commit: str, tree: str) -> None:
         "manifest_sha256": canonical_sha256(manifest),
         "credentialed_call_count": 17,
         "policy_outcome_count": 7,
+        "envelope_sha256": envelope_sha256,
         "release_gate": {"passed": True},
     }
     privacy = {
@@ -198,6 +201,19 @@ def main() -> int:
             changed = validate_release_evidence_root(valid, commit, repo)
             assert changed["passed"] is False, (filename, changed)
             tampered.write_text(original, encoding="utf-8")
+
+        result_path = valid / "result.json"
+        original_result = result_path.read_text(encoding="utf-8")
+        result_payload = json.loads(original_result)
+        result_payload["envelope_sha256"]["slot-0"] = "f" * 64
+        result_path.write_text(
+            json.dumps(result_payload, sort_keys=True, separators=(",", ":")) + "\n",
+            encoding="utf-8",
+        )
+        substituted = validate_release_evidence_root(valid, commit, repo)
+        assert substituted["passed"] is False
+        assert "launch_envelope_binding_invalid" in substituted["errors"]
+        result_path.write_text(original_result, encoding="utf-8")
 
         rewritten = root / "rewritten"
         rewritten.mkdir()

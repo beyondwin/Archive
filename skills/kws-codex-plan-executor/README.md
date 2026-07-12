@@ -61,6 +61,14 @@ privacy verdict, and Git checkpoint in place, then persists only digest-bound
 lineage. The corrected registration must use a changed checkpoint, and a third
 full run is rejected before authentication or provider preflight.
 
+V4 execution always qualifies the exact candidate security/migration case
+before other credentialed slots. The compiler seals exact stdin and
+`--output-schema` bytes into one content-addressed launch envelope per call;
+the runner reopens and verifies that artifact immediately before launch.
+Hidden oracle paths and bytes are bound separately and never enter the worker
+prompt, argv, or environment. Resume reuses a passed sentinel and cannot bypass
+or duplicate it.
+
 ## Contract Summary
 
 - Sol/high is fixed for all core and verdict-capable attempts.

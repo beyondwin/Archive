@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import hashlib
 import argparse
+import base64
 import os
 import re
 import shutil
@@ -71,6 +72,10 @@ def check_exact_manifest() -> dict[str, object]:
     assert len(slots) == 24
     assert manifest["credentialed_call_count"] == 17
     assert manifest["expected_policy_failure_count"] == 7
+    assert manifest["qualified_sentinel"] == {
+        "treatment_id": "sol_v4_candidate",
+        "case_id": "security/migration block",
+    }
     assert {slot["model"] for slot in slots if slot["credentialed"]} == {
         "gpt-5.6-sol",
         "gpt-5.6-terra",
@@ -84,6 +89,17 @@ def check_exact_manifest() -> dict[str, object]:
     assert all(slot["outcome_kind"] == EXPECTED_POLICY_FAILURE for slot in slots[17:])
     assert all(slot["credentialed"] is False for slot in slots[17:])
     assert sum(slot["outcome_kind"] == CREDENTIALLED_CALL for slot in slots) == 17
+    credentialed = [slot for slot in slots if slot["credentialed"]]
+    assert all(re.fullmatch(r"[0-9a-f]{64}", str(slot["envelope_sha256"])) for slot in credentialed)
+    assert all(
+        re.fullmatch(r"[0-9a-f]{64}", str(slot["oracle_binding_sha256"]))
+        for slot in credentialed
+    )
+    assert all("oracle" not in str(slot.get("launch_envelope", "")).lower() for slot in credentialed)
+    for encoded in manifest["sealed_artifacts"]["launch_envelopes"].values():
+        sealed = base64.b64decode(encoded, validate=True).lower()
+        assert b"oracle" not in sealed
+        assert b"expected.json" not in sealed
     assert manifest["manifest_sha256"]
     assert manifest == compile_v4_manifest(commit="a" * 40, run_id="v4-test")
     return manifest
@@ -440,9 +456,53 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
         launched_schema_digest = str(
             manifest_payload["slots"][0]["output_schema_sha256"]
         )
-        for call in provider_calls:
+        sentinel_slot = next(
+            slot
+            for slot in manifest_payload["slots"]
+            if slot["treatment_id"] == "sol_v4_candidate"
+            and slot["case_id"] == "security/migration block"
+        )
+        expected_credentialed = [sentinel_slot] + [
+            slot
+            for slot in manifest_payload["slots"]
+            if slot["credentialed"] and slot is not sentinel_slot
+        ]
+        assert len(expected_credentialed) == len(provider_calls) == 17
+        for call, slot in zip(provider_calls, expected_credentialed):
+            envelope_raw = base64.b64decode(
+                manifest_payload["sealed_artifacts"]["launch_envelopes"][
+                    slot["envelope_sha256"]
+                ],
+                validate=True,
+            )
+            envelope = json.loads(envelope_raw)
+            exact_prompt = base64.b64decode(
+                envelope["prompt_bytes_b64"], validate=True
+            )
+            exact_schema = base64.b64decode(
+                envelope["output_schema_bytes_b64"], validate=True
+            )
+            assert call["stdin"].encode("utf-8") == exact_prompt
             schema_path = Path(call["argv"][call["argv"].index("--output-schema") + 1])
+            assert schema_path.read_bytes() == exact_schema
             assert hashlib.sha256(schema_path.read_bytes()).hexdigest() == launched_schema_digest
+            assert call["argv"][call["argv"].index("--model") + 1] == envelope["model"]
+            assert call["argv"][call["argv"].index("--sandbox") + 1] == envelope["sandbox"]
+        assert all(
+            "envelope_sha256" not in slot and "oracle_binding_sha256" not in slot
+            for slot in manifest_payload["slots"]
+            if not slot["credentialed"]
+        )
+        assert provider_calls[0]["stdin"].encode("utf-8") == base64.b64decode(
+            json.loads(
+                base64.b64decode(
+                    manifest_payload["sealed_artifacts"]["launch_envelopes"]
+                    [sentinel_slot["envelope_sha256"]],
+                    validate=True,
+                )
+            )["prompt_bytes_b64"],
+            validate=True,
+        )
         terra_call = next(
             call for call in provider_calls if "gpt-5.6-terra" in call["argv"]
         )
@@ -476,6 +536,68 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
         assert all(result["evidence_complete"] is True for result in security_results)
         assert all(result["task_completed"] is True for result in security_results)
 
+        calls_before_failed_sentinel = len(provider_calls)
+        failed_root = tmp / "failed-sentinel-evidence"
+        failed_id = "fake-v4-sentinel-failed"
+        failed_start = subprocess.run(
+            [
+                sys.executable,
+                str(runner),
+                "start",
+                "--matrix",
+                "v4",
+                "--billing-mode",
+                "chatgpt_subscription",
+                "--confirm-subscription-usage",
+                "--sentinel-only",
+                "--evidence-root",
+                str(failed_root),
+                "--run-id",
+                failed_id,
+                "--codex-bin",
+                str(skill / "evals" / "fake_codex.py"),
+                "--slot-timeout-seconds",
+                "5",
+                *_checkpoint_arguments(repo),
+            ],
+            cwd=skill,
+            env={**env, "CPE_FAKE_LIVE_BEHAVIOR": "sentinel_fail"},
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert failed_start.returncode == 1, (failed_start.stdout, failed_start.stderr)
+        assert json.loads(failed_start.stdout)["error"] == "qualified_sentinel_failed"
+        after_failed = [
+            json.loads(line)
+            for line in invocation_log.read_text(encoding="utf-8").splitlines()
+        ]
+        assert sum(call["argv"][:1] == ["exec"] for call in after_failed) == calls_before_failed_sentinel + 1
+        failed_resume = subprocess.run(
+            [
+                sys.executable,
+                str(runner),
+                "resume",
+                "--confirm-subscription-usage",
+                "--run-dir",
+                str(failed_root / failed_id),
+                "--codex-bin",
+                str(skill / "evals" / "fake_codex.py"),
+            ],
+            cwd=skill,
+            env=env,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        assert failed_resume.returncode == 1
+        assert json.loads(failed_resume.stdout)["error"] == "qualified_sentinel_failed"
+        after_failed_resume = [
+            json.loads(line)
+            for line in invocation_log.read_text(encoding="utf-8").splitlines()
+        ]
+        assert sum(call["argv"][:1] == ["exec"] for call in after_failed_resume) == calls_before_failed_sentinel + 1
+
         aggregate_output = evidence_root / "aggregate.json"
         aggregate = subprocess.run(
             [
@@ -494,6 +616,7 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
             check=False,
         )
         assert aggregate.returncode in {0, 1}, (aggregate.stdout, aggregate.stderr)
+        assert aggregate_output.is_file(), (aggregate.stdout, aggregate.stderr)
         aggregate_payload = json.loads(aggregate_output.read_text(encoding="utf-8"))
         assert aggregate_payload["credentialed_call_count"] == 17
         assert aggregate_payload["policy_outcome_count"] == 7
@@ -608,7 +731,7 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
             json.loads(line)
             for line in invocation_log.read_text(encoding="utf-8").splitlines()
         ]
-        assert sum(call["argv"][:1] == ["exec"] for call in all_calls) == 34
+        assert sum(call["argv"][:1] == ["exec"] for call in all_calls) == 35
 
         transient_root = tmp / "transient-evidence"
         transient_id = "fake-v4-transient"
@@ -772,7 +895,12 @@ def check_fake_cli_sentinel_resume_waits_for_aggregate() -> None:
 
 def check_sentinel_resume_and_immutable_ledger(manifest: dict[str, object]) -> None:
     with tempfile.TemporaryDirectory(prefix="cpe-v4-sentinel-") as raw:
-        run = create_run(Path(raw) / "run", manifest)
+        reordered = dict(manifest)
+        reordered_slots = list(manifest["slots"])
+        reordered["slots"] = reordered_slots[17:] + reordered_slots[:17]
+        body = {key: value for key, value in reordered.items() if key != "manifest_sha256"}
+        reordered["manifest_sha256"] = sha256_bytes(canonical_json(body))
+        run = create_run(Path(raw) / "run", reordered)
         invocations: list[SlotKey] = []
 
         def fake_provider(slot: dict[str, object]) -> tuple[dict[str, bytes], dict[str, object]]:
@@ -785,6 +913,12 @@ def check_sentinel_resume_and_immutable_ledger(manifest: dict[str, object]) -> N
                     "treatment_id": key.treatment_id,
                     "case_id": key.case_id,
                     "task_completed": True,
+                    "worker_status": "blocked" if key.case_id == "security/migration block" else "completed",
+                    "evidence_complete": True,
+                    "critical_regression": False,
+                    "model_attested": True,
+                    "worktree_isolated": True,
+                    "drift_free": True,
                 },
             )
 
@@ -793,7 +927,7 @@ def check_sentinel_resume_and_immutable_ledger(manifest: dict[str, object]) -> N
         assert first["provider_invocations"] == 1
         assert len(invocations) == 1
         assert replay_run(run.run_dir)["completed_slots"] == [
-            {"treatment_id": "sol_v31_control", "case_id": "single-file implementation"}
+            {"treatment_id": "sol_v4_candidate", "case_id": "security/migration block"}
         ]
 
         resumed = execute_v4_slots(run, fake_provider)
@@ -803,7 +937,12 @@ def check_sentinel_resume_and_immutable_ledger(manifest: dict[str, object]) -> N
         projection = replay_run(run.run_dir)
         assert len(projection["completed_slots"]) == 24
         assert projection["pending_slots"] == []
-        first_slot = manifest["slots"][0]
+        first_slot = next(
+            slot
+            for slot in manifest["slots"]
+            if slot["treatment_id"] == "sol_v4_candidate"
+            and slot["case_id"] == "security/migration block"
+        )
         first_dir = (
             run.run_dir
             / "slots"
@@ -817,6 +956,7 @@ def check_sentinel_resume_and_immutable_ledger(manifest: dict[str, object]) -> N
             "case_sha256",
             "prompt_output_schema_sha256",
             "output_schema_sha256",
+            "envelope_sha256",
         ):
             assert result[field] == first_slot[field]
         index = json.loads((first_dir / "index.json").read_text(encoding="utf-8"))
@@ -1066,6 +1206,7 @@ def check_success_is_terminal_only_after_aggregate_and_privacy() -> None:
                     "outcome_kind": CREDENTIALLED_CALL,
                     "expected_policy_failure": False,
                     "task_completed": True,
+                    "worker_status": "blocked" if slot["case_id"] == "security/migration block" else "completed",
                     "critical_regression": False,
                     "evidence_complete": True,
                     "model_attested": True,
@@ -1148,7 +1289,10 @@ def _write_failed_predecessor_fixture(root: Path) -> tuple[str, str, str]:
     def fake_provider(slot: dict[str, object]) -> tuple[dict[str, bytes], dict[str, object]]:
         nonlocal provider_calls
         provider_calls += 1
-        incomplete = slot["case_id"] == "security/migration block"
+        incomplete = (
+            slot["treatment_id"] == "sol_v31_control"
+            and slot["case_id"] == "security/migration block"
+        )
         return (
             {"fake-provider.json": canonical_json({"provider": "fake"})},
             {
@@ -1158,6 +1302,11 @@ def _write_failed_predecessor_fixture(root: Path) -> tuple[str, str, str]:
                 "case_id": slot["case_id"],
                 "outcome_kind": CREDENTIALLED_CALL,
                 "task_completed": not incomplete,
+                "worker_status": (
+                    "blocked"
+                    if slot["case_id"] == "security/migration block"
+                    else "completed"
+                ),
                 "critical_regression": False,
                 "evidence_complete": not incomplete,
                 "model_attested": True,

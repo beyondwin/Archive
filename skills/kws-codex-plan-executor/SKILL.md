@@ -59,6 +59,15 @@ domain-separated digest attestation in a fresh corrected root. It never copies
 the predecessor manifest, slot evidence, output, session, authentication, or
 oracle-bearing path bytes.
 
+The unpublished v4 quality path is risk-first. Its immutable manifest names
+`sol_v4_candidate` plus `security/migration block` as the only qualified
+sentinel, independent of slot order. Every credentialed slot launches only
+from a content-addressed `LaunchEnvelopeV4` containing the exact prompt and
+output-schema bytes. Hidden oracle material stays in a separate runner-owned
+`OracleBindingV4`; any envelope, route, source, fixture, schema, or oracle
+binding drift blocks before a provider invocation. A sentinel semantic/oracle
+failure terminally protects all remaining credentialed slots.
+
 ## Fixed Routing
 
 - Core coordination, implementation, review, verification, repair, and
