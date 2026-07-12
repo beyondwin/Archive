@@ -413,6 +413,12 @@ def _extract_yaml_task_metadata(raw_body: str, repo_root: Path) -> dict:
             "acceptance_command": None,
             "operator_reviewed": False,
             "operator_decision": None,
+            "task_type": None,
+            "risk_class": None,
+            "forbidden_paths": [],
+            "required_methods": [],
+            "required_evidence": [],
+            "checkpoint_message": None,
         }
     yaml_body = match.group("body")
     try:
@@ -431,6 +437,12 @@ def _extract_yaml_task_metadata(raw_body: str, repo_root: Path) -> dict:
             "acceptance_command": None,
             "operator_reviewed": False,
             "operator_decision": None,
+            "task_type": None,
+            "risk_class": None,
+            "forbidden_paths": [],
+            "required_methods": [],
+            "required_evidence": [],
+            "checkpoint_message": None,
         }
 
     raw_id = payload.get("task_id") or payload.get("id")
@@ -483,6 +495,18 @@ def _extract_yaml_task_metadata(raw_body: str, repo_root: Path) -> dict:
         "acceptance_command": "\n".join(commands) if commands else None,
         "operator_reviewed": payload.get("operator_reviewed") is True,
         "operator_decision": operator_decision,
+        "task_type": str(payload.get("task_type") or "").strip() or None,
+        "risk_class": str(payload.get("risk_class") or "").strip() or None,
+        "forbidden_paths": [str(item) for item in payload.get("forbidden_paths", [])]
+        if isinstance(payload.get("forbidden_paths"), list)
+        else [],
+        "required_methods": [str(item) for item in payload.get("required_methods", [])]
+        if isinstance(payload.get("required_methods"), list)
+        else [],
+        "required_evidence": [str(item) for item in payload.get("required_evidence", [])]
+        if isinstance(payload.get("required_evidence"), list)
+        else [],
+        "checkpoint_message": str(payload.get("checkpoint_message") or "").strip() or None,
     }
 
 
@@ -531,6 +555,7 @@ def _extract_yaml_task_blocks(raw_markdown: str, repo_root: Path, mode: str) -> 
                     and str(payload["operator_decision"]).strip()
                     else None
                 ),
+                "task_source": raw_markdown[match.start() : match.end()],
             }
         )
     return tasks
@@ -574,7 +599,7 @@ def _validate_task_dependencies(tasks: list[dict]) -> None:
 
 
 def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
-    raw_markdown = plan_path.read_text(encoding="utf-8")
+    raw_markdown = plan_path.read_bytes().decode("utf-8")
     yaml_tasks = _extract_yaml_task_blocks(raw_markdown, repo_root, mode)
     if yaml_tasks:
         tasks = yaml_tasks
@@ -598,6 +623,13 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
         raw_body_start_line = _line_number(markdown, body_start)
         raw_body_end_line = _line_number(markdown, body_end)
         raw_body = _slice_lines(raw_markdown, raw_body_start_line, raw_body_end_line)
+        heading_line = _line_number(markdown, match.start())
+        next_heading_line = (
+            _line_number(markdown, matches[index + 1].start())
+            if index + 1 < len(matches)
+            else len(raw_markdown.splitlines()) + 1
+        )
+        task_source = _slice_lines(raw_markdown, heading_line, next_heading_line - 1)
         yaml_metadata = _extract_yaml_task_metadata(raw_body, repo_root)
         files, has_files, file_line_numbers = _extract_files(body_raw, repo_root, _line_number(markdown, body_start))
         if not files and yaml_metadata["files"]:
@@ -636,6 +668,13 @@ def parse_plan(plan_path: Path, repo_root: Path, mode: str) -> dict:
                 "acceptance_source": acceptance_source,
                 "operator_reviewed": yaml_metadata["operator_reviewed"],
                 "operator_decision": yaml_metadata["operator_decision"],
+                "task_type": yaml_metadata["task_type"],
+                "risk_class": yaml_metadata["risk_class"],
+                "forbidden_paths": yaml_metadata["forbidden_paths"],
+                "required_methods": yaml_metadata["required_methods"],
+                "required_evidence": yaml_metadata["required_evidence"],
+                "checkpoint_message": yaml_metadata["checkpoint_message"],
+                "task_source": task_source,
             }
         )
     aliases = {task["id"]: task["id"] for task in tasks}

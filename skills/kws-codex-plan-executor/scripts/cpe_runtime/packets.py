@@ -6,9 +6,12 @@ import os
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
+from .task_contracts import contract_from_body
+
 
 PACKET_MEDIA_TYPE = "application/json"
 PACKET_SCHEMA_VERSION = "3.1"
+PACKET_V4_SCHEMA_VERSION = "cpe.task-packet.v4"
 PACKET_ROLE_POLICY: dict[str, dict[str, bool]] = {
     "scout": {"read_only": True, "verdict_capable": False, "product_write": False},
     "implementation": {"read_only": False, "verdict_capable": False, "product_write": True},
@@ -108,6 +111,37 @@ def build_packet(compiled: object, task: dict) -> PacketDraft:
     task_id = str(task.get("id") or "")
     if not task_id or "/" in task_id or task_id in {".", ".."}:
         raise ValueError("invalid_task_id")
+    task_contract = task.get("task_contract")
+    task_contract_sha256 = task.get("task_contract_sha256")
+    if task_contract is not None or task_contract_sha256 is not None:
+        if not isinstance(task_contract, dict) or not isinstance(task_contract_sha256, str):
+            raise ValueError("task_contract_invalid")
+        contract = contract_from_body(task_contract, task_contract_sha256)
+        if contract.task_id != task_id:
+            raise ValueError("task_contract_id_mismatch")
+        payload = {
+            "schema_version": PACKET_V4_SCHEMA_VERSION,
+            "task_id": contract.task_id,
+            "task_contract": contract.body(),
+            "task_contract_sha256": contract.contract_sha256,
+            "execution_contract": {
+                "scope": "bounded task scope",
+                "files_to_inspect": list(contract.file_claims),
+                "allowed_edits": list(contract.file_claims),
+                "forbidden_edits": list(contract.forbidden_paths),
+                "acceptance_command_or_honest_substitute": "\n".join(contract.acceptance_commands),
+            },
+            "role_policy": PACKET_ROLE_POLICY,
+            "source_hashes": contract.source_hashes,
+        }
+        content = canonical_packet_bytes(payload)
+        return PacketDraft(
+            task_id=task_id,
+            relative_path=f"artifacts/task-packets/{task_id}.json",
+            media_type=PACKET_MEDIA_TYPE,
+            sha256=hashlib.sha256(content).hexdigest(),
+            content=content,
+        )
     contract = task.get("execution_contract") if isinstance(task.get("execution_contract"), dict) else {}
     claims = [str(item) for item in task.get("file_claims", [])]
     allowed = [str(item) for item in contract.get("allowed_paths", claims)]
@@ -197,9 +231,32 @@ def verify_packet(run_dir: Path, manifest: dict, task_id: str) -> PacketDraft:
         raise ValueError("packet_invalid") from exc
     if (
         not isinstance(payload, dict)
-        or payload.get("schema_version") != PACKET_SCHEMA_VERSION
         or payload.get("task_id") != task_id
         or canonical_packet_bytes(payload) != content
     ):
+        raise ValueError("packet_invalid")
+    schema_version = payload.get("schema_version")
+    if schema_version == PACKET_V4_SCHEMA_VERSION:
+        task_contract = payload.get("task_contract")
+        task_contract_sha256 = payload.get("task_contract_sha256")
+        if not isinstance(task_contract_sha256, str):
+            raise ValueError("task_contract_invalid")
+        contract = contract_from_body(task_contract, task_contract_sha256)
+        if contract.task_id != task_id:
+            raise ValueError("task_contract_id_mismatch")
+        if payload.get("role_policy") != PACKET_ROLE_POLICY:
+            raise ValueError("packet_role_policy_mismatch")
+        if payload.get("source_hashes") != contract.source_hashes:
+            raise ValueError("packet_source_hash_mismatch")
+        expected_execution_contract = {
+            "scope": "bounded task scope",
+            "files_to_inspect": list(contract.file_claims),
+            "allowed_edits": list(contract.file_claims),
+            "forbidden_edits": list(contract.forbidden_paths),
+            "acceptance_command_or_honest_substitute": "\n".join(contract.acceptance_commands),
+        }
+        if payload.get("execution_contract") != expected_execution_contract:
+            raise ValueError("packet_contract_view_mismatch")
+    elif schema_version != PACKET_SCHEMA_VERSION:
         raise ValueError("packet_invalid")
     return PacketDraft(task_id, entry["path"], entry["media_type"], entry["sha256"], content)
