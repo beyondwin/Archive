@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import stat
+import subprocess
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -33,6 +35,104 @@ class RepairPlan:
 
     def as_dict(self) -> dict[str, object]:
         return asdict(self)
+
+
+def scheduler_bookkeeping(state: dict) -> dict:
+    """Derive v4 repair roots/backlog from the immutable decision ledger."""
+
+    projected = deepcopy(state)
+    roots: dict[str, int] = {}
+    backlog: list[dict[str, object]] = []
+    for decision in projected.get("decisions", []):
+        if not isinstance(decision, dict):
+            continue
+        if decision.get("decision_kind") == "repair_root_updated":
+            root = decision.get("root_cause_key")
+            count = decision.get("repair_count")
+            if isinstance(root, str) and root and type(count) is int and 0 <= count <= 2:
+                roots[root] = max(roots.get(root, 0), count)
+        elif decision.get("decision_kind") == "backlog_added":
+            item = decision.get("backlog_item")
+            if isinstance(item, dict) and item not in backlog:
+                backlog.append(dict(item))
+    projected["repair_roots"] = roots
+    projected["backlog"] = backlog
+    return projected
+
+
+def record_repair_root(kernel: Kernel, *, task_id: str, root_cause_key: str, count: int) -> None:
+    if not root_cause_key or type(count) is not int or count not in {1, 2}:
+        raise ValueError("invalid_repair_root_update")
+    kernel.transition(
+        Transition(
+            "decision.recorded",
+            {
+                "decision_kind": "repair_root_updated",
+                "selected_action": "repair",
+                "basis": "bounded same-root repair policy",
+                "approval_basis": "standing_autonomy_policy",
+                "root_cause_key": root_cause_key,
+                "repair_count": count,
+            },
+            task_id=task_id,
+        )
+    )
+
+
+def record_backlog(
+    kernel: Kernel,
+    *,
+    task_id: str,
+    category: str,
+    root_cause_key: str,
+    finding: dict[str, object],
+) -> None:
+    item = {
+        "task_id": task_id,
+        "category": category,
+        "root_cause_key": root_cause_key,
+        "finding": deepcopy(finding),
+    }
+    kernel.transition(
+        Transition(
+            "decision.recorded",
+            {
+                "decision_kind": "backlog_added",
+                "selected_action": "backlog_and_continue",
+                "basis": "non-release-impact finding after bounded adjudication",
+                "approval_basis": "standing_autonomy_policy",
+                "backlog_item": item,
+            },
+            task_id=task_id,
+        )
+    )
+
+
+def prepare_repaired_candidate(product_worktree: Path, rejected: object) -> None:
+    """Collapse a rejected candidate plus repair into one new direct child."""
+
+    worktree = product_worktree.expanduser().resolve()
+    commit = getattr(rejected, "commit", None)
+    predecessor = getattr(rejected, "predecessor", None)
+    if not isinstance(commit, str) or not isinstance(predecessor, str):
+        raise ValueError("rejected_candidate_invalid")
+    head = subprocess.run(
+        ["git", "rev-parse", "--verify", "HEAD"],
+        cwd=worktree,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if head.returncode or head.stdout.strip() != commit:
+        raise ValueError("rejected_candidate_head_mismatch")
+    reset = subprocess.run(
+        ["git", "reset", "--mixed", predecessor],
+        cwd=worktree,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    if reset.returncode:
+        raise RuntimeError("repair_candidate_reset_failed")
 
 
 def plan_repairs(run_dir: Path) -> RepairPlan:

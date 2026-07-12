@@ -51,6 +51,64 @@ class ResumeDecision:
     evidence_refs: tuple[dict[str, object], ...] = ()
 
 
+@dataclass(frozen=True)
+class V4ResumeDecision:
+    action: str
+    task_id: str
+    phase: str | None = None
+    attempt_id: str | None = None
+    checkpoint_head: str | None = None
+
+
+def select_v4_resume(state: dict, task_id: str) -> V4ResumeDecision:
+    """Select same-attempt quota resume or checkpoint-bound runtime resume."""
+
+    if (
+        not isinstance(state, dict)
+        or state.get("schema_version") != "4"
+        or not isinstance(task_id, str)
+        or not task_id
+    ):
+        raise ValueError("invalid_v4_resume_state")
+    if state.get("lifecycle") in {"completed", "failed"}:
+        return V4ResumeDecision("terminal_noop", task_id)
+    active = [
+        item
+        for item in state.get("attempts", [])
+        if isinstance(item, dict)
+        and item.get("task_id") == task_id
+        and item.get("status") == "started"
+    ]
+    if len(active) > 1:
+        raise ValueError("active_model_attempt_ambiguous")
+    if active:
+        phase = str(active[0].get("kind") or "")
+        if phase not in {"implementation", "repair", "task_review", "verification"}:
+            raise ValueError("invalid_v4_resume_phase")
+        attempt_id = active[0].get("attempt_id")
+        if not isinstance(attempt_id, str) or not attempt_id:
+            raise ValueError("invalid_v4_resume_attempt")
+        return V4ResumeDecision(
+            "resume_same_attempt", task_id, phase=phase, attempt_id=attempt_id
+        )
+    checkpoint = state.get("checkpoint_head")
+    recorded = [
+        item
+        for item in state.get("verified_checkpoints", [])
+        if isinstance(item, dict) and item.get("commit") == checkpoint
+    ]
+    if (
+        isinstance(checkpoint, str)
+        and len(checkpoint) == 40
+        and all(character in "0123456789abcdef" for character in checkpoint)
+        and len(recorded) == 1
+    ):
+        return V4ResumeDecision(
+            "resume_verified_checkpoint", task_id, checkpoint_head=checkpoint
+        )
+    return V4ResumeDecision("reject", task_id)
+
+
 def _canonical_ref(value: object) -> str | None:
     if not isinstance(value, dict):
         return None

@@ -6,12 +6,14 @@ import shlex
 import sys
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable, Literal, Mapping
 
 from .attempt_controller import (
     ROLE_POLICIES,
     AttemptController,
+    ModelAttemptController,
     WriteAttemptOutcome,
     canonical_role,
     validate_verdict,
@@ -28,6 +30,63 @@ from .validation import COMPLETION_EVIDENCE_KINDS, validate_completion, validate
 from .worker import Worker, WorkerError, WorkerRequest, WorkerResult
 
 
+TaskPhase = Literal[
+    "preflight",
+    "implementation",
+    "candidate",
+    "acceptance",
+    "task_review",
+    "verification",
+    "verified_checkpoint",
+    "repair",
+    "waiting_external",
+    "waiting_user",
+    "blocked",
+]
+
+
+@dataclass(frozen=True)
+class ReviewScope:
+    kind: Literal["task_diff", "repair_delta"]
+    base_commit: str
+    candidate_commit: str
+    previous_findings: tuple[dict[str, object], ...] = ()
+    reopen_full_task_diff: bool = False
+    boundary_changes: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class LifecycleOperations:
+    packet_sha256: str
+    before_model_turn: Callable[[str, str], None]
+    implementation: Callable[[object, str], WorkerResult]
+    repair: Callable[[object, dict[str, object], str], WorkerResult]
+    review: Callable[[object, ReviewScope, str], WorkerResult]
+    deterministic_verification: Callable[..., tuple[bool, str]]
+    semantic_verification: Callable[..., WorkerResult] | None
+    repair_boundary_changes: Callable[..., tuple[str, ...]]
+    acceptance_environment: Mapping[str, str]
+
+
+class PreTurnInterruption(RuntimeError):
+    """External interruption observed before a provider turn exists."""
+
+
+class ExternalModelInterruption(RuntimeError):
+    def __init__(self, category: str, root_cause_key: str):
+        super().__init__(category)
+        self.category = category
+        self.root_cause_key = root_cause_key
+
+
+class RuntimeUpgradeInterruption(RuntimeError):
+    def __init__(self, root_cause_key: str, target_version: str, target_build_id: str):
+        super().__init__("runtime_upgrade_required")
+        self.root_cause_key = root_cause_key
+        self.target_version = target_version
+        self.target_build_id = target_build_id
+
+
 @dataclass(frozen=True)
 class TaskCycleResult:
     task_id: str
@@ -35,6 +94,10 @@ class TaskCycleResult:
     phase: str
     worktree_revision: int
     reason: str | None = None
+    phases: tuple[TaskPhase, ...] = ()
+    model_attempts: int = 0
+    state: dict[str, object] = field(default_factory=dict)
+    review_scopes: tuple[ReviewScope, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -1205,6 +1268,575 @@ def run_task_cycle(task: dict, controller: AttemptController, kernel: Kernel) ->
             return blocked
         acceptance = None
         phase = "acceptance"
+
+
+def _v4_state(kernel: Kernel) -> dict:
+    from .repair import scheduler_bookkeeping
+
+    return scheduler_bookkeeping(kernel.state)
+
+
+def _v4_result(
+    kernel: Kernel,
+    task_id: str,
+    status: str,
+    phase: TaskPhase,
+    phases: list[TaskPhase],
+    budget_before: int,
+    scopes: list[ReviewScope],
+    reason: str | None = None,
+) -> TaskCycleResult:
+    state = _v4_state(kernel)
+    used = int((state.get("attempt_budget") or {}).get("used", 0))
+    return TaskCycleResult(
+        task_id=task_id,
+        status=status,
+        phase=phase,
+        worktree_revision=len(state.get("candidate_checkpoints") or []),
+        reason=reason,
+        phases=tuple(phases),
+        model_attempts=used - budget_before,
+        state=state,
+        review_scopes=tuple(scopes),
+    )
+
+
+def _require_v4_worker_result(result: object) -> WorkerResult:
+    if not isinstance(result, WorkerResult) or result.status != "completed" or not _trusted(result):
+        raise ValueError("untrusted_model_result")
+    return result
+
+
+def _verify_v4_method_evidence(
+    run_dir: Path,
+    contract: object,
+    packet_sha256: str,
+    result: WorkerResult,
+) -> None:
+    from .evidence import verify_method_evidence_ref
+    from .task_contracts import TaskContractV4
+
+    if not isinstance(contract, TaskContractV4):
+        raise ValueError("task_contract_invalid")
+    if contract.task_type != "tdd_implementation":
+        return
+    ref = result.payload.get("method_evidence_ref")
+    problems = verify_method_evidence_ref(
+        run_dir,
+        ref,
+        task_id=contract.task_id,
+        packet_sha256=packet_sha256,
+        contract_sha256=contract.contract_sha256,
+    )
+    if problems:
+        raise ValueError(f"method_evidence_invalid:{problems[0]}")
+
+
+def _attach_v4_method_evidence(
+    kernel: Kernel, task_id: str, attempt_id: str, result: WorkerResult
+) -> None:
+    ref = result.payload.get("method_evidence_ref")
+    if not isinstance(ref, dict):
+        return
+    kernel.transition(
+        Transition(
+            "evidence.attached",
+            {"kind": "method_evidence", "ref": dict(ref)},
+            task_id=task_id,
+            attempt_id=attempt_id,
+        )
+    )
+
+
+def _review_verdict(result: WorkerResult) -> dict[str, object]:
+    verdict = result.payload.get("verdict")
+    if not isinstance(verdict, dict) or verdict.get("status") not in {
+        "passed", "changes_requested", "blocked", "inconclusive"
+    }:
+        raise ValueError("review_verdict_invalid")
+    if not isinstance(verdict.get("findings"), list) or not isinstance(
+        verdict.get("missing_evidence"), list
+    ):
+        raise ValueError("review_verdict_invalid")
+    return dict(verdict)
+
+
+def _record_v4_verdict(
+    kernel: Kernel, task_id: str, attempt_id: str, verdict: dict[str, object]
+) -> None:
+    kernel.transition(
+        Transition(
+            "verdict.recorded",
+            {
+                "status": verdict["status"],
+                "findings": list(verdict["findings"]),
+                "missing_evidence": list(verdict["missing_evidence"]),
+            },
+            task_id=task_id,
+            attempt_id=attempt_id,
+        )
+    )
+
+
+def _approved_review_evidence(
+    contract: object,
+    candidate: object,
+    verdict: dict[str, object],
+    *,
+    adjudication: str,
+):
+    from .checkpoints import create_review_evidence
+    from .task_contracts import TaskContractV4
+
+    if not isinstance(contract, TaskContractV4):
+        raise ValueError("task_contract_invalid")
+    content = {
+        "verdict": verdict,
+        "scheduler_adjudication": adjudication,
+    }
+    digest = hashlib.sha256(
+        json.dumps(content, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return create_review_evidence(
+        task_id=contract.task_id,
+        candidate_commit=str(getattr(candidate, "commit")),
+        contract_sha256=contract.contract_sha256,
+        decision="approved",
+        review_content_sha256=digest,
+    )
+
+
+def _initial_review_scope(candidate: object) -> ReviewScope:
+    return ReviewScope(
+        kind="task_diff",
+        base_commit=str(getattr(candidate, "predecessor")),
+        candidate_commit=str(getattr(candidate, "commit")),
+    )
+
+
+def _repair_review_scope(
+    rejected: object,
+    repaired: object,
+    findings: tuple[dict[str, object], ...],
+    boundary_changes: tuple[str, ...],
+) -> ReviewScope:
+    reopen = bool(
+        {"security", "state_integrity", "evidence"}.intersection(boundary_changes)
+    )
+    return ReviewScope(
+        kind="task_diff" if reopen else "repair_delta",
+        base_commit=(
+            str(getattr(repaired, "predecessor"))
+            if reopen
+            else str(getattr(rejected, "commit"))
+        ),
+        candidate_commit=str(getattr(repaired, "commit")),
+        previous_findings=findings,
+        reopen_full_task_diff=reopen,
+        boundary_changes=boundary_changes,
+    )
+
+
+def run_task_cycle_v4(
+    contract: object,
+    operations: LifecycleOperations,
+    kernel: Kernel,
+    product_worktree: Path,
+    run_dir: Path,
+) -> TaskCycleResult:
+    """Run one bounded TaskContractV4 candidate/review/repair lifecycle."""
+
+    from .checkpoints import create_candidate_checkpoint, promote_verified_checkpoint
+    from .failure_policy import classify_failure
+    from .repair import (
+        prepare_repaired_candidate,
+        record_backlog,
+        record_repair_root,
+    )
+    from .task_contracts import TaskContractV4
+    from .verification_workspace import run_acceptance, verification_worktree
+
+    task_id = str(getattr(contract, "task_id", ""))
+    phases: list[TaskPhase] = ["preflight"]
+    scopes: list[ReviewScope] = []
+    budget_before = int((kernel.state.get("attempt_budget") or {}).get("used", 0))
+    if (
+        not isinstance(contract, TaskContractV4)
+        or not task_id
+        or not isinstance(operations, LifecycleOperations)
+        or len(operations.packet_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in operations.packet_sha256)
+    ):
+        phases.append("blocked")
+        return _v4_result(
+            kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+            "contract_invalid",
+        )
+    if any(
+        item.get("task_id") == task_id
+        and item.get("contract_sha256") == contract.contract_sha256
+        for item in kernel.state.get("verified_checkpoints", [])
+    ):
+        return _v4_result(
+            kernel, task_id, "completed", "verified_checkpoint", phases,
+            budget_before, scopes,
+        )
+
+    controller = ModelAttemptController(kernel)
+    phases.append("implementation")
+    try:
+        implementation_turn = controller.run_model_turn(
+            task_id=task_id,
+            kind="implementation",
+            before_turn=operations.before_model_turn,
+            operation=lambda attempt_id: operations.implementation(contract, attempt_id),
+            preserve_attempt_on=(ExternalModelInterruption,),
+        )
+        implementation = _require_v4_worker_result(implementation_turn.result)
+        _verify_v4_method_evidence(
+            run_dir, contract, operations.packet_sha256, implementation
+        )
+        _attach_v4_method_evidence(
+            kernel, task_id, implementation_turn.attempt_id, implementation
+        )
+    except PreTurnInterruption as exc:
+        phases.append("waiting_external")
+        return _v4_result(
+            kernel, task_id, "waiting_external", "waiting_external", phases,
+            budget_before, scopes, str(exc),
+        )
+    except ExternalModelInterruption as exc:
+        phases.append("waiting_external")
+        return _v4_result(
+            kernel, task_id, "waiting_external", "waiting_external", phases,
+            budget_before, scopes, exc.root_cause_key,
+        )
+    except RuntimeUpgradeInterruption as exc:
+        phases.append("waiting_external")
+        return _v4_result(
+            kernel, task_id, "waiting_external", "waiting_external", phases,
+            budget_before, scopes, exc.root_cause_key,
+        )
+    except ValueError as exc:
+        phases.append("blocked")
+        return _v4_result(
+            kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+            str(exc),
+        )
+
+    phases.append("candidate")
+    try:
+        candidate = create_candidate_checkpoint(kernel, contract, product_worktree)
+    except (RuntimeError, ValueError) as exc:
+        phases.append("blocked")
+        return _v4_result(
+            kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+            str(exc),
+        )
+
+    phases.append("acceptance")
+    try:
+        with verification_worktree(
+            product_worktree, candidate.commit, run_dir, task_id
+        ) as checkout:
+            acceptance = run_acceptance(
+                contract.acceptance_commands,
+                checkout,
+                operations.acceptance_environment,
+            )
+    except (RuntimeError, ValueError) as exc:
+        phases.append("blocked")
+        return _v4_result(
+            kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+            str(exc),
+        )
+    if any(item.exit_code != 0 for item in acceptance):
+        phases.append("blocked")
+        return _v4_result(
+            kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+            "acceptance_failed",
+        )
+
+    scope = _initial_review_scope(candidate)
+    previous_findings: tuple[dict[str, object], ...] = ()
+    while True:
+        phases.append("task_review")
+        scopes.append(scope)
+        try:
+            review_turn = controller.run_model_turn(
+                task_id=task_id,
+                kind="task_review",
+                before_turn=operations.before_model_turn,
+                operation=lambda attempt_id: operations.review(contract, scope, attempt_id),
+                preserve_attempt_on=(ExternalModelInterruption,),
+            )
+            verdict = _review_verdict(
+                _require_v4_worker_result(review_turn.result)
+            )
+            _record_v4_verdict(
+                kernel, task_id, review_turn.attempt_id, verdict
+            )
+        except PreTurnInterruption as exc:
+            phases.append("waiting_external")
+            return _v4_result(
+                kernel, task_id, "waiting_external", "waiting_external", phases,
+                budget_before, scopes, str(exc),
+            )
+        except ExternalModelInterruption as exc:
+            phases.append("waiting_external")
+            return _v4_result(
+                kernel, task_id, "waiting_external", "waiting_external", phases,
+                budget_before, scopes, exc.root_cause_key,
+            )
+        except (RuntimeError, ValueError) as exc:
+            phases.append("blocked")
+            return _v4_result(
+                kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+                str(exc),
+            )
+
+        review_status = str(verdict["status"])
+        if review_status == "passed":
+            review_evidence = _approved_review_evidence(
+                contract, candidate, verdict, adjudication="review_passed"
+            )
+            break
+        if review_status in {"blocked", "inconclusive"}:
+            phases.append("blocked")
+            return _v4_result(
+                kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+                review_status,
+            )
+
+        raw_findings = verdict.get("findings") or []
+        if not raw_findings or not isinstance(raw_findings[0], dict):
+            phases.append("blocked")
+            return _v4_result(
+                kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+                "review_finding_invalid",
+            )
+        finding = dict(raw_findings[0])
+        previous_findings = tuple(
+            dict(item) for item in raw_findings if isinstance(item, dict)
+        )
+        category = str(finding.get("failure_category") or "product_defect")
+        root_cause_key = str(
+            finding.get("root_cause_key") or f"{category}:{task_id}"
+        )
+        try:
+            decision = classify_failure(
+                category,
+                root_cause_key=root_cause_key,
+                release_impact=bool(finding.get("release_impact", False)),
+                impact_class=(
+                    str(finding["impact_class"])
+                    if finding.get("impact_class") is not None
+                    else None
+                ),
+                repair_roots=_v4_state(kernel).get("repair_roots", {}),
+            )
+        except (TypeError, ValueError) as exc:
+            phases.append("blocked")
+            return _v4_result(
+                kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+                str(exc),
+            )
+        if decision.action == "block_release":
+            phases.append("blocked")
+            return _v4_result(
+                kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+                decision.root_cause_key,
+            )
+        if decision.action == "backlog_and_continue":
+            record_backlog(
+                kernel,
+                task_id=task_id,
+                category=decision.category,
+                root_cause_key=decision.root_cause_key,
+                finding=finding,
+            )
+            review_evidence = _approved_review_evidence(
+                contract,
+                candidate,
+                verdict,
+                adjudication="backlog_and_continue",
+            )
+            break
+        if decision.action != "repair" or decision.repair_root_update is None:
+            phases.append("blocked")
+            return _v4_result(
+                kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+                decision.action,
+            )
+
+        root, count = decision.repair_root_update
+        record_repair_root(kernel, task_id=task_id, root_cause_key=root, count=count)
+        rejected = candidate
+        phases.append("repair")
+        try:
+            repair_turn = controller.run_model_turn(
+                task_id=task_id,
+                kind="repair",
+                before_turn=operations.before_model_turn,
+                operation=lambda attempt_id: operations.repair(
+                    contract, finding, attempt_id
+                ),
+                preserve_attempt_on=(ExternalModelInterruption,),
+            )
+            repaired = _require_v4_worker_result(repair_turn.result)
+            _verify_v4_method_evidence(
+                run_dir, contract, operations.packet_sha256, repaired
+            )
+            _attach_v4_method_evidence(
+                kernel, task_id, repair_turn.attempt_id, repaired
+            )
+            prepare_repaired_candidate(product_worktree, rejected)
+            phases.append("candidate")
+            candidate = create_candidate_checkpoint(kernel, contract, product_worktree)
+            phases.append("acceptance")
+            with verification_worktree(
+                product_worktree, candidate.commit, run_dir, task_id
+            ) as checkout:
+                acceptance = run_acceptance(
+                    contract.acceptance_commands,
+                    checkout,
+                    operations.acceptance_environment,
+                )
+            if any(item.exit_code != 0 for item in acceptance):
+                raise ValueError("acceptance_failed")
+            boundary_changes = tuple(
+                operations.repair_boundary_changes(contract, rejected, candidate)
+            )
+            scope = _repair_review_scope(
+                rejected, candidate, previous_findings, boundary_changes
+            )
+        except ExternalModelInterruption as exc:
+            phases.append("waiting_external")
+            return _v4_result(
+                kernel, task_id, "waiting_external", "waiting_external", phases,
+                budget_before, scopes, exc.root_cause_key,
+            )
+        except (RuntimeError, ValueError) as exc:
+            phases.append("blocked")
+            return _v4_result(
+                kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+                str(exc),
+            )
+
+    phases.append("verification")
+    deterministic_passed, deterministic_summary = operations.deterministic_verification(
+        contract, candidate, acceptance, review_evidence
+    )
+    if deterministic_passed is not True or not isinstance(deterministic_summary, str):
+        phases.append("blocked")
+        return _v4_result(
+            kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+            "deterministic_verification_failed",
+        )
+    if "semantic_verification" in contract.required_evidence:
+        if operations.semantic_verification is None:
+            phases.append("blocked")
+            return _v4_result(
+                kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+                "semantic_verification_missing",
+            )
+        try:
+            semantic_turn = controller.run_model_turn(
+                task_id=task_id,
+                kind="verification",
+                before_turn=operations.before_model_turn,
+                operation=lambda attempt_id: operations.semantic_verification(
+                    contract, candidate, acceptance, attempt_id
+                ),
+                preserve_attempt_on=(ExternalModelInterruption,),
+            )
+            semantic_verdict = _review_verdict(
+                _require_v4_worker_result(semantic_turn.result)
+            )
+            _record_v4_verdict(
+                kernel, task_id, semantic_turn.attempt_id, semantic_verdict
+            )
+            if semantic_verdict["status"] != "passed":
+                raise ValueError("semantic_verification_failed")
+        except (ExternalModelInterruption, RuntimeError, ValueError) as exc:
+            phases.append("blocked")
+            return _v4_result(
+                kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+                str(exc),
+            )
+    try:
+        promote_verified_checkpoint(
+            kernel, contract, candidate, acceptance, review_evidence
+        )
+    except (RuntimeError, ValueError) as exc:
+        phases.append("blocked")
+        return _v4_result(
+            kernel, task_id, "blocked", "blocked", phases, budget_before, scopes,
+            str(exc),
+        )
+    phases.append("verified_checkpoint")
+    return _v4_result(
+        kernel, task_id, "completed", "verified_checkpoint", phases,
+        budget_before, scopes,
+    )
+
+
+def run_tasks_v4(
+    contracts: tuple[object, ...],
+    operations: Mapping[str, LifecycleOperations],
+    kernel: Kernel,
+    product_worktree: Path,
+    run_dir: Path,
+) -> tuple[TaskCycleResult, ...]:
+    """Run dependency-ordered v4 tasks, resuming after verified checkpoints."""
+
+    from .task_contracts import TaskContractV4
+
+    typed = [item for item in contracts if isinstance(item, TaskContractV4)]
+    if len(typed) != len(contracts) or len({item.task_id for item in typed}) != len(typed):
+        raise ValueError("task_contract_set_invalid")
+    by_id = {item.task_id: item for item in typed}
+    ordered: list[TaskContractV4] = []
+    remaining = dict(by_id)
+    while remaining:
+        ready = sorted(
+            task_id
+            for task_id, item in remaining.items()
+            if all(dependency in {task.task_id for task in ordered} for dependency in item.dependencies)
+        )
+        if not ready:
+            raise ValueError("task_contract_dependency_invalid")
+        for task_id in ready:
+            ordered.append(remaining.pop(task_id))
+
+    results: list[TaskCycleResult] = []
+    externally_waiting: set[str] = set()
+    for contract in ordered:
+        if set(contract.dependencies).intersection(externally_waiting):
+            continue
+        if any(
+            item.get("task_id") == contract.task_id
+            and item.get("contract_sha256") == contract.contract_sha256
+            for item in kernel.state.get("verified_checkpoints", [])
+        ):
+            continue
+        lifecycle = operations.get(contract.task_id)
+        if lifecycle is None:
+            raise ValueError(f"task_operations_missing:{contract.task_id}")
+        result = run_task_cycle_v4(
+            contract, lifecycle, kernel, product_worktree, run_dir
+        )
+        results.append(result)
+        if result.status == "waiting_external" and any(
+            item.get("task_id") == contract.task_id
+            and item.get("status") == "started"
+            for item in kernel.state.get("attempts", [])
+        ):
+            externally_waiting.add(contract.task_id)
+            continue
+        if result.status != "completed":
+            break
+    return tuple(results)
 
 
 def run_repository_checks(manifest: dict, revision: int) -> tuple[EvidenceRef, ...]:

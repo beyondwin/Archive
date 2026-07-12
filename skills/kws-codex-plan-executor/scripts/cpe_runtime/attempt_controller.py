@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Generic, TypeVar
@@ -123,6 +124,136 @@ class AttemptController:
                 revision += 1
         errors = tuple(scope_errors(delta, allowed, forbidden))
         return WriteAttemptOutcome(result, delta, errors, revision, patch_ref, error)
+
+
+@dataclass(frozen=True)
+class ModelTurnOutcome(Generic[T]):
+    result: T
+    attempt_id: str
+    started_new_attempt: bool
+
+
+class ModelAttemptController:
+    """Record model budget only across the actual provider-turn boundary."""
+
+    def __init__(self, kernel: Kernel):
+        self.kernel = kernel
+
+    def _active_attempt(self, task_id: str, kind: str) -> str | None:
+        matching = [
+            item
+            for item in self.kernel.state.get("attempts", [])
+            if item.get("task_id") == task_id
+            and item.get("kind") == kind
+            and item.get("status") == "started"
+        ]
+        if len(matching) > 1:
+            raise ValueError("active_model_attempt_ambiguous")
+        return str(matching[0]["attempt_id"]) if matching else None
+
+    def _next_attempt_id(self, task_id: str, kind: str) -> str:
+        ordinal = 1 + sum(
+            1
+            for item in self.kernel.state.get("attempts", [])
+            if item.get("task_id") == task_id and item.get("kind") == kind
+        )
+        return f"{task_id}.{kind}.{ordinal}"
+
+    def run_model_turn(
+        self,
+        *,
+        task_id: str,
+        kind: str,
+        before_turn: Callable[[str, str], None],
+        operation: Callable[[str], T],
+        preserve_attempt_on: tuple[type[Exception], ...] = (),
+    ) -> ModelTurnOutcome[T]:
+        from .kernel import Transition
+
+        active = self._active_attempt(task_id, kind)
+        attempt_id = active or self._next_attempt_id(task_id, kind)
+        before_turn(kind, attempt_id)
+        started_new = active is None
+        if started_new:
+            budget = self.kernel.state.get("attempt_budget") or {}
+            if int(budget.get("used", 0)) >= int(budget.get("limit", 40)):
+                raise ValueError("attempt_budget_exhausted")
+            self.kernel.transition(
+                Transition(
+                    "attempt.started",
+                    {"kind": kind},
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                )
+            )
+        try:
+            result = operation(attempt_id)
+        except preserve_attempt_on:
+            raise
+        except Exception as exc:
+            from .evidence import put_json
+
+            digest = hashlib.sha256(
+                f"{type(exc).__name__}:{exc}".encode("utf-8", "replace")
+            ).hexdigest()
+            run_dir = getattr(self.kernel, "run_dir", None)
+            if not isinstance(run_dir, Path):
+                raise RuntimeError("model_interruption_evidence_unavailable") from exc
+            ref = put_json(
+                run_dir,
+                "model_interruption",
+                {
+                    "task_id": task_id,
+                    "attempt_id": attempt_id,
+                    "kind": kind,
+                    "error_type": type(exc).__name__,
+                    "message_sha256": digest,
+                },
+            ).as_dict()
+            self.kernel.transition(
+                Transition(
+                    "evidence.attached",
+                    {"kind": "model_interruption", "ref": ref},
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                )
+            )
+            self.kernel.transition(
+                Transition(
+                    "attempt.completed",
+                    {
+                        "status": "interrupted",
+                        "attestation": {},
+                        "usage": {},
+                        "latency_ms": 0,
+                        "evidence_refs": [ref],
+                    },
+                    task_id=task_id,
+                    attempt_id=attempt_id,
+                )
+            )
+            raise
+
+        attestation = getattr(result, "attestation", {})
+        usage = getattr(result, "usage", {})
+        latency_ms = getattr(result, "latency_ms", 0)
+        payload = getattr(result, "payload", {})
+        evidence_refs = payload.get("evidence_refs", []) if isinstance(payload, dict) else []
+        self.kernel.transition(
+            Transition(
+                "attempt.completed",
+                {
+                    "status": "completed",
+                    "attestation": dict(attestation) if isinstance(attestation, dict) else {},
+                    "usage": dict(usage) if isinstance(usage, dict) else {},
+                    "latency_ms": max(0, int(latency_ms or 0)),
+                    "evidence_refs": list(evidence_refs) if isinstance(evidence_refs, list) else [],
+                },
+                task_id=task_id,
+                attempt_id=attempt_id,
+            )
+        )
+        return ModelTurnOutcome(result, attempt_id, started_new)
 
 
 def canonical_role(role: str) -> str:
