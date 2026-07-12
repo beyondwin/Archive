@@ -10,6 +10,7 @@
     "missing_evidence",
     "verification",
     "verdict",
+    "method_evidence_ref",
     "root_cause_key",
     "failure_category"
   ],
@@ -34,6 +35,22 @@
     "evidence_refs": {"type": "array", "items": {"type": "string"}},
     "missing_evidence": {"type": "array", "items": {"type": "string"}},
     "verification": {"type": "array", "items": {"type": "string"}},
+    "method_evidence_ref": {
+      "anyOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "required": ["kind", "path", "sha256", "media_type"],
+          "properties": {
+            "kind": {"const": "method_evidence"},
+            "path": {"type": "string"},
+            "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "media_type": {"const": "application/json"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "root_cause_key": {"type": ["string", "null"]},
     "failure_category": {"type": ["string", "null"]},
     "verdict": {
