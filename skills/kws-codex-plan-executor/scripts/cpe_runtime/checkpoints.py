@@ -17,6 +17,10 @@ from .git_delta import (
 )
 from .kernel import Transition
 from .task_contracts import TaskContractV4
+from .verification_workspace import (
+    AcceptanceResult,
+    acceptance_command_sha256,
+)
 
 
 CPE_GIT_IDENTITY = {
@@ -30,6 +34,7 @@ CPE_GIT_IDENTITY = {
 @dataclass(frozen=True)
 class CandidateCheckpoint:
     task_id: str
+    contract_sha256: str
     predecessor: str
     commit: str
     tree: str
@@ -46,6 +51,16 @@ class VerifiedCheckpoint:
     contract_sha256: str
     acceptance_sha256: str
     review_sha256: str
+
+
+@dataclass(frozen=True)
+class ReviewEvidence:
+    task_id: str
+    candidate_commit: str
+    contract_sha256: str
+    decision: str
+    review_content_sha256: str
+    artifact_sha256: str
 
 
 def _git(worktree: Path, *args: str, env: dict[str, str] | None = None) -> bytes:
@@ -89,12 +104,67 @@ def _validate_contract(contract: TaskContractV4) -> None:
 
 def _candidate_payload(candidate: CandidateCheckpoint) -> dict[str, object]:
     return {
+        "contract_sha256": candidate.contract_sha256,
         "predecessor": candidate.predecessor,
         "commit": candidate.commit,
         "tree": candidate.tree,
         "patch_sha256": candidate.patch_sha256,
         "changed_files": list(candidate.changed_files),
     }
+
+
+def _review_artifact_sha256(
+    *,
+    task_id: str,
+    candidate_commit: str,
+    contract_sha256: str,
+    decision: str,
+    review_content_sha256: str,
+) -> str:
+    body = {
+        "task_id": task_id,
+        "candidate_commit": candidate_commit,
+        "contract_sha256": contract_sha256,
+        "decision": decision,
+        "review_content_sha256": review_content_sha256,
+    }
+    raw = json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(b"CPE-REVIEW-ARTIFACT-V1\0" + raw).hexdigest()
+
+
+def create_review_evidence(
+    *,
+    task_id: str,
+    candidate_commit: str,
+    contract_sha256: str,
+    decision: str,
+    review_content_sha256: str,
+) -> ReviewEvidence:
+    """Create immutable, self-digesting review evidence for later promotion."""
+
+    if (
+        not task_id
+        or not _is_hex(candidate_commit, 40)
+        or not _is_hex(contract_sha256, 64)
+        or decision not in {"approved", "changes_requested", "blocked"}
+        or not _is_hex(review_content_sha256, 64)
+    ):
+        raise ValueError("review_evidence_invalid")
+    artifact_sha256 = _review_artifact_sha256(
+        task_id=task_id,
+        candidate_commit=candidate_commit,
+        contract_sha256=contract_sha256,
+        decision=decision,
+        review_content_sha256=review_content_sha256,
+    )
+    return ReviewEvidence(
+        task_id=task_id,
+        candidate_commit=candidate_commit,
+        contract_sha256=contract_sha256,
+        decision=decision,
+        review_content_sha256=review_content_sha256,
+        artifact_sha256=artifact_sha256,
+    )
 
 
 def create_candidate_checkpoint(
@@ -140,6 +210,7 @@ def create_candidate_checkpoint(
 
     candidate = CandidateCheckpoint(
         task_id=contract.task_id,
+        contract_sha256=contract.contract_sha256,
         predecessor=predecessor,
         commit=commit,
         tree=tree,
@@ -156,16 +227,21 @@ def create_candidate_checkpoint(
     return candidate
 
 
-def _acceptance_digest(results: Iterable[object]) -> tuple[tuple[object, ...], str]:
+def _acceptance_digest(
+    results: Iterable[object],
+    commands: tuple[str, ...],
+    candidate_commit: str,
+) -> tuple[tuple[AcceptanceResult, ...], str]:
     records = tuple(results)
     if not records:
         raise ValueError("acceptance_evidence_missing")
+    if len(records) != len(commands):
+        raise ValueError("acceptance_command_mismatch")
     payload: list[dict[str, object]] = []
-    for result in records:
-        try:
-            record = asdict(result)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("acceptance_evidence_invalid") from exc
+    for result, command in zip(records, commands, strict=True):
+        if not isinstance(result, AcceptanceResult):
+            raise ValueError("acceptance_evidence_invalid")
+        record = asdict(result)
         if record.get("exit_code") != 0:
             raise ValueError("acceptance_failed")
         if not all(
@@ -173,9 +249,44 @@ def _acceptance_digest(results: Iterable[object]) -> tuple[tuple[object, ...], s
             for field in ("command_sha256", "stdout_sha256", "stderr_sha256")
         ) or not _is_hex(record.get("revision"), 40):
             raise ValueError("acceptance_evidence_invalid")
+        if result.command_sha256 != acceptance_command_sha256(command):
+            raise ValueError("acceptance_command_mismatch")
+        if result.revision != candidate_commit:
+            raise ValueError("acceptance_revision_mismatch")
         payload.append(record)
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return records, hashlib.sha256(b"CPE-ACCEPTANCE-V1\0" + raw).hexdigest()
+
+
+def _validated_review_sha256(
+    review: ReviewEvidence | None,
+    contract: TaskContractV4,
+    candidate: CandidateCheckpoint,
+) -> str:
+    if review is None:
+        raise ValueError("review_evidence_missing")
+    if not isinstance(review, ReviewEvidence):
+        raise ValueError("review_evidence_invalid")
+    if (
+        review.task_id != contract.task_id
+        or review.candidate_commit != candidate.commit
+        or review.contract_sha256 != contract.contract_sha256
+    ):
+        raise ValueError("review_evidence_mismatch")
+    if review.decision != "approved":
+        raise ValueError("review_not_approved")
+    if not _is_hex(review.review_content_sha256, 64):
+        raise ValueError("review_evidence_invalid")
+    expected = _review_artifact_sha256(
+        task_id=review.task_id,
+        candidate_commit=review.candidate_commit,
+        contract_sha256=review.contract_sha256,
+        decision=review.decision,
+        review_content_sha256=review.review_content_sha256,
+    )
+    if review.artifact_sha256 != expected:
+        raise ValueError("review_evidence_invalid")
+    return review.artifact_sha256
 
 
 def promote_verified_checkpoint(
@@ -183,6 +294,7 @@ def promote_verified_checkpoint(
     contract: TaskContractV4,
     candidate: CandidateCheckpoint,
     acceptance_results: Iterable[object],
+    review_evidence: ReviewEvidence | None = None,
 ) -> VerifiedCheckpoint:
     """Promote only the recorded passing direct child of the checkpoint head."""
 
@@ -190,6 +302,8 @@ def promote_verified_checkpoint(
     state = getattr(kernel, "state")
     if candidate.task_id != contract.task_id:
         raise ValueError("candidate_task_mismatch")
+    if candidate.contract_sha256 != contract.contract_sha256:
+        raise ValueError("candidate_contract_mismatch")
     if candidate.predecessor != _checkpoint_predecessor(state):
         raise ValueError("non_direct_child_candidate")
     fields = (candidate.predecessor, candidate.commit, candidate.tree)
@@ -205,9 +319,12 @@ def promote_verified_checkpoint(
     ]
     if len(recorded) != 1:
         raise ValueError("candidate_checkpoint_unrecorded")
-    records, acceptance_sha256 = _acceptance_digest(acceptance_results)
-    if any(getattr(record, "revision", None) != candidate.commit for record in records):
-        raise ValueError("acceptance_revision_mismatch")
+    _records, acceptance_sha256 = _acceptance_digest(
+        acceptance_results,
+        contract.acceptance_commands,
+        candidate.commit,
+    )
+    review_sha256 = _validated_review_sha256(review_evidence, contract, candidate)
     verified = VerifiedCheckpoint(
         task_id=contract.task_id,
         predecessor=candidate.predecessor,
@@ -215,7 +332,7 @@ def promote_verified_checkpoint(
         tree=candidate.tree,
         contract_sha256=contract.contract_sha256,
         acceptance_sha256=acceptance_sha256,
-        review_sha256=candidate.patch_sha256,
+        review_sha256=review_sha256,
     )
     payload = asdict(verified)
     payload.pop("task_id")

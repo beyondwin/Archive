@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import signal
 import subprocess
 import threading
 import uuid
@@ -16,6 +17,8 @@ from typing import Iterator, Mapping
 
 MAX_OUTPUT_BYTES = 64 * 1024
 ACCEPTANCE_TIMEOUT_SECONDS = 15 * 60
+PROCESS_GROUP_GRACE_SECONDS = 0.5
+OUTPUT_DRAIN_TIMEOUT_SECONDS = 1.0
 ENV_ALLOWLIST = frozenset({"LANG", "LC_ALL", "PATH", "SYSTEMROOT", "TERM", "TMPDIR", "TZ"})
 SENSITIVE_ENV = re.compile(
     r"(?:AUTH|COOKIE|CREDENTIAL|HOME|KEY|ORACLE|PASSWORD|SECRET|TOKEN)", re.IGNORECASE
@@ -49,6 +52,37 @@ class _BoundedCapture:
             remaining = MAX_OUTPUT_BYTES - len(self.content)
             if remaining > 0:
                 self.content.extend(chunk[:remaining])
+
+
+def acceptance_command_sha256(command: str) -> str:
+    if not isinstance(command, str) or not command.strip() or "\x00" in command:
+        raise ValueError("acceptance_command_invalid")
+    return hashlib.sha256(
+        b"CPE-ACCEPTANCE-COMMAND-V1\0" + command.encode("utf-8")
+    ).hexdigest()
+
+
+def _stop_process_group(process: subprocess.Popen[bytes], process_group: int) -> None:
+    try:
+        os.killpg(process_group, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+    except OSError as exc:
+        raise RuntimeError("evidence_integrity_failure") from exc
+    try:
+        process.wait(timeout=PROCESS_GROUP_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process_group, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    except OSError as exc:
+        raise RuntimeError("evidence_integrity_failure") from exc
+    try:
+        process.wait(timeout=PROCESS_GROUP_GRACE_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("evidence_integrity_failure") from exc
 
 
 def _run_git(repo: Path, args: list[str]) -> subprocess.CompletedProcess[bytes]:
@@ -164,15 +198,16 @@ def run_acceptance(
     child_env, redactions = _bounded_environment(checkout, environment)
     results: list[AcceptanceResult] = []
     for command in commands:
-        if not isinstance(command, str) or not command.strip() or "\x00" in command:
-            raise ValueError("acceptance_command_invalid")
+        command_sha256 = acceptance_command_sha256(command)
         process = subprocess.Popen(
             ["/bin/sh", "-c", command],
             cwd=checkout,
             env=child_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            start_new_session=True,
         )
+        process_group = process.pid
         assert process.stdout is not None and process.stderr is not None
         stdout = _BoundedCapture()
         stderr = _BoundedCapture()
@@ -185,18 +220,21 @@ def run_acceptance(
         try:
             exit_code = process.wait(timeout=ACCEPTANCE_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait()
+            _stop_process_group(process, process_group)
             exit_code = 124
         for thread in threads:
-            thread.join()
+            thread.join(timeout=OUTPUT_DRAIN_TIMEOUT_SECONDS)
+        if any(thread.is_alive() for thread in threads):
+            _stop_process_group(process, process_group)
+            for thread in threads:
+                thread.join(timeout=PROCESS_GROUP_GRACE_SECONDS)
+            if any(thread.is_alive() for thread in threads):
+                raise RuntimeError("evidence_integrity_failure")
         stdout_truncated = stdout.total > len(stdout.content)
         stderr_truncated = stderr.total > len(stderr.content)
         result = AcceptanceResult(
             revision=revision,
-            command_sha256=hashlib.sha256(
-                b"CPE-ACCEPTANCE-COMMAND-V1\0" + command.encode("utf-8")
-            ).hexdigest(),
+            command_sha256=command_sha256,
             exit_code=exit_code,
             stdout_sha256=_sanitized_digest(
                 bytes(stdout.content), redactions, stdout_truncated
