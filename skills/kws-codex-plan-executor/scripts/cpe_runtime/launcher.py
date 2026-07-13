@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
 import shutil
 import signal
+import stat
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -115,6 +118,7 @@ class ChildLauncher:
         self.timeout_seconds = float(timeout_seconds)
         self.terminate_grace_seconds = float(terminate_grace_seconds)
         self.environ = dict(os.environ if environ is None else environ)
+        self._writer_lease = threading.Lock()
 
     def _validate_request(
         self, request: ChildRequest, worktree: Worktree, store: RunStore
@@ -322,6 +326,53 @@ class ChildLauncher:
                         pass
 
     def launch(
+        self,
+        request: ChildRequest,
+        *,
+        worktree: Worktree,
+        store: RunStore,
+        ingest_artifacts: bool = True,
+    ) -> LaunchOutcome:
+        if request.role not in WRITE_ROLES:
+            return self._launch_once(
+                request,
+                worktree=worktree,
+                store=store,
+                ingest_artifacts=ingest_artifacts,
+            )
+        if not self._writer_lease.acquire(blocking=False):
+            raise ValueError("another write role already holds the writer lease")
+        descriptor = -1
+        try:
+            descriptor = os.open(
+                store.paths.writer_lease,
+                os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+            )
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+            ):
+                raise ValueError("run-owned writer lease must remain a private regular file")
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise ValueError("another write role already holds the writer lease") from exc
+            return self._launch_once(
+                request,
+                worktree=worktree,
+                store=store,
+                ingest_artifacts=ingest_artifacts,
+            )
+        finally:
+            if descriptor >= 0:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                finally:
+                    os.close(descriptor)
+            self._writer_lease.release()
+
+    def _launch_once(
         self,
         request: ChildRequest,
         *,

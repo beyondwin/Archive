@@ -44,6 +44,14 @@ SCENARIOS = frozenset(
         "mapping_split_brief_substitutes_requirement",
         "mapping_success_retry_variant",
         "mapping_many_tasks",
+        "queue_success",
+        "queue_review_fix",
+        "queue_ordinary_failure",
+        "queue_test_failure",
+        "queue_authority",
+        "queue_review_crash",
+        "queue_unchanged_strategy",
+        "writer_hold",
     }
 )
 
@@ -71,6 +79,11 @@ def _prompt_inputs(prompt: str) -> list[str]:
     if not values:
         raise SystemExit("fake codex received no exact input paths")
     return values
+
+
+def _prompt_strategy(prompt: str) -> str:
+    match = re.search(r"^Strategy key:\s*(.+)$", prompt, flags=re.MULTILINE)
+    return match.group(1).strip() if match is not None else "initial"
 
 
 def _git(worktree: Path, *arguments: str) -> str:
@@ -133,10 +146,30 @@ def _log_invocation(argv: list[str], prompt: str) -> None:
 def _commit_change(worktree: Path, item_id: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9._-]", "-", item_id)
     relative = f"cpe-{safe}.txt"
-    (worktree / relative).write_text("deterministic write role change\n", encoding="utf-8")
+    parent = _git(worktree, "rev-parse", "HEAD")
+    (worktree / relative).write_text(
+        f"deterministic write role change after {parent}\n", encoding="utf-8"
+    )
     _git(worktree, "add", "--", relative)
     _git(worktree, "commit", "-q", "-m", f"fake cpe {safe}")
     return _git(worktree, "rev-parse", "HEAD")
+
+
+def _queue_invocation_number(role: str) -> int:
+    declared = os.environ.get("CPE_FAKE_QUEUE_STATE")
+    if not declared:
+        return 1
+    path = Path(declared)
+    if path.exists():
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    else:
+        payload = {}
+    count = int(payload.get(role, 0)) + 1
+    payload[role] = count
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    os.replace(temporary, path)
+    return count
 
 
 def _source_entry(
@@ -768,6 +801,9 @@ def main() -> int:
         time.sleep(60)
         return 99
 
+    if scenario == "queue_review_crash" and role == "reviewer":
+        raise SystemExit("deterministic reviewer process interruption")
+
     if scenario.startswith("mapping_"):
         input_paths = _prompt_inputs(prompt)
         if role == "document_mapper":
@@ -821,7 +857,43 @@ def main() -> int:
     authority_id = None
     artifact_paths = [report_path]
 
-    if scenario == "success" and role in WRITE_ROLES:
+    queue_number = _queue_invocation_number(role) if scenario.startswith("queue_") else 1
+
+    if scenario in {"success", "queue_success", "queue_review_crash"} and role in WRITE_ROLES:
+        commit = _commit_change(worktree, item_id)
+    elif scenario == "queue_review_fix":
+        if role in WRITE_ROLES:
+            commit = _commit_change(worktree, item_id)
+        elif role == "reviewer" and queue_number == 1:
+            status = "changes_requested"
+            verdict = "changes_requested"
+            finding_path = f"reviews/{item_id.replace(':', '-')}/findings-important.json"
+            _write_json(
+                outbox,
+                finding_path,
+                {"severity": "Important", "finding": "consolidate the bounded fix"},
+            )
+            artifact_paths.append(finding_path)
+    elif scenario in {
+        "queue_ordinary_failure",
+        "queue_test_failure",
+        "queue_unchanged_strategy",
+    }:
+        if role == "task_agent":
+            status = "failed"
+            failure_code = "test_failure"
+        elif role == "investigator":
+            pass
+        elif role in WRITE_ROLES:
+            commit = _commit_change(worktree, item_id)
+    elif scenario == "queue_authority" and role == "task_agent":
+        status = "waiting_authority"
+        authority_id = "credential_required"
+    elif scenario == "writer_hold" and role in WRITE_ROLES:
+        marker = os.environ.get("CPE_FAKE_WRITER_MARKER")
+        if marker:
+            Path(marker).write_text("started\n", encoding="utf-8")
+        time.sleep(0.35)
         commit = _commit_change(worktree, item_id)
     elif scenario == "review_changes_requested":
         status = "changes_requested"
@@ -852,7 +924,12 @@ def main() -> int:
         "verdict": verdict,
         "failure_code": failure_code,
         "authority_id": authority_id,
-        "strategy_key": "initial",
+        "strategy_key": (
+            "fresh-root-cause-v2"
+            if role == "investigator"
+            and scenario in {"queue_ordinary_failure", "queue_test_failure"}
+            else _prompt_strategy(prompt)
+        ),
         "affected_document_ids": [],
         "artifact_paths": artifact_paths,
         "summary": f"deterministic {scenario} result",
