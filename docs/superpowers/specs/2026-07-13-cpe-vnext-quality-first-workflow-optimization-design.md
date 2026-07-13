@@ -29,7 +29,7 @@ require their original checkout if an operator later chooses to inspect them.
 
 1. Implement one umbrella design through three sequential implementation
    plans:
-   - release trust and residual-risk closure;
+   - release trust foundation and closure machinery;
    - runtime, validation, test, and multi-plan simplification;
    - quality-preserving workflow deduplication and measurement.
 2. Complete all approved work. Attempt or call budgets never remove product
@@ -140,7 +140,8 @@ Responses API as a runtime dependency.
 
 ## 4. Goals
 
-- Close R1, R2, and R3 against one immutable release checkpoint.
+- Close R1 before the runtime rewrite, then close R3 and R2 once against the
+  final immutable vNext checkpoint.
 - Preserve truthful R4, R5, and R6 limitations without letting them become
   ordinary implementation blockers.
 - Replace old/v4 dual lifecycle paths with one vNext transition kernel.
@@ -298,21 +299,27 @@ input contracts and file claims are independent.
 The entire program uses one run ID, isolated worktree, event ledger, evidence
 store, and final public result.
 
-## 8. Plan 1 - Release Trust And Residual-Risk Closure
+## 8. Plan 1 - Release Trust Foundation And Closure Machinery
 
-### 8.1 Correct execution order
+### 8.1 Correct program execution order
 
 ```text
-R1 trust repair
+Plan 1: R1 trust repair and closure machinery
+  -> Plan 2: vNext runtime and multi-plan cutover
+  -> Plan 3: quality deduplication and measurement
+  -> final vNext checkpoint
   -> R3 four-lane review
   -> one consolidated fix wave
-  -> immutable proof checkpoint
+  -> final proof checkpoint
   -> one cost-free full gate
   -> R2 staged live proof
   -> metadata-only closeout
 ```
 
-R3 precedes R2 so any required code repair happens before credentialed proof.
+Plan 1 makes every later runtime path consume immutable Git-object trust
+bindings, but it does not run credentialed proof. R3 and R2 execute only after
+Plans 2 and 3 have stopped changing runtime behavior. R3 precedes R2 so any
+required code repair happens before the one credentialed proof sequence.
 
 ### 8.2 GitObjectSource
 
@@ -355,9 +362,10 @@ trust-root digest, event-chain head, and evidence references. A mismatch
 invalidates downstream evidence. Resume replays the same transaction and may
 not duplicate a terminal external call.
 
-### 8.4 Four-lane integration review
+### 8.4 Four-lane integration review contract
 
-R3 runs these independent evidence-gathering lanes against one checkpoint:
+Plan 1 defines the schemas, invariant registry, deterministic reducer, and
+checkpoint bindings for these independent evidence-gathering lanes:
 
 1. state and crash recovery;
 2. trust and privacy;
@@ -369,19 +377,22 @@ and recommended disposition. A deterministic reducer deduplicates the lane
 reports by invariant. One reviewer produces one consolidated verdict. At most
 one consolidated repair wave runs before the checkpoint is frozen.
 
-Before R2, the fourth lane reviews the release machinery, historical/current
-evidence separation, staged-proof policy, and lineage bindings. After R2, the
-terminal generation is validated deterministically against that approved
-contract. A new semantic review runs only when the proof fails or exposes a new
-invariant; it cannot silently patch the already proved checkpoint.
+The lanes do not produce a final release verdict during Plan 1. The Program
+Final Gate runs them against the exact post-Plan-3 checkpoint. Before R2, the
+fourth lane reviews the release machinery, historical/current evidence
+separation, staged-proof policy, and lineage bindings. After R2, the terminal
+generation is validated deterministically against that approved contract. A
+new semantic review runs only when the proof fails or exposes a new invariant;
+it cannot silently patch the already proved checkpoint.
 
 A newly discovered P0 or P1 invariant after that wave returns the work to
 design rather than starting another unbounded local patch loop. The work
 remains active until the structural issue is redesigned and resolved.
 
-### 8.5 Staged live proof
+### 8.5 Program Final Gate staged live proof
 
-After the frozen cost-free gate:
+The Program Final Gate, not Plan 1, executes this sequence after the frozen
+cost-free gate:
 
 1. run the qualified security sentinel;
 2. stop on any semantic, evidence, privacy, route, or binding failure;
@@ -395,7 +406,7 @@ are credentialed external effects. They are safety ceilings, not completion
 targets. Reaching a ceiling cannot produce success; it produces a blocker or a
 structural redesign requirement.
 
-### 8.6 Metadata-only closeout
+### 8.6 Program Final Gate metadata-only closeout
 
 Live proof freezes runtime, policy, contract, prompt, fixture, oracle, and
 validator bytes. A later closeout commit may change only allowlisted release
@@ -723,13 +734,15 @@ plan and three implementation plans:
 
 ```text
 docs/superpowers/plans/2026-07-13-cpe-vnext-workflow-optimization-program.md
-docs/superpowers/plans/2026-07-13-cpe-vnext-plan-1-release-trust-closure.md
+docs/superpowers/plans/2026-07-13-cpe-vnext-plan-1-release-trust-foundation.md
 docs/superpowers/plans/2026-07-13-cpe-vnext-plan-2-runtime-multiplan-simplification.md
 docs/superpowers/plans/2026-07-13-cpe-vnext-plan-3-quality-deduplication-measurement.md
 ```
 
 The program plan will own order, cross-plan dependencies, spec coverage, file
-ownership, checkpoints, and the final integration gate. Each implementation
+ownership, checkpoints, and the Program Final Gate. That gate runs the final
+R3 review, consolidated repair if needed, cost-free verification, R2 staged
+proof, and metadata-only closeout after Plans 1 through 3. Each implementation
 plan will own executable task detail. This artifact set also dogfoods the
 vNext multi-plan input shape.
 
@@ -741,7 +754,8 @@ R4 through R6 truthful.
 
 The umbrella program is complete only when:
 
-1. R1, R2, and R3 are closed against the documented proof checkpoint.
+1. R1 is closed before the runtime cutover, and R3 plus R2 are closed once
+   against the final post-Plan-3 proof checkpoint.
 2. R4, R5, and R6 are accurately classified and not overstated.
 3. The vNext runtime contains one lifecycle path and no migration path.
 4. v3 and v4 run IDs are rejected without artifact mutation.
