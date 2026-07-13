@@ -768,6 +768,163 @@ class LeanQueueTest(unittest.TestCase):
             "accepted",
         ])
 
+    def test_accepted_investigation_outcome_repairs_decision_after_reopen(
+        self,
+    ) -> None:
+        store, engine = self.create_engine("queue_ordinary_failure")
+        original_record = engine._record_investigation_outcome
+        interrupted = False
+
+        def interrupt_after_accepted(record: Mapping[str, object]) -> None:
+            nonlocal interrupted
+            original_record(record)
+            if record["selection"] == "accepted" and not interrupted:
+                interrupted = True
+                raise RuntimeError("interrupt after accepted investigation")
+
+        engine._record_investigation_outcome = interrupt_after_accepted  # type: ignore[method-assign]
+        with self.assertRaisesRegex(RuntimeError, "after accepted investigation"):
+            engine.tick()
+        self.assertEqual(len(store.autonomy_decisions()), 0)
+
+        reopened = RunStore.open(codex_home=self.home, run_id=store.run_id)
+        resumed = QueueEngine(reopened, engine.worktree, engine.launcher)
+        self.assertEqual(resumed.tick(), "plan-01:T1")
+        roles = [
+            item["role"]
+            for item in self.invocations()
+            if item["role"] not in {"document_mapper", "program_mapper"}
+        ]
+        self.assertEqual(roles, ["task_agent", "investigator", "fix_agent", "reviewer"])
+        self.assertEqual(len(reopened.autonomy_decisions()), 1)
+        self.assertEqual(
+            len(
+                [
+                    event
+                    for event in reopened.validate_event_chain()
+                    if event["event_type"] == "autonomy.recorded"
+                ]
+            ),
+            1,
+        )
+
+    def test_consumed_accepted_investigation_advances_recovery_method_on_reopen(
+        self,
+    ) -> None:
+        store, engine = self.create_engine("queue_historical_strategy")
+        task_id = "plan-01:T1"
+        evidence_path = "reports/plan-01-T1/recurring-evidence.json"
+        store.put_artifact(evidence_path, b'{"failure":"same evidence"}')
+        evidence_sha256 = engine._artifact_evidence_digest([evidence_path])
+        task = engine._task_by_id(task_id)
+
+        first_strategy, first_paths = engine._run_investigation(
+            task,
+            [evidence_path],
+            previous_strategy="initial",
+            dispatch_evidence_sha256=evidence_sha256,
+        )
+        self.assertEqual(first_strategy, "strategy-A")
+        first_commit = engine._run_consolidated_fix(
+            task,
+            (evidence_path, *first_paths),
+            strategy_key=first_strategy,
+            evidence_sha256=evidence_sha256,
+        )
+        self.assertIsNotNone(first_commit)
+
+        reopened = RunStore.open(codex_home=self.home, run_id=store.run_id)
+        resumed = QueueEngine(reopened, engine.worktree, engine.launcher)
+        next_strategy, next_paths = resumed._run_investigation(
+            resumed._task_by_id(task_id),
+            [evidence_path],
+            previous_strategy="strategy-B",
+            dispatch_evidence_sha256=evidence_sha256,
+        )
+        self.assertEqual(next_strategy, "strategy-C")
+        records = resumed._investigation_records(task_id)
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[-1][0]["recovery_method"], "architecture_synthesis")
+        second_commit = resumed._run_consolidated_fix(
+            resumed._task_by_id(task_id),
+            (evidence_path, *next_paths),
+            strategy_key=next_strategy,
+            evidence_sha256=evidence_sha256,
+        )
+        self.assertIsNotNone(second_commit)
+        starts = [
+            event["payload"]
+            for event in reopened.validate_event_chain()
+            if event["event_type"] == "task.started"
+        ]
+        self.assertEqual(
+            [(item["strategy_key"], item["evidence_sha256"]) for item in starts],
+            [
+                ("strategy-A", evidence_sha256),
+                ("strategy-C", evidence_sha256),
+            ],
+        )
+
+    def test_accepted_outcome_without_decision_rejects_ambiguous_consumption(
+        self,
+    ) -> None:
+        store, engine = self.create_engine("queue_historical_strategy")
+        task_id = "plan-01:T1"
+        evidence_path = "reports/plan-01-T1/ambiguous-consumption.json"
+        store.put_artifact(evidence_path, b'{"failure":"same evidence"}')
+        evidence_sha256 = engine._artifact_evidence_digest([evidence_path])
+        original_record = engine._record_investigation_outcome
+
+        def interrupt_after_accepted(record: Mapping[str, object]) -> None:
+            original_record(record)
+            raise RuntimeError("interrupt before accepted decision")
+
+        engine._record_investigation_outcome = interrupt_after_accepted  # type: ignore[method-assign]
+        with self.assertRaisesRegex(RuntimeError, "before accepted decision"):
+            engine._run_investigation(
+                engine._task_by_id(task_id),
+                [evidence_path],
+                previous_strategy="initial",
+                dispatch_evidence_sha256=evidence_sha256,
+            )
+        engine._append_task_started(
+            task_id=task_id,
+            attempt_id="plan-01-T1-attempt-0001",
+            role="fix_agent",
+            strategy_key="strategy-A",
+            baseline_commit=engine.worktree.head(),
+            evidence_sha256=evidence_sha256,
+        )
+        store.append_event(
+            "task.reported",
+            {
+                "task_id": task_id,
+                "attempt_id": "plan-01-T1-attempt-0001",
+                "status": "failed",
+                "strategy_key": "strategy-A",
+                "artifact_paths": [evidence_path],
+            },
+        )
+
+        reopened = RunStore.open(codex_home=self.home, run_id=store.run_id)
+        resumed = QueueEngine(reopened, engine.worktree, engine.launcher)
+        with self.assertRaisesRegex(ValueError, "replay is ambiguous"):
+            resumed._run_investigation(
+                resumed._task_by_id(task_id),
+                [evidence_path],
+                previous_strategy="strategy-B",
+                dispatch_evidence_sha256=evidence_sha256,
+            )
+        interrupted = [
+            event["payload"]
+            for event in reopened.validate_event_chain()
+            if event["event_type"] == "run.interrupted"
+        ]
+        self.assertEqual(
+            interrupted[-1]["failure_code"],
+            "investigation_replay_ambiguous",
+        )
+
     def test_repeated_unusable_investigations_exhaust_named_recovery_methods(
         self,
     ) -> None:

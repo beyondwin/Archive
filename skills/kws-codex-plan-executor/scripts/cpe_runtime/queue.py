@@ -1394,6 +1394,110 @@ class QueueEngine:
             canonical_json(validated),
         )
 
+    def _accepted_investigation_state(
+        self,
+        *,
+        task_id: str,
+        launch: Mapping[str, object],
+        outcome: Mapping[str, object],
+    ) -> str:
+        if outcome.get("selection") != "accepted":
+            raise ValueError("investigation outcome is not accepted")
+        strategy_key = outcome.get("strategy_key")
+        artifact_paths = outcome.get("artifact_paths")
+        if not isinstance(strategy_key, str) or not isinstance(artifact_paths, list):
+            raise ValueError("accepted investigation outcome is invalid")
+
+        self.store.reconcile_autonomy_events()
+        matching_decisions = [
+            decision
+            for decision in self.store.autonomy_decisions()
+            if decision["strategy_key"] == strategy_key
+            and decision["affected_tasks"] == [task_id]
+            and set(artifact_paths).issubset(set(decision["evidence_paths"]))
+        ]
+        if not matching_decisions:
+            premature_consumption = any(
+                event["event_type"] == "task.started"
+                and event["payload"]["task_id"] == task_id
+                and event["payload"]["strategy_key"] == strategy_key
+                and event["payload"]["evidence_sha256"]
+                == launch["dispatch_evidence_sha256"]
+                for event in self.store.validate_event_chain()
+            )
+            if premature_consumption:
+                self._record_interrupted("investigation_replay_ambiguous")
+                raise ValueError("accepted investigation replay is ambiguous")
+            return "pending_decision"
+        if len(matching_decisions) != 1:
+            self._record_interrupted("investigation_replay_ambiguous")
+            raise ValueError("accepted investigation replay is ambiguous")
+
+        decision = matching_decisions[0]
+        events = self.store.validate_event_chain()
+        matching_events = [
+            (index, event)
+            for index, event in enumerate(events)
+            if event["event_type"] == "autonomy.recorded"
+            and event["payload"]["decision_id"] == decision["decision_id"]
+            and event["payload"]["strategy_key"] == strategy_key
+            and event["payload"].get("task_ids") == [task_id]
+            and set(artifact_paths).issubset(
+                set(event["payload"]["artifact_paths"])
+            )
+        ]
+        if len(matching_events) != 1:
+            self._record_interrupted("investigation_replay_ambiguous")
+            raise ValueError("accepted investigation decision projection is ambiguous")
+
+        decision_index, _ = matching_events[0]
+        later_starts = [
+            event
+            for event in events[decision_index + 1 :]
+            if event["event_type"] == "task.started"
+            and event["payload"]["task_id"] == task_id
+        ]
+        if not later_starts:
+            return "pending_dispatch"
+        first_start = later_starts[0]["payload"]
+        decision_evidence = self._artifact_evidence_digest(
+            tuple(str(path) for path in decision["evidence_paths"])
+        )
+        allowed_evidence = {
+            str(launch["dispatch_evidence_sha256"]),
+            decision_evidence,
+        }
+        if (
+            first_start["strategy_key"] != strategy_key
+            or first_start["evidence_sha256"] not in allowed_evidence
+        ):
+            self._record_interrupted("investigation_replay_ambiguous")
+            raise ValueError("accepted investigation consumption is ambiguous")
+        return "consumed"
+
+    def _append_investigation_decision(
+        self,
+        *,
+        task_id: str,
+        evidence_paths: Sequence[str],
+        outcome: Mapping[str, object],
+    ) -> None:
+        strategy_key = outcome.get("strategy_key")
+        outcome_paths = outcome.get("artifact_paths")
+        if not isinstance(strategy_key, str) or not isinstance(outcome_paths, list):
+            raise ValueError("accepted investigation outcome is invalid")
+        self.store.append_autonomy_decision(
+            issue="focused test or child evidence failed under the previous strategy",
+            alternatives=["repeat patch", "fresh root-cause investigation"],
+            selected="fresh root-cause investigation",
+            strategy_key=strategy_key,
+            rationale="same strategy and evidence made no progress",
+            evidence_paths=list(dict.fromkeys([*evidence_paths, *outcome_paths])),
+            affected_tasks=[task_id],
+            reversible=True,
+        )
+        self.store.reconcile_autonomy_events()
+
     def _append_task_started(
         self,
         *,
@@ -1853,10 +1957,24 @@ class QueueEngine:
             latest_launch, latest_outcome = evidence_records[-1]
             latest_method = str(latest_launch["recovery_method"])
             if latest_outcome is not None and latest_outcome["selection"] == "accepted":
-                return (
-                    str(latest_outcome["strategy_key"]),
-                    tuple(str(path) for path in latest_outcome["artifact_paths"]),
+                accepted_state = self._accepted_investigation_state(
+                    task_id=task_id,
+                    launch=latest_launch,
+                    outcome=latest_outcome,
                 )
+                if accepted_state == "pending_decision":
+                    self._append_investigation_decision(
+                        task_id=task_id,
+                        evidence_paths=evidence_paths,
+                        outcome=latest_outcome,
+                    )
+                if accepted_state != "consumed":
+                    return (
+                        str(latest_outcome["strategy_key"]),
+                        tuple(
+                            str(path) for path in latest_outcome["artifact_paths"]
+                        ),
+                    )
             try:
                 recovery_index = _INVESTIGATION_RECOVERY_METHODS.index(latest_method)
             except ValueError as error:
@@ -1941,19 +2059,11 @@ class QueueEngine:
                 raise ValueError("unchanged strategy_key cannot be redispatched")
             if selection == "accepted":
                 assert result.strategy_key is not None
-                self.store.append_autonomy_decision(
-                    issue="focused test or child evidence failed under the previous strategy",
-                    alternatives=["repeat patch", "fresh root-cause investigation"],
-                    selected="fresh root-cause investigation",
-                    strategy_key=result.strategy_key,
-                    rationale="same strategy and evidence made no progress",
-                    evidence_paths=list(
-                        dict.fromkeys([*evidence_paths, *result.artifact_paths])
-                    ),
-                    affected_tasks=[task_id],
-                    reversible=True,
+                self._append_investigation_decision(
+                    task_id=task_id,
+                    evidence_paths=evidence_paths,
+                    outcome=durable_outcome,
                 )
-                self.store.reconcile_autonomy_events()
                 return result.strategy_key, result.artifact_paths
 
             if result.strategy_key:
