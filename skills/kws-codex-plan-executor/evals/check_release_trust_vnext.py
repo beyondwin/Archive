@@ -15,7 +15,6 @@ from pathlib import Path
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SKILL_ROOT / "scripts"))
 
-from cpe_runtime.git_delta import committed_patch_digest as measured_patch_digest
 from cpe_runtime.git_objects import (
     GitObjectSource,
     TrustRoot,
@@ -66,6 +65,58 @@ def canonical_json(payload: object) -> bytes:
 
 def sha256_bytes(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
+
+
+def canonical_object_delta_body(
+    repository: Path, predecessor: str, commit: str
+) -> dict[str, object]:
+    def entries(revision: str) -> dict[bytes, dict[str, str]]:
+        raw = git_bytes(
+            repository,
+            "ls-tree",
+            "-r",
+            "-t",
+            "-z",
+            "--full-tree",
+            f"{revision}^{{tree}}",
+        )
+        result: dict[bytes, dict[str, str]] = {}
+        for record in raw.split(b"\0"):
+            if not record:
+                continue
+            metadata, path = record.split(b"\t", 1)
+            mode, object_type, oid = metadata.decode("ascii").split(" ")
+            result[path] = {"mode": mode, "type": object_type, "oid": oid}
+        return result
+
+    old_entries = entries(predecessor)
+    new_entries = entries(commit)
+    delta_entries = []
+    for path in sorted(set(old_entries) | set(new_entries)):
+        old_entry = old_entries.get(path)
+        new_entry = new_entries.get(path)
+        if old_entry != new_entry:
+            delta_entries.append(
+                {
+                    "path": os.fsdecode(path),
+                    "old": old_entry,
+                    "new": new_entry,
+                }
+            )
+    return {
+        "schema_version": "cpe.canonical-object-delta.v1",
+        "predecessor_commit": predecessor,
+        "commit": commit,
+        "entries": delta_entries,
+    }
+
+
+def canonical_object_delta_digest(
+    repository: Path, predecessor: str, commit: str
+) -> str:
+    return sha256_bytes(
+        canonical_json(canonical_object_delta_body(repository, predecessor, commit))
+    )
 
 
 def policy_bytes(base: str, contract: bytes, **extra: object) -> bytes:
@@ -126,7 +177,7 @@ def main() -> int:
         repo = Path(raw)
         base, reviewed_commit, contract = fixture(repo)
         root = load_trust_root(repo, reviewed_commit)
-        _files, expected_patch = measured_patch_digest(repo, base, reviewed_commit)
+        expected_patch = canonical_object_delta_digest(repo, base, reviewed_commit)
 
         checks["fixed_policy_git_blob"] = (
             root.policy.path == POLICY_PATH
@@ -158,15 +209,118 @@ def main() -> int:
             and root.body()["attempt_ceilings"] == dict(root.attempt_ceilings)
         )
 
+        git(repo, "config", "diff.noprefix", "true")
+        noprefix_root = load_trust_root(repo, reviewed_commit)
+        git(repo, "config", "--unset", "diff.noprefix")
+        checks["diff_noprefix_cannot_change_patch_root"] = (
+            noprefix_root.patch_sha256 == root.patch_sha256
+            and noprefix_root.trust_root_sha256 == root.trust_root_sha256
+        )
+
+        info_attributes = repo / ".git" / "info" / "attributes"
+        info_attributes.write_text("* -diff\n", encoding="utf-8")
+        git(repo, "config", "diff.external", "/bin/false")
+        hostile_diff_root = load_trust_root(repo, reviewed_commit)
+        git(repo, "config", "--unset", "diff.external")
+        info_attributes.unlink()
+        checks["hostile_diff_attributes_cannot_change_patch_root"] = (
+            hostile_diff_root.patch_sha256 == root.patch_sha256
+            and hostile_diff_root.trust_root_sha256 == root.trust_root_sha256
+        )
+
+        with tempfile.TemporaryDirectory(prefix="cpe-object-delta-modes-") as modes_raw:
+            modes_repo = Path(modes_raw)
+            git(modes_repo, "init", "-q")
+            git(modes_repo, "config", "user.name", "CPE Eval")
+            git(modes_repo, "config", "user.email", "cpe-eval@example.invalid")
+            write(modes_repo, "entry", b"target")
+            modes_base = commit_all(modes_repo, "regular blob")
+
+            git(modes_repo, "update-index", "--chmod=+x", "entry")
+            git(modes_repo, "commit", "-qm", "executable blob")
+            executable_commit = git(modes_repo, "rev-parse", "HEAD")
+            git(modes_repo, "reset", "--hard", "-q", modes_base)
+
+            (modes_repo / "entry").unlink()
+            os.symlink("target", modes_repo / "entry")
+            symlink_commit = commit_all(modes_repo, "symlink blob")
+            git(modes_repo, "reset", "--hard", "-q", modes_base)
+
+            git(modes_repo, "rm", "-q", "entry")
+            git(
+                modes_repo,
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                f"160000,{modes_base},entry",
+            )
+            git(modes_repo, "commit", "-qm", "gitlink")
+            gitlink_commit = git(modes_repo, "rev-parse", "HEAD")
+
+            modes_source = GitObjectSource(modes_repo)
+            regular_entry = modes_source._tree_entries(modes_base)[b"entry"]
+            executable_entry = modes_source._tree_entries(executable_commit)[b"entry"]
+            symlink_entry = modes_source._tree_entries(symlink_commit)[b"entry"]
+            gitlink_entry = modes_source._tree_entries(gitlink_commit)[b"entry"]
+            mode_digests = {
+                committed_patch_digest(modes_repo, modes_base, executable_commit),
+                committed_patch_digest(modes_repo, modes_base, symlink_commit),
+                committed_patch_digest(modes_repo, modes_base, gitlink_commit),
+            }
+        checks["canonical_object_delta_modes_are_unambiguous"] = (
+            regular_entry == {
+                "mode": "100644",
+                "type": "blob",
+                "oid": executable_entry["oid"],
+            }
+            and executable_entry["mode"] == "100755"
+            and executable_entry["type"] == "blob"
+            and symlink_entry["mode"] == "120000"
+            and symlink_entry["type"] == "blob"
+            and symlink_entry["oid"] == regular_entry["oid"]
+            and gitlink_entry
+            == {"mode": "160000", "type": "commit", "oid": modes_base}
+            and len(mode_digests) == 3
+        )
+
+        with tempfile.TemporaryDirectory(prefix="cpe-object-delta-shape-") as shape_raw:
+            shape_repo = Path(shape_raw)
+            git(shape_repo, "init", "-q")
+            git(shape_repo, "config", "user.name", "CPE Eval")
+            git(shape_repo, "config", "user.email", "cpe-eval@example.invalid")
+            write(shape_repo, "dir/z-last", b"kept then changed\n")
+            write(shape_repo, "dir/m-delete", b"deleted\n")
+            shape_base = commit_all(shape_repo, "shape base")
+            (shape_repo / "dir/m-delete").unlink()
+            write(shape_repo, "dir/a-add", b"added\n")
+            write(shape_repo, "dir/z-last", b"changed\n")
+            shape_commit = commit_all(shape_repo, "shape delta")
+            shape_body = canonical_object_delta_body(
+                shape_repo, shape_base, shape_commit
+            )
+            shape_entries = shape_body["entries"]
+        assert isinstance(shape_entries, list)
+        shape_by_path = {entry["path"]: entry for entry in shape_entries}
+        checks["canonical_object_delta_order_and_nulls"] = (
+            [entry["path"] for entry in shape_entries]
+            == sorted(entry["path"] for entry in shape_entries)
+            and shape_by_path["dir/a-add"]["old"] is None
+            and shape_by_path["dir/a-add"]["new"] is not None
+            and shape_by_path["dir/m-delete"]["old"] is not None
+            and shape_by_path["dir/m-delete"]["new"] is None
+            and shape_by_path["dir"]["old"]["type"] == "tree"
+            and shape_by_path["dir"]["new"]["type"] == "tree"
+        )
+
         replacement_file = repo / "seed.txt"
         replacement_file.write_bytes(b"replacement tree\n")
         replacement_commit = commit_all(repo, "replacement commit")
         git(repo, "replace", reviewed_commit, replacement_commit)
         replacement_root = load_trust_root(repo, reviewed_commit)
         git(repo, "replace", "-d", reviewed_commit)
-        expected_replacement_safe_patch = measured_patch_digest(
+        expected_replacement_safe_patch = canonical_object_delta_digest(
             repo, base, reviewed_commit
-        )[1]
+        )
         checks["git_replacement_cannot_change_patch_root"] = (
             replacement_root.patch_sha256 == expected_replacement_safe_patch
         )

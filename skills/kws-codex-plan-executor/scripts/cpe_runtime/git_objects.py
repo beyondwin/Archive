@@ -14,14 +14,11 @@ from types import MappingProxyType
 from typing import Mapping, TypedDict
 
 _OID = re.compile(r"^[0-9a-f]{40}$")
+_MODE = re.compile(r"^[0-7]{6}$")
 
 
 def _canonical_json(payload: object) -> bytes:
     return (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode()
-
-
-def _field(label: bytes, value: bytes) -> bytes:
-    return label + len(value).to_bytes(8, "big") + value
 
 
 def _git_environment() -> dict[str, str]:
@@ -184,40 +181,54 @@ class GitObjectSource:
     def patch_digest(self, predecessor: str, commit: str) -> str:
         predecessor = self._commit(predecessor)
         commit = self._commit(commit)
-        names = bytes(
-            self._git(
-                "diff",
-                "--name-only",
-                "--no-renames",
-                "-z",
-                predecessor,
-                commit,
-                "--",
+        old_entries = self._tree_entries(predecessor)
+        new_entries = self._tree_entries(commit)
+        entries: list[dict[str, object]] = []
+        for raw_path in sorted(set(old_entries) | set(new_entries)):
+            old_entry = old_entries.get(raw_path)
+            new_entry = new_entries.get(raw_path)
+            if old_entry == new_entry:
+                continue
+            entries.append(
+                {
+                    "path": os.fsdecode(raw_path),
+                    "old": old_entry,
+                    "new": new_entry,
+                }
             )
-        )
-        patch = bytes(
-            self._git(
-                "diff",
-                "--binary",
-                "--full-index",
-                "--no-ext-diff",
-                "--no-textconv",
-                "--no-renames",
-                predecessor,
-                commit,
-                "--",
-            )
-        )
-        changed_files = sorted(
-            {os.fsdecode(item) for item in names.split(b"\0") if item}
-        )
-        payload = bytearray(b"CPE-CANDIDATE-COMMIT-V1\0")
-        payload.extend(_field(b"P", predecessor.encode("ascii")))
-        payload.extend(_field(b"C", commit.encode("ascii")))
-        for path in changed_files:
-            payload.extend(_field(b"F", os.fsencode(path)))
-        payload.extend(_field(b"D", patch))
-        return hashlib.sha256(bytes(payload)).hexdigest()
+        body = {
+            "schema_version": "cpe.canonical-object-delta.v1",
+            "predecessor_commit": predecessor,
+            "commit": commit,
+            "entries": entries,
+        }
+        return hashlib.sha256(_canonical_json(body)).hexdigest()
+
+    def _tree_entries(self, commit: str) -> dict[bytes, dict[str, str]]:
+        tree = self.tree(commit)
+        raw = bytes(self._git("ls-tree", "-r", "-t", "-z", "--full-tree", tree))
+        entries: dict[bytes, dict[str, str]] = {}
+        for record in raw.split(b"\0"):
+            if not record:
+                continue
+            try:
+                metadata, path = record.split(b"\t", 1)
+                mode_raw, type_raw, oid_raw = metadata.split(b" ")
+                mode = mode_raw.decode("ascii")
+                object_type = type_raw.decode("ascii")
+                oid = oid_raw.decode("ascii")
+            except (ValueError, UnicodeError) as exc:
+                raise ValueError("git_object_missing") from exc
+            if (
+                not path
+                or path in entries
+                or _MODE.fullmatch(mode) is None
+                or object_type not in {"blob", "tree", "commit"}
+                or _OID.fullmatch(oid) is None
+            ):
+                raise ValueError("git_object_missing")
+            entries[path] = {"mode": mode, "type": object_type, "oid": oid}
+        return entries
 
     def reject_fixed_path_mutation(
         self, reviewed_commit: str, blobs: tuple[GitBlob, ...]
