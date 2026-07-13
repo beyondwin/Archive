@@ -35,6 +35,10 @@ from cpe_runtime.transition_kernel import (  # noqa: E402
     TypedOutcome,
     decide,
 )
+import cpe_runtime.scheduler as scheduler_module  # noqa: E402
+from check_scheduler_v4 import passed as scheduler_passed  # noqa: E402
+from check_scheduler_v4 import changes as scheduler_changes  # noqa: E402
+from check_scheduler_v4 import run_fixture as run_scheduler_fixture  # noqa: E402
 
 
 def _rejects(expected: str, operation) -> bool:
@@ -103,6 +107,19 @@ def main() -> int:
     checks["illegal_transition_fails_closed"] = _rejects(
         "illegal_transition:ready:complete_program",
         lambda: decide(_state("ready"), _outcome("complete_program")),
+    )
+    checks["unknown_phase_rejects_every_special_outcome"] = all(
+        _rejects(
+            f"illegal_transition:typo_phase:{kind}",
+            lambda kind=kind: decide(_state("typo_phase"), _outcome(kind)),
+        )
+        for kind in (
+            "blocked",
+            "structural_redesign",
+            "wait_user",
+            "wait_external",
+            "external_call_required",
+        )
     )
     checks["resume_phase_is_explicit"] = (
         decide(
@@ -180,6 +197,40 @@ def main() -> int:
             and store.read_verified(patch_ref) == b"diff --git a/a b/a\n"
         )
 
+    with tempfile.TemporaryDirectory(prefix="cpe-vnext-evidence-link-") as temp:
+        root = Path(temp)
+        run_dir = root / "run"
+        run_dir.mkdir()
+        escape = root / "escape"
+        escape.mkdir()
+        (run_dir / "artifacts").symlink_to(escape, target_is_directory=True)
+        checks["intermediate_writer_symlink_escape_rejected"] = _rejects(
+            "evidence path escapes run root",
+            lambda: EvidenceStore(run_dir).put_json("acceptance", {"passed": True}),
+        )
+        (run_dir / "artifacts").unlink()
+        evidence_root = run_dir / "artifacts" / "evidence"
+        evidence_root.mkdir(parents=True)
+        (evidence_root / "acceptance").symlink_to(escape, target_is_directory=True)
+        checks["kind_writer_symlink_escape_rejected"] = _rejects(
+            "evidence path escapes run root",
+            lambda: EvidenceStore(run_dir).put_json("acceptance", {"passed": True}),
+        )
+        raw = b'{"passed":true}\n'
+        digest = hashlib.sha256(raw).hexdigest()
+        (escape / f"{digest}.json").write_bytes(raw)
+        checks["intermediate_reader_symlink_escape_rejected"] = _rejects(
+            "evidence_path_invalid",
+            lambda: EvidenceStore(run_dir).read_verified(
+                {
+                    "kind": "acceptance",
+                    "path": f"artifacts/evidence/acceptance/{digest}.json",
+                    "sha256": digest,
+                    "media_type": "application/json",
+                }
+            ),
+        )
+
     projection = {
         "phase": "ready",
         "task_id": "plan-a::T1",
@@ -194,12 +245,23 @@ def main() -> int:
             "task_id": "plan-a::T1",
             "outcome": "pass",
             "evidence_refs": [{"sha256": "b" * 64}],
-            "checkpoint_identity": "c" * 64,
+            "checkpoint": {
+                "plan_id": "plan-a",
+                "identity": "c" * 64,
+                "upstream_checkpoint": None,
+            },
         },
     )
     checks["projector_replaces_without_mutating_input"] = (
         not projection["plan_checkpoints"]
-        and projected["plan_checkpoints"] == ["c" * 64]
+        and projected["plan_checkpoints"]
+        == [
+            {
+                "plan_id": "plan-a",
+                "identity": "c" * 64,
+                "upstream_checkpoint": None,
+            }
+        ]
         and projected["phase"] == "plan_complete"
     )
     checks["global_completion_requires_all_checkpoints_and_gate"] = _rejects(
@@ -273,7 +335,11 @@ def main() -> int:
                 "command": "plan_checkpoint",
                 "task_id": "plan-a::T1",
                 "outcome": "pass",
-                "checkpoint_identity": "f" * 64,
+                "checkpoint": {
+                    "plan_id": "plan-a",
+                    "identity": "f" * 64,
+                    "upstream_checkpoint": None,
+                },
             },
             {
                 "before_projection_replacement",
@@ -389,11 +455,8 @@ def main() -> int:
         and scheduled_calls == ["implementation"]
     )
 
-    authoritative = {
-        "plan_checkpoints": [
-            {"plan_id": "first", "identity": "d" * 64},
-        ]
-    }
+    authoritative = {"plan_checkpoints": [{"plan_id": "first", "identity": "d" * 64}]}
+    authoritative_kernel = type("KernelState", (), {"state": authoritative})()
     candidate = type(
         "Checkpoint",
         (),
@@ -408,7 +471,7 @@ def main() -> int:
     accepted: list[str | None] = []
     result = promote_current_plan_checkpoint(
         candidate,
-        state=authoritative,
+        kernel=authoritative_kernel,
         plan_id="second",
         plan_sha256="1" * 64,
         spec_sha256="2" * 64,
@@ -421,17 +484,79 @@ def main() -> int:
     stale_state = {
         "plan_checkpoints": [{"plan_id": "first", "identity": "e" * 64}]
     }
+    stale_kernel = type("KernelState", (), {"state": stale_state})()
     checks["stale_checkpoint_cannot_self_validate"] = _rejects(
         "plan_checkpoint_upstream_stale",
         lambda: promote_current_plan_checkpoint(
             candidate,
-            state=stale_state,
+            kernel=stale_kernel,
             plan_id="second",
             plan_sha256="1" * 64,
             spec_sha256="2" * 64,
             upstream_graph_sha256="3" * 64,
             promote=lambda item, **_kw: item,
         ),
+    )
+
+    production_commands: list[str] = []
+    production_projections: list[str] = []
+    original_execute = scheduler_module.execute_transition
+    original_project = scheduler_module.project_kernel_event
+
+    def observed_execute(state, outcome, handlers):
+        command, result = original_execute(state, outcome, handlers)
+        production_commands.append(command.kind)
+        return command, result
+
+    def observed_project(state, event, **kwargs):
+        production_projections.append(str(event.get("command")))
+        return original_project(state, event, **kwargs)
+
+    scheduler_module.execute_transition = observed_execute
+    scheduler_module.project_kernel_event = observed_project
+    try:
+        with tempfile.TemporaryDirectory(prefix="cpe-vnext-production-cycle-") as temp:
+            cycle, _kernel, _fixture, _repo = run_scheduler_fixture(
+                Path(temp), [scheduler_passed()]
+            )
+    finally:
+        scheduler_module.execute_transition = original_execute
+        scheduler_module.project_kernel_event = original_project
+    checks["production_task_cycle_uses_one_kernel_path"] = (
+        cycle.status == "completed"
+        and production_commands == [
+            "implementation",
+            "acceptance",
+            "review",
+            "verify",
+        ]
+        and production_projections == production_commands
+    )
+    production_commands.clear()
+    production_projections.clear()
+    scheduler_module.execute_transition = observed_execute
+    scheduler_module.project_kernel_event = observed_project
+    try:
+        with tempfile.TemporaryDirectory(prefix="cpe-vnext-production-repair-") as temp:
+            repaired, _kernel, _fixture, _repo = run_scheduler_fixture(
+                Path(temp), [scheduler_changes(), scheduler_passed()]
+            )
+    finally:
+        scheduler_module.execute_transition = original_execute
+        scheduler_module.project_kernel_event = original_project
+    checks["production_repair_reenters_same_kernel_path"] = (
+        repaired.status == "completed"
+        and production_commands
+        == [
+            "implementation",
+            "acceptance",
+            "review",
+            "repair",
+            "acceptance",
+            "review",
+            "verify",
+        ]
+        and production_projections == production_commands
     )
 
     failed = [name for name, passed in checks.items() if not passed]
