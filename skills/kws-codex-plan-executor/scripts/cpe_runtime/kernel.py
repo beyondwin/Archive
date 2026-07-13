@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .events import EVENT_TYPES, append_event, read_events, validate_chain
+from .evidence_store import EvidenceStore
 from .manifest import load_verified_manifest, validate_manifest
 from .model_policy import CORE_ROUTE
 from .packets import PacketDraft, verify_packet
@@ -311,9 +312,16 @@ def _validate_transition(run_dir: Path, manifest: dict, state: dict, command: Tr
             raise ValueError(f"completion gate failed: {','.join(report.errors)}")
 
 
-def transition_run(run_dir: Path, command: Transition, snapshot_writer=atomic_write_snapshot) -> dict:
+def transition_run(
+    run_dir: Path,
+    command: Transition,
+    snapshot_writer=atomic_write_snapshot,
+    *,
+    crash_hook=None,
+) -> dict:
     run_dir = run_dir.resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
+    hook = crash_hook or (lambda _point: None)
     lock_path = run_dir / ".kernel.lock"
     with lock_path.open("a+", encoding="utf-8") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
@@ -324,6 +332,7 @@ def transition_run(run_dir: Path, command: Transition, snapshot_writer=atomic_wr
             raise ValueError("event_chain_invalid")
         state = project(manifest, events)
         _validate_transition(run_dir, manifest, state, command)
+        hook("before_event_append")
         append_event(
             events_path,
             {
@@ -333,8 +342,11 @@ def transition_run(run_dir: Path, command: Transition, snapshot_writer=atomic_wr
                 "attempt_id": command.attempt_id,
             },
         )
+        hook("after_event_append")
         state = project(manifest, read_events(events_path))
+        hook("before_projection_replacement")
         snapshot_writer(run_dir / "state.json", state)
+        hook("after_projection_replacement")
         fcntl.flock(lock.fileno(), fcntl.LOCK_UN)
     return state
 
@@ -359,44 +371,10 @@ class Kernel:
     def store_patch_evidence(self, patch_bytes: bytes) -> dict[str, str]:
         if not isinstance(patch_bytes, bytes) or not patch_bytes:
             raise ValueError("patch evidence must be non-empty bytes")
-        digest = hashlib.sha256(patch_bytes).hexdigest()
-        artifacts = self.run_dir / "artifacts"
-        artifacts.mkdir(mode=0o700, exist_ok=True)
-        if artifacts.is_symlink():
-            raise ValueError("patch evidence root must not be a symlink")
-        root = artifacts / "patches"
-        root.mkdir(mode=0o700, exist_ok=True)
-        if root.is_symlink() or root.resolve().parent != self.run_dir.resolve() / "artifacts":
-            raise ValueError("patch evidence path escapes run root")
-        target = root / f"{digest}.patch"
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
         try:
-            descriptor = os.open(target, flags, 0o600)
-        except FileExistsError:
-            if target.is_symlink():
-                raise ValueError("existing patch evidence is not a regular file")
-            read_descriptor = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-            try:
-                with os.fdopen(read_descriptor, "rb", closefd=False) as handle:
-                    existing = handle.read()
-            finally:
-                os.close(read_descriptor)
-            if existing != patch_bytes:
-                raise ValueError("existing patch evidence has different content")
-        else:
-            try:
-                with os.fdopen(descriptor, "wb") as handle:
-                    handle.write(patch_bytes)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-            finally:
-                _fsync_dir(root)
-        return {
-            "kind": "patch",
-            "path": target.relative_to(self.run_dir).as_posix(),
-            "sha256": digest,
-            "media_type": "application/octet-stream",
-        }
+            return EvidenceStore(self.run_dir).put_patch(patch_bytes).as_dict()
+        except ValueError as exc:
+            raise ValueError(str(exc)) from exc
 
 
 def _write_packet_exclusive(root: Path, draft: PacketDraft) -> None:

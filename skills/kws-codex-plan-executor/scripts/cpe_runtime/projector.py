@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from typing import Callable
 
 from .events import EVENT_TYPES
 from .runtime_upgrade import RuntimeIdentity, validate_runtime_upgrade
@@ -41,6 +42,86 @@ RETRY_PHASE_STATES = {
     "task_review": "reviewing",
     "verification": "verifying",
 }
+
+
+_KERNEL_PHASES = {
+    "implementation": "implemented",
+    "acceptance": "accepted",
+    "review": "reviewed",
+    "verify": "verified",
+    "repair": "repairing",
+    "structural_redesign": "blocked",
+    "block": "blocked",
+    "wait_user": "waiting_user",
+    "wait_external": "waiting_external",
+    "global_integration": "integration_complete",
+}
+
+
+def project_kernel_event(
+    state: dict,
+    event: dict,
+    *,
+    crash_hook: Callable[[str], None] | None = None,
+) -> dict:
+    """Project one vNext kernel event without mutating its input.
+
+    Durable append remains a kernel responsibility.  This projector only
+    validates state-changing command payloads and returns a replacement value.
+    """
+
+    if not isinstance(state, dict) or not isinstance(event, dict):
+        raise ValueError("kernel_projection_invalid")
+    command = event.get("command")
+    outcome = event.get("outcome")
+    if not isinstance(command, str) or not isinstance(outcome, str):
+        raise ValueError("kernel_projection_invalid")
+    hook = crash_hook or (lambda _point: None)
+    projected = deepcopy(state)
+    hook("before_projection_replacement")
+    if command == "plan_checkpoint":
+        identity = event.get("checkpoint_identity")
+        if not isinstance(identity, str) or len(identity) != 64:
+            raise ValueError("plan_checkpoint_identity_invalid")
+        checkpoints = projected.setdefault("plan_checkpoints", [])
+        if identity in checkpoints:
+            raise ValueError("plan_checkpoint_already_published")
+        hook("before_plan_checkpoint_publication")
+        checkpoints.append(identity)
+        projected["phase"] = "plan_complete"
+        hook("after_plan_checkpoint_publication")
+    elif command == "register_external_call":
+        call_id = event.get("external_call_id")
+        if not isinstance(call_id, str) or not call_id:
+            raise ValueError("external_call_id_invalid")
+        calls = projected.setdefault("external_calls", [])
+        if call_id in calls:
+            raise ValueError("external_call_already_registered")
+        hook("before_external_call_registration")
+        calls.append(call_id)
+        hook("after_external_call_registration")
+    elif command == "complete_program":
+        if projected.get("completed") is True:
+            raise ValueError("global_completion_already_recorded")
+        required = event.get("required_plan_checkpoints")
+        published = projected.get("plan_checkpoints")
+        if (
+            not isinstance(required, list)
+            or not set(required).issubset(set(published or []))
+            or event.get("integration_gate_passed") is not True
+            or projected.get("integration_gate_passed") is not True
+        ):
+            raise ValueError("global_completion_prerequisites_missing")
+        hook("before_global_completion")
+        projected["completed"] = True
+        projected["phase"] = "completed"
+        hook("after_global_completion")
+    elif command in _KERNEL_PHASES:
+        projected["phase"] = _KERNEL_PHASES[command]
+    else:
+        raise ValueError(f"kernel_command_unknown:{command}")
+    hook("after_projection_replacement")
+    return projected
 
 
 def validate_task_status_change(
