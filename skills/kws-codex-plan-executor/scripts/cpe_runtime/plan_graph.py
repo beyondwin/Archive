@@ -312,6 +312,94 @@ def _stage_alias(document: InputDocument) -> str | None:
     return match.group(1).upper() if match else None
 
 
+def _canonical_workspace_path(
+    value: object,
+    *,
+    field: str,
+    category: str,
+) -> str:
+    if not isinstance(value, str) or value != value.strip() or not value:
+        _blocked(
+            category,
+            "workspace paths must be non-empty strings without surrounding whitespace",
+            field=field,
+            value=value,
+        )
+    raw = value
+    if (
+        raw.startswith("/")
+        or re.match(r"^[A-Za-z]:[\\/]", raw)
+        or "\\" in raw
+        or "\x00" in raw
+        or "//" in raw
+    ):
+        _blocked(
+            category,
+            "workspace paths must be relative canonical POSIX paths",
+            field=field,
+            value=raw,
+        )
+    normalized = raw[2:] if raw.startswith("./") else raw
+    parts = normalized.split("/")
+    if not normalized or any(part in {"", ".", ".."} for part in parts):
+        _blocked(
+            category,
+            "workspace paths cannot contain empty, dot, or parent-traversal segments",
+            field=field,
+            value=raw,
+        )
+    return "/".join(parts)
+
+
+def _canonical_path_list(
+    values: list[object],
+    *,
+    field: str,
+    category: str,
+) -> tuple[str, ...]:
+    canonical: list[str] = []
+    sources: dict[str, str] = {}
+    for value in values:
+        path = _canonical_workspace_path(value, field=field, category=category)
+        raw = str(value)
+        if path in sources:
+            _blocked(
+                category,
+                "path list contains duplicate or canonically colliding entries",
+                field=field,
+                canonical_path=path,
+                first=sources[path],
+                duplicate=raw,
+            )
+        sources[path] = raw
+        canonical.append(path)
+    return tuple(canonical)
+
+
+def _canonical_path_mapping(
+    value: Mapping[object, object],
+    *,
+    field: str,
+    category: str,
+) -> dict[str, object]:
+    canonical: dict[str, object] = {}
+    sources: dict[str, str] = {}
+    for raw_path, item in value.items():
+        path = _canonical_workspace_path(raw_path, field=field, category=category)
+        if path in canonical:
+            _blocked(
+                category,
+                "path mapping contains canonically colliding entries",
+                field=field,
+                canonical_path=path,
+                first=sources[path],
+                duplicate=str(raw_path),
+            )
+        canonical[path] = item
+        sources[path] = str(raw_path)
+    return canonical
+
+
 def _path_matches_pattern(path: str, pattern: str) -> bool:
     if pattern.endswith("/**"):
         return path.startswith(pattern[:-3].rstrip("/") + "/")
@@ -341,17 +429,22 @@ def _natural_ownership_rules(
             continue
         bullet = line.lstrip()[1:].strip()
         candidates = [item for item in re.findall(r"`([^`]+)`", bullet) if "/" in item]
+        target = patterns if bullet.startswith("`") else interface_only
         for candidate in candidates:
-            target = patterns if bullet.startswith(f"`{candidate}`") else interface_only
-            previous = target.get(candidate)
+            canonical = _canonical_workspace_path(
+                candidate,
+                field="file_ownership_map",
+                category="file_ownership_invalid",
+            )
+            previous = target.get(canonical)
             if previous is not None and previous != current_owner:
                 _blocked(
                     "ambiguous_file_ownership",
                     "ownership pattern has more than one normalized owner",
-                    pattern=candidate,
+                    pattern=canonical,
                     owners=[previous, current_owner],
                 )
-            target[candidate] = current_owner
+            target[canonical] = current_owner
     if not patterns:
         _blocked(
             "file_ownership_invalid",
@@ -438,8 +531,13 @@ def _natural_program_contract(
         for task in plans[plan_id][1]["tasks"]:
             task_id = str(QualifiedTaskId(plan_id, str(task.get("task_id") or task.get("id"))))
             task_interfaces[task_id] = task.get("interface_declared") is True
-            for path in task.get("file_claims", []):
-                claimed[str(path)].append(task_id)
+            claims = _canonical_path_list(
+                list(task.get("file_claims", [])),
+                field=f"tasks.{task_id}.file_claims",
+                category="file_claim_invalid",
+            )
+            for path in claims:
+                claimed[path].append(task_id)
     interface_writers: dict[str, list[str]] = defaultdict(list)
     for pattern, owner_plan in ownership_patterns.items():
         matching_paths = [path for path in claimed if _path_matches_pattern(path, pattern)]
@@ -725,14 +823,30 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
                     document_id=document.document_id,
                 )
             )
-            claims = tuple(
-                str(item)
-                for item in _list(
+            claims = _canonical_path_list(
+                _list(
                     raw.get("file_claims", []),
                     field="file_claims",
                     document_id=document.document_id,
-                )
+                ),
+                field=f"tasks.{qualified}.file_claims",
+                category="file_claim_invalid",
             )
+            read_only = raw.get("read_only", False)
+            if not isinstance(read_only, bool):
+                _blocked(
+                    "read_only_claim_invalid",
+                    "task read_only must be an explicit boolean",
+                    task_id=qualified,
+                    read_only=read_only,
+                )
+            if read_only and claims:
+                _blocked(
+                    "read_only_claim_invalid",
+                    "read-only tasks cannot declare write-capable file claims",
+                    task_id=qualified,
+                    file_claims=list(claims),
+                )
             canonical_source = json.dumps(raw, sort_keys=True, separators=(",", ":")).encode()
             task_records[qualified] = {
                 "id": qualified,
@@ -743,6 +857,7 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
                 "spec_refs": refs,
                 "file_claims": claims,
                 "interface_declared": raw.get("interface_declared") is True,
+                "read_only": read_only,
                 "task_source_sha256": hashlib.sha256(canonical_source).hexdigest(),
             }
             ordered.append(qualified)
@@ -770,6 +885,17 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
                     dependency=dependency,
                 )
             edges.add((dependency, task_id))
+
+    # Every task is write-capable unless it explicitly proves read-only intent
+    # and has no file claims. Preserve document order for all write-capable
+    # tasks so execution never schedules two writers concurrently by default.
+    for plan_id in plan_order:
+        write_capable = tuple(
+            task_id
+            for task_id in plan_tasks[plan_id]
+            if task_records[task_id]["read_only"] is not True
+        )
+        edges.update(zip(write_capable, write_capable[1:]))
 
     # Program order and no-program repeated argument order are both conservative.
     for previous, current in zip(plan_order, plan_order[1:]):
@@ -861,7 +987,14 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
             "file_ownership_patterns must be an object",
             field="file_ownership_patterns",
         )
-    ownership_patterns = {str(pattern): str(owner) for pattern, owner in raw_patterns.items()}
+    ownership_patterns = {
+        pattern: str(owner)
+        for pattern, owner in _canonical_path_mapping(
+            raw_patterns,
+            field="file_ownership_patterns",
+            category="file_ownership_invalid",
+        ).items()
+    }
     matched_pattern_owners: dict[str, str] = {}
     for pattern, owner_plan in ownership_patterns.items():
         if owner_plan not in plan_order:
@@ -902,29 +1035,34 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
             "file_interface_writers must be an object",
             field="file_interface_writers",
         )
+    canonical_interface_writers = _canonical_path_mapping(
+        raw_interface_writers,
+        field="file_interface_writers",
+        category="interface_contract_missing",
+    )
     interface_writers: dict[str, tuple[str, ...]] = {}
-    for path, raw_writers in raw_interface_writers.items():
-        if not isinstance(raw_writers, list) or str(path) not in claimed:
+    for path, raw_writers in canonical_interface_writers.items():
+        if not isinstance(raw_writers, list) or path not in claimed:
             _blocked(
                 "interface_contract_missing",
                 "interface writers must be a list for one actually claimed path",
-                path=str(path),
+                path=path,
             )
         writers = tuple(str(writer) for writer in raw_writers)
         if (
             not writers
             or len(writers) != len(set(writers))
-            or any(writer not in claimed[str(path)] for writer in writers)
+            or any(writer not in claimed[path] for writer in writers)
             or any(task_records[writer].get("interface_declared") is not True for writer in writers)
         ):
             _blocked(
                 "interface_contract_missing",
                 "interface writers must be unique actual writers with declared interfaces",
-                path=str(path),
+                path=path,
                 writers=list(writers),
-                actual_writers=claimed[str(path)],
+                actual_writers=claimed[path],
             )
-        interface_writers[str(path)] = writers
+        interface_writers[path] = writers
     for path, owner_plan in matched_pattern_owners.items():
         missing_interface_writers = [
             writer
@@ -943,6 +1081,11 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
     declared_ownership = program_contract.get("file_ownership", {}) if program_contract else {}
     if not isinstance(declared_ownership, dict):
         _blocked("contract_invalid", "file_ownership must be an object", field="file_ownership")
+    declared_ownership = _canonical_path_mapping(
+        declared_ownership,
+        field="file_ownership",
+        category="ambiguous_file_ownership",
+    )
     undeclared_paths = sorted(set(declared_ownership) - set(claimed))
     if undeclared_paths:
         _blocked(
@@ -959,7 +1102,15 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
     ):
         if not isinstance(entry, dict):
             _blocked("contract_invalid", "ownership transfer must be an object", transfer=entry)
-        transfer = (str(entry.get("path")), str(entry.get("from")), str(entry.get("to")))
+        transfer = (
+            _canonical_workspace_path(
+                entry.get("path"),
+                field="ownership_transfers.path",
+                category="ambiguous_file_ownership",
+            ),
+            str(entry.get("from")),
+            str(entry.get("to")),
+        )
         if transfer[0] not in claimed:
             _blocked(
                 "ambiguous_file_ownership",
@@ -968,14 +1119,17 @@ def compile_plan_graph(document_set: DocumentSet) -> PlanGraph:
             )
         transfers.add(transfer)
     raw_shared = program_contract.get("shared_interfaces", []) if program_contract else []
-    shared_interfaces = {
-        str(item)
-        for item in _list(
+    shared_interfaces = set(
+        _canonical_path_list(
+            _list(
             raw_shared,
             field="shared_interfaces",
             document_id=programs[0].document_id if programs else "fallback",
+            ),
+            field="shared_interfaces",
+            category="ambiguous_file_ownership",
         )
-    }
+    )
     invalid_shared = sorted(shared_interfaces - set(claimed))
     if invalid_shared:
         _blocked(
@@ -1159,6 +1313,35 @@ def invalidated_nodes(old: PlanGraph, new: PlanGraph) -> tuple[str, ...]:
     for path in set(old.file_ownership) | set(new.file_ownership):
         if old.file_ownership.get(path) != new.file_ownership.get(path):
             seeds.update(new.file_ownership.get(path, ()))
+    changed_patterns = {
+        pattern
+        for pattern in set(old.file_ownership_patterns) | set(new.file_ownership_patterns)
+        if old.file_ownership_patterns.get(pattern)
+        != new.file_ownership_patterns.get(pattern)
+    }
+    if changed_patterns:
+        for task_id, task in new.tasks.items():
+            if any(
+                _path_matches_pattern(str(path), pattern)
+                for path in task.get("file_claims", ())
+                for pattern in changed_patterns
+            ):
+                seeds.add(task_id)
+    changed_interface_paths = {
+        path
+        for path in set(old.file_interface_writers) | set(new.file_interface_writers)
+        if old.file_interface_writers.get(path) != new.file_interface_writers.get(path)
+    }
+    for path in changed_interface_paths:
+        seeds.update(
+            task_id
+            for graph in (old, new)
+            for task_id in (
+                *graph.file_interface_writers.get(path, ()),
+                *graph.file_ownership.get(path, ()),
+            )
+            if task_id in new.tasks
+        )
     if old.global_integration_gate != new.global_integration_gate:
         seeds.add(new.global_integration_gate.qualified_task_id)
     changed_sections = {

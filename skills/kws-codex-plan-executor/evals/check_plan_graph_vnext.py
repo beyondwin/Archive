@@ -335,6 +335,23 @@ def main() -> int:
             canvas.tasks[writer]["plan_id"].endswith("wave-a1-domain-history")
             for writer in canvas.file_interface_writers["src/editor/store/editorStore.ts"]
         )
+        canvas_a2_patterns = {
+            "src/persistence/projectRepository.ts",
+            "src/persistence/indexedDbProjectRepository.ts",
+            "src/persistence/projectMigration.ts",
+            "src/project/commit/**",
+            "src/project/recovery/**",
+            "src/project/lease/**",
+        }
+        checks["canvas_a2_all_backtick_paths_are_owner_patterns"] = (
+            canvas_a2_patterns.issubset(canvas.file_ownership_patterns)
+            and all(
+                canvas.file_ownership_patterns[pattern].endswith(
+                    "wave-a2-local-repository-recovery"
+                )
+                for pattern in canvas_a2_patterns
+            )
+        )
 
         first_source_name = Path(str(canvas_bundle["plans"][0]["source_path"])).name
         first_source = (
@@ -507,6 +524,49 @@ file_claims:
         checks["ambiguous_cross_plan_ownership_blocks"] = _blocked(
             "ambiguous_file_ownership", ownership, root / "ownership-blocked"
         )
+        ownership_alias = copy.deepcopy(ownership)
+        ownership_alias["plans"][1]["contract"]["tasks"][0]["file_claims"] = [
+            "./shared/api.py"
+        ]
+        checks["canonical_path_alias_cannot_bypass_ownership"] = _blocked(
+            "ambiguous_file_ownership", ownership_alias, root / "ownership-alias-blocked"
+        )
+        parent_claim = _simple_bundle()
+        parent_claim["plans"][0]["contract"]["tasks"][0]["file_claims"] = [
+            "../outside.py"
+        ]
+        checks["parent_traversal_file_claim_blocks"] = _blocked(
+            "file_claim_invalid", parent_claim, root / "parent-claim"
+        )
+        absolute_claim = _simple_bundle()
+        absolute_claim["plans"][0]["contract"]["tasks"][0]["file_claims"] = [
+            "/tmp/outside.py"
+        ]
+        checks["absolute_file_claim_blocks"] = _blocked(
+            "file_claim_invalid", absolute_claim, root / "absolute-claim"
+        )
+        duplicate_separator_claim = _simple_bundle()
+        duplicate_separator_claim["plans"][0]["contract"]["tasks"][0]["file_claims"] = [
+            "src//plan-1.py"
+        ]
+        checks["duplicate_separator_file_claim_blocks"] = _blocked(
+            "file_claim_invalid", duplicate_separator_claim, root / "duplicate-separator-claim"
+        )
+        dot_segment_claim = _simple_bundle()
+        dot_segment_claim["plans"][0]["contract"]["tasks"][0]["file_claims"] = [
+            "src/./plan-1.py"
+        ]
+        checks["dot_segment_file_claim_blocks"] = _blocked(
+            "file_claim_invalid", dot_segment_claim, root / "dot-segment-claim"
+        )
+        colliding_claims = _simple_bundle()
+        colliding_claims["plans"][0]["contract"]["tasks"][0]["file_claims"] = [
+            "shared/api.py",
+            "./shared/api.py",
+        ]
+        checks["canonical_claim_collision_blocks"] = _blocked(
+            "file_claim_invalid", colliding_claims, root / "canonical-claim-collision"
+        )
         owners = ["plan-1::build", "plan-2::build"]
         ownership["program"]["contract"]["file_ownership"] = {"shared/api.py": owners}
         ownership["program"]["contract"]["ownership_transfers"] = [
@@ -554,6 +614,125 @@ file_claims:
             == tuple(owners)
         )
 
+        canonical_authority = copy.deepcopy(shared)
+        canonical_authority["program"]["contract"]["file_ownership"] = {
+            "./shared/api.py": owners
+        }
+        canonical_authority["program"]["contract"]["shared_interfaces"] = [
+            "./shared/api.py"
+        ]
+        checks["ownership_authority_paths_are_canonical"] = (
+            _compile_bundle(canonical_authority, root / "canonical-authority").file_ownership[
+                "shared/api.py"
+            ]
+            == tuple(owners)
+        )
+
+        pattern_authority = copy.deepcopy(shared)
+        for item in pattern_authority["plans"]:
+            item["contract"]["tasks"][0]["interface_declared"] = True
+        pattern_authority["program"]["contract"]["file_ownership_patterns"] = {
+            "shared/**": "plan-1"
+        }
+        pattern_authority["program"]["contract"]["file_interface_writers"] = {
+            "shared/api.py": ["plan-2::build"]
+        }
+        pattern_base = _compile_bundle(pattern_authority, root / "pattern-authority-base")
+        changed_pattern_authority = copy.deepcopy(pattern_authority)
+        changed_pattern_authority["program"]["contract"]["file_ownership_patterns"] = {
+            "shared/**": "plan-2"
+        }
+        changed_pattern_authority["program"]["contract"]["file_interface_writers"] = {
+            "shared/api.py": ["plan-1::build"]
+        }
+        pattern_changed = _compile_bundle(
+            changed_pattern_authority, root / "pattern-authority-changed"
+        )
+        checks["pattern_owner_change_invalidates_writers_and_downstream"] = invalidated_nodes(
+            pattern_base, pattern_changed
+        ) == tuple(pattern_changed.tasks)
+
+        interface_authority = _simple_bundle(1, with_program=True)
+        interface_tasks = interface_authority["plans"][0]["contract"]["tasks"]
+        interface_tasks[0]["file_claims"] = ["shared/api.py"]
+        interface_tasks[0]["interface_declared"] = True
+        interface_tasks.append(
+            {
+                "task_id": "verify",
+                "dependencies": [],
+                "spec_refs": ["S1"],
+                "file_claims": ["shared/api.py"],
+                "interface_declared": True,
+            }
+        )
+        interface_authority["program"]["contract"]["global_integration_gate"] = (
+            "plan-1::verify"
+        )
+        interface_authority["program"]["contract"]["file_interface_writers"] = {
+            "shared/api.py": ["plan-1::build"]
+        }
+        interface_base = _compile_bundle(interface_authority, root / "interface-authority-base")
+        changed_interface_authority = copy.deepcopy(interface_authority)
+        changed_interface_authority["program"]["contract"]["file_interface_writers"] = {
+            "shared/api.py": ["plan-1::verify"]
+        }
+        interface_changed = _compile_bundle(
+            changed_interface_authority, root / "interface-authority-changed"
+        )
+        checks["interface_authority_change_invalidates_writers_and_downstream"] = (
+            invalidated_nodes(interface_base, interface_changed)
+            == tuple(interface_changed.tasks)
+        )
+
+        writers = _simple_bundle()
+        writers["plans"][0]["contract"]["tasks"].append(
+            {
+                "task_id": "second-write",
+                "dependencies": [],
+                "spec_refs": ["S1"],
+                "file_claims": ["src/second.py"],
+            }
+        )
+        writers_graph = _compile_bundle(writers, root / "dependency-free-writers")
+        checks["dependency_free_writers_are_serial"] = (
+            "plan-1::build",
+            "plan-1::second-write",
+        ) in writers_graph.edges
+
+        scouts = _simple_bundle()
+        scouts["plans"][0]["contract"]["tasks"] = [
+            {
+                "task_id": "scout-a",
+                "dependencies": [],
+                "spec_refs": ["S1"],
+                "file_claims": [],
+                "read_only": True,
+            },
+            {
+                "task_id": "scout-b",
+                "dependencies": [],
+                "spec_refs": ["S1"],
+                "file_claims": [],
+                "read_only": True,
+            },
+            {
+                "task_id": "gate",
+                "dependencies": ["scout-a", "scout-b"],
+                "spec_refs": ["S1"],
+                "file_claims": ["src/gate.py"],
+            },
+        ]
+        scouts_graph = _compile_bundle(scouts, root / "read-only-scouts")
+        checks["read_only_scouts_may_run_concurrently"] = (
+            ("plan-1::scout-a", "plan-1::scout-b") not in scouts_graph.edges
+            and ("plan-1::scout-b", "plan-1::scout-a") not in scouts_graph.edges
+        )
+        invalid_scout = _simple_bundle()
+        invalid_scout["plans"][0]["contract"]["tasks"][0]["read_only"] = True
+        checks["read_only_task_with_file_claim_blocks"] = _blocked(
+            "read_only_claim_invalid", invalid_scout, root / "invalid-read-only-claim"
+        )
+
         section_base = _compile_bundle(
             _section_bundle({"S1": "alpha", "S2": "beta"}), root / "sections-base"
         )
@@ -567,9 +746,9 @@ file_claims:
             section_base.spec_section_hashes["S1"] != section_s1.spec_section_hashes["S1"]
             and section_base.spec_section_hashes["S2"] == section_s1.spec_section_hashes["S2"]
         )
-        checks["s1_edit_invalidates_s1_and_gate_only"] = invalidated_nodes(
+        checks["s1_edit_invalidates_sequential_writers_and_gate"] = invalidated_nodes(
             section_base, section_s1
-        ) == ("section-plan::s1", "section-plan::gate")
+        ) == tuple(section_s1.tasks)
         checks["s2_edit_invalidates_s2_and_gate_only"] = invalidated_nodes(
             section_base, section_s2
         ) == ("section-plan::s2", "section-plan::gate")
