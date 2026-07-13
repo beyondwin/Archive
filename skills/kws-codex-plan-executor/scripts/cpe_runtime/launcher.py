@@ -12,6 +12,8 @@ import stat
 import subprocess
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping
@@ -88,6 +90,40 @@ def _resolved_directory(path: Path, name: str) -> Path:
     return resolved
 
 
+def _validate_or_normalize_child_result(
+    payload: object, *, expected_role: str, expected_item_id: str
+) -> ChildResult:
+    """Turn only a structurally valid non-allowlisted authority into failure."""
+
+    try:
+        return validate_child_result(
+            payload,
+            expected_role=expected_role,
+            expected_item_id=expected_item_id,
+        )
+    except ValueError:
+        if not isinstance(payload, Mapping):
+            raise
+        authority_id = payload.get("authority_id")
+        if (
+            payload.get("status") != "waiting_authority"
+            or not isinstance(authority_id, str)
+            or not authority_id.strip()
+            or authority_id in AUTHORITY_CODES
+        ):
+            raise
+        normalized = dict(payload)
+        normalized["status"] = "failed"
+        normalized["failure_code"] = "invalid_authority_handoff"
+        normalized["authority_id"] = None
+        normalized["affected_document_ids"] = []
+        return validate_child_result(
+            normalized,
+            expected_role=expected_role,
+            expected_item_id=expected_item_id,
+        )
+
+
 class ChildLauncher:
     def __init__(
         self,
@@ -118,7 +154,55 @@ class ChildLauncher:
         self.timeout_seconds = float(timeout_seconds)
         self.terminate_grace_seconds = float(terminate_grace_seconds)
         self.environ = dict(os.environ if environ is None else environ)
-        self._writer_lease = threading.Lock()
+        self._writer_lease = threading.RLock()
+        self._writer_lifecycle_state = threading.local()
+
+    @contextmanager
+    def writer_lifecycle(self, store: RunStore) -> Iterator[None]:
+        """Own one run's writer lifecycle through durable result publication."""
+
+        lease_path = str(store.paths.writer_lease)
+        depth = getattr(self._writer_lifecycle_state, "depth", 0)
+        if depth:
+            if getattr(self._writer_lifecycle_state, "lease_path", None) != lease_path:
+                raise ValueError("nested writer lifecycle names a different run")
+            self._writer_lifecycle_state.depth = depth + 1
+            try:
+                yield
+            finally:
+                self._writer_lifecycle_state.depth -= 1
+            return
+
+        if not self._writer_lease.acquire(blocking=False):
+            raise ValueError("another write role already holds the writer lease")
+        descriptor = -1
+        try:
+            descriptor = os.open(
+                store.paths.writer_lease,
+                os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
+            )
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or stat.S_IMODE(metadata.st_mode) != 0o600
+            ):
+                raise ValueError("run-owned writer lease must remain a private regular file")
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise ValueError("another write role already holds the writer lease") from exc
+            self._writer_lifecycle_state.depth = 1
+            self._writer_lifecycle_state.lease_path = lease_path
+            yield
+        finally:
+            self._writer_lifecycle_state.depth = 0
+            self._writer_lifecycle_state.lease_path = None
+            if descriptor >= 0:
+                try:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+                finally:
+                    os.close(descriptor)
+            self._writer_lease.release()
 
     def _validate_request(
         self, request: ChildRequest, worktree: Worktree, store: RunStore
@@ -340,37 +424,13 @@ class ChildLauncher:
                 store=store,
                 ingest_artifacts=ingest_artifacts,
             )
-        if not self._writer_lease.acquire(blocking=False):
-            raise ValueError("another write role already holds the writer lease")
-        descriptor = -1
-        try:
-            descriptor = os.open(
-                store.paths.writer_lease,
-                os.O_RDWR | getattr(os, "O_NOFOLLOW", 0),
-            )
-            metadata = os.fstat(descriptor)
-            if (
-                not stat.S_ISREG(metadata.st_mode)
-                or stat.S_IMODE(metadata.st_mode) != 0o600
-            ):
-                raise ValueError("run-owned writer lease must remain a private regular file")
-            try:
-                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError as exc:
-                raise ValueError("another write role already holds the writer lease") from exc
+        with self.writer_lifecycle(store):
             return self._launch_once(
                 request,
                 worktree=worktree,
                 store=store,
                 ingest_artifacts=ingest_artifacts,
             )
-        finally:
-            if descriptor >= 0:
-                try:
-                    fcntl.flock(descriptor, fcntl.LOCK_UN)
-                finally:
-                    os.close(descriptor)
-            self._writer_lease.release()
 
     def _launch_once(
         self,
@@ -454,7 +514,7 @@ class ChildLauncher:
             payload = json.loads(last_message.read_text(encoding="utf-8"))
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise ValueError("Codex child last message is invalid") from exc
-        result = validate_child_result(
+        result = _validate_or_normalize_child_result(
             payload,
             expected_role=request.role,
             expected_item_id=request.item_id,

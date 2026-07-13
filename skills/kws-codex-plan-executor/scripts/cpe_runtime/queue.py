@@ -1149,6 +1149,18 @@ class QueueEngine:
                     "previously attempted strategy and evidence cannot be replayed"
                 )
 
+    def _attempted_strategies(
+        self, task_id: str, evidence_sha256: str
+    ) -> tuple[str, ...]:
+        values = {
+            str(event["payload"]["strategy_key"])
+            for event in self.store.validate_event_chain()
+            if event["event_type"] == "task.started"
+            and event["payload"]["task_id"] == task_id
+            and event["payload"]["evidence_sha256"] == evidence_sha256
+        }
+        return tuple(sorted(values))
+
     def _append_task_started(
         self,
         *,
@@ -1477,6 +1489,7 @@ class QueueEngine:
                         task,
                         result.artifact_paths,
                         previous_strategy=latest_strategy,
+                        dispatch_evidence_sha256=evidence_sha256,
                     )
                     finding_paths = (*result.artifact_paths, *investigation_paths)
                 else:
@@ -1569,10 +1582,11 @@ class QueueEngine:
         evidence_paths: Sequence[str],
         *,
         previous_strategy: str,
+        dispatch_evidence_sha256: str | None = None,
     ) -> tuple[str, tuple[str, ...]]:
         task_id = str(task["task_id"])
         state = self.store.replay()
-        investigation_number = len(
+        first_investigation_number = len(
             [
                 event
                 for event in self.store.validate_event_chain()
@@ -1580,8 +1594,6 @@ class QueueEngine:
                 and task_id in event["payload"].get("task_ids", [])
             ]
         ) + 1
-        investigation_id = f"{self._task_slug(task_id)}-investigation-{investigation_number:04d}"
-        report_path = f"reports/{self._task_slug(task_id)}/investigation-{investigation_number}.md"
         _, selected = self._program_context()
         inputs = [
             selected[str(task["brief_path"])],
@@ -1591,38 +1603,66 @@ class QueueEngine:
                 for path in self._dependency_report_paths(task, state)
             ),
         ]
-        outcome = self._launch_role(
-            role="investigator",
-            item_id=task_id,
-            goal=(
-                "Reproduce the failure, identify the root cause, and select a "
-                "materially changed recovery strategy."
-            ),
-            input_paths=inputs,
-            report_path=report_path,
-            skills=("using-superpowers", "systematic-debugging"),
-            done_when=("the root cause and a changed strategy are recorded",),
-            attempt_id=investigation_id,
+        attempted_history = (
+            self._attempted_strategies(task_id, dispatch_evidence_sha256)
+            if dispatch_evidence_sha256 is not None
+            else ()
         )
-        result = outcome.result
-        if result.status != "completed" or not result.strategy_key:
-            raise ValueError("investigator did not return a usable changed strategy")
-        if result.strategy_key == previous_strategy:
-            raise ValueError("unchanged strategy_key cannot be redispatched")
-        self.store.append_autonomy_decision(
-            issue="focused test or child evidence failed under the previous strategy",
-            alternatives=["repeat patch", "fresh root-cause investigation"],
-            selected="fresh root-cause investigation",
-            strategy_key=result.strategy_key,
-            rationale="same strategy and evidence made no progress",
-            evidence_paths=list(
-                dict.fromkeys([*evidence_paths, *result.artifact_paths])
-            ),
-            affected_tasks=[task_id],
-            reversible=True,
-        )
-        self.store.reconcile_autonomy_events()
-        return result.strategy_key, result.artifact_paths
+        for selection in range(8):
+            investigation_number = first_investigation_number + selection
+            investigation_id = (
+                f"{self._task_slug(task_id)}-investigation-"
+                f"{investigation_number:04d}"
+            )
+            report_path = (
+                f"reports/{self._task_slug(task_id)}/"
+                f"investigation-{investigation_number}.md"
+            )
+            outcome = self._launch_role(
+                role="investigator",
+                item_id=task_id,
+                goal=(
+                    "Reproduce the failure, identify the root cause, and select a "
+                    "materially changed recovery strategy. Previously attempted "
+                    f"strategies for this evidence: {json.dumps(attempted_history)}"
+                ),
+                input_paths=inputs,
+                report_path=report_path,
+                skills=("using-superpowers", "systematic-debugging"),
+                done_when=("the root cause and a changed strategy are recorded",),
+                attempt_id=investigation_id,
+            )
+            result = outcome.result
+            if result.status != "completed" or not result.strategy_key:
+                raise ValueError("investigator did not return a usable changed strategy")
+            if result.strategy_key == previous_strategy:
+                raise ValueError("unchanged strategy_key cannot be redispatched")
+            candidate_evidence = (
+                dispatch_evidence_sha256
+                if dispatch_evidence_sha256 is not None
+                else self._artifact_evidence_digest(
+                    (*evidence_paths, *result.artifact_paths)
+                )
+            )
+            attempted = self._attempted_strategies(task_id, candidate_evidence)
+            if result.strategy_key in attempted:
+                attempted_history = attempted
+                continue
+            self.store.append_autonomy_decision(
+                issue="focused test or child evidence failed under the previous strategy",
+                alternatives=["repeat patch", "fresh root-cause investigation"],
+                selected="fresh root-cause investigation",
+                strategy_key=result.strategy_key,
+                rationale="same strategy and evidence made no progress",
+                evidence_paths=list(
+                    dict.fromkeys([*evidence_paths, *result.artifact_paths])
+                ),
+                affected_tasks=[task_id],
+                reversible=True,
+            )
+            self.store.reconcile_autonomy_events()
+            return result.strategy_key, result.artifact_paths
+        raise ValueError("investigator exhausted novel bounded strategy selections")
 
     def _handle_child_failure(self, result: ChildResult, task_id: str) -> str | None:
         if result.status == "waiting_authority":
@@ -1784,39 +1824,51 @@ class QueueEngine:
             and attempt.get("status") == "completed"
             and isinstance(attempt.get("commit"), str)
         ]
-        if not completed:
-            failed = attempts[-1] if attempts else None
-            if isinstance(failed, Mapping) and failed.get("status") == "failed":
-                evidence_paths = failed.get("artifact_paths", [])
-                previous_strategy = failed.get("strategy_key") or "initial"
-                if not isinstance(evidence_paths, list) or not all(
-                    isinstance(path, str) for path in evidence_paths
-                ):
-                    raise ValueError("failed task evidence is invalid")
-                pending = task_state.get("pending_recovery")
-                if isinstance(pending, Mapping):
-                    strategy = pending.get("strategy_key")
-                    recovery_paths = pending.get("artifact_paths")
-                    if not isinstance(strategy, str) or not isinstance(
-                        recovery_paths, list
-                    ) or not all(isinstance(path, str) for path in recovery_paths):
-                        raise ValueError("pending autonomous recovery is invalid")
-                    investigation_paths = tuple(recovery_paths)
-                else:
-                    strategy, investigation_paths = self._run_investigation(
-                        task,
-                        evidence_paths,
-                        previous_strategy=str(previous_strategy),
-                    )
-                start_commit = self.worktree.head()
-                recovered = self._run_consolidated_fix(
+        latest_attempt = attempts[-1] if attempts else None
+        if isinstance(latest_attempt, Mapping) and latest_attempt.get("status") in {
+            "failed",
+            "interrupted",
+        }:
+            evidence_paths = latest_attempt.get("artifact_paths", [])
+            previous_strategy = latest_attempt.get("strategy_key") or "initial"
+            if not isinstance(evidence_paths, list) or not all(
+                isinstance(path, str) for path in evidence_paths
+            ):
+                raise ValueError("failed or interrupted task evidence is invalid")
+            pending = task_state.get("pending_recovery")
+            if isinstance(pending, Mapping):
+                strategy = pending.get("strategy_key")
+                recovery_paths = pending.get("artifact_paths")
+                if not isinstance(strategy, str) or not isinstance(
+                    recovery_paths, list
+                ) or not all(isinstance(path, str) for path in recovery_paths):
+                    raise ValueError("pending autonomous recovery is invalid")
+                investigation_paths = tuple(recovery_paths)
+            else:
+                strategy, investigation_paths = self._run_investigation(
                     task,
-                    (*evidence_paths, *investigation_paths),
-                    strategy_key=strategy,
+                    evidence_paths,
+                    previous_strategy=str(previous_strategy),
                 )
-                if recovered is not None:
-                    self._run_review(task, start_commit, recovered)
-                return
+            if completed:
+                review_start = self._commit_parent(str(completed[0]["commit"]))
+            else:
+                baseline = latest_attempt.get("baseline_commit")
+                review_start = (
+                    str(baseline)
+                    if latest_attempt.get("status") == "interrupted"
+                    and isinstance(baseline, str)
+                    else self.worktree.head()
+                )
+            recovered = self._run_consolidated_fix(
+                task,
+                (*evidence_paths, *investigation_paths),
+                strategy_key=strategy,
+            )
+            if recovered is not None:
+                self._run_review(task, review_start, recovered)
+            return
+        if not completed:
             self._run_task(task)
             return
 
@@ -1872,20 +1924,21 @@ class QueueEngine:
 
         self.worktree.verify_identity()
         self.map_program()
-        self.store.reconcile_autonomy_events()
-        state = self.store.replay()
-        task = self._next_ready_task(state)
-        if task is None:
-            return None
-        task_id = str(task["task_id"])
-        task_state = state["tasks"].get(task_id)
-        if isinstance(task_state, Mapping) and (
-            task_state.get("attempts") or task_state.get("active_attempt")
-        ):
-            self._resume_task(task, task_state)
-        else:
-            self._run_task(task)
-        return task_id
+        with self.launcher.writer_lifecycle(self.store):
+            self.store.reconcile_autonomy_events()
+            state = self.store.replay()
+            task = self._next_ready_task(state)
+            if task is None:
+                return None
+            task_id = str(task["task_id"])
+            task_state = state["tasks"].get(task_id)
+            if isinstance(task_state, Mapping) and (
+                task_state.get("attempts") or task_state.get("active_attempt")
+            ):
+                self._resume_task(task, task_state)
+            else:
+                self._run_task(task)
+            return task_id
 
     def run_until_terminal(self) -> dict[str, object]:
         """Run every currently ready task without redispatching clean reviews."""

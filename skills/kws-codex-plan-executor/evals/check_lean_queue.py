@@ -325,6 +325,79 @@ class LeanQueueTest(unittest.TestCase):
         self.assertFalse(thread.is_alive())
         self.assertEqual(len(outcomes), 1)
 
+    def test_writer_lifecycle_stays_owned_until_task_report_is_published(self) -> None:
+        store, engine = self.create_engine("queue_success")
+        original_launch_role = engine._launch_role
+        launcher_returned = threading.Event()
+        release_first_engine = threading.Event()
+        first_errors: list[BaseException] = []
+
+        def pause_after_launcher(**kwargs: object) -> object:
+            outcome = original_launch_role(**kwargs)  # type: ignore[arg-type]
+            if kwargs.get("role") == "task_agent":
+                launcher_returned.set()
+                if not release_first_engine.wait(timeout=5):
+                    raise RuntimeError("timed out waiting to release first engine")
+            return outcome
+
+        engine._launch_role = pause_after_launcher  # type: ignore[method-assign]
+        second_launcher = ChildLauncher(
+            schema_path=SKILL_ROOT / "templates" / "child-result-schema.json",
+            timeout_seconds=10,
+            environ=engine.launcher.environ,
+        )
+        second_engine = QueueEngine(store, engine.worktree, second_launcher)
+
+        def run_first() -> None:
+            try:
+                engine.tick()
+            except BaseException as exc:  # pragma: no cover - assertion reports detail
+                first_errors.append(exc)
+
+        thread = threading.Thread(target=run_first)
+        thread.start()
+        self.assertTrue(launcher_returned.wait(timeout=5))
+        try:
+            with self.assertRaisesRegex(ValueError, "writer lease"):
+                second_engine.tick()
+        finally:
+            release_first_engine.set()
+            thread.join(timeout=10)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(first_errors, [])
+        reports = [
+            event["payload"]
+            for event in self.lifecycle_events(store)
+            if event["event_type"] == "task.reported"
+        ]
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0]["status"], "completed")
+
+    def test_replay_rejects_task_report_for_a_different_active_attempt(self) -> None:
+        store, engine = self.create_engine("queue_success")
+        evidence_path = "reports/plan-01-T1/mismatched-report.md"
+        store.put_artifact(evidence_path, b"mismatched report regression\n")
+        engine._append_task_started(
+            task_id="plan-01:T1",
+            attempt_id="plan-01-T1-attempt-0001",
+            role="task_agent",
+            strategy_key="initial",
+            baseline_commit=engine.worktree.head(),
+            evidence_sha256="a" * 64,
+        )
+        store.append_event(
+            "task.reported",
+            {
+                "task_id": "plan-01:T1",
+                "attempt_id": "plan-01-T1-attempt-9999",
+                "status": "failed",
+                "strategy_key": "initial",
+                "artifact_paths": [evidence_path],
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "active attempt"):
+            store.replay()
+
     def test_resume_after_task_commit_runs_review_without_redispatching_writer(self) -> None:
         store, engine = self.create_engine("queue_review_crash")
 
@@ -394,6 +467,82 @@ class LeanQueueTest(unittest.TestCase):
         self.assertEqual(recovered["status"], "interrupted")
         self.assertEqual(recovered["commit"], advanced_head)
         self.assertTrue(any(path.endswith("interrupted.patch") for path in recovered["artifact_paths"]))
+
+    def test_resume_interrupted_task_agent_from_preserved_evidence(self) -> None:
+        store, engine = self.create_engine("queue_success")
+        original_append = engine._append_task_result
+
+        def interrupt_before_report(*args: object, **kwargs: object) -> None:
+            raise RuntimeError("interrupt before initial task report")
+
+        engine._append_task_result = interrupt_before_report  # type: ignore[method-assign]
+        with self.assertRaisesRegex(RuntimeError, "initial task report"):
+            engine.tick()
+        engine._append_task_result = original_append  # type: ignore[method-assign]
+
+        original_investigation = engine._run_investigation
+
+        def interrupt_after_interrupted_report(*args: object, **kwargs: object) -> object:
+            raise RuntimeError("interrupt after interrupted task report")
+
+        engine._run_investigation = interrupt_after_interrupted_report  # type: ignore[method-assign]
+        with self.assertRaisesRegex(RuntimeError, "interrupted task report"):
+            engine.tick()
+        engine._run_investigation = original_investigation  # type: ignore[method-assign]
+        interrupted = store.replay()["tasks"]["plan-01:T1"]["attempts"][-1]
+        self.assertEqual(interrupted["status"], "interrupted")
+
+        engine.launcher.environ["CPE_FAKE_SCENARIO"] = "queue_ordinary_failure"
+        self.assertEqual(engine.tick(), "plan-01:T1")
+        roles = [
+            item["role"]
+            for item in self.invocations()
+            if item["role"] not in {"document_mapper", "program_mapper"}
+        ]
+        self.assertEqual(roles, ["task_agent", "investigator", "fix_agent", "reviewer"])
+
+    def test_resume_interrupted_fix_agent_from_preserved_evidence(self) -> None:
+        store, engine = self.create_engine("queue_review_fix")
+        original_append = engine._append_task_result
+        interrupted = False
+
+        def interrupt_fix_before_report(
+            result: ChildResult, *args: object, **kwargs: object
+        ) -> None:
+            nonlocal interrupted
+            if result.role == "fix_agent" and not interrupted:
+                interrupted = True
+                raise RuntimeError("interrupt before fix report")
+            original_append(result, *args, **kwargs)  # type: ignore[arg-type]
+
+        engine._append_task_result = interrupt_fix_before_report  # type: ignore[method-assign]
+        with self.assertRaisesRegex(RuntimeError, "before fix report"):
+            engine.tick()
+        engine._append_task_result = original_append  # type: ignore[method-assign]
+
+        original_investigation = engine._run_investigation
+
+        def interrupt_after_interrupted_report(*args: object, **kwargs: object) -> object:
+            raise RuntimeError("interrupt after interrupted fix report")
+
+        engine._run_investigation = interrupt_after_interrupted_report  # type: ignore[method-assign]
+        with self.assertRaisesRegex(RuntimeError, "interrupted fix report"):
+            engine.tick()
+        engine._run_investigation = original_investigation  # type: ignore[method-assign]
+        last_attempt = store.replay()["tasks"]["plan-01:T1"]["attempts"][-1]
+        self.assertEqual(last_attempt["role"], "fix_agent")
+        self.assertEqual(last_attempt["status"], "interrupted")
+
+        engine.launcher.environ["CPE_FAKE_SCENARIO"] = "queue_ordinary_failure"
+        self.assertEqual(engine.tick(), "plan-01:T1")
+        roles = [
+            item["role"]
+            for item in self.invocations()
+            if item["role"] not in {"document_mapper", "program_mapper"}
+        ]
+        self.assertEqual(roles.count("task_agent"), 1)
+        self.assertEqual(roles.count("fix_agent"), 2)
+        self.assertEqual(roles.count("investigator"), 1)
 
     def test_resume_after_reported_fix_reviews_expanded_range_without_refixing(self) -> None:
         store, engine = self.create_engine("queue_fix_review_crash")
@@ -484,6 +633,83 @@ class LeanQueueTest(unittest.TestCase):
             if item["role"] == "fix_agent"
         ]
         self.assertEqual(len(fixes), 2)
+
+    def test_historical_investigator_strategy_is_rejected_before_writer(self) -> None:
+        store, engine = self.create_engine("queue_historical_strategy")
+        task_id = "plan-01:T1"
+        evidence_path = "reports/plan-01-T1/historical-evidence.json"
+        store.put_artifact(evidence_path, b'{"failure":"same evidence"}')
+        evidence_sha256 = engine._artifact_evidence_digest([evidence_path])
+        baseline = engine.worktree.head()
+        for number, strategy in enumerate(("strategy-A", "strategy-B"), 1):
+            attempt_id = f"plan-01-T1-attempt-{number:04d}"
+            engine._append_task_started(
+                task_id=task_id,
+                attempt_id=attempt_id,
+                role="fix_agent",
+                strategy_key=strategy,
+                baseline_commit=baseline,
+                evidence_sha256=evidence_sha256,
+            )
+            store.append_event(
+                "task.reported",
+                {
+                    "task_id": task_id,
+                    "attempt_id": attempt_id,
+                    "status": "failed",
+                    "strategy_key": strategy,
+                    "artifact_paths": [evidence_path],
+                },
+            )
+
+        strategy, investigation_paths = engine._run_investigation(
+            engine._task_by_id(task_id),
+            [evidence_path],
+            previous_strategy="strategy-B",
+            dispatch_evidence_sha256=evidence_sha256,
+        )
+        recovered = engine._run_consolidated_fix(
+            engine._task_by_id(task_id),
+            [evidence_path, *investigation_paths],
+            strategy_key=strategy,
+            evidence_sha256=evidence_sha256,
+        )
+        self.assertIsNotNone(recovered)
+        roles = [
+            item["role"]
+            for item in self.invocations()
+            if item["role"] not in {"document_mapper", "program_mapper"}
+        ]
+        self.assertEqual(roles, ["investigator", "investigator", "fix_agent"])
+        starts = [
+            event["payload"]
+            for event in self.lifecycle_events(store)
+            if event["event_type"] == "task.started"
+        ]
+        self.assertEqual(starts[-1]["strategy_key"], "strategy-C")
+
+    def test_invalid_authority_handoff_becomes_ordinary_recovery(self) -> None:
+        store, engine = self.create_engine("queue_invalid_authority")
+
+        self.assertEqual(engine.tick(), "plan-01:T1")
+        self.assertFalse(
+            any(
+                event["event_type"] == "authority.opened"
+                for event in store.validate_event_chain()
+            )
+        )
+        reports = [
+            event["payload"]
+            for event in self.lifecycle_events(store)
+            if event["event_type"] == "task.reported"
+        ]
+        self.assertEqual(reports[0]["status"], "failed")
+        roles = [
+            item["role"]
+            for item in self.invocations()
+            if item["role"] not in {"document_mapper", "program_mapper"}
+        ]
+        self.assertEqual(roles, ["task_agent", "investigator", "fix_agent", "reviewer"])
 
     def test_orphan_autonomy_ledger_reconciles_once_without_duplicate_investigation(
         self,

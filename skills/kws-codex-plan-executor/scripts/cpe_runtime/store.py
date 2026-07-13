@@ -1595,6 +1595,14 @@ class RunStore:
                     str(payload["task_id"]),
                     {"attempts": [], "reviews": [], "report_paths": []},
                 )
+                if isinstance(task.get("active_attempt"), Mapping):
+                    raise ValueError("task started while another active attempt is live")
+                if any(
+                    isinstance(attempt, Mapping)
+                    and attempt.get("attempt_id") == payload["attempt_id"]
+                    for attempt in task["attempts"]
+                ):
+                    raise ValueError("task attempt ID was already reported")
                 task["active_attempt"] = {
                     "attempt_id": payload["attempt_id"],
                     "role": payload.get("role", "task_agent"),
@@ -1608,23 +1616,23 @@ class RunStore:
                     str(payload["task_id"]),
                     {"attempts": [], "reviews": [], "report_paths": []},
                 )
+                active = task.get("active_attempt")
+                if not isinstance(active, Mapping):
+                    raise ValueError("task report has no matching active attempt")
+                if active.get("attempt_id") != payload["attempt_id"]:
+                    raise ValueError("task report differs from its active attempt")
+                if payload.get("strategy_key") != active.get("strategy_key"):
+                    raise ValueError("task report strategy differs from its active attempt")
                 attempt = {
                     "attempt_id": payload["attempt_id"],
-                    "role": payload.get(
-                        "role",
-                        task.get("active_attempt", {}).get("role", "task_agent"),
-                    ),
+                    "role": active.get("role", "task_agent"),
                     "status": payload["status"],
                     "commit": payload.get("commit"),
                     "strategy_key": payload.get("strategy_key"),
                     "result_sha256": payload.get("result_sha256"),
                     "artifact_paths": list(payload["artifact_paths"]),
-                    "baseline_commit": task.get("active_attempt", {}).get(
-                        "baseline_commit"
-                    ),
-                    "evidence_sha256": task.get("active_attempt", {}).get(
-                        "evidence_sha256"
-                    ),
+                    "baseline_commit": active.get("baseline_commit"),
+                    "evidence_sha256": active.get("evidence_sha256"),
                 }
                 task["attempts"].append(attempt)
                 task["report_paths"].extend(payload["artifact_paths"])

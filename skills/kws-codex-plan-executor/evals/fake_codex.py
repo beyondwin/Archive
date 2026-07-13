@@ -53,6 +53,8 @@ SCENARIOS = frozenset(
         "queue_fix_review_crash",
         "queue_repeated_review_finding",
         "queue_unchanged_strategy",
+        "queue_historical_strategy",
+        "queue_invalid_authority",
         "writer_hold",
     }
 )
@@ -898,6 +900,17 @@ def main() -> int:
             pass
         elif role in WRITE_ROLES:
             commit = _commit_change(worktree, item_id)
+    elif scenario == "queue_historical_strategy":
+        if role == "investigator":
+            pass
+        elif role in WRITE_ROLES:
+            commit = _commit_change(worktree, item_id)
+    elif scenario == "queue_invalid_authority":
+        if role == "task_agent":
+            status = "waiting_authority"
+            authority_id = "test_failure"
+        elif role in WRITE_ROLES:
+            commit = _commit_change(worktree, item_id)
     elif scenario == "queue_authority" and role == "task_agent":
         status = "waiting_authority"
         authority_id = "credential_required"
@@ -939,7 +952,16 @@ def main() -> int:
         "strategy_key": (
             "fresh-root-cause-v2"
             if role == "investigator"
-            and scenario in {"queue_ordinary_failure", "queue_test_failure"}
+            and scenario
+            in {
+                "queue_ordinary_failure",
+                "queue_test_failure",
+                "queue_invalid_authority",
+            }
+            else (
+                "strategy-A" if queue_number == 1 else "strategy-C"
+            )
+            if role == "investigator" and scenario == "queue_historical_strategy"
             else _prompt_strategy(prompt)
         ),
         "affected_document_ids": (
