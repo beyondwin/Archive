@@ -75,7 +75,6 @@ def canonical_object_delta_body(
             repository,
             "ls-tree",
             "-r",
-            "-t",
             "-z",
             "--full-tree",
             f"{revision}^{{tree}}",
@@ -304,12 +303,15 @@ def main() -> int:
         checks["canonical_object_delta_order_and_nulls"] = (
             [entry["path"] for entry in shape_entries]
             == sorted(entry["path"] for entry in shape_entries)
+            and set(shape_by_path)
+            == {"dir/a-add", "dir/m-delete", "dir/z-last"}
+            and "dir" not in shape_by_path
             and shape_by_path["dir/a-add"]["old"] is None
             and shape_by_path["dir/a-add"]["new"] is not None
             and shape_by_path["dir/m-delete"]["old"] is not None
             and shape_by_path["dir/m-delete"]["new"] is None
-            and shape_by_path["dir"]["old"]["type"] == "tree"
-            and shape_by_path["dir"]["new"]["type"] == "tree"
+            and shape_by_path["dir/z-last"]["old"] is not None
+            and shape_by_path["dir/z-last"]["new"] is not None
         )
 
         replacement_file = repo / "seed.txt"
