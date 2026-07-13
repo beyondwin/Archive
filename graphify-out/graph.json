@@ -5320,7 +5320,7 @@
       "source_location": "L316",
       "_origin": "ast",
       "id": "packages_contracts_src_types_executionphasetiming",
-      "community": 50,
+      "community": 54,
       "norm_label": "executionphasetiming"
     },
     {
@@ -5660,7 +5660,7 @@
       "source_location": "L658",
       "_origin": "ast",
       "id": "packages_contracts_src_types_waygentworktreemanifest",
-      "community": 50,
+      "community": 54,
       "norm_label": "waygentworktreemanifest"
     },
     {
@@ -5940,7 +5940,7 @@
       "source_location": "L959",
       "_origin": "ast",
       "id": "packages_contracts_src_types_kernelexecutionresult",
-      "community": 50,
+      "community": 65,
       "norm_label": "kernelexecutionresult"
     },
     {
@@ -7860,7 +7860,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_kernel_client_src_index",
-      "community": 50,
+      "community": 65,
       "norm_label": "index.ts"
     },
     {
@@ -7870,7 +7870,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_kernel_client_src_kernelclient",
-      "community": 50,
+      "community": 65,
       "norm_label": "kernelclient.ts"
     },
     {
@@ -7880,7 +7880,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "packages_kernel_client_src_kernelclient_buildkernelrequest",
-      "community": 50,
+      "community": 65,
       "norm_label": "buildkernelrequest()"
     },
     {
@@ -7890,7 +7890,7 @@
       "source_location": "L23",
       "_origin": "ast",
       "id": "packages_kernel_client_src_kernelclient_executeinprocess",
-      "community": 50,
+      "community": 65,
       "norm_label": "executeinprocess()"
     },
     {
@@ -7900,7 +7900,7 @@
       "source_location": "L51",
       "_origin": "ast",
       "id": "packages_kernel_client_src_kernelclient_result",
-      "community": 50,
+      "community": 65,
       "norm_label": "result()"
     },
     {
@@ -7910,7 +7910,7 @@
       "source_location": "L80",
       "_origin": "ast",
       "id": "packages_kernel_client_src_kernelclient_bound",
-      "community": 50,
+      "community": 65,
       "norm_label": "bound()"
     },
     {
@@ -7920,7 +7920,7 @@
       "source_location": "L86",
       "_origin": "ast",
       "id": "packages_kernel_client_src_kernelclient_digest",
-      "community": 50,
+      "community": 65,
       "norm_label": "digest()"
     },
     {
@@ -7930,7 +7930,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_kernel_client_src_worktreeclient",
-      "community": 50,
+      "community": 54,
       "norm_label": "worktreeclient.ts"
     },
     {
@@ -7940,7 +7940,7 @@
       "source_location": "L3",
       "_origin": "ast",
       "id": "packages_kernel_client_src_worktreeclient_worktreeapplyrequest",
-      "community": 50,
+      "community": 54,
       "norm_label": "worktreeapplyrequest"
     },
     {
@@ -7950,7 +7950,7 @@
       "source_location": "L9",
       "_origin": "ast",
       "id": "packages_kernel_client_src_worktreeclient_buildworktreebranch",
-      "community": 50,
+      "community": 54,
       "norm_label": "buildworktreebranch()"
     },
     {
@@ -7960,7 +7960,7 @@
       "source_location": "L13",
       "_origin": "ast",
       "id": "packages_kernel_client_src_worktreeclient_plannedworktree",
-      "community": 50,
+      "community": 54,
       "norm_label": "plannedworktree"
     },
     {
@@ -7970,7 +7970,7 @@
       "source_location": "L19",
       "_origin": "ast",
       "id": "packages_kernel_client_src_worktreeclient_worktreemanifest",
-      "community": 50,
+      "community": 54,
       "norm_label": "worktreemanifest"
     },
     {
@@ -7980,7 +7980,7 @@
       "source_location": "L25",
       "_origin": "ast",
       "id": "packages_kernel_client_src_worktreeclient_planworktree",
-      "community": 50,
+      "community": 54,
       "norm_label": "planworktree()"
     },
     {
@@ -7990,7 +7990,7 @@
       "source_location": "L38",
       "_origin": "ast",
       "id": "packages_kernel_client_src_worktreeclient_buildworktreemanifest",
-      "community": 50,
+      "community": 54,
       "norm_label": "buildworktreemanifest()"
     },
     {
@@ -8000,7 +8000,7 @@
       "source_location": "L42",
       "_origin": "ast",
       "id": "packages_kernel_client_src_worktreeclient_applyguardinput",
-      "community": 50,
+      "community": 54,
       "norm_label": "applyguardinput"
     },
     {
@@ -8010,7 +8010,7 @@
       "source_location": "L49",
       "_origin": "ast",
       "id": "packages_kernel_client_src_worktreeclient_applyguard",
-      "community": 50,
+      "community": 54,
       "norm_label": "applyguard"
     },
     {
@@ -8020,7 +8020,7 @@
       "source_location": "L56",
       "_origin": "ast",
       "id": "packages_kernel_client_src_worktreeclient_buildapplyguard",
-      "community": 50,
+      "community": 54,
       "norm_label": "buildapplyguard()"
     },
     {
@@ -8030,7 +8030,7 @@
       "source_location": "L66",
       "_origin": "ast",
       "id": "packages_kernel_client_src_worktreeclient_validateexplicitapply",
-      "community": 50,
+      "community": 54,
       "norm_label": "validateexplicitapply()"
     },
     {
@@ -8040,7 +8040,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_kernel_client_tests_kernelclient_test",
-      "community": 50,
+      "community": 65,
       "norm_label": "kernelclient.test.ts"
     },
     {
@@ -8050,7 +8050,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_kernel_client_tests_permission_test",
-      "community": 50,
+      "community": 65,
       "norm_label": "permission.test.ts"
     },
     {
@@ -8060,7 +8060,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_kernel_client_tests_worktreeclient_test",
-      "community": 50,
+      "community": 54,
       "norm_label": "worktreeclient.test.ts"
     },
     {
@@ -10910,7 +10910,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_orchestrator_src_applyengine",
-      "community": 50,
+      "community": 65,
       "norm_label": "applyengine.ts"
     },
     {
@@ -10920,7 +10920,7 @@
       "source_location": "L7",
       "_origin": "ast",
       "id": "packages_orchestrator_src_applyengine_applyverifiedcheckpointinput",
-      "community": 50,
+      "community": 65,
       "norm_label": "applyverifiedcheckpointinput"
     },
     {
@@ -10930,7 +10930,7 @@
       "source_location": "L13",
       "_origin": "ast",
       "id": "packages_orchestrator_src_applyengine_applyverifiedcheckpointoutput",
-      "community": 50,
+      "community": 65,
       "norm_label": "applyverifiedcheckpointoutput"
     },
     {
@@ -10940,7 +10940,7 @@
       "source_location": "L19",
       "_origin": "ast",
       "id": "packages_orchestrator_src_applyengine_postapplyverificationsummary",
-      "community": 50,
+      "community": 65,
       "norm_label": "postapplyverificationsummary"
     },
     {
@@ -10950,7 +10950,7 @@
       "source_location": "L34",
       "_origin": "ast",
       "id": "packages_orchestrator_src_applyengine_applyverifiedcheckpoint",
-      "community": 50,
+      "community": 65,
       "norm_label": "applyverifiedcheckpoint()"
     },
     {
@@ -10960,7 +10960,7 @@
       "source_location": "L79",
       "_origin": "ast",
       "id": "packages_orchestrator_src_applyengine_summarizepostapplyverification",
-      "community": 50,
+      "community": 65,
       "norm_label": "summarizepostapplyverification()"
     },
     {
@@ -10970,7 +10970,7 @@
       "source_location": "L102",
       "_origin": "ast",
       "id": "packages_orchestrator_src_applyengine_outputsnippet",
-      "community": 50,
+      "community": 65,
       "norm_label": "outputsnippet()"
     },
     {
@@ -11870,7 +11870,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_orchestrator_src_diffscope",
-      "community": 54,
+      "community": 50,
       "norm_label": "diffscope.ts"
     },
     {
@@ -11880,7 +11880,7 @@
       "source_location": "L4",
       "_origin": "ast",
       "id": "packages_orchestrator_src_diffscope_diffscopeinput",
-      "community": 54,
+      "community": 50,
       "norm_label": "diffscopeinput"
     },
     {
@@ -11900,7 +11900,7 @@
       "source_location": "L18",
       "_origin": "ast",
       "id": "packages_orchestrator_src_diffscope_diffscoperesult",
-      "community": 54,
+      "community": 50,
       "norm_label": "diffscoperesult"
     },
     {
@@ -11910,7 +11910,7 @@
       "source_location": "L40",
       "_origin": "ast",
       "id": "packages_orchestrator_src_diffscope_listactualchangedfiles",
-      "community": 54,
+      "community": 50,
       "norm_label": "listactualchangedfiles()"
     },
     {
@@ -11920,7 +11920,7 @@
       "source_location": "L60",
       "_origin": "ast",
       "id": "packages_orchestrator_src_diffscope_validatediffscope",
-      "community": 54,
+      "community": 50,
       "norm_label": "validatediffscope()"
     },
     {
@@ -11930,7 +11930,7 @@
       "source_location": "L88",
       "_origin": "ast",
       "id": "packages_orchestrator_src_diffscope_failed",
-      "community": 54,
+      "community": 50,
       "norm_label": "failed()"
     },
     {
@@ -11940,7 +11940,7 @@
       "source_location": "L116",
       "_origin": "ast",
       "id": "packages_orchestrator_src_diffscope_matchesany",
-      "community": 54,
+      "community": 50,
       "norm_label": "matchesany()"
     },
     {
@@ -11950,7 +11950,7 @@
       "source_location": "L120",
       "_origin": "ast",
       "id": "packages_orchestrator_src_diffscope_matchesgeneratedoutput",
-      "community": 54,
+      "community": 50,
       "norm_label": "matchesgeneratedoutput()"
     },
     {
@@ -11960,7 +11960,7 @@
       "source_location": "L124",
       "_origin": "ast",
       "id": "packages_orchestrator_src_diffscope_amendmentevidencefor",
-      "community": 54,
+      "community": 50,
       "norm_label": "amendmentevidencefor()"
     },
     {
@@ -11970,7 +11970,7 @@
       "source_location": "L130",
       "_origin": "ast",
       "id": "packages_orchestrator_src_diffscope_matchespattern",
-      "community": 54,
+      "community": 50,
       "norm_label": "matchespattern()"
     },
     {
@@ -11980,7 +11980,7 @@
       "source_location": "L144",
       "_origin": "ast",
       "id": "packages_orchestrator_src_diffscope_globtoregexp",
-      "community": 54,
+      "community": 50,
       "norm_label": "globtoregexp()"
     },
     {
@@ -11990,7 +11990,7 @@
       "source_location": "L152",
       "_origin": "ast",
       "id": "packages_orchestrator_src_diffscope_normalizepath",
-      "community": 54,
+      "community": 50,
       "norm_label": "normalizepath()"
     },
     {
@@ -12430,7 +12430,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_orchestrator_src_generatedoutputs",
-      "community": 54,
+      "community": 50,
       "norm_label": "generatedoutputs.ts"
     },
     {
@@ -12440,7 +12440,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_orchestrator_src_generatedoutputs_expectedgeneratedoutput",
-      "community": 54,
+      "community": 50,
       "norm_label": "expectedgeneratedoutput"
     },
     {
@@ -12450,7 +12450,7 @@
       "source_location": "L7",
       "_origin": "ast",
       "id": "packages_orchestrator_src_generatedoutputs_generatedoutputdetectioninput",
-      "community": 54,
+      "community": 50,
       "norm_label": "generatedoutputdetectioninput"
     },
     {
@@ -12460,7 +12460,7 @@
       "source_location": "L13",
       "_origin": "ast",
       "id": "packages_orchestrator_src_generatedoutputs_generatedoutputdetectionresult",
-      "community": 54,
+      "community": 50,
       "norm_label": "generatedoutputdetectionresult"
     },
     {
@@ -12470,7 +12470,7 @@
       "source_location": "L18",
       "_origin": "ast",
       "id": "packages_orchestrator_src_generatedoutputs_scopegapreport",
-      "community": 54,
+      "community": 50,
       "norm_label": "scopegapreport"
     },
     {
@@ -12480,7 +12480,7 @@
       "source_location": "L28",
       "_origin": "ast",
       "id": "packages_orchestrator_src_generatedoutputs_zod_fixture_output",
-      "community": 54,
+      "community": 50,
       "norm_label": "zod_fixture_output"
     },
     {
@@ -12490,7 +12490,7 @@
       "source_location": "L34",
       "_origin": "ast",
       "id": "packages_orchestrator_src_generatedoutputs_detectgeneratedoutputs",
-      "community": 54,
+      "community": 50,
       "norm_label": "detectgeneratedoutputs()"
     },
     {
@@ -12500,7 +12500,7 @@
       "source_location": "L73",
       "_origin": "ast",
       "id": "packages_orchestrator_src_generatedoutputs_findmissinggeneratedclaims",
-      "community": 54,
+      "community": 50,
       "norm_label": "findmissinggeneratedclaims()"
     },
     {
@@ -12510,7 +12510,7 @@
       "source_location": "L107",
       "_origin": "ast",
       "id": "packages_orchestrator_src_generatedoutputs_coversglob",
-      "community": 54,
+      "community": 50,
       "norm_label": "coversglob()"
     },
     {
@@ -12520,7 +12520,7 @@
       "source_location": "L121",
       "_origin": "ast",
       "id": "packages_orchestrator_src_generatedoutputs_normalizepath",
-      "community": 54,
+      "community": 50,
       "norm_label": "normalizepath()"
     },
     {
@@ -12890,7 +12890,7 @@
       "source_location": "L33",
       "_origin": "ast",
       "id": "packages_orchestrator_src_isolatedstrategy_index_preparedisolatedstrategy",
-      "community": 572,
+      "community": 100,
       "norm_label": "preparedisolatedstrategy"
     },
     {
@@ -12900,7 +12900,7 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "packages_orchestrator_src_isolatedstrategy_index_preparedisolatedstrategy_cleanup",
-      "community": 572,
+      "community": 100,
       "norm_label": ".cleanup()"
     },
     {
@@ -18120,7 +18120,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_orchestrator_src_verification",
-      "community": 50,
+      "community": 65,
       "norm_label": "verification.ts"
     },
     {
@@ -18130,7 +18130,7 @@
       "source_location": "L4",
       "_origin": "ast",
       "id": "packages_orchestrator_src_verification_verificationruninput",
-      "community": 50,
+      "community": 65,
       "norm_label": "verificationruninput"
     },
     {
@@ -18150,7 +18150,7 @@
       "source_location": "L14",
       "_origin": "ast",
       "id": "packages_orchestrator_src_verification_verificationcommandspec",
-      "community": 50,
+      "community": 65,
       "norm_label": "verificationcommandspec"
     },
     {
@@ -18160,7 +18160,7 @@
       "source_location": "L19",
       "_origin": "ast",
       "id": "packages_orchestrator_src_verification_verificationrunoutput",
-      "community": 50,
+      "community": 65,
       "norm_label": "verificationrunoutput"
     },
     {
@@ -18170,7 +18170,7 @@
       "source_location": "L27",
       "_origin": "ast",
       "id": "packages_orchestrator_src_verification_runverificationcommands",
-      "community": 50,
+      "community": 65,
       "norm_label": "runverificationcommands()"
     },
     {
@@ -18180,7 +18180,7 @@
       "source_location": "L58",
       "_origin": "ast",
       "id": "packages_orchestrator_src_verification_normalizeverificationcommandspec",
-      "community": 50,
+      "community": 65,
       "norm_label": "normalizeverificationcommandspec()"
     },
     {
@@ -18190,7 +18190,7 @@
       "source_location": "L63",
       "_origin": "ast",
       "id": "packages_orchestrator_src_verification_verificationresultmatchesexpectation",
-      "community": 50,
+      "community": 65,
       "norm_label": "verificationresultmatchesexpectation()"
     },
     {
@@ -18200,7 +18200,7 @@
       "source_location": "L73",
       "_origin": "ast",
       "id": "packages_orchestrator_src_verification_classifyverificationmismatch",
-      "community": 50,
+      "community": 65,
       "norm_label": "classifyverificationmismatch()"
     },
     {
@@ -18210,7 +18210,7 @@
       "source_location": "L89",
       "_origin": "ast",
       "id": "packages_orchestrator_src_verification_classifyverificationresult",
-      "community": 50,
+      "community": 65,
       "norm_label": "classifyverificationresult()"
     },
     {
@@ -18220,7 +18220,7 @@
       "source_location": "L116",
       "_origin": "ast",
       "id": "packages_orchestrator_src_verification_verificationcommandenv",
-      "community": 50,
+      "community": 65,
       "norm_label": "verificationcommandenv()"
     },
     {
@@ -18230,7 +18230,7 @@
       "source_location": "L125",
       "_origin": "ast",
       "id": "packages_orchestrator_src_verification_firstsignalline",
-      "community": 50,
+      "community": 65,
       "norm_label": "firstsignalline()"
     },
     {
@@ -18240,7 +18240,7 @@
       "source_location": "L129",
       "_origin": "ast",
       "id": "packages_orchestrator_src_verification_firstmatchingline",
-      "community": 50,
+      "community": 65,
       "norm_label": "firstmatchingline()"
     },
     {
@@ -18460,7 +18460,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_orchestrator_src_worktreemanager",
-      "community": 50,
+      "community": 54,
       "norm_label": "worktreemanager.ts"
     },
     {
@@ -18470,7 +18470,7 @@
       "source_location": "L7",
       "_origin": "ast",
       "id": "packages_orchestrator_src_worktreemanager_preparemanagedtaskworktreeinput",
-      "community": 50,
+      "community": 54,
       "norm_label": "preparemanagedtaskworktreeinput"
     },
     {
@@ -18480,7 +18480,7 @@
       "source_location": "L14",
       "_origin": "ast",
       "id": "packages_orchestrator_src_worktreemanager_preparedmanagedtaskworktree",
-      "community": 50,
+      "community": 54,
       "norm_label": "preparedmanagedtaskworktree"
     },
     {
@@ -18490,7 +18490,7 @@
       "source_location": "L19",
       "_origin": "ast",
       "id": "packages_orchestrator_src_worktreemanager_preparemanagedtaskworktree",
-      "community": 50,
+      "community": 54,
       "norm_label": "preparemanagedtaskworktree()"
     },
     {
@@ -18500,7 +18500,7 @@
       "source_location": "L45",
       "_origin": "ast",
       "id": "packages_orchestrator_src_worktreemanager_currentgithead",
-      "community": 50,
+      "community": 54,
       "norm_label": "currentgithead()"
     },
     {
@@ -18510,7 +18510,7 @@
       "source_location": "L54",
       "_origin": "ast",
       "id": "packages_orchestrator_src_worktreemanager_preparetaskworktree",
-      "community": 50,
+      "community": 54,
       "norm_label": "preparetaskworktree()"
     },
     {
@@ -18520,7 +18520,7 @@
       "source_location": "L86",
       "_origin": "ast",
       "id": "packages_orchestrator_src_worktreemanager_isgitworktree",
-      "community": 50,
+      "community": 54,
       "norm_label": "isgitworktree()"
     },
     {
@@ -18530,7 +18530,7 @@
       "source_location": "L95",
       "_origin": "ast",
       "id": "packages_orchestrator_src_worktreemanager_initgitsnapshot",
-      "community": 50,
+      "community": 54,
       "norm_label": "initgitsnapshot()"
     },
     {
@@ -18550,7 +18550,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_orchestrator_tests_applyengine_test",
-      "community": 50,
+      "community": 65,
       "norm_label": "applyengine.test.ts"
     },
     {
@@ -18910,7 +18910,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_orchestrator_tests_diffscope_test",
-      "community": 54,
+      "community": 50,
       "norm_label": "diffscope.test.ts"
     },
     {
@@ -18920,7 +18920,7 @@
       "source_location": "L244",
       "_origin": "ast",
       "id": "packages_orchestrator_tests_diffscope_test_writeleakyproviderscript",
-      "community": 54,
+      "community": 50,
       "norm_label": "writeleakyproviderscript()"
     },
     {
@@ -18930,7 +18930,7 @@
       "source_location": "L264",
       "_origin": "ast",
       "id": "packages_orchestrator_tests_diffscope_test_initsourcecheckout",
-      "community": 54,
+      "community": 50,
       "norm_label": "initsourcecheckout()"
     },
     {
@@ -19010,7 +19010,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_orchestrator_tests_generatedoutputs_test",
-      "community": 54,
+      "community": 50,
       "norm_label": "generatedoutputs.test.ts"
     },
     {
@@ -19970,7 +19970,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_orchestrator_tests_verification_test",
-      "community": 50,
+      "community": 65,
       "norm_label": "verification.test.ts"
     },
     {
@@ -20060,7 +20060,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_orchestrator_tests_worktreemanager_test",
-      "community": 50,
+      "community": 54,
       "norm_label": "worktreemanager.test.ts"
     },
     {
@@ -21030,7 +21030,7 @@
       "source_location": "L64",
       "_origin": "ast",
       "id": "packages_provider_adapters_src_processadapters_normalizeprocessoutput",
-      "community": 20,
+      "community": 548,
       "norm_label": "normalizeprocessoutput()"
     },
     {
@@ -21050,7 +21050,7 @@
       "source_location": "L135",
       "_origin": "ast",
       "id": "packages_provider_adapters_src_processadapters_normalizeworkerstatus",
-      "community": 20,
+      "community": 548,
       "norm_label": "normalizeworkerstatus()"
     },
     {
@@ -21060,7 +21060,7 @@
       "source_location": "L201",
       "_origin": "ast",
       "id": "packages_provider_adapters_src_processadapters_normalizeworkerevidence",
-      "community": 20,
+      "community": 548,
       "norm_label": "normalizeworkerevidence()"
     },
     {
@@ -21070,7 +21070,7 @@
       "source_location": "L212",
       "_origin": "ast",
       "id": "packages_provider_adapters_src_processadapters_normalizefailureclass",
-      "community": 20,
+      "community": 548,
       "norm_label": "normalizefailureclass()"
     },
     {
@@ -21080,7 +21080,7 @@
       "source_location": "L218",
       "_origin": "ast",
       "id": "packages_provider_adapters_src_processadapters_failed",
-      "community": 20,
+      "community": 548,
       "norm_label": "failed()"
     },
     {
@@ -21500,7 +21500,7 @@
       "source_location": "L989",
       "_origin": "ast",
       "id": "packages_provider_adapters_src_processadapters_gatherunsupportedoptionwarnings",
-      "community": 10,
+      "community": 20,
       "norm_label": "gatherunsupportedoptionwarnings()"
     },
     {
@@ -21530,7 +21530,7 @@
       "source_location": "L1031",
       "_origin": "ast",
       "id": "packages_provider_adapters_src_processadapters_parsedtoolcallaccumulator",
-      "community": 20,
+      "community": 548,
       "norm_label": "parsedtoolcallaccumulator"
     },
     {
@@ -21670,7 +21670,7 @@
       "source_location": "L43",
       "_origin": "ast",
       "id": "packages_provider_adapters_src_types_toolcallevidence",
-      "community": 20,
+      "community": 548,
       "norm_label": "toolcallevidence"
     },
     {
@@ -21940,7 +21940,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_provider_adapters_tests_providerusage_test",
-      "community": 20,
+      "community": 548,
       "norm_label": "providerusage.test.ts"
     },
     {
@@ -21950,7 +21950,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_provider_adapters_tests_streamjson_test",
-      "community": 20,
+      "community": 548,
       "norm_label": "streamjson.test.ts"
     },
     {
@@ -21960,7 +21960,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "packages_provider_adapters_tests_streamjson_test_fixturepath",
-      "community": 20,
+      "community": 548,
       "norm_label": "fixturepath"
     },
     {
@@ -21970,7 +21970,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_provider_adapters_tests_tooluseaudit_test",
-      "community": 20,
+      "community": 548,
       "norm_label": "tooluseaudit.test.ts"
     },
     {
@@ -21980,7 +21980,7 @@
       "source_location": "L7",
       "_origin": "ast",
       "id": "packages_provider_adapters_tests_tooluseaudit_test_fixturepath",
-      "community": 20,
+      "community": 548,
       "norm_label": "fixturepath"
     },
     {
@@ -21990,7 +21990,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_provider_adapters_tests_unsupportedoption_test",
-      "community": 10,
+      "community": 20,
       "norm_label": "unsupportedoption.test.ts"
     },
     {
@@ -22000,7 +22000,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "packages_provider_adapters_tests_usageextraction_test",
-      "community": 20,
+      "community": 548,
       "norm_label": "usageextraction.test.ts"
     },
     {
@@ -22010,7 +22010,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "packages_provider_adapters_tests_usageextraction_test_fixturedir",
-      "community": 20,
+      "community": 548,
       "norm_label": "fixturedir"
     },
     {
@@ -22020,7 +22020,7 @@
       "source_location": "L8",
       "_origin": "ast",
       "id": "packages_provider_adapters_tests_usageextraction_test_readfixture",
-      "community": 20,
+      "community": 548,
       "norm_label": "readfixture()"
     },
     {
@@ -46018,7 +46018,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_evals_check_spec_manifest",
-      "community": 250,
+      "community": 372,
       "norm_label": "check_spec_manifest.py"
     },
     {
@@ -46028,7 +46028,7 @@
       "source_location": "L8",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_evals_check_spec_manifest_main",
-      "community": 250,
+      "community": 372,
       "norm_label": "main()"
     },
     {
@@ -48868,7 +48868,7 @@
       "source_location": "L79",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_evals_live_migration_ledger_liverun",
-      "community": 62,
+      "community": 234,
       "norm_label": "liverun"
     },
     {
@@ -49028,7 +49028,7 @@
       "source_location": "L271",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_evals_live_migration_ledger_append_event",
-      "community": 62,
+      "community": 290,
       "norm_label": "append_event()"
     },
     {
@@ -49218,7 +49218,7 @@
       "source_location": "L1068",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_evals_live_migration_ledger_commit_slot",
-      "community": 62,
+      "community": 30,
       "norm_label": "commit_slot()"
     },
     {
@@ -49318,7 +49318,7 @@
       "source_location": "L80",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_evals_live_migration_ledger_rationale_80",
-      "community": 62,
+      "community": 234,
       "norm_label": "stable handle for one immutable live-migration run."
     },
     {
@@ -49348,7 +49348,7 @@
       "source_location": "L276",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_evals_live_migration_ledger_rationale_276",
-      "community": 62,
+      "community": 290,
       "norm_label": "append one fsynced canonical event to the strict hash chain."
     },
     {
@@ -49448,7 +49448,7 @@
       "source_location": "L1074",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_evals_live_migration_ledger_rationale_1074",
-      "community": 62,
+      "community": 30,
       "norm_label": "atomically publish digest-indexed slot evidence, then journal completion."
     },
     {
@@ -50038,7 +50038,7 @@
       "source_location": "L244",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_evals_live_migration_runner_execute_v4_slots",
-      "community": 62,
+      "community": 290,
       "norm_label": "execute_v4_slots()"
     },
     {
@@ -50048,7 +50048,7 @@
       "source_location": "",
       "_origin": "ast",
       "id": "fakeprovider",
-      "community": 62,
+      "community": 290,
       "norm_label": "fakeprovider"
     },
     {
@@ -50468,7 +50468,7 @@
       "source_location": "L250",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_evals_live_migration_runner_rationale_250",
-      "community": 62,
+      "community": 290,
       "norm_label": "execute only pending v4 slots, with deterministic policy outcomes inline."
     },
     {
@@ -52830,7 +52830,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_scripts_cpe_audit_common",
-      "community": 202,
+      "community": 190,
       "norm_label": "cpe_audit_common.py"
     },
     {
@@ -52840,7 +52840,7 @@
       "source_location": "L18",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_scripts_cpe_audit_common_list_strings",
-      "community": 202,
+      "community": 190,
       "norm_label": "list_strings()"
     },
     {
@@ -52850,7 +52850,7 @@
       "source_location": "",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_scripts_cpe_audit_common_py_any",
-      "community": 202,
+      "community": 190,
       "norm_label": "any"
     },
     {
@@ -52860,7 +52860,7 @@
       "source_location": "L24",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_scripts_cpe_audit_common_dependency_list",
-      "community": 202,
+      "community": 190,
       "norm_label": "dependency_list()"
     },
     {
@@ -52870,7 +52870,7 @@
       "source_location": "L31",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_scripts_cpe_audit_common_malformed_scope",
-      "community": 202,
+      "community": 190,
       "norm_label": "malformed_scope()"
     },
     {
@@ -52880,7 +52880,7 @@
       "source_location": "L40",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_scripts_cpe_audit_common_split_scope",
-      "community": 202,
+      "community": 190,
       "norm_label": "split_scope()"
     },
     {
@@ -52890,7 +52890,7 @@
       "source_location": "L47",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_scripts_cpe_audit_common_normalized_scopes",
-      "community": 202,
+      "community": 190,
       "norm_label": "normalized_scopes()"
     },
     {
@@ -52900,7 +52900,7 @@
       "source_location": "L56",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_scripts_cpe_audit_common_write_scope_too_broad",
-      "community": 202,
+      "community": 129,
       "norm_label": "write_scope_too_broad()"
     },
     {
@@ -52910,7 +52910,7 @@
       "source_location": "L60",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_scripts_cpe_audit_common_path_risk_markers",
-      "community": 129,
+      "community": 190,
       "norm_label": "path_risk_markers()"
     },
     {
@@ -52930,7 +52930,7 @@
       "source_location": "L77",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_scripts_cpe_audit_common_small_scope",
-      "community": 202,
+      "community": 190,
       "norm_label": "small_scope()"
     },
     {
@@ -59370,7 +59370,7 @@
       "source_location": "L81",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_scripts_preflight_dispatch_write_scope_format_invalid",
-      "community": 129,
+      "community": 190,
       "norm_label": "write_scope_format_invalid()"
     },
     {
@@ -60320,7 +60320,7 @@
       "source_location": "L81",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_headless_output_schema_properties_blocker",
-      "community": 203,
+      "community": 432,
       "norm_label": "blocker"
     },
     {
@@ -60330,7 +60330,7 @@
       "source_location": "L82",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_headless_output_schema_blocker_type",
-      "community": 203,
+      "community": 432,
       "norm_label": "type"
     },
     {
@@ -60340,7 +60340,7 @@
       "source_location": "L83",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_headless_output_schema_blocker_additionalproperties",
-      "community": 203,
+      "community": 432,
       "norm_label": "additionalproperties"
     },
     {
@@ -60350,7 +60350,7 @@
       "source_location": "L84",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_headless_output_schema_blocker_required",
-      "community": 203,
+      "community": 432,
       "norm_label": "required"
     },
     {
@@ -60450,7 +60450,7 @@
       "source_location": "L101",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_headless_output_schema_properties_evidence_refs",
-      "community": 273,
+      "community": 203,
       "norm_label": "evidence_refs"
     },
     {
@@ -60460,7 +60460,7 @@
       "source_location": "L102",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_headless_output_schema_evidence_refs_type",
-      "community": 273,
+      "community": 203,
       "norm_label": "type"
     },
     {
@@ -60470,7 +60470,7 @@
       "source_location": "L103",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_headless_output_schema_evidence_refs_items",
-      "community": 273,
+      "community": 203,
       "norm_label": "items"
     },
     {
@@ -60520,7 +60520,7 @@
       "source_location": "L111",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_headless_output_schema_failure_decision_properties",
-      "community": 236,
+      "community": 203,
       "norm_label": "properties"
     },
     {
@@ -60530,7 +60530,7 @@
       "source_location": "L116",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_headless_output_schema_properties_decision",
-      "community": 236,
+      "community": 627,
       "norm_label": "decision"
     },
     {
@@ -60540,7 +60540,7 @@
       "source_location": "L117",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_headless_output_schema_decision_type",
-      "community": 236,
+      "community": 627,
       "norm_label": "type"
     },
     {
@@ -60550,7 +60550,7 @@
       "source_location": "L118",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_headless_output_schema_decision_enum",
-      "community": 236,
+      "community": 627,
       "norm_label": "enum"
     },
     {
@@ -60560,7 +60560,7 @@
       "source_location": "L120",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_headless_output_schema_properties_reason",
-      "community": 236,
+      "community": 203,
       "norm_label": "reason"
     },
     {
@@ -60570,7 +60570,7 @@
       "source_location": "L121",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_headless_output_schema_reason_type",
-      "community": 236,
+      "community": 203,
       "norm_label": "type"
     },
     {
@@ -60580,7 +60580,7 @@
       "source_location": "L122",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_headless_output_schema_reason_minlength",
-      "community": 236,
+      "community": 203,
       "norm_label": "minlength"
     },
     {
@@ -60700,7 +60700,7 @@
       "source_location": "L27",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_task_contract_schema_properties_task_id",
-      "community": 690,
+      "community": 419,
       "norm_label": "task_id"
     },
     {
@@ -60710,7 +60710,7 @@
       "source_location": "L27",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_task_contract_schema_task_id_type",
-      "community": 690,
+      "community": 419,
       "norm_label": "type"
     },
     {
@@ -60720,7 +60720,7 @@
       "source_location": "L27",
       "_origin": "ast",
       "id": "skills_kws_codex_plan_executor_templates_task_contract_schema_task_id_minlength",
-      "community": 690,
+      "community": 419,
       "norm_label": "minlength"
     },
     {
@@ -72818,7 +72818,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "docs_superpowers_plans_2026_06_07_executor_instrumentation_integrity_executor_instrumentation_integrity_implementation_plan",
-      "community": 346,
+      "community": 350,
       "norm_label": "executor instrumentation integrity implementation plan"
     },
     {
@@ -72828,7 +72828,7 @@
       "source_location": "L17",
       "_origin": "ast",
       "id": "docs_superpowers_plans_2026_06_07_executor_instrumentation_integrity_file_structure",
-      "community": 346,
+      "community": 350,
       "norm_label": "file structure"
     },
     {
@@ -72838,7 +72838,7 @@
       "source_location": "L38",
       "_origin": "ast",
       "id": "docs_superpowers_plans_2026_06_07_executor_instrumentation_integrity_task_0_capture_regression_fixtures_do_first_no_production_code",
-      "community": 346,
+      "community": 350,
       "norm_label": "task 0: capture regression fixtures (do first; no production code)"
     },
     {
@@ -72848,7 +72848,7 @@
       "source_location": "L77",
       "_origin": "ast",
       "id": "docs_superpowers_plans_2026_06_07_executor_instrumentation_integrity_task_1_honest_cost_auto_waive_on_the_agent_path_c1_gap_1_d001",
-      "community": 346,
+      "community": 350,
       "norm_label": "task 1: honest cost auto-waive on the agent path (c1 \u2014 gap 1, d001)"
     },
     {
@@ -72858,7 +72858,7 @@
       "source_location": "L176",
       "_origin": "ast",
       "id": "docs_superpowers_plans_2026_06_07_executor_instrumentation_integrity_task_2_force_finalization_on_all_tasks_terminal_c2_gap_2_d002",
-      "community": 346,
+      "community": 350,
       "norm_label": "task 2: force finalization on \"all tasks terminal\" (c2 \u2014 gap 2, d002)"
     },
     {
@@ -72868,7 +72868,7 @@
       "source_location": "L275",
       "_origin": "ast",
       "id": "docs_superpowers_plans_2026_06_07_executor_instrumentation_integrity_task_3_timing_value_sanity_timing_inverted_fail_c3_gap_3_d003",
-      "community": 346,
+      "community": 350,
       "norm_label": "task 3: timing value sanity \u2014 `timing_inverted` fail (c3 \u2014 gap 3, d003)"
     },
     {
@@ -72878,7 +72878,7 @@
       "source_location": "L418",
       "_origin": "ast",
       "id": "docs_superpowers_plans_2026_06_07_executor_instrumentation_integrity_task_4_telemetry_coverage_backstop_c4_gap_4_d003",
-      "community": 346,
+      "community": 350,
       "norm_label": "task 4: telemetry coverage backstop (c4 \u2014 gap 4, d003)"
     },
     {
@@ -72888,7 +72888,7 @@
       "source_location": "L611",
       "_origin": "ast",
       "id": "docs_superpowers_plans_2026_06_07_executor_instrumentation_integrity_task_5_task_key_canonicalization_warn_c5_gap_5_d003",
-      "community": 346,
+      "community": 350,
       "norm_label": "task 5: task-key canonicalization warn (c5 \u2014 gap 5, d003)"
     },
     {
@@ -72898,7 +72898,7 @@
       "source_location": "L706",
       "_origin": "ast",
       "id": "docs_superpowers_plans_2026_06_07_executor_instrumentation_integrity_task_6_contract_eval_docs_sync_version_bump_c6",
-      "community": 346,
+      "community": 350,
       "norm_label": "task 6: contract eval + docs sync + version bump (c6)"
     },
     {
@@ -72908,7 +72908,7 @@
       "source_location": "L788",
       "_origin": "ast",
       "id": "docs_superpowers_plans_2026_06_07_executor_instrumentation_integrity_task_7_regression_replay_full_verification_the_real_proof",
-      "community": 346,
+      "community": 350,
       "norm_label": "task 7: regression replay + full verification (the real proof)"
     },
     {
@@ -72918,7 +72918,7 @@
       "source_location": "L856",
       "_origin": "ast",
       "id": "docs_superpowers_plans_2026_06_07_executor_instrumentation_integrity_self_review",
-      "community": 346,
+      "community": 350,
       "norm_label": "self-review"
     },
     {
@@ -83908,7 +83908,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_06_04_executor_finalization_enforcement_design_design_finalization_schema_enforcement_for_kws_claude_multi_agent_executor_v2_26",
-      "community": 350,
+      "community": 346,
       "norm_label": "design: finalization + schema enforcement for kws-claude-multi-agent-executor (v2.26)"
     },
     {
@@ -83918,7 +83918,7 @@
       "source_location": "L7",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_06_04_executor_finalization_enforcement_design_motivation",
-      "community": 350,
+      "community": 346,
       "norm_label": "motivation"
     },
     {
@@ -83928,7 +83928,7 @@
       "source_location": "L37",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_06_04_executor_finalization_enforcement_design_goals",
-      "community": 350,
+      "community": 346,
       "norm_label": "goals"
     },
     {
@@ -83938,7 +83938,7 @@
       "source_location": "L47",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_06_04_executor_finalization_enforcement_design_non_goals",
-      "community": 350,
+      "community": 346,
       "norm_label": "non-goals"
     },
     {
@@ -83948,7 +83948,7 @@
       "source_location": "L55",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_06_04_executor_finalization_enforcement_design_deliverable_a_scripts_validate_state_schema_py_check_only",
-      "community": 350,
+      "community": 346,
       "norm_label": "deliverable a \u2014 `scripts/validate_state_schema.py` (check-only)"
     },
     {
@@ -83958,7 +83958,7 @@
       "source_location": "L79",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_06_04_executor_finalization_enforcement_design_deliverable_b_scripts_finalize_run_py_check_fix",
-      "community": 350,
+      "community": 346,
       "norm_label": "deliverable b \u2014 `scripts/finalize_run.py` (`--check` / `--fix`)"
     },
     {
@@ -83968,7 +83968,7 @@
       "source_location": "L106",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_06_04_executor_finalization_enforcement_design_deliverable_c_wiring_prose_additive",
-      "community": 350,
+      "community": 346,
       "norm_label": "deliverable c \u2014 wiring (prose, additive)"
     },
     {
@@ -83978,7 +83978,7 @@
       "source_location": "L119",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_06_04_executor_finalization_enforcement_design_deliverable_d_tests_eval",
-      "community": 350,
+      "community": 346,
       "norm_label": "deliverable d \u2014 tests + eval"
     },
     {
@@ -83988,7 +83988,7 @@
       "source_location": "L134",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_06_04_executor_finalization_enforcement_design_deliverable_e_docs_experiment_record",
-      "community": 350,
+      "community": 346,
       "norm_label": "deliverable e \u2014 docs / experiment record"
     },
     {
@@ -83998,7 +83998,7 @@
       "source_location": "L143",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_06_04_executor_finalization_enforcement_design_data_flow",
-      "community": 350,
+      "community": 346,
       "norm_label": "data flow"
     },
     {
@@ -84008,7 +84008,7 @@
       "source_location": "L157",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_06_04_executor_finalization_enforcement_design_remaining_risks",
-      "community": 350,
+      "community": 346,
       "norm_label": "remaining risks"
     },
     {
@@ -89385,7 +89385,7 @@
       "label": "5. Non-Goals",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L159",
+      "source_location": "L160",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_5_non_goals",
       "community": 341,
@@ -89395,7 +89395,7 @@
       "label": "6. Umbrella Architecture",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L173",
+      "source_location": "L174",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_6_umbrella_architecture",
       "community": 341,
@@ -89405,7 +89405,7 @@
       "label": "7. DocumentSet And PlanGraph",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L198",
+      "source_location": "L199",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_documentset_and_plangraph",
       "community": 370,
@@ -89415,7 +89415,7 @@
       "label": "7.1 Accepted input shapes",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L200",
+      "source_location": "L201",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_1_accepted_input_shapes",
       "community": 370,
@@ -89425,7 +89425,7 @@
       "label": "7.2 Document identities",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L213",
+      "source_location": "L214",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_2_document_identities",
       "community": 370,
@@ -89435,7 +89435,7 @@
       "label": "7.3 Program plan authority",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L227",
+      "source_location": "L228",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_3_program_plan_authority",
       "community": 370,
@@ -89445,7 +89445,7 @@
       "label": "7.4 No-program fallback",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L243",
+      "source_location": "L244",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_4_no_program_fallback",
       "community": 370,
@@ -89455,7 +89455,7 @@
       "label": "7.5 PlanGraph contract",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L251",
+      "source_location": "L252",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_5_plangraph_contract",
       "community": 370,
@@ -89465,7 +89465,7 @@
       "label": "7.6 Shared files and ownership",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L277",
+      "source_location": "L278",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_6_shared_files_and_ownership",
       "community": 370,
@@ -89475,37 +89475,37 @@
       "label": "7.7 Invalidation",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L284",
+      "source_location": "L285",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_7_invalidation",
       "community": 370,
       "norm_label": "7.7 invalidation"
     },
     {
-      "label": "8. Plan 1 - Release Trust And Residual-Risk Closure",
+      "label": "8. Plan 1 - Release Trust Foundation And Closure Machinery",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L301",
+      "source_location": "L302",
       "_origin": "ast",
-      "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_and_residual_risk_closure",
+      "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_foundation_and_closure_machinery",
       "community": 482,
-      "norm_label": "8. plan 1 - release trust and residual-risk closure"
+      "norm_label": "8. plan 1 - release trust foundation and closure machinery"
     },
     {
-      "label": "8.1 Correct execution order",
+      "label": "8.1 Correct program execution order",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L303",
+      "source_location": "L304",
       "_origin": "ast",
-      "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_1_correct_execution_order",
+      "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_1_correct_program_execution_order",
       "community": 482,
-      "norm_label": "8.1 correct execution order"
+      "norm_label": "8.1 correct program execution order"
     },
     {
       "label": "8.2 GitObjectSource",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L317",
+      "source_location": "L324",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_2_gitobjectsource",
       "community": 482,
@@ -89515,47 +89515,47 @@
       "label": "8.3 ReleaseClosureTransaction",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L340",
+      "source_location": "L347",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_3_releaseclosuretransaction",
       "community": 482,
       "norm_label": "8.3 releaseclosuretransaction"
     },
     {
-      "label": "8.4 Four-lane integration review",
+      "label": "8.4 Four-lane integration review contract",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L358",
+      "source_location": "L365",
       "_origin": "ast",
-      "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_4_four_lane_integration_review",
+      "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_4_four_lane_integration_review_contract",
       "community": 482,
-      "norm_label": "8.4 four-lane integration review"
+      "norm_label": "8.4 four-lane integration review contract"
     },
     {
-      "label": "8.5 Staged live proof",
+      "label": "8.5 Program Final Gate staged live proof",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L382",
+      "source_location": "L392",
       "_origin": "ast",
-      "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_5_staged_live_proof",
+      "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_5_program_final_gate_staged_live_proof",
       "community": 482,
-      "norm_label": "8.5 staged live proof"
+      "norm_label": "8.5 program final gate staged live proof"
     },
     {
-      "label": "8.6 Metadata-only closeout",
+      "label": "8.6 Program Final Gate metadata-only closeout",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L398",
+      "source_location": "L409",
       "_origin": "ast",
-      "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_6_metadata_only_closeout",
+      "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_6_program_final_gate_metadata_only_closeout",
       "community": 482,
-      "norm_label": "8.6 metadata-only closeout"
+      "norm_label": "8.6 program final gate metadata-only closeout"
     },
     {
       "label": "9. Plan 2 - Runtime, Validation, Test, And Multi-Plan Simplification",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L412",
+      "source_location": "L423",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_plan_2_runtime_validation_test_and_multi_plan_simplification",
       "community": 388,
@@ -89565,7 +89565,7 @@
       "label": "9.1 Clean-cut runtime",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L414",
+      "source_location": "L425",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_1_clean_cut_runtime",
       "community": 388,
@@ -89575,7 +89575,7 @@
       "label": "9.2 TransitionKernel",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L428",
+      "source_location": "L439",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_2_transitionkernel",
       "community": 388,
@@ -89585,7 +89585,7 @@
       "label": "9.3 PhaseExecutor",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L440",
+      "source_location": "L451",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_3_phaseexecutor",
       "community": 388,
@@ -89595,7 +89595,7 @@
       "label": "9.4 EvidenceStore And EvidenceResolver",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L456",
+      "source_location": "L467",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_4_evidencestore_and_evidenceresolver",
       "community": 388,
@@ -89605,7 +89605,7 @@
       "label": "9.5 Canonical validation",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L464",
+      "source_location": "L475",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_5_canonical_validation",
       "community": 388,
@@ -89615,7 +89615,7 @@
       "label": "9.6 Quality test decomposition",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L479",
+      "source_location": "L490",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_6_quality_test_decomposition",
       "community": 388,
@@ -89625,7 +89625,7 @@
       "label": "9.7 Crash coverage",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L494",
+      "source_location": "L505",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_7_crash_coverage",
       "community": 388,
@@ -89635,7 +89635,7 @@
       "label": "10. Plan 3 - Quality-Preserving Deduplication And Measurement",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L507",
+      "source_location": "L518",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_plan_3_quality_preserving_deduplication_and_measurement",
       "community": 450,
@@ -89645,7 +89645,7 @@
       "label": "10.1 Review responsibilities",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L509",
+      "source_location": "L520",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_1_review_responsibilities",
       "community": 450,
@@ -89655,7 +89655,7 @@
       "label": "10.2 VerificationPlanner",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L526",
+      "source_location": "L537",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_2_verificationplanner",
       "community": 450,
@@ -89665,7 +89665,7 @@
       "label": "10.3 Verification ladder",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L545",
+      "source_location": "L556",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_3_verification_ladder",
       "community": 450,
@@ -89675,7 +89675,7 @@
       "label": "10.4 Model-call policy",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L559",
+      "source_location": "L570",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_4_model_call_policy",
       "community": 450,
@@ -89685,7 +89685,7 @@
       "label": "10.5 Persistence without scope budgets",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L575",
+      "source_location": "L586",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_5_persistence_without_scope_budgets",
       "community": 450,
@@ -89695,7 +89695,7 @@
       "label": "10.6 Measurement",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L595",
+      "source_location": "L606",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_6_measurement",
       "community": 450,
@@ -89705,7 +89705,7 @@
       "label": "11. Hard Quality Gates",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L621",
+      "source_location": "L632",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_11_hard_quality_gates",
       "community": 341,
@@ -89715,7 +89715,7 @@
       "label": "12. Error And Recovery Policy",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L640",
+      "source_location": "L651",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_12_error_and_recovery_policy",
       "community": 341,
@@ -89725,7 +89725,7 @@
       "label": "13. Verification Matrix",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L662",
+      "source_location": "L673",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_verification_matrix",
       "community": 519,
@@ -89735,7 +89735,7 @@
       "label": "13.1 Document and graph compilation",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L664",
+      "source_location": "L675",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_1_document_and_graph_compilation",
       "community": 519,
@@ -89745,7 +89745,7 @@
       "label": "13.2 Runtime and lifecycle",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L677",
+      "source_location": "L688",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_2_runtime_and_lifecycle",
       "community": 519,
@@ -89755,7 +89755,7 @@
       "label": "13.3 Review and verification",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L687",
+      "source_location": "L698",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_3_review_and_verification",
       "community": 519,
@@ -89765,7 +89765,7 @@
       "label": "13.4 Release closure",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L698",
+      "source_location": "L709",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_4_release_closure",
       "community": 519,
@@ -89775,7 +89775,7 @@
       "label": "13.5 Quality and efficiency comparison",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L709",
+      "source_location": "L720",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_5_quality_and_efficiency_comparison",
       "community": 519,
@@ -89785,7 +89785,7 @@
       "label": "14. Documentation And Artifact Shape",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L719",
+      "source_location": "L730",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_14_documentation_and_artifact_shape",
       "community": 341,
@@ -89795,7 +89795,7 @@
       "label": "15. Completion Criteria",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L740",
+      "source_location": "L753",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_15_completion_criteria",
       "community": 341,
@@ -89805,7 +89805,7 @@
       "label": "16. Residual Risks",
       "file_type": "document",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L761",
+      "source_location": "L775",
       "_origin": "ast",
       "id": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_16_residual_risks",
       "community": 341,
@@ -94668,7 +94668,7 @@
       "source_location": "L172",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_5_validation_governs_task_4_high_risk",
-      "community": 261,
+      "community": 611,
       "norm_label": "\u00a75 validation (governs task 4 \u2014 high risk)"
     },
     {
@@ -94678,7 +94678,7 @@
       "source_location": "L178",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_validationerror_exception",
-      "community": 261,
+      "community": 611,
       "norm_label": "`validationerror(exception)`"
     },
     {
@@ -94688,7 +94688,7 @@
       "source_location": "L182",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_validate_registry_flagregistry_parsed_dict_str_object_dict_str_object",
-      "community": 261,
+      "community": 611,
       "norm_label": "`validate(registry: flagregistry, parsed: dict[str, object]) -> dict[str, object]`"
     },
     {
@@ -94698,7 +94698,7 @@
       "source_location": "L192",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_acceptance_for_task_4",
-      "community": 261,
+      "community": 611,
       "norm_label": "acceptance for task 4"
     },
     {
@@ -94708,7 +94708,7 @@
       "source_location": "L207",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_6_cli_integration_governs_task_5_high_risk",
-      "community": 693,
+      "community": 261,
       "norm_label": "\u00a76 cli integration (governs task 5 \u2014 high risk)"
     },
     {
@@ -94718,7 +94718,7 @@
       "source_location": "L213",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_init_py_re_exports_added_in_this_task",
-      "community": 693,
+      "community": 261,
       "norm_label": "`__init__.py` re-exports (added in this task)"
     },
     {
@@ -94728,7 +94728,7 @@
       "source_location": "L225",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_cli_in_src_flagset_cli_py",
-      "community": 693,
+      "community": 261,
       "norm_label": "`cli` (in `src/flagset/cli.py`)"
     },
     {
@@ -94738,7 +94738,7 @@
       "source_location": "L254",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_12_implementer_opus_vs_sonnet_bench_spec_acceptance_for_task_5",
-      "community": 693,
+      "community": 261,
       "norm_label": "acceptance for task 5"
     },
     {
@@ -94968,7 +94968,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_readme",
-      "community": 85,
+      "community": 16,
       "norm_label": "readme.md"
     },
     {
@@ -94978,7 +94978,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_readme_v2_13_natural_language_args_multi_plan_auto_chain",
-      "community": 85,
+      "community": 600,
       "norm_label": "v2.13 \u2014 natural-language args + multi-plan auto-chain"
     },
     {
@@ -94988,7 +94988,7 @@
       "source_location": "L7",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_readme_goal",
-      "community": 85,
+      "community": 600,
       "norm_label": "goal"
     },
     {
@@ -94998,7 +94998,7 @@
       "source_location": "L15",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_readme_hypothesis",
-      "community": 85,
+      "community": 600,
       "norm_label": "hypothesis"
     },
     {
@@ -95008,7 +95008,7 @@
       "source_location": "L19",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_readme_status_quick_links",
-      "community": 85,
+      "community": 600,
       "norm_label": "status / quick links"
     },
     {
@@ -95018,7 +95018,7 @@
       "source_location": "L25",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_readme_decisions_index",
-      "community": 85,
+      "community": 600,
       "norm_label": "decisions index"
     },
     {
@@ -95028,7 +95028,7 @@
       "source_location": "L30",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_readme_findings_index",
-      "community": 85,
+      "community": 600,
       "norm_label": "findings index"
     },
     {
@@ -95038,7 +95038,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_decisions_d001_nl_lexicon_scope",
-      "community": 85,
+      "community": 16,
       "norm_label": "d001-nl-lexicon-scope.md"
     },
     {
@@ -95048,7 +95048,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_decisions_d001_nl_lexicon_scope_d001_natural_language_lexicon_start_small_additive_only",
-      "community": 85,
+      "community": 16,
       "norm_label": "d001 \u2014 natural-language lexicon: start small, additive only"
     },
     {
@@ -95058,7 +95058,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_decisions_d001_nl_lexicon_scope_context",
-      "community": 85,
+      "community": 16,
       "norm_label": "context"
     },
     {
@@ -95068,7 +95068,7 @@
       "source_location": "L14",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_decisions_d001_nl_lexicon_scope_decision",
-      "community": 85,
+      "community": 16,
       "norm_label": "decision"
     },
     {
@@ -95078,7 +95078,7 @@
       "source_location": "L29",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_decisions_d001_nl_lexicon_scope_consequences",
-      "community": 85,
+      "community": 16,
       "norm_label": "consequences"
     },
     {
@@ -95088,7 +95088,7 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_decisions_d001_nl_lexicon_scope_alternatives_considered",
-      "community": 85,
+      "community": 16,
       "norm_label": "alternatives considered"
     },
     {
@@ -95098,7 +95098,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_decisions_d002_plan_chain_schema",
-      "community": 85,
+      "community": 16,
       "norm_label": "d002-plan-chain-schema.md"
     },
     {
@@ -95108,7 +95108,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_decisions_d002_plan_chain_schema_d002_single_plan_keeps_v2_12_schema_multi_plan_introduces_plan_chain",
-      "community": 85,
+      "community": 16,
       "norm_label": "d002 \u2014 single-plan keeps v2.12 schema; multi-plan introduces `plan_chain[]`"
     },
     {
@@ -95118,7 +95118,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_decisions_d002_plan_chain_schema_context",
-      "community": 85,
+      "community": 16,
       "norm_label": "context"
     },
     {
@@ -95128,7 +95128,7 @@
       "source_location": "L18",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_decisions_d002_plan_chain_schema_decision",
-      "community": 85,
+      "community": 16,
       "norm_label": "decision"
     },
     {
@@ -95138,7 +95138,7 @@
       "source_location": "L36",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_decisions_d002_plan_chain_schema_consequences",
-      "community": 85,
+      "community": 16,
       "norm_label": "consequences"
     },
     {
@@ -95148,7 +95148,7 @@
       "source_location": "L42",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_13_natural_multi_plan_decisions_d002_plan_chain_schema_alternatives_considered",
-      "community": 85,
+      "community": 16,
       "norm_label": "alternatives considered"
     },
     {
@@ -98968,7 +98968,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_22_dispatch_optimization_decisions_d001_haiku_plan_reviewer",
-      "community": 483,
+      "community": 16,
       "norm_label": "d001-haiku-plan-reviewer.md"
     },
     {
@@ -98978,7 +98978,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_22_dispatch_optimization_decisions_d001_haiku_plan_reviewer_d001_plan_reviewer_migrates_to_haiku_4_5",
-      "community": 483,
+      "community": 16,
       "norm_label": "d001 \u2014 plan reviewer migrates to haiku 4.5"
     },
     {
@@ -98988,7 +98988,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_22_dispatch_optimization_decisions_d001_haiku_plan_reviewer_context",
-      "community": 483,
+      "community": 16,
       "norm_label": "context"
     },
     {
@@ -98998,7 +98998,7 @@
       "source_location": "L14",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_22_dispatch_optimization_decisions_d001_haiku_plan_reviewer_options_considered",
-      "community": 483,
+      "community": 16,
       "norm_label": "options considered"
     },
     {
@@ -99008,7 +99008,7 @@
       "source_location": "L21",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_22_dispatch_optimization_decisions_d001_haiku_plan_reviewer_analysis",
-      "community": 483,
+      "community": 16,
       "norm_label": "analysis"
     },
     {
@@ -99018,7 +99018,7 @@
       "source_location": "L29",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_22_dispatch_optimization_decisions_d001_haiku_plan_reviewer_decision",
-      "community": 483,
+      "community": 16,
       "norm_label": "decision"
     },
     {
@@ -99028,7 +99028,7 @@
       "source_location": "L36",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_22_dispatch_optimization_decisions_d001_haiku_plan_reviewer_consequences",
-      "community": 483,
+      "community": 16,
       "norm_label": "consequences"
     },
     {
@@ -103378,7 +103378,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d001_mast_coverage_matrix",
-      "community": 411,
+      "community": 32,
       "norm_label": "d001-mast-coverage-matrix.md"
     },
     {
@@ -103388,7 +103388,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d001_mast_coverage_matrix_d001_mast_coverage_matrix_as_the_authoritative_eval_coverage_doc_j1",
-      "community": 411,
+      "community": 32,
       "norm_label": "d001 \u2014 mast coverage matrix as the authoritative eval-coverage doc (j1)"
     },
     {
@@ -103398,7 +103398,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d001_mast_coverage_matrix_context",
-      "community": 411,
+      "community": 32,
       "norm_label": "context"
     },
     {
@@ -103408,7 +103408,7 @@
       "source_location": "L15",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d001_mast_coverage_matrix_options_considered",
-      "community": 411,
+      "community": 32,
       "norm_label": "options considered"
     },
     {
@@ -103418,7 +103418,7 @@
       "source_location": "L26",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d001_mast_coverage_matrix_analysis",
-      "community": 411,
+      "community": 32,
       "norm_label": "analysis"
     },
     {
@@ -103428,7 +103428,7 @@
       "source_location": "L37",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d001_mast_coverage_matrix_decision",
-      "community": 411,
+      "community": 32,
       "norm_label": "decision"
     },
     {
@@ -103438,7 +103438,7 @@
       "source_location": "L46",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d001_mast_coverage_matrix_consequences",
-      "community": 411,
+      "community": 32,
       "norm_label": "consequences"
     },
     {
@@ -103448,7 +103448,7 @@
       "source_location": "L53",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d001_mast_coverage_matrix_open_questions",
-      "community": 411,
+      "community": 32,
       "norm_label": "open questions"
     },
     {
@@ -103458,7 +103458,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design",
-      "community": 32,
+      "community": 411,
       "norm_label": "d002-probe-fixture-design.md"
     },
     {
@@ -103468,7 +103468,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design_d002_probe_fixture_design_harness_contract_adaptation_detect_then_fix_j2_j3",
-      "community": 32,
+      "community": 411,
       "norm_label": "d002 \u2014 probe-fixture design: harness-contract adaptation + detect-then-fix (j2/j3)"
     },
     {
@@ -103478,7 +103478,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design_context",
-      "community": 32,
+      "community": 411,
       "norm_label": "context"
     },
     {
@@ -103488,7 +103488,7 @@
       "source_location": "L16",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design_options_considered",
-      "community": 32,
+      "community": 411,
       "norm_label": "options considered"
     },
     {
@@ -103498,7 +103498,7 @@
       "source_location": "L24",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design_analysis",
-      "community": 32,
+      "community": 411,
       "norm_label": "analysis"
     },
     {
@@ -103508,7 +103508,7 @@
       "source_location": "L54",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design_decision",
-      "community": 32,
+      "community": 411,
       "norm_label": "decision"
     },
     {
@@ -103518,7 +103518,7 @@
       "source_location": "L61",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design_consequences",
-      "community": 32,
+      "community": 411,
       "norm_label": "consequences"
     },
     {
@@ -103528,7 +103528,7 @@
       "source_location": "L70",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d002_probe_fixture_design_open_questions",
-      "community": 32,
+      "community": 411,
       "norm_label": "open questions"
     },
     {
@@ -103698,7 +103698,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred",
-      "community": 476,
+      "community": 32,
       "norm_label": "d005-haiku-low-tier-deferred.md"
     },
     {
@@ -103708,7 +103708,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred_d005_j6_haiku_low_tier_a_b_harness_deferred_conditional_on_j5_met_p1",
-      "community": 476,
+      "community": 32,
       "norm_label": "d005 \u2014 j6 haiku low-tier a/b harness deferred, conditional on j5=met (p1)"
     },
     {
@@ -103718,7 +103718,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred_context",
-      "community": 476,
+      "community": 32,
       "norm_label": "context"
     },
     {
@@ -103728,7 +103728,7 @@
       "source_location": "L13",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred_options_considered",
-      "community": 476,
+      "community": 32,
       "norm_label": "options considered"
     },
     {
@@ -103738,7 +103738,7 @@
       "source_location": "L24",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred_analysis",
-      "community": 476,
+      "community": 32,
       "norm_label": "analysis"
     },
     {
@@ -103748,7 +103748,7 @@
       "source_location": "L33",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred_decision",
-      "community": 476,
+      "community": 32,
       "norm_label": "decision"
     },
     {
@@ -103758,7 +103758,7 @@
       "source_location": "L40",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred_consequences",
-      "community": 476,
+      "community": 32,
       "norm_label": "consequences"
     },
     {
@@ -103768,7 +103768,7 @@
       "source_location": "L45",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d005_haiku_low_tier_deferred_open_questions",
-      "community": 476,
+      "community": 32,
       "norm_label": "open questions"
     },
     {
@@ -103778,7 +103778,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d006_reflexion_retry_reflection",
-      "community": 32,
+      "community": 476,
       "norm_label": "d006-reflexion-retry-reflection.md"
     },
     {
@@ -103788,7 +103788,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d006_reflexion_retry_reflection_d006_j7_reflexion_structured_retry_reflection_design_fixture_eval_gated_p2",
-      "community": 32,
+      "community": 476,
       "norm_label": "d006 \u2014 j7 reflexion structured retry reflection: design, fixture-eval gated (p2)"
     },
     {
@@ -103798,7 +103798,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d006_reflexion_retry_reflection_context",
-      "community": 32,
+      "community": 476,
       "norm_label": "context"
     },
     {
@@ -103808,7 +103808,7 @@
       "source_location": "L15",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d006_reflexion_retry_reflection_options_considered",
-      "community": 32,
+      "community": 476,
       "norm_label": "options considered"
     },
     {
@@ -103818,7 +103818,7 @@
       "source_location": "L26",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d006_reflexion_retry_reflection_analysis",
-      "community": 32,
+      "community": 476,
       "norm_label": "analysis"
     },
     {
@@ -103828,7 +103828,7 @@
       "source_location": "L36",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d006_reflexion_retry_reflection_decision",
-      "community": 32,
+      "community": 476,
       "norm_label": "decision"
     },
     {
@@ -103838,7 +103838,7 @@
       "source_location": "L43",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d006_reflexion_retry_reflection_consequences",
-      "community": 32,
+      "community": 476,
       "norm_label": "consequences"
     },
     {
@@ -103848,7 +103848,7 @@
       "source_location": "L49",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_30_failure_taxonomy_coverage_decisions_d006_reflexion_retry_reflection_open_questions",
-      "community": 32,
+      "community": 476,
       "norm_label": "open questions"
     },
     {
@@ -104508,7 +104508,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_readme_v2_7_quality_mode_experiment",
-      "community": 16,
+      "community": 572,
       "norm_label": "v2.7 quality mode experiment"
     },
     {
@@ -104518,7 +104518,7 @@
       "source_location": "L7",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_readme_outcome",
-      "community": 16,
+      "community": 572,
       "norm_label": "outcome"
     },
     {
@@ -104528,7 +104528,7 @@
       "source_location": "L17",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_readme_goal",
-      "community": 16,
+      "community": 572,
       "norm_label": "goal"
     },
     {
@@ -104538,7 +104538,7 @@
       "source_location": "L27",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_readme_hypothesis",
-      "community": 16,
+      "community": 572,
       "norm_label": "hypothesis"
     },
     {
@@ -104548,7 +104548,7 @@
       "source_location": "L33",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_readme_status_quick_links",
-      "community": 16,
+      "community": 572,
       "norm_label": "status / quick links"
     },
     {
@@ -104558,7 +104558,7 @@
       "source_location": "L39",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_readme_final_phase_status",
-      "community": 16,
+      "community": 572,
       "norm_label": "final phase status"
     },
     {
@@ -104568,7 +104568,7 @@
       "source_location": "L52",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_readme_decisions_index",
-      "community": 16,
+      "community": 572,
       "norm_label": "decisions index"
     },
     {
@@ -104818,7 +104818,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d004_pilot_scope_d004_pilot_scope_balanced_vs_quality_plus_only",
-      "community": 16,
+      "community": 601,
       "norm_label": "d004 \u2014 pilot scope: balanced vs quality_plus only"
     },
     {
@@ -104828,7 +104828,7 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d004_pilot_scope_context",
-      "community": 16,
+      "community": 601,
       "norm_label": "context"
     },
     {
@@ -104838,7 +104838,7 @@
       "source_location": "L16",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d004_pilot_scope_options",
-      "community": 16,
+      "community": 601,
       "norm_label": "options"
     },
     {
@@ -104848,7 +104848,7 @@
       "source_location": "L29",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d004_pilot_scope_decision",
-      "community": 16,
+      "community": 601,
       "norm_label": "decision"
     },
     {
@@ -104858,7 +104858,7 @@
       "source_location": "L33",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d004_pilot_scope_rationale",
-      "community": 16,
+      "community": 601,
       "norm_label": "rationale"
     },
     {
@@ -104868,7 +104868,7 @@
       "source_location": "L48",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_docs_experiments_v2_7_quality_mode_decisions_d004_pilot_scope_consequences",
-      "community": 16,
+      "community": 601,
       "norm_label": "consequences"
     },
     {
@@ -111678,7 +111678,7 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_evals_readme_kws_claude_multi_agent_executor_evaluation_suite_p6",
-      "community": 109,
+      "community": 608,
       "norm_label": "kws-claude-multi-agent-executor \u2014 evaluation suite (p6)"
     },
     {
@@ -111688,7 +111688,7 @@
       "source_location": "L5",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_evals_readme_layout",
-      "community": 109,
+      "community": 608,
       "norm_label": "layout"
     },
     {
@@ -111698,7 +111698,7 @@
       "source_location": "L33",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_evals_readme_running",
-      "community": 109,
+      "community": 608,
       "norm_label": "running"
     },
     {
@@ -111708,7 +111708,7 @@
       "source_location": "L48",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_evals_readme_fixture_format",
-      "community": 109,
+      "community": 608,
       "norm_label": "fixture format"
     },
     {
@@ -111718,7 +111718,7 @@
       "source_location": "L61",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_evals_readme_judge",
-      "community": 109,
+      "community": 608,
       "norm_label": "judge"
     },
     {
@@ -111728,7 +111728,7 @@
       "source_location": "L74",
       "_origin": "ast",
       "id": "skills_kws_claude_multi_agent_executor_evals_readme_caveats",
-      "community": 109,
+      "community": 608,
       "norm_label": "caveats"
     },
     {
@@ -128606,127 +128606,6 @@
       "weight": 1.0,
       "source": "packages_contracts_src_types",
       "target": "packages_contracts_src_types_workerresult",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-codex-plan-executor/evals/check_headless_result.py",
-      "source_location": "L14",
-      "weight": 1.0,
-      "source": "skills_kws_codex_plan_executor_evals_check_headless_result",
-      "target": "packages_contracts_src_types",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-codex-plan-executor/evals/check_live_model_migration.py",
-      "source_location": "L12",
-      "weight": 1.0,
-      "source": "skills_kws_codex_plan_executor_evals_check_live_model_migration",
-      "target": "packages_contracts_src_types",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-codex-plan-executor/evals/check_preflight_dispatch.py",
-      "source_location": "L10",
-      "weight": 1.0,
-      "source": "skills_kws_codex_plan_executor_evals_check_preflight_dispatch",
-      "target": "packages_contracts_src_types",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-codex-plan-executor/evals/check_recovery_policy.py",
-      "source_location": "L9",
-      "weight": 1.0,
-      "source": "skills_kws_codex_plan_executor_evals_check_recovery_policy",
-      "target": "packages_contracts_src_types",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-codex-plan-executor/evals/check_repair_runs.py",
-      "source_location": "L9",
-      "weight": 1.0,
-      "source": "skills_kws_codex_plan_executor_evals_check_repair_runs",
-      "target": "packages_contracts_src_types",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-codex-plan-executor/evals/check_scheduler_v4.py",
-      "source_location": "L14",
-      "weight": 1.0,
-      "source": "skills_kws_codex_plan_executor_evals_check_scheduler_v4",
-      "target": "packages_contracts_src_types",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-codex-plan-executor/evals/check_state_reconciliation.py",
-      "source_location": "L9",
-      "weight": 1.0,
-      "source": "skills_kws_codex_plan_executor_evals_check_state_reconciliation",
-      "target": "packages_contracts_src_types",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-codex-plan-executor/evals/check_task_contract_v4.py",
-      "source_location": "L11",
-      "weight": 1.0,
-      "source": "skills_kws_codex_plan_executor_evals_check_task_contract_v4",
-      "target": "packages_contracts_src_types",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-codex-plan-executor/evals/check_task_packet.py",
-      "source_location": "L10",
-      "weight": 1.0,
-      "source": "skills_kws_codex_plan_executor_evals_check_task_packet",
-      "target": "packages_contracts_src_types",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-codex-plan-executor/evals/check_validation_consumer_parity.py",
-      "source_location": "L10",
-      "weight": 1.0,
-      "source": "skills_kws_codex_plan_executor_evals_check_validation_consumer_parity",
-      "target": "packages_contracts_src_types",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-codex-plan-executor/scripts/build_task_packet.py",
-      "source_location": "L11",
-      "weight": 1.0,
-      "source": "skills_kws_codex_plan_executor_scripts_build_task_packet",
-      "target": "packages_contracts_src_types",
       "confidence_score": 1.0
     },
     {
@@ -174019,6 +173898,127 @@
       "confidence_score": 1.0
     },
     {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-codex-plan-executor/evals/check_headless_result.py",
+      "source_location": "L14",
+      "weight": 1.0,
+      "source": "skills_kws_codex_plan_executor_evals_check_headless_result",
+      "target": "packages_provider_adapters_src_types",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-codex-plan-executor/evals/check_live_model_migration.py",
+      "source_location": "L12",
+      "weight": 1.0,
+      "source": "skills_kws_codex_plan_executor_evals_check_live_model_migration",
+      "target": "packages_provider_adapters_src_types",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-codex-plan-executor/evals/check_preflight_dispatch.py",
+      "source_location": "L10",
+      "weight": 1.0,
+      "source": "skills_kws_codex_plan_executor_evals_check_preflight_dispatch",
+      "target": "packages_provider_adapters_src_types",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-codex-plan-executor/evals/check_recovery_policy.py",
+      "source_location": "L9",
+      "weight": 1.0,
+      "source": "skills_kws_codex_plan_executor_evals_check_recovery_policy",
+      "target": "packages_provider_adapters_src_types",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-codex-plan-executor/evals/check_repair_runs.py",
+      "source_location": "L9",
+      "weight": 1.0,
+      "source": "skills_kws_codex_plan_executor_evals_check_repair_runs",
+      "target": "packages_provider_adapters_src_types",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-codex-plan-executor/evals/check_scheduler_v4.py",
+      "source_location": "L14",
+      "weight": 1.0,
+      "source": "skills_kws_codex_plan_executor_evals_check_scheduler_v4",
+      "target": "packages_provider_adapters_src_types",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-codex-plan-executor/evals/check_state_reconciliation.py",
+      "source_location": "L9",
+      "weight": 1.0,
+      "source": "skills_kws_codex_plan_executor_evals_check_state_reconciliation",
+      "target": "packages_provider_adapters_src_types",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-codex-plan-executor/evals/check_task_contract_v4.py",
+      "source_location": "L11",
+      "weight": 1.0,
+      "source": "skills_kws_codex_plan_executor_evals_check_task_contract_v4",
+      "target": "packages_provider_adapters_src_types",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-codex-plan-executor/evals/check_task_packet.py",
+      "source_location": "L10",
+      "weight": 1.0,
+      "source": "skills_kws_codex_plan_executor_evals_check_task_packet",
+      "target": "packages_provider_adapters_src_types",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-codex-plan-executor/evals/check_validation_consumer_parity.py",
+      "source_location": "L10",
+      "weight": 1.0,
+      "source": "skills_kws_codex_plan_executor_evals_check_validation_consumer_parity",
+      "target": "packages_provider_adapters_src_types",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-codex-plan-executor/scripts/build_task_packet.py",
+      "source_location": "L11",
+      "weight": 1.0,
+      "source": "skills_kws_codex_plan_executor_scripts_build_task_packet",
+      "target": "packages_provider_adapters_src_types",
+      "confidence_score": 1.0
+    },
+    {
       "relation": "imports",
       "context": "import",
       "confidence": "EXTRACTED",
@@ -183306,6 +183306,39 @@
       "confidence_score": 1.0
     },
     {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-codex-plan-executor/evals/check_spec_manifest.py",
+      "source_location": "L7",
+      "weight": 1.0,
+      "source": "skills_kws_codex_plan_executor_evals_check_spec_manifest",
+      "target": "skills_kws_claude_multi_agent_executor_scripts_build_spec_manifest",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-codex-plan-executor/scripts/audit_plan_executability.py",
+      "source_location": "L9",
+      "weight": 1.0,
+      "source": "skills_kws_codex_plan_executor_scripts_audit_plan_executability",
+      "target": "skills_kws_claude_multi_agent_executor_scripts_build_spec_manifest",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports_from",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-codex-plan-executor/scripts/cpe_runtime/plan_compiler.py",
+      "source_location": "L12",
+      "weight": 1.0,
+      "source": "skills_kws_codex_plan_executor_scripts_cpe_runtime_plan_compiler",
+      "target": "skills_kws_claude_multi_agent_executor_scripts_build_spec_manifest",
+      "confidence_score": 1.0
+    },
+    {
       "relation": "calls",
       "context": "call",
       "confidence": "EXTRACTED",
@@ -187825,7 +187858,7 @@
       "source_location": "L28",
       "weight": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_scripts_kernel_kernel",
-      "target": "docs_contracts_events",
+      "target": "skills_kws_codex_plan_executor_scripts_cpe_runtime_events",
       "confidence_score": 1.0
     },
     {
@@ -187836,7 +187869,7 @@
       "source_location": "L26",
       "weight": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_scripts_kernel_kernel",
-      "target": "skills_kws_codex_plan_executor_evals_live_migration_ledger",
+      "target": "skills_kws_claude_multi_agent_executor_scripts_kernel_ledger",
       "confidence_score": 1.0
     },
     {
@@ -188315,6 +188348,17 @@
       "source_location": "L1",
       "weight": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_scripts_kernel_ledger_rationale_1",
+      "target": "skills_kws_claude_multi_agent_executor_scripts_kernel_ledger",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-claude-multi-agent-executor/scripts/kernel/test_ledger.py",
+      "source_location": "L19",
+      "weight": 1.0,
+      "source": "skills_kws_claude_multi_agent_executor_scripts_kernel_test_ledger",
       "target": "skills_kws_claude_multi_agent_executor_scripts_kernel_ledger",
       "confidence_score": 1.0
     },
@@ -190474,28 +190518,6 @@
       "confidence_score": 1.0
     },
     {
-      "relation": "imports",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-claude-multi-agent-executor/scripts/kernel/test_recovery.py",
-      "source_location": "L21",
-      "weight": 1.0,
-      "source": "skills_kws_claude_multi_agent_executor_scripts_kernel_test_recovery",
-      "target": "skills_kws_claude_multi_agent_executor_scripts_kernel_recovery",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-claude-multi-agent-executor/scripts/kernel/transitions.py",
-      "source_location": "L42",
-      "weight": 1.0,
-      "source": "skills_kws_claude_multi_agent_executor_scripts_kernel_transitions",
-      "target": "skills_kws_claude_multi_agent_executor_scripts_kernel_recovery",
-      "confidence_score": 1.0
-    },
-    {
       "relation": "rationale_for",
       "confidence": "EXTRACTED",
       "source_file": "skills/kws-claude-multi-agent-executor/scripts/kernel/recovery.py",
@@ -192257,7 +192279,7 @@
       "source_location": "L20",
       "weight": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_scripts_kernel_test_events",
-      "target": "docs_contracts_events",
+      "target": "skills_kws_codex_plan_executor_scripts_cpe_runtime_events",
       "confidence_score": 1.0
     },
     {
@@ -193551,17 +193573,6 @@
       "weight": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_scripts_kernel_test_initcmd_rationale_71",
       "target": "skills_kws_claude_multi_agent_executor_scripts_kernel_test_initcmd_test_mode_detach_preserved",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-claude-multi-agent-executor/scripts/kernel/test_ledger.py",
-      "source_location": "L19",
-      "weight": 1.0,
-      "source": "skills_kws_claude_multi_agent_executor_scripts_kernel_test_ledger",
-      "target": "skills_kws_codex_plan_executor_evals_live_migration_ledger",
       "confidence_score": 1.0
     },
     {
@@ -195044,6 +195055,17 @@
       "confidence_score": 1.0
     },
     {
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-claude-multi-agent-executor/scripts/kernel/test_recovery.py",
+      "source_location": "L21",
+      "weight": 1.0,
+      "source": "skills_kws_claude_multi_agent_executor_scripts_kernel_test_recovery",
+      "target": "docs_operations_recovery",
+      "confidence_score": 1.0
+    },
+    {
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "skills/kws-claude-multi-agent-executor/scripts/kernel/test_recovery.py",
@@ -196326,6 +196348,17 @@
       "weight": 1.0,
       "source": "skills_kws_claude_multi_agent_executor_scripts_kernel_test_validate_test_valid_reviewer_pass",
       "target": "skills_kws_claude_multi_agent_executor_scripts_kernel_test_validate_reviewer_schema",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "imports",
+      "context": "import",
+      "confidence": "EXTRACTED",
+      "source_file": "skills/kws-claude-multi-agent-executor/scripts/kernel/transitions.py",
+      "source_location": "L42",
+      "weight": 1.0,
+      "source": "skills_kws_claude_multi_agent_executor_scripts_kernel_transitions",
+      "target": "docs_operations_recovery",
       "confidence_score": 1.0
     },
     {
@@ -222383,17 +222416,6 @@
       "confidence_score": 1.0
     },
     {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-codex-plan-executor/evals/check_spec_manifest.py",
-      "source_location": "L7",
-      "weight": 1.0,
-      "source": "skills_kws_codex_plan_executor_evals_check_spec_manifest",
-      "target": "skills_kws_codex_plan_executor_scripts_build_spec_manifest",
-      "confidence_score": 1.0
-    },
-    {
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "skills/kws-codex-plan-executor/evals/check_spec_manifest.py",
@@ -239893,17 +239915,6 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "skills/kws-codex-plan-executor/scripts/audit_plan_executability.py",
-      "source_location": "L9",
-      "weight": 1.0,
-      "source": "skills_kws_codex_plan_executor_scripts_audit_plan_executability",
-      "target": "skills_kws_codex_plan_executor_scripts_build_spec_manifest",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-codex-plan-executor/scripts/audit_plan_executability.py",
       "source_location": "L12",
       "weight": 1.0,
       "source": "skills_kws_codex_plan_executor_scripts_audit_plan_executability",
@@ -241695,17 +241706,6 @@
       "weight": 1.0,
       "source": "skills_kws_codex_plan_executor_scripts_build_spec_manifest",
       "target": "skills_kws_codex_plan_executor_scripts_build_spec_manifest_visible_heading_lines",
-      "confidence_score": 1.0
-    },
-    {
-      "relation": "imports_from",
-      "context": "import",
-      "confidence": "EXTRACTED",
-      "source_file": "skills/kws-codex-plan-executor/scripts/cpe_runtime/plan_compiler.py",
-      "source_location": "L12",
-      "weight": 1.0,
-      "source": "skills_kws_codex_plan_executor_scripts_cpe_runtime_plan_compiler",
-      "target": "skills_kws_codex_plan_executor_scripts_build_spec_manifest",
       "confidence_score": 1.0
     },
     {
@@ -297598,7 +297598,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L507",
+      "source_location": "L518",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_cpe_vnext_quality_first_workflow_and_multi_plan_execution_design",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_plan_3_quality_preserving_deduplication_and_measurement",
@@ -297608,7 +297608,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L621",
+      "source_location": "L632",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_cpe_vnext_quality_first_workflow_and_multi_plan_execution_design",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_11_hard_quality_gates",
@@ -297618,7 +297618,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L640",
+      "source_location": "L651",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_cpe_vnext_quality_first_workflow_and_multi_plan_execution_design",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_12_error_and_recovery_policy",
@@ -297628,7 +297628,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L662",
+      "source_location": "L673",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_cpe_vnext_quality_first_workflow_and_multi_plan_execution_design",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_verification_matrix",
@@ -297638,7 +297638,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L719",
+      "source_location": "L730",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_cpe_vnext_quality_first_workflow_and_multi_plan_execution_design",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_14_documentation_and_artifact_shape",
@@ -297648,7 +297648,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L740",
+      "source_location": "L753",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_cpe_vnext_quality_first_workflow_and_multi_plan_execution_design",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_15_completion_criteria",
@@ -297658,7 +297658,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L761",
+      "source_location": "L775",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_cpe_vnext_quality_first_workflow_and_multi_plan_execution_design",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_16_residual_risks",
@@ -297708,7 +297708,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L159",
+      "source_location": "L160",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_cpe_vnext_quality_first_workflow_and_multi_plan_execution_design",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_5_non_goals",
@@ -297718,7 +297718,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L173",
+      "source_location": "L174",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_cpe_vnext_quality_first_workflow_and_multi_plan_execution_design",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_6_umbrella_architecture",
@@ -297728,7 +297728,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L198",
+      "source_location": "L199",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_cpe_vnext_quality_first_workflow_and_multi_plan_execution_design",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_documentset_and_plangraph",
@@ -297738,17 +297738,17 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L301",
+      "source_location": "L302",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_cpe_vnext_quality_first_workflow_and_multi_plan_execution_design",
-      "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_and_residual_risk_closure",
+      "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_foundation_and_closure_machinery",
       "confidence_score": 1.0
     },
     {
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L412",
+      "source_location": "L423",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_cpe_vnext_quality_first_workflow_and_multi_plan_execution_design",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_plan_2_runtime_validation_test_and_multi_plan_simplification",
@@ -297808,7 +297808,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L200",
+      "source_location": "L201",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_documentset_and_plangraph",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_1_accepted_input_shapes",
@@ -297818,7 +297818,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L213",
+      "source_location": "L214",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_documentset_and_plangraph",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_2_document_identities",
@@ -297828,7 +297828,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L227",
+      "source_location": "L228",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_documentset_and_plangraph",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_3_program_plan_authority",
@@ -297838,7 +297838,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L243",
+      "source_location": "L244",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_documentset_and_plangraph",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_4_no_program_fallback",
@@ -297848,7 +297848,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L251",
+      "source_location": "L252",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_documentset_and_plangraph",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_5_plangraph_contract",
@@ -297858,7 +297858,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L277",
+      "source_location": "L278",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_documentset_and_plangraph",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_6_shared_files_and_ownership",
@@ -297868,7 +297868,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L284",
+      "source_location": "L285",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_documentset_and_plangraph",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_7_7_invalidation",
@@ -297878,19 +297878,19 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L303",
+      "source_location": "L304",
       "weight": 1.0,
-      "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_and_residual_risk_closure",
-      "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_1_correct_execution_order",
+      "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_foundation_and_closure_machinery",
+      "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_1_correct_program_execution_order",
       "confidence_score": 1.0
     },
     {
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L317",
+      "source_location": "L324",
       "weight": 1.0,
-      "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_and_residual_risk_closure",
+      "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_foundation_and_closure_machinery",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_2_gitobjectsource",
       "confidence_score": 1.0
     },
@@ -297898,9 +297898,9 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L340",
+      "source_location": "L347",
       "weight": 1.0,
-      "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_and_residual_risk_closure",
+      "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_foundation_and_closure_machinery",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_3_releaseclosuretransaction",
       "confidence_score": 1.0
     },
@@ -297908,37 +297908,37 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L358",
+      "source_location": "L365",
       "weight": 1.0,
-      "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_and_residual_risk_closure",
-      "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_4_four_lane_integration_review",
+      "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_foundation_and_closure_machinery",
+      "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_4_four_lane_integration_review_contract",
       "confidence_score": 1.0
     },
     {
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L382",
+      "source_location": "L392",
       "weight": 1.0,
-      "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_and_residual_risk_closure",
-      "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_5_staged_live_proof",
+      "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_foundation_and_closure_machinery",
+      "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_5_program_final_gate_staged_live_proof",
       "confidence_score": 1.0
     },
     {
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L398",
+      "source_location": "L409",
       "weight": 1.0,
-      "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_and_residual_risk_closure",
-      "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_6_metadata_only_closeout",
+      "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_plan_1_release_trust_foundation_and_closure_machinery",
+      "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_8_6_program_final_gate_metadata_only_closeout",
       "confidence_score": 1.0
     },
     {
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L414",
+      "source_location": "L425",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_plan_2_runtime_validation_test_and_multi_plan_simplification",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_1_clean_cut_runtime",
@@ -297948,7 +297948,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L428",
+      "source_location": "L439",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_plan_2_runtime_validation_test_and_multi_plan_simplification",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_2_transitionkernel",
@@ -297958,7 +297958,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L440",
+      "source_location": "L451",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_plan_2_runtime_validation_test_and_multi_plan_simplification",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_3_phaseexecutor",
@@ -297968,7 +297968,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L456",
+      "source_location": "L467",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_plan_2_runtime_validation_test_and_multi_plan_simplification",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_4_evidencestore_and_evidenceresolver",
@@ -297978,7 +297978,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L464",
+      "source_location": "L475",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_plan_2_runtime_validation_test_and_multi_plan_simplification",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_5_canonical_validation",
@@ -297988,7 +297988,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L479",
+      "source_location": "L490",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_plan_2_runtime_validation_test_and_multi_plan_simplification",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_6_quality_test_decomposition",
@@ -297998,7 +297998,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L494",
+      "source_location": "L505",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_plan_2_runtime_validation_test_and_multi_plan_simplification",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_9_7_crash_coverage",
@@ -298008,7 +298008,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L509",
+      "source_location": "L520",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_plan_3_quality_preserving_deduplication_and_measurement",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_1_review_responsibilities",
@@ -298018,7 +298018,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L526",
+      "source_location": "L537",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_plan_3_quality_preserving_deduplication_and_measurement",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_2_verificationplanner",
@@ -298028,7 +298028,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L545",
+      "source_location": "L556",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_plan_3_quality_preserving_deduplication_and_measurement",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_3_verification_ladder",
@@ -298038,7 +298038,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L559",
+      "source_location": "L570",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_plan_3_quality_preserving_deduplication_and_measurement",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_4_model_call_policy",
@@ -298048,7 +298048,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L575",
+      "source_location": "L586",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_plan_3_quality_preserving_deduplication_and_measurement",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_5_persistence_without_scope_budgets",
@@ -298058,7 +298058,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L595",
+      "source_location": "L606",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_plan_3_quality_preserving_deduplication_and_measurement",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_10_6_measurement",
@@ -298068,7 +298068,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L664",
+      "source_location": "L675",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_verification_matrix",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_1_document_and_graph_compilation",
@@ -298078,7 +298078,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L677",
+      "source_location": "L688",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_verification_matrix",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_2_runtime_and_lifecycle",
@@ -298088,7 +298088,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L687",
+      "source_location": "L698",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_verification_matrix",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_3_review_and_verification",
@@ -298098,7 +298098,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L698",
+      "source_location": "L709",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_verification_matrix",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_4_release_closure",
@@ -298108,7 +298108,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "docs/superpowers/specs/2026-07-13-cpe-vnext-quality-first-workflow-optimization-design.md",
-      "source_location": "L709",
+      "source_location": "L720",
       "weight": 1.0,
       "source": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_verification_matrix",
       "target": "docs_superpowers_specs_2026_07_13_cpe_vnext_quality_first_workflow_optimization_design_13_5_quality_and_efficiency_comparison",
@@ -325606,5 +325606,5 @@
     }
   ],
   "hyperedges": [],
-  "built_at_commit": "ef7ac6d97cdc0034e711270b5002419239f77436"
+  "built_at_commit": "a83d3ba07a6437b7573e30d833c03e68e92ded98"
 }
