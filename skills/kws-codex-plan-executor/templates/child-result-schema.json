@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "role",
+    "status",
+    "item_id",
+    "commit",
+    "verdict",
+    "failure_code",
+    "authority_id",
+    "strategy_key",
+    "affected_document_ids",
+    "artifact_paths",
+    "summary"
+  ],
+  "properties": {
+    "role": {"type": "string"},
+    "status": {
+      "type": "string",
+      "enum": [
+        "completed",
+        "changes_requested",
+        "waiting_authority",
+        "interrupted",
+        "failed"
+      ]
+    },
+    "item_id": {"type": "string", "minLength": 1},
+    "commit": {"type": ["string", "null"]},
+    "verdict": {
+      "type": ["string", "null"],
+      "enum": ["pass", "changes_requested", "blocked", null]
+    },
+    "failure_code": {"type": ["string", "null"]},
+    "authority_id": {"type": ["string", "null"]},
+    "strategy_key": {"type": ["string", "null"]},
+    "affected_document_ids": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "artifact_paths": {
+      "type": "array",
+      "items": {"type": "string"}
+    },
+    "summary": {"type": "string", "minLength": 1, "maxLength": 2000}
+  }
+}

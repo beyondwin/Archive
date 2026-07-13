@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -24,6 +26,8 @@ from cpe_runtime.contracts import (  # noqa: E402
     validate_child_result,
 )
 from cpe_runtime.store import RunStore  # noqa: E402
+from cpe_runtime.launcher import ChildLauncher, ChildRequest  # noqa: E402
+from cpe_runtime.worktree import Worktree  # noqa: E402
 
 
 class LeanContractsTest(unittest.TestCase):
@@ -35,8 +39,21 @@ class LeanContractsTest(unittest.TestCase):
         self.home.mkdir(mode=0o700)
         self.repo.mkdir()
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "config", "user.email", "cpe@example.invalid"],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(self.repo), "config", "user.name", "CPE Eval"],
+            check=True,
+        )
         for name in ("spec-a.md", "spec-b.md", "plan-a.md", "plan-b.md", "program.md"):
             shutil.copyfile(FIXTURES / name, self.repo / name)
+        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
+        subprocess.run(
+            ["git", "-C", str(self.repo), "commit", "-q", "-m", "fixture base"],
+            check=True,
+        )
 
         self.spec_a = self.repo / "spec-a.md"
         self.spec_b = self.repo / "spec-b.md"
@@ -81,6 +98,40 @@ class LeanContractsTest(unittest.TestCase):
                     },
                 ],
             },
+        )
+
+    def create_fake_codex_bin(self) -> tuple[Path, Path]:
+        bin_dir = self.root / "fake-bin"
+        bin_dir.mkdir()
+        fake_codex = bin_dir / "codex"
+        source = (SKILL_ROOT / "evals" / "fake_codex.py").read_text(encoding="utf-8")
+        lines = source.splitlines()
+        lines[0] = f"#!{sys.executable}"
+        fake_codex.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        fake_codex.chmod(0o700)
+        return bin_dir, fake_codex
+
+    def make_child_request(
+        self,
+        *,
+        store: RunStore,
+        worktree: Worktree,
+        attempt_id: str,
+        role: str,
+        item_id: str,
+    ) -> ChildRequest:
+        outbox = store.allocate_outbox(attempt_id)
+        return ChildRequest(
+            role=role,
+            item_id=item_id,
+            goal="Exercise one bounded launcher role.",
+            input_paths=(self.plan_a.resolve(), self.spec_a.resolve()),
+            repository=worktree.source,
+            worktree=worktree.root,
+            outbox=outbox,
+            report_path=f"reports/{attempt_id}.md",
+            applicable_skills=("using-superpowers", "test-driven-development"),
+            done_when=("the bounded role reports a valid result",),
         )
 
     def test_snapshots_have_stable_role_local_order_and_are_immutable(self) -> None:
@@ -448,6 +499,257 @@ class LeanContractsTest(unittest.TestCase):
                 expected_role="reviewer",
                 expected_item_id="plan-01:T1-review",
             )
+
+    def test_worktree_create_rejects_tracked_source_dirt_without_editing_source(self) -> None:
+        source_head = subprocess.check_output(
+            ["git", "-C", str(self.repo), "rev-parse", "HEAD"], text=True
+        ).strip()
+        clean_status = subprocess.check_output(
+            [
+                "git",
+                "-C",
+                str(self.repo),
+                "status",
+                "--porcelain=v1",
+                "--untracked-files=all",
+            ],
+            text=True,
+        )
+        created = Worktree.create(
+            source=self.repo,
+            root=self.root / "worktree-clean",
+            run_id="lean-task-2",
+        )
+        self.assertEqual(created.branch, "codex/lean-task-2")
+        self.assertEqual(created.base_commit, source_head)
+        self.assertEqual(created.head(), source_head)
+        self.assertEqual(created.status(), ())
+        self.assertEqual(
+            subprocess.check_output(
+                ["git", "-C", str(self.repo), "rev-parse", "HEAD"], text=True
+            ).strip(),
+            source_head,
+        )
+        self.assertEqual(
+            subprocess.check_output(
+                [
+                    "git",
+                    "-C",
+                    str(self.repo),
+                    "status",
+                    "--porcelain=v1",
+                    "--untracked-files=all",
+                ],
+                text=True,
+            ),
+            clean_status,
+        )
+
+        self.spec_a.write_text("# tracked dirt\n", encoding="utf-8")
+        dirty_root = self.root / "worktree-dirty-source"
+        with self.assertRaises(ValueError):
+            Worktree.create(source=self.repo, root=dirty_root, run_id="source-dirty")
+        self.assertFalse(dirty_root.exists())
+
+    def test_worktree_handoffs_reject_wrong_commit_and_any_visible_dirt(self) -> None:
+        worktree = Worktree.create(
+            source=self.repo,
+            root=self.root / "handoff-worktree",
+            run_id="handoff",
+        )
+        changed = worktree.root / "bounded.txt"
+        changed.write_text("bounded change\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(worktree.root), "add", "bounded.txt"], check=True
+        )
+        subprocess.run(
+            ["git", "-C", str(worktree.root), "commit", "-q", "-m", "bounded"],
+            check=True,
+        )
+        commit = worktree.head()
+        with self.assertRaises(ValueError):
+            worktree.verify_write_handoff(worktree.base_commit)
+        worktree.verify_write_handoff(commit)
+        self.assertIn("bounded change", worktree.diff(worktree.base_commit, commit))
+
+        (worktree.root / "untracked.txt").write_text("dirty\n", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            worktree.verify_write_handoff(commit)
+
+    def test_launcher_uses_bounded_command_env_and_ingests_normalized_artifacts(self) -> None:
+        store = self.create_store()
+        worktree = Worktree.create(
+            source=self.repo,
+            root=self.root / "launcher-worktree",
+            run_id="launcher",
+        )
+        bin_dir, _ = self.create_fake_codex_bin()
+        invocation_log = self.root / "invocations.jsonl"
+        launcher = ChildLauncher(
+            schema_path=SKILL_ROOT / "templates" / "child-result-schema.json",
+            timeout_seconds=5,
+            environ={
+                **os.environ,
+                "PATH": str(bin_dir),
+                "CODEX_HOME": str(self.home),
+                "OPENAI_API_KEY": "must-be-removed",
+                "ANTHROPIC_API_KEY": "must-be-removed",
+                "AWS_SECRET_ACCESS_KEY": "must-be-removed",
+                "AWS_SESSION_TOKEN": "must-be-removed",
+                "GITHUB_TOKEN": "must-be-removed",
+                "CPE_FAKE_SCENARIO": "success",
+                "CPE_FAKE_INVOCATION_LOG": str(invocation_log),
+            },
+        )
+        request = self.make_child_request(
+            store=store,
+            worktree=worktree,
+            attempt_id="review-success",
+            role="reviewer",
+            item_id="plan-01:T1-review",
+        )
+        outcome = launcher.launch(request, worktree=worktree, store=store)
+        self.assertEqual(outcome.result.status, "completed")
+        self.assertEqual(outcome.result.verdict, "pass")
+        self.assertEqual(len(outcome.event_digest), 64)
+        self.assertGreaterEqual(outcome.elapsed_ms, 0)
+        self.assertEqual(
+            store.read_artifact("reports/review-success.md"),
+            b"deterministic child report\n",
+        )
+        invocation = json.loads(invocation_log.read_text(encoding="utf-8"))
+        self.assertEqual(invocation["env"]["PATH"], str(bin_dir))
+        self.assertEqual(invocation["env"]["CODEX_HOME"], str(self.home))
+        for key in (
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "GITHUB_TOKEN",
+        ):
+            self.assertNotIn(key, invocation["env"])
+        argv = invocation["argv"]
+        self.assertEqual(argv[:3], ["exec", "--ignore-user-config", "--json"])
+        self.assertEqual(argv[argv.index("--sandbox") + 1], "read-only")
+        self.assertEqual(argv[argv.index("--add-dir") + 1], str(request.outbox))
+        self.assertNotIn("--model", argv)
+        self.assertNotIn("--profile", argv)
+
+        write_request = self.make_child_request(
+            store=store,
+            worktree=worktree,
+            attempt_id="task-success",
+            role="task_agent",
+            item_id="plan-01:T1",
+        )
+        write_outcome = launcher.launch(write_request, worktree=worktree, store=store)
+        self.assertEqual(write_outcome.result.commit, worktree.head())
+        second_invocation = json.loads(
+            invocation_log.read_text(encoding="utf-8").splitlines()[1]
+        )
+        second_argv = second_invocation["argv"]
+        self.assertEqual(
+            second_argv[second_argv.index("--sandbox") + 1], "workspace-write"
+        )
+
+    def test_launcher_rejects_read_only_git_changes_and_artifact_traversal(self) -> None:
+        store = self.create_store()
+        bin_dir, _ = self.create_fake_codex_bin()
+        for scenario in ("dirty_handoff", "tampered_artifact_path"):
+            with self.subTest(scenario=scenario):
+                worktree = Worktree.create(
+                    source=self.repo,
+                    root=self.root / f"worktree-{scenario}",
+                    run_id=scenario.replace("_", "-"),
+                )
+                launcher = ChildLauncher(
+                    schema_path=SKILL_ROOT / "templates" / "child-result-schema.json",
+                    timeout_seconds=5,
+                    environ={
+                        **os.environ,
+                        "PATH": str(bin_dir),
+                        "CODEX_HOME": str(self.home),
+                        "CPE_FAKE_SCENARIO": scenario,
+                    },
+                )
+                request = self.make_child_request(
+                    store=store,
+                    worktree=worktree,
+                    attempt_id=f"attempt-{scenario.replace('_', '-')}",
+                    role="reviewer",
+                    item_id=f"review-{scenario}",
+                )
+                with self.assertRaises(ValueError):
+                    launcher.launch(request, worktree=worktree, store=store)
+
+    def test_launcher_rejects_wrong_write_commit(self) -> None:
+        store = self.create_store()
+        worktree = Worktree.create(
+            source=self.repo,
+            root=self.root / "wrong-commit-worktree",
+            run_id="wrong-commit",
+        )
+        bin_dir, _ = self.create_fake_codex_bin()
+        launcher = ChildLauncher(
+            schema_path=SKILL_ROOT / "templates" / "child-result-schema.json",
+            timeout_seconds=5,
+            environ={
+                **os.environ,
+                "PATH": str(bin_dir),
+                "CODEX_HOME": str(self.home),
+                "CPE_FAKE_SCENARIO": "wrong_commit",
+            },
+        )
+        request = self.make_child_request(
+            store=store,
+            worktree=worktree,
+            attempt_id="attempt-wrong-commit",
+            role="task_agent",
+            item_id="plan-01:T-wrong",
+        )
+        with self.assertRaises(ValueError):
+            launcher.launch(request, worktree=worktree, store=store)
+
+    def test_launcher_timeout_terminates_the_entire_child_process_group(self) -> None:
+        store = self.create_store()
+        worktree = Worktree.create(
+            source=self.repo,
+            root=self.root / "timeout-worktree",
+            run_id="timeout",
+        )
+        bin_dir, _ = self.create_fake_codex_bin()
+        descendant_pid_path = self.root / "descendant.pid"
+        launcher = ChildLauncher(
+            schema_path=SKILL_ROOT / "templates" / "child-result-schema.json",
+            timeout_seconds=0.5,
+            terminate_grace_seconds=0.2,
+            environ={
+                **os.environ,
+                "PATH": str(bin_dir),
+                "CODEX_HOME": str(self.home),
+                "CPE_FAKE_SCENARIO": "timeout",
+                "CPE_FAKE_DESCENDANT_PID": str(descendant_pid_path),
+            },
+        )
+        request = self.make_child_request(
+            store=store,
+            worktree=worktree,
+            attempt_id="attempt-timeout",
+            role="reviewer",
+            item_id="review-timeout",
+        )
+        with self.assertRaises(TimeoutError):
+            launcher.launch(request, worktree=worktree, store=store)
+        self.assertTrue(descendant_pid_path.is_file())
+        descendant_pid = int(descendant_pid_path.read_text(encoding="utf-8"))
+        for _ in range(40):
+            try:
+                os.kill(descendant_pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.025)
+        else:
+            self.fail(f"timeout descendant still alive: {descendant_pid}")
 
 
 if __name__ == "__main__":
