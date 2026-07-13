@@ -146,6 +146,10 @@ _EVENT_PAYLOAD_SCHEMAS = {
             "generation_id": "id",
             "map_sha256": "hash",
             "artifact_paths": "paths",
+            "publication_manifest_path": "path",
+            "publication_manifest_sha256": "hash",
+            "authority_ids": "ids",
+            "task_ids": "ids",
         },
     ),
     "task.started": (
@@ -1320,6 +1324,16 @@ def validate_program_map(
         if disposition == "planned":
             if not coverage_task_ids or reason is not None:
                 raise ValueError("planned coverage needs tasks and a null reason")
+        elif disposition == "conflict":
+            if (
+                not coverage_task_ids
+                or not isinstance(reason, str)
+                or not reason.strip()
+                or not authority_ids
+            ):
+                raise ValueError(
+                    "conflict coverage needs tasks, authority, and a recorded reason"
+                )
         else:
             if coverage_task_ids or not isinstance(reason, str) or not reason.strip():
                 raise ValueError("non-planned coverage needs no tasks and a recorded reason")
@@ -1428,6 +1442,7 @@ def validate_program_map(
     )
     if not referenced_authority_ids <= known_authority_ids:
         raise ValueError("program map binding names an unknown authority item")
+    conflict_tasks_by_authority: dict[str, set[str]] = {}
     for requirement_id, record in coverage.items():
         if record["disposition"] != "conflict":
             continue
@@ -1454,6 +1469,25 @@ def validate_program_map(
         ):
             raise ValueError(
                 f"conflict coverage {requirement_id} authority has no matching source"
+            )
+        affected_tasks = {
+            str(task["task_id"])
+            for task in tasks
+            if requirement_id in task["requirement_ids"]
+        }
+        if affected_tasks != set(record["task_ids"]):
+            raise ValueError(
+                f"conflict coverage {requirement_id} task edges are inconsistent"
+            )
+        for authority in conflict_authorities:
+            conflict_tasks_by_authority.setdefault(
+                str(authority["authority_id"]), set()
+            ).update(affected_tasks)
+    for authority_id, expected_tasks in conflict_tasks_by_authority.items():
+        if set(authority_by_id[authority_id]["affected_task_ids"]) != expected_tasks:
+            raise ValueError(
+                f"conflict authority {authority_id} affected tasks do not equal "
+                "its requirement edges"
             )
     return {
         "schema_version": MAP_SCHEMA_VERSION,
@@ -1702,6 +1736,11 @@ def validate_event_payload(
             if not isinstance(value, str) or _HEX_SHA256.fullmatch(value) is None:
                 raise ValueError(f"event {field} must be a lowercase SHA-256")
             validated[field] = value
+        elif kind == "path":
+            normalized = normalize_relative_path(value) if isinstance(value, str) else ""
+            if not normalized or len(normalized) > 512:
+                raise ValueError(f"event {field} must be a bounded artifact path")
+            validated[field] = normalized
         elif kind == "commit":
             if value is not None and (
                 not isinstance(value, str) or _HEX_COMMIT.fullmatch(value) is None

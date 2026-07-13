@@ -175,6 +175,41 @@ def _atomic_replace_private(path: Path, data: bytes) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _read_private_installed_file(path: Path) -> bytes:
+    """Read one crash-installed file without accepting type, link, or mode drift."""
+
+    try:
+        descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    except OSError as exc:
+        raise ValueError("unindexed artifact must be a private regular file") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("unindexed artifact must be a private regular file")
+        if stat.S_IMODE(metadata.st_mode) != 0o600:
+            raise ValueError("unindexed artifact mode must remain private")
+        chunks: list[bytes] = []
+        while True:
+            chunk = os.read(descriptor, 64 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        try:
+            current = path.lstat()
+        except OSError as exc:
+            raise ValueError("unindexed artifact changed while reconciling") from exc
+        if (
+            stat.S_ISLNK(current.st_mode)
+            or current.st_dev != metadata.st_dev
+            or current.st_ino != metadata.st_ino
+            or stat.S_IMODE(current.st_mode) != 0o600
+        ):
+            raise ValueError("unindexed artifact changed while reconciling")
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
 def _validate_workspace(workspace: Path) -> Path:
     try:
         resolved = workspace.expanduser().resolve(strict=True)
@@ -412,6 +447,7 @@ class RunStore:
         store._load_manifest()
         store.document_set()
         store.validate_event_chain()
+        store._reconcile_content_addressed_publication_manifests()
         store._validate_artifacts()
         return store
 
@@ -804,6 +840,131 @@ class RunStore:
         target = self.paths.root / normalized
         return normalized, target
 
+    @staticmethod
+    def _validate_publication_manifest(
+        raw: bytes, relative_path: str
+    ) -> dict[str, object]:
+        try:
+            manifest = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("accepted publication manifest is unreadable") from exc
+        parts = Path(relative_path).parts
+        if (
+            len(parts) != 5
+            or parts[0] != "maps"
+            or not parts[1].startswith("generation-")
+            or parts[2] != "attempts"
+            or parts[4] != "accepted.json"
+        ):
+            raise ValueError("accepted publication manifest path is invalid")
+        generation_id = parts[1]
+        publication_id = parts[3]
+        if (
+            not isinstance(manifest, dict)
+            or raw != canonical_json(manifest)
+            or frozenset(manifest)
+            != frozenset(
+                {
+                    "schema_version",
+                    "generation_id",
+                    "publication_id",
+                    "program_map_sha256",
+                    "artifacts",
+                }
+            )
+            or manifest.get("schema_version") != 1
+            or manifest.get("generation_id") != generation_id
+            or manifest.get("publication_id") != publication_id
+            or len(publication_id) != 64
+            or any(character not in "0123456789abcdef" for character in publication_id)
+        ):
+            raise ValueError("accepted publication manifest is invalid")
+        artifacts = manifest.get("artifacts")
+        program_map_sha256 = manifest.get("program_map_sha256")
+        if (
+            not isinstance(artifacts, dict)
+            or not artifacts
+            or not isinstance(program_map_sha256, str)
+            or len(program_map_sha256) != 64
+        ):
+            raise ValueError("accepted publication identity is invalid")
+        commitment: dict[str, dict[str, object]] = {}
+        for logical_path, descriptor in artifacts.items():
+            if (
+                not isinstance(logical_path, str)
+                or normalize_relative_path(logical_path) != logical_path
+                or not isinstance(descriptor, dict)
+                or frozenset(descriptor)
+                != frozenset({"relative_path", "sha256", "byte_length"})
+            ):
+                raise ValueError("accepted publication artifact record is invalid")
+            physical_path = descriptor.get("relative_path")
+            digest = descriptor.get("sha256")
+            byte_length = descriptor.get("byte_length")
+            expected_physical_path = (
+                f"maps/{generation_id}/attempts/{publication_id}/artifacts/"
+                f"{logical_path}"
+            )
+            if (
+                physical_path != expected_physical_path
+                or not isinstance(digest, str)
+                or len(digest) != 64
+                or any(character not in "0123456789abcdef" for character in digest)
+                or not isinstance(byte_length, int)
+                or isinstance(byte_length, bool)
+                or byte_length < 0
+            ):
+                raise ValueError("accepted publication artifact binding is invalid")
+            commitment[logical_path] = {
+                "sha256": digest,
+                "byte_length": byte_length,
+            }
+        expected_publication_id = _sha256(
+            b"cpe-map-publication-v1\0" + canonical_json(commitment)
+        )
+        program_path = f"maps/{generation_id}/program-map.json"
+        program_descriptor = artifacts.get(program_path)
+        if (
+            expected_publication_id != publication_id
+            or not isinstance(program_descriptor, dict)
+            or program_descriptor.get("sha256") != program_map_sha256
+        ):
+            raise ValueError("accepted publication commitment does not match")
+        return manifest
+
+    def _reconcile_content_addressed_publication_manifests(self) -> None:
+        """Index a fully validated accepted manifest left by file-before-index crash."""
+
+        records = self._artifact_records()
+        indexed = {str(record["relative_path"]): record for record in records}
+        for path in sorted(self.paths.maps.rglob("accepted.json")):
+            relative_path = path.relative_to(self.paths.root).as_posix()
+            if relative_path in indexed:
+                continue
+            raw = _read_private_installed_file(path)
+            manifest = self._validate_publication_manifest(raw, relative_path)
+            artifacts = manifest["artifacts"]
+            assert isinstance(artifacts, dict)
+            for descriptor in artifacts.values():
+                assert isinstance(descriptor, dict)
+                physical_path = str(descriptor["relative_path"])
+                physical_record = indexed.get(physical_path)
+                if physical_record is None:
+                    raise ValueError(
+                        "accepted publication references an unindexed artifact"
+                    )
+                data = self._read_indexed_artifact(physical_path, physical_record)
+                if (
+                    _sha256(data) != descriptor["sha256"]
+                    or len(data) != descriptor["byte_length"]
+                ):
+                    raise ValueError("accepted publication artifact digest does not match")
+            self.put_artifact(relative_path, raw)
+            indexed = {
+                str(record["relative_path"]): record
+                for record in self._artifact_records()
+            }
+
     def put_artifact(self, relative_path: str, data: bytes) -> Path:
         if not isinstance(data, bytes):
             raise ValueError("artifact data must be bytes")
@@ -826,7 +987,26 @@ class RunStore:
             if target.exists() or target.is_symlink():
                 record = indexed.get(normalized)
                 if record is None:
-                    raise ValueError("existing artifact has no durable digest record")
+                    current = _read_private_installed_file(target)
+                    if current != data:
+                        raise ValueError(
+                            "unindexed artifact already exists with different bytes"
+                        )
+                    record = {
+                        "artifact_id": f"A{len(records) + 1:06d}",
+                        "relative_path": normalized,
+                        "sha256": _sha256(data),
+                        "byte_length": len(data),
+                    }
+                    line = canonical_json(record) + b"\n"
+                    view = memoryview(line)
+                    while view:
+                        written = os.write(descriptor, view)
+                        if written <= 0:
+                            raise OSError("short artifact index append")
+                        view = view[written:]
+                    os.fsync(descriptor)
+                    return target
                 current = self._read_indexed_artifact(normalized, record)
                 if current == data:
                     return target
@@ -875,43 +1055,36 @@ class RunStore:
         record = records.get(normalized)
         if record is None:
             published: list[bytes] = []
-            for manifest_path, manifest_record in records.items():
-                if (
-                    not manifest_path.startswith("maps/generation-")
-                    or not manifest_path.endswith("/accepted.json")
-                ):
+            for event in self.validate_event_chain():
+                if event["event_type"] != "map.generation_created":
                     continue
-                raw = self._read_indexed_artifact(manifest_path, manifest_record)
-                try:
-                    manifest = json.loads(raw.decode("utf-8"))
-                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                    raise ValueError("accepted publication manifest is unreadable") from exc
-                if (
-                    not isinstance(manifest, dict)
-                    or raw != canonical_json(manifest)
-                    or frozenset(manifest)
-                    != frozenset(
-                        {
-                            "schema_version",
-                            "generation_id",
-                            "publication_id",
-                            "program_map_sha256",
-                            "artifacts",
-                        }
-                    )
-                    or manifest.get("schema_version") != 1
+                payload = event["payload"]
+                if normalized not in payload.get("artifact_paths", []):
+                    continue
+                manifest_path = payload.get("publication_manifest_path")
+                manifest_digest = payload.get("publication_manifest_sha256")
+                if not isinstance(manifest_path, str) or not isinstance(
+                    manifest_digest, str
                 ):
-                    raise ValueError("accepted publication manifest is invalid")
+                    raise ValueError(
+                        "map generation event omits its accepted publication"
+                    )
+                manifest_record = records.get(manifest_path)
+                if manifest_record is None:
+                    raise ValueError("accepted publication manifest is not indexed")
+                raw = self._read_indexed_artifact(manifest_path, manifest_record)
+                if _sha256(raw) != manifest_digest:
+                    raise ValueError("accepted publication event digest does not match")
+                manifest = self._validate_publication_manifest(raw, manifest_path)
                 generation_id = manifest.get("generation_id")
                 publication_id = manifest.get("publication_id")
                 artifacts = manifest.get("artifacts")
                 if (
                     not isinstance(generation_id, str)
-                    or manifest_path != f"maps/{generation_id}/accepted.json"
+                    or generation_id != payload.get("generation_id")
                     or not isinstance(publication_id, str)
-                    or len(publication_id) != 64
-                    or any(character not in "0123456789abcdef" for character in publication_id)
                     or not isinstance(artifacts, dict)
+                    or set(artifacts) != set(payload.get("artifact_paths", []))
                 ):
                     raise ValueError("accepted publication identity is invalid")
                 descriptor = artifacts.get(normalized)
@@ -926,13 +1099,14 @@ class RunStore:
                 physical_path = descriptor.get("relative_path")
                 digest = descriptor.get("sha256")
                 byte_length = descriptor.get("byte_length")
-                expected_prefix = (
+                expected_physical_path = (
                     f"maps/{generation_id}/attempts/{publication_id}/artifacts/"
+                    f"{normalized}"
                 )
                 physical_record = records.get(str(physical_path))
                 if (
                     not isinstance(physical_path, str)
-                    or not physical_path.startswith(expected_prefix)
+                    or physical_path != expected_physical_path
                     or physical_record is None
                     or not isinstance(digest, str)
                     or len(digest) != 64
@@ -1033,7 +1207,11 @@ class RunStore:
         for event in events:
             event_type = event["event_type"]
             if event_type == "map.generation_created":
-                status = "running"
+                status = (
+                    "waiting_authority"
+                    if event["payload"].get("authority_ids")
+                    else "running"
+                )
             elif event_type == "authority.opened":
                 status = "waiting_authority"
             elif event_type == "authority.resolved":

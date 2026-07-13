@@ -8,9 +8,11 @@ import json
 import os
 import shutil
 import subprocess
+import stat
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -27,6 +29,7 @@ from cpe_runtime.contracts import (  # noqa: E402
 )
 from cpe_runtime.launcher import ChildLauncher  # noqa: E402
 from cpe_runtime.queue import QueueEngine  # noqa: E402
+import cpe_runtime.store as store_module  # noqa: E402
 from cpe_runtime.store import RunStore  # noqa: E402
 from cpe_runtime.worktree import Worktree  # noqa: E402
 
@@ -524,6 +527,10 @@ class LeanMappingTest(unittest.TestCase):
                         }
                     ]
                 if disposition == "conflict":
+                    candidate["coverage"]["spec-01:R1"]["task_ids"] = [
+                        "plan-01:T1"
+                    ]
+                    candidate["tasks"][0]["requirement_ids"] = ["spec-01:R1"]
                     candidate["coverage"]["spec-01:R1"]["authority_ids"] = [
                         "A-conflict"
                     ]
@@ -546,6 +553,35 @@ class LeanMappingTest(unittest.TestCase):
                     candidate,
                     document_hashes=self.program_document_hashes(),
                 )
+
+        wrong_conflict_task = self.valid_program_map()
+        wrong_conflict_task["coverage"]["spec-01:R1"] = {
+            "disposition": "conflict",
+            "task_ids": ["plan-01:T1"],
+            "reason": "approved documents conflict",
+            "source_references": [
+                source_reference("spec-01", source_sha256="c" * 64)
+            ],
+            "authority_ids": ["A-conflict"],
+        }
+        wrong_conflict_task["authority_items"] = [
+            {
+                "authority_id": "A-conflict",
+                "authority_code": "authoritative_document_conflict",
+                "affected_task_ids": ["plan-02:T1"],
+                "question": "Which requirement governs?",
+                "options": ["spec-01", "spec-02"],
+                "recommended": "spec-01",
+                "source_references": [
+                    source_reference("spec-01", source_sha256="c" * 64)
+                ],
+            }
+        ]
+        with self.assertRaisesRegex(ValueError, "affected tasks"):
+            validate_program_map(
+                wrong_conflict_task,
+                document_hashes=self.program_document_hashes(),
+            )
 
         outdated = self.valid_program_map()
         outdated["coverage"]["spec-01:R1"]["disposition"] = "implemented"
@@ -619,6 +655,7 @@ class LeanMappingTest(unittest.TestCase):
             [task["task_id"] for task in program["tasks"]],
             ["plan-01:T1", "plan-01:T2", "plan-02:T1"],
         )
+        self.assertEqual(program["tasks"][0]["requirement_ids"], ["spec-01:R1"])
         events = store.validate_event_chain()
         self.assertEqual(
             [event["event_type"] for event in events[-2:]],
@@ -737,6 +774,155 @@ class LeanMappingTest(unittest.TestCase):
         self.assertEqual(
             brief["expected_report_path"], "reports/retry-plan-01-T1.md"
         )
+
+    def test_accepted_manifest_install_before_index_recovers_and_retry_selects_new_bytes(
+        self,
+    ) -> None:
+        class SimulatedProcessInterruption(BaseException):
+            pass
+
+        store = self.create_store()
+        engine = self.create_engine(store=store, scenario="mapping_success")
+        engine.map_documents()
+        original_atomic_write = store_module._atomic_write_new
+        installed: list[Path] = []
+
+        def interrupt_after_accepted_install(path: Path, data: bytes) -> None:
+            original_atomic_write(path, data)
+            if path.name == "accepted.json" and "attempts" in path.parts:
+                installed.append(path)
+                raise SimulatedProcessInterruption
+
+        with mock.patch.object(
+            store_module, "_atomic_write_new", interrupt_after_accepted_install
+        ):
+            with self.assertRaises(SimulatedProcessInterruption):
+                engine.map_program()
+
+        self.assertEqual(len(installed), 1)
+        orphan_manifest = installed[0]
+        orphan_relative = orphan_manifest.relative_to(store.paths.root).as_posix()
+        self.assertNotIn(
+            orphan_relative,
+            {str(record["relative_path"]) for record in store._artifact_records()},
+        )
+        self.assertEqual(stat.S_IMODE(orphan_manifest.stat().st_mode), 0o600)
+        self.assertFalse(
+            any(
+                event["event_type"] == "map.generation_created"
+                for event in store.validate_event_chain()
+            )
+        )
+
+        reopened = RunStore.open(codex_home=self.home, run_id=store.run_id)
+        self.assertIn(
+            orphan_relative,
+            {str(record["relative_path"]) for record in reopened._artifact_records()},
+        )
+        resumed = QueueEngine(
+            reopened,
+            engine.worktree,
+            self.create_launcher(scenario="mapping_success_retry_variant"),
+        )
+        self.assertEqual(
+            resumed.map_program(), "maps/generation-0001/program-map.json"
+        )
+        generation_event = next(
+            event
+            for event in reopened.validate_event_chain()
+            if event["event_type"] == "map.generation_created"
+        )
+        selected_manifest = generation_event["payload"]["publication_manifest_path"]
+        self.assertNotEqual(selected_manifest, orphan_relative)
+        self.assertIn("/attempts/", selected_manifest)
+        brief = json.loads(reopened.read_artifact("briefs/plan-01-T1.json"))
+        self.assertEqual(
+            brief["expected_report_path"], "reports/retry-plan-01-T1.md"
+        )
+
+    def test_generation_event_replays_authority_wait_and_resume_repairs_open_event(
+        self,
+    ) -> None:
+        class SimulatedProcessInterruption(BaseException):
+            pass
+
+        store = self.create_store()
+        engine = self.create_engine(store=store, scenario="mapping_conflict")
+
+        def interrupt_before_authority_events(*_args: object) -> None:
+            raise SimulatedProcessInterruption
+
+        engine._append_authority_events = (  # type: ignore[method-assign]
+            interrupt_before_authority_events
+        )
+        with self.assertRaises(SimulatedProcessInterruption):
+            engine.map_program()
+
+        events = store.validate_event_chain()
+        self.assertEqual(events[-1]["event_type"], "map.generation_created")
+        self.assertEqual(
+            events[-1]["payload"]["authority_ids"], ["mapping-conflict-1"]
+        )
+        self.assertEqual(events[-1]["payload"]["task_ids"], ["plan-01:T1"])
+        self.assertEqual(store.replay()["status"], "waiting_authority")
+
+        reopened = RunStore.open(codex_home=self.home, run_id=store.run_id)
+        resumed = QueueEngine(
+            reopened,
+            engine.worktree,
+            self.create_launcher(scenario="mapping_success"),
+        )
+        self.assertEqual(
+            resumed.map_program(), "maps/generation-0001/program-map.json"
+        )
+        repaired_events = reopened.validate_event_chain()
+        self.assertEqual(repaired_events[-1]["event_type"], "authority.opened")
+        self.assertEqual(reopened.replay()["status"], "waiting_authority")
+        self.assertEqual(
+            sum(
+                invocation["role"] == "program_mapper"
+                for invocation in self.invocations()
+            ),
+            1,
+        )
+
+    def test_event_selected_publication_rejects_manifest_and_physical_tamper(
+        self,
+    ) -> None:
+        for target_kind in ("manifest", "physical"):
+            with self.subTest(target_kind=target_kind):
+                store = self.create_store()
+                worktree = Worktree.create(
+                    source=self.repo,
+                    root=self.root / f"worktree-tamper-{target_kind}",
+                    run_id=f"mapping-tamper-{target_kind}",
+                )
+                engine = QueueEngine(
+                    store,
+                    worktree,
+                    self.create_launcher(scenario="mapping_success"),
+                )
+                engine.map_program()
+                generation_event = next(
+                    event
+                    for event in store.validate_event_chain()
+                    if event["event_type"] == "map.generation_created"
+                )
+                manifest_path = generation_event["payload"][
+                    "publication_manifest_path"
+                ]
+                manifest = json.loads(store.read_artifact(manifest_path))
+                if target_kind == "manifest":
+                    tamper_path = store.paths.root / manifest_path
+                else:
+                    tamper_path = store.paths.root / manifest["artifacts"][
+                        "briefs/plan-01-T1.json"
+                    ]["relative_path"]
+                original = tamper_path.read_bytes()
+                tamper_path.write_bytes(b"x" + original[1:])
+                tamper_path.chmod(0o600)
+                with self.assertRaisesRegex(ValueError, "digest"):
+                    store.read_artifact("briefs/plan-01-T1.json")
 
     def test_noncompleted_mapper_does_not_hide_successful_sibling_outputs(self) -> None:
         store = self.create_store()
@@ -959,6 +1145,69 @@ class LeanMappingTest(unittest.TestCase):
         ]
         with self.assertRaisesRegex(ValueError, "source SHA"):
             validate_program_map(split, document_hashes=self.program_document_hashes())
+
+    def test_conflict_authority_must_equal_split_tasks_with_requirement_edges(
+        self,
+    ) -> None:
+        payload = self.valid_program_map()
+        original = payload["tasks"].pop(0)
+        plan_reference = source_reference("plan-01", source_sha256="a" * 64)
+        first = {
+            **original,
+            "task_id": "plan-01:T1.1",
+            "requirement_ids": [],
+            "brief_path": "briefs/plan-01-T1.1.json",
+        }
+        second = {
+            **original,
+            "task_id": "plan-01:T1.2",
+            "dependencies": ["plan-01:T1.1"],
+            "dependency_edges": [
+                dependency_edge("plan-01:T1.1", plan_reference)
+            ],
+            "brief_path": "briefs/plan-01-T1.2.json",
+        }
+        payload["tasks"][:0] = [first, second]
+        payload["tasks"][2]["dependencies"] = ["plan-01:T1.2"]
+        payload["tasks"][2]["dependency_edges"] = [
+            dependency_edge("plan-01:T1.2", plan_reference)
+        ]
+        payload["coverage"]["spec-01:R1"] = {
+            "disposition": "conflict",
+            "task_ids": ["plan-01:T1.2"],
+            "reason": "approved documents conflict",
+            "source_references": [
+                source_reference("spec-01", source_sha256="c" * 64)
+            ],
+            "authority_ids": ["A-conflict"],
+        }
+        payload["task_splits"] = [
+            {
+                "source_task_id": "plan-01:T1",
+                "split_task_ids": ["plan-01:T1.1", "plan-01:T1.2"],
+                "source_references": [plan_reference],
+                "reason": "split along the conflicting requirement edge",
+            }
+        ]
+        payload["authority_items"] = [
+            {
+                "authority_id": "A-conflict",
+                "authority_code": "authoritative_document_conflict",
+                "affected_task_ids": ["plan-01:T1.1"],
+                "question": "Which requirement governs?",
+                "options": ["spec-01", "spec-02"],
+                "recommended": "spec-01",
+                "source_references": [
+                    source_reference("spec-01", source_sha256="c" * 64)
+                ],
+            }
+        ]
+
+        with self.assertRaisesRegex(ValueError, "affected tasks"):
+            validate_program_map(
+                payload,
+                document_hashes=self.program_document_hashes(),
+            )
 
     def test_split_briefs_collectively_preserve_candidate_contract(self) -> None:
         store = self.create_store()

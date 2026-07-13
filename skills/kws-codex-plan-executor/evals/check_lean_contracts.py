@@ -391,6 +391,22 @@ class LeanContractsTest(unittest.TestCase):
                     "artifact_paths": ["reviews/plan-01-T1/review-1.md"],
                 },
             )
+        with self.assertRaisesRegex(ValueError, "at most 64"):
+            store.append_event(
+                "map.generation_created",
+                {
+                    "generation_id": "generation-0001",
+                    "authority_ids": [f"A{index}" for index in range(65)],
+                },
+            )
+        with self.assertRaisesRegex(ValueError, "artifact path"):
+            store.append_event(
+                "map.generation_created",
+                {
+                    "generation_id": "generation-0001",
+                    "publication_manifest_path": "maps/../accepted.json",
+                },
+            )
 
     def test_artifacts_are_immutable_and_outbox_ingestion_is_bounded(self) -> None:
         store = self.create_store()
@@ -423,6 +439,41 @@ class LeanContractsTest(unittest.TestCase):
         (second_outbox / "reviews").symlink_to(outside, target_is_directory=True)
         with self.assertRaises(ValueError):
             store.ingest_outbox("attempt-2", ["reviews/escaped.md"])
+
+    def test_unindexed_artifact_reconciliation_requires_identical_private_regular_file(
+        self,
+    ) -> None:
+        store = self.create_store()
+
+        identical = store.paths.reports / "identical.md"
+        identical.write_bytes(b"installed before index\n")
+        identical.chmod(0o600)
+        store.put_artifact("reports/identical.md", b"installed before index\n")
+        self.assertEqual(
+            store.read_artifact("reports/identical.md"), b"installed before index\n"
+        )
+
+        different = store.paths.reports / "different.md"
+        different.write_bytes(b"unexpected bytes\n")
+        different.chmod(0o600)
+        with self.assertRaisesRegex(ValueError, "different bytes"):
+            store.put_artifact("reports/different.md", b"expected bytes\n")
+
+        symlink = store.paths.reports / "symlink.md"
+        symlink.symlink_to(identical)
+        with self.assertRaisesRegex(ValueError, "private regular file"):
+            store.put_artifact("reports/symlink.md", b"installed before index\n")
+
+        wrong_type = store.paths.reports / "directory.md"
+        wrong_type.mkdir(mode=0o700)
+        with self.assertRaisesRegex(ValueError, "private regular file"):
+            store.put_artifact("reports/directory.md", b"directory\n")
+
+        wrong_mode = store.paths.reports / "mode.md"
+        wrong_mode.write_bytes(b"mode drift\n")
+        wrong_mode.chmod(0o644)
+        with self.assertRaisesRegex(ValueError, "mode"):
+            store.put_artifact("reports/mode.md", b"mode drift\n")
 
     def test_artifact_digest_mutation_fails_read_open_and_replay(self) -> None:
         store = self.create_store()

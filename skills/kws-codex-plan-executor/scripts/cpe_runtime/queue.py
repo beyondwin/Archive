@@ -26,7 +26,6 @@ from .worktree import Worktree
 
 _GENERATION_ID = "generation-0001"
 _GENERATION_ROOT = f"maps/{_GENERATION_ID}"
-_ACCEPTED_PUBLICATION_PATH = f"{_GENERATION_ROOT}/accepted.json"
 
 
 def _sha256(data: bytes) -> str:
@@ -387,7 +386,7 @@ class QueueEngine:
 
     def _publish_program_artifacts(
         self, artifacts: Mapping[str, bytes], *, program_path: str
-    ) -> dict[str, object]:
+    ) -> tuple[dict[str, object], str, str]:
         publication_id = self._publication_id(artifacts)
         prefix = (
             f"{_GENERATION_ROOT}/attempts/{publication_id}/artifacts"
@@ -408,15 +407,22 @@ class QueueEngine:
             "program_map_sha256": _sha256(artifacts[program_path]),
             "artifacts": records,
         }
-        self.store.put_artifact(
-            _ACCEPTED_PUBLICATION_PATH, canonical_json(manifest)
+        manifest_bytes = canonical_json(manifest)
+        manifest_path = (
+            f"{_GENERATION_ROOT}/attempts/{publication_id}/accepted.json"
         )
-        return manifest
+        self.store.put_artifact(manifest_path, manifest_bytes)
+        return manifest, manifest_path, _sha256(manifest_bytes)
 
-    def _accepted_program_artifacts(self) -> dict[str, bytes]:
-        manifest = _load_json(
-            self.store.read_artifact(_ACCEPTED_PUBLICATION_PATH),
-            "accepted program publication",
+    def _accepted_program_artifacts(
+        self, manifest_path: str, manifest_sha256: str
+    ) -> dict[str, bytes]:
+        manifest_bytes = self.store.read_artifact(manifest_path)
+        if _sha256(manifest_bytes) != manifest_sha256:
+            raise ValueError("accepted program publication event digest does not match")
+        manifest = self.store._validate_publication_manifest(  # noqa: SLF001
+            manifest_bytes,
+            manifest_path,
         )
         if frozenset(manifest) != frozenset(
             {
@@ -447,7 +453,7 @@ class QueueEngine:
             if set(raw_record) != {"relative_path", "sha256", "byte_length"}:
                 raise ValueError("accepted program publication record fields are invalid")
             physical_path = raw_record["relative_path"]
-            if not isinstance(physical_path, str) or not physical_path.startswith(prefix):
+            if physical_path != f"{prefix}{logical_path}":
                 raise ValueError("accepted program publication path is invalid")
             data = self.store.read_artifact(physical_path)
             if (
@@ -625,11 +631,12 @@ class QueueEngine:
                 else [candidate_id]
             )
             target_tasks = [task_by_id[task_id] for task_id in target_ids]
-            planned_requirement_ids = {
+            mapped_requirement_ids = {
                 str(requirement_id)
                 for requirement_id in candidate["requirement_ids"]
                 if requirement_id in program["coverage"]
-                and program["coverage"][requirement_id]["disposition"] == "planned"
+                and program["coverage"][requirement_id]["disposition"]
+                in {"planned", "conflict"}
             }
             unknown_requirement_ids = set(candidate["requirement_ids"]) - set(
                 program["coverage"]
@@ -644,11 +651,11 @@ class QueueEngine:
                 for task in target_tasks
                 for requirement_id in task["requirement_ids"]
             }
-            if actual_requirement_ids != planned_requirement_ids:
+            if actual_requirement_ids != mapped_requirement_ids:
                 raise ValueError("program tasks weaken or invent mapped candidate coverage")
             requirement_constraints = [
                 constraint
-                for requirement_id in planned_requirement_ids
+                for requirement_id in mapped_requirement_ids
                 for constraint in mapped_requirements[requirement_id][1]["constraints"]
             ]
             expected_constraints = encoded(
@@ -866,15 +873,55 @@ class QueueEngine:
                     },
                 )
 
+    @staticmethod
+    def _generation_authority_state(
+        program: Mapping[str, object]
+    ) -> tuple[list[str], list[str]]:
+        items = program.get("authority_items")
+        if not isinstance(items, list):
+            raise ValueError("program authority items are not event-safe")
+        authority_ids = sorted(str(item["authority_id"]) for item in items)
+        task_ids = sorted(
+            {
+                str(task_id)
+                for item in items
+                for task_id in item["affected_task_ids"]
+            }
+        )
+        if len(authority_ids) > 64 or len(task_ids) > 64:
+            raise ValueError("program authority state exceeds bounded generation event")
+        return authority_ids, task_ids
+
     def map_program(self) -> str:
         """Compose validated document maps into one immutable global program map."""
 
         self.map_documents()
         document_maps = self._validated_document_maps()
         program_path = f"{_GENERATION_ROOT}/program-map.json"
-        accepted_target = self.store.paths.root / _ACCEPTED_PUBLICATION_PATH
+        events = self.store.validate_event_chain()
+        generation_events = [
+            event
+            for event in events
+            if event["event_type"] == "map.generation_created"
+            and event["payload"]["generation_id"] == _GENERATION_ID
+        ]
+        if len(generation_events) > 1:
+            raise ValueError("map generation was accepted more than once")
+        selected_manifest_path: str | None = None
+        selected_manifest_sha256: str | None = None
+        if generation_events:
+            selected_manifest_path = generation_events[0]["payload"].get(
+                "publication_manifest_path"
+            )
+            selected_manifest_sha256 = generation_events[0]["payload"].get(
+                "publication_manifest_sha256"
+            )
+            if not isinstance(selected_manifest_path, str) or not isinstance(
+                selected_manifest_sha256, str
+            ):
+                raise ValueError("map generation event omits accepted publication")
         reported_artifact_paths: tuple[str, ...] | None = None
-        if not accepted_target.exists() and not accepted_target.is_symlink():
+        if not generation_events:
             attempt_id, outbox = self._allocate_attempt("map-program-0001")
             request = ChildRequest(
                 role="program_mapper",
@@ -945,13 +992,22 @@ class QueueEngine:
                 )
                 if blocking:
                     raise ValueError(f"blocking coverage dispositions: {blocking}")
-                self._publish_program_artifacts(
-                    staged_bytes, program_path=program_path
+                self._generation_authority_state(staged_program)
+                _, selected_manifest_path, selected_manifest_sha256 = (
+                    self._publish_program_artifacts(
+                        staged_bytes, program_path=program_path
+                    )
                 )
             finally:
                 self.store.discard_outbox(attempt_id)
 
-        published_bytes = self._accepted_program_artifacts()
+        if not isinstance(selected_manifest_path, str) or not isinstance(
+            selected_manifest_sha256, str
+        ):
+            raise ValueError("accepted program publication is unavailable")
+        published_bytes = self._accepted_program_artifacts(
+            selected_manifest_path, selected_manifest_sha256
+        )
         program, program_bytes, artifact_paths = self._validate_program_artifacts(
             document_maps,
             reader=published_bytes.__getitem__,
@@ -972,30 +1028,24 @@ class QueueEngine:
         if blocking:
             raise ValueError(f"blocking coverage dispositions: {blocking}")
 
-        events = self.store.validate_event_chain()
-        generation_events = [
-            event
-            for event in events
-            if event["event_type"] == "map.generation_created"
-            and event["payload"]["generation_id"] == _GENERATION_ID
-        ]
-        if len(generation_events) > 1:
-            raise ValueError("map generation was accepted more than once")
+        authority_ids, authority_task_ids = self._generation_authority_state(program)
+        generation_payload = {
+            "generation_id": _GENERATION_ID,
+            "map_sha256": _sha256(program_bytes),
+            "artifact_paths": list(artifact_paths),
+            "publication_manifest_path": selected_manifest_path,
+            "publication_manifest_sha256": selected_manifest_sha256,
+            "authority_ids": authority_ids,
+            "task_ids": authority_task_ids,
+        }
         if generation_events:
             event_payload = generation_events[0]["payload"]
-            if (
-                event_payload.get("map_sha256") != _sha256(program_bytes)
-                or event_payload.get("artifact_paths") != list(artifact_paths)
-            ):
+            if event_payload != generation_payload:
                 raise ValueError("map generation event differs from immutable artifacts")
         else:
             self.store.append_event(
                 "map.generation_created",
-                {
-                    "generation_id": _GENERATION_ID,
-                    "map_sha256": _sha256(program_bytes),
-                    "artifact_paths": list(artifact_paths),
-                },
+                generation_payload,
             )
         authority_path = f"{_GENERATION_ROOT}/authority-queue.json"
         self._append_authority_events(program, authority_path)
