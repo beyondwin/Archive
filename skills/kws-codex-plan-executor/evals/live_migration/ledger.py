@@ -18,7 +18,7 @@ from typing import Any, Iterator
 from urllib.parse import quote
 
 from .contracts import SlotKey, canonical_json, sha256_bytes
-from .compiler import require_trust_root
+from .compiler import require_manifest_trust_root
 
 
 EVENT_SCHEMA = "cpe-live-event.v1"
@@ -439,16 +439,26 @@ def _release_projection(
     runs: list[dict[str, object]] = []
     by_id: dict[str, dict[str, object]] = {}
     trust_root_sha256: str | None = None
+    trust_root: dict[str, object] | None = None
     for event in events:
         payload = event["payload"]
         assert isinstance(payload, dict)
         event_trust = payload.get("trust_root_sha256")
-        if event_trust is not None:
-            if not isinstance(event_trust, str) or _SHA256.fullmatch(event_trust) is None:
+        event_trust_body = payload.get("trust_root")
+        if event_trust is not None or event_trust_body is not None:
+            if (
+                not isinstance(event_trust, str)
+                or _SHA256.fullmatch(event_trust) is None
+                or not isinstance(event_trust_body, dict)
+                or sha256_bytes(canonical_json(event_trust_body)) != event_trust
+            ):
                 raise LedgerError("release trust root binding is invalid")
             if trust_root_sha256 is not None and event_trust != trust_root_sha256:
                 raise LedgerError("release trust root binding changed")
+            if trust_root is not None and event_trust_body != trust_root:
+                raise LedgerError("release trust root body changed")
             trust_root_sha256 = event_trust
+            trust_root = event_trust_body
         if event["type"] == _PREDECESSOR_EVENT:
             if runs or event["sequence"] != 1:
                 raise LedgerError("predecessor attestation must be the first release event")
@@ -478,6 +488,7 @@ def _release_projection(
                     if event_trust is not None
                     else {}
                 ),
+                **({"trust_root": event_trust_body} if event_trust_body is not None else {}),
                 "terminal": False,
                 "passed": None,
                 "aggregate_sha256": None,
@@ -520,6 +531,7 @@ def _release_projection(
                         if event_trust is not None
                         else {}
                     ),
+                    **({"trust_root": event_trust_body} if event_trust_body is not None else {}),
                 }
             )
         else:
@@ -530,6 +542,7 @@ def _release_projection(
         "event_count": len(events),
         "last_event_sha256": events[-1]["event_sha256"] if events else None,
         "trust_root_sha256": trust_root_sha256,
+        **({"trust_root": trust_root} if trust_root is not None else {}),
         "runs": runs,
         "terminal_full_runs": sum(bool(record["terminal"]) for record in runs),
         "terminal_full_failures": failures,
@@ -551,7 +564,7 @@ def _validate_release_generation(root: Path, payload: dict[str, object]) -> Path
         "file_sha256",
     }
     file_sha256 = payload.get("file_sha256")
-    allowed = (required, required | {"trust_root_sha256"})
+    allowed = (required, required | {"trust_root", "trust_root_sha256"})
     if (
         set(payload) not in allowed
         or payload.get("proof_profile") not in {"critical_path_live", "full_paid_matrix"}
@@ -563,7 +576,12 @@ def _validate_release_generation(root: Path, payload: dict[str, object]) -> Path
         ))
         or (
             "trust_root_sha256" in payload
-            and _SHA256.fullmatch(str(payload["trust_root_sha256"])) is None
+            and (
+                _SHA256.fullmatch(str(payload["trust_root_sha256"])) is None
+                or not isinstance(payload.get("trust_root"), dict)
+                or sha256_bytes(canonical_json(payload["trust_root"]))
+                != payload["trust_root_sha256"]
+            )
         )
     ):
         raise LedgerError("release finalization payload is invalid")
@@ -680,9 +698,60 @@ def finalize_release_generation(
         "proof_profile": proof_profile,
         "file_sha256": file_sha256,
     }
-    if trust_root is not None:
-        payload["trust_root_sha256"] = trust_root.trust_root_sha256
     with _locked_run(release_root):
+        events = _read_release_events(release_root)
+        projection = _release_projection(events, release_root)
+        target = next(
+            (
+                record
+                for record in projection["runs"]
+                if record.get("run_id") == run_id
+            ),
+            None,
+        )
+        existing_finalized = [
+            event
+            for event in events
+            if event["type"] == _FINALIZED_EVENT
+            and isinstance(event.get("payload"), dict)
+            and event["payload"].get("run_id") == run_id
+        ]
+        if target is None or (
+            target.get("terminal") is True and len(existing_finalized) != 1
+        ):
+            raise LedgerError("release finalization requires one pending registered run")
+        registered_manifest = _load_object(
+            _release_manifest_path(release_root, run_id),
+            f"registered release manifest {run_id}",
+        )
+        if (
+            _manifest_digest(registered_manifest) != target.get("manifest_sha256")
+            or child_manifest_sha256 != target.get("manifest_sha256")
+        ):
+            raise LedgerError("terminal release manifest differs from its registration")
+        try:
+            expected_trust = require_manifest_trust_root(registered_manifest)
+        except ValueError as exc:
+            raise LedgerError("release_trust_root_mismatch") from exc
+        if expected_trust is not None:
+            if (
+                trust_root is None
+                or trust_root.body() != registered_manifest.get("trust_root")
+                or trust_root.trust_root_sha256 != expected_trust
+            ):
+                raise LedgerError("release_trust_root_mismatch")
+            for name in ("manifest.json", "result.json", "dogfood-result.json"):
+                try:
+                    bound = json.loads(payload_bytes[name])
+                except (UnicodeError, json.JSONDecodeError) as exc:
+                    raise LedgerError("release_trust_root_mismatch") from exc
+                if (
+                    not isinstance(bound, dict)
+                    or bound.get("trust_root_sha256") != expected_trust
+                ):
+                    raise LedgerError("release_trust_root_mismatch")
+            payload["trust_root_sha256"] = expected_trust
+            payload["trust_root"] = registered_manifest["trust_root"]
         generation_root = release_root / _GENERATION_DIR
         generation_root.mkdir(mode=0o700, exist_ok=True)
         final = generation_root / generation_sha256
@@ -713,13 +782,6 @@ def finalize_release_generation(
                 raise LedgerError("a different release generation is already terminal")
             event = finalized[0]
         else:
-            projection = _release_projection(events, release_root)
-            runs = projection["runs"]
-            target = next(
-                (record for record in runs if record.get("run_id") == run_id), None
-            )
-            if target is None or target.get("terminal") is True:
-                raise LedgerError("release finalization requires one pending registered run")
             event = _append_release_event_locked(release_root, _FINALIZED_EVENT, payload)
         if crash_at == "event_before_state":
             raise LedgerError("injected_event_before_state")
@@ -850,11 +912,14 @@ def register_release_run(
 
     if not isinstance(manifest, dict) or manifest.get("schema_version") != "cpe-quality-manifest.v4":
         raise LedgerError("release lineage requires a v4 manifest")
-    if expected_trust_root is not None:
-        try:
-            require_trust_root(manifest, expected_trust_root)
-        except ValueError as exc:
-            raise LedgerError("release_trust_root_mismatch") from exc
+    try:
+        require_manifest_trust_root(
+            manifest,
+            expected=expected_trust_root,
+            required=expected_trust_root is not None,
+        )
+    except ValueError as exc:
+        raise LedgerError("release_trust_root_mismatch") from exc
     run_id = manifest.get("run_id")
     manifest_sha256 = manifest.get("manifest_sha256")
     checkpoint = manifest.get("implementation_patch_sha256") or manifest.get(
@@ -931,6 +996,11 @@ def register_release_run(
                     if "trust_root_sha256" in manifest
                     else {}
                 ),
+                **(
+                    {"trust_root": manifest["trust_root"]}
+                    if "trust_root" in manifest
+                    else {}
+                ),
             },
         )
         _atomic_json(
@@ -941,7 +1011,12 @@ def register_release_run(
 
 
 def recover_orphan_release_registration(
-    root: Path, run_id: str
+    root: Path,
+    run_id: str,
+    *,
+    expected_trust_root=None,
+    repository: Path | None = None,
+    require_trust: bool = False,
 ) -> dict[str, object] | None:
     """Recover a fsynced exact manifest whose registration event was not appended."""
 
@@ -954,6 +1029,37 @@ def recover_orphan_release_registration(
     with _locked_run(release_root):
         manifest = _load_object(manifest_path, f"orphan release manifest {run_id}")
         digest = _manifest_digest(manifest)
+        if expected_trust_root is None and repository is not None:
+            candidate_trust_root = None
+            try:
+                from cpe_runtime.release_policy_vnext import load_trust_root
+
+                candidate_trust_root = load_trust_root(
+                    repository, str(manifest.get("implementation_commit") or "")
+                )
+            except ValueError:
+                candidate_trust_root = None
+            if candidate_trust_root is not None and (
+                require_trust
+                or "trust_root_sha256" in manifest
+                or manifest.get("release_policy_sha256")
+                == candidate_trust_root.policy.sha256
+            ):
+                expected_trust_root = candidate_trust_root
+        if expected_trust_root is None and (
+            require_trust or "trust_root_sha256" in manifest
+        ):
+            if repository is None:
+                raise LedgerError("release_trust_root_mismatch")
+            raise LedgerError("release_trust_root_mismatch")
+        try:
+            require_manifest_trust_root(
+                manifest,
+                expected=expected_trust_root,
+                required=expected_trust_root is not None,
+            )
+        except ValueError as exc:
+            raise LedgerError("release_trust_root_mismatch") from exc
         checkpoint = manifest.get("implementation_patch_sha256") or manifest.get(
             "implementation_commit"
         )
@@ -1007,6 +1113,11 @@ def recover_orphan_release_registration(
                     if "trust_root_sha256" in manifest
                     else {}
                 ),
+                **(
+                    {"trust_root": manifest["trust_root"]}
+                    if "trust_root" in manifest
+                    else {}
+                ),
             },
         )
         _atomic_json(
@@ -1024,6 +1135,7 @@ def record_release_terminal(
     passed: bool,
     aggregate_sha256: str,
     privacy_sha256: str,
+    trust_root_sha256: str | None = None,
 ) -> dict[str, object]:
     """Commit the post-aggregate and post-privacy terminal release verdict."""
 
@@ -1052,6 +1164,12 @@ def record_release_terminal(
         )
         if _manifest_digest(registered_manifest) != target.get("manifest_sha256"):
             raise LedgerError("terminal release manifest differs from its registration")
+        try:
+            expected_trust = require_manifest_trust_root(registered_manifest)
+        except ValueError as exc:
+            raise LedgerError("release_trust_root_mismatch") from exc
+        if expected_trust is not None and trust_root_sha256 != expected_trust:
+            raise LedgerError("release_trust_root_mismatch")
         event = _append_release_event_locked(
             release_root,
             "release_run_terminal",
@@ -1061,6 +1179,16 @@ def record_release_terminal(
                 "passed": passed,
                 "aggregate_sha256": aggregate_sha256,
                 "privacy_sha256": privacy_sha256,
+                **(
+                    {"trust_root_sha256": expected_trust}
+                    if expected_trust is not None
+                    else {}
+                ),
+                **(
+                    {"trust_root": registered_manifest["trust_root"]}
+                    if expected_trust is not None
+                    else {}
+                ),
             },
         )
         _atomic_json(
