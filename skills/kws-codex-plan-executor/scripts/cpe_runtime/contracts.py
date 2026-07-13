@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
@@ -1802,6 +1802,200 @@ def validate_event_payload(
     if len(canonical_json(validated)) > 16 * 1024:
         raise ValueError("event payload exceeds 16 KiB")
     return validated
+
+
+def validate_document_audit(
+    payload: object,
+    *,
+    document_id: str,
+    source_sha256: str,
+    revision: str,
+    requirement_ids: Sequence[str],
+) -> dict[str, object]:
+    """Validate one immutable document-scoped final coverage verdict."""
+
+    fields = frozenset(
+        {
+            "schema_version",
+            "document_id",
+            "source_sha256",
+            "revision",
+            "coverage_verdicts",
+            "missing_requirements",
+            "conflicts",
+            "verdict",
+        }
+    )
+    value = _map_object(payload, fields=fields, name="document audit")
+    if value["schema_version"] != 1:
+        raise ValueError("document audit schema_version must be 1")
+    expected_document = _map_id(document_id, "expected audit document ID")
+    if _map_id(value["document_id"], "audit document ID") != expected_document:
+        raise ValueError("document audit ID does not match")
+    expected_source = _map_hash(source_sha256, "expected audit source SHA")
+    if _map_hash(value["source_sha256"], "audit source SHA") != expected_source:
+        raise ValueError("document audit source SHA does not match")
+    if (
+        not isinstance(revision, str)
+        or _HEX_COMMIT.fullmatch(revision) is None
+        or value["revision"] != revision
+    ):
+        raise ValueError("document audit revision does not match")
+
+    expected_requirements = tuple(
+        _map_id(item, "audit requirement ID") for item in requirement_ids
+    )
+    if len(set(expected_requirements)) != len(expected_requirements):
+        raise ValueError("expected audit requirement IDs must be unique")
+    coverage = value["coverage_verdicts"]
+    if not isinstance(coverage, Mapping) or set(coverage) != set(expected_requirements):
+        raise ValueError("document audit coverage does not match requirements")
+    verdict_values = frozenset({"pass", "blocked", "failed"})
+    normalized_coverage: dict[str, str] = {}
+    for requirement_id in expected_requirements:
+        verdict = coverage[requirement_id]
+        if verdict not in verdict_values:
+            raise ValueError("document audit coverage verdict is invalid")
+        normalized_coverage[requirement_id] = str(verdict)
+    missing = tuple(
+        _map_id(item, "missing audit requirement")
+        for item in _string_array(value, "missing_requirements")
+    )
+    if not set(missing) <= set(expected_requirements):
+        raise ValueError("document audit names an unknown missing requirement")
+    conflicts = _map_string_list(value["conflicts"], "document audit conflicts")
+    verdict = value["verdict"]
+    if verdict not in verdict_values:
+        raise ValueError("document audit verdict is invalid")
+    if verdict == "pass" and (
+        any(item != "pass" for item in normalized_coverage.values())
+        or missing
+        or conflicts
+    ):
+        raise ValueError("passing document audit contains blocking evidence")
+    return {
+        "schema_version": 1,
+        "document_id": expected_document,
+        "source_sha256": expected_source,
+        "revision": revision,
+        "coverage_verdicts": normalized_coverage,
+        "missing_requirements": list(missing),
+        "conflicts": conflicts,
+        "verdict": verdict,
+    }
+
+
+def validate_terminal_artifact(
+    payload: object,
+    *,
+    revision: str,
+    auditor_document_ids: Sequence[str],
+    verification_commands: Sequence[str],
+) -> dict[str, object]:
+    """Validate the sole revision-bound terminal quality artifact."""
+
+    fields = frozenset(
+        {
+            "schema_version",
+            "quality_verdict",
+            "revision",
+            "auditor_verdicts",
+            "verification",
+            "authority_open",
+            "residual_limitations",
+            "whole_diff_sha256",
+        }
+    )
+    value = _map_object(payload, fields=fields, name="terminal artifact")
+    if value["schema_version"] != 1:
+        raise ValueError("terminal artifact schema_version must be 1")
+    if (
+        not isinstance(revision, str)
+        or _HEX_COMMIT.fullmatch(revision) is None
+        or value["revision"] != revision
+    ):
+        raise ValueError("terminal artifact revision does not match")
+    quality_verdict = value["quality_verdict"]
+    verdict_values = frozenset({"pass", "blocked", "failed"})
+    if quality_verdict not in verdict_values:
+        raise ValueError("terminal quality_verdict is invalid")
+    document_ids = tuple(
+        _map_id(item, "terminal auditor document ID")
+        for item in auditor_document_ids
+    )
+    raw_auditors = value["auditor_verdicts"]
+    if not isinstance(raw_auditors, Mapping) or set(raw_auditors) != set(document_ids):
+        raise ValueError("terminal auditor verdict set does not match")
+    auditor_verdicts: dict[str, str] = {}
+    for document_id in document_ids:
+        verdict = raw_auditors[document_id]
+        if verdict not in verdict_values:
+            raise ValueError("terminal auditor verdict is invalid")
+        auditor_verdicts[document_id] = str(verdict)
+
+    commands = tuple(
+        _map_text(command, "terminal verification command", 2048)
+        for command in verification_commands
+    )
+    raw_verification = value["verification"]
+    if not isinstance(raw_verification, list) or len(raw_verification) != len(commands):
+        raise ValueError("terminal verification count does not match")
+    verification: list[dict[str, object]] = []
+    for index, raw_record in enumerate(raw_verification):
+        record = _map_object(
+            raw_record,
+            fields=frozenset({"command", "exit_code", "output_path"}),
+            name="terminal verification record",
+        )
+        if record["command"] != commands[index]:
+            raise ValueError("terminal verification command order does not match")
+        exit_code = record["exit_code"]
+        if (
+            not isinstance(exit_code, int)
+            or isinstance(exit_code, bool)
+            or exit_code < -255
+            or exit_code > 255
+        ):
+            raise ValueError("terminal verification exit_code is invalid")
+        output_path = normalize_relative_path(record["output_path"])
+        expected_output_root = f"verification/final/{revision}/"
+        if not output_path.startswith(expected_output_root):
+            raise ValueError(
+                "terminal verification output is outside the exact revision namespace"
+            )
+        verification.append(
+            {
+                "command": commands[index],
+                "exit_code": exit_code,
+                "output_path": output_path,
+            }
+        )
+    authority_open = [
+        _map_id(item, "terminal authority ID")
+        for item in _string_array(value, "authority_open")
+    ]
+    residual_limitations = _map_string_list(
+        value["residual_limitations"], "terminal residual limitations"
+    )
+    whole_diff_sha256 = _map_hash(
+        value["whole_diff_sha256"], "terminal whole diff SHA"
+    )
+    if quality_verdict == "pass" and (
+        any(verdict != "pass" for verdict in auditor_verdicts.values())
+        or any(record["exit_code"] != 0 for record in verification)
+        or authority_open
+    ):
+        raise ValueError("passing terminal artifact contains blocking evidence")
+    return {
+        "schema_version": 1,
+        "quality_verdict": quality_verdict,
+        "revision": revision,
+        "auditor_verdicts": auditor_verdicts,
+        "verification": verification,
+        "authority_open": authority_open,
+        "residual_limitations": residual_limitations,
+        "whole_diff_sha256": whole_diff_sha256,
+    }
 
 
 def validate_child_result(

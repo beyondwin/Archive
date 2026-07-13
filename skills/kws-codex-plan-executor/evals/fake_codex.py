@@ -56,6 +56,15 @@ SCENARIOS = frozenset(
         "queue_historical_strategy",
         "queue_invalid_authority",
         "queue_repeated_unusable_strategy",
+        "final_success",
+        "final_auditor_blocked",
+        "final_stale_commit",
+        "final_failed_terminal",
+        "final_integration_fix",
+        "final_integrator_crash",
+        "final_integrator_timeout",
+        "final_pass_with_finding",
+        "final_forged_handoff",
         "writer_hold",
     }
 )
@@ -142,6 +151,7 @@ def _log_invocation(argv: list[str], prompt: str) -> None:
         "env": {key: value for key, value in os.environ.items() if key in names},
         "prompt": prompt,
         "role": _prompt_value(prompt, "CPE_ROLE"),
+        "item_id": _prompt_value(prompt, "ITEM"),
         "input_paths": _prompt_inputs(prompt),
     }
     with Path(declared).open("a", encoding="utf-8") as handle:
@@ -175,6 +185,190 @@ def _queue_invocation_number(role: str) -> int:
     temporary.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     os.replace(temporary, path)
     return count
+
+
+def _append_verification_invocation(revision: str, command: str) -> None:
+    declared = os.environ.get("CPE_FAKE_VERIFICATION_LOG")
+    if not declared:
+        return
+    with Path(declared).open("a", encoding="utf-8") as handle:
+        handle.write(
+            json.dumps(
+                {"revision": revision, "command": command}, sort_keys=True
+            )
+            + "\n"
+        )
+
+
+def _json_inputs(input_paths: list[str]) -> list[dict[str, object]]:
+    payloads: list[dict[str, object]] = []
+    for value in input_paths:
+        path = Path(value)
+        if path.suffix != ".json":
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            payloads.append(payload)
+    return payloads
+
+
+def _final_audit_result(
+    *,
+    scenario: str,
+    item_id: str,
+    input_paths: list[str],
+    worktree: Path,
+    outbox: Path,
+    report_path: str,
+) -> tuple[str, str, list[str]]:
+    source = Path(input_paths[0]).read_bytes()
+    document_map = next(
+        (
+            payload
+            for payload in _json_inputs(input_paths)
+            if payload.get("document_id") == item_id
+            and isinstance(payload.get("requirements"), list)
+        ),
+        None,
+    )
+    if document_map is None:
+        raise SystemExit("document auditor received no matching document map")
+    requirements = [
+        str(requirement["requirement_id"])
+        for requirement in document_map["requirements"]
+        if isinstance(requirement, dict) and requirement.get("kind") == "normative"
+    ]
+    blocked = scenario == "final_auditor_blocked" and item_id == "spec-01"
+    revision = _git(worktree, "rev-parse", "HEAD")
+    audit_verdict = "blocked" if blocked else "pass"
+    _write_json(
+        outbox,
+        report_path,
+        {
+            "schema_version": 1,
+            "document_id": item_id,
+            "source_sha256": hashlib.sha256(source).hexdigest(),
+            "revision": revision,
+            "coverage_verdicts": {
+                requirement_id: audit_verdict for requirement_id in requirements
+            },
+            "missing_requirements": requirements if blocked else [],
+            "conflicts": [],
+            "verdict": audit_verdict,
+        },
+    )
+    return revision, audit_verdict, [report_path]
+
+
+def _final_integration_result(
+    *,
+    scenario: str,
+    queue_number: int,
+    input_paths: list[str],
+    worktree: Path,
+    outbox: Path,
+    report_path: str,
+) -> tuple[str, str, str, list[str]]:
+    revision = _git(worktree, "rev-parse", "HEAD")
+    if scenario == "final_integrator_crash" and queue_number == 1:
+        raise SystemExit("deterministic final integrator process interruption")
+    audits = [
+        payload
+        for payload in _json_inputs(input_paths)
+        if payload.get("schema_version") == 1
+        and isinstance(payload.get("document_id"), str)
+        and isinstance(payload.get("coverage_verdicts"), dict)
+    ]
+    program = next(
+        (
+            payload
+            for payload in _json_inputs(input_paths)
+            if isinstance(payload.get("final_verification_commands"), list)
+        ),
+        None,
+    )
+    if program is None:
+        raise SystemExit("final integrator received no program map")
+    whole_paths = [Path(value) for value in input_paths if "whole.patch" in value]
+    if len(whole_paths) != 1:
+        raise SystemExit("final integrator requires exactly one whole diff")
+    artifact_paths = [report_path]
+    verification: list[dict[str, object]] = []
+    for index, command in enumerate(program["final_verification_commands"], start=1):
+        command = str(command)
+        _append_verification_invocation(revision, command)
+        output_path = (
+            f"verification/final/{revision}/commands/command-{index:02d}.log"
+        )
+        target = outbox / output_path
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        target.write_text(f"PASS {command}\n", encoding="utf-8")
+        target.chmod(0o600)
+        artifact_paths.append(output_path)
+        verification.append(
+            {"command": command, "exit_code": 0, "output_path": output_path}
+        )
+
+    if scenario == "final_integration_fix" and queue_number == 1:
+        finding_path = f"verification/final/{revision}/integration-findings.json"
+        _write_json(
+            outbox,
+            finding_path,
+            {"severity": "Important", "finding": "apply one consolidated fix"},
+        )
+        artifact_paths.append(finding_path)
+        return revision, "changes_requested", "changes_requested", artifact_paths
+
+    if scenario == "final_pass_with_finding":
+        finding_path = f"verification/final/{revision}/unexpected-finding.json"
+        _write_json(
+            outbox,
+            finding_path,
+            {"severity": "Important", "finding": "must not accompany pass"},
+        )
+        artifact_paths.append(finding_path)
+
+    terminal_revision = (
+        _git(worktree, "rev-parse", "HEAD^")
+        if scenario == "final_stale_commit"
+        else revision
+    )
+    _write_json(
+        outbox,
+        report_path,
+        {
+            "schema_version": 1,
+            "quality_verdict": (
+                "failed" if scenario == "final_failed_terminal" else "pass"
+            ),
+            "revision": terminal_revision,
+            "auditor_verdicts": {
+                str(audit["document_id"]): str(audit["verdict"])
+                for audit in audits
+            },
+            "verification": (
+                [
+                    {**record, "exit_code": 1}
+                    for record in verification
+                ]
+                if scenario == "final_failed_terminal"
+                else verification
+            ),
+            "authority_open": [],
+            "residual_limitations": [],
+            "whole_diff_sha256": hashlib.sha256(whole_paths[0].read_bytes()).hexdigest(),
+        },
+    )
+    if scenario == "final_forged_handoff":
+        _write_json(
+            outbox,
+            f"verification/final/{revision}/integration-handoff.json",
+            {"producer": "untrusted-child"},
+        )
+    return terminal_revision, "completed", "pass", artifact_paths
 
 
 def _source_entry(
@@ -806,6 +1000,10 @@ def main() -> int:
         time.sleep(60)
         return 99
 
+    if scenario == "final_integrator_timeout" and role == "program_final_integrator":
+        time.sleep(60)
+        return 99
+
     if scenario == "queue_review_crash" and role == "reviewer":
         raise SystemExit("deterministic reviewer process interruption")
 
@@ -862,9 +1060,33 @@ def main() -> int:
     authority_id = None
     artifact_paths = [report_path]
 
-    queue_number = _queue_invocation_number(role) if scenario.startswith("queue_") else 1
+    queue_number = (
+        _queue_invocation_number(role)
+        if scenario.startswith(("queue_", "final_"))
+        else 1
+    )
 
-    if scenario in {"success", "queue_success", "queue_review_crash"} and role in WRITE_ROLES:
+    if scenario.startswith("final_") and role == "document_auditor":
+        commit, verdict, artifact_paths = _final_audit_result(
+            scenario=scenario,
+            item_id=item_id,
+            input_paths=_prompt_inputs(prompt),
+            worktree=worktree,
+            outbox=outbox,
+            report_path=report_path,
+        )
+    elif scenario.startswith("final_") and role == "program_final_integrator":
+        commit, status, verdict, artifact_paths = _final_integration_result(
+            scenario=scenario,
+            queue_number=queue_number,
+            input_paths=_prompt_inputs(prompt),
+            worktree=worktree,
+            outbox=outbox,
+            report_path=report_path,
+        )
+    elif scenario.startswith("final_") and role in WRITE_ROLES:
+        commit = _commit_change(worktree, item_id)
+    elif scenario in {"success", "queue_success", "queue_review_crash"} and role in WRITE_ROLES:
         commit = _commit_change(worktree, item_id)
     elif scenario in {
         "queue_review_fix",

@@ -23,6 +23,7 @@ from .contracts import (
     CHILD_ROLES,
     WRITE_ROLES,
     ChildResult,
+    canonical_json,
     normalize_relative_path,
     validate_child_result,
 )
@@ -354,6 +355,129 @@ class ChildLauncher:
         return environment
 
     @staticmethod
+    def _read_child_artifact(outbox: Path, relative_path: str) -> bytes:
+        normalized = normalize_relative_path(relative_path)
+        current = outbox
+        parts = Path(normalized).parts
+        for index, part in enumerate(parts):
+            current = current / part
+            try:
+                metadata = current.lstat()
+            except OSError as exc:
+                raise ValueError("final child omitted a reported artifact") from exc
+            if stat.S_ISLNK(metadata.st_mode):
+                raise ValueError("final child artifact path contains a symlink")
+            if index < len(parts) - 1 and not stat.S_ISDIR(metadata.st_mode):
+                raise ValueError("final child artifact parent is not a directory")
+        descriptor = os.open(current, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ValueError("final child artifact is not a regular file")
+            chunks: list[bytes] = []
+            while True:
+                chunk = os.read(descriptor, 64 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            return b"".join(chunks)
+        finally:
+            os.close(descriptor)
+
+    def _persist_final_handoff(
+        self,
+        *,
+        request: ChildRequest,
+        outbox: Path,
+        result: ChildResult,
+    ) -> ChildResult:
+        if request.role != "program_final_integrator":
+            return result
+        report_path = normalize_relative_path(request.report_path)
+        report_parent = Path(report_path).parent.as_posix()
+        handoff_path = normalize_relative_path(
+            f"{report_parent}/integration-handoff.json"
+        )
+        if handoff_path in result.artifact_paths:
+            raise ValueError("child result uses the reserved integration handoff path")
+        if report_path not in result.artifact_paths:
+            raise ValueError("final integrator omitted its declared report")
+        artifact_sha256s = {
+            path: hashlib.sha256(
+                self._read_child_artifact(outbox, path)
+            ).hexdigest()
+            for path in result.artifact_paths
+        }
+        updated = ChildResult(
+            role=result.role,
+            status=result.status,
+            item_id=result.item_id,
+            commit=result.commit,
+            verdict=result.verdict,
+            failure_code=result.failure_code,
+            authority_id=result.authority_id,
+            strategy_key=result.strategy_key,
+            affected_document_ids=result.affected_document_ids,
+            artifact_paths=(handoff_path, *result.artifact_paths),
+            summary=result.summary,
+        )
+        payload = {
+            "schema_version": 1,
+            "producer": "cpe_launcher",
+            "child_result": {
+                "role": updated.role,
+                "status": updated.status,
+                "item_id": updated.item_id,
+                "commit": updated.commit,
+                "verdict": updated.verdict,
+                "failure_code": updated.failure_code,
+                "authority_id": updated.authority_id,
+                "strategy_key": updated.strategy_key,
+                "affected_document_ids": list(updated.affected_document_ids),
+                "artifact_paths": list(updated.artifact_paths),
+                "summary": updated.summary,
+            },
+            "report_path": report_path,
+            "report_sha256": artifact_sha256s[report_path],
+            "artifact_sha256s": artifact_sha256s,
+        }
+        target = outbox / handoff_path
+        parent = target.parent
+        try:
+            parent_metadata = parent.lstat()
+        except OSError as exc:
+            raise ValueError("integration handoff parent is unavailable") from exc
+        if stat.S_ISLNK(parent_metadata.st_mode) or not stat.S_ISDIR(
+            parent_metadata.st_mode
+        ):
+            raise ValueError("integration handoff parent is not a real directory")
+        try:
+            descriptor = os.open(
+                target,
+                os.O_WRONLY
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+        except OSError as exc:
+            raise ValueError(
+                "child attempted to forge the reserved integration handoff"
+            ) from exc
+        try:
+            os.fchmod(descriptor, 0o600)
+            view = memoryview(canonical_json(payload))
+            while view:
+                written = os.write(descriptor, view)
+                if written <= 0:
+                    raise OSError("short integration handoff write")
+                view = view[written:]
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        return updated
+
+    @staticmethod
     def _event_digest(stdout: str) -> str:
         for line in stdout.splitlines():
             if not line.strip():
@@ -532,6 +656,11 @@ class ChildLauncher:
             worktree.verify_read_only_handoff(before_head, before_status)
 
         if ingest_artifacts:
+            result = self._persist_final_handoff(
+                request=request,
+                outbox=outbox,
+                result=result,
+            )
             attempt_id = outbox.name
             ingested = store.ingest_outbox(attempt_id, result.artifact_paths)
             if ingested != result.artifact_paths:

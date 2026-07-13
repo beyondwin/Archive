@@ -18,9 +18,11 @@ from .contracts import (
     InputDocument,
     canonical_json,
     normalize_relative_path,
+    validate_document_audit,
     validate_document_map,
     validate_program_map,
     validate_task_brief,
+    validate_terminal_artifact,
 )
 from .launcher import ChildLauncher, ChildRequest, LaunchOutcome
 from .store import RunStore
@@ -2329,6 +2331,1093 @@ class QueueEngine:
             end_commit = recovered
         self._run_review(task, start_commit, end_commit)
 
+    @staticmethod
+    def _final_root(revision: str) -> str:
+        return f"verification/final/{revision}"
+
+    def _audit_path(self, revision: str, document_id: str) -> str:
+        return f"{self._final_root(revision)}/audits/{document_id}.json"
+
+    def _terminal_path(self, revision: str) -> str:
+        return f"{self._final_root(revision)}/terminal.json"
+
+    def _integration_launch_path(self, revision: str) -> str:
+        return f"{self._final_root(revision)}/integration-launch.json"
+
+    def _integration_result_path(self, revision: str) -> str:
+        return f"{self._final_root(revision)}/integration-result.json"
+
+    def _integration_handoff_path(self, revision: str) -> str:
+        return f"{self._final_root(revision)}/integration-handoff.json"
+
+    def _integration_failure_path(self, revision: str) -> str:
+        return f"{self._final_root(revision)}/integration-child-failure.json"
+
+    def _integration_retry_path(self, revision: str) -> str:
+        return f"{self._final_root(revision)}/integration-retry-launch.json"
+
+    def _tasks_are_final_ready(
+        self, state: Mapping[str, object], program: Mapping[str, object]
+    ) -> bool:
+        if state.get("status") == "completed":
+            return False
+        replayed_tasks = state.get("tasks")
+        authorities = state.get("authorities")
+        if not isinstance(replayed_tasks, Mapping) or not isinstance(
+            authorities, Mapping
+        ):
+            raise ValueError("replayed final queue state is invalid")
+        if any(
+            isinstance(authority, Mapping)
+            and authority.get("status") == "waiting_authority"
+            for authority in authorities.values()
+        ):
+            return False
+        return all(
+            isinstance(replayed_tasks.get(str(task["task_id"])), Mapping)
+            and replayed_tasks[str(task["task_id"])].get("review_verdict") == "pass"
+            for task in program["tasks"]
+        )
+
+    def _audit_requirements(
+        self, document: InputDocument
+    ) -> tuple[str, ...]:
+        document_map, _ = self._read_document_map(
+            document, self._document_map_path(document)
+        )
+        return tuple(
+            str(requirement["requirement_id"])
+            for requirement in document_map["requirements"]
+            if requirement["kind"] == "normative"
+        )
+
+    def _validate_audit_event(
+        self,
+        event: Mapping[str, object],
+        *,
+        document: InputDocument,
+        revision: str,
+    ) -> tuple[str, str]:
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping):
+            raise ValueError("document audit event payload is invalid")
+        expected_path = self._audit_path(revision, document.document_id)
+        paths = payload.get("artifact_paths")
+        if paths != [expected_path]:
+            raise ValueError("document audit event has unexpected artifacts")
+        data = self.store.read_artifact(expected_path)
+        validated = validate_document_audit(
+            _load_json(data, f"document audit {document.document_id}"),
+            document_id=document.document_id,
+            source_sha256=document.sha256,
+            revision=revision,
+            requirement_ids=self._audit_requirements(document),
+        )
+        if canonical_json(validated) != data:
+            raise ValueError("document audit is not in its canonical validated shape")
+        verdict = str(validated["verdict"])
+        if payload.get("status") != "completed" or payload.get("verdict") != verdict:
+            raise ValueError("document audit event differs from its artifact")
+        report_sha256 = payload.get("report_sha256")
+        if report_sha256 is not None and report_sha256 != _sha256(data):
+            raise ValueError("document audit event report digest does not match")
+        return expected_path, verdict
+
+    def _current_document_audits(
+        self, revision: str
+    ) -> dict[str, tuple[str, str]]:
+        documents = {item.document_id: item for item in self.store.document_set()}
+        result: dict[str, tuple[str, str]] = {}
+        for event in self.store.validate_event_chain():
+            if event["event_type"] != "audit.reported":
+                continue
+            payload = event["payload"]
+            if payload.get("commit") != revision:
+                continue
+            paths = payload.get("artifact_paths")
+            if not isinstance(paths, list) or len(paths) != 1:
+                raise ValueError("document audit event has invalid artifacts")
+            matched = [
+                document
+                for document in documents.values()
+                if paths[0] == self._audit_path(revision, document.document_id)
+            ]
+            if len(matched) != 1 or matched[0].document_id in result:
+                raise ValueError("document audit events are ambiguous")
+            document = matched[0]
+            result[document.document_id] = self._validate_audit_event(
+                event, document=document, revision=revision
+            )
+        return result
+
+    def _audit_inputs(
+        self,
+        document: InputDocument,
+        *,
+        revision: str,
+        program: Mapping[str, object],
+        selected: Mapping[str, Path],
+        state: Mapping[str, object],
+    ) -> tuple[Path, ...]:
+        source = self.store.paths.root / document.snapshot_path
+        inputs: list[Path] = [source.resolve(strict=True)]
+        inputs.append(
+            self._artifact_input(self._document_map_path(document), selected)
+        )
+        replayed_tasks = state["tasks"]
+        assert isinstance(replayed_tasks, Mapping)
+        for task in program["tasks"]:
+            if document.document_id not in task["document_ids"]:
+                continue
+            task_id = str(task["task_id"])
+            inputs.append(selected[str(task["brief_path"])])
+            task_state = replayed_tasks.get(task_id)
+            if not isinstance(task_state, Mapping):
+                raise ValueError("final audit task evidence is unavailable")
+            evidence_paths = [
+                *task_state.get("report_paths", []),
+                *(
+                    path
+                    for review in task_state.get("reviews", [])
+                    if isinstance(review, Mapping)
+                    for path in review.get("artifact_paths", [])
+                ),
+            ]
+            if not all(isinstance(path, str) for path in evidence_paths):
+                raise ValueError("final audit task artifact paths are invalid")
+            inputs.extend(
+                self._artifact_input(str(path), selected) for path in evidence_paths
+            )
+            attempts = task_state.get("attempts", [])
+            baseline = self.worktree.base_commit
+            if attempts and isinstance(attempts[0], Mapping):
+                candidate = attempts[0].get("baseline_commit")
+                if isinstance(candidate, str):
+                    baseline = candidate
+            passing_reviews = [
+                review
+                for review in task_state.get("reviews", [])
+                if isinstance(review, Mapping)
+                and review.get("verdict") == "pass"
+                and isinstance(review.get("commit"), str)
+            ]
+            if not passing_reviews:
+                raise ValueError("final audit task has no passing reviewed commit")
+            reviewed_commit = str(passing_reviews[-1]["commit"])
+            diff_path = (
+                f"{self._final_root(revision)}/diffs/"
+                f"{document.document_id}-{self._task_slug(task_id)}.patch"
+            )
+            self.store.put_artifact(
+                diff_path,
+                self.worktree.diff(baseline, reviewed_commit).encode("utf-8"),
+            )
+            inputs.append(self._artifact_input(diff_path, selected))
+        integration_state = replayed_tasks.get("program:integration")
+        if isinstance(integration_state, Mapping):
+            for attempt in integration_state.get("attempts", []):
+                if not isinstance(attempt, Mapping) or attempt.get("status") != "completed":
+                    continue
+                baseline = attempt.get("baseline_commit")
+                commit = attempt.get("commit")
+                attempt_id = attempt.get("attempt_id")
+                if not all(
+                    isinstance(value, str) and value
+                    for value in (baseline, commit, attempt_id)
+                ):
+                    raise ValueError("integration fix audit range is invalid")
+                diff_path = (
+                    f"{self._final_root(revision)}/diffs/"
+                    f"{document.document_id}-{attempt_id}.patch"
+                )
+                self.store.put_artifact(
+                    diff_path,
+                    self.worktree.diff(str(baseline), str(commit)).encode("utf-8"),
+                )
+                inputs.append(self._artifact_input(diff_path, selected))
+        return self._dedupe_paths(inputs)
+
+    def _run_document_audits(self, revision: str) -> dict[str, tuple[str, str]]:
+        audits = self._current_document_audits(revision)
+        program, selected = self._program_context()
+        state = self.store.replay()
+        for document in self.store.document_set():
+            if document.document_id in audits:
+                continue
+            report_path = self._audit_path(revision, document.document_id)
+            outcome = self._launch_role(
+                role="document_auditor",
+                item_id=document.document_id,
+                goal=(
+                    "Audit only this immutable source document against its mapped "
+                    f"requirements and supplied implementation evidence at {revision}."
+                ),
+                input_paths=self._audit_inputs(
+                    document,
+                    revision=revision,
+                    program=program,
+                    selected=selected,
+                    state=state,
+                ),
+                report_path=report_path,
+                skills=("using-superpowers", "verification-before-completion"),
+                done_when=(
+                    "every normative requirement has one explicit coverage verdict",
+                    "the verdict is bound to the exact immutable source and revision",
+                ),
+                attempt_id=(
+                    f"final-audit-{document.document_id}-{revision[:12]}"
+                ),
+            )
+            result = outcome.result
+            if result.commit != revision:
+                raise ValueError("document auditor revision does not match current HEAD")
+            if result.status != "completed" or result.verdict not in {
+                "pass",
+                "blocked",
+            }:
+                raise ValueError("document auditor returned a non-terminal verdict")
+            if result.artifact_paths != (report_path,):
+                raise ValueError("document auditor returned unexpected artifacts")
+            data = self.store.read_artifact(report_path)
+            self.store.append_event(
+                "audit.reported",
+                {
+                    "audit_id": (
+                        f"audit-{document.document_id}-{revision[:12]}"
+                    ),
+                    "status": result.status,
+                    "commit": revision,
+                    "verdict": result.verdict,
+                    "report_sha256": _sha256(data),
+                    "artifact_paths": [report_path],
+                },
+            )
+            audits[document.document_id] = self._validate_audit_event(
+                self.store.validate_event_chain()[-1],
+                document=document,
+                revision=revision,
+            )
+        return audits
+
+    def _whole_diff_path(self, revision: str) -> str:
+        path = f"{self._final_root(revision)}/whole.patch"
+        self.store.put_artifact(
+            path,
+            self.worktree.diff(self.worktree.base_commit, revision).encode("utf-8"),
+        )
+        return path
+
+    def _open_authority_ids(self) -> tuple[str, ...]:
+        state = self.store.replay()
+        authorities = state.get("authorities")
+        if not isinstance(authorities, Mapping):
+            raise ValueError("replayed authority state is invalid")
+        return tuple(
+            sorted(
+                str(authority_id)
+                for authority_id, authority in authorities.items()
+                if isinstance(authority, Mapping)
+                and authority.get("status") == "waiting_authority"
+            )
+        )
+
+    def _authority_state_path(self, revision: str) -> str:
+        path = f"{self._final_root(revision)}/authority-open.json"
+        self.store.put_artifact(
+            path,
+            canonical_json(
+                {
+                    "schema_version": 1,
+                    "revision": revision,
+                    "authority_open": list(self._open_authority_ids()),
+                }
+            ),
+        )
+        return path
+
+    def _integration_launch_record(
+        self,
+        *,
+        revision: str,
+        audit_paths: Sequence[str],
+        verification_commands: Sequence[str],
+        whole_diff_path: str,
+    ) -> dict[str, object]:
+        return {
+            "schema_version": 1,
+            "revision": revision,
+            "audit_sha256s": {
+                audit_path: _sha256(self.store.read_artifact(audit_path))
+                for audit_path in audit_paths
+            },
+            "verification_commands": list(verification_commands),
+            "whole_diff_path": whole_diff_path,
+            "whole_diff_sha256": _sha256(
+                self.store.read_artifact(whole_diff_path)
+            ),
+            "terminal_path": self._terminal_path(revision),
+        }
+
+    def _prepare_integration_launch(
+        self,
+        *,
+        revision: str,
+        audit_paths: Sequence[str],
+        verification_commands: Sequence[str],
+        whole_diff_path: str,
+    ) -> str:
+        path = self._integration_launch_path(revision)
+        data = canonical_json(
+            self._integration_launch_record(
+                revision=revision,
+                audit_paths=audit_paths,
+                verification_commands=verification_commands,
+                whole_diff_path=whole_diff_path,
+            )
+        )
+        self.store.put_artifact(path, data)
+        if self.store.read_artifact(path) != data:
+            raise ValueError("final integration launch commitment changed")
+        return path
+
+    def _validate_integration_launch(
+        self,
+        *,
+        revision: str,
+        audit_paths: Sequence[str],
+        verification_commands: Sequence[str],
+        whole_diff_path: str,
+    ) -> str:
+        path = self._integration_launch_path(revision)
+        expected = canonical_json(
+            self._integration_launch_record(
+                revision=revision,
+                audit_paths=audit_paths,
+                verification_commands=verification_commands,
+                whole_diff_path=whole_diff_path,
+            )
+        )
+        if self.store.read_artifact(path) != expected:
+            raise ValueError("final integration launch commitment is stale")
+        return path
+
+    def _integration_result_record(
+        self,
+        *,
+        revision: str,
+        status: str,
+        verdict: str,
+        artifact_paths: Sequence[str],
+    ) -> dict[str, object]:
+        paths = [normalize_relative_path(path) for path in artifact_paths]
+        if not paths or len(paths) != len(set(paths)):
+            raise ValueError("final integration result artifacts are invalid")
+        terminal_path = self._terminal_path(revision)
+        if terminal_path not in paths or "result.json" in paths:
+            raise ValueError("final integration result uses a reserved artifact path")
+        artifact_sha256s = {
+            path: _sha256(self.store.read_artifact(path)) for path in paths
+        }
+        return {
+            "schema_version": 1,
+            "revision": revision,
+            "status": status,
+            "verdict": verdict,
+            "report_sha256": artifact_sha256s[terminal_path],
+            "artifact_paths": paths,
+            "artifact_sha256s": artifact_sha256s,
+        }
+
+    def _read_integration_handoff(self, revision: str) -> dict[str, object]:
+        handoff_path = self._integration_handoff_path(revision)
+        data = self.store.read_artifact(handoff_path)
+        payload = _load_json(data, "final integration child handoff")
+        if set(payload) != {
+            "schema_version",
+            "producer",
+            "child_result",
+            "report_path",
+            "report_sha256",
+            "artifact_sha256s",
+        } or payload.get("schema_version") != 1 or payload.get(
+            "producer"
+        ) != "cpe_launcher":
+            raise ValueError("final integration child handoff fields are invalid")
+        child = payload.get("child_result")
+        child_fields = {
+            "role",
+            "status",
+            "item_id",
+            "commit",
+            "verdict",
+            "failure_code",
+            "authority_id",
+            "strategy_key",
+            "affected_document_ids",
+            "artifact_paths",
+            "summary",
+        }
+        if not isinstance(child, Mapping) or set(child) != child_fields:
+            raise ValueError("final integration child result fields are invalid")
+        if (
+            child.get("role") != "program_final_integrator"
+            or child.get("item_id") != "program-final"
+            or child.get("commit") != revision
+            or (child.get("status"), child.get("verdict"))
+            not in {
+                ("completed", "pass"),
+                ("changes_requested", "changes_requested"),
+            }
+            or child.get("failure_code") is not None
+            or child.get("authority_id") is not None
+            or child.get("affected_document_ids") != []
+            or (
+                child.get("strategy_key") is not None
+                and (
+                    not isinstance(child.get("strategy_key"), str)
+                    or not child["strategy_key"]
+                )
+            )
+            or not isinstance(child.get("summary"), str)
+            or not child["summary"]
+        ):
+            raise ValueError("final integration child result binding is invalid")
+        paths = child.get("artifact_paths")
+        if (
+            not isinstance(paths, list)
+            or not all(isinstance(path, str) for path in paths)
+            or len(paths) != len(set(paths))
+            or not paths
+            or paths[0] != handoff_path
+            or self._terminal_path(revision) not in paths
+            or "result.json" in paths
+        ):
+            raise ValueError("final integration child artifact list is invalid")
+        normalized_paths = [normalize_relative_path(path) for path in paths]
+        digests = payload.get("artifact_sha256s")
+        if not isinstance(digests, Mapping) or set(digests) != set(
+            normalized_paths[1:]
+        ):
+            raise ValueError("final integration child artifact hashes are invalid")
+        for path in normalized_paths[1:]:
+            digest = digests[path]
+            if not isinstance(digest, str) or digest != _sha256(
+                self.store.read_artifact(path)
+            ):
+                raise ValueError("final integration child artifact hash is stale")
+        terminal_path = self._terminal_path(revision)
+        if (
+            payload.get("report_path") != terminal_path
+            or payload.get("report_sha256") != digests[terminal_path]
+        ):
+            raise ValueError("final integration child report binding is invalid")
+        return payload
+
+    def _read_integration_result(
+        self, revision: str
+    ) -> dict[str, object]:
+        path = self._integration_result_path(revision)
+        data = self.store.read_artifact(path)
+        payload = _load_json(data, "final integration result record")
+        expected_fields = {
+            "schema_version",
+            "revision",
+            "status",
+            "verdict",
+            "report_sha256",
+            "artifact_paths",
+            "artifact_sha256s",
+        }
+        if set(payload) != expected_fields or payload.get("schema_version") != 1:
+            raise ValueError("final integration result record fields are invalid")
+        status = payload.get("status")
+        verdict = payload.get("verdict")
+        if payload.get("revision") != revision or (status, verdict) not in {
+            ("completed", "pass"),
+            ("changes_requested", "changes_requested"),
+        }:
+            raise ValueError("final integration result record binding is invalid")
+        paths = payload.get("artifact_paths")
+        digests = payload.get("artifact_sha256s")
+        if (
+            not isinstance(paths, list)
+            or not all(isinstance(path, str) for path in paths)
+            or not isinstance(digests, Mapping)
+            or set(digests) != set(paths)
+        ):
+            raise ValueError("final integration result artifact binding is invalid")
+        expected = self._integration_result_record(
+            revision=revision,
+            status=str(status),
+            verdict=str(verdict),
+            artifact_paths=tuple(paths),
+        )
+        if payload != expected or canonical_json(expected) != data:
+            raise ValueError("final integration result record is stale")
+        return expected
+
+    def _integration_event_payload(
+        self, revision: str, result_record: Mapping[str, object]
+    ) -> dict[str, object]:
+        lifecycle_paths = [
+            self._integration_launch_path(revision),
+            *self._validated_integration_retry_paths(revision),
+        ]
+        lifecycle_paths.append(self._integration_result_path(revision))
+        return {
+            "integration_id": f"program-final-{revision[:12]}",
+            "status": result_record["status"],
+            "commit": revision,
+            "verdict": result_record["verdict"],
+            "report_sha256": result_record["report_sha256"],
+            "artifact_paths": [
+                *lifecycle_paths,
+                *result_record["artifact_paths"],
+            ],
+        }
+
+    def _validated_integration_retry_paths(self, revision: str) -> tuple[str, ...]:
+        launch_path = self._integration_launch_path(revision)
+        failure_path = self._integration_failure_path(revision)
+        retry_path = self._integration_retry_path(revision)
+        failure_target = self.store.paths.root / failure_path
+        retry_target = self.store.paths.root / retry_path
+        failure_exists = failure_target.exists() or failure_target.is_symlink()
+        retry_exists = retry_target.exists() or retry_target.is_symlink()
+        if retry_exists and not failure_exists:
+            raise ValueError("final integration retry has no child failure record")
+        result: list[str] = []
+        if failure_exists:
+            expected_failure = {
+                "schema_version": 1,
+                "revision": revision,
+                "status": "pre_artifact_failure",
+                "launch_sha256": _sha256(self.store.read_artifact(launch_path)),
+            }
+            failure = _load_json(
+                self.store.read_artifact(failure_path),
+                "final integrator child failure",
+            )
+            if failure != expected_failure:
+                raise ValueError("final integrator child failure record is stale")
+            result.append(failure_path)
+        if retry_exists:
+            expected_retry = {
+                "schema_version": 1,
+                "revision": revision,
+                "failure_sha256": _sha256(self.store.read_artifact(failure_path)),
+            }
+            retry = _load_json(
+                self.store.read_artifact(retry_path),
+                "final integrator retry launch",
+            )
+            if retry != expected_retry:
+                raise ValueError("final integrator retry launch record is stale")
+            result.append(retry_path)
+        return tuple(result)
+
+    def _validate_integration_event(
+        self,
+        event: Mapping[str, object],
+        *,
+        revision: str,
+        audit_paths: Sequence[str],
+        program: Mapping[str, object],
+        whole_diff_path: str,
+    ) -> Mapping[str, object]:
+        payload = event.get("payload")
+        if not isinstance(payload, Mapping):
+            raise ValueError("final integration event payload is invalid")
+        if payload.get("commit") != revision:
+            raise ValueError("final integration event revision does not match")
+        self._validate_integration_launch(
+            revision=revision,
+            audit_paths=audit_paths,
+            verification_commands=tuple(program["final_verification_commands"]),
+            whole_diff_path=whole_diff_path,
+        )
+        result_record = self._read_integration_result(revision)
+        paths = payload.get("artifact_paths")
+        if not isinstance(paths, list) or not all(isinstance(path, str) for path in paths):
+            raise ValueError("final integration artifact paths are invalid")
+        expected_paths = self._integration_event_payload(
+            revision, result_record
+        )["artifact_paths"]
+        if paths != expected_paths:
+            raise ValueError("final integration event differs from its result record")
+        terminal_path = self._terminal_path(revision)
+        if terminal_path not in paths:
+            raise ValueError("final integration report is unavailable")
+        report = self.store.read_artifact(terminal_path)
+        if (
+            payload.get("status") != result_record["status"]
+            or payload.get("verdict") != result_record["verdict"]
+            or payload.get("report_sha256") != result_record["report_sha256"]
+            or payload.get("report_sha256") != _sha256(report)
+        ):
+            raise ValueError("final integration report digest does not match")
+        if payload.get("status") == "changes_requested":
+            if payload.get("verdict") != "changes_requested":
+                raise ValueError("final integration change request is invalid")
+            return payload
+        if payload.get("status") != "completed" or payload.get("verdict") != "pass":
+            raise ValueError("final integration did not pass")
+        validated = validate_terminal_artifact(
+            _load_json(report, "terminal artifact"),
+            revision=revision,
+            auditor_document_ids=tuple(
+                document.document_id for document in self.store.document_set()
+            ),
+            verification_commands=tuple(program["final_verification_commands"]),
+        )
+        if canonical_json(validated) != report:
+            raise ValueError("terminal artifact is not in its canonical validated shape")
+        if validated["quality_verdict"] != "pass":
+            raise ValueError("completed final integration quality verdict is not pass")
+        if validated["authority_open"] != list(self._open_authority_ids()):
+            raise ValueError("terminal artifact authority state is stale")
+        whole_diff = self.store.read_artifact(whole_diff_path)
+        if validated["whole_diff_sha256"] != _sha256(whole_diff):
+            raise ValueError("terminal artifact whole diff digest does not match")
+        auditor_verdicts = validated["auditor_verdicts"]
+        if any(
+            auditor_verdicts[document.document_id] != "pass"
+            for document in self.store.document_set()
+        ):
+            raise ValueError("terminal artifact contains a non-passing auditor verdict")
+        for record in validated["verification"]:
+            output_path = str(record["output_path"])
+            if output_path not in paths:
+                raise ValueError("terminal verification output was not reported")
+            self.store.read_artifact(output_path)
+        expected_child_paths = [
+            self._integration_handoff_path(revision),
+            terminal_path,
+            *(str(record["output_path"]) for record in validated["verification"]),
+        ]
+        if result_record["artifact_paths"] != expected_child_paths:
+            raise ValueError("passing final integration reported extra artifacts")
+        if set(audit_paths) != {
+            self._audit_path(revision, document.document_id)
+            for document in self.store.document_set()
+        }:
+            raise ValueError("terminal integration audit evidence is incomplete")
+        return payload
+
+    def _current_integration(
+        self,
+        *,
+        revision: str,
+        audit_paths: Sequence[str],
+        program: Mapping[str, object],
+        whole_diff_path: str,
+    ) -> Mapping[str, object] | None:
+        matches = [
+            event
+            for event in self.store.validate_event_chain()
+            if event["event_type"] == "integration.reported"
+            and event["payload"].get("commit") == revision
+        ]
+        if len(matches) > 1:
+            raise ValueError("final integration events are ambiguous")
+        if matches:
+            return self._validate_integration_event(
+                matches[0],
+                revision=revision,
+                audit_paths=audit_paths,
+                program=program,
+                whole_diff_path=whole_diff_path,
+            )
+
+        launch_path = self._integration_launch_path(revision)
+        result_path = self._integration_result_path(revision)
+        handoff_path = self._integration_handoff_path(revision)
+        terminal_path = self._terminal_path(revision)
+        launch_target = self.store.paths.root / launch_path
+        result_target = self.store.paths.root / result_path
+        handoff_target = self.store.paths.root / handoff_path
+        terminal_target = self.store.paths.root / terminal_path
+        failure_path = self._integration_failure_path(revision)
+        if result_target.exists() or result_target.is_symlink():
+            self._validate_integration_launch(
+                revision=revision,
+                audit_paths=audit_paths,
+                verification_commands=tuple(program["final_verification_commands"]),
+                whole_diff_path=whole_diff_path,
+            )
+            result_record = self._read_integration_result(revision)
+            candidate = self._integration_event_payload(revision, result_record)
+            self._validate_integration_event(
+                {"payload": candidate},
+                revision=revision,
+                audit_paths=audit_paths,
+                program=program,
+                whole_diff_path=whole_diff_path,
+            )
+            self.store.append_event("integration.reported", candidate)
+            return candidate
+        if handoff_target.exists() or handoff_target.is_symlink():
+            self._validate_integration_launch(
+                revision=revision,
+                audit_paths=audit_paths,
+                verification_commands=tuple(program["final_verification_commands"]),
+                whole_diff_path=whole_diff_path,
+            )
+            handoff = self._read_integration_handoff(revision)
+            child = handoff["child_result"]
+            assert isinstance(child, Mapping)
+            result_record = self._integration_result_record(
+                revision=revision,
+                status=str(child["status"]),
+                verdict=str(child["verdict"]),
+                artifact_paths=tuple(child["artifact_paths"]),
+            )
+            self.store.put_artifact(result_path, canonical_json(result_record))
+            candidate = self._integration_event_payload(revision, result_record)
+            self._validate_integration_event(
+                {"payload": candidate},
+                revision=revision,
+                audit_paths=audit_paths,
+                program=program,
+                whole_diff_path=whole_diff_path,
+            )
+            self.store.append_event("integration.reported", candidate)
+            return candidate
+        if terminal_target.exists() or terminal_target.is_symlink():
+            self._record_interrupted("final_integrator_handoff_unavailable")
+            raise ValueError(
+                "orphaned final integrator artifacts have no durable child handoff"
+            )
+        if launch_target.exists() or launch_target.is_symlink():
+            self._validate_integration_launch(
+                revision=revision,
+                audit_paths=audit_paths,
+                verification_commands=tuple(program["final_verification_commands"]),
+                whole_diff_path=whole_diff_path,
+            )
+            retry_paths = self._validated_integration_retry_paths(revision)
+            if retry_paths == (failure_path,):
+                return None
+            self._record_interrupted("final_integrator_result_unavailable")
+            raise ValueError(
+                "final integrator launch has no durable result; refusing duplicate verification"
+            )
+        return None
+
+    def _run_program_final_integrator(
+        self,
+        *,
+        revision: str,
+        audits: Mapping[str, tuple[str, str]],
+        program: Mapping[str, object],
+        selected: Mapping[str, Path],
+        whole_diff_path: str,
+    ) -> Mapping[str, object]:
+        audit_paths = tuple(
+            audits[document.document_id][0] for document in self.store.document_set()
+        )
+        existing = self._current_integration(
+            revision=revision,
+            audit_paths=audit_paths,
+            program=program,
+            whole_diff_path=whole_diff_path,
+        )
+        if existing is not None:
+            return existing
+        terminal_path = self._terminal_path(revision)
+        authority_state_path = self._authority_state_path(revision)
+        launch_path = self._prepare_integration_launch(
+            revision=revision,
+            audit_paths=audit_paths,
+            verification_commands=tuple(program["final_verification_commands"]),
+            whole_diff_path=whole_diff_path,
+        )
+        failure_path = self._integration_failure_path(revision)
+        retry_path = self._integration_retry_path(revision)
+        failure_target = self.store.paths.root / failure_path
+        retry_target = self.store.paths.root / retry_path
+        if failure_target.exists() or failure_target.is_symlink():
+            retry_record = {
+                "schema_version": 1,
+                "revision": revision,
+                "failure_sha256": _sha256(self.store.read_artifact(failure_path)),
+            }
+            self.store.put_artifact(retry_path, canonical_json(retry_record))
+        inputs = [
+            selected[f"{_GENERATION_ROOT}/program-map.json"],
+            selected[f"{_GENERATION_ROOT}/coverage.json"],
+            *(self._artifact_input(path, selected) for path in audit_paths),
+            self.store.paths.autonomy_decisions.resolve(strict=True),
+            selected[f"{_GENERATION_ROOT}/authority-queue.json"],
+            self._artifact_input(authority_state_path, selected),
+            self._artifact_input(whole_diff_path, selected),
+            self._artifact_input(launch_path, selected),
+        ]
+        try:
+            outcome = self._launch_role(
+                role="program_final_integrator",
+                item_id="program-final",
+                goal=(
+                    "Integrate all document audits and run each final verification command "
+                    f"exactly once at revision {revision}."
+                ),
+                input_paths=inputs,
+                report_path=terminal_path,
+                skills=("using-superpowers", "verification-before-completion"),
+                done_when=(
+                    "the terminal artifact binds every audit and verification output",
+                    "a pass is emitted only for the exact clean final revision",
+                ),
+                attempt_id=f"final-integrator-{revision[:12]}",
+            )
+        except (ValueError, TimeoutError):
+            terminal_target = self.store.paths.root / terminal_path
+            if not (
+                terminal_target.exists()
+                or terminal_target.is_symlink()
+                or failure_target.exists()
+                or failure_target.is_symlink()
+                or retry_target.exists()
+                or retry_target.is_symlink()
+            ):
+                self.store.put_artifact(
+                    failure_path,
+                    canonical_json(
+                        {
+                            "schema_version": 1,
+                            "revision": revision,
+                            "status": "pre_artifact_failure",
+                            "launch_sha256": _sha256(
+                                self.store.read_artifact(launch_path)
+                            ),
+                        }
+                    ),
+                )
+            raise
+        result = outcome.result
+        if result.commit != revision or self.worktree.head() != revision:
+            raise ValueError("final integrator revision does not match current HEAD")
+        if self.worktree.status():
+            raise ValueError("final integrator left a dirty worktree")
+        if (result.status, result.verdict) not in {
+            ("completed", "pass"),
+            ("changes_requested", "changes_requested"),
+        }:
+            raise ValueError("final integrator returned an invalid result")
+        if terminal_path not in result.artifact_paths:
+            raise ValueError("final integrator omitted its terminal report")
+        handoff = self._read_integration_handoff(revision)
+        if handoff["child_result"] != {
+            "role": result.role,
+            "status": result.status,
+            "item_id": result.item_id,
+            "commit": result.commit,
+            "verdict": result.verdict,
+            "failure_code": result.failure_code,
+            "authority_id": result.authority_id,
+            "strategy_key": result.strategy_key,
+            "affected_document_ids": list(result.affected_document_ids),
+            "artifact_paths": list(result.artifact_paths),
+            "summary": result.summary,
+        }:
+            raise ValueError(
+                "final integrator normalized result differs from durable handoff"
+            )
+        result_record = self._integration_result_record(
+            revision=revision,
+            status=result.status,
+            verdict=str(result.verdict),
+            artifact_paths=result.artifact_paths,
+        )
+        result_path = self._integration_result_path(revision)
+        self.store.put_artifact(result_path, canonical_json(result_record))
+        payload = self._integration_event_payload(revision, result_record)
+        validated = self._validate_integration_event(
+            {"payload": payload},
+            revision=revision,
+            audit_paths=audit_paths,
+            program=program,
+            whole_diff_path=whole_diff_path,
+        )
+        self.store.append_event("integration.reported", payload)
+        return validated
+
+    def _run_integration_fix(
+        self,
+        *,
+        revision: str,
+        finding_paths: Sequence[str],
+        selected: Mapping[str, Path],
+    ) -> str:
+        task_id = "program:integration"
+        attempt_number = self._attempt_number(task_id)
+        attempt_id = f"program-integration-attempt-{attempt_number:04d}"
+        report_path = f"reports/program-integration/attempt-{attempt_number}.md"
+        inputs = [
+            selected[f"{_GENERATION_ROOT}/program-map.json"],
+            *(self._artifact_input(path, selected) for path in finding_paths),
+        ]
+        evidence_sha256 = self._artifact_evidence_digest(finding_paths)
+        self._append_task_started(
+            task_id=task_id,
+            attempt_id=attempt_id,
+            role="integration_fix_agent",
+            strategy_key="integration-consolidated",
+            baseline_commit=revision,
+            evidence_sha256=evidence_sha256,
+        )
+        outcome = self._launch_role(
+            role="integration_fix_agent",
+            item_id=task_id,
+            goal=(
+                "Strategy key: integration-consolidated\n"
+                "Resolve all supplied final integration findings in one commit."
+            ),
+            input_paths=inputs,
+            report_path=report_path,
+            skills=(
+                "using-superpowers",
+                "systematic-debugging",
+                "test-driven-development",
+            ),
+            done_when=("all final integration findings are resolved together",),
+            attempt_id=attempt_id,
+        )
+        result = outcome.result
+        self._append_task_result(
+            result,
+            task_id=task_id,
+            attempt_id=attempt_id,
+            strategy_key="integration-consolidated",
+        )
+        if result.status != "completed" or result.commit is None:
+            raise ValueError("integration fix agent did not complete")
+        if result.commit == revision:
+            raise ValueError("integration fix did not create a new revision")
+        return result.commit
+
+    def _reconcile_active_integration_fix(self) -> None:
+        state = self.store.replay()
+        tasks = state.get("tasks")
+        if not isinstance(tasks, Mapping):
+            raise ValueError("replayed task state is invalid")
+        integration_state = tasks.get("program:integration")
+        if not isinstance(integration_state, Mapping):
+            return
+        active = integration_state.get("active_attempt")
+        if not isinstance(active, Mapping):
+            return
+        attempt_id = active.get("attempt_id")
+        strategy_key = active.get("strategy_key")
+        baseline = active.get("baseline_commit")
+        if (
+            active.get("role") != "integration_fix_agent"
+            or not all(
+                isinstance(value, str) and value
+                for value in (attempt_id, strategy_key, baseline)
+            )
+        ):
+            self._record_interrupted("integration_fix_replay_ambiguous")
+            raise ValueError("active integration fix binding is invalid")
+        if self.worktree.status():
+            self._record_interrupted("active_integration_fix_left_dirty_worktree")
+            raise ValueError("active integration fix left a dirty worktree")
+        commit = self.worktree.head()
+        if commit == baseline:
+            self._record_interrupted("active_integration_fix_has_no_bound_result")
+            raise ValueError("active integration fix has no bound result")
+        report_number = str(attempt_id).rsplit("-", 1)[-1].lstrip("0") or "0"
+        report_path = f"reports/program-integration/attempt-{report_number}.md"
+        try:
+            self.store.read_artifact(report_path)
+        except ValueError as exc:
+            self._record_interrupted("active_integration_fix_report_unavailable")
+            raise ValueError("active integration fix report is unavailable") from exc
+        self.store.append_event(
+            "task.reported",
+            {
+                "task_id": "program:integration",
+                "attempt_id": str(attempt_id),
+                "status": "completed",
+                "commit": commit,
+                "strategy_key": str(strategy_key),
+                "artifact_paths": [report_path],
+            },
+        )
+
+    def _complete_run(
+        self,
+        *,
+        revision: str,
+        integration: Mapping[str, object],
+    ) -> None:
+        terminal_path = self._terminal_path(revision)
+        terminal = self.store.read_artifact(terminal_path)
+        completed = [
+            event
+            for event in self.store.validate_event_chain()
+            if event["event_type"] == "run.completed"
+        ]
+        expected_paths = ["result.json", *integration["artifact_paths"]]
+        if completed:
+            if len(completed) != 1 or completed[0]["payload"] != {
+                "status": "completed",
+                "commit": revision,
+                "result_sha256": _sha256(terminal),
+                "artifact_paths": expected_paths,
+            }:
+                raise ValueError("run completion event differs from terminal evidence")
+            if self.store.read_artifact("result.json") != terminal:
+                raise ValueError("terminal result artifact differs from completion event")
+            return
+        if self.worktree.head() != revision or self.worktree.status():
+            raise ValueError("run completion revision is not the clean worktree HEAD")
+        self.store.put_artifact("result.json", terminal)
+        self.store.append_event(
+            "run.completed",
+            {
+                "status": "completed",
+                "commit": revision,
+                "result_sha256": _sha256(terminal),
+                "artifact_paths": expected_paths,
+            },
+        )
+
+    def _run_final_closure(self) -> dict[str, object]:
+        while True:
+            self._reconcile_active_integration_fix()
+            revision = self.worktree.head()
+            if self.worktree.status():
+                raise ValueError("final audit requires a clean worktree")
+            program, selected = self._program_context()
+            audits = self._run_document_audits(revision)
+            if set(audits) != {
+                document.document_id for document in self.store.document_set()
+            }:
+                raise ValueError("final document audit set is incomplete")
+            if any(verdict != "pass" for _, verdict in audits.values()):
+                return self.store.replay()
+            whole_diff_path = self._whole_diff_path(revision)
+            integration = self._run_program_final_integrator(
+                revision=revision,
+                audits=audits,
+                program=program,
+                selected=selected,
+                whole_diff_path=whole_diff_path,
+            )
+            if integration["status"] == "changes_requested":
+                new_revision = self._run_integration_fix(
+                    revision=revision,
+                    finding_paths=tuple(integration["artifact_paths"]),
+                    selected=selected,
+                )
+                if self.worktree.head() != new_revision or self.worktree.status():
+                    raise ValueError("integration fix handoff is not a clean new revision")
+                continue
+            self._complete_run(revision=revision, integration=integration)
+            return self.store.replay()
+
     def tick(self) -> str | None:
         """Advance exactly one ready task through a fresh review or durable wait."""
 
@@ -2351,10 +3440,17 @@ class QueueEngine:
             return task_id
 
     def run_until_terminal(self) -> dict[str, object]:
-        """Run every currently ready task without redispatching clean reviews."""
+        """Run ready tasks, revision-bound audits, and one terminal integrator."""
 
         self.map_documents()
         self.map_program()
         while self.tick() is not None:
             pass
-        return self.store.replay()
+        state = self.store.replay()
+        if state["status"] == "completed":
+            return state
+        program, _ = self._program_context()
+        if not self._tasks_are_final_ready(state, program):
+            return state
+        with self.launcher.writer_lifecycle(self.store):
+            return self._run_final_closure()
