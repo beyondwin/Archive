@@ -556,12 +556,13 @@ def _mapping_program_result(
         disposition = "unmapped" if scenario == "mapping_unmapped" else "conflict"
         coverage["spec-01:R1"] = {
             "disposition": disposition,
-            "task_ids": [],
+            "task_ids": ["plan-01:T1"] if disposition == "conflict" else [],
             "reason": "deterministic blocking coverage fixture",
             "source_references": [_source_entry(*requirements["spec-01:R1"])],
             "authority_ids": [],
         }
-        tasks[0]["requirement_ids"] = []
+        if disposition == "unmapped":
+            tasks[0]["requirement_ids"] = []
         if disposition == "conflict":
             coverage["spec-01:R1"]["authority_ids"] = ["mapping-conflict-1"]
             authority_items.append(
